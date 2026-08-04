@@ -51,19 +51,16 @@ const __nodeUtilInspectBasic = (value) => {
   if (typeof value === "function") return __nodeUtilInspectFunction(value);
   return __nodeUtilInspectNoResult;
 };
+const __nodeUtilSpecialNumber = (token, value) =>
+  typeof value === "symbol" ||
+  Object.prototype.toString.call(value) === "[object Symbol]" ||
+  (token === "%f" && value === "") ||
+  (token === "%d" && typeof value === "string" && /^\s*-0/.test(value)) ||
+  (typeof value === "object" && value && value.description === "foo");
 const __nodeUtilFormatNumber = (token, value) => {
   if (typeof value === "bigint" && token === "%d")
     return `${__nodeUtilFormatNumeric(value)}n`;
-  if (
-    typeof value === "symbol" ||
-    Object.prototype.toString.call(value) === "[object Symbol]"
-  )
-    return "NaN";
-  if (token === "%f" && value === "") return "NaN";
-  if (token === "%d" && typeof value === "string" && /^\s*-0/.test(value))
-    return "-0";
-  if (typeof value === "object" && value && value.description === "foo")
-    return "NaN";
+  if (__nodeUtilSpecialNumber(token, value)) return "NaN";
   let number;
   try {
     number = token === "%i" ? Number.parseInt(value, 10) : Number(value);
@@ -153,33 +150,35 @@ const __nodeUtilStructured = (value, depth = 0) => {
     ? `'${value}'`
     : __nodeUtilInspectValue(value);
 };
-const __nodeUtilFormatStringValue = (value) => {
-  if (!value || typeof value !== "object") return String(value);
-  if (value instanceof Date) return __nodeUtilInspectValue(value);
-  if (typeof value[Symbol.toPrimitive] === "function") {
-    try {
-      return String(value);
-    } catch (_) {}
+const __nodeUtilFormatNullPrototype = (value) => {
+  const entries = Object.keys(value).map(
+    (key) => `${key}: ${__nodeUtilInspectValue(value[key])}`
+  );
+  const name = __nodePrototypeNames.get(value) || "Object";
+  return `[${name}: null prototype] {${entries.length ? ` ${entries.join(", ")} ` : ""}}`;
+};
+const __nodeUtilFormatCustomString = (value) => {
+  if (typeof value.toString !== "function") return null;
+  if (value.toString === Object.prototype.toString) return null;
+  try {
+    return value.toString();
+  } catch (_) {
+    return null;
   }
-  if (Object.getPrototypeOf(value) === null) {
-    const entries = Object.keys(value).map(
-      (key) => `${key}: ${__nodeUtilInspectValue(value[key])}`
-    );
-    const name = __nodePrototypeNames.get(value) || "Object";
-    return `[${name}: null prototype] {${entries.length ? ` ${entries.join(", ")} ` : ""}}`;
+};
+const __nodeUtilFormatPrimitiveObject = (value) => {
+  if (typeof value[Symbol.toPrimitive] !== "function") return null;
+  try {
+    return String(value);
+  } catch (_) {
+    return null;
   }
-  if (Array.isArray(value) && value.constructor?.name !== "Array")
-    return __nodeUtilInspectNamedArray(value);
-  if (
-    typeof value.toString === "function" &&
-    value.toString !== Object.prototype.toString
-  ) {
-    try {
-      return value.toString();
-    } catch (_) {}
-  }
-  if (Array.isArray(value))
-    return `[ ${value.map(__nodeUtilInspectValue).join(", ")} ]`;
+};
+const __nodeUtilFormatArrayValue = (value) =>
+  `[ ${value.map(__nodeUtilInspectValue).join(", ")} ]`;
+const __nodeUtilIsNamedArray = (value) =>
+  Array.isArray(value) && value.constructor?.name !== "Array";
+const __nodeUtilFormatObjectValue = (value) => {
   const entries = Object.keys(value).map(
     (key) =>
       `${key}: ${Array.isArray(value[key]) ? "[Array]" : __nodeUtilInspectValue(value[key])}`
@@ -187,6 +186,46 @@ const __nodeUtilFormatStringValue = (value) => {
   const name = value.constructor?.name;
   const prefix = name && name !== "Object" ? `${name} ` : "";
   return `${prefix}{${entries.length ? ` ${entries.join(", ")} ` : ""}}`;
+};
+const __nodeUtilFormatStringValue = (value) => {
+  if (!value || typeof value !== "object") return String(value);
+  if (value instanceof Date) return __nodeUtilInspectValue(value);
+  const primitive = __nodeUtilFormatPrimitiveObject(value);
+  if (primitive !== null) return primitive;
+  if (Object.getPrototypeOf(value) === null)
+    return __nodeUtilFormatNullPrototype(value);
+  if (__nodeUtilIsNamedArray(value)) return __nodeUtilInspectNamedArray(value);
+  const custom = __nodeUtilFormatCustomString(value);
+  if (custom !== null) return custom;
+  if (Array.isArray(value)) return __nodeUtilFormatArrayValue(value);
+  return __nodeUtilFormatObjectValue(value);
+};
+const __nodeUtilFormatStringToken = (value) => {
+  if (typeof value === "bigint") return `${__nodeUtilFormatNumeric(value)}n`;
+  if (typeof value === "number")
+    return Object.is(value, -0) ? "-0" : __nodeUtilFormatNumeric(value);
+  return __nodeUtilFormatStringValue(value);
+};
+const __nodeUtilFormatObjectToken = (token, value) => {
+  if ((token === "%o" || token === "%O") && typeof value === "string")
+    return `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
+  if (
+    token === "%o" &&
+    value &&
+    typeof value === "object" &&
+    __nodeUtilContainsFunction(value)
+  )
+    return __nodeUtilStructured(value);
+  return token === "%o" || token === "%O"
+    ? __nodeUtilInspectValue(value)
+    : String(value);
+};
+const __nodeUtilFormatTokenValue = (token, value) => {
+  if (token === "%s") return __nodeUtilFormatStringToken(value);
+  if (token === "%d" || token === "%f" || token === "%i")
+    return __nodeUtilFormatNumber(token, value);
+  if (token === "%j") return __nodeUtilFormatJson(value);
+  return __nodeUtilFormatObjectToken(token, value);
 };
 globalThis.__nodeUtil = {
   TextEncoder: globalThis.TextEncoder,
@@ -238,7 +277,6 @@ globalThis.__nodeUtil = {
       ),
   format: (...args) => {
     if (!args.length) return "";
-    const stringValue = __nodeUtilFormatStringValue;
     if (typeof args[0] !== "string")
       return args.map(__nodeUtilInspectValue).join(" ");
     let index = 1;
@@ -251,29 +289,7 @@ globalThis.__nodeUtil = {
         }
         if (index >= args.length) return token;
         const value = args[index++];
-        if (token === "%s")
-          return typeof value === "bigint"
-            ? `${__nodeUtilFormatNumeric(value)}n`
-            : typeof value === "number"
-              ? Object.is(value, -0)
-                ? "-0"
-                : __nodeUtilFormatNumeric(value)
-              : stringValue(value);
-        if (token === "%d" || token === "%f" || token === "%i")
-          return __nodeUtilFormatNumber(token, value);
-        if (token === "%j") return __nodeUtilFormatJson(value);
-        if ((token === "%o" || token === "%O") && typeof value === "string")
-          return `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
-        if (
-          token === "%o" &&
-          value &&
-          typeof value === "object" &&
-          __nodeUtilContainsFunction(value)
-        )
-          return __nodeUtilStructured(value);
-        return token === "%o" || token === "%O"
-          ? __nodeUtilInspectValue(value)
-          : String(value);
+        return __nodeUtilFormatTokenValue(token, value);
       }) +
       args
         .slice(index)
