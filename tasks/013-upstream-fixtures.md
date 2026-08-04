@@ -2188,3 +2188,5 @@ Stage 818 verified node:events listener inspection and limits.
 Stage 819 verified the core node:stream API.
 
 Stage 820 verified node:stream/promises helpers.
+
+Stage 821 verified the core node:util API.
