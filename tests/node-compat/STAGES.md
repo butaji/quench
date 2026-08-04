@@ -432,3 +432,4 @@ these small fixtures isolate the currently implemented contract.
 |   433 | process nextTick ordering before promise callbacks             | `tools/run-node-tests.sh --stage 433` |
 |   434 | process nextTick callback validation                          | `tools/run-node-tests.sh --stage 434` |
 |   435 | timer callback validation across timeout/immediate/interval   | `tools/run-node-tests.sh --stage 435` |
+|   436 | timer handle ref, unref, and hasRef state                     | `tools/run-node-tests.sh --stage 436` |
