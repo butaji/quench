@@ -2170,3 +2170,5 @@ Stage 809 aligned static Module helper properties.
 Stage 810 aligned static Module loader state properties.
 
 Stage 811 added standard Module extension handler keys.
+
+Stage 812 added static Module path helper methods.

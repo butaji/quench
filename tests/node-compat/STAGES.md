@@ -808,3 +808,4 @@ these small fixtures isolate the currently implemented contract.
 |   809 | module exposes static Module helpers                            | `tools/run-node-tests.sh --stage 809` |
 |   810 | module exposes static loader state                              | `tools/run-node-tests.sh --stage 810` |
 |   811 | module exposes standard extension handlers                     | `tools/run-node-tests.sh --stage 811` |
+|   812 | module exposes static path helpers                              | `tools/run-node-tests.sh --stage 812` |
