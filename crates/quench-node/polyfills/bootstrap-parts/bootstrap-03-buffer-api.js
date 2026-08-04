@@ -4,7 +4,16 @@ globalThis.Buffer = new Proxy(NodeBuffer, {
     return NodeBuffer.from(...args);
   },
   construct(_target, args) {
-    if (typeof args[0] === "number") return new NodeBuffer(args[0]);
+    if (typeof args[0] === "number") {
+      if (args.length > 1) {
+        const error = new TypeError(
+          `The "string" argument must be of type string. Received type number (${args[0]})`
+        );
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      return new NodeBuffer(args[0]);
+    }
     return NodeBuffer.from(...args);
   }
 });
