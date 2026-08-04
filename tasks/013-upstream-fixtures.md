@@ -2631,3 +2631,8 @@ asynchronous scheduling noise.
 Stage 950 verifies the listener-identity overload of `listenerCount()`.
 Retrospective: registering two callbacks with one duplicate distinguishes total
 counting from identity filtering in a deterministic fixture.
+
+Stage 951 verifies `events.on()` async-iterator delivery, ordered argument
+tuples, explicit iterator cleanup, and listener removal. Retrospective: the
+fixture must use an async function because the harness evaluates scripts as
+classic scripts rather than modules with top-level await.
