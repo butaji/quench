@@ -2002,3 +2002,5 @@ Stage 725 added chainable process.stderr prependListener support.
 Stage 726 added chainable process stdout prependOnceListener support.
 
 Stage 727 added chainable process stderr prependOnceListener support.
+
+Stage 728 added the process.stdout off alias for listener removal.
