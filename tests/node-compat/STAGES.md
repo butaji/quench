@@ -598,3 +598,4 @@ these small fixtures isolate the currently implemented contract.
 |   599 | process execArgv exposes an empty runtime-argument array                 | `tools/run-node-tests.sh --stage 599` |
 |   600 | process argv0 identifies the Node-compatible runtime                    | `tools/run-node-tests.sh --stage 600` |
 |   601 | process features exposes a runtime capability object                   | `tools/run-node-tests.sh --stage 601` |
+|   602 | process deprecation flags default to false booleans                      | `tools/run-node-tests.sh --stage 602` |
