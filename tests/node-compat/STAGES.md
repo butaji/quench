@@ -765,3 +765,4 @@ these small fixtures isolate the currently implemented contract.
 |   766 | process stdin readableObjectMode is disabled                             | `tools/run-node-tests.sh --stage 766` |
 |   767 | process stdin readable methods expose empty-input behavior               | `tools/run-node-tests.sh --stage 767` |
 |   768 | process stdin isPaused reports an active input flow                    | `tools/run-node-tests.sh --stage 768` |
+|   769 | process stdin exposes stdio lifecycle methods                         | `tools/run-node-tests.sh --stage 769` |
