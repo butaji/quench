@@ -40,7 +40,7 @@ const __quenchVmCreateCompiledFunction = (
     fn.cachedData = NodeBuffer.from(code);
   }
   if (options?.cachedData)
-    fn.cachedDataRejected = options.cachedData.toString() !== code;
+    fn.cachedDataRejected = !__quenchVmCacheMatches(options.cachedData, code);
   return fn;
 };
 const __quenchVmCompileFunction = (code, params = [], options) => {
