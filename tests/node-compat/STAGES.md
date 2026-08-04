@@ -431,3 +431,4 @@ these small fixtures isolate the currently implemented contract.
 |   432 | stream destroy error, close, and destroyed state               | `tools/run-node-tests.sh --stage 432` |
 |   433 | process nextTick ordering before promise callbacks             | `tools/run-node-tests.sh --stage 433` |
 |   434 | process nextTick callback validation                          | `tools/run-node-tests.sh --stage 434` |
+|   435 | timer callback validation across timeout/immediate/interval   | `tools/run-node-tests.sh --stage 435` |

@@ -1223,6 +1223,9 @@ ordering before promise callbacks.
 Stage 434 formalized synchronous `process.nextTick` callback validation with
 `ERR_INVALID_ARG_TYPE`.
 
+Stage 435 formalized synchronous callback validation for timeout, immediate,
+and interval scheduling APIs.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
