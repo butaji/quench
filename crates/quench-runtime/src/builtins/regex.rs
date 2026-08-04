@@ -69,6 +69,33 @@ mod tests {
         assert!(validate_unicode_backreferences(haystack, &m));
     }
 
+    #[test]
+    fn native_function_matcher_unicode_identifier_pattern_matches_ascii() {
+        let result = std::thread::Builder::new()
+            .stack_size(256 * 1024 * 1024)
+            .spawn(|| {
+                let source = std::fs::read_to_string(
+                    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                        .join("../../tests/test262/harness/nativeFunctionMatcher.js"),
+                )
+                .unwrap();
+                let marker = "const UnicodeIDStart = /";
+                let start = source.find(marker).unwrap() + marker.len();
+                let end = source[start..].find("/;\n").unwrap() + start;
+                let pattern = &source[start..end];
+                let regex = regress::Regex::new(pattern).unwrap();
+                assert!(regex.find("f").is_some());
+                let mut ctx = crate::Context::new().unwrap();
+                crate::builtins::register_builtins(&mut ctx);
+                crate::builtins::bootstrap::bootstrap_js_builtins(&mut ctx).unwrap();
+                let result = ctx.eval(&format!("var r = /{pattern}/; r.test('f')"));
+                assert_eq!(result, Ok(Value::Boolean(true)));
+            })
+            .unwrap()
+            .join();
+        assert!(result.is_ok());
+    }
+
     // ------------------------------------------------------------------------
     // regexp_match_state
     // ------------------------------------------------------------------------
