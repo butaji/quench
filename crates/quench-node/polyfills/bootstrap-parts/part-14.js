@@ -88,7 +88,7 @@ const __nodeCryptoHmacPads = (key) => {
   }
   return { keyBytes, inner, outer };
 };
-const __createNodeCrypto = () => ({
+const __nodeCryptoApi = {
   getHashes: () => ["sha256"],
   getCiphers: () => [],
   timingSafeEqual: (left, right) => {
@@ -340,7 +340,8 @@ const __createNodeCrypto = () => ({
     };
     return hmac;
   }
-});
+};
+const __createNodeCrypto = () => __nodeCryptoApi;
 let __nodeCryptoInstance;
 globalThis.__nodeCryptoInitialized = false;
 globalThis.__nodeCrypto = new Proxy(
