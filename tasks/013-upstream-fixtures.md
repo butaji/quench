@@ -2890,3 +2890,8 @@ while unblocking compatibility fixtures that use prototype inheritance.
 Stage 1001 exposes `Readable.prototype.readableEnded` and its false default.
 Retrospective: checking both prototype ownership and instance initialization
 captures the structural and runtime parts of the stream state contract.
+
+Stage 1002 verifies Readable invokes its `_read` hook when data flow begins and
+delivers the pushed chunk through async iteration. Retrospective: testing the
+hook and consumer together catches scheduling gaps that property-only stages
+cannot observe.
