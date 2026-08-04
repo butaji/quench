@@ -3107,3 +3107,10 @@ out-of-bounds offsets, matching Node's `ERR_OUT_OF_RANGE` contract. The
 retrospective confirms that separating invalid offset sign from buffer-size
 bounds is clearer than one combined branch; the focused stage and upstream
 `test-buffer-read.js` now pass.
+
+Stage 1034 distinguishes integer-read offset errors for NaN/fractional values
+from negative and infinite offsets. Stage 1035 applies the same precise
+contract to variable-width integer byte lengths and offsets. Retrospective:
+comparing each Node error family prevented a generic range error from masking
+which numeric validation rule failed; the upstream `test-buffer-readint.js`
+fixture now passes completely.
