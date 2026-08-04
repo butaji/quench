@@ -1992,3 +1992,5 @@ Stage 720 made process.stdout setMaxListeners chainable and stateful.
 Stage 721 made process.stderr setMaxListeners chainable and stateful.
 
 Stage 722 added lightweight process.stdout rawListeners support.
+
+Stage 723 added lightweight process.stderr rawListeners support.
