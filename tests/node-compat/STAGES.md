@@ -387,3 +387,4 @@ these small fixtures isolate the currently implemented contract.
 |   388 | lazy URL bootstrap and url.parse availability                  | `tools/run-node-tests.sh --stage 388` |
 |   389 | lazy OS bootstrap and os.platform availability                | `tools/run-node-tests.sh --stage 389` |
 |   390 | fs close callback descriptor release                           | `tools/run-node-tests.sh --stage 390` |
+|   391 | crypto PBKDF2 sync and callback derivation                     | `tools/run-node-tests.sh --stage 391` |
