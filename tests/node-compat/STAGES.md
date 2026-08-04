@@ -462,3 +462,4 @@ these small fixtures isolate the currently implemented contract.
 |   463 | stream readableFlowing tracks pause and resume state              | `tools/run-node-tests.sh --stage 463` |
 |   464 | stream readable and writable object mode flags                   | `tools/run-node-tests.sh --stage 464` |
 |   465 | stream destroy callback receives original error                   | `tools/run-node-tests.sh --stage 465` |
+|   466 | stream writable destroy callback receives original error           | `tools/run-node-tests.sh --stage 466` |
