@@ -1,0 +1,8 @@
+#!/usr/bin/env sh
+set -eu
+
+changed_js=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '\.js$' || true)
+if [ -n "$changed_js" ]; then
+  printf '%s\n' "$changed_js" | xargs npx prettier --check
+fi
+git diff --cached --check
