@@ -1427,6 +1427,9 @@ execArgv, and silent settings.
 Stage 506 formalized the shared child-process fixture helper validating exit
 status, signal, and stderr predicates.
 
+Stage 507 formalized cluster worker state transitions, listening metadata, and
+SIGTERM exit reporting.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
