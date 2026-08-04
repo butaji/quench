@@ -734,3 +734,4 @@ these small fixtures isolate the currently implemented contract.
 |   735 | process stderr async iterator is empty and awaitable                         | `tools/run-node-tests.sh --stage 735` |
 |   736 | process stdout destroy is non-destructive and chainable                      | `tools/run-node-tests.sh --stage 736` |
 |   737 | process stderr destroy is non-destructive and chainable                      | `tools/run-node-tests.sh --stage 737` |
+|   738 | process stdout writable state reports an active stream                      | `tools/run-node-tests.sh --stage 738` |

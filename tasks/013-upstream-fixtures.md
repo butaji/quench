@@ -2022,3 +2022,5 @@ Stage 735 added an empty awaitable process.stderr async iterator.
 Stage 736 added non-destructive, chainable process.stdout destroy support.
 
 Stage 737 added non-destructive, chainable process.stderr destroy support.
+
+Stage 738 added active process.stdout writable-state properties.
