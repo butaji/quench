@@ -728,3 +728,4 @@ these small fixtures isolate the currently implemented contract.
 |   729 | process stderr off returns the stream for chaining                            | `tools/run-node-tests.sh --stage 729` |
 |   730 | process stdout emit reports no unhandled listeners                          | `tools/run-node-tests.sh --stage 730` |
 |   731 | process stderr emit reports no unhandled listeners                          | `tools/run-node-tests.sh --stage 731` |
+|   732 | process stdout listeners reports the lightweight listener state              | `tools/run-node-tests.sh --stage 732` |
