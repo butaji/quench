@@ -1914,6 +1914,8 @@ Stage 684 formalized the boolean no-channel process.send result contract.
 
 Stage 685 formalized the non-empty process.cwd current-directory contract.
 
+Stage 686 formalized reversible process.chdir behavior for the current directory.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
