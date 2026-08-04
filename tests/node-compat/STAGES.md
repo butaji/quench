@@ -456,3 +456,4 @@ these small fixtures isolate the currently implemented contract.
 |   457 | stream unshift-after-end rejection and error code              | `tools/run-node-tests.sh --stage 457` |
 |   458 | stream Readable read(0) preserves queued data                  | `tools/run-node-tests.sh --stage 458` |
 |   459 | stream readableEnded changes only after end                     | `tools/run-node-tests.sh --stage 459` |
+|   460 | stream readable event exposes queued data                        | `tools/run-node-tests.sh --stage 460` |
