@@ -1620,6 +1620,9 @@ Stage 568 formalized worker-process IPC state and the `send()` and
 Stage 569 formalized the `child_process` exec and execFile API surface,
 including synchronous variants and callback completion behavior.
 
+Stage 570 formalized the `child_process.spawn()` stream surface and child
+process metadata such as stdio, arguments, and spawn file.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
