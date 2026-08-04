@@ -602,10 +602,26 @@ pub fn assign_to_member(
             class.set_static_property(&prop_name, value.clone(), env)?;
             Ok(())
         }
-        _ => Err(JsError(format!(
-            "Cannot assign to property of non-object, got {:?}",
-            obj_val
-        ))),
+        _ => {
+            // Per ES §13.15.2 / §6.2.4.5 PutValue, assigning to a property on a
+            // null/undefined base throws TypeError. Set the thrown value so
+            // the surrounding catch block sees a real error object (not
+            // `undefined`) — required by test262's `assert.throws` and the
+            // harness `assert`.
+            let msg = format!(
+                "TypeError: Cannot set properties of {} (setting property '{}')",
+                match &obj_val {
+                    Value::Null => "null".to_string(),
+                    Value::Undefined => "undefined".to_string(),
+                    _ => format!("{:?}", obj_val),
+                },
+                prop_name
+            );
+            let (err, js_err) =
+                crate::value::error::create_js_error_with_type(&msg, "TypeError");
+            crate::value::set_thrown_value(err);
+            Err(js_err)
+        }
     }
 }
 

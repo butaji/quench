@@ -433,6 +433,54 @@ mod tests {
     }
 
     #[test]
+    fn member_assignment_on_null_throws_typeerror_object() {
+        use crate::test262::runner::execute::initialize_test_context;
+        let mut ctx = initialize_test_context(false).expect("ctx");
+        let script = r#"
+            var count = 0;
+            var base = null;
+            var captured;
+            try {
+                base.prop = count += 1;
+                captured = "no-throw";
+            } catch (thrown) {
+                captured = [
+                    typeof thrown === "object" && thrown !== null,
+                    thrown && thrown.constructor && thrown.constructor.name,
+                    thrown && thrown.constructor === TypeError,
+                ];
+            }
+            globalThis.__assign_result = captured;
+            globalThis.__count_after = count;
+        "#;
+        ctx.eval(script).expect("script must run");
+        let v = ctx.get_global("__assign_result").expect("set");
+        let Value::Object(obj) = v else {
+            panic!("expected array, got {:?}", v);
+        };
+        let arr = obj.borrow();
+        let is_object = matches!(arr.get("0").unwrap(), Value::Boolean(true));
+        let name_val = arr.get("1").unwrap();
+        let same_ctor = matches!(arr.get("2").unwrap(), Value::Boolean(true));
+        assert!(
+            is_object,
+            "thrown must be an object (got typeof non-object)"
+        );
+        let Value::String(name) = name_val else {
+            panic!("elem 1 must be string, got {:?}", name_val);
+        };
+        assert_eq!(name, "TypeError", "thrown must be a TypeError");
+        assert!(same_ctor, "thrown.constructor must be TypeError");
+        // The right-hand side is evaluated before the assignment throws
+        // (per ES PutValue semantics), so the count++ side effect persists.
+        let count = ctx.get_global("__count_after").unwrap();
+        let Value::Number(n) = count else {
+            panic!("count must be a number, got {:?}", count);
+        };
+        assert_eq!(n, 1.0, "count++ side effect must persist on throw");
+    }
+
+    #[test]
     fn harness_string_underscore_native_helpers_are_present() {
         use crate::test262::runner::execute::initialize_test_context;
         let mut ctx = initialize_test_context(false).expect("ctx");
