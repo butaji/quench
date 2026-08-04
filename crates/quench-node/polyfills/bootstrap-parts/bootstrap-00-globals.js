@@ -193,6 +193,8 @@ globalThis.process = {
       get: (_, key) =>
         typeof key === "string" ? globalThis.__quench_env_get(key) : undefined,
       set: (_, key, value) => {
+        if (typeof key === "symbol" || typeof value === "symbol")
+          throw new TypeError("Cannot convert a Symbol value to a string");
         globalThis.__quench_env_set(String(key), String(value));
         globalThis.__quench_env_keys = [
           ...new Set([...globalThis.__quench_env_keys, String(key)])

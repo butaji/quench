@@ -3362,3 +3362,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Added `EPIPE` and `ENOBUFS` to the shared system-error catalog.
 - Verified the focused catalog contract and the upstream UV errno fixture.
+### Stage 1096: process environment symbols
+
+- Made `process.env` reject symbol keys and symbol values while preserving
+  symbol reads, membership, deletion, and object-tag behavior.
+- Verified the focused contract and Node's `test-process-env-symbols.js` fixture.
