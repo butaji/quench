@@ -1182,6 +1182,9 @@ syscall metadata.
 Stage 420 formalized independent state branching through `hash.copy` and
 `hmac.copy`.
 
+Stage 421 formalized rejection of updates and repeated digests after crypto
+finalization with `ERR_CRYPTO_HASH_FINALIZED`.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing

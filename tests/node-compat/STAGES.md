@@ -417,3 +417,4 @@ these small fixtures isolate the currently implemented contract.
 |   418 | fs appendFileSync hex and base64 string encodings              | `tools/run-node-tests.sh --stage 418` |
 |   419 | fs statSync missing path ENOENT metadata                       | `tools/run-node-tests.sh --stage 419` |
 |   420 | crypto hash and HMAC copy state branching                     | `tools/run-node-tests.sh --stage 420` |
+|   421 | crypto finalized hash and HMAC operation errors               | `tools/run-node-tests.sh --stage 421` |
