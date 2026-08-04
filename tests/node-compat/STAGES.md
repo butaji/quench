@@ -915,3 +915,4 @@ these small fixtures isolate the currently implemented contract.
 |   916 | module exposes absolute-path createRequire                | `tools/run-node-tests.sh --stage 916` |
 |   917 | process exposes release metadata                         | `tools/run-node-tests.sh --stage 917` |
 |   918 | process exposes parent PID metadata                      | `tools/run-node-tests.sh --stage 918` |
+|   919 | process exposes environment round trips                  | `tools/run-node-tests.sh --stage 919` |
