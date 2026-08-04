@@ -53,3 +53,13 @@ fn array_from_reads_array_elements_after_each_mapping_callback() {
         Ok(Value::String("127,127,127".to_string()))
     );
 }
+
+#[test]
+fn array_filter_reads_constructor_before_callback() {
+    let mut ctx = Context::new().unwrap();
+    assert_eq!(
+        ctx.eval("var a=[]; Object.defineProperty(a,'constructor',{get(){throw new Error('sentinel');}}); try { a.filter(()=>true); false; } catch (e) { e.message==='sentinel'; }")
+            .unwrap(),
+        Value::Boolean(true)
+    );
+}
