@@ -803,3 +803,4 @@ these small fixtures isolate the currently implemented contract.
 |   804 | module exposes modern helper methods                            | `tools/run-node-tests.sh --stage 804` |
 |   805 | module exposes metadata and constructors                        | `tools/run-node-tests.sh --stage 805` |
 |   806 | module createRequire resolves builtins                          | `tools/run-node-tests.sh --stage 806` |
+|   807 | module exposes loader hook methods                              | `tools/run-node-tests.sh --stage 807` |

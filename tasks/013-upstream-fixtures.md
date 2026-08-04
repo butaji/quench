@@ -2160,3 +2160,5 @@ Stage 804 added modern module helper method compatibility.
 Stage 805 added module metadata and constructor compatibility.
 
 Stage 806 verified module.createRequire builtin resolution.
+
+Stage 807 added modern module loader hook methods.
