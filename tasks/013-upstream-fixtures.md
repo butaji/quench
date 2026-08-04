@@ -2808,3 +2808,7 @@ Stage 985 verifies worker_threads MessageChannel exports and MessagePort
 `ref()`/`unref()`/`hasRef()` lifecycle behavior. Retrospective: exposing the
 existing JS port implementation through the module surface avoids duplicating
 transport logic in Rust.
+
+Stage 986 verifies the EventTarget `getMaxListeners`/`setMaxListeners` API and
+restoration of the prior limit. Retrospective: saving the original limit keeps
+listener-limit stages isolated from the process-wide default.
