@@ -3195,3 +3195,9 @@ the available byte width. Retrospective: range validation ran first and
 reported `1.01` as a buffer-size failure when Node reports a non-integer input;
 ordering the numeric classification first fixes both float reads and writes.
 Upstream `test-buffer-readfloat.js` now passes.
+
+Stage 1048 adds an intrinsic ArrayBuffer brand check for `Buffer.from()`.
+Retrospective: `instanceof ArrayBuffer` accepts objects with a forged prototype;
+calling the native `byteLength` getter distinguishes genuine backing stores
+while preserving shared storage for real ArrayBuffers. Upstream
+`test-buffer-arraybuffer.js` now passes.
