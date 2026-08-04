@@ -549,3 +549,4 @@ these small fixtures isolate the currently implemented contract.
 |   550 | stream PassThrough forwards data and remains readable and writable   | `tools/run-node-tests.sh --stage 550` |
 |   551 | process report exposes JavaScript reports and signal defaults       | `tools/run-node-tests.sh --stage 551` |
 |   552 | fs promises glob asynchronously matches files from a cwd           | `tools/run-node-tests.sh --stage 552` |
+|   553 | dns servers, resolver, lookup callback, and promises are supported | `tools/run-node-tests.sh --stage 553` |
