@@ -81,9 +81,12 @@ globalThis.NodeEventTarget ||= class NodeEventTarget extends EventTarget {
     this._nodeListeners = {};
   }
   addListener(name, listener, options) {
+    const owner = this;
     const callback =
       typeof listener === "function"
-        ? listener
+        ? function (event) {
+            return listener.call(owner, event);
+          }
         : function (event) {
             return listener.handleEvent.call(listener, event);
           };
