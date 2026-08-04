@@ -126,6 +126,7 @@ __quenchNodeTestModule.it = __quenchNodeTestModule.describe;
 __quenchNodeTestModule.test = __quenchNodeTestModule;
 const __quenchInternalBindingModule = {
   internalBinding: (binding) => {
+    if (binding === "os") return globalThis.__quenchInternalOsBinding;
     if (binding === "debug")
       return {
         getGenericUsageCount: (name) =>

@@ -311,7 +311,7 @@ const __nodeOsExports = {
       process.env.TMPDIR || process.env.TMP || process.env.TEMP || "/tmp";
     return candidate.length > 1 ? candidate.replace(/\/+$/, "") : candidate;
   },
-  homedir: () => globalThis.__quench_homedir,
+  homedir: () => globalThis.__quenchOsHomeDirectory(),
   type: () => "Quench",
   endianness: () => "LE",
   hostname: () => globalThis.__quench_hostname,
