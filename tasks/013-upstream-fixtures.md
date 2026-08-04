@@ -2410,3 +2410,8 @@ Stage 906 verifies the node:crypto default Buffer hash digest contract.
 
 Retrospective: keep output-type contracts separate from encoded-output vectors;
 this isolates Buffer interop regressions without duplicating hash semantics.
+
+Stage 907 verifies the node:process builtin module lookup API.
+
+Retrospective: modern process loading surfaces should be checked before
+polyfilling; the existing bootstrap already provided the required behavior.

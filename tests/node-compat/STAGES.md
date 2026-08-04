@@ -903,3 +903,4 @@ these small fixtures isolate the currently implemented contract.
 |   904 | crypto exposes asynchronous PBKDF2 derivation             | `tools/run-node-tests.sh --stage 904` |
 |   905 | crypto exposes asynchronous HKDF derivation               | `tools/run-node-tests.sh --stage 905` |
 |   906 | crypto hash exposes default Buffer digest                 | `tools/run-node-tests.sh --stage 906` |
+|   907 | process exposes builtin module lookup                    | `tools/run-node-tests.sh --stage 907` |
