@@ -2865,3 +2865,7 @@ invariants without depending on the upstream process-exit ordering harness.
 Upstream audit: `test-event-emitter-remove-all-listeners.js` reaches its exit
 assertions; the remaining mismatch is the complete LIFO ordering interaction
 among `removeListener` observers.
+
+Stage 997 verifies re-entrant EventEmitter `once()` removal: a listener removed
+before invocation must not be called again by nested emission. Retrospective:
+the compact stage isolates wrapper removal ordering from argument-count paths.
