@@ -2954,3 +2954,12 @@ missing encoding argument and avoids destabilizing existing flow behavior.
 
 Upstream audit: `test-stream-readable-unshift.js` still covers broader
 multi-chunk ordering and stream-encoding interactions beyond this slice.
+
+Stage 1012 verifies `Readable.push()` accepts strings, applies the configured
+default encoding, and honors an explicit encoding override. Retrospective:
+extracting chunk validation reduced method complexity and made string support
+an explicit contract instead of weakening the invalid-chunk path.
+
+Upstream audit: `test-stream-readable-default-encoding.js` reaches the
+remaining Buffer hexadecimal rendering mismatch already tracked for stage
+1003; the focused stage checks encoded bytes directly.

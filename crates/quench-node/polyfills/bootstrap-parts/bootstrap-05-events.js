@@ -66,6 +66,18 @@ const __nodeReadablePushError = (message, code) => {
   error.code = code;
   throw error;
 };
+const __nodeReadableValidateChunk = (stream, chunk) => {
+  if (
+    stream.readableObjectMode ||
+    typeof chunk === "string" ||
+    ArrayBuffer.isView(chunk)
+  )
+    return true;
+  const error = new TypeError("chunk must be a string or buffer");
+  error.code = "ERR_INVALID_ARG_TYPE";
+  stream.emit("error", error);
+  return false;
+};
 const __nodeReadablePushEnd = (stream) => {
   stream._ended = true;
   if (!stream._chunks.length) {
@@ -255,7 +267,7 @@ class NodeReadable extends NodeEventEmitter {
       0
     );
   }
-  push(chunk) {
+  push(chunk, encoding) {
     if (this.destroyed && chunk !== null)
       return __nodeReadablePushError(
         "Cannot call push after a stream was destroyed",
@@ -270,14 +282,9 @@ class NodeReadable extends NodeEventEmitter {
       this._readableState.reading = false;
       return __nodeReadablePushEnd(this);
     }
-    if (!this.readableObjectMode && !ArrayBuffer.isView(chunk)) {
-      const error = new TypeError("chunk must be a string or buffer");
-      error.code = "ERR_INVALID_ARG_TYPE";
-      this.emit("error", error);
-      return false;
-    }
+    if (!__nodeReadableValidateChunk(this, chunk)) return false;
     if (!this.readableObjectMode && typeof chunk === "string")
-      chunk = NodeBuffer.from(chunk, this.readableDefaultEncoding);
+      chunk = NodeBuffer.from(chunk, encoding || this.readableDefaultEncoding);
     return __nodeReadablePushChunk(this, chunk);
   }
   unshift(chunk, encoding) {
