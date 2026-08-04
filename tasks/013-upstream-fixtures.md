@@ -2500,3 +2500,8 @@ and preserves Node's undefined return value.
 Stage 925 adds the process ref/unref forwarding contract. The adapter checks
 Node's symbol hooks first and falls back to the legacy methods, so both user
 objects and timer handles share the same small implementation.
+
+Stage 926 records the verified OS signal-constant contract. The existing
+platform table already matched the upstream fixture, so this stage required no
+runtime change; the next OS slice should isolate priority validation from the
+host-dependent `setpriority` behavior.

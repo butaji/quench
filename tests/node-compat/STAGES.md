@@ -920,3 +920,4 @@ these small fixtures isolate the currently implemented contract.
 |   921 | upstream process parent PID fixture                     | `tools/run-node-tests.sh --stage 921` |
 |   924 | process source-map enablement validation                | `tools/run-node-tests.sh --stage 924` |
 |   925 | process ref and unref hooks                            | `tools/run-node-tests.sh --stage 925` |
+|   926 | os signal constants                                    | `tools/run-node-tests.sh --stage 926` |
