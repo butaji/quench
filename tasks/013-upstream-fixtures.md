@@ -2558,3 +2558,8 @@ later target is rejected.
 Stage 937 adds target validation for static `events.getMaxListeners()`.
 Retrospective: paired getter/setter facades should share the same accepted
 target model so invalid values cannot silently read a default.
+
+Stage 938 verifies the `events.addAbortListener()` disposable contract.
+Retrospective: the existing platform AbortSignal implementation already
+provides the required one-shot behavior, so the compatibility layer can
+retain Node's native events helper without a duplicate polyfill.
