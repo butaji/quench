@@ -490,18 +490,26 @@ fn has_prototype_in_chain(
     obj: &crate::value::Object,
     target_proto: &std::rc::Rc<std::cell::RefCell<crate::value::Object>>,
 ) -> bool {
-    if let Some(ref proto_rc) = obj.prototype {
+    fn walk(
+        obj: &crate::value::Object,
+        target_proto: &std::rc::Rc<std::cell::RefCell<crate::value::Object>>,
+        seen: &mut std::collections::HashSet<*const std::cell::RefCell<crate::value::Object>>,
+    ) -> bool {
+        let Some(proto_rc) = obj.prototype.as_ref() else {
+            return false;
+        };
         let proto_ptr: *const std::cell::RefCell<crate::value::Object> = &**proto_rc;
         let target_ptr: *const std::cell::RefCell<crate::value::Object> = &**target_proto;
         if proto_ptr == target_ptr {
             return true;
         }
-        let proto_borrowed = proto_rc.borrow();
-        if has_prototype_in_chain(&proto_borrowed, target_proto) {
-            return true;
+        if !seen.insert(proto_ptr) {
+            return false;
         }
+        let proto_borrowed = proto_rc.borrow();
+        walk(&proto_borrowed, target_proto, seen)
     }
-    false
+    walk(obj, target_proto, &mut std::collections::HashSet::new())
 }
 
 fn function_instanceof(
@@ -543,12 +551,18 @@ fn function_instanceof(
 
 pub(crate) fn eval_instanceof(left: &Value, right: &Value) -> Result<Value, JsError> {
     if let Value::Object(ctor) = right {
-        if let Some(symbol) = crate::builtins::symbol::get_has_instance_symbol() {
-            let method = crate::eval::member::eval_object_member_value(ctor, &symbol, None)?;
-            if !matches!(method, Value::Undefined | Value::Null) {
-                let result =
-                    crate::eval::call_value_with_this(method, vec![left.clone()], right.clone())?;
-                return Ok(Value::Boolean(crate::value::to_bool(&result)));
+        let is_default_function_prototype = crate::builtins::function::is_function_prototype(ctor);
+        if !is_default_function_prototype {
+            if let Some(symbol) = crate::builtins::symbol::get_has_instance_symbol() {
+                let method = crate::eval::member::eval_object_member_value(ctor, &symbol, None)?;
+                if !matches!(method, Value::Undefined | Value::Null) {
+                    let result = crate::eval::call_value_with_this(
+                        method,
+                        vec![left.clone()],
+                        right.clone(),
+                    )?;
+                    return Ok(Value::Boolean(crate::value::to_bool(&result)));
+                }
             }
         }
     }

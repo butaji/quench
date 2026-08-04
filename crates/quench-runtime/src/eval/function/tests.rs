@@ -52,7 +52,10 @@ fn async_generator_yield_star_gets_sync_iterator_with_correct_receiver() {
         "var log = []; var source = { get [Symbol.iterator]() { log.push(this === source); return function() { return { next: function() { log.push(this !== source); return { value: 1, done: true }; } }; }; } }; var g = async function*() { yield* source; }; g().next().then(function() { log.push('done'); });",
     )
     .unwrap();
-    assert_eq!(ctx.eval("log.join('|')"), Ok(Value::String("true|true|done".into())));
+    assert_eq!(
+        ctx.eval("log.join('|')"),
+        Ok(Value::String("true|true|done".into()))
+    );
 }
 
 #[test]
@@ -60,6 +63,13 @@ fn relational_comparison_of_object_and_function_uses_primitive_values() {
     let mut ctx = Context::new().unwrap();
     let value = ctx.eval("({} > function(){return 1}) === ({}.toString() > function(){return 1}.toString()) && (function(){return 1} > {}) === (function(){return 1}.toString() > {}.toString()) && (function(){return 1} > function(){return 1}) === (function(){return 1}.toString() > function(){return 1}.toString()) && ({} > {}) === ({}.toString() > {}.toString())");
     assert_eq!(value, Ok(Value::Boolean(true)));
+}
+
+#[test]
+fn instanceof_rejects_primitive_function_prototype_without_recursing() {
+    let mut ctx = Context::new().unwrap();
+    let value = ctx.eval("Function.prototype.prototype = ''; [] instanceof Function.prototype");
+    assert!(value.is_err());
 }
 
 #[test]
