@@ -2312,3 +2312,5 @@ Stage 880 verifies the node:crypto symmetric and derivation API.
 Stage 881 verifies the node:os platform and user environment API.
 
 Stage 882 verifies the node:process builtin loading helpers.
+
+Stage 883 verifies the node:stream Web Stream adapter helpers.
