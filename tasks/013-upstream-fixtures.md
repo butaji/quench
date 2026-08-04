@@ -2164,3 +2164,5 @@ Stage 806 verified module.createRequire builtin resolution.
 Stage 807 added modern module loader hook methods.
 
 Stage 808 expanded module builtin detection to standard Node core names.
+
+Stage 809 aligned static Module helper properties.
