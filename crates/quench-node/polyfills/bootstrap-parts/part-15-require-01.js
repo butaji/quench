@@ -197,6 +197,67 @@ globalThis.__quench_require_part_01 = (name, specifier) => {
       error.code = "ERR_INVALID_ARG_VALUE";
       throw error;
     };
+    const checkBlockListEntry = (entries, str, explicitType, inputKind) => {
+      if (!entries.has(str)) return false;
+      const entry = entries.get(str);
+      return (
+        explicitType ||
+        inputKind === "socket" ||
+        (inputKind === "string" && !entry.explicit)
+      );
+    };
+    const checkBlockListV4 = (blockList, str, explicitType, inputKind) => {
+      if (checkBlockListEntry(blockList._v4, str, explicitType, inputKind))
+        return true;
+      for (const [start, end] of blockList._v4Ranges)
+        if (compareV4(str, start) >= 0 && compareV4(str, end) <= 0) return true;
+      for (const [net, prefix] of blockList._v4Subnets)
+        if (matchSubnetV4(str, net, prefix)) return true;
+      return blockList._v6.has("::ffff:" + str);
+    };
+    const checkMappedV4 = (blockList, value) => {
+      const marker = value.indexOf("::ffff:");
+      if (marker === -1) return false;
+      const tail = value.slice(marker + 7);
+      let v4 = tail;
+      if (tail.indexOf(":") !== -1) {
+        const parts = tail.split(":");
+        if (
+          parts.length !== 2 ||
+          !/^[0-9a-fA-F]+$/.test(parts[0]) ||
+          !/^[0-9a-fA-F]+$/.test(parts[1])
+        )
+          return false;
+        const first = parseInt(parts[0], 16);
+        const second = parseInt(parts[1], 16);
+        v4 = `${(first >> 8) & 0xff}.${first & 0xff}.${(second >> 8) & 0xff}.${second & 0xff}`;
+      }
+      return checkBlockListV4(blockList, v4, true, "socket");
+    };
+    const checkBlockListV6 = (blockList, str, explicitType, inputKind) => {
+      if (checkBlockListEntry(blockList._v6, str, explicitType, inputKind))
+        return true;
+      for (const [start, end] of blockList._v6Ranges)
+        if (compareV6(str, start) >= 0 && compareV6(str, end) <= 0) return true;
+      for (const [net, prefix] of blockList._v6Subnets)
+        if (matchSubnetV6(str, net, prefix)) return true;
+      return checkMappedV4(blockList, str);
+    };
+    const resolveBlockListCheck = (address, type, checkType) => {
+      const str = normalizeRangeEndpoint(address, "address");
+      const explicitType = type !== undefined;
+      let resolvedType;
+      if (type === undefined)
+        resolvedType = isIPv4(str) ? "ipv4" : isIPv6(str) ? "ipv6" : null;
+      else resolvedType = resolveAddressType(str, type, checkType);
+      const inputKind =
+        address &&
+        typeof address !== "string" &&
+        typeof address.address === "string"
+          ? "socket"
+          : "string";
+      return { str, resolvedType, explicitType, inputKind };
+    };
     return {
       isIP,
       isIPv4,
@@ -313,99 +374,14 @@ globalThis.__quench_require_part_01 = (name, specifier) => {
           }
         }
         check(address, type) {
-          let str;
-          if (typeof address === "string") str = address;
-          else if (address && typeof address.address === "string")
-            str = address.address;
-          else {
-            const e = new TypeError("Invalid address [ERR_INVALID_ARG_TYPE]");
-            e.code = "ERR_INVALID_ARG_TYPE";
-            throw e;
-          }
-          let resolvedType = type;
-          if (typeof resolvedType === "string")
-            resolvedType = resolvedType.toLowerCase();
-          const explicitType = resolvedType !== undefined;
-          if (resolvedType === undefined) {
-            if (isIPv4(str)) resolvedType = "ipv4";
-            else if (isIPv6(str)) resolvedType = "ipv6";
-            else return false;
-          } else {
-            this._checkType(resolvedType);
-          }
-          let inputKind = "string";
-          if (
-            address &&
-            typeof address !== "string" &&
-            typeof address.address === "string"
-          ) {
-            inputKind = "socket";
-          }
-          if (resolvedType === "ipv4") {
-            if (this._v4.has(str)) {
-              const entry = this._v4.get(str);
-              if (
-                explicitType ||
-                inputKind === "socket" ||
-                (inputKind === "string" && !entry.explicit)
-              )
-                return true;
-            }
-            for (const [s, e] of this._v4Ranges) {
-              if (compareV4(str, s) >= 0 && compareV4(str, e) <= 0) return true;
-            }
-            for (const [net, prefix] of this._v4Subnets) {
-              if (matchSubnetV4(str, net, prefix)) return true;
-            }
-            const mapped = "::ffff:" + str;
-            if (this._v6.has(mapped)) return true;
-          } else {
-            if (this._v6.has(str)) {
-              const entry = this._v6.get(str);
-              if (
-                explicitType ||
-                inputKind === "socket" ||
-                (inputKind === "string" && !entry.explicit)
-              )
-                return true;
-            }
-            for (const [s, e] of this._v6Ranges) {
-              if (compareV6(str, s) >= 0 && compareV6(str, e) <= 0) return true;
-            }
-            for (const [net, prefix] of this._v6Subnets) {
-              if (matchSubnetV6(str, net, prefix)) return true;
-            }
-            const dc = str.indexOf("::ffff:");
-            if (dc !== -1) {
-              const tail = str.slice(dc + 7);
-              let v4 = null;
-              if (tail.indexOf(":") === -1) {
-                v4 = tail;
-              } else {
-                const parts = tail.split(":");
-                if (
-                  parts.length === 2 &&
-                  /^[0-9a-fA-F]+$/.test(parts[0]) &&
-                  /^[0-9a-fA-F]+$/.test(parts[1])
-                ) {
-                  const a = parseInt(parts[0], 16);
-                  const b = parseInt(parts[1], 16);
-                  v4 = `${(a >> 8) & 0xff}.${a & 0xff}.${(b >> 8) & 0xff}.${b & 0xff}`;
-                }
-              }
-              if (v4 !== null) {
-                if (this._v4.has(v4)) return true;
-                for (const [s, e] of this._v4Ranges) {
-                  if (compareV4(v4, s) >= 0 && compareV4(v4, e) <= 0)
-                    return true;
-                }
-                for (const [net, prefix] of this._v4Subnets) {
-                  if (matchSubnetV4(v4, net, prefix)) return true;
-                }
-              }
-            }
-          }
-          return false;
+          const { str, resolvedType, explicitType, inputKind } =
+            resolveBlockListCheck(address, type, (value) =>
+              this._checkType(value)
+            );
+          if (resolvedType === null) return false;
+          return resolvedType === "ipv4"
+            ? checkBlockListV4(this, str, explicitType, inputKind)
+            : checkBlockListV6(this, str, explicitType, inputKind);
         }
       },
       SocketAddress: class SocketAddress {
