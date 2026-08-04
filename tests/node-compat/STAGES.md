@@ -739,3 +739,4 @@ these small fixtures isolate the currently implemented contract.
 |   740 | process stdout writableNeedDrain reports no pending drain                       | `tools/run-node-tests.sh --stage 740` |
 |   741 | process stderr writableNeedDrain reports no pending drain                       | `tools/run-node-tests.sh --stage 741` |
 |   742 | process stdout writableHighWaterMark is positive                            | `tools/run-node-tests.sh --stage 742` |
+|   743 | process stderr writableHighWaterMark is positive                            | `tools/run-node-tests.sh --stage 743` |
