@@ -1078,6 +1078,9 @@ when the module is loaded.
 Stage 385 formalized lazy crypto initialization, ensuring module access flips
 the initialization state only when the crypto implementation is requested.
 
+Stage 386 formalized lazy stream initialization, ensuring the stream module
+loads its implementation only when requested.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
