@@ -123,6 +123,7 @@ Array.prototype.forEach = function ArrayForEach(callbackfn /*, thisArg */) {
 
 // Array.prototype.map (ES2025 §23.1.3.22)
 Array.prototype.map = function ArrayMap(callbackfn /*, thisArg */) {
+  "use strict";
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.map called on null or undefined");
   var O = ToObject(this);
   var len = ToLength(O.length);
@@ -139,6 +140,7 @@ Array.prototype.map = function ArrayMap(callbackfn /*, thisArg */) {
 
 // Array.prototype.filter (ES2025 §23.1.3.12)
 Array.prototype.filter = function ArrayFilter(callbackfn /*, thisArg */) {
+  "use strict";
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.filter called on null or undefined");
   var O = ToObject(this);
   var len = ToLength(O.length);
@@ -633,6 +635,7 @@ Array.prototype.shift = function ArrayShift() {
 
 // Array.prototype.flat (ES2025 §23.1.3.13)
 Array.prototype.flat = function ArrayFlat() {
+  "use strict";
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.flat called on null or undefined");
   var O = ToObject(this);
   var len = ToLength(O.length);
@@ -655,6 +658,7 @@ Array.prototype.flat = function ArrayFlat() {
 
 // Array.prototype.flatMap (ES2025 §23.1.3.14)
 Array.prototype.flatMap = function ArrayFlatMap(callbackfn /*, thisArg */) {
+  "use strict";
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.flatMap called on null or undefined");
   var O = ToObject(this);
   var len = ToLength(O.length);

@@ -818,6 +818,15 @@ mod tests {
     }
 
     #[test]
+    fn array_flat_rejects_null_receiver() {
+        let mut ctx = new_ctx();
+        let r = ctx
+            .eval("try { Array.prototype.flat.call(null); false; } catch (e) { e instanceof TypeError; }")
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
     fn array_from_applies_iterator_mapper_before_next_step() {
         let mut ctx = new_ctx();
         let r = ctx
