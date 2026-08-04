@@ -1075,6 +1075,9 @@ from leaking between separate stage files.
 Stage 384 formalized crypto module bootstrap with the `randomUUID` API exposed
 when the module is loaded.
 
+Stage 385 formalized lazy crypto initialization, ensuring module access flips
+the initialization state only when the crypto implementation is requested.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
