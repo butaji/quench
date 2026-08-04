@@ -2070,3 +2070,5 @@ Stage 759 aligned process.stderr readableObjectMode with local Node.
 Stage 760 added Node-specific process.stdout stdio methods.
 
 Stage 761 added Node-specific process.stderr stdio methods.
+
+Stage 762 added active process.stdin readable-state properties.

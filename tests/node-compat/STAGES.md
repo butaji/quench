@@ -758,3 +758,4 @@ these small fixtures isolate the currently implemented contract.
 |   759 | process stderr readableObjectMode is disabled                              | `tools/run-node-tests.sh --stage 759` |
 |   760 | process stdout stdio methods are present and chainable                     | `tools/run-node-tests.sh --stage 760` |
 |   761 | process stderr stdio methods are present and chainable                     | `tools/run-node-tests.sh --stage 761` |
+|   762 | process stdin readable state matches an active input stream                | `tools/run-node-tests.sh --stage 762` |
