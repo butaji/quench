@@ -2364,3 +2364,8 @@ Stage 897 verifies the node:crypto Web Crypto random-values API.
 
 Retrospective: typed-array fallbacks must write through `buffer`,
 `byteOffset`, and `byteLength` so subviews retain correct Web Crypto behavior.
+
+Stage 898 verifies the node:crypto canonical SHA-256 digest contract.
+
+Retrospective: use the locally installed Node runtime to obtain canonical
+cryptographic vectors, avoiding hand-authored expected values.
