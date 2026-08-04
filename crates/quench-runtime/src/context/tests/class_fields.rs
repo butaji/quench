@@ -189,6 +189,17 @@ fn test_object_keys_excludes_enumerable_symbol_properties() {
 }
 
 #[test]
+fn test_arrow_function_name_is_an_own_property() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval(
+        "var descriptor = Object.getOwnPropertyDescriptor(() => {}, 'name'); \
+         descriptor.value === '' && !descriptor.writable && \
+         !descriptor.enumerable && descriptor.configurable",
+    );
+    assert_eq!(result, Ok(Value::Boolean(true)));
+}
+
+#[test]
 fn test_computed_symbol_class_field_descriptor_preserves_value() {
     let mut ctx = Context::new().unwrap();
     let result = ctx.eval(
