@@ -69,9 +69,45 @@ const __quenchRunClusterWorker = (cluster, worker, env, reentry) => {
   if (worker.state !== "dead")
     __quenchFinishClusterWorker(cluster, worker, workerError);
 };
-globalThis.__quench_require_part_02 = (name, specifier) => {
-  if (name === "cluster") {
-    if (globalThis.__nodeCluster) return globalThis.__nodeCluster;
+const __quenchVmModule = {
+  SourceTextModule: class SourceTextModule {
+    constructor() {
+      this.namespace = Object.create(null);
+      __nodeModuleNamespaces.add(this.namespace);
+    }
+    async link() {}
+    async evaluate() {}
+  },
+  createContext: (sandbox = {}) => sandbox,
+  runInThisContext: (code) => (0, eval)(String(code)),
+  runInNewContext: (code, sandbox = {}) => {
+    const previous = {};
+    for (const key of Object.keys(sandbox)) {
+      previous[key] = globalThis[key];
+      globalThis[key] = sandbox[key];
+    }
+    try {
+      return (0, eval)(String(code));
+    } finally {
+      for (const key of Object.keys(sandbox)) globalThis[key] = previous[key];
+    }
+  },
+  runInContext: (code, sandbox = {}) => {
+    const previous = {};
+    for (const key of Object.keys(sandbox)) {
+      previous[key] = globalThis[key];
+      globalThis[key] = sandbox[key];
+    }
+    try {
+      return (0, eval)(String(code));
+    } finally {
+      for (const key of Object.keys(sandbox)) globalThis[key] = previous[key];
+    }
+  }
+};
+let __quenchClusterModule;
+{
+  if (!globalThis.__nodeCluster) {
     let forks = 0;
     class NodeClusterWorker extends globalThis.__nodeEventEmitter {
       constructor(id) {
@@ -207,51 +243,17 @@ globalThis.__quench_require_part_02 = (name, specifier) => {
       cluster.emit("listening", worker);
       worker.emit("listening", info);
     };
-    return cluster;
+    __quenchClusterModule = cluster;
   }
+}
+globalThis.__quench_require_part_02 = (name, specifier) => {
+  if (name === "cluster")
+    return globalThis.__nodeCluster || __quenchClusterModule;
   if (name === "internal/event_target")
     return { kWeakHandler: Symbol("kWeakHandler") };
   if (name === "stream") return globalThis.__nodeStream;
   if (name === "stream/iter") return __quenchRequireStreamIter();
-  if (name === "vm")
-    return {
-      SourceTextModule: class SourceTextModule {
-        constructor() {
-          this.namespace = Object.create(null);
-          __nodeModuleNamespaces.add(this.namespace);
-        }
-        async link() {}
-        async evaluate() {}
-      },
-      createContext: (sandbox = {}) => sandbox,
-      runInThisContext: (code) => (0, eval)(String(code)),
-      runInNewContext: (code, sandbox = {}) => {
-        const previous = {};
-        for (const key of Object.keys(sandbox)) {
-          previous[key] = globalThis[key];
-          globalThis[key] = sandbox[key];
-        }
-        try {
-          return (0, eval)(String(code));
-        } finally {
-          for (const key of Object.keys(sandbox))
-            globalThis[key] = previous[key];
-        }
-      },
-      runInContext: (code, sandbox = {}) => {
-        const previous = {};
-        for (const key of Object.keys(sandbox)) {
-          previous[key] = globalThis[key];
-          globalThis[key] = sandbox[key];
-        }
-        try {
-          return (0, eval)(String(code));
-        } finally {
-          for (const key of Object.keys(sandbox))
-            globalThis[key] = previous[key];
-        }
-      }
-    };
+  if (name === "vm") return __quenchVmModule;
   if (name === "worker_threads") return { isMainThread: true };
   if (name === "node:test" || name === "test")
     return {
