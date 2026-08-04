@@ -2869,3 +2869,7 @@ among `removeListener` observers.
 Stage 997 verifies re-entrant EventEmitter `once()` removal: a listener removed
 before invocation must not be called again by nested emission. Retrospective:
 the compact stage isolates wrapper removal ordering from argument-count paths.
+
+Stage 998 verifies `EventEmitter.prototype.on.call({})` lazily initializes
+listener storage and supports repeated registration. Retrospective: testing a
+generic receiver catches hidden constructor assumptions in prototype methods.
