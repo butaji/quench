@@ -401,9 +401,9 @@ Array.prototype.fill = function ArrayFill(value /*, start, end */) {
 // Array.prototype.reduceRight (ES2025 §23.1.3.29)
 Array.prototype.reduceRight = function ArrayReduceRight(callbackfn /*, initialValue */) {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.reduceRight called on null or undefined");
-  if (!IsCallable(callbackfn)) throw ThrowTypeError("callbackfn is not a function");
   var O = ToObject(this);
   var len = ToLength(O.length);
+  if (!IsCallable(callbackfn)) throw ThrowTypeError("callbackfn is not a function");
   if (len === 0 && arguments.length < 2) throw ThrowTypeError("Reduce of empty array with no initial value");
   var k = len - 1;
   var accumulator = arguments.length >= 2 ? arguments[1] : undefined;
