@@ -875,3 +875,4 @@ these small fixtures isolate the currently implemented contract.
 |   876 | fs exposes file watching API                               | `tools/run-node-tests.sh --stage 876` |
 |   877 | fs exposes directory and stream constructors              | `tools/run-node-tests.sh --stage 877` |
 |   878 | crypto exposes key and certificate constructors            | `tools/run-node-tests.sh --stage 878` |
+|   879 | crypto exposes signing and key generation API              | `tools/run-node-tests.sh --stage 879` |
