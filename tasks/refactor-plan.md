@@ -89,3 +89,8 @@ relevant test262 stage.
 - **R28 — Data-driven global lengths.** `Context::register_native`
   (`context/mod.rs:253`) hardcodes `length` for parseInt/parseFloat/isNaN/…
   in a match; move to the builtin registration data.
+
+- **R29 — Single builtin ownership.** `tools/check-builtin-ownership.sh`
+  requires explicit `@builtin-rust` markers for Rust-owned public methods and
+  rejects matching JS prototype implementations unless they are documented
+  one-line proxy exceptions.
