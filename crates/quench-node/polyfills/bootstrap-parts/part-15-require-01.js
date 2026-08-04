@@ -31,37 +31,67 @@ const normalizeIPv6Zone = (input) => {
   if (!input.includes("%")) return input;
   const percentIndex = input.indexOf("%");
   const zone = input.slice(percentIndex + 1);
-  if (
-    percentIndex === input.length - 1 ||
-    input.indexOf("%", percentIndex + 1) !== -1 ||
-    zone.includes(":") ||
-    zone.includes("%") ||
-    zone.includes("@") ||
-    !/^[0-9A-Za-z._-]+$/.test(zone)
-  )
-    return null;
+  if (!isValidIPv6Zone(input, percentIndex, zone)) return null;
   const address = input.slice(0, percentIndex);
   return address.length ? address : null;
 };
-const countIPv6Groups = (headGroups, tailGroups, hasDoubleColon) => {
+const isValidIPv6Zone = (input, percentIndex, zone) =>
+  percentIndex !== input.length - 1 &&
+  input.indexOf("%", percentIndex + 1) === -1 &&
+  !zone.includes(":") &&
+  !zone.includes("%") &&
+  !zone.includes("@") &&
+  /^[0-9A-Za-z._-]+$/.test(zone);
+const isValidIPv6GroupPosition = (
+  group,
+  index,
+  groups,
+  hasDoubleColon,
+  isHead
+) => {
+  if (isHead && hasDoubleColon && group.includes(".")) return false;
+  if (
+    !hasDoubleColon &&
+    isHead &&
+    group.includes(".") &&
+    index < groups.length - 1
+  )
+    return false;
+  return !(!isHead && index < groups.length - 1 && group.includes("."));
+};
+const countIPv6GroupList = (groups, hasDoubleColon, isHead) => {
   let expanded = 0;
-  for (let i = 0; i < headGroups.length; i++) {
-    const group = headGroups[i];
-    if (hasDoubleColon && group.includes(".")) return 0;
-    if (!hasDoubleColon && group.includes(".") && i < headGroups.length - 1)
+  for (let index = 0; index < groups.length; index++) {
+    const group = groups[index];
+    if (!isValidIPv6GroupPosition(group, index, groups, hasDoubleColon, isHead))
       return 0;
     const width = validateIPv6Group(group);
     if (!width) return 0;
     expanded += width;
   }
-  for (let i = 0; i < tailGroups.length; i++) {
-    const group = tailGroups[i];
-    if (i < tailGroups.length - 1 && group.includes(".")) return 0;
-    const width = validateIPv6Group(group);
-    if (!width) return 0;
-    expanded += width;
-  }
   return expanded;
+};
+const countIPv6Groups = (headGroups, tailGroups, hasDoubleColon) => {
+  return (
+    countIPv6GroupList(headGroups, hasDoubleColon, true) +
+    countIPv6GroupList(tailGroups, hasDoubleColon, false)
+  );
+};
+const parseIPv6Groups = (address) => {
+  if (address === "::") return { expanded: 0, special: true };
+  const doubleColonIndex = address.indexOf("::");
+  if (
+    doubleColonIndex !== -1 &&
+    address.indexOf("::", doubleColonIndex + 1) !== -1
+  )
+    return null;
+  const hasDoubleColon = doubleColonIndex !== -1;
+  const head = hasDoubleColon ? address.slice(0, doubleColonIndex) : address;
+  const tail = hasDoubleColon ? address.slice(doubleColonIndex + 2) : "";
+  const headGroups = head === "" ? [] : head.split(":");
+  const tailGroups = tail === "" ? [] : tail.split(":");
+  const expanded = countIPv6Groups(headGroups, tailGroups, hasDoubleColon);
+  return { expanded, hasDoubleColon, special: false };
 };
 const isIPv6 = (input) => {
   if (input == null) return false;
@@ -72,29 +102,16 @@ const isIPv6 = (input) => {
       return false;
     }
   }
+  return isIPv6String(input);
+};
+const isIPv6String = (input) => {
   if (input.length === 0) return false;
   const address = normalizeIPv6Zone(input);
   if (!address) return false;
-  if (address === "::") return true;
-  const doubleColonIndex = address.indexOf("::");
-  if (
-    doubleColonIndex !== -1 &&
-    address.indexOf("::", doubleColonIndex + 1) !== -1
-  )
-    return false;
-  const hasDoubleColon = doubleColonIndex !== -1;
-  const head = hasDoubleColon ? address.slice(0, doubleColonIndex) : address;
-  const tail = hasDoubleColon ? address.slice(doubleColonIndex + 2) : "";
-  const headGroups = head === "" ? [] : head.split(":");
-  const tailGroups = tail === "" ? [] : tail.split(":");
-  const expanded = countIPv6Groups(headGroups, tailGroups, hasDoubleColon);
-  if (!expanded) return false;
-  if (hasDoubleColon) {
-    if (expanded > 7) return false;
-  } else {
-    if (expanded !== 8) return false;
-  }
-  return true;
+  const parsed = parseIPv6Groups(address);
+  if (!parsed || parsed.special) return Boolean(parsed);
+  if (!parsed.expanded) return false;
+  return parsed.hasDoubleColon ? parsed.expanded <= 7 : parsed.expanded === 8;
 };
 const isIP = (input) => {
   if (input == null) return 0;
