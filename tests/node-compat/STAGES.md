@@ -652,3 +652,4 @@ these small fixtures isolate the currently implemented contract.
 |   653 | process deprecation policy flags expose boolean defaults                     | `tools/run-node-tests.sh --stage 653` |
 |   654 | process debugPort exposes a finite non-negative number                       | `tools/run-node-tests.sh --stage 654` |
 |   655 | process getActiveResourcesInfo returns resource-name strings                | `tools/run-node-tests.sh --stage 655` |
+|   656 | process availableMemory returns a finite non-negative number                 | `tools/run-node-tests.sh --stage 656` |

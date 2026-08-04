@@ -1854,6 +1854,8 @@ Stage 654 formalized the finite non-negative process.debugPort contract.
 
 Stage 655 formalized the array-of-strings process.getActiveResourcesInfo contract.
 
+Stage 656 formalized the finite non-negative process.availableMemory contract.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
