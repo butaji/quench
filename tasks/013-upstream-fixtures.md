@@ -1,5 +1,13 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1111: checked OS home directory
+
+- Fixture: `test-os-checked-function.js`
+- Added the internal OS home-directory hook and Node-shaped checked-system-call
+  error propagation for `os.homedir()`.
+- Retrospective: exposing a small mutable internal hook lets internal tests
+  exercise error translation without adding a Rust syscall abstraction.
+
 ## Stage 1110: os EOL override
 
 - Fixture: `test-os-eol.js`

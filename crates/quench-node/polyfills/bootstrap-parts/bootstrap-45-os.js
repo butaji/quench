@@ -29,6 +29,23 @@ const __quenchOsFallback = {
     return value;
   }
 };
+globalThis.__quenchInternalOsBinding = {
+  getHomeDirectory: (context) => {
+    context.value = globalThis.__quench_homedir || "/";
+  }
+};
+const __quenchOsHomeDirectory = () => {
+  const context = {};
+  globalThis.__quenchInternalOsBinding.getHomeDirectory(context);
+  if (context.syscall) {
+    throw new Error(
+      `A system error occurred: ${context.syscall} returned ${context.code} (${context.message})`
+    );
+  }
+  return context.value;
+};
+globalThis.__quenchOsHomeDirectory = __quenchOsHomeDirectory;
+__quenchOsFallback.homedir = __quenchOsHomeDirectory;
 for (const [name, fallback] of Object.entries(__quenchOsFallback)) {
   if (globalThis.__nodeOs[name] === undefined)
     globalThis.__nodeOs[name] = fallback;
