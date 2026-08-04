@@ -3388,4 +3388,5 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1101: process chdir errors
 
 - Added Node-shaped ENOENT metadata for missing `process.chdir` paths.
-- Verified the focused stage and upstream chdir error-message fixture.
+- Normalized macOS `/private/tmp` cwd aliases and validated argument types.
+- Verified the focused stage and upstream chdir fixtures.
