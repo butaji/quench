@@ -582,6 +582,18 @@ fn async_helper_observes_replaced_done_callback() {
 }
 
 #[test]
+fn async_returns_undefined_test_passes_through_runner() {
+    use crate::test262::harness::HarnessLoader;
+    use crate::test262::runner::default_test262_dir;
+
+    let root = default_test262_dir();
+    let path =
+        PathBuf::from(&root).join("test/harness/asyncHelpers-asyncTest-returns-undefined.js");
+    let outcome = run_single_test(&HarnessLoader::new(&root), &path);
+    assert!(matches!(outcome, TestOutcome::Pass), "outcome: {outcome:?}");
+}
+
+#[test]
 fn dynamic_import_rejection_reaches_catch_handler() {
     let script = format!(
         "{}import('./missing-module.js').catch(function(error) {{ if (error === undefined) throw new Error('missing error'); $DONE(); }}, $DONE);",

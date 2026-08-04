@@ -26,7 +26,7 @@ fn test_timeout_secs() -> u64 {
 
 /// Async prelude: `$DONE` records invocations and rethrows error arguments.
 /// The count is verified after the microtask drain by `async_done_probe`.
-pub const ASYNC_DONE_PRELUDE: &str = "var $DONE = function(error) { \
+pub const ASYNC_DONE_PRELUDE: &str = "globalThis.$DONE = function(error) { \
 globalThis.__test262DoneCount = (globalThis.__test262DoneCount|0) + 1; \
 if (globalThis.__test262DoneCount > 1) throw new Test262Error('$DONE called twice'); \
 if (error !== undefined && error !== null) { globalThis.__test262DoneError = error; throw error; } \
