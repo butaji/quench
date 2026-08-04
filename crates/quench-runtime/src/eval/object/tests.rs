@@ -80,6 +80,53 @@ fn strict_assign_undeclared_throws() {
 }
 
 #[test]
+fn iterator_destructuring_evaluates_computed_target_once() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx
+        .eval(
+            r#"
+            var log = [];
+            function source() {
+                log.push("source");
+                var iterator = {
+                    next: function() {
+                        log.push("iterator-step");
+                        return {
+                            get done() { log.push("iterator-done"); return true; },
+                            get value() { log.push("iterator-value"); }
+                        };
+                    }
+                };
+                var source = {};
+                source[Symbol.iterator] = function() {
+                    log.push("iterator");
+                    return iterator;
+                };
+                return source;
+            }
+            function target() {
+                log.push("target");
+                return target = { set q(value) { log.push("set"); } };
+            }
+            function targetKey() {
+                log.push("target-key");
+                return { toString() { log.push("target-key-tostring"); return "q"; } };
+            }
+            [target()[targetKey()]] = source();
+            log.join("|");
+            "#,
+        )
+        .unwrap();
+    assert_eq!(
+        result,
+        Value::String(
+            "source|iterator|target|target-key|iterator-step|iterator-done|target-key-tostring|set"
+                .to_string(),
+        )
+    );
+}
+
+#[test]
 fn strict_arrow_assignment_to_undeclared_is_reference_error() {
     let mut ctx = Context::new().unwrap();
     let error = ctx

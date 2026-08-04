@@ -23,6 +23,14 @@ pub(crate) fn clear_destructuring_member_reference() {
     DESTRUCTURING_MEMBER_REFERENCE.with(|cell| *cell.borrow_mut() = None);
 }
 
+pub(crate) fn take_destructuring_member_reference() -> Option<(Value, Value)> {
+    DESTRUCTURING_MEMBER_REFERENCE.with(|cell| cell.borrow_mut().take())
+}
+
+pub(crate) fn set_destructuring_member_reference(reference: Option<(Value, Value)>) {
+    DESTRUCTURING_MEMBER_REFERENCE.with(|cell| *cell.borrow_mut() = reference);
+}
+
 pub(crate) fn cache_destructuring_identifier_reference(
     name: &str,
     scope: Option<Rc<RefCell<crate::env::Scope>>>,
@@ -421,7 +429,7 @@ pub fn assign_to_member(
     if matches!(object, Expression::Identifier(name) if name == "super") {
         crate::eval::class::helpers::check_this_access_allowed(env)?;
     }
-    let cached = DESTRUCTURING_MEMBER_REFERENCE.with(|cell| cell.borrow_mut().take());
+    let cached = take_destructuring_member_reference();
     let cached = computed.then_some(cached).flatten();
     let cached_symbol = cached.as_ref().and_then(|(_, key)| match key {
         Value::Symbol(symbol) => Some(symbol.clone()),

@@ -365,7 +365,10 @@ fn array_with_iterator_impl(
                 return result;
             }
         }
-        let (elem_value, done) = take_iterator_step(iterator, &mut index, env)?;
+        let target_reference = crate::eval::object::take_destructuring_member_reference();
+        let step_result = take_iterator_step(iterator, &mut index, env);
+        crate::eval::object::set_destructuring_member_reference(target_reference);
+        let (elem_value, done) = step_result?;
         iterator_done = done;
         if let Err(error) = apply(binding, &elem_value) {
             let original = crate::value::take_thrown_value();
