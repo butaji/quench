@@ -856,3 +856,4 @@ these small fixtures isolate the currently implemented contract.
 |   857 | process exposes modern memory and resource API              | `tools/run-node-tests.sh --stage 857` |
 |   858 | util types exposes specialized type predicates              | `tools/run-node-tests.sh --stage 858` |
 |   859 | sqlite exposes synchronous database API                     | `tools/run-node-tests.sh --stage 859` |
+|   860 | http2 exposes HTTP/2 client and server API                   | `tools/run-node-tests.sh --stage 860` |

@@ -2266,3 +2266,5 @@ Stage 857 verifies the node:process modern memory and resource API.
 Stage 858 verifies the node:util/types specialized type predicates.
 
 Stage 859 verifies the node:sqlite synchronous database API.
+
+Stage 860 verifies the node:http2 client and server API.
