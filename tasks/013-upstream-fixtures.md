@@ -3139,3 +3139,10 @@ prototype repair accidentally copied `slice()` results; the upstream swap
 fixture made the aliasing requirement explicit, so the final layer now wraps
 views without changing their storage semantics. Upstream
 `test-buffer-swap.js` now passes.
+
+Stage 1040 restores the final-layer BigInt read/write methods after subclass
+rebinding had left their internal helper calls pointing at an older prototype.
+Retrospective: testing the public methods and prototype chain together exposed
+the class-expression binding issue; the final allocation layer now owns both
+the helpers and public dispatch, including Node's `2n ** Nn` overflow wording.
+Upstream `test-buffer-bigint64.js` now passes.
