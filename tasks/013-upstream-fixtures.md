@@ -1328,6 +1328,9 @@ Stage 471 formalized `refresh()` reactivating a cleared interval exactly once.
 Stage 472 formalized chainable Readable `setEncoding()`, exposed encoding
 state, queued-buffer decoding, and unknown-encoding validation.
 
+Stage 473 formalized Readable encoding decoding data delivered through flowing
+`data` events.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing

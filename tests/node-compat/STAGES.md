@@ -469,3 +469,4 @@ these small fixtures isolate the currently implemented contract.
 |   470 | timer refresh after clear reactivates once                       | `tools/run-node-tests.sh --stage 470` |
 |   471 | interval refresh after clear reactivates once                    | `tools/run-node-tests.sh --stage 471` |
 |   472 | stream setEncoding chains and decodes queued buffers              | `tools/run-node-tests.sh --stage 472` |
+|   473 | stream setEncoding decodes flowing data                           | `tools/run-node-tests.sh --stage 473` |
