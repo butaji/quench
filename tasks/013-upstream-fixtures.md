@@ -2000,3 +2000,5 @@ Stage 724 added chainable process.stdout prependListener support.
 Stage 725 added chainable process.stderr prependListener support.
 
 Stage 726 added chainable process stdout prependOnceListener support.
+
+Stage 727 added chainable process stderr prependOnceListener support.

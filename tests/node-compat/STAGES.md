@@ -723,3 +723,4 @@ these small fixtures isolate the currently implemented contract.
 |   724 | process stdout prependListener returns the stream for chaining                | `tools/run-node-tests.sh --stage 724` |
 |   725 | process stderr prependListener returns the stream for chaining                | `tools/run-node-tests.sh --stage 725` |
 |   726 | process stdout prependOnceListener returns the stream for chaining            | `tools/run-node-tests.sh --stage 726` |
+|   727 | process stderr prependOnceListener returns the stream for chaining            | `tools/run-node-tests.sh --stage 727` |
