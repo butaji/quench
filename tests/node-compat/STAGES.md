@@ -777,3 +777,4 @@ these small fixtures isolate the currently implemented contract.
 |   778 | process stdout aligns Socket type and buffer size                   | `tools/run-node-tests.sh --stage 778` |
 |   779 | process stderr aligns Socket type and buffer size                   | `tools/run-node-tests.sh --stage 779` |
 |   780 | process stdio exposes async disposal                                | `tools/run-node-tests.sh --stage 780` |
+|   781 | process stdio async disposal returns promises                      | `tools/run-node-tests.sh --stage 781` |
