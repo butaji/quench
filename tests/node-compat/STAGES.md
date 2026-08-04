@@ -914,3 +914,4 @@ these small fixtures isolate the currently implemented contract.
 |   915 | harness injects per-script filename and dirname           | `tools/run-node-tests.sh --stage 915` |
 |   916 | module exposes absolute-path createRequire                | `tools/run-node-tests.sh --stage 916` |
 |   917 | process exposes release metadata                         | `tools/run-node-tests.sh --stage 917` |
+|   918 | process exposes parent PID metadata                      | `tools/run-node-tests.sh --stage 918` |
