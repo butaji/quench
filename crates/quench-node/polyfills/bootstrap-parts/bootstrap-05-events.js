@@ -63,6 +63,26 @@ const __nodeReadablePushEnd = (stream) => {
   }
   return false;
 };
+const __nodeWritableComplete = (state, stream, size, callback, error) => {
+  if (state.completed) {
+    const duplicate = new Error("Callback called multiple times");
+    duplicate.code = "ERR_MULTIPLE_CALLBACK";
+    queueMicrotask(() => stream.emit("error", duplicate));
+    return;
+  }
+  state.completed = true;
+  if (error) stream.emit("error", error);
+  stream.writableLength = Math.max(0, stream.writableLength - size);
+  if (callback) callback(error);
+  if (
+    stream.writableNeedDrain &&
+    stream.writableLength < stream.writableHighWaterMark
+  ) {
+    stream.writableNeedDrain = false;
+    stream._writableState.needDrain = false;
+    stream.emit("drain");
+  }
+};
 const __nodeReadablePushChunk = (stream, chunk) => {
   if (stream._paused || stream.listenerCount("data") === 0) {
     stream._chunks.push(chunk);
@@ -293,6 +313,7 @@ class NodeWritable extends NodeEventEmitter {
     this.writableFinished = false;
     this.writableCorked = 0;
     this._corkedChunks = [];
+    this._write = options.write;
   }
   destroy(error, callback) {
     if (this.destroyed) return this;
@@ -334,18 +355,11 @@ class NodeWritable extends NodeEventEmitter {
     this.writableLength += size;
     if (this.writableCorked > 0) this._corkedChunks.push(chunk);
     else this.emit("data", chunk);
-    queueMicrotask(() => {
-      this.writableLength = Math.max(0, this.writableLength - size);
-      if (callback) callback();
-      if (
-        this.writableNeedDrain &&
-        this.writableLength < this.writableHighWaterMark
-      ) {
-        this.writableNeedDrain = false;
-        this._writableState.needDrain = false;
-        this.emit("drain");
-      }
-    });
+    const state = { completed: false };
+    const complete = (error) =>
+      __nodeWritableComplete(state, this, size, callback, error);
+    if (this._write) this._write.call(this, chunk, encoding, complete);
+    else queueMicrotask(complete);
     const writable = this.writableLength < this.writableHighWaterMark;
     this.writableNeedDrain = !writable;
     this._writableState.needDrain = this.writableNeedDrain;
