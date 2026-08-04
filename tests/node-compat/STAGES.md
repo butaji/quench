@@ -421,3 +421,4 @@ these small fixtures isolate the currently implemented contract.
 |   422 | fs WriteStream open, end, and close lifecycle                 | `tools/run-node-tests.sh --stage 422` |
 |   423 | fs ReadStream data delivery and close lifecycle               | `tools/run-node-tests.sh --stage 423` |
 |   424 | fs ReadStream encoding options and bytesRead                  | `tools/run-node-tests.sh --stage 424` |
+|   425 | fs ReadStream inverted range validation                        | `tools/run-node-tests.sh --stage 425` |
