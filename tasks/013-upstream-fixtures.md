@@ -1878,6 +1878,8 @@ Stage 666 formalized the finite non-negative monotonic process.uptime contract.
 
 Stage 667 formalized process.nextTick callback argument forwarding.
 
+Stage 668 formalized writable process.exitCode behavior.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
