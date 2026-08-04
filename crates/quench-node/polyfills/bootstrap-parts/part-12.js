@@ -196,6 +196,45 @@ globalThis.__nodeUtil = {
       (value &&
         typeof value === "object" &&
         Object.values(value).some((entry) => containsFunction(entry)));
+    const formatNumber = (token, value) => {
+      if (typeof value === "bigint" && token === "%d")
+        return `${__nodeUtilFormatNumeric(value)}n`;
+      if (
+        typeof value === "symbol" ||
+        Object.prototype.toString.call(value) === "[object Symbol]"
+      )
+        return "NaN";
+      if (token === "%f" && value === "") return "NaN";
+      if (token === "%d" && typeof value === "string" && /^\s*-0/.test(value))
+        return "-0";
+      if (typeof value === "object" && value && value.description === "foo")
+        return "NaN";
+      let number;
+      try {
+        number = token === "%i" ? Number.parseInt(value, 10) : Number(value);
+      } catch (_) {
+        number = NaN;
+      }
+      return Object.is(number, -0) ? "-0" : __nodeUtilFormatNumeric(number);
+    };
+    const formatJson = (value) => {
+      const seen = new WeakSet();
+      try {
+        const rendered = JSON.stringify(value, (key, entry) => {
+          if (entry && typeof entry === "object") {
+            if (seen.has(entry)) return "[Circular]";
+            seen.add(entry);
+          }
+          return entry;
+        });
+        if (rendered === undefined) return "undefined";
+        return rendered.includes("[Circular]") ? "[Circular]" : rendered;
+      } catch (error) {
+        if (error instanceof TypeError && /circular/i.test(error.message))
+          return "[Circular]";
+        throw error;
+      }
+    };
     if (typeof args[0] !== "string") return args.map(inspect).join(" ");
     let index = 1;
     return (
@@ -215,59 +254,9 @@ globalThis.__nodeUtil = {
                 ? "-0"
                 : __nodeUtilFormatNumeric(value)
               : stringValue(value);
-        if (token === "%d" || token === "%f") {
-          if (typeof value === "bigint" && token === "%d")
-            return `${__nodeUtilFormatNumeric(value)}n`;
-          if (
-            typeof value === "symbol" ||
-            Object.prototype.toString.call(value) === "[object Symbol]"
-          )
-            return "NaN";
-          if (token === "%f" && value === "") return "NaN";
-          if (
-            token === "%d" &&
-            typeof value === "string" &&
-            /^\s*-0/.test(value)
-          )
-            return "-0";
-          if (typeof value === "object" && value && value.description === "foo")
-            return "NaN";
-          let number;
-          try {
-            number = Number(value);
-          } catch (_) {
-            number = NaN;
-          }
-          return Object.is(number, -0) ? "-0" : __nodeUtilFormatNumeric(number);
-        }
-        if (token === "%i") {
-          if (typeof value === "bigint") return `${numeric(value)}n`;
-          let number;
-          try {
-            number = Number.parseInt(value, 10);
-          } catch (_) {
-            number = NaN;
-          }
-          return Object.is(number, -0) ? "-0" : __nodeUtilFormatNumeric(number);
-        }
-        if (token === "%j") {
-          const seen = new WeakSet();
-          try {
-            const rendered = JSON.stringify(value, (key, entry) => {
-              if (entry && typeof entry === "object") {
-                if (seen.has(entry)) return "[Circular]";
-                seen.add(entry);
-              }
-              return entry;
-            });
-            if (rendered === undefined) return "undefined";
-            return rendered.includes("[Circular]") ? "[Circular]" : rendered;
-          } catch (error) {
-            if (error instanceof TypeError && /circular/i.test(error.message))
-              return "[Circular]";
-            throw error;
-          }
-        }
+        if (token === "%d" || token === "%f" || token === "%i")
+          return formatNumber(token, value);
+        if (token === "%j") return formatJson(value);
         if ((token === "%o" || token === "%O") && typeof value === "string")
           return `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
         if (
