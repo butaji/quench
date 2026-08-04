@@ -2812,3 +2812,8 @@ transport logic in Rust.
 Stage 986 verifies the EventTarget `getMaxListeners`/`setMaxListeners` API and
 restoration of the prior limit. Retrospective: saving the original limit keeps
 listener-limit stages isolated from the process-wide default.
+
+Stage 987 verifies `events.getEventListeners()` returns normalized callback
+identities for EventTargets and suppresses duplicate registrations.
+Retrospective: normalizing at the introspection boundary preserves the native
+EventTarget deduplication contract without changing dispatch storage.

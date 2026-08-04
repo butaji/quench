@@ -64,7 +64,12 @@ __quenchEventListenersModule.getEventListeners = (target, event) => {
     return [...(target._events[event] || [])].map(
       (item) => item.listener || item
     );
-  if (target && target._listeners) return [...(target._listeners[event] || [])];
+  if (target && target._listeners)
+    return [...(target._listeners[event] || [])]
+      .map((item) => item.listener || item)
+      .filter(
+        (listener, index, listeners) => listeners.indexOf(listener) === index
+      );
   const error = new TypeError(
     "The emitter argument must be an instance of EventEmitter or EventTarget [ERR_INVALID_ARG_TYPE]"
   );
