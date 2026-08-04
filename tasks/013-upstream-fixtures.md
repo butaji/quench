@@ -2997,3 +2997,11 @@ Stage 1017 verifies offset and length arguments for shared ArrayBuffer-backed
 Buffers, including mutation through the selected range. Retrospective:
 splitting offset semantics from brand validation gives a deterministic stage
 without hiding the unresolved native getter boundary.
+
+Stage 1018 improves `Buffer.concat()` invalid-list diagnostics with indexed
+argument names and Node-style received-type descriptions. Retrospective:
+centralizing the received-value formatter keeps validation changes below the
+complexity limit and makes subsequent error-contract slices cheaper.
+
+Upstream audit: `test-buffer-concat.js` still has a remaining exact assertion
+boundary in the legacy module path; the focused invalid-item contract passes.
