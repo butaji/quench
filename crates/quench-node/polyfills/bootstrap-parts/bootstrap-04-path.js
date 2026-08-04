@@ -72,6 +72,7 @@ const __nodeGlobSegment = (value, pattern) => {
     .replace(/\*/g, "[^/]*")
     .replace(/::DOUBLESTAR::/g, ".*")
     .replace(/\?/g, "[^/]")
+    .replace(/\[!([^\]]+)\]/g, "[^$1]")
     .replace(/\[([^\]]+)\]/g, "[$1]");
   try {
     return new RegExp("^" + expression + "$").test(value);
@@ -80,7 +81,13 @@ const __nodeGlobSegment = (value, pattern) => {
   }
 };
 const __nodeGlobMatch = (path, pattern) => {
-  if (typeof path !== "string" || typeof pattern !== "string") return false;
+  if (typeof path !== "string" || typeof pattern !== "string") {
+    const error = new TypeError(
+      'The "path" and "pattern" arguments must be of type string'
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
   const paths = __nodeGlobNormalize(path).split("/");
   const patterns = __nodeGlobNormalize(pattern).split("/");
   let pathIndex = 0;
@@ -346,6 +353,12 @@ const __nodeWinPath = {
     if (base === "." || base === "..") return "";
     const index = base.lastIndexOf(".");
     return index > 0 ? base.slice(index) : "";
+  },
+  matchesGlob(path, pattern) {
+    return __nodeGlobMatch(
+      __nodePathArg(path).replace(/[\\/]/g, "/"),
+      __nodePathArg(pattern).replace(/[\\/]/g, "/")
+    );
   }
 };
 __nodeWinPath.posix = globalThis.__nodePath;

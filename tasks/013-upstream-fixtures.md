@@ -3302,6 +3302,8 @@ Stage 1072 handles Windows relative paths when one normalized side is empty.
 
 Stage 1073 exposes `path/win32` as the canonical `path.win32` module alias.
 
+Stage 1074 adds platform-aware `matchesGlob` and validates its string inputs.
+
 Stage 1070 trims trailing separators before calculating path extensions.
 
 Stage 1063 normalizes all typed-array views through their underlying bytes,
