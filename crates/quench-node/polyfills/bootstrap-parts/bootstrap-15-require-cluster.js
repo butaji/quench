@@ -202,6 +202,7 @@ const __quenchVmModule = {
     __quenchVmContexts.add(sandbox);
     return sandbox;
   },
+  isContext: (value) => __quenchVmIsContext(value),
   runInThisContext: (code, options) => {
     try {
       return (0, eval)(String(code));
