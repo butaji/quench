@@ -523,3 +523,4 @@ these small fixtures isolate the currently implemented contract.
 |   524 | util types identifies built-in collection and view types           | `tools/run-node-tests.sh --stage 524` |
 |   525 | stream promises finished tracks transform completion             | `tools/run-node-tests.sh --stage 525` |
 |   526 | stream web readable and writable reader/writer contracts          | `tools/run-node-tests.sh --stage 526` |
+|   527 | stream consumers read Web Streams as text JSON and buffers         | `tools/run-node-tests.sh --stage 527` |
