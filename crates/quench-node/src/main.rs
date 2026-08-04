@@ -16,6 +16,7 @@ mod host_context;
 const BOOTSTRAP_PARTS: &[&str] = &[
     include_str!("../polyfills/bootstrap-parts/bootstrap-00-globals.js"),
     include_str!("../polyfills/bootstrap-parts/bootstrap-01-timers-promises.js"),
+    include_str!("../polyfills/bootstrap-parts/bootstrap-02-buffer-input-validation.js"),
     include_str!("../polyfills/bootstrap-parts/bootstrap-02-buffer-encoding.js"),
     include_str!("../polyfills/bootstrap-parts/bootstrap-02-buffer-copy.js"),
     include_str!("../polyfills/bootstrap-parts/bootstrap-02-buffer-validation.js"),

@@ -3048,3 +3048,13 @@ the range contract passed, the upstream fixture exposed another inherited
 static constructor; keeping all final constructors in the dedicated
 allocation layer made the fix local and reusable. The upstream copy fixture
 now passes completely.
+
+Stage 1026 verifies Node-style received-type descriptions for invalid
+`Buffer.from()` inputs, including symbols, bigints, functions, nullish values,
+and boxed primitives. Retrospective: comparing Node's formatter output exposed
+that the generic invalid-argument path was too sparse; a local formatter now
+keeps this contract independent from allocation and encoding logic.
+
+Upstream audit: the focused invalid-input matrix passes; the full
+`test-buffer-from.js` fixture still reaches a later assertion mismatch in the
+current harness, which remains for the next stage.
