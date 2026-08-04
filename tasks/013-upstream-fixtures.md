@@ -2282,3 +2282,5 @@ Stage 865 verifies the node:stream/web Web Streams constructors and helpers.
 Stage 866 verifies the node:stream/consumers conversion helpers.
 
 Stage 867 verifies the node:assert/strict strict assertion API.
+
+Stage 868 verifies the node:fs/promises promise filesystem API.
