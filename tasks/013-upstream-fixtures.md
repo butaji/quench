@@ -2098,3 +2098,5 @@ Stage 773 added process.stdin close and pending compatibility.
 Stage 774 added process.stdin async disposal protocol support.
 
 Stage 775 aligned process.stdin ReadStream type and terminal metadata.
+
+Stage 776 aligned process.stdin end range metadata with local Node.

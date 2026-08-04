@@ -427,6 +427,7 @@ macro_rules! run_host_context {
         ctx.eval::<(), _>(b"if (globalThis.process && globalThis.process.stdin) { const stdin = globalThis.process.stdin; stdin.close ||= (() => stdin); stdin.pending ??= false; }")?;
         ctx.eval::<(), _>(b"if (globalThis.process && globalThis.process.stdin) { const stdin = globalThis.process.stdin; stdin[Symbol.asyncDispose] ||= (async () => undefined); }")?;
         ctx.eval::<(), _>(b"if (globalThis.process && globalThis.process.stdin && globalThis.process.stdin.constructor.name !== 'ReadStream') Object.defineProperty(globalThis.process.stdin, 'constructor', { value: function ReadStream() {}, configurable: true })")?;
+        ctx.eval::<(), _>(b"if (globalThis.process && globalThis.process.stdin) globalThis.process.stdin.end ??= null")?;
         ctx.globals().set("__nodeOsInitialized", false)?;
         ctx.globals().set("__quench_script_source", $source)?;
         let wrapped = format!("try {{\n{}\n}} catch (error) {{ globalThis.__quench_last_error = error && error.stack ? `${{error.name}}: ${{error.message}}\\n${{error.stack}}` : String(error); throw error; }}", $source);
