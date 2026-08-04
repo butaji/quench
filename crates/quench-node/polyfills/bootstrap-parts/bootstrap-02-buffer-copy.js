@@ -38,17 +38,29 @@ const __nodeBufferCopyValidate = (source, target) => {
     throw error;
   }
 };
+const __nodeBufferConcatReceived = (value) => {
+  if (value == null) return ` Received ${value}`;
+  if (typeof value === "number") return ` Received type number (${value})`;
+  if (ArrayBuffer.isView(value)) return " Received an instance of Buffer";
+  const name =
+    value.constructor?.name === "NodeBuffer"
+      ? "Buffer"
+      : value.constructor?.name;
+  return ` Received an instance of ${name || "Object"}`;
+};
 const __nodeBufferConcatValidate = (list, totalLength) => {
   if (!Array.isArray(list)) {
     const error = new TypeError(
-      'The "list" argument must be an instance of Array'
+      `The "list" argument must be an instance of Array.${__nodeBufferConcatReceived(list)}`
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
-  if (list.some((item) => !ArrayBuffer.isView(item))) {
+  const invalidIndex = list.findIndex((item) => !ArrayBuffer.isView(item));
+  if (invalidIndex >= 0) {
+    const item = list[invalidIndex];
     const error = new TypeError(
-      "The list argument must contain only typed arrays"
+      `The "list[${invalidIndex}]" argument must be an instance of Buffer or Uint8Array.${__nodeBufferConcatReceived(item)}`
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
