@@ -461,8 +461,19 @@ class NodeEventEmitter {
     return this.removeListener(event, listener);
   }
   removeAllListeners(event) {
-    if (event === undefined) this._events = Object.create(null);
-    else delete this._events[event];
+    if (!this._events) {
+      this._events = Object.create(null);
+      return this;
+    }
+    const names = event === undefined ? this.eventNames() : [event];
+    if (event === undefined && names.includes("removeListener")) {
+      names.splice(names.indexOf("removeListener"), 1);
+      names.push("removeListener");
+    }
+    for (const name of names) {
+      for (const listener of this.listeners(name).reverse())
+        this.removeListener(name, listener);
+    }
     return this;
   }
   listeners(event) {
