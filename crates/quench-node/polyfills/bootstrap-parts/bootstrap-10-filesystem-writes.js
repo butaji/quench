@@ -297,6 +297,47 @@ globalThis.__nodeFs.promises.open = async (...args) => {
   return handle;
 };
 let __nodePriority = 0;
+const __nodeValidatePriorityPid = (pid) => {
+  if (pid === undefined) return;
+  if (typeof pid !== "number") {
+    const error = new TypeError('The "pid" argument must be of type number.');
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  if (pid === -1) {
+    const error = new Error(
+      "A system error occurred: uv_os_getpriority returned ESRCH"
+    );
+    error.code = "ERR_SYSTEM_ERROR";
+    error.name = "SystemError";
+    throw error;
+  }
+  if (!Number.isSafeInteger(pid) || pid < 0 || pid > 2 ** 32 - 1) {
+    const error = new RangeError('The value of "pid" is out of range.');
+    error.code = "ERR_OUT_OF_RANGE";
+    throw error;
+  }
+  if (pid === 0 || pid === globalThis.process.pid) return;
+  const error = new Error(
+    "A system error occurred: uv_os_getpriority returned ESRCH"
+  );
+  error.code = "ERR_SYSTEM_ERROR";
+  throw error;
+};
+const __nodeValidatePriorityValue = (priority) => {
+  if (typeof priority !== "number") {
+    const error = new TypeError(
+      'The "priority" argument must be of type number.'
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  if (!Number.isSafeInteger(priority) || priority < -20 || priority > 19) {
+    const error = new RangeError('The value of "priority" is out of range.');
+    error.code = "ERR_OUT_OF_RANGE";
+    throw error;
+  }
+};
 const __nodeStartedAt = Date.now();
 const __nodeOsExports = {
   EOL: "\n",
@@ -331,9 +372,15 @@ const __nodeOsExports = {
     ]
   }),
   uptime: () => Math.max(0.001, (Date.now() - __nodeStartedAt) / 1000),
-  getPriority: () => __nodePriority,
+  getPriority: (pid) => {
+    __nodeValidatePriorityPid(pid);
+    return __nodePriority;
+  },
   setPriority: (pid, priority) => {
-    __nodePriority = Number(priority === undefined ? pid : priority);
+    const value = priority === undefined ? pid : priority;
+    __nodeValidatePriorityPid(priority === undefined ? undefined : pid);
+    __nodeValidatePriorityValue(value);
+    __nodePriority = value;
   },
   cpus: () =>
     Array.from({ length: globalThis.__quench_cpu_count }, () => ({
@@ -399,7 +446,8 @@ const __nodeOsExports = {
       PRIORITY_BELOW_NORMAL: 10,
       PRIORITY_NORMAL: 0,
       PRIORITY_ABOVE_NORMAL: -7,
-      PRIORITY_HIGH: -14
+      PRIORITY_HIGH: -14,
+      PRIORITY_HIGHEST: -20
     })
   })
 };
