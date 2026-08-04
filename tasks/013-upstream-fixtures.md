@@ -2415,3 +2415,8 @@ Stage 907 verifies the node:process builtin module lookup API.
 
 Retrospective: modern process loading surfaces should be checked before
 polyfilling; the existing bootstrap already provided the required behavior.
+
+Stage 908 verifies the node:module builtin inventory.
+
+Retrospective: extending a shared decorator must preserve its adjacent
+helpers; the regression sweep caught a dropped `_resolveFilename` fallback.
