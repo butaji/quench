@@ -1530,6 +1530,9 @@ positionals, and token output.
 Stage 541 formalized `util.styleText()` ANSI styling, style arrays, and color
 disablement.
 
+Stage 542 formalized `util.callbackify()` success/error bridging and input
+validation for non-functions.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
