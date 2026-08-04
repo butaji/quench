@@ -3152,3 +3152,13 @@ argument allocates, while a numeric argument with an encoding is rejected with
 Node's exact invalid-argument message. Retrospective: the earlier constructor
 fix handled only the argument type, and the upstream `test-buffer-new.js`
 fixture exposed the significance of argument count as a separate contract.
+
+Stage 1042 verifies final Buffer method introspection across the layered
+prototype chain, including inherited copy/swap/BigInt methods and the custom
+inspect symbol. Retrospective: collecting every ancestor initially leaked
+Uint8Array methods and invoked accessors; descriptor-based collection stops at
+the typed-array boundary and includes callable Buffer methods only.
+
+Upstream audit: the focused introspection stage passes; the generic-method
+fixture still reports a separate method-table assertion mismatch in the
+harness.
