@@ -305,13 +305,7 @@ pub fn make_ops_object() -> Value {
 
     set_op(&mut obj, "GetPrototypeOf", |args| {
         let o = args.first().cloned().unwrap_or(Value::Undefined);
-        match &o {
-            Value::Object(obj_rc) => {
-                let proto = obj_rc.borrow().prototype.clone();
-                Ok(proto.map_or(Value::Null, Value::Object))
-            }
-            _ => Ok(Value::Null),
-        }
+        crate::builtins::object_static::object_get_prototype_of(vec![o])
     });
 
     set_op(&mut obj, "IsExtensible", |args| {
@@ -1047,6 +1041,15 @@ mod tests {
              var o = { a: 1 }; \
              HasProperty(o, 'a') && !HasProperty(o, 'b')",
             )
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn test_ops_bridge_get_prototype_of_function_values() {
+        let mut ctx = crate::Context::new().unwrap();
+        let r = ctx
+            .eval("__ops__.GetPrototypeOf(() => {}) === Function.prototype")
             .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
