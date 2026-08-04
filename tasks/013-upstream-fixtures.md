@@ -2222,3 +2222,5 @@ Stage 835 verifies the node:crypto hashing and randomness API.
 Stage 836 verifies the node:zlib compression and stream API.
 
 Stage 837 verifies the node:dns callback and promise resolver API.
+
+Stage 838 verifies the node:http client and server core API.
