@@ -480,3 +480,4 @@ these small fixtures isolate the currently implemented contract.
 |   481 | fs mkdtempSync validates prefix type                            | `tools/run-node-tests.sh --stage 481` |
 |   482 | fs async mkdtemp validates prefix type                           | `tools/run-node-tests.sh --stage 482` |
 |   483 | fs mkdtemp validates options type                                | `tools/run-node-tests.sh --stage 483` |
+|   484 | crypto HMAC digest validates encoding                            | `tools/run-node-tests.sh --stage 484` |
