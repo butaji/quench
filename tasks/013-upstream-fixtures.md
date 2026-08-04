@@ -2228,3 +2228,5 @@ Stage 838 verifies the node:http client and server core API.
 Stage 839 verifies the node:https secure client and server API.
 
 Stage 840 verifies the node:net TCP client and server core API.
+
+Stage 841 verifies the node:dgram UDP socket API.
