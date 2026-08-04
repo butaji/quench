@@ -2168,3 +2168,5 @@ Stage 808 expanded module builtin detection to standard Node core names.
 Stage 809 aligned static Module helper properties.
 
 Stage 810 aligned static Module loader state properties.
+
+Stage 811 added standard Module extension handler keys.
