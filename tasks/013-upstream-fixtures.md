@@ -2451,3 +2451,11 @@ Stage 914 verifies the node:process monotonic uptime API.
 
 Retrospective: upstream confirmation can close a stage without a polyfill
 change when the existing host timing primitive already matches Node behavior.
+
+Stage 915 verifies the harness per-script filename and dirname globals.
+
+Retrospective: path injection is now isolated from process cwd semantics; the
+upstream chdir fixture still exposes `/tmp` symlink normalization separately.
+
+Retrospective: bootstrap initialization can overwrite harness globals, so
+script paths now flow through a dedicated host key before final assignment.

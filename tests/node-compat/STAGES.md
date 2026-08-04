@@ -911,3 +911,4 @@ these small fixtures isolate the currently implemented contract.
 |   912 | process validates UID and GID setter arguments             | `tools/run-node-tests.sh --stage 912` |
 |   913 | process validates next tick callback arguments             | `tools/run-node-tests.sh --stage 913` |
 |   914 | process exposes monotonic uptime                          | `tools/run-node-tests.sh --stage 914` |
+|   915 | harness injects per-script filename and dirname           | `tools/run-node-tests.sh --stage 915` |
