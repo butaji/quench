@@ -602,3 +602,4 @@ these small fixtures isolate the currently implemented contract.
 |   603 | process version exposes a Node-style semantic version string             | `tools/run-node-tests.sh --stage 603` |
 |   604 | process versions exposes the Node version entry                       | `tools/run-node-tests.sh --stage 604` |
 |   605 | process versions exposes a semantic V8 version entry                  | `tools/run-node-tests.sh --stage 605` |
+|   606 | process versions exposes a semantic libuv version entry               | `tools/run-node-tests.sh --stage 606` |

@@ -1721,6 +1721,8 @@ Stage 604 formalized the semantic Node version entry in `process.versions`.
 
 Stage 605 formalized the semantic V8 version entry in `process.versions`.
 
+Stage 606 formalized the semantic libuv version entry in `process.versions`.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
