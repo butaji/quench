@@ -1,5 +1,13 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1141: VM context symbol keys
+
+- Fixture: `test-vm-ownkeys.js`
+- Forwarded symbol-keyed sandbox descriptors alongside string keys during VM
+  context installation and synchronization.
+- Retrospective: use a shared property-key representation for VM descriptors;
+  string-only snapshots silently lose symbol properties.
+
 ## Stage 1140: VM Script cached data
 
 - Fixtures: `test-vm-cached-data.js`, `test-vm-createcacheddata.js`

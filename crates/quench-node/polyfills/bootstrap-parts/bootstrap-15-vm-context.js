@@ -163,9 +163,15 @@ const __quenchVmRestoreProperties = (keys, previous, hiddenProcess) => {
     Object.defineProperty(globalThis, "process", hiddenProcess);
 };
 const __quenchVmInstallContext = (sandbox) => {
-  const keys = Object.getOwnPropertyNames(sandbox);
+  const keys = [
+    ...Object.getOwnPropertyNames(sandbox),
+    ...Object.getOwnPropertySymbols(sandbox)
+  ];
   const previous = new Map();
-  const originalGlobalKeys = new Set(Object.getOwnPropertyNames(globalThis));
+  const originalGlobalKeys = new Set([
+    ...Object.getOwnPropertyNames(globalThis),
+    ...Object.getOwnPropertySymbols(globalThis)
+  ]);
   const hiddenProcess =
     !keys.includes("process") &&
     Object.getOwnPropertyDescriptor(globalThis, "process");
@@ -192,7 +198,10 @@ const __quenchVmRestoreNewContext = (
   if (hidesProcess && original.has("process"))
     Object.defineProperty(globalThis, "process", original.get("process"));
   if (!preservesHostGlobals) {
-    for (const key of Object.getOwnPropertyNames(globalThis))
+    for (const key of [
+      ...Object.getOwnPropertyNames(globalThis),
+      ...Object.getOwnPropertySymbols(globalThis)
+    ])
       if (!original.has(key)) Reflect.deleteProperty(globalThis, key);
     for (const [key, descriptor] of original)
       Object.defineProperty(globalThis, key, descriptor);
@@ -208,7 +217,10 @@ const __quenchVmRunInNewContext = (code, sandbox, options) => {
   __quenchVmValidateContextOptions(options, true);
   if (!__quenchVmIsObject(sandbox))
     __quenchVmTypeError("The context argument must be an object");
-  const keys = Object.getOwnPropertyNames(sandbox);
+  const keys = [
+    ...Object.getOwnPropertyNames(sandbox),
+    ...Object.getOwnPropertySymbols(sandbox)
+  ];
   const hidesProcess = !keys.includes("process");
   const preservesHostGlobals = keys.some(
     (key) => typeof sandbox[key] === "function"
