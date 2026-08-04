@@ -189,6 +189,14 @@ globalThis.__quench_require_part_01 = (name, specifier) => {
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     };
+    const resolveAddressType = (value, type, checkType) => {
+      if (type !== undefined) return checkType(type);
+      const resolved = isIPv4(value) ? "ipv4" : isIPv6(value) ? "ipv6" : null;
+      if (resolved) return resolved;
+      const error = new TypeError("Invalid address");
+      error.code = "ERR_INVALID_ARG_VALUE";
+      throw error;
+    };
     return {
       isIP,
       isIPv4,
@@ -230,17 +238,9 @@ globalThis.__quench_require_part_01 = (name, specifier) => {
           const normalized = normalizeAddress(address);
           const str = normalized.value;
           const explicit = type !== undefined || normalized.explicit;
-          let resolvedType = type;
-          if (resolvedType === undefined) {
-            resolvedType = isIPv4(str) ? "ipv4" : isIPv6(str) ? "ipv6" : null;
-            if (resolvedType === null) {
-              const e = new TypeError("Invalid address");
-              e.code = "ERR_INVALID_ARG_VALUE";
-              throw e;
-            }
-          } else {
-            resolvedType = this._checkType(resolvedType);
-          }
+          const resolvedType = resolveAddressType(str, type, (value) =>
+            this._checkType(value)
+          );
           if (resolvedType === "ipv4") {
             const existing = this._v4.get(str);
             this._v4.set(str, {
@@ -287,26 +287,15 @@ globalThis.__quench_require_part_01 = (name, specifier) => {
           }
         }
         addSubnet(net, prefix, type) {
-          if (typeof net === "string") {
-            // keep
-          } else if (net && typeof net.address === "string") {
-            net = net.address;
-          } else {
-            const e = new TypeError("Invalid net [ERR_INVALID_ARG_TYPE]");
-            e.code = "ERR_INVALID_ARG_TYPE";
-            throw e;
-          }
+          net = normalizeRangeEndpoint(net, "net");
           if (typeof prefix !== "number") {
             const e = new TypeError("Invalid prefix [ERR_INVALID_ARG_TYPE]");
             e.code = "ERR_INVALID_ARG_TYPE";
             throw e;
           }
-          let resolvedType = type;
-          if (resolvedType === undefined) {
-            resolvedType = isIPv4(net) ? "ipv4" : "ipv6";
-          } else {
-            resolvedType = this._checkType(resolvedType);
-          }
+          const resolvedType = resolveAddressType(net, type, (value) =>
+            this._checkType(value)
+          );
           const maxPrefix = resolvedType === "ipv4" ? 32 : 128;
           if (!Number.isFinite(prefix) || prefix < 0 || prefix > maxPrefix) {
             const e = new TypeError(
