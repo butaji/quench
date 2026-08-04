@@ -754,3 +754,4 @@ these small fixtures isolate the currently implemented contract.
 |   755 | process stderr pending reports no pending operation                        | `tools/run-node-tests.sh --stage 755` |
 |   756 | process stdout writableObjectMode is disabled                              | `tools/run-node-tests.sh --stage 756` |
 |   757 | process stderr writableObjectMode is disabled                              | `tools/run-node-tests.sh --stage 757` |
+|   758 | process stdout readableObjectMode is disabled                              | `tools/run-node-tests.sh --stage 758` |
