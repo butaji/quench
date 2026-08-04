@@ -3,24 +3,6 @@ const __nodeBufferAllocate = (size, fill, encoding) => {
   __nodeAllocatorCounts.zeroFilled++;
   return new NodeBuffer(length).fill(fill, 0, length, encoding);
 };
-let __nodeBufferPool = new ArrayBuffer(8192);
-let __nodeBufferPoolOffset = 0;
-const __nodeBufferPoolFrom = (source) => {
-  if (source.length === 0 || source.length >= NodeBuffer.poolSize >>> 1)
-    return undefined;
-  if (__nodeBufferPoolOffset + source.length > __nodeBufferPool.byteLength) {
-    __nodeBufferPool = new ArrayBuffer(NodeBuffer.poolSize);
-    __nodeBufferPoolOffset = 0;
-  }
-  const result = new NodeBuffer(
-    __nodeBufferPool,
-    __nodeBufferPoolOffset,
-    source.length
-  );
-  result.set(source);
-  __nodeBufferPoolOffset += source.length;
-  return result;
-};
 const __NodeBufferBase04 = NodeBuffer;
 NodeBuffer = class NodeBuffer extends __NodeBufferBase04 {
   _readBigInt(offset, littleEndian, signed) {
