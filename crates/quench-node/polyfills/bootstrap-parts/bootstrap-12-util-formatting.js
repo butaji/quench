@@ -55,10 +55,9 @@ const __nodeUtilSpecialNumber = (token, value) =>
   typeof value === "symbol" ||
   Object.prototype.toString.call(value) === "[object Symbol]" ||
   (token === "%f" && value === "") ||
-  (token === "%d" && typeof value === "string" && /^\s*-0/.test(value)) ||
   (typeof value === "object" && value && value.description === "foo");
 const __nodeUtilFormatNumber = (token, value) => {
-  if (typeof value === "bigint" && token === "%d")
+  if (typeof value === "bigint" && (token === "%d" || token === "%i"))
     return `${__nodeUtilFormatNumeric(value)}n`;
   if (__nodeUtilSpecialNumber(token, value)) return "NaN";
   let number;
