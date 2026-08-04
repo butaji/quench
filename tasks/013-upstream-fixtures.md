@@ -1382,6 +1382,9 @@ the expected URI error.
 Stage 490 formalized querystring parsing and unescaping preserving Unicode
 characters in literal and percent-encoded forms.
 
+Stage 491 formalized `querystring.parse()` consulting the module's writable
+`unescape` hook.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
