@@ -506,3 +506,4 @@ these small fixtures isolate the currently implemented contract.
 |   507 | cluster worker lifecycle and listening metadata                  | `tools/run-node-tests.sh --stage 507` |
 |   508 | cluster fork merges custom environment variables                 | `tools/run-node-tests.sh --stage 508` |
 |   509 | cluster disconnect events report clean worker exit               | `tools/run-node-tests.sh --stage 509` |
+|   510 | cluster kill reports terminating signal and state                | `tools/run-node-tests.sh --stage 510` |
