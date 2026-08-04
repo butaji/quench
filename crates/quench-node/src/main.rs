@@ -261,3 +261,18 @@ fn run_directory_reuse(dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>> 
         Err("Node reusable harness failures".into())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::run_source;
+
+    #[test]
+    fn evaluates_javascript_source() {
+        run_source("if (1 + 1 !== 2) throw new Error('bad arithmetic');").unwrap();
+    }
+
+    #[test]
+    fn loads_node_compatibility_globals() {
+        run_source("if (typeof Buffer !== 'function') throw new Error('Buffer missing');").unwrap();
+    }
+}
