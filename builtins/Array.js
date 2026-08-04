@@ -725,9 +725,9 @@ Array.prototype.findLast = function ArrayFindLast(callbackfn /*, thisArg */) {
 // Array.prototype.findLastIndex (ES2023 §23.1.3.15)
 Array.prototype.findLastIndex = function ArrayFindLastIndex(callbackfn /*, thisArg */) {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.findLastIndex called on null or undefined");
-  if (!IsCallable(callbackfn)) throw ThrowTypeError("callbackfn is not a function");
   var O = ToObject(this);
   var len = ToLength(O.length);
+  if (!IsCallable(callbackfn)) throw ThrowTypeError("callbackfn is not a function");
   var thisArg = arguments.length > 1 ? arguments[1] : undefined;
   for (var k = len - 1; k >= 0; k--) {
     if (callbackfn.call(thisArg, O[k], k, O)) return k;
