@@ -302,7 +302,7 @@ globalThis.__nodeCommon = {
     const wrapped = function (...args) {
       calls++;
       wrapped.calls = calls;
-      return fn(...args);
+      return fn.apply(this, args);
     };
     wrapped.calls = 0;
     wrapped.expected = exact;
@@ -431,7 +431,7 @@ class NodeEventEmitter {
           ? listeners
           : [listeners];
     values.slice().forEach((listener) => {
-      const result = listener(...args);
+      const result = listener.call(this, ...args);
       if (this.captureRejections && result?.then)
         result.catch((error) =>
           queueMicrotask(() => {
@@ -445,9 +445,16 @@ class NodeEventEmitter {
     return values.length > 0;
   }
   removeListener(event, listener) {
-    const values = this.listeners(event).filter((item) => item !== listener);
+    const current = this.listeners(event);
+    const removed = current.find(
+      (item) => item === listener || item.listener === listener
+    );
+    if (!removed) return this;
+    const values = current.filter((item) => item !== removed);
     if (values.length === 0) delete this._events[event];
     else this._events[event] = values.length === 1 ? values[0] : values;
+    if (event !== "removeListener")
+      this.emit("removeListener", event, removed.listener || removed);
     return this;
   }
   off(event, listener) {

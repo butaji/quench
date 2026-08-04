@@ -2853,3 +2853,7 @@ a TypeError.
 Stage 994 verifies EventEmitter raw-listener identity and event-name reporting
 with the single-listener storage optimization. Retrospective: normalizing at
 the introspection methods keeps compact storage invisible to callers.
+
+Stage 995 verifies `removeListener` notifications preserve event name, callback
+identity, and emitter `this` binding. Retrospective: emitting lifecycle events
+after storage mutation makes nested removal deterministic and observable.
