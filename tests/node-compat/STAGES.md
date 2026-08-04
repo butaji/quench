@@ -501,3 +501,4 @@ these small fixtures isolate the currently implemented contract.
 |   502 | child process IPC send reports queue backpressure                 | `tools/run-node-tests.sh --stage 502` |
 |   503 | child process eval exit reports normal completion                | `tools/run-node-tests.sh --stage 503` |
 |   504 | cluster primary exposes worker lifecycle controls               | `tools/run-node-tests.sh --stage 504` |
+|   505 | cluster setup emits configured settings                         | `tools/run-node-tests.sh --stage 505` |
