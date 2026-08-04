@@ -2054,3 +2054,5 @@ Stage 751 aligned process.stderr bytesWritten with local Node.
 Stage 752 aligned process.stdout writableCorked with local Node.
 
 Stage 753 aligned process.stderr writableCorked with local Node.
+
+Stage 754 aligned process.stdout pending with local Node.
