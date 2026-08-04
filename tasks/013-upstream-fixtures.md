@@ -1483,6 +1483,9 @@ collections, promises, dates, regular expressions, and invalid values.
 Stage 525 formalized `stream/promises.finished()` observing completion of a
 Gzip/Gunzip transform pipeline and exposed `pipeline`.
 
+Stage 526 formalized Web Streams readable reader and writable writer contracts
+through `stream/web`.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
