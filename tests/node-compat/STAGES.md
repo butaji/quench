@@ -489,3 +489,4 @@ these small fixtures isolate the currently implemented contract.
 |   490 | querystring preserves Unicode values                              | `tools/run-node-tests.sh --stage 490` |
 |   491 | querystring.parse uses writable unescape hook                    | `tools/run-node-tests.sh --stage 491` |
 |   492 | internal event target exposes weak handler symbol                 | `tools/run-node-tests.sh --stage 492` |
+|   493 | async_hooks exposes resource and chainable hooks                 | `tools/run-node-tests.sh --stage 493` |
