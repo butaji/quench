@@ -138,7 +138,9 @@ const __quenchInternalBindingModule = {
         UV_ENOENT: -2,
         UV_EEXIST: -17,
         errname: (errorNumber) =>
-          globalThis.__nodeUtil.getSystemErrorName(errorNumber)
+          globalThis.__nodeUtil.getSystemErrorName(errorNumber),
+        getErrorMessage: (errorNumber) =>
+          globalThis.__nodeUtil.getSystemErrorMessage(errorNumber)
       };
     if (binding === "js_stream")
       return {

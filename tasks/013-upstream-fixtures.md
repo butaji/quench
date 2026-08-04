@@ -3350,3 +3350,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Added `util.getSystemErrorMap`, `_errnoException`, and UV errno names.
 - Verified the focused stage and Node's `test-uv-errmap.js` fixture.
+### Stage 1093: util system error messages
+
+- Added unknown-error message formatting and `getSystemErrorMessage`.
+- Added matching UV binding methods and strict argument validation.
