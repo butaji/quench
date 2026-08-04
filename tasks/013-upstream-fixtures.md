@@ -1817,6 +1817,9 @@ Stage 639 formalized one-shot delivery and listener removal for
 Stage 640 formalized event-specific clearing with
 `process.removeAllListeners`.
 
+Stage 641 formalized targeted callback removal with
+`process.removeListener`.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
