@@ -1125,6 +1125,9 @@ such as hexadecimal strings.
 Stage 401 formalized `timers/promises.setTimeout` delay handling and resolved
 value propagation.
 
+Stage 402 formalized `perf_hooks.performance` monotonic timing, numeric origins,
+and `toJSON` availability.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
