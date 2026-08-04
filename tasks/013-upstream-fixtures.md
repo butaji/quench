@@ -2298,3 +2298,5 @@ Stage 873 verifies the node:util modern parsing and abort helpers.
 Stage 874 verifies the node:url URLPattern matching API.
 
 Stage 875 verifies the node:fs callback, promise, and sync copy API.
+
+Stage 876 verifies the node:fs file watching API.
