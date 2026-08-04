@@ -671,3 +671,4 @@ these small fixtures isolate the currently implemented contract.
 |   672 | process emit fans out arguments and reports listener presence                  | `tools/run-node-tests.sh --stage 672` |
 |   673 | process on and once return the process object for chaining                    | `tools/run-node-tests.sh --stage 673` |
 |   674 | process argv0 exposes a non-empty launch identity string                      | `tools/run-node-tests.sh --stage 674` |
+|   675 | process execArgv exposes an array of strings                                  | `tools/run-node-tests.sh --stage 675` |
