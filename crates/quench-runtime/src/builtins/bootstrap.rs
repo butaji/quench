@@ -750,6 +750,18 @@ mod tests {
     }
 
     #[test]
+    fn array_copy_within_throws_when_deleting_non_configurable_target() {
+        let mut ctx = new_ctx();
+        let r = ctx
+            .eval(
+                "var obj = { length: 43 }; Object.defineProperty(obj, '42', { configurable: false, writable: true }); \
+                 try { Array.prototype.copyWithin.call(obj, 42, 0); false; } catch (e) { e instanceof TypeError; }",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
     fn array_flat_map_reads_length_before_callback_validation() {
         let mut ctx = new_ctx();
         let r = ctx

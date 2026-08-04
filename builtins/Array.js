@@ -486,7 +486,8 @@ Array.prototype.copyWithin = function ArrayCopyWithin(target, start, end) {
   var direction = 1;
   if (from < to && to < from + count) { from += count - 1; to += count - 1; direction = -1; }
   while (count > 0) {
-    if (HasProperty(O, from)) O[to] = O[from]; else delete O[to];
+    if (HasProperty(O, from)) O[to] = O[from];
+    else if (!delete O[to]) throw ThrowTypeError("Cannot delete array property");
     from += direction; to += direction; count--;
   }
   return O;
