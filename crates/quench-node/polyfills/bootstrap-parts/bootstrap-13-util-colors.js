@@ -127,7 +127,10 @@ const __nodeQuerystringAddValue = (result, key, value) => {
 };
 const __nodeQuerystringMaxKeys = (options) => {
   if (!options || options.maxKeys === undefined) return 1000;
-  return options.maxKeys === 0 ? Infinity : Number(options.maxKeys);
+  if (typeof options.maxKeys !== "number")
+    return options.maxKeys === "0" ? Infinity : 1000;
+  if (!Number.isFinite(options.maxKeys)) return Infinity;
+  return options.maxKeys === 0 ? Infinity : options.maxKeys;
 };
 const __nodeQuerystringExports = {
   escape: __nodeQuerystringEscape,
