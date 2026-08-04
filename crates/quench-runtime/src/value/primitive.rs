@@ -70,9 +70,18 @@ fn to_primitive_function(
         PrimitiveHint::String => ("toString", "valueOf"),
     };
 
-    // Check own properties first (user-defined override)
-    let first_method = f.get_property(first);
-    let second_method = f.get_property(second);
+    let inherited_to_string = crate::builtins::function::get_function_prototype()
+        .and_then(|prototype| prototype.borrow().get("toString"));
+    let first_method = f.get_property(first).or_else(|| {
+        (first == "toString")
+            .then(|| inherited_to_string.clone())
+            .flatten()
+    });
+    let second_method = f.get_property(second).or_else(|| {
+        (second == "toString")
+            .then(|| inherited_to_string)
+            .flatten()
+    });
 
     let this_val = Value::Function((**f).clone());
 
