@@ -30,6 +30,20 @@ const __quenchVmCheckRestrictedDeclaration = (code) => {
   if (descriptor?.configurable === false)
     throw new SyntaxError(`${declaration[1]} has already been declared`);
 };
+const __quenchVmContextValue = (value, sandbox) => {
+  if (value === sandbox) return globalThis;
+  if (value === null || typeof value !== "object") return value;
+  const clone = Array.isArray(value)
+    ? []
+    : Object.create(Object.getPrototypeOf(value));
+  for (const key of Reflect.ownKeys(value)) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if ("value" in descriptor && descriptor.value === sandbox)
+      descriptor.value = globalThis;
+    Object.defineProperty(clone, key, descriptor);
+  }
+  return clone;
+};
 const __quenchVmApplyScriptCache = (script, options) => {
   if (options?.produceCachedData) {
     script.cachedDataProduced = true;
@@ -189,6 +203,8 @@ const __quenchVmInstallContext = (sandbox) => {
   for (const key of keys) {
     previous.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
     const descriptor = Object.getOwnPropertyDescriptor(sandbox, key);
+    if ("value" in descriptor)
+      descriptor.value = __quenchVmContextValue(descriptor.value, sandbox);
     if (!previous.get(key) || previous.get(key).configurable)
       Object.defineProperty(globalThis, key, descriptor);
     if (key === "setTimeout" && typeof descriptor.value === "function") {
