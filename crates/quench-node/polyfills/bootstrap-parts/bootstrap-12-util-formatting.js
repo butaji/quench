@@ -235,11 +235,33 @@ const __nodeUtilFormatTokenValue = (token, value) => {
   if (token === "%j") return __nodeUtilFormatJson(value);
   return __nodeUtilFormatObjectToken(token, value);
 };
+const __nodeUtilDeprecate = (functionToWrap, message, code) => {
+  if (typeof code !== "string") {
+    const received =
+      code === null
+        ? "Received null"
+        : `Received type ${typeof code} (${String(code)})`;
+    const error = new TypeError(
+      'The "code" argument must be of type string. ' + received
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  let warned = false;
+  return function deprecatedFunction(...args) {
+    if (!warned) {
+      warned = true;
+      process.emitWarning(message, { code });
+    }
+    return functionToWrap.apply(this, args);
+  };
+};
 globalThis.__nodeUtil = {
   TextEncoder: globalThis.TextEncoder,
   TextDecoder: globalThis.TextDecoder,
   isArray: (value) => Array.isArray(value),
   debuglog: () => () => {},
+  deprecate: __nodeUtilDeprecate,
   _extend: (target, source) => {
     if (source && typeof source === "object") Object.assign(target, source);
     return target;
