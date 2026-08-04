@@ -2691,3 +2691,7 @@ metadata propagation observable without depending on runtime-generated IDs.
 Stage 964 verifies an explicit per-instance `captureRejections: false` takes
 precedence over the static default. Retrospective: saving and restoring the
 static setting keeps the precedence test isolated from later fixtures.
+
+Stage 965 verifies `errorMonitor` callback ordering and error identity.
+Retrospective: recording both callbacks in one synchronous emission makes the
+ordering guarantee explicit without relying on microtask timing.
