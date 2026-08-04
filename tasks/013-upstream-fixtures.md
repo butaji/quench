@@ -1158,6 +1158,9 @@ and undefined results for unknown names.
 Stage 412 formalized `perf_hooks.timerify` wrapper error propagation and
 observer lifecycle handling.
 
+Stage 413 formalized `FileHandle` position tracking across `read` and
+`readFile`, including continuation from the current offset.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
