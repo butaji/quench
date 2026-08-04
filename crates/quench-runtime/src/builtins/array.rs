@@ -3,9 +3,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::value::{
-    JsError, NativeConstructor, NativeFunction, Object, ObjectKind, Value,
-};
+use crate::value::{JsError, NativeConstructor, NativeFunction, Object, ObjectKind, Value};
 use crate::Context;
 
 /// Maximum length accepted by the Array constructor before it would

@@ -2,9 +2,12 @@
 
 use std::path::Path;
 
+#[cfg(test)]
 use crate::test262::harness::try_inject_harness;
 use crate::value::error::take_thrown_value;
-use crate::{Context, Value};
+#[cfg(test)]
+use crate::Context;
+use crate::Value;
 
 /// Implement this for your engine to plug it into the test262 runner.
 pub trait Test262Host: Send {
@@ -291,41 +294,12 @@ impl Default for QuenchHost {
 
 impl Test262Host for QuenchHost {
     fn run_script(&mut self, source: &str) -> Result<(), String> {
-        // Reset thread-local state before each test to prevent stale
-        // CONTROL_FLOW / THROWN_VALUE / labels leaking between tests.
-        crate::interpreter::reset_interpreter_state();
-        let mut ctx = Context::new().map_err(|e| format!("{:?}", e))?;
-        crate::builtins::register_builtins(&mut ctx);
-        crate::builtins::bootstrap::bootstrap_js_builtins(&mut ctx)
-            .map_err(|e| format!("builtin bootstrap failure: {}", e))?;
-        let prev_strict = crate::interpreter::is_strict_mode();
-        crate::interpreter::set_strict_mode(false);
-        try_inject_harness(&mut ctx).map_err(|e| format!("harness load failure: {}", e))?;
-        // Set MAIN_REALM_TEST262_ERROR after harness injection so create_js_error_with_type
-        // uses the correct constructor for this realm (not a sub-realm's constructor).
-        if let Some(te) = ctx.get_global("Test262Error") {
-            crate::value::error::set_main_realm_test262_error(te);
-        }
-        crate::interpreter::set_strict_mode(prev_strict);
-        crate::interpreter::set_strict_mode(false);
+        let mut ctx = crate::test262::runner::execute::initialize_test_context(false)?;
         ctx.eval(source).map(|_| ()).map_err(|e| format!("{:?}", e))
     }
 
     fn run_module_script(&mut self, source: &str) -> Result<(), String> {
-        // Reset thread-local state before each test.
-        crate::interpreter::reset_interpreter_state();
-        let mut ctx = Context::new().map_err(|e| format!("{:?}", e))?;
-        crate::builtins::register_builtins(&mut ctx);
-        crate::builtins::bootstrap::bootstrap_js_builtins(&mut ctx)
-            .map_err(|e| format!("builtin bootstrap failure: {}", e))?;
-        let prev_strict = crate::interpreter::is_strict_mode();
-        crate::interpreter::set_strict_mode(false);
-        try_inject_harness(&mut ctx).map_err(|e| format!("harness load failure: {}", e))?;
-        if let Some(te) = ctx.get_global("Test262Error") {
-            crate::value::error::set_main_realm_test262_error(te);
-        }
-        crate::interpreter::set_strict_mode(prev_strict);
-        crate::interpreter::set_strict_mode(false);
+        let mut ctx = crate::test262::runner::execute::initialize_test_context(false)?;
         ctx.eval_es_module(source)
             .map(|_| ())
             .map_err(|e| format!("{:?}", e))

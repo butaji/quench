@@ -980,18 +980,18 @@ pub fn eval_statement(
                     "TypeError: cannot use with on non-object".to_string(),
                 ));
             };
-            env.borrow_mut().push_scope();
+            let with_env = Rc::new(RefCell::new(Environment::with_parent(Rc::clone(env))));
             {
-                let current_scope = env.borrow().current_scope();
+                let current_scope = with_env.borrow().current_scope();
                 let mut scope = current_scope.borrow_mut();
                 scope.set_with_object_binding(Rc::clone(&obj_rc));
             }
-            let result = eval_statement(body, env, _is_expr_body, in_arrow_function);
-            env.borrow_mut()
+            let result = eval_statement(body, &with_env, _is_expr_body, in_arrow_function);
+            with_env
+                .borrow_mut()
                 .current_scope()
                 .borrow_mut()
                 .clear_with_unscopables();
-            env.borrow_mut().pop_scope();
             result
         }
         Statement::Export(stmt) => {

@@ -2,9 +2,11 @@
 test-threads = "num-cpus"
 status-level = "fail"
 failure-output = "immediate-final"
+slow-timeout = { period = "30s", terminate-after = 1 }
 
 [profile.test262]
 test-threads = 1
 status-level = "fail"
 failure-output = "immediate-final"
 fail-fast = false
+slow-timeout = { period = "15m", terminate-after = 1 }

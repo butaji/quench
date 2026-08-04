@@ -812,8 +812,8 @@ pub fn has_invalid_unicode_class_range_escape(source: &str) -> bool {
 }
 
 pub fn has_overlapping_regexp_modifiers(source: &str) -> bool {
-    source.match_indices("(?").any(|(start, _)| {
-        let rest = &source[start + 2..];
+    source.match_indices("/(?").any(|(start, _)| {
+        let rest = &source[start + 3..];
         let colon = rest.find(':');
         let close = rest.find(')');
         if let Some(close) = close {
@@ -938,6 +938,15 @@ pub fn has_unicode_identity_escape_in_named_group(source: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use crate::ast::{Expression, ForInit, Statement, VarKind};
+
+    #[test]
+    fn regexp_modifier_check_ignores_non_regexp_group_syntax() {
+        assert!(
+            !crate::interpreter::helpers::has_overlapping_regexp_modifiers(
+                "/* Conditional Expression (? :) */\nconst value = null ?? true ? 0 : 1;",
+            )
+        );
+    }
 
     // ── check_use_strict_directive ───────────────────────────────────────────────
 

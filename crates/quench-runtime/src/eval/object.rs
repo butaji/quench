@@ -770,7 +770,8 @@ pub(crate) fn assign_to_object(
                     }
                     return Ok(());
                 }
-                let value_to_set = if prop_name == "length" && o.borrow().kind == ObjectKind::Array {
+                let value_to_set = if prop_name == "length" && o.borrow().kind == ObjectKind::Array
+                {
                     let primitive = crate::value::to_primitive(value, None)?;
                     let number = crate::value::to_number(&primitive);
                     if !number.is_finite()

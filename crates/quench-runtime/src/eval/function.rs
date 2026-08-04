@@ -736,7 +736,10 @@ pub(crate) fn create_arguments_object(
                 .iter()
                 .all(|candidate| candidate.name != param.name);
             if !is_last_binding {
-                obj.set(&i.to_string(), args.get(i).cloned().unwrap_or(Value::Undefined));
+                obj.set(
+                    &i.to_string(),
+                    args.get(i).cloned().unwrap_or(Value::Undefined),
+                );
                 continue;
             }
             mapped.insert(i as u32, param.name.clone());

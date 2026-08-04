@@ -435,15 +435,26 @@ fn execute_script(
     run_sync_script_with_path(script, is_module, test_path)
 }
 
-fn run_sync_script_with_path(source: &str, is_module: bool, path: &Path) -> Result<(), String> {
+pub(crate) fn initialize_test_context(strict: bool) -> Result<crate::Context, String> {
+    crate::interpreter::reset_interpreter_state();
     let mut ctx = crate::Context::new().map_err(|error| format!("{error:?}"))?;
     crate::builtins::register_builtins(&mut ctx);
     crate::builtins::bootstrap::bootstrap_js_builtins(&mut ctx)
         .map_err(|error| format!("builtin bootstrap failure: {error}"))?;
-    let strict = source.trim_start().starts_with("\"use strict\";")
-        || source.trim_start().starts_with("'use strict';");
+    crate::interpreter::set_strict_mode(false);
     crate::test262::harness::try_inject_harness(&mut ctx)
         .map_err(|error| format!("harness load failure: {error}"))?;
+    if let Some(error) = ctx.get_global("Test262Error") {
+        crate::value::error::set_main_realm_test262_error(error);
+    }
+    crate::interpreter::set_strict_mode(strict);
+    Ok(ctx)
+}
+
+fn run_sync_script_with_path(source: &str, is_module: bool, path: &Path) -> Result<(), String> {
+    let strict = source.trim_start().starts_with("\"use strict\";")
+        || source.trim_start().starts_with("'use strict';");
+    let mut ctx = initialize_test_context(strict)?;
     load_fixture_modules(&mut ctx, path)?;
     if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
         ctx.set_global(
@@ -451,7 +462,6 @@ fn run_sync_script_with_path(source: &str, is_module: bool, path: &Path) -> Resu
             crate::Value::String(format!("./{name}")),
         );
     }
-    crate::interpreter::set_strict_mode(strict);
     if strict && crate::interpreter::has_legacy_octal(source) {
         return Err("SyntaxError: legacy octal literal in strict mode".to_string());
     }
@@ -478,18 +488,9 @@ fn run_async_script_with_path(
     is_module: bool,
     test_path: Option<&Path>,
 ) -> Result<(), String> {
-    let mut ctx = crate::Context::new().map_err(|e| format!("{:?}", e))?;
-    crate::builtins::register_builtins(&mut ctx);
-    crate::builtins::bootstrap::bootstrap_js_builtins(&mut ctx)
-        .map_err(|error| format!("builtin bootstrap failure: {error}"))?;
     let strict = source.trim_start().starts_with("\"use strict\";")
         || source.trim_start().starts_with("'use strict';");
-    crate::interpreter::set_strict_mode(strict);
-    crate::test262::harness::try_inject_harness(&mut ctx)
-        .map_err(|e| format!("harness load failure: {}", e))?;
-    if let Some(te) = ctx.get_global("Test262Error") {
-        crate::value::error::set_main_realm_test262_error(te);
-    }
+    let mut ctx = initialize_test_context(strict)?;
     if let Some(test_path) = test_path {
         if let Some(name) = test_path.file_name().and_then(|name| name.to_str()) {
             ctx.set_global(
@@ -502,7 +503,6 @@ fn run_async_script_with_path(
             register_current_script_module(&mut ctx, test_path)?;
         }
     }
-    crate::interpreter::set_strict_mode(strict);
     if is_module {
         register_current_module_bindings(&mut ctx, source)?;
     }
@@ -1480,6 +1480,7 @@ pub fn run_isolated(test_path: &Path) -> TestOutcome {
     let path = test_path.display().to_string();
     let bin = run_test_binary();
     let child = std::process::Command::new(&bin)
+        .arg("--runner")
         .arg(&path)
         .env("TEST262_NOSKIP", "1")
         .env("TEST262_DIR", crate::test262::runner::default_test262_dir())

@@ -59,6 +59,48 @@ fn async_generator_yield_star_gets_sync_iterator_with_correct_receiver() {
 }
 
 #[test]
+fn async_generator_yield_star_sync_iterator_preserves_two_step_order() {
+    let mut ctx = Context::new().unwrap();
+    crate::builtins::register_builtins(&mut ctx);
+    crate::builtins::bootstrap::bootstrap_js_builtins(&mut ctx).unwrap();
+    ctx.eval(
+        "var result; var log=[]; var source={get [Symbol.asyncIterator](){log.push('async');return null},get [Symbol.iterator](){log.push('iterator');return function(){log.push('call-iterator');var count=0;return {get next(){log.push('get-next');return function(value){log.push('next:'+value);count++;return count===1?{get done(){log.push('done-1');return false},get value(){log.push('value-1');return 1}}:{get done(){log.push('done-2');return true},get value(){log.push('value-2');return 2}}}}}}}}; async function* g(){var value=yield* source;log.push('after:'+value);return 3} var iterator=g();iterator.next('first').then(function(first){iterator.next('second').then(function(last){result=log.join('|')+';'+first.value+':'+first.done+';'+last.value+':'+last.done})})",
+    )
+    .unwrap();
+    assert_eq!(
+        ctx.eval("result").unwrap(),
+        Value::String("async|iterator|call-iterator|get-next|next:undefined|done-1|value-1|next:second|done-2|value-2|after:2;1:false;3:true".into())
+    );
+}
+
+#[test]
+fn async_generator_yield_star_preserves_initial_object_log_records() {
+    let mut ctx = Context::new().unwrap();
+    crate::builtins::register_builtins(&mut ctx);
+    crate::builtins::bootstrap::bootstrap_js_builtins(&mut ctx).unwrap();
+    ctx.eval(
+        "var result; var log=[]; var source={get [Symbol.asyncIterator](){log.push({name:'async',args:[...arguments]});return null},get [Symbol.iterator](){log.push({name:'iterator',args:[...arguments]});return function(){log.push({name:'call',args:[...arguments]});return {next(){return {value:1,done:false}}}}}};async function* g(){yield* source}g().next('ignored').then(function(){result=log[0].args.length+':'+log[1].args.length+':'+log[2].args.length})",
+    )
+    .unwrap();
+    assert_eq!(ctx.eval("result").unwrap(), Value::String("0:0:0".into()));
+}
+
+#[test]
+fn async_generator_yield_star_preserves_sync_iterator_getter_receiver() {
+    let mut ctx = Context::new().unwrap();
+    crate::builtins::register_builtins(&mut ctx);
+    crate::builtins::bootstrap::bootstrap_js_builtins(&mut ctx).unwrap();
+    ctx.eval(
+        "var result;var log=[];var source={get [Symbol.asyncIterator](){return null},[Symbol.iterator](){return {name:'iterator',get next(){log.push(this);return function(){return {value:1,done:false}}}}}};async function* g(){yield* source}g().next().then(function(){result=log[0].name})",
+    )
+    .unwrap();
+    assert_eq!(
+        ctx.eval("result").unwrap(),
+        Value::String("iterator".into())
+    );
+}
+
+#[test]
 fn relational_comparison_of_object_and_function_uses_primitive_values() {
     let mut ctx = Context::new().unwrap();
     let value = ctx.eval("({} > function(){return 1}) === ({}.toString() > function(){return 1}.toString()) && (function(){return 1} > {}) === (function(){return 1}.toString() > {}.toString()) && (function(){return 1} > function(){return 1}) === (function(){return 1}.toString() > function(){return 1}.toString()) && ({} > {}) === ({}.toString() > {}.toString())");

@@ -27,6 +27,7 @@ use quench_runtime::test262::runner::execute::load_fixture_modules;
 use quench_runtime::test262::runner::execute::register_current_module_bindings;
 use quench_runtime::test262::runner::execute::register_current_script_module;
 use quench_runtime::test262::runner::execute::ASYNC_DONE_PRELUDE;
+use quench_runtime::test262::runner::run_single_test;
 use quench_runtime::test262::HarnessLoader;
 use quench_runtime::{builtins, Context, JsError, Value};
 
@@ -36,6 +37,7 @@ fn main() -> ExitCode {
     let mut module = false;
     let mut show_script = false;
     let mut show_stack = false;
+    let mut runner = false;
     let mut inspect_exprs: Vec<String> = Vec::new();
     let mut test_path: Option<String> = None;
 
@@ -46,6 +48,7 @@ fn main() -> ExitCode {
             "--module" => module = true,
             "--show-script" => show_script = true,
             "--stack" => show_stack = true,
+            "--runner" => runner = true,
             "--inspect" => {
                 i += 1;
                 if i >= args.len() {
@@ -71,6 +74,23 @@ fn main() -> ExitCode {
         std::process::exit(2);
     });
     let path = PathBuf::from(&path_str);
+
+    if runner {
+        let test262_dir = std::env::var("TEST262_DIR")
+            .unwrap_or_else(|_| quench_runtime::test262::runner::default_test262_dir());
+        let harness = HarnessLoader::new(&test262_dir);
+        return match run_single_test(&harness, &path) {
+            quench_runtime::test262::host::TestOutcome::Pass => ExitCode::SUCCESS,
+            quench_runtime::test262::host::TestOutcome::Fail { failure } => {
+                eprintln!("Reason: {}", failure.message);
+                ExitCode::from(1)
+            }
+            quench_runtime::test262::host::TestOutcome::Skip { reason } => {
+                eprintln!("Reason: test was skipped: {reason}");
+                ExitCode::from(1)
+            }
+        };
+    }
 
     let source = match std::fs::read_to_string(&path) {
         Ok(s) => s,

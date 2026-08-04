@@ -97,9 +97,7 @@ pub(crate) fn set_boxed_value(obj: &mut Object, value: Value) {
 
 /// Register methods on Object.prototype
 fn register_object_prototype_methods(object_proto_rc: &Rc<RefCell<Object>>) {
-    use prototype_methods::{
-        object_prototype_has_own_property, object_prototype_is_prototype_of,
-    };
+    use prototype_methods::{object_prototype_has_own_property, object_prototype_is_prototype_of};
 
     // Object.prototype.toString
     object_proto_rc.borrow_mut().set_builtin_method(
@@ -167,5 +165,4 @@ fn register_object_prototype_methods(object_proto_rc: &Rc<RefCell<Object>>) {
             object_prototype_is_prototype_of,
         ))),
     );
-
 }

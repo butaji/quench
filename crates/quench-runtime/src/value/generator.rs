@@ -189,7 +189,12 @@ impl GeneratorObject {
         }
         self.state = GeneratorState::Running;
         self.await_completion = false;
-        self.next_value = value;
+        let initial_resume = self.yield_index == 0 && self.pending_stmt.is_none();
+        self.next_value = if initial_resume {
+            Value::Undefined
+        } else {
+            value
+        };
 
         // Store the resume value so yield expressions can find it
         crate::interpreter::set_generator_resume_value(self.next_value.clone());

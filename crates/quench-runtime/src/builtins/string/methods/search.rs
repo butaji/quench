@@ -141,5 +141,4 @@ mod tests {
         let args = vec![Value::String("é".to_string())];
         assert_eq!(last_index_of_impl(&args, s), Value::Number(0.0));
     }
-
 }

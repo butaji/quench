@@ -8,8 +8,8 @@ use std::rc::Rc;
 pub use helpers::{spec_parse_float, spec_parse_int};
 
 use crate::value::{
-    to_bool, to_js_string, to_number, NativeConstructor, NativeFunction, Object,
-    ObjectKind, PropertyFlags, Value,
+    to_bool, to_js_string, to_number, NativeConstructor, NativeFunction, Object, ObjectKind,
+    PropertyFlags, Value,
 };
 use crate::Context;
 

@@ -55,7 +55,9 @@ fn array_from_async_awaits_each_mapping_result_before_next_call() {
     .unwrap();
     assert_eq!(
         ctx.eval("result"),
-        Ok(Value::String("2,4,6|map1,then1,map2,then2,map3,then3".to_string()))
+        Ok(Value::String(
+            "2,4,6|map1,then1,map2,then2,map3,then3".to_string()
+        ))
     );
 }
 
@@ -64,23 +66,36 @@ fn array_from_async_rejects_non_callable_mapping_function() {
     let mut ctx = new_context();
     ctx.eval("var result; Array.fromAsync([], null).then(()=>result='ok', e=>result=e.name);")
         .unwrap();
-    assert_eq!(ctx.eval("result"), Ok(Value::String("TypeError".to_string())));
+    assert_eq!(
+        ctx.eval("result"),
+        Ok(Value::String("TypeError".to_string()))
+    );
 }
 
 #[test]
 fn array_from_async_rejects_non_callable_mapping_for_array_like_input() {
     let mut ctx = new_context();
-    ctx.eval("var result; Array.fromAsync({length:0}, null).then(()=>result='ok', e=>result=e.name);")
-        .unwrap();
-    assert_eq!(ctx.eval("result"), Ok(Value::String("TypeError".to_string())));
+    ctx.eval(
+        "var result; Array.fromAsync({length:0}, null).then(()=>result='ok', e=>result=e.name);",
+    )
+    .unwrap();
+    assert_eq!(
+        ctx.eval("result"),
+        Ok(Value::String("TypeError".to_string()))
+    );
 }
 
 #[test]
 fn array_from_async_rejects_array_like_lengths_above_array_maximum() {
     let mut ctx = new_context();
-    ctx.eval("var result; Array.fromAsync({length:4294967296}).then(()=>result='ok', e=>result=e.name);")
-        .unwrap();
-    assert_eq!(ctx.eval("result"), Ok(Value::String("RangeError".to_string())));
+    ctx.eval(
+        "var result; Array.fromAsync({length:4294967296}).then(()=>result='ok', e=>result=e.name);",
+    )
+    .unwrap();
+    assert_eq!(
+        ctx.eval("result"),
+        Ok(Value::String("RangeError".to_string()))
+    );
 }
 
 #[test]
@@ -125,8 +140,7 @@ fn array_from_async_awaits_arraylike_values_and_mapping_promises() {
 fn array_from_async_passes_this_arg_to_mapping_callback() {
     let mut ctx = new_context();
     ctx.eval(
-        &("var result; Array.fromAsync([1], function(){return this.value;}, {value:7})"
-            .to_owned()
+        &("var result; Array.fromAsync([1], function(){return this.value;}, {value:7})".to_owned()
             + ".then(v=>{result=v[0];});"),
     )
     .unwrap();

@@ -228,6 +228,13 @@ fn value_function_remove_property_idempotent() {
     assert!(!func.remove_property("length"));
 }
 
+#[test]
+fn value_function_prototype_is_not_configurable() {
+    let env = Rc::new(RefCell::new(Environment::new()));
+    let func = ValueFunction::new(None, vec![], vec![], Rc::clone(&env), false, true);
+    assert!(!func.remove_property("prototype"));
+}
+
 // ── ValueFunction prototype ────────────────────────────────────────────────────
 
 #[test]

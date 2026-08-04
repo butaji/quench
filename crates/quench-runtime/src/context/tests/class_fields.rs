@@ -175,7 +175,11 @@ fn test_static_async_generator_before_computed_instance_fields() {
         "var key = 'b'; class C { static async *method() { return 42; } [key] = 42; } \
          C.method().next().value",
     );
-    assert!(result.is_ok(), "static async generator failed: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "static async generator failed: {:?}",
+        result
+    );
 }
 
 #[test]

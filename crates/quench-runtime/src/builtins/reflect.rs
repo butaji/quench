@@ -4,9 +4,7 @@
 //! the handler omits them). Tests that require the full Reflect or Proxy
 //! API are still skipped via the `Reflect`/`Proxy` feature gates.
 
-use crate::builtins::object_static::{
-    object_define_property, to_property_key,
-};
+use crate::builtins::object_static::{object_define_property, to_property_key};
 use crate::context::Context;
 use crate::value::{to_object, JsError, ObjData, Object, ObjectKind, Value};
 use std::cell::RefCell;

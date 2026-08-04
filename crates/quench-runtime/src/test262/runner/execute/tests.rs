@@ -19,6 +19,54 @@ fn in_process_and_isolated_share_one_timeout() {
 }
 
 #[test]
+fn initialized_context_exposes_the_main_realm_test262_error() {
+    let ctx = initialize_test_context(false).unwrap();
+    assert!(ctx.get_global("Test262Error").is_some());
+}
+
+#[test]
+fn isolated_runner_matches_in_process_strictness() {
+    use crate::test262::harness::HarnessLoader;
+    use crate::test262::runner::default_test262_dir;
+
+    let path = std::env::temp_dir().join(format!(
+        "quench-runner-strictness-{}-{}.js",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::write(
+        &path,
+        "/*---\ndescription: runner strictness invariant\n---*/\nundeclaredRunnerBinding = 1;\n",
+    )
+    .unwrap();
+    let harness = HarnessLoader::new(&default_test262_dir());
+    let in_process = run_single_test(&harness, &path);
+    let isolated = run_isolated(&path);
+    std::fs::remove_file(&path).unwrap();
+    assert!(matches!(in_process, TestOutcome::Fail { .. }));
+    assert!(
+        matches!(isolated, TestOutcome::Fail { ref failure } if failure.message.contains("strict:")),
+        "isolated: {isolated:?}, in-process: {in_process:?}"
+    );
+}
+
+#[test]
+fn digest_workers_are_capped_for_process_isolation() {
+    assert_eq!(crate::test262::runner::digest::worker_count(64), 4);
+}
+
+#[test]
+fn with_proxy_destructuring_binding_lookup_is_stack_safe() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(
+        "../../tests/test262/test/language/expressions/assignment/destructuring/keyed-destructuring-property-reference-target-evaluation-order-with-bindings.js",
+    );
+    assert_eq!(run_isolated(&path), TestOutcome::Pass);
+}
+
+#[test]
 fn first_existing_picks_debug_before_stale_release() {
     let dir = std::env::temp_dir().join(format!("quench-binpick-{}", std::process::id()));
     std::fs::create_dir_all(dir.join("debug")).unwrap();

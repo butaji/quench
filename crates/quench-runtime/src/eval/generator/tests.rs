@@ -460,7 +460,10 @@ mod generator_tests {
             .unwrap();
         crate::interpreter::set_generator_yield(Value::String("stale".into()));
         ctx.eval("iter.next();").unwrap();
-        assert_eq!(ctx.eval("log[0].name").unwrap(), Value::String("started".into()));
+        assert_eq!(
+            ctx.eval("log[0].name").unwrap(),
+            Value::String("started".into())
+        );
     }
 
     #[test]

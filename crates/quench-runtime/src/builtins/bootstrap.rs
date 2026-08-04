@@ -837,7 +837,6 @@ mod tests {
         assert_eq!(r, Value::Boolean(true));
     }
 
-
     #[test]
     fn array_flat_map_reads_length_before_callback_validation() {
         let mut ctx = new_ctx();
@@ -849,7 +848,6 @@ mod tests {
             .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
-
 
     #[test]
     fn boxed_number_converts_to_its_primitive_value() {

@@ -1041,6 +1041,7 @@ fn object_destructuring_impl(
             } else {
                 excluded.insert(key_str.clone());
                 crate::eval::object::touch_assignment_target(target, env)?;
+                let target_reference = crate::eval::object::take_destructuring_member_reference();
                 // If the computed key evaluation triggered a generator yield
                 // (e.g. `yield` in `x[yield]`), check if this is a real
                 // suspension (ControlFlow::Yield is set) or a stale flag from
@@ -1066,6 +1067,7 @@ fn object_destructuring_impl(
                 }
                 let prop_value =
                     crate::eval::member::eval_object_member(&obj, &key_str, Some(env))?;
+                crate::eval::object::set_destructuring_member_reference(target_reference);
                 if init {
                     crate::eval::object::init_to(target, &prop_value, env)?;
                 } else {
@@ -1075,15 +1077,20 @@ fn object_destructuring_impl(
         } else {
             let key_str = extract_destructure_key(key, env)?;
             excluded.insert(key_str.clone());
-            if let BindingElement::Default(inner, _) = binding {
+            let target_reference = if let BindingElement::Default(inner, _) = binding {
                 if let BindingElement::AssignmentTarget(target) = inner.as_ref() {
                     crate::eval::object::touch_assignment_target(target, env)?;
+                    crate::eval::object::take_destructuring_member_reference()
                 } else {
                     let target = crate::eval::object::binding_pattern_expression(binding.clone());
                     crate::eval::object::touch_assignment_target(&target, env)?;
+                    crate::eval::object::take_destructuring_member_reference()
                 }
-            }
+            } else {
+                None
+            };
             let prop_value = crate::eval::member::eval_object_member(&obj, &key_str, Some(env))?;
+            crate::eval::object::set_destructuring_member_reference(target_reference);
             apply(binding, &prop_value)?;
         }
     }
@@ -1317,7 +1324,9 @@ fn assign_binding_elem_with_default(
         }
         BindingElement::Default(binding, default) => {
             let (value, name_default) = if matches!(value, Value::Undefined) {
+                let target_reference = crate::eval::object::take_destructuring_member_reference();
                 let default_val = eval_expression(default, env, false)?;
+                crate::eval::object::set_destructuring_member_reference(target_reference);
                 // If the default evaluation triggered a generator yield or
                 // pending control flow, propagate without proceeding.
                 if crate::interpreter::peek_generator_yield() {

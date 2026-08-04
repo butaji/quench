@@ -11,6 +11,8 @@ fn array_sort_legacy_to_string_order() {
     "#;
     assert_eq!(
         ctx.eval(source),
-        Ok(Value::String("true|a|X|NaN|Infinity|2|1|obj|-1|undefined".to_string()))
+        Ok(Value::String(
+            "true|a|X|NaN|Infinity|2|1|obj|-1|undefined".to_string()
+        ))
     );
 }

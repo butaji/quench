@@ -132,9 +132,8 @@ fn run_parallel(
     use_isolated: bool,
 ) -> Vec<(String, TestOutcome)> {
     let workers = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(4)
-        .max(1);
+        .map(|n| worker_count(n.get()))
+        .unwrap_or(4);
     let (tx, rx) = mpsc::channel();
     let next = Arc::new(Mutex::new(0usize));
     let tests = tests.to_vec();
@@ -174,6 +173,10 @@ fn run_parallel(
         trim_quick(&mut indexed, flags.quick_limit);
     }
     indexed.into_iter().map(|(_, p, o)| (p, o)).collect()
+}
+
+pub(crate) fn worker_count(available: usize) -> usize {
+    available.clamp(1, 4)
 }
 
 fn trim_quick(indexed: &mut Vec<(usize, String, TestOutcome)>, limit: usize) {

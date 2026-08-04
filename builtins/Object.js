@@ -76,7 +76,6 @@ Object.prototype.isPrototypeOf = function ObjectIsPrototypeOf(V) {
   return false;
 };
 
-// Object.getOwnPropertyDescriptor (ES2025 §20.1.2.7)
 Object.getOwnPropertyDescriptor = function ObjectGetOwnPropertyDescriptor(O, P) {
   if (O === null || O === undefined) throw ThrowTypeError("Cannot convert undefined or null to object");
   return GetOwnPropDesc(O, P);

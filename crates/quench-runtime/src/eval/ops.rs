@@ -702,6 +702,12 @@ pub fn make_ops_object() -> Value {
                     desc,
                 ))))
             }
+            Value::NativeConstructor(constructor) => {
+                crate::builtins::object_static::get_native_constructor_property_descriptor(
+                    constructor,
+                    &key,
+                )
+            }
             _ => Ok(Value::Undefined),
         }
     });
@@ -1079,7 +1085,9 @@ mod tests {
             Value::Object(std::rc::Rc::new(std::cell::RefCell::new(object))),
         );
         let r = ctx
-            .eval("[__ops__.OwnKeys(symbol_object).length, typeof __ops__.OwnKeys(symbol_object)[0]]")
+            .eval(
+                "[__ops__.OwnKeys(symbol_object).length, typeof __ops__.OwnKeys(symbol_object)[0]]",
+            )
             .unwrap();
         let Value::Object(values) = r else {
             panic!("expected result array");

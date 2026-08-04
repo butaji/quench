@@ -868,7 +868,10 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
             }
         }
         if prop == "length"
-            && matches!(obj.data, crate::value::object::helpers::ObjData::Args { .. })
+            && matches!(
+                obj.data,
+                crate::value::object::helpers::ObjData::Args { .. }
+            )
         {
             if let Some(Value::Number(next_length)) = flags.value.as_ref() {
                 let next_length = *next_length as usize;

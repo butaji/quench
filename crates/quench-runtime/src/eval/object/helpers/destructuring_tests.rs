@@ -23,6 +23,21 @@ mod iterator_protocol_tests {
         assert_eq!(result, Value::String("b".to_string()));
     }
 
+    #[test]
+    fn keyed_destructuring_evaluates_target_key_after_source_value() {
+        let result = eval(
+            "var log=[]; function source(){log.push('source');return {get p(){log.push('get')}}} function target(){log.push('target');return {set q(v){log.push('set')}}} function sourceKey(){log.push('source-key');return {toString(){log.push('source-key-tostring');return 'p'}}} function targetKey(){log.push('target-key');return {toString(){log.push('target-key-tostring');return 'q'}}} ({[sourceKey()]:target()[targetKey()]}=source());log.join(',')",
+        )
+        .unwrap();
+        assert_eq!(
+            result,
+            Value::String(
+                "source,source-key,source-key-tostring,target,target-key,get,target-key-tostring,set"
+                    .into(),
+            )
+        );
+    }
+
     // ─── take_iterator_value: basic next() ─────────────────────────────────────
 
     /// iterator.next() returns correct value
