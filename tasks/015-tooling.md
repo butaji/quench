@@ -105,7 +105,8 @@ decomposed in subsequent slices.
 
 ## Status
 
-In progress. The slice template now seeds an exit-event assertion. Prettier is
+In progress. The slice template now seeds an exit-event assertion, and
+`tools/lint-host.sh` now provides the documented host-only Rust gate. Prettier is
 now pinned in
 `package.json` with a local staged-file hook installed by
 `tools/install-hooks.sh`, and the host callback contract template is available
