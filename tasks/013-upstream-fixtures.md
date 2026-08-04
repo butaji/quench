@@ -1,5 +1,14 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1120: VM non-configurable properties
+
+- Fixtures: `test-vm-global-non-writable-properties.js`,
+  `test-vm-data-property-writable.js`
+- Avoided redefining host-global properties that became non-configurable in a
+  VM context, preserving their values across subsequent evaluations.
+- Retrospective: VM cleanup must distinguish properties introduced by the shim
+  from properties made permanently non-configurable by evaluated code.
+
 ## Stage 1119: VM context accessors
 
 - Fixture: `test-vm-create-context-accessors.js`
