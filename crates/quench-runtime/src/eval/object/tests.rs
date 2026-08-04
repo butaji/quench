@@ -127,6 +127,27 @@ fn iterator_destructuring_evaluates_computed_target_once() {
 }
 
 #[test]
+fn strict_with_deleted_property_assignment_is_reference_error() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval(
+        r#"
+        var count = 0;
+        var scope = {x: 1};
+        with (scope) {
+            (function() {
+                "use strict";
+                try { count++; x = (delete scope.x, 2); count++; }
+                catch (error) { if (!(error instanceof ReferenceError)) throw error; }
+                count++;
+            })();
+        }
+        count + ":" + ("x" in scope);
+        "#,
+    );
+    assert_eq!(result.unwrap(), Value::String("2:false".to_string()));
+}
+
+#[test]
 fn strict_arrow_assignment_to_undeclared_is_reference_error() {
     let mut ctx = Context::new().unwrap();
     let error = ctx

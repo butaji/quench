@@ -544,6 +544,15 @@ pub fn eval_expression(
                     return Ok(right_val);
                 }
                 if object_property_result == Some(false) && crate::interpreter::is_strict_mode() {
+                    if scope.borrow().is_with_environment()
+                        && scope.borrow().object_binding_has(name) != Some(true)
+                    {
+                        let (_, error) = crate::value::error::create_js_error_with_type(
+                            &format!("{} is not defined", name),
+                            "ReferenceError",
+                        );
+                        return Err(error);
+                    }
                     let (_, error) = crate::value::error::create_js_error_with_type(
                         &format!("Cannot assign to read-only property '{}'", name),
                         "TypeError",
