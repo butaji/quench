@@ -2510,3 +2510,8 @@ Stage 927 records the verified `os` fast-information surface. The existing
 host-derived platform, architecture, release, hostname, load-average, and CPU
 values satisfy the upstream fixture; priority mutation remains isolated for a
 future host-specific implementation.
+
+Stage 928 records the verified `os.homedir()` fallback contract. The host
+binding already returns a non-empty home directory when environment variables
+are unavailable, matching the upstream fixture without additional runtime
+code.
