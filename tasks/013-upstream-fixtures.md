@@ -3308,6 +3308,8 @@ Stage 1075 adds identity POSIX and namespaced Windows path conversion.
 
 Stage 1078 matches `formatWithOptions` inspect-options validation diagnostics.
 
+Stage 1081 completes `util.inherits` super-constructor and constructor metadata.
+
 Stage 1070 trims trailing separators before calculating path extensions.
 
 Stage 1063 normalizes all typed-array views through their underlying bytes,
