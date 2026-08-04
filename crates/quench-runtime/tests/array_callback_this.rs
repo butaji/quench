@@ -103,3 +103,13 @@ fn array_from_constructs_before_iterating() {
         Value::Boolean(true)
     );
 }
+
+#[test]
+fn array_flat_map_constructs_species_result() {
+    let mut ctx = Context::new().unwrap();
+    assert_eq!(
+        ctx.eval("var C=function(){this.marker=7;}; var a=[1]; a.constructor={}; a.constructor[Symbol.species]=C; var r=a.flatMap(x=>[x]); r.marker===7")
+            .unwrap(),
+        Value::Boolean(true)
+    );
+}

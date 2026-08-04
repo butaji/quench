@@ -680,7 +680,12 @@ Array.prototype.flatMap = function ArrayFlatMap(callbackfn /*, thisArg */) {
   var len = ToLength(O.length);
   if (!IsCallable(callbackfn)) throw ThrowTypeError("callbackfn is not a function");
   var thisArg = arguments.length > 1 ? arguments[1] : undefined;
-  var result = [];
+  var C = O.constructor;
+  if (C !== null && typeof C === 'object') {
+    C = C[Symbol.species];
+    if (C === null || C === undefined) C = undefined;
+  }
+  var result = C === undefined ? [] : new C(0);
   var resultIndex = 0;
   for (var i = 0; i < len; i++) {
     if (HasProperty(O, i)) {
