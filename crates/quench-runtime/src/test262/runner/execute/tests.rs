@@ -109,6 +109,22 @@ fn negative_type_mismatch_preserves_test_path_diagnostics() {
 }
 
 #[test]
+fn plain_js_error_diagnostics_fall_back_to_error_text() {
+    let outcome = check_outcome(
+        &crate::test262::metadata::Test262Metadata::default(),
+        Err("TypeError: Cannot read properties of null or undefined".into()),
+        None,
+    );
+    assert!(matches!(
+        outcome,
+        TestOutcome::Fail { failure }
+            if failure.error_type.as_deref() == Some("TypeError")
+                && failure.error_message.as_deref()
+                    == Some("Cannot read properties of null or undefined")
+    ));
+}
+
+#[test]
 fn stage_zero_deep_equal_primitives_passes_through_runner() {
     use crate::test262::harness::HarnessLoader;
     use crate::test262::runner::default_test262_dir;

@@ -62,7 +62,17 @@ fn error_type_matches(phase: &str, typ: &str, msg: &str) -> bool {
 /// Called after a failed eval while the thrown value is still available.
 fn build_failure(msg: impl Into<String>, test_path: Option<&Path>) -> TestFailure {
     let msg = msg.into();
-    let (error_type, error_message, js_stack) = capture_thrown_diagnostics();
+    let (mut error_type, mut error_message, js_stack) = capture_thrown_diagnostics();
+    if error_type.is_none() {
+        if let Some((kind, detail)) = msg
+            .trim_start_matches("JsError(\"")
+            .trim_end_matches("\")")
+            .split_once(':')
+        {
+            error_type = Some(kind.to_string());
+            error_message = Some(detail.trim().to_string());
+        }
+    }
     let mut f = TestFailure {
         message: msg,
         error_type,
