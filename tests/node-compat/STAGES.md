@@ -565,3 +565,4 @@ these small fixtures isolate the currently implemented contract.
 |   566 | cluster workers exposes a primary-process worker registry           | `tools/run-node-tests.sh --stage 566` |
 |   567 | cluster workers registry removes entries after worker exit         | `tools/run-node-tests.sh --stage 567` |
 |   568 | cluster worker processes expose IPC connection methods             | `tools/run-node-tests.sh --stage 568` |
+|   569 | child_process exec APIs expose callbacks and synchronous variants   | `tools/run-node-tests.sh --stage 569` |
