@@ -12,6 +12,11 @@ const __quenchStringDecoderClass = class {
   }
   write(input) {
     const bytes = [...this._pending, ...Array.from(input || [])];
+    if (this.encoding === "utf8") {
+      const result = __quenchDecodeUtf8(bytes, false);
+      this._pending = result.pending;
+      return result.text;
+    }
     let end = 0;
     while (end < bytes.length) {
       const width =
@@ -29,6 +34,10 @@ const __quenchStringDecoderClass = class {
     return this._decoder.decode(new Uint8Array(bytes.slice(0, end)));
   }
   end(input) {
+    if (this.encoding === "utf8") {
+      const prefix = input === undefined ? "" : this.write(input);
+      return `${prefix}${__quenchDecodeUtf8(this._pending, true).text}`;
+    }
     return `${input === undefined ? "" : this.write(input)}${this._decoder.decode(new Uint8Array(this._pending))}`;
   }
 };
