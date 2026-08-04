@@ -673,3 +673,4 @@ these small fixtures isolate the currently implemented contract.
 |   674 | process argv0 exposes a non-empty launch identity string                      | `tools/run-node-tests.sh --stage 674` |
 |   675 | process execArgv exposes an array of strings                                  | `tools/run-node-tests.sh --stage 675` |
 |   676 | process versions exposes a non-empty Node version string                      | `tools/run-node-tests.sh --stage 676` |
+|   677 | process versions entries expose non-empty strings                            | `tools/run-node-tests.sh --stage 677` |
