@@ -2354,3 +2354,8 @@ Stage 895 verifies the node:crypto version 4 random UUID API.
 
 Retrospective: format-level assertions are a useful deterministic check for
 random APIs while avoiding brittle expectations about exact generated values.
+
+Stage 896 verifies the node:crypto buffer random bytes API.
+
+Retrospective: verify native rquickjs behavior before adding polyfills; this
+stage needed only a contract gate because the existing byte primitive matched.
