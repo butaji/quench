@@ -2114,3 +2114,5 @@ Stage 781 verified promise returns from process stdout and stderr async disposal
 Stage 782 added process identity and umask method compatibility.
 
 Stage 783 added process credential helper method compatibility.
+
+Stage 784 added process uncaught exception capture state helpers.
