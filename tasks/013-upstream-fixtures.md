@@ -1489,6 +1489,9 @@ through `stream/web`.
 Stage 527 formalized `stream/consumers` text, JSON, and buffer consumption of
 Web Streams.
 
+Stage 528 formalized punycode ASCII/Unicode domain conversion, UCS-2 code point
+conversion, and version metadata.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
