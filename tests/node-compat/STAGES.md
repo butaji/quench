@@ -818,3 +818,4 @@ these small fixtures isolate the currently implemented contract.
 |   819 | stream exposes core constructors and helpers                   | `tools/run-node-tests.sh --stage 819` |
 |   820 | stream promises exposes pipeline and finished                   | `tools/run-node-tests.sh --stage 820` |
 |   821 | util exposes core formatting and helper API                     | `tools/run-node-tests.sh --stage 821` |
+|   822 | os exposes core platform and resource API                      | `tools/run-node-tests.sh --stage 822` |

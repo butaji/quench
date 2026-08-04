@@ -2190,3 +2190,5 @@ Stage 819 verified the core node:stream API.
 Stage 820 verified node:stream/promises helpers.
 
 Stage 821 verified the core node:util API.
+
+Stage 822 verified the core node:os API.
