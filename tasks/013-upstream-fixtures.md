@@ -2066,3 +2066,5 @@ Stage 757 aligned process.stderr writableObjectMode with local Node.
 Stage 758 aligned process.stdout readableObjectMode with local Node.
 
 Stage 759 aligned process.stderr readableObjectMode with local Node.
+
+Stage 760 added Node-specific process.stdout stdio methods.
