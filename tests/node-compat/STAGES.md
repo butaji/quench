@@ -887,3 +887,4 @@ these small fixtures isolate the currently implemented contract.
 |   888 | crypto exposes usable hash chaining contract               | `tools/run-node-tests.sh --stage 888` |
 |   889 | crypto exposes usable HMAC chaining contract               | `tools/run-node-tests.sh --stage 889` |
 |   890 | crypto exposes timing-safe equality comparison             | `tools/run-node-tests.sh --stage 890` |
+|   891 | crypto exposes algorithm inventory                         | `tools/run-node-tests.sh --stage 891` |
