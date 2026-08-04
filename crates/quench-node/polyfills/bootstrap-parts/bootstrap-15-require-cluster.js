@@ -107,12 +107,18 @@ const __quenchVmModule = {
   },
   runInContext: (code, sandbox = {}) => {
     const previous = {};
+    const originalKeys = new Set(Object.keys(globalThis));
     for (const key of Object.keys(sandbox)) {
       previous[key] = globalThis[key];
       globalThis[key] = sandbox[key];
     }
     try {
-      return (0, eval)(String(code));
+      const result = (0, eval)(String(code));
+      for (const key of Object.keys(sandbox)) sandbox[key] = globalThis[key];
+      for (const key of Object.keys(globalThis))
+        if (!originalKeys.has(key) && key !== "globalThis")
+          sandbox[key] = globalThis[key];
+      return result;
     } finally {
       for (const key of Object.keys(sandbox)) globalThis[key] = previous[key];
     }

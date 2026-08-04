@@ -1,5 +1,13 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1117: VM context forwarding
+
+- Fixture: `test-vm-context-property-forwarding.js`
+- Captured assignments from `runInContext()` back onto the provided context
+  object while retaining existing property reads.
+- Retrospective: context forwarding is a small post-evaluation synchronization
+  step compatible with the current lightweight VM shim.
+
 ## Stage 1116: VM context validation
 
 - Fixture: `test-vm-create-context-arg.js`
