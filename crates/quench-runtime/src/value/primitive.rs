@@ -127,12 +127,6 @@ fn to_primitive_object(
         return Ok(v);
     }
 
-    if let Some(value) = obj.borrow().get_own_value("_value") {
-        if primitive_direct(&value).is_some() {
-            return Ok(value);
-        }
-    }
-
     let (first, second) = match hint {
         PrimitiveHint::Default | PrimitiveHint::Number => ("valueOf", "toString"),
         PrimitiveHint::String => ("toString", "valueOf"),
