@@ -396,6 +396,7 @@ class NodeEventEmitter {
       options.captureRejections ?? NodeEventEmitter.captureRejections ?? false;
   }
   on(event, listener) {
+    this._events ||= Object.create(null);
     const current = this._events[event];
     this._events[event] =
       current === undefined
