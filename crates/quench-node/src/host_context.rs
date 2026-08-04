@@ -430,6 +430,7 @@ macro_rules! run_host_context {
         ctx.eval::<(), _>(b"if (globalThis.process && globalThis.process.stdin) globalThis.process.stdin.end ??= null")?;
         ctx.eval::<(), _>(b"if (globalThis.process && globalThis.process.stdout) { const stdout = globalThis.process.stdout; stdout.writableHighWaterMark = 65536; if (stdout.constructor.name !== 'Socket') Object.defineProperty(stdout, 'constructor', { value: function Socket() {}, configurable: true }); }")?;
         ctx.eval::<(), _>(b"if (globalThis.process && globalThis.process.stderr) { const stderr = globalThis.process.stderr; stderr.writableHighWaterMark = 65536; if (stderr.constructor.name !== 'Socket') Object.defineProperty(stderr, 'constructor', { value: function Socket() {}, configurable: true }); }")?;
+        ctx.eval::<(), _>(b"if (globalThis.process) { const dispose = async () => undefined; globalThis.process.stdout[Symbol.asyncDispose] ||= dispose; globalThis.process.stderr[Symbol.asyncDispose] ||= dispose; }")?;
         ctx.globals().set("__nodeOsInitialized", false)?;
         ctx.globals().set("__quench_script_source", $source)?;
         let wrapped = format!("try {{\n{}\n}} catch (error) {{ globalThis.__quench_last_error = error && error.stack ? `${{error.name}}: ${{error.message}}\\n${{error.stack}}` : String(error); throw error; }}", $source);
