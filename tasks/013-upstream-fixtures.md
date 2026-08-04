@@ -1,5 +1,12 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1146: VM isContext API
+
+- Fixture: `test-vm-is-context.js`
+- Added typed input validation and context-registry-backed `vm.isContext()`.
+- Retrospective: reuse the existing WeakSet context registry for identity APIs;
+  no additional Rust state is required.
+
 ## Stage 1145: VM Proxy constructor forwarding
 
 - Fixture: `test-vm-proxies.js`

@@ -30,6 +30,14 @@ const __quenchVmCheckRestrictedDeclaration = (code) => {
   if (descriptor?.configurable === false)
     throw new SyntaxError(`${declaration[1]} has already been declared`);
 };
+const __quenchVmIsContext = (value) => {
+  if (
+    value === null ||
+    (typeof value !== "object" && typeof value !== "function")
+  )
+    __quenchVmTypeError('The "sandbox" argument must be of type object.');
+  return __quenchVmContexts.has(value);
+};
 const __quenchVmContextValue = (value, sandbox) => {
   if (value === sandbox) return globalThis;
   if (value === null || typeof value !== "object") return value;
