@@ -2604,3 +2604,12 @@ single deterministic fixture.
 Stage 948 verifies that `listeners()` exposes the original once callback while
 `rawListeners()` exposes its wrapper metadata. Retrospective: comparing both
 views makes wrapper normalization explicit without requiring asynchronous emit.
+
+Retrospective: the strict JavaScript size gate is most effective when applied
+to ordinary source files, not generated string fragments. Moving bootstrap
+parts into shared lexical scope made helper names globally significant, so new
+helpers must use unique subsystem prefixes. Object composition removes a
+wrapper violation only when each implementation function is also split below
+the limits; otherwise it merely moves the same violation. Focused ESLint,
+Prettier, build, stage, and `git diff --check` runs remain the fastest safe
+checkpoint loop.
