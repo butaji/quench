@@ -280,6 +280,10 @@ const __quenchVmRunInNewContext = (code, sandbox, options) => {
       originalGlobalKeys: new Set(original.keys()),
       formatCode: true
     });
+    if (!keys.includes("Proxy") && /\bProxy\b/.test(String(code)))
+      sandbox.Proxy = function (...args) {
+        return new globalThis.Proxy(...args);
+      };
     return result;
   } finally {
     __quenchVmRestoreNewContext(
