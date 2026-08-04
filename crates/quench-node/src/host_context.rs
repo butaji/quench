@@ -62,7 +62,7 @@ macro_rules! run_host_context {
         )?;
         ctx.globals().set("__quench_pid", std::process::id())?;
         ctx.globals().set("__quench_exec_path", std::env::current_exe().unwrap_or_else(|_| PathBuf::from("quench-node")).to_string_lossy().into_owned())?;
-        ctx.globals().set("__filename", std::env::current_exe().unwrap_or_else(|_| PathBuf::from("quench-node")).to_string_lossy().into_owned())?;
+        ctx.globals().set("__filename", ctx.globals().get::<_, String>("__quench_script_filename").unwrap_or_else(|_| std::env::current_exe().unwrap_or_else(|_| PathBuf::from("quench-node")).to_string_lossy().into_owned()))?;
         ctx.globals().set("__quench_argv", env::args().collect::<Vec<String>>())?;
         ctx.globals().set("__quench_env_keys", std::env::vars().map(|(key, _)| key).collect::<Vec<String>>())?;
         ctx.globals().set("__quench_platform", std::env::consts::OS)?;

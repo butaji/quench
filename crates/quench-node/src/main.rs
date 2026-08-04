@@ -150,7 +150,36 @@ fn run_source_with_runtime(
     source: &str,
     runtime: &Runtime,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    run_source_with_runtime_at_path(source, runtime, None)
+}
+
+fn run_source_with_runtime_at_path(
+    source: &str,
+    runtime: &Runtime,
+    path: Option<&std::path::Path>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let context = Context::full(runtime)?;
+    if let Some(path) = path {
+        let filename = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            env::current_dir()?.join(path)
+        };
+        let dirname = filename
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."));
+        context.with(|ctx| -> rquickjs::Result<()> {
+            ctx.globals()
+                .set("__filename", filename.to_string_lossy().as_ref())?;
+            ctx.globals()
+                .set("__dirname", dirname.to_string_lossy().as_ref())?;
+            ctx.globals().set(
+                "__quench_script_filename",
+                filename.to_string_lossy().as_ref(),
+            )?;
+            Ok(())
+        })?;
+    }
     run_host_context!(context, source)?;
     Ok(())
 }
@@ -167,7 +196,7 @@ fn run_directory(dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
         {
             total += 1;
             let source = fs::read_to_string(entry.path())?;
-            match run_source(&source) {
+            match run_source_with_runtime_at_path(&source, &Runtime::new()?, Some(entry.path())) {
                 Ok(()) => println!("ok {}", entry.path().display()),
                 Err(error) => {
                     failed += 1;
@@ -199,7 +228,7 @@ fn run_directory_reuse(dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>> 
         {
             total += 1;
             let source = fs::read_to_string(entry.path())?;
-            match run_source_with_runtime(&source, &runtime) {
+            match run_source_with_runtime_at_path(&source, &runtime, Some(entry.path())) {
                 Ok(()) => println!("ok {}", entry.path().display()),
                 Err(error) => {
                     failed += 1;
