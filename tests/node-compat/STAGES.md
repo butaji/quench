@@ -826,3 +826,4 @@ these small fixtures isolate the currently implemented contract.
 |   827 | timers exposes callback and promise APIs                       | `tools/run-node-tests.sh --stage 827` |
 |   828 | console exposes core logging and constructor API               | `tools/run-node-tests.sh --stage 828` |
 |   829 | tty exposes detection and stream constructors                  | `tools/run-node-tests.sh --stage 829` |
+|   830 | querystring exposes parse and stringify API                    | `tools/run-node-tests.sh --stage 830` |
