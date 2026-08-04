@@ -2292,3 +2292,5 @@ Stage 870 verifies the node:fs callback and promise glob API.
 Stage 871 verifies the node:crypto Web Crypto compatibility API.
 
 Stage 872 verifies the node:timers/promises complete promise timer API.
+
+Stage 873 verifies the node:util modern parsing and abort helpers.
