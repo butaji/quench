@@ -3337,3 +3337,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 - Added optional-code handling, warning deduplication, arity/prototype preservation,
   and the internal pending-deprecate alias.
 - Verified the focused stage and Node's complete `util.deprecate` fixture.
+### Stage 1090: util parse environment files
+
+- Added a readable dotenv parser for `util.parseEnv`, including quotes,
+  comments, multiline values, duplicate keys, and invalid input validation.
+- Verified the focused stage and Node's complete `test-util-parse-env.js` fixture.
