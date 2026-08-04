@@ -926,3 +926,4 @@ these small fixtures isolate the currently implemented contract.
 |   929 | broad os information surface                          | `tools/run-node-tests.sh --stage 929` |
 |   930 | events max-listener static APIs                       | `tools/run-node-tests.sh --stage 930` |
 |   931 | events static listener inspection                     | `tools/run-node-tests.sh --stage 931` |
+|   932 | EventEmitter event name enumeration                  | `tools/run-node-tests.sh --stage 932` |

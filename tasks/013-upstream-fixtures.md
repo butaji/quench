@@ -2531,3 +2531,6 @@ WeakMap-backed limits.
 Stage 931 adds `events.getEventListeners()`, returning defensive copies from
 the existing emitter and EventTarget listener stores with Node's invalid-target
 error code.
+
+Stage 932 adds `EventEmitter.eventNames()` using `Reflect.ownKeys`, preserving
+both string and symbol event names while excluding removed listeners.
