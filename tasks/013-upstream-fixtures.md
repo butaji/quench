@@ -3174,3 +3174,9 @@ values receive `ERR_OUT_OF_RANGE`, non-numbers receive
 `ERR_INVALID_ARG_TYPE`, and Infinity remains accepted. Retrospective: the
 initial Infinity fix needed a separate NaN branch and explicit error codes;
 the focused stage and upstream setter fixture now pass.
+
+Stage 1045 verifies that `Buffer.from(resizableArrayBuffer, offset)` tracks
+resizes through its shared view. Retrospective: passing an explicit computed
+length froze the typed-array view; omitting that length for the unbounded form
+preserves native resizable-buffer tracking while explicit lengths remain
+bounded. Upstream `test-buffer-resizable.js` now passes.
