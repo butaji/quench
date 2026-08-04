@@ -2174,3 +2174,5 @@ Stage 811 added standard Module extension handler keys.
 Stage 812 added static Module path helper methods.
 
 Stage 813 added static Module resolution helper methods.
+
+Stage 814 verified the core node:assert API.

@@ -810,3 +810,4 @@ these small fixtures isolate the currently implemented contract.
 |   811 | module exposes standard extension handlers                     | `tools/run-node-tests.sh --stage 811` |
 |   812 | module exposes static path helpers                              | `tools/run-node-tests.sh --stage 812` |
 |   813 | module exposes static resolution helpers                        | `tools/run-node-tests.sh --stage 813` |
+|   814 | assert exposes core assertion API                               | `tools/run-node-tests.sh --stage 814` |
