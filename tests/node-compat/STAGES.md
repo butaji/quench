@@ -694,3 +694,4 @@ these small fixtures isolate the currently implemented contract.
 |   695 | process throwDeprecation is a writable boolean policy flag                    | `tools/run-node-tests.sh --stage 695` |
 |   696 | process stdin pause and resume are callable and chainable                     | `tools/run-node-tests.sh --stage 696` |
 |   697 | process stdout on returns the stream for chaining                             | `tools/run-node-tests.sh --stage 697` |
+|   698 | process stderr on returns the stream for chaining                             | `tools/run-node-tests.sh --stage 698` |
