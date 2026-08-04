@@ -86,12 +86,13 @@ pub fn create_promise_constructor(
                 let _ = reject_native.set_property("name", Value::String(String::new()));
                 let reject_val = Value::NativeFunction(reject_native);
 
-                let _executor_result =
-                    call_value_with_this(executor, vec![resolve_val, reject_val], Value::Undefined);
-                // Let executor errors propagate naturally.
-                // For `new Promise(fn)`, if fn throws synchronously, the error propagates out.
-                // For `NewPromiseCapability` (Promise.race/all/etc), executor errors are
-                // handled by the caller (invoke_promise_constructor checks resolve/reject slots).
+                if let Err(error) =
+                    call_value_with_this(executor, vec![resolve_val, reject_val], Value::Undefined)
+                {
+                    let reason =
+                        crate::value::take_thrown_value().unwrap_or_else(|| Value::String(error.0));
+                    settle_reject(&promise_rc, reason);
+                }
             }
 
             Ok(Value::Object(promise_rc))
