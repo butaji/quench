@@ -2224,3 +2224,5 @@ Stage 836 verifies the node:zlib compression and stream API.
 Stage 837 verifies the node:dns callback and promise resolver API.
 
 Stage 838 verifies the node:http client and server core API.
+
+Stage 839 verifies the node:https secure client and server API.
