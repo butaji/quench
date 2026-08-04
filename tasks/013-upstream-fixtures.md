@@ -2774,3 +2774,11 @@ boundary avoids depending on rquickjs callback receiver behavior.
 Stage 979 verifies NodeEventTarget `emit()` separates EventTarget Event payloads
 from Node-style raw listener arguments. Retrospective: an explicit listener
 kind flag avoids ambiguous argument adaptation at the shared dispatch boundary.
+
+Stage 980 verifies EventTarget custom inspection remains safe after listener
+registration. Retrospective: a narrow stringification assertion avoids coupling
+the stage to formatter-specific output while preserving the public type name.
+
+Upstream audit: `test-eventtarget-memoryleakwarning.js` is currently blocked by
+the missing `MessageChannel` global; it is independent of EventTarget listener
+bookkeeping and remains a subsequent host-global task.
