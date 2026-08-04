@@ -716,3 +716,4 @@ these small fixtures isolate the currently implemented contract.
 |   717 | process stderr eventNames reports the lightweight listener state              | `tools/run-node-tests.sh --stage 717` |
 |   718 | process stdout getMaxListeners reports the Node default limit                 | `tools/run-node-tests.sh --stage 718` |
 |   719 | process stderr getMaxListeners reports the Node default limit                 | `tools/run-node-tests.sh --stage 719` |
+|   720 | process stdout setMaxListeners updates the listener limit                    | `tools/run-node-tests.sh --stage 720` |
