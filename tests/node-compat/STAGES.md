@@ -923,3 +923,4 @@ these small fixtures isolate the currently implemented contract.
 |   926 | os signal constants                                    | `tools/run-node-tests.sh --stage 926` |
 |   927 | os fast host information surface                      | `tools/run-node-tests.sh --stage 927` |
 |   928 | os home-directory fallback surface                    | `tools/run-node-tests.sh --stage 928` |
+|   929 | broad os information surface                          | `tools/run-node-tests.sh --stage 929` |

@@ -1541,6 +1541,11 @@ logging, assertion, grouping, table, and trace methods. The existing shared
 console polyfill already covered this surface, so the stage required no new
 runtime code.
 
+Stage 929 records the broad `os` module surface covered by the upstream
+`test-os.js` fixture. The host-backed values and numeric resource methods
+already satisfy this contract; EOL descriptor mutation and internal binding
+error injection remain separately tracked gaps.
+
 Stage 545 formalized `URL.canParse()` validation and `URL.parse()` null-on-
 failure behavior; the existing URL surface already covered both statics.
 
