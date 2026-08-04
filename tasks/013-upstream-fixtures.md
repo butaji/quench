@@ -2826,3 +2826,8 @@ harness module-format boundary.
 Stage 989 verifies `process.emitWarning()` creates and emits a named Error
 warning. Retrospective: adding this primitive before listener-limit warnings
 keeps warning construction separate from warning threshold bookkeeping.
+
+Stage 990 verifies EventEmitter uses a null-prototype `_events` map and that
+`setMaxListeners()` does not create event entries. Retrospective: asserting
+internal shape and side effects together catches prototype-key collisions while
+remaining deterministic.
