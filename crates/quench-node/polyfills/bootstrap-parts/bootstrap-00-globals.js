@@ -269,7 +269,22 @@ globalThis.process = {
   },
   features: { inspector: false, tls: false, quic: false, dtls: false },
   cwd: () => globalThis.__quench_cwd_get(),
-  chdir: (value) => globalThis.__quench_chdir(String(value)),
+  chdir: (value) => {
+    const path = String(value);
+    if (!globalThis.__quench_fs_exists(path)) {
+      const error = new Error(
+        `ENOENT: no such file or directory, chdir '${process.cwd()}' -> '${path}'`
+      );
+      Object.assign(error, {
+        code: "ENOENT",
+        path: process.cwd(),
+        syscall: "chdir",
+        dest: path
+      });
+      throw error;
+    }
+    return globalThis.__quench_chdir(path);
+  },
   exitCode: 0,
   exit: (code) => {
     process.exitCode = code;
