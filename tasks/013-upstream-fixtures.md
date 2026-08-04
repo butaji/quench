@@ -1676,6 +1676,9 @@ Stage 587 formalized equivalent callback validation for forked child-process
 Stage 588 formalized normal forked child exit status and null signal
 reporting.
 
+Stage 589 formalized child-process `destroy()` and `Symbol.dispose`
+termination behavior.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
