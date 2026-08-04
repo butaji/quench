@@ -812,3 +812,4 @@ these small fixtures isolate the currently implemented contract.
 |   813 | module exposes static resolution helpers                        | `tools/run-node-tests.sh --stage 813` |
 |   814 | assert exposes core assertion API                               | `tools/run-node-tests.sh --stage 814` |
 |   815 | buffer exposes core static API                                  | `tools/run-node-tests.sh --stage 815` |
+|   816 | buffer exposes modern encoding helpers                         | `tools/run-node-tests.sh --stage 816` |
