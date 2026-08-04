@@ -10,7 +10,41 @@
       globalThis.process.emit("warning", warning);
       return warning;
     };
-    globalThis.process.getActiveResourcesInfo = () => [];
+    const activeTimers = new Map();
+    const originalSetTimeout = globalThis.setTimeout;
+    const originalClearTimeout = globalThis.clearTimeout;
+    const originalSetInterval = globalThis.setInterval;
+    const originalClearInterval = globalThis.clearInterval;
+    if (typeof originalSetTimeout === "function") {
+      globalThis.setTimeout = (callback, delay, ...args) => {
+        let timer;
+        const wrappedCallback = (...callbackArgs) => {
+          activeTimers.delete(timer);
+          return callback(...callbackArgs);
+        };
+        timer = originalSetTimeout(wrappedCallback, delay, ...args);
+        activeTimers.set(timer, "Timeout");
+        return timer;
+      };
+      globalThis.clearTimeout = (timer) => {
+        activeTimers.delete(timer);
+        return originalClearTimeout(timer);
+      };
+    }
+    if (typeof originalSetInterval === "function") {
+      globalThis.setInterval = (callback, delay, ...args) => {
+        const timer = originalSetInterval(callback, delay, ...args);
+        activeTimers.set(timer, "Interval");
+        return timer;
+      };
+      globalThis.clearInterval = (timer) => {
+        activeTimers.delete(timer);
+        return originalClearInterval(timer);
+      };
+    }
+    globalThis.process.getActiveResourcesInfo = () => [
+      ...activeTimers.values()
+    ];
     globalThis.process.availableMemory = () => Number.MAX_SAFE_INTEGER;
     globalThis.process.setSourceMapsEnabled = () => undefined;
     globalThis.process.sourceMapsEnabled = false;

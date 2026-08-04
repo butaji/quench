@@ -1,5 +1,13 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1103: process active resources
+
+- Fixture: `test-process-getactiveresources.js`
+- Added timer tracking so `process.getActiveResourcesInfo()` reports pending
+  timeouts and intervals and removes cleared or completed one-shot timers.
+- Verified with the focused stage, upstream fixture, formatting, linter,
+  nextest, diff check, and compatibility coverage.
+
 ## Goal
 
 The 4684 fixtures in `tests/node/test/parallel/` are the contract surface for
