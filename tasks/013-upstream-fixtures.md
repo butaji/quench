@@ -3279,3 +3279,8 @@ Stage 1061 retains a trailing UTF-16 high surrogate until the corresponding
 low-surrogate bytes arrive. Retrospective: emitting each complete code unit
 immediately split surrogate pairs across writes; retaining only the final high
 surrogate preserves streaming semantics without changing ordinary UCS-2 data.
+
+Stage 1062 validates StringDecoder encodings and input views. Retrospective:
+the permissive wrapper coerced unknown encodings and null input into strings or
+empty byte arrays; validating before conversion matches Node’s error codes and
+keeps the byte normalization path focused on actual views.
