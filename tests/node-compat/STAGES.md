@@ -509,3 +509,4 @@ these small fixtures isolate the currently implemented contract.
 |   510 | cluster kill reports terminating signal and state                | `tools/run-node-tests.sh --stage 510` |
 |   511 | net IP validation distinguishes IPv4, IPv6, and invalid values    | `tools/run-node-tests.sh --stage 511` |
 |   512 | path matchesGlob handles wildcard and path patterns               | `tools/run-node-tests.sh --stage 512` |
+|   513 | os constants expose frozen signal values                         | `tools/run-node-tests.sh --stage 513` |
