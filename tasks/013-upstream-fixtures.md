@@ -1346,6 +1346,9 @@ preserving remaining data.
 Stage 478 formalized Readable string pushes being converted to byte data with
 correct queue length and partial reads.
 
+Stage 479 formalized `fs.readFile()` rejecting calls without a callback using
+`ERR_INVALID_ARG_TYPE`.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
