@@ -3126,3 +3126,9 @@ range failures, non-integer offsets, and genuinely undersized buffers. The
 retrospective extends the numeric-validation approach from stages 1034–1036:
 error classification must consider both the input value and the available
 buffer width. Upstream `test-buffer-writedouble.js` now passes.
+
+Stage 1038 applies the same precise offset classification to `_readDouble()`:
+integer range, non-integer input, and undersized-buffer bounds remain distinct.
+Retrospective: auditing both read and write validators separately caught a
+parallel implementation path that shared no helper; the focused stage and
+upstream `test-buffer-readdouble.js` now pass.
