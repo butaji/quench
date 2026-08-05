@@ -1,5 +1,12 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1159: crypto SHAKE XOF hashes
+
+- Fixture: `test-crypto-hash.js`
+- Added Rust SHAKE128/SHAKE256 XOF bindings and JS `outputLength` support.
+- Retrospective: keep variable-length XOF output in the Rust digest boundary;
+  the JS wrapper only validates options and selects the requested length.
+
 ## Stage 1158: crypto hash algorithm bridge
 
 - Fixture: `test-crypto-hash.js`
