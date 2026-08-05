@@ -5136,3 +5136,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1438: crypto ECDH invalid point
 
 - Reject malformed `secp521r1` point conversion.
+
+### Stage 1439: crypto EC signing fallback
+
+- Allow EC private-key signing while retaining RSA error behavior.
