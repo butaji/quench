@@ -283,7 +283,7 @@ const __nodeURLResolveInput = (input, base) => {
   if (base && (value === "" ? (value = String(base).trim().replace(/[\t\n\r]/g, "")) : /^(?:https?|ftp):\/\//i.test(base) && (value = value.replace(/\\/g, "/"))));
   // prettier-ignore
   if (base && (!/^[a-z][a-z0-9+.-]*:/.test(value) || /^(?:https?|ftp):[^/]/.test(value))) { const baseUrl = new globalThis.__nodeURL(base); value = value.replace(/^(?:https?|ftp):/, "");
-    value = value.startsWith("/")
+    if (/^[?#]/.test(value)) value = baseUrl.origin + baseUrl.pathname + value; else value = value.startsWith("/")
       ? baseUrl.origin + value
       : baseUrl.origin + baseUrl.pathname.replace(/\/[^/]*$/, "/") + value;
   }
