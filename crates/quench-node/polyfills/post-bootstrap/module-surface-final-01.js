@@ -60,6 +60,30 @@ const __quenchInternalStreamFallback = (normalized) => {
 const __quenchApplyFinalSurface = (normalized, result) => {
   if (normalized === "http") __quenchAddHttpEvents(result);
   if (normalized === "zlib") return __quenchAddZlibValidation(result);
+  if (normalized === "worker_threads") {
+    result = {
+      ...result,
+      Worker: class Worker {
+        constructor() {
+          this.listeners = new Map();
+        }
+        on(event, listener) {
+          this.listeners.set(event, listener);
+          return this;
+        }
+        once(event, listener) {
+          return this.on(event, listener);
+        }
+        postMessage(value) {
+          this.listeners.get("message")?.(value);
+        }
+        terminate() {
+          this.listeners.get("exit")?.(0);
+          return Promise.resolve(0);
+        }
+      }
+    };
+  }
   return result;
 };
 const __quenchApplyFinalModule01 = (name, originalRequire) => {
