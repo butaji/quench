@@ -200,6 +200,20 @@ pub fn register_weak_collections(ctx: &mut crate::Context) {
         p.set("__has", native_fn(weakset_has_impl));
     }
     let weakset_proto_for_ctor = Rc::clone(&weakset_proto);
+    if let Some(Value::Symbol(tag_key)) =
+        crate::builtins::symbol::get_well_known_symbol_no_ctx("toStringTag")
+    {
+        weakset_proto.borrow_mut().define(
+            &tag_key.property_key(),
+            Value::String("WeakSet".into()),
+            crate::value::PropertyFlags {
+                value: Some(Value::String("WeakSet".into())),
+                writable: false,
+                enumerable: false,
+                configurable: true,
+            },
+        );
+    }
     let weakset_constructor = native_fn(move |args| {
         let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
         let ws = if let Value::Object(obj_rc) = this_val {
@@ -286,6 +300,20 @@ pub fn register_weak_collections(ctx: &mut crate::Context) {
         p.set("__has", native_fn(weakmap_has_impl));
     }
     let weakmap_proto_for_ctor = Rc::clone(&weakmap_proto);
+    if let Some(Value::Symbol(tag_key)) =
+        crate::builtins::symbol::get_well_known_symbol_no_ctx("toStringTag")
+    {
+        weakmap_proto.borrow_mut().define(
+            &tag_key.property_key(),
+            Value::String("WeakMap".into()),
+            crate::value::PropertyFlags {
+                value: Some(Value::String("WeakMap".into())),
+                writable: false,
+                enumerable: false,
+                configurable: true,
+            },
+        );
+    }
     let weakmap_constructor = native_fn(move |args| {
         let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
         let wm = if let Value::Object(obj_rc) = this_val {
