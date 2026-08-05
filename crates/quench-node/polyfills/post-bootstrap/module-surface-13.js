@@ -66,6 +66,13 @@ const __quenchCryptoCipherFallback = (result) => {
       }
     };
   };
+  const Cipheriv = function Cipheriv(...args) {
+    const cipher = result.createCipheriv(...args);
+    Object.setPrototypeOf(cipher, Cipheriv.prototype);
+    return cipher;
+  };
+  result.Cipheriv ||= Cipheriv;
+  result.Decipheriv ||= Cipheriv;
 };
 const __quenchCryptoRandomFallbacks = (result, state) => {
   result.randomBytes ||= (size) => new Uint8Array(Number(size) || 0);
