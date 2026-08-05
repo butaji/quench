@@ -243,6 +243,20 @@ globalThis.__nodeInvalidThis = () => {
   error.code = "ERR_INVALID_THIS";
   throw error;
 };
+globalThis.__nodeURLFormEncode = (value) =>
+  globalThis
+    .__nodeUrlEncode(value)
+    .replace(
+      /[!'()]/g,
+      (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`
+    );
+globalThis.__nodeURLDecode = (value) => {
+  try {
+    return decodeURIComponent(value);
+  } catch (_) {
+    return value;
+  }
+};
 const __nodeURLSearchParamsToString =
   globalThis.__nodeURLSearchParams.prototype.toString;
 globalThis.__nodeURLSearchParams.prototype.toString =
@@ -286,10 +300,40 @@ for (const name of [
     enumerable: true
   });
 }
+const __nodeURLSearchIterator = (values) => {
+  let index = 0;
+  const iterator = Object.create(__nodeURLSearchIteratorPrototype);
+  iterator.next = function next() {
+    if (this !== iterator) {
+      const error = new TypeError(
+        'Value of "this" must be of type URLSearchParamsIterator'
+      );
+      error.code = "ERR_INVALID_THIS";
+      throw error;
+    }
+    return index < values.length
+      ? { done: false, value: values[index++] }
+      : { done: true, value: undefined };
+  };
+  return iterator;
+};
+const __nodeURLSearchIteratorPrototype = {
+  [Symbol.iterator]() {
+    return this;
+  }
+};
+Object.defineProperty(__nodeURLSearchIteratorPrototype, Symbol.toStringTag, {
+  value: "URLSearchParams Iterator"
+});
+const __nodeURLSearchValidateThis = (value) => {
+  if (!(value instanceof globalThis.__nodeURLSearchParams))
+    return globalThis.__nodeInvalidThis();
+  return value;
+};
 const __nodeURLSearchEntries = Object.getOwnPropertyDescriptor(
   {
     entries() {
-      return this._pairs[Symbol.iterator]();
+      return __nodeURLSearchIterator(__nodeURLSearchValidateThis(this)._pairs);
     }
   },
   "entries"
@@ -297,7 +341,9 @@ const __nodeURLSearchEntries = Object.getOwnPropertyDescriptor(
 const __nodeURLSearchKeys = Object.getOwnPropertyDescriptor(
   {
     keys() {
-      return this._pairs.map(([key]) => key)[Symbol.iterator]();
+      return __nodeURLSearchIterator(
+        __nodeURLSearchValidateThis(this)._pairs.map(([key]) => key)
+      );
     }
   },
   "keys"
@@ -305,7 +351,9 @@ const __nodeURLSearchKeys = Object.getOwnPropertyDescriptor(
 const __nodeURLSearchValues = Object.getOwnPropertyDescriptor(
   {
     values() {
-      return this._pairs.map(([, value]) => value)[Symbol.iterator]();
+      return __nodeURLSearchIterator(
+        __nodeURLSearchValidateThis(this)._pairs.map(([, value]) => value)
+      );
     }
   },
   "values"
@@ -319,7 +367,14 @@ globalThis.__nodeURLSearchParams.prototype.forEach =
   Object.getOwnPropertyDescriptor(
     {
       forEach(callback, thisArg) {
-        this._pairs.forEach(([value, key]) =>
+        if (typeof callback !== "function") {
+          const error = new TypeError(
+            "The callback argument must be a function"
+          );
+          error.code = "ERR_INVALID_ARG_TYPE";
+          throw error;
+        }
+        this._pairs.forEach(([key, value]) =>
           callback.call(thisArg, value, key, this)
         );
       }
@@ -353,6 +408,20 @@ for (const symbol of [
     enumerable: false
   });
 }
+const __nodeURLSearchTag = Object.getOwnPropertyDescriptor(
+  globalThis.__nodeURLSearchParams.prototype,
+  Symbol.toStringTag
+);
+if (!__nodeURLSearchTag || __nodeURLSearchTag.configurable)
+  Object.defineProperty(
+    globalThis.__nodeURLSearchParams.prototype,
+    Symbol.toStringTag,
+    {
+      configurable: true,
+      enumerable: false,
+      value: "URLSearchParams"
+    }
+  );
 Object.defineProperty(globalThis.__nodeURLSearchParams.prototype, "size", {
   configurable: true,
   enumerable: true,
@@ -373,7 +442,7 @@ for (const name of ["append", "set", "delete", "sort"]) {
         [name](...args) {
           const result = original.apply(this, args);
           if (this.__nodeURLOwner)
-            this.__nodeURLOwner.search = this.toString() ? `?${this}` : "";
+            this.__nodeURLOwner._search = this.toString() ? `?${this}` : "";
           return result;
         }
       },
