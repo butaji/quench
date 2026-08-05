@@ -291,11 +291,13 @@ const __nodeURLResolveInput = (input, base) => {
 };
 // prettier-ignore
 const __nodeURLCredentials = (authority) => { const at = authority.lastIndexOf("@"), raw = at < 0 ? "" : authority.slice(0, at), separator = raw.indexOf(":"); return separator < 0 ? [raw, ""] : [raw.slice(0, separator), raw.slice(separator + 1)]; };
+// prettier-ignore
+const __nodeURLNormalizeIPv4Tail = (host) => host.replace(/^(\[[^\]]*?):?(\d+\.\d+\.\d+\.\d+)(\].*)$/, (_, prefix, ip, suffix) => { const octets = ip.split(".").map(Number), high = (octets[0] << 8) + octets[1], low = (octets[2] << 8) + octets[3]; return `${prefix}${prefix.endsWith("::") ? "" : ":"}${high.toString(16)}:${low.toString(16)}${suffix}`; });
 // eslint-disable-next-line complexity
 const __nodeURLAssignParts = (url, match) => {
   const [username, password] = __nodeURLCredentials(match[2] || "");
   // prettier-ignore
-  ((url.protocol = match[1] || ""), (url.host = (match[2] || "").replace(/^.*@/, "")), (url._username = username.replace(/]/g, "%5D").replace(/:/g, "%3A")), (url._password = password.replace(/]/g, "%5D").replace(/:/g, "%3A").replace(/@/g, "%40")), Object.defineProperty(url, "_hostname", { configurable: true, value: url.host.startsWith("[") ? url.host.slice(0, url.host.indexOf("]") + 1) : url.host.split(":")[0], writable: true }), (url.port = url.host.startsWith("[") ? url.host.match(/^\[[^\]]*\](?::(.*))?$/)?.[1] || "" : url.host.includes(":") ? url.host.slice(url.host.lastIndexOf(":") + 1).replace(/^0+(?=\d)/, "") : ""));
+  ((url.protocol = match[1] || ""), (url.host = __nodeURLNormalizeIPv4Tail((match[2] || "").replace(/^.*@/, ""))), (url._username = username.replace(/]/g, "%5D").replace(/:/g, "%3A")), (url._password = password.replace(/]/g, "%5D").replace(/:/g, "%3A").replace(/@/g, "%40")), Object.defineProperty(url, "_hostname", { configurable: true, value: url.host.startsWith("[") ? url.host.slice(0, url.host.indexOf("]") + 1) : url.host.split(":")[0], writable: true }), (url.port = url.host.startsWith("[") ? url.host.match(/^\[[^\]]*\](?::(.*))?$/)?.[1] || "" : url.host.includes(":") ? url.host.slice(url.host.lastIndexOf(":") + 1).replace(/^0+(?=\d)/, "") : ""));
   if (["http:80", "https:443"].includes(url.protocol + url.port)) url.port = "";
   // prettier-ignore
   url.pathname = match[3] || "/", url.search = match[4] !== undefined ? `?${match[4]}` : "", url.hash = match[5] !== undefined ? `#${match[5]}` : "", match[1] && !match[2] && (url._pathname = match[3] || "");
@@ -486,9 +488,7 @@ globalThis.__nodeUrlModule = new Proxy(
   {},
   {
     get: (_, key) => {
-      globalThis.__nodeUrlInitialized = true;
-      __nodeUrlModuleInstance ||= __nodeUrlModuleExports;
-      return __nodeUrlModuleInstance[key];
+      return (__nodeUrlModuleInstance ||= __nodeUrlModuleExports)[key];
     },
     ownKeys: () => Reflect.ownKeys(__nodeUrlModuleExports),
     getOwnPropertyDescriptor: (_, key) => ({
