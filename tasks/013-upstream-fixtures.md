@@ -4015,3 +4015,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 - Adjacent upstream probes exposed that dgram behavior depends on lifecycle
   timing, not only return values. Focused stages now exercise pending,
   connected, and closed transitions independently.
+
+### Stage 1183: dgram ref lifecycle
+
+- Added the chainable `ref()` method to complete the socket handle lifecycle
+  surface used by the upstream ref fixture.
