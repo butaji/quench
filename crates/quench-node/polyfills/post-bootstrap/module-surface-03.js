@@ -128,6 +128,15 @@ const __quenchApplyReadableOperations = async (values, operations) => {
       const keep = await Promise.all(result.map(operation.callback));
       result = result.filter((_value, index) => keep[index]);
     }
+    if (operation.type === "flatMap") {
+      const mapped = await Promise.all(result.map(operation.callback));
+      result = [];
+      for (const value of mapped) {
+        if (Array.isArray(value)) result.push(...value);
+        else if (value?.toArray) result.push(...(await value.toArray()));
+        else result.push(value);
+      }
+    }
   }
   return result;
 };
@@ -202,6 +211,13 @@ const __quenchIterableOptions = (callback, options) => {
     error.code = "ERR_OUT_OF_RANGE";
     throw error;
   }
+  if (options.signal !== undefined && typeof options.signal !== "object") {
+    const error = new TypeError(
+      "ERR_INVALID_ARG_TYPE: signal must be an AbortSignal"
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
 };
 const __quenchForEachReadable = (slice, callback) =>
   slice.toArray().then((values) => Promise.all(values.map(callback)));
@@ -221,6 +237,13 @@ const __quenchSliceFilter = (stream, operations, callback, options) => {
   return __quenchReadableSlice(stream, {
     ...operations,
     operations: operations.operations.concat({ type: "filter", callback })
+  });
+};
+const __quenchSliceFlatMap = (stream, operations, callback, options) => {
+  __quenchIterableOptions(callback, options);
+  return __quenchReadableSlice(stream, {
+    ...operations,
+    operations: operations.operations.concat({ type: "flatMap", callback })
   });
 };
 const __quenchReadableSlice = (stream, operations) => ({
@@ -246,6 +269,9 @@ const __quenchReadableSlice = (stream, operations) => ({
   },
   filter(callback, options) {
     return __quenchSliceFilter(stream, operations, callback, options);
+  },
+  flatMap(callback, options) {
+    return __quenchSliceFlatMap(stream, operations, callback, options);
   },
   forEach(callback) {
     return __quenchForEachReadable(this, callback);
@@ -273,6 +299,14 @@ const __quenchAddSliceMethods = (prototype) => {
       take: Infinity,
       operations: []
     }).filter(callback, options);
+  };
+  prototype.flatMap = function (callback, options) {
+    return __quenchSliceFlatMap(
+      this,
+      { drop: 0, take: Infinity, operations: [] },
+      callback,
+      options
+    );
   };
   prototype.toArray ||= function () {
     return __quenchReadableSlice(this, {
