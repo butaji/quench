@@ -2487,6 +2487,13 @@ fn direct_eval_arguments_declaration_conflicts_with_function_body_lexical_bindin
 }
 
 #[test]
+fn direct_eval_arguments_declaration_in_non_simple_generator_parameters_is_syntax_error() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval("async function * f(p = eval('var arguments')) {} f()");
+    assert!(result.unwrap_err().0.contains("SyntaxError"));
+}
+
+#[test]
 fn async_function_eval_arguments_conflict_rejects_with_syntax_error() {
     let mut ctx = Context::new().unwrap();
     ctx.eval("var caught = false; async function f(p = eval('var arguments')) { var arguments; } f().catch(function(error) { caught = error instanceof SyntaxError; });")

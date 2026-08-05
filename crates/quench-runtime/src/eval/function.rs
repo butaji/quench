@@ -544,22 +544,22 @@ pub(crate) fn bind_params(
     // can detect var/lexical conflicts. Set the eval env to the call env
     // before evaluating defaults, then restore.
     let prev_eval_env = crate::interpreter::get_current_eval_env();
-    let previous_conflicts = crate::interpreter::set_eval_conflict_names(Some(
-        crate::interpreter::collect_let_const_declarations(&f.body)
+    let mut conflicts = crate::interpreter::collect_let_const_declarations(&f.body);
+    conflicts.extend(
+        crate::interpreter::collect_var_names(&f.body)
             .into_iter()
-            .chain(
-                crate::interpreter::collect_var_names(&f.body)
-                    .into_iter()
-                    .map(|name| (name, crate::ast::VarKind::Var)),
-            )
-            .chain(f.body.iter().filter_map(|statement| match statement {
-                crate::ast::Statement::FunctionDeclaration { name, .. } => {
-                    Some((name.clone(), crate::ast::VarKind::Var))
-                }
-                _ => None,
-            }))
-            .collect(),
-    ));
+            .map(|name| (name, crate::ast::VarKind::Var)),
+    );
+    conflicts.extend(f.body.iter().filter_map(|statement| match statement {
+        crate::ast::Statement::FunctionDeclaration { name, .. } => {
+            Some((name.clone(), crate::ast::VarKind::Var))
+        }
+        _ => None,
+    }));
+    if !f.is_arrow && has_parameter_expressions(params) {
+        conflicts.push(("arguments".to_string(), crate::ast::VarKind::Var));
+    }
+    let previous_conflicts = crate::interpreter::set_eval_conflict_names(Some(conflicts));
     if params.iter().any(|p| p.default.is_some()) {
         crate::interpreter::set_current_eval_env(Some(Rc::clone(call_env_rc)));
     }
