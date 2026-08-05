@@ -28,14 +28,39 @@ globalThis.__quenchResolveParsedOpaque = (r, f, t) => {
   const base = match[2].slice(0, match[2].lastIndexOf("/") + 1);
   return r.parse(globalThis.__quenchNormalizeOpaqueRelative(match[1], base, t));
 };
+globalThis.__quenchResolveParsedTripleAbsolute = (r, f, t) => {
+  if (!f.slashes || f.host || !t.startsWith("/")) return null;
+  if (f.slashes && !f.host && t.startsWith("//"))
+    return r.parse(`${f.protocol}${t}`);
+  return r.parse(`${f.protocol}//${t}`);
+};
 globalThis.__quenchResolveParsedWebAbsolute = (r, f, t) => {
   const source = f.href || f.pathname || "";
-  if (!t.startsWith("/") || !source.includes("://")) return null;
+  if (!t.startsWith("/")) return null;
+  const triple = globalThis.__quenchResolveParsedTripleAbsolute(r, f, t);
+  if (triple) return triple;
+  if (!source.includes("://")) return null;
   return r.parse(globalThis.__quenchResolveAbsolutePath(source, t));
+};
+globalThis.__quenchResolveParsedTripleSlash = (r, f, t) => {
+  if (f.slashes && !f.host && f.pathname && !t.startsWith("/")) {
+    const base = f.pathname.slice(0, f.pathname.lastIndexOf("/") + 1);
+    const parts = `${base}${t}`.split("/");
+    const normalized = [];
+    for (const part of parts) {
+      if (part === ".") continue;
+      if (part === ".." && normalized.length > 1) normalized.pop();
+      else normalized.push(part);
+    }
+    return r.parse(`${f.protocol}//${normalized.join("/")}`);
+  }
+  return null;
 };
 globalThis.__quenchResolveParsedWebRelative = (r, f, t) => {
   const source = f.href || "";
-  const origin = source.match(/^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/]*/)?.[0];
+  const triple = globalThis.__quenchResolveParsedTripleSlash(r, f, t);
+  if (triple) return triple;
+  const origin = source.match(/^[A-Za-z][A-Za-z0-9+.-]*:\/\/\/?[^/]*/)?.[0];
   if (!origin || t.startsWith("/")) return null;
   if (t === "") return r.parse(source);
   const path = source.slice(origin.length).split(/[?#]/)[0] || "/";
