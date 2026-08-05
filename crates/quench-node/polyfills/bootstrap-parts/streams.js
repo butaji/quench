@@ -32,7 +32,7 @@ globalThis.__nodeFs.createReadStream = (value, options = {}) => {
   stream.fd = null;
   stream.bytesRead = 0;
   if (options.encoding !== undefined) stream.setEncoding(options.encoding);
-  queueMicrotask(() => {
+  setTimeout(() => {
     try {
       stream.fd = globalThis.__nodeFs.openSync(path, "r");
       stream.emit("open", stream.fd);
@@ -98,7 +98,7 @@ globalThis.__nodeFs.open = (value, flags, mode, callback) => {
   }
   __nodeFsValidateMode(mode);
   const path = nodeFsPath(value);
-  queueMicrotask(() => {
+  setTimeout(() => {
     let fd;
     try {
       fd = globalThis.__nodeFs.openSync(path, flags, mode);
@@ -107,7 +107,7 @@ globalThis.__nodeFs.open = (value, flags, mode, callback) => {
       return;
     }
     callback(null, fd);
-  });
+  }, 0);
 };
 globalThis.__nodeFs.readdir = (value, options, callback) => {
   if (typeof options === "function") {
@@ -154,46 +154,6 @@ globalThis.__nodeFs.mkdir = (value, options, callback) => {
     } catch (error) {
       callback(error);
     }
-  });
-};
-globalThis.__nodeFs.readFile = (value, options, callback) => {
-  if (typeof options === "function") {
-    callback = options;
-    options = undefined;
-  }
-  if (typeof value === "function") __nodeFsReadPath(value);
-  if (typeof callback !== "function") {
-    const error = new TypeError(
-      'The "callback" argument must be of type function'
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
-  }
-  if (
-    options &&
-    options.signal !== undefined &&
-    !(options.signal instanceof NodeAbortSignal)
-  ) {
-    const error = new TypeError('The "signal" option must be an AbortSignal');
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
-  }
-  queueMicrotask(() => {
-    if (options && options.signal && options.signal.aborted) {
-      const error = new Error("The operation was aborted");
-      error.name = "AbortError";
-      error.code = "ABORT_ERR";
-      callback(error);
-      return;
-    }
-    let data;
-    try {
-      data = globalThis.__nodeFs.readFileSync(value, options);
-    } catch (error) {
-      callback(error);
-      return;
-    }
-    callback(null, data);
   });
 };
 globalThis.__nodeFs.watch = (value) => {

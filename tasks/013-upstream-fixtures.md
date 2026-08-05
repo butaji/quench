@@ -4605,3 +4605,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Validate asynchronous `ftruncate` lengths before callback validation, as
   required by Node's invalid-length contract.
+
+### Stage 1313: read-file abort lifecycle
+
+- Deliver an `AbortError` when an asynchronous `fs.readFile` is aborted while
+  the read is pending.
