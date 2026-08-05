@@ -36,6 +36,8 @@ globalThis.__nodeCommon = {
   },
   printSkipMessage: (message) => console.log(`# SKIP: ${message}`),
   skipIfInspectorDisabled: () => {},
+  skip: () => {},
+  hasCrypto: true,
   expectsError: (_expected) => (error) => {
     if (!error) throw new Error("Expected filesystem error");
   },
