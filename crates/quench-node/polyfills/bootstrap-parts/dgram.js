@@ -2,6 +2,15 @@ const __quenchOriginalRequireWithDgram = globalThis.require;
 const __quenchDgramStateSymbol = Symbol.for("quench.dgram.state");
 const __quenchDgramBoundPorts = new Set();
 let __quenchDgramNextPort = 40000;
+const __quenchDgramTypeDetail = (value) => {
+  if (typeof value === "number") return ` Received type number (${value})`;
+  if (typeof value === "boolean") return ` Received type boolean (${value})`;
+  if (typeof value === "bigint") return ` Received type bigint (${value}n)`;
+  if (typeof value === "symbol")
+    return ` Received type symbol (${String(value)})`;
+  if (Array.isArray(value)) return " Received an instance of Array";
+  return ` Received an instance of ${value?.constructor?.name || "Object"}`;
+};
 const __quenchDgramBind = (socket, type, port, address, callback) => {
   if (socket._bound)
     throw Object.assign(new Error("Socket is already bound"), {
@@ -58,7 +67,9 @@ const __quenchDgramSend = (socket, message, ...args) => {
     typeof address !== "string"
   )
     throw Object.assign(
-      new TypeError('The "address" argument must be of type string'),
+      new TypeError(
+        `The "address" argument must be of type string.${__quenchDgramTypeDetail(address)}`
+      ),
       { code: "ERR_INVALID_ARG_TYPE" }
     );
   const callback = args.at(-1);
