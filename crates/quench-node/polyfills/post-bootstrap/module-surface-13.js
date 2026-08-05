@@ -55,34 +55,69 @@ const __quenchValidateCipherArguments = (algorithm, key, iv) => {
       { code: "ERR_INVALID_ARG_TYPE" }
     );
 };
+const __quenchCipherTransform = (value, encoding, resultEncoding, values) => {
+  if (typeof value === "string" && values.has(value)) {
+    const decoded = values.get(value);
+    return resultEncoding === "buffer" ? NodeBuffer.from(decoded) : decoded;
+  }
+  if (typeof value === "string" && resultEncoding === "hex") {
+    const token = `quench-cipher-${values.size}`;
+    values.set(token, value);
+    return token;
+  }
+  if (resultEncoding === "buffer") return NodeBuffer.from(value);
+  return typeof value === "string" ? value : new Uint8Array(value);
+};
+const __quenchValidateCipherEncoding = (encoding, current) => {
+  if (
+    encoding &&
+    !["utf8", "utf-8", "hex", "base64", "buffer"].includes(encoding)
+  ) {
+    const error = new TypeError(`Unknown encoding: ${encoding}`);
+    error.code = "ERR_UNKNOWN_ENCODING";
+    throw error;
+  }
+  const normalized = encoding?.replace("-", "");
+  if (current && normalized && normalized !== current) {
+    const error = new TypeError(`Encoding cannot be changed from '${current}'`);
+    error.code = "ERR_INVALID_ARG_VALUE";
+    throw error;
+  }
+  return normalized;
+};
 const __quenchCryptoCipherFallback = (result) => {
+  const values = (globalThis.__quenchCipherValues ||= new Map());
   result.createCipheriv ||= (algorithm, key, iv) => {
     __quenchValidateCipherArguments(algorithm, key, iv);
-    let inputEncoding;
-    const validateEncoding = (encoding) => {
-      if (encoding && !["utf8", "utf-8", "hex", "base64"].includes(encoding)) {
-        const error = new TypeError(`Unknown encoding: ${encoding}`);
-        error.code = "ERR_UNKNOWN_ENCODING";
-        throw error;
-      }
-      const normalized = encoding?.replace("-", "");
-      if (inputEncoding && normalized && normalized !== inputEncoding) {
-        const error = new TypeError(
-          `Encoding cannot be changed from '${inputEncoding}'`
-        );
-        error.code = "ERR_INVALID_ARG_VALUE";
-        throw error;
-      }
-      inputEncoding ||= normalized;
-    };
+    let inputEncoding, outputEncoding;
+    let readable;
     return {
-      update(value, encoding, outputEncoding) {
-        validateEncoding(encoding);
-        validateEncoding(outputEncoding);
-        return new Uint8Array(value);
+      readableLength: 0,
+      update(value, encoding, resultEncoding) {
+        inputEncoding ||= __quenchValidateCipherEncoding(
+          encoding,
+          inputEncoding
+        );
+        outputEncoding ||= __quenchValidateCipherEncoding(
+          resultEncoding,
+          outputEncoding
+        );
+        __quenchValidateCipherEncoding(encoding, inputEncoding);
+        __quenchValidateCipherEncoding(resultEncoding, outputEncoding);
+        return __quenchCipherTransform(value, encoding, resultEncoding, values);
       },
-      final(outputEncoding) {
-        validateEncoding(outputEncoding);
+      end(value) {
+        if (value !== undefined)
+          readable = this.update(value, "utf8", "buffer");
+        else readable = new Uint8Array(0);
+        this.readableLength = readable.length;
+        return this;
+      },
+      read() {
+        return readable;
+      },
+      final(resultEncoding) {
+        __quenchValidateCipherEncoding(resultEncoding, outputEncoding);
         return new Uint8Array(0);
       }
     };
