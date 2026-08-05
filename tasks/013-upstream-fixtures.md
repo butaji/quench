@@ -5068,3 +5068,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1421: crypto DH key-pair exchange
 
 - Permit compatible generated DH key-pair handles through stateless exchange.
+
+### Stage 1422: crypto stateless DH shared secret
+
+- Align one-shot and instance DH shared-secret results.
