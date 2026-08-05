@@ -58,9 +58,12 @@ fn realm_eval_script(
     // evalScript runs a NEW script: non-strict unless the source itself
     // declares 'use strict' — never inherit the caller's strictness.
     let was_strict = crate::interpreter::is_strict_mode();
+    let was_direct_eval = crate::interpreter::is_direct_eval();
     crate::interpreter::set_strict_mode(false);
+    crate::interpreter::set_direct_eval(false);
     let result = ctx.eval(&code);
     crate::interpreter::set_strict_mode(was_strict);
+    crate::interpreter::set_direct_eval(was_direct_eval);
     let updated_realm = crate::context::intrinsics::IntrinsicSnapshot::save();
     *realm_intrinsics.borrow_mut() = Some(updated_realm);
     caller_intrinsics.restore();
@@ -134,9 +137,12 @@ fn host_262_eval_script(args: Vec<Value>) -> Result<Value, JsError> {
     // evalScript runs a NEW script: non-strict unless the source itself
     // declares 'use strict' — never inherit the caller's strictness.
     let was_strict = crate::interpreter::is_strict_mode();
+    let was_direct_eval = crate::interpreter::is_direct_eval();
     crate::interpreter::set_strict_mode(false);
+    crate::interpreter::set_direct_eval(false);
     let result = ctx.eval(&code);
     crate::interpreter::set_strict_mode(was_strict);
+    crate::interpreter::set_direct_eval(was_direct_eval);
     result
 }
 
