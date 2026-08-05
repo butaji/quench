@@ -4521,3 +4521,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1293: interval callback context
 
 - Bind interval callbacks to their timer handle so `clearInterval(this)` works.
+
+### Stage 1294: timer delay clamping
+
+- Clamp timer delays outside the supported signed 32-bit range to immediate
+  next-tick behavior.
