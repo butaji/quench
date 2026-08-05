@@ -250,3 +250,8 @@ globalThis.__nodeURLSearchParams.prototype.toString = function toString() {
     return globalThis.__nodeInvalidThis();
   return __nodeURLSearchParamsToString.call(this);
 };
+globalThis.__nodeURLSearchParams.prototype.sort ||= function sort() {
+  if (!(this instanceof globalThis.__nodeURLSearchParams))
+    return globalThis.__nodeInvalidThis();
+  this._pairs.sort(([left], [right]) => left.localeCompare(right));
+};
