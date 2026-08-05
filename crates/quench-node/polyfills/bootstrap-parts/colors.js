@@ -326,8 +326,8 @@ globalThis.__nodeURL = class NodeURL {
     return this.href;
   }
 };
-globalThis.URL = globalThis.__nodeURL;
-globalThis.URLSearchParams = globalThis.__nodeURLSearchParams;
+// prettier-ignore
+Object.defineProperty(globalThis, "URL", { configurable: true, enumerable: false, value: globalThis.__nodeURL, writable: true }), Object.defineProperty(globalThis, "URLSearchParams", { configurable: true, enumerable: false, value: globalThis.__nodeURLSearchParams, writable: true });
 const __nodeLegacyUrlHostInvalid = (host) =>
   !/^\[[^\]]+\](?::\d*)?$/.test(host) && /[#/?@[\\\]^|]/.test(host);
 const __nodeLegacyUrlValidateAuthority = (value) => {
