@@ -4203,3 +4203,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Suppressed duplicate `EBADF` errors when filesystem read streams close after
   their descriptor has already been released.
+
+### Stage 1221: zlib window-bits validation
+
+- Added range validation for zlib convenience methods' `windowBits` option.
