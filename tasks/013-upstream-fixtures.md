@@ -5383,3 +5383,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1651. `url-hash-surrogate.js` — encode Unicode URL hash values.
 1652. `url-setter-symbol.js` — reject Symbol URL setter values.
 1653. `url-setter-object-coercion.js` — propagate URL setter object coercion errors.
+1655. `url-deep-equality.js` — hide URLSearchParams owner internals from deep equality.
