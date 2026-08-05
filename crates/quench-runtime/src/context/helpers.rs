@@ -312,9 +312,12 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
             .borrow()
             .get("globalThis")
             .unwrap_or(Value::Undefined);
+        let saved_scopes = ctx.env.borrow_mut().scopes.split_off(1);
         let mut eval_env = Rc::new(RefCell::new(Environment::with_parent(Rc::clone(&ctx.env))));
         crate::interpreter::set_this_binding(&eval_env, this_value);
-        crate::interpreter::eval_program(&program, &mut eval_env, Some(&source), false)
+        let result = crate::interpreter::eval_program(&program, &mut eval_env, Some(&source), false);
+        ctx.env.borrow_mut().scopes.extend(saved_scopes);
+        result
     } else {
         let this_value = ctx
             .env
@@ -1030,6 +1033,16 @@ mod tests {
         assert_eq!(
             ctx.eval("(0, eval)('\"use strict\"; var strictEvalOnly = 88;'); 'strictEvalOnly' in this"),
             Ok(Value::Boolean(false))
+        );
+    }
+
+    #[test]
+    fn strict_indirect_eval_uses_global_lexical_environment() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        assert_eq!(
+            ctx.eval("let x = 'outside'; { let x = 'inside'; (0, eval)('\"use strict\"; x;') }") ,
+            Ok(Value::String("outside".to_string()))
         );
     }
 
