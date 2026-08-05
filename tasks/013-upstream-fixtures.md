@@ -4944,3 +4944,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1390: crypto DH number validation
 
 - Reject non-integer Diffie-Hellman size and generator arguments.
+
+### Stage 1391: crypto DH small modulus
+
+- Reject Diffie-Hellman modulus sizes that are too small for OpenSSL 3.
