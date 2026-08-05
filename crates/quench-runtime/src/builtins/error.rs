@@ -270,7 +270,16 @@ fn register_aggregate_error(ctx: &mut Context, parent_proto: &Rc<RefCell<Object>
                     obj.set("errors", errors_arg.clone());
                 }
                 if let Some(msg) = &msg_str {
-                    obj.set("message", Value::String(msg.clone()));
+                    obj.define_own_property(
+                        "message",
+                        &PropertyDescriptor {
+                            value: Some(Value::String(msg.clone())),
+                            writable: Some(true),
+                            enumerable: Some(false),
+                            configurable: Some(true),
+                            ..Default::default()
+                        },
+                    );
                 }
                 if let Some(Value::Object(options)) = args.get(2) {
                     if let Some(cause) = options.borrow().get("cause") {
