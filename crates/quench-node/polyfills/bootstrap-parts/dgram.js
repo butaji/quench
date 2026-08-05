@@ -111,8 +111,17 @@ const __quenchDgramSend = (socket, message, ...args) => {
       { code: "ERR_INVALID_ARG_TYPE" }
     );
   const callback = args.at(-1);
-  const payload = Array.isArray(message) ? NodeBuffer.concat(message) : message;
+  const payload =
+    typeof message === "string"
+      ? NodeBuffer.from(message)
+      : Array.isArray(message)
+        ? NodeBuffer.concat(message)
+        : message;
   const length = hasOffset ? args[1] : payload.byteLength;
+  if (socket._connected) {
+    socket._sendQueueSize = (socket._sendQueueSize || 0) + length;
+    socket._sendQueueCount = (socket._sendQueueCount || 0) + 1;
+  }
   queueMicrotask(() => {
     if (!socket._bound) return;
     socket.emit("message", payload, socket.address());
@@ -358,6 +367,8 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
         throw __quenchDgramBufferError("send", "EBADF", "bad file descriptor");
       return socket._sendBufferSize || options.sendBufferSize || 0;
     },
+    getSendQueueSize: () => socket._sendQueueSize || 0,
+    getSendQueueCount: () => socket._sendQueueCount || 0,
     setRecvBufferSize: (value) => {
       if (!socket._bound)
         throw __quenchDgramBufferError("recv", "EBADF", "bad file descriptor");
