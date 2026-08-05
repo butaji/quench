@@ -5048,3 +5048,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1416: crypto stateless DH key messages
 
 - Preserve contextual key-type error wording for mixed key pairs.
+
+### Stage 1417: crypto stateless DH descriptors
+
+- Validate private/public key descriptor formats and types with property paths.
