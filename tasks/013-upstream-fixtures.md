@@ -4434,3 +4434,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1272: copyFile callback validation
 
 - Enforced synchronous callback type validation for `fs.copyFile`.
+
+### Stage 1273: copyFile path validation
+
+- Reject invalid source and destination paths synchronously in `fs.copyFile`.

@@ -241,8 +241,8 @@ Object.assign(globalThis.__nodeFs, {
     return globalThis.__nodeFs.writeSync(fd, NodeBuffer.concat(buffers));
   },
   copyFileSync: (from, to, mode = 0) => {
-    const source = nodeFsPath(from);
-    const destination = nodeFsPath(to);
+    const source = __nodeFsPathOnly(from);
+    const destination = __nodeFsPathOnly(to);
     if (typeof mode !== "number") {
       const error = new TypeError('The "mode" argument must be of type number');
       error.code = "ERR_INVALID_ARG_TYPE";
