@@ -157,10 +157,20 @@ const __quenchValidateStatelessDhKeys = (options) => {
       { code: "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE" }
     );
 };
+const __quenchValidateStatelessDhRequiredKeys = (options) => {
+  if (options.privateKey === undefined || options.publicKey === undefined)
+    throw Object.assign(
+      new TypeError(
+        "The options argument must contain privateKey and publicKey"
+      ),
+      { code: "ERR_INVALID_ARG_TYPE" }
+    );
+};
 const __quenchCryptoKeyExchangeFallback = (result) => {
   __quenchPrepareDhGroup(result);
   result.diffieHellman ||= (options, callback) => {
     __quenchValidateStatelessDhArgs(options, callback);
+    __quenchValidateStatelessDhRequiredKeys(options);
     __quenchValidateStatelessDhKeys(options);
     return NodeBuffer.alloc(128);
   };
