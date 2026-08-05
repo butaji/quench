@@ -395,6 +395,8 @@ const __quenchAddUrlFormatting = (result) => {
   __quenchAddFileUrlFallback(result);
   const originalResolve = result.resolve;
   result.resolveObject ||= (from, to) => {
+    const fileRelative = globalThis.__quenchResolveFileRelative(from, to);
+    if (fileRelative) return fileRelative;
     if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\/\//.test(from))
       return globalThis.__quenchResolveEmptyAuthority(from, to);
     const protocolTarget =
