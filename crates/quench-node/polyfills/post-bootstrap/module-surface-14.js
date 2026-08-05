@@ -495,4 +495,5 @@ const __quenchCryptoAllKeyFallbacks = (result) => {
   result.publicEncrypt ||= (_key, data) => NodeBuffer.from(data);
   result.privateDecrypt ||= (_key, data) => NodeBuffer.from(data);
   __quenchCryptoSecretKeyFallback(result);
+  __quenchCryptoPrimeFallback(result);
 };

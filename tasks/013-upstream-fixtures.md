@@ -5195,3 +5195,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1462. `crypto-secret-key-validation.js` — validate secret-key algorithms and lengths.
 1463. `crypto-randomuuid-options.js` — validate random UUID options.
 1464. `crypto-randomuuidv7.js` — provide timestamp-ordered UUIDv7 generation.
+1465. `crypto-prime-api.js` — expose prime generation and checking APIs.

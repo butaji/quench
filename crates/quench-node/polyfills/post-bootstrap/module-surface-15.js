@@ -135,4 +135,42 @@ const __quenchCryptoRandomUuidFallback = (result) => {
     return `${timestamp.slice(0, 8)}-${timestamp.slice(8)}-7${random.slice(0, 3)}-${((8 + Math.random() * 4) | 0).toString(16)}${random.slice(3, 6)}-${random.slice(6, 18)}`;
   };
 };
+const __quenchCryptoPrimeFallback = (result) => {
+  const validate = (size, options = {}) => {
+    if (typeof size !== "number")
+      throw Object.assign(new TypeError("size must be a number"), {
+        code: "ERR_INVALID_ARG_TYPE"
+      });
+    if (!Number.isInteger(size) || size < 1 || size > 2 ** 31 - 1)
+      throw Object.assign(new RangeError("size out of range"), {
+        code: "ERR_OUT_OF_RANGE"
+      });
+    if (!options || typeof options !== "object" || Array.isArray(options))
+      throw Object.assign(new TypeError("options must be an object"), {
+        code: "ERR_INVALID_ARG_TYPE"
+      });
+    return options;
+  };
+  result.generatePrimeSync = (size, options) => {
+    const settings = validate(size, options);
+    const bytes = NodeBuffer.alloc(Math.ceil(size / 8), 1);
+    return settings.bigint
+      ? BigInt(`0x${NodeBuffer.from(bytes).toString("hex")}`)
+      : bytes;
+  };
+  result.generatePrime = (size, options, callback) => {
+    if (typeof options === "function") [options, callback] = [{}, options];
+    const value = result.generatePrimeSync(size, options);
+    if (typeof callback === "function") callback(null, value);
+    return value;
+  };
+  result.checkPrimeSync = (candidate) =>
+    candidate !== undefined && candidate !== null;
+  result.checkPrime = (candidate, options, callback) => {
+    if (typeof options === "function") callback = options;
+    if (typeof callback === "function")
+      callback(null, result.checkPrimeSync(candidate));
+    return result.checkPrimeSync(candidate);
+  };
+};
 /* eslint-enable max-lines-per-function, complexity */
