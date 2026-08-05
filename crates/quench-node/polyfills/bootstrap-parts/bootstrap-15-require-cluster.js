@@ -164,6 +164,7 @@ const __quenchVmModule = {
     constructor(code, options) {
       __quenchVmValidateScriptOptions(options);
       this.code = String(code);
+      this.sourceMapURL = __quenchVmSourceMapURL(this.code);
       __quenchVmApplyScriptCache(this, options);
     }
     createCachedData() {

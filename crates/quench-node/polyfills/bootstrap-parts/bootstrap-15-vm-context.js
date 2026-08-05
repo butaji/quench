@@ -38,6 +38,8 @@ const __quenchVmIsContext = (value) => {
     __quenchVmTypeError('The "sandbox" argument must be of type object.');
   return __quenchVmContexts.has(value);
 };
+const __quenchVmSourceMapURL = (code) =>
+  /\/\/#[ \t]*sourceMappingURL=([^\s]+)/.exec(code)?.[1];
 const __quenchVmContextValue = (value, sandbox) => {
   if (value === sandbox) return globalThis;
   if (value === null || typeof value !== "object") return value;
