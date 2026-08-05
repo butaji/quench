@@ -3,10 +3,11 @@
 ## Stage 1150: VM realm Object.hasOwn
 
 - Fixture: `test-vm-global-property-prototype.js`
-- Restore `Object.hasOwn()` inside VM context intrinsics.
-- Retrospective: a global polyfill does not prove availability in a separately
-  evaluated VM realm; add a realm-focused contract before changing context
-  installation.
+- Verify `Object.hasOwn()` and own-property descriptors inside a VM context
+  with an inherited sandbox prototype.
+- Retrospective: the focused realm probe passes without extra context code, so
+  keep the shim minimal and isolate the remaining large-fixture failure before
+  changing context installation.
 
 ## Stage 1149: legacy URL raw query formatting
 
