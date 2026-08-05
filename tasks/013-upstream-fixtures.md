@@ -5243,3 +5243,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1511. `url-resolve-dot-directory.js` — preserve directory slashes for dot targets.
 1512. `url-resolve-same-web-scheme.js` — resolve same-scheme web paths relatively.
 1513. `url-resolve-empty-scheme.js` — preserve bases for empty scheme targets.
+1514. `url-resolve-empty-host.js` — preserve empty-host URL resolution paths.
