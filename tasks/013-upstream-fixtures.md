@@ -1,5 +1,13 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1160: crypto random size validation
+
+- Fixture: `test-crypto-random.js`
+- Added a separate random-byte polyfill with Node-shaped type/range errors and
+  the legacy `pseudoRandomBytes` alias.
+- Retrospective: split high-churn crypto APIs by concern before adding more
+  validation, preserving the file-size gate and making ownership explicit.
+
 ## Stage 1159: crypto SHAKE XOF hashes
 
 - Fixture: `test-crypto-hash.js`
