@@ -669,7 +669,7 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
         let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
             continue;
         };
-        if !(name.ends_with("_FIXTURE.js") || name.ends_with("_FIXTURE.json")) {
+        if !name.contains("_FIXTURE") {
             continue;
         }
         fixtures.push((name.to_string(), path));
@@ -751,6 +751,21 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
     let mut named_reexport_edges = Vec::<(String, String)>::new();
     let mut pending_default_imports = HashMap::<String, String>::new();
     for (index, (name, path)) in fixtures.iter().enumerate() {
+        if !name.ends_with("_FIXTURE.js") && !name.ends_with("_FIXTURE.json") {
+            let source = std::fs::read(path).map_err(|e| format!("fixture read: {}", e))?;
+            let module_name = format!("./{}", name);
+            if let Some(Value::Object(raw_modules)) = ctx.get_global(raw_modules_key) {
+                raw_modules.borrow_mut().set(
+                    &module_name,
+                    Value::String(String::from_utf8_lossy(&source).into_owned()),
+                );
+            }
+            ctx.register_module(
+                &module_name,
+                crate::value::Object::new(crate::value::ObjectKind::ModuleNamespace),
+            );
+            continue;
+        }
         let source = std::fs::read_to_string(path).map_err(|e| format!("fixture read: {}", e))?;
         let module_name = format!("./{}", name);
         if name.ends_with("_FIXTURE.json") {

@@ -34,6 +34,15 @@ pub fn lower_module_decl(decl: &ast::Statement) -> Option<Statement> {
 #[allow(clippy::complexity)]
 pub fn lower_import(import: &ast::ImportDeclaration) -> Option<Statement> {
     let source = import.source.value.to_string();
+    let import_type = import.with_clause.as_ref().and_then(|clause| {
+        clause.with_entries.iter().find_map(|entry| {
+            let key = match &entry.key {
+                ast::ImportAttributeKey::Identifier(key) => key.name.as_str(),
+                ast::ImportAttributeKey::StringLiteral(key) => key.value.as_str(),
+            };
+            (key == "type").then(|| entry.value.value.to_string())
+        })
+    });
     let Some(specifiers) = import.specifiers.as_ref() else {
         return Some(Statement::Import {
             default: None,
@@ -41,6 +50,7 @@ pub fn lower_import(import: &ast::ImportDeclaration) -> Option<Statement> {
             namespace: None,
             source,
             deferred: matches!(import.phase, Some(ast::ImportPhase::Defer)),
+            import_type,
         });
     };
 
@@ -77,6 +87,7 @@ pub fn lower_import(import: &ast::ImportDeclaration) -> Option<Statement> {
         namespace,
         source,
         deferred: matches!(import.phase, Some(ast::ImportPhase::Defer)),
+        import_type,
     })
 }
 
@@ -98,6 +109,7 @@ pub fn lower_export_star_from(source: &str) -> Statement {
         namespace: Some(unique_name.clone()),
         source: source.to_string(),
         deferred: false,
+        import_type: None,
     };
     // Lower the for-in loop manually using statements
     // for (let k in ns) exports[k] = ns[k];
@@ -227,6 +239,7 @@ pub fn lower_export_named(named: &ast::ExportNamedDeclaration) -> Option<Stateme
             namespace: None,
             source,
             deferred: false,
+            import_type: None,
         };
         let mut all_stmts = vec![import_stmt];
         all_stmts.extend(stmts);
@@ -266,6 +279,7 @@ fn lower_export_from(
         namespace: None,
         source,
         deferred: false,
+        import_type: None,
     };
     let mut all_stmts = vec![import_stmt];
     all_stmts.extend(stmts);

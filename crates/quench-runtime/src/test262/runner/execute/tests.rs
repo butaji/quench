@@ -1612,3 +1612,14 @@ fn runner_deferred_namespace_evaluates_on_export_access() {
         .join("tests/test262/test/language/import/import-defer/evaluation-triggers/trigger-exported-string-get.js");
     assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
 }
+
+#[test]
+fn runner_static_text_import_produces_string_default() {
+    let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .join("tests/test262/test/language/import/import-attributes/text-empty.js");
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}

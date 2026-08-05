@@ -115,6 +115,7 @@ pub enum Statement {
         namespace: Option<String>,
         source: String,
         deferred: bool,
+        import_type: Option<String>,
     },
     /// For-in loop (ES6)
     /// for (x in object) { body }

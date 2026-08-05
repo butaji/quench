@@ -1005,7 +1005,8 @@ pub fn eval_statement(
             namespace,
             source,
             deferred,
-        } => eval_import(default, named, namespace, source, *deferred, env),
+            import_type,
+        } => eval_import(default, named, namespace, source, *deferred, import_type, env),
         Statement::ForIn {
             variable,
             object,
@@ -2219,9 +2220,31 @@ fn eval_import(
     namespace: &Option<String>,
     source: &str,
     deferred: bool,
+    import_type: &Option<String>,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
-    let module_exports = if deferred {
+    let module_exports = if let Some(import_type) = import_type {
+        let raw = get_raw_module_source(env, source).ok_or_else(|| {
+            JsError::new(format!("Cannot find module '{}'.", source))
+        })?;
+        let value = match import_type.as_str() {
+            "text" => Value::String(raw),
+            "json" => parse_json_module(&raw).map_err(|reason| JsError::new(format!("{:?}", reason)))?,
+            _ => Value::Undefined,
+        };
+        let mut module = Object::new(ObjectKind::ModuleNamespace);
+        module.define(
+            "default",
+            value,
+            crate::value::PropertyFlags {
+                value: None,
+                writable: true,
+                enumerable: true,
+                configurable: false,
+            },
+        );
+        Value::Object(Rc::new(RefCell::new(module)))
+    } else if deferred {
         dynamic_import(source, env, None, false, true)?
     } else {
         initialize_fixture_module(source, env)?;
