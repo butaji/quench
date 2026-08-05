@@ -4351,3 +4351,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Allocate distinct synthetic descriptors for simultaneous filesystem opens in
   the JavaScript compatibility layer.
+
+### Stage 1255: appendFile validation order
+
+- Validate append data before requiring the asynchronous callback, matching
+  Node’s error precedence.
