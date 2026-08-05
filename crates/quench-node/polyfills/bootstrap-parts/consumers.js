@@ -8,7 +8,12 @@ const __quenchConsume = async (stream) => {
       if (item.done) break;
       chunks.push(item.value);
     }
-  else if (stream != null) chunks.push(stream);
+  else if (stream != null)
+    await new Promise((resolve, reject) => {
+      stream.on("data", (chunk) => chunks.push(chunk));
+      stream.once("end", resolve);
+      stream.once("error", reject);
+    });
   return chunks;
 };
 const __quenchStreamConsumers = {
@@ -22,6 +27,8 @@ const __quenchStreamConsumers = {
     (await __quenchStreamConsumers.buffer(stream)).toString(),
   json: async (stream) =>
     JSON.parse(await __quenchStreamConsumers.text(stream)),
+  bytes: async (stream) =>
+    new Uint8Array(await __quenchStreamConsumers.buffer(stream)),
   blob: async (stream) =>
     new Blob([await __quenchStreamConsumers.buffer(stream)])
 };
