@@ -4281,3 +4281,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Preserved serialized `Cookie` headers on HTTP request objects returned by
   `request()` and `get()`.
+
+### Stage 1239: internal TCP binding
+
+- Added the minimal `internal/test/binding` TCP wrapper required by net tests
+  that instrument `TCPWrap.prototype.setNoDelay`.

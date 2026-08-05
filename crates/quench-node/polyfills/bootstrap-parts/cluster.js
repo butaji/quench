@@ -83,9 +83,8 @@ const __quenchVmCopyProperties = (sandbox, keys, originalGlobalKeys) => {
     )
       sandbox[key] = globalThis[key];
 };
-const __quenchVmContexts = new WeakSet();
-const __quenchVmIsObject = (value) =>
-  value !== null && (typeof value === "object" || typeof value === "function");
+const __quenchVmIsObject = (v) =>
+  v != null && ["object", "function"].includes(typeof v);
 const __quenchVmRunCallback = (callback, sandbox, args) => {
   const state = __quenchVmInstallContext(sandbox);
   try {
@@ -139,7 +138,7 @@ const __quenchVmValidateContext = (sandbox) => {
     __quenchVmTypeError(
       'The "contextifiedObject" argument must be of type object.'
     );
-  if (!__quenchVmContexts.has(sandbox)) {
+  if (!(__quenchVmIsObject.contexts ||= new WeakSet()).has(sandbox)) {
     __quenchVmTypeError(
       'The "contextifiedObject" argument must be an vm.Context'
     );
@@ -200,7 +199,7 @@ const __quenchVmModule = {
     if (!__quenchVmIsObject(sandbox))
       __quenchVmTypeError("The options argument must be an object");
     __quenchVmValidateContextOptions(options);
-    __quenchVmContexts.add(sandbox);
+    (__quenchVmIsObject.contexts ||= new WeakSet()).add(sandbox);
     return sandbox;
   },
   isContext: (value) => __quenchVmIsContext(value),
@@ -236,16 +235,16 @@ __quenchNodeTestModule.describe = (_name, callback) =>
   __quenchTrackTestResult(callback({ assert: globalThis.__nodeAssert }));
 __quenchNodeTestModule.it = __quenchNodeTestModule.describe;
 __quenchNodeTestModule.test = __quenchNodeTestModule;
+const __quenchDebugBinding = () => ({
+  getGenericUsageCount: (name) =>
+    name.includes("Uninitialized")
+      ? __nodeAllocatorCounts.uninitialized
+      : __nodeAllocatorCounts.zeroFilled
+});
 const __quenchInternalBindingModule = {
   internalBinding: (binding) => {
     if (binding === "os") return globalThis.__quenchInternalOsBinding;
-    if (binding === "debug")
-      return {
-        getGenericUsageCount: (name) =>
-          name.includes("Uninitialized")
-            ? __nodeAllocatorCounts.uninitialized
-            : __nodeAllocatorCounts.zeroFilled
-      };
+    if (binding === "debug") return __quenchDebugBinding();
     if (binding === "uv")
       return {
         UV_ENOENT: -2,
@@ -263,6 +262,7 @@ const __quenchInternalBindingModule = {
           }
         }
       };
+    if (binding === "tcp_wrap") return globalThis.__quenchTcpBinding?.();
     if (binding === "util")
       return {
         arrayBufferViewHasBuffer: (() => {
