@@ -4167,3 +4167,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1213: readable flow controls
 
 - Added chainable `Readable.resume()` and `Readable.pause()` compatibility.
+- Added `ERR_STREAM_PREMATURE_CLOSE` reporting for unfinished streams.
