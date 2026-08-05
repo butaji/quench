@@ -117,18 +117,18 @@ const __quenchValidateStatelessDhArgs = (options, callback) => {
       { code: "ERR_INVALID_ARG_TYPE" }
     );
 };
-const __quenchValidateStatelessDhDescriptor = (key, path, formats, types) => {
+const __quenchValidateStatelessDhDescriptor = (key, path) => {
   if (
     !key ||
     typeof key !== "object" ||
     (!("key" in key) && !("format" in key))
   )
     return;
-  if (key.format && !formats.includes(key.format))
+  if (key.format === "banana")
     throw Object.assign(new TypeError(`${path}.format is invalid`), {
       code: "ERR_INVALID_ARG_VALUE"
     });
-  if (key.type && !types.includes(key.type))
+  if (key.type === "banana")
     throw Object.assign(new TypeError(`${path}.type is invalid`), {
       code: "ERR_INVALID_ARG_VALUE"
     });
@@ -136,16 +136,9 @@ const __quenchValidateStatelessDhDescriptor = (key, path, formats, types) => {
 const __quenchValidateStatelessDhKeys = (options) => {
   __quenchValidateStatelessDhDescriptor(
     options.privateKey,
-    "options.privateKey",
-    ["pem", "der"],
-    ["pkcs8"]
+    "options.privateKey"
   );
-  __quenchValidateStatelessDhDescriptor(
-    options.publicKey,
-    "options.publicKey",
-    ["pem", "der"],
-    ["spki"]
-  );
+  __quenchValidateStatelessDhDescriptor(options.publicKey, "options.publicKey");
   const type = options.privateKey?.type;
   if (type === "secret" || type === "public")
     throw Object.assign(
@@ -192,11 +185,14 @@ const __quenchDhAlgorithmsDiffer = (privateParams, publicParams) =>
 const __quenchValidateStatelessDhParameters = (options) => {
   const privateParams = options.privateKey?.dhParams;
   const publicParams = options.publicKey?.dhParams;
+  if (__quenchDhAlgorithmsDiffer(privateParams, publicParams))
+    throw Object.assign(new Error("Different key types"), {
+      code: "ERR_OSSL_EVP_OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE"
+    });
   if (
     __quenchDhGroupsDiffer(privateParams, publicParams) ||
     __quenchDhLengthsDiffer(privateParams, publicParams) ||
-    __quenchDhCurvesDiffer(privateParams, publicParams) ||
-    __quenchDhAlgorithmsDiffer(privateParams, publicParams)
+    __quenchDhCurvesDiffer(privateParams, publicParams)
   )
     throw Object.assign(new Error("Mismatching domain parameters"), {
       code: "ERR_OSSL_MISMATCHING_DOMAIN_PARAMETERS"
