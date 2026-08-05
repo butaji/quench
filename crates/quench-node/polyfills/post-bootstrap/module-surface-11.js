@@ -37,6 +37,7 @@ globalThis.__quenchResolveParsedWebRelative = (r, f, t) => {
   const source = f.href || "";
   const origin = source.match(/^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/]*/)?.[0];
   if (!origin || t.startsWith("/")) return null;
+  if (t === "") return r.parse(source);
   const path = source.slice(origin.length).split(/[?#]/)[0] || "/";
   if (/^[?#]/.test(t)) return r.parse(`${origin}${path}${t}`);
   const base = path.slice(0, path.lastIndexOf("/") + 1);
@@ -45,10 +46,14 @@ globalThis.__quenchResolveParsedWebRelative = (r, f, t) => {
   const normalized = globalThis.__quenchNormalizeAbsoluteTarget(
     `${base}${targetPath}`
   );
-  const trailing =
-    targetPath.endsWith("/") && !normalized.endsWith("/") ? "/" : "";
+  const trailing = globalThis.__quenchParsedWebTrailing(targetPath, normalized);
   return r.parse(`${origin}${normalized}${trailing}${suffix}`);
 };
+globalThis.__quenchParsedWebTrailing = (target, normalized) =>
+  (target.endsWith("/") || target === "." || target === "..") &&
+  !normalized.endsWith("/")
+    ? "/"
+    : "";
 globalThis.__quenchResolveParsedAbsoluteOpaque = (r, f, t) =>
   /^[A-Za-z][A-Za-z0-9+.-]*:[^/]/.test(t) &&
   !/^([A-Za-z][A-Za-z0-9+.-]*):#/.test(t)
