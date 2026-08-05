@@ -243,7 +243,7 @@ const __quenchCryptoCipherPrototypes = (result) => {
     const create = result[factory];
     if (typeof create !== "function") continue;
     result[factory] = (...args) => {
-      const value = create(...args);
+      const value = create(...__quenchCryptoKeyInput(args));
       __nodeCryptoSetPrototype(value, result[constructor]);
       return value;
     };
@@ -307,8 +307,8 @@ const __quenchCryptoKeyObjectBrand =
   (globalThis.__quenchCryptoKeyObjectBrand ||= new WeakSet());
 const __quenchCryptoKeyInput = (args) =>
   args.map((value, index) =>
-    index === 1 && __quenchCryptoKeyObjectBrand.has(value)
-      ? value.export()
+    index === 1 && value?.__quenchType && typeof value.export === "function"
+      ? (value.source ?? value.export())
       : value
   );
 const __quenchCryptoKeyObjectInvalidThis = () => {
