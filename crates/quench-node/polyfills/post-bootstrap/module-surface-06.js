@@ -187,7 +187,10 @@
             return this[`_${property}`];
           },
           set [property](value) {
-            this[`_${property}`] = value;
+            this[`_${property}`] =
+              property === "username" || property === "password"
+                ? encodeURIComponent(String(value))
+                : value;
           }
         },
         property
