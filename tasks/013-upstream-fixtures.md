@@ -4158,3 +4158,12 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Added event-based callback completion and cleanup behavior for
   `stream.finished()`.
+
+### Stage 1212: internal end-of-stream symbol
+
+- Added the internal end-of-stream module fallback required by Node's finished
+  fixture.
+
+### Stage 1213: readable flow controls
+
+- Added chainable `Readable.resume()` and `Readable.pause()` compatibility.
