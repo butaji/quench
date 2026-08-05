@@ -50,14 +50,14 @@ const __nodeFsCheckMkdirParents = (path) => {
 };
 const __nodeFsReadPath = (value) => {
   if (
-    value === null ||
-    (typeof value === "object" &&
-      !(value instanceof NodeBuffer) &&
-      !(value instanceof Uint8Array) &&
-      !(value instanceof globalThis.__nodeURL))
+    typeof value !== "string" &&
+    typeof value !== "number" &&
+    !(value instanceof NodeBuffer) &&
+    !(value instanceof Uint8Array) &&
+    !(value instanceof globalThis.__nodeURL)
   ) {
     const error = new TypeError(
-      'The "path" argument must be of type string or an instance of Buffer or URL'
+      `The "path" argument must be of type string or an instance of Buffer or URL. Received ${typeof value} `
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;

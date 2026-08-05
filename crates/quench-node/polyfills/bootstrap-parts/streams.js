@@ -165,6 +165,7 @@ globalThis.__nodeFs.readFile = (value, options, callback) => {
     callback = options;
     options = undefined;
   }
+  if (typeof value === "function") __nodeFsReadPath(value);
   if (typeof callback !== "function") {
     const error = new TypeError(
       'The "callback" argument must be of type function'
