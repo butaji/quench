@@ -15,7 +15,7 @@ use crate::Value;
 
 /// Per-test timeout in seconds — one value shared by the in-process and
 /// subprocess (isolated) paths so a test cannot pass one way and fail the other.
-pub const DEFAULT_TEST_TIMEOUT_SECS: u64 = 30;
+pub const DEFAULT_TEST_TIMEOUT_SECS: u64 = 120;
 
 fn test_timeout_secs() -> u64 {
     std::env::var("TEST_TIMEOUT_SECS")

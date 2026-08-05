@@ -15,7 +15,7 @@ fn fixture_declarations_are_evaluated_before_default_expression() {
 fn in_process_and_isolated_share_one_timeout() {
     // Both paths read TEST_TIMEOUT_SECS; pin the value so a slow test cannot
     // pass in-process (formerly 10s) and fail isolated (formerly 15s).
-    assert_eq!(test_timeout_secs(), 30);
+    assert_eq!(test_timeout_secs(), 120);
 }
 
 #[test]
