@@ -10,6 +10,12 @@ fn is_array_buffer(object: &Object) -> bool {
     object.get_own("\0arrayBuffer").is_some()
 }
 
+fn array_buffer_type_error(message: &str) -> crate::JsError {
+    let (error, js_error) = crate::value::error::create_js_error_with_type(message, "TypeError");
+    crate::value::set_thrown_value(error);
+    js_error
+}
+
 pub fn register_array_buffer(ctx: &mut Context) {
     let proto_rc = Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)));
     if let Some(object_proto) = crate::builtins::get_object_prototype() {
@@ -20,13 +26,13 @@ pub fn register_array_buffer(ctx: &mut Context) {
     let byte_length_getter = Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
         let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
         let Value::Object(object) = this_val else {
-            return Err(crate::JsError::new(
-                "TypeError: ArrayBuffer.prototype.byteLength requires an ArrayBuffer receiver",
+            return Err(array_buffer_type_error(
+                "ArrayBuffer.prototype.byteLength requires an ArrayBuffer receiver",
             ));
         };
         if !is_array_buffer(&object.borrow()) {
-            return Err(crate::JsError::new(
-                "TypeError: ArrayBuffer.prototype.byteLength requires an ArrayBuffer receiver",
+            return Err(array_buffer_type_error(
+                "ArrayBuffer.prototype.byteLength requires an ArrayBuffer receiver",
             ));
         }
         let value = object
@@ -42,13 +48,13 @@ pub fn register_array_buffer(ctx: &mut Context) {
         let getter = Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
             let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
             let Value::Object(object) = this_val else {
-                return Err(crate::JsError::new(
-                    "TypeError: ArrayBuffer getter requires an ArrayBuffer receiver",
+                return Err(array_buffer_type_error(
+                    "ArrayBuffer getter requires an ArrayBuffer receiver",
                 ));
             };
             if !is_array_buffer(&object.borrow()) {
-                return Err(crate::JsError::new(
-                    "TypeError: ArrayBuffer getter requires an ArrayBuffer receiver",
+                return Err(array_buffer_type_error(
+                    "ArrayBuffer getter requires an ArrayBuffer receiver",
                 ));
             }
             Ok(Value::Boolean(false))
@@ -141,14 +147,14 @@ pub fn register_array_buffer(ctx: &mut Context) {
     let resizable_getter = Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
         let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
         let Value::Object(o) = this_val else {
-            return Err(crate::JsError::new(
-                "TypeError: ArrayBuffer.prototype.resizable requires an ArrayBuffer receiver",
+            return Err(array_buffer_type_error(
+                "ArrayBuffer.prototype.resizable requires an ArrayBuffer receiver",
             ));
         };
         let o = o.borrow();
         if !is_array_buffer(&o) {
-            return Err(crate::JsError::new(
-                "TypeError: ArrayBuffer.prototype.resizable requires an ArrayBuffer receiver",
+            return Err(array_buffer_type_error(
+                "ArrayBuffer.prototype.resizable requires an ArrayBuffer receiver",
             ));
         }
         let max_bl = o
@@ -165,11 +171,16 @@ pub fn register_array_buffer(ctx: &mut Context) {
     let max_bl_getter = Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
         let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
         let Value::Object(o) = this_val else {
-            return Err(crate::JsError::new(
-                "TypeError: ArrayBuffer.prototype.maxByteLength requires an ArrayBuffer receiver",
+            return Err(array_buffer_type_error(
+                "ArrayBuffer.prototype.maxByteLength requires an ArrayBuffer receiver",
             ));
         };
         let o = o.borrow();
+        if !is_array_buffer(&o) {
+            return Err(array_buffer_type_error(
+                "ArrayBuffer.prototype.maxByteLength requires an ArrayBuffer receiver",
+            ));
+        }
         Ok(o.get_own_value("maxByteLength")
             .unwrap_or(Value::Number(0.0)))
     })));
@@ -401,6 +412,14 @@ mod tests {
             ),
             Value::String("function".to_string())
         );
+    }
+
+    #[test]
+    fn array_buffer_accessor_rejection_is_a_type_error_object() {
+        let result = eval_ok(
+            "try { Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, 'byteLength').get.call({}); false } catch (error) { error instanceof TypeError }",
+        );
+        assert_eq!(result, Value::Boolean(true));
     }
 
     #[test]
