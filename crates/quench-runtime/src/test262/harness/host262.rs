@@ -136,6 +136,7 @@ fn host_262_eval_script(args: Vec<Value>) -> Result<Value, JsError> {
     }
     let ctx = unsafe { &mut *ctx_ptr };
     reject_restricted_global_lexicals(ctx, &code)?;
+    let function_names = global_function_names(ctx, &code)?;
     // evalScript runs a NEW script: non-strict unless the source itself
     // declares 'use strict' — never inherit the caller's strictness.
     let was_strict = crate::interpreter::is_strict_mode();
@@ -145,7 +146,42 @@ fn host_262_eval_script(args: Vec<Value>) -> Result<Value, JsError> {
     let result = ctx.eval(&code);
     crate::interpreter::set_strict_mode(was_strict);
     crate::interpreter::set_direct_eval(was_direct_eval);
+    if result.is_ok() {
+        set_global_function_descriptors(ctx, &function_names);
+    }
     result
+}
+
+fn global_function_names(ctx: &Context, source: &str) -> Result<Vec<String>, JsError> {
+    let Program::Script(body) = ctx.parse(source)?;
+    Ok(body
+        .iter()
+        .filter_map(|statement| match statement {
+            crate::ast::Statement::FunctionDeclaration { name, .. } => Some(name.clone()),
+            _ => None,
+        })
+        .collect())
+}
+
+fn set_global_function_descriptors(ctx: &Context, names: &[String]) {
+    let Some(Value::Object(global)) = ctx.get_global("globalThis") else {
+        return;
+    };
+    for name in names {
+        let Some(value) = global.borrow().get(name) else {
+            continue;
+        };
+        global.borrow_mut().define(
+            name,
+            value.clone(),
+            crate::value::PropertyFlags {
+                value: Some(value),
+                writable: true,
+                enumerable: true,
+                configurable: false,
+            },
+        );
+    }
 }
 
 fn reject_restricted_global_lexicals(ctx: &Context, source: &str) -> Result<(), JsError> {
@@ -547,6 +583,16 @@ mod tests {
              catch (e) { e instanceof SyntaxError }",
         );
         assert_eq!(result, Ok(crate::Value::Boolean(true)));
+    }
+
+    #[test]
+    fn test_eval_script_function_binding_is_non_configurable() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval(
+            "$262.evalScript('function freshFunction() {}'); \
+             Object.getOwnPropertyDescriptor(this, 'freshFunction').configurable",
+        );
+        assert_eq!(result, Ok(crate::Value::Boolean(false)));
     }
 
     #[test]
