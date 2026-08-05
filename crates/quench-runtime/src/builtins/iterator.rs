@@ -38,20 +38,30 @@ fn async_iterator_dispose(_args: Vec<Value>) -> Result<Value, JsError> {
         )
     })?;
     let Value::Object(object) = this.clone() else {
-        return Err(JsError(
-            "TypeError: async iterator is not an object".to_string(),
-        ));
+        let proto = crate::builtins::promise::get_promise_proto();
+        return crate::builtins::promise::promise_reject_impl_static(
+            vec![Value::String("TypeError: async iterator is not an object".into())],
+            proto,
+        );
     };
-    let return_method = crate::eval::member::eval_object_member(&object, "return", None)?;
-    let result = if matches!(return_method, Value::Undefined | Value::Null) {
-        Value::Undefined
-    } else {
-        crate::eval::function::call_value_with_this(return_method, vec![Value::Undefined], this)?
+    let return_method = crate::eval::member::eval_object_member(&object, "return", None);
+    let return_call = match return_method {
+        Ok(v) if matches!(v, Value::Undefined | Value::Null) => Ok(Value::Undefined),
+        Ok(v) => crate::eval::function::call_value_with_this(v, vec![Value::Undefined], this.clone()),
+        Err(e) => Err(e),
     };
-    let promise = crate::builtins::promise::promise_resolve_impl_static(
-        vec![result],
-        crate::builtins::promise::get_promise_proto(),
-    )?;
+    let promise = match return_call {
+        Ok(result) => crate::builtins::promise::promise_resolve_impl_static(
+            vec![result],
+            crate::builtins::promise::get_promise_proto(),
+        )?,
+        Err(_js_err) => {
+            let throw_value = crate::value::take_thrown_value()
+                .unwrap_or(Value::String("Error".into()));
+            let proto = crate::builtins::promise::get_promise_proto();
+            crate::builtins::promise::promise_reject_impl_static(vec![throw_value], proto)?
+        }
+    };
     let on_fulfilled =
         Value::NativeFunction(Rc::new(NativeFunction::new(|_| Ok(Value::Undefined))));
     crate::interpreter::set_native_this(promise);
