@@ -44,13 +44,20 @@ const __quenchCryptoSignFallback = (result) => {
   };
 };
 const __quenchCryptoKeyFallback = (result) => {
-  const create = (type) => (key) => ({
-    type,
-    source: key,
-    asymmetricKeyType:
-      type === "private" || type === "public" ? "ec" : undefined,
-    export: () => NodeBuffer.from(typeof key === "string" ? key : "")
-  });
+  const create = (type) => (key) => {
+    const handle = {
+      type,
+      source: key,
+      asymmetricKeyType:
+        type === "private" || type === "public" ? "ec" : undefined,
+      export: () => {
+        const exported = NodeBuffer.from(typeof key === "string" ? key : "");
+        exported.dhParams = handle.dhParams;
+        return exported;
+      }
+    };
+    return handle;
+  };
   result.createPrivateKey ||= create("private");
   result.createPublicKey ||= create("public");
   result.generateKeyPairSync = (algorithm, options = {}) => {
