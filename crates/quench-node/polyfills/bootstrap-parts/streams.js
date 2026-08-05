@@ -145,7 +145,7 @@ globalThis.__nodeFs.mkdir = (value, options, callback) => {
     typeof options.recursive !== "boolean"
   ) {
     const error = new TypeError(
-      'The "options.recursive" property must be of type boolean.'
+      `The "options.recursive" property must be of type boolean.${__nodeInvalidArgSuffix(options.recursive)}`
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
