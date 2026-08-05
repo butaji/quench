@@ -5255,3 +5255,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1523. `url-revoke-object-url.js` — validate URL revokeObjectURL arguments.
 1524. `url-internal-is-url.js` — expose internal URL brand detection.
 1525. `url-parse-invalid-input.js` — preserve legacy URL parser input errors.
+1526. `url-parse-protocol-relative.js` — preserve protocol-relative legacy paths.

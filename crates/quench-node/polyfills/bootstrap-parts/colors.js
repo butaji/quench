@@ -331,45 +331,18 @@ globalThis.URLSearchParams = globalThis.__nodeURLSearchParams;
 const __nodeLegacyUrlValidateAuthority = (value) => {
   const rawAuthority =
     value.match(/^[a-z][a-z0-9+.-]*:\/\/([^/]+)/i)?.[1] || "";
-  if (/\u0000/.test(rawAuthority) || /[#%/?@[\\\]^|]/.test(rawAuthority)) {
+  const host = rawAuthority.slice(rawAuthority.lastIndexOf("@") + 1);
+  if (/\u0000/.test(rawAuthority) || /[#/?@[\\\]^|]/.test(host)) {
     const error = new TypeError("Invalid URL");
     error.code = "ERR_INVALID_URL";
     error.input = value;
     throw error;
   }
 };
-const __nodeLegacyUrlReceived = (value) => {
-  if (value == null) return String(value);
-  if (typeof value === "function") return `function ${value.name || ""}`;
-  if (typeof value === "object")
-    return `an instance of ${Object.prototype.toString.call(value).slice(8, -1)}`;
-  return `type ${typeof value} (${String(value)})`;
-};
 const __nodeLegacyUrlPrepare = (value) => {
-  if (typeof value !== "string") {
-    const error = new TypeError(
-      'The "url" argument must be of type string.' +
-        ` Received ${__nodeLegacyUrlReceived(value)}`
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
-  }
-  if (/^https?:\/\/[^/]*:[.]|^git\+ssh:\/\/[^/]*:[^/]+\/[^/]+/.test(value)) {
-    const error = new TypeError("Invalid URL");
-    error.code = "ERR_INVALID_ARG_VALUE";
-    throw error;
-  }
-  if (/%(?:[0-9A-Fa-f]{0,1}|[0-9A-Fa-f]{2})/.test(value)) {
-    try {
-      decodeURIComponent(value);
-    } catch (_) {
-      throw new URIError("URI malformed");
-    }
-  }
-  __nodeLegacyUrlValidateAuthority(value);
-  let input = value.trim();
-  if (/^[a-z][a-z0-9+.-]*:/.test(input)) input = input.replaceAll("\\", "/");
-  return { input, parsed: new globalThis.__nodeURL(input) };
+  const result = globalThis.__nodePrepareLegacyUrl(value);
+  __nodeLegacyUrlValidateAuthority(result.input);
+  return result;
 };
 const __nodeLegacyUrlAuthority = (input) => {
   const authority = input.match(/^[a-z][a-z0-9+.-]*:\/\/([^/?#]*)/i)?.[1] || "";
@@ -379,7 +352,9 @@ const __nodeLegacyUrlAuthority = (input) => {
   return { auth, host };
 };
 const __nodeLegacyUrlPathParts = (parsed, host) => {
-  const pathname = parsed.pathname || (host ? "/" : "");
+  const pathname = parsed.pathname?.startsWith("/;")
+    ? parsed.pathname.slice(1)
+    : parsed.pathname || (host ? "/" : "");
   const search = parsed.search || null;
   return { pathname, search };
 };
@@ -392,6 +367,7 @@ const __nodeLegacyUrlParts = (input, parsed) => {
   const hostname = host.replace(/^\[|\]$/g, "").split(":")[0];
   const port = host.match(/:(\d+)$/)?.[1] || null;
   const { pathname, search } = __nodeLegacyUrlPathParts(parsed, host);
+  const hrefAuth = auth ? `${auth.replace(/[" <]/g, encodeURIComponent)}@` : "";
   return {
     protocol: __nodeLegacyUrlValue(protocol),
     slashes: Boolean(protocol) || null,
@@ -404,7 +380,7 @@ const __nodeLegacyUrlParts = (input, parsed) => {
     query: search ? search.slice(1) : null,
     pathname: __nodeLegacyUrlValue(pathname),
     path: __nodeLegacyUrlPathValue(pathname, search),
-    href: `${protocol}${host ? `//${host}` : ""}${pathname}${search || ""}${parsed.hash || ""}`
+    href: `${protocol}${host ? `//${hrefAuth}${host}` : ""}${pathname}${search || ""}${parsed.hash || ""}`
   };
 };
 const __nodeLegacyUrlFormatSearch = (value) => {
@@ -469,6 +445,9 @@ const __nodeUrlModuleExports = {
   },
   parse: (value) => {
     const { input, parsed } = __nodeLegacyUrlPrepare(value);
+    const protocolRelative =
+      globalThis.__nodeLegacyProtocolRelativeParts(input);
+    if (protocolRelative) return protocolRelative;
     return __nodeLegacyUrlParts(input, parsed);
   },
   format: (value) => {
