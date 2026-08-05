@@ -205,7 +205,7 @@
             : property === "hash"
               ? String(value) === ""
                 ? ""
-                : `#${globalThis.__nodeUrlEncode(String(value).replace(/^#/, "")).replace(/%2F/gi, "/").replace(/%5C/gi, "\\")}`
+                : `#${globalThis.__nodeUrlEncode(String(value).replace(/^#/, "")).replace(/%2F/gi, "/").replace(/%5C/gi, "\\").replace(/%3B/gi, ";").replace(/%3F/gi, "?")}`
               : String(value);
   // eslint-disable-next-line complexity
   const setURLAccessorValue = (target, property, value) => {
