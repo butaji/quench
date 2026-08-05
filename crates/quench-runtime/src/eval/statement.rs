@@ -1328,7 +1328,7 @@ fn eval_func_decl(
         let env_ref = env.borrow();
         env_ref.get_parent().is_none()
     };
-    let existing_kind = env.borrow().get_kind(name);
+    let existing_kind = env.borrow().current_kind(name);
     let mut func = crate::value::ValueFunction::new(
         Some(name.to_owned()),
         params.to_vec(),

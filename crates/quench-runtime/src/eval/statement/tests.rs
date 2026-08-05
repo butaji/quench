@@ -3243,4 +3243,27 @@ obj;
             Value::Boolean(false)
         );
     }
+
+    #[test]
+    fn arrow_default_closure_uses_parameter_environment() {
+        assert_eq!(
+            eval(
+                "const f = (p = eval(\"var arguments = 'param'\"), q = () => arguments) => { function arguments() {} return q(); }; f()"
+            )
+            .unwrap(),
+            Value::String("param".to_string())
+        );
+    }
+
+    #[test]
+    fn direct_eval_existing_local_var_preserves_value() {
+        assert_eq!(
+            eval(
+                "var initial; (function() { var x = 44443; eval('initial = x; var x;'); }()); initial"
+            )
+            .unwrap(),
+            Value::Number(44443.0)
+        );
+    }
+
 }
