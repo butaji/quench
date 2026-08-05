@@ -5392,3 +5392,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1662. `urlsearchparams-argument-validation.js` — validate URLSearchParams receiver and arguments.
 1663. `url-enumerable-properties.js` — hide URL internal slots from enumeration.
 1664. `urlsearchparams-iterator-inspect.js` — inspect URLSearchParams iterators by remaining values.
+1665. `url-invalid-receiver.js` — reject invalid URL method and accessor receivers.

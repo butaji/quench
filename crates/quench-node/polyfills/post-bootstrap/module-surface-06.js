@@ -187,6 +187,8 @@
               : String(value);
   // eslint-disable-next-line complexity
   const setURLAccessorValue = (target, property, value) => {
+    if (!(target instanceof globalThis.__nodeURL))
+      throw new TypeError("Cannot read private member");
     const normalized = normalizeURLSetterValue(property, value);
     target[`_${property}`] =
       property === "pathname" && normalized === "" ? "/" : normalized;
@@ -229,6 +231,12 @@
       const fallback = Object.getOwnPropertyDescriptor(
         {
           get [property]() {
+            if (!(this instanceof globalThis.__nodeURL))
+              throw new TypeError(
+                property === "search"
+                  ? "Receiver must be an instance of class URL"
+                  : "Cannot read private member"
+              );
             return property === "origin"
               ? this.protocol === "blob:" && this.pathname
                 ? new globalThis.__nodeURL(decodeURIComponent(this.pathname))
@@ -313,6 +321,8 @@
   const setURLHref = Object.getOwnPropertyDescriptor(
     {
       set href(value) {
+        if (!(this instanceof globalThis.__nodeURL))
+          throw new TypeError("Cannot read private member");
         if (typeof value === "symbol")
           throw new TypeError("Cannot convert a Symbol value to a string");
         const input = String(value);
