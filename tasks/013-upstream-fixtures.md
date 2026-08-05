@@ -4796,3 +4796,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1353: crypto encoding name normalization
 
 - Normalize `utf-8` to Node’s canonical `utf8` name in cipher errors.
+
+### Stage 1354: crypto cipher constructors
+
+- Expose callable `Cipheriv` and `Decipheriv` constructors with instances.
