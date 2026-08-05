@@ -331,28 +331,34 @@ globalThis.URLSearchParams = globalThis.__nodeURLSearchParams;
 const __nodeLegacyUrlValidateAuthority = (value) => {
   const rawAuthority =
     value.match(/^[a-z][a-z0-9+.-]*:\/\/([^/]+)/i)?.[1] || "";
-  if (/\u0000/.test(rawAuthority) || /[#%/?@[\\\]^|]/.test(rawAuthority))
-    throw new TypeError("Invalid URL");
+  if (/\u0000/.test(rawAuthority) || /[#%/?@[\\\]^|]/.test(rawAuthority)) {
+    const error = new TypeError("Invalid URL");
+    error.code = "ERR_INVALID_URL";
+    error.input = value;
+    throw error;
+  }
+};
+const __nodeLegacyUrlReceived = (value) => {
+  if (value == null) return String(value);
+  if (typeof value === "function") return `function ${value.name || ""}`;
+  if (typeof value === "object")
+    return `an instance of ${Object.prototype.toString.call(value).slice(8, -1)}`;
+  return `type ${typeof value} (${String(value)})`;
 };
 const __nodeLegacyUrlPrepare = (value) => {
   if (typeof value !== "string") {
-    let received;
-    if (value == null) received = String(value);
-    else {
-      try {
-        received = `type ${typeof value} (${String(value)})`;
-      } catch (_) {
-        received = `type ${typeof value} (${Object.prototype.toString.call(value)})`;
-      }
-    }
     const error = new TypeError(
-      'The "url" argument must be of type string.' + ` Received ${received}`
+      'The "url" argument must be of type string.' +
+        ` Received ${__nodeLegacyUrlReceived(value)}`
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
-  if (/^https?:\/\/[^/]*:[.]|^git\+ssh:\/\/[^/]*:[^/]+\/[^/]+/.test(value))
-    throw new TypeError("Invalid URL");
+  if (/^https?:\/\/[^/]*:[.]|^git\+ssh:\/\/[^/]*:[^/]+\/[^/]+/.test(value)) {
+    const error = new TypeError("Invalid URL");
+    error.code = "ERR_INVALID_ARG_VALUE";
+    throw error;
+  }
   if (/%(?:[0-9A-Fa-f]{0,1}|[0-9A-Fa-f]{2})/.test(value)) {
     try {
       decodeURIComponent(value);
