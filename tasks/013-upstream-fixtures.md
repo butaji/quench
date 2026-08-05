@@ -5253,3 +5253,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1521. `url-fileurltopath-invalid-path.js` — reject encoded file URL separators.
 1522. `url-to-http-options.js` — expose URL-to-HTTP option conversion.
 1523. `url-revoke-object-url.js` — validate URL revokeObjectURL arguments.
+1524. `url-internal-is-url.js` — expose internal URL brand detection.
