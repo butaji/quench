@@ -5204,3 +5204,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1471. `crypto-private-encrypt-roundtrip.js` — expose private-encrypt/public-decrypt round trips.
 1472. `crypto-hash-oneshot.js` — expose one-shot crypto hashing.
 1473. `crypto-hash-xof-output.js` — normalize one-shot XOF output encodings.
+1474. `crypto-rsa-pss-digest-aliases.js` — support RSA-PSS digest aliases.
