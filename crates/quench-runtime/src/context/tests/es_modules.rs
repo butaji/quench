@@ -126,7 +126,10 @@ fn module_await_using_for_binding_shadows_outer_binding() {
 fn module_resolution_error_prevents_module_body_evaluation() {
     let mut ctx = Context::new().unwrap();
     let mut errors = crate::value::Object::new(crate::value::ObjectKind::Ordinary);
-    errors.set("./current.js", crate::Value::String("Ambiguous export".to_string()));
+    errors.set(
+        "./current.js",
+        crate::Value::String("Ambiguous export".to_string()),
+    );
     ctx.set_global(
         "__quench_module_errors__".to_string(),
         crate::Value::Object(std::rc::Rc::new(std::cell::RefCell::new(errors))),
@@ -145,7 +148,10 @@ fn module_resolution_error_prevents_module_body_evaluation() {
 fn module_import_resolution_error_is_thrown_before_body() {
     let mut ctx = Context::new().unwrap();
     let mut errors = crate::value::Object::new(crate::value::ObjectKind::Ordinary);
-    errors.set("./dep.js", crate::Value::String("Ambiguous export".to_string()));
+    errors.set(
+        "./dep.js",
+        crate::Value::String("Ambiguous export".to_string()),
+    );
     ctx.set_global(
         "__quench_module_errors__".to_string(),
         crate::Value::Object(std::rc::Rc::new(std::cell::RefCell::new(errors))),

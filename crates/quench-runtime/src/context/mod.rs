@@ -153,10 +153,8 @@ impl Context {
                 self.env.borrow().get("__quench_module_errors__"),
             ) {
                 if let Some(Value::String(reason)) = errors.borrow().get(&module) {
-                    let (value, error) = crate::value::error::create_js_error_with_type(
-                        &reason,
-                        "SyntaxError",
-                    );
+                    let (value, error) =
+                        crate::value::error::create_js_error_with_type(&reason, "SyntaxError");
                     crate::value::set_thrown_value(value);
                     return Err(error);
                 }

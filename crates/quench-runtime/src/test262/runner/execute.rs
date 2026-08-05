@@ -970,10 +970,13 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
         if let Some(Value::Symbol(symbol)) =
             crate::builtins::symbol::get_well_known_symbol_no_ctx("toStringTag")
         {
-            module_exports.set_symbol(
-                &symbol.property_key(),
-                crate::Value::String("Module".to_string()),
-            );
+            let key = symbol.property_key();
+            module_exports.set_symbol(&key, crate::Value::String("Module".to_string()));
+            if let Some(flags) = module_exports.descriptors.get_mut(&key) {
+                flags.writable = false;
+                flags.enumerable = false;
+                flags.configurable = false;
+            }
         }
         module_exports.extensible = false;
         if let Some(default_import) = default_import {

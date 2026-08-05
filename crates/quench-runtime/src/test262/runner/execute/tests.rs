@@ -362,8 +362,7 @@ fn indirectly_exported_function_binding_is_initialized_before_evaluation() {
     use crate::test262::runner::{default_test262_dir, run_single_test};
 
     let root = default_test262_dir();
-    let path = PathBuf::from(&root)
-        .join("test/language/module-code/instn-iee-bndng-fun.js");
+    let path = PathBuf::from(&root).join("test/language/module-code/instn-iee-bndng-fun.js");
     let harness = HarnessLoader::new(&root);
     assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
 }
@@ -544,9 +543,8 @@ fn module_resolution_error_is_raised_before_module_body() {
     use crate::test262::runner::{default_test262_dir, run_single_test};
 
     let root = default_test262_dir();
-    let path = PathBuf::from(&root).join(
-        "test/language/module-code/ambiguous-export-bindings/error-export-from-named.js",
-    );
+    let path = PathBuf::from(&root)
+        .join("test/language/module-code/ambiguous-export-bindings/error-export-from-named.js");
     let harness = HarnessLoader::new(&root);
     assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
 }

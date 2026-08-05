@@ -1033,6 +1033,34 @@ pub fn get_object_property_descriptor(
     o: &Rc<RefCell<Object>>,
     prop: &str,
 ) -> Result<Value, JsError> {
+    if o.borrow().kind == ObjectKind::ModuleNamespace {
+        if !o.borrow().has_own(prop) {
+            return Ok(Value::Undefined);
+        }
+        let getter = o.borrow().get_getter(prop).and_then(|g| g.func.clone());
+        let value = if let Some(getter) = getter {
+            crate::eval::function::call_value_with_this(
+                getter,
+                vec![],
+                Value::Object(Rc::clone(o)),
+            )?
+        } else {
+            let object = o.borrow();
+            object
+                .get_own_value(prop)
+                .ok_or_else(|| JsError::new("property not found"))?
+        };
+        let symbol_tag = prop.contains('\0') && prop.contains("toStringTag");
+        return Ok(make_descriptor_value(
+            PropertyFlags {
+                value: Some(value.clone()),
+                writable: !symbol_tag,
+                enumerable: !symbol_tag,
+                configurable: false,
+            },
+            value,
+        ));
+    }
     let obj = o.borrow();
 
     if prop == "length" && obj.kind == ObjectKind::Array {
