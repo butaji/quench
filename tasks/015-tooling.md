@@ -134,3 +134,5 @@ the remaining monolith is concentrated in the Buffer and fs implementations.
 `tools/diff-cluster.sh` now compares fixture outcomes between `HEAD^` and the
 working commit, making per-slice regressions visible without manual log
 comparison.
+`tools/coverage-by-prefix.sh` now emits pass/total percentages grouped by the
+leading fixture prefix for corpus-level progress measurement.
