@@ -152,7 +152,7 @@ const __nodeCryptoHmacPads = (key) => {
   return { keyBytes, inner, outer };
 };
 const __nodeCryptoApi = {
-  getHashes: () => ["sha1", "sha256"],
+  getHashes: () => ["RSA-SHA1", "sha1", "sha256"],
   getCiphers: () => [],
   timingSafeEqual: (left, right) => {
     if (!(left instanceof Uint8Array) || !(right instanceof Uint8Array)) {
@@ -350,13 +350,14 @@ const __nodeCryptoApi = {
     }
     // prettier-ignore
     const normalized = algorithm.toLowerCase(), isXof = normalized.startsWith("shake");
+    const digestName = normalized === "rsa-sha1" ? "sha1" : normalized;
     // prettier-ignore
     if (!isXof && options?.outputLength !== undefined && !(normalized === "sha224" && options.outputLength === 28)) { if (typeof options.outputLength !== "number") throw Object.assign(new TypeError("The outputLength option must be a number"), { code: "ERR_INVALID_ARG_TYPE" }); throw Object.assign(options.outputLength === 28 ? new Error("not XOF or invalid length") : new RangeError("outputLength is out of range"), { code: options.outputLength === 28 ? "ERR_OSSL_EVP_NOT_XOF_OR_INVALID_LENGTH" : "ERR_OUT_OF_RANGE" }); }
     // prettier-ignore
     if (isXof && (!options || typeof options.outputLength !== "number")) throw Object.assign(new Error("not XOF or invalid length"), { code: "ERR_OSSL_EVP_NOT_XOF_OR_INVALID_LENGTH" });
     if (
       !isXof &&
-      !["sha1", "sha224", "sha256", "sha512", "md5"].includes(normalized)
+      !["sha1", "sha224", "sha256", "sha512", "md5"].includes(digestName)
     ) {
       throw new Error("Digest method not supported");
     }
@@ -393,11 +394,11 @@ const __nodeCryptoApi = {
         const bytes = NodeBuffer.from(
           isXof
             ? globalThis.__quench_shake_bytes(
-                normalized,
+                digestName,
                 input,
                 options.outputLength
               )
-            : globalThis.__quench_digest_bytes(normalized, input)
+            : globalThis.__quench_digest_bytes(digestName, input)
         );
         if (
           encoding === undefined ||
