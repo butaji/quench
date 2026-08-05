@@ -1,4 +1,5 @@
 const __quenchOriginalRequireWithDgram = globalThis.require;
+const __quenchDgramStateSymbol = Symbol.for("quench.dgram.state");
 const __quenchDgramBind = (socket, type, port, address, callback) => {
   if (socket._bound)
     throw Object.assign(new Error("Socket is already bound"), {
@@ -21,6 +22,7 @@ const __quenchDgramSend = (socket, message, ...args) => {
   const payload = Array.isArray(message) ? NodeBuffer.concat(message) : message;
   const length = hasOffset ? args[1] : payload.byteLength;
   queueMicrotask(() => {
+    if (!socket._bound) return;
     socket.emit("message", payload, socket.address());
     if (typeof callback === "function") callback(null, length);
   });
@@ -119,6 +121,7 @@ const __quenchDgramSocket = (type = "udp4") => {
     ref: () => socket,
     unref: () => socket
   };
+  socket[__quenchDgramStateSymbol] = { handle: { fd: 0 } };
   return socket;
 };
 const __quenchDgram = {
@@ -130,4 +133,6 @@ const __quenchDgram = {
 globalThis.require = (specifier) =>
   String(specifier).replace(/^node:/, "") === "dgram"
     ? __quenchDgram
-    : __quenchOriginalRequireWithDgram(specifier);
+    : specifier === "internal/dgram"
+      ? { kStateSymbol: __quenchDgramStateSymbol }
+      : __quenchOriginalRequireWithDgram(specifier);
