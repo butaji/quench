@@ -4188,3 +4188,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Added event-backed `map()`, `filter()`, `forEach()`, and async iteration
   helpers for readable slices.
+
+### Stage 1218: buffered iterable regression
+
+- Added regression coverage for filtering buffered `Readable.from()` values;
+  asynchronous concurrency cases remain separate runtime work.
