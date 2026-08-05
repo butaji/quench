@@ -4484,3 +4484,13 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Preserve numeric path values while rejecting fd-only inputs, so validation
   diagnostics report the actual received type and value.
+
+### Stage 1284: preserve fchmod descriptors
+
+- Keep file descriptors open after asynchronous `fchmod` callbacks, matching
+  Node descriptor lifecycle semantics.
+
+### Stage 1285: fchmod mode validation order
+
+- Validate `fchmod` mode types before callback presence, matching Node’s
+  argument-validation order.
