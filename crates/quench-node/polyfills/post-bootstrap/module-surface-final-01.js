@@ -48,12 +48,19 @@ const __quenchUtilTypesFallbacks = (result) => {
   __quenchUtilTypesTypedFallbacks(result);
   return result;
 };
-const __quenchApplyFinalModule01 = (name, originalRequire) => {
-  const normalized = String(name).replace(/^node:/, "");
+const __quenchInternalStreamFallback = (normalized) => {
   if (normalized === "internal/streams/end-of-stream")
     return {
       kEosNodeSynchronousCallback: Symbol("kEosNodeSynchronousCallback")
     };
+  if (normalized === "internal/streams/add-abort-signal")
+    return { addAbortSignalNoValidate: (_signal, stream) => stream };
+  return null;
+};
+const __quenchApplyFinalModule01 = (name, originalRequire) => {
+  const normalized = String(name).replace(/^node:/, "");
+  const internalFallback = __quenchInternalStreamFallback(normalized);
+  if (internalFallback) return internalFallback;
   if (normalized === "sqlite")
     return {
       DatabaseSync: function DatabaseSync() {},
