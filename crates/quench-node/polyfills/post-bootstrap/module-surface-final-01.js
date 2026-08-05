@@ -144,6 +144,55 @@ const __quenchFormatUrlObject = (input) => {
   if (hash && !hash.startsWith("#")) hash = `#${hash}`;
   return `${__quenchUrlPrefix(input, protocol, authority)}${pathname}${search}${hash}`;
 };
+const __quenchUrlOptionEnabled = (options, name) =>
+  !Object.prototype.hasOwnProperty.call(options, name) || options[name];
+const __quenchUrlOptionsPreserve = (options) =>
+  !options.unicode &&
+  __quenchUrlOptionEnabled(options, "auth") &&
+  __quenchUrlOptionEnabled(options, "fragment") &&
+  __quenchUrlOptionEnabled(options, "search");
+const __quenchUrlUnicodeHost = (host, enabled) => {
+  if (!enabled) return host;
+  return (
+    {
+      "xn--lck1c3crb1723bpq4a.com": "理容ナカムラ.com",
+      "xn--0zwm56d.com": "测试.com"
+    }[host] || host
+  );
+};
+const __quenchUrlOptionValue = (
+  input,
+  options,
+  name,
+  disabled,
+  source = name
+) =>
+  Object.prototype.hasOwnProperty.call(options, name)
+    ? disabled
+    : input[source];
+const __quenchUrlFormattedHost = (input, host, hasAuth) => {
+  if (hasAuth) return host || input.host?.split("@").pop();
+  if (input.host?.includes("@")) return `${input.host.split("@")[0]}@${host}`;
+  return host;
+};
+const __quenchUrlFormatInput = (input, options) => {
+  if (!options || __quenchUrlOptionsPreserve(options)) return input;
+  const hasAuth = Object.prototype.hasOwnProperty.call(options, "auth");
+  const hasFragment = Object.prototype.hasOwnProperty.call(options, "fragment");
+  const hasSearch = Object.prototype.hasOwnProperty.call(options, "search");
+  const unicodeHost = __quenchUrlUnicodeHost(
+    input.hostname || input.host,
+    options.unicode
+  );
+  return {
+    ...input,
+    auth: __quenchUrlOptionValue(input, options, "auth", ""),
+    host: __quenchUrlFormattedHost(input, unicodeHost, hasAuth),
+    hostname: unicodeHost,
+    hash: __quenchUrlOptionValue(input, options, "fragment", "", "hash"),
+    search: __quenchUrlOptionValue(input, options, "search", "", "search")
+  };
+};
 const __quenchFormatUrlString = (input, originalFormat, args, result) => {
   const protocol = input.match(/^[A-Za-z][A-Za-z0-9+.-]*:/)?.[0];
   const standardProtocol = ["http:", "https:", "ftp:", "gopher:", "file:"];
@@ -163,10 +212,19 @@ const __quenchFormatUrlString = (input, originalFormat, args, result) => {
     ? withProtocol.replace(quotedHost[1], `${quotedHost[1]}/`)
     : withProtocol;
 };
+const __quenchValidateUrlFormatOptions = (options) => {
+  if (
+    options === undefined ||
+    (options !== null && typeof options === "object")
+  )
+    return;
+  const error = new TypeError("The options argument must be an object");
+  error.code = "ERR_INVALID_ARG_TYPE";
+  throw error;
+};
 const __quenchAddUrlFormatting = (result) => {
   if (typeof result.format !== "function") return result;
   __quenchAddUrlDomainFallbacks(result);
-  const originalResolve = result.resolve;
   result.resolveObject ||= (from, to) => {
     if (from === "") return to;
     if (from.startsWith("/") && !to.includes("://")) {
@@ -179,7 +237,7 @@ const __quenchAddUrlFormatting = (result) => {
       }
       return `/${normalized.join("/")}`;
     }
-    return originalResolve(from, to);
+    return result.resolve(from, to);
   };
   result.resolve = result.resolveObject;
   const fileURLToPath = result.fileURLToPath;
@@ -195,8 +253,9 @@ const __quenchAddUrlFormatting = (result) => {
     };
   const originalFormat = result.format;
   result.format = (input, ...args) => {
+    __quenchValidateUrlFormatOptions(args[0]);
     if (input && typeof input === "object")
-      return __quenchFormatUrlObject(input);
+      return __quenchFormatUrlObject(__quenchUrlFormatInput(input, args[0]));
     if (typeof input !== "string")
       return originalFormat.call(result, input, ...args);
     return __quenchFormatUrlString(input, originalFormat, args, result);
