@@ -344,6 +344,7 @@ class __quenchKeyObject {
     );
   }
 }
+class __quenchAsymmetricKeyObject extends __quenchKeyObject {}
 Object.defineProperties(__quenchKeyObject.prototype, {
   source: {
     configurable: true,
@@ -401,8 +402,22 @@ Object.defineProperties(__quenchKeyObject.prototype, {
     }
   }
 });
+Object.defineProperties(__quenchAsymmetricKeyObject.prototype, {
+  asymmetricKeyType: Object.getOwnPropertyDescriptor(
+    __quenchKeyObject.prototype,
+    "asymmetricKeyType"
+  ),
+  asymmetricKeyDetails: Object.getOwnPropertyDescriptor(
+    __quenchKeyObject.prototype,
+    "asymmetricKeyDetails"
+  )
+});
 const __quenchCreateKeyObject = (type, source, exportValue) => {
-  const key = Object.create(__quenchKeyObject.prototype);
+  const prototype =
+    type === "secret"
+      ? __quenchKeyObject.prototype
+      : __quenchAsymmetricKeyObject.prototype;
+  const key = Object.create(prototype);
   __quenchCryptoKeyObjectData.set(key, {
     type,
     source,

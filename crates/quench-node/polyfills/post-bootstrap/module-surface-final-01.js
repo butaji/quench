@@ -21,6 +21,9 @@ const __quenchTestModuleFallbacks = (result, originalRequire, name) => {
   return runner;
 };
 const __quenchUtilTypesBasicFallbacks = (result) => {
+  result.isKeyObject = (value) =>
+    globalThis.__quenchCryptoKeyObjectBrand?.has(value) === true ||
+    (value?.source !== undefined && typeof value.export === "function");
   result.isAnyArrayBuffer ||= () => false;
   result.isArgumentsObject ||= (value) =>
     Object.prototype.toString.call(value) === "[object Arguments]";
@@ -194,6 +197,7 @@ const __quenchApplyFinalModule01 = (name, originalRequire) => {
     return __quenchTestModuleFallbacks(result, originalRequire, name);
   if (normalized === "util") {
     result.types ||= Object.create(null);
+    __quenchUtilTypesFallbacks(result.types);
     return result;
   }
   if (normalized === "util/types") {
