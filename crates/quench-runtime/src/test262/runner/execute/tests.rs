@@ -1689,6 +1689,206 @@ fn runner_deferred_namespace_evaluates_on_export_access() {
 }
 
 #[test]
+fn runner_deferred_namespace_then_access_does_not_evaluate() {
+    let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .join("tests/test262/test/language/import/import-defer/evaluation-triggers/ignore-exported-then-get.js");
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
+
+#[test]
+fn runner_deferred_namespace_has_triggers_evaluation() {
+    let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .join("tests/test262/test/language/import/import-defer/evaluation-triggers/trigger-not-exported-string-hasProperty.js");
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
+
+#[test]
+fn runner_deferred_namespace_meta_operations_trigger_evaluation() {
+    let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
+    for name in [
+        "trigger-not-exported-string-defineOwnProperty.js",
+        "trigger-not-exported-string-delete.js",
+        "trigger-not-exported-string-getOwnProperty.js",
+    ] {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(|p| p.parent())
+            .unwrap()
+            .join("tests/test262/test/language/import/import-defer/evaluation-triggers")
+            .join(name);
+        assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+    }
+}
+
+#[test]
+fn runner_deferred_namespace_own_keys_trigger_evaluation() {
+    let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .join("tests/test262/test/language/import/import-defer/evaluation-triggers/trigger-ownPropertyKeys.js");
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
+
+#[test]
+fn runner_deferred_namespace_super_access_obeys_key_trigger_rules() {
+    let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
+    for name in [
+        "ignore-exported-then-super-get.js",
+        "trigger-exported-string-super-property-set-exported.js",
+        "trigger-not-exported-string-super-property-set-exported.js",
+    ] {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(|p| p.parent())
+            .unwrap()
+            .join("tests/test262/test/language/import/import-defer/evaluation-triggers")
+            .join(name);
+        assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+    }
+}
+
+#[test]
+fn runner_deferred_namespace_field_definition_triggers_evaluation() {
+    let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .join("tests/test262/test/language/import/import-defer/evaluation-triggers/trigger-not-exported-string-super-property-define.js");
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
+
+#[test]
+fn runner_deferred_namespace_identity_crosses_fixture_modules() {
+    let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .join(
+            "tests/test262/test/language/import/import-defer/deferred-namespace-object/identity.js",
+        );
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
+
+#[test]
+fn runner_deferred_namespace_constructor_error_is_an_object() {
+    let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .join("tests/test262/test/language/import/import-defer/deferred-namespace-object/exotic-object-behavior.js");
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
+
+#[test]
+fn runner_deferred_import_reports_fixture_syntax_error_eagerly() {
+    let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .join("tests/test262/test/language/import/import-defer/errors/syntax-error/import-defer-of-syntax-error-fails.js");
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
+
+#[test]
+fn runner_deferred_module_rethrows_same_evaluation_error() {
+    let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .join("tests/test262/test/language/import/import-defer/errors/module-throws/trigger-evaluation.js");
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
+
+#[test]
+fn runner_deferred_import_after_failed_evaluation_links() {
+    let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .join("tests/test262/test/language/import/import-defer/errors/module-throws/defer-import-after-evaluation.js");
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
+
+#[test]
+fn runner_deferred_tla_namespace_does_not_evaluate_during_linking() {
+    let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .join("tests/test262/test/language/import/import-defer/errors/get-other-while-evaluating-async/main.js");
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
+
+#[test]
+fn runner_deferred_current_module_access_throws_while_evaluating() {
+    let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .join(
+            "tests/test262/test/language/import/import-defer/errors/get-self-while-evaluating.js",
+        );
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
+
+#[test]
+fn runner_deferred_resolution_error_rejects_import() {
+    let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .join("tests/test262/test/language/import/import-defer/errors/resolution-error/import-defer-of-missing-module-fails.js");
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
+
+#[test]
+fn runner_deferred_dependency_access_throws_while_evaluating() {
+    let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
+    for path in [
+        "errors/get-other-while-evaluating/main.js",
+        "errors/get-self-while-defer-evaluating/main.js",
+    ] {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(|p| p.parent())
+            .unwrap()
+            .join("tests/test262/test/language/import/import-defer")
+            .join(path);
+        assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+    }
+}
+
+#[test]
+fn runner_deferred_tla_preserves_flattening_order() {
+    let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .join("tests/test262/test/language/import/import-defer/evaluation-top-level-await/flattening-order/main.js");
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
+
+#[test]
 fn runner_static_text_import_produces_string_default() {
     let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -1707,6 +1907,53 @@ fn runner_text_import_reads_javascript_named_fixture_as_text() {
         .and_then(|p| p.parent())
         .unwrap()
         .join("tests/test262/test/language/import/import-attributes/text-javascript.js");
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
+
+#[test]
+fn runner_json_import_preserves_object_value() {
+    let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .join("tests/test262/test/language/import/import-attributes/json-value-object.js");
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
+
+#[test]
+fn runner_json_import_link_errors_prevent_evaluation() {
+    let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
+    for name in ["json-invalid.js", "json-named-bindings.js"] {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(|p| p.parent())
+            .unwrap()
+            .join("tests/test262/test/language/import/import-attributes")
+            .join(name);
+        assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+    }
+}
+
+#[test]
+fn runner_json_import_reuses_default_value() {
+    let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .join("tests/test262/test/language/import/import-attributes/json-idempotency.js");
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
+
+#[test]
+fn runner_bytes_import_preserves_binary_payload() {
+    let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .join("tests/test262/test/language/import/import-bytes/bytes-from-png.js");
     assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
 }
 

@@ -32,6 +32,9 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
         .get(1)
         .map(to_property_key)
         .unwrap_or(Ok("".to_string()))?;
+    if let Value::Object(object) = &obj {
+        crate::eval::member::trigger_deferred_namespace(object, &prop)?;
+    }
     let desc = args
         .get(2)
         .ok_or_else(|| JsError::from("Object.defineProperty: descriptor required"))?;
@@ -1015,6 +1018,7 @@ pub fn object_get_own_property_descriptor(args: Vec<Value>) -> Result<Value, JsE
         .unwrap_or(Ok("".to_string()))?;
 
     if let Value::Object(o) = obj {
+        crate::eval::member::trigger_deferred_namespace(o, &prop)?;
         return get_object_property_descriptor(o, &prop);
     } else if let Value::Function(ref f) = obj {
         return get_function_property_descriptor(f, &prop);

@@ -10,6 +10,12 @@ use crate::value::{to_object, JsError, ObjData, Object, ObjectKind, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
 
+fn reflect_type_error(message: &str) -> JsError {
+    let (value, error) = crate::value::error::create_js_error_with_type(message, "TypeError");
+    crate::value::set_thrown_value(value);
+    error
+}
+
 fn reflect_construct(args: Vec<Value>) -> Result<Value, JsError> {
     let target = args
         .first()
@@ -23,11 +29,11 @@ fn reflect_construct(args: Vec<Value>) -> Result<Value, JsError> {
         })
         .ok_or_else(|| JsError::new("Reflect.construct requires an argument list"))?;
     if !crate::eval::class::helpers::is_constructor_value(&target) {
-        return Err(JsError::new("TypeError: target is not a constructor"));
+        return Err(reflect_type_error("target is not a constructor"));
     }
     let new_target = args.get(2).cloned().unwrap_or_else(|| target.clone());
     if !crate::eval::class::helpers::is_constructor_value(&new_target) {
-        return Err(JsError::new("TypeError: newTarget is not a constructor"));
+        return Err(reflect_type_error("newTarget is not a constructor"));
     }
     let realm_default = match &new_target {
         Value::Function(function) => function.closure.borrow().get("Object").and_then(|object| {
@@ -222,6 +228,16 @@ pub fn register_reflect(ctx: &mut Context) {
                 let this_arg = args.get(1).cloned().unwrap_or(Value::Undefined);
                 let call_args =
                     crate::builtins::function::extract_args_from_array_like(args.get(2))?;
+                let callable = matches!(
+                    &target,
+                    Value::Function(_)
+                        | Value::NativeFunction(_)
+                        | Value::NativeConstructor(_)
+                        | Value::Class(_)
+                ) || matches!(&target, Value::Object(object) if object.borrow().is_callable());
+                if !callable {
+                    return Err(reflect_type_error("Reflect.apply target is not callable"));
+                }
                 crate::interpreter::set_this_value(this_arg.clone());
                 let result = crate::eval::call_value_with_this(target, call_args, this_arg);
                 crate::interpreter::take_this_value();

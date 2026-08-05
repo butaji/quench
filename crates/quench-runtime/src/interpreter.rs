@@ -483,11 +483,30 @@ pub fn eval_program(
             if set_this {
                 let this_value = env.borrow().get("globalThis").unwrap_or(Value::Undefined);
                 set_this_binding(env, this_value);
+            } else {
+                for stmt in statements {
+                    if matches!(stmt, Statement::Import { .. }) {
+                        crate::eval::eval_statement(stmt, env, false, false)?;
+                    }
+                }
+                let fixture = env
+                    .borrow()
+                    .current_scope()
+                    .borrow()
+                    .get("__quench_fixture_evaluation__")
+                    == Some(Value::Boolean(true));
+                let import_defer = env.borrow().get("__quench_import_defer_context__")
+                    == Some(Value::Boolean(true));
+                if import_defer && !fixture {
+                    crate::builtins::promise::execute_pending_microtasks()?;
+                }
             }
 
             let mut last_value = Value::Undefined;
             for stmt in statements {
-                if matches!(stmt, Statement::FunctionDeclaration { .. }) {
+                if matches!(stmt, Statement::FunctionDeclaration { .. })
+                    || !set_this && matches!(stmt, Statement::Import { .. })
+                {
                     continue;
                 }
                 let val = crate::eval::eval_statement(stmt, env, false, false)?;

@@ -318,6 +318,7 @@ pub fn make_ops_object() -> Value {
         let o = args.first().cloned().unwrap_or(Value::Undefined);
         match &o {
             Value::Object(obj_rc) => {
+                crate::eval::member::trigger_deferred_namespace(obj_rc, "")?;
                 let object = obj_rc.borrow();
                 let mut keys: Vec<Value> = crate::value::object::own_property_names(&object)
                     .into_iter()
@@ -686,6 +687,7 @@ pub fn make_ops_object() -> Value {
         };
         match &o {
             Value::Object(obj_rc) => {
+                crate::eval::member::trigger_deferred_namespace(obj_rc, &key)?;
                 crate::eval::object::call_proxy_get_own_property_descriptor(obj_rc, &key)?;
                 crate::builtins::object_static::get_object_property_descriptor(obj_rc, &key)
             }

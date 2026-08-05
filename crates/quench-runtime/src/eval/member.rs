@@ -12,6 +12,7 @@ mod string_member;
 
 pub use function_member::eval_function_member;
 pub use native_member::{eval_native_constructor_member, eval_native_function_member};
+pub(crate) use object_member::trigger_deferred_namespace;
 pub use object_member::{eval_object_member, eval_object_member_value};
 pub use string_member::eval_string_member;
 

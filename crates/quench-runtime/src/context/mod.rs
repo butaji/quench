@@ -167,7 +167,15 @@ impl Context {
             interpreter::set_this_binding(&self.env, Value::Undefined);
             let previous_strict = interpreter::is_strict_mode();
             interpreter::set_strict_mode(true);
+            self.env.borrow_mut().define(
+                "__quench_current_module_evaluating__".to_string(),
+                Value::Boolean(true),
+            );
             let result = interpreter::eval_program(&program, &mut self.env, Some(source), false);
+            self.env.borrow_mut().define(
+                "__quench_current_module_evaluating__".to_string(),
+                Value::Boolean(false),
+            );
             interpreter::set_strict_mode(previous_strict);
             result
         })();

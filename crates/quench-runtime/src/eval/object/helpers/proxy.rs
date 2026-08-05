@@ -328,6 +328,7 @@ pub fn create_data_property_or_throw(
     key: &str,
     value: Value,
 ) -> Result<(), JsError> {
+    crate::eval::member::trigger_deferred_namespace(obj, key)?;
     if !obj.borrow().extensible && !obj.borrow().properties.contains_key(key) {
         let (_, js_err) = crate::value::error::create_js_error_with_type(
             "Cannot add property to non-extensible object",
