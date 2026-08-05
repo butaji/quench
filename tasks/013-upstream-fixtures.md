@@ -5365,3 +5365,5 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1633. `urlsearchparams-sort.js` — implement stable URLSearchParams sorting.
 1634. `url-tostring-enumerability.js` — align URL toString descriptor enumerability.
 1635. `url-tojson-method.js` — add the enumerable URL toJSON method.
+1636. `url-inspect-method.js` — add the URL inspect custom method.
+1637. `url-href-enumerability.js` — align URL href accessor enumerability.
