@@ -4466,3 +4466,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Preserve `ENOTDIR` and other classified recursive-parent errors instead of
   rewriting them as `ENOENT`.
+
+### Stage 1280: realpath cycle errors
+
+- Normalize cyclic symlink failures to Node-compatible `ELOOP` realpath
+  errors.
