@@ -22,3 +22,7 @@ globalThis.__validateOpendirOptions = (options) => {
     throw error;
   }
 };
+globalThis.__nodeFs.opendirSync = (value, options) => {
+  globalThis.__validateOpendirOptions(options);
+  return new globalThis.__nodeFs.Dir(nodeFsPath(value));
+};
