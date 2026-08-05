@@ -1,33 +1,56 @@
 {
+  const getURLPatternURL = (value) => new URL(value);
+  const getURLPatternGroups = (source, pathname) => {
+    const names = [...source.matchAll(/:([^/]+)/g)].map((match) => match[1]);
+    const value = pathname.split("/").slice(-1)[0];
+    return Object.fromEntries(names.map((name) => [name, value]));
+  };
+  const getURLPatternResult = (source, value) => {
+    const url = getURLPatternURL(value);
+    return {
+      hash: { input: url.hash },
+      hostname: { input: url.hostname },
+      inputs: [value],
+      password: { input: url.password },
+      pathname: {
+        groups: getURLPatternGroups(source, url.pathname),
+        input: url.pathname
+      },
+      port: { input: url.port },
+      protocol: { input: url.protocol },
+      search: { input: url.search },
+      username: { input: url.username }
+    };
+  };
+  const validateURLPatternInput = (isConstructed, options) => {
+    if (!isConstructed) {
+      const error = new TypeError(
+        "Class constructor URLPattern cannot be invoked without 'new'"
+      );
+      error.code = "ERR_CONSTRUCT_CALL_REQUIRED";
+      throw error;
+    }
+    if (options != null && typeof options !== "object") {
+      const error = new TypeError("Invalid URLPattern input");
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+  };
   const createURLPattern = () => {
-    function URLPattern(options) {
-      if (!new.target) {
-        const error = new TypeError(
-          "Class constructor URLPattern cannot be invoked without 'new'"
-        );
-        error.code = "ERR_CONSTRUCT_CALL_REQUIRED";
-        throw error;
-      }
-      if (options != null && typeof options !== "object") {
-        const error = new TypeError("Invalid URLPattern input");
-        error.code = "ERR_INVALID_ARG_TYPE";
-        throw error;
-      }
+    function URLPattern(options, optionsFlags) {
+      validateURLPatternInput(new.target, options);
       this.protocol = options?.protocol || "*";
       this.hostname = options?.hostname || "*";
       this.pathname = options?.pathname || "*";
+      optionsFlags?.ignoreCase;
       const source = this.pathname;
       this.test = (value) =>
-        new URL(value).pathname ===
+        getURLPatternURL(value).pathname ===
         source.replace(
           /:[^/]+/g,
-          () => new URL(value).pathname.split("/").slice(-1)[0]
+          () => getURLPatternURL(value).pathname.split("/").slice(-1)[0]
         );
-      this.exec = (value) => ({
-        pathname: {
-          groups: { id: new URL(value).pathname.split("/").slice(-1)[0] }
-        }
-      });
+      this.exec = (value) => getURLPatternResult(source, value);
     }
     return URLPattern;
   };
