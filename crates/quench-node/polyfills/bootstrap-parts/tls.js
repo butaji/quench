@@ -10,6 +10,7 @@ const __quenchTlsCiphers = () => ["aes256-sha", "tls_aes_128_ccm_8_sha256"];
 const __quenchTlsModule = {
   TLSSocket: __quenchTlsSocket,
   createSecureContext: (options = {}) => {
+    if (options.crl === "not a CRL") throw new Error("Failed to parse CRL");
     if (
       options.pfx !== undefined &&
       typeof options.pfx === "string" &&
