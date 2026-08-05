@@ -11,6 +11,17 @@ const __quenchDgramTypeDetail = (value) => {
   if (Array.isArray(value)) return " Received an instance of Array";
   return ` Received an instance of ${value?.constructor?.name || "Object"}`;
 };
+const __quenchDgramBufferError = (type, code, message) => {
+  const syscall = `uv_${type}_buffer_size`;
+  const error = new Error(
+    `Could not get or set buffer size: ${syscall} returned ${code} (${message})`
+  );
+  error.name = "SystemError";
+  error.code = "ERR_SOCKET_BUFFER_SIZE";
+  error.info = { code, message, syscall };
+  error.syscall = syscall;
+  return error;
+};
 const __quenchDgramBind = (socket, type, port, address, callback) => {
   if (socket._bound)
     throw Object.assign(new Error("Socket is already bound"), {
@@ -311,8 +322,44 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
     },
     disconnect: () => __quenchDgramDisconnect(socket),
     remoteAddress: () => __quenchDgramRemoteAddress(socket),
-    getRecvBufferSize: () => options.recvBufferSize || 0,
-    getSendBufferSize: () => options.sendBufferSize || 0,
+    getRecvBufferSize: () => {
+      if (!socket._bound)
+        throw __quenchDgramBufferError("recv", "EBADF", "bad file descriptor");
+      return socket._recvBufferSize || options.recvBufferSize || 0;
+    },
+    getSendBufferSize: () => {
+      if (!socket._bound)
+        throw __quenchDgramBufferError("send", "EBADF", "bad file descriptor");
+      return socket._sendBufferSize || options.sendBufferSize || 0;
+    },
+    setRecvBufferSize: (value) => {
+      if (!socket._bound)
+        throw __quenchDgramBufferError("recv", "EBADF", "bad file descriptor");
+      if (!Number.isInteger(value) || value <= 0)
+        throw Object.assign(
+          new TypeError("Buffer size must be a positive integer"),
+          {
+            code: "ERR_SOCKET_BAD_BUFFER_SIZE"
+          }
+        );
+      if (value > 0x7fffffff)
+        throw __quenchDgramBufferError("recv", "EINVAL", "invalid argument");
+      socket._recvBufferSize = value * 2;
+    },
+    setSendBufferSize: (value) => {
+      if (!socket._bound)
+        throw __quenchDgramBufferError("send", "EBADF", "bad file descriptor");
+      if (!Number.isInteger(value) || value <= 0)
+        throw Object.assign(
+          new TypeError("Buffer size must be a positive integer"),
+          {
+            code: "ERR_SOCKET_BAD_BUFFER_SIZE"
+          }
+        );
+      if (value > 0x7fffffff)
+        throw __quenchDgramBufferError("send", "EINVAL", "invalid argument");
+      socket._sendBufferSize = value * 2;
+    },
     setBroadcast: (value) => {
       if (!socket._bound) throw new Error("setBroadcast EBADF");
       return value;
