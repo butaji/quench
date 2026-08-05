@@ -4776,3 +4776,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1348: crypto signing error
 
 - Provide the expected RSA signing error for the upstream fixture’s small key.
+
+### Stage 1349: TLS CRL validation
+
+- Reject malformed CRL input with Node’s expected TLS error.
