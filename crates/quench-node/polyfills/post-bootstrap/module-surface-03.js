@@ -46,6 +46,26 @@ const __quenchValidatePipeline = (pipeline, args) => {
   const result = pipeline(...args);
   return result === undefined ? args[args.length - 2] : result;
 };
+const __quenchFinishedStream = (stream, options, callback) => {
+  if (typeof options === "function") {
+    callback = options;
+    options = {};
+  }
+  if (typeof callback !== "function")
+    throw new TypeError("The callback must be a function");
+  let active = true;
+  const complete = (error) => {
+    if (!active) return;
+    active = false;
+    callback(error);
+  };
+  stream.once("end", complete);
+  stream.once("finish", complete);
+  stream.once("error", complete);
+  return () => {
+    active = false;
+  };
+};
 const __quenchAddHttpEvents = (result) => {
   for (const name of ["IncomingMessage", "ServerResponse"]) {
     const prototype = result[name]?.prototype;
@@ -81,6 +101,9 @@ const __quenchAddStreamCompat = (result) => {
   __quenchAddStreamDefaults(result);
   const pipeline = result.pipeline;
   result.pipeline = (...args) => __quenchValidatePipeline(pipeline, args);
+  const finished = result.finished;
+  result.finished = (stream, options, callback) =>
+    __quenchFinishedStream(stream, options, callback, finished);
   result.promises ||= globalThis.require("stream/promises");
   const promisifyCustom = Symbol.for("nodejs.util.promisify.custom");
   result.pipeline[promisifyCustom] = result.promises.pipeline;
