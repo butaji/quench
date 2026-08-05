@@ -4080,3 +4080,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Added bound-state errors, positive-size validation, and Linux-style doubled
   buffer-size accessors for UDP sockets.
+
+### Stage 1197: dgram connected send overloads
+
+- Corrected connected sends without destination arguments so offset/length
+  parameters are not misclassified as addresses.
