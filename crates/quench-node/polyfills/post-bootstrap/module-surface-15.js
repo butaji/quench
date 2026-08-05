@@ -449,7 +449,10 @@ const __nodeLegacyUrlReceived = (value) => {
   return `type ${typeof value} (${String(value)})`;
 };
 const __nodePrepareLegacyUrlInput = (value) => {
-  let input = value.trim().replace(/[\r\n\t]/g, "");
+  let input = globalThis.__nodeLegacyUrlControlNormalize(value.trim());
+  input = input.replace(/^([^/]*\/\/[^/]*)/, (authority) =>
+    authority.replace(/%0[9a-d]/gi, "")
+  );
   if (!/^[a-z][a-z0-9+.-]*:/i.test(input)) return input;
   if (/^javascript:/i.test(input)) return input;
   const suffixIndex = input.search(/[?#]/);
@@ -457,13 +460,7 @@ const __nodePrepareLegacyUrlInput = (value) => {
   const suffix = suffixIndex < 0 ? "" : input.slice(suffixIndex);
   input =
     globalThis.__nodeLegacyPathNormalize(head) +
-    suffix
-      .replaceAll("\\", "%5C")
-      .replaceAll('"', "%22")
-      .replaceAll("'", "%27")
-      .replaceAll("<", "%3C")
-      .replaceAll(">", "%3E")
-      .replaceAll(" ", "%20");
+    globalThis.__nodeLegacyQueryNormalize(suffix);
   input = input.replace(/^([a-z][a-z0-9+.-]*:\/\/[^/?#;]+);/i, "$1/;");
   input = input.replace(/^([^/?#]+):([?#])/, "$1$2");
   input = input.replace(/^([a-z][a-z0-9+.-]*:\/\/[^/?#]+):(?=[/?#]|$)/i, "$1");
