@@ -5140,3 +5140,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1439: crypto EC signing fallback
 
 - Allow EC private-key signing while retaining RSA error behavior.
+
+### Stage 1440: crypto Hash class identity
+
+- Preserve `Hash` prototype identity for `createHash()` results.
