@@ -50,7 +50,8 @@ pub fn register_array_buffer(ctx: &mut Context) {
         .borrow_mut()
         .set_getter_func("byteLength", byte_length_getter);
     for name in ["detached", "immutable"] {
-        let getter = Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
+        let marker = format!("\0{name}");
+        let getter = Value::NativeFunction(Rc::new(NativeFunction::new(move |_args| {
             let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
             let Value::Object(object) = this_val else {
                 return Err(array_buffer_type_error(
@@ -62,8 +63,8 @@ pub fn register_array_buffer(ctx: &mut Context) {
                     "ArrayBuffer getter requires an ArrayBuffer receiver",
                 ));
             }
-            let detached = object.borrow().get_own_value("\0detached").is_some();
-            Ok(Value::Boolean(detached))
+            let present = object.borrow().get_own_value(&marker).is_some();
+            Ok(Value::Boolean(present))
         })));
         proto_rc.borrow_mut().set_getter_func(name, getter);
     }
@@ -175,6 +176,11 @@ pub fn register_array_buffer(ctx: &mut Context) {
                 if !is_array_buffer(&this_obj.borrow()) {
                     return Err(array_buffer_type_error(
                         "ArrayBuffer method requires an ArrayBuffer receiver",
+                    ));
+                }
+                if this_obj.borrow().get_own_value("\0immutable").is_some() && !is_slice {
+                    return Err(array_buffer_type_error(
+                        "Immutable ArrayBuffer cannot be transferred",
                     ));
                 }
                 if !is_slice {

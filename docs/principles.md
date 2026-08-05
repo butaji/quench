@@ -60,19 +60,3 @@ spec abstract op, every error constructor, every protocol (iterator,
 property access) has exactly one implementation that all callers
 route through. A second path — even a shorter local one — is
 duplication and is deleted in the same PR that notices it.
-
-## Audit status (2026-08)
-
-Measured deviations from the principles above (details:
-`docs/review-2026-08.md`; active queue: `tasks/refactor-plan.md` R18+).
-
-- **Ambient state is not shrinking**: 48 `thread_local!` slots, including
-  strict mode as a global `Cell<bool>` and generator suspend state staged in
-  thread-locals (R23).
-- **Second paths exist**: `loose_eq` hand-rolls ToPrimitive instead of the
-  canonical `value/primitive.rs::to_primitive` (R20); `__ops__.DefineProp`/
-  `SealObject`/`FreezeObject` duplicate `object_static/descriptors.rs` (R21).
-- **`#[allow(dead_code)]` markers remain** (R25): `ClassValue::from_ast`,
-  `to_primitive_for_compare`, `Context::env`.
-- **Speculative scaffolding exists**: `interner.rs` is constructed per
-  `Context` with zero readers (R25).

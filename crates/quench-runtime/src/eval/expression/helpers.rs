@@ -191,6 +191,7 @@ pub fn eval_delete(
                     Err(js_err)
                 }
                 Value::Object(obj_rc) => {
+                    crate::eval::member::trigger_deferred_namespace(&obj_rc, &prop_key)?;
                     let deleted = obj_rc.borrow_mut().delete(&prop_key);
                     if !deleted && crate::interpreter::is_strict_mode() {
                         let (_, error) = crate::value::error::create_js_error_with_type(

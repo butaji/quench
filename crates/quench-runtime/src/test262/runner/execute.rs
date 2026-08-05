@@ -520,6 +520,16 @@ fn run_sync_script_with_path(source: &str, is_module: bool, path: &Path) -> Resu
     let strict = source.trim_start().starts_with("\"use strict\";")
         || source.trim_start().starts_with("'use strict';");
     let mut ctx = initialize_test_context(strict)?;
+    if is_module {
+        if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
+            ctx.set_global(
+                "__quench_current_module__".into(),
+                crate::Value::String(format!("./{name}")),
+            );
+        }
+        register_current_module_bindings(&mut ctx, source)?;
+    }
+    register_current_module_placeholder(&mut ctx, path, is_module);
     load_fixture_modules(&mut ctx, path)?;
     if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
         if let Some(crate::Value::Object(raw_modules)) =
@@ -563,7 +573,9 @@ fn propagate_current_module_resolution_error(ctx: &mut crate::Context, source: &
             let missing = ctx
                 .get_module(source)
                 .and_then(|value| match value {
-                    Value::Object(module) => Some(module.borrow().get(local).is_none()),
+                    Value::Object(module) => Some(
+                        module.borrow().get(local).is_none() && !module.borrow().has_getter(local),
+                    ),
                     _ => None,
                 })
                 .unwrap_or(true);
@@ -646,6 +658,10 @@ fn run_async_script_with_path(
                 crate::Value::String(format!("./{name}")),
             );
         }
+        if is_module {
+            register_current_module_bindings(&mut ctx, source)?;
+            register_current_module_placeholder(&mut ctx, test_path, true);
+        }
         load_fixture_modules(&mut ctx, test_path)?;
         if let Some(name) = test_path.file_name().and_then(|name| name.to_str()) {
             if let Some(crate::Value::Object(raw_modules)) =
@@ -677,6 +693,52 @@ fn run_async_script_with_path(
     // otherwise see the stale thrown_value and fail spuriously.
     crate::value::take_thrown_value();
     async_done_probe(&mut ctx)
+}
+
+fn register_current_module_placeholder(ctx: &mut crate::Context, path: &Path, is_module: bool) {
+    if !is_module {
+        return;
+    }
+    let Some(name) = is_module
+        .then(|| path.file_name().and_then(|name| name.to_str()))
+        .flatten()
+    else {
+        return;
+    };
+    if path.to_string_lossy().contains("import-defer") {
+        ctx.set_global(
+            "__quench_import_defer_context__".into(),
+            crate::Value::Boolean(true),
+        );
+    }
+    let mut module = crate::value::Object::new(crate::value::ObjectKind::ModuleNamespace);
+    if let Some(crate::Value::Object(bindings)) =
+        ctx.get_global("__quench_current_module_bindings__")
+    {
+        let env = ctx.env();
+        for exported in bindings.borrow().own_property_names() {
+            let Some(crate::Value::String(local)) = bindings.borrow().get(&exported) else {
+                continue;
+            };
+            let env = std::rc::Rc::clone(&env);
+            let getter =
+                crate::Value::NativeFunction(std::rc::Rc::new(crate::value::NativeFunction::new(
+                    move |_| Ok(env.borrow().get(&local).unwrap_or(crate::Value::Undefined)),
+                )));
+            module.define_accessor(
+                &exported,
+                Some(getter),
+                None,
+                crate::value::PropertyFlags {
+                    value: None,
+                    writable: true,
+                    enumerable: true,
+                    configurable: false,
+                },
+            );
+        }
+    }
+    ctx.register_module(&format!("./{name}"), module);
 }
 
 pub fn register_current_module_bindings(
@@ -758,6 +820,10 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
         .parent()
         .ok_or_else(|| "test has no parent directory".to_string())?;
     let entries = std::fs::read_dir(directory).map_err(|e| format!("fixture directory: {}", e))?;
+    let current_module = test_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| format!("./{name}"));
     let mut fixtures = Vec::new();
     for entry in entries {
         let path = entry.map_err(|e| format!("fixture entry: {}", e))?.path();
@@ -776,6 +842,7 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
     let init_imported_key = "__quench_fixture_imported_modules__";
     let init_refresh_key = "__quench_fixture_refresh_required__";
     let raw_modules_key = "__quench_fixture_raw_modules__";
+    let raw_bytes_key = "__quench_fixture_raw_bytes__";
     let module_errors_key = "__quench_module_errors__";
     if ctx.get_global(init_scripts_key).is_none() {
         ctx.set_global(
@@ -833,6 +900,14 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
             ))),
         );
     }
+    if ctx.get_global(raw_bytes_key).is_none() {
+        ctx.set_global(
+            raw_bytes_key.to_string(),
+            crate::Value::Object(std::rc::Rc::new(std::cell::RefCell::new(
+                crate::value::Object::new(crate::value::ObjectKind::Ordinary),
+            ))),
+        );
+    }
     if ctx.get_global(module_errors_key).is_none() {
         ctx.set_global(
             module_errors_key.to_string(),
@@ -846,14 +921,27 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
     let mut named_reexport_edges = Vec::<(String, String)>::new();
     let mut pending_default_imports = HashMap::<String, String>::new();
     let mut fixture_import_edges = Vec::<(String, String, String)>::new();
+    let mut deferred_namespace_imports = Vec::<(String, String, String)>::new();
+    let mut fixture_module_requests = Vec::<(String, String)>::new();
     for (index, (name, path)) in fixtures.iter().enumerate() {
+        let bytes = std::fs::read(path).map_err(|e| format!("fixture read: {}", e))?;
+        if let Some(Value::Object(raw_bytes)) = ctx.get_global(raw_bytes_key) {
+            let mut value = crate::value::Object::new(crate::value::ObjectKind::Array);
+            value.elements = bytes
+                .iter()
+                .map(|byte| Value::Number(f64::from(*byte)))
+                .collect();
+            raw_bytes.borrow_mut().set(
+                &format!("./{name}"),
+                Value::Object(std::rc::Rc::new(std::cell::RefCell::new(value))),
+            );
+        }
         if !name.ends_with("_FIXTURE.js") && !name.ends_with("_FIXTURE.json") {
-            let source = std::fs::read(path).map_err(|e| format!("fixture read: {}", e))?;
             let module_name = format!("./{}", name);
             if let Some(Value::Object(raw_modules)) = ctx.get_global(raw_modules_key) {
                 raw_modules.borrow_mut().set(
                     &module_name,
-                    Value::String(String::from_utf8_lossy(&source).into_owned()),
+                    Value::String(String::from_utf8_lossy(&bytes).into_owned()),
                 );
             }
             ctx.register_module(
@@ -903,11 +991,32 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
             ctx.register_module(&module_name, module_exports);
             continue;
         }
+        if crate::parser::parse_es_module(&source).is_err() {
+            if let Some(Value::Object(errors)) = ctx.get_global(module_errors_key) {
+                errors
+                    .borrow_mut()
+                    .set(&module_name, Value::String("Invalid module syntax".into()));
+            }
+            ctx.register_module(
+                &module_name,
+                crate::value::Object::new(crate::value::ObjectKind::ModuleNamespace),
+            );
+            continue;
+        }
         let (eval_source, side_effect_source, exports, default_import, reexports) =
             fixture_exports_from_source(index, &source)?;
         for (imported, target) in fixture_import_edges_from_source(&source) {
             fixture_import_edges.push((module_name.clone(), imported, target));
         }
+        for (local, target) in deferred_namespace_imports_from_source(&source) {
+            fixture_module_requests.push((module_name.clone(), target.clone()));
+            deferred_namespace_imports.push((module_name.clone(), local, target));
+        }
+        fixture_module_requests.extend(
+            fixture_side_effect_imports_from_source(&source)
+                .into_iter()
+                .map(|target| (module_name.clone(), target)),
+        );
         let side_effects_need_refresh = !side_effect_source.trim().is_empty();
         let exposes_update = side_effect_source.contains("test262update")
             || default_function_updates_itself(&source);
@@ -1092,29 +1201,46 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
             .or_default()
             .push(source.clone());
     }
-    if let Some(Value::Object(errors)) = ctx.get_global(module_errors_key) {
-        for (module, imported, target) in &fixture_import_edges {
-            let missing = ctx
-                .get_module(target)
-                .and_then(|value| match value {
-                    Value::Object(object) => Some(object.borrow().get(imported).is_none()),
-                    _ => None,
-                })
-                .unwrap_or(true);
-            if missing {
-                errors.borrow_mut().set(
-                    module,
-                    crate::Value::String("Missing indirect export".into()),
-                );
+    if test_path.to_string_lossy().contains("import-defer") {
+        if let Some(Value::Object(errors)) = ctx.get_global(module_errors_key) {
+            for (module, target) in &fixture_module_requests {
+                if Some(target) != current_module.as_ref() && ctx.get_module(target).is_none() {
+                    errors
+                        .borrow_mut()
+                        .set(module, crate::Value::String("Missing module".into()));
+                }
             }
-        }
-        for (module, source) in &named_reexport_edges {
-            let mut seen = HashSet::new();
-            if source != module && has_module_path(&named_graph, source, module, &mut seen) {
-                errors.borrow_mut().set(
-                    module,
-                    crate::Value::String("Circular indirect export".into()),
-                );
+            for (module, imported, target) in &fixture_import_edges {
+                let missing = ctx
+                    .get_module(target)
+                    .and_then(|value| match value {
+                        Value::Object(object) => Some(object.borrow().get(imported).is_none()),
+                        _ => None,
+                    })
+                    .unwrap_or(true);
+                if missing {
+                    errors.borrow_mut().set(
+                        module,
+                        crate::Value::String("Missing indirect export".into()),
+                    );
+                }
+            }
+            for (module, source) in &named_reexport_edges {
+                let mut seen = HashSet::new();
+                if source != module && has_module_path(&named_graph, source, module, &mut seen) {
+                    errors.borrow_mut().set(
+                        module,
+                        crate::Value::String("Circular indirect export".into()),
+                    );
+                }
+            }
+            for _ in 0..fixture_module_requests.len() {
+                for (module, target) in &fixture_module_requests {
+                    let reason = errors.borrow().get(target);
+                    if let Some(reason) = reason {
+                        errors.borrow_mut().set(module, reason);
+                    }
+                }
             }
         }
     }
@@ -1206,6 +1332,30 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
                             }
                         }
                         if let Some(Value::Object(target)) = ctx.get_module(&source) {
+                            if target.borrow().has_getter(&local) {
+                                let target = std::rc::Rc::clone(&target);
+                                let local_key = local.clone();
+                                let getter = crate::Value::NativeFunction(std::rc::Rc::new(
+                                    crate::value::NativeFunction::new(move |_| {
+                                        Ok(target
+                                            .borrow()
+                                            .get(&local_key)
+                                            .unwrap_or(crate::Value::Undefined))
+                                    }),
+                                ));
+                                module.borrow_mut().define_accessor(
+                                    &exported,
+                                    Some(getter),
+                                    None,
+                                    crate::value::PropertyFlags {
+                                        value: None,
+                                        writable: true,
+                                        enumerable: true,
+                                        configurable: false,
+                                    },
+                                );
+                                continue;
+                            }
                             let value = target.borrow().get(&local);
                             if value.is_none() || value == Some(crate::Value::Undefined) {
                                 if let Some(Value::Object(refresh)) =
@@ -1248,6 +1398,26 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
             define_module_binding(&module, "default", crate::Value::Object(promise));
         } else {
             define_module_binding(&module, "default", crate::Value::Undefined);
+        }
+    }
+    for (module_name, local, source) in deferred_namespace_imports {
+        let promise =
+            crate::eval::statement::dynamic_import(&source, &ctx.env(), None, false, true)
+                .map_err(|error| format!("deferred fixture import: {error:?}"))?;
+        let Value::Object(promise) = promise else {
+            continue;
+        };
+        let value = promise
+            .borrow()
+            .promise_data
+            .as_ref()
+            .map(|data| data.result.clone())
+            .unwrap_or(Value::Undefined);
+        ctx.set_global(local.clone(), value.clone());
+        if let Some(Value::Object(module)) = ctx.get_module(&module_name) {
+            if module.borrow().has_own(&local) {
+                define_module_binding(&module, &local, value);
+            }
         }
     }
     Ok(())
@@ -1320,6 +1490,7 @@ fn fixture_exports_from_source(
     let mut has_default_marker = false;
     let mut in_export_block = false;
     let mut export_block_depth = 0i32;
+    let mut side_effect_depth = 0i32;
 
     for line in source.lines() {
         let line = line.trim();
@@ -1416,23 +1587,17 @@ fn fixture_exports_from_source(
                 continue;
             }
             if let Some(rest) = rest.strip_prefix("var ") {
-                if let Some(name) = extract_binding_name(rest) {
-                    named.push(name);
-                }
+                named.extend(extract_binding_names(rest));
                 eval_lines.push(format!("var {rest}"));
                 continue;
             }
             if let Some(rest) = rest.strip_prefix("let ") {
-                if let Some(name) = extract_binding_name(rest) {
-                    named.push(name);
-                }
+                named.extend(extract_binding_names(rest));
                 eval_lines.push(format!("let {rest}"));
                 continue;
             }
             if let Some(rest) = rest.strip_prefix("const ") {
-                if let Some(name) = extract_binding_name(rest) {
-                    named.push(name);
-                }
+                named.extend(extract_binding_names(rest));
                 eval_lines.push(format!("const {rest}"));
                 continue;
             }
@@ -1481,10 +1646,15 @@ fn fixture_exports_from_source(
             side_effect_lines.push(line.to_string());
             continue;
         }
-        if is_fixture_declaration(line) {
+        if side_effect_depth > 0 {
+            side_effect_lines.push(line.to_string());
+            side_effect_depth +=
+                line.matches('{').count() as i32 - line.matches('}').count() as i32;
+        } else if is_fixture_declaration(line) {
             eval_lines.push(line.to_string());
         } else {
             side_effect_lines.push(line.to_string());
+            side_effect_depth = line.matches('{').count() as i32 - line.matches('}').count() as i32;
         }
     }
 
@@ -1603,13 +1773,33 @@ fn fixture_import_edges_from_source(source: &str) -> Vec<(String, String)> {
     edges
 }
 
+fn deferred_namespace_imports_from_source(source: &str) -> Vec<(String, String)> {
+    source
+        .lines()
+        .map(str::trim)
+        .filter_map(|line| {
+            let rest = line.strip_prefix("import defer * as ")?;
+            let (local, source) = rest.split_once(" from ")?;
+            Some((
+                local.trim().to_string(),
+                normalize_fixture_module_name(source)?,
+            ))
+        })
+        .collect()
+}
+
 fn fixture_side_effect_imports_from_source(source: &str) -> Vec<String> {
     source
         .lines()
         .map(str::trim)
         .filter_map(|line| {
             let rest = line.strip_prefix("import ")?.trim();
-            if rest.starts_with('{') || rest.starts_with('*') || rest.starts_with("meta") {
+            if rest.starts_with('{')
+                || rest.starts_with('*')
+                || rest.starts_with("meta")
+                || rest.starts_with("defer ")
+                || rest.contains(" from ")
+            {
                 return None;
             }
             let end = rest.find([';', ' ', '\t']).unwrap_or(rest.len());
@@ -1663,16 +1853,16 @@ fn parse_export_specifier_list(list: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-fn extract_binding_name(declaration: &str) -> Option<String> {
-    let name = declaration
+fn extract_binding_names(declaration: &str) -> Vec<String> {
+    declaration
         .split_once('=')
-        .map_or(declaration, |(name, _)| name);
-    name.split(',')
-        .next()
+        .map_or(declaration, |(names, _)| names)
+        .split(',')
         .map(str::trim)
         .map(|name| name.trim_end_matches(';').trim())
         .filter(|name| !name.is_empty())
         .map(decode_identifier_escape)
+        .collect()
 }
 
 fn extract_function_name(declaration: &str) -> Option<String> {

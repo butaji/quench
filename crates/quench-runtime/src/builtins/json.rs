@@ -245,6 +245,7 @@ fn from_serde_value(v: serde_json::Value) -> Result<Value, JsError> {
         }
         serde_json::Value::Object(map) => {
             let mut obj = Object::new(ObjectKind::Ordinary);
+            obj.prototype = crate::builtins::get_object_prototype();
             for (k, val) in map {
                 obj.properties.insert(k, from_serde_value(val)?);
             }

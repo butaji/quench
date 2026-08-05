@@ -107,16 +107,10 @@ fn eval_object_member_inner(
     prop_name: &str,
     env: Option<&Rc<RefCell<Environment>>>,
 ) -> Result<Value, JsError> {
-    let deferred = o
-        .try_borrow_mut()
-        .ok()
-        .and_then(|mut object| object.deferred_module_get.take());
-    if let Some(hook) = deferred {
-        crate::eval::function::call_value_with_this(hook, Vec::new(), Value::Undefined)?;
-    }
     {
         let mut current: Option<Rc<RefCell<Object>>> = Some(Rc::clone(o));
         while let Some(obj_rc) = current {
+            trigger_deferred_namespace(&obj_rc, prop_name)?;
             {
                 let obj = obj_rc.borrow();
                 if let Some(getter_storage) = obj.get_getter(prop_name) {
@@ -205,6 +199,29 @@ fn eval_object_member_inner(
         }
     }
     Ok(Value::Undefined)
+}
+
+pub(crate) fn trigger_deferred_namespace(
+    object: &Rc<RefCell<Object>>,
+    property: &str,
+) -> Result<(), JsError> {
+    if property == "then" || property.contains('\0') {
+        return Ok(());
+    }
+    let hook = {
+        let Ok(mut object) = object.try_borrow_mut() else {
+            return Ok(());
+        };
+        object.deferred_module_get.take()
+    };
+    if let Some(hook) = hook {
+        object.borrow_mut().deferred_module_get = Some(hook.clone());
+        match crate::eval::function::call_value_with_this(hook, Vec::new(), Value::Undefined) {
+            Ok(_) => object.borrow_mut().deferred_module_get = None,
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
 }
 
 fn eval_object_member_inner_value(

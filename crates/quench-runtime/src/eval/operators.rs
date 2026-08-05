@@ -469,7 +469,7 @@ fn eval_in_op(left: &Value, right: &Value) -> Result<Value, JsError> {
     }
     let prop_name = to_js_string(left);
     match right {
-        Value::Object(obj) => Ok(Value::Boolean(obj.borrow().has(&prop_name))),
+        Value::Object(obj) => eval_object_has(obj, &prop_name).map(Value::Boolean),
         Value::Function(function) => Ok(Value::Boolean(
             function
                 .own_property_names()
@@ -482,6 +482,22 @@ fn eval_in_op(left: &Value, right: &Value) -> Result<Value, JsError> {
         )),
         _ => crate::throw!("TypeError", "right-hand side of 'in' is not an object"),
     }
+}
+
+fn eval_object_has(
+    object: &Rc<std::cell::RefCell<crate::value::Object>>,
+    key: &str,
+) -> Result<bool, JsError> {
+    let mut current = Some(Rc::clone(object));
+    while let Some(object) = current {
+        crate::eval::member::trigger_deferred_namespace(&object, key)?;
+        let borrowed = object.borrow();
+        if borrowed.has_own(key) || borrowed.symbol_properties.contains_key(key) {
+            return Ok(true);
+        }
+        current = borrowed.prototype.as_ref().map(Rc::clone);
+    }
+    Ok(false)
 }
 
 fn has_prototype_in_chain(

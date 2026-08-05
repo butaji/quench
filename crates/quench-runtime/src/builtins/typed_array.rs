@@ -33,6 +33,45 @@ pub fn get_typed_array_prototype() -> Option<Rc<RefCell<Object>>> {
     TYPED_ARRAY_PROTOTYPE.with(|tp| tp.borrow().clone())
 }
 
+pub(crate) fn immutable_uint8_array(
+    bytes: Vec<Value>,
+    env: &Rc<RefCell<crate::env::Environment>>,
+) -> Result<Value, JsError> {
+    let prototype = constructor_prototype(env, "Uint8Array")?;
+    let buffer_prototype = constructor_prototype(env, "ArrayBuffer")?;
+    let length = bytes.len() as u64;
+    let mut buffer = Object::with_prototype(ObjectKind::Ordinary, buffer_prototype);
+    buffer.elements = bytes;
+    buffer.set("byteLength", Value::Number(length as f64));
+    buffer.set("\0arrayBuffer", Value::Boolean(true));
+    buffer.set("\0immutable", Value::Boolean(true));
+    let buffer = Rc::new(RefCell::new(buffer));
+    let mut array = Object::with_prototype(ObjectKind::Ordinary, prototype);
+    array.data = ObjData::Idx {
+        buffer: Rc::clone(&buffer),
+        offset: 0,
+        length,
+        name: TypedArrayName::Uint8,
+    };
+    array.set_builtin_method("buffer", Value::Object(buffer));
+    Ok(Value::Object(Rc::new(RefCell::new(array))))
+}
+
+fn constructor_prototype(
+    env: &Rc<RefCell<crate::env::Environment>>,
+    name: &str,
+) -> Result<Rc<RefCell<Object>>, JsError> {
+    let Some(Value::NativeFunction(constructor)) = env.borrow().get(name) else {
+        return Err(JsError::new(format!("TypeError: {name} is unavailable")));
+    };
+    let Some(Value::Object(prototype)) = constructor.get_property("prototype") else {
+        return Err(JsError::new(format!(
+            "TypeError: {name} prototype is unavailable"
+        )));
+    };
+    Ok(prototype)
+}
+
 /// Save the thread-local prototype cache (realm snapshot support)
 pub(crate) fn save_typed_array_prototype() -> Option<Rc<RefCell<Object>>> {
     get_typed_array_prototype()

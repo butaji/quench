@@ -415,6 +415,7 @@ pub(crate) fn eval_super_member(
     // Look up property on the prototype chain
     let mut current: Option<Rc<RefCell<Object>>> = proto;
     while let Some(obj_rc) = current {
+        crate::eval::member::trigger_deferred_namespace(&obj_rc, &prop_name)?;
         let obj = obj_rc.borrow();
         // Check getter first
         if let Some(getter_storage) = obj.get_getter(&prop_name) {
@@ -457,7 +458,11 @@ pub fn set_super_property(
 
     // Check if we're in a static context (static method, static init block).
     let this_val = crate::interpreter::get_this_binding(env);
-    let is_static = if env.borrow().is_in_class_field_initializer() {
+    let is_static = if crate::eval::class::helpers::constructing_class_for_super().is_some()
+        || !matches!(this_val, Value::Class(_))
+    {
+        false
+    } else if env.borrow().is_in_class_field_initializer() {
         matches!(this_val, Value::Class(_))
     } else {
         let mut current: Option<Rc<RefCell<Environment>>> = Some(env.clone());
@@ -486,6 +491,10 @@ pub fn set_super_property(
         })
     };
     let prop_name = eval_property_key(property, env, in_arrow_function)?;
+
+    if let Some(base) = &proto {
+        crate::eval::member::trigger_deferred_namespace(base, &prop_name)?;
+    }
 
     if is_static {
         // Static: set property on the superclass constructor.
@@ -528,6 +537,7 @@ pub fn set_super_property(
 
     // No setter found: set the property on `this` (the receiver).
     if let Value::Object(ref o) = this_val {
+        crate::eval::member::trigger_deferred_namespace(o, &prop_name)?;
         let blocked = {
             let receiver = o.borrow();
             receiver
