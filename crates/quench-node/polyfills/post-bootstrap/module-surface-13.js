@@ -46,6 +46,7 @@ const __quenchCryptoSignFallback = (result) => {
 const __quenchCryptoKeyFallback = (result) => {
   const create = (type) => (key) => ({
     type,
+    source: key,
     asymmetricKeyType:
       type === "private" || type === "public" ? "ec" : undefined,
     export: () => NodeBuffer.from(typeof key === "string" ? key : "")
