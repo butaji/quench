@@ -347,13 +347,15 @@ globalThis.__quenchResolveParsedFragment = (result, from, to) => {
   if (!target || !source.startsWith(`${target[1]}://`)) return null;
   return result.parse(`${source.replace(/#.*$/, "")}${target[2]}`);
 };
-globalThis.__quenchResolveParsedSingleSlash = (result, from, to) => {
-  const target = to.match(/^([A-Za-z][A-Za-z0-9+.-]*):\/([^/].*)$/);
-  const source = from.href || from.pathname || "";
-  if (!target || !source.startsWith(`${target[1]}://`)) return null;
-  const origin = source.match(/^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/]*/)?.[0];
-  return result.parse(`${origin}/${target[2]}`);
-};
+globalThis.__quenchResolveScopedObject = (r, f, t) =>
+  typeof f === "string" || !t.startsWith("@") || !f.href
+    ? null
+    : r.parse(
+        `${f.href.match(/^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/]*/)?.[0]}/${t}`
+      );
+globalThis.__quenchResolveParsedSpecial = (r, f, t) =>
+  globalThis.__quenchResolveScopedObject(r, f, t) ||
+  globalThis.__quenchResolveParsedFragment(r, f, t);
 globalThis.__quenchResolveParsedObject = (
   result,
   from,
@@ -361,14 +363,13 @@ globalThis.__quenchResolveParsedObject = (
   originalResolve
 ) => {
   if (typeof from === "string") return null;
-  const fragment = globalThis.__quenchResolveParsedFragment(result, from, to);
+  const fragment = globalThis.__quenchResolveParsedSpecial(result, from, to);
   if (fragment) return fragment;
   if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(to)) return result.parse(to);
   if (/^([A-Za-z][A-Za-z0-9+.-]*):(#.*)$/.test(to))
     return result.parse(to.replace(/^([A-Za-z][A-Za-z0-9+.-]*):/, "$1:///"));
-  const singleSlash = globalThis.__quenchResolveParsedSingleSlash(
-    result,
-    from,
+  const singleSlash = globalThis.__quenchResolveSingleSlashProtocol(
+    from.href || from.pathname || "",
     to
   );
   if (singleSlash) return singleSlash;
