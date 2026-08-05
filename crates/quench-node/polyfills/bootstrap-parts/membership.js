@@ -1,4 +1,3 @@
-/* eslint-disable max-lines-per-function, complexity */
 const __quenchDgramMembership = (socket, operation, address) => {
   if (address === undefined)
     throw Object.assign(
@@ -18,48 +17,42 @@ const __quenchDgramMembershipMethods = (socket) => ({
     __quenchDgramMembership(socket, "addMembership", address),
   dropMembership: (address) =>
     __quenchDgramMembership(socket, "dropMembership", address),
-  addSourceSpecificMembership: (source, group) => {
-    if (typeof source !== "string")
-      throw Object.assign(
-        new TypeError(
-          'The "sourceAddress" argument must be of type string. Received type number (0)'
-        ),
-        { code: "ERR_INVALID_ARG_TYPE" }
-      );
-    if (typeof group !== "string")
-      throw Object.assign(
-        new TypeError(
-          'The "groupAddress" argument must be of type string. Received type number (0)'
-        ),
-        { code: "ERR_INVALID_ARG_TYPE" }
-      );
-    if (source === "0" || group === "0")
-      throw Object.assign(new Error("addSourceSpecificMembership EINVAL"), {
-        code: "EINVAL"
-      });
-    if (!socket._bound)
-      throw Object.assign(new Error("Not running"), {
-        code: "ERR_SOCKET_DGRAM_NOT_RUNNING"
-      });
-  },
-  dropSourceSpecificMembership: (source, group) => {
-    if (typeof source !== "string")
-      throw Object.assign(
-        new TypeError(
-          'The "sourceAddress" argument must be of type string. Received type number (0)'
-        ),
-        { code: "ERR_INVALID_ARG_TYPE" }
-      );
-    if (typeof group !== "string")
-      throw Object.assign(
-        new TypeError(
-          'The "groupAddress" argument must be of type string. Received type number (0)'
-        ),
-        { code: "ERR_INVALID_ARG_TYPE" }
-      );
-    if (source === "0" || group === "0")
-      throw Object.assign(new Error("dropSourceSpecificMembership EINVAL"), {
-        code: "EINVAL"
-      });
-  }
+  addSourceSpecificMembership: (source, group) =>
+    __quenchSourceMembership(
+      socket,
+      "addSourceSpecificMembership",
+      source,
+      group
+    ),
+  dropSourceSpecificMembership: (source, group) =>
+    __quenchSourceMembership(
+      socket,
+      "dropSourceSpecificMembership",
+      source,
+      group
+    )
 });
+const __quenchSourceMembership = (socket, operation, source, group) => {
+  if (typeof source !== "string")
+    throw Object.assign(
+      new TypeError(
+        'The "sourceAddress" argument must be of type string. Received type number (0)'
+      ),
+      { code: "ERR_INVALID_ARG_TYPE" }
+    );
+  if (typeof group !== "string")
+    throw Object.assign(
+      new TypeError(
+        'The "groupAddress" argument must be of type string. Received type number (0)'
+      ),
+      { code: "ERR_INVALID_ARG_TYPE" }
+    );
+  if (source === "0" || group === "0")
+    throw Object.assign(new Error(`${operation} EINVAL`), {
+      code: "EINVAL"
+    });
+  if (!socket._bound)
+    throw Object.assign(new Error("Not running"), {
+      code: "ERR_SOCKET_DGRAM_NOT_RUNNING"
+    });
+};
