@@ -41,7 +41,7 @@ const __quenchValidateDhGenerator = (generator) => {
     (typeof generator === "number" && generator <= 1) ||
     (generator &&
       typeof generator.byteLength === "number" &&
-      generator.byteLength <= 1)
+      (generator.byteLength === 0 || generator[0] <= 1))
   ) {
     const error = new Error("bad generator");
     error.code = "ERR_OSSL_DH_BAD_GENERATOR";
