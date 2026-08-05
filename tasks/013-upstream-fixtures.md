@@ -5060,3 +5060,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1419: crypto stateless DH required keys
 
 - Require both private and public keys for one-shot DH.
+
+### Stage 1420: crypto named DH groups
+
+- Support `modp5` and `modp18` named-group lookup.

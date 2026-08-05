@@ -184,7 +184,7 @@ const __quenchCryptoKeyExchangeFallback = (result) => {
   };
   result.createDiffieHellmanGroup = () => result.DiffieHellmanGroup();
   result.getDiffieHellman ||= (name) => {
-    if (name !== "modp14" && name !== "modp1")
+    if (!["modp1", "modp5", "modp14", "modp18"].includes(name))
       throw Object.assign(new Error("Unknown DH group"), {
         code: "ERR_CRYPTO_UNKNOWN_DH_GROUP"
       });
