@@ -4562,3 +4562,13 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1303: symlink metadata timestamps
 
 - Keep `lstat` and target `stat` timestamps distinguishable for symlinks.
+
+### Stage 1304: Dir path accessor
+
+- Validate `fs.Dir.prototype.path` receivers with `ERR_INVALID_THIS` while
+  preserving instance paths.
+
+### Stage 1305: opendir callback errors
+
+- Include `ERR_INVALID_ARG_TYPE` in callback-missing `fs.opendir` errors and
+  their string representation.
