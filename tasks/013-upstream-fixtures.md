@@ -4972,3 +4972,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1397: crypto supported DH group
 
 - Expose the `modp14` prime and generator accessors.
+
+### Stage 1398: crypto valid DH generator
+
+- Accept the valid one-byte generator returned by `modp14`.
