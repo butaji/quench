@@ -4900,3 +4900,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1379: crypto key-exchange prototypes
 
 - Expose prototype-correct Diffie-Hellman and ECDH constructor results.
+
+### Stage 1380: crypto Decipheriv prototype
+
+- Return decipher instances with Node’s `crypto.Decipheriv` prototype.
