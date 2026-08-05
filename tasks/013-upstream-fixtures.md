@@ -5410,3 +5410,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1681. `url-fragment-slash.js` — preserve slashes in URL fragments.
 1682. `url-fragment-backslash.js` — preserve backslashes in URL fragments.
 1683. `url-fragment-punctuation.js` — preserve punctuation in URL fragments.
+1684. `url-empty-query.js` — preserve empty URL query markers.
