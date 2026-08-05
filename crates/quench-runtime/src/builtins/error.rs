@@ -91,15 +91,22 @@ fn register_error_constructor(ctx: &mut Context, name: &str, proto: &Rc<RefCell<
             // and not undefined. Descriptor uses enumerable: false.
             if let Some(msg) = message {
                 if msg != Value::Undefined {
-                    let msg_str = match &msg {
-                        Value::Symbol(_) => {
-                            let (_, err) = create_js_error_with_type(
-                                "Cannot convert a Symbol to a string",
-                                "TypeError",
-                            );
-                            return Err(err);
+                    // Per ES §20.5.1.1 / §21.4.1 etc. — ToString the message;
+                    // ToString = ToPrimitive with hint "string" then to string.
+                    // A Symbol result throws TypeError; other thrown errors
+                    // propagate unchanged.
+                    let msg_str = match crate::value::primitive::to_primitive(&msg, Some("string")) {
+                        Ok(prim) => {
+                            if matches!(prim, Value::Symbol(_)) {
+                                let (_, err) = create_js_error_with_type(
+                                    "Cannot convert a Symbol to a string",
+                                    "TypeError",
+                                );
+                                return Err(err);
+                            }
+                            crate::value::convert::to_js_string(&prim)
                         }
-                        _ => to_js_string(&msg),
+                        Err(e) => return Err(e),
                     };
                     error_rc.borrow_mut().define_own_property(
                         "message",
