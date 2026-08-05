@@ -3995,3 +3995,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Added connected sockets, multi-buffer sends, message delivery, and listener
   receiver context for the next upstream dgram fixtures.
+
+### Stage 1180: dgram connection state
+
+- Added connected/disconnected state, remote address reporting, and port
+  validation for UDP sockets.
