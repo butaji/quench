@@ -3943,3 +3943,21 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Matched Node’s object-specific `stripVTControlCharacters` argument
   diagnostic instead of formatting objects as `[object Object]`.
+
+### Stage 1171: DNS server hole normalization
+
+- Made `dns.setServers()` ignore sparse-array holes like Node’s implementation.
+- Added a focused sparse-server regression stage.
+
+### Stage 1172: DNS invalid server validation
+
+- Added invalid IP rejection with Node’s `ERR_INVALID_IP_ADDRESS` code.
+
+### Stage 1173: DNS resolve validation
+
+- Added callback and promise `dns.resolve()` surfaces with `rrtype` validation.
+
+### Stage 1174: DNS lookup service validation
+
+- Added callback and promise `lookupService()` surfaces with Node’s missing
+  argument errors.
