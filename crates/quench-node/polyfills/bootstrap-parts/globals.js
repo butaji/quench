@@ -17,6 +17,11 @@ const __nodeNativeStructuredClone = globalThis.structuredClone;
 globalThis.structuredClone = (value, options) => {
   for (const item of options && options.transfer ? options.transfer : [])
     if (item instanceof ArrayBuffer) __nodeDetachedBuffers.add(item);
+  if (globalThis.process && value === globalThis.process.env) {
+    const clone = {};
+    for (const key of Object.keys(value)) clone[key] = value[key];
+    return clone;
+  }
   return __nodeNativeStructuredClone
     ? __nodeNativeStructuredClone(value, options)
     : value;
@@ -83,7 +88,6 @@ globalThis.queueMicrotask = (callback) =>
             : String(error);
     }
   });
-
 globalThis.__nodeFormat = (args) =>
   args
     .map((value) => {
