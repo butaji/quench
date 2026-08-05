@@ -59,6 +59,44 @@ const __quenchDgramSend = (socket, message, ...args) => {
   });
   return socket;
 };
+const __quenchDgramSendTo = (socket, message, ...args) => {
+  if (args[0] === undefined)
+    throw Object.assign(
+      new TypeError(
+        'The "offset" argument must be of type number. Received undefined'
+      ),
+      { code: "ERR_INVALID_ARG_TYPE" }
+    );
+  if (typeof args[0] !== "number")
+    throw Object.assign(
+      new TypeError(
+        `The "offset" argument must be of type number. Received type string ('${args[0]}')`
+      ),
+      { code: "ERR_INVALID_ARG_TYPE" }
+    );
+  if (typeof args[1] !== "number")
+    throw Object.assign(
+      new TypeError(
+        `The "length" argument must be of type number. Received type string ('${args[1]}')`
+      ),
+      { code: "ERR_INVALID_ARG_TYPE" }
+    );
+  if (typeof args[3] !== "string")
+    throw Object.assign(
+      new TypeError(
+        `The "address" argument must be of type string. Received type boolean (${args[3]})`
+      ),
+      { code: "ERR_INVALID_ARG_TYPE" }
+    );
+  if (typeof args[2] !== "number")
+    throw Object.assign(
+      new TypeError(
+        `The "port" argument must be of type number. Received type boolean (${args[2]})`
+      ),
+      { code: "ERR_INVALID_ARG_TYPE" }
+    );
+  return __quenchDgramSend(socket, message, ...args);
+};
 const __quenchDgramConnect = (socket, port, address, callback) => {
   if (typeof address === "function") {
     callback = address;
@@ -197,7 +235,7 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
       return socket._address;
     },
     send: (message, ...args) => __quenchDgramSend(socket, message, ...args),
-    sendto: (message, ...args) => __quenchDgramSend(socket, message, ...args),
+    sendto: (message, ...args) => __quenchDgramSendTo(socket, message, ...args),
     connect: (port, address, callback) =>
       __quenchDgramConnect(socket, port, address, callback),
     connectSync: (port, address = "127.0.0.1") => {
