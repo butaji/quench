@@ -172,12 +172,21 @@ Hand-rolled copies — including `chrono_*` helpers that never import
 
 ## Future optimization targets
 
-Defer performance work until conformance is complete:
+Defer engine-performance work until conformance is complete. Runner throughput
+work directly shortens the conformance loop and is required before making
+performance claims:
 
 | Target | Ref plan | Timeline |
 |--------|----------|----------|
 | NaN-boxed values, arenas, string interning | Deferred | After 100% |
-| Profiling | Deferred | Only when conformance work requires it |
+| Profiling | Runner phase instrumentation first | Required to choose the next bottleneck |
+
+The conformance runner should use persistent workers, configurable bounded
+parallelism, and immutable parsed/bootstrap caches. Mutable contexts, pending
+jobs, thrown values, and realm state remain worker-local until reset hygiene is
+proved by tests. Stage-level concurrency requires isolated result files and a
+serialized merge. Optimize scheduling by expected failures cleared per hour,
+not by stage number alone.
 
 ## Bootstrap order
 

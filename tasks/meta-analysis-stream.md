@@ -19,22 +19,29 @@ For a failing stage:
 ## Throughput strategy
 
 Reduce time from failure discovery to a verified canonical fix while keeping
-the digest as the sole conformance SSOT.
+the digest as the sole conformance SSOT. Optimize verified failures cleared
+per developer hour, not merely tests per second.
 
-1. Run `TEST262_QUICK=1` to discover representative failure groups.
-2. Write one unit-test reproducer per distinct root cause and fix the canonical
+1. Run quick representatives and collect phase timing.
+2. Group by stable root-cause fingerprint and rank by affected tests per hour.
+3. Write one unit-test reproducer per distinct root cause and fix the canonical
    spec-op or builtin path.
-3. Run the complete stage digest, then formatting, clippy, and the relevant
-   unit suite.
+4. Run the complete affected stage digest, then formatting, clippy, and the
+   relevant unit suite.
 
 Prioritize expected failures cleared per hour. Shared operations such as
 `ToPrimitive`, property operations, descriptors, iterators, callability, and
 equality outrank local builtin symptoms when one defect can affect many stages.
 
 When extending diagnostics, group by stable root-cause fields such as phase,
-error type, runtime location, execution mode, and normalized message. Measure
-discovery, harness loading, context/bootstrap, parsing, execution, and cleanup
+error type, runtime location, execution mode, builtin/abstract operation, and
+normalized message. Measure discovery, metadata, harness loading,
+context/bootstrap, parsing, execution, microtasks, cleanup, and worker startup
 before optimizing them.
+
+Use persistent workers and immutable artifact caches only after refactor-pin
+tests prove context and realm isolation. Never cache mutable globals, pending
+jobs, thrown values, or shared prototype state.
 
 Independent stages may run concurrently only with isolated result files and a
 serialized final advancement step. Helper scripts must not create a second

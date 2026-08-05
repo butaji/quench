@@ -21,6 +21,11 @@ can be expressed over `__ops__`.
 
 ## Ownership queue
 
+Migration is not automatically a throughput improvement. Select families
+using failure fan-out, measured bootstrap cost, and total maintained LOC.
+Shared semantic foundations and runner throughput take priority over
+migrations that only relocate code.
+
 The following families are migration targets or ownership boundaries. This
 list is not a status ledger; Test262 output and source inspection determine
 what remains for a particular change.

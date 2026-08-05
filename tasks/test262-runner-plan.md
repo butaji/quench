@@ -39,15 +39,20 @@ Runner improvements must preserve complete fixture execution, deterministic
 outcomes, timeout enforcement, and skip accounting.
 
 - Add phase timing for discovery, metadata/harness loading, context/bootstrap,
-  parse, execution, and cleanup.
-- Make worker count configurable and benchmark it against throughput, memory,
-  timeout rate, and crash rate.
-- Improve grouping with stable phase, error type, runtime location, mode, and
-  normalized-message fields.
-- Cache immutable parsed harness/bootstrap artifacts without sharing mutable
-  context state until reset hygiene is proven by refactor-pin tests.
+  parse, execution, microtask drain, cleanup, and worker startup.
+- Use a persistent worker pool with configurable bounded worker count and
+  benchmark it against throughput, memory, timeout rate, and crash rate.
+- Improve grouping with stable phase, error type, runtime location, mode,
+  builtin/abstract operation, and normalized-message fields, then rank groups
+  by estimated affected tests per hour.
+- Cache only immutable parsed harness/builtin artifacts. Mutable realm state,
+  jobs, thrown values, and globals remain worker-local until reset tests prove
+  reuse safe.
 - Support concurrent independent stages using isolated result files and a
   serialized merge/advance operation.
+- Provide triage, verify, and release modes. Triage may stop after
+  representative root-cause groups; verify runs the complete affected stage;
+  release runs every stage with zero skips.
 
 Quick mode accelerates diagnosis only; a full digest remains the only
 completion evidence.

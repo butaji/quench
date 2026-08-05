@@ -5,7 +5,9 @@ based on the handle model shared by V8, QuickJS, JavaScriptCore,
 SpiderMonkey, and Hermes. It is an additive embedding layer over the existing
 OXC + wakler runtime architecture; it does not change the Test262 runner.
 
-Test262 runs are the only conformance source of truth.
+Test262 runs are the only conformance source of truth. This work is deferred
+until in-scope Test262 conformance is complete; it must not compete with
+semantic foundations, runner throughput, or failure triage.
 Each implementation milestone requires focused Rust unit tests first, then
 the affected Test262 stage, with no changes under `tests/test262`.
 

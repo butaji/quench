@@ -40,12 +40,13 @@ relevant test262 stage.
   argument values. Redefining `arguments.length` now expands indexed access
   with `undefined` values for concat and related array-like consumers.
 
-- **R22 — Migrate all builtin algorithms to JS.** The migration is tracked in
+- **R22 — Targeted builtin migration to JS.** The migration is tracked in
   `tasks/builtin-migration.md`; `bootstrap_js_builtins` is active for normal
-  contexts. Continue one family at a time on top of canonical `__ops__`,
-  measure the relevant Test262 stage during the later polish pass, and remove
-  duplicate Rust registrations only after JavaScript owns the observable
-  algorithm, validation, coercion, ordering, or descriptor behavior.
+  contexts. Prioritize a family only when Test262 failure data or maintained-
+  LOC measurement shows leverage. Remove duplicate Rust registrations only
+  after JavaScript owns the observable algorithm, validation, coercion,
+  ordering, or descriptor behavior. JS ownership is not itself a throughput
+  objective.
   Rust remains for interpreter/core operations, canonical `__ops__`, storage
   and native memory, performance-sensitive work, crate-backed primitives,
   engine integration, and explicitly documented lower-LOC direct bindings.
@@ -94,26 +95,36 @@ relevant test262 stage.
   rejects matching JS prototype implementations unless they are documented
   one-line proxy exceptions.
 
-- **R30 — Test262 throughput instrumentation.** Add phase timing for discovery,
-  harness, context/bootstrap, parse, execution, and cleanup; emit deterministic
-  digest timing fields with runner unit tests.
+- **R30 — Test262 throughput instrumentation.** Add deterministic structured
+  timing for discovery, metadata, harness, context/bootstrap, parse, execution,
+  microtasks, cleanup, and worker startup. Emit JSONL outside `docs/` and
+  `tasks/`, with runner unit tests.
 
-- **R31 — Configurable digest workers.** Replace the fixed worker cap with a
-  bounded environment-configurable count, benchmark representative stages, and
-  add tests for parsing and bounds.
+- **R31 — Persistent configurable workers.** Replace the fixed worker cap with
+  a bounded environment-configurable pool. Bootstrap once per worker, keep
+  mutable contexts worker-local, support process isolation for crashes, and
+  benchmark wall time, tests/sec, memory, timeout, and crash rate.
 
-- **R32 — Root-cause failure grouping.** Group stable phase, error type, runtime
-  location, execution mode, and normalized-message fields; test equivalent and
-  distinct causes.
+- **R32 — Root-cause failure fingerprints.** Group stable phase, error type,
+  runtime location, execution mode, builtin/abstract operation, and
+  normalized-message fields. Rank groups by estimated affected tests per hour
+  and test equivalent and distinct causes.
 
 - **R33 — Immutable bootstrap cache.** Measure bootstrap cost, then cache only
-  immutable parsed artifacts. Add realm-isolation and `Context::reset`
-  refactor-pin tests.
+  immutable parsed harness/builtin artifacts or realm templates. Add
+  realm-isolation, pending-job, thrown-value, and `Context::reset` refactor-pin
+  tests.
 
-- **R34 — Concurrent stage batches.** Run independent stages with isolated
-  result files and serialized merge/advance. Test complete collection, failure
-  propagation, and no partial advancement.
+- **R34 — Concurrent stage batches.** Run independent stages concurrently with
+  isolated result files and serialized merge/advance. Require complete
+  collection, explicit crash/timeout/skip accounting, failure propagation, and
+  no partial advancement.
 
 - **R35 — Fast-loop command.** Add one local workflow entry point for quick
-  triage, focused reproducers, full stage digest, and final lint checks. It must
-  not edit Test262 fixtures or manufacture conformance status.
+  representative triage, fingerprint-ranked reproducers, full affected-stage
+  digest, and final lint checks. It must not edit Test262 fixtures, write
+  conformance status to `docs/` or `tasks/`, or manufacture coverage.
+
+- **R36 — Conformance acceleration gate.** Freeze the universal embedding API
+  and engine-performance work until Test262 is complete. Revisit only after
+  runner timing data shows a conformance-relevant bottleneck.

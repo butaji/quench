@@ -9,7 +9,8 @@ commands, not copied status or milestones.
 There is one canonical conformance command: the filtered nextest invocation
 below runs the single staged harness test, which owns per-file execution and
 the digest. The shell tools only select a stage, capture output, or format
-that result; they do not maintain a second coverage counter. `cargo run
+that result; they do not maintain a second coverage counter or write
+conformance status into `docs/` or `tasks/`. `cargo run
 --bin run-test` is reserved for one-test diagnosis, and `run-each.sh` is the
 crash-isolated fallback.
 
@@ -73,9 +74,11 @@ The helper scripts under `tools/` are implementation details of the runner.
 Use them directly only when their command-line behavior is needed; do not
 add their output or progress summaries to documentation.
 
-The nextest Test262 profile intentionally uses one harness test thread: the
-harness owns the per-file loop and produces the digest, so nextest parallelism
-applies to unit/integration tests rather than splitting one stage's SSOT run.
+The harness owns the per-file loop and produces the digest. Parallelism must be
+controlled by the Test262 runner, not by nextest splitting the harness test.
+The preferred acceleration path is a bounded persistent worker pool: workers
+bootstrap once, execute worker-local mutable contexts, and return structured
+results. Process isolation remains available for crash-prone tests.
 `run-each.sh` is the diagnostic crash-isolation path and is not a replacement
 for the digest command.
 
@@ -97,9 +100,16 @@ TEST262_STAGE=N TEST262_DIGEST=1 \
 The first command is triage only. The second is conformance evidence.
 
 Benchmark worker count against wall time, tests per second, peak memory,
-timeouts, and crashes. Cache only immutable parsed/bootstrap artifacts until
-context reset hygiene proves that mutable state can be reused safely.
+timeouts, and crashes. Record discovery, metadata, harness, bootstrap, parse,
+execution, microtask, cleanup, and worker-startup timings. Cache only
+immutable parsed/bootstrap artifacts until context reset hygiene proves that
+mutable state can be reused safely.
 
 Independent stages can be batched concurrently only through isolated result
-files and serialized merge/advance. `tasks/index.json` remains descriptive
-configuration, never execution evidence.
+files and serialized merge/advance. A batch is complete only after every
+stage reports, including crashes, timeouts, and skips. `tasks/index.json`
+remains descriptive configuration, never execution evidence.
+
+Development mode should optimize verified failures cleared per hour: use quick
+representatives and stable root-cause groups for triage, then run the complete
+affected stage as evidence. Full all-stage runs remain release verification.
