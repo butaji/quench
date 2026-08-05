@@ -4115,3 +4115,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Added bound-state, type, and invalid-address behavior for
   `setMulticastInterface()`.
+
+### Stage 1203: dgram send queue information
+
+- Added send queue size/count accessors and connected-send accounting used by
+  the queue-info fixture.
