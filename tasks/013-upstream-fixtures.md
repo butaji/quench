@@ -4312,3 +4312,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1246: readline line interface
 
 - Added evented `readline.createInterface()` line parsing for data and EOF.
+
+### Stage 1247: process environment structured cloning
+
+- Added a plain-object `structuredClone(process.env)` path for the Proxy-backed
+  environment surface.
