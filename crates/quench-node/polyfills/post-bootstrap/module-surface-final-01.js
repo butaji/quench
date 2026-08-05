@@ -57,6 +57,11 @@ const __quenchInternalStreamFallback = (normalized) => {
     return { addAbortSignalNoValidate: (_signal, stream) => stream };
   return null;
 };
+const __quenchApplyFinalSurface = (normalized, result) => {
+  if (normalized === "http") __quenchAddHttpEvents(result);
+  if (normalized === "zlib") return __quenchAddZlibValidation(result);
+  return result;
+};
 const __quenchApplyFinalModule01 = (name, originalRequire) => {
   const normalized = String(name).replace(/^node:/, "");
   const internalFallback = __quenchInternalStreamFallback(normalized);
@@ -76,8 +81,8 @@ const __quenchApplyFinalModule01 = (name, originalRequire) => {
       Session: function Session() {},
       console: {}
     };
-  const result = originalRequire(name);
-  if (normalized === "http") __quenchAddHttpEvents(result);
+  let result = originalRequire(name);
+  result = __quenchApplyFinalSurface(normalized, result);
   if (normalized === "test")
     return __quenchTestModuleFallbacks(result, originalRequire, name);
   if (normalized === "util") {
