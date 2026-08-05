@@ -223,14 +223,25 @@ Object.assign(globalThis.__nodeFs, {
     }
     return total;
   },
-  writeSync: (
-    fd,
-    buffer,
-    offset = 0,
-    length = buffer.length - offset,
-    position = null
-  ) => {
-    if (typeof buffer === "string") buffer = NodeBuffer.from(buffer);
+  writeSync: (fd, buffer, offset = 0, length, position = null) => {
+    if (typeof buffer === "string") {
+      position = offset;
+      if (length === "hex" && buffer.length % 2 !== 0) {
+        const error = new TypeError(
+          `'encoding' is invalid for data of length ${buffer.length}`
+        );
+        error.code = "ERR_INVALID_ARG_VALUE";
+        throw error;
+      }
+      buffer = NodeBuffer.from(
+        buffer,
+        typeof length === "string" ? length : "utf8"
+      );
+      offset = 0;
+      length = buffer.length;
+    }
+    if (length === undefined && buffer instanceof Uint8Array)
+      length = buffer.length - offset;
     __nodeFsValidateWriteBuffer(fd, buffer, offset, length);
     return __nodeFsWriteDescriptor(fd, buffer, offset, length, position);
   },

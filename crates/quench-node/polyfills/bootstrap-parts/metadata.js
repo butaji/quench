@@ -296,20 +296,28 @@ globalThis.__nodeFs.readv = (fd, buffers, position, callback) => {
     }
   });
 };
+const __nodeFsWriteObjectOptions = (options, callback) => ({
+  buffer: options.buffer,
+  offset: options.offset || 0,
+  length:
+    options.length === undefined
+      ? options.buffer && options.buffer.length - (options.offset || 0)
+      : options.length,
+  position: options.position,
+  callback
+});
 const __nodeFsWriteOptions = (buffer, offset, length, position, callback) => {
-  if (buffer && typeof buffer === "object" && !ArrayBuffer.isView(buffer)) {
-    const options = buffer;
-    return {
-      buffer: options.buffer,
-      offset: options.offset || 0,
-      length:
-        options.length === undefined
-          ? options.buffer && options.buffer.length - (options.offset || 0)
-          : options.length,
-      position: options.position,
-      callback: offset
-    };
+  if (typeof offset === "function") {
+    callback = offset;
+    offset = undefined;
   }
+  if (
+    buffer &&
+    typeof buffer === "object" &&
+    !ArrayBuffer.isView(buffer) &&
+    "buffer" in buffer
+  )
+    return __nodeFsWriteObjectOptions(buffer, callback);
   return {
     buffer,
     offset,
@@ -317,18 +325,6 @@ const __nodeFsWriteOptions = (buffer, offset, length, position, callback) => {
     position: typeof position === "function" ? null : position,
     callback: typeof position === "function" ? position : callback
   };
-};
-const __nodeFsValidateWrite = (fd, buffer, callback) => {
-  if (typeof callback !== "function")
-    throw new TypeError('The "callback" argument must be of type function');
-  if (
-    typeof fd !== "number" ||
-    !(typeof buffer === "string" || buffer instanceof Uint8Array)
-  ) {
-    const error = new TypeError("Invalid write arguments");
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
-  }
 };
 globalThis.__nodeFs.write = (
   fd,
