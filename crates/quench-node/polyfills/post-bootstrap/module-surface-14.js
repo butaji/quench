@@ -41,7 +41,18 @@ const __quenchCryptoDhConstructor = (result) => {
   result.DiffieHellman = Constructor;
   return () => Object.create(Constructor.prototype);
 };
+const __quenchCryptoSimpleConstructor = (result, name) => {
+  const Constructor = function Constructor() {
+    return Object.create(Constructor.prototype);
+  };
+  result[name] = Constructor;
+  return () => Object.create(Constructor.prototype);
+};
 const __quenchCryptoKeyExchangeFallback = (result) => {
+  if (typeof result.DiffieHellmanGroup !== "function")
+    __quenchCryptoSimpleConstructor(result, "DiffieHellmanGroup");
+  if (typeof result.ECDH !== "function")
+    __quenchCryptoSimpleConstructor(result, "ECDH");
   result.createDiffieHellman ||= (
     sizeOrKey,
     generatorOrEncoding,
@@ -50,7 +61,7 @@ const __quenchCryptoKeyExchangeFallback = (result) => {
     __quenchValidateDhNumbers(sizeOrKey, maybeGenerator);
     return __quenchCryptoDhConstructor(result)();
   };
-  result.createDiffieHellmanGroup ||= () => Object.create(Function.prototype);
+  result.createDiffieHellmanGroup ||= () => result.DiffieHellmanGroup();
   result.getDiffieHellman ||= (name) => {
     if (name !== "modp14")
       throw Object.assign(new Error("Unknown DH group"), {
@@ -69,6 +80,6 @@ const __quenchCryptoKeyExchangeFallback = (result) => {
         ),
         { code: "ERR_INVALID_ARG_TYPE" }
       );
-    return Object.create(Function.prototype);
+    return result.ECDH();
   };
 };
