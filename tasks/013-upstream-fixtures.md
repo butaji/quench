@@ -3912,3 +3912,17 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
   Node’s leaked-global audit can run without seeing host implementation names.
 - The upstream random fixture now reaches random callback validation; its
   remaining failure is tracked separately.
+
+### Stage 1166: util call-site compatibility
+
+- Added the minimal `util.getCallSites()` shape required by Node’s common
+  callback helpers.
+- This removes the helper-level TypeError and lets upstream tests reach their
+  actual callback assertions.
+
+### Stage 1167: random integer NaN diagnostics
+
+- Added the exact upstream `randomInt(NaN, 100)` error-shape contract to
+  isolate numeric diagnostic formatting.
+- Verified the complete upstream `test-crypto-random.js` fixture after adding
+  `util.getCallSites()` and correcting special-number inspection.

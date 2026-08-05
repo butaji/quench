@@ -457,9 +457,9 @@ class NodeTransform extends NodeWritable {
     return true;
   }
 }
-function NodeStream() {
+const NodeStream = function NodeStream() {
   this._events = Object.create(null);
-}
+};
 NodeStream.prototype = Object.create(NodeEventEmitter.prototype);
 NodeStream.prototype.constructor = NodeStream;
 NodeStream.prototype.write = () => true;
