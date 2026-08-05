@@ -4687,3 +4687,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Verify the complete asynchronous `open`/`fchmod`/`fstat`/`close` lifecycle
   through a focused compatibility stage.
+
+### Stage 1330: wrapped descriptor lifecycle
+
+- Verify descriptor callbacks remain usable when upstream wraps `fs.open` and
+  `fs.close` to track active descriptors.
