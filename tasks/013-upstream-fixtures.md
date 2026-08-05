@@ -5346,3 +5346,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1614. `url-file-path-posix-encoding.js` — preserve POSIX encoded backslash behavior.
 1615. `url-path-to-file-url-unsafe.js` — preserve unsafe-character path encoding.
 1616. `url-path-to-file-url-utf16-boundaries.js` — preserve UTF-16 encoding boundaries.
+1617. `urlpattern-constructor-surface.js` — enforce URLPattern constructor and input validation.
