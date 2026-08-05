@@ -5388,3 +5388,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1658. `url-empty-href.js` — reject empty URL href assignments.
 1659. `url-subclass-hostname.js` — preserve URL construction with overridden hostname getters.
 1660. `url-custom-inspect.js` — format URL instances with Node-style inspect fields.
+1661. `url-tostring-tags.js` — expose URL and URLSearchParams toString tags.
