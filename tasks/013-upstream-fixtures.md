@@ -5386,3 +5386,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1655. `url-deep-equality.js` — hide URLSearchParams owner internals from deep equality.
 1657. `url-global-descriptors.js` — align global URL property descriptors.
 1658. `url-empty-href.js` — reject empty URL href assignments.
+1659. `url-subclass-hostname.js` — preserve URL construction with overridden hostname getters.

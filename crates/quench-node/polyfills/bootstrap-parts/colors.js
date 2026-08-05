@@ -291,17 +291,16 @@ const __nodeURLResolveInput = (input, base) => {
     .__quenchNormalizeSpecialUrlInput(value)
     .replace(/\/\.\//g, "/");
 };
+// prettier-ignore
+const __nodeURLCredentials = (authority) => { const match = authority.match(/^(?:([^:@]*)(?::([^@]*))?@)/); return [match?.[1] || "", match?.[2] || ""]; };
 const __nodeURLAssignParts = (url, match) => {
-  url.protocol = match[1] || "";
-  url.host = match[2] || "";
-  url.hostname = url.host.replace(/^.*@/, "").split(":")[0];
-  url.port = url.host.includes(":")
-    ? url.host.slice(url.host.lastIndexOf(":") + 1)
-    : "";
-  url.pathname = match[3] || "/";
-  url.search = match[4] ? `?${match[4]}` : "";
-  url.hash = match[5] ? `#${match[5]}` : "";
+  const [username, password] = __nodeURLCredentials(match[2] || "");
   // prettier-ignore
+  ((url.protocol = match[1] || ""), (url.host = match[2] || ""), (url._username = username), (url._password = password), Object.defineProperty(url, "_hostname", { configurable: true, value: url.host.replace(/^.*@/, "").split(":")[0], writable: true }));
+  // prettier-ignore
+  url.port = url.host.includes(":") ? url.host.slice(url.host.lastIndexOf(":") + 1) : "";
+  // prettier-ignore
+  url.pathname = match[3] || "/", url.search = match[4] ? `?${match[4]}` : "", url.hash = match[5] ? `#${match[5]}` : "";
   // prettier-ignore
   Object.defineProperty(url, "origin", { configurable: true, enumerable: true, value: url.protocol && url.host ? `${url.protocol}//${url.host}` : "null", writable: true }), Object.defineProperty(url, "searchParams", { configurable: true, enumerable: true, value: (() => { const params = new NodeURLSearchParams(match[4] || ""); Object.defineProperty(params, "__nodeURLOwner", { configurable: true, value: url }); return params; })(), writable: true });
 };
