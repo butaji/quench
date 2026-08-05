@@ -4271,3 +4271,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Corrected `console.assert()` `%s` argument consumption and preserved trailing
   arguments in the formatted diagnostic.
+
+### Stage 1237: net connection socket surface
+
+- Replaced the undefined `net.createConnection()` fallback with an evented
+  socket supporting encoding, writes, end, and connect events.
