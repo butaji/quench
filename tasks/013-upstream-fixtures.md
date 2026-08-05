@@ -5416,3 +5416,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1687. `url-pathname-at.js` — preserve at signs in URL pathnames.
 1688. `url-userinfo-bracket.js` — escape closing brackets in URL userinfo.
 1689. `url-userinfo-delimiters.js` — parse complex URL userinfo delimiters.
+1690. `url-query-fragment-delimiters.js` — preserve query and fragment delimiters.
