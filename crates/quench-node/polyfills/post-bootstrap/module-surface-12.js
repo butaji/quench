@@ -347,6 +347,13 @@ globalThis.__quenchResolveParsedFragment = (result, from, to) => {
   if (!target || !source.startsWith(`${target[1]}://`)) return null;
   return result.parse(`${source.replace(/#.*$/, "")}${target[2]}`);
 };
+globalThis.__quenchResolveParsedSingleSlash = (result, from, to) => {
+  const target = to.match(/^([A-Za-z][A-Za-z0-9+.-]*):\/([^/].*)$/);
+  const source = from.href || from.pathname || "";
+  if (!target || !source.startsWith(`${target[1]}://`)) return null;
+  const origin = source.match(/^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/]*/)?.[0];
+  return result.parse(`${origin}/${target[2]}`);
+};
 globalThis.__quenchResolveParsedObject = (
   result,
   from,
@@ -359,8 +366,12 @@ globalThis.__quenchResolveParsedObject = (
   if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(to)) return result.parse(to);
   if (/^([A-Za-z][A-Za-z0-9+.-]*):(#.*)$/.test(to))
     return result.parse(to.replace(/^([A-Za-z][A-Za-z0-9+.-]*):/, "$1:///"));
-  if (/^[A-Za-z][A-Za-z0-9+.-]*:\/([^/].*)$/.test(to))
-    return result.parse(to.replace(/^([A-Za-z][A-Za-z0-9+.-]*):\//, "$1://"));
+  const singleSlash = globalThis.__quenchResolveParsedSingleSlash(
+    result,
+    from,
+    to
+  );
+  if (singleSlash) return singleSlash;
   return result.parse(
     globalThis.__quenchResolveParsedPath(from.pathname || from.href || "", to)
   );
