@@ -481,7 +481,7 @@ const __quenchCryptoFallbacks = (result) => {
   globalThis.__quenchVerifyConstructor = result.Verify;
   __quenchCryptoSignFallback(result);
   __quenchCryptoKeyExchangeFallback(result);
-  __quenchCryptoKeyFallback(result);
+  (__quenchCryptoKeyFallback(result), __quenchCryptoKeyObjectFallback(result));
   __quenchCryptoConstantsFallback(result);
   __quenchCertificateFallback(result);
   __quenchCryptoCipherFallback(result);
