@@ -113,6 +113,18 @@ macro_rules! run_host_context {
             }),
         )?;
         ctx.globals().set(
+            "__quench_digest_bytes",
+            Func::from(|algorithm: String, value: Vec<u8>| -> rquickjs::Result<Vec<u8>> {
+                match algorithm.as_str() {
+                    "sha1" => Ok(Sha1::digest(value).to_vec()),
+                    "sha256" => Ok(Sha256::digest(value).to_vec()),
+                    "sha512" => Ok(Sha512::digest(value).to_vec()),
+                    "md5" => Ok(Md5::digest(value).to_vec()),
+                    _ => Err(rquickjs::Error::new_from_js("crypto", "unsupported digest")),
+                }
+            }),
+        )?;
+        ctx.globals().set(
             "__quench_random_uuid",
             Func::from(|| {
                 let mut bytes = [0u8; 16];

@@ -1,5 +1,13 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1158: crypto hash algorithm bridge
+
+- Fixture: `test-crypto-hash.js`
+- Added minimal Rust digest bindings for SHA-1, SHA-256, SHA-512, and MD5 and
+  selected them from the JS hash wrapper.
+- Retrospective: keep digest computation in Rust while retaining the readable
+  streaming/hash object behavior in JavaScript.
+
 ## Stage 1157: crypto.pbkdf2 key-length diagnostics
 
 - Fixture: `test-crypto-pbkdf2.js`
