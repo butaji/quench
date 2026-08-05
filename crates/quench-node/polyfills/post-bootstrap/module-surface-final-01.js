@@ -287,9 +287,11 @@ const __quenchIsRelativePath = (from, to) =>
 const __quenchResolveOpaquePath = (from, to) => {
   const match = from.match(/^([A-Za-z][A-Za-z0-9+.-]*):(.*)$/);
   const targetScheme = to.match(/^([A-Za-z][A-Za-z0-9+.-]*):(.*)$/);
-  if (targetScheme) return targetScheme[2] === "." ? `${targetScheme[1]}:` : to;
+  if (targetScheme)
+    return globalThis.__quenchOpaqueTargetResolve(from, to, targetScheme);
   if (!match || from.includes("://") || to.includes("://")) return null;
-  return `${match[1]}:${__quenchNormalizeAbsoluteTarget(`/${to}`).slice(1)}`;
+  const base = match[2].slice(0, match[2].lastIndexOf("/") + 1);
+  return `${match[1]}:${base}${to}`;
 };
 const __quenchResolveWebRelativePath = (from, to) => {
   if (!from.includes("://")) return null;
@@ -297,7 +299,6 @@ const __quenchResolveWebRelativePath = (from, to) => {
   if (to.startsWith("#")) return `${from.split("#")[0]}${to}`;
   if (to.startsWith("/")) return null;
   const rawOrigin = from.match(/^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/]*/)?.[0];
-  const origin = rawOrigin;
   const path = from.slice(rawOrigin.length).split(/[?#]/)[0] || "/";
   const base = path.slice(0, path.lastIndexOf("/") + 1);
   const targetPath = to.split(/[?#]/)[0];
@@ -313,7 +314,7 @@ const __quenchResolveWebRelativePath = (from, to) => {
   if (base.includes("//") && !cleanTarget.includes("."))
     return `${origin}${base}${cleanTarget}${suffix}`;
   const normalized = __quenchNormalizeAbsoluteTarget(`${base}${targetPath}`);
-  return `${origin}${__quenchResolvedPath(normalized, targetPath)}${suffix}`;
+  return `${rawOrigin}${__quenchResolvedPath(normalized, targetPath)}${suffix}`;
 };
 const __quenchResolveSameWebScheme = (from, to) => {
   const target = to.match(/^([A-Za-z][A-Za-z0-9+.-]*):(.*)$/);
@@ -335,24 +336,23 @@ const __quenchResolveScopedPath = (from, to) => {
   const origin = from.match(/^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/]*/)?.[0];
   return `${origin}/${to}`;
 };
+const __quenchResolveProtocolHash = (from, to) => {
+  const match = to.match(/^([A-Za-z][A-Za-z0-9+.-]*):(#.*)$/);
+  if (!match) return null;
+  return from.startsWith(`${match[1]}:`)
+    ? `${from.replace(/#.*$/, "")}${match[2]}`
+    : `${match[1]}:///${match[2]}`;
+};
 const __quenchResolveProtocolTargetBase = (from, to) => {
   if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(to)) return to;
-  const protocolHash = to.match(/^([A-Za-z][A-Za-z0-9+.-]*):(#.*)$/);
-  if (protocolHash) {
-    if (from.startsWith(`${protocolHash[1]}:`))
-      return `${from.replace(/#.*$/, "")}${protocolHash[2]}`;
-    return `${protocolHash[1]}:///${protocolHash[2]}`;
-  }
-  const opaqueTarget = to.match(/^([A-Za-z][A-Za-z0-9+.-]*):\.$/);
-  if (opaqueTarget) return `${opaqueTarget[1]}:`;
-  if (/^[A-Za-z][A-Za-z0-9+.-]*:[^/]/.test(to)) return to;
-  const singleSlash = to.match(/^([A-Za-z][A-Za-z0-9+.-]*):\/([^/].*)$/);
-  if (!singleSlash) return null;
-  if (from.startsWith(`${singleSlash[1]}:`)) {
-    const origin = from.match(/^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/]*/)?.[0];
-    return `${origin || `${singleSlash[1]}://`}/${singleSlash[2]}`;
-  }
-  return `${singleSlash[1]}://${singleSlash[2]}`;
+  return (
+    __quenchResolveProtocolHash(from, to) ||
+    (/^[A-Za-z][A-Za-z0-9+.-]*:\.$/.test(to) ? `${to.slice(0, -1)}` : null) ||
+    (/^[A-Za-z][A-Za-z0-9+.-]*:[^/]/.test(to)
+      ? __quenchResolveOpaquePath(from, to) || to
+      : null) ||
+    globalThis.__quenchResolveSingleSlashProtocol(from, to)
+  );
 };
 const __quenchResolveProtocolTarget = (from, to) =>
   __quenchResolveSameWebScheme(from, to) ||

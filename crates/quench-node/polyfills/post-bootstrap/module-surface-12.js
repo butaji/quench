@@ -219,6 +219,23 @@ globalThis.__quenchResolveMailtoRelative = (from, to) =>
     : /^mailto:/i.test(to) && !/^[a-z][a-z0-9+.-]*:/i.test(from)
       ? `mailto:${to.slice(7, to.lastIndexOf("/") + 1)}${from}`
       : null;
+globalThis.__quenchOpaqueTargetRelative = (from, to) => {
+  const target = to.match(/^([a-z][a-z0-9+.-]*):(.*)$/i);
+  if (!target || /^[a-z][a-z0-9+.-]*:/i.test(from)) return null;
+  return `${target[1]}:${target[2].slice(0, target[2].lastIndexOf("/") + 1)}${from}`.replace(
+    /^[^/]+\/\.\.\//,
+    ""
+  );
+};
+globalThis.__quenchOpaqueTargetResolve = (from, to, target) =>
+  target[2] === "."
+    ? `${target[1]}:`
+    : globalThis.__quenchOpaqueTargetRelative(from, to) || to;
+globalThis.__quenchResolveSingleSlashProtocol = (from, to) => {
+  const match = to.match(/^([A-Za-z][A-Za-z0-9+.-]*):\/([^/].*)$/);
+  if (!match) return null;
+  return `${from.match(/^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/]*/)?.[0] || `${match[1]}://`}/${match[2]}`;
+};
 globalThis.__quenchAddLegacyParseMethods = (result) => {
   const originalParse = result.parse;
   result.parse = (input) => {
