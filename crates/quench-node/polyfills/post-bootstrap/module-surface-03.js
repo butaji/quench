@@ -21,6 +21,7 @@ const __quenchAddStreamCompat = (result) => {
   __quenchAddStreamAliases(result);
   __quenchAddStreamWebCompat(result);
   __quenchAddStreamDefaults(result);
+  result.promises ||= globalThis.require("stream/promises");
   return result;
 };
 if (globalThis.require) {
