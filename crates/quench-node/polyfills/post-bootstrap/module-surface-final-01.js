@@ -58,6 +58,7 @@ const __quenchInternalStreamFallback = (normalized) => {
   return null;
 };
 const __quenchApplyFinalSurface = (normalized, result) => {
+  if (normalized === "url") result = __quenchAddUrlFormatting(result);
   if (normalized === "http") __quenchAddHttpEvents(result);
   if (normalized === "zlib") return __quenchAddZlibValidation(result);
   if (normalized === "worker_threads") {
@@ -84,6 +85,86 @@ const __quenchApplyFinalSurface = (normalized, result) => {
       }
     };
   }
+  return result;
+};
+const __quenchUrlAuthority = (input) => {
+  let authority = input.host || input.hostname || "";
+  if (authority.includes(":") && !authority.startsWith("[") && input.hostname)
+    authority = `[${authority}]`;
+  if (input.port && !authority.endsWith(`:${input.port}`))
+    authority = `${authority}:${input.port}`;
+  return authority;
+};
+const __quenchUrlAuth = (input) =>
+  input.auth ? `${encodeURIComponent(input.auth).replace(/%3A/gi, ":")}@` : "";
+const __quenchUrlPrefix = (input, protocol, authority) => {
+  const slashedProtocol = ["http:", "https:", "ftp:", "gopher:", "file:"];
+  if (!input.slashes && !slashedProtocol.includes(protocol))
+    return `${protocol}${__quenchUrlAuth(input)}${authority}`;
+  return `${protocol}//${__quenchUrlAuth(input)}${authority}`;
+};
+const __quenchUrlPath = (input, authority) => {
+  let pathname = input.pathname || "";
+  pathname = pathname.replace(/#/g, "%23").replace(/\?/g, "%3F");
+  if (authority && pathname && !pathname.startsWith("/"))
+    pathname = `/${pathname}`;
+  if (
+    authority &&
+    !pathname &&
+    (input.search !== undefined || input.query !== undefined)
+  )
+    pathname = "/";
+  return pathname;
+};
+const __quenchUrlSearch = (input) => {
+  let search = input.search || "";
+  if (!search && input.query !== undefined) {
+    search =
+      typeof input.query === "string"
+        ? input.query
+        : new URLSearchParams(input.query).toString();
+  }
+  if (search && !search.startsWith("?")) search = `?${search}`;
+  return search.replace(/#/g, "%23");
+};
+const __quenchFormatUrlObject = (input) => {
+  const protocol = input.protocol ? `${input.protocol.replace(/:$/, "")}:` : "";
+  const authority = __quenchUrlAuthority(input);
+  const pathname = __quenchUrlPath(input, authority);
+  const search = __quenchUrlSearch(input);
+  let hash = input.hash || "";
+  if (hash && !hash.startsWith("#")) hash = `#${hash}`;
+  return `${__quenchUrlPrefix(input, protocol, authority)}${pathname}${search}${hash}`;
+};
+const __quenchFormatUrlString = (input, originalFormat, args, result) => {
+  const protocol = input.match(/^[A-Za-z][A-Za-z0-9+.-]*:/)?.[0];
+  const standardProtocol = ["http:", "https:", "ftp:", "gopher:", "file:"];
+  if (protocol && !standardProtocol.includes(protocol)) return input;
+  const oversizedHost = input.match(
+    /^[A-Za-z][A-Za-z0-9+.-]*:\/\/([^/]*)(\/.*)$/
+  );
+  if (oversizedHost && oversizedHost[1].length > 255)
+    return `${protocol}//${oversizedHost[2]}`;
+  const formatted = originalFormat.call(result, input, ...args);
+  const withProtocol =
+    protocol && !formatted.startsWith(protocol)
+      ? `${protocol}${formatted}`
+      : formatted.replace(/^null(?=\/)/, "");
+  const quotedHost = input.match(/^([A-Za-z][A-Za-z0-9+.-]*:\/\/[^\"]*)\"/);
+  return quotedHost
+    ? withProtocol.replace(quotedHost[1], `${quotedHost[1]}/`)
+    : withProtocol;
+};
+const __quenchAddUrlFormatting = (result) => {
+  if (typeof result.format !== "function") return result;
+  const originalFormat = result.format;
+  result.format = (input, ...args) => {
+    if (input && typeof input === "object")
+      return __quenchFormatUrlObject(input);
+    if (typeof input !== "string")
+      return originalFormat.call(result, input, ...args);
+    return __quenchFormatUrlString(input, originalFormat, args, result);
+  };
   return result;
 };
 const __quenchApplyFinalModule01 = (name, originalRequire) => {

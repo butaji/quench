@@ -4241,3 +4241,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Added a constructible worker placeholder with basic listener, messaging, and
   termination methods.
+
+### Stage 1231: URL quoted-host formatting
+
+- Matched Node's legacy `url.format()` slash placement when a quoted host
+  suffix is percent-encoded.
