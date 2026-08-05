@@ -427,6 +427,7 @@ const __nodeCryptoApi = {
         return __nodeCryptoHashCopy(normalized, chunks);
       }
     };
+    __nodeCryptoSetPrototype(hash, globalThis.__quenchHashConstructor);
     return hash;
   },
   Hash: function Hash(algorithm) {
@@ -474,6 +475,7 @@ const __nodeCryptoApi = {
         return clone;
       }
     };
+    __nodeCryptoSetPrototype(hmac, globalThis.__quenchHmacConstructor);
     return hmac;
   }
 };

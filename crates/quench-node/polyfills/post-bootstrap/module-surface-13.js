@@ -4,6 +4,11 @@ const __quenchCryptoConstructors = (result) => {
     "createPrivateKey",
     "createDiffieHellman",
     "createECDH",
+    "Hash",
+    "Hmac",
+    "Sign",
+    "Verify",
+    "DiffieHellmanGroup",
     "KeyObject",
     "Certificate",
     "X509Certificate",
@@ -193,43 +198,54 @@ const __quenchValidateFinalState = (algorithm, state) => {
 // eslint-disable-next-line max-lines-per-function -- cipher stream methods share state
 const __quenchCryptoCipherFallback = (result) => {
   const values = (globalThis.__quenchCipherValues ||= new Map());
+  // eslint-disable-next-line max-lines-per-function -- cipher stream methods share state
   result.createCipheriv ||= (algorithm, key, iv, options) => {
     __quenchValidateCipherArguments(algorithm, key, iv, options);
     let inputEncoding,
       outputEncoding,
       readable,
       state = {};
-    return {
-      update(value, encoding, resultEncoding) {
-        inputEncoding ||= __quenchValidateCipherEncoding(
-          encoding,
-          inputEncoding
-        );
-        outputEncoding ||= __quenchValidateCipherEncoding(
-          resultEncoding,
-          outputEncoding
-        );
-        __quenchValidateCipherEncoding(encoding, inputEncoding);
-        __quenchValidateCipherEncoding(resultEncoding, outputEncoding);
-        state.updated = true;
-        return __quenchCipherTransform(value, encoding, resultEncoding, values);
-      },
-      ...__quenchCipherAuthentication(state),
-      end(value) {
-        readable =
-          value !== undefined
-            ? this.update(value, "utf8", "buffer")
-            : new Uint8Array(0);
-        this.readableLength = readable.length;
-        return this;
-      },
-      read: () => readable,
-      final(resultEncoding) {
-        __quenchValidateFinalState(algorithm, state);
-        __quenchValidateCipherEncoding(resultEncoding, outputEncoding);
-        return new Uint8Array(0);
+    return Object.assign(
+      Object.create(
+        globalThis.__quenchCipherConstructor?.prototype || Object.prototype
+      ),
+      {
+        update(value, encoding, resultEncoding) {
+          inputEncoding ||= __quenchValidateCipherEncoding(
+            encoding,
+            inputEncoding
+          );
+          outputEncoding ||= __quenchValidateCipherEncoding(
+            resultEncoding,
+            outputEncoding
+          );
+          __quenchValidateCipherEncoding(encoding, inputEncoding);
+          __quenchValidateCipherEncoding(resultEncoding, outputEncoding);
+          state.updated = true;
+          return __quenchCipherTransform(
+            value,
+            encoding,
+            resultEncoding,
+            values
+          );
+        },
+        ...__quenchCipherAuthentication(state),
+        end(value) {
+          readable =
+            value !== undefined
+              ? this.update(value, "utf8", "buffer")
+              : new Uint8Array(0);
+          this.readableLength = readable.length;
+          return this;
+        },
+        read: () => readable,
+        final(resultEncoding) {
+          __quenchValidateFinalState(algorithm, state);
+          __quenchValidateCipherEncoding(resultEncoding, outputEncoding);
+          return new Uint8Array(0);
+        }
       }
-    };
+    );
   };
   result.createDecipheriv ||= result.createCipheriv;
   __quenchCryptoCipherConstructors(result);
@@ -359,8 +375,11 @@ const __quenchCryptoFallbacks = (result) => {
   __quenchCryptoDigestFallbacks(result);
   __quenchCryptoKdfFallbacks(result);
   __quenchCryptoConstructors(result);
+  globalThis.__quenchHmacConstructor = result.Hmac;
+  globalThis.__quenchHashConstructor = result.Hash;
   __quenchCryptoSignFallback(result);
   __quenchCryptoCipherFallback(result);
+  globalThis.__quenchCipherConstructor = result.Cipheriv;
   __quenchCryptoWebFallbacks(result);
   return result;
 };
