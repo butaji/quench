@@ -5368,3 +5368,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1636. `url-inspect-method.js` — add the URL inspect custom method.
 1637. `url-href-enumerability.js` — align URL href accessor enumerability.
 1638. `url-accessor-enumerability.js` — normalize existing URL accessor descriptors.
+1639. `url-href-setter.js` — add writable URL href accessor behavior.
