@@ -23,6 +23,18 @@ __quenchSharedChildProcess.execFile = (file, args, options, callback) => {
     Array.isArray(args) ? args : []
   );
   const values = Array.isArray(args) ? args : [];
+  if (!Array.isArray(args) && typeof args === "function") {
+    child.once("close", (code, signal) => {
+      if (code === 0 && signal === null) return args(null, "", "");
+      const error = new Error(`Command failed: ${file}`);
+      error.code = code === -1 ? "EPERM" : code;
+      error.killed = true;
+      error.signal = signal;
+      error.cmd = String(file);
+      args(error, "", "");
+    });
+    return child;
+  }
   const failed = values.some((value) => String(value) === "42");
   if (done)
     queueMicrotask(() => {
