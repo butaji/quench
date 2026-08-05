@@ -363,6 +363,12 @@ pub fn collect_let_const_recursive(stmts: &[Statement], decls: &mut Vec<(String,
                     decls.push((name, VarKind::Const));
                 }
             }
+            Statement::ClassDeclaration { name, .. } => {
+                // Class declarations are block-scoped like `let` (per ES §15.7.1).
+                // Hoist them into the TDZ so referencing the name before the
+                // declaration throws a ReferenceError.
+                decls.push((name.clone(), VarKind::Let));
+            }
             Statement::SequenceDecls(inner) => collect_let_const_recursive(inner, decls),
             Statement::Try { .. } => {}
             _ => {}

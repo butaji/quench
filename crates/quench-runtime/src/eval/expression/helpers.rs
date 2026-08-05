@@ -88,15 +88,23 @@ pub fn eval_unary_expr(
     if op == UnaryOp::Typeof {
         if let Expression::Identifier(name) = argument {
             if in_arrow_function && name == "arguments" {
-                return Err(JsError(format!("ReferenceError: {} is not defined", name)));
+                let msg = format!("ReferenceError: {} is not defined", name);
+                let (err, js_err) =
+                    crate::value::error::create_js_error_with_type(&msg, "ReferenceError");
+                crate::value::set_thrown_value(err);
+                return Err(js_err);
             }
             if name != "this" {
                 let is_tdz = { env.borrow().is_tdz(name) };
                 if is_tdz {
-                    return Err(JsError(format!(
+                    let msg = format!(
                         "ReferenceError: cannot access '{}' before initialization",
                         name
-                    )));
+                    );
+                    let (err, js_err) =
+                        crate::value::error::create_js_error_with_type(&msg, "ReferenceError");
+                    crate::value::set_thrown_value(err);
+                    return Err(js_err);
                 }
                 let has_binding = env.borrow().has(name);
                 let global = { env.borrow().get("globalThis") };
