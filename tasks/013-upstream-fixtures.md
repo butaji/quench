@@ -5097,6 +5097,10 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Reject stateless exchanges between different named curves.
 
+### Stage 1430: crypto DH key algorithm mismatch
+
+- Reject stateless exchanges between incompatible generated key algorithms.
+
 ### Stage 1428: crypto DH non-domain peer key
 
 - Select the short vector for any non-domain-length peer key.
