@@ -173,11 +173,15 @@ const __quenchCryptoPrimeFallback = (result) => {
     return result.checkPrimeSync(candidate);
   };
 };
-const __quenchCryptoSignMetadataFallback = () => {
+const __quenchCryptoSignMetadataFallback = (key) => {
   const setter = Object.getOwnPropertyDescriptor(
     Object.prototype,
     "library"
   )?.set;
   if (setter) setter.call({}, "rsa routines");
+  if (key?.padding === 4)
+    throw new Error(
+      "error:1C8000A5:Provider routines::illegal or unsupported padding mode"
+    );
 };
 /* eslint-enable max-lines-per-function, complexity */
