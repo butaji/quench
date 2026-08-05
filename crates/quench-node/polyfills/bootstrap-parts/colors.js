@@ -367,6 +367,7 @@ const __nodeLegacyUrlParts = (input, parsed) => {
   const hostname = host.replace(/^\[|\]$/g, "").split(":")[0];
   const port = host.match(/:(\d+)$/)?.[1] || null;
   const { pathname, search } = __nodeLegacyUrlPathParts(parsed, host);
+  const hrefPath = pathname.startsWith(";") ? `/${pathname}` : pathname;
   const hrefAuth = auth ? `${auth.replace(/[" <]/g, encodeURIComponent)}@` : "";
   return {
     protocol: __nodeLegacyUrlValue(protocol),
@@ -380,7 +381,7 @@ const __nodeLegacyUrlParts = (input, parsed) => {
     query: search ? search.slice(1) : null,
     pathname: __nodeLegacyUrlValue(pathname),
     path: __nodeLegacyUrlPathValue(pathname, search),
-    href: `${protocol}${host ? `//${hrefAuth}${host}` : ""}${pathname}${search || ""}${parsed.hash || ""}`
+    href: `${protocol}${host ? `//${hrefAuth}${host}` : ""}${hrefPath}${search || ""}${parsed.hash || ""}`
   };
 };
 const __nodeLegacyUrlFormatSearch = (value) => {

@@ -450,7 +450,7 @@ const __nodeLegacyUrlReceived = (value) => {
 };
 const __nodePrepareLegacyUrlInput = (value) => {
   let input = value.trim().replace(/[\r\n\t]/g, "");
-  if (!/^[a-z][a-z0-9+.-]*:/.test(input)) return input;
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(input)) return input;
   const suffixIndex = input.search(/[?#]/);
   const head = suffixIndex < 0 ? input : input.slice(0, suffixIndex);
   const suffix = suffixIndex < 0 ? "" : input.slice(suffixIndex);
