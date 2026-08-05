@@ -27,7 +27,6 @@ pub fn register_array_buffer(ctx: &mut Context) {
     if let Some(object_proto) = crate::builtins::get_object_prototype() {
         proto_rc.borrow_mut().prototype = Some(object_proto);
     }
-
     let proto_clone = Rc::clone(&proto_rc);
     let byte_length_getter = Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
         let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
@@ -405,7 +404,20 @@ fn register_shared_array_buffer(ctx: &mut Context) {
     if let Some(object_proto) = crate::builtins::get_object_prototype() {
         proto_rc.borrow_mut().prototype = Some(object_proto);
     }
-
+    if let Some(Value::Symbol(tag_key)) =
+        crate::builtins::symbol::get_well_known_symbol_no_ctx("toStringTag")
+    {
+        proto_rc.borrow_mut().define(
+            &tag_key.property_key(),
+            Value::String("SharedArrayBuffer".to_string()),
+            crate::value::PropertyFlags {
+                value: Some(Value::String("SharedArrayBuffer".to_string())),
+                writable: false,
+                enumerable: false,
+                configurable: true,
+            },
+        );
+    }
     let byte_length_getter = Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
         let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
         let Value::Object(object) = this_val else {
@@ -413,6 +425,11 @@ fn register_shared_array_buffer(ctx: &mut Context) {
                 "SharedArrayBuffer.prototype.byteLength requires a SharedArrayBuffer receiver",
             ));
         };
+        if object.borrow().get_own("\0sharedArrayBuffer").is_none() {
+            return Err(array_buffer_type_error(
+                "SharedArrayBuffer.prototype.byteLength requires a SharedArrayBuffer receiver",
+            ));
+        }
         let value = object
             .borrow()
             .get_own_value("byteLength")
@@ -430,6 +447,11 @@ fn register_shared_array_buffer(ctx: &mut Context) {
                 "SharedArrayBuffer.prototype.growable requires a SharedArrayBuffer receiver",
             ));
         };
+        if object.borrow().get_own("\0sharedArrayBuffer").is_none() {
+            return Err(array_buffer_type_error(
+                "SharedArrayBuffer.prototype.growable requires a SharedArrayBuffer receiver",
+            ));
+        }
         let value = object
             .borrow()
             .get_own_value("maxByteLength")
@@ -785,6 +807,24 @@ mod tests {
             "Object.getOwnPropertyDescriptor(SharedArrayBuffer.prototype, 'byteLength').enumerable === false && Object.getOwnPropertyDescriptor(SharedArrayBuffer.prototype, 'growable').enumerable === false",
         );
         assert_eq!(result, Value::Boolean(true));
+    }
+
+    #[test]
+    fn shared_array_buffer_prototype_has_to_string_tag() {
+        let result = eval_ok("SharedArrayBuffer.prototype[Symbol.toStringTag]");
+        assert_eq!(result, Value::String("SharedArrayBuffer".to_string()));
+    }
+
+    #[test]
+    fn shared_array_buffer_accessors_reject_array_buffer_receivers() {
+        let byte_length = eval_ok(
+            "try { Object.getOwnPropertyDescriptor(SharedArrayBuffer.prototype, 'byteLength').get.call(new ArrayBuffer(1)); false } catch (error) { error instanceof TypeError }",
+        );
+        let growable = eval_ok(
+            "try { Object.getOwnPropertyDescriptor(SharedArrayBuffer.prototype, 'growable').get.call(new ArrayBuffer(1)); false } catch (error) { error instanceof TypeError }",
+        );
+        assert_eq!(byte_length, Value::Boolean(true));
+        assert_eq!(growable, Value::Boolean(true));
     }
 
     #[test]

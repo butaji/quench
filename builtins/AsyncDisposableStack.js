@@ -89,7 +89,7 @@ DefineProp(AsyncDisposableStack.prototype, Symbol.toStringTag, {
 });
 DefineProp(AsyncDisposableStack.prototype, Symbol.asyncDispose, {
   value: AsyncDisposableStack.prototype.disposeAsync,
-  writable: false,
+  writable: true,
   enumerable: false,
   configurable: true
 });
