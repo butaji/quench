@@ -38,7 +38,7 @@ pub fn parse_script(source: &str) -> Result<Program, JsError> {
     }) {
         return Err(JsError("SyntaxError: module declaration in script".to_string()));
     }
-    check_strict_reserved(&ret.program)?;
+    check_strict_reserved(&ret.program, false)?;
     check_strict_fn_params(&ret.program)?;
     check_strict_fn_body(&ret.program)?;
     early_errors::check_early_errors(&ret.program)?;
@@ -65,8 +65,9 @@ pub fn parse_script(source: &str) -> Result<Program, JsError> {
 /// Reject strict-mode future reserved words used as binding identifiers.
 /// Strict mode applies when the program has a "use strict" directive prologue
 /// or when it is inherited from the calling context (e.g. strict eval).
-fn check_strict_reserved(program: &oxc::ast::ast::Program) -> Result<(), JsError> {
+fn check_strict_reserved(program: &oxc::ast::ast::Program, is_module: bool) -> Result<(), JsError> {
     let strict = crate::strict_reserved::has_use_strict_directive(program)
+        || is_module
         || crate::interpreter::is_strict_mode();
     if !strict {
         return Ok(());
@@ -364,7 +365,7 @@ pub fn parse_es_module(source: &str) -> Result<Program, JsError> {
     if !ret.diagnostics.is_empty() {
         return Err(JsError(format!("Parse error: {:?}", ret.diagnostics)));
     }
-    check_strict_reserved(&ret.program)?;
+    check_strict_reserved(&ret.program, true)?;
     check_strict_fn_params(&ret.program)?;
     check_strict_fn_body(&ret.program)?;
     early_errors::check_early_errors(&ret.program)?;
@@ -771,6 +772,11 @@ mod tests {
     #[test]
     fn module_rejects_restricted_import_binding() {
         assert!(parse_es_module("import { x as arguments } from 'm';").is_err());
+    }
+
+    #[test]
+    fn module_rejects_strict_reserved_binding_after_call() {
+        assert!(parse_es_module("$DONOTEVALUATE();\n\nvar public;").is_err());
     }
 
     #[test]
