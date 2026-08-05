@@ -449,7 +449,9 @@ const __nodeLegacyUrlReceived = (value) => {
   return `type ${typeof value} (${String(value)})`;
 };
 const __nodePrepareLegacyUrlInput = (value) => {
-  let input = globalThis.__nodeLegacyUrlControlNormalize(value.trim());
+  let input = globalThis.__nodeLegacyUrlControlNormalize(
+    value.trim().replace(/^[\x00-\x1f]+|[\x00-\x1f]+$/g, "")
+  );
   input = input.replace(/^([^/]*\/\/[^/]*)/, (authority) =>
     authority.replace(/%0[9a-d]/gi, "")
   );
