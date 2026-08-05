@@ -70,6 +70,11 @@ pub fn register_array_buffer(ctx: &mut Context) {
                     "TypeError: ArrayBuffer.prototype.slice requires an ArrayBuffer receiver",
                 ));
             };
+            if !is_array_buffer(&this_obj.borrow()) {
+                return Err(array_buffer_type_error(
+                    "ArrayBuffer.prototype.slice requires an ArrayBuffer receiver",
+                ));
+            }
             let len = this_obj
                 .borrow()
                 .get("byteLength")
@@ -130,10 +135,15 @@ pub fn register_array_buffer(ctx: &mut Context) {
             Value::NativeFunction(Rc::new(NativeFunction::new(move |args| {
                 let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
                 let Value::Object(this_obj) = this_val else {
-                    return Err(crate::JsError::new(
-                        "TypeError: ArrayBuffer method requires an ArrayBuffer receiver",
+                    return Err(array_buffer_type_error(
+                        "ArrayBuffer method requires an ArrayBuffer receiver",
                     ));
                 };
+                if !is_array_buffer(&this_obj.borrow()) {
+                    return Err(array_buffer_type_error(
+                        "ArrayBuffer method requires an ArrayBuffer receiver",
+                    ));
+                }
                 let mut obj = this_obj.borrow_mut();
                 let start = args
                     .first()
@@ -445,6 +455,14 @@ mod tests {
     fn array_buffer_slice_rejects_non_constructor_species() {
         let result = eval_ok(
             "var buffer = new ArrayBuffer(1); buffer.constructor = { [Symbol.species]: 1 }; try { buffer.slice(); false } catch (error) { error instanceof TypeError }",
+        );
+        assert_eq!(result, Value::Boolean(true));
+    }
+
+    #[test]
+    fn array_buffer_transfer_rejects_prototype_lookalikes() {
+        let result = eval_ok(
+            "try { Object.create(ArrayBuffer.prototype).transfer(); false } catch (error) { error instanceof TypeError }",
         );
         assert_eq!(result, Value::Boolean(true));
     }
