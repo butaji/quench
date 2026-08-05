@@ -346,7 +346,7 @@ const __quenchCryptoCipherFallback = (result) => {
       }
     );
   };
-  result.createDecipheriv ||= (...args) => result.createCipheriv(...args);
+  __quenchCryptoDecipherFallback(result);
   __quenchCryptoCipherConstructors(result);
 };
 const __quenchCryptoCipherConstructors = (result) => {
@@ -479,8 +479,8 @@ const __quenchCryptoFallbacks = (result) => {
   globalThis.__quenchHashConstructor = result.Hash;
   globalThis.__quenchSignConstructor = result.Sign;
   globalThis.__quenchVerifyConstructor = result.Verify;
-  __quenchCryptoSignFallback(result);
-  __quenchCryptoKeyExchangeFallback(result);
+  (__quenchCryptoSignFallback(result),
+    __quenchCryptoKeyExchangeFallback(result));
   (__quenchCryptoKeyFallback(result), __quenchCryptoKeyObjectFallback(result));
   __quenchCryptoConstantsFallback(result);
   __quenchCertificateFallback(result);
