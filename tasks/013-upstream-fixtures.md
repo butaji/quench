@@ -4586,3 +4586,12 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Reject non-octal string modes passed to `fs.open` and `fs.openSync` with
   `ERR_INVALID_ARG_VALUE`.
+
+### Stage 1309: externalizable string globals
+
+- Provide the externalizable-string globals expected by Node's write fixture.
+
+### Stage 1310: write string overload
+
+- Normalize the `fs.writeSync(fd, string, position, encoding)` overload before
+  applying buffer range validation.

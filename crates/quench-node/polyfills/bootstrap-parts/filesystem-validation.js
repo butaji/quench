@@ -1,20 +1,3 @@
-const __nodeFsValidateMode = (mode) => {
-  if (
-    mode !== undefined &&
-    mode !== null &&
-    typeof mode !== "number" &&
-    typeof mode !== "string"
-  ) {
-    const error = new TypeError('The "mode" argument must be of type number');
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
-  }
-  if (typeof mode === "string" && !/^0?[0-7]+$/.test(mode)) {
-    const error = new TypeError(`The "mode" argument is invalid: ${mode}`);
-    error.code = "ERR_INVALID_ARG_VALUE";
-    throw error;
-  }
-};
 const __nodeFsSetMode = (path, mode) => {
   if (mode !== undefined && mode !== null)
     globalThis.__nodeModes[path] =
@@ -209,6 +192,19 @@ const __nodeFsWriteFinalize = (path, options, result) => {
     globalThis.__nodeModes[path] = Number(options.mode);
   return result;
 };
+const __nodeFsReadFileOutput = (bytes, options) => {
+  if (options === undefined || options === null) return NodeBuffer.from(bytes);
+  const encoding =
+    typeof options === "string" ? options : options && options.encoding;
+  if (encoding !== undefined && !NodeBuffer.isEncoding(encoding)) {
+    const error = new TypeError(`Unknown encoding: ${encoding}`);
+    error.code = "ERR_UNKNOWN_ENCODING";
+    throw error;
+  }
+  const buffered = __nodeFsReadWithBuffer(bytes, options, encoding);
+  if (buffered !== undefined) return buffered;
+  return NodeBuffer.from(bytes).toString(encoding || "utf8");
+};
 globalThis.__nodeFs = {};
 Object.assign(globalThis.__nodeFs, {
   _toUnixTimestamp: (value) => {
@@ -310,21 +306,7 @@ Object.assign(globalThis.__nodeFs, {
   readFileSync: (value, options) => {
     const path = __nodeFsReadPath(value);
     const bytes = __nodeFsReadBytes(path, options);
-    const hex = NodeBuffer.from(bytes).toString("hex");
-    if (options === undefined || options === null)
-      return NodeBuffer.from(bytes);
-    const encoding =
-      typeof options === "string" ? options : options && options.encoding;
-    if (encoding !== undefined && !NodeBuffer.isEncoding(encoding)) {
-      const error = new TypeError(`Unknown encoding: ${encoding}`);
-      error.code = "ERR_UNKNOWN_ENCODING";
-      throw error;
-    }
-    const buffered = __nodeFsReadWithBuffer(bytes, options, encoding);
-    if (buffered !== undefined) return buffered;
-    if (encoding === "hex" || encoding === "base64")
-      return NodeBuffer.from(hex, "hex").toString(encoding);
-    return globalThis.__quench_fs_read_file(path);
+    return __nodeFsReadFileOutput(bytes, options);
   },
   writeFileSync: (value, data, options = {}) => {
     const path = nodeFsPath(value);
@@ -337,8 +319,16 @@ Object.assign(globalThis.__nodeFs, {
   openSync: (value, flags = "r", mode) => {
     const path = nodeFsPath(value);
     __nodeFsValidateMode(mode);
-    const flag = String(flags);
-    if (!/^[wax]/.test(flag) && !globalThis.__quench_fs_access(path)) {
+    const createsFile =
+      typeof flags === "number" &&
+      (flags & globalThis.__nodeFs.constants.O_CREAT) !== 0;
+    const flag =
+      typeof flags === "number" ? (createsFile ? "w" : "r") : String(flags);
+    if (
+      !createsFile &&
+      !/^[wax]/.test(flag) &&
+      !globalThis.__quench_fs_access(path)
+    ) {
       const error = new Error(
         `ENOENT: no such file or directory, open '${path}'`
       );
