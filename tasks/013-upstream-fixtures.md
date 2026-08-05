@@ -4060,3 +4060,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Added buffer-like payload validation and the legacy `sendto()` alias used by
   invalid-message fixtures.
+
+### Stage 1192: dgram sendto validation
+
+- Added ordered validation for the legacy `sendto()` offset, length, port, and
+  address arguments.
