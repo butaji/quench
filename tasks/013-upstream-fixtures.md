@@ -5252,3 +5252,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1520. `url-pathtofileurl-host-validation.js` — reject invalid Windows UNC hosts.
 1521. `url-fileurltopath-invalid-path.js` — reject encoded file URL separators.
 1522. `url-to-http-options.js` — expose URL-to-HTTP option conversion.
+1523. `url-revoke-object-url.js` — validate URL revokeObjectURL arguments.

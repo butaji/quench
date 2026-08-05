@@ -416,3 +416,10 @@ const __nodeUrlToHttpOptions = (value) => {
   };
 };
 globalThis.__nodeUrlToHttpOptions = __nodeUrlToHttpOptions;
+globalThis.__nodeURL.revokeObjectURL = (value) => {
+  if (value === undefined) {
+    const error = new TypeError('The "url" argument must be specified');
+    error.code = "ERR_MISSING_ARGS";
+    throw error;
+  }
+};
