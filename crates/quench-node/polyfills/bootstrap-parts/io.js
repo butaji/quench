@@ -117,12 +117,19 @@ const __nodeFsReadNormalize = (buffer, offset, length, position) => {
   return { offset, length, position };
 };
 const __nodeFsReadArguments = (fd, buffer, offset, length, position) => {
-  if (typeof fd !== "number")
-    throw new TypeError('The "fd" argument must be of type number');
-  if (!(buffer instanceof Uint8Array))
-    throw new TypeError(
-      'The "buffer" argument must be an instance of Buffer, TypedArray, or DataView'
+  if (typeof fd !== "number") {
+    const error = new TypeError(
+      `The "fd" argument must be of type number. Received ${fd}`
     );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  if (!(buffer instanceof Uint8Array)) {
+    const error = new TypeError(
+      'The "buffer" argument must be an instance of Buffer, TypedArray, or DataView. Received an instance of Object'
+    );
+    throw error;
+  }
   return {
     fd,
     buffer,
