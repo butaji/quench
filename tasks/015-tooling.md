@@ -136,3 +136,5 @@ working commit, making per-slice regressions visible without manual log
 comparison.
 `tools/coverage-by-prefix.sh` now emits pass/total percentages grouped by the
 leading fixture prefix for corpus-level progress measurement.
+The unused ESLint suppression in the dgram membership polyfill was removed, so
+the repository lint gate is warning-free for owned source.
