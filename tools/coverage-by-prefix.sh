@@ -1,43 +1,36 @@
-#!/usr/bin/env bash
-# Emit a coverage table by test-name prefix from running quench-node over a directory.
-# Usage: tools/coverage-by-prefix.sh [directory]
-set -euo pipefail
+#!/usr/bin/env sh
+set -eu
 
-root="$(cd "$(dirname "$0")/.." && pwd)"
-dir="${1:-$root/tests/node/test/parallel}"
-
-if [[ ! -d "$dir" ]]; then
-  echo "Error: directory $dir does not exist" >&2
-  exit 1
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+dir=${1:-"$root/tests/node/test/parallel"}
+timeout_seconds=${QUENCH_NODE_TEST_TIMEOUT_SECONDS:-10}
+binary=${QUENCH_NODE_BIN:-"$root/target/debug/quench-node"}
+if [ ! -x "$binary" ]; then
+  cargo build --quiet --manifest-path "$root/Cargo.toml" -p quench-node
 fi
 
-echo "$@" | head -200 > /tmp/qcov-output.txt
-cargo run -q --manifest-path "$root/Cargo.toml" -p quench-node \
-  -- --test-dir "$dir" > /tmp/qcov-output.txt 2>&1 || true
-
-awk '
-/^(ok|not_ok) / {
-  n = split($2, parts, "/")
-  base = parts[n]
-  sub(/^test-/, "", base)
-  idx = index(base, "-")
-  if (idx > 0) prefix = substr(base, 1, idx - 1)
-  else prefix = base
-  total[prefix]++
-  if ($1 == "ok") pass[prefix]++
+run_fixture() {
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$timeout_seconds" "$binary" "$1"
+  elif command -v gtimeout >/dev/null 2>&1; then
+    gtimeout "$timeout_seconds" "$binary" "$1"
+  else
+    perl -e 'alarm shift; exec @ARGV' "$timeout_seconds" "$binary" "$1"
+  fi
 }
-END {
-  grand_total = 0
-  grand_pass = 0
-  for (p in total) {
-    t = total[p]
-    s = (p in pass) ? pass[p] : 0
-    f = t - s
-    r = (t > 0) ? int(s * 100 / t) : 0
-    printf "%-22s %8d %8d %8d %5d%%\n", p, t, s, f, r
-    grand_total += t
-    grand_pass += s
-  }
-  r = (grand_total > 0) ? int(grand_pass * 100 / grand_total) : 0
-  printf "\n%-22s %8d %8d %8s %5d%%\n", "OVERALL", grand_total, grand_pass, "", r
-}' /tmp/qcov-output.txt
+
+prefixes=$(find "$dir" -type f \( -name '*.js' -o -name '*.mjs' -o -name '*.cjs' \) \
+  | sed 's#.*/##; s#^test-##; s#-.*##' | sort -u)
+for prefix in $prefixes; do
+  total=0
+  passed=0
+  while IFS= read -r fixture; do
+    total=$((total + 1))
+    run_fixture "$fixture" >/dev/null 2>&1 && passed=$((passed + 1)) || true
+  done <<EOF
+$(find "$dir" -type f \( -name "test-${prefix}-*.js" -o -name "test-${prefix}-*.mjs" -o -name "test-${prefix}-*.cjs" \) | sort)
+EOF
+  percent=$(awk -v passed="$passed" -v total="$total" \
+    'BEGIN { if (total == 0) print "0.00"; else printf "%.2f", passed * 100 / total }')
+  printf '%s: %s/%s (%s%%)\n' "$prefix" "$passed" "$total" "$percent"
+done
