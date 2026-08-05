@@ -74,7 +74,20 @@ const __quenchValidateCipherKey = (algorithm, key) => {
   const length = typeof key === "string" ? key.length : key.byteLength;
   if (length !== expected) throw new Error("Invalid key length");
 };
-const __quenchValidateCipherArguments = (algorithm, key, iv) => {
+const __quenchValidateAuthTagLength = (algorithm, options) => {
+  if (
+    algorithm.toLowerCase() !== "chacha20-poly1305" ||
+    options?.authTagLength === undefined ||
+    (options.authTagLength >= 1 && options.authTagLength <= 16)
+  )
+    return;
+  const error = new Error(
+    `Invalid authentication tag length: ${options.authTagLength}`
+  );
+  error.code = "ERR_CRYPTO_INVALID_AUTH_TAG";
+  throw error;
+};
+const __quenchValidateCipherArguments = (algorithm, key, iv, options) => {
   if (typeof algorithm !== "string") {
     throw Object.assign(
       new TypeError(
@@ -105,6 +118,7 @@ const __quenchValidateCipherArguments = (algorithm, key, iv) => {
       { code: "ERR_INVALID_ARG_TYPE" }
     );
   __quenchValidateEcbIv(algorithm, iv);
+  __quenchValidateAuthTagLength(algorithm, options);
   __quenchValidateCipherKey(algorithm, key);
   if (!algorithm.toLowerCase().includes("ecb"))
     __quenchValidateCbcIv(algorithm, iv);
@@ -171,8 +185,8 @@ const __quenchCipherAuthentication = (state) => ({
 });
 const __quenchCryptoCipherFallback = (result) => {
   const values = (globalThis.__quenchCipherValues ||= new Map());
-  result.createCipheriv ||= (algorithm, key, iv) => {
-    __quenchValidateCipherArguments(algorithm, key, iv);
+  result.createCipheriv ||= (algorithm, key, iv, options) => {
+    __quenchValidateCipherArguments(algorithm, key, iv, options);
     let inputEncoding, outputEncoding;
     let readable,
       state = {};
