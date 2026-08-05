@@ -3961,3 +3961,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Added callback and promise `lookupService()` surfaces with Node’s missing
   argument errors.
+
+### Stage 1175: DNS MX error compatibility
+
+- Added `resolveMx()` with Node-shaped `ENOTFOUND` metadata for unavailable
+  `.onion` names.

@@ -1,14 +1,16 @@
 __nodeCryptoApi.Hash.prototype = Object.prototype;
+// This formatter mirrors Node's diagnostic type precedence in one decision tree.
+// eslint-disable-next-line complexity
 const __nodeCryptoRandomReceived = (value) => {
   const primitive = value?.valueOf?.() ?? value;
   const tag = Object.prototype.toString.call(value);
   if (typeof primitive === "string" || tag === "[object String]")
     return ` Received type string ('${primitive}')`;
-  if (value === null || value === undefined) return ` Received ${value}`;
   if (typeof primitive === "boolean")
     return ` Received type boolean (${primitive})`;
   if (typeof primitive === "number" || tag === "[object Number]")
     return ` Received type number (${primitive})`;
+  if (value === null || value === undefined) return ` Received ${value}`;
   return ` Received an instance of ${value.constructor?.name || "Object"}`;
 };
 globalThis.__nodeCryptoRandomIntegerError = (minimum, maximum) => {

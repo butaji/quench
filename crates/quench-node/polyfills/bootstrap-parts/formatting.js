@@ -356,6 +356,7 @@ globalThis.__nodeUtil = {
         .join("")
     );
   },
+  // eslint-disable-next-line complexity
   inspect: (value) => {
     if (value instanceof Date) return value.toISOString();
     if (typeof value === "symbol") return String(value);
