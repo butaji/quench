@@ -314,10 +314,10 @@ Object.assign(__quenchInternalFsUtilsModule, {
       xa: 1217,
       "ax+": 1218,
       "xa+": 1218,
-      as: 1051713,
-      sa: 1051713,
-      "as+": 1051714,
-      "sa+": 1051714
+      as: 1053761,
+      sa: 1053761,
+      "as+": 1053762,
+      "sa+": 1053762
     };
     if (typeof flags !== "string" || values[flags] === undefined) {
       const error = new TypeError(`Unknown file open flag: ${flags}`);
