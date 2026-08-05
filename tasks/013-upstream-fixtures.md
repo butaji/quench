@@ -5128,3 +5128,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1436: crypto exported zero-peer marker
 
 - Preserve zero-peer source metadata through key export encodings.
+
+### Stage 1437: crypto ECDH convert-key validation
+
+- Expose `ECDH.convertKey()` argument and invalid-curve validation.
