@@ -4984,3 +4984,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1400: crypto DH argument types
 
 - Reject empty DH keys and unsupported generator argument types.
+
+### Stage 1401: crypto DH constructors
+
+- Expose callable `DiffieHellmanGroup` and `ECDH` constructors with correct prototypes.
