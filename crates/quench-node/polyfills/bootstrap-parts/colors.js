@@ -280,7 +280,7 @@ const __nodeURLResolveInput = (input, base) => {
   // prettier-ignore
   let value = String(input).trim().replace(/[\t\n\r]/g, "");
   // prettier-ignore
-  if (base && value === "") value = String(base).trim().replace(/[\t\n\r]/g, "");
+  if (base && (value === "" ? (value = String(base).trim().replace(/[\t\n\r]/g, "")) : /^(?:https?|ftp):\/\//i.test(base) && (value = value.replace(/\\/g, "/"))));
   // prettier-ignore
   if (base && (!/^[a-z][a-z0-9+.-]*:/.test(value) || /^(?:https?|ftp):[^/]/.test(value))) { const baseUrl = new globalThis.__nodeURL(base); value = value.replace(/^(?:https?|ftp):/, "");
     value = value.startsWith("/")
