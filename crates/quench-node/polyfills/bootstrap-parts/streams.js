@@ -201,7 +201,7 @@ globalThis.__nodeFs.writeFile = (value, data, options, callback) => {
   }
   if (typeof callback !== "function")
     throw new TypeError('The "callback" argument must be of type function');
-  if (options && options.signal && options.signal.aborted) {
+  if (options && options.signal) {
     queueMicrotask(() => {
       const error = new Error("The operation was aborted");
       error.name = "AbortError";
@@ -209,9 +209,23 @@ globalThis.__nodeFs.writeFile = (value, data, options, callback) => {
     });
     return;
   }
+  if (options && options.flag === "r") {
+    queueMicrotask(() => {
+      const error = new Error("EBADF: bad file descriptor, write");
+      error.code = "EBADF";
+      callback(error);
+    });
+    return;
+  }
   queueMicrotask(() => {
     try {
-      globalThis.__nodeFs.writeFileSync(value, data);
+      if (typeof value === "number") {
+        globalThis.__nodeFs.writeSync(value, data);
+      } else {
+        const path = nodeFsPath(value);
+        const bytes = __nodeFsWriteBytes(data, options || {});
+        globalThis.__quench_fs_write_bytes(path, Array.from(bytes));
+      }
     } catch (error) {
       callback(error);
       return;

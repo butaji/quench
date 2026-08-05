@@ -4610,3 +4610,17 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Deliver an `AbortError` when an asynchronous `fs.readFile` is aborted while
   the read is pending.
+
+### Stage 1314: write-file abort lifecycle
+
+- Deliver an `AbortError` for callback-based `fs.writeFile` calls using an
+  abort signal.
+
+### Stage 1315: write-file descriptors
+
+- Support file descriptors as callback-based `fs.writeFile` targets.
+
+### Stage 1316: write-file basic callback
+
+- Preserve the ordinary callback-based `fs.writeFile(path, data, callback)`
+  success path while adding abort and descriptor handling.
