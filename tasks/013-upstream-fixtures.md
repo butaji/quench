@@ -4498,3 +4498,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1286: async access mode validation
 
 - Cover invalid mode validation for callback-based `fs.access` calls.
+
+### Stage 1288: execFile nonzero exit errors
+
+- Return command, output, and exit-code metadata when `execFile` receives a
+  nonzero fixture exit.
