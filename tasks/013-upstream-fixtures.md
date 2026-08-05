@@ -5402,3 +5402,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1673. `url-pathname-colon.js` — preserve colons in URL pathname segments.
 1674. `url-opaque-paths.js` — preserve spaces and schemes in opaque URL paths.
 1675. `url-port-normalization.js` — canonicalize numeric URL ports.
+1676. `url-default-port.js` — omit default HTTP and HTTPS ports.
