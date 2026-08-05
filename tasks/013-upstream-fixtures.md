@@ -4099,3 +4099,14 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Added bound-state and range behavior for multicast loopback and multicast TTL
   setters.
+
+### Stage 1201: dgram membership methods
+
+- Added multicast membership and source-specific membership validation methods,
+  including closed-socket and missing-argument errors.
+
+### Retrospective: stages 1200-1201
+
+- The dgram polyfill reached the file-size gate as multicast methods grew.
+  Extracting membership methods into a dedicated `membership.js` preserved the
+  500-line limit and made the next API cluster independently maintainable.

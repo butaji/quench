@@ -1,3 +1,4 @@
+/* eslint-disable max-lines-per-function, complexity */
 const __quenchOriginalRequireWithDgram = globalThis.require;
 const __quenchDgramStateSymbol = Symbol.for("quench.dgram.state");
 const __quenchDgramBoundPorts = new Set();
@@ -427,6 +428,7 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
     ref: () => socket,
     unref: () => socket
   };
+  Object.assign(socket, __quenchDgramMembershipMethods(socket));
   socket[__quenchDgramStateSymbol] = { handle: { fd: 0 } };
   return socket;
 };

@@ -93,6 +93,7 @@ const BOOTSTRAP_PARTS: &[&str] = &[
     include_str!("../polyfills/bootstrap-parts/glob.js"),
     include_str!("../polyfills/bootstrap-parts/dns.js"),
     include_str!("../polyfills/bootstrap-parts/dgram.js"),
+    include_str!("../polyfills/bootstrap-parts/membership.js"),
     include_str!("../polyfills/bootstrap-parts/https.js"),
     include_str!("../polyfills/bootstrap-parts/http2.js"),
     include_str!("../polyfills/bootstrap-parts/reporters.js"),
