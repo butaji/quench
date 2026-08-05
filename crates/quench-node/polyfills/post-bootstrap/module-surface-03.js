@@ -119,6 +119,88 @@ const __quenchAddAbortSignal = (signal, stream) => {
   }
   return stream;
 };
+const __quenchCollectReadable = (stream, operations) =>
+  new Promise((resolve, reject) => {
+    const values = [];
+    let skipped = operations.drop;
+    stream.on("data", (value) => {
+      if (skipped > 0) {
+        skipped--;
+        return;
+      }
+      if (values.length < operations.take) values.push(value);
+      if (values.length === operations.take && stream.pause) stream.pause();
+    });
+    stream.once("end", () => resolve(values));
+    stream.once("error", reject);
+  });
+const __quenchSliceCount = (count) => {
+  const value = Number(count);
+  if (!Number.isFinite(value) || value < 0) {
+    const error = new RangeError(
+      "ERR_OUT_OF_RANGE: count must be non-negative"
+    );
+    error.code = "ERR_OUT_OF_RANGE";
+    throw error;
+  }
+  return Math.floor(value);
+};
+const __quenchSliceOptions = (options) => {
+  if (options === undefined) return;
+  if (!options || typeof options !== "object") {
+    const error = new TypeError(
+      "ERR_INVALID_ARG_TYPE: options must be an object"
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  if (options.signal !== undefined && typeof options.signal !== "object") {
+    const error = new TypeError(
+      "ERR_INVALID_ARG_TYPE: signal must be an AbortSignal"
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+};
+const __quenchReadableSlice = (stream, operations) => ({
+  drop(count, options) {
+    __quenchSliceOptions(options);
+    return __quenchReadableSlice(stream, {
+      drop: operations.drop + __quenchSliceCount(count),
+      take: operations.take
+    });
+  },
+  take(count, options) {
+    __quenchSliceOptions(options);
+    return __quenchReadableSlice(stream, {
+      drop: operations.drop,
+      take: Math.min(operations.take, __quenchSliceCount(count))
+    });
+  },
+  toArray() {
+    return __quenchCollectReadable(stream, operations);
+  }
+});
+const __quenchAddReadableSlices = (result) => {
+  for (const name of ["Readable", "Transform", "Duplex", "PassThrough"]) {
+    const prototype = result[name]?.prototype;
+    if (!prototype) continue;
+    prototype.drop ||= function (count, options) {
+      __quenchSliceOptions(options);
+      return __quenchReadableSlice(this, {
+        drop: __quenchSliceCount(count),
+        take: Infinity
+      });
+    };
+    prototype.take ||= function (count, options) {
+      __quenchSliceOptions(options);
+      return __quenchReadableSlice(this, {
+        drop: 0,
+        take: __quenchSliceCount(count)
+      });
+    };
+  }
+};
 const __quenchAddHttpEvents = (result) => {
   for (const name of ["IncomingMessage", "ServerResponse"]) {
     const prototype = result[name]?.prototype;
@@ -168,6 +250,7 @@ const __quenchAddStreamCompat = (result) => {
       return this;
     };
   }
+  __quenchAddReadableSlices(result);
   __quenchAddStreamWebCompat(result);
   __quenchAddStreamDefaults(result);
   const pipeline = result.pipeline;

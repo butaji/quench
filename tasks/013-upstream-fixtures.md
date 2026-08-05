@@ -4178,3 +4178,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Added `addAbortSignal()` validation, stream return behavior, and the internal
   no-validation helper module.
+
+### Stage 1216: stream drop/take slices
+
+- Added event-backed `Readable.drop()`, `Readable.take()`, and `toArray()`
+  chaining for finite stream slices.
