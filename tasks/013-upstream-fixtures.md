@@ -9,6 +9,8 @@
   full interactive REPL loop; this keeps the compatibility boundary small.
 - The shared test helper also now exposes `skipIfInspectorDisabled()` as a
   no-op because this harness does not disable inspector-backed fixtures.
+- The focused contract also verifies that input data reaches the output
+  writer; the upstream fixture still exercises a fuller Duplex lifecycle.
 
 ## Stage 1152: filesystem appendFile invalid data
 
