@@ -1,6 +1,7 @@
 //! $262 host API object for test262
 
 use crate::context::CURRENT_CONTEXT;
+use crate::ast::Program;
 use crate::test262::harness::make_native;
 use crate::value::{Object, ObjectKind};
 use crate::{Context, JsError, Value};
@@ -134,6 +135,7 @@ fn host_262_eval_script(args: Vec<Value>) -> Result<Value, JsError> {
         return Err(js_err);
     }
     let ctx = unsafe { &mut *ctx_ptr };
+    reject_restricted_global_lexicals(ctx, &code)?;
     // evalScript runs a NEW script: non-strict unless the source itself
     // declares 'use strict' — never inherit the caller's strictness.
     let was_strict = crate::interpreter::is_strict_mode();
@@ -144,6 +146,32 @@ fn host_262_eval_script(args: Vec<Value>) -> Result<Value, JsError> {
     crate::interpreter::set_strict_mode(was_strict);
     crate::interpreter::set_direct_eval(was_direct_eval);
     result
+}
+
+fn reject_restricted_global_lexicals(ctx: &Context, source: &str) -> Result<(), JsError> {
+    let Program::Script(body) = ctx.parse(source)?;
+    let names = crate::interpreter::collect_let_const_declarations(&body);
+    let Some(Value::Object(global)) = ctx.get_global("globalThis") else {
+        return Ok(());
+    };
+    for (name, _) in names {
+        if global
+            .borrow()
+            .get_own_property(&name)
+            .is_some_and(|descriptor| descriptor.configurable == Some(false))
+            && crate::context::get_current_env()
+                .and_then(|env| env.borrow().get_kind(&name))
+                != Some(crate::ast::VarKind::Var)
+        {
+            let (error, js_error) = crate::value::error::create_js_error_with_type(
+                "Identifier conflicts with a restricted global property",
+                "SyntaxError",
+            );
+            crate::value::set_thrown_value(error);
+            return Err(js_error);
+        }
+    }
+    Ok(())
 }
 
 /// Inject $262.agent stub BEFORE loading harness files.
@@ -391,6 +419,17 @@ mod tests {
             result.is_ok(),
             "$262.evalScript lost its context: {result:?}"
         );
+    }
+
+    #[test]
+    fn test_eval_script_rejects_restricted_lexical_global() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval(
+            "Object.defineProperty(this, 'restricted', { configurable: false }); \
+             try { $262.evalScript('let x; let restricted;'); false } \
+             catch (e) { e instanceof SyntaxError }",
+        );
+        assert_eq!(result, Ok(crate::Value::Boolean(true)));
     }
 
     #[test]
