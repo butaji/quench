@@ -71,6 +71,13 @@ const __quenchDgramBind = (socket, type, port, address, callback) => {
   return socket;
 };
 const __quenchDgramSend = (socket, message, ...args) => {
+  if (message === undefined)
+    throw Object.assign(
+      new TypeError(
+        'The "buffer" argument must be of type string or an instance of Buffer, TypedArray, or DataView. Received undefined'
+      ),
+      { code: "ERR_INVALID_ARG_TYPE" }
+    );
   if (
     typeof message !== "string" &&
     !(message instanceof NodeBuffer) &&
@@ -84,7 +91,7 @@ const __quenchDgramSend = (socket, message, ...args) => {
       }
     );
   const hasOffset = args.length >= 5 || (socket._connected && args.length >= 2);
-  const addressIndex = args.length >= 5 ? 3 : hasOffset ? -1 : 1;
+  const addressIndex = args.length >= 4 ? 3 : hasOffset ? -1 : 1;
   const address = addressIndex < 0 ? undefined : args[addressIndex];
   if (
     address !== undefined &&
