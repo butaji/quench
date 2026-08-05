@@ -285,9 +285,12 @@ const __nodeWindowsDriveURL = (value, windows) => {
   return { href: `file:///${drive}/${path}` };
 };
 const __quenchValidateFileUrlHost = globalThis.__quenchValidateFileUrlHost;
-const __quenchValidateFileUrlPath = (input) => {
+const __quenchValidateFileUrlPath = (input, options) => {
   const href = typeof input === "string" ? input : input?.href;
-  if (!href || !/%2f|%5c/i.test(href)) return;
+  const invalid =
+    /%2f/i.test(href || "") ||
+    (options?.windows === true && /%5c/i.test(href || ""));
+  if (!href || !invalid) return;
   const error = new TypeError("Invalid file URL path");
   error.code = "ERR_INVALID_FILE_URL_PATH";
   error.input = new globalThis.__nodeURL(href);
@@ -297,7 +300,7 @@ const __quenchAddFileUrlFallback = (result) => {
   const fileURLToPath = result.fileURLToPath;
   if (typeof fileURLToPath !== "function") return;
   result.fileURLToPath = (input, ...args) => {
-    __quenchValidateFileUrlPath(input);
+    __quenchValidateFileUrlPath(input, args[0]);
     __quenchValidateFileUrlHost(input, args[0]);
     try {
       const converted = fileURLToPath(input, ...args);
