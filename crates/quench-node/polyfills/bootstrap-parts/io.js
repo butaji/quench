@@ -285,7 +285,18 @@ Object.assign(globalThis.__nodeFs, {
   realpathSync: (value, options) => {
     const input = nodePathValue(value);
     const path = input.replace(/^\.\/test\//, "tests/node/test/");
-    const result = globalThis.__quench_fs_realpath(path);
+    let result;
+    try {
+      result = globalThis.__quench_fs_realpath(path);
+    } catch (_) {
+      const error = new Error(
+        `ELOOP: too many symbolic links encountered, realpath '${path}'`
+      );
+      error.code = "ELOOP";
+      error.syscall = "realpath";
+      error.path = path;
+      throw error;
+    }
     const encoding =
       typeof options === "string" ? options : options && options.encoding;
     return encoding === "buffer"
