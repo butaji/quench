@@ -46,6 +46,7 @@ const BOOTSTRAP_PARTS: &[&str] = &[
     include_str!("../polyfills/bootstrap-parts/externalizable-strings.js"),
     include_str!("../polyfills/bootstrap-parts/open-validation.js"),
     include_str!("../polyfills/bootstrap-parts/write-validation.js"),
+    include_str!("../polyfills/bootstrap-parts/truncate-validation.js"),
     include_str!("../polyfills/bootstrap-parts/streams.js"),
     include_str!("../polyfills/bootstrap-parts/writes.js"),
     include_str!("../polyfills/bootstrap-parts/performance.js"),

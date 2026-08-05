@@ -1,31 +1,36 @@
-globalThis.__nodeFs.truncate = (value, length, callback) => {
+globalThis.__nodeFs.truncate = (value, length = 0, callback) => {
   if (typeof length === "function") {
     callback = length;
     length = 0;
   }
+  __validateTruncateLength(length);
   if (typeof callback !== "function")
     throw Object.assign(
       new TypeError('The "callback" argument must be of type function'),
       { code: "ERR_INVALID_ARG_TYPE" }
     );
-  if (typeof length !== "number" || !Number.isFinite(length)) {
-    const error = new TypeError('The "len" argument must be of type number');
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
-  }
-  if (!Number.isInteger(length)) {
-    const error = new RangeError('The value of "len" is out of range');
-    error.code = "ERR_OUT_OF_RANGE";
-    throw error;
-  }
   const path =
     typeof value === "number"
       ? globalThis.__nodeFdPaths[value]
       : nodeFsPath(value);
+  if (__truncateMissingPath(path, callback)) return;
   queueMicrotask(() => {
     try {
-      globalThis.__quench_fs_truncate(path, Number(length));
+      globalThis.__quench_fs_truncate(path, Math.max(0, Number(length)));
     } catch (error) {
+      if (
+        error.code === "ENOENT" ||
+        String(error.message).includes("no such file")
+      ) {
+        const missing = new Error(
+          `ENOENT: no such file or directory, open '${path}'`
+        );
+        missing.code = "ENOENT";
+        missing.path = path;
+        missing.syscall = "open";
+        callback(missing);
+        return;
+      }
       callback(error);
       return;
     }
@@ -37,6 +42,14 @@ globalThis.__nodeFs.ftruncate = (fd, length = 0, callback) => {
     callback = length;
     length = 0;
   }
+  __validateTruncateLength(length);
+  if (typeof fd !== "number") {
+    const error = new TypeError(
+      `The "fd" argument must be of type number.${__nodeInvalidArgSuffix(fd)}`
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
   if (typeof callback !== "function")
     throw Object.assign(
       new TypeError('The "callback" argument must be of type function'),
@@ -44,7 +57,9 @@ globalThis.__nodeFs.ftruncate = (fd, length = 0, callback) => {
     );
   queueMicrotask(() => {
     try {
-      globalThis.__nodeFs.ftruncateSync(fd, length);
+      if (length < 0)
+        globalThis.__quench_fs_truncate(globalThis.__nodeFdPaths[fd], 0);
+      else globalThis.__nodeFs.ftruncateSync(fd, length);
       callback(null);
     } catch (error) {
       callback(error);
