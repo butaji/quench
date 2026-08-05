@@ -35,6 +35,7 @@ globalThis.__nodeCommon = {
     return alive.has(pid);
   },
   printSkipMessage: (message) => console.log(`# SKIP: ${message}`),
+  skipIfInspectorDisabled: () => {},
   expectsError: (_expected) => (error) => {
     if (!error) throw new Error("Expected filesystem error");
   },

@@ -1,5 +1,15 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1153: REPL writer color options
+
+- Fixture: `test-repl-colors.js`
+- Added the minimal `REPLServer` writer surface and color option expected by
+  the upstream constructor contract.
+- Retrospective: expose observable constructor state before implementing the
+  full interactive REPL loop; this keeps the compatibility boundary small.
+- The shared test helper also now exposes `skipIfInspectorDisabled()` as a
+  no-op because this harness does not disable inspector-backed fixtures.
+
 ## Stage 1152: filesystem appendFile invalid data
 
 - Fixture: `test-fs-append-file.js`
