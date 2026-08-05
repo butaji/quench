@@ -4848,3 +4848,11 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1366: crypto cipher key validation
 
 - Reject unknown ciphers and invalid AES/DES key lengths.
+
+### Stage 1367: crypto ASCII encoding
+
+- Accept the `ascii` encoding in cipher stream updates.
+
+### Stage 1368: crypto authenticated methods
+
+- Provide chainable AAD/auth-tag methods and duplicate-tag state validation.
