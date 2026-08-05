@@ -160,6 +160,22 @@ const __quenchFormatUrlString = (input, originalFormat, args, result) => {
 };
 const __quenchAddUrlFormatting = (result) => {
   if (typeof result.format !== "function") return result;
+  const originalResolve = result.resolve;
+  result.resolveObject ||= (from, to) => {
+    if (from === "") return to;
+    if (from.startsWith("/") && !to.includes("://")) {
+      const base = from.slice(0, from.lastIndexOf("/") + 1);
+      const parts = `${base}${to}`.split("/");
+      const normalized = [];
+      for (const part of parts) {
+        if (part === "..") normalized.pop();
+        else if (part && part !== ".") normalized.push(part);
+      }
+      return `/${normalized.join("/")}`;
+    }
+    return originalResolve(from, to);
+  };
+  result.resolve = result.resolveObject;
   const originalFormat = result.format;
   result.format = (input, ...args) => {
     if (input && typeof input === "object")
