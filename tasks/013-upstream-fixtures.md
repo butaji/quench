@@ -4375,3 +4375,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Preserve the requested directory mode while masking file-type bits above
   `0o777`.
+
+### Stage 1260: filesystem watcher close
+
+- Added the minimal `fs.watch` closeable handle and no-op file watcher methods.
