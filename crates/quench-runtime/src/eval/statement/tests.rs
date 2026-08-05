@@ -631,6 +631,33 @@ fn dynamic_import_namespace_descriptor_reads_live_binding() {
 }
 
 #[test]
+fn dynamic_import_namespace_has_own_descriptor_reads_live_binding() {
+    let mut ctx = crate::Context::new().unwrap();
+    let mut exports = crate::value::Object::new(crate::value::ObjectKind::Ordinary);
+    let getter = crate::value::Value::NativeFunction(std::rc::Rc::new(
+        crate::value::NativeFunction::new(|_| Err(crate::value::error::JsError::new("boom"))),
+    ));
+    exports.define_accessor(
+        "x",
+        Some(getter),
+        None,
+        crate::value::PropertyFlags {
+            value: None,
+            writable: false,
+            enumerable: true,
+            configurable: false,
+        },
+    );
+    ctx.register_module("module-name", exports);
+    ctx.eval("var result; import('module-name').then(ns => { try { Object.prototype.hasOwnProperty.call(ns, 'x'); result = false; } catch (_) { result = true; } });").unwrap();
+    crate::builtins::promise::execute_pending_microtasks().unwrap();
+    assert_eq!(
+        ctx.eval("result").unwrap(),
+        crate::value::Value::Boolean(true)
+    );
+}
+
+#[test]
 fn dynamic_import_namespace_own_keys_are_sorted_and_immutable() {
     let mut ctx = crate::Context::new().unwrap();
     let mut exports = crate::value::Object::new(crate::value::ObjectKind::Ordinary);

@@ -29,6 +29,15 @@ pub fn object_prototype_has_own_property(args: Vec<Value>) -> Result<Value, JsEr
 
             // Check string properties and numeric array indices
             if let Some(key_str) = crate::builtins::object::helpers::get_property_key(key_val) {
+                if obj.kind == crate::value::ObjectKind::ModuleNamespace {
+                    drop(obj);
+                    return Ok(Value::Boolean(!matches!(
+                        crate::builtins::object_static::get_object_property_descriptor(
+                            o, &key_str,
+                        )?,
+                        Value::Undefined
+                    )));
+                }
                 if obj.has_own(&key_str) {
                     return Ok(Value::Boolean(true));
                 }
