@@ -173,6 +173,18 @@
         ...descriptor,
         enumerable: true
       });
+    if (prototype && !prototype.toJSON) {
+      const toJSON = new Proxy(() => undefined, {
+        apply: (_target, receiver) => prototype.toString.call(receiver)
+      });
+      Object.defineProperty(toJSON, "name", { value: "toJSON" });
+      Object.defineProperty(prototype, "toJSON", {
+        configurable: true,
+        enumerable: true,
+        value: toJSON,
+        writable: true
+      });
+    }
   };
   const createURLPattern = () => {
     function URLPattern(options, optionsFlags, baseURL) {
