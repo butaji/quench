@@ -987,7 +987,10 @@ pub fn eval_statement(
                 let mut scope = current_scope.borrow_mut();
                 scope.set_with_object_binding(Rc::clone(&obj_rc));
             }
+            let previous_eval_env = crate::interpreter::get_current_eval_env();
+            crate::interpreter::set_current_eval_env(Some(Rc::clone(&with_env)));
             let result = eval_statement(body, &with_env, _is_expr_body, in_arrow_function);
+            crate::interpreter::set_current_eval_env(previous_eval_env);
             with_env
                 .borrow_mut()
                 .current_scope()
