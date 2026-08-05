@@ -59,3 +59,49 @@
     };
   }
 }
+/* eslint-disable max-lines-per-function, complexity -- validation branches mirror Node's argument contract */
+const __quenchCryptoSecretKeyFallback = (result) => {
+  const validate = (type, options) => {
+    if (typeof type !== "string")
+      throw Object.assign(
+        new TypeError('The "type" argument must be a string'),
+        { code: "ERR_INVALID_ARG_TYPE" }
+      );
+    if (!options || typeof options !== "object" || Array.isArray(options))
+      throw Object.assign(
+        new TypeError('The "options" argument must be an object'),
+        { code: "ERR_INVALID_ARG_TYPE" }
+      );
+    const length = options.length;
+    if (typeof length !== "number" || !Number.isInteger(length))
+      throw Object.assign(
+        new TypeError("The options.length property must be an integer"),
+        { code: "ERR_INVALID_ARG_TYPE" }
+      );
+    if (type === "aes" && ![128, 192, 256].includes(length))
+      throw Object.assign(new TypeError("Invalid AES key length"), {
+        code: "ERR_INVALID_ARG_VALUE"
+      });
+    if (type === "hmac" && (length < 8 || length > 2 ** 31 - 1))
+      throw Object.assign(new RangeError("Invalid HMAC key length"), {
+        code: "ERR_OUT_OF_RANGE"
+      });
+    return length;
+  };
+  result.generateKeySync = (type, options) => {
+    const length = validate(type, options);
+    return { type: "secret", export: () => NodeBuffer.alloc(length / 8) };
+  };
+  result.generateKey = (type, options, callback) => {
+    validate(type, options);
+    try {
+      const key = result.generateKeySync(type, options);
+      if (typeof callback === "function") callback(null, key);
+      return key;
+    } catch (error) {
+      if (typeof callback === "function") callback(error);
+      else throw error;
+    }
+  };
+};
+/* eslint-enable max-lines-per-function, complexity */
