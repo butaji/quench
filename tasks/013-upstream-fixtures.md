@@ -4832,3 +4832,11 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1362: crypto missing IV validation
 
 - Reject omitted and explicitly undefined initialization vectors.
+
+### Stage 1363: crypto CBC IV validation
+
+- Enforce AES-CBC and DES-CBC initialization-vector lengths.
+
+### Stage 1364: crypto CBC null IV
+
+- Reject null initialization vectors for CBC ciphers.
