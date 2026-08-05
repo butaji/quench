@@ -4143,3 +4143,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1208: callable stream writable
 
 - Preserved Node's legacy ability to invoke `stream.Writable()` without `new`.
+
+### Stage 1209: stream pipeline validation
+
+- Added Node-style validation for missing stream pipeline callbacks.

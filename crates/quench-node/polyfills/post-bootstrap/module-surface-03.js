@@ -27,11 +27,22 @@ const __quenchMakeCallableConstructor = (Constructor) => {
   Object.defineProperty(callable, "__quenchCallable", { value: true });
   return callable;
 };
+const __quenchValidatePipeline = (pipeline, args) => {
+  const callback = args[args.length - 1];
+  if (args.length < 2 || typeof callback !== "function") {
+    const error = new TypeError("The last argument must be of type function");
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  return pipeline(...args);
+};
 const __quenchAddStreamCompat = (result) => {
   __quenchAddStreamAliases(result);
   result.Writable = __quenchMakeCallableConstructor(result.Writable);
   __quenchAddStreamWebCompat(result);
   __quenchAddStreamDefaults(result);
+  const pipeline = result.pipeline;
+  result.pipeline = (...args) => __quenchValidatePipeline(pipeline, args);
   result.promises ||= globalThis.require("stream/promises");
   const promisifyCustom = Symbol.for("nodejs.util.promisify.custom");
   result.pipeline[promisifyCustom] = result.promises.pipeline;
