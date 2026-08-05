@@ -4856,3 +4856,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1368: crypto authenticated methods
 
 - Provide chainable AAD/auth-tag methods and duplicate-tag state validation.
+
+### Stage 1369: crypto auth-tag length
+
+- Reject invalid ChaCha20-Poly1305 authentication-tag lengths.
