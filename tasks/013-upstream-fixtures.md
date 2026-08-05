@@ -4065,3 +4065,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Added ordered validation for the legacy `sendto()` offset, length, port, and
   address arguments.
+
+### Stage 1193: dgram send address types
+
+- Added validation for non-string destination addresses while preserving empty
+  and omitted address defaults.
