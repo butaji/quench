@@ -146,6 +146,8 @@ const __quenchCommonFixtures = {
   path: (file) => `${globalThis.__quench_cwd}/tests/node/test/fixtures/${file}`,
   utf8TestText: "The quick brown fox jumps over the lazy dog.\n"
 };
+const __quenchCommonCrypto = { hasOpenSSL3: true };
+const __quenchIsCommonCrypto = (name) => name.includes("common/crypto");
 const __quenchRequirePart03Common = (name) => {
   if (name === "../common" || name.endsWith("/common"))
     return globalThis.__nodeCommon;
@@ -157,6 +159,7 @@ const __quenchRequirePart03Common = (name) => {
     return __quenchCommonChildProcess;
   if (name === "../common/fixtures" || name.endsWith("/common/fixtures"))
     return __quenchCommonFixtures;
+  if (__quenchIsCommonCrypto(name)) return __quenchCommonCrypto;
   return undefined;
 };
 globalThis.__quench_require_part_03 = (name) => {

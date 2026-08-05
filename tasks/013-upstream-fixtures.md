@@ -1,5 +1,28 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1156: crypto.pbkdf2 range error codes
+
+- Fixture: `test-crypto-pbkdf2.js`
+- Added `ERR_OUT_OF_RANGE` codes for invalid PBKDF2 iteration and key-length
+  inputs.
+- Retrospective: preserve error structure while treating exact diagnostic
+  wording as a separate compatibility contract.
+
+## Stage 1155: crypto.pbkdf2 callback validation
+
+- Fixture: `test-crypto-pbkdf2.js`
+- Added Node’s `ERR_INVALID_ARG_TYPE` code to the missing-callback error.
+- Retrospective: when a validation message already matches, preserve the
+  structured error code separately from the human-readable text.
+
+## Stage 1154: common crypto capability helpers
+
+- Fixture: `test-crypto-pbkdf2.js`
+- Added the harness capability flags and skip helpers required before crypto
+  fixtures can reach their API assertions.
+- Retrospective: complete shared fixture prerequisites before attributing an
+  early failure to the underlying Node API.
+
 ## Stage 1153: REPL writer color options
 
 - Fixture: `test-repl-colors.js`
