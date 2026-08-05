@@ -259,6 +259,15 @@ fn error_type_matches_bare_kind_colon_message() {
 }
 
 #[test]
+fn error_type_matches_error_without_message() {
+    assert!(error_type_matches(
+        "runtime",
+        "Test262Error",
+        "JsError(\"Test262Error\")"
+    ));
+}
+
+#[test]
 fn error_type_matches_envelope_wrapped_message() {
     assert!(error_type_matches(
         "runtime",

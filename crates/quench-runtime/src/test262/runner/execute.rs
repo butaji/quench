@@ -90,11 +90,11 @@ fn error_type_matches(phase: &str, typ: &str, msg: &str) -> bool {
     if phase == "parse" && typ == "SyntaxError" && msg.contains("Parse error") {
         return true;
     }
-    let actual = msg
-        .trim_start_matches("JsError(\"")
+    let actual = msg.trim_start_matches("JsError(\"");
+    let actual = actual
         .split_once(':')
         .map(|(kind, _)| kind)
-        .unwrap_or_default();
+        .unwrap_or(actual.trim_end_matches("\")"));
     actual == typ
 }
 
