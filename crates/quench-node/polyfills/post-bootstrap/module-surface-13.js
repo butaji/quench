@@ -35,8 +35,30 @@ const __quenchCryptoSignFallback = (result) => {
     }
   });
 };
+const __quenchValidateCipherArguments = (algorithm, key, iv) => {
+  if (typeof algorithm !== "string") {
+    throw Object.assign(
+      new TypeError(
+        `The "cipher" argument must be of type string. Received ${algorithm}`
+      ),
+      { code: "ERR_INVALID_ARG_TYPE" }
+    );
+  }
+  if (
+    key === null ||
+    key === undefined ||
+    (iv !== undefined && typeof iv !== "string" && !(iv instanceof Uint8Array))
+  )
+    throw Object.assign(
+      new TypeError(
+        "The key and initialization vector arguments must be buffers or strings"
+      ),
+      { code: "ERR_INVALID_ARG_TYPE" }
+    );
+};
 const __quenchCryptoCipherFallback = (result) => {
-  result.createCipheriv ||= () => {
+  result.createCipheriv ||= (algorithm, key, iv) => {
+    __quenchValidateCipherArguments(algorithm, key, iv);
     let inputEncoding;
     const validateEncoding = (encoding) => {
       if (encoding && !["utf8", "utf-8", "hex", "base64"].includes(encoding)) {
