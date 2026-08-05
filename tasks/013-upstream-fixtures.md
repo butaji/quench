@@ -4389,3 +4389,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Reject non-AbortSignal `execFile` options synchronously with Node’s error
   code.
+
+### Stage 1263: recursive mkdir parents
+
+- Create missing recursive parent directories and return the first created
+  directory path.
