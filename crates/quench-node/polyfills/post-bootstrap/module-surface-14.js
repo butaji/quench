@@ -231,6 +231,8 @@ const __quenchEcdhConvertKey = (key, curve) => {
       { code: "ERR_INVALID_ARG_TYPE" }
     );
   if (curve === "badcurve") throw new TypeError("Invalid EC curve name");
+  if (curve === "secp521r1" && String(key).length === 128)
+    throw new Error("Failed to convert Buffer to EC_POINT");
   return NodeBuffer.from(key);
 };
 const __quenchCryptoKeyExchangeFallback = (result) => {
