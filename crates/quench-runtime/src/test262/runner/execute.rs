@@ -558,6 +558,25 @@ fn propagate_current_module_resolution_error(ctx: &mut crate::Context, source: &
     let Some(Value::Object(errors)) = ctx.get_global("__quench_module_errors__") else {
         return;
     };
+    for entry in &reexports {
+        if let PendingReExport::Named { source, local, .. } = entry {
+            let missing = ctx
+                .get_module(source)
+                .and_then(|value| match value {
+                    Value::Object(module) => Some(module.borrow().get(local).is_none()),
+                    _ => None,
+                })
+                .unwrap_or(true);
+            if missing {
+                if let Some(Value::String(module)) = ctx.get_global("__quench_current_module__") {
+                    errors
+                        .borrow_mut()
+                        .set(&module, Value::String("Missing indirect export".into()));
+                }
+                return;
+            }
+        }
+    }
     let mut sources = reexports
         .into_iter()
         .map(|entry| match entry {
