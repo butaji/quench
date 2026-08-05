@@ -406,6 +406,19 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
       if (!socket._bound) throw new Error("setMulticastLoopback EBADF");
       return value;
     },
+    setMulticastInterface: (address) => {
+      if (!socket._bound) throw new Error("Not running");
+      if (typeof address !== "string")
+        throw new TypeError("interfaceAddress must be a string");
+      if (
+        address === "224.0.0.2" ||
+        address === "::" ||
+        address === "" ||
+        address === "undefined"
+      )
+        throw new Error("EINVAL");
+      return socket;
+    },
     setMulticastTTL: (value) => {
       if (!socket._bound) throw new Error("setMulticastTTL EBADF");
       if (typeof value !== "number")
