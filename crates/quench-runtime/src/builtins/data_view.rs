@@ -13,6 +13,34 @@ pub fn register_data_view(ctx: &mut Context) {
     }
 
     let proto_clone = Rc::clone(&proto_rc);
+    proto_rc.borrow_mut().set(
+        "getUint8",
+        Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
+            let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+            let Value::Object(view) = this_val else {
+                return Err(crate::JsError::new(
+                    "TypeError: DataView.prototype.getUint8 requires a DataView receiver",
+                ));
+            };
+            let offset = args.first().map(to_number).unwrap_or(0.0) as usize;
+            let view = view.borrow();
+            let byte_offset = view
+                .get_own_value("byteOffset")
+                .map(|value| to_number(&value) as usize)
+                .unwrap_or(0);
+            let Some(Value::Object(buffer)) = view.get_own_value("buffer") else {
+                return Err(crate::JsError::new("TypeError: detached DataView"));
+            };
+            let buffer = buffer.borrow();
+            let index = byte_offset.saturating_add(offset);
+            let Some(value) = buffer.elements.get(index) else {
+                return Err(crate::JsError::new(
+                    "RangeError: Offset is outside the bounds of the DataView",
+                ));
+            };
+            Ok(Value::Number(to_number(value)))
+        }))),
+    );
     let mut dv_native = NativeFunction::new_with_prototype(
         move |args| {
             let Some(buffer) = args.first() else {
@@ -102,4 +130,11 @@ mod tests {
         );
         assert_eq!(ok, Value::Boolean(true));
     }
+
+    #[test]
+    fn data_view_get_uint8_reads_zero_initialized_byte() {
+        let value = eval_ok("new DataView(new ArrayBuffer(1)).getUint8(0)");
+        assert_eq!(value, Value::Number(0.0));
+    }
+
 }
