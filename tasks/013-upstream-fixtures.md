@@ -3931,3 +3931,10 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Added the minimal `SecureContext.setOptions()` surface and Node-shaped
   detached-method `Illegal invocation` behavior.
+
+### Stage 1169: single-file harness context
+
+- Made `--test-dir` accept an individual JavaScript fixture with its filename
+  and directory context preserved.
+- Verified the path-aware runner with the upstream `test-path.js` fixture and
+  a focused single-file context stage.

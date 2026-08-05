@@ -218,6 +218,19 @@ fn run_source_with_runtime_at_path(
 }
 
 fn run_directory(dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    if dir.is_file() {
+        let source = fs::read_to_string(dir)?;
+        return match run_source_with_runtime_at_path(&source, &Runtime::new()?, Some(dir)) {
+            Ok(()) => {
+                println!("ok {}", dir.display());
+                Ok(())
+            }
+            Err(error) => {
+                eprintln!("not ok {}: {error:?}", dir.display());
+                Err("Node test harness failures".into())
+            }
+        };
+    }
     let mut failed = 0;
     let mut total = 0;
     for entry in WalkDir::new(dir).into_iter().filter_map(Result::ok) {
