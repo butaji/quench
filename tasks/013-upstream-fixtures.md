@@ -4295,3 +4295,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Added chainable `destroy()` and `resetAndDestroy()` socket methods with close
   event scheduling.
+
+### Stage 1242: TLS socket inheritance
+
+- Made `tls.TLSSocket` extend the compatibility `net.Socket` constructor.

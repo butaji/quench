@@ -4,7 +4,10 @@ const __quenchTlsUnsupported = (operation) => {
   error.code = "ERR_TLS_NOT_SUPPORTED";
   return error;
 };
+const __quenchTlsSocketBase = globalThis.require("net").Socket;
+class __quenchTlsSocket extends __quenchTlsSocketBase {}
 const __quenchTlsModule = {
+  TLSSocket: __quenchTlsSocket,
   createSecureContext: (options = {}) => {
     if (options.pfx !== undefined && options.passphrase !== "sample")
       throw new Error("mac verify failure");
