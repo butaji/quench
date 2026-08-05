@@ -5340,3 +5340,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1608. `url-path-to-file-url-reserved.js` — preserve reserved-character file URL encoding.
 1609. `url-path-to-file-url-posix-unc.js` — preserve POSIX UNC-looking path handling.
 1610. `url-format-legacy-objects.js` — preserve legacy formatting edge cases.
+1611. `url-whatwg-special-slashes.js` — normalize special WHATWG schemes.

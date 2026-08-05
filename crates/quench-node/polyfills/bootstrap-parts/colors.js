@@ -287,7 +287,7 @@ const __nodeURLResolveInput = (input, base) => {
       ? baseUrl.origin + value
       : baseUrl.origin + baseUrl.pathname.replace(/\/[^/]*$/, "/") + value;
   }
-  return value;
+  return globalThis.__quenchNormalizeSpecialUrlInput(value);
 };
 const __nodeURLAssignParts = (url, match) => {
   url.protocol = match[1] || "";
