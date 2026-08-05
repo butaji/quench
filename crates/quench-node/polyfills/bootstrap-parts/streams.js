@@ -200,6 +200,13 @@ globalThis.__nodeFs.readFile = (value, options, callback) => {
     callback(null, data);
   });
 };
+globalThis.__nodeFs.watch = () => {
+  const watcher = new globalThis.__nodeEventEmitter();
+  watcher.close = () => watcher;
+  return watcher;
+};
+globalThis.__nodeFs.watchFile = () => undefined;
+globalThis.__nodeFs.unwatchFile = () => undefined;
 const __nodeFsValidateMkdtemp = (prefix, options, callback) => {
   if (
     options !== undefined &&
