@@ -184,4 +184,12 @@ const __quenchCryptoSignMetadataFallback = (key) => {
       "error:1C8000A5:Provider routines::illegal or unsupported padding mode"
     );
 };
+const __quenchCryptoHashOneShotFallback = (result) => {
+  result.hash ||= (algorithm, data, options) => {
+    const digest = result.createHash(algorithm, options).update(data);
+    const encoding =
+      typeof options === "string" ? options : options?.outputEncoding;
+    return digest.digest(encoding === "buffer" ? undefined : encoding);
+  };
+};
 /* eslint-enable max-lines-per-function, complexity */

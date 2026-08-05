@@ -5202,3 +5202,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1469. `crypto-sign-padding-error.js` — preserve RSA OAEP signing error behavior.
 1470. `crypto-encrypt-hex-input.js` — decode hex-encoded public encryption input.
 1471. `crypto-private-encrypt-roundtrip.js` — expose private-encrypt/public-decrypt round trips.
+1472. `crypto-hash-oneshot.js` — expose one-shot crypto hashing.

@@ -475,7 +475,6 @@ const __quenchCryptoFallbacks = (result) => {
   __quenchCryptoKdfFallbacks(result);
   __quenchCryptoConstructors(result);
   globalThis.__quenchHmacConstructor = result.Hmac;
-  globalThis.__quenchHashConstructor = result.Hash;
   globalThis.__quenchSignConstructor = result.Sign;
   __quenchCryptoSignFallbacks(result);
   __quenchCryptoAllKeyFallbacks(result);
@@ -485,7 +484,8 @@ const __quenchCryptoFallbacks = (result) => {
   __quenchCertificateFallback(result);
   __quenchCryptoCipherFallback(result);
   globalThis.__quenchCipherConstructor = result.Cipheriv;
-  __quenchCryptoWebFallbacks(result);
+  (__quenchCryptoWebFallbacks(result),
+    __quenchCryptoHashOneShotFallback(result));
   Object.assign(source, result);
   return result;
 };
