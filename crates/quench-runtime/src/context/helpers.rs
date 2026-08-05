@@ -243,6 +243,9 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
     }
     let result = if crate::interpreter::is_direct_eval() {
         if let Some(mut eval_env) = crate::interpreter::get_current_eval_env() {
+            if eval_strict {
+                eval_env = Rc::new(RefCell::new(Environment::with_parent(eval_env)));
+            }
             if in_class_field {
                 eval_env
                     .borrow_mut()
@@ -250,6 +253,10 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
             }
             crate::interpreter::eval_program(&program, &mut eval_env, Some(&source), false)
         } else {
+            let mut eval_env = Rc::clone(&ctx.env);
+            if eval_strict {
+                eval_env = Rc::new(RefCell::new(Environment::with_parent(eval_env)));
+            }
             let this_value = if strict_inherited {
                 Value::Undefined
             } else {
@@ -258,8 +265,8 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
                     .get("globalThis")
                     .unwrap_or(Value::Undefined)
             };
-            crate::interpreter::set_this_binding(&ctx.env, this_value);
-            crate::interpreter::eval_program(&program, &mut ctx.env, Some(&source), false)
+            crate::interpreter::set_this_binding(&eval_env, this_value);
+            crate::interpreter::eval_program(&program, &mut eval_env, Some(&source), false)
         }
     } else {
         let this_value = ctx
@@ -888,6 +895,16 @@ mod tests {
         let mut ctx = Context::new().unwrap();
         crate::builtins::register_builtins(&mut ctx);
         assert!(ctx.eval("'use strict'; var err; eval('{ function f() {} }'); try { f; } catch (e) { err = e; } err instanceof ReferenceError").is_ok_and(|value| matches!(value, Value::Boolean(true))));
+    }
+
+    #[test]
+    fn strict_eval_var_does_not_update_caller_binding() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        assert_eq!(
+            ctx.eval("'use strict'; function f() { var x = 0; eval('var x = 1'); return x; } f()"),
+            Ok(Value::Number(0.0))
+        );
     }
 
     #[test]
