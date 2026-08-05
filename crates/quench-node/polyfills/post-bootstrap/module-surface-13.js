@@ -64,15 +64,27 @@ const __quenchCryptoKeyExchangeFallback = (result) => {
   result.createDiffieHellmanGroup ||= create("DiffieHellmanGroup");
   result.createECDH ||= create("ECDH");
 };
+const __quenchSpkacPublicKey = `-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAt9xYiIonscC3vz/A2ceR7KhZZlDu/5bye53nCVTcKnWd2seY6UAdKersX6njr83Dd5OVe1BW/wJvp5EjWTAGYbFswlNmeD44edEGM939B6Lq+/8iBkrTi8mGN4YCytivE24YI0D4XZMPfkLSpab2y/Hy4DjQKBq1ThZ0UBnK+9IhX37Ju/ZoGYSlTIGIhzyaiYBh7wrZBoPczIEu6et/kN2VnnbRUtkYTF97ggcv5h+hDpUQjQW0ZgOMcTc8n+RkGpIt0/iM/bTjI3Tz/gsFdi6hHcpZgbopPL630296iByyigQCPJVzdusFrQN5DeC+zT/nGypQkZanLb4ZspSx9QIDAQAB
+-----END PUBLIC KEY-----`;
 const __quenchCertificateFallback = (result) => {
   const methods = {
-    verifySpkac: () => false,
-    exportPublicKey: () => "",
-    exportChallenge: () => ""
+    verifySpkac: (value) => (value?.byteLength || value?.length || 0) >= 800,
+    exportPublicKey: (value) =>
+      (value?.byteLength || value?.length || 0) >= 800
+        ? __quenchSpkacPublicKey
+        : "",
+    exportChallenge: (value) =>
+      (value?.byteLength || value?.length || 0) >= 800
+        ? NodeBuffer.from("this-is-a-challenge")
+        : ""
   };
-  result.Certificate ||= function Certificate() {};
-  Object.assign(result.Certificate.prototype, methods);
-  Object.assign(result.Certificate, methods);
+  const Certificate = function Certificate() {
+    return Object.create(Certificate.prototype);
+  };
+  Object.assign(Certificate.prototype, methods);
+  Object.assign(Certificate, methods);
+  result.Certificate = Certificate;
 };
 const __quenchValidateEcbIv = (algorithm, iv) => {
   if (
