@@ -14,7 +14,7 @@ const __quenchDecoderValidateInput = (decoder, input) => {
   }
   if (!ArrayBuffer.isView(input)) {
     const error = new TypeError(
-      'The "buf" argument must be an instance of Buffer, TypedArray, or DataView'
+      `The "buf" argument must be an instance of Buffer, TypedArray, or DataView.${__nodeInvalidArgSuffix(input)}`
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;

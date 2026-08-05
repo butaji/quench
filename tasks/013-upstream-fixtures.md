@@ -4737,3 +4737,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Verify UTF-16LE surrogate buffering and unaligned byte sequences across
   decoder writes.
+
+### Stage 1340: string decoder invalid input
+
+- Match Node’s detailed invalid-buffer error for `StringDecoder.write(null)`.
