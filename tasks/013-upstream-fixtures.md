@@ -5332,3 +5332,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1600. `url-resolve-object-mixed-schemes.js` — cover parsed mixed-scheme targets.
 1601. `url-resolve-object-authority-only.js` — cover parsed authority-only bases.
 1602. `url-resolve-object-escaped-delimiters.js` — preserve parsed escaped delimiters.
+1603. `url-resolve-object-ftp-relatives.js` — cover parsed FTP relative targets.
