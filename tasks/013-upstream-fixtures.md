@@ -4211,3 +4211,23 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1222: console label validation
 
 - Rejected symbol labels for `console.time()`, `timeEnd()`, and `timeLog()`.
+
+### Stage 1223: console dirxml
+
+- Added `console.dirxml()` compatibility for global and constructed consoles.
+
+### Stage 1224: console trace
+
+- Added the global `console.trace()` compatibility method.
+
+### Stage 1225: console prototype labels
+
+- Safely handled timer labels colliding with inherited object properties.
+
+### Stage 1226: console timer map
+
+- Exposed stable `console._times` state and preserved repeated timer starts.
+
+### Stage 1227: console assert output
+
+- Added non-throwing `console.assert()` output with Node-compatible prefixes.
