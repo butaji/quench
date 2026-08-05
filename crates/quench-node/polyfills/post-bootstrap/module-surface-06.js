@@ -216,6 +216,17 @@
       });
     }
   };
+  const setURLHref = {
+    set href(value) {
+      Object.defineProperty(this, "href", {
+        configurable: true,
+        enumerable: true,
+        value: String(value),
+        writable: true
+      });
+    }
+  }.set;
+  Object.defineProperty(setURLHref, "name", { value: "set href" });
   const installURLToStringDescriptor = (URLConstructor) => {
     const prototype = URLConstructor?.prototype;
     const descriptor =
@@ -227,8 +238,14 @@
       });
     const href =
       prototype && Object.getOwnPropertyDescriptor(prototype, "href");
-    if (href)
-      Object.defineProperty(prototype, "href", { ...href, enumerable: true });
+    if (href) {
+      Object.defineProperty(prototype, "href", {
+        configurable: href.configurable,
+        enumerable: true,
+        get: href.get,
+        set: href.set || setURLHref
+      });
+    }
     installURLAccessorDescriptors(prototype);
     installURLExtraMethods(prototype);
   };
@@ -261,11 +278,13 @@
           (String(pattern).startsWith("*.") &&
             String(value).endsWith(String(pattern).slice(1)));
       }
-      if (normalized === "url" && !result.URLPattern) {
-        result = Object.assign({}, result);
+      if (normalized === "url") {
+        if (!result.URLPattern) {
+          result = Object.assign({}, result);
+          result.URLPattern = createURLPattern();
+        }
         installURLCanParse(result.URL);
         installURLToStringDescriptor(result.URL);
-        result.URLPattern = createURLPattern();
       }
       return result;
     };
