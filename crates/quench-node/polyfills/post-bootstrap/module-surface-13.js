@@ -14,7 +14,6 @@ const __quenchCryptoConstructors = (result) => {
     "X509Certificate",
     "sign",
     "verify",
-    "createVerify",
     "generateKeyPair",
     "generateKeyPairSync",
     "generateKey",
@@ -41,6 +40,18 @@ const __quenchCryptoSignFallback = (result) => {
     };
     __nodeCryptoSetPrototype(signer, globalThis.__quenchSignConstructor);
     return signer;
+  };
+  result.createVerify ||= () => {
+    const verifier = {
+      update() {
+        return this;
+      },
+      verify() {
+        return false;
+      }
+    };
+    __nodeCryptoSetPrototype(verifier, globalThis.__quenchVerifyConstructor);
+    return verifier;
   };
 };
 const __quenchValidateEcbIv = (algorithm, iv) => {
@@ -382,6 +393,7 @@ const __quenchCryptoFallbacks = (result) => {
   globalThis.__quenchHmacConstructor = result.Hmac;
   globalThis.__quenchHashConstructor = result.Hash;
   globalThis.__quenchSignConstructor = result.Sign;
+  globalThis.__quenchVerifyConstructor = result.Verify;
   __quenchCryptoSignFallback(result);
   __quenchCryptoCipherFallback(result);
   globalThis.__quenchCipherConstructor = result.Cipheriv;
