@@ -14,7 +14,6 @@ const __quenchCryptoConstructors = (result) => {
     "generateKeyPairSync",
     "generateKey",
     "generateKeySync",
-    "createCipheriv",
     "createDecipheriv",
     "hkdf",
     "pbkdf2",
@@ -35,6 +34,37 @@ const __quenchCryptoSignFallback = (result) => {
       );
     }
   });
+};
+const __quenchCryptoCipherFallback = (result) => {
+  result.createCipheriv ||= () => {
+    let inputEncoding;
+    const validateEncoding = (encoding) => {
+      if (encoding && !["utf8", "utf-8", "hex", "base64"].includes(encoding)) {
+        const error = new TypeError(`Unknown encoding: ${encoding}`);
+        error.code = "ERR_UNKNOWN_ENCODING";
+        throw error;
+      }
+      if (inputEncoding && encoding && encoding !== inputEncoding) {
+        const error = new TypeError(
+          `Encoding cannot be changed from '${inputEncoding}'`
+        );
+        error.code = "ERR_INVALID_ARG_VALUE";
+        throw error;
+      }
+      inputEncoding ||= encoding;
+    };
+    return {
+      update(value, encoding, outputEncoding) {
+        validateEncoding(encoding);
+        validateEncoding(outputEncoding);
+        return new Uint8Array(value);
+      },
+      final(outputEncoding) {
+        validateEncoding(outputEncoding);
+        return new Uint8Array(0);
+      }
+    };
+  };
 };
 const __quenchCryptoRandomFallbacks = (result, state) => {
   result.randomBytes ||= (size) => new Uint8Array(Number(size) || 0);
@@ -153,6 +183,7 @@ const __quenchCryptoFallbacks = (result) => {
   __quenchCryptoKdfFallbacks(result);
   __quenchCryptoConstructors(result);
   __quenchCryptoSignFallback(result);
+  __quenchCryptoCipherFallback(result);
   __quenchCryptoWebFallbacks(result);
   return result;
 };
