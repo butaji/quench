@@ -4236,3 +4236,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Exposed `timers.promises` as the same module object as
   `timers/promises`.
+
+### Stage 1230: worker constructor surface
+
+- Added a constructible worker placeholder with basic listener, messaging, and
+  termination methods.
