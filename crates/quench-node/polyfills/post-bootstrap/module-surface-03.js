@@ -22,6 +22,9 @@ const __quenchAddStreamCompat = (result) => {
   __quenchAddStreamWebCompat(result);
   __quenchAddStreamDefaults(result);
   result.promises ||= globalThis.require("stream/promises");
+  const promisifyCustom = Symbol.for("nodejs.util.promisify.custom");
+  result.pipeline[promisifyCustom] = result.promises.pipeline;
+  result.finished[promisifyCustom] = result.promises.finished;
   return result;
 };
 if (globalThis.require) {
