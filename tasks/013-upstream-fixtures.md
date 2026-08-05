@@ -4085,3 +4085,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Corrected connected sends without destination arguments so offset/length
   parameters are not misclassified as addresses.
+
+### Stage 1198: dgram undefined payload validation
+
+- Added the full Node-style diagnostic for a missing send buffer argument.
