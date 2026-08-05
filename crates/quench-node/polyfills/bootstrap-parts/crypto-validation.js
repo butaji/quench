@@ -36,6 +36,18 @@ const __nodeCryptoValidateStringEncoding = (value, encoding) => {
 const __nodeCryptoSetPrototype = (value, constructor) =>
   typeof constructor === "function" &&
   Object.setPrototypeOf(value, constructor.prototype);
+const __quenchValidateDhGenerator = (generator) => {
+  if (
+    (typeof generator === "number" && generator <= 1) ||
+    (generator &&
+      typeof generator.byteLength === "number" &&
+      generator.byteLength <= 1)
+  ) {
+    const error = new Error("bad generator");
+    error.code = "ERR_OSSL_DH_BAD_GENERATOR";
+    throw error;
+  }
+};
 const __quenchValidateDhNumbers = (sizeOrKey, generator) => {
   if (typeof sizeOrKey === "number" && !Number.isInteger(sizeOrKey))
     throw Object.assign(
@@ -56,6 +68,7 @@ const __quenchValidateDhNumbers = (sizeOrKey, generator) => {
       ),
       { code: "ERR_OUT_OF_RANGE" }
     );
+  __quenchValidateDhGenerator(generator);
 };
 const __nodeCryptoHmacDigest = (algorithm, inner, outer, chunks, encoding) => {
   const message = [];
