@@ -292,14 +292,25 @@ pub fn check_module_duplicate_labels(program: &ast::Program) -> Result<(), JsErr
 pub fn check_module_duplicate_function_names(program: &ast::Program) -> Result<(), JsError> {
     let mut names = HashSet::new();
     for statement in &program.body {
-        let ast::Statement::FunctionDeclaration(function) = statement else {
-            continue;
+        let name = match statement {
+            ast::Statement::FunctionDeclaration(function) => {
+                function.id.as_ref().map(|id| id.name.as_str())
+            }
+            ast::Statement::ClassDeclaration(class) => class.id.as_ref().map(|id| id.name.as_str()),
+            ast::Statement::ExportDefaultDeclaration(export) => match &export.declaration {
+                ast::ExportDefaultDeclarationKind::FunctionDeclaration(function) => {
+                    function.id.as_ref().map(|id| id.name.as_str())
+                }
+                ast::ExportDefaultDeclarationKind::ClassDeclaration(class) => {
+                    class.id.as_ref().map(|id| id.name.as_str())
+                }
+                _ => None,
+            },
+            _ => None,
         };
-        let Some(name) = function.id.as_ref().map(|id| id.name.as_str()) else {
-            continue;
-        };
+        let Some(name) = name else { continue };
         if !names.insert(name) {
-            return Err(JsError("SyntaxError: duplicate module function name".into()));
+            return Err(JsError("SyntaxError: duplicate module binding".into()));
         }
     }
     Ok(())

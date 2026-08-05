@@ -780,6 +780,11 @@ mod tests {
     }
 
     #[test]
+    fn module_rejects_duplicate_class_and_default_function_binding() {
+        assert!(parse_es_module("class F {}\nexport default function F() {}").is_err());
+    }
+
+    #[test]
     fn test_oxc_parses_class_getter_with_computed_key() {
         // What does OXC produce for `class C { get [expr]() {} }`?
         // Does it produce MethodDefinition with kind=Get, or AccessorProperty?
