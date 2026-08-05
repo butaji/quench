@@ -1,3 +1,5 @@
+var ops = __ops__;
+var DefineProp = ops.DefineProp;
 var _bigIntToString = BigInt.prototype.__toString;
 var _bigIntValueOf = BigInt.prototype.__valueOf;
 var _bigIntAsIntN = BigInt.__asIntN;
