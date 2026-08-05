@@ -108,7 +108,8 @@ const __quenchUrlAuth = (input) =>
 const __quenchUrlPrefix = (input, protocol, authority) => {
   if (protocol === "mailto:")
     return `${protocol}${__quenchUrlAuth(input)}${authority}`;
-  if (!input.slashes) return `${protocol}${__quenchUrlAuth(input)}${authority}`;
+  if (!input.slashes && !globalThis.__quenchSpecialUrlProtocol(protocol))
+    return `${protocol}${__quenchUrlAuth(input)}${authority}`;
   return `${protocol}//${__quenchUrlAuth(input)}${authority}`;
 };
 const __quenchUrlSearch = (input) => {
@@ -123,13 +124,12 @@ const __quenchUrlSearch = (input) => {
   return search.replace(/#/g, "%23");
 };
 const __quenchFormatUrlObject = (input) => {
+  if (globalThis.__quenchWhatwgFormat(input)) return input.href;
   const protocol = input.protocol ? `${input.protocol.replace(/:$/, "")}:` : "";
   const authority = __quenchUrlAuthority(input);
   const pathname = globalThis.__quenchUrlPath(input, authority);
-  const search = __quenchUrlSearch(input);
-  let hash = input.hash || "";
-  if (hash && !hash.startsWith("#")) hash = `#${hash}`;
-  return `${__quenchUrlPrefix(input, protocol, authority)}${pathname}${search}${hash}`;
+  const hash = input.hash ? `#${input.hash.replace(/^#/, "")}` : "";
+  return `${__quenchUrlPrefix(input, protocol, authority)}${pathname}${__quenchUrlSearch(input)}${hash}`;
 };
 const __quenchParseQueryObject = (value) => {
   const query = Object.create(null);
