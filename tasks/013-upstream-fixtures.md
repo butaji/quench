@@ -4094,3 +4094,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Corrected unconnected offset/length sends where the destination address is
   omitted and the callback occupies the final positional argument.
+
+### Stage 1200: dgram multicast options
+
+- Added bound-state and range behavior for multicast loopback and multicast TTL
+  setters.
