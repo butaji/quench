@@ -481,10 +481,12 @@ pub fn make_ops_object() -> Value {
     // Descriptor operations for Object.defineProperty / getOwnPropertyDescriptor
     set_op(&mut obj, "DefineProp", |args| {
         let o = args.first().cloned().unwrap_or(Value::Undefined);
-        let key = args
-            .get(1)
-            .map(crate::value::to_js_string)
-            .unwrap_or_default();
+        let key = match args.get(1) {
+            Some(Value::Symbol(symbol)) => symbol.property_key(),
+            Some(value) => crate::value::to_js_string(value),
+            None => String::new(),
+        };
+        let is_symbol_key = matches!(args.get(1), Some(Value::Symbol(_)));
         let desc = args.get(2).cloned().unwrap_or(Value::Undefined);
         match (&o, &desc) {
             (Value::Object(obj_rc), Value::Object(desc_rc)) => {
@@ -569,7 +571,18 @@ pub fn make_ops_object() -> Value {
                             .get("configurable")
                             .is_some_and(|v| crate::value::to_bool(&v)),
                     };
-                    obj_rc.borrow_mut().define(&key, val, flags);
+                    if is_symbol_key {
+                        obj_rc
+                            .borrow_mut()
+                            .symbol_properties
+                            .insert(key.clone(), val.clone());
+                        obj_rc
+                            .borrow_mut()
+                            .descriptors
+                            .insert(key.clone(), flags);
+                    } else {
+                        obj_rc.borrow_mut().define(&key, val, flags);
+                    }
                     Ok(Value::Boolean(true))
                 }
             }
