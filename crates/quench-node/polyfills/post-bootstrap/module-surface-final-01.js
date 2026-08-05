@@ -262,16 +262,12 @@ const __quenchDuplicateParent = (origin, base, target, suffix) => {
   }
   return `${origin}${parent}${remaining}${suffix}`;
 };
-const __quenchWebOriginPrefix = (origin) =>
-  /^(http|https):\/\/$/.test(origin || "") ? origin.slice(0, -2) : origin;
 const __quenchResolveAbsolutePath = (from, to) => {
   if (!to.startsWith("/")) return null;
   const networkPath = __quenchNetworkPathTarget(from, to);
   if (networkPath) return networkPath;
   const path = __quenchNormalizeAbsoluteTarget(to);
-  const origin = __quenchWebOriginPrefix(
-    from.match(/^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/]*/)?.[0]
-  );
+  const origin = from.match(/^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/]*/)?.[0];
   if (origin) return `${origin}${path}`;
   const scheme = from.match(/^([A-Za-z][A-Za-z0-9+.-]*):[^/]*$/)?.[1];
   return scheme ? `${scheme}:${path}` : path;
@@ -290,10 +286,9 @@ const __quenchResolveWebRelativePath = (from, to) => {
   if (to.startsWith("?")) return `${from.split(/[?#]/)[0]}${to}`;
   if (to.startsWith("#")) return `${from.split("#")[0]}${to}`;
   if (to.startsWith("/")) return null;
-  const origin = __quenchWebOriginPrefix(
-    from.match(/^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/]*/)?.[0]
-  );
-  const path = from.slice(origin.length).split(/[?#]/)[0] || "/";
+  const rawOrigin = from.match(/^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/]*/)?.[0];
+  const origin = rawOrigin;
+  const path = from.slice(rawOrigin.length).split(/[?#]/)[0] || "/";
   const base = path.slice(0, path.lastIndexOf("/") + 1);
   const targetPath = to.split(/[?#]/)[0];
   const suffix = to.slice(targetPath.length);
