@@ -4788,3 +4788,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1351: crypto hash default encoding
 
 - Apply the stream’s configured default encoding when writing string data.
+
+### Stage 1352: crypto cipher encoding validation
+
+- Enforce cipher input/output encoding consistency and reject unknown encodings.
