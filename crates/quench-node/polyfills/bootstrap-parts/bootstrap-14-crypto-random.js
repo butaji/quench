@@ -44,6 +44,7 @@ for (const name of ["prng", "rng"])
     enumerable: false
   });
 globalThis.__nodeCryptoApi = __nodeCryptoApi;
+globalThis.__nodeCryptoApi.pseudoRandomBytes = __nodeCryptoRandomBytes;
 // eslint-disable-next-line max-lines-per-function -- shared validation and byte-view handling
 __nodeCryptoApi.randomFillSync = (
   buffer,
