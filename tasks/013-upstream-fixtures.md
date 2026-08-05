@@ -4996,3 +4996,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1403: crypto DH generated-key state
 
 - Track deterministic public/private key changes across `generateKeys()` calls.
+
+### Stage 1404: crypto DH group factory
+
+- Support `createDiffieHellmanGroup()` instances through the DH prototype.

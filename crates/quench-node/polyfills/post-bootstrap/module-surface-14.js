@@ -74,13 +74,18 @@ const __quenchCryptoKeyExchangeFallback = (result) => {
     __quenchCryptoSimpleConstructor(result, "DiffieHellmanGroup");
   if (typeof result.ECDH !== "function")
     __quenchCryptoSimpleConstructor(result, "ECDH");
+  __quenchCryptoDhConstructor(result);
+  Object.setPrototypeOf(
+    result.DiffieHellmanGroup.prototype,
+    result.DiffieHellman.prototype
+  );
   result.createDiffieHellman ||= (
     sizeOrKey,
     generatorOrEncoding,
     maybeGenerator = generatorOrEncoding
   ) => {
     __quenchValidateDhNumbers(sizeOrKey, maybeGenerator);
-    return __quenchCryptoDhConstructor(result)();
+    return Object.create(result.DiffieHellman.prototype);
   };
   result.createDiffieHellmanGroup ||= () => result.DiffieHellmanGroup();
   result.getDiffieHellman ||= (name) => {
