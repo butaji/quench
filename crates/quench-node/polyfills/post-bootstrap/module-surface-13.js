@@ -44,14 +44,15 @@ const __quenchCryptoCipherFallback = (result) => {
         error.code = "ERR_UNKNOWN_ENCODING";
         throw error;
       }
-      if (inputEncoding && encoding && encoding !== inputEncoding) {
+      const normalized = encoding?.replace("-", "");
+      if (inputEncoding && normalized && normalized !== inputEncoding) {
         const error = new TypeError(
           `Encoding cannot be changed from '${inputEncoding}'`
         );
         error.code = "ERR_INVALID_ARG_VALUE";
         throw error;
       }
-      inputEncoding ||= encoding;
+      inputEncoding ||= normalized;
     };
     return {
       update(value, encoding, outputEncoding) {
