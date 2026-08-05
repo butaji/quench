@@ -5268,3 +5268,5 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1536. `url-parse-resolve-object.js` — expose legacy URL resolveObject behavior.
 1537. `url-resolve-empty-authority.js` — normalize empty-authority URL bases.
 1538. `url-resolve-double-slash-parent.js` — normalize double-slash parent paths.
+1539. `url-resolve-network-path-slash.js` — preserve network-path trailing slashes.
+1540. `url-resolve-file-fragment.js` — normalize file URL fragment bases.
