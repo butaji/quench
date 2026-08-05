@@ -5363,3 +5363,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1631. `fs-close-async-validation.js` — validate async close descriptors synchronously.
 1632. `urlsearchparams-detached-stringifier.js` — reject detached URLSearchParams methods.
 1633. `urlsearchparams-sort.js` — implement stable URLSearchParams sorting.
+1634. `url-tostring-enumerability.js` — align URL toString descriptor enumerability.
