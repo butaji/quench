@@ -37,6 +37,12 @@ pub fn lower_module_decl(decl: &ast::Statement) -> Option<Statement> {
 pub fn lower_import(import: &ast::ImportDeclaration) -> Option<Statement> {
     let source = import.source.value.to_string();
     let import_type = import.with_clause.as_ref().and_then(|clause| {
+        if clause.with_entries.iter().any(|entry| {
+            !matches!(&entry.key, ast::ImportAttributeKey::Identifier(key) if key.name == "type")
+                && !matches!(&entry.key, ast::ImportAttributeKey::StringLiteral(key) if key.value == "type")
+        }) {
+            return Some("__unsupported__".to_string());
+        }
         clause.with_entries.iter().find_map(|entry| {
             let key = match &entry.key {
                 ast::ImportAttributeKey::Identifier(key) => key.name.as_str(),

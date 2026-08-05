@@ -2238,6 +2238,9 @@ fn eval_import(
     import_type: &Option<String>,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
+    if import_type.as_deref() == Some("__unsupported__") {
+        return Err(JsError::new("SyntaxError: unsupported import attributes"));
+    }
     let module_exports = if let Some(import_type) = import_type {
         let raw = get_raw_module_source(env, source)
             .ok_or_else(|| JsError::new(format!("Cannot find module '{}'.", source)))?;
@@ -2245,6 +2248,11 @@ fn eval_import(
             "text" => Value::String(raw),
             "json" => {
                 parse_json_module(&raw).map_err(|reason| JsError::new(format!("{:?}", reason)))?
+            }
+            "__unsupported__" => {
+                return Err(JsError::new(
+                    "SyntaxError: unsupported import attribute".to_string(),
+                ));
             }
             _ => Value::Undefined,
         };

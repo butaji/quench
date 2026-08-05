@@ -165,3 +165,11 @@ fn module_import_resolution_error_is_thrown_before_body() {
     let message = format!("{:?}", result.unwrap_err());
     assert!(message.contains("Ambiguous export"), "{message}");
 }
+
+#[test]
+fn module_import_rejects_unknown_import_attribute() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval_es_module("import './missing.js' with {custom: 'value'};");
+    let error = result.expect_err("unknown import attributes must fail during linking");
+    assert!(format!("{error:?}").contains("SyntaxError"));
+}
