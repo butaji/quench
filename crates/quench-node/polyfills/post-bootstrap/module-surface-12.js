@@ -345,6 +345,8 @@ globalThis.__quenchResolveParsedFragment = (result, from, to) => {
   if (typeof from === "string") return null;
   const target = to.match(/^([A-Za-z][A-Za-z0-9+.-]*):(#.*)$/);
   const source = from.href || from.pathname || "";
+  if (to.startsWith("#") && source.includes("://"))
+    return result.parse(`${source.replace(/#.*$/, "")}${to}`);
   if (!target || !source.startsWith(`${target[1]}://`)) return null;
   return result.parse(`${source.replace(/#.*$/, "")}${target[2]}`);
 };
