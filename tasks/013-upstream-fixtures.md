@@ -3980,3 +3980,13 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 - The focused stage reproduced only the observable contract; the upstream
   fixture then verified that the polyfill preserved callback ordering and the
   socket return value.
+
+### Stage 1177: dgram send offsets
+
+- Added the offset/length send overload and callback byte count used by the
+  upstream UDP fixture.
+
+### Stage 1178: dgram bind callback ordering
+
+- Deferred the bind callback to a microtask so callers can finish initializing
+  their socket variable before the callback observes it.

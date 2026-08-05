@@ -9,15 +9,19 @@ const __quenchDgramBind = (socket, type, port, address, callback) => {
   socket._address = {
     address: typeof address === "string" ? address : "0.0.0.0",
     family: type === "udp6" ? "IPv6" : "IPv4",
-    port: typeof port === "number" ? port : 0
+    port: typeof port === "number" && port > 0 ? port : 40000
   };
-  callback?.();
+  queueMicrotask(() => callback?.());
   queueMicrotask(() => socket.emit("listening"));
   return socket;
 };
-const __quenchDgramSend = (socket, message, address, callback) => {
-  if (typeof address === "function") callback = address;
-  queueMicrotask(() => callback?.(null));
+const __quenchDgramSend = (socket, message, ...args) => {
+  const callback = args.at(-1);
+  const hasOffset = typeof args[0] === "number";
+  const length = hasOffset ? args[1] : message.byteLength;
+  queueMicrotask(() =>
+    typeof callback === "function" ? callback(null, length) : undefined
+  );
   return socket;
 };
 const __quenchDgramClose = (socket, callback) => {
@@ -26,12 +30,16 @@ const __quenchDgramClose = (socket, callback) => {
   queueMicrotask(() => socket.emit("close"));
   return socket;
 };
-const __quenchDgramAddress = (socket, type) =>
-  socket._address || {
-    address: "0.0.0.0",
-    family: type === "udp6" ? "IPv6" : "IPv4",
-    port: 0
-  };
+const __quenchDgramAddress = (socket, type) => {
+  if (!socket._bound) throw new Error("getsockname EBADF");
+  return (
+    socket._address || {
+      address: "0.0.0.0",
+      family: type === "udp6" ? "IPv6" : "IPv4",
+      port: 0
+    }
+  );
+};
 const __quenchDgramOn = (socket, listeners, event, callback) => {
   (listeners[event] ||= []).push(callback);
   return socket;
