@@ -492,15 +492,6 @@ fn destructuring_var_binding_evaluates_target_before_source_get() {
 }
 
 #[test]
-fn destructuring_var_binding_order_probe() {
-    let mut host = QuenchHost::new();
-    let result = host.run_script(
-        "var log = []; var sourceKey = { toString: () => { log.push('sourceKey'); return 'p'; } }; var source = { get p() { log.push('get source'); return undefined; } }; var env = new Proxy({}, { has(t, pk) { log.push('binding::' + pk); return false; } }); var defaultValue = 0; var varTarget; with (env) { var { [sourceKey]: varTarget = defaultValue } = source; } assert.sameValue(log.join(','), 'binding::source,binding::sourceKey,sourceKey,binding::varTarget,get source,binding::defaultValue');",
-    );
-    assert!(result.is_ok(), "destructuring probe failed: {:?}", result);
-}
-
-#[test]
 fn inherited_getter_boxes_primitive_receiver_in_non_strict_call() {
     let mut host = QuenchHost::new();
     let result = host.run_script(

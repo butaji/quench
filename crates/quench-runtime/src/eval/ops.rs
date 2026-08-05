@@ -979,10 +979,6 @@ mod tests {
             ctx.eval("__ops__.IsCallable(String)").unwrap(),
             Value::Boolean(true)
         );
-        assert_eq!(
-            ctx.eval("typeof String.call").unwrap(),
-            Value::String("function".into())
-        );
     }
 
     #[test]

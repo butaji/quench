@@ -1155,7 +1155,7 @@ mod tests {
         let value = ctx
             .eval("var value; Boolean.prototype[Symbol.iterator] = function*(){ yield this.valueOf(); }; function* g(){ value = yield * 'hit' in Object.create({hit:true}); value = yield * 'miss' in Object.create({}); } var i=g(); i.next('first'); var before=value; i.next('second'); [before, value].join('|')")
             .unwrap();
-        assert_eq!(value, Value::String("undefined|undefined".into()));
+        assert_eq!(value, Value::String("|".into()));
     }
 
     #[test]

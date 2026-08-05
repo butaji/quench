@@ -476,6 +476,16 @@ impl Environment {
 
     pub fn declare_var(&mut self, name: String, kind: VarKind) {
         if kind == VarKind::Var {
+            if self
+                .scopes
+                .first()
+                .is_some_and(|scope| scope.borrow().is_with_environment())
+            {
+                if let Some(parent) = &self.parent {
+                    parent.borrow_mut().declare_var(name, kind);
+                }
+                return;
+            }
             if let Some(scope) = self.scopes.first() {
                 scope.borrow_mut().declare_var(name, kind);
             }

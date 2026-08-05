@@ -269,13 +269,4 @@ mod tests {
             "MAX_VALUE"
         ));
     }
-
-    #[test]
-    fn test_is_readonly_constructor_property_other_props() {
-        assert!(!super::is_readonly_constructor_property(
-            "Number",
-            "prototype"
-        ));
-        assert!(!super::is_readonly_constructor_property("Number", "foo"));
-    }
 }

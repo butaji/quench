@@ -457,6 +457,12 @@ pub fn eval_expression(
             if let (Expression::Identifier(name), Some(scope)) =
                 (assignment_target, identifier_scope)
             {
+                if scope.borrow().is_global_object_binding()
+                    && !crate::interpreter::is_strict_mode()
+                    && matches!(name.as_str(), "undefined" | "NaN" | "Infinity")
+                {
+                    return Ok(right_val);
+                }
                 // Per ES spec §12.4.5.1, `let` and `const` at global scope do NOT
                 // create properties on the global object. The object_binding_has
                 // check below is meant for `var` bindings whose global property was

@@ -568,6 +568,13 @@ impl Scope {
                 if self.is_unscopable(name) {
                     return None;
                 }
+                if !matches!(self.object_has_binding_property(name), Some(true)) {
+                    return if crate::interpreter::is_strict_mode() {
+                        None
+                    } else {
+                        Some(Value::Undefined)
+                    };
+                }
                 return match proxy_get_property(object, name) {
                     Ok(v) => Some(v),
                     Err(_) => Some(Value::Undefined),

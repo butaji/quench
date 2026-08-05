@@ -320,7 +320,7 @@ fn non_strict_super_set_ignores_failed_receiver_set() {
 #[test]
 fn direct_eval_new_target_in_class_field_is_runtime_undefined() {
     let value = eval("var executed = false; var C = class { x = eval('executed = true; new.target;'); }; var c = new C(); [executed, c.x].join('|')").unwrap();
-    assert_eq!(value, Value::String("true|undefined".into()));
+    assert_eq!(value, Value::String("true|".into()));
 }
 
 #[test]
