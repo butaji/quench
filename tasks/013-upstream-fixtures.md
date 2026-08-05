@@ -4759,3 +4759,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1344: crypto cipher catalog
 
 - Expose AES-128-CBC cipher metadata required by the upstream crypto fixture.
+
+### Stage 1345: TLS cipher list
+
+- Expose the TLS cipher names required by the upstream crypto fixture.
