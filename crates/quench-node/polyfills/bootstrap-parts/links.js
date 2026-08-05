@@ -301,7 +301,18 @@ globalThis.__nodeFs.opendir = (value, options, callback) => {
 };
 globalThis.__nodeFs.lstatSync = (value) => {
   const path = nodeFsPath(value);
-  const kind = globalThis.__quench_fs_link_kind(path);
+  let kind;
+  try {
+    kind = globalThis.__quench_fs_link_kind(path);
+  } catch (_) {
+    const error = new Error(
+      `ENOENT: no such file or directory, lstat '${path}'`
+    );
+    error.code = "ENOENT";
+    error.syscall = "lstat";
+    error.path = path;
+    throw error;
+  }
   const stats = new globalThis.__nodeStats(
     kind === "file",
     kind === "directory",
