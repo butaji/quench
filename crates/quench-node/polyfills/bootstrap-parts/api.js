@@ -193,8 +193,9 @@ const nodeFsPath = (value) => {
   )
     return nodePathValue(value);
   const error = new TypeError(
-    'The "path" argument must be of type string or an instance of Buffer or URL'
+    'The "path" argument must be of type string or an instance of Buffer or URL.'
   );
+  error.message += globalThis.__nodeCommon.invalidArgTypeHelper(value);
   error.code = "ERR_INVALID_ARG_TYPE";
   throw error;
 };
