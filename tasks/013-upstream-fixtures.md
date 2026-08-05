@@ -5327,3 +5327,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1595. `url-resolve-object-opaque-addresses.js` — cover parsed opaque address relatives.
 1596. `url-resolve-object-query-slashes.js` — preserve parsed query slash targets.
 1597. `url-resolve-object-authority-credentials.js` — preserve parsed authority credentials.
+1598. `url-resolve-object-fragment-bases.js` — preserve parsed fragment-only bases.
