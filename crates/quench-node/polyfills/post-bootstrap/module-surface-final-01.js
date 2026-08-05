@@ -82,6 +82,8 @@ const __quenchApplyFinalModule01 = (name, originalRequire) => {
       console: {}
     };
   let result = originalRequire(name);
+  if (normalized === "timers")
+    result.promises = originalRequire("timers/promises");
   result = __quenchApplyFinalSurface(normalized, result);
   if (normalized === "test")
     return __quenchTestModuleFallbacks(result, originalRequire, name);
