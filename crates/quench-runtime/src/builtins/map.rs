@@ -136,6 +136,20 @@ pub fn register_map_and_set(ctx: &mut Context) {
         if let Some(key) = iterator_prop_key() {
             p.set(&key, native_fn(map_iterator_impl));
         }
+        if let Some(Value::Symbol(tag_key)) =
+            crate::builtins::symbol::get_well_known_symbol_no_ctx("toStringTag")
+        {
+            p.define(
+                &tag_key.property_key(),
+                Value::String("Map".into()),
+                PropertyFlags {
+                    value: Some(Value::String("Map".into())),
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                },
+            );
+        }
     }
     let map_proto_for_ctor = Rc::clone(&map_proto);
     let map_constructor = native_fn(move |args| {

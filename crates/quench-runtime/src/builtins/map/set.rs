@@ -95,6 +95,20 @@ pub fn register_set(ctx: &mut Context, set_proto: Rc<RefCell<Object>>) {
                 ..Default::default()
             },
         );
+        if let Some(Value::Symbol(tag_key)) =
+            crate::builtins::symbol::get_well_known_symbol_no_ctx("toStringTag")
+        {
+            p.define(
+                &tag_key.property_key(),
+                Value::String("Set".into()),
+                PropertyFlags {
+                    value: Some(Value::String("Set".into())),
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                },
+            );
+        }
     }
 
     let set_proto_for_ctor = Rc::clone(&set_proto);
