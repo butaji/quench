@@ -4647,3 +4647,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1321: readdir dirent types
 
 - Preserve file `Dirent` names and type predicates for `readdirSync` results.
+
+### Stage 1322: lchmod validation
+
+- Provide Node-compatible callback and path validation for `fs.lchmod` and
+  `fs.lchmodSync`.

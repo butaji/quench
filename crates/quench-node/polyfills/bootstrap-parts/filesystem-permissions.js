@@ -5,8 +5,15 @@ const nodeMode = (mode) => {
     throw error;
   }
   const value = typeof mode === "string" ? parseInt(mode, 8) : Number(mode);
+  if (typeof mode === "string" && !/^0?[0-7]+$/.test(mode)) {
+    const error = new TypeError(`The "mode" argument is invalid: ${mode}`);
+    error.code = "ERR_INVALID_ARG_VALUE";
+    throw error;
+  }
   if (!Number.isFinite(value) || value < 0 || value > 0xffffffff) {
-    const error = new RangeError('The value of "mode" is out of range');
+    const error = new RangeError(
+      `The value of "mode" is out of range. It must be >= 0 && <= 4294967295. Received ${mode}`
+    );
     error.code = "ERR_OUT_OF_RANGE";
     throw error;
   }
@@ -34,4 +41,23 @@ globalThis.__nodeFs.fchmod = (fd, mode, callback) => {
       callback(error);
     }
   });
+};
+globalThis.__nodeFs.lchmodSync = (value, mode) => (
+  nodeMode(mode),
+  globalThis.__nodeFs.chmodSync(value, mode)
+);
+globalThis.__nodeFs.lchmod = (value, mode, callback) => {
+  if (typeof mode === "function") {
+    callback = mode;
+    mode = 0o666;
+  }
+  if (typeof callback !== "function") {
+    const error = new TypeError(
+      'The "callback" argument must be of type function'
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  globalThis.__nodeFs.lchmodSync(value, mode);
+  queueMicrotask(() => callback(null));
 };
