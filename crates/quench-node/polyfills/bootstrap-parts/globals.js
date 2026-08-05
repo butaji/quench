@@ -1,4 +1,3 @@
-/* Small, dependency-free globals available before user code. */
 globalThis.global = globalThis;
 globalThis.globalThis = globalThis;
 const __nodeNativeEval = globalThis.eval;
@@ -162,12 +161,10 @@ globalThis.console.timeEnd = (label = "default") => {
   );
   delete consoleTimers[label];
 };
-
 globalThis.__quench_node_pids = new Set([globalThis.__quench_pid]);
 globalThis.DOMException = class DOMException extends Error {
   constructor(message = "", name = "Error") {
     super(message);
-    this.message = message;
     this.name = name;
   }
 };
@@ -200,8 +197,11 @@ globalThis.process = {
   env: new Proxy(
     {},
     {
-      get: (_, key) =>
-        typeof key === "string" ? globalThis.__quench_env_get(key) : undefined,
+      get: (target, key) => {
+        if (typeof key !== "string") return Reflect.get(target, key);
+        const value = globalThis.__quench_env_get(key);
+        return value === undefined ? Reflect.get(target, key) : value;
+      },
       set: (_, key, value) => {
         if (typeof key === "symbol" || typeof value === "symbol")
           throw new TypeError("Cannot convert a Symbol value to a string");
@@ -245,11 +245,12 @@ globalThis.process = {
         typeof key === "string" &&
         globalThis.__quench_env_get(key) !== undefined,
       ownKeys: () => globalThis.__quench_env_keys,
-      getOwnPropertyDescriptor: (_, key) => ({
-        enumerable: true,
-        configurable: true,
-        value: globalThis.__quench_env_get(String(key))
-      })
+      getOwnPropertyDescriptor: (_, key) => {
+        const value = globalThis.__quench_env_get(String(key));
+        return value === undefined
+          ? undefined
+          : { enumerable: true, configurable: true, value };
+      }
     }
   ),
   argv: [globalThis.__quench_exec_path, ...globalThis.__quench_argv.slice(1)],
@@ -404,7 +405,6 @@ globalThis.process = {
   }
 };
 process.hrtime.bigint = () => BigInt(globalThis.__quench_now_ns());
-
 globalThis.setImmediate = (callback, ...args) => {
   if (typeof callback !== "function")
     throw new TypeError('The "callback" argument must be of type function');

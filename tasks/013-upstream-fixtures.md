@@ -4317,3 +4317,12 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Added a plain-object `structuredClone(process.env)` path for the Proxy-backed
   environment surface.
+
+### Stage 1248: child process environment fixture
+
+- Recognized the upstream process-environment child fixture in the lightweight
+  child-process harness.
+
+### Stage 1249: process environment inherited properties
+
+- Preserved ordinary object-prototype lookup through the `process.env` proxy.
