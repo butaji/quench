@@ -558,7 +558,7 @@ fn propagate_current_module_resolution_error(ctx: &mut crate::Context, source: &
     let Some(Value::Object(errors)) = ctx.get_global("__quench_module_errors__") else {
         return;
     };
-    let sources = reexports
+    let mut sources = reexports
         .into_iter()
         .map(|entry| match entry {
             PendingReExport::StarAs { source, .. }
@@ -566,6 +566,11 @@ fn propagate_current_module_resolution_error(ctx: &mut crate::Context, source: &
             | PendingReExport::Named { source, .. } => source,
         })
         .collect::<Vec<_>>();
+    sources.extend(
+        fixture_import_edges_from_source(source)
+            .into_iter()
+            .map(|(_, source)| source),
+    );
     let reason = sources
         .into_iter()
         .find_map(|source| errors.borrow().get(&source));
