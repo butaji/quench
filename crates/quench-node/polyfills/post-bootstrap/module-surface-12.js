@@ -356,13 +356,9 @@ globalThis.__quenchResolveScopedObject = (r, f, t) =>
       );
 globalThis.__quenchResolveParsedSpecial = (r, f, t) =>
   globalThis.__quenchResolveScopedObject(r, f, t) ||
-  globalThis.__quenchResolveParsedFragment(r, f, t);
-globalThis.__quenchResolveParsedObject = (
-  result,
-  from,
-  to,
-  originalResolve
-) => {
+  globalThis.__quenchResolveParsedFragment(r, f, t) ||
+  globalThis.__quenchResolveParsedOpaque(r, f, t);
+globalThis.__quenchResolveParsedObject = (result, from, to) => {
   if (typeof from === "string") return null;
   const fragment = globalThis.__quenchResolveParsedSpecial(result, from, to);
   if (fragment) return fragment;
@@ -396,12 +392,7 @@ globalThis.__quenchResolveObjectEarly = (result, from, to, originalResolve) => {
   if (fragmentOnly) return fragmentOnly;
   if (to === "." && globalThis.__quenchIsOpaqueTarget(from))
     return `${from.match(/^([A-Za-z][A-Za-z0-9+.-]*):/)[1]}:`;
-  const parsedObject = globalThis.__quenchResolveParsedObject(
-    result,
-    from,
-    to,
-    originalResolve
-  );
+  const parsedObject = globalThis.__quenchResolveParsedObject(result, from, to);
   if (parsedObject) return parsedObject;
   const absoluteTarget = globalThis.__quenchResolveAbsoluteTarget(from, to);
   if (absoluteTarget) return absoluteTarget;
