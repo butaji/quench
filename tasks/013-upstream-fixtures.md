@@ -3904,3 +3904,11 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
   loading Node’s shared test helpers.
 - Kept the global-surface audit visible; the remaining helper failure is not
   hidden behind a compatibility-specific bypass.
+
+### Stage 1164: global surface descriptors
+
+- Added the non-enumerable `fetch` global required by Node’s common helpers.
+- Normalized configurable bootstrap globals to non-enumerable descriptors so
+  Node’s leaked-global audit can run without seeing host implementation names.
+- The upstream random fixture now reaches random callback validation; its
+  remaining failure is tracked separately.
