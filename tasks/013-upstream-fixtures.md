@@ -4173,3 +4173,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Added readable `push()` and `setEncoding()` compatibility for custom Duplex
   implementations.
+
+### Stage 1215: stream abort signal surface
+
+- Added `addAbortSignal()` validation, stream return behavior, and the internal
+  no-validation helper module.
