@@ -3971,3 +3971,12 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Added bound-state tracking and Node-shaped duplicate-bind errors to the
   minimal UDP socket polyfill.
+
+### Retrospective: stages 1175-1176
+
+- Probing individual upstream fixtures quickly identified the next gap, while
+  the default timeout prevented the incomplete dgram fixture from leaving a
+  stale runner.
+- The focused stage reproduced only the observable contract; the upstream
+  fixture then verified that the polyfill preserved callback ordering and the
+  socket return value.
