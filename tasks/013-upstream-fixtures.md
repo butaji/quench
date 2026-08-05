@@ -5275,3 +5275,16 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1543. `url-resolve-mailto-relative.js` — resolve mailto relative paths.
 1544. `url-resolve-query-base.js` — discard base queries for absolute paths.
 1545. `url-resolve-opaque-relative.js` — resolve opaque scheme relative paths.
+1546. `url-resolve-cross-scheme-single-slash.js` — preserve target schemes in single-slash paths.
+1547. `url-resolve-opaque-parent.js` — normalize parent traversal in opaque paths.
+1548. `url-resolve-web-parent-origin.js` — preserve web origins during parent resolution.
+1549. `url-resolve-opaque-absolute.js` — resolve opaque targets from absolute paths.
+1550. `url-resolve-object-opaque.js` — resolve opaque targets from parsed URL objects.
+1551. `url-resolve-opaque-absolute-string.js` — resolve opaque bases against absolute strings.
+1552. `url-resolve-empty-opaque.js` — remove fragments from empty opaque bases.
+1553. `url-resolve-opaque-dot.js` — preserve opaque schemes for dot targets.
+1554. `url-resolve-mailto-query.js` — preserve mailto addresses for query targets.
+1555. `url-resolve-opaque-double-slash.js` — preserve double-slash opaque targets.
+1556. `url-resolve-web-double-slash.js` — preserve double slashes in web paths.
+1557. `url-resolve-authority-slash.js` — append slashes to authority-only targets.
+1558. `url-resolve-network-authority.js` — preserve network authorities in same schemes.

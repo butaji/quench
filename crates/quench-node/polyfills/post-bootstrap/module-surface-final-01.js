@@ -279,9 +279,10 @@ const __quenchResolveAbsolutePath = (from, to) => {
     .match(/^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/]*/)?.[0]
     ?.split(/[?#]/)[0];
   if (origin) return `${origin}${path}`;
-  const scheme = from.match(/^([A-Za-z][A-Za-z0-9+.-]*):[^/]*$/)?.[1];
+  const scheme = from.match(/^([A-Za-z][A-Za-z0-9+.-]*):/)?.[1];
   return scheme ? `${scheme}:${path}` : path;
 };
+globalThis.__quenchResolveAbsolutePath = __quenchResolveAbsolutePath;
 const __quenchIsRelativePath = (from, to) =>
   !from.includes("://") && !to.includes("://");
 const __quenchResolveOpaquePath = (from, to) => {
@@ -290,8 +291,10 @@ const __quenchResolveOpaquePath = (from, to) => {
   if (targetScheme)
     return globalThis.__quenchOpaqueTargetResolve(from, to, targetScheme);
   if (!match || from.includes("://") || to.includes("://")) return null;
+  if (to === ".") return `${match[1]}:`;
+  if (to.startsWith(".//")) return `${match[1]}://${to.slice(3)}`;
   const base = match[2].slice(0, match[2].lastIndexOf("/") + 1);
-  return `${match[1]}:${base}${to}`;
+  return globalThis.__quenchNormalizeOpaqueRelative(match[1], base, to);
 };
 const __quenchResolveWebRelativePath = (from, to) => {
   if (!from.includes("://")) return null;
@@ -304,24 +307,24 @@ const __quenchResolveWebRelativePath = (from, to) => {
   const targetPath = to.split(/[?#]/)[0];
   const suffix = to.slice(targetPath.length);
   const duplicateParent = __quenchDuplicateParent(
-    origin,
+    rawOrigin,
     base,
     targetPath,
     suffix
   );
   if (duplicateParent) return duplicateParent;
   const cleanTarget = targetPath.replace(/^\.\//, "");
-  if (base.includes("//") && !cleanTarget.includes("."))
-    return `${origin}${base}${cleanTarget}${suffix}`;
+  if (globalThis.__quenchPreserveWebDoubleSlash(base, targetPath))
+    return `${rawOrigin}${base}${cleanTarget}${suffix}`;
   const normalized = __quenchNormalizeAbsoluteTarget(`${base}${targetPath}`);
   return `${rawOrigin}${__quenchResolvedPath(normalized, targetPath)}${suffix}`;
 };
-const __quenchResolveSameWebScheme = (from, to) => {
-  const target = to.match(/^([A-Za-z][A-Za-z0-9+.-]*):(.*)$/);
-  if (!target || !from.startsWith(`${target[1]}://`)) return null;
-  if (target[2] === "") return from;
-  return __quenchResolveWebRelativePath(from, target[2]);
-};
+const __quenchResolveSameWebScheme = (from, to) =>
+  globalThis.__quenchResolveSameWebScheme(
+    from,
+    to,
+    __quenchResolveWebRelativePath
+  );
 const __quenchResolveRelativePath = (from, to, resolve) => {
   const webPath = __quenchResolveWebRelativePath(from, to);
   if (webPath) return webPath;
@@ -354,12 +357,9 @@ const __quenchResolveProtocolTargetBase = (from, to) => {
     globalThis.__quenchResolveSingleSlashProtocol(from, to)
   );
 };
-const __quenchResolveProtocolTarget = (from, to) =>
-  __quenchResolveSameWebScheme(from, to) ||
-  __quenchResolveProtocolTargetBase(from, to);
 const __quenchResolvePath = (from, to, resolve) => {
-  if (from === "") return to;
-  if (to === "") return from;
+  if (from === "") return globalThis.__quenchResolveEmptyBase(to);
+  if (to === "") return globalThis.__quenchResolveEmptyTarget(from);
   const absolutePath = __quenchResolveAbsolutePath(from, to);
   if (absolutePath) return absolutePath;
   if (from.startsWith("/") && !to.includes("://")) {
@@ -393,18 +393,18 @@ const __quenchAddUrlParseFallback = (result) => {
 const __quenchAddUrlFormatting = (result) => {
   if (typeof result.format !== "function") return result;
   (__quenchAddUrlDomainFallbacks(result), __quenchAddUrlParseFallback(result));
-  globalThis.__quenchAddLegacyParseMethods(result);
-  __quenchAddFileUrlFallback(result);
+  (globalThis.__quenchAddLegacyParseMethods(result),
+    __quenchAddFileUrlFallback(result));
   const originalResolve = result.resolve;
   result.resolveObject ||= (from, to) => {
-    const fileRelative = globalThis.__quenchResolveFileRelative(from, to);
-    if (fileRelative) return fileRelative;
-    if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\/\//.test(from))
-      return globalThis.__quenchResolveEmptyAuthority(from, to);
+    const early = globalThis.__quenchResolveObjectEarly(result, from, to);
+    if (early) return early;
     const protocolTarget =
       globalThis.__quenchResolveFileFragment(from, to) ||
-      __quenchResolveProtocolTarget(from, to);
-    if (protocolTarget) return protocolTarget;
+      __quenchResolveSameWebScheme(from, to) ||
+      __quenchResolveProtocolTargetBase(from, to);
+    if (protocolTarget)
+      return globalThis.__quenchNormalizeAuthorityTarget(protocolTarget);
     const scopedPath = __quenchResolveScopedPath(from, to);
     if (scopedPath) return scopedPath;
     const singleSlashProtocol = to.match(
@@ -415,7 +415,8 @@ const __quenchAddUrlFormatting = (result) => {
     if (to === ".") return from.slice(0, from.lastIndexOf("/") + 1);
     return __quenchResolvePath(from, to, originalResolve);
   };
-  result.resolve = result.resolveObject;
+  result.resolve = (from, to) =>
+    globalThis.__quenchWrapResolve(result, from, to);
   const originalFormat = result.format;
   result.format = (input, ...args) => {
     __quenchValidateUrlFormatInput(input);
