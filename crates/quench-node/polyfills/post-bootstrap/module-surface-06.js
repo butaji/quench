@@ -152,6 +152,18 @@
       return getURLPatternResult(this._source, value, baseURL);
     };
   };
+  const installURLCanParse = (urlConstructor) => {
+    const original = urlConstructor.canParse;
+    if (typeof original !== "function") return;
+    urlConstructor.canParse = function (value, base) {
+      if (!arguments.length) {
+        const error = new TypeError("The url argument must be specified");
+        error.code = "ERR_MISSING_ARGS";
+        throw error;
+      }
+      return original.call(this, value, base);
+    };
+  };
   const createURLPattern = () => {
     function URLPattern(options, optionsFlags, baseURL) {
       validateURLPatternInput(
@@ -183,6 +195,7 @@
       }
       if (normalized === "url" && !result.URLPattern) {
         result = Object.assign({}, result);
+        installURLCanParse(result.URL);
         result.URLPattern = createURLPattern();
       }
       return result;
