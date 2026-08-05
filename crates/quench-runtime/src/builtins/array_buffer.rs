@@ -237,14 +237,14 @@ pub fn register_array_buffer(ctx: &mut Context) {
         Value::NativeFunction(Rc::new(NativeFunction::new(move |args| {
             let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
             let Value::Object(this_obj) = this_val else {
-                return Err(crate::JsError::new(
-                    "TypeError: ArrayBuffer.prototype.resize requires an ArrayBuffer receiver",
+                return Err(array_buffer_type_error(
+                    "ArrayBuffer.prototype.resize requires an ArrayBuffer receiver",
                 ));
             };
             let new_len = args.first().map(|v| to_number(v) as i64).unwrap_or(0);
             if new_len < 0 {
-                return Err(crate::JsError::new(
-                    "RangeError: ArrayBuffer.prototype.resize requires a non-negative length",
+                return Err(array_buffer_range_error(
+                    "ArrayBuffer.prototype.resize requires a non-negative length",
                 ));
             }
             let max_bl = this_obj
@@ -253,13 +253,13 @@ pub fn register_array_buffer(ctx: &mut Context) {
                 .map(|v| to_number(&v) as i64)
                 .unwrap_or(0);
             if max_bl <= 0 {
-                return Err(crate::JsError::new(
-                    "TypeError: ArrayBuffer.prototype.resize called on non-resizable ArrayBuffer",
+                return Err(array_buffer_type_error(
+                    "ArrayBuffer.prototype.resize called on non-resizable ArrayBuffer",
                 ));
             }
             if new_len > max_bl {
-                return Err(crate::JsError::new(
-                    "RangeError: ArrayBuffer.prototype.resize: new length exceeds maxByteLength",
+                return Err(array_buffer_range_error(
+                    "ArrayBuffer.prototype.resize: new length exceeds maxByteLength",
                 ));
             }
             let mut obj = this_obj.borrow_mut();
@@ -485,6 +485,14 @@ mod tests {
     fn array_buffer_transfer_rejects_excessive_new_length() {
         let result = eval_ok(
             "try { new ArrayBuffer(1).transfer(9007199254740991); false } catch (error) { error instanceof RangeError }",
+        );
+        assert_eq!(result, Value::Boolean(true));
+    }
+
+    #[test]
+    fn array_buffer_resize_range_errors_are_objects() {
+        let result = eval_ok(
+            "var buffer = new ArrayBuffer(1, { maxByteLength: 2 }); try { buffer.resize(-1); false } catch (error) { error instanceof RangeError }",
         );
         assert_eq!(result, Value::Boolean(true));
     }
