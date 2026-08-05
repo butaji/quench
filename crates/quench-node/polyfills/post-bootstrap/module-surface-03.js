@@ -46,13 +46,44 @@ const __quenchValidatePipeline = (pipeline, args) => {
   const result = pipeline(...args);
   return result === undefined ? args[args.length - 2] : result;
 };
+const __quenchIsFinishedStream = (stream) =>
+  stream &&
+  (typeof stream.pipe === "function" ||
+    typeof stream.read === "function" ||
+    typeof stream.write === "function" ||
+    stream._readableState ||
+    stream._writableState);
+const __quenchValidateFinishedStream = (stream, options, callback) => {
+  if (!__quenchIsFinishedStream(stream)) {
+    const error = new TypeError("The stream argument must be a stream");
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  if (typeof options === "function") {
+    callback = options;
+    options = {};
+  }
+  if (options === null) options = {};
+  if (typeof options !== "object" || options === null) {
+    const error = new TypeError("The options argument must be an object");
+    error.code = "ERR_INVALID_ARG_TYPE";
+    if (callback === undefined)
+      error.message = "The callback must be a function";
+    throw error;
+  }
+  if (typeof callback !== "function") {
+    const error = new TypeError("The callback must be a function");
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+};
 const __quenchFinishedStream = (stream, options, callback) => {
   if (typeof options === "function") {
     callback = options;
     options = {};
   }
-  if (typeof callback !== "function")
-    throw new TypeError("The callback must be a function");
+  if (options === null) options = {};
+  __quenchValidateFinishedStream(stream, options, callback);
   let active = true;
   const complete = (error) => {
     if (!active) return;
@@ -62,6 +93,11 @@ const __quenchFinishedStream = (stream, options, callback) => {
   stream.once("end", complete);
   stream.once("finish", complete);
   stream.once("error", complete);
+  stream.once("close", () => {
+    const error = new Error("Premature close");
+    error.code = "ERR_STREAM_PREMATURE_CLOSE";
+    complete(error);
+  });
   return () => {
     active = false;
   };
