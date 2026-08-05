@@ -5199,3 +5199,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1466. `crypto-shared-module-fallbacks.js` — share crypto fallback exports across specifiers.
 1467. `crypto-sign-constructors.js` — preserve callable Sign and Verify constructor behavior.
 1468. `crypto-sign-error-metadata.js` — preserve signing error metadata setter behavior.
+1469. `crypto-sign-padding-error.js` — preserve RSA OAEP signing error behavior.
