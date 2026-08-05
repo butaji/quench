@@ -128,19 +128,17 @@ pub fn check_module_exported_bindings(program: &ast::Program) -> Result<(), JsEr
         let ast::Statement::ExportNamedDeclaration(export) = statement else {
             continue;
         };
-        if export.source.is_none() && export.declaration.is_none() {
-            for specifier in &export.specifiers {
-                let local_name = match &specifier.local {
-                    ast::ModuleExportName::IdentifierReference(local) => local.name.as_str(),
-                    ast::ModuleExportName::IdentifierName(local) => local.name.as_str(),
-                    ast::ModuleExportName::StringLiteral(_) => continue,
-                };
-                if !bindings.contains(local_name) {
-                    return Err(JsError(format!(
-                        "SyntaxError: Exported binding '{}' is not declared",
-                        local_name
-                    )));
-                }
+        for specifier in &export.specifiers {
+            let local_name = match &specifier.local {
+                ast::ModuleExportName::IdentifierReference(local) => local.name.as_str(),
+                ast::ModuleExportName::IdentifierName(local) => local.name.as_str(),
+                ast::ModuleExportName::StringLiteral(_) => continue,
+            };
+            if !bindings.contains(local_name) {
+                return Err(JsError(format!(
+                    "SyntaxError: Exported binding '{}' is not declared",
+                    local_name
+                )));
             }
         }
     }
@@ -783,19 +781,22 @@ impl<'a> Visit<'a> for NestedStrictFnChecker {
         if self.error.is_some() {
             return;
         }
+        let body = match &arrow.body {
+            ast::ArrowFunctionBody::FunctionBody(body) => body,
+            _ => return,
+        };
         let body_is_strict = self.strict
-            || arrow
-                .body
+            || body
                 .directives
                 .iter()
                 .any(|d| d.expression.value == "use strict");
-        if let Err(err) = check_strict_function_body(&arrow.params, &arrow.body, body_is_strict) {
+        if let Err(err) = check_strict_function_body(&arrow.params, body, body_is_strict) {
             self.error = Some(err);
             return;
         }
         let prev = self.strict;
         self.strict = body_is_strict;
-        for stmt in &arrow.body.statements {
+        for stmt in &body.statements {
             if let Err(err) = check_stmt(stmt, self.strict) {
                 self.error = Some(err);
                 return;
@@ -1151,16 +1152,19 @@ fn is_named_function(stmt: &ast::Statement<'_>) -> bool {
 fn check_expr_for_fn_params(expr: &ast::Expression, strict: bool) -> Result<(), JsError> {
     match expr {
         ast::Expression::ArrowFunctionExpression(arrow) => {
+            let body = match &arrow.body {
+                ast::ArrowFunctionBody::FunctionBody(body) => body,
+                _ => return Ok(()),
+            };
             let body_is_strict = strict
-                || arrow
-                    .body
+                || body
                     .directives
                     .iter()
                     .any(|d| d.expression.value == "use strict");
-            for stmt in &arrow.body.statements {
+            for stmt in &body.statements {
                 check_stmt(stmt, body_is_strict)?;
             }
-            check_fn_params(&arrow.params, &arrow.body)?;
+            check_fn_params(&arrow.params, body)?;
         }
         ast::Expression::FunctionExpression(func) => {
             if let Some(body) = &func.body {
@@ -1271,8 +1275,10 @@ impl<'a> Visit<'a> for AsyncArrowParamAwaitChecker {
         }
         let previous = self.async_context;
         self.async_context |= arrow.r#async;
-        for stmt in &arrow.body.statements {
-            self.visit_statement(stmt);
+        if let ast::ArrowFunctionBody::FunctionBody(body) = &arrow.body {
+            for stmt in &body.statements {
+                self.visit_statement(stmt);
+            }
         }
         self.async_context = previous;
     }
@@ -1343,8 +1349,10 @@ impl<'a> oxc::ast_visit::Visit<'a> for GeneratorArrowParamYieldChecker {
                 self.0 |= finder.0;
             }
         }
-        for stmt in &arrow.body.statements {
-            self.visit_statement(stmt);
+        if let ast::ArrowFunctionBody::FunctionBody(body) = &arrow.body {
+            for stmt in &body.statements {
+                self.visit_statement(stmt);
+            }
         }
     }
 }
@@ -2474,8 +2482,10 @@ impl<'a> Visit<'a> for SuperChecker {
                 self.visit_expression(init);
             }
         }
-        for stmt in &arrow.body.statements {
-            self.visit_statement(stmt);
+        if let ast::ArrowFunctionBody::FunctionBody(body) = &arrow.body {
+            for stmt in &body.statements {
+                self.visit_statement(stmt);
+            }
         }
         self.is_class_method.pop();
     }

@@ -18,7 +18,9 @@ pub fn lower_module_decl(decl: &ast::Statement) -> Option<Statement> {
         // export default function/class
         ast::Statement::ExportDefaultDeclaration(export) => lower_export_default_decl(export),
         // Named exports
+        ast::Statement::ExportDeclaration(export) => lower_export_declaration(export),
         ast::Statement::ExportNamedDeclaration(export) => lower_export_named(export),
+        ast::Statement::ExportFromDeclaration(export) => lower_export_from(export),
         // export * from 'module'
         ast::Statement::ExportAllDeclaration(export) => {
             let source = export.source.value.to_string();
@@ -220,35 +222,39 @@ fn default_export_value(value: Expression) -> Statement {
 /// Lower export { foo, bar } to exports.foo = foo; exports.bar = bar;
 /// Lower export { foo } from 'module' to imports.foo; exports.foo = foo;
 pub fn lower_export_named(named: &ast::ExportNamedDeclaration) -> Option<Statement> {
-    if let Some(declaration) = &named.declaration {
-        let statement = match declaration {
-            ast::Declaration::VariableDeclaration(declaration) => lower_var_decl(declaration),
-            ast::Declaration::FunctionDeclaration(declaration) => lower_fn_decl(declaration),
-            ast::Declaration::ClassDeclaration(declaration) => lower_class_decl(declaration),
-            _ => None,
-        }?;
-        return Some(Statement::Export(Box::new(statement)));
-    }
-    // Handle export-from syntax: export { x } from 'module'
-    if let Some(src) = &named.source {
-        let source = src.value.to_string();
-        let (imports, stmts) = collect_export_from_specs(&named.specifiers);
-        let import_stmt = Statement::Import {
-            default: None,
-            named: imports,
-            namespace: None,
-            source,
-            deferred: false,
-            import_type: None,
-        };
-        let mut all_stmts = vec![import_stmt];
-        all_stmts.extend(stmts);
-        return Some(Statement::Block(all_stmts));
-    }
-
     // In OXC, ExportSpecifier is a struct with local and exported fields
+    lower_local_export_specs(&named.specifiers)
+}
+
+pub fn lower_export_declaration(export: &ast::ExportDeclaration) -> Option<Statement> {
+    let statement = match &export.declaration {
+        ast::Declaration::VariableDeclaration(declaration) => lower_var_decl(declaration),
+        ast::Declaration::FunctionDeclaration(declaration) => lower_fn_decl(declaration),
+        ast::Declaration::ClassDeclaration(declaration) => lower_class_decl(declaration),
+        _ => None,
+    }?;
+    Some(Statement::Export(Box::new(statement)))
+}
+
+pub fn lower_export_from(export: &ast::ExportFromDeclaration) -> Option<Statement> {
+    let source = export.source.value.to_string();
+    let (imports, stmts) = collect_export_from_specs(&export.specifiers);
+    let import_stmt = Statement::Import {
+        default: None,
+        named: imports,
+        namespace: None,
+        source,
+        deferred: false,
+        import_type: None,
+    };
+    let mut all_stmts = vec![import_stmt];
+    all_stmts.extend(stmts);
+    Some(Statement::Block(all_stmts))
+}
+
+fn lower_local_export_specs(specifiers: &[ast::ExportSpecifier]) -> Option<Statement> {
     let mut stmts = Vec::new();
-    for spec in &named.specifiers {
+    for spec in specifiers {
         let exported = module_export_name_to_string(&spec.exported);
         let local = module_export_name_to_string(&spec.local);
         stmts.push(make_export_assignment(&exported, &local));
@@ -263,27 +269,6 @@ pub fn lower_export_named(named: &ast::ExportNamedDeclaration) -> Option<Stateme
     } else {
         Some(Statement::Export(Box::new(Statement::Block(stmts))))
     }
-}
-
-/// Lower `export { x } from 'module'` to import and re-export
-#[allow(dead_code)]
-fn lower_export_from(
-    named: &ast::ExportNamedDeclaration,
-    src: &ast::StringLiteral,
-) -> Option<Statement> {
-    let source = src.value.to_string();
-    let (imports, stmts) = collect_export_from_specs(&named.specifiers);
-    let import_stmt = Statement::Import {
-        default: None,
-        named: imports,
-        namespace: None,
-        source,
-        deferred: false,
-        import_type: None,
-    };
-    let mut all_stmts = vec![import_stmt];
-    all_stmts.extend(stmts);
-    Some(Statement::Block(all_stmts))
 }
 
 pub(crate) fn collect_export_from_specs(

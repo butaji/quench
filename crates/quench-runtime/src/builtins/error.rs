@@ -4,7 +4,6 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::interpreter::get_native_this;
-use crate::value::convert::to_js_string;
 use crate::value::error::{create_js_error_with_type, set_thrown_value};
 use crate::value::object::PropertyDescriptor;
 use crate::value::{NativeConstructor, Object, ObjectKind, PropertyFlags, Value};

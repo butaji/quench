@@ -192,7 +192,9 @@ fn check_strict_fn_params(program: &oxc::ast::ast::Program) -> Result<(), JsErro
                 }
             }
             oxc::ast::ast::Expression::ArrowFunctionExpression(arrow) => {
-                check_fn(&arrow.params, &arrow.body, strict)?;
+                if let oxc::ast::ast::ArrowFunctionBody::FunctionBody(body) = &arrow.body {
+                    check_fn(&arrow.params, body, strict)?;
+                }
             }
             _ => {}
         }
@@ -272,9 +274,12 @@ fn walk_body_expr(expr: &oxc::ast::ast::Expression, strict: bool) -> Result<(), 
             }
         }
         oxc::ast::ast::Expression::ArrowFunctionExpression(arrow) => {
+            let body = match &arrow.body {
+                oxc::ast::ast::ArrowFunctionBody::FunctionBody(body) => body,
+                _ => return Ok(()),
+            };
             let body_is_strict = strict
-                || arrow
-                    .body
+                || body
                     .directives
                     .iter()
                     .any(|d| d.expression.value == "use strict");
@@ -293,7 +298,7 @@ fn walk_body_expr(expr: &oxc::ast::ast::Expression, strict: bool) -> Result<(), 
                     }
                 }
                 // Check body statements for assignments to eval/arguments
-                check_body_assignments(&arrow.body.statements)?;
+                check_body_assignments(&body.statements)?;
             }
         }
         _ => {}

@@ -148,7 +148,9 @@ pub fn lower_stmt(stmt: &ast::Statement) -> Option<Statement> {
             Some(Statement::Expression(Box::new(expr)))
         }
         ast::Statement::ImportDeclaration(import) => lower_import_decl(import),
+        ast::Statement::ExportDeclaration(export) => lower_export_declaration(export),
         ast::Statement::ExportNamedDeclaration(export) => lower_export_named(export),
+        ast::Statement::ExportFromDeclaration(export) => lower_export_from(export),
         ast::Statement::ExportDefaultDeclaration(export) => lower_export_default_decl(export),
         ast::Statement::ExportAllDeclaration(export) => lower_export_all_decl(export),
         _ => None,
@@ -281,23 +283,6 @@ fn module_export_name_to_string(name: &ast::ModuleExportName) -> String {
 
 #[allow(dead_code)]
 fn lower_export_named_local(export: &ast::ExportNamedDeclaration) -> Option<Statement> {
-    // Handle export-from syntax: export { x } from 'module'
-    if let Some(src) = &export.source {
-        let source = src.value.to_string();
-        let (imports, stmts) = collect_export_from_specs(&export.specifiers);
-        let import_stmt = Statement::Import {
-            default: None,
-            named: imports,
-            namespace: None,
-            source,
-            deferred: false,
-            import_type: None,
-        };
-        let mut all_stmts = vec![import_stmt];
-        all_stmts.extend(stmts);
-        return Some(Statement::Block(all_stmts));
-    }
-
     // Handle direct exports - ExportSpecifier is a struct with local and exported fields
     let mut stmts = Vec::new();
     for spec in &export.specifiers {

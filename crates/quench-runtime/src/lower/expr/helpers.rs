@@ -6,7 +6,6 @@ use super::super::literals::{lower_tagged_template, lower_template_literal};
 use super::super::opt_chain::lower_opt_chain;
 use super::super::stmt::lower_formal_params;
 use super::helpers_expr as expr_helpers;
-use crate::ast::Statement;
 use crate::ast::{ArrowBody, Expression, PropertyKey, PropertyValue};
 use oxc::ast::ast;
 
@@ -195,16 +194,13 @@ fn lower_object_prop(
                 .map(|b| super::super::helpers::lower_fn_body(b))
                 .unwrap_or_default(),
             ast::Expression::ArrowFunctionExpression(arrow) => {
-                if arrow.expression {
-                    vec![]
-                } else {
-                    let stmts = arrow
-                        .body
+                match &arrow.body {
+                    ast::ArrowFunctionBody::FunctionBody(body) => body
                         .statements
                         .iter()
                         .filter_map(super::super::stmt::lower_stmt)
-                        .collect();
-                    stmts
+                        .collect(),
+                    _ => vec![],
                 }
             }
             _ => vec![],
@@ -285,26 +281,12 @@ fn lower_fn_expr(func: &ast::Function) -> Result<Expression, LowerError> {
 
 fn lower_arrow_expr(arrow: &ast::ArrowFunctionExpression) -> Result<Expression, LowerError> {
     let params = lower_formal_params(&arrow.params);
-    let body = if arrow.expression {
-        let stmts = arrow
-            .body
-            .statements
-            .iter()
-            .filter_map(super::super::stmt::lower_stmt)
-            .collect::<Vec<_>>();
-        if stmts.len() == 1 {
-            match &stmts[0] {
-                Statement::Expression(expr) => ArrowBody::Expression(*expr.clone()),
-                Statement::Return(Some(expr)) => ArrowBody::Expression(*expr.clone()),
-                _ => ArrowBody::Block(std::rc::Rc::new(stmts)),
-            }
-        } else {
-            ArrowBody::Block(std::rc::Rc::new(stmts))
-        }
+    let body = if let Some(expr) = arrow.body.as_expression() {
+        ArrowBody::Expression(lower_expr(expr)?)
+    } else if let ast::ArrowFunctionBody::FunctionBody(body) = &arrow.body {
+        ArrowBody::Block(std::rc::Rc::new(super::super::helpers::lower_fn_body(body)))
     } else {
-        ArrowBody::Block(std::rc::Rc::new(super::super::helpers::lower_fn_body(
-            &arrow.body,
-        )))
+        return Err(LowerError::new("invalid arrow function body"));
     };
     Ok(Expression::ArrowFunction {
         params,
