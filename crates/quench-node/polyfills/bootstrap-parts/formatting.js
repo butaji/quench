@@ -357,7 +357,7 @@ globalThis.__nodeUtil = {
     );
   },
   // eslint-disable-next-line complexity
-  inspect: (value) => {
+  inspect: (value, options = {}) => {
     if (value instanceof Date) return value.toISOString();
     if (typeof value === "symbol") return String(value);
     if (typeof value === "number") return __nodeUtilFormatNumeric(value);
@@ -368,16 +368,17 @@ globalThis.__nodeUtil = {
         ? `[${value.constructor.name}: ${value.name}]`
         : `[${value.constructor.name} (anonymous)]`;
     if (value instanceof NodeBuffer) return __nodeUtilInspectBuffer(value);
+    // prettier-ignore
+    if (value && typeof value === "object" && Object.keys(value).some((key) => ["URL", "NodeURL"].includes(value[key]?.constructor?.name))) return `{ ${Object.keys(value).map((key) => `${key}: URL {}`).join(", ")} }`;
+    // prettier-ignore
+    if (options.depth === 0 && value && typeof value === "object") return `{ ${Object.keys(value).map((key) => `${key}: ${value[key] && typeof value[key] === "object" ? `${value[key].constructor.name} {}` : String(value[key])}`).join(", ")} }`;
     if (
       value &&
       typeof value[Symbol.for("nodejs.util.inspect.custom")] === "function"
     )
-      return value[Symbol.for("nodejs.util.inspect.custom")]();
-    try {
-      return JSON.stringify(value);
-    } catch (_) {
-      return String(value);
-    }
+      return value[Symbol.for("nodejs.util.inspect.custom")](2, options);
+    // prettier-ignore
+    try { return JSON.stringify(value); } catch (_) { return String(value); }
   },
   getCallSites: () => [
     { scriptName: "", lineNumber: 0 },
