@@ -4139,3 +4139,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Consumed Node-style readable streams through their data/end events and added
   the `bytes()` stream consumer.
+
+### Stage 1208: callable stream writable
+
+- Preserved Node's legacy ability to invoke `stream.Writable()` without `new`.
