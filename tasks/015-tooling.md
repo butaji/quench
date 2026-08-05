@@ -131,3 +131,6 @@ streams, OS, and performance implementations into readable files under the
 existing focused stages remain green.
 The core, text/assert, and path/common sections are now extracted as well;
 the remaining monolith is concentrated in the Buffer and fs implementations.
+`tools/diff-cluster.sh` now compares fixture outcomes between `HEAD^` and the
+working commit, making per-slice regressions visible without manual log
+comparison.
