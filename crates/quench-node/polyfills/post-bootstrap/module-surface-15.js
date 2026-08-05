@@ -284,12 +284,7 @@ const __nodeWindowsDriveURL = (value, windows) => {
     .join("/");
   return { href: `file:///${drive}/${path}` };
 };
-const __quenchValidateFileUrlHost = (input, options) => {
-  if (input?.protocol === "file:" && input.host && options?.windows !== true)
-    throw Object.assign(new TypeError("File URL host must be empty"), {
-      code: "ERR_INVALID_FILE_URL_HOST"
-    });
-};
+const __quenchValidateFileUrlHost = globalThis.__quenchValidateFileUrlHost;
 const __quenchValidateFileUrlPath = (input) => {
   const href = typeof input === "string" ? input : input?.href;
   if (!href || !/%2f|%5c/i.test(href)) return;
