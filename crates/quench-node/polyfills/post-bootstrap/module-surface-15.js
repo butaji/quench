@@ -290,10 +290,19 @@ const __quenchValidateFileUrlHost = (input, options) => {
       code: "ERR_INVALID_FILE_URL_HOST"
     });
 };
+const __quenchValidateFileUrlPath = (input) => {
+  const href = typeof input === "string" ? input : input?.href;
+  if (!href || !/%2f|%5c/i.test(href)) return;
+  const error = new TypeError("Invalid file URL path");
+  error.code = "ERR_INVALID_FILE_URL_PATH";
+  error.input = new globalThis.__nodeURL(href);
+  throw error;
+};
 const __quenchAddFileUrlFallback = (result) => {
   const fileURLToPath = result.fileURLToPath;
   if (typeof fileURLToPath !== "function") return;
   result.fileURLToPath = (input, ...args) => {
+    __quenchValidateFileUrlPath(input);
     __quenchValidateFileUrlHost(input, args[0]);
     try {
       const converted = fileURLToPath(input, ...args);
