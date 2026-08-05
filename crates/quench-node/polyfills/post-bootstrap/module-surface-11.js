@@ -59,6 +59,12 @@ globalThis.__quenchResolveParsedAbsoluteOpaque = (r, f, t) =>
   !/^([A-Za-z][A-Za-z0-9+.-]*):#/.test(t)
     ? r.parse(t)
     : null;
+globalThis.__quenchResolveParsedSameSchemeOpaque = (r, f, t) => {
+  const target = t.match(/^([A-Za-z][A-Za-z0-9+.-]*):([^/].*)$/);
+  const source = f.href || "";
+  if (!target || !source.startsWith(`${target[1]}://`)) return null;
+  return globalThis.__quenchResolveParsedWebRelative(r, f, target[2]);
+};
 globalThis.__quenchResolveParsedEmptyScheme = (r, f, t) => {
   const source = f.href || "";
   const match = t.match(/^([A-Za-z][A-Za-z0-9+.-]*):$/);
