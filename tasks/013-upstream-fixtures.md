@@ -4356,3 +4356,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Validate append data before requiring the asynchronous callback, matching
   Node’s error precedence.
+
+### Stage 1256: mkdtemp absolute prefixes
+
+- Honor absolute `fs.mkdtemp` prefixes directly in the minimal Rust host hook.
