@@ -29,12 +29,22 @@ const __quenchMakeCallableConstructor = (Constructor) => {
 };
 const __quenchValidatePipeline = (pipeline, args) => {
   const callback = args[args.length - 1];
-  if (args.length < 2 || typeof callback !== "function") {
-    const error = new TypeError("The last argument must be of type function");
+  if (args.length === 0) {
+    const error = new TypeError(
+      "ERR_INVALID_ARG_TYPE: The last argument must be of type function"
+    );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
-  return pipeline(...args);
+  if (args.length < 3 || typeof callback !== "function") {
+    const error = new TypeError(
+      "ERR_MISSING_ARGS: The pipeline requires at least two streams"
+    );
+    error.code = "ERR_MISSING_ARGS";
+    throw error;
+  }
+  const result = pipeline(...args);
+  return result === undefined ? args[args.length - 2] : result;
 };
 const __quenchAddStreamCompat = (result) => {
   __quenchAddStreamAliases(result);

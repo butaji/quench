@@ -4144,6 +4144,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Preserved Node's legacy ability to invoke `stream.Writable()` without `new`.
 
-### Stage 1209: stream pipeline validation
+### Stage 1209: stream pipeline argument validation
 
-- Added Node-style validation for missing stream pipeline callbacks.
+- Added Node-style validation for empty pipelines, missing streams, and missing
+  callbacks.
