@@ -30,6 +30,17 @@ const __quenchCryptoDhConstructor = (result) => {
     return NodeBuffer.alloc(128);
   };
   Constructor.prototype.getPublicKey = () => NodeBuffer.alloc(128);
+  Constructor.prototype.getPrivateKey = function getPrivateKey() {
+    if (!this.generated && !this.privateKey)
+      throw Object.assign(new Error("Invalid state"), {
+        code: "ERR_CRYPTO_INVALID_STATE"
+      });
+    return this.privateKey || NodeBuffer.alloc(128);
+  };
+  Constructor.prototype.setPrivateKey = function setPrivateKey(value) {
+    this.privateKey = NodeBuffer.from(value);
+    return this;
+  };
   Constructor.prototype.computeSecret = function computeSecret() {
     if (!this.generated)
       throw Object.assign(
