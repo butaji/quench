@@ -273,6 +273,9 @@ const __nodeWindowsDriveURL = (value, windows) => {
     .map((part) =>
       encodeURIComponent(part)
         .replace(/%26/g, "&")
+        .replace(/%24/g, "$")
+        .replace(/%2B/gi, "+")
+        .replace(/%2C/gi, ",")
         .replace(/%3D/gi, "=")
         .replace(/%3A/gi, ":")
         .replace(/%3B/gi, ";")
