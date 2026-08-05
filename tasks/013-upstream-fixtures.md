@@ -5080,3 +5080,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1424: crypto equivalent DH parameters
 
 - Allow named and equivalent explicit-prime parameters to interoperate.
+
+### Stage 1425: crypto stateless DH callback errors
+
+- Deliver asynchronous DH validation failures through the callback.
