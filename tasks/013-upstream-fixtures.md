@@ -4662,3 +4662,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Match Node's file-descriptor and mode validation errors for `fs.fchmod` and
   `fs.fchmodSync`.
+
+### Stage 1325: chmod symlink targets
+
+- Apply `lchmod` mode metadata to symlinks without invoking host chmod on the
+  link target.
