@@ -340,21 +340,31 @@ globalThis.__quenchResolveParsedAbsolute = (result, from, to) => {
     href: resolved
   });
 };
-globalThis.__quenchResolveParsedObject = (result, from, to, originalResolve) =>
-  typeof from === "string"
-    ? null
-    : /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(to)
-      ? result.parse(to)
-      : /^([A-Za-z][A-Za-z0-9+.-]*):(#.*)$/.test(to)
-        ? result.parse(to.replace(/^([A-Za-z][A-Za-z0-9+.-]*):/, "$1:///"))
-        : /^([A-Za-z][A-Za-z0-9+.-]*):\/([^/].*)$/.test(to)
-          ? result.parse(to.replace(/^([A-Za-z][A-Za-z0-9+.-]*):\//, "$1://"))
-          : result.parse(
-              globalThis.__quenchResolveParsedPath(
-                from.pathname || from.href || "",
-                to
-              )
-            );
+globalThis.__quenchResolveParsedFragment = (result, from, to) => {
+  if (typeof from === "string") return null;
+  const target = to.match(/^([A-Za-z][A-Za-z0-9+.-]*):(#.*)$/);
+  const source = from.href || from.pathname || "";
+  if (!target || !source.startsWith(`${target[1]}://`)) return null;
+  return result.parse(`${source.replace(/#.*$/, "")}${target[2]}`);
+};
+globalThis.__quenchResolveParsedObject = (
+  result,
+  from,
+  to,
+  originalResolve
+) => {
+  if (typeof from === "string") return null;
+  const fragment = globalThis.__quenchResolveParsedFragment(result, from, to);
+  if (fragment) return fragment;
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(to)) return result.parse(to);
+  if (/^([A-Za-z][A-Za-z0-9+.-]*):(#.*)$/.test(to))
+    return result.parse(to.replace(/^([A-Za-z][A-Za-z0-9+.-]*):/, "$1:///"));
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:\/([^/].*)$/.test(to))
+    return result.parse(to.replace(/^([A-Za-z][A-Za-z0-9+.-]*):\//, "$1://"));
+  return result.parse(
+    globalThis.__quenchResolveParsedPath(from.pathname || from.href || "", to)
+  );
+};
 globalThis.__quenchResolveParsedPath = (base, to) => {
   const path = to.startsWith("/")
     ? to
