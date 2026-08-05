@@ -39,50 +39,54 @@ pub(crate) fn throw_type_error() -> Value {
 }
 
 fn throw_type_error_for_constructor(constructor: Option<Value>) -> Value {
-    let key = constructor.as_ref().map(constructor_key).unwrap_or(0);
+    let Some(constructor) = constructor else {
+        return make_throw_type_error(None);
+    };
+    let key = constructor_key(&constructor);
     THROW_TYPE_ERRORS.with(|cell| {
         if let Some(value) = cell.borrow().get(&key).cloned() {
             return value;
         }
-        let function = Rc::new(NativeFunction::new(move |_| {
-            let Some(constructor) = constructor.clone() else {
-                return Err(JsError(
-                    "TypeError: 'caller' and 'callee' are not allowed in strict mode".into(),
-                ));
-            };
-            let message =
-                Value::String("'caller' and 'callee' are not allowed in strict mode".into());
-            let error = construct_type_error(&constructor, message)?;
-            crate::value::set_thrown_value(error);
-            Err(JsError(
-                "TypeError: 'caller' and 'callee' are not allowed in strict mode".into(),
-            ))
-        }));
-        function.define_property(
-            "name",
-            Value::String(String::new()),
-            crate::value::PropertyFlags {
-                value: Some(Value::String(String::new())),
-                writable: false,
-                enumerable: false,
-                configurable: false,
-            },
-        );
-        function.define_property(
-            "length",
-            Value::Number(0.0),
-            crate::value::PropertyFlags {
-                value: Some(Value::Number(0.0)),
-                writable: false,
-                enumerable: false,
-                configurable: false,
-            },
-        );
-        function.set_extensible(false);
-        let value = Value::NativeFunction(function);
+        let value = make_throw_type_error(Some(constructor));
         cell.borrow_mut().insert(key, value.clone());
         value
     })
+}
+
+fn make_throw_type_error(constructor: Option<Value>) -> Value {
+    let function = Rc::new(NativeFunction::new(move |_| {
+        let message = "'caller' and 'callee' are not allowed in strict mode";
+        let error = match constructor.clone() {
+            Some(constructor) => construct_type_error(&constructor, Value::String(message.into()))?,
+            None => crate::value::error::create_js_error_with_type(message, "TypeError").0,
+        };
+        crate::value::set_thrown_value(error);
+        Err(JsError(
+            "TypeError: 'caller' and 'callee' are not allowed in strict mode".into(),
+        ))
+    }));
+    function.define_property(
+        "name",
+        Value::String(String::new()),
+        crate::value::PropertyFlags {
+            value: Some(Value::String(String::new())),
+            writable: false,
+            enumerable: false,
+            configurable: false,
+        },
+    );
+    function.define_property(
+        "length",
+        Value::Number(0.0),
+        crate::value::PropertyFlags {
+            value: Some(Value::Number(0.0)),
+            writable: false,
+            enumerable: false,
+            configurable: false,
+        },
+    );
+    function.set_extensible(false);
+    Value::NativeFunction(function)
 }
 
 fn construct_type_error(constructor: &Value, message: Value) -> Result<Value, JsError> {

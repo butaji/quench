@@ -1579,3 +1579,14 @@ fn for_of_destructuring_closes_iterator_on_rest_reference_completion() {
         assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
     }
 }
+
+#[test]
+fn runner_throw_type_error_is_an_object() {
+    let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .join("tests/test262/test/built-ins/ThrowTypeError/throws-type-error.js");
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
