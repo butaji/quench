@@ -17,6 +17,44 @@ pub fn register_array_buffer(ctx: &mut Context) {
     }
 
     let proto_clone = Rc::clone(&proto_rc);
+    let byte_length_getter = Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
+        let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+        let Value::Object(object) = this_val else {
+            return Err(crate::JsError::new(
+                "TypeError: ArrayBuffer.prototype.byteLength requires an ArrayBuffer receiver",
+            ));
+        };
+        if !is_array_buffer(&object.borrow()) {
+            return Err(crate::JsError::new(
+                "TypeError: ArrayBuffer.prototype.byteLength requires an ArrayBuffer receiver",
+            ));
+        }
+        let value = object
+            .borrow()
+            .get_own_value("byteLength")
+            .unwrap_or(Value::Number(0.0));
+        Ok(value)
+    })));
+    proto_rc
+        .borrow_mut()
+        .set_getter_func("byteLength", byte_length_getter);
+    for name in ["detached", "immutable"] {
+        let getter = Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
+            let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+            let Value::Object(object) = this_val else {
+                return Err(crate::JsError::new(
+                    "TypeError: ArrayBuffer getter requires an ArrayBuffer receiver",
+                ));
+            };
+            if !is_array_buffer(&object.borrow()) {
+                return Err(crate::JsError::new(
+                    "TypeError: ArrayBuffer getter requires an ArrayBuffer receiver",
+                ));
+            }
+            Ok(Value::Boolean(false))
+        })));
+        proto_rc.borrow_mut().set_getter_func(name, getter);
+    }
     proto_rc.borrow_mut().set(
         "slice",
         Value::NativeFunction(Rc::new(NativeFunction::new(move |args| {
@@ -343,6 +381,26 @@ mod tests {
     #[test]
     fn array_buffer_resizable_rejects_prototype_lookalikes() {
         assert!(eval_err("Object.create(ArrayBuffer.prototype).resizable"));
+    }
+
+    #[test]
+    fn array_buffer_byte_length_prototype_property_is_an_accessor() {
+        assert_eq!(
+            eval_ok(
+                "typeof Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, 'byteLength').get"
+            ),
+            Value::String("function".to_string())
+        );
+    }
+
+    #[test]
+    fn array_buffer_detached_prototype_property_is_an_accessor() {
+        assert_eq!(
+            eval_ok(
+                "typeof Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, 'detached').get"
+            ),
+            Value::String("function".to_string())
+        );
     }
 
     #[test]
