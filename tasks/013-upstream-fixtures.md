@@ -4398,3 +4398,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1264: async mkdir result
 
 - Return the recursive first-created path through callback-style `fs.mkdir`.
+
+### Stage 1265: watch path validation
+
+- Reject invalid `fs.watch` paths synchronously with the shared filesystem
+  validator.
