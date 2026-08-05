@@ -292,7 +292,10 @@ globalThis.__nodeAssert.notDeepStrictEqual = (actual, expected, message) => {
     __nodeAssertionFailure(message || "values are deeply equal");
 };
 const __nodeAssertMatchExpectedFunction = (error, expected) => {
-  const isConstructor = expected.prototype !== undefined;
+  const isConstructor =
+    expected === Array ||
+    expected === Error ||
+    expected.prototype instanceof Error;
   if (isConstructor && !(error instanceof expected)) {
     const assertion = new globalThis.__nodeAssert.AssertionError(
       `The error is expected to be an instance of "${expected.name}". Received "${error.constructor.name}"\n\nError message:\n\n${error.message}`
