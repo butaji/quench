@@ -340,13 +340,18 @@ fn normalize_intrinsic_prototypes(ctx: &Context) {
                         normalize_prototype(&proto_obj);
                     }
                 }
-                crate::value::Value::Function(_f) => {
+                crate::value::Value::Function(f) => {
                     // Value::Function globals (e.g. FinalizationRegistry after
                     // builtins/FinalizationRegistry.js reassigns it) carry the
                     // same prototype object as the original NativeFunction
-                    // constructor. Skip here — normalize runs on the
-                    // NativeConstructor/FinalizationRegistry path above
-                    // during the first bootstrap pass.
+                    // constructor. Normalize it (sets method names, marks
+                    // them non-constructable) so the function names match
+                    // the property keys.
+                    if let Some(crate::value::Value::Object(proto_obj)) = f.get_property("prototype") {
+                        if !Rc::ptr_eq(&proto_obj, &f.get_prototype()) {
+                            normalize_prototype(&proto_obj);
+                        }
+                    }
                 }
                 _ => {}
             }
