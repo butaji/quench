@@ -5185,3 +5185,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1452. `crypto-keyobject-configurable-slots.js` — preserve configurable KeyObject accessors and key inputs.
 1453. `crypto-keyobject-cipher-input.js` — accept branded secret keys after public accessor replacement.
 1454. `crypto-keyobject-encrypt-decrypt.js` — preserve secret-key state through cipher streams.
+1455. `crypto-keyobject-no-own-state.js` — keep secret KeyObject state out of own properties.
