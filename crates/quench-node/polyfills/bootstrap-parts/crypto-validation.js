@@ -24,3 +24,12 @@ const __nodeCryptoAssertDigestOpen = (finalized) => {
     throw error;
   }
 };
+const __nodeCryptoValidateStringEncoding = (value, encoding) => {
+  if (encoding === "hex" && value.length % 2) {
+    const error = new TypeError(
+      `The argument 'encoding' is invalid for data of length ${value.length}. Received 'hex'`
+    );
+    error.code = "ERR_INVALID_ARG_VALUE";
+    throw error;
+  }
+};

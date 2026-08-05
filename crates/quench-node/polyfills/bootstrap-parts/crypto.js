@@ -365,9 +365,10 @@ const __nodeCryptoApi = {
           // prettier-ignore
           throw Object.assign(new TypeError("The data argument must be of type string or an instance of Buffer"), { code: "ERR_INVALID_ARG_TYPE" });
         }
-        if (typeof value === "string")
+        if (typeof value === "string") {
+          __nodeCryptoValidateStringEncoding(value, encoding);
           chunks.push(NodeBuffer.from(value, encoding || "utf8"));
-        else if (value instanceof Uint8Array) chunks.push(value);
+        } else if (value instanceof Uint8Array) chunks.push(value);
         else
           throw Object.assign(
             new TypeError(
@@ -447,11 +448,10 @@ const __nodeCryptoApi = {
           error.code = "ERR_CRYPTO_HASH_FINALIZED";
           throw error;
         }
-        chunks.push(
-          typeof value === "string"
-            ? NodeBuffer.from(value, encoding || "utf8")
-            : NodeBuffer.from(value)
-        );
+        if (typeof value === "string") {
+          __nodeCryptoValidateStringEncoding(value, encoding);
+          chunks.push(NodeBuffer.from(value, encoding || "utf8"));
+        } else chunks.push(NodeBuffer.from(value));
         return hmac;
       },
       digest: (encoding) => {
