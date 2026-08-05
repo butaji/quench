@@ -4,7 +4,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::context::Context;
-use crate::value::{to_number, NativeFunction, Object, ObjectKind, ObjData, Value};
+use crate::value::{to_number, NativeFunction, ObjData, Object, ObjectKind, Value};
 
 pub fn register_array_buffer(ctx: &mut Context) {
     let proto_rc = Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)));
@@ -49,6 +49,49 @@ pub fn register_array_buffer(ctx: &mut Context) {
             Ok(Value::Object(Rc::new(RefCell::new(sliced))))
         }))),
     );
+
+    for (name, is_slice) in [
+        ("transfer", false),
+        ("transferToFixedLength", false),
+        ("transferToImmutable", false),
+        ("sliceToImmutable", true),
+    ] {
+        let proto = Rc::clone(&proto_rc);
+        proto_rc.borrow_mut().set(
+            name,
+            Value::NativeFunction(Rc::new(NativeFunction::new(move |args| {
+                let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+                let Value::Object(this_obj) = this_val else {
+                    return Err(crate::JsError::new(
+                        "TypeError: ArrayBuffer method requires an ArrayBuffer receiver",
+                    ));
+                };
+                let mut obj = this_obj.borrow_mut();
+                let start = args
+                    .first()
+                    .map(|value| to_number(value) as usize)
+                    .unwrap_or(0);
+                let end = args
+                    .get(1)
+                    .map(|value| to_number(value) as usize)
+                    .unwrap_or(obj.elements.len())
+                    .min(obj.elements.len());
+                let start = start.min(end);
+                let elements = obj.elements[start..end].to_vec();
+                if !is_slice {
+                    obj.elements.clear();
+                    obj.set("byteLength", Value::Number(0.0));
+                }
+                let length = elements.len() as f64;
+                let mut result = Object::new(ObjectKind::Ordinary);
+                result.prototype = Some(Rc::clone(&proto));
+                result.elements = elements;
+                result.set("byteLength", Value::Number(length));
+                crate::builtins::object::set_boxed_value(&mut result, Value::Number(length));
+                Ok(Value::Object(Rc::new(RefCell::new(result))))
+            }))),
+        );
+    }
 
     // ArrayBuffer.prototype.resizable getter
     let resizable_getter = Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
@@ -281,6 +324,14 @@ mod tests {
     fn array_buffer_constructor_with_zero_length() {
         let result = eval_ok("(new ArrayBuffer(0)).byteLength");
         assert_eq!(result.to_string(), "0");
+    }
+
+    #[test]
+    fn array_buffer_transfer_methods_are_functions() {
+        let result = eval_ok(
+            "typeof ArrayBuffer.prototype.transfer === 'function' && typeof ArrayBuffer.prototype.transferToFixedLength === 'function' && typeof ArrayBuffer.prototype.sliceToImmutable === 'function'",
+        );
+        assert_eq!(result, Value::Boolean(true));
     }
 
     #[test]
