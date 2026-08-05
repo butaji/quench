@@ -367,7 +367,10 @@ const __nodeCryptoApi = {
           );
         return hash;
       },
-      write: (value, encoding) => (hash.update(value, encoding), true),
+      write: (value, encoding) => (
+        hash.update(value, encoding || hash._writableState.defaultEncoding),
+        true
+      ),
       end: (value, encoding) => {
         if (value !== undefined) hash.update(value, encoding);
         const output = hash.digest();
