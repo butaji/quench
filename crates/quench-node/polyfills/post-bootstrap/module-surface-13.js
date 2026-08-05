@@ -62,7 +62,13 @@ const __quenchCryptoKeyExchangeFallback = (result) => {
     result[constructorName] = Constructor;
     return () => Object.create(Constructor.prototype);
   };
-  result.createDiffieHellman ||= (sizeOrKey, generator) => {
+  result.createDiffieHellman ||= (
+    sizeOrKey,
+    generatorOrEncoding,
+    maybeGenerator
+  ) => {
+    const generator =
+      maybeGenerator === undefined ? generatorOrEncoding : maybeGenerator;
     __quenchValidateDhNumbers(sizeOrKey, generator);
     return create("DiffieHellman")();
   };
