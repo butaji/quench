@@ -405,6 +405,8 @@ const __quenchAddUrlFormatting = (result) => {
   __quenchAddFileUrlFallback(result);
   const originalResolve = result.resolve;
   result.resolveObject ||= (from, to) => {
+    if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\/\//.test(from))
+      return globalThis.__quenchResolveEmptyAuthority(from, to);
     const protocolTarget = __quenchResolveProtocolTarget(from, to);
     if (protocolTarget) return protocolTarget;
     const scopedPath = __quenchResolveScopedPath(from, to);
