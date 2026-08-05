@@ -104,3 +104,44 @@ globalThis.__quenchResolveParsedEmptyScheme = (r, f, t) => {
   const match = t.match(/^([A-Za-z][A-Za-z0-9+.-]*):$/);
   return match && source.startsWith(`${match[1]}:`) ? r.parse(source) : null;
 };
+globalThis.__quenchResolveParsedFileEmpty = (result, from, to) =>
+  to === "" && from.pathname && from.protocol === "file:"
+    ? result.parse(`file:${from.pathname}`)
+    : null;
+globalThis.__quenchResolveParsedFileFragment = (result, from, to) => {
+  const source = from.href || from.pathname || "";
+  if (
+    !source.startsWith("file:") ||
+    /^[A-Za-z][A-Za-z0-9+.-]*:/.test(to) ||
+    to.startsWith("//")
+  )
+    return null;
+  if (to.startsWith("#"))
+    return result.parse(
+      `${source.startsWith("file:///") ? `file:/${source.slice(8)}` : source}${to}`
+    );
+  const path = globalThis.__quenchResolveParsedPath(
+    from.pathname || source,
+    to
+  );
+  const trailing = globalThis.__quenchParsedWebTrailing(to, path);
+  return result.parse(`file:${path}${trailing}`);
+};
+globalThis.__quenchResolveParsedFile = (result, from, to) =>
+  globalThis.__quenchResolveParsedFileEmpty(result, from, to) ||
+  globalThis.__quenchResolveParsedFileFragment(result, from, to);
+globalThis.__quenchResolveParsedHash = (result, from, to) => {
+  const source = from.href || from.pathname || "";
+  return to.startsWith("#") && source.includes("://")
+    ? result.parse(`${source.replace(/#.*$/, "")}${to}`)
+    : null;
+};
+globalThis.__quenchResolveParsedFragment = (result, from, to) => {
+  if (typeof from === "string") return null;
+  const target = to.match(/^([A-Za-z][A-Za-z0-9+.-]*):(#.*)$/);
+  const source = from.href || from.pathname || "";
+  if (to.startsWith("#") && source.startsWith("file:"))
+    return result.parse(`${source.replace(/^file:\/\//, "file:/")}${to}`);
+  if (!target || !source.startsWith(`${target[1]}://`)) return null;
+  return result.parse(`${source.replace(/#.*$/, "")}${target[2]}`);
+};
