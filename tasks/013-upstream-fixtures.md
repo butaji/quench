@@ -4256,3 +4256,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Added arbitrary-byte gzip/gunzip round-trip coverage to isolate binary
   stream mismatches from text-only behavior.
+
+### Stage 1234: zlib constructor identity
+
+- Preserved `instanceof` behavior when zlib stream constructors are invoked
+  with or without `new`.
