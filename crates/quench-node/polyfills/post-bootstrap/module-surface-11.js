@@ -59,3 +59,8 @@ globalThis.__quenchResolveParsedAbsoluteOpaque = (r, f, t) =>
   !/^([A-Za-z][A-Za-z0-9+.-]*):#/.test(t)
     ? r.parse(t)
     : null;
+globalThis.__quenchResolveParsedEmptyScheme = (r, f, t) => {
+  const source = f.href || "";
+  const match = t.match(/^([A-Za-z][A-Za-z0-9+.-]*):$/);
+  return match && source.startsWith(`${match[1]}:`) ? r.parse(source) : null;
+};
