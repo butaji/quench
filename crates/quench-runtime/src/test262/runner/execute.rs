@@ -626,7 +626,7 @@ fn propagate_missing_import_resolution_error(ctx: &mut crate::Context, source: &
         let Some(Value::Object(target)) = ctx.get_module(&target_name) else {
             continue;
         };
-        if target.borrow().get(&imported).is_none() {
+        if target.borrow().get(&imported).is_none() && !target.borrow().has_getter(&imported) {
             errors.borrow_mut().set(
                 &module_name,
                 Value::String("Missing indirect export".to_string()),
