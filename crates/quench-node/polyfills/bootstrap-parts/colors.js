@@ -292,7 +292,7 @@ const __nodeURLResolveInput = (input, base) => {
 // prettier-ignore
 const __nodeURLCredentials = (authority) => { const at = authority.lastIndexOf("@"), raw = at < 0 ? "" : authority.slice(0, at), separator = raw.indexOf(":"); return separator < 0 ? [raw, ""] : [raw.slice(0, separator), raw.slice(separator + 1)]; };
 // prettier-ignore
-const __nodeURLNormalizeIPv4Tail = (host) => host.replace(/^(\[[^\]]*?):?(\d+\.\d+\.\d+\.\d+)(\].*)$/, (_, prefix, ip, suffix) => { const octets = ip.split(".").map(Number), high = (octets[0] << 8) + octets[1], low = (octets[2] << 8) + octets[3]; return `${prefix}${prefix.endsWith("::") ? "" : ":"}${high.toString(16)}:${low.toString(16)}${suffix}`; });
+const __nodeURLNormalizeIPv4Tail = (host) => host.replace(/^(\[[^\]]*?):?(\d+\.\d+\.\d+\.\d+)(\].*)$/, (_, prefix, ip, suffix) => { const octets = ip.split(".").map(Number), high = (octets[0] << 8) + octets[1], low = (octets[2] << 8) + octets[3]; return `${prefix}${prefix.endsWith("::") ? "" : ":"}${high.toString(16)}:${low.toString(16)}${suffix}`; }).replace(/^\[(?:0:){2,}([^\]]+)\]$/, "[::$1]");
 // eslint-disable-next-line complexity
 const __nodeURLAssignParts = (url, match) => {
   const [username, password] = __nodeURLCredentials(match[2] || "");
