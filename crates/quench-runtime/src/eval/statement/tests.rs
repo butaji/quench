@@ -27,6 +27,11 @@ fn global_environment_ignores_symbol_unscopables() {
 }
 
 #[test]
+fn strict_delete_this_returns_true() {
+    assert_eq!(eval("'use strict'; delete this"), Ok(Value::Boolean(true)));
+}
+
+#[test]
 fn switch_case_still_matches_when_default_calls_function() {
     assert_eq!(
         eval("function boxed(value) { return false; } function classify(value) { switch (typeof value) { case 'string': return true; default: return boxed(value); } } classify('a')").unwrap(),

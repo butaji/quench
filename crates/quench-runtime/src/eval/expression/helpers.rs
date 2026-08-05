@@ -251,6 +251,9 @@ pub fn eval_delete(
             }
         }
         Expression::Identifier(name) => {
+            if name == "this" {
+                return Ok(Value::Boolean(true));
+            }
             if matches!(name.as_str(), "NaN" | "undefined" | "Infinity") {
                 return Ok(Value::Boolean(false));
             }
