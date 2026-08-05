@@ -310,6 +310,8 @@ const __quenchCryptoKeyExchangeFallback = (result) => {
 };
 const __quenchCryptoKeyObjectBrand =
   (globalThis.__quenchCryptoKeyObjectBrand ||= new WeakSet());
+const __quenchCryptoKeyObjectData = (globalThis.__quenchCryptoKeyObjectData ||=
+  new WeakMap());
 const __quenchCryptoKeyInput = (args) =>
   args.map((value, index) =>
     index === 1 &&
@@ -327,14 +329,39 @@ class __quenchKeyObject {
   get type() {
     if (!__quenchCryptoKeyObjectBrand.has(this))
       __quenchCryptoKeyObjectInvalidThis();
-    return this.__quenchType;
+    return __quenchCryptoKeyObjectData.get(this).type;
   }
   export() {
     if (!__quenchCryptoKeyObjectBrand.has(this))
       __quenchCryptoKeyObjectInvalidThis();
-    return this.__quenchExport();
+    return __quenchCryptoKeyObjectData.get(this).exportValue();
+  }
+  equals(other) {
+    return (
+      __quenchCryptoKeyObjectBrand.has(this) &&
+      __quenchCryptoKeyObjectBrand.has(other) &&
+      this.export().toString() === other.export().toString()
+    );
   }
 }
+Object.defineProperties(__quenchKeyObject.prototype, {
+  source: {
+    configurable: true,
+    get() {
+      return __quenchCryptoKeyObjectData.get(this)?.source;
+    }
+  },
+  dhParams: {
+    configurable: true,
+    get() {
+      return __quenchCryptoKeyObjectData.get(this)?.dhParams;
+    },
+    set(value) {
+      const data = __quenchCryptoKeyObjectData.get(this);
+      if (data) data.dhParams = value;
+    }
+  }
+});
 Object.defineProperty(__quenchKeyObject.prototype, "type", {
   configurable: true,
   get: Object.getOwnPropertyDescriptor(__quenchKeyObject.prototype, "type").get
@@ -345,10 +372,10 @@ Object.defineProperties(__quenchKeyObject.prototype, {
     get() {
       if (
         !__quenchCryptoKeyObjectBrand.has(this) ||
-        this.__quenchType !== "secret"
+        __quenchCryptoKeyObjectData.get(this).type !== "secret"
       )
         __quenchCryptoKeyObjectInvalidThis();
-      return this.__quenchSize;
+      return __quenchCryptoKeyObjectData.get(this).size;
     }
   },
   asymmetricKeyType: {
@@ -356,10 +383,10 @@ Object.defineProperties(__quenchKeyObject.prototype, {
     get() {
       if (
         !__quenchCryptoKeyObjectBrand.has(this) ||
-        this.__quenchType === "secret"
+        __quenchCryptoKeyObjectData.get(this).type === "secret"
       )
         __quenchCryptoKeyObjectInvalidThis();
-      return this.__quenchAsymmetricType;
+      return __quenchCryptoKeyObjectData.get(this).asymmetricType;
     }
   },
   asymmetricKeyDetails: {
@@ -367,23 +394,23 @@ Object.defineProperties(__quenchKeyObject.prototype, {
     get() {
       if (
         !__quenchCryptoKeyObjectBrand.has(this) ||
-        this.__quenchType === "secret"
+        __quenchCryptoKeyObjectData.get(this).type === "secret"
       )
         __quenchCryptoKeyObjectInvalidThis();
-      return this.__quenchDetails;
+      return __quenchCryptoKeyObjectData.get(this).details;
     }
   }
 });
 const __quenchCreateKeyObject = (type, source, exportValue) => {
   const key = Object.create(__quenchKeyObject.prototype);
-  key.__quenchType = type;
-  key.__quenchExport = () => exportValue;
-  key.__quenchSize = type === "secret" ? 16 : undefined;
-  key.__quenchAsymmetricType =
-    type === "private" || type === "public" ? "rsa" : undefined;
-  key.__quenchDetails =
-    type === "private" || type === "public" ? {} : undefined;
-  key.source = source;
+  __quenchCryptoKeyObjectData.set(key, {
+    type,
+    source,
+    exportValue: () => exportValue,
+    size: type === "secret" ? 16 : undefined,
+    asymmetricType: type === "private" || type === "public" ? "rsa" : undefined,
+    details: type === "private" || type === "public" ? {} : undefined
+  });
   __quenchCryptoKeyObjectBrand.add(key);
   return key;
 };
