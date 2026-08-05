@@ -3881,3 +3881,13 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
   `test-crypto-random.js` fixture. Keeping random validation in its own
   polyfill made the 500-line file limit visible early and avoided expanding
   the Rust host surface.
+
+### Stage 1161: local CommonJS module loading
+
+- Added cached relative `.js`/`.json`/`index.js` resolution with standard
+  CommonJS module bindings for upstream test helpers.
+- Added a focused fixture-loader stage; the upstream crypto fixture now loads
+  `tests/node/common/fixtures.js` and advances to crypto behavior checks.
+- Verified the focused local-loader stage, lint rules, and Rust test suite;
+  retained the loader as a separate post-bootstrap file to keep module logic
+  readable and independently maintainable.
