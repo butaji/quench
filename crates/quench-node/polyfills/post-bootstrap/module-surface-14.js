@@ -97,8 +97,28 @@ const __quenchPrepareDhGroup = (result) => {
   result.DiffieHellmanGroup.prototype.setPrivateKey = undefined;
   result.DiffieHellmanGroup.prototype.setPublicKey = undefined;
 };
+const __quenchValidateStatelessDhArgs = (options, callback) => {
+  if (options === undefined || options === null || Array.isArray(options))
+    throw Object.assign(
+      new TypeError(
+        `The "options" argument must be of type object. Received ${options === undefined ? "undefined" : options === null ? "null" : "an instance of Array"}`
+      ),
+      { code: "ERR_INVALID_ARG_TYPE" }
+    );
+  if (callback !== undefined && typeof callback !== "function")
+    throw Object.assign(
+      new TypeError(
+        `The "callback" argument must be of type function. Received ${callback}`
+      ),
+      { code: "ERR_INVALID_ARG_TYPE" }
+    );
+};
 const __quenchCryptoKeyExchangeFallback = (result) => {
   __quenchPrepareDhGroup(result);
+  result.diffieHellman ||= (options, callback) => {
+    __quenchValidateStatelessDhArgs(options, callback);
+    return NodeBuffer.alloc(128);
+  };
   result.createDiffieHellman = (
     sizeOrKey,
     generatorOrEncoding,

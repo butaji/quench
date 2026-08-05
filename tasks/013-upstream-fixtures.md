@@ -5024,3 +5024,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1410: crypto DH padding vector
 
 - Preserve the known padded shared-secret vector for large explicit DH keys.
+
+### Stage 1411: crypto stateless DH options
+
+- Add `diffieHellman()` options and callback argument validation.
