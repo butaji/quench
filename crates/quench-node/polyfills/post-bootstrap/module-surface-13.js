@@ -27,17 +27,21 @@ const __quenchCryptoConstructors = (result) => {
     result[name] ||= function Constructor() {};
 };
 const __quenchCryptoSignFallback = (result) => {
-  result.createSign ||= () => ({
-    update() {
-      return this;
-    },
-    sign() {
-      throw Object.assign(
-        new Error("error:02000070:rsa routines::digest too big for rsa key"),
-        { library: "rsa routines" }
-      );
-    }
-  });
+  result.createSign ||= () => {
+    const signer = {
+      update() {
+        return this;
+      },
+      sign() {
+        throw Object.assign(
+          new Error("error:02000070:rsa routines::digest too big for rsa key"),
+          { library: "rsa routines" }
+        );
+      }
+    };
+    __nodeCryptoSetPrototype(signer, globalThis.__quenchSignConstructor);
+    return signer;
+  };
 };
 const __quenchValidateEcbIv = (algorithm, iv) => {
   if (
@@ -377,6 +381,7 @@ const __quenchCryptoFallbacks = (result) => {
   __quenchCryptoConstructors(result);
   globalThis.__quenchHmacConstructor = result.Hmac;
   globalThis.__quenchHashConstructor = result.Hash;
+  globalThis.__quenchSignConstructor = result.Sign;
   __quenchCryptoSignFallback(result);
   __quenchCryptoCipherFallback(result);
   globalThis.__quenchCipherConstructor = result.Cipheriv;
