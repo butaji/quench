@@ -6,9 +6,11 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use md5::Md5;
 use rand::RngCore;
 use rquickjs::{function::Func, Context, Runtime};
-use sha2::{Digest, Sha256};
+use sha1::Sha1;
+use sha2::{Digest, Sha256, Sha512};
 use walkdir::WalkDir;
 
 mod host_context;

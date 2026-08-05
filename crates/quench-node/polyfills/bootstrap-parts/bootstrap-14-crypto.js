@@ -340,30 +340,77 @@ const __nodeCryptoApi = {
     }
     queueMicrotask(() => callback(null, result));
   },
+  // eslint-disable-next-line max-lines-per-function -- hash stream methods share one state object
   createHash: (algorithm) => {
-    if (algorithm !== "sha256")
-      throw new Error(`Unsupported hash: ${algorithm}`);
+    if (typeof algorithm !== "string") {
+      const error = new TypeError(
+        `The "algorithm" argument must be of type string. Received ${algorithm}`
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    const normalized = String(algorithm).toLowerCase();
+    if (!["sha1", "sha256", "sha512", "md5"].includes(normalized)) {
+      const error = new Error(
+        normalized.startsWith("shake")
+          ? "not XOF or invalid length"
+          : "Digest method not supported"
+      );
+      if (normalized.startsWith("shake"))
+        error.code = "ERR_OSSL_EVP_NOT_XOF_OR_INVALID_LENGTH";
+      throw error;
+    }
     const chunks = [];
     let finalized = false;
     const hash = {
       update: (value, encoding) => {
         __nodeCryptoAssertDigestOpen(finalized);
+        if (value === undefined) {
+          const error = new TypeError(
+            "The data argument must be of type string or an instance of Buffer"
+          );
+          error.code = "ERR_INVALID_ARG_TYPE";
+          throw error;
+        }
         if (typeof value === "string")
           chunks.push(NodeBuffer.from(value, encoding || "utf8"));
         else if (value instanceof Uint8Array) chunks.push(value);
         else chunks.push(new NodeTextEncoder().encode(String(value)));
         return hash;
       },
+      write: (value, encoding) => {
+        hash.update(value, encoding);
+        return true;
+      },
+      end: (value, encoding) => {
+        if (value !== undefined) hash.update(value, encoding);
+        return hash;
+      },
+      read: () => hash.digest(),
       digest: (encoding) => {
         __nodeCryptoAssertDigestOpen(finalized);
         finalized = true;
         const input = [];
         for (const chunk of chunks) input.push(...chunk);
-        const bytes = NodeBuffer.from(globalThis.__quench_sha256_bytes(input));
+        const bytes = NodeBuffer.from(
+          globalThis.__quench_digest_bytes(normalized, input)
+        );
         const result = bytes.toString("hex");
-        if (encoding === undefined || encoding === null) return bytes;
+        if (
+          encoding === undefined ||
+          encoding === null ||
+          encoding === "buffer"
+        )
+          return bytes;
         if (encoding === "hex") return result;
         if (encoding === "base64") return bytes.toString("base64");
+        if (encoding === "latin1") return bytes.toString("latin1");
+        if (
+          ["utf8", "utf-8", "ucs2", "ucs-2", "utf16le", "utf-16le"].includes(
+            encoding
+          )
+        )
+          return bytes.toString(encoding);
         const error = new TypeError(`Unknown encoding: ${encoding}`);
         error.code = "ERR_UNKNOWN_ENCODING";
         throw error;
@@ -374,6 +421,9 @@ const __nodeCryptoApi = {
       }
     };
     return hash;
+  },
+  Hash: function Hash(algorithm) {
+    return __nodeCryptoApi.createHash(algorithm);
   },
   createHmac: (algorithm, key) => {
     if (algorithm !== "sha256")
@@ -414,6 +464,7 @@ const __nodeCryptoApi = {
     return hmac;
   }
 };
+__nodeCryptoApi.Hash.prototype = Object.prototype;
 const __createNodeCrypto = () => __nodeCryptoApi;
 let __nodeCryptoInstance;
 globalThis.__nodeCryptoInitialized = false;
