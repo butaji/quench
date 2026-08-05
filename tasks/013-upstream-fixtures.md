@@ -4517,3 +4517,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1291: fork send validation
 
 - Validate missing and symbol messages passed to forked child `send` calls.
+
+### Stage 1293: interval callback context
+
+- Bind interval callbacks to their timer handle so `clearInterval(this)` works.
