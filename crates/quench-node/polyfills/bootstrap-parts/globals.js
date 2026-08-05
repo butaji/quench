@@ -470,7 +470,7 @@ globalThis.setInterval = (callback, _delay = 0, ...args) => {
     queueMicrotask(() => {
       if (!id.active || generation !== id.generation) return;
       if (_delay > 0) globalThis.__quench_sleep_ms(Math.max(0, Number(_delay)));
-      callback(...args);
+      callback.apply(id, args);
       if (id.active) schedule();
     });
   };
