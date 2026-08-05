@@ -43,46 +43,6 @@ const __quenchCryptoSignFallback = (result) => {
     return verifier;
   };
 };
-const __quenchCryptoKeyExchangeFallback = (result) => {
-  const create = (constructorName) => {
-    const Constructor = function Constructor() {
-      return Object.create(Constructor.prototype);
-    };
-    if (constructorName === "DiffieHellman")
-      Constructor.prototype.getPrime = () => NodeBuffer.alloc(128);
-    result[constructorName] = Constructor;
-    return () => Object.create(Constructor.prototype);
-  };
-  result.createDiffieHellman ||= (
-    sizeOrKey,
-    generatorOrEncoding,
-    maybeGenerator = generatorOrEncoding
-  ) => {
-    __quenchValidateDhNumbers(sizeOrKey, maybeGenerator);
-    return create("DiffieHellman")();
-  };
-  result.createDiffieHellmanGroup ||= create("DiffieHellmanGroup");
-  result.getDiffieHellman ||= (name) => {
-    if (name !== "modp14")
-      throw Object.assign(new Error("Unknown DH group"), {
-        code: "ERR_CRYPTO_UNKNOWN_DH_GROUP"
-      });
-    return {
-      getPrime: () => NodeBuffer.alloc(128),
-      getGenerator: () => NodeBuffer.from([2])
-    };
-  };
-  result.createECDH ||= (curve) => {
-    if (curve === undefined)
-      throw Object.assign(
-        new TypeError(
-          'The "curve" argument must be of type string. Received undefined'
-        ),
-        { code: "ERR_INVALID_ARG_TYPE" }
-      );
-    return create("ECDH")();
-  };
-};
 const __quenchCryptoKeyFallback = (result) => {
   const create = (type) => (key) => ({
     type,
