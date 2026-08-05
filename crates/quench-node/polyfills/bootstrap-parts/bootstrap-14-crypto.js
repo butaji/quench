@@ -485,9 +485,9 @@ globalThis.__nodeCrypto = new Proxy(
   {},
   {
     get: (_, key) => {
-      globalThis.__nodeCryptoInitialized = true;
       __nodeCryptoInstance ||= __createNodeCrypto();
-      return __nodeCryptoInstance[key];
+      // prettier-ignore
+      return __nodeCryptoInstance[key] || (key === "pseudoRandomBytes" && globalThis.__nodeCryptoRandomBytes);
     },
     ownKeys: () =>
       Reflect.ownKeys((__nodeCryptoInstance ||= __createNodeCrypto())),

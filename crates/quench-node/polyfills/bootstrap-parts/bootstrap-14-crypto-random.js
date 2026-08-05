@@ -30,6 +30,7 @@ const __nodeCryptoRandomBytes = (size, callback) => {
     queueMicrotask(() => callback(null, output));
   return output;
 };
+globalThis.__nodeCryptoRandomBytes = __nodeCryptoRandomBytes;
 __nodeCryptoApi.randomBytes = __nodeCryptoRandomBytes;
 Object.defineProperty(__nodeCryptoApi, "pseudoRandomBytes", {
   value: __nodeCryptoRandomBytes,
