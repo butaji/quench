@@ -168,9 +168,20 @@ pub fn eval_delete(
             let prop_key =
                 extract_property_name(property.clone(), *computed, env, in_arrow_function)?;
             match obj_val {
-                Value::Null | Value::Undefined => Err(JsError(
-                    "TypeError: Cannot delete property of null or undefined".to_string(),
-                )),
+                Value::Null | Value::Undefined => {
+                    let msg = format!(
+                        "TypeError: Cannot delete properties of {} (deleting)",
+                        match &obj_val {
+                            Value::Null => "null",
+                            Value::Undefined => "undefined",
+                            _ => unreachable!(),
+                        },
+                    );
+                    let (err, js_err) =
+                        crate::value::error::create_js_error_with_type(&msg, "TypeError");
+                    crate::value::set_thrown_value(err);
+                    Err(js_err)
+                }
                 Value::Object(obj_rc) => {
                     let deleted = obj_rc.borrow_mut().delete(&prop_key);
                     if !deleted && crate::interpreter::is_strict_mode() {
