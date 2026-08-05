@@ -46,12 +46,12 @@ const __quenchUtilTypesTypedFallbacks = (result) => {
   result.isUint8Array ||= (value) => value instanceof Uint8Array;
 };
 const __quenchUtilTypesFallbacks = (result) => {
-  __quenchUtilTypesBasicFallbacks(result);
-  __quenchUtilTypesCollectionFallbacks(result);
-  __quenchUtilTypesTypedFallbacks(result);
-  return result;
+  (__quenchUtilTypesBasicFallbacks(result),
+    __quenchUtilTypesCollectionFallbacks(result));
+  return (__quenchUtilTypesTypedFallbacks(result), result);
 };
 const __quenchInternalStreamFallback = (normalized) => {
+  if (normalized === "internal/url") return { isURL: globalThis.__nodeIsURL };
   if (normalized === "internal/streams/end-of-stream")
     return {
       kEosNodeSynchronousCallback: Symbol("kEosNodeSynchronousCallback")
