@@ -1169,8 +1169,18 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
                             if let Some(previous) = sources.get(&key) {
                                 if previous != source {
                                     let mut module = module.borrow_mut();
-                                    module.properties.remove(&key);
-                                    module.descriptors.remove(&key);
+                                    module.properties.shift_remove(&key);
+                                    module.descriptors.shift_remove(&key);
+                                    if let Some(Value::Object(errors)) =
+                                        ctx.get_global(module_errors_key)
+                                    {
+                                        errors.borrow_mut().set(
+                                            &module_name,
+                                            crate::Value::String(
+                                                "Ambiguous indirect export".into(),
+                                            ),
+                                        );
+                                    }
                                     continue;
                                 }
                             } else {

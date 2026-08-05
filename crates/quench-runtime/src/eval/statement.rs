@@ -2274,10 +2274,14 @@ fn eval_import(
         initialize_fixture_module(source, env)?;
         if let Some(Value::Object(errors)) = env.borrow().get("__quench_module_errors__") {
             if let Some(Value::String(reason)) = errors.borrow().get(source) {
-                let (value, error) =
-                    crate::value::error::create_js_error_with_type(&reason, "SyntaxError");
-                crate::value::set_thrown_value(value);
-                return Err(error);
+                if namespace.is_some() && reason == "Ambiguous indirect export" {
+                    // Ambiguous star exports are omitted from namespace objects.
+                } else {
+                    let (value, error) =
+                        crate::value::error::create_js_error_with_type(&reason, "SyntaxError");
+                    crate::value::set_thrown_value(value);
+                    return Err(error);
+                }
             }
         }
         Value::Object(get_module_exports(source, env)?)
