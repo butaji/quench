@@ -28,6 +28,9 @@ pub fn register_data_view(ctx: &mut Context) {
                 .unwrap_or(buffer_len - byte_offset);
             let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
             if let Value::Object(this_obj) = this_val {
+                this_obj
+                    .borrow_mut()
+                    .set("\0dataView", Value::Boolean(true));
                 this_obj.borrow_mut().set("buffer", buffer.clone());
                 this_obj
                     .borrow_mut()

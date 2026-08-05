@@ -4,7 +4,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::context::Context;
-use crate::value::{to_number, NativeFunction, Object, ObjectKind, Value};
+use crate::value::{to_number, NativeFunction, Object, ObjectKind, ObjData, Value};
 
 pub fn register_array_buffer(ctx: &mut Context) {
     let proto_rc = Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)));
@@ -188,6 +188,17 @@ pub fn register_array_buffer(ctx: &mut Context) {
     ab_native.name = "ArrayBuffer".to_string();
     let ab_fn_rc = Rc::new(ab_native);
     let _ = ab_fn_rc.set_property("prototype", Value::Object(Rc::clone(&proto_rc)));
+    let _ = ab_fn_rc.set_property(
+        "isView",
+        Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
+            let is_view = matches!(args.first(), Some(Value::Object(object)) if {
+                let object = object.borrow();
+                matches!(object.data, ObjData::Idx { .. })
+                    || object.get_own("\0dataView").is_some()
+            });
+            Ok(Value::Boolean(is_view))
+        }))),
+    );
     let ab_fn = Value::NativeFunction(ab_fn_rc);
 
     ctx.set_global("ArrayBuffer".to_string(), ab_fn);
@@ -247,6 +258,11 @@ mod tests {
     fn array_buffer_exists_as_global() {
         let result = eval_ok("typeof ArrayBuffer");
         assert_eq!(result.to_string(), "function");
+    }
+
+    #[test]
+    fn array_buffer_is_view_rejects_ordinary_objects() {
+        assert_eq!(eval_ok("ArrayBuffer.isView({})"), Value::Boolean(false));
     }
 
     #[test]
