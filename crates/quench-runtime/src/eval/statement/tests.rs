@@ -32,6 +32,14 @@ fn strict_delete_this_returns_true() {
 }
 
 #[test]
+fn direct_eval_in_function_accepts_new_target() {
+    assert_eq!(
+        eval("var seen = null; var f = function() { seen = eval('new.target;'); }; f(); seen"),
+        Ok(Value::Undefined)
+    );
+}
+
+#[test]
 fn switch_case_still_matches_when_default_calls_function() {
     assert_eq!(
         eval("function boxed(value) { return false; } function classify(value) { switch (typeof value) { case 'string': return true; default: return boxed(value); } } classify('a')").unwrap(),

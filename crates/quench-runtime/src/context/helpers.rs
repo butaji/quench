@@ -36,7 +36,7 @@ pub(crate) fn restore_regex_cache(saved: rustc_hash::FxHashMap<char, Value>) {
 /// "use strict" directive.
 pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> {
     let argument = args.first().cloned().unwrap_or(Value::Undefined);
-    let source = match argument {
+    let mut source = match argument {
         Value::String(source) => source,
         value => return Ok(value),
     };
@@ -85,6 +85,14 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
     let strict_inherited = crate::interpreter::is_strict_mode()
         || source.trim_start().starts_with("\"use strict\";")
         || source.trim_start().starts_with("'use strict';");
+    let eval_new_target_alias = "__quench_eval_new_target__";
+    let has_new_target = crate::interpreter::is_direct_eval()
+        && source.contains("new.target")
+        && crate::interpreter::get_current_eval_env()
+            .is_some_and(|env| env.borrow().get("new.target").is_some());
+    if has_new_target {
+        source = source.replace("new.target", eval_new_target_alias);
+    }
     let has_octal = crate::interpreter::has_legacy_octal(&source);
     if strict_inherited && has_octal {
         let (err_val, js_err) = crate::value::error::create_js_error_with_type(
@@ -260,6 +268,16 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
                     .borrow_mut()
                     .define("new.target".to_string(), Value::Undefined);
             }
+            if has_new_target {
+                let new_target = eval_env
+                    .borrow()
+                    .get("new.target")
+                    .unwrap_or(Value::Undefined);
+                eval_env.borrow_mut().define(
+                    eval_new_target_alias.to_string(),
+                    new_target,
+                );
+            }
             crate::interpreter::eval_program(&program, &mut eval_env, Some(&source), false)
         } else {
             let mut eval_env = Rc::clone(&ctx.env);
@@ -275,6 +293,16 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
                     .unwrap_or(Value::Undefined)
             };
             crate::interpreter::set_this_binding(&eval_env, this_value);
+            if has_new_target {
+                let new_target = eval_env
+                    .borrow()
+                    .get("new.target")
+                    .unwrap_or(Value::Undefined);
+                eval_env.borrow_mut().define(
+                    eval_new_target_alias.to_string(),
+                    new_target,
+                );
+            }
             crate::interpreter::eval_program(&program, &mut eval_env, Some(&source), false)
         }
     } else {
