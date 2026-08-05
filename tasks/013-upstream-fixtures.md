@@ -4326,3 +4326,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1249: process environment inherited properties
 
 - Preserved ordinary object-prototype lookup through the `process.env` proxy.
+
+### Stage 1250: process environment empty names
+
+- Ignored assignments to empty environment-variable names, matching Node’s
+  process environment behavior.
