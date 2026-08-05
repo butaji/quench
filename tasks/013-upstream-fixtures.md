@@ -1,5 +1,13 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1149: legacy URL raw query formatting
+
+- Fixture: `test-url-format.js`
+- Preserved raw query characters such as `@` in string-based legacy
+  `url.format()` while retaining WHATWG path and hash normalization.
+- Retrospective: isolate legacy URL formatting from WHATWG URL serialization to
+  avoid over-encoding compatibility-sensitive query text.
+
 ## Stage 1148: Object.hasOwn static helper
 
 - Fixture: `test-vm-global-property-prototype.js`
@@ -3683,72 +3691,88 @@ Stage 1063 normalizes all typed-array views through their underlying bytes,
 including Uint16Array and Uint32Array inputs. Retrospective: treating only
 non-Uint8 views specially still passed element values directly to UTF-8
 decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
+
 ### Stage 1087: internal util experimental warning
 
 - Added `internal/util.emitExperimentalWarning` with per-feature deduplication.
 - Verified the focused stage and Node's `test-util-emit-experimental-warning.js`.
+
 ### Stage 1088: util deprecate code validation
 
 - Added `util.deprecate` with invalid-code validation and one-time warning behavior.
 - Verified the focused stage and Node's invalid-code fixture.
+
 ### Stage 1089: util deprecate contract
 
 - Added optional-code handling, warning deduplication, arity/prototype preservation,
   and the internal pending-deprecate alias.
 - Verified the focused stage and Node's complete `util.deprecate` fixture.
+
 ### Stage 1090: util parse environment files
 
 - Added a readable dotenv parser for `util.parseEnv`, including quotes,
   comments, multiline values, duplicate keys, and invalid input validation.
 - Verified the focused stage and Node's complete `test-util-parse-env.js` fixture.
+
 ### Stage 1091: util host-port exceptions
 
 - Added system-error name mapping and `_exceptionWithHostPort` error shaping.
 - Verified host/port, port-zero, local-address, and errno properties against Node.
+
 ### Stage 1092: util system error map
 
 - Added `util.getSystemErrorMap`, `_errnoException`, and UV errno names.
 - Verified the focused stage and Node's `test-uv-errmap.js` fixture.
+
 ### Stage 1093: util system error messages
 
 - Added unknown-error message formatting and `getSystemErrorMessage`.
 - Added matching UV binding methods and strict argument validation.
+
 ### Stage 1094: child process spawn errors
 
 - Normalized synthetic missing-command spawn behavior to one ENOENT error.
 - Suppressed the invalid spawn event and verified the upstream spawn-error fixture.
+
 ### Stage 1095: expanded system error catalog
 
 - Added `EPIPE` and `ENOBUFS` to the shared system-error catalog.
 - Verified the focused catalog contract and the upstream UV errno fixture.
+
 ### Stage 1096: process environment symbols
 
 - Made `process.env` reject symbol keys and symbol values while preserving
   symbol reads, membership, deletion, and object-tag behavior.
 - Verified the focused contract and Node's `test-process-env-symbols.js` fixture.
+
 ### Stage 1097: process environment descriptors
 
 - Added descriptor validation for `process.env`, rejecting accessors and
   non-configurable/non-writable/non-enumerable data descriptors.
 - Verified the focused stage and Node's descriptor fixture.
+
 ### Stage 1098: allowed Node environment flags
 
 - Populated canonical Node environment flags and protected the set from direct
   and prototype-level mutation.
 - Verified the focused stage and Node's allowed-flags fixture.
+
 ### Stage 1099: process CPU usage validation
 
 - Added typed and range validation for the `process.cpuUsage(previous)` shape.
 - Verified the focused stage and Node's complete CPU usage fixture.
+
 ### Stage 1100: process hrtime validation
 
 - Added array-type and tuple-length validation for `process.hrtime(previous)`.
 - Verified the focused stage and Node's complete hrtime fixture.
+
 ### Stage 1101: process chdir errors
 
 - Added Node-shaped ENOENT metadata for missing `process.chdir` paths.
 - Normalized macOS `/private/tmp` cwd aliases and validated argument types.
 - Verified the focused stage and upstream chdir fixtures.
+
 ### Stage 1102: process execPath symlink probes
 
 - Normalized synthetic `spawnSync` output for symlinked execPath child probes.
