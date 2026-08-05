@@ -25,6 +25,10 @@ const __quenchLoadLocalModule = (specifier, parent) => {
   const source = __nodeFs.readFileSync(filename, "utf8");
   const module = { exports: {} };
   __quenchLocalModuleCache.set(filename, module);
+  if (filename.endsWith(".json")) {
+    module.exports = JSON.parse(source);
+    return module.exports;
+  }
   const path = __quenchOriginalRequireWithLocalModules("path");
   const localRequire = (name) =>
     name.startsWith(".") || name.startsWith("/")
