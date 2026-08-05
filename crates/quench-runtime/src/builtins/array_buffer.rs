@@ -521,16 +521,19 @@ fn register_shared_array_buffer(ctx: &mut Context) {
                 .get_own_value("byteLength")
                 .map(|value| to_number(&value) as usize)
                 .unwrap_or(0);
-            let start = args
-                .first()
-                .map(|value| to_number(value) as isize)
-                .unwrap_or(0)
-                .clamp(0, len as isize) as usize;
-            let end = args
-                .get(1)
-                .map(|value| to_number(value) as isize)
-                .unwrap_or(len as isize)
-                .clamp(start as isize, len as isize) as usize;
+            let normalize = |value: Option<&Value>, default: f64| {
+                let number = value.map(to_number).unwrap_or(default);
+                if number.is_nan() {
+                    return 0;
+                }
+                if number < 0.0 {
+                    (len as f64 + number).max(0.0) as usize
+                } else {
+                    number.min(len as f64) as usize
+                }
+            };
+            let start = normalize(args.first(), 0.0);
+            let end = normalize(args.get(1), len as f64).max(start);
             let mut result = Object::new(ObjectKind::Ordinary);
             result.prototype = Some(Rc::clone(&slice_proto));
             result.elements = this_obj.borrow().elements[start..end].to_vec();
@@ -692,6 +695,12 @@ mod tests {
             "var sab = new SharedArrayBuffer(4); var result = sab.slice(1, 3); typeof sab.slice === 'function' && result instanceof SharedArrayBuffer && result.byteLength === 2",
         );
         assert_eq!(result, Value::Boolean(true));
+    }
+
+    #[test]
+    fn shared_array_buffer_slice_normalizes_negative_indices() {
+        let result = eval_ok("var sab = new SharedArrayBuffer(6); sab.slice(-5, -2).byteLength");
+        assert_eq!(result, Value::Number(3.0));
     }
 
     #[test]
