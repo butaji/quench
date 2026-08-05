@@ -4125,3 +4125,12 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Connected the `stream.promises` property to the existing
   `stream/promises` module surface.
+
+### Stage 1205: stream promisify identity
+
+- Linked stream callback APIs to their promise counterparts through Node's
+  `util.promisify.custom` symbol.
+
+### Stage 1206: stream finished options
+
+- Added boolean validation for the `stream/promises.finished()` cleanup option.
