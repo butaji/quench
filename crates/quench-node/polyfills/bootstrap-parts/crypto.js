@@ -152,7 +152,7 @@ const __nodeCryptoHmacPads = (key) => {
   return { keyBytes, inner, outer };
 };
 const __nodeCryptoApi = {
-  getHashes: () => ["sha256"],
+  getHashes: () => ["sha1", "sha256"],
   getCiphers: () => [],
   timingSafeEqual: (left, right) => {
     if (!(left instanceof Uint8Array) || !(right instanceof Uint8Array)) {
