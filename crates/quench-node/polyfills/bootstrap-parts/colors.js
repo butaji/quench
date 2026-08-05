@@ -421,6 +421,7 @@ const __nodeLegacyUrlFormatObject = (value) => {
 const __nodeUrlModuleExports = {
   URL: globalThis.__nodeURL,
   URLSearchParams: globalThis.__nodeURLSearchParams,
+  urlToHttpOptions: (value) => globalThis.__nodeUrlToHttpOptions(value),
   fileURLToPath: (value) => {
     let href;
     if (value && typeof value.href === "string") href = value.href;
