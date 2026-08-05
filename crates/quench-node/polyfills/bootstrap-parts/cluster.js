@@ -243,8 +243,8 @@ const __quenchDebugBinding = () => ({
 });
 const __quenchInternalBindingModule = {
   internalBinding: (binding) => {
-    if (binding === "os") return globalThis.__quenchInternalOsBinding;
-    if (binding === "debug") return __quenchDebugBinding();
+    const coreBinding = globalThis.__quenchInternalBindingCore(binding);
+    if (coreBinding) return coreBinding;
     if (binding === "uv")
       return {
         UV_ENOENT: -2,
@@ -275,7 +275,7 @@ const __quenchInternalBindingModule = {
         })(),
         previewEntries: () => []
       };
-    return { fstat: () => undefined };
+    return globalThis.__quenchInternalFallbackBinding;
   }
 };
 const __quenchInternalErrorsModule = {
