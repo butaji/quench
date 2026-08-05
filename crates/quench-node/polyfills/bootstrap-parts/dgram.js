@@ -18,8 +18,23 @@ const __quenchDgramBufferError = (type, code, message) => {
   );
   error.name = "SystemError";
   error.code = "ERR_SOCKET_BUFFER_SIZE";
-  error.info = { code, message, syscall };
-  error.syscall = syscall;
+  error.info = { errno: undefined, code, message, syscall };
+  let errorErrno;
+  Object.defineProperty(error, "errno", {
+    enumerable: true,
+    get: () => errorErrno,
+    set: (value) => {
+      errorErrno = value;
+    }
+  });
+  let errorSyscall = syscall;
+  Object.defineProperty(error, "syscall", {
+    enumerable: true,
+    get: () => errorSyscall,
+    set: (value) => {
+      errorSyscall = value;
+    }
+  });
   return error;
 };
 const __quenchDgramBind = (socket, type, port, address, callback) => {
