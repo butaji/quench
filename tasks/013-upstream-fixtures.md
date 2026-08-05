@@ -5172,3 +5172,11 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1447: crypto Decipheriv class identity
 
 - Preserve Decipheriv prototype identity for its factory.
+
+### Stage 1448: crypto class identity probe
+
+- Isolate the remaining crypto constructor identity mismatch.
+
+### Stage 1449: crypto legacy cipher identity
+
+- Preserve Cipheriv identity for the legacy DES cipher path.
