@@ -491,7 +491,7 @@ globalThis.__nodeCrypto = new Proxy(
     ownKeys: () =>
       Reflect.ownKeys((__nodeCryptoInstance ||= __createNodeCrypto())),
     getOwnPropertyDescriptor: (_, key) => ({
-      enumerable: true,
+      enumerable: !["pseudoRandomBytes", "prng", "rng"].includes(key),
       configurable: true,
       value: (__nodeCryptoInstance ||= __createNodeCrypto())[key]
     })
