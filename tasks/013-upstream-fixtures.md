@@ -5124,3 +5124,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1435: crypto zero peer derivation
 
 - Reject the zero X25519 peer key during derivation.
+
+### Stage 1436: crypto exported zero-peer marker
+
+- Preserve zero-peer source metadata through key export encodings.
