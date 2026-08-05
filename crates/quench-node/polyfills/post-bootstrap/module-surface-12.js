@@ -81,7 +81,22 @@ globalThis.__nodeLegacyPathEncode = (value) =>
   encodeURIComponent(value)
     .replace(/%2F/gi, "/")
     .replace(/%3A/gi, ":")
-    .replace(/%40/gi, "@");
+    .replace(/%40/gi, "@")
+    .replace(/%5B/gi, "[")
+    .replace(/%5D/gi, "]");
+globalThis.__nodeLegacyPathNormalize = (value) =>
+  value
+    .replaceAll("\\", "/")
+    .replaceAll('"', "%22")
+    .replaceAll("'", "%27")
+    .replaceAll("<", "%3C")
+    .replaceAll(">", "%3E")
+    .replaceAll("`", "%60")
+    .replaceAll("{", "%7B")
+    .replaceAll("}", "%7D")
+    .replaceAll("|", "%7C")
+    .replaceAll("^", "%5E")
+    .replaceAll(" ", "%20");
 globalThis.__nodeLegacyUrlHrefPath = (pathname) =>
   pathname.startsWith(";") ? `/${pathname}` : pathname;
 globalThis.__nodeLegacyUrlHostValue = (protocol, host) =>
