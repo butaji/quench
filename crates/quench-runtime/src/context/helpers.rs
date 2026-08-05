@@ -640,6 +640,9 @@ pub fn init_es_module_cache(ctx: &mut Context) -> Result<(), JsError> {
 pub fn init_js_globals(ctx: &mut Context) -> Result<(), JsError> {
     let global_obj = Object::new(ObjectKind::Global);
     let global_obj = Rc::new(RefCell::new(global_obj));
+    if let Some(object_proto) = crate::builtins::get_object_prototype() {
+        global_obj.borrow_mut().prototype = Some(object_proto);
+    }
     global_obj.borrow_mut().define(
         "globalThis",
         Value::Object(Rc::clone(&global_obj)),

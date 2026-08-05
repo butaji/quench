@@ -554,11 +554,20 @@ pub(crate) fn eval_instanceof(left: &Value, right: &Value) -> Result<Value, JsEr
             if let Some(Value::Symbol(symbol)) = crate::builtins::symbol::get_has_instance_symbol()
             {
                 let key = symbol.property_key();
-                let mut owner = ctor.borrow().prototype.clone();
+                let mut owner = Some(Rc::clone(ctor));
                 let mut method = None;
                 while let Some(candidate) = owner {
-                    if let Some(value) = candidate.borrow().get_own(&key) {
+                    let getter = candidate.borrow().get_getter(&key).cloned();
+                    if let Some(getter) = getter {
+                        method = Some(crate::eval::object::call_getter(
+                            ctor,
+                            &getter,
+                            &Rc::new(std::cell::RefCell::new(crate::env::Environment::new())),
+                        )?);
+                    } else if let Some(value) = candidate.borrow().get_own(&key) {
                         method = Some(value);
+                    }
+                    if method.is_some() {
                         if crate::builtins::function::get_function_prototype()
                             .is_some_and(|prototype| Rc::ptr_eq(&candidate, &prototype))
                         {
