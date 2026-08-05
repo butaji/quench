@@ -4045,3 +4045,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Bound callback `this` to the socket and resolved default IPv4/IPv6 bind
   addresses for the default-address fixtures.
+
+### Stage 1189: dgram synchronous bind
+
+- Added a synchronous bind surface returning the resolved address and applying
+  the same port/address validation as the asynchronous path.
