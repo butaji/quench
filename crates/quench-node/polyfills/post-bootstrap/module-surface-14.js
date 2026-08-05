@@ -114,6 +114,29 @@ const __quenchValidateStatelessDhArgs = (options, callback) => {
     );
 };
 const __quenchValidateStatelessDhKeys = (options) => {
+  const validateDescriptor = (key, path, formats, types) => {
+    if (!key || typeof key !== "object") return;
+    if (key.format && !formats.includes(key.format))
+      throw Object.assign(new TypeError(`${path}.format is invalid`), {
+        code: "ERR_INVALID_ARG_VALUE"
+      });
+    if (key.type && !types.includes(key.type))
+      throw Object.assign(new TypeError(`${path}.type is invalid`), {
+        code: "ERR_INVALID_ARG_VALUE"
+      });
+  };
+  validateDescriptor(
+    options.privateKey,
+    "options.privateKey",
+    ["pem", "der"],
+    ["pkcs8"]
+  );
+  validateDescriptor(
+    options.publicKey,
+    "options.publicKey",
+    ["pem", "der"],
+    ["spki"]
+  );
   const type = options.privateKey?.type;
   if (type === "secret" || type === "public")
     throw Object.assign(
