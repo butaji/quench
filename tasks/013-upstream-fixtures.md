@@ -5321,3 +5321,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1589. `url-resolve-object-path-parameter-directories.js` — cover parsed parameter-directory traversal.
 1590. `url-resolve-object-root-dot-names.js` — cover parsed root and dot-name targets.
 1591. `url-resolve-object-file-fragments.js` — preserve parsed file fragments and directories.
+1592. `url-resolve-object-mailto-relative.js` — preserve parsed mailto relative targets.
