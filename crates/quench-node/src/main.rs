@@ -36,6 +36,7 @@ const BOOTSTRAP_PARTS: &[&str] = &[
     include_str!("../polyfills/bootstrap-parts/filesystem-access-validation.js"),
     include_str!("../polyfills/bootstrap-parts/io.js"),
     include_str!("../polyfills/bootstrap-parts/metadata.js"),
+    include_str!("../polyfills/bootstrap-parts/filesystem-permissions.js"),
     include_str!("../polyfills/bootstrap-parts/timestamps.js"),
     include_str!("../polyfills/bootstrap-parts/links.js"),
     include_str!("../polyfills/bootstrap-parts/streams.js"),
