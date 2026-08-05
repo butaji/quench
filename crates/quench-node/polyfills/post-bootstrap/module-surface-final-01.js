@@ -388,26 +388,18 @@ const __quenchAddUrlParseFallback = (result) => {
     return parsed;
   };
 };
-const __quenchAddLegacyParseMethods = (result) => {
-  const originalParse = result.parse;
-  result.parse = (input) => {
-    const parsed = originalParse(input);
-    parsed.resolveObject = (target) =>
-      /^javascript:/i.test(target) ? originalParse(target) : parsed;
-    parsed.resolve = parsed.resolveObject;
-    return parsed;
-  };
-};
 const __quenchAddUrlFormatting = (result) => {
   if (typeof result.format !== "function") return result;
   (__quenchAddUrlDomainFallbacks(result), __quenchAddUrlParseFallback(result));
-  __quenchAddLegacyParseMethods(result);
+  globalThis.__quenchAddLegacyParseMethods(result);
   __quenchAddFileUrlFallback(result);
   const originalResolve = result.resolve;
   result.resolveObject ||= (from, to) => {
     if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\/\//.test(from))
       return globalThis.__quenchResolveEmptyAuthority(from, to);
-    const protocolTarget = __quenchResolveProtocolTarget(from, to);
+    const protocolTarget =
+      globalThis.__quenchResolveFileFragment(from, to) ||
+      __quenchResolveProtocolTarget(from, to);
     if (protocolTarget) return protocolTarget;
     const scopedPath = __quenchResolveScopedPath(from, to);
     if (scopedPath) return scopedPath;
