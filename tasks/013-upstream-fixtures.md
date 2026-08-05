@@ -5216,3 +5216,30 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1484. `url-format-auth-option.js` — honor auth suppression during URL formatting.
 1485. `url-format-query-fragment-options.js` — honor query and fragment suppression.
 1486. `url-format-unicode-option.js` — honor Unicode hostname formatting.
+1487. `url-resolve-absolute-target.js` — preserve absolute URL resolve targets.
+1488. `url-resolve-trailing-slash.js` — preserve trailing slashes in URL resolve.
+1489. `url-resolve-directory-target.js` — resolve dot targets to base directories.
+1490. `url-resolve-parent-directory.js` — preserve parent-directory resolve slashes.
+1491. `url-resolve-root-parent.js` — normalize root parent URL resolution.
+1492. `url-resolve-relative-parent.js` — normalize relative parent URL paths.
+1493. `url-resolve-protocol-hash.js` — normalize protocol-only hash targets.
+1494. `url-resolve-single-slash-protocol.js` — normalize single-slash protocols.
+1495. `url-resolve-preserve-protocol.js` — preserve complete protocol URLs.
+1496. `url-resolve-absolute-query.js` — preserve absolute URL query spelling.
+1497. `url-resolve-same-protocol-hash.js` — preserve same-protocol hash targets.
+1498. `url-resolve-same-origin-path.js` — preserve origins for same-scheme paths.
+1499. `url-resolve-absolute-parent.js` — normalize parent segments in absolute targets.
+1500. `url-resolve-opaque-scheme.js` — preserve opaque schemes during resolution.
+1501. `url-resolve-scoped-package.js` — preserve origins for scoped package paths.
+1502. `url-resolve-opaque-target.js` — preserve explicitly-schemed opaque targets.
+1503. `url-resolve-opaque-absolute-path.js` — preserve opaque schemes for absolute paths.
+1504. `url-resolve-origin-absolute.js` — preserve web origins for absolute paths.
+1505. `url-resolve-web-dot-path.js` — normalize dot segments in web paths.
+1506. `url-resolve-network-path.js` — preserve schemes for network-path targets.
+1507. `url-resolve-query-only.js` — preserve paths for query-only targets.
+1508. `url-resolve-relative-query.js` — preserve query text on relative paths.
+1509. `url-resolve-distinct-scheme.js` — preserve distinct scheme targets.
+1510. `url-resolve-empty-target.js` — preserve bases for empty targets.
+1511. `url-resolve-dot-directory.js` — preserve directory slashes for dot targets.
+1512. `url-resolve-same-web-scheme.js` — resolve same-scheme web paths relatively.
+1513. `url-resolve-empty-scheme.js` — preserve bases for empty scheme targets.
