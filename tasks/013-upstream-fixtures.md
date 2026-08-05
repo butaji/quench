@@ -4438,3 +4438,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1273: copyFile path validation
 
 - Reject invalid source and destination paths synchronously in `fs.copyFile`.
+
+### Stage 1274: rm missing targets
+
+- Throw `ENOENT` for missing `rm` targets unless `force:true` is supplied.
