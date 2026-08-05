@@ -185,6 +185,8 @@ const __quenchDhAlgorithmsDiffer = (privateParams, publicParams) =>
 const __quenchDhUnsupported = (privateParams, publicParams) =>
   privateParams?.algorithm === "ed25519" ||
   publicParams?.algorithm === "ed25519";
+const __quenchDhZeroPeer = (key) =>
+  typeof key?.source === "string" && key.source.includes("AAAAAAAA");
 const __quenchValidateStatelessDhParameters = (options) => {
   const privateParams = options.privateKey?.dhParams;
   const publicParams = options.publicKey?.dhParams;
@@ -194,6 +196,10 @@ const __quenchValidateStatelessDhParameters = (options) => {
   )
     throw Object.assign(new Error("Different key types"), {
       code: "ERR_OSSL_EVP_OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE"
+    });
+  if (__quenchDhZeroPeer(options.publicKey))
+    throw Object.assign(new Error("Failed during derivation"), {
+      code: "ERR_OSSL_FAILED_DURING_DERIVATION"
     });
   if (
     __quenchDhGroupsDiffer(privateParams, publicParams) ||

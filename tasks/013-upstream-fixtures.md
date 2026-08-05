@@ -5120,3 +5120,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1434: crypto unsupported DH algorithm
 
 - Reject Ed25519 stateless DH operations as unsupported key types.
+
+### Stage 1435: crypto zero peer derivation
+
+- Reject the zero X25519 peer key during derivation.
