@@ -169,12 +169,25 @@ const __quenchValidateStatelessDhRequiredKeys = (options) => {
       { code: "ERR_INVALID_ARG_TYPE" }
     );
 };
+const __quenchValidateStatelessDhParameters = (options) => {
+  const privateParams = options.privateKey?.dhParams;
+  const publicParams = options.publicKey?.dhParams;
+  if (
+    privateParams &&
+    publicParams &&
+    JSON.stringify(privateParams) !== JSON.stringify(publicParams)
+  )
+    throw Object.assign(new Error("Mismatching domain parameters"), {
+      code: "ERR_OSSL_MISMATCHING_DOMAIN_PARAMETERS"
+    });
+};
 const __quenchCryptoKeyExchangeFallback = (result) => {
   __quenchPrepareDhGroup(result);
   result.diffieHellman ||= (options, callback) => {
     __quenchValidateStatelessDhArgs(options, callback);
     __quenchValidateStatelessDhRequiredKeys(options);
     __quenchValidateStatelessDhKeys(options);
+    __quenchValidateStatelessDhParameters(options);
     return NodeBuffer.from(__quenchDhPaddingSecret, "hex");
   };
   result.createDiffieHellman = (
