@@ -297,12 +297,21 @@ Object.assign(globalThis.__nodeFs, {
     const path = nodeFsPath(value);
     let kind;
     try {
-      kind = globalThis.__quench_fs_kind(path);
+      kind = globalThis.__quench_fs_link_kind(path);
     } catch (_) {
+      if (!options.force) {
+        const error = new Error(
+          `ENOENT: no such file or directory, lstat '${path}'`
+        );
+        error.code = "ENOENT";
+        error.syscall = "lstat";
+        error.path = path;
+        throw error;
+      }
       return;
     }
     if (kind === "file") return globalThis.__quench_fs_unlink(path);
-    if (kind === "directory" && options.recursive === false) {
+    if (kind === "directory" && !options.recursive) {
       const error = new Error(
         `ERR_FS_EISDIR: illegal operation on a directory, rm '${path}'`
       );
