@@ -4134,3 +4134,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1206: stream finished options
 
 - Added boolean validation for the `stream/promises.finished()` cleanup option.
+
+### Stage 1207: stream consumers
+
+- Consumed Node-style readable streams through their data/end events and added
+  the `bytes()` stream consumer.
