@@ -5324,3 +5324,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1592. `url-resolve-object-mailto-relative.js` — preserve parsed mailto relative targets.
 1593. `url-resolve-object-encoded-paths.js` — preserve parsed percent-encoded path data.
 1594. `url-resolve-object-file-authorities.js` — preserve parsed file authorities.
+1595. `url-resolve-object-opaque-addresses.js` — cover parsed opaque address relatives.
