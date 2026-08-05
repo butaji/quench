@@ -4763,3 +4763,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1345: TLS cipher list
 
 - Expose the TLS cipher names required by the upstream crypto fixture.
+
+### Stage 1346: crypto curve list
+
+- Expose the `secp384r1` elliptic-curve name required by the upstream crypto
+  fixture.

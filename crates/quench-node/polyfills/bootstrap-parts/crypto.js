@@ -108,13 +108,6 @@ const __nodeCryptoHashCopy = (algorithm, chunks) => {
   for (const chunk of chunks) clone.update(chunk);
   return clone;
 };
-const __nodeCryptoAssertDigestOpen = (finalized) => {
-  if (finalized) {
-    const error = new Error("Digest already called");
-    error.code = "ERR_CRYPTO_HASH_FINALIZED";
-    throw error;
-  }
-};
 const __nodeCryptoHmacDigest = (inner, outer, chunks, encoding) => {
   const message = [];
   for (const chunk of chunks) message.push(...chunk);
@@ -155,6 +148,7 @@ const __nodeCryptoApi = {
   getHashes: () => ["RSA-SHA1", "sha1", "sha256"],
   getCiphers: () => ["aes-128-cbc"],
   getCipherInfo: __nodeCryptoCipherInfo,
+  getCurves: () => ["secp384r1"],
   timingSafeEqual: (left, right) => {
     if (!(left instanceof Uint8Array) || !(right instanceof Uint8Array)) {
       const error = new TypeError(
