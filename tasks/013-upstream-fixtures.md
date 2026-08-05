@@ -5312,3 +5312,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1580. `url-resolve-object-web-query-paths.js` — preserve query and fragment path text.
 1581. `url-resolve-object-triple-slash.js` — preserve parsed triple-slash URL bases.
 1582. `url-resolve-object-legacy-opaque.js` — preserve parsed legacy opaque dot targets.
+1583. `url-resolve-object-rfc-relative.js` — cover parsed RFC relative URL targets.
