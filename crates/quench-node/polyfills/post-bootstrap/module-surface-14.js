@@ -169,13 +169,20 @@ const __quenchValidateStatelessDhRequiredKeys = (options) => {
       { code: "ERR_INVALID_ARG_TYPE" }
     );
 };
+const __quenchDhGroupsDiffer = (privateParams, publicParams) =>
+  privateParams?.group &&
+  publicParams?.group &&
+  privateParams.group !== publicParams.group;
+const __quenchDhLengthsDiffer = (privateParams, publicParams) =>
+  privateParams?.primeLength &&
+  publicParams?.primeLength &&
+  privateParams.primeLength !== publicParams.primeLength;
 const __quenchValidateStatelessDhParameters = (options) => {
   const privateParams = options.privateKey?.dhParams;
   const publicParams = options.publicKey?.dhParams;
   if (
-    privateParams &&
-    publicParams &&
-    JSON.stringify(privateParams) !== JSON.stringify(publicParams)
+    __quenchDhGroupsDiffer(privateParams, publicParams) ||
+    __quenchDhLengthsDiffer(privateParams, publicParams)
   )
     throw Object.assign(new Error("Mismatching domain parameters"), {
       code: "ERR_OSSL_MISMATCHING_DOMAIN_PARAMETERS"
