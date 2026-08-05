@@ -4840,3 +4840,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1364: crypto CBC null IV
 
 - Reject null initialization vectors for CBC ciphers.
+
+### Stage 1365: crypto GCM IV validation
+
+- Enforce the supported AES-GCM initialization-vector length range.
