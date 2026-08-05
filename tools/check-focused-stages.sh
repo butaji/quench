@@ -2,7 +2,7 @@
 set -eu
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-timeout_seconds=${QUENCH_NODE_TEST_TIMEOUT_SECONDS:-30}
+timeout_seconds=${QUENCH_NODE_TEST_TIMEOUT_SECONDS:-10}
 pass=0
 fail=0
 failed=""

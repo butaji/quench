@@ -2,7 +2,7 @@
 set -eu
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-timeout_seconds=${QUENCH_NODE_TEST_TIMEOUT_SECONDS:-30}
+timeout_seconds=${QUENCH_NODE_TEST_TIMEOUT_SECONDS:-10}
 binary="$root/target/debug/quench-node"
 if [ ! -x "$binary" ]; then
   cargo build --quiet --manifest-path "$root/Cargo.toml" -p quench-node
