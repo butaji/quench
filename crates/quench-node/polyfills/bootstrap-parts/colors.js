@@ -248,25 +248,23 @@ class NodeURLSearchParams {
   }
   append(key, value) {
     // prettier-ignore
-    // prettier-ignore
-    this._pairs.push([String(key).replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, "\uFFFD").replace(/(^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "$1\uFFFD"), String(value).replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, "\uFFFD").replace(/(^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "$1\uFFFD")]);
+    this._pairs.push([globalThis.__nodeURLSearchString(key).replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, "\uFFFD").replace(/(^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "$1\uFFFD"), globalThis.__nodeURLSearchString(value).replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, "\uFFFD").replace(/(^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "$1\uFFFD")]);
   }
   // prettier-ignore
   set(key, value) { this.delete(key); this.append(key, value); }
-  get(key) {
-    const pair = this._pairs.find(([name]) => name === String(key));
-    return pair ? pair[1] : null;
-  }
-  getAll(key) {
-    return this._pairs
-      .filter(([name]) => name === String(key))
-      .map(([, value]) => value);
-  }
+  // prettier-ignore
+  get(key) { const pair = this._pairs.find(([name]) => name === globalThis.__nodeURLSearchString(key)); return pair ? pair[1] : null; }
+  // prettier-ignore
+  getAll(key) { return this._pairs.filter(([name]) => name === globalThis.__nodeURLSearchString(key)).map(([, value]) => value); }
   has(key) {
-    return this._pairs.some(([name]) => name === String(key));
+    return this._pairs.some(
+      ([name]) => name === globalThis.__nodeURLSearchString(key)
+    );
   }
   delete(key) {
-    this._pairs = this._pairs.filter(([name]) => name !== String(key));
+    this._pairs = this._pairs.filter(
+      ([name]) => name !== globalThis.__nodeURLSearchString(key)
+    );
   }
   toString() {
     return this._pairs

@@ -257,6 +257,11 @@ globalThis.__nodeURLDecode = (value) => {
     return value;
   }
 };
+globalThis.__nodeURLSearchString = (value) => {
+  if (typeof value === "symbol" || String(value).startsWith("Symbol("))
+    throw new TypeError("Cannot convert a Symbol value to a string");
+  return String(value);
+};
 const __nodeURLSearchParamsToString =
   globalThis.__nodeURLSearchParams.prototype.toString;
 globalThis.__nodeURLSearchParams.prototype.toString =
@@ -298,6 +303,34 @@ for (const name of [
   Object.defineProperty(globalThis.__nodeURLSearchParams.prototype, name, {
     ...descriptor,
     enumerable: true
+  });
+}
+for (const name of ["append", "delete", "get", "getAll", "has", "set"]) {
+  const original = globalThis.__nodeURLSearchParams.prototype[name];
+  const required = name === "append" || name === "set" ? 2 : 1;
+  const method = Object.getOwnPropertyDescriptor(
+    {
+      [name](...args) {
+        if (!(this instanceof globalThis.__nodeURLSearchParams))
+          return globalThis.__nodeInvalidThis();
+        if (args.length < required) {
+          const label = required === 2 ? '"name" and "value"' : '"name"';
+          const error = new TypeError(
+            `The ${label} argument${required === 2 ? "s" : ""} must be specified`
+          );
+          error.code = "ERR_MISSING_ARGS";
+          throw error;
+        }
+        return original.apply(this, args);
+      }
+    },
+    name
+  ).value;
+  Object.defineProperty(globalThis.__nodeURLSearchParams.prototype, name, {
+    configurable: true,
+    enumerable: true,
+    value: method,
+    writable: true
   });
 }
 const __nodeURLSearchIterator = (values) => {
