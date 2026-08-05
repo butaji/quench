@@ -5418,3 +5418,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1689. `url-userinfo-delimiters.js` — parse complex URL userinfo delimiters.
 1690. `url-query-fragment-delimiters.js` — preserve query and fragment delimiters.
 1691. `url-pathname-brackets.js` — preserve brackets in URL pathnames.
+1692. `url-ipv6-authority.js` — parse bracketed IPv6 authorities correctly.
