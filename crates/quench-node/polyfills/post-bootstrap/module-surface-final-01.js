@@ -275,7 +275,9 @@ const __quenchResolveAbsolutePath = (from, to) => {
   const networkPath = __quenchNetworkPathTarget(from, to);
   if (networkPath) return networkPath;
   const path = __quenchNormalizeAbsoluteTarget(to);
-  const origin = from.match(/^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/]*/)?.[0];
+  const origin = from
+    .match(/^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/]*/)?.[0]
+    ?.split(/[?#]/)[0];
   if (origin) return `${origin}${path}`;
   const scheme = from.match(/^([A-Za-z][A-Za-z0-9+.-]*):[^/]*$/)?.[1];
   return scheme ? `${scheme}:${path}` : path;

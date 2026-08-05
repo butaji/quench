@@ -177,7 +177,9 @@ globalThis.__quenchResolveReversedFileRelative = (from, to) =>
 globalThis.__quenchResolveFileAuthority = (from, to) =>
   /^file:\/\/[^/]+\//i.test(from) && /^file:\/[^/]/i.test(to)
     ? from.replace(/^file:\/\/[^/]+/i, "file://")
-    : null;
+    : /^file:\/[^/]/i.test(from) && /^file:\/\/[^/]+\//i.test(to)
+      ? to.replace(/^file:\/\/[^/]+/i, "file://")
+      : null;
 const __quenchResolveFileRelativeBase = (from, to) => {
   const reversed = globalThis.__quenchResolveReversedFileRelative(from, to);
   if (reversed) return reversed;
@@ -200,8 +202,23 @@ const __quenchResolveFileRelativeBase = (from, to) => {
   return base + target.replace(/^\.\//, "").replace(/#$/, "");
 };
 globalThis.__quenchResolveFileRelative = (from, to) =>
+  globalThis.__quenchResolveQueryAbsolute(from, to) ||
+  globalThis.__quenchResolveMailtoRelative(from, to) ||
   globalThis.__quenchResolveFileAuthority(from, to) ||
   __quenchResolveFileRelativeBase(from, to);
+globalThis.__nodeLegacyResolve = (from, to) =>
+  globalThis.__quenchResolveFileRelative(from, to) ||
+  new globalThis.__nodeURL(to, from).href;
+globalThis.__quenchResolveQueryAbsolute = (from, to) =>
+  from.startsWith("/") && /^https?:\/\/[^/?#]+(?:[?#].*)?$/i.test(to)
+    ? to.split(/[?#]/)[0] + from
+    : null;
+globalThis.__quenchResolveMailtoRelative = (from, to) =>
+  /^mailto:/i.test(from) && !/^[a-z][a-z0-9+.-]*:/i.test(to)
+    ? `mailto:${from.slice(7, from.lastIndexOf("/") + 1)}${to}`
+    : /^mailto:/i.test(to) && !/^[a-z][a-z0-9+.-]*:/i.test(from)
+      ? `mailto:${to.slice(7, to.lastIndexOf("/") + 1)}${from}`
+      : null;
 globalThis.__quenchAddLegacyParseMethods = (result) => {
   const originalParse = result.parse;
   result.parse = (input) => {
