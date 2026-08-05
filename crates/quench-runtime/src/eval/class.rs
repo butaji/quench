@@ -68,6 +68,17 @@ pub fn eval_class_expr(
         if crate::value::generator_replay::yield_pending() {
             return Ok(Value::Undefined);
         }
+        // Per ES §15.7.14 ClassDefinitionEvaluation step 5: if superclass is
+        // not null and IsConstructor(superclass) is false, throw TypeError.
+        if !matches!(val, Value::Null)
+            && !crate::eval::class::helpers::is_constructor_value(&val)
+        {
+            let msg = "TypeError: superclass is not a constructor";
+            let (err, js_err) =
+                crate::value::error::create_js_error_with_type(&msg, "TypeError");
+            crate::value::set_thrown_value(err);
+            return Err(js_err);
+        }
         class_scope.borrow_mut().set_super_class(val.clone());
         Some(val)
     } else {
