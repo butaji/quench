@@ -1,5 +1,13 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1151: filesystem appendFile callback and promise APIs
+
+- Fixture: `test-fs-append-file.js`
+- Added focused coverage for callback and promise append operations over the
+  existing filesystem implementation.
+- Retrospective: isolate callback and promise adapters in one contract before
+  changing shared filesystem storage behavior.
+
 ## Stage 1150: VM realm Object.hasOwn
 
 - Fixture: `test-vm-global-property-prototype.js`
