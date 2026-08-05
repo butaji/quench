@@ -17,8 +17,19 @@ const __quenchAddStreamDefaults = (result) => {
   result.setDefaultHighWaterMark ||= () => 16384;
   result.getDefaultHighWaterMark ||= () => 16384;
 };
+const __quenchMakeCallableConstructor = (Constructor) => {
+  if (Constructor.__quenchCallable) return Constructor;
+  const callable = function (...args) {
+    return new Constructor(...args);
+  };
+  callable.prototype = Constructor.prototype;
+  Object.setPrototypeOf(callable, Constructor);
+  Object.defineProperty(callable, "__quenchCallable", { value: true });
+  return callable;
+};
 const __quenchAddStreamCompat = (result) => {
   __quenchAddStreamAliases(result);
+  result.Writable = __quenchMakeCallableConstructor(result.Writable);
   __quenchAddStreamWebCompat(result);
   __quenchAddStreamDefaults(result);
   result.promises ||= globalThis.require("stream/promises");
