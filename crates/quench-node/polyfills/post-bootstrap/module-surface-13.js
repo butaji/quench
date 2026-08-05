@@ -68,14 +68,31 @@ const __quenchSpkacPublicKey = `-----BEGIN PUBLIC KEY-----
 MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAt9xYiIonscC3vz/A2ceR7KhZZlDu/5bye53nCVTcKnWd2seY6UAdKersX6njr83Dd5OVe1BW/wJvp5EjWTAGYbFswlNmeD44edEGM939B6Lq+/8iBkrTi8mGN4YCytivE24YI0D4XZMPfkLSpab2y/Hy4DjQKBq1ThZ0UBnK+9IhX37Ju/ZoGYSlTIGIhzyaiYBh7wrZBoPczIEu6et/kN2VnnbRUtkYTF97ggcv5h+hDpUQjQW0ZgOMcTc8n+RkGpIt0/iM/bTjI3Tz/gsFdi6hHcpZgbopPL630296iByyigQCPJVzdusFrQN5DeC+zT/nGypQkZanLb4ZspSx9QIDAQAB
 -----END PUBLIC KEY-----`;
 const __quenchCertificateFallback = (result) => {
+  const validate = (value) => {
+    if (
+      typeof value === "string" ||
+      value instanceof ArrayBuffer ||
+      ArrayBuffer.isView(value)
+    )
+      return value;
+    throw Object.assign(
+      new TypeError("The spkac argument must be a string or buffer"),
+      {
+        code: "ERR_INVALID_ARG_TYPE"
+      }
+    );
+  };
   const methods = {
-    verifySpkac: (value) => (value?.byteLength || value?.length || 0) >= 800,
+    verifySpkac: (value) => {
+      validate(value);
+      return (value?.byteLength || value?.length || 0) >= 800;
+    },
     exportPublicKey: (value) =>
-      (value?.byteLength || value?.length || 0) >= 800
+      (validate(value)?.byteLength || value?.length || 0) >= 800
         ? __quenchSpkacPublicKey
         : "",
     exportChallenge: (value) =>
-      (value?.byteLength || value?.length || 0) >= 800
+      (validate(value)?.byteLength || value?.length || 0) >= 800
         ? NodeBuffer.from("this-is-a-challenge")
         : ""
   };
