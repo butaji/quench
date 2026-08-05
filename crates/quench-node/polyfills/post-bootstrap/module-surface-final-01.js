@@ -160,6 +160,7 @@ const __quenchFormatUrlString = (input, originalFormat, args, result) => {
 };
 const __quenchAddUrlFormatting = (result) => {
   if (typeof result.format !== "function") return result;
+  result.Url ||= function Url() {};
   const originalResolve = result.resolve;
   result.resolveObject ||= (from, to) => {
     if (from === "") return to;
