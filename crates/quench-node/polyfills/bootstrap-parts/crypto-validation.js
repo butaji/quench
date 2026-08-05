@@ -61,9 +61,26 @@ const __quenchValidateDhInputType = (value) => {
       ),
       { code: "ERR_INVALID_ARG_TYPE" }
     );
+  if (typeof value === "string" && value.length === 0)
+    throw Object.assign(new TypeError("The sizeOrKey argument is invalid"), {
+      code: "ERR_INVALID_ARG_TYPE"
+    });
+};
+const __quenchValidateDhGeneratorType = (generator) => {
+  if (
+    generator !== undefined &&
+    typeof generator !== "number" &&
+    typeof generator !== "string" &&
+    !(generator instanceof ArrayBuffer) &&
+    !ArrayBuffer.isView(generator)
+  )
+    throw Object.assign(new TypeError("The generator argument is invalid"), {
+      code: "ERR_INVALID_ARG_TYPE"
+    });
 };
 const __quenchValidateDhNumbers = (sizeOrKey, generator) => {
   __quenchValidateDhInputType(sizeOrKey);
+  __quenchValidateDhGeneratorType(generator);
   if (typeof sizeOrKey === "number" && !Number.isInteger(sizeOrKey))
     throw Object.assign(
       new RangeError(

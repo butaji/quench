@@ -4980,3 +4980,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1399: crypto DH key methods
 
 - Provide key generation, public-key, and shared-secret methods with invalid-state validation.
+
+### Stage 1400: crypto DH argument types
+
+- Reject empty DH keys and unsupported generator argument types.
