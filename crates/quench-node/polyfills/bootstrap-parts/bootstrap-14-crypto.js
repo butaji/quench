@@ -189,17 +189,15 @@ const __nodeCryptoApi = {
       callback
     ));
     if (!Number.isSafeInteger(minimum) || !Number.isSafeInteger(maximum)) {
-      const error = new TypeError("The bounds must be safe integers");
+      const error = globalThis.__nodeCryptoRandomIntegerError(minimum, maximum);
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
-    if (maximum <= minimum || maximum - minimum > 0x1_0000_0000_0000) {
-      const error = new RangeError(
-        "The difference between max and min must be less than 2^48"
-      );
-      error.code = "ERR_OUT_OF_RANGE";
-      throw error;
-    }
+    const rangeError = globalThis.__nodeCryptoRandomIntegerRangeError(
+      minimum,
+      maximum
+    );
+    if (rangeError) throw rangeError;
     const range = maximum - minimum;
     const limit = Math.floor(0x1_0000_0000_0000 / range) * range;
     const choose = () => {
