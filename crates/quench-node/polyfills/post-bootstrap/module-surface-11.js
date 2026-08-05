@@ -205,7 +205,7 @@ globalThis.__quenchEncodeLegacyPath = (parsed) => {
 };
 globalThis.__quenchNormalizeSpecialUrlInput = (value) =>
   /^(?:https?|ftp):/i.test(value) && !/^(?:https?|ftp):\/\//i.test(value)
-    ? value.replace(/^((?:https?|ftp):)/i, "$1//")
+    ? value.replace(/^((?:https?|ftp):)/i, "$1//").replace(/\\/g, "/")
     : value;
 globalThis.__quenchWhatwgFormat = (input) =>
   input.protocol === "tel:"
