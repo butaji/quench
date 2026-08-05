@@ -169,6 +169,8 @@ const __nodeFsAttachHandleOperations = (handle) => {
 };
 globalThis.__nodeFs.promises.lchmod = async (value, mode) =>
   globalThis.__nodeFs.lchmodSync(value, mode);
+globalThis.__nodeFs.promises.lchown = async (value, uid, gid) =>
+  globalThis.__nodeFs.lchownSync(value, uid, gid);
 globalThis.__nodeFs.promises.open = async (...args) => {
   const handle = await __nodePromiseOpen(...args);
   __nodeFsAttachHandleIo(handle);

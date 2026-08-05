@@ -61,3 +61,30 @@ globalThis.__nodeFs.lchmod = (value, mode, callback) => {
   globalThis.__nodeFs.lchmodSync(value, mode);
   queueMicrotask(() => callback(null));
 };
+const nodeOwner = (owner, name) => {
+  if (!Number.isInteger(owner) || owner < 0) {
+    const error = new TypeError(
+      `The "${name}" argument must be of type number`
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+};
+globalThis.__nodeFs.lchownSync = (value, uid, gid) => {
+  nodeOwner(uid, "uid");
+  nodeOwner(gid, "gid");
+  __nodeFsPathOnly(value);
+};
+globalThis.__nodeFs.lchown = (value, uid, gid, callback) => {
+  nodeOwner(uid, "uid");
+  nodeOwner(gid, "gid");
+  if (typeof callback !== "function") {
+    const error = new TypeError(
+      'The "callback" argument must be of type function'
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  globalThis.__nodeFs.lchownSync(value, uid, gid);
+  queueMicrotask(() => callback(null));
+};
