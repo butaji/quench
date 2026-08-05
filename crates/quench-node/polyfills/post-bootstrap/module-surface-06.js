@@ -189,7 +189,12 @@
       : property === "username" || property === "password"
         ? globalThis.__nodeUrlEncode(value)
         : property === "pathname"
-          ? String(value).split("/").map(globalThis.__nodeUrlEncode).join("/")
+          ? String(value)
+              .split("/")
+              .map((segment) =>
+                globalThis.__nodeUrlEncode(segment).replace(/%3B/gi, ";")
+              )
+              .join("/")
           : property === "search"
             ? String(value) === ""
               ? ""
