@@ -428,14 +428,13 @@ globalThis.setTimeout = (callback, _delay = 0, ...args) => {
   id.ref = () => ((id.refed = true), id);
   id.unref = () => ((id.refed = false), id);
   id.hasRef = () => id.active && id.refed;
-  id.generation = 0;
   const resource = globalThis.__nodeCurrentAsyncResource;
   const schedule = () => {
     const generation = ++id.generation;
     queueMicrotask(() => {
       if (id.active && generation === id.generation) {
-        if (_delay > 0)
-          globalThis.__quench_sleep_ms(Math.max(0, Number(_delay)));
+        const delay = __nodeTimerDelay(_delay);
+        if (delay) globalThis.__quench_sleep_ms(delay);
         const previous = globalThis.__nodeCurrentAsyncResource;
         globalThis.__nodeCurrentAsyncResource = resource;
         try {
@@ -469,7 +468,8 @@ globalThis.setInterval = (callback, _delay = 0, ...args) => {
     const generation = ++id.generation;
     queueMicrotask(() => {
       if (!id.active || generation !== id.generation) return;
-      if (_delay > 0) globalThis.__quench_sleep_ms(Math.max(0, Number(_delay)));
+      const delay = __nodeTimerDelay(_delay);
+      if (delay) globalThis.__quench_sleep_ms(delay);
       callback.apply(id, args);
       if (id.active) schedule();
     });
