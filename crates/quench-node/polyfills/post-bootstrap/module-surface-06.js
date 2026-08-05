@@ -173,6 +173,10 @@
         ...descriptor,
         enumerable: true
       });
+    const href =
+      prototype && Object.getOwnPropertyDescriptor(prototype, "href");
+    if (href)
+      Object.defineProperty(prototype, "href", { ...href, enumerable: true });
     if (prototype && !prototype.toJSON) {
       const toJSON = new Proxy(() => undefined, {
         apply: (_target, receiver) => prototype.toString.call(receiver)
@@ -182,6 +186,21 @@
         configurable: true,
         enumerable: true,
         value: toJSON,
+        writable: true
+      });
+    }
+    const inspect = Symbol.for("nodejs.util.inspect.custom");
+    if (prototype && !prototype[inspect]) {
+      const inspectMethod = new Proxy(() => undefined, {
+        apply: (_target, receiver) => prototype.toString.call(receiver)
+      });
+      Object.defineProperty(inspectMethod, "name", {
+        value: `[${inspect.description}]`
+      });
+      Object.defineProperty(prototype, inspect, {
+        configurable: true,
+        enumerable: false,
+        value: inspectMethod,
         writable: true
       });
     }
