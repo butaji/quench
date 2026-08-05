@@ -172,6 +172,7 @@ const __quenchValidateCipherEncoding = (encoding, current) => {
 };
 const __quenchCipherAuthentication = (state) => ({
   setAAD() {
+    if (state.updated) throw new Error("Invalid state");
     return this;
   },
   setAuthTag(value) {
@@ -202,6 +203,7 @@ const __quenchCryptoCipherFallback = (result) => {
         );
         __quenchValidateCipherEncoding(encoding, inputEncoding);
         __quenchValidateCipherEncoding(resultEncoding, outputEncoding);
+        state.updated = true;
         return __quenchCipherTransform(value, encoding, resultEncoding, values);
       },
       ...__quenchCipherAuthentication(state),
