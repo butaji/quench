@@ -71,6 +71,13 @@ const __nodeFsReadPath = (value) => {
   error.code = "EBADF";
   throw error;
 };
+const __nodeFsApplyMkdirMode = (path, options) => {
+  const mode = typeof options === "object" ? options.mode : options;
+  if (mode === undefined) return;
+  const numericMode =
+    typeof mode === "string" ? parseInt(mode, 8) : Number(mode);
+  globalThis.__nodeModes[path] = numericMode & 0o777;
+};
 const __nodeFsReadBytes = (path, options) => {
   try {
     return globalThis.__quench_fs_read_bytes(path);
@@ -353,7 +360,9 @@ Object.assign(globalThis.__nodeFs, {
     }
     __nodeFsCheckMkdirParents(path);
     try {
-      return globalThis.__quench_fs_mkdir(path);
+      const result = globalThis.__quench_fs_mkdir(path);
+      __nodeFsApplyMkdirMode(path, options);
+      return result;
     } catch (_) {
       const error = new Error(
         `ENOENT: no such file or directory, mkdir '${path}'`

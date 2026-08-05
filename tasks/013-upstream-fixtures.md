@@ -4370,3 +4370,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Added standard filesystem mode/open constants and Node’s null-prototype
   `fs.constants` surface.
+
+### Stage 1259: mkdir mode masking
+
+- Preserve the requested directory mode while masking file-type bits above
+  `0o777`.
