@@ -5369,3 +5369,6 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1637. `url-href-enumerability.js` — align URL href accessor enumerability.
 1638. `url-accessor-enumerability.js` — normalize existing URL accessor descriptors.
 1639. `url-href-setter.js` — add writable URL href accessor behavior.
+1640. `url-module-descriptors.js` — expose URL accessors on the url module constructor.
+1641. `url-static-object-url.js` — expose URL object URL static methods.
+1642. `urlsearchparams-method-descriptors.js` — expose URLSearchParams prototype methods.
