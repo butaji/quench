@@ -6,6 +6,10 @@ use std::rc::Rc;
 use crate::context::Context;
 use crate::value::{to_number, NativeFunction, ObjData, Object, ObjectKind, Value};
 
+fn is_array_buffer(object: &Object) -> bool {
+    object.get_own("\0arrayBuffer").is_some()
+}
+
 pub fn register_array_buffer(ctx: &mut Context) {
     let proto_rc = Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)));
     if let Some(object_proto) = crate::builtins::get_object_prototype() {
@@ -44,6 +48,7 @@ pub fn register_array_buffer(ctx: &mut Context) {
                 sliced.prototype = Some(p);
             }
             sliced.set("byteLength", Value::Number(sliced_len));
+            sliced.set("\0arrayBuffer", Value::Boolean(true));
             sliced.elements = this_obj.borrow().elements[start..end].to_vec();
             crate::builtins::object::set_boxed_value(&mut sliced, Value::Number(sliced_len));
             Ok(Value::Object(Rc::new(RefCell::new(sliced))))
@@ -87,6 +92,7 @@ pub fn register_array_buffer(ctx: &mut Context) {
                 result.prototype = Some(Rc::clone(&proto));
                 result.elements = elements;
                 result.set("byteLength", Value::Number(length));
+                result.set("\0arrayBuffer", Value::Boolean(true));
                 crate::builtins::object::set_boxed_value(&mut result, Value::Number(length));
                 Ok(Value::Object(Rc::new(RefCell::new(result))))
             }))),
@@ -102,6 +108,11 @@ pub fn register_array_buffer(ctx: &mut Context) {
             ));
         };
         let o = o.borrow();
+        if !is_array_buffer(&o) {
+            return Err(crate::JsError::new(
+                "TypeError: ArrayBuffer.prototype.resizable requires an ArrayBuffer receiver",
+            ));
+        }
         let max_bl = o
             .get_own_value("maxByteLength")
             .map(|v| to_number(&v))
@@ -182,6 +193,9 @@ pub fn register_array_buffer(ctx: &mut Context) {
                     &mut this_obj.borrow_mut(),
                     Value::Number(len),
                 );
+                this_obj
+                    .borrow_mut()
+                    .set("\0arrayBuffer", Value::Boolean(true));
                 // Read maxByteLength from options argument
                 let max_bl = args
                     .get(1)
@@ -324,6 +338,11 @@ mod tests {
     fn array_buffer_constructor_with_zero_length() {
         let result = eval_ok("(new ArrayBuffer(0)).byteLength");
         assert_eq!(result.to_string(), "0");
+    }
+
+    #[test]
+    fn array_buffer_resizable_rejects_prototype_lookalikes() {
+        assert!(eval_err("Object.create(ArrayBuffer.prototype).resizable"));
     }
 
     #[test]
