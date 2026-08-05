@@ -188,13 +188,25 @@ const __quenchValidateStatelessDhParameters = (options) => {
       code: "ERR_OSSL_MISMATCHING_DOMAIN_PARAMETERS"
     });
 };
+const __quenchStatelessDhValidate = (options, callback) => {
+  try {
+    __quenchValidateStatelessDhRequiredKeys(options);
+    __quenchValidateStatelessDhKeys(options);
+    __quenchValidateStatelessDhParameters(options);
+    return true;
+  } catch (error) {
+    if (typeof callback === "function") {
+      callback(error);
+      return false;
+    }
+    throw error;
+  }
+};
 const __quenchCryptoKeyExchangeFallback = (result) => {
   __quenchPrepareDhGroup(result);
   result.diffieHellman ||= (options, callback) => {
     __quenchValidateStatelessDhArgs(options, callback);
-    __quenchValidateStatelessDhRequiredKeys(options);
-    __quenchValidateStatelessDhKeys(options);
-    __quenchValidateStatelessDhParameters(options);
+    if (!__quenchStatelessDhValidate(options, callback)) return;
     return NodeBuffer.from(__quenchDhPaddingSecret, "hex");
   };
   result.createDiffieHellman = (
