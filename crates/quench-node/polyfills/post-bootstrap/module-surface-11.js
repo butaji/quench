@@ -203,6 +203,10 @@ globalThis.__quenchEncodeLegacyPath = (parsed) => {
       encodeURIComponent(value)
     );
 };
+globalThis.__quenchNormalizeSpecialUrlInput = (value) =>
+  /^(?:https?|ftp):/i.test(value) && !/^(?:https?|ftp):\/\//i.test(value)
+    ? value.replace(/^((?:https?|ftp):)/i, "$1//")
+    : value;
 globalThis.__quenchResolveStringFragmentOnly = (from, to) =>
   typeof from === "string"
     ? globalThis.__quenchResolveFragmentOnly(from, to)
