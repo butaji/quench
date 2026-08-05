@@ -323,7 +323,7 @@ globalThis.__nodeURL = class NodeURL {
     if (!(this instanceof globalThis.__nodeURL))
       throw new TypeError("Receiver must be an instance of class URL");
     // prettier-ignore
-    const credentials = this.username || this.password ? `${this.username || ""}${this.password ? `:${this.password}` : ""}@` : "" , prefix = this.protocol === "file:" ? "file://" : this.origin === "null" ? this.protocol + (this._hasAuthorityDelimiter ? "//" : "") : this.origin.replace(/^(\w+:\/\/)/, `$1${credentials}`);
+    const credentials = this.username || this.password ? `${this.username || ""}${this.password ? `:${this.password}` : ""}@` : "" , prefix = this.protocol === "file:" ? "file://" : this.origin === "null" ? this.protocol + (this._hasAuthorityDelimiter ? `//${credentials}${this.host}` : "") : this.origin.replace(/^(\w+:\/\/)/, `$1${credentials}`);
     return `${prefix}${this.pathname}${this.search}${this.hash}`;
   }
   // prettier-ignore
