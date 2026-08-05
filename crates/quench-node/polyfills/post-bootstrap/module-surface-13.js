@@ -56,6 +56,10 @@ const __quenchCryptoKeyFallback = (result) => {
     privateKey: create("private")(),
     publicKey: create("public")()
   });
+  result.generateKeySync = () => ({
+    type: "secret",
+    export: () => NodeBuffer.alloc(16)
+  });
 };
 const __quenchCryptoConstantsFallback = (result) => {
   result.constants ||= {};
