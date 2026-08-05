@@ -101,8 +101,8 @@ globalThis.__nodeFs.rm = (value, options, callback) => {
 globalThis.__nodeFs.rename = (from, to, callback) => {
   if (typeof callback !== "function")
     throw new TypeError('The "callback" argument must be of type function');
-  const source = nodeFsPath(from);
-  const destination = nodeFsPath(to);
+  const source = __nodeFsPathOnly(from);
+  const destination = __nodeFsPathOnly(to);
   queueMicrotask(() => {
     try {
       globalThis.__nodeFs.renameSync(source, destination);
