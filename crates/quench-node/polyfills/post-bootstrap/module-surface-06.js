@@ -195,6 +195,7 @@
               .map((segment) =>
                 globalThis
                   .__nodeUrlEncode(segment)
+                  .replace(/%25([0-9A-F]{2})/gi, "%$1")
                   .replace(/%3B/gi, ";")
                   .replace(/%3A/gi, ":")
                   .replace(/%40/gi, "@")
