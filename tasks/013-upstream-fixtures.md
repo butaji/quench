@@ -4379,3 +4379,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1260: filesystem watcher close
 
 - Added the minimal `fs.watch` closeable handle and no-op file watcher methods.
+
+### Stage 1261: mkdir recursive validation
+
+- Added Node-compatible received-value details to invalid `mkdir` recursive
+  option errors.
