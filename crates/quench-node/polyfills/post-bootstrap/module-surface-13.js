@@ -14,7 +14,6 @@ const __quenchCryptoConstructors = (result) => {
     "generateKeyPairSync",
     "generateKey",
     "generateKeySync",
-    "createDecipheriv",
     "hkdf",
     "pbkdf2",
     "scrypt",
@@ -88,6 +87,10 @@ const __quenchCryptoCipherFallback = (result) => {
       }
     };
   };
+  result.createDecipheriv ||= result.createCipheriv;
+  __quenchCryptoCipherConstructors(result);
+};
+const __quenchCryptoCipherConstructors = (result) => {
   const Cipheriv = function Cipheriv(...args) {
     const cipher = result.createCipheriv(...args);
     Object.setPrototypeOf(cipher, Cipheriv.prototype);
