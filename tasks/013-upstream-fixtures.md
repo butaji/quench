@@ -5056,3 +5056,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1418: crypto stateless DH key-object ordering
 
 - Distinguish plain key objects from `{ key, format, type }` descriptors.
+
+### Stage 1419: crypto stateless DH required keys
+
+- Require both private and public keys for one-shot DH.
