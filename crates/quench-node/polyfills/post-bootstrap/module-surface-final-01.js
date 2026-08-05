@@ -395,9 +395,10 @@ const __quenchAddUrlFormatting = (result) => {
   (__quenchAddUrlDomainFallbacks(result), __quenchAddUrlParseFallback(result));
   (globalThis.__quenchAddLegacyParseMethods(result),
     __quenchAddFileUrlFallback(result));
-  const originalResolve = result.resolve;
+  const originalResolve = result.resolve,
+    resolveObjectEarly = globalThis.__quenchResolveObjectEarly;
   result.resolveObject ||= (from, to) => {
-    const early = globalThis.__quenchResolveObjectEarly(result, from, to);
+    const early = resolveObjectEarly(result, from, to, originalResolve);
     if (early) return early;
     const protocolTarget =
       globalThis.__quenchResolveFileFragment(from, to) ||
@@ -405,18 +406,17 @@ const __quenchAddUrlFormatting = (result) => {
       __quenchResolveProtocolTargetBase(from, to);
     if (protocolTarget)
       return globalThis.__quenchNormalizeAuthorityTarget(protocolTarget);
-    const scopedPath = __quenchResolveScopedPath(from, to);
-    if (scopedPath) return scopedPath;
-    const singleSlashProtocol = to.match(
-      /^([A-Za-z][A-Za-z0-9+.-]*):\/([^/].*)$/
+    if (__quenchResolveScopedPath(from, to))
+      return __quenchResolveScopedPath(from, to);
+    const singleSlashProtocol = globalThis.__quenchResolveSingleSlashProtocol(
+      from,
+      to
     );
-    if (singleSlashProtocol)
-      return `${singleSlashProtocol[1]}://${singleSlashProtocol[2]}`;
+    if (singleSlashProtocol) return singleSlashProtocol;
     if (to === ".") return from.slice(0, from.lastIndexOf("/") + 1);
     return __quenchResolvePath(from, to, originalResolve);
   };
-  result.resolve = (from, to) =>
-    globalThis.__quenchWrapResolve(result, from, to);
+  result.resolve = (...args) => globalThis.__quenchWrapResolve(result, ...args);
   const originalFormat = result.format;
   result.format = (input, ...args) => {
     __quenchValidateUrlFormatInput(input);
