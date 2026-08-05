@@ -615,19 +615,21 @@ pub fn create_class_prototype_helper_with_env(
             return Ok(Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary))));
         }
         if !matches!(&super_class_val, Value::Null) && !is_constructor_value(&super_class_val) {
-            return Err(JsError(
-                "TypeError: superclass must be a constructor".to_string(),
-            ));
+            let message = "TypeError: superclass must be a constructor";
+            let (thrown, error) =
+                crate::value::error::create_js_error_with_type(message, "TypeError");
+            crate::value::set_thrown_value(thrown);
+            return Err(error);
         }
 
         if matches!(&super_class_val, Value::Null) {
             None
         } else if let Value::NativeFunction(nf) = &super_class_val {
             if nf.name == "Proxy" {
-                return Err(JsError(
-                    "TypeError: superclass constructor prototype is not an object or null"
-                        .to_string(),
-                ));
+                let message = "TypeError: superclass constructor prototype is not an object or null";
+                let (thrown, error) = crate::value::error::create_js_error_with_type(message, "TypeError");
+                crate::value::set_thrown_value(thrown);
+                return Err(error);
             }
             let proto_val = crate::eval::member::eval_native_function_member(nf, "prototype")?;
             if matches!(&proto_val, Value::Null) {
@@ -635,10 +637,10 @@ pub fn create_class_prototype_helper_with_env(
             } else if let Value::Object(o) = &proto_val {
                 Some(Rc::clone(o))
             } else {
-                return Err(JsError(
-                    "TypeError: superclass constructor prototype is not an object or null"
-                        .to_string(),
-                ));
+                let message = "TypeError: superclass constructor prototype is not an object or null";
+                let (thrown, error) = crate::value::error::create_js_error_with_type(message, "TypeError");
+                crate::value::set_thrown_value(thrown);
+                return Err(error);
             }
         } else {
             // For other types (Object, Class, Function), use the existing helper

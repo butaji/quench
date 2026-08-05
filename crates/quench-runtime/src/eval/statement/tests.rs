@@ -1807,6 +1807,8 @@ mod class_declaration {
     #[test]
     fn class_invalid_heritage_throws() {
         assert!(eval("class C extends 42 {}").is_err());
+        assert!(eval("class C extends function() {}.bind() {}").is_err());
+        assert!(crate::value::take_thrown_value().is_some());
     }
 
     #[test]
