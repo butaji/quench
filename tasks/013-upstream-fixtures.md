@@ -5200,3 +5200,5 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1467. `crypto-sign-constructors.js` — preserve callable Sign and Verify constructor behavior.
 1468. `crypto-sign-error-metadata.js` — preserve signing error metadata setter behavior.
 1469. `crypto-sign-padding-error.js` — preserve RSA OAEP signing error behavior.
+1470. `crypto-encrypt-hex-input.js` — decode hex-encoded public encryption input.
+1471. `crypto-private-encrypt-roundtrip.js` — expose private-encrypt/public-decrypt round trips.

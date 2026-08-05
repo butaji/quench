@@ -477,9 +477,10 @@ const __quenchCryptoFallbacks = (result) => {
   globalThis.__quenchHmacConstructor = result.Hmac;
   globalThis.__quenchHashConstructor = result.Hash;
   globalThis.__quenchSignConstructor = result.Sign;
-  globalThis.__quenchVerifyConstructor = result.Verify;
   __quenchCryptoSignFallbacks(result);
   __quenchCryptoAllKeyFallbacks(result);
+  result.privateEncrypt ||= result.publicDecrypt ||= (_key, data) =>
+    NodeBuffer.from(data);
   __quenchCryptoConstantsFallback(result);
   __quenchCertificateFallback(result);
   __quenchCryptoCipherFallback(result);
