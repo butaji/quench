@@ -150,12 +150,15 @@ pub fn register_array_buffer(ctx: &mut Context) {
                         "ArrayBuffer method requires an ArrayBuffer receiver",
                     ));
                 }
-                if let Some(value) = args.first() {
-                    let new_length = to_number(value);
-                    if !new_length.is_finite() || !(0.0..=u32::MAX as f64).contains(&new_length) {
-                        return Err(array_buffer_range_error(
-                            "ArrayBuffer transfer length is out of range",
-                        ));
+                if !is_slice {
+                    if let Some(value) = args.first() {
+                        let new_length = to_number(value);
+                        if !new_length.is_finite() || !(0.0..=u32::MAX as f64).contains(&new_length)
+                        {
+                            return Err(array_buffer_range_error(
+                                "ArrayBuffer transfer length is out of range",
+                            ));
+                        }
                     }
                 }
                 let mut obj = this_obj.borrow_mut();
