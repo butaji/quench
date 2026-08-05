@@ -277,7 +277,9 @@ class NodeURLSearchParams {
 }
 globalThis.__nodeURLSearchParams = NodeURLSearchParams;
 const __nodeURLResolveInput = (input, base) => {
-  let value = String(input);
+  let value = String(input)
+    .trim()
+    .replace(/[\t\n\r]/g, "");
   if (base && !/^[a-z][a-z0-9+.-]*:/.test(value)) {
     const baseUrl = new globalThis.__nodeURL(base);
     value = value.startsWith("/")
@@ -299,9 +301,7 @@ const __nodeURLAssignParts = (url, match) => {
   // prettier-ignore
   url.pathname = match[3] || "/", url.search = match[4] ? `?${match[4]}` : "", url.hash = match[5] ? `#${match[5]}` : "";
   // prettier-ignore
-  Object.defineProperty(url, "origin", { configurable: true, enumerable: false, value: url.protocol && url.host ? `${url.protocol}//${url.host}` : "null", writable: true }), Object.defineProperty(url, "searchParams", { configurable: true, enumerable: false, value: (() => { const params = new NodeURLSearchParams(match[4] || ""); Object.defineProperty(params, "__nodeURLOwner", { configurable: true, value: url, writable: true }); return params; })(), writable: true });
-  // prettier-ignore
-  url._origin = url.origin, url._searchParams = url.searchParams, delete url.origin, delete url.searchParams;
+  Object.defineProperty(url, "origin", { configurable: true, enumerable: false, value: url.protocol && url.host ? `${url.protocol}//${url.host}` : "null", writable: true }), Object.defineProperty(url, "searchParams", { configurable: true, enumerable: false, value: (() => { const params = new NodeURLSearchParams(match[4] || ""); Object.defineProperty(params, "__nodeURLOwner", { configurable: true, value: url, writable: true }); return params; })(), writable: true }), url._origin = url.origin, url._searchParams = url.searchParams, delete url.origin, delete url.searchParams;
   // prettier-ignore
   Object.keys(url).filter((key) => key.startsWith("_")).forEach((key) => Object.defineProperty(url, key, { enumerable: false }));
 };
