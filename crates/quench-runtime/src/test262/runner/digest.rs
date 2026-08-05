@@ -114,13 +114,10 @@ fn record_outcome(
 }
 
 fn inprocess_digest() -> bool {
-    inprocess_digest_value(std::env::var("TEST262_INPROCESS").ok().as_deref())
-}
-
-fn inprocess_digest_value(value: Option<&str>) -> bool {
-    value
+    std::env::var("TEST262_INPROCESS")
+        .ok()
         .map(|s| s == "1" || s.eq_ignore_ascii_case("true"))
-        .unwrap_or(true)
+        .unwrap_or(false) // default to isolated (crash = failure, not skip)
 }
 
 fn run_serial(
@@ -532,13 +529,6 @@ fn label(path: &Path, strict: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn digest_defaults_to_in_process_execution() {
-        assert!(inprocess_digest_value(None));
-        assert!(!inprocess_digest_value(Some("0")));
-        assert!(inprocess_digest_value(Some("true")));
-    }
 
     #[test]
     fn elapsed_millis_reports_subsecond_precision() {
