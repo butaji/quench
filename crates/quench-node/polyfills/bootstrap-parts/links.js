@@ -317,7 +317,7 @@ globalThis.__nodeFs.lstatSync = (value) => {
   const stats = new globalThis.__nodeStats(
     kind === "file",
     kind === "directory",
-    new Date()
+    new Date(Date.now() - 1)
   );
   stats._symlink = kind === "symlink";
   stats.mode = globalThis.__nodeModes[path] || 0;
