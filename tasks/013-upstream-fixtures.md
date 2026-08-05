@@ -4844,3 +4844,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1365: crypto GCM IV validation
 
 - Enforce the supported AES-GCM initialization-vector length range.
+
+### Stage 1366: crypto cipher key validation
+
+- Reject unknown ciphers and invalid AES/DES key lengths.
