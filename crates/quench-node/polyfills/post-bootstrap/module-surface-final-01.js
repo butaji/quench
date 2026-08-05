@@ -233,6 +233,16 @@ const __quenchValidateUrlFormatOptions = (options) => {
   error.code = "ERR_INVALID_ARG_TYPE";
   throw error;
 };
+const __quenchValidateUrlFormatInput = (input) => {
+  if (
+    input !== null &&
+    (typeof input === "string" || typeof input === "object")
+  )
+    return;
+  const error = new TypeError("The url argument must be a string or object");
+  error.code = "ERR_INVALID_ARG_TYPE";
+  throw error;
+};
 const __quenchResolvedPath = (resolved, target) => {
   if (resolved === "/") return resolved;
   if (target === ".." || target.endsWith("/") || target.endsWith("/."))
@@ -412,9 +422,11 @@ const __quenchAddUrlFormatting = (result) => {
   result.resolve = result.resolveObject;
   const originalFormat = result.format;
   result.format = (input, ...args) => {
+    __quenchValidateUrlFormatInput(input);
     __quenchValidateUrlFormatOptions(args[0]);
     if (input && typeof input === "object")
       return __quenchFormatUrlObject(__quenchUrlFormatInput(input, args[0]));
+    if (input === "") return "";
     if (typeof input !== "string")
       return originalFormat.call(result, input, ...args);
     return __quenchFormatUrlString(input, originalFormat, args, result);
