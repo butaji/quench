@@ -4554,3 +4554,11 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Implement the internal `validateRmOptionsSync` contract used by upstream
   `fs.rm` tests.
+
+### Stage 1302: async symlink validation
+
+- Add Node error codes to callback-based symlink path and type validation.
+
+### Stage 1303: symlink metadata timestamps
+
+- Keep `lstat` and target `stat` timestamps distinguishable for symlinks.
