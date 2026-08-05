@@ -341,17 +341,14 @@ const __nodeLegacyUrlValidateAuthority = (value) => {
     throw error;
   }
 };
-const __nodeLegacyUrlPrepare = (value) => {
-  const result = globalThis.__nodePrepareLegacyUrl(value);
-  __nodeLegacyUrlValidateAuthority(result.input);
-  return result;
-};
 const __nodeLegacyUrlAuthority = (input) => {
   const authority =
     input.match(/^(?:[a-z][a-z0-9+.-]*:)?\/\/([^/?#]*)/i)?.[1] || "";
   const at = authority.lastIndexOf("@");
   const auth = at >= 0 ? decodeURIComponent(authority.slice(0, at)) : null;
-  const host = (at >= 0 ? authority.slice(at + 1) : authority).toLowerCase();
+  const host = globalThis.__nodeLegacyHostASCII(
+    (at >= 0 ? authority.slice(at + 1) : authority).toLowerCase()
+  );
   return { auth, host };
 };
 const __nodeLegacyUrlPathParts = (parsed, host) => {
@@ -458,7 +455,9 @@ const __nodeUrlModuleExports = {
     return new globalThis.__nodeURL("file://" + (isAbsolute ? "" : "") + p);
   },
   parse: (value) => {
-    const { input, parsed } = __nodeLegacyUrlPrepare(value);
+    const prepared = globalThis.__nodePrepareLegacyUrl(value);
+    __nodeLegacyUrlValidateAuthority(prepared.input);
+    const { input, parsed } = prepared;
     const protocolRelative =
       globalThis.__nodeLegacyProtocolRelativeParts(input);
     if (protocolRelative) return protocolRelative;
@@ -466,6 +465,8 @@ const __nodeUrlModuleExports = {
     if (mailto) return mailto;
     const schemeAddress = globalThis.__nodeLegacySchemeAddressParts(input);
     if (schemeAddress) return schemeAddress;
+    const opaquePath = globalThis.__nodeLegacyOpaquePathParts(input);
+    if (opaquePath) return opaquePath;
     return __nodeLegacyUrlParts(input, parsed);
   },
   format: (value) => {

@@ -78,7 +78,10 @@ if (globalThis.require) {
     __quenchApplyModuleSurface12(name, originalRequire(name));
 }
 globalThis.__nodeLegacyPathEncode = (value) =>
-  encodeURIComponent(value).replace(/%2F/gi, "/").replace(/%3A/gi, ":");
+  encodeURIComponent(value)
+    .replace(/%2F/gi, "/")
+    .replace(/%3A/gi, ":")
+    .replace(/%40/gi, "@");
 globalThis.__nodeLegacyUrlHrefPath = (pathname) =>
   pathname.startsWith(";") ? `/${pathname}` : pathname;
 globalThis.__nodeLegacyUrlHostValue = (protocol, host) =>
@@ -147,4 +150,33 @@ globalThis.__nodeLegacySchemeAddressParts = (input) => {
     query: match[3] || null,
     path: search
   };
+};
+globalThis.__nodeLegacyOpaquePathParts = (input) => {
+  const match = input.match(
+    /^([a-z][a-z0-9+.-]*:)([^/?#]+)\/([^?#]*)(?:\?([^#]*))?(?:#(.*))?$/i
+  );
+  if (!match || match[1].toLowerCase() === "mailto:") return null;
+  const search = match[4] ? `?${match[4]}` : null;
+  const hash = match[5] ? `#${match[5]}` : null;
+  return {
+    href: input,
+    host: match[2],
+    hostname: match[2],
+    protocol: match[1].toLowerCase(),
+    pathname: `/${match[3]}`,
+    path: `/${match[3]}${search || ""}`,
+    slashes: null,
+    auth: null,
+    port: null,
+    hash,
+    search,
+    query: match[4] || null
+  };
+};
+globalThis.__nodeLegacyHostASCII = (host) => {
+  try {
+    return globalThis.require("punycode").toASCII(host);
+  } catch (_) {
+    return host;
+  }
 };
