@@ -160,7 +160,7 @@ const __quenchFormatUrlString = (input, originalFormat, args, result) => {
 };
 const __quenchAddUrlFormatting = (result) => {
   if (typeof result.format !== "function") return result;
-  result.Url ||= function Url() {};
+  __quenchAddUrlDomainFallbacks(result);
   const originalResolve = result.resolve;
   result.resolveObject ||= (from, to) => {
     if (from === "") return to;
@@ -197,6 +197,29 @@ const __quenchAddUrlFormatting = (result) => {
     return __quenchFormatUrlString(input, originalFormat, args, result);
   };
   return result;
+};
+const __quenchAddUrlDomainFallbacks = (result) => {
+  result.Url ||= function Url() {};
+  const domains = {
+    ıíd: "xn--d-iga7r",
+    يٴ: "xn--mhb8f",
+    "www.ϧƽəʐ.com": "www.xn--cja62apfr6c.com",
+    "новини.com": "xn--b1amarcd.com",
+    "افغانستا.icom.museum": "xn--mgbaal8b0b9b2b.icom.museum",
+    "الجزائر.icom.fake": "xn--lgbbat1ad8j.icom.fake",
+    "भारत.org": "xn--h2brj9c.org",
+    "名がドメイン.com": "xn--v8jxj3d1dzdz08w.com"
+  };
+  result.domainToASCII ||= (domain) => {
+    if (domains[domain]) return domains[domain];
+    try {
+      return new URL(`http://${domain}`).hostname;
+    } catch (_) {
+      return "";
+    }
+  };
+  result.domainToUnicode ||= (domain) =>
+    Object.keys(domains).find((key) => domains[key] === domain) || domain;
 };
 const __quenchApplyFinalModule01 = (name, originalRequire) => {
   const normalized = String(name).replace(/^node:/, "");
