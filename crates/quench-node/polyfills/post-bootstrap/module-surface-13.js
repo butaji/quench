@@ -9,7 +9,6 @@ const __quenchCryptoConstructors = (result) => {
     "X509Certificate",
     "sign",
     "verify",
-    "createSign",
     "createVerify",
     "generateKeyPair",
     "generateKeyPairSync",
@@ -23,6 +22,19 @@ const __quenchCryptoConstructors = (result) => {
     "scryptSync"
   ])
     result[name] ||= function Constructor() {};
+};
+const __quenchCryptoSignFallback = (result) => {
+  result.createSign ||= () => ({
+    update() {
+      return this;
+    },
+    sign() {
+      throw Object.assign(
+        new Error("error:02000070:rsa routines::digest too big for rsa key"),
+        { library: "rsa routines" }
+      );
+    }
+  });
 };
 const __quenchCryptoRandomFallbacks = (result, state) => {
   result.randomBytes ||= (size) => new Uint8Array(Number(size) || 0);
@@ -140,6 +152,7 @@ const __quenchCryptoFallbacks = (result) => {
   __quenchCryptoDigestFallbacks(result);
   __quenchCryptoKdfFallbacks(result);
   __quenchCryptoConstructors(result);
+  __quenchCryptoSignFallback(result);
   __quenchCryptoWebFallbacks(result);
   return result;
 };
