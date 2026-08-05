@@ -22,10 +22,15 @@ __quenchSharedChildProcess.execFile = (file, args, options, callback) => {
     file,
     Array.isArray(args) ? args : []
   );
+  const values = Array.isArray(args) ? args : [];
+  const failed = values.some((value) => String(value) === "42");
   if (done)
-    queueMicrotask(() =>
-      done(null, __quenchEchoOutput(file, Array.isArray(args) ? args : []), "")
-    );
+    queueMicrotask(() => {
+      if (!failed) return done(null, __quenchEchoOutput(file, values), "");
+      const error = new Error(`Command failed: ${file} ${values.join(" ")}`);
+      error.code = 42;
+      done(error, "", "");
+    });
   return child;
 };
 const __quenchSyncOutput = (file, args, options) => {
