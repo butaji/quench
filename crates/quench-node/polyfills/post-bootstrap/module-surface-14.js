@@ -182,10 +182,16 @@ const __quenchDhAlgorithmsDiffer = (privateParams, publicParams) =>
   privateParams?.algorithm &&
   publicParams?.algorithm &&
   privateParams.algorithm !== publicParams.algorithm;
+const __quenchDhUnsupported = (privateParams, publicParams) =>
+  privateParams?.algorithm === "ed25519" ||
+  publicParams?.algorithm === "ed25519";
 const __quenchValidateStatelessDhParameters = (options) => {
   const privateParams = options.privateKey?.dhParams;
   const publicParams = options.publicKey?.dhParams;
-  if (__quenchDhAlgorithmsDiffer(privateParams, publicParams))
+  if (
+    __quenchDhUnsupported(privateParams, publicParams) ||
+    __quenchDhAlgorithmsDiffer(privateParams, publicParams)
+  )
     throw Object.assign(new Error("Different key types"), {
       code: "ERR_OSSL_EVP_OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE"
     });

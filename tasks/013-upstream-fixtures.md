@@ -5109,6 +5109,14 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Accept valid raw and compressed key descriptor encodings.
 
+### Stage 1433: crypto DH exported metadata
+
+- Preserve domain metadata across exported key buffer descriptors.
+
 ### Stage 1428: crypto DH non-domain peer key
 
 - Select the short vector for any non-domain-length peer key.
+
+### Stage 1434: crypto unsupported DH algorithm
+
+- Reject Ed25519 stateless DH operations as unsupported key types.
