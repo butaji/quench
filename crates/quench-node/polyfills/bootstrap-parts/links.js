@@ -373,7 +373,9 @@ globalThis.__nodeFs.lstat = (value, options, callback) => {
 };
 globalThis.__nodeFs.fstatSync = (fd) => {
   if (typeof fd !== "number") {
-    const error = new TypeError('The "fd" argument must be of type number');
+    const error = new TypeError(
+      `The "fd" argument must be of type number.${globalThis.__nodeCommon.invalidArgTypeHelper(fd)}`
+    );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
@@ -402,7 +404,9 @@ globalThis.__nodeFs.fstat = (fd, options, callback) => {
 globalThis.__nodeFs.Stats = globalThis.__nodeStats;
 globalThis.__nodeFs.close = (fd, callback) => {
   if (typeof fd !== "number") {
-    const error = new TypeError('The "fd" argument must be of type number');
+    const error = new TypeError(
+      `The "fd" argument must be of type number.${globalThis.__nodeCommon.invalidArgTypeHelper(fd)}`
+    );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
