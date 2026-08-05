@@ -45,6 +45,7 @@ const BOOTSTRAP_PARTS: &[&str] = &[
     include_str!("../polyfills/bootstrap-parts/bootstrap-13-url-format.js"),
     include_str!("../polyfills/bootstrap-parts/bootstrap-14-crypto.js"),
     include_str!("../polyfills/bootstrap-parts/bootstrap-14-crypto-random.js"),
+    include_str!("../polyfills/bootstrap-parts/bootstrap-14-crypto-hmac-validation.js"),
     include_str!("../polyfills/bootstrap-parts/bootstrap-15-require-core.js"),
     include_str!("../polyfills/bootstrap-parts/bootstrap-15-require-network.js"),
     include_str!("../polyfills/bootstrap-parts/bootstrap-15-require-cluster.js"),

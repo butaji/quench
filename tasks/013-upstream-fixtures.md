@@ -3891,3 +3891,9 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 - Verified the focused local-loader stage, lint rules, and Rust test suite;
   retained the loader as a separate post-bootstrap file to keep module logic
   readable and independently maintainable.
+
+### Stage 1162: HMAC encoding validation
+
+- Added Node-shaped rejection for odd-length hexadecimal HMAC updates.
+- Kept the validation as a separate crypto compatibility layer so the core
+  crypto implementation remains within the file-size limit.
