@@ -136,9 +136,9 @@ const __quenchParseQueryObject = (value) => {
   if (!value) return query;
   for (const part of String(value).split("&")) {
     const [key, item = ""] = part.split("=");
-    query[decodeURIComponent(key)] = decodeURIComponent(
-      item.replace(/\+/g, " ")
-    );
+    const name = decodeURIComponent(key);
+    const decoded = decodeURIComponent(item.replace(/\+/g, " "));
+    query[name] = name in query ? [].concat(query[name], decoded) : decoded;
   }
   return query;
 };
