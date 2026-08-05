@@ -4820,3 +4820,15 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1359: crypto cipher stream interface
 
 - Provide `end()`, `read()`, and `readableLength` on cipher objects.
+
+### Stage 1360: crypto cipher buffer round trip
+
+- Preserve cipher round trips when update output and input use buffers.
+
+### Stage 1361: crypto ECB IV validation
+
+- Allow null/empty ECB IVs and reject non-empty ECB initialization vectors.
+
+### Stage 1362: crypto missing IV validation
+
+- Reject omitted and explicitly undefined initialization vectors.
