@@ -5431,3 +5431,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1702. `url-pathname-percent-escape.js` — preserve percent escapes in URL pathnames.
 1703. `url-unknown-scheme-authority.js` — preserve hosts for unknown URL schemes.
 1704. `url-windows-drive-path.js` — normalize Windows drive paths in file URLs.
+1705. `url-legacy-drive-separator.js` — normalize legacy Windows drive separators.
