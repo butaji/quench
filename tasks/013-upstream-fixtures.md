@@ -4595,3 +4595,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Normalize the `fs.writeSync(fd, string, position, encoding)` overload before
   applying buffer range validation.
+
+### Stage 1311: writev callback overload
+
+- Recognize the callback-only `fs.writev(fd, callback)` overload before
+  validating the file descriptor and buffers.
