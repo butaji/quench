@@ -4732,3 +4732,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Verify `StringDecoder` accepts all upstream ArrayBufferView inputs and
   preserves incomplete UTF-8 state across writes and `end()`.
+
+### Stage 1339: string decoder UTF-16 state
+
+- Verify UTF-16LE surrogate buffering and unaligned byte sequences across
+  decoder writes.
