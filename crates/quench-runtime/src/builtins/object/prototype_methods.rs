@@ -63,7 +63,7 @@ pub fn object_prototype_has_own_property(args: Vec<Value>) -> Result<Value, JsEr
                     return Ok(Value::Boolean(true));
                 }
                 // Check prototype
-                if key_str == "prototype" && nf.prototype.borrow().is_some() {
+                if key_str == "prototype" && nf.get_property("prototype").is_some() {
                     return Ok(Value::Boolean(true));
                 }
                 // Check user-defined properties

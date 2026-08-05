@@ -567,6 +567,16 @@ mod tests {
     }
 
     #[test]
+    fn parse_int_has_no_prototype_own_property() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("Object.prototype.hasOwnProperty.call(parseInt, 'prototype')")
+                .unwrap(),
+            Value::Boolean(false)
+        );
+    }
+
+    #[test]
     fn parse_int_has_configurable_length_descriptor() {
         let mut ctx = Context::new().unwrap();
         assert_eq!(

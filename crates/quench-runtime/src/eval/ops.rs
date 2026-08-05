@@ -710,9 +710,12 @@ pub fn make_ops_object() -> Value {
                 if nf.get_property(&format!("\0deleted:{key}")).is_some() {
                     return Ok(Value::Undefined);
                 }
-                if !matches!(key.as_str(), "name" | "length" | "prototype")
+                if !matches!(key.as_str(), "name" | "length")
                     && nf.get_property(&key).is_none()
                 {
+                    return Ok(Value::Undefined);
+                }
+                if key == "prototype" && nf.get_property("prototype").is_none() {
                     return Ok(Value::Undefined);
                 }
                 let value = crate::eval::member::eval_native_function_member(nf, &key)?;
