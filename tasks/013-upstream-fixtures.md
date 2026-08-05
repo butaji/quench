@@ -5292,3 +5292,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1560. `url-resolve-fragment-only.js` — resolve fragment-only legacy bases.
 1561. `url-resolve-object-path.js` — preserve parsed relative path object shapes.
 1562. `url-resolve-object-path-matrix.js` — cover the initial parsed path matrix.
+1563. `url-resolve-object-cross-protocol.js` — preserve parsed cross-protocol targets.
