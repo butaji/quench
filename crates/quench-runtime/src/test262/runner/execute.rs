@@ -542,9 +542,6 @@ fn run_sync_script_with_path(source: &str, is_module: bool, path: &Path) -> Resu
     if strict && crate::interpreter::has_overlapping_regexp_modifiers(source) {
         return Err("SyntaxError: overlapping regexp modifiers".to_string());
     }
-    if is_module {
-        register_current_module_bindings(&mut ctx, source)?;
-    }
     let result = if is_module {
         ctx.eval_es_module(source)
     } else {
