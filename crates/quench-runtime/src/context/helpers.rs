@@ -222,6 +222,9 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
     let eval_strict = strict_inherited
         || source.trim_start().starts_with("\"use strict\"")
         || source.trim_start().starts_with("'use strict'");
+    let strict_indirect_eval = !crate::interpreter::is_direct_eval()
+        && (source.trim_start().starts_with("\"use strict\"")
+            || source.trim_start().starts_with("'use strict'"));
     if !eval_strict && crate::interpreter::is_direct_eval() {
         reject_eval_var_lexical_conflict(&program, ctx)?;
     }
@@ -303,6 +306,15 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
             }
             crate::interpreter::eval_program(&program, &mut eval_env, Some(&source), false)
         }
+    } else if strict_indirect_eval {
+        let this_value = ctx
+            .env
+            .borrow()
+            .get("globalThis")
+            .unwrap_or(Value::Undefined);
+        let mut eval_env = Rc::new(RefCell::new(Environment::with_parent(Rc::clone(&ctx.env))));
+        crate::interpreter::set_this_binding(&eval_env, this_value);
+        crate::interpreter::eval_program(&program, &mut eval_env, Some(&source), false)
     } else {
         let this_value = ctx
             .env
@@ -322,6 +334,24 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
     crate::interpreter::pop_label_scope();
     crate::interpreter::clear_eval_barrier_depth();
     let ast::Program::Script(body) = &program;
+    if strict_indirect_eval {
+        let mut var_names = Vec::new();
+        crate::interpreter::collect_var_names_recursive(body, &mut var_names);
+        let before = eval_global_names.as_ref();
+        if let Some(Value::Object(global)) = ctx.get_global("globalThis") {
+            for name in &var_names {
+                if before.is_some_and(|names| names.contains(name)) {
+                    continue;
+                }
+                global.borrow_mut().delete(name);
+                ctx.env
+                    .borrow_mut()
+                    .current_scope()
+                    .borrow_mut()
+                    .remove_binding(name);
+            }
+        }
+    }
     if let (Some(before), Some(Value::Object(global))) =
         (eval_global_names.as_ref(), ctx.get_global("globalThis"))
     {
@@ -991,6 +1021,16 @@ mod tests {
         let mut ctx = Context::new().unwrap();
         crate::builtins::register_builtins(&mut ctx);
         assert!(ctx.eval("eval('function NaN(){}')").is_err());
+    }
+
+    #[test]
+    fn strict_indirect_eval_does_not_create_global_var() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        assert_eq!(
+            ctx.eval("(0, eval)('\"use strict\"; var strictEvalOnly = 88;'); 'strictEvalOnly' in this"),
+            Ok(Value::Boolean(false))
+        );
     }
 
     #[test]
