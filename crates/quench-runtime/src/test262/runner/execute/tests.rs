@@ -562,6 +562,18 @@ fn module_resolution_error_propagates_through_named_import() {
 }
 
 #[test]
+fn module_resolution_error_propagates_through_side_effect_import() {
+    use crate::test262::harness::HarnessLoader;
+    use crate::test262::runner::{default_test262_dir, run_single_test};
+
+    let root = default_test262_dir();
+    let path = PathBuf::from(&root)
+        .join("test/language/module-code/import-attributes/import-attribute-newlines.js");
+    let harness = HarnessLoader::new(&root);
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
+
+#[test]
 fn dynamic_import_namespace_fixture_exports_uninitialized_bindings() {
     use crate::test262::harness::HarnessLoader;
     use crate::test262::runner::{default_test262_dir, run_single_test};

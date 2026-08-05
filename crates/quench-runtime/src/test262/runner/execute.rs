@@ -571,6 +571,7 @@ fn propagate_current_module_resolution_error(ctx: &mut crate::Context, source: &
             .into_iter()
             .map(|(_, source)| source),
     );
+    sources.extend(fixture_side_effect_imports_from_source(source));
     let reason = sources
         .into_iter()
         .find_map(|source| errors.borrow().get(&source));
@@ -825,6 +826,7 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
     let mut star_sources = HashMap::<String, HashMap<String, String>>::new();
     let mut named_reexport_edges = Vec::<(String, String)>::new();
     let mut pending_default_imports = HashMap::<String, String>::new();
+    let mut fixture_import_edges = Vec::<(String, String, String)>::new();
     for (index, (name, path)) in fixtures.iter().enumerate() {
         if !name.ends_with("_FIXTURE.js") && !name.ends_with("_FIXTURE.json") {
             let source = std::fs::read(path).map_err(|e| format!("fixture read: {}", e))?;
@@ -884,6 +886,9 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
         }
         let (eval_source, side_effect_source, exports, default_import, reexports) =
             fixture_exports_from_source(index, &source)?;
+        for (imported, target) in fixture_import_edges_from_source(&source) {
+            fixture_import_edges.push((module_name.clone(), imported, target));
+        }
         let side_effects_need_refresh = !side_effect_source.trim().is_empty();
         let exposes_update = side_effect_source.contains("test262update")
             || default_function_updates_itself(&source);
@@ -1069,6 +1074,21 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
             .push(source.clone());
     }
     if let Some(Value::Object(errors)) = ctx.get_global(module_errors_key) {
+        for (module, imported, target) in &fixture_import_edges {
+            let missing = ctx
+                .get_module(target)
+                .and_then(|value| match value {
+                    Value::Object(object) => Some(object.borrow().get(imported).is_none()),
+                    _ => None,
+                })
+                .unwrap_or(true);
+            if missing {
+                errors.borrow_mut().set(
+                    module,
+                    crate::Value::String("Missing indirect export".into()),
+                );
+            }
+        }
         for (module, source) in &named_reexport_edges {
             let mut seen = HashSet::new();
             if source != module && has_module_path(&named_graph, source, module, &mut seen) {
@@ -1559,6 +1579,21 @@ fn fixture_import_edges_from_source(source: &str) -> Vec<(String, String)> {
         }
     }
     edges
+}
+
+fn fixture_side_effect_imports_from_source(source: &str) -> Vec<String> {
+    source
+        .lines()
+        .map(str::trim)
+        .filter_map(|line| {
+            let rest = line.strip_prefix("import ")?.trim();
+            if rest.starts_with('{') || rest.starts_with('*') || rest.starts_with("meta") {
+                return None;
+            }
+            let end = rest.find([';', ' ', '\t']).unwrap_or(rest.len());
+            normalize_fixture_module_name(&rest[..end])
+        })
+        .collect()
 }
 
 fn parse_default_import(raw: &str) -> Option<String> {
