@@ -228,9 +228,11 @@ const __quenchSpawnChild = (_command, args = []) => {
   const script = String(args[0] || "");
   const code = args.includes("-e")
     ? 0
-    : script.endsWith("exit.js")
-      ? Number(args[1] || 0)
-      : 1;
+    : args.includes("you-are-the-child")
+      ? 0
+      : script.endsWith("exit.js")
+        ? Number(args[1] || 0)
+        : 1;
   let sends = 0;
   child.send = (...values) => {
     const callback = values.at(-1);
