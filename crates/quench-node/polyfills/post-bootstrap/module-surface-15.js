@@ -213,7 +213,10 @@ const __quenchCryptoHashOneShotFallback = (result) => {
     const digest = result.createHash(algorithm, options).update(data);
     const encoding =
       typeof options === "string" ? options : options?.outputEncoding;
-    return digest.digest(encoding === "buffer" ? undefined : encoding);
+    const bytes = digest.digest();
+    if (encoding === "hex" || encoding === "base64")
+      return NodeBuffer.from(bytes).toString(encoding);
+    return bytes;
   };
 };
 /* eslint-enable max-lines-per-function, complexity */
