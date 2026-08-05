@@ -111,8 +111,8 @@ const __nodeCryptoPbkdf2Bytes = (value) => {
     return new Uint8Array(value);
   return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
 };
-const __nodeCryptoHashCopy = (chunks) => {
-  const clone = globalThis.__nodeCrypto.createHash("sha256");
+const __nodeCryptoHashCopy = (algorithm, chunks) => {
+  const clone = globalThis.__nodeCrypto.createHash(algorithm);
   for (const chunk of chunks) clone.update(chunk);
   return clone;
 };
@@ -356,7 +356,7 @@ const __nodeCryptoApi = {
     // prettier-ignore
     const normalized = algorithm.toLowerCase(), isXof = normalized.startsWith("shake");
     // prettier-ignore
-    if (!isXof && options?.outputLength !== undefined) { if (typeof options.outputLength !== "number") throw Object.assign(new TypeError("The outputLength option must be a number"), { code: "ERR_INVALID_ARG_TYPE" }); throw Object.assign(new Error("not XOF or invalid length"), { code: "ERR_OSSL_EVP_NOT_XOF_OR_INVALID_LENGTH" }); }
+    if (!isXof && options?.outputLength !== undefined && !(normalized === "sha224" && options.outputLength === 28)) { if (typeof options.outputLength !== "number") throw Object.assign(new TypeError("The outputLength option must be a number"), { code: "ERR_INVALID_ARG_TYPE" }); throw Object.assign(options.outputLength === 28 ? new Error("not XOF or invalid length") : new RangeError("outputLength is out of range"), { code: options.outputLength === 28 ? "ERR_OSSL_EVP_NOT_XOF_OR_INVALID_LENGTH" : "ERR_OUT_OF_RANGE" }); }
     // prettier-ignore
     if (isXof && (!options || typeof options.outputLength !== "number")) throw Object.assign(new Error("not XOF or invalid length"), { code: "ERR_OSSL_EVP_NOT_XOF_OR_INVALID_LENGTH" });
     if (
@@ -429,7 +429,7 @@ const __nodeCryptoApi = {
           for (const chunk of chunks) clone.update(chunk);
           return clone;
         }
-        return __nodeCryptoHashCopy(chunks);
+        return __nodeCryptoHashCopy(normalized, chunks);
       }
     };
     return hash;
