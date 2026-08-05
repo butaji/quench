@@ -2,10 +2,10 @@ const __quenchCryptoConstructors = (result) => {
   for (const name of [
     "createPublicKey",
     "createPrivateKey",
-    "createDiffieHellman",
-    "createECDH",
     "Hash",
     "Hmac",
+    "DiffieHellman",
+    "ECDH",
     "Sign",
     "Verify",
     "DiffieHellmanGroup",
@@ -53,6 +53,16 @@ const __quenchCryptoSignFallback = (result) => {
     __nodeCryptoSetPrototype(verifier, globalThis.__quenchVerifyConstructor);
     return verifier;
   };
+};
+const __quenchCryptoKeyExchangeFallback = (result) => {
+  const create = (constructorName) => () => {
+    const value = {};
+    __nodeCryptoSetPrototype(value, result[constructorName]);
+    return value;
+  };
+  result.createDiffieHellman ||= create("DiffieHellman");
+  result.createDiffieHellmanGroup ||= create("DiffieHellmanGroup");
+  result.createECDH ||= create("ECDH");
 };
 const __quenchValidateEcbIv = (algorithm, iv) => {
   if (
@@ -395,6 +405,7 @@ const __quenchCryptoFallbacks = (result) => {
   globalThis.__quenchSignConstructor = result.Sign;
   globalThis.__quenchVerifyConstructor = result.Verify;
   __quenchCryptoSignFallback(result);
+  __quenchCryptoKeyExchangeFallback(result);
   __quenchCryptoCipherFallback(result);
   globalThis.__quenchCipherConstructor = result.Cipheriv;
   __quenchCryptoWebFallbacks(result);
