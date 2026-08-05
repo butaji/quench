@@ -360,9 +360,9 @@ globalThis.__quenchResolveParsedSpecial = (r, f, t) =>
   globalThis.__quenchResolveParsedOpaque(r, f, t);
 globalThis.__quenchResolveParsedObject = (result, from, to) => {
   if (typeof from === "string") return null;
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(to)) return result.parse(to);
   const fragment = globalThis.__quenchResolveParsedSpecial(result, from, to);
   if (fragment) return fragment;
-  if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(to)) return result.parse(to);
   if (/^([A-Za-z][A-Za-z0-9+.-]*):(#.*)$/.test(to))
     return result.parse(to.replace(/^([A-Za-z][A-Za-z0-9+.-]*):/, "$1:///"));
   const singleSlash = globalThis.__quenchResolveSingleSlashProtocol(
