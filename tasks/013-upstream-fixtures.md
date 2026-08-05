@@ -5407,3 +5407,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1678. `url-special-backslash.js` — normalize backslashes in special URL paths.
 1679. `url-empty-fragment.js` — preserve empty URL fragment markers.
 1680. `url-fragment-reference.js` — preserve the base path for fragment references.
+1681. `url-fragment-slash.js` — preserve slashes in URL fragments.
