@@ -5193,3 +5193,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1460. `crypto-keygen-encrypt-roundtrip.js` — support encoded RSA encrypt/decrypt round trips.
 1461. `crypto-keygen-direct-sign.js` — support direct RSA signing and verification with encoded keys.
 1462. `crypto-secret-key-validation.js` — validate secret-key algorithms and lengths.
+1463. `crypto-randomuuid-options.js` — validate random UUID options.

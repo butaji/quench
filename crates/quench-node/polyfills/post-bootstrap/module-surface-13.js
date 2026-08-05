@@ -360,11 +360,7 @@ const __quenchCryptoRandomFallbacks = (result, state) => {
   result.randomFillSync ||= (buffer) => buffer;
   result.randomInt ||= (min, max) =>
     Math.floor(Math.random() * (Number(max) - Number(min))) + Number(min);
-  result.randomUUID ||= () =>
-    "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (char) => {
-      const value = (Math.random() * 16) | 0;
-      return (char === "x" ? value : (value & 3) | 8).toString(16);
-    });
+  __quenchCryptoRandomUuidFallback(result);
   result.getFips ||= () => state.fips;
   result.setFips ||= (value) => {
     state.fips = Number(value) ? 1 : 0;
