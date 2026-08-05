@@ -4261,3 +4261,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Preserved `instanceof` behavior when zlib stream constructors are invoked
   with or without `new`.
+
+### Stage 1235: zlib unzip detection
+
+- Made `createUnzip()` select gzip or deflate decompression from the stream
+  header instead of always assuming gzip.
