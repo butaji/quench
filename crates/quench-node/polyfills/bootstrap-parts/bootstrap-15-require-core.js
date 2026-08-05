@@ -170,7 +170,7 @@ const __quenchCoreStaticModules = new Map([
   ["util", () => globalThis.__nodeUtil],
   ["util/types", () => (globalThis.__nodeUtil.types ||= Object.create(null))],
   ["perf_hooks", () => globalThis.__nodePerfHooks],
-  ["crypto", () => globalThis.__nodeCrypto],
+  ["crypto", () => globalThis.__nodeCryptoApi || globalThis.__nodeCrypto],
   ["v8", () => ({})],
   [
     "events",
