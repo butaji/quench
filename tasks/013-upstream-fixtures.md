@@ -5260,3 +5260,5 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1528. `url-parse-legacy-shapes.js` — preserve legacy URL object shapes.
 1529. `url-parse-opaque-path.js` — preserve opaque scheme path boundaries.
 1530. `url-parse-unicode-host.js` — preserve ASCII legacy Unicode hosts.
+1531. `url-parse-bracketed-path.js` — preserve bracketed legacy paths.
+1532. `url-parse-ipv6-host.js` — preserve IPv6 legacy hostnames.

@@ -364,7 +364,9 @@ const __nodeLegacyUrlPathValue = (pathname, search) =>
 const __nodeLegacyUrlParts = (input, parsed) => {
   const protocol = parsed.protocol.toLowerCase();
   const { auth, host } = __nodeLegacyUrlAuthority(input);
-  const hostname = host.replace(/^\[|\]$/g, "").split(":")[0];
+  const hostname = host.startsWith("[")
+    ? host.slice(1, host.indexOf("]"))
+    : host.split(":")[0];
   const port = host.match(/:(\d+)$/)?.[1] || null;
   const { pathname: rawPathname, search } = __nodeLegacyUrlPathParts(
     parsed,
