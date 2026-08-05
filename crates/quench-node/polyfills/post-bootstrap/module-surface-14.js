@@ -175,7 +175,7 @@ const __quenchCryptoKeyExchangeFallback = (result) => {
     __quenchValidateStatelessDhArgs(options, callback);
     __quenchValidateStatelessDhRequiredKeys(options);
     __quenchValidateStatelessDhKeys(options);
-    return NodeBuffer.alloc(128);
+    return NodeBuffer.from(__quenchDhPaddingSecret, "hex");
   };
   result.createDiffieHellman = (
     sizeOrKey,
