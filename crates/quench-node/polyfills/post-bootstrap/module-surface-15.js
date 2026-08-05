@@ -186,6 +186,30 @@ const __quenchCryptoSignMetadataFallback = (key) => {
 };
 const __quenchCryptoHashOneShotFallback = (result) => {
   result.hash ||= (algorithm, data, options) => {
+    if (
+      typeof algorithm !== "string" ||
+      (typeof data !== "string" &&
+        !(data instanceof ArrayBuffer) &&
+        !ArrayBuffer.isView(data))
+    )
+      throw Object.assign(new TypeError("Invalid hash arguments"), {
+        code: "ERR_INVALID_ARG_TYPE"
+      });
+    if (
+      options !== undefined &&
+      typeof options !== "string" &&
+      typeof options !== "object"
+    )
+      throw Object.assign(new TypeError("Invalid output encoding"), {
+        code: "ERR_INVALID_ARG_TYPE"
+      });
+    if (
+      typeof options === "string" &&
+      !["buffer", "hex", "base64"].includes(options)
+    )
+      throw Object.assign(new TypeError("Invalid output encoding"), {
+        code: "ERR_INVALID_ARG_VALUE"
+      });
     const digest = result.createHash(algorithm, options).update(data);
     const encoding =
       typeof options === "string" ? options : options?.outputEncoding;
