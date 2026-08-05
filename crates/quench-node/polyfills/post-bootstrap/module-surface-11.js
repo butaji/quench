@@ -207,6 +207,16 @@ globalThis.__quenchNormalizeSpecialUrlInput = (value) =>
   /^(?:https?|ftp):/i.test(value) && !/^(?:https?|ftp):\/\//i.test(value)
     ? value.replace(/^((?:https?|ftp):)/i, "$1//")
     : value;
+globalThis.__quenchWhatwgFormat = (input) =>
+  input.protocol === "tel:"
+    ? `${input.protocol}${input.pathname}`
+    : input.searchParams &&
+        input.href &&
+        !Object.prototype.hasOwnProperty.call(input, "auth")
+      ? input.href
+      : null;
+globalThis.__quenchSpecialUrlProtocol = (protocol) =>
+  /^(?:http|https|ftp):$/.test(protocol);
 globalThis.__quenchResolveStringFragmentOnly = (from, to) =>
   typeof from === "string"
     ? globalThis.__quenchResolveFragmentOnly(from, to)
