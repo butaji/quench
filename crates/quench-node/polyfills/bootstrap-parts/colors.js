@@ -232,6 +232,7 @@ globalThis.__nodeQuerystring = new Proxy(
 );
 class NodeURLSearchParams {
   constructor(init = "") {
+    // prettier-ignore
     this._pairs = [];
     if (typeof init === "string") {
       init
@@ -240,20 +241,18 @@ class NodeURLSearchParams {
         .filter(Boolean)
         .forEach((part) => {
           const i = part.indexOf("=");
-          this.append(
-            decodeURIComponent(i < 0 ? part : part.slice(0, i)),
-            decodeURIComponent(i < 0 ? "" : part.slice(i + 1))
-          );
+          // prettier-ignore
+          this.append(globalThis.__nodeURLDecode((i < 0 ? part : part.slice(0, i)).replace(/\+/g, " ")), globalThis.__nodeURLDecode((i < 0 ? "" : part.slice(i + 1)).replace(/\+/g, " ")));
         });
     } else Object.keys(init).forEach((key) => this.append(key, init[key]));
   }
   append(key, value) {
-    this._pairs.push([String(key), String(value)]);
+    // prettier-ignore
+    // prettier-ignore
+    this._pairs.push([String(key).replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, "\uFFFD").replace(/(^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "$1\uFFFD"), String(value).replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, "\uFFFD").replace(/(^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "$1\uFFFD")]);
   }
-  set(key, value) {
-    this.delete(key);
-    this.append(key, value);
-  }
+  // prettier-ignore
+  set(key, value) { this.delete(key); this.append(key, value); }
   get(key) {
     const pair = this._pairs.find(([name]) => name === String(key));
     return pair ? pair[1] : null;
@@ -273,7 +272,7 @@ class NodeURLSearchParams {
     return this._pairs
       .map(
         ([key, value]) =>
-          `${globalThis.__nodeUrlEncode(key).replace(/%20/g, "+")}=${globalThis.__nodeUrlEncode(value).replace(/%20/g, "+")}`
+          `${globalThis.__nodeURLFormEncode(key).replace(/%20/g, "+")}=${globalThis.__nodeURLFormEncode(value).replace(/%20/g, "+")}`
       )
       .join("&");
   }

@@ -176,18 +176,23 @@
           : property === "search"
             ? String(value) === ""
               ? ""
-              : `?${String(value)
-                  .replace(/^\?/, "")
-                  .split("&")
-                  .map((part) =>
-                    part.split("=").map(globalThis.__nodeUrlEncode).join("=")
-                  )
-                  .join("&")}`
+              : String(value).startsWith("?")
+                ? String(value)
+                : `?${String(value)}`
             : property === "hash"
               ? String(value) === ""
                 ? ""
                 : `#${globalThis.__nodeUrlEncode(String(value).replace(/^#/, ""))}`
               : String(value);
+  const setURLAccessorValue = (target, property, value) => {
+    const normalized = normalizeURLSetterValue(property, value);
+    target[`_${property}`] =
+      property === "pathname" && normalized === "" ? "/" : normalized;
+    if (property === "search" && target.searchParams)
+      target.searchParams._pairs = new globalThis.__nodeURLSearchParams(
+        normalized
+      )._pairs;
+  };
   const installURLAccessorDescriptors = (prototype) => {
     for (const property of [
       "protocol",
@@ -211,7 +216,7 @@
             return this[`_${property}`];
           },
           set [property](value) {
-            this[`_${property}`] = normalizeURLSetterValue(property, value);
+            setURLAccessorValue(this, property, value);
           }
         },
         property
@@ -306,8 +311,20 @@
     },
     "href"
   ).set;
+  const installURLTag = (prototype) => {
+    const tag =
+      prototype &&
+      Object.getOwnPropertyDescriptor(prototype, Symbol.toStringTag);
+    if (prototype && (!tag || tag.configurable))
+      Object.defineProperty(prototype, Symbol.toStringTag, {
+        configurable: true,
+        enumerable: false,
+        value: "URL"
+      });
+  };
   const installURLToStringDescriptor = (URLConstructor) => {
     const prototype = URLConstructor?.prototype;
+    installURLTag(prototype);
     const descriptor =
       prototype && Object.getOwnPropertyDescriptor(prototype, "toString");
     if (descriptor)
