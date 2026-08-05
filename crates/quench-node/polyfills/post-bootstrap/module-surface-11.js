@@ -81,7 +81,7 @@ globalThis.__quenchParsedWebTrailing = (target, normalized) =>
     : "";
 globalThis.__quenchResolveParsedAbsoluteOpaque = (r, f, t) =>
   /^[A-Za-z][A-Za-z0-9+.-]*:[^/]/.test(t) &&
-  !/^([A-Za-z][A-Za-z0-9+.-]*):#/.test(t)
+  !/^([A-Za-z][A-Za-z0-9+.-]*):[#.]/.test(t)
     ? r.parse(t)
     : null;
 globalThis.__quenchResolveParsedSameSchemeOpaque = (r, f, t) => {
