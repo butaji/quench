@@ -1331,6 +1331,34 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
                                 continue;
                             }
                         }
+                        let current_source = matches!(
+                            ctx.get_global("__quench_current_module__"),
+                            Some(Value::String(ref current)) if current == source
+                        );
+                        if current_source {
+                            let env = std::rc::Rc::clone(ctx.env());
+                            let local_key = local.clone();
+                            let getter = crate::Value::NativeFunction(std::rc::Rc::new(
+                                crate::value::NativeFunction::new(move |_| {
+                                    Ok(env
+                                        .borrow()
+                                        .get(&local_key)
+                                        .unwrap_or(crate::Value::Undefined))
+                                }),
+                            ));
+                            module.borrow_mut().define_accessor(
+                                &exported,
+                                Some(getter),
+                                None,
+                                crate::value::PropertyFlags {
+                                    value: None,
+                                    writable: true,
+                                    enumerable: true,
+                                    configurable: false,
+                                },
+                            );
+                            continue;
+                        }
                         if let Some(Value::Object(target)) = ctx.get_module(&source) {
                             if target.borrow().has_getter(&local) {
                                 let target = std::rc::Rc::clone(&target);
