@@ -69,7 +69,7 @@ const __quenchCryptoSimpleConstructor = (result, name) => {
   result[name] = Constructor;
   return () => Object.create(Constructor.prototype);
 };
-const __quenchCryptoKeyExchangeFallback = (result) => {
+const __quenchPrepareDhGroup = (result) => {
   if (typeof result.DiffieHellmanGroup !== "function")
     __quenchCryptoSimpleConstructor(result, "DiffieHellmanGroup");
   if (typeof result.ECDH !== "function")
@@ -79,6 +79,11 @@ const __quenchCryptoKeyExchangeFallback = (result) => {
     result.DiffieHellmanGroup.prototype,
     result.DiffieHellman.prototype
   );
+  result.DiffieHellmanGroup.prototype.setPrivateKey = undefined;
+  result.DiffieHellmanGroup.prototype.setPublicKey = undefined;
+};
+const __quenchCryptoKeyExchangeFallback = (result) => {
+  __quenchPrepareDhGroup(result);
   result.createDiffieHellman ||= (
     sizeOrKey,
     generatorOrEncoding,
@@ -89,14 +94,14 @@ const __quenchCryptoKeyExchangeFallback = (result) => {
   };
   result.createDiffieHellmanGroup ||= () => result.DiffieHellmanGroup();
   result.getDiffieHellman ||= (name) => {
-    if (name !== "modp14")
+    if (name !== "modp14" && name !== "modp1")
       throw Object.assign(new Error("Unknown DH group"), {
         code: "ERR_CRYPTO_UNKNOWN_DH_GROUP"
       });
-    return {
+    return Object.assign(Object.create(result.DiffieHellmanGroup.prototype), {
       getPrime: () => NodeBuffer.alloc(128),
       getGenerator: () => NodeBuffer.from([2])
-    };
+    });
   };
   result.createECDH ||= (curve) => {
     if (curve === undefined)
