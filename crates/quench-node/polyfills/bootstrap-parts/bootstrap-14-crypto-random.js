@@ -1,8 +1,38 @@
 const __nodeCryptoRandomReceived = (value) => {
-  if (typeof value === "string") return ` Received type string ('${value}')`;
+  const primitive = value?.valueOf?.() ?? value;
+  const tag = Object.prototype.toString.call(value);
+  if (typeof primitive === "string" || tag === "[object String]")
+    return ` Received type string ('${primitive}')`;
   if (value === null || value === undefined) return ` Received ${value}`;
-  if (typeof value === "boolean") return ` Received type boolean (${value})`;
+  if (typeof primitive === "boolean")
+    return ` Received type boolean (${primitive})`;
+  if (typeof primitive === "number" || tag === "[object Number]")
+    return ` Received type number (${primitive})`;
   return ` Received an instance of ${value.constructor?.name || "Object"}`;
+};
+globalThis.__nodeCryptoRandomIntegerError = (minimum, maximum) => {
+  const name = Number.isSafeInteger(minimum) ? "max" : "min";
+  const value = name === "min" ? minimum : maximum;
+  return new TypeError(
+    `The "${name}" argument must be a safe integer.${__nodeCryptoRandomReceived(value)}`
+  );
+};
+globalThis.__nodeCryptoRandomIntegerRangeError = (minimum, maximum) => {
+  const limit = 0xffff_ffff_ffff;
+  if (maximum <= minimum)
+    return Object.assign(
+      new RangeError(
+        `The value of "max" is out of range. It must be greater than the value of "min" (${minimum}). Received ${maximum}`
+      ),
+      { code: "ERR_OUT_OF_RANGE" }
+    );
+  if (maximum - minimum > limit)
+    return Object.assign(
+      new RangeError(
+        `The value of "max - min" is out of range. It must be <= ${limit}. Received ${maximum - minimum}`
+      ),
+      { code: "ERR_OUT_OF_RANGE" }
+    );
 };
 const __nodeCryptoRandomBytes = (size, callback) => {
   if (typeof size !== "number")

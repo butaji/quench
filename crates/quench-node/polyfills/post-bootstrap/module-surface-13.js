@@ -127,7 +127,12 @@ const __quenchCryptoWebFallbacks = (result) => {
   result.webcrypto.randomUUID ||= result.randomUUID;
 };
 const __quenchCryptoFallbacks = (result) => {
-  result = Object.assign({}, result);
+  const source = result;
+  result = Object.assign({}, source);
+  for (const name of ["pseudoRandomBytes", "prng", "rng"]) {
+    const descriptor = Object.getOwnPropertyDescriptor(source, name);
+    if (descriptor) Object.defineProperty(result, name, descriptor);
+  }
   const state = { fips: 0 };
   result.createHash ||= () => ({ update: () => this, digest: () => "" });
   result.createHmac ||= () => ({ update: () => this, digest: () => "" });
