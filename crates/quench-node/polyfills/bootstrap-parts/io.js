@@ -163,6 +163,54 @@ const __nodeFsReadDescriptor = ({ fd, buffer, offset, length, position }) => {
     globalThis.__nodeFdPositions[fd] = numericPosition + bytes.length;
   return bytes.length;
 };
+const __nodeFsRemoveTree = (path) => {
+  const mode = globalThis.__nodeModes[path];
+  if (mode !== undefined && (mode & 0o300) !== 0o300) {
+    const code =
+      process.platform === "darwin" && mode & 0o111 ? "ENOTEMPTY" : "EACCES";
+    const error = new Error(`${code}: permission denied, rm '${path}'`);
+    error.code = code;
+    error.syscall = "rm";
+    error.path = path;
+    throw error;
+  }
+  for (const name of globalThis.__nodeFs.readdirSync(path)) {
+    const child = `${path.replace(/\/$/, "")}/${name}`;
+    if (globalThis.__nodeFs.lstatSync(child).isSymbolicLink()) {
+      globalThis.__quench_fs_unlink(child);
+      continue;
+    }
+    const kind = globalThis.__quench_fs_link_kind(child);
+    if (kind === "directory") __nodeFsRemoveTree(child);
+    else globalThis.__quench_fs_unlink(child);
+  }
+  return globalThis.__quench_fs_remove_dir(path);
+};
+const __nodeFsRemovePath = (path, kind, options) => {
+  if (globalThis.__nodeFs.lstatSync(path).isSymbolicLink())
+    return globalThis.__quench_fs_unlink(path);
+  if (kind === "file") return globalThis.__quench_fs_unlink(path);
+  if (kind === "directory" && !options.recursive) {
+    const error = new Error(
+      `ERR_FS_EISDIR: illegal operation on a directory, rm '${path}'`
+    );
+    error.code = "ERR_FS_EISDIR";
+    error.path = path;
+    throw error;
+  }
+  return options.recursive
+    ? __nodeFsRemoveTree(path)
+    : globalThis.__quench_fs_remove_dir(path);
+};
+const __nodeFsRunRemoval = (path, kind, options) => {
+  try {
+    return __nodeFsRemovePath(path, kind, options);
+  } catch (error) {
+    error.syscall ||= "rm";
+    error.path ||= path;
+    throw error;
+  }
+};
 Object.assign(globalThis.__nodeFs, {
   ftruncateSync: (fd, length = 0) => {
     if (typeof fd !== "number") {
@@ -344,7 +392,7 @@ Object.assign(globalThis.__nodeFs, {
     if (parentMode !== undefined && (parentMode & 0o300) !== 0o300) {
       const error = new Error(`EACCES: permission denied, rm '${path}'`);
       error.code = "EACCES";
-      error.syscall = "unlink";
+      error.syscall = "rm";
       error.path = path;
       throw error;
     }
@@ -363,16 +411,7 @@ Object.assign(globalThis.__nodeFs, {
       }
       return;
     }
-    if (kind === "file") return globalThis.__quench_fs_unlink(path);
-    if (kind === "directory" && !options.recursive) {
-      const error = new Error(
-        `ERR_FS_EISDIR: illegal operation on a directory, rm '${path}'`
-      );
-      error.code = "ERR_FS_EISDIR";
-      error.path = path;
-      throw error;
-    }
-    return globalThis.__quench_fs_remove_dir(path);
+    return __nodeFsRunRemoval(path, kind, options);
   },
   chmodSync: (value, mode) => {
     const path = __nodeFsPathOnly(value);
