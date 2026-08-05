@@ -82,3 +82,11 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase04 {
 };
 NodeBuffer.prototype[Symbol.for("nodejs.util.inspect.custom")] =
   NodeBuffer.prototype.inspect;
+const __nodeBufferFromWithAlignment = NodeBuffer.from;
+NodeBuffer.from = (value, ...args) => {
+  const result = __nodeBufferFromWithAlignment.call(NodeBuffer, value, ...args);
+  if (typeof value !== "string" || result.byteOffset % 8 === 0) return result;
+  const aligned = new Uint8Array(result);
+  Object.setPrototypeOf(aligned, NodeBuffer.prototype);
+  return aligned;
+};
