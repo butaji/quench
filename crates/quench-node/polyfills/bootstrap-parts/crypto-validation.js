@@ -36,6 +36,27 @@ const __nodeCryptoValidateStringEncoding = (value, encoding) => {
 const __nodeCryptoSetPrototype = (value, constructor) =>
   typeof constructor === "function" &&
   Object.setPrototypeOf(value, constructor.prototype);
+const __quenchValidateDhNumbers = (sizeOrKey, generator) => {
+  if (typeof sizeOrKey === "number" && !Number.isInteger(sizeOrKey))
+    throw Object.assign(
+      new RangeError(
+        `The value of "sizeOrKey" is out of range. It must be an integer. Received ${sizeOrKey}`
+      ),
+      { code: "ERR_OUT_OF_RANGE" }
+    );
+  if (typeof sizeOrKey === "number" && sizeOrKey <= 1) {
+    const error = new Error("modulus too small");
+    error.code = "ERR_OSSL_DH_MODULUS_TOO_SMALL";
+    throw error;
+  }
+  if (typeof generator === "number" && !Number.isInteger(generator))
+    throw Object.assign(
+      new RangeError(
+        `The value of "generator" is out of range. It must be an integer. Received ${generator}`
+      ),
+      { code: "ERR_OUT_OF_RANGE" }
+    );
+};
 const __nodeCryptoHmacDigest = (algorithm, inner, outer, chunks, encoding) => {
   const message = [];
   for (const chunk of chunks) message.push(...chunk);
