@@ -4331,3 +4331,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Ignored assignments to empty environment-variable names, matching Node’s
   process environment behavior.
+
+### Stage 1251: assert deep equality alias
+
+- Added the legacy `assert.deepEqual` API using the existing deep comparison
+  implementation.

@@ -283,6 +283,7 @@ globalThis.__nodeAssert.deepStrictEqual = (actual, expected, message) => {
     __nodeAssertionFailure(message || "values differ");
   }
 };
+globalThis.__nodeAssert.deepEqual = globalThis.__nodeAssert.deepStrictEqual;
 globalThis.__nodeAssert.notDeepStrictEqual = (actual, expected, message) => {
   if (
     JSON.stringify(__nodeAssertNormalize(actual)) ===
