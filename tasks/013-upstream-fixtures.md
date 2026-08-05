@@ -5040,3 +5040,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1414: crypto stateless DH key types
 
 - Reject secret and public handles used as the private key.
+
+### Stage 1415: crypto stateless DH public types
+
+- Reject secret and private handles used as the public key.

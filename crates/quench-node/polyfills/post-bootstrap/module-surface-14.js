@@ -120,6 +120,12 @@ const __quenchValidateStatelessDhKeys = (options) => {
       new Error(`Invalid key object type ${type}, expected private.`),
       { code: "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE" }
     );
+  const publicType = options.publicKey?.type;
+  if (publicType === "secret" || publicType === "private")
+    throw Object.assign(
+      new Error(`Invalid key object type ${publicType}, expected public.`),
+      { code: "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE" }
+    );
 };
 const __quenchCryptoKeyExchangeFallback = (result) => {
   __quenchPrepareDhGroup(result);
