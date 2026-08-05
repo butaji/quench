@@ -591,6 +591,26 @@ fn binary_instanceof_unrelated() {
 }
 
 #[test]
+fn string_constructor_has_instance_does_not_recurse() {
+    let mut ctx = crate::Context::new().unwrap();
+    assert_eq!(
+        ctx.eval("({}) instanceof String"),
+        Ok(crate::value::Value::Boolean(false))
+    );
+}
+
+#[test]
+fn inherited_custom_has_instance_is_called() {
+    let mut ctx = crate::Context::new().unwrap();
+    assert_eq!(
+        ctx.eval(
+            "var base = {}; Object.defineProperty(base, Symbol.hasInstance, { value: function() { return true; } }); var ctor = Object.create(base); ({}) instanceof ctor"
+        ),
+        Ok(crate::value::Value::Boolean(true))
+    );
+}
+
+#[test]
 fn instanceof_non_callable_rhs_throws_type_error() {
     let mut ctx = crate::Context::new().unwrap();
     assert!(ctx.eval("1 instanceof Math").is_err());

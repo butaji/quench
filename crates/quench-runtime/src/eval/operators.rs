@@ -551,15 +551,32 @@ pub(crate) fn eval_instanceof(left: &Value, right: &Value) -> Result<Value, JsEr
     if let Value::Object(ctor) = right {
         let is_default_function_prototype = crate::builtins::function::is_function_prototype(ctor);
         if !is_default_function_prototype {
-            if let Some(symbol) = crate::builtins::symbol::get_has_instance_symbol() {
-                let method = crate::eval::member::eval_object_member_value(ctor, &symbol, None)?;
-                if !matches!(method, Value::Undefined | Value::Null) {
-                    let result = crate::eval::call_value_with_this(
-                        method,
-                        vec![left.clone()],
-                        right.clone(),
-                    )?;
-                    return Ok(Value::Boolean(crate::value::to_bool(&result)));
+            if let Some(Value::Symbol(symbol)) = crate::builtins::symbol::get_has_instance_symbol()
+            {
+                let key = symbol.property_key();
+                let mut owner = ctor.borrow().prototype.clone();
+                let mut method = None;
+                while let Some(candidate) = owner {
+                    if let Some(value) = candidate.borrow().get_own(&key) {
+                        method = Some(value);
+                        if crate::builtins::function::get_function_prototype()
+                            .is_some_and(|prototype| Rc::ptr_eq(&candidate, &prototype))
+                        {
+                            method = None;
+                        }
+                        break;
+                    }
+                    owner = candidate.borrow().prototype.clone();
+                }
+                if let Some(method) = method {
+                    if !matches!(method, Value::Undefined | Value::Null) {
+                        let result = crate::eval::call_value_with_this(
+                            method,
+                            vec![left.clone()],
+                            right.clone(),
+                        )?;
+                        return Ok(Value::Boolean(crate::value::to_bool(&result)));
+                    }
                 }
             }
         }
