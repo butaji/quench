@@ -278,6 +278,7 @@ Object.assign(globalThis.__nodeFs, {
     { getPrototypeOf: () => null }
   ),
   existsSync: (value) => globalThis.__quench_fs_exists(nodePathValue(value)),
+  exists: globalThis.__nodeFsExists,
   mkdtempSync: (prefix, options) => {
     if (
       typeof prefix !== "string" &&

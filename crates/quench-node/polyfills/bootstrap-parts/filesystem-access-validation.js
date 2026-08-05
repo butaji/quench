@@ -16,3 +16,25 @@ const __nodeFsValidateAccessMode = (mode) => {
     throw error;
   }
 };
+globalThis.__nodeFsExists = (value, callback) => {
+  if (typeof callback !== "function") {
+    const error = new TypeError(
+      'The "callback" argument must be of type function'
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  let exists = false;
+  try {
+    exists = globalThis.__quench_fs_exists(nodePathValue(value));
+  } catch (_) {}
+  callback(exists);
+};
+globalThis.__nodeFs.exists = globalThis.__nodeFsExists;
+globalThis.__nodeFs.existsSync = (value) => {
+  try {
+    return Boolean(globalThis.__quench_fs_exists(nodePathValue(value)));
+  } catch (_) {
+    return false;
+  }
+};
