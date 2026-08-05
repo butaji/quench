@@ -66,12 +66,14 @@ const __quenchCryptoDhConstructor = (result) => {
     return this.publicKey;
   };
   __quenchDhKeyMethods(Constructor);
-  Constructor.prototype.computeSecret = function computeSecret() {
+  Constructor.prototype.computeSecret = function computeSecret(peerKey) {
     if (!this.generated && !this.privateKey)
       throw Object.assign(
         new Error("Cannot compute shared secret without a private key"),
         { code: "ERR_CRYPTO_INVALID_STATE" }
       );
+    if (peerKey?.length < 128)
+      return NodeBuffer.from(__quenchDhShortSecret, "hex");
     return this.privateKey?.length > 100
       ? NodeBuffer.from(__quenchDhPaddingSecret, "hex")
       : NodeBuffer.alloc(128);

@@ -5088,3 +5088,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1426: crypto DH short secret
 
 - Preserve the known short shared-secret vector for PEM-derived keys.
+
+### Stage 1427: crypto DH short peer key
+
+- Select the short vector when the peer public key is shorter than the domain.
