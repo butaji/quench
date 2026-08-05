@@ -66,6 +66,7 @@ const __quenchApplyFinalModule01 = (name, originalRequire) => {
       console: {}
     };
   const result = originalRequire(name);
+  if (normalized === "http") __quenchAddHttpEvents(result);
   if (normalized === "test")
     return __quenchTestModuleFallbacks(result, originalRequire, name);
   if (normalized === "util") {
