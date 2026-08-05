@@ -4768,3 +4768,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Expose the `secp384r1` elliptic-curve name required by the upstream crypto
   fixture.
+
+### Stage 1347: crypto hex encoding validation
+
+- Reject odd-length hexadecimal input in hash and HMAC updates.
