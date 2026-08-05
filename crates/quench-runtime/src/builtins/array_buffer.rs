@@ -63,7 +63,8 @@ pub fn register_array_buffer(ctx: &mut Context) {
                     "ArrayBuffer getter requires an ArrayBuffer receiver",
                 ));
             }
-            Ok(Value::Boolean(false))
+            let detached = object.borrow().get_own_value("\0detached").is_some();
+            Ok(Value::Boolean(detached))
         })));
         proto_rc.borrow_mut().set_getter_func(name, getter);
     }
@@ -189,21 +190,30 @@ pub fn register_array_buffer(ctx: &mut Context) {
                     }
                 }
                 let mut obj = this_obj.borrow_mut();
-                let start = args
-                    .first()
-                    .map(|value| to_number(value) as usize)
-                    .unwrap_or(0);
-                let end = args
-                    .get(1)
-                    .map(|value| to_number(value) as usize)
-                    .unwrap_or(obj.elements.len())
-                    .min(obj.elements.len());
-                let start = start.min(end);
-                let elements = obj.elements[start..end].to_vec();
-                if !is_slice {
+                let elements = if is_slice {
+                    let start = args
+                        .first()
+                        .map(|value| to_number(value) as usize)
+                        .unwrap_or(0);
+                    let end = args
+                        .get(1)
+                        .map(|value| to_number(value) as usize)
+                        .unwrap_or(obj.elements.len())
+                        .min(obj.elements.len());
+                    let start = start.min(end);
+                    obj.elements[start..end].to_vec()
+                } else {
+                    let requested = args
+                        .first()
+                        .map(|value| to_number(value) as usize)
+                        .unwrap_or(obj.elements.len());
+                    let mut elements = obj.elements.clone();
+                    elements.resize(requested, Value::Number(0.0));
                     obj.elements.clear();
                     obj.set("byteLength", Value::Number(0.0));
-                }
+                    obj.set("\0detached", Value::Boolean(true));
+                    elements
+                };
                 let length = elements.len() as f64;
                 let mut result = Object::new(ObjectKind::Ordinary);
                 result.prototype = Some(Rc::clone(&proto));
@@ -553,6 +563,14 @@ mod tests {
     fn array_buffer_slice_rejects_species_result_without_array_buffer_data() {
         let result = eval_ok(
             "var constructor = { [Symbol.species]: function() { return {}; } }; var buffer = new ArrayBuffer(1); buffer.constructor = constructor; try { buffer.slice(); false } catch (error) { error instanceof TypeError }",
+        );
+        assert_eq!(result, Value::Boolean(true));
+    }
+
+    #[test]
+    fn array_buffer_transfer_grows_and_detaches_source() {
+        let result = eval_ok(
+            "var source = new ArrayBuffer(2); var target = source.transfer(4); target.byteLength === 4 && source.byteLength === 0 && source.detached === true",
         );
         assert_eq!(result, Value::Boolean(true));
     }
