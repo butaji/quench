@@ -299,9 +299,9 @@ const __nodeURLAssignParts = (url, match) => {
   url.pathname = match[3] || "/";
   url.search = match[4] ? `?${match[4]}` : "";
   url.hash = match[5] ? `#${match[5]}` : "";
-  url.origin =
-    url.protocol && url.host ? `${url.protocol}//${url.host}` : "null";
-  url.searchParams = new NodeURLSearchParams(match[4] || "");
+  // prettier-ignore
+  // prettier-ignore
+  Object.defineProperty(url, "origin", { configurable: true, enumerable: true, value: url.protocol && url.host ? `${url.protocol}//${url.host}` : "null", writable: true }), Object.defineProperty(url, "searchParams", { configurable: true, enumerable: true, value: new NodeURLSearchParams(match[4] || ""), writable: true });
 };
 globalThis.__nodeURL = class NodeURL {
   constructor(input, base) {
