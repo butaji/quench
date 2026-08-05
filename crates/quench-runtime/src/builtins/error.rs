@@ -238,10 +238,23 @@ fn register_aggregate_error(ctx: &mut Context, parent_proto: &Rc<RefCell<Object>
                     return Err(js_err);
                 }
                 Some(value) if !matches!(value, Value::Undefined) => {
-                    match crate::builtins::uri::to_string_for_spec(value) {
-                        Ok(s) => Some(s),
+                    // Per ES §7.1.1: ToString = ToPrimitive with hint "string",
+                    // then to string. ToPrimitive with hint "string" calls
+                    // Symbol.toPrimitive first, then toString, then valueOf.
+                    let prim = match crate::value::primitive::to_primitive(value, Some("string")) {
+                        Ok(p) => p,
                         Err(e) => return Err(e),
+                    };
+                    // If the primitive is a Symbol, ToString throws TypeError.
+                    if matches!(prim, Value::Symbol(_)) {
+                        let (err_val, js_err) = create_js_error_with_type(
+                            "Cannot convert a Symbol to a string",
+                            "TypeError",
+                        );
+                        set_thrown_value(err_val);
+                        return Err(js_err);
                     }
+                    Some(crate::value::convert::to_js_string(&prim))
                 }
                 _ => None,
             };
