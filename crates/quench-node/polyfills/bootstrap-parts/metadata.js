@@ -82,7 +82,9 @@ globalThis.__nodeFs.access = (value, mode, callback) => {
 };
 globalThis.__nodeFs.fsync = (fd, callback) => {
   if (typeof fd !== "number") {
-    const error = new TypeError('The "fd" argument must be of type number');
+    const error = new TypeError(
+      `The "fd" argument must be of type number. Received ${fd}`
+    );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
@@ -148,14 +150,17 @@ const __nodeFsAsyncReadDefault = (callback) => {
 const __nodeFsAsyncReadBufferOptions = (buffer, callback) => {
   const options = buffer;
   const target =
-    options.buffer ||
-    NodeBuffer.alloc(
-      options.length === undefined ? 16384 : Number(options.length)
-    );
+    options.buffer === undefined
+      ? NodeBuffer.alloc(
+          options.length === undefined ? 16384 : Number(options.length)
+        )
+      : options.buffer;
   const offset = options.offset == null ? 0 : Number(options.offset);
   const length =
     options.length === undefined
-      ? target.length - offset
+      ? target === null
+        ? 0
+        : target.length - offset
       : Number(options.length);
   const position = options.position === undefined ? null : options.position;
   return { buffer: target, offset, length, position, callback };
@@ -171,18 +176,18 @@ const __nodeFsAsyncReadOffsetOptions = (buffer, offset, callback) => {
   return { buffer, offset: start, length, position, callback };
 };
 const __nodeFsValidateAsyncReadBuffer = (buffer, length) => {
-  if (buffer.length === 0 && Number(length) > 0) {
-    const error = new TypeError(
-      "The argument 'buffer' is empty and cannot be written."
-    );
-    error.code = "ERR_INVALID_ARG_VALUE";
-    throw error;
-  }
   if (!(buffer instanceof Uint8Array)) {
     const error = new TypeError(
       'The "buffer" argument must be an instance of Buffer, TypedArray, or DataView'
     );
     error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  if (buffer.length === 0 && Number(length) > 0) {
+    const error = new TypeError(
+      "The argument 'buffer' is empty and cannot be written."
+    );
+    error.code = "ERR_INVALID_ARG_VALUE";
     throw error;
   }
 };
@@ -220,16 +225,23 @@ const __nodeFsValidateAsyncRead = (
   position,
   callback
 ) => {
-  if (typeof callback !== "function")
-    throw new TypeError('The "callback" argument must be of type function');
   if (typeof fd !== "number") {
-    const error = new TypeError('The "fd" argument must be of type number');
+    const error = new TypeError(
+      `The "fd" argument must be of type number. Received ${fd}`
+    );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
   __nodeFsValidateAsyncReadBuffer(buffer, length);
   __nodeFsValidateAsyncReadRange(offset, length);
   __nodeFsValidateAsyncReadPosition(position);
+  if (typeof callback !== "function") {
+    const error = new TypeError(
+      'The "callback" argument must be of type function'
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
 };
 globalThis.__nodeFs.read = (fd, buffer, offset, length, position, callback) => {
   ({ buffer, offset, length, position, callback } = __nodeFsAsyncReadOptions(

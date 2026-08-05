@@ -217,6 +217,11 @@ globalThis.__nodeStats.prototype.isSymbolicLink = function () {
 };
 globalThis.__nodeFs.Dir = class Dir {
   constructor(path) {
+    if (path === undefined) {
+      const error = new TypeError('The "path" argument must be specified');
+      error.code = "ERR_MISSING_ARGS";
+      throw error;
+    }
     this._path = path;
     if (globalThis.__quench_fs_kind(path) === "file") {
       const error = new Error(`ENOTDIR: not a directory, scandir '${path}'`);
@@ -228,19 +233,6 @@ globalThis.__nodeFs.Dir = class Dir {
     });
     this._index = 0;
     this._closed = false;
-  }
-  get path() {
-    if (
-      this === globalThis.__nodeFs.Dir.prototype ||
-      !(this instanceof globalThis.__nodeFs.Dir)
-    ) {
-      const error = new TypeError(
-        "Method get path called on incompatible receiver"
-      );
-      error.code = "ERR_INVALID_THIS";
-      throw error;
-    }
-    return this._path;
   }
   readSync() {
     if (this._closed) {
@@ -297,10 +289,6 @@ globalThis.__nodeFs.Dir = class Dir {
       }
     });
   }
-};
-globalThis.__nodeFs.opendirSync = (value, options) => {
-  globalThis.__validateOpendirOptions(options);
-  return new globalThis.__nodeFs.Dir(nodeFsPath(value));
 };
 globalThis.__nodeFs.opendir = (value, options, callback) => {
   if (typeof options === "function") {

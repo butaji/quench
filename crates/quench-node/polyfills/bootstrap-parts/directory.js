@@ -25,3 +25,18 @@ globalThis.__nodeFs.Dirent = class Dirent {
     return this._type === 7;
   }
 };
+Object.defineProperty(globalThis.__nodeFs.Dir.prototype, "path", {
+  get() {
+    if (
+      this === globalThis.__nodeFs.Dir.prototype ||
+      !(this instanceof globalThis.__nodeFs.Dir)
+    ) {
+      const error = new TypeError(
+        "Method get path called on incompatible receiver"
+      );
+      error.code = "ERR_INVALID_THIS";
+      throw error;
+    }
+    return this._path;
+  }
+});

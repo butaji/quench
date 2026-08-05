@@ -4572,3 +4572,12 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Include `ERR_INVALID_ARG_TYPE` in callback-missing `fs.opendir` errors and
   their string representation.
+
+### Stage 1306: directory missing path
+
+- Reject `new fs.Dir()` with Node's `ERR_MISSING_ARGS` contract.
+
+### Stage 1307: read validation order
+
+- Validate `fs.read` buffer arguments before the callback when both are
+  invalid, matching Node's error precedence.
