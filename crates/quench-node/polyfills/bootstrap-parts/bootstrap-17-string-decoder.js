@@ -91,11 +91,11 @@ const __quenchStringDecoderClass = class {
     return `${input === undefined ? "" : this.write(input)}${this._decoder.decode(new Uint8Array(this._pending))}`;
   }
 };
-function __quenchStringDecoder(encoding) {
+const __quenchStringDecoder = function __quenchStringDecoder(encoding) {
   const state = new __quenchStringDecoderClass(encoding);
   Object.setPrototypeOf(this, __quenchStringDecoderClass.prototype);
   Object.assign(this, state);
-}
+};
 __quenchStringDecoder.prototype = __quenchStringDecoderClass.prototype;
 globalThis.require = (specifier) => {
   if (String(specifier).replace(/^node:/, "") === "string_decoder")

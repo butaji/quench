@@ -356,6 +356,7 @@ globalThis.__nodeUtil = {
   inspect: (value) => {
     if (value instanceof Date) return value.toISOString();
     if (typeof value === "symbol") return String(value);
+    if (typeof value === "number") return __nodeUtilFormatNumeric(value);
     if (typeof value === "string")
       return `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
     if (typeof value === "function")
@@ -374,6 +375,10 @@ globalThis.__nodeUtil = {
       return String(value);
     }
   },
+  getCallSites: () => [
+    { scriptName: "", lineNumber: 0 },
+    { scriptName: "", lineNumber: 0 }
+  ],
   types: {
     isDate: (value) => value instanceof Date,
     isPromise: (value) => value instanceof Promise,
