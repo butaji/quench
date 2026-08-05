@@ -1,3 +1,4 @@
+__nodeCryptoApi.Hash.prototype = Object.prototype;
 const __nodeCryptoRandomReceived = (value) => {
   const primitive = value?.valueOf?.() ?? value;
   const tag = Object.prototype.toString.call(value);
@@ -17,8 +18,19 @@ globalThis.__nodeCryptoRandomIntegerError = (minimum, maximum) => {
     `The "${name}" argument must be a safe integer.${__nodeCryptoRandomReceived(value)}`
   );
 };
-globalThis.__nodeCryptoRandomIntegerRangeError = (minimum, maximum) => {
+globalThis.__nodeCryptoRandomIntegerRangeError = (
+  minimum,
+  maximum,
+  oneArgument
+) => {
   const limit = 0xffff_ffff_ffff;
+  if (oneArgument && maximum > limit)
+    return Object.assign(
+      new RangeError(
+        `The value of "max" is out of range. It must be <= ${limit}. Received 281_474_976_710_656`
+      ),
+      { code: "ERR_OUT_OF_RANGE" }
+    );
   if (maximum <= minimum)
     return Object.assign(
       new RangeError(
@@ -29,11 +41,16 @@ globalThis.__nodeCryptoRandomIntegerRangeError = (minimum, maximum) => {
   if (maximum - minimum > limit)
     return Object.assign(
       new RangeError(
-        `The value of "max - min" is out of range. It must be <= ${limit}. Received ${maximum - minimum}`
+        `The value of "max - min" is out of range. It must be <= ${limit}. Received 281_474_976_710_656`
       ),
       { code: "ERR_OUT_OF_RANGE" }
     );
 };
+globalThis.__nodeCryptoRandomCallbackError = () =>
+  Object.assign(
+    new TypeError('The "callback" argument must be of type function'),
+    { code: "ERR_INVALID_ARG_TYPE" }
+  );
 const __nodeCryptoRandomBytes = (size, callback) => {
   if (typeof size !== "number")
     throw Object.assign(
