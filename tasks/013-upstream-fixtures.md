@@ -5209,3 +5209,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1476. `crypto-keygen-raw-outputs.js` — expose raw Buffer key-generation outputs.
 1478. `url-resolve-object.js` — expose legacy URL resolveObject behavior.
 1479. `url-legacy-constructor.js` — expose the legacy URL constructor.
+1480. `url-file-scheme-error.js` — preserve fileURLToPath scheme errors.
