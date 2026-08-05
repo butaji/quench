@@ -4804,3 +4804,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1355: crypto cipher argument validation
 
 - Reject invalid cipher names, keys, and initialization vectors.
+
+### Stage 1356: crypto decipher argument validation
+
+- Apply the same argument validation to `createDecipheriv()`.
