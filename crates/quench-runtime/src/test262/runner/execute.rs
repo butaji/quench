@@ -1168,16 +1168,9 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
                             let sources = star_sources.entry(module_name.clone()).or_default();
                             if let Some(previous) = sources.get(&key) {
                                 if previous != source {
-                                    if let Some(Value::Object(errors)) =
-                                        ctx.get_global(module_errors_key)
-                                    {
-                                        errors.borrow_mut().set(
-                                            &module_name,
-                                            crate::Value::String(
-                                                "Ambiguous indirect export".into(),
-                                            ),
-                                        );
-                                    }
+                                    let mut module = module.borrow_mut();
+                                    module.properties.remove(&key);
+                                    module.descriptors.remove(&key);
                                     continue;
                                 }
                             } else {
