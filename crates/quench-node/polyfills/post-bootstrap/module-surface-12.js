@@ -174,7 +174,11 @@ globalThis.__quenchResolveReversedFileRelative = (from, to) =>
   /^file:\/[^/]/i.test(to) && !/^[a-z][a-z0-9+.-]*:/i.test(from)
     ? globalThis.__quenchResolveFileRelative(to, from)
     : null;
-globalThis.__quenchResolveFileRelative = (from, to) => {
+globalThis.__quenchResolveFileAuthority = (from, to) =>
+  /^file:\/\/[^/]+\//i.test(from) && /^file:\/[^/]/i.test(to)
+    ? from.replace(/^file:\/\/[^/]+/i, "file://")
+    : null;
+const __quenchResolveFileRelativeBase = (from, to) => {
   const reversed = globalThis.__quenchResolveReversedFileRelative(from, to);
   if (reversed) return reversed;
   if (/^file:\/[^/]/i.test(to) && from.startsWith("/"))
@@ -195,6 +199,9 @@ globalThis.__quenchResolveFileRelative = (from, to) => {
   }
   return base + target.replace(/^\.\//, "").replace(/#$/, "");
 };
+globalThis.__quenchResolveFileRelative = (from, to) =>
+  globalThis.__quenchResolveFileAuthority(from, to) ||
+  __quenchResolveFileRelativeBase(from, to);
 globalThis.__quenchAddLegacyParseMethods = (result) => {
   const originalParse = result.parse;
   result.parse = (input) => {
