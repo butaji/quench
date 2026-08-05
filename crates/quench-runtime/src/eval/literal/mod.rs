@@ -152,8 +152,17 @@ pub fn eval_regexp_literal(pattern: &str, flags: &str) -> Result<Value, JsError>
         return Err(js_err);
     }
     let regress_flags: String = flags.chars().filter(|c| "imsu".contains(*c)).collect();
-    let regex = Regex::with_flags(pattern, regress_flags.as_str())
-        .map_err(|_| JsError::new("Invalid regular expression"))?;
+    let regex = match Regex::with_flags(pattern, regress_flags.as_str()) {
+        Ok(regex) => regex,
+        Err(_) => {
+            let (err_val, js_err) = crate::value::error::create_js_error_with_type(
+                "Invalid regular expression",
+                "SyntaxError",
+            );
+            crate::value::set_thrown_value(err_val);
+            return Err(js_err);
+        }
+    };
     let mut obj = Object::new(ObjectKind::RegExp);
     obj.internal_regex_source = Some(pattern.to_string());
     obj.internal_regex_flags = Some(flags.to_string());
