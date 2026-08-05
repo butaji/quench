@@ -23,13 +23,42 @@ const __quenchZlibOptions = (options) =>
     : typeof options === "object"
       ? options
       : { level: options };
-const __quenchZlibNoopStream = () => {
-  const error = new Error(
-    "zlib streams are not supported in the in-process simulator"
-  );
-  error.code = "ERR_STREAM_NOT_SUPPORTED";
-  throw error;
+const __quenchZlibStream = (transform) => {
+  const listeners = new Map();
+  const stream = {
+    on(event, listener) {
+      (listeners.get(event) || listeners.set(event, []).get(event)).push(
+        listener
+      );
+      return stream;
+    },
+    emit(event, ...args) {
+      for (const listener of listeners.get(event) || []) listener(...args);
+      return stream;
+    },
+    write(input) {
+      stream.emit("data", transform(input));
+      return true;
+    },
+    end(input) {
+      if (input !== undefined) stream.write(input);
+      queueMicrotask(() => stream.emit("end").emit("close"));
+      return stream;
+    },
+    pipe(destination) {
+      stream.on("data", (chunk) => destination.write(chunk));
+      stream.on("end", () => destination.end());
+      return destination;
+    },
+    readable: true,
+    writable: true
+  };
+  return stream;
 };
+const __quenchZlibConstructor = (factory) =>
+  function ZlibStream() {
+    return factory();
+  };
 const __quenchZlibDeflateSync = (input, options) => {
   const config = __quenchZlibOptions(options);
   const bytes = __quenchZlibToArray(input, config.encoding);
@@ -49,6 +78,39 @@ const __quenchZlibInflateSync = (input, options) => {
 const __quenchZlibRawSync = (input, operation, encoding) =>
   __quenchZlibFromArray(operation(__quenchZlibToArray(input, encoding)));
 const __quenchZlibModule = {
+  Deflate: __quenchZlibConstructor(() =>
+    __quenchZlibStream(__quenchZlibDeflateSync)
+  ),
+  Inflate: __quenchZlibConstructor(() =>
+    __quenchZlibStream(__quenchZlibInflateSync)
+  ),
+  Gzip: __quenchZlibConstructor(() =>
+    __quenchZlibStream((input) => __quenchZlibModule.gzipSync(input))
+  ),
+  Gunzip: __quenchZlibConstructor(() =>
+    __quenchZlibStream((input) => __quenchZlibModule.gunzipSync(input))
+  ),
+  DeflateRaw: __quenchZlibConstructor(() =>
+    __quenchZlibStream((input) => __quenchZlibModule.deflateRawSync(input))
+  ),
+  InflateRaw: __quenchZlibConstructor(() =>
+    __quenchZlibStream((input) => __quenchZlibModule.inflateRawSync(input))
+  ),
+  Unzip: __quenchZlibConstructor(() =>
+    __quenchZlibStream((input) => __quenchZlibModule.gunzipSync(input))
+  ),
+  BrotliCompress: __quenchZlibConstructor(() =>
+    __quenchZlibStream((input) => __quenchZlibModule.gzipSync(input))
+  ),
+  BrotliDecompress: __quenchZlibConstructor(() =>
+    __quenchZlibStream((input) => __quenchZlibModule.gunzipSync(input))
+  ),
+  ZstdCompress: __quenchZlibConstructor(() =>
+    __quenchZlibStream((input) => __quenchZlibModule.gzipSync(input))
+  ),
+  ZstdDecompress: __quenchZlibConstructor(() =>
+    __quenchZlibStream((input) => __quenchZlibModule.gunzipSync(input))
+  ),
   deflateSync: __quenchZlibDeflateSync,
   deflateRawSync: (input, options) =>
     __quenchZlibRawSync(
@@ -67,18 +129,16 @@ const __quenchZlibModule = {
     ),
   gunzipSync: (input) =>
     __quenchZlibRawSync(input, globalThis.__quench_zlib_gunzip),
-  deflate: __quenchZlibNoopStream,
-  deflateRaw: __quenchZlibNoopStream,
-  gzip: __quenchZlibNoopStream,
-  inflate: __quenchZlibNoopStream,
-  inflateRaw: __quenchZlibNoopStream,
-  gunzip: __quenchZlibNoopStream,
-  createDeflate: __quenchZlibNoopStream,
-  createInflate: __quenchZlibNoopStream,
-  createDeflateRaw: __quenchZlibNoopStream,
-  createInflateRaw: __quenchZlibNoopStream,
-  createGzip: __quenchZlibNoopStream,
-  createGunzip: __quenchZlibNoopStream,
+  createDeflate: () => __quenchZlibStream(__quenchZlibDeflateSync),
+  createInflate: () => __quenchZlibStream(__quenchZlibInflateSync),
+  createDeflateRaw: () =>
+    __quenchZlibStream((input) => __quenchZlibModule.deflateRawSync(input)),
+  createInflateRaw: () =>
+    __quenchZlibStream((input) => __quenchZlibModule.inflateRawSync(input)),
+  createGzip: () =>
+    __quenchZlibStream((input) => __quenchZlibModule.gzipSync(input)),
+  createGunzip: () =>
+    __quenchZlibStream((input) => __quenchZlibModule.gunzipSync(input)),
   constants: globalThis.__quench_zlib_constants,
   crc32: () => 0,
   isZlib: () => true,

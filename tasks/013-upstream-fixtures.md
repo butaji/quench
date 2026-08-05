@@ -4246,3 +4246,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Matched Node's legacy `url.format()` slash placement when a quoted host
   suffix is percent-encoded.
+
+### Stage 1232: zlib stream constructors
+
+- Replaced throwing zlib stream stubs with evented transforms backed by the
+  existing synchronous compression primitives.
