@@ -163,7 +163,7 @@ const __quenchDgramRemoteAddress = (socket) => {
 const __quenchDgramClose = (socket, callback) => {
   socket._bound = false;
   if (socket._address) __quenchDgramBoundPorts.delete(socket._address.port);
-  callback?.();
+  if (typeof callback === "function") callback();
   queueMicrotask(() => socket.emit("close"));
   return socket;
 };
@@ -313,6 +313,22 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
     remoteAddress: () => __quenchDgramRemoteAddress(socket),
     getRecvBufferSize: () => options.recvBufferSize || 0,
     getSendBufferSize: () => options.sendBufferSize || 0,
+    setBroadcast: (value) => {
+      if (!socket._bound) throw new Error("setBroadcast EBADF");
+      return value;
+    },
+    setTTL: (value) => {
+      if (!socket._bound) throw new Error("setTTL EBADF");
+      if (typeof value !== "number")
+        throw Object.assign(
+          new TypeError(
+            `The "ttl" argument must be of type number. Received type string ('${value}')`
+          ),
+          { code: "ERR_INVALID_ARG_TYPE" }
+        );
+      if (value <= 0 || value >= 256) throw new Error("setTTL EINVAL");
+      return value;
+    },
     close: (callback) => __quenchDgramClose(socket, callback),
     address: () => __quenchDgramAddress(socket, type),
     on: (event, callback) =>

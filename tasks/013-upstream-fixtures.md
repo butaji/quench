@@ -4070,3 +4070,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Added validation for non-string destination addresses while preserving empty
   and omitted address defaults.
+
+### Stages 1194-1195: dgram close and socket flags
+
+- Ignored non-function close callback values and added bound/unbound behavior
+  for `setBroadcast()` and `setTTL()`.
