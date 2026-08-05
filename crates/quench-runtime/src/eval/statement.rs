@@ -114,6 +114,10 @@ pub(crate) fn take_tail_call_signal() -> Option<TailCallSignal> {
     TAIL_CALL_SIGNAL.with(|cell| cell.borrow_mut().take())
 }
 
+fn has_tail_call_signal() -> bool {
+    TAIL_CALL_SIGNAL.with(|cell| cell.borrow().is_some())
+}
+
 /// Push acc onto the thread-local accumulator stack (called before each tail call).
 pub(crate) fn acc_stack_push(acc: Value) {
     ACC_STACK.with(|cell| cell.borrow_mut().push(acc));
@@ -399,6 +403,9 @@ fn eval_function_body_impl(
         }
 
         let stmt_val = eval_statement(stmt, env, false, in_arrow_function)?;
+        if has_tail_call_signal() {
+            return Ok(Value::Undefined);
+        }
         let is_for_await = matches!(
             stmt,
             Statement::Expression(expr)
@@ -663,7 +670,6 @@ fn handle_tail_call_in_block(
         if expr.as_ref().is_some_and(|e| is_tail_expr(e))
             && try_handle_tail_call(expr, env, in_arrow_function)?
         {
-            set_control_flow(ControlFlow::Return(Value::Undefined));
             env.borrow_mut().pop_scope();
             return Ok(Some(()));
         }
@@ -1009,7 +1015,15 @@ pub fn eval_statement(
             source,
             deferred,
             import_type,
-        } => eval_import(default, named, namespace, source, *deferred, import_type, env),
+        } => eval_import(
+            default,
+            named,
+            namespace,
+            source,
+            *deferred,
+            import_type,
+            env,
+        ),
         Statement::ForIn {
             variable,
             object,
@@ -1090,8 +1104,7 @@ fn resolve_dispose_method(
             .ok_or_else(|| JsError::new("TypeError: disposal symbol is not initialized"))?,
         _ => {
             let msg = "TypeError: Symbol is not callable";
-            let (err, js_err) =
-                crate::value::error::create_js_error_with_type(&msg, "TypeError");
+            let (err, js_err) = crate::value::error::create_js_error_with_type(&msg, "TypeError");
             crate::value::set_thrown_value(err);
             return Err(js_err);
         }
@@ -1220,6 +1233,9 @@ fn eval_var_decl(
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
 ) -> Result<Value, JsError> {
+    if *kind == VarKind::Var && init.is_none() {
+        return Ok(Value::Undefined);
+    }
     let existing_var = *kind == VarKind::Var && env.borrow().get_kind(name) == Some(VarKind::Var);
     let already_declared = env.borrow().current_kind(name).is_some();
     if !existing_var && !already_declared {
@@ -1623,10 +1639,6 @@ fn eval_for(
         // expression, so updates go to HEAD directly.
         if head_lexical {
             push_for_body_iteration_scope(&mut env.borrow_mut(), &per_iter_names);
-            env.borrow()
-                .current_scope()
-                .borrow_mut()
-                .mark_per_iteration();
         }
         // Condition check (PI is on chain — closures see per-iteration values)
         if !eval_for_loop_condition(condition, env, in_arrow_function)? {
@@ -2227,12 +2239,13 @@ fn eval_import(
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
     let module_exports = if let Some(import_type) = import_type {
-        let raw = get_raw_module_source(env, source).ok_or_else(|| {
-            JsError::new(format!("Cannot find module '{}'.", source))
-        })?;
+        let raw = get_raw_module_source(env, source)
+            .ok_or_else(|| JsError::new(format!("Cannot find module '{}'.", source)))?;
         let value = match import_type.as_str() {
             "text" => Value::String(raw),
-            "json" => parse_json_module(&raw).map_err(|reason| JsError::new(format!("{:?}", reason)))?,
+            "json" => {
+                parse_json_module(&raw).map_err(|reason| JsError::new(format!("{:?}", reason)))?
+            }
             _ => Value::Undefined,
         };
         let mut module = Object::new(ObjectKind::ModuleNamespace);
@@ -2530,12 +2543,14 @@ pub(crate) fn dynamic_import(
                 let key = symbol.property_key();
                 namespace.set_symbol(
                     &key,
-                    Value::String(if deferred {
-                        "Deferred Module"
-                    } else {
-                        "Module"
-                    }
-                    .to_string()),
+                    Value::String(
+                        if deferred {
+                            "Deferred Module"
+                        } else {
+                            "Module"
+                        }
+                        .to_string(),
+                    ),
                 );
                 if let Some(flags) = namespace.descriptors.get_mut(&key) {
                     flags.writable = false;

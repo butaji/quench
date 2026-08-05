@@ -110,10 +110,12 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
     CURRENT_CONTEXT.with(|cell| {
         *cell.borrow_mut() = Some(ctx_ptr);
     });
-    let eval_global_names = ctx.get_global("globalThis").and_then(|global| match global {
-        Value::Object(global) => Some(global.borrow().own_property_names()),
-        _ => None,
-    });
+    let eval_global_names = ctx
+        .get_global("globalThis")
+        .and_then(|global| match global {
+            Value::Object(global) => Some(global.borrow().own_property_names()),
+            _ => None,
+        });
     // Save label stack depth before parse so we can restore on any exit path.
     let label_depth = crate::interpreter::label_stack_depth();
     // Indirect eval should not inherit strict mode for parsing. Temporarily
@@ -185,8 +187,7 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
                     .borrow()
                     .get_own_property(name)
                     .is_some_and(|descriptor| {
-                        descriptor.configurable == Some(false)
-                            && descriptor.writable != Some(true)
+                        descriptor.configurable == Some(false) && descriptor.writable != Some(true)
                     })
                 {
                     let (err_val, js_err) = crate::value::error::create_js_error_with_type(
@@ -225,6 +226,9 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
     let strict_indirect_eval = !crate::interpreter::is_direct_eval()
         && (source.trim_start().starts_with("\"use strict\"")
             || source.trim_start().starts_with("'use strict'"));
+    if !crate::interpreter::is_direct_eval() && !strict_indirect_eval {
+        reject_indirect_eval_global_lexical_conflict(&program, ctx)?;
+    }
     if !eval_strict && crate::interpreter::is_direct_eval() {
         reject_eval_var_lexical_conflict(&program, ctx)?;
     }
@@ -274,12 +278,16 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
                     .borrow()
                     .get("new.target")
                     .unwrap_or(Value::Undefined);
-                eval_env.borrow_mut().define(
-                    eval_new_target_alias.to_string(),
-                    new_target,
-                );
+                eval_env
+                    .borrow_mut()
+                    .define(eval_new_target_alias.to_string(), new_target);
             }
-            crate::interpreter::eval_program(&program, &mut eval_env, Some(&source), false)
+            let previous_eval_env = crate::interpreter::get_current_eval_env();
+            crate::interpreter::set_current_eval_env(Some(Rc::clone(&eval_env)));
+            let result =
+                crate::interpreter::eval_program(&program, &mut eval_env, Some(&source), false);
+            crate::interpreter::set_current_eval_env(previous_eval_env);
+            result
         } else {
             let mut eval_env = Rc::clone(&ctx.env);
             if eval_strict {
@@ -299,12 +307,16 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
                     .borrow()
                     .get("new.target")
                     .unwrap_or(Value::Undefined);
-                eval_env.borrow_mut().define(
-                    eval_new_target_alias.to_string(),
-                    new_target,
-                );
+                eval_env
+                    .borrow_mut()
+                    .define(eval_new_target_alias.to_string(), new_target);
             }
-            crate::interpreter::eval_program(&program, &mut eval_env, Some(&source), false)
+            let previous_eval_env = crate::interpreter::get_current_eval_env();
+            crate::interpreter::set_current_eval_env(Some(Rc::clone(&eval_env)));
+            let result =
+                crate::interpreter::eval_program(&program, &mut eval_env, Some(&source), false);
+            crate::interpreter::set_current_eval_env(previous_eval_env);
+            result
         }
     } else if strict_indirect_eval {
         let this_value = ctx
@@ -315,7 +327,8 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
         let saved_scopes = ctx.env.borrow_mut().scopes.split_off(1);
         let mut eval_env = Rc::new(RefCell::new(Environment::with_parent(Rc::clone(&ctx.env))));
         crate::interpreter::set_this_binding(&eval_env, this_value);
-        let result = crate::interpreter::eval_program(&program, &mut eval_env, Some(&source), false);
+        let result =
+            crate::interpreter::eval_program(&program, &mut eval_env, Some(&source), false);
         ctx.env.borrow_mut().scopes.extend(saved_scopes);
         result
     } else {
@@ -501,26 +514,50 @@ pub fn reject_eval_var_lexical_conflict(
         }
     }
     for name in names {
-        if name == "arguments"
-            && eval_env.borrow().get_kind(&name) == Some(ast::VarKind::Var)
-            && eval_env.borrow().get(&name).is_some()
-        {
-            let (error, js_error) = crate::value::error::create_js_error_with_type(
-                "Identifier 'arguments' conflicts with an existing binding",
-                "SyntaxError",
-            );
-            crate::value::set_thrown_value(error);
-            return Err(js_error);
-        }
         let is_local = eval_env.borrow().has(&name);
         if !is_local {
-            eval_env
-                .borrow_mut()
-                .declare_var(name.clone(), ast::VarKind::Var);
+            eval_env.borrow_mut().declare_eval_var(name.clone());
             eval_env
                 .borrow_mut()
                 .initialize_declared(&name, Value::Undefined);
         }
+    }
+    for statement in body {
+        if let ast::Statement::FunctionDeclaration { name, .. } = statement {
+            let has_global_property = ctx.get_global("globalThis").is_some_and(
+                |global| matches!(global, Value::Object(object) if object.borrow().has(name)),
+            );
+            if !has_global_property {
+                eval_env.borrow_mut().declare_eval_var(name.clone());
+            }
+        }
+    }
+    Ok(())
+}
+
+fn reject_indirect_eval_global_lexical_conflict(
+    program: &crate::ast::Program,
+    ctx: &Context,
+) -> Result<(), JsError> {
+    let ast::Program::Script(body) = program;
+    let mut names = Vec::new();
+    crate::interpreter::collect_var_names_recursive(body, &mut names);
+    if names.iter().any(|name| {
+        matches!(
+            ctx.env
+                .borrow()
+                .scopes
+                .first()
+                .and_then(|scope| scope.borrow().get_kind(name)),
+            Some(ast::VarKind::Let | ast::VarKind::Const)
+        )
+    }) {
+        let (error, js_error) = crate::value::error::create_js_error_with_type(
+            "Identifier has already been declared",
+            "SyntaxError",
+        );
+        crate::value::set_thrown_value(error);
+        return Err(js_error);
     }
     Ok(())
 }
@@ -1031,7 +1068,9 @@ mod tests {
         let mut ctx = Context::new().unwrap();
         crate::builtins::register_builtins(&mut ctx);
         assert_eq!(
-            ctx.eval("(0, eval)('\"use strict\"; var strictEvalOnly = 88;'); 'strictEvalOnly' in this"),
+            ctx.eval(
+                "(0, eval)('\"use strict\"; var strictEvalOnly = 88;'); 'strictEvalOnly' in this"
+            ),
             Ok(Value::Boolean(false))
         );
     }
@@ -1041,7 +1080,7 @@ mod tests {
         let mut ctx = Context::new().unwrap();
         crate::builtins::register_builtins(&mut ctx);
         assert_eq!(
-            ctx.eval("let x = 'outside'; { let x = 'inside'; (0, eval)('\"use strict\"; x;') }") ,
+            ctx.eval("let x = 'outside'; { let x = 'inside'; (0, eval)('\"use strict\"; x;') }"),
             Ok(Value::String("outside".to_string()))
         );
     }
@@ -1065,7 +1104,7 @@ mod tests {
         );
     }
 
-#[test]
+    #[test]
     fn double_register_builtins_preserves_assert_methods() {
         // Same path as above, but check assert methods are intact.
         let mut ctx = Context::new().unwrap();
@@ -1083,7 +1122,7 @@ mod tests {
         );
     }
 
-#[test]
+    #[test]
     fn direct_eval_lexical_bindings_do_not_leak() {
         let mut ctx = Context::new().unwrap();
         crate::builtins::register_builtins(&mut ctx);

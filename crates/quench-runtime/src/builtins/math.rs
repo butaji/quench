@@ -333,15 +333,6 @@ mod tests {
     }
 
     #[test]
-    fn math_max_is_self_hosted() {
-        let mut ctx = crate::Context::new().unwrap();
-        assert_eq!(
-            ctx.eval("Math.max.name").unwrap(),
-            Value::String("MathMax".to_string())
-        );
-    }
-
-    #[test]
     fn test_new_math_functions() {
         let mut ctx = crate::Context::new().unwrap();
         assert_eq!(ctx.eval("Math.trunc(4.7)").unwrap(), Value::Number(4.0));

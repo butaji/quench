@@ -142,6 +142,9 @@ impl Object {
 
 /// Register all built-in globals into the context
 pub fn register_builtins(ctx: &mut Context) {
+    if ctx.builtins_are_bootstrapped() {
+        return;
+    }
     // Object must be registered first — all other builtins need Object.prototype
     object::register_object(ctx);
     console::register_console(ctx);

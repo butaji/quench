@@ -1014,6 +1014,7 @@ fn regexp_constructor_impl(
             },
         );
         obj.set("flags", Value::String(flags.clone()));
+        make_regexp_fields_non_enumerable(&mut obj);
         obj.internal_regex = Some(compiled);
         Ok(Value::Object(Rc::clone(&obj_rc)))
     } else {
@@ -1037,9 +1038,28 @@ fn regexp_constructor_impl(
             },
         );
         obj.set("flags", Value::String(flags.clone()));
+        make_regexp_fields_non_enumerable(&mut obj);
         obj.internal_regex = Some(compiled);
         obj.prototype = Some(Rc::clone(regexp_proto));
         Ok(Value::Object(Rc::new(RefCell::new(obj))))
+    }
+}
+
+fn make_regexp_fields_non_enumerable(obj: &mut Object) {
+    for key in ["source", "global", "ignoreCase", "multiline", "flags"] {
+        if let Some(flags) = obj.descriptors.get_mut(key) {
+            flags.enumerable = false;
+        } else {
+            obj.descriptors.insert(
+                key.to_string(),
+                PropertyFlags {
+                    value: None,
+                    writable: true,
+                    enumerable: false,
+                    configurable: true,
+                },
+            );
+        }
     }
 }
 

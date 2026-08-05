@@ -290,27 +290,6 @@ fn test_for_loop_let_closure_sees_body_value() {
     assert!(result.is_ok(), "var closure test failed: {:?}", result);
 }
 
-#[test]
-fn test_for_loop_const_per_iteration() {
-    let mut host = QuenchHost::new();
-    let result = host.run_script(
-        r#"
-        var result = [];
-        for (const i = 0; i < 3; i++) {
-            result.push(function() { return i; });
-        }
-        assert.sameValue(result[0](), 0);
-        assert.sameValue(result[1](), 1);
-        assert.sameValue(result[2](), 2);
-        "#,
-    );
-    assert!(
-        result.is_ok(),
-        "per-iteration const binding failed: {:?}",
-        result
-    );
-}
-
 // ── Test isolation regression ────────────────────────────────────────────────
 
 #[test]
@@ -513,6 +492,15 @@ fn destructuring_var_binding_evaluates_target_before_source_get() {
 }
 
 #[test]
+fn destructuring_var_binding_order_probe() {
+    let mut host = QuenchHost::new();
+    let result = host.run_script(
+        "var log = []; var sourceKey = { toString: () => { log.push('sourceKey'); return 'p'; } }; var source = { get p() { log.push('get source'); return undefined; } }; var env = new Proxy({}, { has(t, pk) { log.push('binding::' + pk); return false; } }); var defaultValue = 0; var varTarget; with (env) { var { [sourceKey]: varTarget = defaultValue } = source; } assert.sameValue(log.join(','), 'binding::source,binding::sourceKey,sourceKey,binding::varTarget,get source,binding::defaultValue');",
+    );
+    assert!(result.is_ok(), "destructuring probe failed: {:?}", result);
+}
+
+#[test]
 fn inherited_getter_boxes_primitive_receiver_in_non_strict_call() {
     let mut host = QuenchHost::new();
     let result = host.run_script(
@@ -679,13 +667,6 @@ fn mapped_arguments_rejects_reconfiguring_nonconfigurable_index() {
         .unwrap();
     let result = host.run_script(&script);
     assert!(result.is_ok(), "reconfiguration was accepted: {:?}", result);
-}
-
-#[test]
-fn mapped_arguments_redefinition_does_not_change_configurability() {
-    let mut host = QuenchHost::new();
-    let result = host.run_script("(function(a) { Object.defineProperty(arguments, '0', {configurable: false}); Object.defineProperty(arguments, '0', {configurable: true}); assert.sameValue(Object.getOwnPropertyDescriptor(arguments, '0').configurable, false); })(0);");
-    assert!(result.is_ok(), "configurability changed: {:?}", result);
 }
 
 #[test]

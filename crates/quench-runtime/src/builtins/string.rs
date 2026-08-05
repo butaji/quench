@@ -173,15 +173,13 @@ pub(crate) fn register_string_iterator(string_proto: &Rc<RefCell<Object>>) {
         let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
         let Value::Object(object) = this_val else {
             let msg = "TypeError: not a String Iterator";
-            let (err, js_err) =
-                crate::value::error::create_js_error_with_type(&msg, "TypeError");
+            let (err, js_err) = crate::value::error::create_js_error_with_type(&msg, "TypeError");
             crate::value::set_thrown_value(err);
             return Err(js_err);
         };
         let Some(Value::Object(state)) = object.borrow().get_own("\0stringIteratorState") else {
             let msg = "TypeError: not a String Iterator";
-            let (err, js_err) =
-                crate::value::error::create_js_error_with_type(&msg, "TypeError");
+            let (err, js_err) = crate::value::error::create_js_error_with_type(&msg, "TypeError");
             crate::value::set_thrown_value(err);
             return Err(js_err);
         };

@@ -40,14 +40,18 @@ fn async_iterator_dispose(_args: Vec<Value>) -> Result<Value, JsError> {
     let Value::Object(object) = this.clone() else {
         let proto = crate::builtins::promise::get_promise_proto();
         return crate::builtins::promise::promise_reject_impl_static(
-            vec![Value::String("TypeError: async iterator is not an object".into())],
+            vec![Value::String(
+                "TypeError: async iterator is not an object".into(),
+            )],
             proto,
         );
     };
     let return_method = crate::eval::member::eval_object_member(&object, "return", None);
     let return_call = match return_method {
         Ok(v) if matches!(v, Value::Undefined | Value::Null) => Ok(Value::Undefined),
-        Ok(v) => crate::eval::function::call_value_with_this(v, vec![Value::Undefined], this.clone()),
+        Ok(v) => {
+            crate::eval::function::call_value_with_this(v, vec![Value::Undefined], this.clone())
+        }
         Err(e) => Err(e),
     };
     let promise = match return_call {
@@ -56,8 +60,8 @@ fn async_iterator_dispose(_args: Vec<Value>) -> Result<Value, JsError> {
             crate::builtins::promise::get_promise_proto(),
         )?,
         Err(_js_err) => {
-            let throw_value = crate::value::take_thrown_value()
-                .unwrap_or(Value::String("Error".into()));
+            let throw_value =
+                crate::value::take_thrown_value().unwrap_or(Value::String("Error".into()));
             let proto = crate::builtins::promise::get_promise_proto();
             crate::builtins::promise::promise_reject_impl_static(vec![throw_value], proto)?
         }

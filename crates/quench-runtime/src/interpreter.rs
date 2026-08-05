@@ -487,6 +487,9 @@ pub fn eval_program(
 
             let mut last_value = Value::Undefined;
             for stmt in statements {
+                if matches!(stmt, Statement::FunctionDeclaration { .. }) {
+                    continue;
+                }
                 let val = crate::eval::eval_statement(stmt, env, false, false)?;
                 // Empty completions (var/let/const/function/class declarations,
                 // empty statements, empty blocks) should not replace the previous

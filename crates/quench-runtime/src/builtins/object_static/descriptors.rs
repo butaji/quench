@@ -35,6 +35,18 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
     let desc = args
         .get(2)
         .ok_or_else(|| JsError::from("Object.defineProperty: descriptor required"))?;
+    if !matches!(
+        desc,
+        Value::Object(_)
+            | Value::Function(_)
+            | Value::NativeFunction(_)
+            | Value::NativeConstructor(_)
+            | Value::Class(_)
+    ) {
+        return Err(JsError::from(
+            "TypeError: property descriptor is not an object",
+        ));
+    }
     // Per spec, absent descriptor flags default to false for new properties.
     let mut flags = PropertyFlags {
         value: None,
@@ -59,7 +71,7 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
         desc,
         Value::Object(descriptor) if descriptor.borrow().has_setter("set")
     );
-    let descriptor_has_value = matches!(
+    let mut descriptor_has_value = matches!(
         desc,
         Value::Object(descriptor) if descriptor.borrow().has_own("value")
     );
@@ -67,6 +79,13 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
         desc,
         Value::Object(descriptor) if descriptor.borrow().has_own("writable")
     );
+
+    if let Value::Function(function) = desc {
+        if let Some(value) = function.get_property("value") {
+            descriptor_has_value = true;
+            flags.value = Some(value);
+        }
+    }
 
     if let Value::Object(desc_obj) = desc {
         let descriptor_value = crate::eval::member::eval_object_member_value(
@@ -1107,7 +1126,7 @@ pub fn get_object_property_descriptor(
     let has_property = obj.properties.contains_key(prop)
         || prop
             .parse::<usize>()
-            .map(|i| i < obj.elements.len())
+            .map(|index| index < obj.elements.len() && !obj.holes.contains(&index))
             .unwrap_or(false);
 
     if !has_property {
@@ -1265,14 +1284,10 @@ pub fn get_native_constructor_property_descriptor(
     // Check for custom static methods first
     if let Some(value) = nc.get_static_method(prop) {
         let immutable = nc.is_non_deletable_static_method(prop);
-        // The constructor's own length/name/prototype are always
-        // non-writable per spec; user-defined static methods (e.g.
-        // BigInt.asIntN) are writable.
-        let writable = !matches!(prop, "length" | "name" | "prototype");
         return Ok(make_descriptor_value(
             PropertyFlags {
                 value: Some(value),
-                writable,
+                writable: !immutable,
                 enumerable: false,
                 configurable: !immutable,
             },

@@ -1,13 +1,11 @@
 //! Tests for Symbol built-in
 
-use crate::builtins::symbol::{register_symbol, reset_global_symbol_registry};
+use crate::builtins::symbol::reset_global_symbol_registry;
 use crate::Context;
 use crate::Value;
 
 fn create_test_context() -> Context {
-    let mut ctx = Context::new().unwrap();
-    register_symbol(&mut ctx);
-    ctx
+    Context::new().unwrap()
 }
 
 #[test]

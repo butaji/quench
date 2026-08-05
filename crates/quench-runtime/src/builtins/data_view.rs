@@ -136,5 +136,4 @@ mod tests {
         let value = eval_ok("new DataView(new ArrayBuffer(1)).getUint8(0)");
         assert_eq!(value, Value::Number(0.0));
     }
-
 }

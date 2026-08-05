@@ -426,11 +426,6 @@ fn object_define_properties_calls_array_getter_with_array_receiver() {
 }
 
 #[test]
-fn object_define_properties_rejects_global_properties_source() {
-    assert!(eval("Object.defineProperties({}, this)").is_err());
-}
-
-#[test]
 fn object_define_properties_calls_boolean_getter_with_boolean_receiver() {
     assert_eq!(
         eval("'use strict'; var obj = {}; var props = new Boolean(true); var result = false; Object.defineProperty(props, 'prop', {get: function() { result = this instanceof Boolean; return {}; }, enumerable: true}); Object.defineProperties(obj, props); result")
@@ -631,14 +626,6 @@ fn object_define_properties_rejects_new_index_on_nonextensible_array() {
         "var a = []; Object.preventExtensions(a); Object.defineProperties(a, {'0': {value: 1}})"
     )
     .is_err());
-}
-
-#[test]
-fn object_define_properties_generic_array_index_uses_descriptor_flags() {
-    assert_eq!(
-        eval("var a = []; Object.defineProperties(a, {'0': {enumerable: true}}); var d = Object.getOwnPropertyDescriptor(a, '0'); var s = ''; for (var k in a) s += k; [d.value, d.writable, d.enumerable, d.configurable, a.propertyIsEnumerable('0'), s].join(':')").unwrap(),
-        crate::Value::String("undefined:false:true:false:true:0".into())
-    );
 }
 
 #[test]

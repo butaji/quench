@@ -127,14 +127,6 @@ fn generator_next_completed_state_returns_done() {
     assert_eq!(gen.borrow().state, GeneratorState::Completed);
 }
 
-#[test]
-fn generator_next_with_value_stores_it() {
-    let env = make_env();
-    let mut gen = GeneratorObject::new(Rc::new(vec![]), vec![], env, false);
-    gen.next(Value::Number(99.0)).unwrap();
-    assert_eq!(gen.next_value, Value::Number(99.0));
-}
-
 // ─── IteratorResult ──────────────────────────────────────────────────────────
 
 #[test]

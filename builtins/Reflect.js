@@ -25,7 +25,10 @@ Reflect.preventExtensions = function(target) {
   return true;
 };
 Reflect.ownKeys = function(target) {
-  return OwnKeys(ToObject(target));
+  if (target === null || (typeof target !== 'object' && typeof target !== 'function')) {
+    throw ThrowTypeError("Reflect.ownKeys target must be an object");
+  }
+  return OwnKeys(target);
 };
 Reflect.getOwnPropertyDescriptor = function(target, propertyKey) {
   return GetOwnPropDesc(ToObject(target), propertyKey);

@@ -25,6 +25,7 @@ pub fn current_source() -> Option<&'static str> {
 pub struct Context {
     env: Rc<RefCell<Environment>>,
     pub string_interner: crate::interner::StringInterner,
+    builtins_bootstrapped: bool,
 }
 
 pub mod helpers;
@@ -40,6 +41,7 @@ impl Context {
         let mut ctx = Context {
             env: Rc::new(RefCell::new(env)),
             string_interner: crate::interner::StringInterner::new(),
+            builtins_bootstrapped: false,
         };
 
         // Set thread-local before init_builtins so eval function can access context
@@ -50,6 +52,7 @@ impl Context {
 
         intrinsics::clear_intrinsics();
         helpers::init_builtins(&mut ctx)?;
+        ctx.builtins_bootstrapped = true;
 
         // Clear thread-local after init_builtins
         CURRENT_CONTEXT.with(|cell| {
@@ -64,13 +67,19 @@ impl Context {
         interpreter::reset_depth();
         self.env = Rc::new(RefCell::new(Environment::new()));
         self.string_interner = crate::interner::StringInterner::new();
+        self.builtins_bootstrapped = false;
         // Clear every thread-local intrinsic cache before init_builtins rebuilds
         // them, so a reset context never hands out previous-realm intrinsics.
         intrinsics::clear_intrinsics();
         // Reset global symbol registry for new realm
         crate::builtins::symbol::reset_global_symbol_registry();
         helpers::init_builtins(self)?;
+        self.builtins_bootstrapped = true;
         Ok(())
+    }
+
+    pub(crate) fn builtins_are_bootstrapped(&self) -> bool {
+        self.builtins_bootstrapped
     }
 
     /// Evaluate a JavaScript source string using the recursive interpreter.

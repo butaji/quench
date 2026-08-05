@@ -179,8 +179,7 @@ fn array_destructuring_impl(
         // so the surrounding catch block sees a real error object (not `undefined`)
         // which is required by test262's assert.throws and the harness `assert`.
         let msg = "TypeError: value is not iterable";
-        let (err, js_err) =
-            crate::value::error::create_js_error_with_type(&msg, "TypeError");
+        let (err, js_err) = crate::value::error::create_js_error_with_type(&msg, "TypeError");
         crate::value::set_thrown_value(err);
         return Err(js_err);
     };
@@ -1430,7 +1429,8 @@ pub fn assign_to_identifier(
                 "ReferenceError: Cannot access '{}' before initialization",
                 name
             );
-            let (err, js_err) = crate::value::error::create_js_error_with_type(&msg, "ReferenceError");
+            let (err, js_err) =
+                crate::value::error::create_js_error_with_type(&msg, "ReferenceError");
             crate::value::set_thrown_value(err);
             return Err(js_err);
         }

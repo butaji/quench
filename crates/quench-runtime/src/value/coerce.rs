@@ -14,6 +14,21 @@ pub fn to_js_string(v: &Value) -> String {
     }
     match v {
         Value::Object(o) => {
+            let boxed_value = {
+                let object = o.borrow();
+                matches!(
+                    object.exotic_kind,
+                    Some(crate::value::kind::ExoticKind::String)
+                        | Some(crate::value::kind::ExoticKind::Number)
+                        | Some(crate::value::kind::ExoticKind::Boolean)
+                        | Some(crate::value::kind::ExoticKind::BigInt)
+                )
+                .then(|| object.get_own_value("_value"))
+                .flatten()
+            };
+            if let Some(value) = boxed_value {
+                return to_js_string(&value);
+            }
             let own_to_string = {
                 let obj = o.borrow();
                 obj.get_own_value("toString")

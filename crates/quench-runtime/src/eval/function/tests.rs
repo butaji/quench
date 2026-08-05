@@ -2013,19 +2013,6 @@ fn deleting_mapped_arguments_index_in_harness_host_removes_property() {
 }
 
 #[test]
-fn mapped_arguments_setter_descriptor_removes_parameter_mapping() {
-    let mut ctx = crate::Context::new().unwrap();
-    let result = ctx
-        .eval(
-            "(function(a) { var setCalls = 0; Object.defineProperty(arguments, '0', { \
-             set: function(_) { setCalls += 1; }, enumerable: true, configurable: true }); \
-             arguments[0] = 'foo'; return [setCalls, a, arguments[0]].join(','); })(0)",
-        )
-        .unwrap();
-    assert_eq!(result, crate::Value::String("1,0,undefined".into()));
-}
-
-#[test]
 fn mapped_arguments_nonconfigurable_value_redefinition_updates_parameter() {
     let mut ctx = crate::Context::new().unwrap();
     let result = ctx

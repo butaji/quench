@@ -12,7 +12,6 @@ mod scope;
 
 use crate::ast::{Expression, PropertyKey, VarKind};
 use crate::value::{get_thrown_value, Value};
-pub(crate) use scope::set_compound_binding_read;
 pub use scope::{Scope, VarState};
 
 // ─── Environment ─────────────────────────────────────────────────────────────
@@ -485,6 +484,12 @@ impl Environment {
         }
     }
 
+    pub fn declare_eval_var(&mut self, name: String) {
+        if let Some(scope) = self.scopes.first() {
+            scope.borrow_mut().declare_eval_var(name);
+        }
+    }
+
     pub fn initialize_declared(&mut self, name: &str, value: Value) {
         for scope_rc in self.scopes.iter().rev() {
             let mut scope = scope_rc.borrow_mut();
@@ -559,6 +564,11 @@ impl Environment {
         for scope_rc in self.scopes.iter_mut().rev() {
             let mut scope = scope_rc.borrow_mut();
             if scope.has(name) {
+                if scope.is_deletable_binding(name) {
+                    let _ = scope.delete_object_property(name);
+                    scope.remove_binding(name);
+                    return true;
+                }
                 // Don't delete declared bindings (var/let/const) — only implicit globals
                 if scope.get_kind(name).is_some() {
                     return false;
@@ -571,6 +581,18 @@ impl Environment {
             return parent.borrow_mut().delete_binding(name);
         }
         false
+    }
+
+    pub fn is_deletable_binding(&self, name: &str) -> bool {
+        for scope in self.scopes.iter().rev() {
+            let scope = scope.borrow();
+            if scope.has(name) {
+                return scope.is_deletable_binding(name);
+            }
+        }
+        self.parent
+            .as_ref()
+            .is_some_and(|parent| parent.borrow().is_deletable_binding(name))
     }
 
     pub fn push_scope(&mut self) {

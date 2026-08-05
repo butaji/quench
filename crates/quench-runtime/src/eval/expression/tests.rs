@@ -86,7 +86,7 @@ fn untagged_template_uses_cooked_escape_value() {
 fn tagged_template_invalid_escape_has_undefined_cooked_value() {
     assert_eq!(
         eval("(function(s) { return [s[0], s.raw[0]].join('|'); })`\\01`").unwrap(),
-        Value::String("undefined|\\01".to_string())
+        Value::String("|\\01".to_string())
     );
 }
 
@@ -94,7 +94,7 @@ fn tagged_template_invalid_escape_has_undefined_cooked_value() {
 fn tagged_template_objects_are_frozen() {
     assert_eq!(
         eval("(function(s) { s.x = 1; s.raw.x = 1; return [Object.isFrozen(s), Object.isFrozen(s.raw), s.x, s.raw.x].join('|'); })`x`").unwrap(),
-        Value::String("true|true|undefined|undefined".to_string())
+        Value::String("true|true||".to_string())
     );
 }
 

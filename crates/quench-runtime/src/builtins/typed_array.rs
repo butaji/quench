@@ -113,6 +113,7 @@ pub fn register_typed_arrays(ctx: &mut Context) {
         );
         ctx.set_global(name.to_string(), ctor);
     }
+    register_typed_array_iterator();
 }
 
 fn make_typed_array_constructor(

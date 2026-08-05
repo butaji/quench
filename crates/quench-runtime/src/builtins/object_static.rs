@@ -12,11 +12,11 @@ mod descriptors;
 mod freezing;
 
 pub use descriptors::{
-    class_own_property_names, get_class_property_descriptor, get_function_property_descriptor,
-    get_native_constructor_property_descriptor, get_native_function_property_descriptor,
-    get_object_property_descriptor, make_descriptor_value, make_property_descriptor_number,
-    make_property_descriptor_string, object_define_property, object_get_own_property_descriptor,
-    to_property_key,
+    class_own_property_names, class_own_property_symbols, get_class_property_descriptor,
+    get_function_property_descriptor, get_native_constructor_property_descriptor,
+    get_native_function_property_descriptor, get_object_property_descriptor, make_descriptor_value,
+    make_property_descriptor_number, make_property_descriptor_string, object_define_property,
+    object_get_own_property_descriptor, to_property_key,
 };
 pub use freezing::{
     is_frozen_object, object_freeze, object_get_prototype_of, object_is_extensible,
@@ -593,7 +593,7 @@ fn object_create_get(object: &Rc<RefCell<Object>>, key: &str) -> Result<Value, J
 }
 
 /// Check whether a property key is internal (not user data)
-fn is_internal_key(key: &str) -> bool {
+pub(crate) fn is_internal_key(key: &str) -> bool {
     key.starts_with('_') || key == "constructor" || key == "prototype"
 }
 

@@ -14,18 +14,6 @@ use crate::value::error::set_thrown_value;
 use crate::value::get_thrown_value;
 use crate::value::{to_bool, Value};
 
-thread_local! {
-    static COMPOUND_BINDING_READ: Cell<bool> = const { Cell::new(false) };
-}
-
-pub(crate) fn set_compound_binding_read(enabled: bool) {
-    COMPOUND_BINDING_READ.with(|cell| cell.set(enabled));
-}
-
-fn compound_binding_read() -> bool {
-    COMPOUND_BINDING_READ.with(Cell::get)
-}
-
 /// Whether a variable was declared (hoisting support) but not yet initialized
 #[derive(Debug, Clone, PartialEq)]
 #[allow(clippy::large_enum_variant)]
@@ -49,6 +37,7 @@ pub struct Scope {
     declarations: HashMap<String, VarState>,
     /// Track var kinds for const enforcement
     var_kinds: HashMap<String, VarKind>,
+    deletable_bindings: HashSet<String>,
     function_names: HashSet<String>,
     this_value: Option<Value>,
     /// Whether `this` has been initialized for this scope.
@@ -87,6 +76,7 @@ impl Clone for Scope {
                 .collect(),
             declarations: self.declarations.clone(),
             var_kinds: self.var_kinds.clone(),
+            deletable_bindings: self.deletable_bindings.clone(),
             function_names: self.function_names.clone(),
             this_value: self.this_value.clone(),
             this_initialized: self.this_initialized,
@@ -106,6 +96,7 @@ impl Scope {
             bindings: HashMap::new(),
             declarations: HashMap::new(),
             var_kinds: HashMap::new(),
+            deletable_bindings: HashSet::new(),
             function_names: HashSet::new(),
             this_value: None,
             this_initialized: false,
@@ -365,13 +356,13 @@ impl Scope {
         &self,
         name: &str,
         value: Value,
-        strict: bool,
+        _strict: bool,
     ) -> Option<bool> {
         let object = self.object_binding.as_ref()?.clone();
         if !self.load_with_unscopables() || self.is_unscopable(name) {
             return None;
         }
-        if strict && self.object_has_binding_property(name) != Some(true) {
+        if _strict && self.object_has_binding_property(name) != Some(true) {
             return Some(false);
         }
         if matches!(object.borrow().get_descriptor(name), Some(flags) if !flags.writable) {
@@ -465,6 +456,33 @@ impl Scope {
         }
     }
 
+    pub fn declare_eval_var(&mut self, name: String) {
+        let new_global_property = self
+            .object_binding
+            .as_ref()
+            .is_some_and(|object| object.borrow().get_own_property(&name).is_none());
+        self.deletable_bindings.insert(name.clone());
+        self.declare_var(name.clone(), VarKind::Var);
+        if new_global_property {
+            if let Some(object) = &self.object_binding {
+                object.borrow_mut().define(
+                    &name,
+                    Value::Undefined,
+                    crate::value::object::PropertyFlags {
+                        value: Some(Value::Undefined),
+                        writable: true,
+                        enumerable: true,
+                        configurable: true,
+                    },
+                );
+            }
+        }
+    }
+
+    pub fn is_deletable_binding(&self, name: &str) -> bool {
+        self.deletable_bindings.contains(name)
+    }
+
     pub fn declare_with_var(&mut self, name: String, kind: VarKind) {
         self.var_kinds.insert(name.clone(), kind);
         if self.bindings.contains_key(&name) || self.declarations.contains_key(&name) {
@@ -548,11 +566,6 @@ impl Scope {
             }
             if has_binding.is_some_and(|has| has) {
                 if self.is_unscopable(name) {
-                    return None;
-                }
-                if !compound_binding_read()
-                    && !matches!(self.object_has_binding_property(name), Some(true))
-                {
                     return None;
                 }
                 return match proxy_get_property(object, name) {
@@ -657,6 +670,7 @@ impl Scope {
         self.bindings.remove(name);
         self.declarations.remove(name);
         self.var_kinds.remove(name);
+        self.deletable_bindings.remove(name);
         self.function_names.remove(name);
     }
 

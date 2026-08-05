@@ -313,7 +313,7 @@ Array.prototype.push = function ArrayPush() {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.push called on null or undefined");
   var O = ToObject(this);
   var len = ToLength(O.length);
-  for (var i = 0; i < arguments.length; i++) O[len + i] = arguments[i];
+  for (var i = 0; i < arguments.length; i++) CreateDataProperty(O, len + i, arguments[i]);
   O.length = len + arguments.length;
   return O.length;
 };
@@ -467,8 +467,16 @@ function ArrayIteratorNext() {
   return { value: [index, value], done: false };
 }
 
+var _ArrayIteratorPrototype;
+
 function ArrayIterator(O, kind) {
-  var iterator = Object.create(Iterator.prototype);
+  if (_ArrayIteratorPrototype === undefined) {
+    _ArrayIteratorPrototype = Object.create(Iterator.prototype);
+    Object.defineProperty(_ArrayIteratorPrototype, Symbol.toStringTag, {
+      value: 'Array Iterator', configurable: true
+    });
+  }
+  var iterator = Object.create(_ArrayIteratorPrototype);
   iterator._array = O;
   iterator._index = 0;
   iterator._kind = kind;

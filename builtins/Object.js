@@ -20,6 +20,7 @@ var GetOwnPropDesc = ops.GetOwnPropDesc;
 var OwnKeys = ops.OwnKeys;
 var CreateObject = ops.CreateObject;
 var ToPropertyKey = ops.ToPropertyKey;
+var SetPropertyOrThrow = ops.SetPropertyOrThrow;
 
 function EnumerableStringOwnKeys(O) {
   var keys = EnumerableOwnKeys(O);
@@ -66,14 +67,7 @@ Object.prototype.hasOwnProperty = function ObjectHasOwnProperty(P) {
 };
 
 Object.prototype.isPrototypeOf = function ObjectIsPrototypeOf(V) {
-  if (V === null || (typeof V !== 'object' && typeof V !== 'function')) return false;
-  var target = ToObject(this);
-  var current = GetPrototypeOf(V);
-  while (current !== null) {
-    if (current === target) return true;
-    current = GetPrototypeOf(current);
-  }
-  return false;
+  return this.__isPrototypeOf(V);
 };
 
 Object.getOwnPropertyDescriptor = function ObjectGetOwnPropertyDescriptor(O, P) {
@@ -119,7 +113,11 @@ Object.assign = function ObjectAssign(target) {
     if (source === null || source === undefined) continue;
     var from = ToObject(source);
     var keys = EnumerableOwnKeys(from);
-    for (var j = 0; j < keys.length; j++) to[keys[j]] = from[keys[j]];
+    for (var j = 0; j < keys.length; j++) {
+      var key = keys[j];
+      var descriptor = GetOwnPropDesc(from, key);
+      if (descriptor !== undefined && descriptor.enumerable) SetPropertyOrThrow(to, key, from[key]);
+    }
   }
   return to;
 };
@@ -129,7 +127,10 @@ Object.defineProperties = function ObjectDefineProperties(O, Properties) {
   var object = ToObject(O);
   var descriptors = ToObject(Properties);
   var keys = EnumerableOwnKeys(descriptors);
-  for (var i = 0; i < keys.length; i++) Object.defineProperty(object, keys[i], descriptors[keys[i]]);
+  for (var i = 0; i < keys.length; i++) {
+    var key = keys[i];
+    if (GetOwnPropDesc(descriptors, key) !== undefined) Object.defineProperty(object, key, descriptors[key]);
+  }
   return object;
 };
 
@@ -140,7 +141,7 @@ Object.hasOwn = function ObjectHasOwn(O, P) {
 
 // Object.isExtensible (ES2025 §20.1.2.16)
 Object.isExtensible = function ObjectIsExtensible(O) {
-  if (O === null || O === undefined) throw ThrowTypeError("Cannot convert undefined or null to object");
+  if (O === null || (typeof O !== 'object' && typeof O !== 'function')) return false;
   return IsExtensible(O);
 };
 

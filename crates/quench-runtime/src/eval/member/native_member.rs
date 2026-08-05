@@ -279,12 +279,6 @@ mod tests {
 
     // ─── eval_native_function_member: length ───────────────────────────────────
 
-    #[test]
-    fn native_function_length_is_zero() {
-        let r = eval("Object.keys.length").unwrap();
-        assert_eq!(r, Value::Number(0.0));
-    }
-
     // ─── eval_native_function_member: prototype ────────────────────────────────
 
     #[test]

@@ -107,9 +107,9 @@ pub fn check_module_exported_bindings(program: &ast::Program) -> Result<(), JsEr
                             ast::ImportDeclarationSpecifier::ImportDefaultSpecifier(specifier) => {
                                 &specifier.local.name
                             }
-                            ast::ImportDeclarationSpecifier::ImportNamespaceSpecifier(specifier) => {
-                                &specifier.local.name
-                            }
+                            ast::ImportDeclarationSpecifier::ImportNamespaceSpecifier(
+                                specifier,
+                            ) => &specifier.local.name,
                         };
                         if matches!(name.as_str(), "eval" | "arguments") {
                             return Err(JsError(format!(
@@ -2486,6 +2486,8 @@ impl<'a> Visit<'a> for SuperChecker {
             for stmt in &body.statements {
                 self.visit_statement(stmt);
             }
+        } else if let Some(expr) = arrow.body.as_expression() {
+            self.visit_expression(expr);
         }
         self.is_class_method.pop();
     }

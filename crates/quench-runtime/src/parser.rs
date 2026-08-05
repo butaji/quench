@@ -36,7 +36,9 @@ pub fn parse_script(source: &str) -> Result<Program, JsError> {
                 | oxc::ast::ast::Statement::ExportNamedDeclaration(_)
         )
     }) {
-        return Err(JsError("SyntaxError: module declaration in script".to_string()));
+        return Err(JsError(
+            "SyntaxError: module declaration in script".to_string(),
+        ));
     }
     check_strict_reserved(&ret.program, false)?;
     check_strict_fn_params(&ret.program)?;

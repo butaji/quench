@@ -266,11 +266,16 @@ pub fn eval_delete(
                     name
                 )));
             }
+            if env.borrow().is_deletable_binding(name) {
+                return Ok(Value::Boolean(env.borrow_mut().delete_binding(name)));
+            }
             if let Some(deleted) = env.borrow_mut().delete_from_object_env(name) {
                 return Ok(Value::Boolean(deleted));
             }
             let kind = env.borrow().get_kind(name);
-            if matches!(kind, Some(VarKind::Var | VarKind::Let | VarKind::Const)) {
+            if matches!(kind, Some(VarKind::Var | VarKind::Let | VarKind::Const))
+                && !env.borrow().is_deletable_binding(name)
+            {
                 return Ok(Value::Boolean(false));
             }
             // Implicit global (no kind) — delete from scope chain and globalThis

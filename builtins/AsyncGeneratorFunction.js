@@ -25,9 +25,3 @@ DefineProp(AsyncGeneratorFunction.prototype, "constructor", {
   enumerable: false,
   configurable: true
 });
-DefineProp(AsyncGeneratorFunction.prototype, "prototype", {
-  value: AsyncGeneratorFunction.prototype,
-  writable: false,
-  enumerable: false,
-  configurable: true
-});

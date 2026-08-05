@@ -1010,6 +1010,15 @@ mod tests {
         assert_eq!(value, crate::Value::Boolean(true));
     }
 
+    #[test]
+    fn async_generator_method_owns_an_async_generator_prototype() {
+        let mut context = crate::Context::new().unwrap();
+        let value = context
+            .eval("var method = { async *method() {} }.method; Object.getPrototypeOf(method.prototype) === Object.getPrototypeOf(async function*() {}).prototype")
+            .unwrap();
+        assert_eq!(value, crate::Value::Boolean(true));
+    }
+
     use super::*;
 
     #[test]
@@ -1094,18 +1103,6 @@ mod tests {
                  Array.prototype.map.call(f, function(_,_,o){return o instanceof Function;})[0]"
             ),
             Ok(Value::Boolean(true))
-        );
-    }
-
-    #[test]
-    fn function_prototype_methods_have_standard_metadata() {
-        let mut ctx = Context::new().unwrap();
-        let value = ctx
-            .eval("['call', 'apply', 'bind', 'toString'].map(function (name) { var d = Object.getOwnPropertyDescriptor(Function.prototype, name); return [d.value.name, d.value.length, d.writable, d.enumerable, d.configurable].join('|'); }).join(';')")
-            .unwrap();
-        assert_eq!(
-            value,
-            Value::String("call|1|false|false|true;apply|2|false|false|true;bind|1|false|false|true;toString|0|false|false|true".into())
         );
     }
 

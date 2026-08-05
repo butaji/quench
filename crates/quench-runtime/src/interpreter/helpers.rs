@@ -110,10 +110,10 @@ pub fn hoist_functions(statements: &[Statement], env: &Rc<RefCell<Environment>>)
                     *is_generator,
                 );
                 func.strict = strict || check_use_strict_directive(body);
-                // Set VarKind::Var so delete on function decls returns false
                 env.borrow_mut().declare_var(name.clone(), VarKind::Var);
                 let func_value = Value::Function(func);
-                env.borrow_mut().define(name.clone(), func_value.clone());
+                env.borrow_mut()
+                    .initialize_declared(name, func_value.clone());
                 // Top-level function declarations also live on the global
                 // object so member access through `globalThis.x` (and via
                 // `with(globalThis) { x }`) sees the binding. Without this,

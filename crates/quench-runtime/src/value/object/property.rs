@@ -41,7 +41,9 @@ impl Object {
             return Some(value.clone());
         }
         let index = key.parse::<usize>().ok()?;
-        if self.kind != ObjectKind::Array || self.holes.contains(&index) {
+        if self.holes.contains(&index)
+            || (self.kind != ObjectKind::Array && !matches!(self.data, ObjData::Args { .. }))
+        {
             return None;
         }
         self.elements.get(index).cloned()
@@ -221,6 +223,22 @@ impl Object {
         self.properties.insert(key.to_string(), value.clone());
         flags.value = Some(value);
         self.descriptors.insert(key.to_string(), flags);
+        if self.kind == ObjectKind::Array {
+            if let Some(index) = as_array_index(key) {
+                let old_length = self.elements.len();
+                self.elements.resize(index + 1, Value::Undefined);
+                self.elements[index] = self.properties[key].clone();
+                self.holes.remove(&index);
+                for hole in old_length..index {
+                    self.holes.insert(hole);
+                }
+                self.properties.shift_remove(key);
+                self.properties.insert(
+                    "length".to_string(),
+                    Value::Number(self.elements.len() as f64),
+                );
+            }
+        }
     }
 
     /// Get property descriptor flags for a key.

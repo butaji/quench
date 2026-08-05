@@ -364,7 +364,7 @@ fn es_module_parse_import_with_alias() {
 
 #[test]
 fn es_module_parse_export_with_alias() {
-    let result = parse_es_module("export { foo }; export { foo as bar };");
+    let result = parse_es_module("const foo = 0; export { foo }; export { foo as bar };");
     assert!(
         result.is_ok(),
         "Failed to parse aliased export: {:?}",

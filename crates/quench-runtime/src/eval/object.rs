@@ -495,11 +495,9 @@ pub fn assign_to_member(
             };
             let msg = format!(
                 "TypeError: Cannot set properties of {} (setting property '{}')",
-                base_repr,
-                prop_name
+                base_repr, prop_name
             );
-            let (err, js_err) =
-                crate::value::error::create_js_error_with_type(&msg, "TypeError");
+            let (err, js_err) = crate::value::error::create_js_error_with_type(&msg, "TypeError");
             crate::value::set_thrown_value(err);
             return Err(js_err);
         }
@@ -631,8 +629,7 @@ pub fn assign_to_member(
                 },
                 prop_name
             );
-            let (err, js_err) =
-                crate::value::error::create_js_error_with_type(&msg, "TypeError");
+            let (err, js_err) = crate::value::error::create_js_error_with_type(&msg, "TypeError");
             crate::value::set_thrown_value(err);
             Err(js_err)
         }
@@ -657,11 +654,9 @@ pub fn assign_to_member_value(
             };
             let msg = format!(
                 "TypeError: Cannot set properties of {} (setting property '{}')",
-                base_repr,
-                property
+                base_repr, property
             );
-            let (err, js_err) =
-                crate::value::error::create_js_error_with_type(&msg, "TypeError");
+            let (err, js_err) = crate::value::error::create_js_error_with_type(&msg, "TypeError");
             crate::value::set_thrown_value(err);
             Err(js_err)
         }

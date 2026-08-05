@@ -94,7 +94,8 @@ fn register_error_constructor(ctx: &mut Context, name: &str, proto: &Rc<RefCell<
                     // ToString = ToPrimitive with hint "string" then to string.
                     // A Symbol result throws TypeError; other thrown errors
                     // propagate unchanged.
-                    let msg_str = match crate::value::primitive::to_primitive(&msg, Some("string")) {
+                    let msg_str = match crate::value::primitive::to_primitive(&msg, Some("string"))
+                    {
                         Ok(prim) => {
                             if matches!(prim, Value::Symbol(_)) {
                                 let (_, err) = create_js_error_with_type(

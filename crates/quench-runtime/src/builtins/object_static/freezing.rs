@@ -244,6 +244,9 @@ pub fn object_get_prototype_of(args: Vec<Value>) -> Result<Value, JsError> {
             .clone()
             .or_else(|| crate::builtins::function::get_function_prototype().map(Value::Object))
             .unwrap_or(Value::Null)),
+        Value::NativeConstructor(constructor) if constructor.inherits_function_constructor() => {
+            Ok(crate::context::get_global_from_context("Function").unwrap_or(Value::Null))
+        }
         Value::NativeConstructor(_) => Ok(crate::builtins::function::get_function_prototype()
             .map(Value::Object)
             .unwrap_or(Value::Null)),

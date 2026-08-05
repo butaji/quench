@@ -930,8 +930,7 @@ pub fn eval_for_of(
             // a real error object (not `undefined`) — required by test262's
             // `assert.throws` and the harness `assert`.
             let msg = "TypeError: Value is not iterable";
-            let (err, js_err) =
-                crate::value::error::create_js_error_with_type(&msg, "TypeError");
+            let (err, js_err) = crate::value::error::create_js_error_with_type(&msg, "TypeError");
             crate::value::set_thrown_value(err);
             return Err(js_err);
         }

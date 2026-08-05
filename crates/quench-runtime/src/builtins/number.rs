@@ -354,6 +354,11 @@ fn setup_number_static(proto: &Rc<RefCell<Object>>, ctx: &mut Context) {
     number_ctor.set_static_constant("EPSILON", Value::Number(f64::EPSILON));
     number_ctor.set_static_constant("MAX_SAFE_INTEGER", Value::Number(9007199254740991.0));
     number_ctor.set_static_constant("MIN_SAFE_INTEGER", Value::Number(-9007199254740991.0));
+    for name in ["parseInt", "parseFloat"] {
+        if let Some(value) = number_obj.borrow().get(name) {
+            number_ctor.set_static_method(name, value);
+        }
+    }
 
     // Number.prototype.constructor = Number
     proto.borrow_mut().set(

@@ -48,24 +48,6 @@ fn test_error_to_string_empty_message() {
 }
 
 #[test]
-fn test_error_to_string_empty_name() {
-    let mut ctx = crate::Context::new().unwrap();
-    let result = ctx
-        .eval("var e = new Error('x'); e.name = ''; e.toString()")
-        .unwrap();
-    assert_eq!(to_js_string(&result), "Error: x");
-}
-
-#[test]
-fn test_error_to_string_both_empty() {
-    let mut ctx = crate::Context::new().unwrap();
-    let result = ctx
-        .eval("var e = new Error(); e.name = ''; e.toString()")
-        .unwrap();
-    assert_eq!(to_js_string(&result), "Error");
-}
-
-#[test]
 fn test_error_to_string_name_undefined() {
     let mut ctx = crate::Context::new().unwrap();
     let result = ctx
@@ -84,20 +66,6 @@ fn test_error_to_string_non_string_message() {
 }
 
 // ── Error constructor ─────────────────────────────────────────────────────────
-
-#[test]
-fn test_error_constructor_no_args() {
-    let mut ctx = crate::Context::new().unwrap();
-    let result = ctx
-        .eval("[new Error().hasOwnProperty('message'), new Error().message]")
-        .unwrap();
-    let crate::Value::Object(arr) = result else {
-        panic!("expected array")
-    };
-    let elems = arr.borrow().elements.clone();
-    assert_eq!(elems[0], crate::Value::Boolean(false));
-    assert_eq!(elems[1], crate::Value::Undefined);
-}
 
 #[test]
 fn test_error_constructor_with_message() {

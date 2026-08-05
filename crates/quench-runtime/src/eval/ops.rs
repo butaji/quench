@@ -253,20 +253,53 @@ pub fn make_ops_object() -> Value {
         let o = args.first().cloned().unwrap_or(Value::Undefined);
         match &o {
             Value::Object(obj_rc) => {
-                let obj_ref = obj_rc.borrow();
+                if let Some(keys) = crate::eval::object::proxy_own_keys(obj_rc)? {
+                    let arr = crate::value::object::Object::new_array_from(keys);
+                    return Ok(Value::Object(std::rc::Rc::new(std::cell::RefCell::new(
+                        arr,
+                    ))));
+                }
+                let target =
+                    crate::eval::object::proxy_handler_and_target(obj_rc).and_then(|(_, value)| {
+                        match value {
+                            Value::Object(object) => Some(object),
+                            _ => None,
+                        }
+                    });
+                let obj_ref = target.as_ref().unwrap_or(obj_rc).borrow();
                 let mut keys: Vec<Value> = crate::value::object::enumerable_own_keys(&obj_ref)
                     .into_iter()
-                    .filter(|k| !k.contains('\0'))
+                    .filter(|k| {
+                        !k.contains('\0') && !crate::builtins::object_static::is_internal_key(k)
+                    })
                     .map(Value::String)
                     .collect();
-                keys.extend(obj_ref.symbol_properties.keys().filter_map(|key| {
-                    let (desc, id) = key.split_once('\0')?;
-                    Some(Value::Symbol(std::rc::Rc::new(crate::value::Symbol {
-                        desc: (!desc.is_empty()).then(|| std::rc::Rc::from(desc)),
-                        global: false,
-                        id: id.parse().ok()?,
-                    })))
-                }));
+                keys.extend(
+                    obj_ref
+                        .symbol_properties
+                        .keys()
+                        .filter(|key| obj_ref.is_enumerable(key))
+                        .filter_map(|key| {
+                            let (desc, id) = key.split_once('\0')?;
+                            Some(Value::Symbol(std::rc::Rc::new(crate::value::Symbol {
+                                desc: (!desc.is_empty()).then(|| std::rc::Rc::from(desc)),
+                                global: false,
+                                id: id.parse().ok()?,
+                            })))
+                        }),
+                );
+                let arr = crate::value::object::Object::new_array_from(keys);
+                Ok(Value::Object(std::rc::Rc::new(std::cell::RefCell::new(
+                    arr,
+                ))))
+            }
+            Value::Function(function) => {
+                let keys = function
+                    .own_property_names()
+                    .into_iter()
+                    .filter(|key| !matches!(key.as_str(), "length" | "name" | "prototype"))
+                    .map(Value::String)
+                    .collect();
                 let arr = crate::value::object::Object::new_array_from(keys);
                 Ok(Value::Object(std::rc::Rc::new(std::cell::RefCell::new(
                     arr,
@@ -286,7 +319,7 @@ pub fn make_ops_object() -> Value {
         match &o {
             Value::Object(obj_rc) => {
                 let object = obj_rc.borrow();
-                let mut keys: Vec<Value> = crate::value::object::own_keys(&object)
+                let mut keys: Vec<Value> = crate::value::object::own_property_names(&object)
                     .into_iter()
                     .map(Value::String)
                     .collect();
@@ -303,6 +336,20 @@ pub fn make_ops_object() -> Value {
                     arr,
                 ))))
             }
+            Value::Class(class) => {
+                let keys = crate::builtins::object_static::class_own_property_names(class)
+                    .into_iter()
+                    .map(Value::String)
+                    .chain(
+                        crate::builtins::object_static::class_own_property_symbols(class)
+                            .into_iter(),
+                    )
+                    .collect();
+                let arr = crate::value::object::Object::new_array_from(keys);
+                Ok(Value::Object(std::rc::Rc::new(std::cell::RefCell::new(
+                    arr,
+                ))))
+            }
             Value::NativeFunction(nf) => {
                 let mut keys = vec![
                     Value::String("length".to_string()),
@@ -312,7 +359,9 @@ pub fn make_ops_object() -> Value {
                     keys.push(Value::String("prototype".to_string()));
                 }
                 let arr = crate::value::object::Object::new_array_from(keys);
-                Ok(Value::Object(std::rc::Rc::new(std::cell::RefCell::new(arr))))
+                Ok(Value::Object(std::rc::Rc::new(std::cell::RefCell::new(
+                    arr,
+                ))))
             }
             _ => {
                 let empty = crate::value::object::Object::new_array_from(vec![]);
@@ -368,6 +417,26 @@ pub fn make_ops_object() -> Value {
         }
     });
 
+    set_op(&mut obj, "SetPropertyOrThrow", |args| {
+        let value = args.first().cloned().unwrap_or(Value::Undefined);
+        let Value::Object(object) = value else {
+            return Err(JsError::from("TypeError: property target is not an object"));
+        };
+        let key = match args.get(1) {
+            Some(Value::Symbol(symbol)) => symbol.property_key(),
+            Some(value) => crate::value::to_js_string(value),
+            None => String::new(),
+        };
+        let assigned = args.get(2).cloned().unwrap_or(Value::Undefined);
+        let env = crate::context::get_current_env()
+            .ok_or_else(|| JsError::from("TypeError: missing execution environment"))?;
+        let strict = crate::interpreter::is_strict_mode();
+        crate::interpreter::set_strict_mode(true);
+        let result = crate::eval::object::assign_to_object(&object, &key, &assigned, &env);
+        crate::interpreter::set_strict_mode(strict);
+        result.map(|()| Value::Boolean(true))
+    });
+
     set_op(&mut obj, "SetPrototypeOf", |args| {
         let o = args.first().cloned().unwrap_or(Value::Undefined);
         let proto = args.get(1).cloned().unwrap_or(Value::Null);
@@ -382,6 +451,10 @@ pub fn make_ops_object() -> Value {
         match &v {
             Value::Object(o) => {
                 o.borrow_mut().extensible = false;
+                Ok(Value::Boolean(true))
+            }
+            Value::Class(class) => {
+                class.set_extensible(false);
                 Ok(Value::Boolean(true))
             }
             _ => Ok(Value::Boolean(false)),
@@ -576,10 +649,7 @@ pub fn make_ops_object() -> Value {
                             .borrow_mut()
                             .symbol_properties
                             .insert(key.clone(), val.clone());
-                        obj_rc
-                            .borrow_mut()
-                            .descriptors
-                            .insert(key.clone(), flags);
+                        obj_rc.borrow_mut().descriptors.insert(key.clone(), flags);
                     } else {
                         // Per ES §15.4.5: SetFunctionName — if value is a
                         // non-arrow function, name it after the property key.
@@ -589,16 +659,15 @@ pub fn make_ops_object() -> Value {
                         // etc.); the spec says SetFunctionName is invoked
                         // when defining an own data property whose value is
                         // a function.
-                        let val_to_set =
-                            if let Value::Function(mut f) = val {
-                                if !f.is_arrow {
-                                    f.name = Some(key.clone());
-                                    let _ = f.set_property("name", Value::String(key.clone()));
-                                }
-                                Value::Function(f)
-                            } else {
-                                val.clone()
-                            };
+                        let val_to_set = if let Value::Function(mut f) = val {
+                            if !f.is_arrow {
+                                f.name = Some(key.clone());
+                                let _ = f.set_property("name", Value::String(key.clone()));
+                            }
+                            Value::Function(f)
+                        } else {
+                            val.clone()
+                        };
                         obj_rc.borrow_mut().define(&key, val_to_set, flags);
                     }
                     Ok(Value::Boolean(true))
@@ -617,64 +686,8 @@ pub fn make_ops_object() -> Value {
         };
         match &o {
             Value::Object(obj_rc) => {
-                let obj_ref = obj_rc.borrow();
-                // Check for accessor descriptor first
-                if obj_ref.has_getter(&key) || obj_ref.has_setter(&key) {
-                    let getter = obj_ref.get_getter(&key);
-                    let setter = obj_ref.get_setter(&key);
-                    let flags = obj_ref
-                        .descriptors
-                        .get(&key)
-                        .cloned()
-                        .unwrap_or(crate::value::object::helpers::PropertyFlags::default_data());
-                    let desc_obj =
-                        crate::value::object::Object::new(crate::value::ObjectKind::Ordinary);
-                    let desc_rc = std::rc::Rc::new(std::cell::RefCell::new(desc_obj));
-                    if let Some(g) = getter {
-                        desc_rc
-                            .borrow_mut()
-                            .set("get", g.func.clone().unwrap_or(Value::Undefined));
-                    }
-                    if let Some(s) = setter {
-                        desc_rc
-                            .borrow_mut()
-                            .set("set", s.func.clone().unwrap_or(Value::Undefined));
-                    }
-                    desc_rc
-                        .borrow_mut()
-                        .set("enumerable", Value::Boolean(flags.enumerable));
-                    desc_rc
-                        .borrow_mut()
-                        .set("configurable", Value::Boolean(flags.configurable));
-                    Ok(Value::Object(desc_rc))
-                } else if let Some(val) = obj_ref.get_own_value(&key) {
-                    let flags = obj_ref.descriptors.get(&key).cloned().unwrap_or(
-                        crate::value::object::helpers::PropertyFlags {
-                            value: Some(val.clone()),
-                            writable: true,
-                            enumerable: true,
-                            configurable: true,
-                        },
-                    );
-                    let desc_obj =
-                        crate::value::object::Object::new(crate::value::ObjectKind::Ordinary);
-                    let desc_rc = std::rc::Rc::new(std::cell::RefCell::new(desc_obj));
-                    desc_rc
-                        .borrow_mut()
-                        .set("value", flags.value.clone().unwrap_or_else(|| val.clone()));
-                    desc_rc
-                        .borrow_mut()
-                        .set("writable", Value::Boolean(flags.writable));
-                    desc_rc
-                        .borrow_mut()
-                        .set("enumerable", Value::Boolean(flags.enumerable));
-                    desc_rc
-                        .borrow_mut()
-                        .set("configurable", Value::Boolean(flags.configurable));
-                    Ok(Value::Object(desc_rc))
-                } else {
-                    Ok(Value::Undefined)
-                }
+                crate::eval::object::call_proxy_get_own_property_descriptor(obj_rc, &key)?;
+                crate::builtins::object_static::get_object_property_descriptor(obj_rc, &key)
             }
             Value::Function(function) => {
                 if key == "prototype"
@@ -712,36 +725,7 @@ pub fn make_ops_object() -> Value {
                 ))))
             }
             Value::Class(class) => {
-                if matches!(key.as_str(), "name" | "length" | "prototype") {
-                    return crate::builtins::object_static::get_class_property_descriptor(
-                        class, &key,
-                    );
-                }
-                if !class.has_static_own_property(&key) {
-                    return Ok(Value::Undefined);
-                }
-                let is_field = class.static_properties_cell.borrow().contains_key(&key);
-                let value = if is_field {
-                    class.get_static_field(&key).unwrap_or(Value::Undefined)
-                } else if class.has_static_method(&key) {
-                    class
-                        .get_class_def_env()
-                        .and_then(|env| {
-                            crate::eval::member::eval_class_member(class, &key, &env).ok()
-                        })
-                        .unwrap_or(Value::Undefined)
-                } else {
-                    Value::Undefined
-                };
-                let mut desc =
-                    crate::value::object::Object::new(crate::value::ObjectKind::Ordinary);
-                desc.set("value", value);
-                desc.set("writable", Value::Boolean(true));
-                desc.set("enumerable", Value::Boolean(is_field));
-                desc.set("configurable", Value::Boolean(true));
-                Ok(Value::Object(std::rc::Rc::new(std::cell::RefCell::new(
-                    desc,
-                ))))
+                crate::builtins::object_static::get_class_property_descriptor(class, &key)
             }
             Value::NativeConstructor(constructor) => {
                 crate::builtins::object_static::get_native_constructor_property_descriptor(
@@ -753,9 +737,7 @@ pub fn make_ops_object() -> Value {
                 if nf.get_property(&format!("\0deleted:{key}")).is_some() {
                     return Ok(Value::Undefined);
                 }
-                if !matches!(key.as_str(), "name" | "length")
-                    && nf.get_property(&key).is_none()
-                {
+                if !matches!(key.as_str(), "name" | "length") && nf.get_property(&key).is_none() {
                     return Ok(Value::Undefined);
                 }
                 if key == "prototype" && nf.get_property("prototype").is_none() {

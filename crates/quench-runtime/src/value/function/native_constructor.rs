@@ -61,6 +61,13 @@ impl NativeConstructor {
         *self.name.borrow_mut() = name.to_string();
     }
 
+    pub fn inherits_function_constructor(&self) -> bool {
+        matches!(
+            self.name().as_str(),
+            "AsyncFunction" | "GeneratorFunction" | "AsyncGeneratorFunction"
+        )
+    }
+
     /// Set a static method on the constructor
     pub fn set_static_method(&self, name: &str, value: Value) {
         self.deleted_static_methods.borrow_mut().remove(name);

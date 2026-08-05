@@ -135,20 +135,21 @@ fn host_262_eval_script(args: Vec<Value>) -> Result<Value, JsError> {
         return Err(js_err);
     }
     let ctx = unsafe { &mut *ctx_ptr };
-    reject_restricted_global_lexicals(ctx, &code)?;
-    let function_names = global_function_names(ctx, &code)?;
     // evalScript runs a NEW script: non-strict unless the source itself
     // declares 'use strict' — never inherit the caller's strictness.
     let was_strict = crate::interpreter::is_strict_mode();
     let was_direct_eval = crate::interpreter::is_direct_eval();
     crate::interpreter::set_strict_mode(false);
     crate::interpreter::set_direct_eval(false);
-    let result = ctx.eval(&code);
+    let result = (|| {
+        reject_restricted_global_lexicals(ctx, &code)?;
+        let function_names = global_function_names(ctx, &code)?;
+        let value = ctx.eval(&code)?;
+        set_global_function_descriptors(ctx, &function_names);
+        Ok(value)
+    })();
     crate::interpreter::set_strict_mode(was_strict);
     crate::interpreter::set_direct_eval(was_direct_eval);
-    if result.is_ok() {
-        set_global_function_descriptors(ctx, &function_names);
-    }
     result
 }
 
@@ -370,14 +371,17 @@ fn inject_abstract_module_source(ctx: &mut Context) {
                 ..Default::default()
             },
         );
-        if let Some(flags) = proto.borrow_mut().descriptors.get_mut(&tag_key.property_key()) {
+        if let Some(flags) = proto
+            .borrow_mut()
+            .descriptors
+            .get_mut(&tag_key.property_key())
+        {
             flags.enumerable = false;
             flags.configurable = true;
         }
     }
 
-    let constructor =
-        NativeConstructor::new(host_262_abstract_module_source, Rc::clone(&proto));
+    let constructor = NativeConstructor::new(host_262_abstract_module_source, Rc::clone(&proto));
     constructor.set_name("AbstractModuleSource");
     let ctor_val = Value::NativeConstructor(Rc::new(constructor));
     proto.borrow_mut().set("constructor", ctor_val.clone());
@@ -783,7 +787,10 @@ mod tests {
     fn test_abstract_module_source_name_is_constructor_name() {
         let mut ctx = harness_ctx();
         let result = ctx.eval("$262.AbstractModuleSource.name");
-        assert_eq!(result.unwrap(), crate::Value::String("AbstractModuleSource".into()));
+        assert_eq!(
+            result.unwrap(),
+            crate::Value::String("AbstractModuleSource".into())
+        );
     }
 
     #[test]
@@ -796,14 +803,17 @@ mod tests {
     #[test]
     fn test_abstract_module_source_proto_is_function_prototype() {
         let mut ctx = harness_ctx();
-        let result = ctx.eval("Object.getPrototypeOf($262.AbstractModuleSource) === Function.prototype");
+        let result =
+            ctx.eval("Object.getPrototypeOf($262.AbstractModuleSource) === Function.prototype");
         assert_eq!(result.unwrap(), crate::Value::Boolean(true));
     }
 
     #[test]
     fn test_abstract_module_source_prototype_inherits_object_prototype() {
         let mut ctx = harness_ctx();
-        let result = ctx.eval("Object.getPrototypeOf($262.AbstractModuleSource.prototype) === Object.prototype");
+        let result = ctx.eval(
+            "Object.getPrototypeOf($262.AbstractModuleSource.prototype) === Object.prototype",
+        );
         assert_eq!(result.unwrap(), crate::Value::Boolean(true));
     }
 

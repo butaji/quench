@@ -15,9 +15,3 @@ DefineProp(GeneratorFunction.prototype, "constructor", {
   enumerable: false,
   configurable: true
 });
-DefineProp(GeneratorFunction.prototype, "prototype", {
-  value: GeneratorFunction.prototype,
-  writable: false,
-  enumerable: false,
-  configurable: true
-});

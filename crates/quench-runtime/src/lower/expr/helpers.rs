@@ -193,16 +193,14 @@ fn lower_object_prop(
                 .as_ref()
                 .map(|b| super::super::helpers::lower_fn_body(b))
                 .unwrap_or_default(),
-            ast::Expression::ArrowFunctionExpression(arrow) => {
-                match &arrow.body {
-                    ast::ArrowFunctionBody::FunctionBody(body) => body
-                        .statements
-                        .iter()
-                        .filter_map(super::super::stmt::lower_stmt)
-                        .collect(),
-                    _ => vec![],
-                }
-            }
+            ast::Expression::ArrowFunctionExpression(arrow) => match &arrow.body {
+                ast::ArrowFunctionBody::FunctionBody(body) => body
+                    .statements
+                    .iter()
+                    .filter_map(super::super::stmt::lower_stmt)
+                    .collect(),
+                _ => vec![],
+            },
             _ => vec![],
         };
         let param = crate::ast::Param {

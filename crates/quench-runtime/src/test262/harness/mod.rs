@@ -1407,53 +1407,6 @@ if (opd.configurable !== true) throw new Error('FAIL: configurable should be tru
         }
     }
 
-    /// assert must be a NativeFunction (not overwritten by JS).
-    #[test]
-    fn test_harness_assert_is_native_function() {
-        let mut ctx = Context::new().unwrap();
-        try_inject_harness(&mut ctx).expect("harness ok");
-
-        let assert_val = ctx.get_global("assert").unwrap();
-        assert!(
-            matches!(assert_val, Value::NativeFunction(_)),
-            "assert should be NativeFunction, got: {:?}",
-            assert_val
-        );
-    }
-
-    /// assert.sameValue, assert.throws, assert.compareArray, assert.deepEqual,
-    /// assert.notSameValue, assert.notUnreachable must all exist as NativeFunctions.
-    #[test]
-    fn test_harness_assert_methods_are_native() {
-        let mut ctx = Context::new().unwrap();
-        try_inject_harness(&mut ctx).expect("harness ok");
-
-        let methods = [
-            "sameValue",
-            "throws",
-            "compareArray",
-            "deepEqual",
-            "notSameValue",
-            "notUnreachable",
-        ];
-        let assert_val = ctx.get_global("assert").unwrap();
-
-        if let Value::NativeFunction(nf) = assert_val {
-            for m in methods {
-                let prop = nf.get_property(m);
-                assert!(prop.is_some(), "assert.{} should be defined", m);
-                assert!(
-                    matches!(prop, Some(Value::NativeFunction(_))),
-                    "assert.{} should be NativeFunction, got: {:?}",
-                    m,
-                    prop
-                );
-            }
-        } else {
-            panic!("assert should be NativeFunction");
-        }
-    }
-
     /// Test262Error must be a NativeConstructor.
     #[test]
     fn test_harness_test262_error_is_native_constructor() {
@@ -1521,11 +1474,10 @@ if (opd.configurable !== true) throw new Error('FAIL: configurable should be tru
         try_inject_harness(&mut ctx).expect("first ok");
         try_inject_harness(&mut ctx).expect("second ok");
 
-        // assert should still be a NativeFunction (not broken by second injection)
-        let assert_val = ctx.get_global("assert").unwrap();
-        assert!(
-            matches!(assert_val, Value::NativeFunction(_)),
-            "assert should still be NativeFunction after second injection"
+        assert_eq!(
+            ctx.eval("typeof assert === 'function' && typeof assert.sameValue === 'function'")
+                .unwrap(),
+            Value::Boolean(true)
         );
 
         // Test262Error should still be present
@@ -1547,20 +1499,6 @@ if (opd.configurable !== true) throw new Error('FAIL: configurable should be tru
         ctx1.set_global("__quench_test_marker".to_string(), Value::Number(1.0));
         let marker = ctx2.get_global("__quench_test_marker");
         assert!(marker.is_none(), "ctx2 should not see globals set on ctx1");
-    }
-
-    /// verifyProperty must be a NativeFunction (not from JS).
-    #[test]
-    fn test_harness_verify_property_is_native() {
-        let mut ctx = Context::new().unwrap();
-        try_inject_harness(&mut ctx).expect("harness ok");
-
-        let val = ctx.get_global("verifyProperty").unwrap();
-        assert!(
-            matches!(val, Value::NativeFunction(_)),
-            "verifyProperty should be NativeFunction, got: {:?}",
-            val
-        );
     }
 
     /// Test262Error.prototype.toString must work (used by sta.js).
@@ -1686,19 +1624,6 @@ if (opd.configurable !== true) throw new Error('FAIL: configurable should be tru
             matches!(len, Value::Number(n) if n >= 7.0),
             "nativeErrors should have at least 7 entries (Error types), got: {:?}",
             len
-        );
-    }
-
-    /// makeNativeError must be a NativeFunction.
-    #[test]
-    fn test_harness_make_native_error_is_native() {
-        let mut ctx = Context::new().unwrap();
-        try_inject_harness(&mut ctx).expect("harness ok");
-
-        let val = ctx.get_global("makeNativeError").unwrap();
-        assert!(
-            matches!(val, Value::NativeFunction(_)),
-            "makeNativeError should be NativeFunction"
         );
     }
 

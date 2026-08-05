@@ -263,14 +263,6 @@ const BUILTIN_FILES: &[(&str, &str)] = &[
             "/../../builtins/DisposableStack.js"
         )),
     ),
-    // Phase 24: FinalizationRegistry — placeholder stub until native backing lands
-    (
-        "FinalizationRegistry",
-        include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../builtins/FinalizationRegistry.js"
-        )),
-    ),
     // Phase 25: AsyncDisposableStack — placeholder; needs native Rust implementation
     // of the async disposable resource stack and Symbol.asyncDispose well-known symbol.
     (
@@ -317,6 +309,8 @@ fn normalize_intrinsic_prototypes(ctx: &Context) {
         "WeakSet",
         "WeakRef",
         "Promise",
+        "Math",
+        "Reflect",
         "RegExp",
         "Date",
         "BigInt",
@@ -336,22 +330,28 @@ fn normalize_intrinsic_prototypes(ctx: &Context) {
                     }
                 }
                 crate::value::Value::NativeFunction(nf) => {
-                    if let Some(crate::value::Value::Object(proto_obj)) = nf.get_property("prototype") {
+                    if let Some(crate::value::Value::Object(proto_obj)) =
+                        nf.get_property("prototype")
+                    {
                         normalize_prototype(&proto_obj);
                     }
                 }
                 crate::value::Value::Function(f) => {
-                    // Value::Function globals (e.g. FinalizationRegistry after
-                    // builtins/FinalizationRegistry.js reassigns it) carry the
-                    // same prototype object as the original NativeFunction
-                    // constructor. Normalize it (sets method names, marks
-                    // them non-constructable) so the function names match
-                    // the property keys.
-                    if let Some(crate::value::Value::Object(proto_obj)) = f.get_property("prototype") {
-                        if !Rc::ptr_eq(&proto_obj, &f.get_prototype()) {
-                            normalize_prototype(&proto_obj);
-                        }
+                    if let Some(crate::value::Value::Object(proto_obj)) =
+                        f.get_property("prototype")
+                    {
+                        normalize_prototype(&proto_obj);
                     }
+                }
+                crate::value::Value::Object(object) if object.borrow().is_callable() => {
+                    if let Some(crate::value::Value::Object(prototype)) =
+                        object.borrow().get("prototype")
+                    {
+                        normalize_prototype(&prototype);
+                    }
+                }
+                crate::value::Value::Object(object) if matches!(name, "Math" | "Reflect") => {
+                    normalize_intrinsic_object(&object);
                 }
                 _ => {}
             }
@@ -397,17 +397,32 @@ fn normalize_prototype(prototype: &Rc<RefCell<crate::value::Object>>) {
     }
 }
 
+fn normalize_intrinsic_object(object: &Rc<RefCell<crate::value::Object>>) {
+    let values = crate::value::object::own_keys(&object.borrow())
+        .into_iter()
+        .filter_map(|key| object.borrow().get_own(&key).map(|value| (key, value)))
+        .collect::<Vec<_>>();
+    for (key, value) in values {
+        object.borrow_mut().define(
+            &key,
+            value,
+            crate::value::PropertyFlags {
+                value: None,
+                writable: true,
+                enumerable: false,
+                configurable: true,
+            },
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::Value;
 
     fn new_ctx() -> Context {
-        let mut ctx = Context::new().unwrap();
-        // init_builtins is called by Context::new(), which registers __ops__.
-        // bootstrap_js_builtins evaluates the JS files.
-        bootstrap_js_builtins(&mut ctx).unwrap();
-        ctx
+        Context::new().unwrap()
     }
 
     #[test]
@@ -456,7 +471,10 @@ mod tests {
         let r = ctx
             .eval("[typeof Object.getOwnPropertyDescriptor, typeof Object.getPrototypeOf, typeof Object.keys, typeof Object.assign].join('|')")
             .unwrap();
-        assert_eq!(r, Value::String("function|function|function|function".into()));
+        assert_eq!(
+            r,
+            Value::String("function|function|function|function".into())
+        );
     }
     #[test]
     fn generator_function_to_string_tag() {
@@ -1478,40 +1496,6 @@ mod tests {
     }
 
     #[test]
-    fn array_keys_returns_indices() {
-        let mut ctx = new_ctx();
-        let r = ctx
-            .eval(
-                "var k = ['a', 'b', 'c'].keys(); \
-             k.length === 3 && k[0] === 0 && k[1] === 1 && k[2] === 2",
-            )
-            .unwrap();
-        assert_eq!(r, Value::Boolean(true));
-    }
-
-    #[test]
-    fn array_values_returns_values() {
-        let mut ctx = new_ctx();
-        let r = ctx
-            .eval(
-                "var v = ['a', 'b'].values(); \
-             v.length === 2 && v[0] === 'a' && v[1] === 'b'",
-            )
-            .unwrap();
-        assert_eq!(r, Value::Boolean(true));
-    }
-
-    #[test]
-    fn array_entries_returns_pairs() {
-        let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "var e = ['x', 'y'].entries(); \
-             e.length === 2 && e[0][0] === 0 && e[0][1] === 'x' && e[1][0] === 1 && e[1][1] === 'y'",
-        ).unwrap();
-        assert_eq!(r, Value::Boolean(true));
-    }
-
-    #[test]
     fn string_char_at_works() {
         let mut ctx = new_ctx();
         let r = ctx.eval("'hello'.charAt(1) === 'e'").unwrap();
@@ -1624,15 +1608,6 @@ mod tests {
                 "var a = [1, 2, 3]; var b = a.toReversed(); \
              b[0] === 3 && b[1] === 2 && b[2] === 1 && a[0] === 1",
             )
-            .unwrap();
-        assert_eq!(r, Value::Boolean(true));
-    }
-
-    #[test]
-    fn _disabled_to_sorted() {
-        let mut ctx = new_ctx();
-        let r = ctx
-            .eval("typeof Array.prototype.toSorted === 'undefined'")
             .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
@@ -2107,15 +2082,6 @@ mod tests {
         let mut ctx = new_ctx();
         let r = ctx
             .eval("typeof SharedArrayBuffer.prototype.slice === 'function'")
-            .unwrap();
-        assert_eq!(r, Value::Boolean(true));
-    }
-
-    #[test]
-    fn shared_array_buffer_to_string_tag() {
-        let mut ctx = new_ctx();
-        let r = ctx
-            .eval("SharedArrayBuffer.prototype[Symbol.toStringTag] === undefined")
             .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }

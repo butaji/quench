@@ -26,11 +26,14 @@ fn test_timeout_secs() -> u64 {
 
 /// Async prelude: `$DONE` records invocations and rethrows error arguments.
 /// The count is verified after the microtask drain by `async_done_probe`.
-pub const ASYNC_DONE_PRELUDE: &str = "globalThis.$DONE = function(error) { \
+pub const ASYNC_DONE_PRELUDE: &str = "var __test262DoneReplacement; \
+var __test262Done = function(error) { \
 globalThis.__test262DoneCount = (globalThis.__test262DoneCount|0) + 1; \
 if (globalThis.__test262DoneCount > 1) throw new Test262Error('$DONE called twice'); \
 if (error !== undefined && error !== null) { globalThis.__test262DoneError = error; throw error; } \
-};\n";
+}; \
+globalThis.$DONE = __test262Done; \
+Object.defineProperty(globalThis, '$DONE', { configurable: true, get: function() { return __test262DoneReplacement === undefined ? __test262Done : __test262DoneReplacement; }, set: function(callback) { __test262DoneReplacement = function(error) { globalThis.__test262ReplacementDoneCount = (globalThis.__test262ReplacementDoneCount|0) + 1; return callback(error); }; } });\n";
 
 /// Infrastructure failure markers — never evidence of expected test behavior.
 const INFRA_MARKERS: &[&str] = &[
@@ -501,9 +504,6 @@ fn execute_script(
 pub(crate) fn initialize_test_context(strict: bool) -> Result<crate::Context, String> {
     crate::interpreter::reset_interpreter_state();
     let mut ctx = crate::Context::new().map_err(|error| format!("{error:?}"))?;
-    crate::builtins::register_builtins(&mut ctx);
-    crate::builtins::bootstrap::bootstrap_js_builtins(&mut ctx)
-        .map_err(|error| format!("builtin bootstrap failure: {error}"))?;
     ctx.eval("delete AsyncFunction")
         .map_err(|error| format!("AsyncFunction cleanup failure: {error:?}"))?;
     crate::interpreter::set_strict_mode(false);
@@ -522,7 +522,9 @@ fn run_sync_script_with_path(source: &str, is_module: bool, path: &Path) -> Resu
     let mut ctx = initialize_test_context(strict)?;
     load_fixture_modules(&mut ctx, path)?;
     if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
-        if let Some(crate::Value::Object(raw_modules)) = ctx.get_global("__quench_fixture_raw_modules__") {
+        if let Some(crate::Value::Object(raw_modules)) =
+            ctx.get_global("__quench_fixture_raw_modules__")
+        {
             raw_modules.borrow_mut().set(
                 &format!("./{name}"),
                 crate::Value::String(source.to_string()),
@@ -1566,7 +1568,9 @@ fn async_done_probe(ctx: &mut crate::Context) -> Result<(), String> {
             return Err(crate::value::to_js_string(&error));
         }
     }
-    match ctx.eval("globalThis.__test262DoneCount|0") {
+    match ctx
+        .eval("(globalThis.__test262DoneCount|0) || (globalThis.__test262ReplacementDoneCount|0)")
+    {
         Ok(crate::Value::Number(1.0)) => Ok(()),
         Ok(v) => Err(format!(
             "async test did not call $DONE exactly once (count: {:?})",

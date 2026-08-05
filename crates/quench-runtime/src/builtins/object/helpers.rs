@@ -50,6 +50,7 @@ pub fn get_builtin_tag(this_val: &Value) -> String {
 
 /// Get builtin tag for object values
 pub fn get_object_builtin_tag(o: &Rc<RefCell<Object>>) -> String {
+    let fallback = get_object_kind_tag(o.borrow().kind.clone());
     let mut current = Some(Rc::clone(o));
     while let Some(obj_rc) = current {
         let obj = obj_rc.borrow();
@@ -66,11 +67,10 @@ pub fn get_object_builtin_tag(o: &Rc<RefCell<Object>>) -> String {
             if matches!(obj.data, ObjData::Args { .. }) {
                 return "Arguments".to_string();
             }
-            return get_object_kind_tag(obj.kind.clone());
         }
         current = obj.prototype.clone();
     }
-    "Object".to_string()
+    fallback
 }
 
 fn typed_array_builtin_tag(data: &ObjData) -> Option<String> {

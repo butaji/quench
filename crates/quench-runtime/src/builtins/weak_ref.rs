@@ -18,7 +18,8 @@ fn make_deref_native() -> NativeFunction {
     let mut f = NativeFunction::new(move |_args| {
         let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
         let Value::Object(this_obj) = this_val else {
-            let msg = "TypeError: WeakRef.prototype.deref called on incompatible 'this'".to_string();
+            let msg =
+                "TypeError: WeakRef.prototype.deref called on incompatible 'this'".to_string();
             let (err_val, js_err) =
                 crate::value::error::create_js_error_with_type(&msg, "TypeError");
             crate::value::set_thrown_value(err_val);
@@ -27,7 +28,8 @@ fn make_deref_native() -> NativeFunction {
         let obj = this_obj.borrow();
         if !obj.weak_ref_target.is_some() {
             drop(obj);
-            let msg = "TypeError: WeakRef.prototype.deref called on incompatible 'this'".to_string();
+            let msg =
+                "TypeError: WeakRef.prototype.deref called on incompatible 'this'".to_string();
             let (err_val, js_err) =
                 crate::value::error::create_js_error_with_type(&msg, "TypeError");
             crate::value::set_thrown_value(err_val);
@@ -206,9 +208,15 @@ pub fn register_finalization_registry(ctx: &mut Context) {
     // These carry proper name/length descriptors so test262 sees the spec
     // shape even before builtins/FinalizationRegistry.js overrides them
     // with the no-op wrappers used by the harness.
-    let register_fn = Rc::new(make_fr_proto_method("register", |_args| Ok(Value::Undefined)));
-    let unregister_fn = Rc::new(make_fr_proto_method("unregister", |_args| Ok(Value::Boolean(false))));
-    let cleanup_some_fn = Rc::new(make_fr_proto_method("cleanupSome", |_args| Ok(Value::Undefined)));
+    let register_fn = Rc::new(make_fr_proto_method("register", |_args| {
+        Ok(Value::Undefined)
+    }));
+    let unregister_fn = Rc::new(make_fr_proto_method("unregister", |_args| {
+        Ok(Value::Boolean(false))
+    }));
+    let cleanup_some_fn = Rc::new(make_fr_proto_method("cleanupSome", |_args| {
+        Ok(Value::Undefined)
+    }));
     proto_rc.borrow_mut().define(
         "register",
         Value::NativeFunction(Rc::clone(&register_fn)),
@@ -339,9 +347,21 @@ mod tests {
     #[test]
     fn weak_ref_throws_for_non_object_target() {
         let mut ctx = Context::new().unwrap();
-        assert!(ctx.eval("try { new WeakRef(undefined); false } catch(e) { e instanceof TypeError }").unwrap() == Value::Boolean(true));
-        assert!(ctx.eval("try { new WeakRef(null); false } catch(e) { e instanceof TypeError }").unwrap() == Value::Boolean(true));
-        assert!(ctx.eval("try { new WeakRef(1); false } catch(e) { e instanceof TypeError }").unwrap() == Value::Boolean(true));
+        assert!(
+            ctx.eval("try { new WeakRef(undefined); false } catch(e) { e instanceof TypeError }")
+                .unwrap()
+                == Value::Boolean(true)
+        );
+        assert!(
+            ctx.eval("try { new WeakRef(null); false } catch(e) { e instanceof TypeError }")
+                .unwrap()
+                == Value::Boolean(true)
+        );
+        assert!(
+            ctx.eval("try { new WeakRef(1); false } catch(e) { e instanceof TypeError }")
+                .unwrap()
+                == Value::Boolean(true)
+        );
     }
 
     #[test]

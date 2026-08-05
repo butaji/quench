@@ -344,7 +344,14 @@ pub fn create_js_error_with_type(message: &str, error_type: &str) -> (Value, JsE
         if let Some(ctor_val) = ctor {
             let arg = Value::String(message.to_string());
             let result = crate::eval::call_value_with_this(ctor_val, vec![arg], Value::Undefined);
-            if let Ok(v @ (Value::Object(_) | Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_) | Value::Class(_))) = result {
+            if let Ok(
+                v @ (Value::Object(_)
+                | Value::Function(_)
+                | Value::NativeFunction(_)
+                | Value::NativeConstructor(_)
+                | Value::Class(_)),
+            ) = result
+            {
                 set_thrown_value(v.clone());
                 return (v, JsError(format!("{}: {}", error_type, message)));
             }

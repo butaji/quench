@@ -23,25 +23,6 @@ use std::rc::Rc;
 pub mod helpers;
 pub use helpers::*;
 
-fn has_object_binding_environment(env: &Rc<RefCell<Environment>>) -> bool {
-    let mut current = Some(Rc::clone(env));
-    while let Some(environment) = current {
-        let next = {
-            let environment_ref = environment.borrow();
-            if environment_ref
-                .scopes
-                .iter()
-                .any(|scope| scope.borrow().is_object_binding())
-            {
-                return true;
-            }
-            environment_ref.get_parent()
-        };
-        current = next;
-    }
-    false
-}
-
 #[cfg(test)]
 mod tests;
 
@@ -476,24 +457,6 @@ pub fn eval_expression(
             if let (Expression::Identifier(name), Some(scope)) =
                 (assignment_target, identifier_scope)
             {
-                if matches!(name.as_str(), "NaN" | "undefined" | "Infinity") {
-                    if crate::interpreter::is_strict_mode() && has_object_binding_environment(env) {
-                        let (_, error) = crate::value::error::create_js_error_with_type(
-                            &format!("Cannot assign to read-only property '{}'", name),
-                            "TypeError",
-                        );
-                        return Err(error);
-                    }
-                    if crate::interpreter::is_strict_mode() && !has_object_binding_environment(env)
-                    {
-                        let (_, error) = crate::value::error::create_js_error_with_type(
-                            &format!("Cannot assign to '{}' in strict mode", name),
-                            "TypeError",
-                        );
-                        return Err(error);
-                    }
-                    return Ok(right_val);
-                }
                 // Per ES spec §12.4.5.1, `let` and `const` at global scope do NOT
                 // create properties on the global object. The object_binding_has
                 // check below is meant for `var` bindings whose global property was
@@ -727,9 +690,7 @@ pub fn eval_expression(
             } else {
                 None
             };
-            crate::env::set_compound_binding_read(true);
             let left_result = eval_expression(left, env, in_arrow_function);
-            crate::env::set_compound_binding_read(false);
             let left_val = left_result?;
             // Extract identifier info before dropping borrow.
             let ident_name = if let Expression::Identifier(name) = left.as_ref() {

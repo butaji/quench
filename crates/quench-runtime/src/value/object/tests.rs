@@ -36,6 +36,7 @@ fn array_assign_and_define_own_property_survive() {
 fn test_non_canonical_numeric_key_does_not_alias_elements() {
     let mut obj = Object::new_array(3);
     obj.elements[1] = Value::Number(2.0);
+    obj.holes.remove(&1);
     obj.set("01", Value::Number(9.0));
     assert_eq!(obj.get("1"), Some(Value::Number(2.0)));
     assert_eq!(obj.get("01"), Some(Value::Number(9.0)));
@@ -227,7 +228,7 @@ fn test_delete_non_configurable_and_element() {
     arr.elements[0] = Value::Number(10.0);
     arr.holes.remove(&0);
     assert!(arr.delete("0"));
-    assert_eq!(arr.get("0"), Some(Value::Undefined));
+    assert_eq!(arr.get("0"), None);
 }
 
 // ─── 3. has / has_own / keys / get_descriptor ───────────────────────
@@ -376,7 +377,7 @@ fn test_array_elements_access() {
     obj.set("1", Value::String("one".to_string()));
     assert_eq!(obj.get("0"), Some(Value::String("zero".to_string())));
     assert_eq!(obj.get("1"), Some(Value::String("one".to_string())));
-    assert_eq!(obj.get("2"), Some(Value::Undefined));
+    assert_eq!(obj.get("2"), None);
     let mut empty = Object::new_array(0);
     empty.set("5", Value::Number(5.0));
     assert!(empty.elements.len() > 5);
@@ -442,7 +443,7 @@ fn test_element_hole_after_delete() {
     obj.set("1", Value::Number(100.0));
     obj.delete("1");
     assert!(obj.holes.contains(&1));
-    assert_eq!(obj.get("1"), Some(Value::Undefined));
+    assert_eq!(obj.get("1"), None);
     let mut empty = Object::new_array(0);
     empty.set("0", Value::Number(1.0));
     assert!(empty.properties.get("length").is_some());

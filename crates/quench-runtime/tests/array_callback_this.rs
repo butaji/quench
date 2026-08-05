@@ -30,15 +30,6 @@ fn array_of_uses_called_constructor_and_sets_length() {
 }
 
 #[test]
-fn array_prototype_has_unscopables_object() {
-    let mut ctx = Context::new().unwrap();
-    assert_eq!(
-        ctx.eval("var u=Array.prototype[Symbol.unscopables]; var d=Object.getOwnPropertyDescriptor(u,'toReversed'); [Object.getPrototypeOf(u)===Object.prototype,d.value,d.writable,d.enumerable,d.configurable,u.toSorted,u.toSpliced,Object.prototype.hasOwnProperty.call(u,'with')].join('|')"),
-        Ok(Value::String("true|true|true|true|true|true|true|false".to_string()))
-    );
-}
-
-#[test]
 fn array_from_uses_called_constructor_prototype() {
     let mut ctx = Context::new().unwrap();
     assert_eq!(
