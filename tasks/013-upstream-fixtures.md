@@ -4461,3 +4461,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Return `EEXIST` with copy metadata when `COPYFILE_EXCL` targets an existing
   destination.
+
+### Stage 1279: preserve recursive mkdir errors
+
+- Preserve `ENOTDIR` and other classified recursive-parent errors instead of
+  rewriting them as `ENOENT`.
