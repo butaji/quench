@@ -5297,3 +5297,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1565. `url-resolve-object-auth-target.js` — preserve parsed authenticated targets.
 1566. `url-resolve-object-same-scheme-fragment.js` — preserve same-scheme parsed fragments.
 1567. `url-resolve-object-same-scheme-path.js` — retain authorities for same-scheme paths.
+1568. `url-resolve-object-scoped-path.js` — preserve parsed scoped web paths.
