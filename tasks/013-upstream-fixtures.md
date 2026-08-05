@@ -5308,3 +5308,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1576. `url-resolve-object-absolute-opaque.js` — preserve parsed absolute opaque targets.
 1577. `url-resolve-object-web-suffixes.js` — preserve parsed web query and fragment suffixes.
 1578. `url-resolve-object-web-directories.js` — preserve parsed web directory resolution.
+1579. `url-resolve-object-empty-scheme.js` — preserve parsed bases for empty scheme targets.
