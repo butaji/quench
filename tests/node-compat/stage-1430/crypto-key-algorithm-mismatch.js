@@ -1,0 +1,9 @@
+const assert = require("node:assert");
+const crypto = require("node:crypto");
+
+const privateKey = crypto.generateKeyPairSync("x448").privateKey;
+const publicKey = crypto.generateKeyPairSync("x25519").publicKey;
+assert.throws(() => crypto.diffieHellman({ privateKey, publicKey }), {
+  code: "ERR_OSSL_MISMATCHING_DOMAIN_PARAMETERS"
+});
+console.log("crypto key algorithm mismatch passed");

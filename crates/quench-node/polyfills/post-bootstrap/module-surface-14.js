@@ -185,13 +185,18 @@ const __quenchDhCurvesDiffer = (privateParams, publicParams) =>
   privateParams?.namedCurve &&
   publicParams?.namedCurve &&
   privateParams.namedCurve !== publicParams.namedCurve;
+const __quenchDhAlgorithmsDiffer = (privateParams, publicParams) =>
+  privateParams?.algorithm &&
+  publicParams?.algorithm &&
+  privateParams.algorithm !== publicParams.algorithm;
 const __quenchValidateStatelessDhParameters = (options) => {
   const privateParams = options.privateKey?.dhParams;
   const publicParams = options.publicKey?.dhParams;
   if (
     __quenchDhGroupsDiffer(privateParams, publicParams) ||
     __quenchDhLengthsDiffer(privateParams, publicParams) ||
-    __quenchDhCurvesDiffer(privateParams, publicParams)
+    __quenchDhCurvesDiffer(privateParams, publicParams) ||
+    __quenchDhAlgorithmsDiffer(privateParams, publicParams)
   )
     throw Object.assign(new Error("Mismatching domain parameters"), {
       code: "ERR_OSSL_MISMATCHING_DOMAIN_PARAMETERS"
