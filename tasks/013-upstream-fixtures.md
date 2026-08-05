@@ -3966,3 +3966,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Added `resolveMx()` with Node-shaped `ENOTFOUND` metadata for unavailable
   `.onion` names.
+
+### Stage 1176: dgram bind state
+
+- Added bound-state tracking and Node-shaped duplicate-bind errors to the
+  minimal UDP socket polyfill.
