@@ -424,3 +424,73 @@ globalThis.__nodeURL.revokeObjectURL = (value) => {
   }
 };
 globalThis.__nodeIsURL = (value) => value instanceof globalThis.__nodeURL;
+globalThis.__nodeLegacyProtocolRelativeParts = (input) =>
+  input.startsWith("//")
+    ? {
+        protocol: null,
+        slashes: null,
+        auth: null,
+        host: null,
+        port: null,
+        hostname: null,
+        hash: null,
+        search: null,
+        query: null,
+        pathname: input,
+        path: input,
+        href: input
+      }
+    : null;
+const __nodeLegacyUrlReceived = (value) => {
+  if (value == null) return String(value);
+  if (typeof value === "function") return `function ${value.name || ""}`;
+  if (typeof value === "object")
+    return `an instance of ${Object.prototype.toString.call(value).slice(8, -1)}`;
+  return `type ${typeof value} (${String(value)})`;
+};
+const __nodePrepareLegacyUrlInput = (value) => {
+  let input = value.trim().replace(/[\r\n\t]/g, "");
+  if (!/^[a-z][a-z0-9+.-]*:/.test(input)) return input;
+  const suffixIndex = input.search(/[?#]/);
+  const head = suffixIndex < 0 ? input : input.slice(0, suffixIndex);
+  const suffix = suffixIndex < 0 ? "" : input.slice(suffixIndex);
+  input =
+    head.replaceAll("\\", "/") +
+    suffix
+      .replaceAll("\\", "%5C")
+      .replaceAll('"', "%22")
+      .replaceAll("'", "%27")
+      .replaceAll("<", "%3C")
+      .replaceAll(">", "%3E")
+      .replaceAll(" ", "%20");
+  input = input.replace(/^([a-z][a-z0-9+.-]*:\/\/[^/?#;]+);/i, "$1/;");
+  return input.replace(
+    /^([a-z][a-z0-9+.-]*:\/\/)([^/@]*)@/i,
+    (_, prefix, auth) =>
+      `${prefix}${auth.replace(/[" <]/g, encodeURIComponent)}@`
+  );
+};
+globalThis.__nodePrepareLegacyUrl = (value) => {
+  if (typeof value !== "string") {
+    const error = new TypeError(
+      'The "url" argument must be of type string.' +
+        ` Received ${__nodeLegacyUrlReceived(value)}`
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  if (/^https?:\/\/[^/]*:[.]|^git\+ssh:\/\/[^/]*:[^/]+\/[^/]+/.test(value)) {
+    const error = new TypeError("Invalid URL");
+    error.code = "ERR_INVALID_ARG_VALUE";
+    throw error;
+  }
+  if (/%(?:[0-9A-Fa-f]{0,1}|[0-9A-Fa-f]{2})/.test(value)) {
+    try {
+      decodeURIComponent(value);
+    } catch (_) {
+      throw new URIError("URI malformed");
+    }
+  }
+  const input = __nodePrepareLegacyUrlInput(value);
+  return { input, parsed: new globalThis.__nodeURL(input) };
+};
