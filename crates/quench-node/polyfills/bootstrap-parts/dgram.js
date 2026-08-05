@@ -81,6 +81,15 @@ const __quenchDgramOn = (socket, listeners, event, callback) => {
   (listeners[event] ||= []).push(callback);
   return socket;
 };
+const __quenchDgramOnce = (socket, listeners, event, callback) => {
+  const wrapper = (...args) => {
+    listeners[event] = (listeners[event] || []).filter(
+      (listener) => listener !== wrapper
+    );
+    callback.apply(socket, args);
+  };
+  return __quenchDgramOn(socket, listeners, event, wrapper);
+};
 const __quenchDgramEmit = (socket, listeners, event, args) => {
   for (const callback of listeners[event] || []) callback.apply(socket, args);
   return socket;
@@ -100,6 +109,8 @@ const __quenchDgramSocket = (type = "udp4") => {
     address: () => __quenchDgramAddress(socket, type),
     on: (event, callback) =>
       __quenchDgramOn(socket, listeners, event, callback),
+    once: (event, callback) =>
+      __quenchDgramOnce(socket, listeners, event, callback),
     emit: (event, ...args) => __quenchDgramEmit(socket, listeners, event, args),
     unref: () => socket
   };

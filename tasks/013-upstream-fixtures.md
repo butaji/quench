@@ -4000,3 +4000,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Added connected/disconnected state, remote address reporting, and port
   validation for UDP sockets.
+
+### Stage 1181: dgram once listeners
+
+- Added one-shot event listeners needed by connection lifecycle fixtures.
