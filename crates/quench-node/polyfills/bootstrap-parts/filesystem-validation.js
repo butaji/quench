@@ -87,6 +87,32 @@ const __nodeFsReadPath = (value) => {
 };
 const __nodeFsPathOnly = (value) =>
   __nodeFsReadPath(typeof value === "number" ? false : value);
+const __nodeFsCopyPath = (value, name) => {
+  try {
+    return __nodeFsPathOnly(value);
+  } catch (error) {
+    if (error.code === "ERR_INVALID_ARG_TYPE")
+      error.message = error.message.replace('"path"', `"${name}"`);
+    throw error;
+  }
+};
+const __nodeFsCopyExclusiveError = (destination, source, mode) => {
+  if (!(mode & 1)) return;
+  let exists = false;
+  try {
+    exists = Boolean(globalThis.__quench_fs_kind(destination));
+  } catch (_) {}
+  if (!exists) return;
+  const error = new Error(
+    `EEXIST: file already exists, copyfile '${source}' -> '${destination}'`
+  );
+  error.errno = -17;
+  error.code = "EEXIST";
+  error.syscall = "copyfile";
+  error.path = source;
+  error.dest = destination;
+  throw error;
+};
 const __nodeFsApplyMkdirMode = (path, options) => {
   const mode = typeof options === "object" ? options.mode : options;
   if (mode === undefined) return;
