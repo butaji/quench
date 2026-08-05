@@ -5,6 +5,7 @@ use std::rc::Rc;
 
 use crate::interpreter::get_native_this;
 use crate::value::convert::to_js_string;
+use crate::value::error::create_js_error_with_type;
 use crate::value::object::PropertyDescriptor;
 use crate::value::{NativeConstructor, Object, ObjectKind, PropertyFlags, Value};
 use crate::Context;
@@ -90,10 +91,20 @@ fn register_error_constructor(ctx: &mut Context, name: &str, proto: &Rc<RefCell<
             // and not undefined. Descriptor uses enumerable: false.
             if let Some(msg) = message {
                 if msg != Value::Undefined {
+                    let msg_str = match &msg {
+                        Value::Symbol(_) => {
+                            let (_, err) = create_js_error_with_type(
+                                "Cannot convert a Symbol to a string",
+                                "TypeError",
+                            );
+                            return Err(err);
+                        }
+                        _ => to_js_string(&msg),
+                    };
                     error_rc.borrow_mut().define_own_property(
                         "message",
                         &PropertyDescriptor {
-                            value: Some(msg),
+                            value: Some(Value::String(msg_str)),
                             writable: Some(true),
                             enumerable: Some(false),
                             configurable: Some(true),
