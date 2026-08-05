@@ -5299,3 +5299,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1567. `url-resolve-object-same-scheme-path.js` — retain authorities for same-scheme paths.
 1568. `url-resolve-object-scoped-path.js` — preserve parsed scoped web paths.
 1569. `url-resolve-object-file-targets.js` — preserve parsed file URL targets.
+1570. `url-resolve-object-remaining-matrix.js` — cover remaining parsed URL cases.
