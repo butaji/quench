@@ -48,6 +48,19 @@ const __quenchDgramSend = (socket, message, ...args) => {
         code: "ERR_INVALID_ARG_TYPE"
       }
     );
+  const addressIndex = args.length >= 4 ? 3 : 1;
+  const address = args[addressIndex];
+  if (
+    address !== undefined &&
+    address !== null &&
+    address !== "" &&
+    typeof address !== "function" &&
+    typeof address !== "string"
+  )
+    throw Object.assign(
+      new TypeError('The "address" argument must be of type string'),
+      { code: "ERR_INVALID_ARG_TYPE" }
+    );
   const callback = args.at(-1);
   const hasOffset = args.length >= 5 || (socket._connected && args.length >= 3);
   const payload = Array.isArray(message) ? NodeBuffer.concat(message) : message;
