@@ -579,9 +579,16 @@ pub fn register_function(ctx: &mut Context) {
     function_constructor.set_name("Function");
     let func_ctor = Value::NativeConstructor(Rc::new(function_constructor));
     // Set Function.prototype.constructor = Function
-    function_proto
-        .borrow_mut()
-        .set("constructor", func_ctor.clone());
+    function_proto.borrow_mut().define(
+        "constructor",
+        func_ctor.clone(),
+        crate::value::PropertyFlags {
+            value: Some(func_ctor.clone()),
+            writable: false,
+            enumerable: false,
+            configurable: true,
+        },
+    );
     ctx.set_global("Function".to_string(), func_ctor);
 
     // Register AsyncFunction, GeneratorFunction, AsyncGeneratorFunction
@@ -595,7 +602,16 @@ pub fn register_function(ctx: &mut Context) {
     let async_ctor_val = Value::NativeConstructor(Rc::new(async_func_ctor));
     ASYNC_FUNCTION_PROTOTYPE.with(|fp| {
         if let Some(p) = fp.borrow().as_ref() {
-            p.borrow_mut().set("constructor", async_ctor_val.clone());
+            p.borrow_mut().define(
+                "constructor",
+                async_ctor_val.clone(),
+                crate::value::PropertyFlags {
+                    value: Some(async_ctor_val.clone()),
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                },
+            );
         }
     });
     ctx.set_global("AsyncFunction".to_string(), async_ctor_val);
@@ -609,7 +625,16 @@ pub fn register_function(ctx: &mut Context) {
     let gen_ctor_val = Value::NativeConstructor(Rc::new(gen_func_ctor));
     GENERATOR_FUNCTION_PROTOTYPE.with(|fp| {
         if let Some(p) = fp.borrow().as_ref() {
-            p.borrow_mut().set("constructor", gen_ctor_val.clone());
+            p.borrow_mut().define(
+                "constructor",
+                gen_ctor_val.clone(),
+                crate::value::PropertyFlags {
+                    value: Some(gen_ctor_val.clone()),
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                },
+            );
         }
     });
     if let Some(generator_proto) = get_generator_prototype() {
@@ -635,8 +660,16 @@ pub fn register_function(ctx: &mut Context) {
     let async_gen_ctor_val = Value::NativeConstructor(Rc::new(async_gen_func_ctor));
     ASYNC_GENERATOR_FUNCTION_PROTOTYPE.with(|fp| {
         if let Some(p) = fp.borrow().as_ref() {
-            p.borrow_mut()
-                .set("constructor", async_gen_ctor_val.clone());
+            p.borrow_mut().define(
+                "constructor",
+                async_gen_ctor_val.clone(),
+                crate::value::PropertyFlags {
+                    value: Some(async_gen_ctor_val.clone()),
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                },
+            );
         }
     });
     ctx.set_global("AsyncGeneratorFunction".to_string(), async_gen_ctor_val);

@@ -4,8 +4,17 @@
 
 var ops = __ops__;
 var ThrowTypeError = ops.ThrowTypeError;
+var DefineProp = ops.DefineProp;
 
-// ES2025 §20.2.4: %AsyncFunctionPrototype%[@@toStringTag] = "AsyncFunction"
-// TODO: Use Object.defineProperty for spec-correct non-writable/non-enumerable
-// flags once symbol-keyed defineProperty is fixed for plain objects.
-AsyncFunction.prototype[Symbol.toStringTag] = "AsyncFunction";
+DefineProp(AsyncFunction.prototype, Symbol.toStringTag, {
+  value: "AsyncFunction",
+  writable: false,
+  enumerable: false,
+  configurable: true
+});
+DefineProp(AsyncFunction.prototype, "constructor", {
+  value: AsyncFunction,
+  writable: false,
+  enumerable: false,
+  configurable: true
+});
