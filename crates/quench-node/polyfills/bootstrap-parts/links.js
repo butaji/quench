@@ -27,7 +27,7 @@ globalThis.__nodeFs.chmod = (value, mode, callback) => {
   }
   if (typeof callback !== "function")
     throw new TypeError('The "callback" argument must be of type function');
-  const path = nodeFsPath(value);
+  const path = __nodeFsPathOnly(value);
   queueMicrotask(() => {
     try {
       globalThis.__nodeFs.chmodSync(path, mode);

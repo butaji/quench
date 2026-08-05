@@ -71,7 +71,7 @@ const __nodeFsReadPath = (value) => {
     !(value instanceof globalThis.__nodeURL)
   ) {
     const error = new TypeError(
-      `The "path" argument must be of type string or an instance of Buffer or URL. Received ${typeof value} `
+      `The "path" argument must be of type string or an instance of Buffer or URL.${__nodeInvalidArgSuffix(value)}`
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -85,6 +85,8 @@ const __nodeFsReadPath = (value) => {
   error.code = "EBADF";
   throw error;
 };
+const __nodeFsPathOnly = (value) =>
+  __nodeFsReadPath(typeof value === "number" ? false : value);
 const __nodeFsApplyMkdirMode = (path, options) => {
   const mode = typeof options === "object" ? options.mode : options;
   if (mode === undefined) return;

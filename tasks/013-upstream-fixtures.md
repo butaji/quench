@@ -4408,3 +4408,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Treat ordinary `assert.throws` validator functions as predicates while
   retaining constructor checks for error classes and tested constructors.
+
+### Stage 1267: chmod path validation
+
+- Reject invalid `fs.chmod` paths synchronously in both sync and callback APIs.

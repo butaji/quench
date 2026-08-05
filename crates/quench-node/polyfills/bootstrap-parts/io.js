@@ -311,7 +311,7 @@ Object.assign(globalThis.__nodeFs, {
     return globalThis.__quench_fs_remove_dir(path);
   },
   chmodSync: (value, mode) => {
-    const path = nodeFsPath(value);
+    const path = __nodeFsPathOnly(value);
     globalThis.__quench_fs_chmod(
       path,
       typeof mode === "string" ? parseInt(mode, 8) : Number(mode)
