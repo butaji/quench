@@ -162,8 +162,17 @@ pub fn register_array_buffer(ctx: &mut Context) {
                         .set("maxByteLength", Value::Number(max_bl));
                 }
                 let len_usize = len as usize;
-                this_obj.borrow_mut().elements =
-                    (0..len_usize).map(|_| Value::Number(0.0)).collect();
+                let mut elements = Vec::new();
+                if elements.try_reserve_exact(len_usize).is_err() {
+                    let (error, js_error) = crate::value::error::create_js_error_with_type(
+                        "ArrayBuffer allocation is too large",
+                        "RangeError",
+                    );
+                    crate::value::set_thrown_value(error);
+                    return Err(js_error);
+                }
+                elements.resize(len_usize, Value::Number(0.0));
+                this_obj.borrow_mut().elements = elements;
                 if this_obj.borrow().prototype.is_none() {
                     this_obj.borrow_mut().prototype = Some(Rc::clone(&proto_clone));
                 }
@@ -280,6 +289,21 @@ mod tests {
         let result =
             eval_ok("var ab = new ArrayBuffer(8, { maxByteLength: 16 }); ab.maxByteLength");
         assert_eq!(result.to_string(), "16");
+    }
+
+    #[test]
+    fn array_buffer_rejects_unallocatable_length() {
+        let result = eval_err("new ArrayBuffer(9007199254740991)");
+        assert!(result);
+    }
+
+    #[test]
+    fn array_buffer_allocation_failure_is_range_error_object() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx
+            .eval("try { new ArrayBuffer(9007199254740991); false } catch (error) { error instanceof RangeError }")
+            .unwrap();
+        assert_eq!(result, Value::Boolean(true));
     }
 
     #[test]
