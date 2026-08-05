@@ -4290,3 +4290,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1240: net socket flow controls
 
 - Added chainable `resume()` and `pause()` methods to compatibility sockets.
+
+### Stage 1241: net socket teardown
+
+- Added chainable `destroy()` and `resetAndDestroy()` socket methods with close
+  event scheduling.
