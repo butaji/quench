@@ -2525,7 +2525,15 @@ pub(crate) fn dynamic_import(
                 crate::builtins::symbol::get_well_known_symbol_no_ctx("toStringTag")
             {
                 let key = symbol.property_key();
-                namespace.set_symbol(&key, Value::String("Module".to_string()));
+                namespace.set_symbol(
+                    &key,
+                    Value::String(if deferred {
+                        "Deferred Module"
+                    } else {
+                        "Module"
+                    }
+                    .to_string()),
+                );
                 if let Some(flags) = namespace.descriptors.get_mut(&key) {
                     flags.writable = false;
                     flags.enumerable = false;
