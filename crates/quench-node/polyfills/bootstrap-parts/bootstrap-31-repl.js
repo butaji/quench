@@ -42,6 +42,7 @@ const __quenchRepl = {
     this.closed = false;
     if (this.input?.on && this.output?.write) {
       this.input.on("data", () => this.output.write("\"'string'\"\n"));
+      this.input.resume?.();
     }
   }
 };
