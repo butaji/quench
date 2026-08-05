@@ -3938,3 +3938,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
   and directory context preserved.
 - Verified the path-aware runner with the upstream `test-path.js` fixture and
   a focused single-file context stage.
+
+### Stage 1170: util VT input validation
+
+- Matched Node’s object-specific `stripVTControlCharacters` argument
+  diagnostic instead of formatting objects as `[object Object]`.
