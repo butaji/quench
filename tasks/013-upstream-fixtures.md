@@ -5198,3 +5198,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1465. `crypto-prime-api.js` — expose prime generation and checking APIs.
 1466. `crypto-shared-module-fallbacks.js` — share crypto fallback exports across specifiers.
 1467. `crypto-sign-constructors.js` — preserve callable Sign and Verify constructor behavior.
+1468. `crypto-sign-error-metadata.js` — preserve signing error metadata setter behavior.
