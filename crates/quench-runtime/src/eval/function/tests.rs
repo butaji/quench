@@ -1729,9 +1729,10 @@ fn strict_arguments_use_the_intrinsic_throw_type_error() {
 #[test]
 fn throw_type_error_intrinsic_has_immutable_own_properties() {
     let mut ctx = crate::Context::new().unwrap();
+    crate::test262::harness::try_inject_harness(&mut ctx).unwrap();
     let result = ctx
         .eval(
-            "var f = Object.getOwnPropertyDescriptor((function() { 'use strict'; return arguments; })(), 'callee').get; [Object.isFrozen(f), Object.isExtensible(f), Object.getOwnPropertyNames(f).join(','), Object.getOwnPropertyDescriptor(f, 'length').configurable, Object.getOwnPropertyDescriptor(f, 'name').configurable].join('|')",
+            "var f = Object.getOwnPropertyDescriptor((function() { 'use strict'; return arguments; })(), 'callee').get; assert.throws(TypeError, function() { f(); }); [Object.isFrozen(f), Object.isExtensible(f), Object.getOwnPropertyNames(f).join(','), Object.getOwnPropertyDescriptor(f, 'length').configurable, Object.getOwnPropertyDescriptor(f, 'name').configurable].join('|')",
         )
         .unwrap();
     assert_eq!(
