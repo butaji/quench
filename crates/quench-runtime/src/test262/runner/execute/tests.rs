@@ -1634,3 +1634,14 @@ fn runner_text_import_reads_javascript_named_fixture_as_text() {
         .join("tests/test262/test/language/import/import-attributes/text-javascript.js");
     assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
 }
+
+#[test]
+fn runner_self_text_import_reads_current_source() {
+    let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .join("tests/test262/test/language/import/import-attributes/text-self.js");
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}

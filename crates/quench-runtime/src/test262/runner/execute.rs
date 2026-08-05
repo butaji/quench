@@ -520,6 +520,12 @@ fn run_sync_script_with_path(source: &str, is_module: bool, path: &Path) -> Resu
     let mut ctx = initialize_test_context(strict)?;
     load_fixture_modules(&mut ctx, path)?;
     if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
+        if let Some(crate::Value::Object(raw_modules)) = ctx.get_global("__quench_fixture_raw_modules__") {
+            raw_modules.borrow_mut().set(
+                &format!("./{name}"),
+                crate::Value::String(source.to_string()),
+            );
+        }
         ctx.set_global(
             "__quench_current_module__".to_string(),
             crate::Value::String(format!("./{name}")),
@@ -562,6 +568,16 @@ fn run_async_script_with_path(
             );
         }
         load_fixture_modules(&mut ctx, test_path)?;
+        if let Some(name) = test_path.file_name().and_then(|name| name.to_str()) {
+            if let Some(crate::Value::Object(raw_modules)) =
+                ctx.get_global("__quench_fixture_raw_modules__")
+            {
+                raw_modules.borrow_mut().set(
+                    &format!("./{name}"),
+                    crate::Value::String(source.to_string()),
+                );
+            }
+        }
         if !is_module {
             register_current_script_module(&mut ctx, test_path)?;
         }
