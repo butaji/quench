@@ -4153,3 +4153,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Added `on`, `once`, and `emit` methods to HTTP message and response
   prototypes used by stream pipeline consumers.
+
+### Stage 1211: callback stream finished
+
+- Added event-based callback completion and cleanup behavior for
+  `stream.finished()`.
