@@ -456,6 +456,7 @@ fn register_shared_array_buffer(ctx: &mut Context) {
         let value = object
             .borrow()
             .get_own_value("maxByteLength")
+            .or_else(|| object.borrow().get_own_value("byteLength"))
             .unwrap_or(Value::Number(0.0));
         Ok(value)
     })));
@@ -522,7 +523,10 @@ fn register_shared_array_buffer(ctx: &mut Context) {
                 .map(|value| to_number(&value) as usize)
                 .unwrap_or(0);
             let normalize = |value: Option<&Value>, default: f64| {
-                let number = value.map(to_number).unwrap_or(default);
+                let number = value
+                    .filter(|value| !matches!(value, Value::Undefined))
+                    .map(to_number)
+                    .unwrap_or(default);
                 if number.is_nan() {
                     return 0;
                 }
@@ -534,10 +538,62 @@ fn register_shared_array_buffer(ctx: &mut Context) {
             };
             let start = normalize(args.first(), 0.0);
             let end = normalize(args.get(1), len as f64).max(start);
+            let sliced_len = end - start;
+            let species = if let Some(constructor) = this_obj.borrow().get_own_value("constructor")
+            {
+                if matches!(constructor, Value::Undefined | Value::Null) {
+                    None
+                } else {
+                    let Value::Object(constructor) = constructor else {
+                        return Err(array_buffer_type_error(
+                            "SharedArrayBuffer slice constructor must be an object",
+                        ));
+                    };
+                    if let Some(Value::Symbol(symbol)) =
+                        crate::builtins::symbol::get_well_known_symbol_no_ctx("species")
+                    {
+                        constructor.borrow().get(&symbol.property_key())
+                    } else {
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+            let species = species.filter(|value| !matches!(value, Value::Undefined | Value::Null));
+            if let Some(species) = species {
+                if !crate::eval::class::helpers::is_constructor_value(&species) {
+                    return Err(array_buffer_type_error(
+                        "SharedArrayBuffer species is not a constructor",
+                    ));
+                }
+                let allocated = Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)));
+                let result = crate::eval::function::call_value_with_this(
+                    species,
+                    vec![Value::Number(sliced_len as f64)],
+                    Value::Object(Rc::clone(&allocated)),
+                )?;
+                let Value::Object(result) = result else {
+                    return Err(array_buffer_type_error(
+                        "SharedArrayBuffer species constructor did not return an object",
+                    ));
+                };
+                if result.borrow().get_own("\0sharedArrayBuffer").is_none()
+                    || Rc::ptr_eq(&result, &this_obj)
+                    || result.borrow().elements.len() < sliced_len
+                {
+                    return Err(array_buffer_type_error(
+                        "SharedArrayBuffer species result is not a valid SharedArrayBuffer",
+                    ));
+                }
+                let elements = this_obj.borrow().elements[start..end].to_vec();
+                result.borrow_mut().elements[..sliced_len].clone_from_slice(&elements);
+                return Ok(Value::Object(result));
+            }
             let mut result = Object::new(ObjectKind::Ordinary);
             result.prototype = Some(Rc::clone(&slice_proto));
             result.elements = this_obj.borrow().elements[start..end].to_vec();
-            result.set("byteLength", Value::Number((end - start) as f64));
+            result.set("byteLength", Value::Number(sliced_len as f64));
             result.set("\0sharedArrayBuffer", Value::Boolean(true));
             Ok(Value::Object(Rc::new(RefCell::new(result))))
         }))),
@@ -701,6 +757,26 @@ mod tests {
     fn shared_array_buffer_slice_normalizes_negative_indices() {
         let result = eval_ok("var sab = new SharedArrayBuffer(6); sab.slice(-5, -2).byteLength");
         assert_eq!(result, Value::Number(3.0));
+    }
+
+    #[test]
+    fn shared_array_buffer_slice_uses_species_result() {
+        let result = eval_ok(
+            "var resultBuffer; var sab = new SharedArrayBuffer(8); var constructor = {}; constructor[Symbol.species] = function(length) { return resultBuffer = new SharedArrayBuffer(length + 2); }; sab.constructor = constructor; sab.slice() === resultBuffer && resultBuffer.byteLength === 10",
+        );
+        assert_eq!(result, Value::Boolean(true));
+    }
+
+    #[test]
+    fn shared_array_buffer_slice_uses_length_for_undefined_end() {
+        let result = eval_ok("new SharedArrayBuffer(8).slice(6, undefined).byteLength");
+        assert_eq!(result, Value::Number(2.0));
+    }
+
+    #[test]
+    fn shared_array_buffer_max_byte_length_matches_length_when_fixed() {
+        let result = eval_ok("new SharedArrayBuffer(42).maxByteLength");
+        assert_eq!(result, Value::Number(42.0));
     }
 
     #[test]
