@@ -236,3 +236,17 @@ globalThis.__nodeUrlEncode = (value) =>
       .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, "\uFFFD")
       .replace(/(^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "$1\uFFFD")
   );
+globalThis.__nodeInvalidThis = () => {
+  const error = new TypeError(
+    'Value of "this" must be of type URLSearchParams'
+  );
+  error.code = "ERR_INVALID_THIS";
+  throw error;
+};
+const __nodeURLSearchParamsToString =
+  globalThis.__nodeURLSearchParams.prototype.toString;
+globalThis.__nodeURLSearchParams.prototype.toString = function toString() {
+  if (!(this instanceof globalThis.__nodeURLSearchParams))
+    return globalThis.__nodeInvalidThis();
+  return __nodeURLSearchParamsToString.call(this);
+};
