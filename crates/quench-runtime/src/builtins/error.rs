@@ -119,6 +119,13 @@ fn register_error_constructor(ctx: &mut Context, name: &str, proto: &Rc<RefCell<
     if let Some(flags) = prototype.descriptors.get_mut("constructor") {
         flags.enumerable = false;
     }
+    // Per ES §19.5.6.2 / §20.5.8.2 (NativeError length = 1).
+    // Set length as a static property on the constructor so `verifyProperty`
+    // (which reads via Object.getOwnPropertyDescriptor) sees {value:1, writable:false,
+    // enumerable:false, configurable:true}.
+    if let Value::NativeConstructor(nc_ref) = &ctor {
+        nc_ref.set_static_method("length", Value::Number(1.0));
+    }
     ctx.set_global(name.to_string(), ctor);
 }
 
