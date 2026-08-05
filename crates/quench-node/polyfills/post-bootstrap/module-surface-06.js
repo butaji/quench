@@ -196,6 +196,7 @@
                   .__nodeUrlEncode(segment)
                   .replace(/%3B/gi, ";")
                   .replace(/%3A/gi, ":")
+                  .replace(/%40/gi, "@")
               )
               .join("/")
           : property === "search"
