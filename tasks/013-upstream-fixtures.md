@@ -4702,3 +4702,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Initialize timeout generations so scheduled callbacks pass their active
   generation guard and execute before process teardown.
+
+### Stage 1333: recursive removal trees
+
+- Recursively remove directory trees while unlinking symlinks instead of
+  traversing their targets, and normalize host removal errors.
