@@ -943,6 +943,43 @@ mod tests {
     }
 
     #[test]
+    fn double_register_builtins_preserves_object_static_methods() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        crate::builtins::bootstrap::bootstrap_js_builtins(&mut ctx).unwrap();
+        // Mimic the test262 runner's initialize_test_context path
+        crate::builtins::register_builtins(&mut ctx);
+        crate::builtins::bootstrap::bootstrap_js_builtins(&mut ctx).unwrap();
+        // Now load the test262 harness to mirror the full path
+        crate::test262::harness::try_inject_harness(&mut ctx).unwrap();
+        let r = ctx
+            .eval("[typeof Object.getOwnPropertyDescriptor, typeof Object.getPrototypeOf, typeof Object.keys, typeof Object.assign].join('|')")
+            .unwrap();
+        assert_eq!(
+            r,
+            crate::Value::String("function|function|function|function".into())
+        );
+    }
+
+#[test]
+    fn double_register_builtins_preserves_assert_methods() {
+        // Same path as above, but check assert methods are intact.
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        crate::builtins::bootstrap::bootstrap_js_builtins(&mut ctx).unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        crate::builtins::bootstrap::bootstrap_js_builtins(&mut ctx).unwrap();
+        crate::test262::harness::try_inject_harness(&mut ctx).unwrap();
+        let r = ctx
+            .eval("[typeof assert, typeof assert.sameValue, typeof assert.throws, typeof assert._isSameValue].join('|')")
+            .unwrap();
+        assert_eq!(
+            r,
+            crate::Value::String("function|function|function|function".into())
+        );
+    }
+
+#[test]
     fn direct_eval_lexical_bindings_do_not_leak() {
         let mut ctx = Context::new().unwrap();
         crate::builtins::register_builtins(&mut ctx);

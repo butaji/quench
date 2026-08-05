@@ -81,6 +81,11 @@ pub(crate) fn restore_iterator_prototype(proto: Option<Rc<RefCell<Object>>>) {
 
 /// Register the Iterator builtin and all %IteratorPrototype% methods.
 pub fn register_iterator(ctx: &mut Context) {
+    // Idempotent: a second call would orphan JS-side mutations to
+    // Iterator.prototype made by builtins/Iterator.js (map, filter, etc.).
+    if ctx.get_global("Iterator").is_some() {
+        return;
+    }
     let mut proto = Object::new(ObjectKind::Ordinary);
     if let Some(object_proto) = get_object_prototype() {
         proto.prototype = Some(object_proto);
