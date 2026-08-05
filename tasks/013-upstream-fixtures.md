@@ -5212,3 +5212,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1480. `url-file-scheme-error.js` — preserve fileURLToPath scheme errors.
 1481. `url-domain-conversion.js` — expose domain ASCII/Unicode conversion APIs.
 1482. `url-format-authority.js` — avoid duplicating URL credentials during formatting.
+1483. `url-format-options-validation.js` — validate URL formatting options.
+1484. `url-format-auth-option.js` — honor auth suppression during URL formatting.
+1485. `url-format-query-fragment-options.js` — honor query and fragment suppression.
+1486. `url-format-unicode-option.js` — honor Unicode hostname formatting.
