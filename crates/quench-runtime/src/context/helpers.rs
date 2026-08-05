@@ -110,15 +110,10 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
     CURRENT_CONTEXT.with(|cell| {
         *cell.borrow_mut() = Some(ctx_ptr);
     });
-    let direct_eval_global_names = if crate::interpreter::is_direct_eval() {
-        ctx.get_global("globalThis")
-            .and_then(|global| match global {
-                Value::Object(global) => Some(global.borrow().own_property_names()),
-                _ => None,
-            })
-    } else {
-        None
-    };
+    let eval_global_names = ctx.get_global("globalThis").and_then(|global| match global {
+        Value::Object(global) => Some(global.borrow().own_property_names()),
+        _ => None,
+    });
     // Save label stack depth before parse so we can restore on any exit path.
     let label_depth = crate::interpreter::label_stack_depth();
     // Indirect eval should not inherit strict mode for parsing. Temporarily
@@ -189,7 +184,10 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
                 if global
                     .borrow()
                     .get_own_property(name)
-                    .is_some_and(|descriptor| descriptor.configurable == Some(false))
+                    .is_some_and(|descriptor| {
+                        descriptor.configurable == Some(false)
+                            && descriptor.writable != Some(true)
+                    })
                 {
                     let (err_val, js_err) = crate::value::error::create_js_error_with_type(
                         "cannot redefine global property",
@@ -325,7 +323,7 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
     crate::interpreter::clear_eval_barrier_depth();
     let ast::Program::Script(body) = &program;
     if let (Some(before), Some(Value::Object(global))) =
-        (direct_eval_global_names, ctx.get_global("globalThis"))
+        (eval_global_names.as_ref(), ctx.get_global("globalThis"))
     {
         let mut var_names = Vec::new();
         crate::interpreter::collect_var_names_recursive(body, &mut var_names);
@@ -352,14 +350,39 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
         for statement in body {
             if let ast::Statement::FunctionDeclaration { name, .. } = statement {
                 if let Some(value) = ctx.env.borrow().get(name) {
+                    let descriptor = global.borrow().get_own_property(name);
+                    let existed = eval_global_names
+                        .as_ref()
+                        .is_some_and(|names| names.contains(name));
+                    let nonconfigurable = descriptor
+                        .as_ref()
+                        .is_some_and(|d| d.configurable == Some(false));
                     global.borrow_mut().define(
                         name,
                         value,
                         crate::value::PropertyFlags {
-                            value: None,
-                            writable: true,
-                            enumerable: true,
-                            configurable: true,
+                            value: descriptor.as_ref().and_then(|d| d.value.clone()),
+                            writable: if existed && nonconfigurable {
+                                descriptor.as_ref().and_then(|d| d.writable).unwrap_or(true)
+                            } else {
+                                true
+                            },
+                            enumerable: if existed && nonconfigurable {
+                                descriptor
+                                    .as_ref()
+                                    .and_then(|d| d.enumerable)
+                                    .unwrap_or(true)
+                            } else {
+                                true
+                            },
+                            configurable: if existed {
+                                descriptor
+                                    .as_ref()
+                                    .and_then(|d| d.configurable)
+                                    .unwrap_or(true)
+                            } else {
+                                true
+                            },
                         },
                     );
                 }

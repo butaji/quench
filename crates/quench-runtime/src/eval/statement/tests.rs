@@ -32,6 +32,14 @@ fn strict_delete_this_returns_true() {
 }
 
 #[test]
+fn eval_function_updates_writable_nonconfigurable_global() {
+    assert_eq!(
+        eval("var initial; Object.defineProperty(this, 'f', { enumerable: true, writable: true, configurable: false }); eval('initial = f; function f() { return 2222; }'); [typeof initial, initial(), Object.getOwnPropertyDescriptor(this, 'f').configurable].join('|')"),
+        Ok(Value::String("function|2222|false".to_string()))
+    );
+}
+
+#[test]
 fn direct_eval_in_function_accepts_new_target() {
     assert_eq!(
         eval("var seen = null; var f = function() { seen = eval('new.target;'); }; f(); seen"),
