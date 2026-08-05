@@ -5354,3 +5354,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1622. `url-can-parse-missing-argument.js` — validate URL.canParse required input.
 1623. `url-parse-query-shape.js` — preserve non-enumerable legacy URL methods.
 1624. `fs-url-scheme-validation.js` — reject non-file URLs in filesystem APIs.
+1625. `fs-encoded-url-validation.js` — validate encoded file URL paths and hosts.
