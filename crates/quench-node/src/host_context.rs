@@ -5,25 +5,21 @@ macro_rules! run_host_context {
         ctx.globals().set(
             "__quench_fs_exists",
             Func::from(|path: String| fs::metadata(path).is_ok()),
-        )?;
-        ctx.globals().set(
+        )?; ctx.globals().set(
             "__quench_cwd",
             std::env::current_dir()
                 .unwrap_or_else(|_| PathBuf::from("."))
                 .to_string_lossy()
                 .into_owned(),
-        )?;
-        ctx.globals().set(
+        )?; ctx.globals().set(
             "__quench_cwd_get",
             Func::from(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).to_string_lossy().into_owned()),
-        )?;
-        ctx.globals().set(
+        )?; ctx.globals().set(
             "__quench_chdir",
             Func::from(|path: String| -> rquickjs::Result<()> {
                 std::env::set_current_dir(path).map_err(|_| rquickjs::Error::new_from_js("process", "chdir failed"))
             }),
-        )?;
-        ctx.globals().set(
+        )?; ctx.globals().set(
             "__quench_umask",
             Func::from(|mask: Option<u32>| -> u32 {
                 #[cfg(unix)]
@@ -97,31 +93,35 @@ macro_rules! run_host_context {
             #[cfg(not(unix))] { None::<u32> }
         })?;
         ctx.globals().set(
-            "__quench_sha256",
-            Func::from(|value: String| {
-                let digest = Sha256::digest(value.as_bytes());
-                digest
-                    .iter()
-                    .map(|byte| format!("{byte:02x}"))
-                    .collect::<String>()
-            }),
-        )?;
-        ctx.globals().set(
-            "__quench_sha256_bytes",
-            Func::from(|value: Vec<u8>| -> Vec<u8> {
-                Sha256::digest(value).to_vec()
-            }),
-        )?;
-        ctx.globals().set(
             "__quench_digest_bytes",
             Func::from(|algorithm: String, value: Vec<u8>| -> rquickjs::Result<Vec<u8>> {
                 match algorithm.as_str() {
                     "sha1" => Ok(Sha1::digest(value).to_vec()),
+                    "sha224" => Ok(Sha224::digest(value).to_vec()),
                     "sha256" => Ok(Sha256::digest(value).to_vec()),
                     "sha512" => Ok(Sha512::digest(value).to_vec()),
                     "md5" => Ok(Md5::digest(value).to_vec()),
                     _ => Err(rquickjs::Error::new_from_js("crypto", "unsupported digest")),
                 }
+            }),
+        )?;
+        ctx.globals().set(
+            "__quench_shake_bytes",
+            Func::from(|algorithm: String, value: Vec<u8>, length: u32| -> Vec<u8> {
+                let mut output = vec![0u8; length as usize];
+                match algorithm.as_str() {
+                    "shake128" => {
+                        let mut hasher = Shake128::default();
+                        hasher.update(&value);
+                        sha3::digest::XofReader::read(&mut hasher.finalize_xof(), &mut output);
+                    }
+                    _ => {
+                        let mut hasher = Shake256::default();
+                        hasher.update(&value);
+                        sha3::digest::XofReader::read(&mut hasher.finalize_xof(), &mut output);
+                    }
+                }
+                output
             }),
         )?;
         ctx.globals().set(
