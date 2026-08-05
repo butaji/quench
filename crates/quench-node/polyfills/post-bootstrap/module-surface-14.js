@@ -20,25 +20,35 @@ if (globalThis.require) {
     return result;
   };
 }
+const __quenchCryptoInvalidState = () => {
+  throw Object.assign(new Error("Invalid state"), {
+    code: "ERR_CRYPTO_INVALID_STATE"
+  });
+};
 const __quenchCryptoDhConstructor = (result) => {
   const Constructor = function Constructor() {
     return Object.create(Constructor.prototype);
   };
   Constructor.prototype.getPrime = () => NodeBuffer.alloc(128);
   Constructor.prototype.generateKeys = function generateKeys() {
+    const needsPublicKey = !this.generated || !this.publicKey;
+    if (needsPublicKey) this.keySequence = (this.keySequence || 0) + 1;
+    if (!this.privateKey) this.privateKey = NodeBuffer.from([this.keySequence]);
+    if (needsPublicKey) this.publicKey = NodeBuffer.from([this.keySequence]);
     this.generated = true;
-    return NodeBuffer.alloc(128);
+    return this.publicKey;
   };
-  Constructor.prototype.getPublicKey = () => NodeBuffer.alloc(128);
+  Constructor.prototype.getPublicKey = function getPublicKey() {
+    if (!this.generated && !this.privateKey) __quenchCryptoInvalidState();
+    return this.publicKey || NodeBuffer.alloc(128);
+  };
   Constructor.prototype.getPrivateKey = function getPrivateKey() {
-    if (!this.generated && !this.privateKey)
-      throw Object.assign(new Error("Invalid state"), {
-        code: "ERR_CRYPTO_INVALID_STATE"
-      });
+    if (!this.generated && !this.privateKey) __quenchCryptoInvalidState();
     return this.privateKey || NodeBuffer.alloc(128);
   };
   Constructor.prototype.setPrivateKey = function setPrivateKey(value) {
     this.privateKey = NodeBuffer.from(value);
+    this.generated = false;
     return this;
   };
   Constructor.prototype.computeSecret = function computeSecret() {
