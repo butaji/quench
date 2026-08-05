@@ -4360,3 +4360,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1256: mkdtemp absolute prefixes
 
 - Honor absolute `fs.mkdtemp` prefixes directly in the minimal Rust host hook.
+
+### Stage 1257: readFile path validation
+
+- Reject invalid callback-style `fs.readFile` paths synchronously instead of
+  coercing arbitrary values to strings.
