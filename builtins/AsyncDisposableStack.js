@@ -9,7 +9,8 @@ function AsyncDisposableStack() {
 
 AsyncDisposableStack.prototype.use = function AsyncDisposableStackUse(value) {
   if (this.__disposed) throw new ReferenceError("AsyncDisposableStack is already disposed");
-  var method = value == null ? undefined : (value[Symbol.asyncDispose] || value[Symbol.dispose]);
+  if (value == null) return value;
+  var method = value[Symbol.asyncDispose] || value[Symbol.dispose];
   if (typeof method !== 'function') throw new TypeError("Object is not disposable");
   this.__resources.push(function() { return method.call(value); });
   return value;
@@ -52,31 +53,31 @@ AsyncDisposableStack.prototype.move = function AsyncDisposableStackMove() {
 
 DefineProp(AsyncDisposableStack.prototype, "adopt", {
   value: AsyncDisposableStack.prototype.adopt,
-  writable: false,
+  writable: true,
   enumerable: false,
   configurable: true
 });
 DefineProp(AsyncDisposableStack.prototype, "defer", {
   value: AsyncDisposableStack.prototype.defer,
-  writable: false,
+  writable: true,
   enumerable: false,
   configurable: true
 });
 DefineProp(AsyncDisposableStack.prototype, "disposeAsync", {
   value: AsyncDisposableStack.prototype.disposeAsync,
-  writable: false,
+  writable: true,
   enumerable: false,
   configurable: true
 });
 DefineProp(AsyncDisposableStack.prototype, "use", {
   value: AsyncDisposableStack.prototype.use,
-  writable: false,
+  writable: true,
   enumerable: false,
   configurable: true
 });
 DefineProp(AsyncDisposableStack.prototype, "move", {
   value: AsyncDisposableStack.prototype.move,
-  writable: false,
+  writable: true,
   enumerable: false,
   configurable: true
 });
