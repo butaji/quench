@@ -6,7 +6,7 @@ use std::rc::Rc;
 use crate::interpreter::get_native_this;
 use crate::value::convert::to_js_string;
 use crate::value::object::PropertyDescriptor;
-use crate::value::{NativeConstructor, Object, ObjectKind, Value};
+use crate::value::{NativeConstructor, Object, ObjectKind, PropertyFlags, Value};
 use crate::Context;
 
 #[cfg(test)]
@@ -59,7 +59,16 @@ fn create_error_proto(name: &str) -> Object {
     // subclass), the initial value of NativeError.prototype.message is the
     // empty String. Without this, the prototype's message reads back as
     // `undefined` and the propertyHelper.js / assert.sameValue checks fail.
-    proto.set("message", Value::String(String::new()));
+    proto.define(
+        "message",
+        Value::String(String::new()),
+        PropertyFlags {
+            value: Some(Value::String(String::new())),
+            writable: true,
+            enumerable: false,
+            configurable: true,
+        },
+    );
     proto
 }
 
@@ -252,11 +261,18 @@ fn register_aggregate_error(ctx: &mut Context, parent_proto: &Rc<RefCell<Object>
         Rc::clone(&proto_rc),
     );
     constructor.set_name("AggregateError");
+    constructor.set_static_method("length", Value::Number(2.0));
     let ctor = Value::NativeConstructor(Rc::new(constructor));
     let mut prototype = proto_rc.borrow_mut();
-    prototype.set("constructor", ctor.clone());
-    if let Some(flags) = prototype.descriptors.get_mut("constructor") {
-        flags.enumerable = false;
-    }
+    prototype.define(
+        "constructor",
+        ctor.clone(),
+        PropertyFlags {
+            value: Some(ctor.clone()),
+            writable: true,
+            enumerable: false,
+            configurable: true,
+        },
+    );
     ctx.set_global("AggregateError".to_string(), ctor);
 }

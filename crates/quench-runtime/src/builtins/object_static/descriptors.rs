@@ -1265,6 +1265,8 @@ pub fn get_native_constructor_property_descriptor(
     if prop == "length" {
         let len = if nc.name() == "SuppressedError" {
             3.0
+        } else if nc.name() == "AggregateError" {
+            2.0
         } else if is_function_constructor
             || matches!(
                 nc.name().as_str(),
