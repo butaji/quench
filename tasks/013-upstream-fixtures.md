@@ -5414,3 +5414,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1685. `url-backslash-network-path.js` — resolve backslash network-path references.
 1686. `url-empty-unknown-authority.js` — preserve empty authorities for unknown schemes.
 1687. `url-pathname-at.js` — preserve at signs in URL pathnames.
+1688. `url-userinfo-bracket.js` — escape closing brackets in URL userinfo.
