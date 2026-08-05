@@ -488,10 +488,20 @@ pub fn assign_to_member(
             if let Value::Class(class) = this_val {
                 return class.set_static_field(&prop_name, value.clone());
             }
-            return Err(JsError(format!(
-                "Cannot assign to property of non-object, got {:?}",
-                this_val
-            )));
+            let base_repr: String = match &this_val {
+                Value::Null => "null".to_string(),
+                Value::Undefined => "undefined".to_string(),
+                _ => format!("{:?}", this_val),
+            };
+            let msg = format!(
+                "TypeError: Cannot set properties of {} (setting property '{}')",
+                base_repr,
+                prop_name
+            );
+            let (err, js_err) =
+                crate::value::error::create_js_error_with_type(&msg, "TypeError");
+            crate::value::set_thrown_value(err);
+            return Err(js_err);
         }
     }
 
@@ -639,10 +649,22 @@ pub fn assign_to_member_value(
         Value::Object(o) => assign_to_object(o, property, value, env),
         Value::Function(f) => assign_to_function(f, property, value.clone()),
         Value::Class(c) => c.set_static_field(property, value.clone()),
-        _ => Err(JsError(format!(
-            "Cannot assign to property of non-object, got {:?}",
-            object
-        ))),
+        _ => {
+            let base_repr: String = match object {
+                Value::Null => "null".to_string(),
+                Value::Undefined => "undefined".to_string(),
+                _ => format!("{:?}", object),
+            };
+            let msg = format!(
+                "TypeError: Cannot set properties of {} (setting property '{}')",
+                base_repr,
+                property
+            );
+            let (err, js_err) =
+                crate::value::error::create_js_error_with_type(&msg, "TypeError");
+            crate::value::set_thrown_value(err);
+            Err(js_err)
+        }
     }
 }
 
