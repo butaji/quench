@@ -534,6 +534,7 @@ fn run_sync_script_with_path(source: &str, is_module: bool, path: &Path) -> Resu
             "__quench_current_module__".to_string(),
             crate::Value::String(format!("./{name}")),
         );
+        propagate_missing_import_resolution_error(&mut ctx, source);
         propagate_current_module_resolution_error(&mut ctx, source);
     }
     if strict && crate::interpreter::has_legacy_octal(source) {
@@ -575,6 +576,27 @@ fn propagate_current_module_resolution_error(ctx: &mut crate::Context, source: &
         return;
     };
     errors.borrow_mut().set(&module, reason);
+}
+
+fn propagate_missing_import_resolution_error(ctx: &mut crate::Context, source: &str) {
+    let Some(Value::String(module_name)) = ctx.get_global("__quench_current_module__") else {
+        return;
+    };
+    let Some(Value::Object(errors)) = ctx.get_global("__quench_module_errors__") else {
+        return;
+    };
+    for (imported, target_name) in fixture_import_edges_from_source(source) {
+        let Some(Value::Object(target)) = ctx.get_module(&target_name) else {
+            continue;
+        };
+        if target.borrow().get(&imported).is_none() {
+            errors.borrow_mut().set(
+                &module_name,
+                Value::String("Missing indirect export".to_string()),
+            );
+            return;
+        }
+    }
 }
 
 /// Run an async-flag test: eval (which drains microtasks), then verify $DONE
@@ -1500,6 +1522,38 @@ fn normalize_fixture_module_name(raw: &str) -> Option<String> {
     } else {
         Some(format!("./{}", source))
     }
+}
+
+fn fixture_import_edges_from_source(source: &str) -> Vec<(String, String)> {
+    let mut edges = Vec::new();
+    for line in source.lines().map(str::trim) {
+        let Some(rest) = line.strip_prefix("import ") else {
+            continue;
+        };
+        let Some((clause, from)) = rest.split_once(" from ") else {
+            continue;
+        };
+        let Some(module) = normalize_fixture_module_name(from) else {
+            continue;
+        };
+        let Some(named) = clause.trim().strip_prefix('{') else {
+            continue;
+        };
+        let Some(named) = named.strip_suffix('}') else {
+            continue;
+        };
+        for specifier in named.split(',').map(str::trim) {
+            if specifier.is_empty() {
+                continue;
+            }
+            let imported = specifier
+                .split_once(" as ")
+                .map_or(specifier, |(name, _)| name)
+                .trim();
+            edges.push((imported.to_string(), module.clone()));
+        }
+    }
+    edges
 }
 
 fn parse_default_import(raw: &str) -> Option<String> {
