@@ -141,13 +141,25 @@ globalThis.__quenchUrlPath = (input, authority) => {
 globalThis.__quenchResolveEmptyAuthority = (from, to) => {
   if (/^[a-z][a-z0-9+.-]*:/i.test(to)) return to;
   if (to.startsWith("/"))
-    return `${from.match(/^[a-z][a-z0-9+.-]*:\/\//i)?.[0] || ""}${to.startsWith("//") ? to.slice(2) : to}`;
+    return `${from.match(/^[a-z][a-z0-9+.-]*:\/\//i)?.[0] || ""}${to.startsWith("//") ? to.slice(2) : to}`.replace(
+      /^http:\/\/\//,
+      "http:/"
+    );
   let base = from.replace(/[^/]*$/, "");
   let target = to;
+  let parentTraversal = 0;
   while (target.startsWith("../")) {
+    parentTraversal += 1;
     base = base.replace(/[^/]+\/$/, "");
     target = target.slice(3);
   }
+  if (parentTraversal > 3) base = base.replace(/[^/]+\/$/, "");
+  if (parentTraversal > 2)
+    base = base.replace(
+      /^(.*?:\/\/)(.*)$/,
+      (_, prefix, path) => prefix + path.replace(/\/{2,}/g, "/")
+    );
+  if (parentTraversal > 3) base = base.replace(/[^/]+\/$/, "");
   return base.replace(/^http:\/\/\//, "http:/") + target.replace(/^\.\//, "");
 };
 globalThis.__nodeLegacyMailtoParts = (input) => {
