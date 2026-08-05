@@ -4539,3 +4539,18 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Enforce write permission bits for `fs.access` `W_OK` checks and report
   Node-style `EACCES` metadata.
+
+### Stage 1298: tmpdir file URLs
+
+- Cover upstream `tmpdir.fileURL()` objects through filesystem write and read
+  operations.
+
+### Stage 1299: path resolve trailing components
+
+- Preserve a trailing slash only when the final `path.resolve` component has
+  one, matching Node path normalization.
+
+### Stage 1300: rm option validation
+
+- Implement the internal `validateRmOptionsSync` contract used by upstream
+  `fs.rm` tests.
