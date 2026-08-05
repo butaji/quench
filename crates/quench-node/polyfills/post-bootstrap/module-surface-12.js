@@ -138,13 +138,18 @@ globalThis.__quenchUrlPath = (input, authority) => {
     pathname = "/";
   return pathname;
 };
-globalThis.__quenchResolveEmptyAuthority = (from, to) =>
-  /^[a-z][a-z0-9+.-]*:/i.test(to)
-    ? to
-    : to.startsWith("/")
-      ? `${from.match(/^[a-z][a-z0-9+.-]*:\/\//i)?.[0] || ""}${to}`
-      : from.replace(/[^/]*$/, "").replace(/^http:\/\/\//, "http:/") +
-        to.replace(/^\.\//, "");
+globalThis.__quenchResolveEmptyAuthority = (from, to) => {
+  if (/^[a-z][a-z0-9+.-]*:/i.test(to)) return to;
+  if (to.startsWith("/"))
+    return `${from.match(/^[a-z][a-z0-9+.-]*:\/\//i)?.[0] || ""}${to.startsWith("//") ? to.slice(2) : to}`;
+  let base = from.replace(/[^/]*$/, "");
+  let target = to;
+  while (target.startsWith("../")) {
+    base = base.replace(/[^/]+\/$/, "");
+    target = target.slice(3);
+  }
+  return base.replace(/^http:\/\/\//, "http:/") + target.replace(/^\.\//, "");
+};
 globalThis.__nodeLegacyMailtoParts = (input) => {
   if (!/^mailto:/i.test(input)) return null;
   const [address, query = ""] = input.slice(input.indexOf(":") + 1).split("?");
