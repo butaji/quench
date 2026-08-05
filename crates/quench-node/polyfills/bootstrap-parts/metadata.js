@@ -4,7 +4,10 @@ globalThis.__nodeFs.truncate = (value, length, callback) => {
     length = 0;
   }
   if (typeof callback !== "function")
-    throw new TypeError('The "callback" argument must be of type function');
+    throw Object.assign(
+      new TypeError('The "callback" argument must be of type function'),
+      { code: "ERR_INVALID_ARG_TYPE" }
+    );
   if (typeof length !== "number" || !Number.isFinite(length)) {
     const error = new TypeError('The "len" argument must be of type number');
     error.code = "ERR_INVALID_ARG_TYPE";
@@ -48,7 +51,11 @@ globalThis.__nodeFs.ftruncate = (fd, length = 0, callback) => {
 globalThis.__nodeFs.access = (value, mode, callback) => {
   if (typeof mode === "function") callback = mode;
   if (typeof callback !== "function")
-    throw new TypeError('The "callback" argument must be of type function');
+    throw Object.assign(
+      new TypeError('The "callback" argument must be of type function'),
+      { code: "ERR_INVALID_ARG_TYPE" }
+    );
+  __nodeFsValidateAccessMode(mode);
   if (typeof value === "number") {
     const error = new TypeError(
       'The "path" argument must be of type string or an instance of Buffer or URL'
