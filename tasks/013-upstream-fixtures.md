@@ -5360,3 +5360,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1628. `urlsearchparams-surrogates.js` — encode unpaired UTF-16 surrogates safely.
 1629. `fs-readdir-hex.js` — preserve directory entry bytes for hex encoding.
 1630. `fs-close-argument-message.js` — include received values in fd errors.
+1631. `fs-close-async-validation.js` — validate async close descriptors synchronously.
