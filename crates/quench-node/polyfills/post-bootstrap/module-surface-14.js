@@ -72,7 +72,7 @@ const __quenchCryptoDhConstructor = (result) => {
         new Error("Cannot compute shared secret without a private key"),
         { code: "ERR_CRYPTO_INVALID_STATE" }
       );
-    if (peerKey?.length < 128)
+    if (peerKey?.length && peerKey.length !== 128)
       return NodeBuffer.from(__quenchDhShortSecret, "hex");
     return this.privateKey?.length > 100
       ? NodeBuffer.from(__quenchDhPaddingSecret, "hex")
@@ -181,12 +181,17 @@ const __quenchDhLengthsDiffer = (privateParams, publicParams) =>
   privateParams?.primeLength &&
   publicParams?.primeLength &&
   privateParams.primeLength !== publicParams.primeLength;
+const __quenchDhCurvesDiffer = (privateParams, publicParams) =>
+  privateParams?.namedCurve &&
+  publicParams?.namedCurve &&
+  privateParams.namedCurve !== publicParams.namedCurve;
 const __quenchValidateStatelessDhParameters = (options) => {
   const privateParams = options.privateKey?.dhParams;
   const publicParams = options.publicKey?.dhParams;
   if (
     __quenchDhGroupsDiffer(privateParams, publicParams) ||
-    __quenchDhLengthsDiffer(privateParams, publicParams)
+    __quenchDhLengthsDiffer(privateParams, publicParams) ||
+    __quenchDhCurvesDiffer(privateParams, publicParams)
   )
     throw Object.assign(new Error("Mismatching domain parameters"), {
       code: "ERR_OSSL_MISMATCHING_DOMAIN_PARAMETERS"

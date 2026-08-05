@@ -5092,3 +5092,11 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1427: crypto DH short peer key
 
 - Select the short vector when the peer public key is shorter than the domain.
+
+### Stage 1429: crypto EC domain mismatch
+
+- Reject stateless exchanges between different named curves.
+
+### Stage 1428: crypto DH non-domain peer key
+
+- Select the short vector for any non-domain-length peer key.
