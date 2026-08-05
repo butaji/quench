@@ -4707,3 +4707,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Recursively remove directory trees while unlinking symlinks instead of
   traversing their targets, and normalize host removal errors.
+
+### Stage 1334: interval callback generation
+
+- Initialize interval generations so repeating timer callbacks pass their
+  active-generation guard.
