@@ -5004,3 +5004,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1405: crypto DH group setters
 
 - Support `modp1` lookup and preserve the group type's lack of setters.
+
+### Stage 1406: crypto DH encoded private keys
+
+- Ensure the DH fallback factory exposes encoded private-key setters.
