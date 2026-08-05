@@ -119,6 +119,39 @@ const __quenchAddAbortSignal = (signal, stream) => {
   }
   return stream;
 };
+const __quenchValidateZlibOptions = (options) => {
+  const value = options?.windowBits;
+  if (
+    value !== undefined &&
+    (!Number.isInteger(value) || value < 9 || value > 15)
+  ) {
+    const error = new RangeError(
+      `The value of "options.windowBits" is out of range. It must be >= 9 and <= 15. Received ${value}`
+    );
+    error.code = "ERR_OUT_OF_RANGE";
+    throw error;
+  }
+};
+const __quenchAddZlibValidation = (result) => {
+  for (const name of [
+    "gzip",
+    "gunzip",
+    "deflate",
+    "inflate",
+    "gzipSync",
+    "gunzipSync",
+    "deflateSync",
+    "inflateSync"
+  ]) {
+    if (typeof result[name] !== "function") continue;
+    const original = result[name];
+    result[name] = (value, options, callback) => {
+      __quenchValidateZlibOptions(options);
+      return original(value, options, callback);
+    };
+  }
+  return result;
+};
 const __quenchApplyReadableOperations = async (values, operations) => {
   let result = values.slice(operations.drop, operations.drop + operations.take);
   for (const operation of operations.operations) {
@@ -416,6 +449,8 @@ if (globalThis.require) {
     const result = originalRequire(name);
     if (String(name).replace(/^node:/, "") === "http")
       __quenchAddHttpEvents(result);
+    if (String(name).replace(/^node:/, "") === "zlib")
+      return __quenchAddZlibValidation(result);
     if (String(name).replace(/^node:/, "") === "stream")
       return __quenchAddStreamCompat(result);
     return result;
