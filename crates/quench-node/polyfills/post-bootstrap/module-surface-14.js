@@ -303,7 +303,14 @@ const __quenchCryptoKeyExchangeFallback = (result) => {
     return result.ECDH();
   };
 };
-const __quenchCryptoKeyObjectBrand = new WeakSet();
+const __quenchCryptoKeyObjectBrand =
+  (globalThis.__quenchCryptoKeyObjectBrand ||= new WeakSet());
+const __quenchCryptoKeyInput = (args) =>
+  args.map((value, index) =>
+    index === 1 && __quenchCryptoKeyObjectBrand.has(value)
+      ? value.export()
+      : value
+  );
 const __quenchCryptoKeyObjectInvalidThis = () => {
   throw Object.assign(new TypeError("Invalid this value"), {
     code: "ERR_INVALID_THIS"
@@ -321,8 +328,13 @@ class __quenchKeyObject {
     return this.__quenchExport();
   }
 }
+Object.defineProperty(__quenchKeyObject.prototype, "type", {
+  configurable: true,
+  get: Object.getOwnPropertyDescriptor(__quenchKeyObject.prototype, "type").get
+});
 Object.defineProperties(__quenchKeyObject.prototype, {
   symmetricKeySize: {
+    configurable: true,
     get() {
       if (
         !__quenchCryptoKeyObjectBrand.has(this) ||
@@ -333,6 +345,7 @@ Object.defineProperties(__quenchKeyObject.prototype, {
     }
   },
   asymmetricKeyType: {
+    configurable: true,
     get() {
       if (
         !__quenchCryptoKeyObjectBrand.has(this) ||
@@ -343,6 +356,7 @@ Object.defineProperties(__quenchKeyObject.prototype, {
     }
   },
   asymmetricKeyDetails: {
+    configurable: true,
     get() {
       if (
         !__quenchCryptoKeyObjectBrand.has(this) ||

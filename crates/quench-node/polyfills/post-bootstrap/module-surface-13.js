@@ -83,7 +83,7 @@ const __quenchCryptoClassPrototypes = (result) => {
   };
   const createHmac = result.createHmac;
   result.createHmac = (...args) => {
-    const value = createHmac(...args);
+    const value = createHmac(...__quenchCryptoKeyInput(args));
     __nodeCryptoSetPrototype(value, result.Hmac);
     return value;
   };

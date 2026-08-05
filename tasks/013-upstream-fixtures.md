@@ -5182,3 +5182,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 - Preserve Cipheriv identity for the legacy DES cipher path.
 1450. `crypto-class-legacy-specifier.js` — crypto class identity through the legacy module specifier.
 1451. `crypto-keyobject-brand-basics.js` — expose the branded KeyObject base and secret-key accessors.
+1452. `crypto-keyobject-configurable-slots.js` — preserve configurable KeyObject accessors and key inputs.
