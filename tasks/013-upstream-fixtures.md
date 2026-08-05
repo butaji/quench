@@ -4932,3 +4932,11 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1387: crypto RSA constants
 
 - Expose RSA padding and PSS salt-length constants.
+
+### Stage 1388: crypto DH callable constructors
+
+- Support calling Diffie-Hellman and ECDH constructors without `new`.
+
+### Stage 1389: crypto DH prime
+
+- Expose a prime-buffer result from Diffie-Hellman instances.

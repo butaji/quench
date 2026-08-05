@@ -53,10 +53,14 @@ const __quenchCryptoSignFallback = (result) => {
   };
 };
 const __quenchCryptoKeyExchangeFallback = (result) => {
-  const create = (constructorName) => () => {
-    const value = {};
-    __nodeCryptoSetPrototype(value, result[constructorName]);
-    return value;
+  const create = (constructorName) => {
+    const Constructor = function Constructor() {
+      return Object.create(Constructor.prototype);
+    };
+    if (constructorName === "DiffieHellman")
+      Constructor.prototype.getPrime = () => NodeBuffer.alloc(128);
+    result[constructorName] = Constructor;
+    return () => Object.create(Constructor.prototype);
   };
   result.createDiffieHellman ||= create("DiffieHellman");
   result.createDiffieHellmanGroup ||= create("DiffieHellmanGroup");
