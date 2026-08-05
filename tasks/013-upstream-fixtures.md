@@ -4004,3 +4004,14 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1181: dgram once listeners
 
 - Added one-shot event listeners needed by connection lifecycle fixtures.
+
+### Stage 1182: dgram pending connection state
+
+- Preserved Node's distinction between a connection being pending and being
+  established, including `disconnect()` validation during the pending phase.
+
+### Retrospective: stages 1179-1182
+
+- Adjacent upstream probes exposed that dgram behavior depends on lifecycle
+  timing, not only return values. Focused stages now exercise pending,
+  connected, and closed transitions independently.
