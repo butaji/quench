@@ -4075,3 +4075,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Ignored non-function close callback values and added bound/unbound behavior
   for `setBroadcast()` and `setTTL()`.
+
+### Stage 1196: dgram buffer sizes
+
+- Added bound-state errors, positive-size validation, and Linux-style doubled
+  buffer-size accessors for UDP sockets.
