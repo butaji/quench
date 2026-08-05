@@ -5152,3 +5152,23 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1442: crypto cipher class identity
 
 - Preserve Cipheriv and Decipheriv prototypes for cipher factories.
+
+### Stage 1443: crypto signing class identity
+
+- Preserve Sign and Verify prototypes for signing factories.
+
+### Stage 1444: crypto DH class identity
+
+- Preserve DiffieHellman prototype identity for its factory.
+
+### Stage 1445: crypto DH group class identity
+
+- Preserve DiffieHellmanGroup prototype identity for its factory.
+
+### Stage 1446: crypto ECDH class identity
+
+- Preserve ECDH prototype identity for its factory.
+
+### Stage 1447: crypto Decipheriv class identity
+
+- Preserve Decipheriv prototype identity for its factory.

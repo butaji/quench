@@ -87,6 +87,7 @@ const __quenchCryptoClassPrototypes = (result) => {
     __nodeCryptoSetPrototype(value, result.Hmac);
     return value;
   };
+  __quenchCryptoSigningPrototypes(result);
   __quenchCryptoCipherPrototypes(result);
 };
 const __quenchCryptoConstantsFallback = (result) => {
