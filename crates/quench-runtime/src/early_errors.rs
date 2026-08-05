@@ -80,6 +80,67 @@ pub fn check_early_errors(program: &ast::Program) -> Result<(), JsError> {
     Ok(())
 }
 
+pub fn check_module_exported_bindings(program: &ast::Program) -> Result<(), JsError> {
+    let mut bindings = HashSet::new();
+    for statement in &program.body {
+        match statement {
+            ast::Statement::VariableDeclaration(declaration) => {
+                bindings.extend(collect_bound_names(declaration));
+            }
+            ast::Statement::FunctionDeclaration(function) => {
+                if let Some(id) = &function.id {
+                    bindings.insert(id.name.to_string());
+                }
+            }
+            ast::Statement::ClassDeclaration(class) => {
+                if let Some(id) = &class.id {
+                    bindings.insert(id.name.to_string());
+                }
+            }
+            ast::Statement::ImportDeclaration(import) => {
+                if let Some(specifiers) = &import.specifiers {
+                    for specifier in specifiers {
+                        let name = match specifier {
+                            ast::ImportDeclarationSpecifier::ImportSpecifier(specifier) => {
+                                &specifier.local.name
+                            }
+                            ast::ImportDeclarationSpecifier::ImportDefaultSpecifier(specifier) => {
+                                &specifier.local.name
+                            }
+                            ast::ImportDeclarationSpecifier::ImportNamespaceSpecifier(specifier) => {
+                                &specifier.local.name
+                            }
+                        };
+                        bindings.insert(name.to_string());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    for statement in &program.body {
+        let ast::Statement::ExportNamedDeclaration(export) = statement else {
+            continue;
+        };
+        if export.source.is_none() && export.declaration.is_none() {
+            for specifier in &export.specifiers {
+                let local_name = match &specifier.local {
+                    ast::ModuleExportName::IdentifierReference(local) => local.name.as_str(),
+                    ast::ModuleExportName::IdentifierName(local) => local.name.as_str(),
+                    ast::ModuleExportName::StringLiteral(_) => continue,
+                };
+                if !bindings.contains(local_name) {
+                    return Err(JsError(format!(
+                        "SyntaxError: Exported binding '{}' is not declared",
+                        local_name
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 struct StrictDeleteIdentifierChecker(bool);
 
 impl<'a> Visit<'a> for StrictDeleteIdentifierChecker {

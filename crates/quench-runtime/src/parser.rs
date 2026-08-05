@@ -368,6 +368,7 @@ pub fn parse_es_module(source: &str) -> Result<Program, JsError> {
     check_strict_fn_params(&ret.program)?;
     check_strict_fn_body(&ret.program)?;
     early_errors::check_early_errors(&ret.program)?;
+    early_errors::check_module_exported_bindings(&ret.program)?;
     early_errors::check_module_duplicate_labels(&ret.program)?;
     early_errors::check_module_duplicate_function_names(&ret.program)?;
     early_errors::check_break_continue_errors(&ret.program)?;
@@ -760,6 +761,11 @@ mod tests {
     #[test]
     fn module_rejects_duplicate_top_level_function_names() {
         assert!(parse_es_module("function f() {} function f() {}").is_err());
+    }
+
+    #[test]
+    fn module_rejects_export_of_undeclared_binding() {
+        assert!(parse_es_module("export { Number };").is_err());
     }
 
     #[test]
