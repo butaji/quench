@@ -478,6 +478,7 @@ macro_rules! run_host_context {
                 return Err(rquickjs::Error::new_from_js("async", "exception"));
             }
         }
+        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/global-surface.js").as_bytes())?;
         ctx.eval::<(), _>(b"try { if (typeof process?.emit === 'function') process.emit('exit', process.exitCode || 0); } catch (error) { globalThis.__quench_exit_error = error && error.stack ? `${error.name}: ${error.message}\\n${error.stack}` : String(error); throw error; }")
             .map_err(|error| {
                 let detail = ctx.globals().get::<_, String>("__quench_exit_error").unwrap_or_else(|_| format!("{error:?}"));
