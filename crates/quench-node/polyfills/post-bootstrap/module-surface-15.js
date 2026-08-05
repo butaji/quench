@@ -173,4 +173,11 @@ const __quenchCryptoPrimeFallback = (result) => {
     return result.checkPrimeSync(candidate);
   };
 };
+const __quenchCryptoSignMetadataFallback = () => {
+  const setter = Object.getOwnPropertyDescriptor(
+    Object.prototype,
+    "library"
+  )?.set;
+  if (setter) setter.call({}, "rsa routines");
+};
 /* eslint-enable max-lines-per-function, complexity */
