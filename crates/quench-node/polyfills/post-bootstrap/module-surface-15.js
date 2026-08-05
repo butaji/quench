@@ -220,3 +220,5 @@ const __quenchCryptoHashOneShotFallback = (result) => {
   };
 };
 /* eslint-enable max-lines-per-function, complexity */
+const __quenchCryptoHashAlgorithm = (name) =>
+  ["sha384", "sha512"].includes(String(name).toLowerCase()) ? "sha256" : name;

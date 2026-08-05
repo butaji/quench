@@ -80,7 +80,10 @@ const __quenchCryptoKeyFallback = (result) => {
 const __quenchCryptoClassPrototypes = (result) => {
   const createHash = result.createHash;
   result.createHash = (...args) => {
-    const value = createHash(...args);
+    const value = createHash(
+      __quenchCryptoHashAlgorithm(args[0]),
+      ...args.slice(1)
+    );
     __nodeCryptoSetPrototype(value, result.Hash);
     return value;
   };
@@ -308,9 +311,7 @@ const __quenchCryptoCipherFallback = (result) => {
       readable,
       state = {};
     return Object.assign(
-      Object.create(
-        globalThis.__quenchCipherConstructor?.prototype || Object.prototype
-      ),
+      Object.create(result.Cipheriv?.prototype || Object.prototype),
       {
         update(value, encoding, resultEncoding) {
           inputEncoding ||= __quenchValidateCipherEncoding(
@@ -474,8 +475,6 @@ const __quenchCryptoFallbacks = (result) => {
   __quenchCryptoClassPrototypes(result);
   __quenchCryptoKdfFallbacks(result);
   __quenchCryptoConstructors(result);
-  globalThis.__quenchHmacConstructor = result.Hmac;
-  globalThis.__quenchSignConstructor = result.Sign;
   __quenchCryptoSignFallbacks(result);
   __quenchCryptoAllKeyFallbacks(result);
   result.privateEncrypt ||= result.publicDecrypt ||= (_key, data) =>
@@ -483,7 +482,6 @@ const __quenchCryptoFallbacks = (result) => {
   __quenchCryptoConstantsFallback(result);
   __quenchCertificateFallback(result);
   __quenchCryptoCipherFallback(result);
-  globalThis.__quenchCipherConstructor = result.Cipheriv;
   (__quenchCryptoWebFallbacks(result),
     __quenchCryptoHashOneShotFallback(result));
   Object.assign(source, result);
