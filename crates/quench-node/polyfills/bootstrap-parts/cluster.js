@@ -293,7 +293,7 @@ const __quenchInternalBufferModule = {
   utf8Write: (buffer, string, offset = 0, length = buffer.length - offset) =>
     buffer.write(string, offset, length, "utf8")
 };
-const __quenchInternalFsUtilsModule = {
+Object.assign(__quenchInternalFsUtilsModule, {
   stringToFlags: (flags) => {
     const values = {
       r: 0,
@@ -326,7 +326,7 @@ const __quenchInternalFsUtilsModule = {
     }
     return values[flags];
   }
-};
+});
 const __quenchRequireClusterInternal = (name) => {
   if (name === "internal/test/binding") return __quenchInternalBindingModule;
   if (name === "internal/errors") return __quenchInternalErrorsModule;
