@@ -168,6 +168,32 @@ fn reject_restricted_global_lexicals(ctx: &Context, source: &str) -> Result<(), 
             }
         }
     }
+    for statement in &body {
+        let Some(name) = (match statement {
+            crate::ast::Statement::FunctionDeclaration { name, .. } => Some(name),
+            _ => None,
+        }) else {
+            continue;
+        };
+        let descriptor = global.borrow().get_own_property(name);
+        let allowed = match descriptor {
+            None => global.borrow().extensible,
+            Some(descriptor) if descriptor.configurable == Some(true) => true,
+            Some(descriptor) => {
+                descriptor.is_data()
+                    && descriptor.writable == Some(true)
+                    && descriptor.enumerable == Some(true)
+            }
+        };
+        if !allowed {
+            let (error, js_error) = crate::value::error::create_js_error_with_type(
+                "Cannot declare global function",
+                "TypeError",
+            );
+            crate::value::set_thrown_value(error);
+            return Err(js_error);
+        }
+    }
     for (name, _) in names {
         if global
             .borrow()
@@ -452,6 +478,17 @@ mod tests {
         let result = ctx.eval(
             "Object.preventExtensions(this); \
              try { $262.evalScript('var freshGlobal;'); false } \
+             catch (e) { e instanceof TypeError }",
+        );
+        assert_eq!(result, Ok(crate::Value::Boolean(true)));
+    }
+
+    #[test]
+    fn test_eval_script_rejects_incompatible_global_function() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval(
+            "Object.defineProperty(this, 'fixed', { configurable: false, writable: false }); \
+             try { $262.evalScript('function fixed() {}'); false } \
              catch (e) { e instanceof TypeError }",
         );
         assert_eq!(result, Ok(crate::Value::Boolean(true)));
