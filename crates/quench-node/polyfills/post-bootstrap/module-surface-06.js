@@ -176,6 +176,7 @@
             globalThis
               .__nodeUrlEncode(segment.replace(/\+/g, " "))
               .replace(/%25([0-9A-F]{2})/gi, "%$1")
+              .replace(/%3F/gi, "?")
           )
           .join("=")
       )
@@ -206,7 +207,7 @@
             : property === "hash"
               ? String(value) === ""
                 ? ""
-                : `#${globalThis.__nodeUrlEncode(String(value).replace(/^#/, "")).replace(/%2F/gi, "/").replace(/%5C/gi, "\\").replace(/%3B/gi, ";").replace(/%3F/gi, "?")}`
+                : `#${globalThis.__nodeUrlEncode(String(value).replace(/^#/, "")).replace(/%2F/gi, "/").replace(/%5C/gi, "\\").replace(/%23/gi, "#").replace(/%3B/gi, ";").replace(/%3F/gi, "?")}`
               : String(value);
   // eslint-disable-next-line complexity
   const setURLAccessorValue = (target, property, value) => {
