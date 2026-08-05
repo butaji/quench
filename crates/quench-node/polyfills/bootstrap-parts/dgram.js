@@ -83,8 +83,9 @@ const __quenchDgramSend = (socket, message, ...args) => {
         code: "ERR_INVALID_ARG_TYPE"
       }
     );
-  const addressIndex = args.length >= 4 ? 3 : 1;
-  const address = args[addressIndex];
+  const hasOffset = args.length >= 5 || (socket._connected && args.length >= 2);
+  const addressIndex = args.length >= 5 ? 3 : hasOffset ? -1 : 1;
+  const address = addressIndex < 0 ? undefined : args[addressIndex];
   if (
     address !== undefined &&
     address !== null &&
@@ -99,7 +100,6 @@ const __quenchDgramSend = (socket, message, ...args) => {
       { code: "ERR_INVALID_ARG_TYPE" }
     );
   const callback = args.at(-1);
-  const hasOffset = args.length >= 5 || (socket._connected && args.length >= 3);
   const payload = Array.isArray(message) ? NodeBuffer.concat(message) : message;
   const length = hasOffset ? args[1] : payload.byteLength;
   queueMicrotask(() => {
