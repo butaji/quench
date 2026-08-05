@@ -4697,3 +4697,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Reject file removal when the tracked parent directory lacks write and
   execute permissions.
+
+### Stage 1332: timer callback generation
+
+- Initialize timeout generations so scheduled callbacks pass their active
+  generation guard and execute before process teardown.
