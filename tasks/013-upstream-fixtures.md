@@ -5032,3 +5032,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1412: crypto key-pair handles
 
 - Return minimal private/public handles from `generateKeyPairSync()`.
+
+### Stage 1413: crypto secret-key handles
+
+- Return a minimal secret handle from `generateKeySync()`.
