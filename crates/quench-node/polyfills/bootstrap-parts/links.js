@@ -125,8 +125,8 @@ globalThis.__nodeFs.copyFile = (from, to, mode, callback) => {
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
-  const source = nodeFsPath(from);
-  const destination = nodeFsPath(to);
+  const source = __nodeFsCopyPath(from, "src");
+  const destination = __nodeFsCopyPath(to, "dest");
   if (typeof mode !== "number") {
     const error = new TypeError('The "mode" argument must be of type number');
     error.code = "ERR_INVALID_ARG_TYPE";
@@ -134,6 +134,7 @@ globalThis.__nodeFs.copyFile = (from, to, mode, callback) => {
   }
   queueMicrotask(() => {
     try {
+      __nodeFsCopyExclusiveError(destination, source, mode);
       globalThis.__nodeFs.copyFileSync(source, destination, mode);
     } catch (error) {
       callback(error);
