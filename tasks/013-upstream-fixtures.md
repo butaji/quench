@@ -5435,3 +5435,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1706. `url-file-base-drive-reference.js` — resolve drive references against file bases.
 1707. `url-rooted-drive-reference.js` — resolve rooted drive references against file bases.
 1708. `url-protocol-relative-drive.js` — resolve protocol-relative drives against file bases.
+1709. `url-file-network-host.js` — preserve network hosts in file URLs.
