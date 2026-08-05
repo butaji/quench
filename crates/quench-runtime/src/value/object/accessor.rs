@@ -58,6 +58,14 @@ pub fn set_getter_func(obj: &mut crate::value::Object, key: &str, func: crate::v
             strict: crate::interpreter::is_strict_mode(),
         },
     );
+    obj.descriptors.insert(
+        key.to_string(),
+        crate::value::object::helpers::PropertyFlags {
+            enumerable: false,
+            configurable: true,
+            ..Default::default()
+        },
+    );
 }
 
 /// Set a setter function for a property

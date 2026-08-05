@@ -780,6 +780,14 @@ mod tests {
     }
 
     #[test]
+    fn shared_array_buffer_accessors_are_non_enumerable() {
+        let result = eval_ok(
+            "Object.getOwnPropertyDescriptor(SharedArrayBuffer.prototype, 'byteLength').enumerable === false && Object.getOwnPropertyDescriptor(SharedArrayBuffer.prototype, 'growable').enumerable === false",
+        );
+        assert_eq!(result, Value::Boolean(true));
+    }
+
+    #[test]
     fn shared_array_buffer_rejects_unallocatable_length_before_allocation() {
         let result = eval_ok(
             "try { new SharedArrayBuffer(9007199254740991); false } catch (error) { error instanceof RangeError }",
