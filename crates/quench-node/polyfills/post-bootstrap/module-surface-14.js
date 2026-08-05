@@ -249,6 +249,20 @@ const __quenchCryptoCipherPrototypes = (result) => {
     };
   }
 };
+const __quenchCryptoSigningPrototypes = (result) => {
+  for (const [factory, constructor] of [
+    ["createSign", "Sign"],
+    ["createVerify", "Verify"]
+  ]) {
+    const create = result[factory];
+    if (typeof create !== "function") continue;
+    result[factory] = (...args) => {
+      const value = create(...args);
+      __nodeCryptoSetPrototype(value, result[constructor]);
+      return value;
+    };
+  }
+};
 const __quenchCryptoKeyExchangeFallback = (result) => {
   __quenchPrepareDhGroup(result);
   result.ECDH.convertKey = __quenchEcdhConvertKey;
