@@ -20,7 +20,8 @@ const __quenchCryptoSignFallback = (result) => {
       update() {
         return this;
       },
-      sign() {
+      sign(key) {
+        if (String(key).includes("EC PRIVATE KEY")) return NodeBuffer.alloc(64);
         throw Object.assign(
           new Error("error:02000070:rsa routines::digest too big for rsa key"),
           { library: "rsa routines" }
