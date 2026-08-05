@@ -358,6 +358,7 @@ globalThis.__quenchResolveParsedSpecial = (r, f, t) =>
   globalThis.__quenchResolveScopedObject(r, f, t) ||
   globalThis.__quenchResolveParsedFragment(r, f, t) ||
   globalThis.__quenchResolveParsedWebAbsolute(r, f, t) ||
+  globalThis.__quenchResolveParsedAbsoluteOpaque(r, f, t) ||
   globalThis.__quenchResolveParsedWebRelative(r, f, t) ||
   globalThis.__quenchResolveParsedOpaque(r, f, t);
 globalThis.__quenchResolveParsedObject = (result, from, to) => {
