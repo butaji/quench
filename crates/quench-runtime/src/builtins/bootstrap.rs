@@ -458,7 +458,6 @@ mod tests {
             .unwrap();
         assert_eq!(r, Value::String("function|function|function|function".into()));
     }
-
     #[test]
     fn generator_function_to_string_tag() {
         let mut ctx = Context::new().unwrap();
@@ -1512,7 +1511,6 @@ mod tests {
         assert_eq!(r, Value::Boolean(true));
     }
 
-
     #[test]
     fn string_char_at_works() {
         let mut ctx = new_ctx();
@@ -2108,7 +2106,7 @@ mod tests {
     fn shared_array_buffer_prototype_slice_and_tag() {
         let mut ctx = new_ctx();
         let r = ctx
-            .eval("typeof SharedArrayBuffer.prototype.slice === 'undefined'")
+            .eval("typeof SharedArrayBuffer.prototype.slice === 'function'")
             .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }

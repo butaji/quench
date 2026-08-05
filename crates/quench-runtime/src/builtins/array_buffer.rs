@@ -441,13 +441,69 @@ fn register_shared_array_buffer(ctx: &mut Context) {
         .borrow_mut()
         .set_getter_func("growable", growable_getter);
 
+    let slice_proto = Rc::clone(&proto_rc);
+    proto_rc.borrow_mut().set(
+        "slice",
+        Value::NativeFunction(Rc::new(NativeFunction::new(move |args| {
+            let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+            let Value::Object(this_obj) = this_val else {
+                return Err(array_buffer_type_error(
+                    "SharedArrayBuffer.prototype.slice requires a SharedArrayBuffer receiver",
+                ));
+            };
+            if this_obj.borrow().get_own("\0sharedArrayBuffer").is_none() {
+                return Err(array_buffer_type_error(
+                    "SharedArrayBuffer.prototype.slice requires a SharedArrayBuffer receiver",
+                ));
+            }
+            let len = this_obj
+                .borrow()
+                .get_own_value("byteLength")
+                .map(|value| to_number(&value) as usize)
+                .unwrap_or(0);
+            let start = args
+                .first()
+                .map(|value| to_number(value) as isize)
+                .unwrap_or(0)
+                .clamp(0, len as isize) as usize;
+            let end = args
+                .get(1)
+                .map(|value| to_number(value) as isize)
+                .unwrap_or(len as isize)
+                .clamp(start as isize, len as isize) as usize;
+            let mut result = Object::new(ObjectKind::Ordinary);
+            result.prototype = Some(Rc::clone(&slice_proto));
+            result.elements = this_obj.borrow().elements[start..end].to_vec();
+            result.set("byteLength", Value::Number((end - start) as f64));
+            result.set("\0sharedArrayBuffer", Value::Boolean(true));
+            Ok(Value::Object(Rc::new(RefCell::new(result))))
+        }))),
+    );
+
     let proto_clone = Rc::clone(&proto_rc);
     let mut sab_native = NativeFunction::new_with_prototype(
         move |args| {
             let len = args.first().map(to_number).unwrap_or(0.0);
             let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
             if let Value::Object(this_obj) = this_val {
+                if !len.is_finite() || len < 0.0 || len > usize::MAX as f64 {
+                    return Err(array_buffer_range_error(
+                        "SharedArrayBuffer allocation is too large",
+                    ));
+                }
+                let len_usize = len as usize;
+                let mut elements = Vec::new();
+                if elements.try_reserve_exact(len_usize).is_err() {
+                    return Err(array_buffer_range_error(
+                        "SharedArrayBuffer allocation is too large",
+                    ));
+                }
+                elements.resize(len_usize, Value::Number(0.0));
                 this_obj.borrow_mut().set("byteLength", Value::Number(len));
+                this_obj.borrow_mut().elements = elements;
+                this_obj
+                    .borrow_mut()
+                    .set("\0sharedArrayBuffer", Value::Boolean(true));
                 if this_obj.borrow().prototype.is_none() {
                     this_obj.borrow_mut().prototype = Some(Rc::clone(&proto_clone));
                 }
@@ -543,6 +599,22 @@ mod tests {
             "typeof Object.getOwnPropertyDescriptor(SharedArrayBuffer.prototype, 'growable').get",
         );
         assert_eq!(result, Value::String("function".to_string()));
+    }
+
+    #[test]
+    fn shared_array_buffer_slice_returns_shared_array_buffer() {
+        let result = eval_ok(
+            "var sab = new SharedArrayBuffer(4); var result = sab.slice(1, 3); typeof sab.slice === 'function' && result instanceof SharedArrayBuffer && result.byteLength === 2",
+        );
+        assert_eq!(result, Value::Boolean(true));
+    }
+
+    #[test]
+    fn shared_array_buffer_rejects_unallocatable_length_before_allocation() {
+        let result = eval_ok(
+            "try { new SharedArrayBuffer(9007199254740991); false } catch (error) { error instanceof RangeError }",
+        );
+        assert_eq!(result, Value::Boolean(true));
     }
 
     #[test]
