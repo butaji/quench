@@ -4403,3 +4403,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Reject invalid `fs.watch` paths synchronously with the shared filesystem
   validator.
+
+### Stage 1266: assert predicate validation
+
+- Treat ordinary `assert.throws` validator functions as predicates while
+  retaining constructor checks for error classes and tested constructors.
