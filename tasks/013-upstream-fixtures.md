@@ -4299,3 +4299,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1242: TLS socket inheritance
 
 - Made `tls.TLSSocket` extend the compatibility `net.Socket` constructor.
+
+### Stage 1243: net half-open default
+
+- Added Node’s default `allowHalfOpen: false` socket property.
