@@ -5180,3 +5180,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1449: crypto legacy cipher identity
 
 - Preserve Cipheriv identity for the legacy DES cipher path.
+1450. `crypto-class-legacy-specifier.js` — crypto class identity through the legacy module specifier.
