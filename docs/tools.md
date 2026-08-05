@@ -78,3 +78,28 @@ harness owns the per-file loop and produces the digest, so nextest parallelism
 applies to unit/integration tests rather than splitting one stage's SSOT run.
 `run-each.sh` is the diagnostic crash-isolation path and is not a replacement
 for the digest command.
+
+## Fast conformance loop
+
+Use quick mode to find representative failures, then use a complete digest for
+evidence:
+
+```bash
+TEST262_STAGE=N TEST262_DIGEST=1 TEST262_QUICK=1 \
+  cargo nextest run -p quench-runtime --test test262 --profile test262 \
+  -E 'test(test262_staged)' --run-ignored all --no-capture
+
+TEST262_STAGE=N TEST262_DIGEST=1 \
+  cargo nextest run -p quench-runtime --test test262 --profile test262 \
+  -E 'test(test262_staged)' --run-ignored all --no-capture
+```
+
+The first command is triage only. The second is conformance evidence.
+
+Benchmark worker count against wall time, tests per second, peak memory,
+timeouts, and crashes. Cache only immutable parsed/bootstrap artifacts until
+context reset hygiene proves that mutable state can be reused safely.
+
+Independent stages can be batched concurrently only through isolated result
+files and serialized merge/advance. `tasks/index.json` remains descriptive
+configuration, never execution evidence.

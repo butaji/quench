@@ -32,3 +32,22 @@ duplicate Test262 assertions.
 
 The runner must remain local-only. GitHub Actions are forbidden in this
 repository.
+
+## Acceleration work
+
+Runner improvements must preserve complete fixture execution, deterministic
+outcomes, timeout enforcement, and skip accounting.
+
+- Add phase timing for discovery, metadata/harness loading, context/bootstrap,
+  parse, execution, and cleanup.
+- Make worker count configurable and benchmark it against throughput, memory,
+  timeout rate, and crash rate.
+- Improve grouping with stable phase, error type, runtime location, mode, and
+  normalized-message fields.
+- Cache immutable parsed harness/bootstrap artifacts without sharing mutable
+  context state until reset hygiene is proven by refactor-pin tests.
+- Support concurrent independent stages using isolated result files and a
+  serialized merge/advance operation.
+
+Quick mode accelerates diagnosis only; a full digest remains the only
+completion evidence.

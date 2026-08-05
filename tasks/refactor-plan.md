@@ -93,3 +93,27 @@ relevant test262 stage.
   requires explicit `@builtin-rust` markers for Rust-owned public methods and
   rejects matching JS prototype implementations unless they are documented
   one-line proxy exceptions.
+
+- **R30 — Test262 throughput instrumentation.** Add phase timing for discovery,
+  harness, context/bootstrap, parse, execution, and cleanup; emit deterministic
+  digest timing fields with runner unit tests.
+
+- **R31 — Configurable digest workers.** Replace the fixed worker cap with a
+  bounded environment-configurable count, benchmark representative stages, and
+  add tests for parsing and bounds.
+
+- **R32 — Root-cause failure grouping.** Group stable phase, error type, runtime
+  location, execution mode, and normalized-message fields; test equivalent and
+  distinct causes.
+
+- **R33 — Immutable bootstrap cache.** Measure bootstrap cost, then cache only
+  immutable parsed artifacts. Add realm-isolation and `Context::reset`
+  refactor-pin tests.
+
+- **R34 — Concurrent stage batches.** Run independent stages with isolated
+  result files and serialized merge/advance. Test complete collection, failure
+  propagation, and no partial advancement.
+
+- **R35 — Fast-loop command.** Add one local workflow entry point for quick
+  triage, focused reproducers, full stage digest, and final lint checks. It must
+  not edit Test262 fixtures or manufacture conformance status.
