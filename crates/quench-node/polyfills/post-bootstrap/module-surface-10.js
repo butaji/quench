@@ -4,7 +4,12 @@
     globalThis.require = (name) => {
       let result = originalRequire(name);
       if (String(name).replace(/^node:/, "") === "crypto") {
-        result = Object.assign({}, result);
+        const source = result;
+        result = Object.assign({}, source);
+        for (const name of ["pseudoRandomBytes", "prng", "rng"]) {
+          const descriptor = Object.getOwnPropertyDescriptor(source, name);
+          if (descriptor) Object.defineProperty(result, name, descriptor);
+        }
         result.pbkdf2 ||= (
           password,
           salt,

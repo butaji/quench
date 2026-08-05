@@ -3868,3 +3868,12 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Normalized synthetic `spawnSync` output for symlinked execPath child probes.
 - Verified the focused probe and upstream `test-process-execpath.js` fixture.
+
+### Stage 1160: crypto random export descriptors
+
+- Preserved non-enumerable legacy crypto random exports when post-bootstrap
+  module wrappers clone the crypto API.
+- Centralized random-integer validation diagnostics in the random polyfill to
+  keep the core crypto file within the 500-line limit.
+- The focused size-validation stage passes; the upstream fixture is still
+  being advanced through random-integer boundary cases.
