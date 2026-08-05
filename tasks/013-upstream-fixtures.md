@@ -4952,3 +4952,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1392: crypto DH generator validation
 
 - Reject invalid numeric and byte-array Diffie-Hellman generators.
+
+### Stage 1393: crypto DH input types
+
+- Reject unsupported Diffie-Hellman first-argument types.
