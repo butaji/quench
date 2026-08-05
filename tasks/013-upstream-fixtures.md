@@ -5319,3 +5319,5 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1587. `url-resolve-object-same-scheme-forms.js` — cover parsed same-scheme URL forms.
 1588. `url-resolve-object-triple-slash-authorities.js` — preserve parsed triple-slash authorities.
 1589. `url-resolve-object-path-parameter-directories.js` — cover parsed parameter-directory traversal.
+1590. `url-resolve-object-root-dot-names.js` — cover parsed root and dot-name targets.
+1591. `url-resolve-object-file-fragments.js` — preserve parsed file fragments and directories.
