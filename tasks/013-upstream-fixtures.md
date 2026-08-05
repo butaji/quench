@@ -5385,3 +5385,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1653. `url-setter-object-coercion.js` — propagate URL setter object coercion errors.
 1655. `url-deep-equality.js` — hide URLSearchParams owner internals from deep equality.
 1657. `url-global-descriptors.js` — align global URL property descriptors.
+1658. `url-empty-href.js` — reject empty URL href assignments.
