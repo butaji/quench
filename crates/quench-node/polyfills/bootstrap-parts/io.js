@@ -241,8 +241,8 @@ Object.assign(globalThis.__nodeFs, {
     return globalThis.__nodeFs.writeSync(fd, NodeBuffer.concat(buffers));
   },
   copyFileSync: (from, to, mode = 0) => {
-    const source = __nodeFsPathOnly(from);
-    const destination = __nodeFsPathOnly(to);
+    const source = __nodeFsCopyPath(from, "src");
+    const destination = __nodeFsCopyPath(to, "dest");
     if (typeof mode !== "number") {
       const error = new TypeError('The "mode" argument must be of type number');
       error.code = "ERR_INVALID_ARG_TYPE";
@@ -253,6 +253,7 @@ Object.assign(globalThis.__nodeFs, {
       error.code = "ERR_OUT_OF_RANGE";
       throw error;
     }
+    __nodeFsCopyExclusiveError(destination, source, mode);
     return globalThis.__quench_fs_copy(source, destination);
   },
   appendFileSync: (value, data, options = {}) => {

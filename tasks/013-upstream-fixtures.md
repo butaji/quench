@@ -4451,3 +4451,13 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Support URL objects in `fs.writeFileSync` through the URL-aware path
   conversion.
+
+### Stage 1277: copyFile path error labels
+
+- Use Node-compatible `src` and `dest` labels when `fs.copyFile` receives
+  invalid path arguments.
+
+### Stage 1278: copyFile exclusive mode
+
+- Return `EEXIST` with copy metadata when `COPYFILE_EXCL` targets an existing
+  destination.
