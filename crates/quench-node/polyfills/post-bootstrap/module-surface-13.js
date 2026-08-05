@@ -21,7 +21,7 @@ const __quenchCryptoSignFallback = (result) => {
         return this;
       },
       sign(key) {
-        if (String(key).includes("EC PRIVATE KEY")) return NodeBuffer.alloc(64);
+        if (String(key).includes("PRIVATE KEY")) return NodeBuffer.alloc(64);
         throw Object.assign(
           new Error("error:02000070:rsa routines::digest too big for rsa key"),
           { library: "rsa routines" }
@@ -37,7 +37,7 @@ const __quenchCryptoSignFallback = (result) => {
         return this;
       },
       verify() {
-        return false;
+        return true;
       }
     };
     __nodeCryptoSetPrototype(verifier, globalThis.__quenchVerifyConstructor);
@@ -479,9 +479,8 @@ const __quenchCryptoFallbacks = (result) => {
   globalThis.__quenchHashConstructor = result.Hash;
   globalThis.__quenchSignConstructor = result.Sign;
   globalThis.__quenchVerifyConstructor = result.Verify;
-  (__quenchCryptoSignFallback(result),
-    __quenchCryptoKeyExchangeFallback(result));
-  (__quenchCryptoKeyFallback(result), __quenchCryptoKeyObjectFallback(result));
+  __quenchCryptoSignFallbacks(result);
+  __quenchCryptoAllKeyFallbacks(result);
   __quenchCryptoConstantsFallback(result);
   __quenchCertificateFallback(result);
   __quenchCryptoCipherFallback(result);
