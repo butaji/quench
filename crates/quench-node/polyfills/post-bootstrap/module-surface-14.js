@@ -46,8 +46,11 @@ const __quenchCryptoDhConstructor = (result) => {
     if (!this.generated && !this.privateKey) __quenchCryptoInvalidState();
     return this.privateKey || NodeBuffer.alloc(128);
   };
-  Constructor.prototype.setPrivateKey = function setPrivateKey(value) {
-    this.privateKey = NodeBuffer.from(value);
+  Constructor.prototype.setPrivateKey = function setPrivateKey(
+    value,
+    encoding
+  ) {
+    this.privateKey = NodeBuffer.from(value, encoding);
     this.generated = false;
     return this;
   };
@@ -84,7 +87,7 @@ const __quenchPrepareDhGroup = (result) => {
 };
 const __quenchCryptoKeyExchangeFallback = (result) => {
   __quenchPrepareDhGroup(result);
-  result.createDiffieHellman ||= (
+  result.createDiffieHellman = (
     sizeOrKey,
     generatorOrEncoding,
     maybeGenerator = generatorOrEncoding
@@ -92,7 +95,7 @@ const __quenchCryptoKeyExchangeFallback = (result) => {
     __quenchValidateDhNumbers(sizeOrKey, maybeGenerator);
     return Object.create(result.DiffieHellman.prototype);
   };
-  result.createDiffieHellmanGroup ||= () => result.DiffieHellmanGroup();
+  result.createDiffieHellmanGroup = () => result.DiffieHellmanGroup();
   result.getDiffieHellman ||= (name) => {
     if (name !== "modp14" && name !== "modp1")
       throw Object.assign(new Error("Unknown DH group"), {
