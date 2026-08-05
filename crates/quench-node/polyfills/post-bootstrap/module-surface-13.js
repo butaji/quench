@@ -52,10 +52,13 @@ const __quenchCryptoKeyFallback = (result) => {
   });
   result.createPrivateKey ||= create("private");
   result.createPublicKey ||= create("public");
-  result.generateKeyPairSync = () => ({
-    privateKey: create("private")(),
-    publicKey: create("public")()
-  });
+  result.generateKeyPairSync = (algorithm, options = {}) => {
+    const privateKey = create("private")();
+    const publicKey = create("public")();
+    privateKey.dhParams = { algorithm, ...options };
+    publicKey.dhParams = privateKey.dhParams;
+    return { privateKey, publicKey };
+  };
   result.generateKeySync = () => ({
     type: "secret",
     export: () => NodeBuffer.alloc(16)

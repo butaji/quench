@@ -5072,3 +5072,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1422: crypto stateless DH shared secret
 
 - Align one-shot and instance DH shared-secret results.
+
+### Stage 1423: crypto DH parameter mismatch
+
+- Preserve generated DH parameters and reject mismatched domains.
