@@ -102,6 +102,23 @@ const __quenchFinishedStream = (stream, options, callback) => {
     active = false;
   };
 };
+const __quenchAddAbortSignal = (signal, stream) => {
+  if (!signal || typeof signal !== "object") {
+    const error = new TypeError(
+      "ERR_INVALID_ARG_TYPE: The signal argument must be an AbortSignal"
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  if (!stream || typeof stream !== "object") {
+    const error = new TypeError(
+      "ERR_INVALID_ARG_TYPE: The stream argument must be a stream"
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  return stream;
+};
 const __quenchAddHttpEvents = (result) => {
   for (const name of ["IncomingMessage", "ServerResponse"]) {
     const prototype = result[name]?.prototype;
@@ -158,6 +175,7 @@ const __quenchAddStreamCompat = (result) => {
   const finished = result.finished;
   result.finished = (stream, options, callback) =>
     __quenchFinishedStream(stream, options, callback, finished);
+  result.addAbortSignal = __quenchAddAbortSignal;
   result.promises ||= globalThis.require("stream/promises");
   const promisifyCustom = Symbol.for("nodejs.util.promisify.custom");
   result.pipeline[promisifyCustom] = result.promises.pipeline;
