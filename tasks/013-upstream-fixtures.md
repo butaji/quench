@@ -3990,3 +3990,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Deferred the bind callback to a microtask so callers can finish initializing
   their socket variable before the callback observes it.
+
+### Stage 1179: dgram connected sends
+
+- Added connected sockets, multi-buffer sends, message delivery, and listener
+  receiver context for the next upstream dgram fixtures.

@@ -18,10 +18,18 @@ const __quenchDgramBind = (socket, type, port, address, callback) => {
 const __quenchDgramSend = (socket, message, ...args) => {
   const callback = args.at(-1);
   const hasOffset = typeof args[0] === "number";
-  const length = hasOffset ? args[1] : message.byteLength;
-  queueMicrotask(() =>
-    typeof callback === "function" ? callback(null, length) : undefined
-  );
+  const payload = Array.isArray(message) ? NodeBuffer.concat(message) : message;
+  const length = hasOffset ? args[1] : payload.byteLength;
+  queueMicrotask(() => {
+    socket.emit("message", payload, socket.address());
+    if (typeof callback === "function") callback(null, length);
+  });
+  return socket;
+};
+const __quenchDgramConnect = (socket, port, address, callback) => {
+  socket._connected = true;
+  socket._remote = { address, port };
+  queueMicrotask(() => callback?.());
   return socket;
 };
 const __quenchDgramClose = (socket, callback) => {
@@ -45,7 +53,7 @@ const __quenchDgramOn = (socket, listeners, event, callback) => {
   return socket;
 };
 const __quenchDgramEmit = (socket, listeners, event, args) => {
-  for (const callback of listeners[event] || []) callback(...args);
+  for (const callback of listeners[event] || []) callback.apply(socket, args);
   return socket;
 };
 const __quenchDgramSocket = (type = "udp4") => {
@@ -54,8 +62,9 @@ const __quenchDgramSocket = (type = "udp4") => {
     type,
     bind: (port, address, callback) =>
       __quenchDgramBind(socket, type, port, address, callback),
-    send: (message, port, address, callback) =>
-      __quenchDgramSend(socket, message, address, callback),
+    send: (message, ...args) => __quenchDgramSend(socket, message, ...args),
+    connect: (port, address, callback) =>
+      __quenchDgramConnect(socket, port, address, callback),
     close: (callback) => __quenchDgramClose(socket, callback),
     address: () => __quenchDgramAddress(socket, type),
     on: (event, callback) =>
