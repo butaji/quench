@@ -5425,3 +5425,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1696. `url-bare-single-slash.js` — resolve bare single-slash schemes to the base root.
 1697. `url-ftp-single-slash.js` — preserve absolute FTP single-slash references.
 1698. `url-cross-scheme-single-slash.js` — preserve cross-scheme single-slash URLs.
+1699. `url-websocket-single-slash.js` — normalize WebSocket single-slash schemes.
