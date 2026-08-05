@@ -4394,3 +4394,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Create missing recursive parent directories and return the first created
   directory path.
+
+### Stage 1264: async mkdir result
+
+- Return the recursive first-created path through callback-style `fs.mkdir`.

@@ -153,8 +153,8 @@ globalThis.__nodeFs.mkdir = (value, options, callback) => {
   const path = nodeFsPath(value);
   queueMicrotask(() => {
     try {
-      globalThis.__nodeFs.mkdirSync(path, options);
-      callback(null);
+      const created = globalThis.__nodeFs.mkdirSync(path, options);
+      callback(null, created);
     } catch (error) {
       callback(error);
     }
