@@ -244,7 +244,7 @@ fn run_single_file(dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
             Ok(())
         }
         Err(error) => {
-            eprintln!("not ok {}: {error}", dir.display());
+            eprintln!("not ok {}: {error:?}", dir.display());
             Err("Node test harness failures".into())
         }
     }
