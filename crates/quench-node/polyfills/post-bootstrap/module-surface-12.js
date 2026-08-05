@@ -333,10 +333,11 @@ globalThis.__quenchResolveParsedAbsolute = (result, from, to) => {
   const resolved = globalThis.__quenchResolveAbsolutePath(source, to);
   if (!resolved) return null;
   const parsed = result.parse(resolved);
+  const resolvedPath = resolved.includes("://") ? to : resolved;
   return Object.assign(parsed, {
     protocol: from.protocol,
-    pathname: to,
-    path: to,
+    pathname: resolvedPath,
+    path: resolvedPath,
     href: resolved
   });
 };
@@ -384,8 +385,9 @@ globalThis.__quenchResolveParsedPath = (base, to) => {
   const parts = path.split("/");
   const normalized = [];
   for (const part of parts) {
-    if (part === ".." && normalized.length > 0) normalized.pop();
-    else if (part && part !== ".") normalized.push(part);
+    if (part === "..") {
+      if (normalized.length > 0) normalized.pop();
+    } else if (part && part !== ".") normalized.push(part);
   }
   return `${path.startsWith("/") ? "/" : ""}${normalized.join("/")}`;
 };
