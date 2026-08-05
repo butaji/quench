@@ -5434,3 +5434,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1705. `url-legacy-drive-separator.js` — normalize legacy Windows drive separators.
 1706. `url-file-base-drive-reference.js` — resolve drive references against file bases.
 1707. `url-rooted-drive-reference.js` — resolve rooted drive references against file bases.
+1708. `url-protocol-relative-drive.js` — resolve protocol-relative drives against file bases.
