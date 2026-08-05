@@ -17,7 +17,7 @@ const __quenchDgramBind = (socket, type, port, address, callback) => {
 };
 const __quenchDgramSend = (socket, message, ...args) => {
   const callback = args.at(-1);
-  const hasOffset = typeof args[0] === "number";
+  const hasOffset = args.length >= 5 || (socket._connected && args.length >= 3);
   const payload = Array.isArray(message) ? NodeBuffer.concat(message) : message;
   const length = hasOffset ? args[1] : payload.byteLength;
   queueMicrotask(() => {
@@ -27,10 +27,39 @@ const __quenchDgramSend = (socket, message, ...args) => {
   return socket;
 };
 const __quenchDgramConnect = (socket, port, address, callback) => {
+  if (typeof address === "function") {
+    callback = address;
+    address = "127.0.0.1";
+  }
+  if (!Number.isInteger(port) || port <= 0 || port >= 65536)
+    throw Object.assign(new RangeError("Port should be > 0 and < 65536"), {
+      code: "ERR_SOCKET_BAD_PORT"
+    });
+  if (socket._connected)
+    throw Object.assign(new Error("Already connected"), {
+      code: "ERR_SOCKET_DGRAM_IS_CONNECTED"
+    });
   socket._connected = true;
   socket._remote = { address, port };
-  queueMicrotask(() => callback?.());
+  callback?.();
+  queueMicrotask(() => socket.emit("connect"));
   return socket;
+};
+const __quenchDgramDisconnect = (socket) => {
+  if (!socket._connected)
+    throw Object.assign(new Error("Not connected"), {
+      code: "ERR_SOCKET_DGRAM_NOT_CONNECTED"
+    });
+  socket._connected = false;
+  socket._remote = undefined;
+  return socket;
+};
+const __quenchDgramRemoteAddress = (socket) => {
+  if (!socket._connected)
+    throw Object.assign(new Error("Not connected"), {
+      code: "ERR_SOCKET_DGRAM_NOT_CONNECTED"
+    });
+  return { ...socket._remote, family: "IPv4" };
 };
 const __quenchDgramClose = (socket, callback) => {
   socket._bound = false;
@@ -65,6 +94,8 @@ const __quenchDgramSocket = (type = "udp4") => {
     send: (message, ...args) => __quenchDgramSend(socket, message, ...args),
     connect: (port, address, callback) =>
       __quenchDgramConnect(socket, port, address, callback),
+    disconnect: () => __quenchDgramDisconnect(socket),
+    remoteAddress: () => __quenchDgramRemoteAddress(socket),
     close: (callback) => __quenchDgramClose(socket, callback),
     address: () => __quenchDgramAddress(socket, type),
     on: (event, callback) =>
