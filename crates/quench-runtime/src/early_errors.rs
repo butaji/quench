@@ -182,9 +182,20 @@ impl<'a> Visit<'a> for StrictHeritageChecker {
 impl<'a> Visit<'a> for DuplicateLabelChecker {
     fn visit_function(
         &mut self,
-        _function: &ast::Function<'a>,
+        function: &ast::Function<'a>,
         _flags: oxc::syntax::scope::ScopeFlags,
     ) {
+        let outer_labels = std::mem::take(&mut self.labels);
+        let outer_duplicate = self.duplicate;
+        self.duplicate = false;
+        if let Some(body) = &function.body {
+            for statement in &body.statements {
+                self.visit_statement(statement);
+            }
+        }
+        let function_duplicate = self.duplicate;
+        self.labels = outer_labels;
+        self.duplicate = outer_duplicate || function_duplicate;
     }
 
     fn visit_labeled_statement(&mut self, statement: &ast::LabeledStatement<'a>) {
@@ -209,6 +220,22 @@ pub fn check_module_duplicate_labels(program: &ast::Program) -> Result<(), JsErr
     } else {
         Ok(())
     }
+}
+
+pub fn check_module_duplicate_function_names(program: &ast::Program) -> Result<(), JsError> {
+    let mut names = HashSet::new();
+    for statement in &program.body {
+        let ast::Statement::FunctionDeclaration(function) = statement else {
+            continue;
+        };
+        let Some(name) = function.id.as_ref().map(|id| id.name.as_str()) else {
+            continue;
+        };
+        if !names.insert(name) {
+            return Err(JsError("SyntaxError: duplicate module function name".into()));
+        }
+    }
+    Ok(())
 }
 
 struct StrictFunctionNameChecker(bool);

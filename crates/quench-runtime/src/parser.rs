@@ -369,6 +369,7 @@ pub fn parse_es_module(source: &str) -> Result<Program, JsError> {
     check_strict_fn_body(&ret.program)?;
     early_errors::check_early_errors(&ret.program)?;
     early_errors::check_module_duplicate_labels(&ret.program)?;
+    early_errors::check_module_duplicate_function_names(&ret.program)?;
     early_errors::check_break_continue_errors(&ret.program)?;
     early_errors::check_super_outside_class(&ret.program)?;
     early_errors::check_private_names(&ret.program)?;
@@ -749,6 +750,16 @@ mod tests {
     #[test]
     fn module_rejects_duplicate_labels() {
         assert!(parse_es_module("label: { label: 0; }").is_err());
+    }
+
+    #[test]
+    fn module_rejects_duplicate_labels_inside_functions() {
+        assert!(parse_es_module("function f() { label: {} label: {} }").is_err());
+    }
+
+    #[test]
+    fn module_rejects_duplicate_top_level_function_names() {
+        assert!(parse_es_module("function f() {} function f() {}").is_err());
     }
 
     #[test]
