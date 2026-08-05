@@ -295,6 +295,14 @@ const __quenchNetModule = {
     pause() {
       return this;
     }
+    destroy() {
+      this.destroyed = true;
+      queueMicrotask(() => this.emit("close"));
+      return this;
+    }
+    resetAndDestroy() {
+      return this.destroy();
+    }
     connect(_options, callback) {
       globalThis.__quenchValidateConnectionOptions(_options);
       if (typeof callback === "function") this.once("connect", callback);
@@ -302,7 +310,13 @@ const __quenchNetModule = {
       return this;
     }
     write(_data, callback) {
-      if (typeof callback === "function") queueMicrotask(callback);
+      if (this.destroyed && typeof callback === "function") {
+        const error = new Error(
+          "Cannot call write after a stream was destroyed"
+        );
+        error.code = "ERR_STREAM_DESTROYED";
+        queueMicrotask(() => callback(error));
+      } else if (typeof callback === "function") queueMicrotask(callback);
       return true;
     }
     end(_data, callback) {
@@ -452,6 +466,7 @@ const __quenchNetModule = {
   createServer: (handler) => {
     const server = new globalThis.__nodeEventEmitter();
     server._handle = { close: () => {} };
+    server.address = () => ({ address: "127.0.0.1", family: "IPv4", port: 0 });
     server.listen = (_port, callback) => {
       if (typeof callback === "function") queueMicrotask(callback);
       return server;
