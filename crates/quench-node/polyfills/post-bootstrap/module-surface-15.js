@@ -104,4 +104,27 @@ const __quenchCryptoSecretKeyFallback = (result) => {
     }
   };
 };
+const __quenchCryptoRandomUuidFallback = (result) => {
+  result.randomUUID = (options) => {
+    if (
+      options !== undefined &&
+      (options === null || typeof options !== "object")
+    )
+      throw Object.assign(new TypeError("options must be an object"), {
+        code: "ERR_INVALID_ARG_TYPE"
+      });
+    if (
+      options?.disableEntropyCache !== undefined &&
+      typeof options.disableEntropyCache !== "boolean"
+    )
+      throw Object.assign(
+        new TypeError("disableEntropyCache must be a boolean"),
+        { code: "ERR_INVALID_ARG_TYPE" }
+      );
+    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (char) => {
+      const value = (Math.random() * 16) | 0;
+      return (char === "x" ? value : (value & 3) | 8).toString(16);
+    });
+  };
+};
 /* eslint-enable max-lines-per-function, complexity */
