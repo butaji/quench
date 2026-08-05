@@ -432,6 +432,9 @@ const __nodeUrlModuleExports = {
   },
   pathToFileURL: (value, options) => {
     const windows = options && options.windows;
+    __nodeValidateWindowsFileHost(value, windows);
+    const specialWindowsURL = __nodeWindowsSpecialFileURL(value, windows);
+    if (specialWindowsURL) return specialWindowsURL;
     const sep = windows ? "\\" : "/";
     const resolved = globalThis.__nodePath.resolve(String(value));
     const isAbsolute = globalThis.__nodePath.isAbsolute(resolved);
@@ -443,10 +446,16 @@ const __nodeUrlModuleExports = {
       .split("/")
       .map((seg, i) => {
         if (i === 0) return seg;
-        return encodeURIComponent(seg).replace(
-          /[!'()*]/g,
-          (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase()
-        );
+        return encodeURIComponent(seg)
+          .replace(/%26/g, "&")
+          .replace(/%3D/gi, "=")
+          .replace(/%3A/gi, ":")
+          .replace(/%3B/gi, ";")
+          .replace(/~/g, "%7E")
+          .replace(
+            /[!'()*]/g,
+            (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase()
+          );
       })
       .join("/");
     if (trailing && !p.endsWith("/")) p = p + "/";

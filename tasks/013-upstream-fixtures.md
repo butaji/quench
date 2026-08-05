@@ -5249,3 +5249,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1517. `url-fileurltopath-drive.js` — convert Windows drive-letter file URLs.
 1518. `url-parse-protocol-relative-path.js` — preserve protocol-relative parse paths.
 1519. `url-format-input-validation.js` — reject invalid URL format inputs.
+1520. `url-pathtofileurl-host-validation.js` — reject invalid Windows UNC hosts.
