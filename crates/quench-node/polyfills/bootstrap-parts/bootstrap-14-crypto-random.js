@@ -31,12 +31,16 @@ const __nodeCryptoRandomBytes = (size, callback) => {
   return output;
 };
 __nodeCryptoApi.randomBytes = __nodeCryptoRandomBytes;
-__nodeCryptoApi.pseudoRandomBytes = __nodeCryptoRandomBytes;
+Object.defineProperty(__nodeCryptoApi, "pseudoRandomBytes", {
+  value: __nodeCryptoRandomBytes,
+  configurable: true,
+  writable: true
+});
 // eslint-disable-next-line max-lines-per-function -- shared validation and byte-view handling
 __nodeCryptoApi.randomFillSync = (
   buffer,
   offset = 0,
-  size = buffer.byteLength - offset
+  size
   // eslint-disable-next-line complexity -- shared validation and byte-view handling
 ) => {
   const view = ArrayBuffer.isView(buffer)
@@ -53,6 +57,7 @@ __nodeCryptoApi.randomFillSync = (
       ),
       { code: "ERR_INVALID_ARG_TYPE" }
     );
+  if (size === undefined) size = buffer.byteLength - offset;
   if (typeof offset !== "number")
     throw Object.assign(
       new TypeError(
@@ -74,21 +79,17 @@ __nodeCryptoApi.randomFillSync = (
       ),
       { code: "ERR_OUT_OF_RANGE" }
     );
+  if (!Number.isSafeInteger(size) || size < 0 || size > 0x7fffffff)
+    throw Object.assign(
+      new RangeError(
+        `The value of "size" is out of range. It must be >= 0 && <= ${0x7fffffff}. Received ${size}`
+      ),
+      { code: "ERR_OUT_OF_RANGE" }
+    );
   if (offset + size > buffer.byteLength)
     throw Object.assign(
       new RangeError(
         `The value of "size + offset" is out of range. It must be <= ${buffer.byteLength}. Received ${offset + size}`
-      ),
-      { code: "ERR_OUT_OF_RANGE" }
-    );
-  if (
-    !Number.isSafeInteger(size) ||
-    size < 0 ||
-    offset + size > buffer.byteLength
-  )
-    throw Object.assign(
-      new RangeError(
-        `The value of "size" is out of range. It must be >= 0 && <= ${0x7fffffff}. Received ${size}`
       ),
       { code: "ERR_OUT_OF_RANGE" }
     );
@@ -99,10 +100,10 @@ __nodeCryptoApi.randomFill = (buffer, offset, size, callback) => {
   if (typeof offset === "function") {
     callback = offset;
     offset = 0;
-    size = buffer.byteLength;
+    size = buffer?.byteLength;
   } else if (typeof size === "function") {
     callback = size;
-    size = buffer.byteLength - offset;
+    size = buffer?.byteLength - offset;
   }
   if (typeof callback !== "function")
     throw Object.assign(
