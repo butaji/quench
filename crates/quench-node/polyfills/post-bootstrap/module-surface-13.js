@@ -299,7 +299,7 @@ const __quenchCryptoCipherFallback = (result) => {
   const values = (globalThis.__quenchCipherValues ||= new Map());
   // eslint-disable-next-line max-lines-per-function -- cipher stream methods share state
   result.createCipheriv ||= (algorithm, key, iv, options) => {
-    __quenchValidateCipherArguments(algorithm, key, iv, options);
+    __quenchValidateCipherArguments(algorithm, key?.source ?? key, iv, options);
     let inputEncoding,
       outputEncoding,
       readable,
