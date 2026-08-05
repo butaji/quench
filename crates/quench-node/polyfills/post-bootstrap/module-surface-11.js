@@ -335,9 +335,8 @@ for (const name of ["append", "delete", "get", "getAll", "has", "set"]) {
 }
 const __nodeURLSearchIterator = (values) => {
   let index = 0;
-  const iterator = Object.create(__nodeURLSearchIteratorPrototype);
   // prettier-ignore
-  Object.defineProperties(iterator, { __values: { configurable: true, value: values }, __index: { configurable: true, value: 0, writable: true } });
+  const iterator = Object.defineProperties(Object.create(__nodeURLSearchIteratorPrototype), { __values: { configurable: true, value: values }, __index: { configurable: true, value: 0, writable: true } });
   iterator.next = function next() {
     // prettier-ignore
     if (this !== iterator) throw Object.assign(new TypeError('Value of "this" must be of type URLSearchParamsIterator'), { code: "ERR_INVALID_THIS" });
