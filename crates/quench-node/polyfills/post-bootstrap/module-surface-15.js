@@ -421,6 +421,8 @@ globalThis.__nodeURL.revokeObjectURL = (value) => {
     throw error;
   }
 };
+// prettier-ignore
+globalThis.__nodeURL.createObjectURL = (value) => { if (!value || typeof value !== "object") { const error = new TypeError('The "obj" argument must be an instance of Blob'); error.code = "ERR_INVALID_ARG_TYPE"; throw error; } return `blob:nodedata:${Math.random().toString(16).slice(2)}`; };
 globalThis.__nodeIsURL = (value) => value instanceof globalThis.__nodeURL;
 globalThis.__nodeLegacyProtocolRelativeParts = (input) =>
   input.startsWith("//") && !/@|:\d+\//.test(input)
