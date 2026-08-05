@@ -51,6 +51,12 @@ const __quenchValidateCbcIv = (algorithm, iv) => {
   if (iv === null || length !== expected)
     throw new Error("Invalid initialization vector");
 };
+const __quenchValidateGcmIv = (algorithm, iv) => {
+  if (!algorithm.toLowerCase().includes("gcm")) return;
+  const length = typeof iv === "string" ? iv.length : iv?.byteLength;
+  if (length < 8 || length > 64)
+    throw new Error("Invalid initialization vector");
+};
 const __quenchValidateCipherArguments = (algorithm, key, iv) => {
   if (typeof algorithm !== "string") {
     throw Object.assign(
@@ -84,6 +90,7 @@ const __quenchValidateCipherArguments = (algorithm, key, iv) => {
   __quenchValidateEcbIv(algorithm, iv);
   if (!algorithm.toLowerCase().includes("ecb"))
     __quenchValidateCbcIv(algorithm, iv);
+  __quenchValidateGcmIv(algorithm, iv);
 };
 const __quenchCipherLookup = (value, resultEncoding, values) => {
   if (value instanceof Uint8Array) {
