@@ -5429,3 +5429,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1700. `url-ftp-no-slash.js` — preserve absolute FTP no-slash references.
 1701. `url-cross-scheme-no-slash.js` — preserve cross-scheme no-slash URLs.
 1702. `url-pathname-percent-escape.js` — preserve percent escapes in URL pathnames.
+1703. `url-unknown-scheme-authority.js` — preserve hosts for unknown URL schemes.
