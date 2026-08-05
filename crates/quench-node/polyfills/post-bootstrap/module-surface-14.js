@@ -425,4 +425,22 @@ const __quenchCryptoKeyObjectFallback = (result) => {
   if (createPublic)
     result.createPublicKey = (key) =>
       __quenchCreateKeyObject("public", key, createPublic(key));
+  const generatePair = result.generateKeyPairSync;
+  if (generatePair) {
+    result.generateKeyPairSync = (algorithm, options) => {
+      const pair = generatePair(algorithm, options);
+      return {
+        privateKey: __quenchCreateKeyObject(
+          "private",
+          pair.privateKey,
+          pair.privateKey
+        ),
+        publicKey: __quenchCreateKeyObject(
+          "public",
+          pair.publicKey,
+          pair.publicKey
+        )
+      };
+    };
+  }
 };
