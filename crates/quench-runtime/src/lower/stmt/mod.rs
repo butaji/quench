@@ -220,6 +220,7 @@ fn lower_import_decl(import: &ast::ImportDeclaration) -> Option<Statement> {
             named: Vec::new(),
             namespace: None,
             source,
+            deferred: matches!(import.phase, Some(ast::ImportPhase::Defer)),
         });
     };
 
@@ -255,6 +256,7 @@ fn lower_import_decl(import: &ast::ImportDeclaration) -> Option<Statement> {
         named,
         namespace,
         source,
+        deferred: matches!(import.phase, Some(ast::ImportPhase::Defer)),
     })
 }
 
@@ -277,6 +279,7 @@ fn lower_export_named_local(export: &ast::ExportNamedDeclaration) -> Option<Stat
             named: imports,
             namespace: None,
             source,
+            deferred: false,
         };
         let mut all_stmts = vec![import_stmt];
         all_stmts.extend(stmts);
@@ -399,6 +402,7 @@ fn lower_export_star_from_local(source: &str) -> Statement {
         named: vec![],
         namespace: Some(unique_name.clone()),
         source: source.to_string(),
+        deferred: false,
     };
     // Lower the for-in loop manually using statements
     // for (let k in ns) exports[k] = ns[k];

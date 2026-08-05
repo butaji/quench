@@ -114,6 +114,7 @@ pub enum Statement {
         named: Vec<(String, String)>, // (local_name, exported_name)
         namespace: Option<String>,
         source: String,
+        deferred: bool,
     },
     /// For-in loop (ES6)
     /// for (x in object) { body }

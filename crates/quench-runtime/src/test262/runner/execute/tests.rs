@@ -1590,3 +1590,14 @@ fn runner_throw_type_error_is_an_object() {
         .join("tests/test262/test/built-ins/ThrowTypeError/throws-type-error.js");
     assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
 }
+
+#[test]
+fn runner_deferred_and_eager_imports_do_not_panic() {
+    let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .join("tests/test262/test/language/import/import-defer/evaluation-sync/module-imported-defer-and-eager.js");
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}

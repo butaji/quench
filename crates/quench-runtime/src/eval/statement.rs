@@ -1004,7 +1004,8 @@ pub fn eval_statement(
             named,
             namespace,
             source,
-        } => eval_import(default, named, namespace, source, env),
+            deferred,
+        } => eval_import(default, named, namespace, source, *deferred, env),
         Statement::ForIn {
             variable,
             object,
@@ -2217,11 +2218,18 @@ fn eval_import(
     named: &[(String, String)],
     namespace: &Option<String>,
     source: &str,
+    deferred: bool,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
-    initialize_fixture_module(source, env)?;
-    // Get the module's exports from our module cache
-    let module_exports = get_module_exports(source, env)?;
+    let module_exports = if deferred {
+        dynamic_import(source, env, None, false, true)?
+    } else {
+        initialize_fixture_module(source, env)?;
+        Value::Object(get_module_exports(source, env)?)
+    };
+    let Value::Object(module_exports) = module_exports else {
+        return Ok(Value::Undefined);
+    };
 
     // Handle default import: `import x from 'mod'`
     if let Some(name) = default {
@@ -2699,10 +2707,11 @@ fn refresh_fixture_module_exports(source: &str, env: &Rc<RefCell<Environment>>) 
                     configurable: false,
                 });
         module.borrow_mut().define(&exported, value, flags);
+        let exported_value = module.borrow().get(&exported).unwrap_or(Value::Undefined);
         if let Some(Value::Object(namespace)) = &namespace {
             namespace.borrow_mut().define(
                 &exported,
-                module.borrow().get(&exported).unwrap_or(Value::Undefined),
+                exported_value,
                 crate::value::PropertyFlags {
                     value: None,
                     writable: true,
