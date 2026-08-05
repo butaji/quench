@@ -4940,3 +4940,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1389: crypto DH prime
 
 - Expose a prime-buffer result from Diffie-Hellman instances.
+
+### Stage 1390: crypto DH number validation
+
+- Reject non-integer Diffie-Hellman size and generator arguments.
