@@ -4430,3 +4430,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Corrected path-only `utimes`/`lutimes` and fd-based `futimes` validation,
   including symlink and missing-path behavior.
+
+### Stage 1272: copyFile callback validation
+
+- Enforced synchronous callback type validation for `fs.copyFile`.
