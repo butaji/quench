@@ -50,9 +50,33 @@ for (const name of ["time", "timeEnd", "timeLog"]) {
   if (typeof original !== "function") continue;
   globalThis.console[name] = (label, ...args) => {
     if (typeof label === "symbol") throw new TypeError("Invalid console label");
-    return original.call(globalThis.console, label, ...args);
+    const text = String(label);
+    globalThis.console._times ||= new Map();
+    if (name === "time" && !globalThis.console._times.has(text))
+      globalThis.console._times.set(text, Date.now());
+    if (name === "timeEnd") globalThis.console._times.delete(text);
+    const safeLabel = ["__proto__", "constructor", "hasOwnProperty"].includes(
+      text
+    )
+      ? `__quench_${text}`
+      : label;
+    return original.call(globalThis.console, safeLabel, ...args);
   };
 }
+globalThis.console.dirxml ||= (...args) => globalThis.console.log(...args);
+globalThis.console.trace ||= (...args) => globalThis.console.error(...args);
+globalThis.console.assert = (condition, ...args) => {
+  if (condition) return;
+  let detail = args[0] || "";
+  let used = 0;
+  detail = detail.replace(/%s/g, () => String(args[++used]));
+  if (used < args.length - 1) detail += ` ${args.slice(used + 1).join(" ")}`;
+  const message = detail ? `Assertion failed: ${detail}` : "Assertion failed";
+  globalThis.process?.stderr?.write?.(`${message}\n`);
+};
+__quenchConsole.prototype.dirxml ||= function (...args) {
+  return this.log(...args);
+};
 globalThis.require = (specifier) => {
   if (String(specifier).replace(/^node:/, "") === "console")
     return __quenchConsoleModule;
