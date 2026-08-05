@@ -35,14 +35,18 @@ const __quenchDgramConnect = (socket, port, address, callback) => {
     throw Object.assign(new RangeError("Port should be > 0 and < 65536"), {
       code: "ERR_SOCKET_BAD_PORT"
     });
-  if (socket._connected)
+  if (socket._connected || socket._connecting)
     throw Object.assign(new Error("Already connected"), {
       code: "ERR_SOCKET_DGRAM_IS_CONNECTED"
     });
-  socket._connected = true;
+  socket._connecting = true;
   socket._remote = { address, port };
-  callback?.();
-  queueMicrotask(() => socket.emit("connect"));
+  setTimeout(() => {
+    socket._connecting = false;
+    socket._connected = true;
+    callback?.();
+    socket.emit("connect");
+  });
   return socket;
 };
 const __quenchDgramDisconnect = (socket) => {
