@@ -5338,3 +5338,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1606. `url-file-path-errors.js` — handle file URL argument and host errors.
 1607. `url-path-to-file-url-unicode.js` — preserve Unicode and control-byte encoding.
 1608. `url-path-to-file-url-reserved.js` — preserve reserved-character file URL encoding.
+1609. `url-path-to-file-url-posix-unc.js` — preserve POSIX UNC-looking path handling.
