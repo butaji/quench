@@ -5374,3 +5374,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1642. `urlsearchparams-method-descriptors.js` — expose URLSearchParams prototype methods.
 1643. `urlsearchparams-size.js` — expose URLSearchParams size.
 1644. `url-href-searchparams-sync.js` — preserve URLSearchParams identity across href updates.
+1645. `urlsearchparams-owner-sync.js` — synchronize URL search after URLSearchParams mutation.
