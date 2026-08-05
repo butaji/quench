@@ -4727,3 +4727,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Reproduce upstream’s Buffer-backed typed-array view construction and verify
   offsets and byte lengths through the stage harness.
+
+### Stage 1338: string decoder view input
+
+- Verify `StringDecoder` accepts all upstream ArrayBufferView inputs and
+  preserves incomplete UTF-8 state across writes and `end()`.
