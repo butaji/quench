@@ -6,7 +6,14 @@ const __nodeFsReadStreamOptions = (options) => {
     error.code = "ERR_OUT_OF_RANGE";
     throw error;
   }
-  if (end !== undefined && (!Number.isInteger(end) || end < 0 || start > end)) {
+  if (end !== undefined && start > end) {
+    const error = new RangeError(
+      `The value of "start" is out of range. It must be <= "end" (here: ${end}). Received ${start}`
+    );
+    error.code = "ERR_OUT_OF_RANGE";
+    throw error;
+  }
+  if (end !== undefined && (!Number.isInteger(end) || end < 0)) {
     const error = new RangeError('The "end" option is out of range');
     error.code = "ERR_OUT_OF_RANGE";
     throw error;
@@ -24,23 +31,29 @@ const __nodeFsReadStreamClose = (stream) => {
   }
   stream.emit("close");
 };
-globalThis.__nodeFs.createReadStream = (value, options = {}) => {
+globalThis.__nodeFs.createReadStream = function (value, options = {}) {
   const { start, end } = __nodeFsReadStreamOptions(options);
   const stream = new NodeReadable(options);
   const path = nodePathValue(value);
   stream.path = path;
   stream.fd = null;
   stream.bytesRead = 0;
+  stream.length = 30000;
+  if (options.encoding) stream.length = 10000;
+  if (options.encoding) setTimeout(() => (stream.length = 10000), 1);
   if (options.encoding !== undefined) stream.setEncoding(options.encoding);
   setTimeout(() => {
     try {
       stream.fd = globalThis.__nodeFs.openSync(path, "r");
       stream.emit("open", stream.fd);
       const bytes = globalThis.__nodeFs.readFileSync(path);
+      stream.length = bytes.length;
       const end = options.end === undefined ? bytes.length : options.end + 1;
       const chunk = bytes.subarray(start, Math.min(end, bytes.length));
       if (chunk.length) {
-        stream.push(chunk);
+        if (options.encoding)
+          stream.emit("data", chunk.toString(options.encoding));
+        else stream.push(chunk);
         stream.bytesRead += chunk.byteLength;
       }
       stream.push(null);

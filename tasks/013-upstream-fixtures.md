@@ -4624,3 +4624,13 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Preserve the ordinary callback-based `fs.writeFile(path, data, callback)`
   success path while adding abort and descriptor handling.
+
+### Stage 1317: read-stream range errors
+
+- Report Node's detailed `start`/`end` range error when a read stream range is
+  inverted.
+
+### Stage 1318: read-stream constructor
+
+- Preserve constructibility of `fs.createReadStream` for upstream callers that
+  instantiate it with `new`.
