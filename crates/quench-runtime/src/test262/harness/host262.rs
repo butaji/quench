@@ -154,8 +154,53 @@ fn reject_restricted_global_lexicals(ctx: &Context, source: &str) -> Result<(), 
     let Some(Value::Object(global)) = ctx.get_global("globalThis") else {
         return Ok(());
     };
+    let current_env = crate::context::get_current_env();
+    let has_lexical = |name: &str| {
+        current_env.as_ref().is_some_and(|env| {
+            matches!(
+                env.borrow().get_kind(name),
+                Some(crate::ast::VarKind::Let | crate::ast::VarKind::Const)
+            )
+        })
+    };
+    for (name, _) in &names {
+        if has_lexical(name) {
+            let (error, js_error) = crate::value::error::create_js_error_with_type(
+                "Identifier has already been declared",
+                "SyntaxError",
+            );
+            crate::value::set_thrown_value(error);
+            return Err(js_error);
+        }
+    }
     let mut var_names = Vec::new();
     crate::interpreter::collect_var_names_recursive(&body, &mut var_names);
+    for name in &var_names {
+        if has_lexical(name) {
+            let (error, js_error) = crate::value::error::create_js_error_with_type(
+                "Identifier has already been declared",
+                "SyntaxError",
+            );
+            crate::value::set_thrown_value(error);
+            return Err(js_error);
+        }
+    }
+    for statement in &body {
+        let Some(name) = (match statement {
+            crate::ast::Statement::FunctionDeclaration { name, .. } => Some(name),
+            _ => None,
+        }) else {
+            continue;
+        };
+        if has_lexical(name) {
+            let (error, js_error) = crate::value::error::create_js_error_with_type(
+                "Identifier has already been declared",
+                "SyntaxError",
+            );
+            crate::value::set_thrown_value(error);
+            return Err(js_error);
+        }
+    }
     if !global.borrow().extensible {
         for name in var_names {
             if !global.borrow().has_own(&name) {
@@ -490,6 +535,16 @@ mod tests {
             "Object.defineProperty(this, 'fixed', { configurable: false, writable: false }); \
              try { $262.evalScript('function fixed() {}'); false } \
              catch (e) { e instanceof TypeError }",
+        );
+        assert_eq!(result, Ok(crate::Value::Boolean(true)));
+    }
+
+    #[test]
+    fn test_eval_script_rejects_existing_lexical_binding() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval(
+            "let existing; try { $262.evalScript('var x; let existing;'); false } \
+             catch (e) { e instanceof SyntaxError }",
         );
         assert_eq!(result, Ok(crate::Value::Boolean(true)));
     }
