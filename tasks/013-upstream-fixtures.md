@@ -4908,3 +4908,15 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1381: crypto certificate methods
 
 - Expose static and instance SPKAC certificate methods.
+
+### Stage 1382: crypto SPKAC verification
+
+- Distinguish valid and invalid SPKAC fixture sizes for verification.
+
+### Stage 1383: crypto SPKAC exports
+
+- Export the expected public key and challenge from valid SPKAC inputs.
+
+### Stage 1384: crypto Certificate callable
+
+- Support calling `Certificate()` with or without `new`.
