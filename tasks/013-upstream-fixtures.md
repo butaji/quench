@@ -4639,3 +4639,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Provide the minimal `internalBinding('fs').openFileHandle` contract used by
   Node's FileHandle lifecycle fixture.
+
+### Stage 1320: open sync flag values
+
+- Correct `as`/`sa` open-flag mappings to include the platform `O_SYNC` value.
