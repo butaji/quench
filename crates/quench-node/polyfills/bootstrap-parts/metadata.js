@@ -38,7 +38,10 @@ globalThis.__nodeFs.ftruncate = (fd, length = 0, callback) => {
     length = 0;
   }
   if (typeof callback !== "function")
-    throw new TypeError('The "callback" argument must be of type function');
+    throw Object.assign(
+      new TypeError('The "callback" argument must be of type function'),
+      { code: "ERR_INVALID_ARG_TYPE" }
+    );
   queueMicrotask(() => {
     try {
       globalThis.__nodeFs.ftruncateSync(fd, length);
@@ -421,17 +424,23 @@ const __nodeFsValidateSymlink = (target, link, type, callback) => {
   if (
     (typeof target !== "string" && !(target instanceof Uint8Array)) ||
     (typeof link !== "string" && !(link instanceof Uint8Array))
-  )
-    throw new TypeError(
+  ) {
+    const error = new TypeError(
       'The "target" and "path" arguments must be strings or Buffer'
     );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
   if (
     type !== undefined &&
     type !== "file" &&
     type !== "dir" &&
     type !== "junction"
-  )
-    throw new TypeError('The "type" argument is invalid');
+  ) {
+    const error = new TypeError('The "type" argument is invalid');
+    error.code = "ERR_INVALID_ARG_VALUE";
+    throw error;
+  }
 };
 globalThis.__nodeFs.symlink = (target, link, type, callback) => {
   if (typeof type === "function") {
