@@ -87,7 +87,7 @@ pub fn eval_unary_expr(
 ) -> Result<Value, JsError> {
     if op == UnaryOp::Typeof {
         if let Expression::Identifier(name) = argument {
-            if in_arrow_function && name == "arguments" {
+            if in_arrow_function && name == "arguments" && !env.borrow().has(name) {
                 let msg = format!("ReferenceError: {} is not defined", name);
                 let (err, js_err) =
                     crate::value::error::create_js_error_with_type(&msg, "ReferenceError");

@@ -32,6 +32,14 @@ fn strict_delete_this_returns_true() {
 }
 
 #[test]
+fn arrow_typeof_arguments_uses_local_function_binding() {
+    assert_eq!(
+        eval("const f = () => { function arguments() {} return typeof arguments; }; f()"),
+        Ok(Value::String("function".to_string()))
+    );
+}
+
+#[test]
 fn direct_eval_resolves_identifier_through_with_environment() {
     assert_eq!(
         eval("var result; (function() { var o = { value: 'str2' }; with (o) { result = eval(\"'str2' === value\"); } }()); result"),
