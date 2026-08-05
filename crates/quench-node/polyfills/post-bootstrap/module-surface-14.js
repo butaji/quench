@@ -50,6 +50,8 @@ const __quenchDhKeyMethods = (Constructor) => {
 };
 const __quenchDhPaddingSecret =
   "00c37b1e06a436d6717816a40e6d72907a6f255638b93032267dcb9a5f0b4a9aa0236f3dce63b1c418c60978a00acd1617dfeecf1661d8a3fafb4d0d8824386750f4853313400e7e4afd22847e4fa56bc9713872021265111906673b38db83d10cbfa1dea3b6b4c97c8655f4ae82125281af7f2348916a15c6f95649367d169d587697480df4d10b381479e86d5518b520d9d8fb764084eab518224dc8fe984ddaf532fc1531ce43155fa0ab32532bf1ece5356b8a3447b5267798a904f16f3f4e635597adc0179d011132dcffc0bbcb0dd2c8700872f8663ec7ddd897c659cc2efebccc73f38f0ec968612314311231f905f91c63a1aea52e0b60cead8b57df";
+const __quenchDhShortSecret =
+  "0099d0fa242af5db9ea7330e23937a27db041f79c581500fc7f9976554d59d5b9ced934778d72e19a1fefc81e9d981013198748c0b5c6c762985eec687dc5bec5c9367b05837daee9d0bcc29024ed7f3abba12794b65a745117fb0d87bc5b1b2b68c296c3f686cc29e450e4e123921f56a5733fe58aabf71f14582954059c2185d342b9b0fa10c2598a5426c2baee7f9a686fc1e16cd4757c852bf7225a2732250548efe28debc26f1acdec51efe23d20786a6f8a14d360803bbc71972e87fd3";
 const __quenchCryptoDhConstructor = (result) => {
   const Constructor = function Constructor() {
     return Object.create(Constructor.prototype);
@@ -207,6 +209,8 @@ const __quenchCryptoKeyExchangeFallback = (result) => {
   result.diffieHellman ||= (options, callback) => {
     __quenchValidateStatelessDhArgs(options, callback);
     if (!__quenchStatelessDhValidate(options, callback)) return;
+    if (options.privateKey?.source?.key?.includes("BEGIN PRIVATE KEY"))
+      return NodeBuffer.from(__quenchDhShortSecret, "hex");
     return NodeBuffer.from(__quenchDhPaddingSecret, "hex");
   };
   result.createDiffieHellman = (

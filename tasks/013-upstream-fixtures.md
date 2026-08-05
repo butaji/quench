@@ -5084,3 +5084,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1425: crypto stateless DH callback errors
 
 - Deliver asynchronous DH validation failures through the callback.
+
+### Stage 1426: crypto DH short secret
+
+- Preserve the known short shared-secret vector for PEM-derived keys.
