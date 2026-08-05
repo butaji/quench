@@ -77,3 +77,74 @@ if (globalThis.require) {
   globalThis.require = (name) =>
     __quenchApplyModuleSurface12(name, originalRequire(name));
 }
+globalThis.__nodeLegacyPathEncode = (value) =>
+  encodeURIComponent(value).replace(/%2F/gi, "/").replace(/%3A/gi, ":");
+globalThis.__nodeLegacyUrlHrefPath = (pathname) =>
+  pathname.startsWith(";") ? `/${pathname}` : pathname;
+globalThis.__nodeLegacyUrlHostValue = (protocol, host) =>
+  protocol === "file:" && !host ? "" : host || null;
+globalThis.__nodeLegacyUrlHrefPrefix = (protocol, auth, host) =>
+  protocol === "file:"
+    ? `${protocol}//${host ? `${auth}${host}` : ""}`
+    : `${protocol}${host ? `//${auth}${host}` : ""}`;
+globalThis.__nodeLegacyUrlSlashes = (input, protocol) =>
+  input.startsWith("//") ||
+  (Boolean(protocol) && input.slice(protocol.length).startsWith("//"));
+globalThis.__quenchUrlPath = (input, authority) => {
+  let pathname = (input.pathname || "")
+    .replace(/#/g, "%23")
+    .replace(/\?/g, "%3F");
+  if (authority && pathname && !pathname.startsWith("/"))
+    pathname = `/${pathname}`;
+  if (
+    authority &&
+    input.protocol !== "mailto:" &&
+    !pathname &&
+    (input.search != null || input.query != null)
+  )
+    pathname = "/";
+  return pathname;
+};
+globalThis.__nodeLegacyMailtoParts = (input) => {
+  if (!/^mailto:/i.test(input)) return null;
+  const [address, query = ""] = input.slice(input.indexOf(":") + 1).split("?");
+  const at = address.lastIndexOf("@");
+  const auth = at < 0 ? null : address.slice(0, at);
+  const host = at < 0 ? null : address.slice(at + 1);
+  return {
+    href: input,
+    protocol: "mailto:",
+    host,
+    auth,
+    hostname: host,
+    search: query ? `?${query}` : null,
+    query: query || null,
+    path: query ? `?${query}` : null,
+    slashes: null,
+    port: null,
+    hash: null
+  };
+};
+globalThis.__nodeLegacySchemeAddressParts = (input) => {
+  const match = input.match(
+    /^([a-z][a-z0-9+.-]*:)([^/?#]*@[^/?#]*)(?:\?([^#]*))?/i
+  );
+  if (!match || match[1].toLowerCase() === "mailto:") return null;
+  const at = match[2].lastIndexOf("@");
+  const auth = match[2].slice(0, at);
+  const host = match[2].slice(at + 1);
+  const search = match[3] ? `?${match[3]}` : null;
+  return {
+    href: input,
+    protocol: match[1].toLowerCase(),
+    host,
+    auth,
+    hostname: host,
+    slashes: null,
+    port: null,
+    hash: null,
+    search,
+    query: match[3] || null,
+    path: search
+  };
+};
