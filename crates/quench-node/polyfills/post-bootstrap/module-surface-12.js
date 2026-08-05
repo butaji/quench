@@ -373,7 +373,7 @@ globalThis.__quenchResolveParsedObject = (
     from.href || from.pathname || "",
     to
   );
-  if (singleSlash) return singleSlash;
+  if (singleSlash) return result.parse(singleSlash);
   return result.parse(
     globalThis.__quenchResolveParsedPath(from.pathname || from.href || "", to)
   );
