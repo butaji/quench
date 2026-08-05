@@ -64,6 +64,16 @@ const __quenchCryptoKeyExchangeFallback = (result) => {
   result.createDiffieHellmanGroup ||= create("DiffieHellmanGroup");
   result.createECDH ||= create("ECDH");
 };
+const __quenchCertificateFallback = (result) => {
+  const methods = {
+    verifySpkac: () => false,
+    exportPublicKey: () => "",
+    exportChallenge: () => ""
+  };
+  result.Certificate ||= function Certificate() {};
+  Object.assign(result.Certificate.prototype, methods);
+  Object.assign(result.Certificate, methods);
+};
 const __quenchValidateEcbIv = (algorithm, iv) => {
   if (
     algorithm.toLowerCase().includes("ecb") &&
@@ -406,6 +416,7 @@ const __quenchCryptoFallbacks = (result) => {
   globalThis.__quenchVerifyConstructor = result.Verify;
   __quenchCryptoSignFallback(result);
   __quenchCryptoKeyExchangeFallback(result);
+  __quenchCertificateFallback(result);
   __quenchCryptoCipherFallback(result);
   globalThis.__quenchCipherConstructor = result.Cipheriv;
   __quenchCryptoWebFallbacks(result);
