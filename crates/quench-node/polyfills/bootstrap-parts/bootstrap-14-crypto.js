@@ -183,11 +183,14 @@ const __nodeCryptoApi = {
     return difference === 0;
   },
   randomInt: (minimum = 0, maximum, callback) => {
+    const oneArgument = maximum === undefined || typeof maximum === "function";
     ({ minimum, maximum, callback } = __nodeCryptoRandomArguments(
       minimum,
       maximum,
       callback
     ));
+    if (callback !== undefined && typeof callback !== "function")
+      throw globalThis.__nodeCryptoRandomCallbackError();
     if (!Number.isSafeInteger(minimum) || !Number.isSafeInteger(maximum)) {
       const error = globalThis.__nodeCryptoRandomIntegerError(minimum, maximum);
       error.code = "ERR_INVALID_ARG_TYPE";
@@ -195,7 +198,8 @@ const __nodeCryptoApi = {
     }
     const rangeError = globalThis.__nodeCryptoRandomIntegerRangeError(
       minimum,
-      maximum
+      maximum,
+      oneArgument
     );
     if (rangeError) throw rangeError;
     const range = maximum - minimum;
@@ -475,10 +479,8 @@ const __nodeCryptoApi = {
     return hmac;
   }
 };
-__nodeCryptoApi.Hash.prototype = Object.prototype;
 const __createNodeCrypto = () => __nodeCryptoApi;
 let __nodeCryptoInstance;
-globalThis.__nodeCryptoInitialized = false;
 globalThis.__nodeCrypto = new Proxy(
   {},
   {

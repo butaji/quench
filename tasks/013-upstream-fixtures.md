@@ -3875,5 +3875,9 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
   module wrappers clone the crypto API.
 - Centralized random-integer validation diagnostics in the random polyfill to
   keep the core crypto file within the 500-line limit.
-- The focused size-validation stage passes; the upstream fixture is still
-  being advanced through random-integer boundary cases.
+- Added Node-shaped random-integer type, callback, and boundary diagnostics.
+- Preserved non-enumerable exports across both crypto module clone layers.
+- Verified the focused stage and the complete upstream
+  `test-crypto-random.js` fixture. Keeping random validation in its own
+  polyfill made the 500-line file limit visible early and avoided expanding
+  the Rust host surface.
