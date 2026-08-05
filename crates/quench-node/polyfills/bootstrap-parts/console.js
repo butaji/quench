@@ -45,6 +45,14 @@ const __quenchConsoleModule = {
   warn: (...args) => globalThis.console.warn(...args),
   error: (...args) => globalThis.console.error(...args)
 };
+for (const name of ["time", "timeEnd", "timeLog"]) {
+  const original = globalThis.console?.[name];
+  if (typeof original !== "function") continue;
+  globalThis.console[name] = (label, ...args) => {
+    if (typeof label === "symbol") throw new TypeError("Invalid console label");
+    return original.call(globalThis.console, label, ...args);
+  };
+}
 globalThis.require = (specifier) => {
   if (String(specifier).replace(/^node:/, "") === "console")
     return __quenchConsoleModule;
