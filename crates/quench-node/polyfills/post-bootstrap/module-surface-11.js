@@ -203,10 +203,8 @@ globalThis.__quenchEncodeLegacyPath = (parsed) => {
       encodeURIComponent(value)
     );
 };
-globalThis.__quenchNormalizeSpecialUrlInput = (value) =>
-  /^(?:https?|ftp):/i.test(value) && !/^(?:https?|ftp):\/\//i.test(value)
-    ? value.replace(/^((?:https?|ftp):)/i, "$1//").replace(/\\/g, "/")
-    : value;
+// prettier-ignore
+globalThis.__quenchNormalizeSpecialUrlInput = (value) => /^(?:https?|ftp):/i.test(value) && !/^(?:https?|ftp):\/\//i.test(value) ? value.replace(/^((?:https?|ftp):)/i, "$1//").replace(/^[^?#]*/, (path) => path.replace(/\\/g, "/")) : value;
 globalThis.__quenchWhatwgFormat = (input) =>
   input.protocol === "tel:"
     ? `${input.protocol}${input.pathname}`
