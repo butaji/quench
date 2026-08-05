@@ -4168,3 +4168,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Added chainable `Readable.resume()` and `Readable.pause()` compatibility.
 - Added `ERR_STREAM_PREMATURE_CLOSE` reporting for unfinished streams.
+
+### Stage 1214: readable stream methods
+
+- Added readable `push()` and `setEncoding()` compatibility for custom Duplex
+  implementations.

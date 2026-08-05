@@ -142,6 +142,14 @@ const __quenchAddStreamCompat = (result) => {
     prototype.pause ||= function () {
       return this;
     };
+    const push = prototype.push;
+    prototype.push = function (...args) {
+      const result = push?.apply(this, args);
+      return args[0] === null ? true : result;
+    };
+    prototype.setEncoding ||= function () {
+      return this;
+    };
   }
   __quenchAddStreamWebCompat(result);
   __quenchAddStreamDefaults(result);
