@@ -4976,3 +4976,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1398: crypto valid DH generator
 
 - Accept the valid one-byte generator returned by `modp14`.
+
+### Stage 1399: crypto DH key methods
+
+- Provide key generation, public-key, and shared-secret methods with invalid-state validation.
