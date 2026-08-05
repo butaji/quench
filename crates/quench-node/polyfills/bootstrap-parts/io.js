@@ -166,7 +166,9 @@ const __nodeFsReadDescriptor = ({ fd, buffer, offset, length, position }) => {
 Object.assign(globalThis.__nodeFs, {
   ftruncateSync: (fd, length = 0) => {
     if (typeof fd !== "number") {
-      const error = new TypeError('The "fd" argument must be of type number');
+      const error = new TypeError(
+        `The "fd" argument must be of type number.${__nodeInvalidArgSuffix(fd)}`
+      );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
