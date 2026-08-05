@@ -97,6 +97,21 @@ globalThis.__nodeLegacyPathNormalize = (value) =>
     .replaceAll("|", "%7C")
     .replaceAll("^", "%5E")
     .replaceAll(" ", "%20");
+globalThis.__nodeLegacyUrlControlNormalize = (value) =>
+  value.replace(/\t/g, "%09").replace(/\n/g, "%0A").replace(/\r/g, "%0D");
+globalThis.__nodeLegacyQueryNormalize = (value) =>
+  value
+    .replaceAll("\\", "%5C")
+    .replaceAll('"', "%22")
+    .replaceAll("'", "%27")
+    .replaceAll("<", "%3C")
+    .replaceAll(">", "%3E")
+    .replaceAll("`", "%60")
+    .replaceAll("{", "%7B")
+    .replaceAll("}", "%7D")
+    .replaceAll("|", "%7C")
+    .replaceAll("^", "%5E")
+    .replaceAll(" ", "%20");
 globalThis.__nodeLegacyUrlHrefPath = (pathname) =>
   pathname.startsWith(";") ? `/${pathname}` : pathname;
 globalThis.__nodeLegacyUrlHostValue = (protocol, host) =>
