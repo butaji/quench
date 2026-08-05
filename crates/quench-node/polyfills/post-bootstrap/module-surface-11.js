@@ -245,16 +245,28 @@ globalThis.__nodeInvalidThis = () => {
 };
 const __nodeURLSearchParamsToString =
   globalThis.__nodeURLSearchParams.prototype.toString;
-globalThis.__nodeURLSearchParams.prototype.toString = function toString() {
-  if (!(this instanceof globalThis.__nodeURLSearchParams))
-    return globalThis.__nodeInvalidThis();
-  return __nodeURLSearchParamsToString.call(this);
-};
-globalThis.__nodeURLSearchParams.prototype.sort ||= function sort() {
-  if (!(this instanceof globalThis.__nodeURLSearchParams))
-    return globalThis.__nodeInvalidThis();
-  this._pairs.sort(([left], [right]) => left.localeCompare(right));
-};
+globalThis.__nodeURLSearchParams.prototype.toString =
+  Object.getOwnPropertyDescriptor(
+    {
+      toString() {
+        if (!(this instanceof globalThis.__nodeURLSearchParams))
+          return globalThis.__nodeInvalidThis();
+        return __nodeURLSearchParamsToString.call(this);
+      }
+    },
+    "toString"
+  ).value;
+globalThis.__nodeURLSearchParams.prototype.sort ||=
+  Object.getOwnPropertyDescriptor(
+    {
+      sort() {
+        if (!(this instanceof globalThis.__nodeURLSearchParams))
+          return globalThis.__nodeInvalidThis();
+        this._pairs.sort(([left], [right]) => left.localeCompare(right));
+      }
+    },
+    "sort"
+  ).value;
 for (const name of [
   "append",
   "delete",
@@ -314,9 +326,7 @@ globalThis.__nodeURLSearchParams.prototype.forEach =
     },
     "forEach"
   ).value;
-globalThis.__nodeURLSearchParams.prototype[
-  Symbol.for("nodejs.util.inspect.custom")
-] = Object.getOwnPropertyDescriptor(
+const __nodeURLSearchInspect = Object.getOwnPropertyDescriptor(
   {
     inspect() {
       return this.toString();
@@ -324,6 +334,12 @@ globalThis.__nodeURLSearchParams.prototype[
   },
   "inspect"
 ).value;
+Object.defineProperty(__nodeURLSearchInspect, "name", {
+  value: "[nodejs.util.inspect.custom]"
+});
+globalThis.__nodeURLSearchParams.prototype[
+  Symbol.for("nodejs.util.inspect.custom")
+] = __nodeURLSearchInspect;
 for (const symbol of [
   Symbol.iterator,
   Symbol.for("nodejs.util.inspect.custom")
@@ -337,3 +353,15 @@ for (const symbol of [
     enumerable: false
   });
 }
+Object.defineProperty(globalThis.__nodeURLSearchParams.prototype, "size", {
+  configurable: true,
+  enumerable: true,
+  get: Object.getOwnPropertyDescriptor(
+    {
+      get size() {
+        return this._pairs.length;
+      }
+    },
+    "size"
+  ).get
+});

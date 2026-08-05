@@ -232,12 +232,21 @@
   const setURLHref = Object.getOwnPropertyDescriptor(
     {
       set href(value) {
-        Object.defineProperty(this, "href", {
-          configurable: true,
-          enumerable: true,
-          value: String(value),
-          writable: true
-        });
+        const parsed = new globalThis.__nodeURL(String(value));
+        for (const property of [
+          "protocol",
+          "username",
+          "password",
+          "host",
+          "hostname",
+          "port",
+          "pathname",
+          "search",
+          "hash",
+          "origin"
+        ])
+          this[property] = parsed[property];
+        this.searchParams._pairs = parsed.searchParams._pairs;
       }
     },
     "href"
