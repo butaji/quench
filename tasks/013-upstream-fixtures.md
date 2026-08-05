@@ -5437,3 +5437,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1708. `url-protocol-relative-drive.js` — resolve protocol-relative drives against file bases.
 1709. `url-file-network-host.js` — preserve network hosts in file URLs.
 1710. `url-unc-network-path.js` — resolve UNC paths as file network hosts.
+1711. `url-mixed-unc-prefix.js` — resolve mixed UNC prefixes as network hosts.
