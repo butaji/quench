@@ -777,10 +777,14 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
             .or(mapped_value)
             .or_else(|| obj.get_own_value(&prop))
             .unwrap_or(Value::Undefined);
-        // Per ES §15.4.5: SetFunctionName — if value is an anonymous
-        // non-arrow function, name it after the property key.
+        // Per ES §15.4.5: SetFunctionName — if value is a non-arrow
+        // function, name it after the property key. We always rename (not
+        // just when f.name.is_none()) so patterns like:
+        //   Object.defineProperty(o, "y", { value: function(){} })
+        // produce the spec-compliant name (here: "y", not "value" which
+        // is the descriptor's "value" key).
         let value = if let Value::Function(mut f) = value {
-            if f.name.is_none() && !f.is_arrow {
+            if !f.is_arrow {
                 f.name = Some(prop.clone());
                 let _ = f.set_property("name", Value::String(prop.clone()));
             }

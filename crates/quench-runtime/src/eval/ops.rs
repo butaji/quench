@@ -581,12 +581,17 @@ pub fn make_ops_object() -> Value {
                             .descriptors
                             .insert(key.clone(), flags);
                     } else {
-                        // Per ES §15.4.5: SetFunctionName — if value is an
-                        // anonymous non-arrow function, name it after the key.
-                        eprintln!("DefineProp key={} is_fn={}", key, matches!(val, Value::Function(_)));
+                        // Per ES §15.4.5: SetFunctionName — if value is a
+                        // non-arrow function, name it after the property key.
+                        // This is unconditional for built-in initialization
+                        // patterns (where the function comes from an object
+                        // literal whose key happens to be "value" or "get"
+                        // etc.); the spec says SetFunctionName is invoked
+                        // when defining an own data property whose value is
+                        // a function.
                         let val_to_set =
                             if let Value::Function(mut f) = val {
-                                if f.name.is_none() && !f.is_arrow {
+                                if !f.is_arrow {
                                     f.name = Some(key.clone());
                                     let _ = f.set_property("name", Value::String(key.clone()));
                                 }
