@@ -343,16 +343,18 @@ globalThis.__quenchResolveParsedAbsolute = (result, from, to) => {
 globalThis.__quenchResolveParsedObject = (result, from, to, originalResolve) =>
   typeof from === "string"
     ? null
-    : /^([A-Za-z][A-Za-z0-9+.-]*):(#.*)$/.test(to)
-      ? result.parse(to.replace(/^([A-Za-z][A-Za-z0-9+.-]*):/, "$1:///"))
-      : /^([A-Za-z][A-Za-z0-9+.-]*):\/([^/].*)$/.test(to)
-        ? result.parse(to.replace(/^([A-Za-z][A-Za-z0-9+.-]*):\//, "$1://"))
-        : result.parse(
-            globalThis.__quenchResolveParsedPath(
-              from.pathname || from.href || "",
-              to
-            )
-          );
+    : /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(to)
+      ? result.parse(to)
+      : /^([A-Za-z][A-Za-z0-9+.-]*):(#.*)$/.test(to)
+        ? result.parse(to.replace(/^([A-Za-z][A-Za-z0-9+.-]*):/, "$1:///"))
+        : /^([A-Za-z][A-Za-z0-9+.-]*):\/([^/].*)$/.test(to)
+          ? result.parse(to.replace(/^([A-Za-z][A-Za-z0-9+.-]*):\//, "$1://"))
+          : result.parse(
+              globalThis.__quenchResolveParsedPath(
+                from.pathname || from.href || "",
+                to
+              )
+            );
 globalThis.__quenchResolveParsedPath = (base, to) => {
   const path = to.startsWith("/")
     ? to
@@ -370,12 +372,6 @@ globalThis.__quenchResolveObjectEarly = (result, from, to, originalResolve) => {
   if (fragmentOnly) return fragmentOnly;
   if (to === "." && globalThis.__quenchIsOpaqueTarget(from))
     return `${from.match(/^([A-Za-z][A-Za-z0-9+.-]*):/)[1]}:`;
-  const absoluteTarget = globalThis.__quenchResolveAbsoluteTarget(from, to);
-  if (absoluteTarget) return absoluteTarget;
-  const mailto = globalThis.__quenchResolveMailtoRelative(from, to);
-  if (mailto) return mailto;
-  const parsed = globalThis.__quenchResolveParsedAbsolute(result, from, to);
-  if (parsed) return parsed;
   const parsedObject = globalThis.__quenchResolveParsedObject(
     result,
     from,
@@ -383,6 +379,12 @@ globalThis.__quenchResolveObjectEarly = (result, from, to, originalResolve) => {
     originalResolve
   );
   if (parsedObject) return parsedObject;
+  const absoluteTarget = globalThis.__quenchResolveAbsoluteTarget(from, to);
+  if (absoluteTarget) return absoluteTarget;
+  const mailto = globalThis.__quenchResolveMailtoRelative(from, to);
+  if (mailto) return mailto;
+  const parsed = globalThis.__quenchResolveParsedAbsolute(result, from, to);
+  if (parsed) return parsed;
   const file = globalThis.__quenchResolveLegacyFileRelative(from, to);
   if (file) return file;
   return /^[A-Za-z][A-Za-z0-9+.-]*:\/\/\//.test(from)
