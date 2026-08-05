@@ -90,7 +90,10 @@ const __quenchDgramSend = (socket, message, ...args) => {
         code: "ERR_INVALID_ARG_TYPE"
       }
     );
-  const hasOffset = args.length >= 5 || (socket._connected && args.length >= 2);
+  const hasOffset =
+    args.length >= 5 ||
+    (args.length === 4 && typeof args[3] === "function") ||
+    (socket._connected && args.length >= 2);
   const addressIndex = args.length >= 4 ? 3 : hasOffset ? -1 : 1;
   const address = addressIndex < 0 ? undefined : args[addressIndex];
   if (
