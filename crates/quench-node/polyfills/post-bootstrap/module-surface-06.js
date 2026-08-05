@@ -216,17 +216,19 @@
       });
     }
   };
-  const setURLHref = {
-    set href(value) {
-      Object.defineProperty(this, "href", {
-        configurable: true,
-        enumerable: true,
-        value: String(value),
-        writable: true
-      });
-    }
-  }.set;
-  Object.defineProperty(setURLHref, "name", { value: "set href" });
+  const setURLHref = Object.getOwnPropertyDescriptor(
+    {
+      set href(value) {
+        Object.defineProperty(this, "href", {
+          configurable: true,
+          enumerable: true,
+          value: String(value),
+          writable: true
+        });
+      }
+    },
+    "href"
+  ).set;
   const installURLToStringDescriptor = (URLConstructor) => {
     const prototype = URLConstructor?.prototype;
     const descriptor =
