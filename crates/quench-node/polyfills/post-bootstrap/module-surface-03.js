@@ -46,6 +46,34 @@ const __quenchValidatePipeline = (pipeline, args) => {
   const result = pipeline(...args);
   return result === undefined ? args[args.length - 2] : result;
 };
+const __quenchAddHttpEvents = (result) => {
+  for (const name of ["IncomingMessage", "ServerResponse"]) {
+    const prototype = result[name]?.prototype;
+    if (!prototype || prototype.on) continue;
+    const listeners = new WeakMap();
+    prototype.on = function (event, listener) {
+      const entries = listeners.get(this) || [];
+      entries.push({ event, listener, once: false });
+      listeners.set(this, entries);
+      return this;
+    };
+    prototype.once = function (event, listener) {
+      const entries = listeners.get(this) || [];
+      entries.push({ event, listener, once: true });
+      listeners.set(this, entries);
+      return this;
+    };
+    prototype.emit = function (event, ...args) {
+      const entries = listeners.get(this) || [];
+      for (const entry of entries.slice()) {
+        if (entry.event !== event) continue;
+        entry.listener.apply(this, args);
+        if (entry.once) entries.splice(entries.indexOf(entry), 1);
+      }
+      return this;
+    };
+  }
+};
 const __quenchAddStreamCompat = (result) => {
   __quenchAddStreamAliases(result);
   result.Writable = __quenchMakeCallableConstructor(result.Writable);
@@ -63,6 +91,8 @@ if (globalThis.require) {
   const originalRequire = globalThis.require;
   globalThis.require = (name) => {
     const result = originalRequire(name);
+    if (String(name).replace(/^node:/, "") === "http")
+      __quenchAddHttpEvents(result);
     if (String(name).replace(/^node:/, "") === "stream")
       return __quenchAddStreamCompat(result);
     return result;

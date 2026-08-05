@@ -4148,3 +4148,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Added Node-style validation for empty pipelines, missing streams, and missing
   callbacks.
+
+### Stage 1210: HTTP event surface
+
+- Added `on`, `once`, and `emit` methods to HTTP message and response
+  prototypes used by stream pipeline consumers.
