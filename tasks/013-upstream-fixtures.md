@@ -4425,3 +4425,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Normalize the upstream test harness’s `./test/...` realpath fixture paths
   relative to the repository root.
+
+### Stage 1271: utimes path and fd validation
+
+- Corrected path-only `utimes`/`lutimes` and fd-based `futimes` validation,
+  including symlink and missing-path behavior.
