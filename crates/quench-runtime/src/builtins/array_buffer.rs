@@ -441,6 +441,28 @@ fn register_shared_array_buffer(ctx: &mut Context) {
         .borrow_mut()
         .set_getter_func("growable", growable_getter);
 
+    let max_byte_length_getter = Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
+        let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+        let Value::Object(object) = this_val else {
+            return Err(array_buffer_type_error(
+                "SharedArrayBuffer.prototype.maxByteLength requires a SharedArrayBuffer receiver",
+            ));
+        };
+        if object.borrow().get_own("\0sharedArrayBuffer").is_none() {
+            return Err(array_buffer_type_error(
+                "SharedArrayBuffer.prototype.maxByteLength requires a SharedArrayBuffer receiver",
+            ));
+        }
+        let value = object
+            .borrow()
+            .get_own_value("maxByteLength")
+            .unwrap_or(Value::Number(0.0));
+        Ok(value)
+    })));
+    proto_rc
+        .borrow_mut()
+        .set_getter_func("maxByteLength", max_byte_length_getter);
+
     let slice_proto = Rc::clone(&proto_rc);
     proto_rc.borrow_mut().set(
         "slice",
@@ -597,6 +619,14 @@ mod tests {
     fn shared_array_buffer_growable_prototype_property_is_an_accessor() {
         let result = eval_ok(
             "typeof Object.getOwnPropertyDescriptor(SharedArrayBuffer.prototype, 'growable').get",
+        );
+        assert_eq!(result, Value::String("function".to_string()));
+    }
+
+    #[test]
+    fn shared_array_buffer_max_byte_length_prototype_property_is_an_accessor() {
+        let result = eval_ok(
+            "typeof Object.getOwnPropertyDescriptor(SharedArrayBuffer.prototype, 'maxByteLength').get",
         );
         assert_eq!(result, Value::String("function".to_string()));
     }
