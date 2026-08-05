@@ -16,6 +16,7 @@ const __quenchDgramBind = (socket, type, port, address, callback) => {
       syscall: "bind"
     });
   socket._bound = true;
+  socket._bindPending = true;
   __quenchDgramBoundPorts.add(resolvedPort);
   socket._address = {
     address:
@@ -27,7 +28,10 @@ const __quenchDgramBind = (socket, type, port, address, callback) => {
     family: type === "udp6" ? "IPv6" : "IPv4",
     port: resolvedPort
   };
-  queueMicrotask(() => callback?.call(socket));
+  queueMicrotask(() => {
+    socket._bindPending = false;
+    callback?.call(socket);
+  });
   queueMicrotask(() => socket.emit("listening"));
   return socket;
 };
@@ -156,6 +160,15 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
         throw Object.assign(new TypeError("Invalid IP address"), {
           code: "ERR_INVALID_ARG_VALUE"
         });
+      if (
+        options?.sendBlockList?.check?.(
+          address,
+          type === "udp6" ? "ipv6" : "ipv4"
+        )
+      )
+        throw Object.assign(new Error("IP is blocked"), {
+          code: "ERR_IP_BLOCKED"
+        });
       if (__quenchDgramBoundPorts.has(resolvedPort))
         throw Object.assign(new Error("bind EADDRINUSE"), {
           code: "EADDRINUSE",
@@ -174,6 +187,53 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
     send: (message, ...args) => __quenchDgramSend(socket, message, ...args),
     connect: (port, address, callback) =>
       __quenchDgramConnect(socket, port, address, callback),
+    connectSync: (port, address = "127.0.0.1") => {
+      if (socket._bindPending)
+        throw Object.assign(new Error("Socket is already bound"), {
+          code: "ERR_SOCKET_ALREADY_BOUND"
+        });
+      if (!Number.isInteger(port) || port <= 0 || port >= 65536)
+        throw Object.assign(new RangeError("Port should be > 0 and < 65536"), {
+          code: "ERR_SOCKET_BAD_PORT"
+        });
+      if (typeof address !== "string")
+        throw Object.assign(
+          new TypeError('The "address" argument must be of type string'),
+          {
+            code: "ERR_INVALID_ARG_TYPE"
+          }
+        );
+      if (address === "localhost")
+        throw Object.assign(new TypeError("Invalid IP address"), {
+          code: "ERR_INVALID_ARG_VALUE"
+        });
+      if (socket._connected)
+        throw Object.assign(new Error("Already connected"), {
+          code: "ERR_SOCKET_DGRAM_IS_CONNECTED"
+        });
+      if (
+        options?.sendBlockList?.check?.(
+          address,
+          type === "udp6" ? "ipv6" : "ipv4"
+        )
+      )
+        throw Object.assign(new Error("IP is blocked"), {
+          code: "ERR_IP_BLOCKED"
+        });
+      if (!socket._bound) {
+        socket._bound = true;
+        const localPort = __quenchDgramNextPort++;
+        __quenchDgramBoundPorts.add(localPort);
+        socket._address = {
+          address: type === "udp6" ? "::" : "0.0.0.0",
+          family: type === "udp6" ? "IPv6" : "IPv4",
+          port: localPort
+        };
+      }
+      socket._connected = true;
+      socket._remote = { address, port };
+      queueMicrotask(() => socket._bound && socket.emit("connect"));
+    },
     disconnect: () => __quenchDgramDisconnect(socket),
     remoteAddress: () => __quenchDgramRemoteAddress(socket),
     getRecvBufferSize: () => options.recvBufferSize || 0,

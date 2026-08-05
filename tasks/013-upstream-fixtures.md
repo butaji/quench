@@ -4050,3 +4050,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Added a synchronous bind surface returning the resolved address and applying
   the same port/address validation as the asynchronous path.
+
+### Stage 1190: dgram synchronous connect
+
+- Added synchronous connection state, remote address reporting, implicit bind,
+  and validation for the connectSync fixture.
