@@ -4266,3 +4266,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Made `createUnzip()` select gzip or deflate decompression from the stream
   header instead of always assuming gzip.
+
+### Stage 1236: console assert placeholders
+
+- Corrected `console.assert()` `%s` argument consumption and preserved trailing
+  arguments in the formatted diagnostic.

@@ -67,10 +67,15 @@ globalThis.console.dirxml ||= (...args) => globalThis.console.log(...args);
 globalThis.console.trace ||= (...args) => globalThis.console.error(...args);
 globalThis.console.assert = (condition, ...args) => {
   if (condition) return;
-  let detail = args[0] || "";
-  let used = 0;
-  detail = detail.replace(/%s/g, () => String(args[++used]));
-  if (used < args.length - 1) detail += ` ${args.slice(used + 1).join(" ")}`;
+  const originalDetail = args[0] || "";
+  let used = 1;
+  const text = String(originalDetail);
+  const placeholder = text.indexOf("%s");
+  let detail =
+    placeholder >= 0
+      ? `${text.slice(0, placeholder)}${String(args[used++])}${text.slice(placeholder + 2)}`
+      : text;
+  if (used < args.length) detail += ` ${args.slice(used).join(" ")}`;
   const message = detail ? `Assertion failed: ${detail}` : "Assertion failed";
   globalThis.process?.stderr?.write?.(`${message}\n`);
 };
