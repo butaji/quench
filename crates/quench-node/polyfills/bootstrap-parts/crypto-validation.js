@@ -33,6 +33,9 @@ const __nodeCryptoValidateStringEncoding = (value, encoding) => {
     throw error;
   }
 };
+const __nodeCryptoSetPrototype = (value, constructor) =>
+  typeof constructor === "function" &&
+  Object.setPrototypeOf(value, constructor.prototype);
 const __nodeCryptoHmacDigest = (algorithm, inner, outer, chunks, encoding) => {
   const message = [];
   for (const chunk of chunks) message.push(...chunk);

@@ -4872,3 +4872,19 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1372: crypto HMAC SHA-1
 
 - Support SHA-1 HMAC creation, updates, and digest output.
+
+### Stage 1373: crypto class surfaces
+
+- Expose constructor functions required by the crypto classes fixture.
+
+### Stage 1374: crypto HMAC prototype
+
+- Return HMAC instances with Node’s `crypto.Hmac` prototype.
+
+### Stage 1375: crypto Hash prototype
+
+- Return hash instances with Node’s `crypto.Hash` prototype.
+
+### Stage 1376: crypto Cipheriv prototype
+
+- Return cipher instances with Node’s `crypto.Cipheriv` prototype.
