@@ -53,6 +53,7 @@ const __quenchCryptoKeyFallback = (result) => {
       export: () => {
         const exported = NodeBuffer.from(typeof key === "string" ? key : "");
         exported.dhParams = handle.dhParams;
+        exported.source = handle.source;
         return exported;
       }
     };
