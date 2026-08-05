@@ -69,10 +69,11 @@ globalThis.__nodeFs.fchmod = (fd, mode, callback) => {
     }
   });
 };
-globalThis.__nodeFs.lchmodSync = (value, mode) => (
-  nodeMode(mode),
-  globalThis.__nodeFs.chmodSync(value, mode)
-);
+globalThis.__nodeFs.lchmodSync = (value, mode) => {
+  const path = __nodeFsPathOnly(value);
+  const valueMode = nodeMode(mode);
+  globalThis.__nodeModes[path] = valueMode;
+};
 globalThis.__nodeFs.lchmod = (value, mode, callback) => {
   if (typeof mode === "function") {
     callback = mode;
