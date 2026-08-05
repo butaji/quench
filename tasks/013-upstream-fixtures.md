@@ -4446,3 +4446,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1275: lstat missing targets
 
 - Normalize missing `lstatSync` paths to Node-style `ENOENT` errors.
+
+### Stage 1276: writeFile URL paths
+
+- Support URL objects in `fs.writeFileSync` through the URL-aware path
+  conversion.

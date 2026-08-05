@@ -297,7 +297,7 @@ Object.assign(globalThis.__nodeFs, {
     return globalThis.__quench_fs_read_file(path);
   },
   writeFileSync: (value, data, options = {}) => {
-    const path = __nodeFsReadPath(value);
+    const path = nodeFsPath(value);
     __nodeFsValidateFlush(options);
     const bytes = __nodeFsWriteBytes(data, options);
     if (options?.flag === "a") return __nodeFsAppendBytes(path, bytes);
