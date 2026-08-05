@@ -306,9 +306,12 @@ globalThis.__nodeUtil = {
   },
   stripVTControlCharacters: (value) => {
     if (typeof value !== "string") {
+      const received =
+        value !== null && typeof value === "object"
+          ? ` Received an instance of ${value.constructor?.name || "Object"}`
+          : ` Received type ${typeof value} (${String(value)})`;
       const error = new TypeError(
-        'The "str" argument must be of type string.' +
-          ` Received type ${typeof value} (${String(value)})`
+        'The "str" argument must be of type string.' + received
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
