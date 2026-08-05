@@ -401,6 +401,22 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
       if (value <= 0 || value >= 256) throw new Error("setTTL EINVAL");
       return value;
     },
+    setMulticastLoopback: (value) => {
+      if (!socket._bound) throw new Error("setMulticastLoopback EBADF");
+      return value;
+    },
+    setMulticastTTL: (value) => {
+      if (!socket._bound) throw new Error("setMulticastTTL EBADF");
+      if (typeof value !== "number")
+        throw Object.assign(
+          new TypeError(
+            `The "ttl" argument must be of type number. Received type string ('${value}')`
+          ),
+          { code: "ERR_INVALID_ARG_TYPE" }
+        );
+      if (value <= 0 || value >= 256) throw new Error("setMulticastTTL EINVAL");
+      return value;
+    },
     close: (callback) => __quenchDgramClose(socket, callback),
     address: () => __quenchDgramAddress(socket, type),
     on: (event, callback) =>
