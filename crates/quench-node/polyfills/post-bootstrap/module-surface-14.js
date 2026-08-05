@@ -465,7 +465,7 @@ const __quenchCryptoKeyObjectFallback = (result) => {
     result.generateKeyPairSync = (algorithm, options) => {
       const pair = generatePair(algorithm, options);
       if (options?.publicKeyEncoding || options?.privateKeyEncoding)
-        return __quenchEncodedPair();
+        return __quenchCryptoEncodedPair(options);
       const details = {
         modulusLength: options?.modulusLength,
         publicExponent: options?.publicExponent ?? 65537n
