@@ -4308,3 +4308,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Added `tcp_wrap.constants.SOCKET` and minimal TCP handle lifecycle methods
   for dgram file-descriptor validation tests.
+
+### Stage 1246: readline line interface
+
+- Added evented `readline.createInterface()` line parsing for data and EOF.
