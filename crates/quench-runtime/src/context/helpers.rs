@@ -512,7 +512,7 @@ pub fn reject_eval_var_lexical_conflict(
             crate::value::set_thrown_value(error);
             return Err(js_error);
         }
-        let is_local = eval_env.borrow().current_scope().borrow().has(&name);
+        let is_local = eval_env.borrow().has(&name);
         if !is_local {
             eval_env
                 .borrow_mut()
