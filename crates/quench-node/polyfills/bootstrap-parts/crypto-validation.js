@@ -48,7 +48,22 @@ const __quenchValidateDhGenerator = (generator) => {
     throw error;
   }
 };
+const __quenchValidateDhInputType = (value) => {
+  if (
+    typeof value !== "number" &&
+    typeof value !== "string" &&
+    !(value instanceof ArrayBuffer) &&
+    !ArrayBuffer.isView(value)
+  )
+    throw Object.assign(
+      new TypeError(
+        "The sizeOrKey argument must be a number, string, or buffer"
+      ),
+      { code: "ERR_INVALID_ARG_TYPE" }
+    );
+};
 const __quenchValidateDhNumbers = (sizeOrKey, generator) => {
+  __quenchValidateDhInputType(sizeOrKey);
   if (typeof sizeOrKey === "number" && !Number.isInteger(sizeOrKey))
     throw Object.assign(
       new RangeError(
