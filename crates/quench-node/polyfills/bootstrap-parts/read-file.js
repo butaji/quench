@@ -16,6 +16,13 @@ globalThis.__nodeFs.readFile = (value, options, callback) => {
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
+  if (value instanceof globalThis.__nodeURL && value.protocol !== "file:") {
+    const error = new TypeError("The URL must use the file: protocol");
+    error.code = "ERR_INVALID_URL_SCHEME";
+    throw error;
+  }
+  if (value instanceof globalThis.__nodeURL)
+    globalThis.__nodeUrlModule.fileURLToPath(value);
   if (options && options.signal !== undefined) {
     if (!(options.signal instanceof NodeAbortSignal)) {
       const error = new TypeError('The "signal" option must be an AbortSignal');
