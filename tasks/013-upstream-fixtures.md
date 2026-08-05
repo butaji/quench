@@ -1,5 +1,13 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1147: VM Script source map URL
+
+- Fixture: `test-vm-source-map-url.js`
+- Extracted valid hash-prefixed `sourceMappingURL` comments from Script source
+  while ignoring malformed magic comments.
+- Retrospective: keep source metadata parsing local to Script construction so
+  evaluation remains unchanged.
+
 ## Stage 1146: VM isContext API
 
 - Fixture: `test-vm-is-context.js`
