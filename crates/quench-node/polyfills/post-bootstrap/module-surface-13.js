@@ -74,6 +74,14 @@ const __quenchCryptoKeyFallback = (result) => {
     export: () => NodeBuffer.alloc(16)
   });
 };
+const __quenchCryptoClassPrototypes = (result) => {
+  const createHash = result.createHash;
+  result.createHash = (...args) => {
+    const value = createHash(...args);
+    __nodeCryptoSetPrototype(value, result.Hash);
+    return value;
+  };
+};
 const __quenchCryptoConstantsFallback = (result) => {
   result.constants ||= {};
   Object.assign(result.constants, {
@@ -456,6 +464,7 @@ const __quenchCryptoFallbacks = (result) => {
   result.createHmac ||= () => ({ update: () => this, digest: () => "" });
   __quenchCryptoRandomFallbacks(result, state);
   __quenchCryptoDigestFallbacks(result);
+  __quenchCryptoClassPrototypes(result);
   __quenchCryptoKdfFallbacks(result);
   __quenchCryptoConstructors(result);
   globalThis.__quenchHmacConstructor = result.Hmac;
