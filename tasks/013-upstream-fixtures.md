@@ -5352,3 +5352,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1620. `urlpattern-method-input-validation.js` — validate URLPattern method inputs.
 1621. `urlpattern-overloads.js` — support URLPattern string and base URL overloads.
 1622. `url-can-parse-missing-argument.js` — validate URL.canParse required input.
+1623. `url-parse-query-shape.js` — preserve non-enumerable legacy URL methods.
