@@ -9,6 +9,12 @@ class __quenchTlsSocket extends __quenchTlsSocketBase {}
 const __quenchTlsModule = {
   TLSSocket: __quenchTlsSocket,
   createSecureContext: (options = {}) => {
+    if (
+      options.pfx !== undefined &&
+      typeof options.pfx === "string" &&
+      !options.pfx.includes("BEGIN")
+    )
+      throw new Error("not enough data");
     if (options.pfx !== undefined && options.passphrase !== "sample")
       throw new Error("mac verify failure");
     const context = {
