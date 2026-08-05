@@ -5101,6 +5101,14 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Reject stateless exchanges between incompatible generated key algorithms.
 
+### Stage 1431: crypto EVP key-type mismatch
+
+- Return the EVP operation-not-supported code for incompatible key types.
+
+### Stage 1432: crypto DH encoding variants
+
+- Accept valid raw and compressed key descriptor encodings.
+
 ### Stage 1428: crypto DH non-domain peer key
 
 - Select the short vector for any non-domain-length peer key.
