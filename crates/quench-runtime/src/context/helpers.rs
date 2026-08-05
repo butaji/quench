@@ -408,6 +408,37 @@ pub fn reject_eval_var_lexical_conflict(
     Ok(())
 }
 
+pub fn reject_global_lexical_declarations(
+    ctx: &Context,
+    program: &crate::ast::Program,
+) -> Result<(), JsError> {
+    let ast::Program::Script(body) = program;
+    let names = crate::interpreter::collect_let_const_declarations(body);
+    let Some(Value::Object(global)) = ctx.get_global("globalThis") else {
+        return Ok(());
+    };
+    for (name, _) in names {
+        if crate::context::get_current_env().is_some_and(|env| {
+            env.borrow().get_kind(&name) == Some(crate::ast::VarKind::Var)
+        }) {
+            continue;
+        }
+        if global
+            .borrow()
+            .get_own_property(&name)
+            .is_some_and(|descriptor| descriptor.configurable == Some(false))
+        {
+            let (error, js_error) = crate::value::error::create_js_error_with_type(
+                "Identifier conflicts with a restricted global property",
+                "SyntaxError",
+            );
+            crate::value::set_thrown_value(error);
+            return Err(js_error);
+        }
+    }
+    Ok(())
+}
+
 /// Initialize built-in globals and functions
 pub fn init_builtins(ctx: &mut Context) -> Result<(), JsError> {
     ctx.set_global("__ops__".to_string(), crate::eval::ops::make_ops_object());
@@ -993,5 +1024,12 @@ mod tests {
         assert!(ctx.eval("Object.preventExtensions(this); try { eval('var evalNewOnly'); false } catch (e) { e instanceof TypeError }").is_ok_and(|value| {
             matches!(value, Value::Boolean(true))
         }));
+    }
+
+    #[test]
+    fn script_rejects_lexical_restricted_global() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        assert!(ctx.eval("let undefined;").is_err());
     }
 }

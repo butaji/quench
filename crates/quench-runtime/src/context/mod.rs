@@ -94,6 +94,7 @@ impl Context {
 
         let result = (|| {
             let program = self.parse(source)?;
+            helpers::reject_global_lexical_declarations(self, &program)?;
             // Script code: set `this = globalThis` per ScriptDeclarationInstantiation
             interpreter::eval_program(&program, &mut self.env, Some(source), true)
         })();
