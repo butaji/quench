@@ -4600,3 +4600,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Recognize the callback-only `fs.writev(fd, callback)` overload before
   validating the file descriptor and buffers.
+
+### Stage 1312: ftruncate length validation
+
+- Validate asynchronous `ftruncate` lengths before callback validation, as
+  required by Node's invalid-length contract.
