@@ -5036,3 +5036,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1413: crypto secret-key handles
 
 - Return a minimal secret handle from `generateKeySync()`.
+
+### Stage 1414: crypto stateless DH key types
+
+- Reject secret and public handles used as the private key.

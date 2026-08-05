@@ -113,10 +113,19 @@ const __quenchValidateStatelessDhArgs = (options, callback) => {
       { code: "ERR_INVALID_ARG_TYPE" }
     );
 };
+const __quenchValidateStatelessDhKeys = (options) => {
+  const type = options.privateKey?.type;
+  if (type === "secret" || type === "public")
+    throw Object.assign(
+      new Error(`Invalid key object type ${type}, expected private.`),
+      { code: "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE" }
+    );
+};
 const __quenchCryptoKeyExchangeFallback = (result) => {
   __quenchPrepareDhGroup(result);
   result.diffieHellman ||= (options, callback) => {
     __quenchValidateStatelessDhArgs(options, callback);
+    __quenchValidateStatelessDhKeys(options);
     return NodeBuffer.alloc(128);
   };
   result.createDiffieHellman = (
