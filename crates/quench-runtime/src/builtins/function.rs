@@ -252,6 +252,9 @@ pub fn register_function(ctx: &mut Context) {
     FUNCTION_PROTOTYPE.with(|fp| {
         *fp.borrow_mut() = Some(Rc::clone(&function_proto));
     });
+    if let Some(Value::Object(string)) = ctx.get_global("String") {
+        string.borrow_mut().prototype = Some(Rc::clone(&function_proto));
+    }
 
     let async_function_proto_rc = Rc::new(RefCell::new(Object::with_prototype(
         ObjectKind::Ordinary,

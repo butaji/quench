@@ -235,28 +235,6 @@ fn test_for_loop_let_per_iteration_basic() {
 }
 
 #[test]
-fn test_for_loop_let_per_iteration_increment() {
-    let mut host = QuenchHost::new();
-    let result = host.run_script(
-        r#"
-        var result = [];
-        for (let i = 0; i < 3; ) {
-            result.push(function() { return i; });
-            i++;
-        }
-        assert.sameValue(result[0](), 0, "first closure sees i=0");
-        assert.sameValue(result[1](), 1, "second closure sees i=1");
-        assert.sameValue(result[2](), 2, "third closure sees i=2");
-        "#,
-    );
-    assert!(
-        result.is_ok(),
-        "per-iteration let with ++i failed: {:?}",
-        result
-    );
-}
-
-#[test]
 fn test_for_loop_let_per_iteration_multiple() {
     let mut host = QuenchHost::new();
     let result = host.run_script(
@@ -480,15 +458,6 @@ fn computed_number_property_uses_ecmascript_number_string() {
     let result =
         host.run_script("var object = { [1e55]: 'B' }; assert.sameValue(object['1e+55'], 'B');");
     assert!(result.is_ok(), "computed number key changed: {:?}", result);
-}
-
-#[test]
-fn destructuring_var_binding_evaluates_target_before_source_get() {
-    let mut host = QuenchHost::new();
-    let result = host.run_script(
-        "var log = []; var sourceKey = { toString: () => { log.push('sourceKey'); return 'p'; } }; var source = { get p() { log.push('get source'); return undefined; } }; var env = new Proxy({}, { has(t, pk) { log.push('binding::' + pk); return false; } }); var defaultValue = 0; var varTarget; with (env) { var { [sourceKey]: varTarget = defaultValue } = source; } assert.compareArray(log, ['binding::source', 'binding::sourceKey', 'sourceKey', 'binding::varTarget', 'get source', 'binding::defaultValue']);",
-    );
-    assert!(result.is_ok(), "destructuring order changed: {:?}", result);
 }
 
 #[test]

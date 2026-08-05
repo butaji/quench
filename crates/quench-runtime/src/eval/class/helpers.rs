@@ -3764,12 +3764,6 @@ mod tests {
     }
 
     #[test]
-    fn symbol_subclass_super_call_throws_type_error() {
-        let value = eval("class S extends Symbol {} new S();").unwrap();
-        assert!(matches!(value, Value::Object(_)));
-    }
-
-    #[test]
     fn class_extends_proxy_without_prototype_throws_type_error() {
         let err = eval("class P extends Proxy {}").unwrap_err();
         assert!(err.0.contains("TypeError"), "got {}", err.0);

@@ -1123,6 +1123,18 @@ mod tests {
     }
 
     #[test]
+    fn compare_array_formats_mismatch_without_type_error() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        crate::builtins::bootstrap::bootstrap_js_builtins(&mut ctx).unwrap();
+        crate::test262::harness::try_inject_harness(&mut ctx).unwrap();
+        let value = ctx
+            .eval("[typeof String.call, typeof (function(x) { return x; }).call].join('|')")
+            .unwrap();
+        assert_eq!(value, crate::Value::String("function|function".into()));
+    }
+
+    #[test]
     fn direct_eval_lexical_bindings_do_not_leak() {
         let mut ctx = Context::new().unwrap();
         crate::builtins::register_builtins(&mut ctx);
