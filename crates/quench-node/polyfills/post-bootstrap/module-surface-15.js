@@ -254,6 +254,33 @@ const __quenchFileUrlDrivePath = (input, converted) => {
     .replace(/^\/[A-Za-z]:/, (drive) => drive.slice(1))
     .replace(/\//g, "\\");
 };
+const __quenchWindowsControlURL = (value, windows) => {
+  if (!windows || typeof value !== "string" || !value.startsWith("\\\\"))
+    return null;
+  const input = value.slice(2);
+  const controlUNC = input.match(/^([^\\/#?]*)\\(.*)$/);
+  if (!controlUNC || !/[\n\r\t]/.test(controlUNC[1])) return null;
+  return {
+    href: `file://${controlUNC[1].replace(/[\n\r\t]/g, "")}/${controlUNC[2].replace(/\\/g, "/")}`
+  };
+};
+const __nodeWindowsDriveURL = (value, windows) => {
+  if (!windows || typeof value !== "string" || !/^[A-Za-z]:[\\/]/.test(value))
+    return null;
+  const parts = value.replace(/\\/g, "/").split("/");
+  const drive = parts.shift();
+  const path = parts
+    .map((part) =>
+      encodeURIComponent(part)
+        .replace(/%26/g, "&")
+        .replace(/%3D/gi, "=")
+        .replace(/%3A/gi, ":")
+        .replace(/%3B/gi, ";")
+        .replace(/~/g, "%7E")
+    )
+    .join("/");
+  return { href: `file:///${drive}/${path}` };
+};
 const __quenchValidateFileUrlHost = (input, options) => {
   if (input?.protocol === "file:" && input.host && options?.windows !== true)
     throw Object.assign(new TypeError("File URL host must be empty"), {
@@ -279,4 +306,48 @@ const __quenchAddFileUrlFallback = (result) => {
       throw error;
     }
   };
+};
+const __nodeValidateWindowsFileHost = (value, windows) => {
+  if (!windows || typeof value !== "string" || !value.startsWith("\\\\"))
+    return;
+  const hostname = value.slice(2).split(/[\\/]/)[0];
+  if (/[ @:\[\]]/.test(hostname)) {
+    const error = new TypeError("Invalid file URL host");
+    error.code = "ERR_INVALID_URL";
+    throw error;
+  }
+};
+const __nodeWindowsUncTerminatorURL = (value, windows) => {
+  if (!windows || typeof value !== "string" || !value.startsWith("\\\\"))
+    return null;
+  const controlURL = __quenchWindowsControlURL(value, windows);
+  if (controlURL) return controlURL;
+  const input = value.slice(2);
+  const host = input.split(/[\\/#?]/)[0];
+  const marker = input.slice(host.length);
+  if (!/[#?/]/.test(marker)) return null;
+  const suffix =
+    marker.match(/^[#?][^\\]*\\(.*)$/)?.[1] ||
+    marker.match(/^\/[^\\]*\\(.*)$/)?.[1];
+  const path = `/${(suffix || "").replace(/\\/g, "/")}`;
+  return { href: `file://${host}${path}` };
+};
+const __nodeWindowsSpecialFileURL = (value, windows) => {
+  if (typeof value === "string" && value.startsWith("\\\\?\\UNC\\"))
+    return __nodeWindowsPlainUNCURL(value, windows);
+  return (
+    __nodeWindowsUncTerminatorURL(value, windows) ||
+    __nodeWindowsDriveURL(value, windows) ||
+    __nodeWindowsPlainUNCURL(value, windows)
+  );
+};
+const __nodeWindowsPlainUNCURL = (value, windows) => {
+  if (!windows || typeof value !== "string" || !value.startsWith("\\\\"))
+    return null;
+  const deviceUNC = value.startsWith("\\\\?\\UNC\\")
+    ? value.slice("\\\\?\\UNC\\".length)
+    : value.slice(2);
+  const parts = deviceUNC.split("\\");
+  const host = parts.shift();
+  return { href: `file://${host}/${parts.map(encodeURIComponent).join("/")}` };
 };
