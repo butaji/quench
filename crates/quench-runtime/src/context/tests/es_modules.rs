@@ -55,6 +55,13 @@ fn module_import_meta_is_an_object() {
 }
 
 #[test]
+fn module_exported_function_is_initialized_before_module_body() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval_es_module("typeof test262; export function test262() {};");
+    assert_eq!(result, Ok(crate::Value::String("function".to_string())));
+}
+
+#[test]
 fn top_level_await_using_initializes_module_binding() {
     let mut ctx = Context::new().unwrap();
     let result = ctx
