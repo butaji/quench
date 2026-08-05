@@ -468,7 +468,11 @@ function ArrayIteratorNext() {
 }
 
 function ArrayIterator(O, kind) {
-  var iterator = { _array: O, _index: 0, _kind: kind, _done: false };
+  var iterator = Object.create(Iterator.prototype);
+  iterator._array = O;
+  iterator._index = 0;
+  iterator._kind = kind;
+  iterator._done = false;
   iterator.next = ArrayIteratorNext;
   iterator[Symbol.iterator] = function() { return this; };
   return iterator;
