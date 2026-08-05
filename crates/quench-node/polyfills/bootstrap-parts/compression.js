@@ -25,6 +25,7 @@ const __quenchZlibOptions = (options) =>
       : { level: options };
 const __quenchZlibStream = (transform) => {
   const listeners = new Map();
+  const chunks = [];
   const stream = {
     on(event, listener) {
       (listeners.get(event) || listeners.set(event, []).get(event)).push(
@@ -37,12 +38,15 @@ const __quenchZlibStream = (transform) => {
       return stream;
     },
     write(input) {
-      stream.emit("data", transform(input));
+      chunks.push(NodeBuffer.from(input));
       return true;
     },
     end(input) {
       if (input !== undefined) stream.write(input);
-      queueMicrotask(() => stream.emit("end").emit("close"));
+      queueMicrotask(() => {
+        stream.emit("data", transform(NodeBuffer.concat(chunks)));
+        stream.emit("end").emit("close");
+      });
       return stream;
     },
     pipe(destination) {
