@@ -4526,3 +4526,11 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Clamp timer delays outside the supported signed 32-bit range to immediate
   next-tick behavior.
+
+### Stage 1295: access default mode
+
+- Normalize the callback-only `fs.access(path, callback)` overload to `F_OK`.
+
+### Stage 1296: access error metadata
+
+- Include the `access` syscall in missing-path `ENOENT` errors.
