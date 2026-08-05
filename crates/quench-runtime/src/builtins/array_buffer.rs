@@ -96,14 +96,15 @@ pub fn register_array_buffer(ctx: &mut Context) {
                 .map(|v| to_number(v) as isize)
                 .unwrap_or(len as isize)
                 .clamp(start as isize, len as isize) as usize;
-            if let Some(Value::Object(constructor)) = this_obj.borrow().get_own_value("constructor")
+            let species_constructor = if let Some(Value::Object(constructor)) =
+                this_obj.borrow().get_own_value("constructor")
             {
                 if let Some(Value::Symbol(species)) =
                     crate::builtins::symbol::get_well_known_symbol_no_ctx("species")
                 {
                     let species_value = constructor.borrow().get(&species.property_key());
                     if !matches!(
-                        species_value,
+                        &species_value,
                         None | Some(Value::Undefined) | Some(Value::Null)
                     ) && !species_value
                         .as_ref()
@@ -113,9 +114,35 @@ pub fn register_array_buffer(ctx: &mut Context) {
                             "ArrayBuffer species is not a constructor",
                         ));
                     }
+                    species_value
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            let sliced_len = (end - start) as f64;
+            if let Some(constructor) = species_constructor {
+                let new_obj = Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)));
+                let result = crate::eval::function::call_value_with_this(
+                    constructor,
+                    vec![Value::Number(sliced_len)],
+                    Value::Object(Rc::clone(&new_obj)),
+                )?;
+                let Value::Object(result) = result else {
+                    return Err(array_buffer_type_error(
+                        "ArrayBuffer species constructor did not return an object",
+                    ));
+                };
+                if !is_array_buffer(&result.borrow())
+                    || Rc::ptr_eq(&result, &this_obj)
+                    || result.borrow().elements.len() < sliced_len as usize
+                {
+                    return Err(array_buffer_type_error(
+                        "ArrayBuffer species result is not a valid ArrayBuffer",
+                    ));
                 }
             }
-            let sliced_len = (end - start) as f64;
             let proto = this_obj.borrow().prototype.clone();
             let mut sliced = Object::new(ObjectKind::Ordinary);
             if let Some(p) = proto {
@@ -518,6 +545,14 @@ mod tests {
     fn array_buffer_resize_range_errors_are_objects() {
         let result = eval_ok(
             "var buffer = new ArrayBuffer(1, { maxByteLength: 2 }); try { buffer.resize(-1); false } catch (error) { error instanceof RangeError }",
+        );
+        assert_eq!(result, Value::Boolean(true));
+    }
+
+    #[test]
+    fn array_buffer_slice_rejects_species_result_without_array_buffer_data() {
+        let result = eval_ok(
+            "var constructor = { [Symbol.species]: function() { return {}; } }; var buffer = new ArrayBuffer(1); buffer.constructor = constructor; try { buffer.slice(); false } catch (error) { error instanceof TypeError }",
         );
         assert_eq!(result, Value::Boolean(true));
     }
