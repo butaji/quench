@@ -108,14 +108,14 @@ const __nodeCryptoHashCopy = (algorithm, chunks) => {
   for (const chunk of chunks) clone.update(chunk);
   return clone;
 };
-const __nodeCryptoHmacPads = (key) => {
+const __nodeCryptoHmacPads = (algorithm, key) => {
   let keyBytes =
     typeof key === "string"
       ? new NodeTextEncoder().encode(key)
       : NodeBuffer.from(key);
   if (keyBytes.length > 64)
     keyBytes = NodeBuffer.from(
-      globalThis.__quench_digest_bytes("sha256", Array.from(keyBytes))
+      globalThis.__quench_digest_bytes(algorithm, Array.from(keyBytes))
     );
   const padded = NodeBuffer.alloc(64);
   padded.set(keyBytes);
@@ -432,10 +432,11 @@ const __nodeCryptoApi = {
   Hash: function Hash(algorithm) {
     return __nodeCryptoApi.createHash(algorithm);
   },
+  // eslint-disable-next-line max-lines-per-function -- HMAC state methods share one object
   createHmac: (algorithm, key) => {
-    if (algorithm !== "sha256")
+    if (!["sha1", "sha256"].includes(algorithm))
       throw new Error(`Unsupported hmac: ${algorithm}`);
-    const { keyBytes, inner, outer } = __nodeCryptoHmacPads(key);
+    const { keyBytes, inner, outer } = __nodeCryptoHmacPads(algorithm, key);
     const chunks = [];
     let finalized = false;
     const hmac = {
@@ -454,7 +455,13 @@ const __nodeCryptoApi = {
       digest: (encoding) => {
         __nodeCryptoAssertDigestOpen(finalized);
         finalized = true;
-        return __nodeCryptoHmacDigest(inner, outer, chunks, encoding);
+        return __nodeCryptoHmacDigest(
+          algorithm,
+          inner,
+          outer,
+          chunks,
+          encoding
+        );
       },
       copy: () => {
         if (finalized) {
@@ -462,7 +469,7 @@ const __nodeCryptoApi = {
           error.code = "ERR_CRYPTO_HASH_FINALIZED";
           throw error;
         }
-        const clone = globalThis.__nodeCrypto.createHmac("sha256", keyBytes);
+        const clone = globalThis.__nodeCrypto.createHmac(algorithm, keyBytes);
         for (const chunk of chunks) clone.update(chunk);
         return clone;
       }
