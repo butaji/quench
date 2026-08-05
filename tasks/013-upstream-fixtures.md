@@ -5132,3 +5132,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1437: crypto ECDH convert-key validation
 
 - Expose `ECDH.convertKey()` argument and invalid-curve validation.
+
+### Stage 1438: crypto ECDH invalid point
+
+- Reject malformed `secp521r1` point conversion.
