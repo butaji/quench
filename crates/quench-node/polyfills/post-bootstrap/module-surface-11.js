@@ -235,7 +235,7 @@ globalThis.__nodeUrlEncode = (value) =>
     String(value)
       .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, "\uFFFD")
       .replace(/(^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "$1\uFFFD")
-  );
+  ).replace(/~/g, "%7E");
 globalThis.__nodeInvalidThis = () => {
   const error = new TypeError(
     'Value of "this" must be of type URLSearchParams'
@@ -365,3 +365,18 @@ Object.defineProperty(globalThis.__nodeURLSearchParams.prototype, "size", {
     "size"
   ).get
 });
+for (const name of ["append", "set", "delete", "sort"]) {
+  const original = globalThis.__nodeURLSearchParams.prototype[name];
+  globalThis.__nodeURLSearchParams.prototype[name] =
+    Object.getOwnPropertyDescriptor(
+      {
+        [name](...args) {
+          const result = original.apply(this, args);
+          if (this.__nodeURLOwner)
+            this.__nodeURLOwner.search = this.toString() ? `?${this}` : "";
+          return result;
+        }
+      },
+      name
+    ).value;
+}
