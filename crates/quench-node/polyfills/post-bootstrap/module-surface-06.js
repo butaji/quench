@@ -164,6 +164,30 @@
       return original.call(this, value, base);
     };
   };
+  const normalizeURLSetterValue = (property, value) =>
+    typeof value === "symbol"
+      ? (() => {
+          throw new TypeError("Cannot convert a Symbol value to a string");
+        })()
+      : property === "username" || property === "password"
+        ? globalThis.__nodeUrlEncode(value)
+        : property === "pathname"
+          ? String(value).split("/").map(globalThis.__nodeUrlEncode).join("/")
+          : property === "search"
+            ? String(value) === ""
+              ? ""
+              : `?${String(value)
+                  .replace(/^\?/, "")
+                  .split("&")
+                  .map((part) =>
+                    part.split("=").map(globalThis.__nodeUrlEncode).join("=")
+                  )
+                  .join("&")}`
+            : property === "hash"
+              ? String(value) === ""
+                ? ""
+                : `#${globalThis.__nodeUrlEncode(String(value).replace(/^#/, ""))}`
+              : String(value);
   const installURLAccessorDescriptors = (prototype) => {
     for (const property of [
       "protocol",
@@ -187,10 +211,7 @@
             return this[`_${property}`];
           },
           set [property](value) {
-            this[`_${property}`] =
-              property === "username" || property === "password"
-                ? globalThis.__nodeUrlEncode(value)
-                : value;
+            this[`_${property}`] = normalizeURLSetterValue(property, value);
           }
         },
         property
@@ -199,7 +220,7 @@
         Object.defineProperty(prototype, property, {
           ...(accessor || fallback),
           enumerable: true,
-          set: accessor?.set || (readonly ? undefined : fallback.set)
+          set: readonly ? undefined : fallback.set
         });
     }
   };
@@ -235,6 +256,8 @@
   const setURLHref = Object.getOwnPropertyDescriptor(
     {
       set href(value) {
+        if (typeof value === "symbol")
+          throw new TypeError("Cannot convert a Symbol value to a string");
         const parsed = new globalThis.__nodeURL(String(value));
         for (const property of [
           "protocol",

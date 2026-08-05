@@ -315,7 +315,7 @@ globalThis.__nodeURL = class NodeURL {
   get href() {
     const query = this.searchParams.toString();
     // prettier-ignore
-    const credentials = this.username ? `${this.username}${this.password ? `:${this.password}` : ""}@` : "";
+    const credentials = this.username || this.password ? `${this.username || ""}${this.password ? `:${this.password}` : ""}@` : "";
     // prettier-ignore
     const prefix = this.protocol === "file:" ? "file://" : this.origin === "null" ? "" : this.origin.replace(/^(\w+:\/\/)/, `$1${credentials}`);
     return `${prefix}${this.pathname}${query ? `?${query}` : this.search}${this.hash}`;

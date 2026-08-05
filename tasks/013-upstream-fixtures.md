@@ -5377,3 +5377,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1645. `urlsearchparams-owner-sync.js` — synchronize URL search after URLSearchParams mutation.
 1646. `url-username-setter.js` — encode URL username changes in href.
 1647. `url-password-surrogate.js` — safely encode URL password surrogates.
+1648. `url-global-password.js` — verify global URL password serialization.
+1649. `url-pathname-surrogate.js` — encode Unicode URL pathname segments.
+1650. `url-search-surrogate.js` — encode Unicode URL search values.
+1651. `url-hash-surrogate.js` — encode Unicode URL hash values.
+1652. `url-setter-symbol.js` — reject Symbol URL setter values.
