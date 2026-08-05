@@ -4868,3 +4868,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1371: crypto authentication final state
 
 - Reject unauthenticated ChaCha20-Poly1305 decryption at `final()`.
+
+### Stage 1372: crypto HMAC SHA-1
+
+- Support SHA-1 HMAC creation, updates, and digest output.
