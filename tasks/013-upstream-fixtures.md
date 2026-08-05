@@ -5274,3 +5274,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1542. `url-resolve-file-authority.js` — normalize file URL authorities.
 1543. `url-resolve-mailto-relative.js` — resolve mailto relative paths.
 1544. `url-resolve-query-base.js` — discard base queries for absolute paths.
+1545. `url-resolve-opaque-relative.js` — resolve opaque scheme relative paths.
