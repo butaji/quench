@@ -388,9 +388,20 @@ const __quenchAddUrlParseFallback = (result) => {
     return parsed;
   };
 };
+const __quenchAddLegacyParseMethods = (result) => {
+  const originalParse = result.parse;
+  result.parse = (input) => {
+    const parsed = originalParse(input);
+    parsed.resolveObject = (target) =>
+      /^javascript:/i.test(target) ? originalParse(target) : parsed;
+    parsed.resolve = parsed.resolveObject;
+    return parsed;
+  };
+};
 const __quenchAddUrlFormatting = (result) => {
   if (typeof result.format !== "function") return result;
   (__quenchAddUrlDomainFallbacks(result), __quenchAddUrlParseFallback(result));
+  __quenchAddLegacyParseMethods(result);
   __quenchAddFileUrlFallback(result);
   const originalResolve = result.resolve;
   result.resolveObject ||= (from, to) => {
