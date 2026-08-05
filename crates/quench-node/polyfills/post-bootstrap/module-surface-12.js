@@ -141,10 +141,7 @@ globalThis.__quenchUrlPath = (input, authority) => {
 globalThis.__quenchResolveEmptyAuthority = (from, to) => {
   if (/^[a-z][a-z0-9+.-]*:/i.test(to)) return to;
   if (to.startsWith("/"))
-    return `${from.match(/^[a-z][a-z0-9+.-]*:\/\//i)?.[0] || ""}${to.startsWith("//") ? to.slice(2) : to}`.replace(
-      /^http:\/\/\//,
-      "http:/"
-    );
+    return globalThis.__quenchResolveEmptyNetworkPath(from, to);
   let base = from.replace(/[^/]*$/, "");
   let target = to;
   let parentTraversal = 0;
@@ -161,6 +158,25 @@ globalThis.__quenchResolveEmptyAuthority = (from, to) => {
     );
   if (parentTraversal > 3) base = base.replace(/[^/]+\/$/, "");
   return base.replace(/^http:\/\/\//, "http:/") + target.replace(/^\.\//, "");
+};
+globalThis.__quenchResolveEmptyNetworkPath = (from, to) =>
+  `${from.match(/^[a-z][a-z0-9+.-]*:\/\//i)?.[0] || ""}${to.startsWith("//") ? to.slice(2) : to}${/^\/\/[^/]+$/.test(to) && /^https?:/i.test(from) ? "/" : ""}`.replace(
+    /^http:\/\/\//,
+    "http:/"
+  );
+globalThis.__quenchResolveFileFragment = (from, to) =>
+  /^file:\/[^/]/i.test(to) && /^#/.test(from)
+    ? to.replace(/^file:\//i, "file:///") + from
+    : null;
+globalThis.__quenchAddLegacyParseMethods = (result) => {
+  const originalParse = result.parse;
+  result.parse = (input) => {
+    const parsed = originalParse(input);
+    parsed.resolveObject = (target) =>
+      /^javascript:/i.test(target) ? originalParse(target) : parsed;
+    parsed.resolve = parsed.resolveObject;
+    return parsed;
+  };
 };
 globalThis.__nodeLegacyMailtoParts = (input) => {
   if (!/^mailto:/i.test(input)) return null;
