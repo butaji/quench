@@ -5303,3 +5303,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1571. `url-resolve-object-opaque-parent.js` — preserve parsed opaque parent traversal.
 1572. `url-resolve-object-opaque-dot.js` — preserve parsed opaque dot roots.
 1573. `url-resolve-object-opaque-absolute.js` — preserve protocols for parsed opaque absolute paths.
+1574. `url-resolve-object-opaque-rfc-matrix.js` — cover parsed opaque RFC cases.
