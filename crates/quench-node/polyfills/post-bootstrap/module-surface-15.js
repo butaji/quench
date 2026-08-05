@@ -126,5 +126,13 @@ const __quenchCryptoRandomUuidFallback = (result) => {
       return (char === "x" ? value : (value & 3) | 8).toString(16);
     });
   };
+  result.randomUUIDv7 = (options) => {
+    result.randomUUID(options);
+    const timestamp = Date.now().toString(16).padStart(12, "0");
+    const random = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx".replace(/x/g, () =>
+      ((Math.random() * 16) | 0).toString(16)
+    );
+    return `${timestamp.slice(0, 8)}-${timestamp.slice(8)}-7${random.slice(0, 3)}-${((8 + Math.random() * 4) | 0).toString(16)}${random.slice(3, 6)}-${random.slice(6, 18)}`;
+  };
 };
 /* eslint-enable max-lines-per-function, complexity */
