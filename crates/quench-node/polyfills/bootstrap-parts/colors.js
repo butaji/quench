@@ -478,7 +478,7 @@ const __nodeUrlModuleExports = {
       return __nodeLegacyUrlFormatObject(value);
     return String(value);
   },
-  resolve: (from, to) => new globalThis.__nodeURL(to, from).href
+  resolve: (from, to) => globalThis.__nodeLegacyResolve(from, to)
 };
 let __nodeUrlModuleInstance;
 globalThis.__nodeUrlInitialized = false;
