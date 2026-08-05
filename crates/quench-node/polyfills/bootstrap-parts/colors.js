@@ -313,17 +313,17 @@ globalThis.__nodeURL = class NodeURL {
     const match = value.match(/^([a-z][a-z0-9+.-]*:)?(?:\/\/([^/?#]*))?([^?#]*)(?:\?([^#]*))?(?:#(.*))?$/i);
     // prettier-ignore
     if (input === undefined || base === null || (!base && !/^[a-z][a-z0-9+.-]*:/i.test(value)) || !match) throw Object.assign(new TypeError("Invalid URL"), { code: "ERR_INVALID_URL" });
-    __nodeURLAssignParts(this, match);
-    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(value))
-      this._hasAuthorityDelimiter = true;
+    // prettier-ignore
+    __nodeURLAssignParts(this, match), /^[a-z][a-z0-9+.-]*:\/\//i.test(value) && (this._hasAuthorityDelimiter = true);
     // prettier-ignore
     return new Proxy(this, { get: (target, property, receiver) => { const value = Reflect.get(target, property, receiver); if (property === "searchParams") value.__nodeURLOwner = receiver; return value; }, set: (target, property, value, receiver) => property === "origin" || property === "searchParams" ? globalThis.__nodeThrowReadonlyURLSetter(property) : Reflect.set(target, property, value, receiver) });
   }
+  // eslint-disable-next-line complexity
   get href() {
     if (!(this instanceof globalThis.__nodeURL))
       throw new TypeError("Receiver must be an instance of class URL");
     // prettier-ignore
-    const credentials = this.username || this.password ? `${this.username || ""}${this.password ? `:${this.password}` : ""}@` : "" , prefix = this.protocol === "file:" ? `file://${this.host}${this.pathname === "" ? "/" : ""}` : this.origin === "null" ? this.protocol + (this._hasAuthorityDelimiter ? `//${credentials}${this.host}` : "") : this.origin.replace(/^(\w+:\/\/)/, `$1${credentials}`);
+    const credentials = this.username || this.password ? `${this.username || ""}${this.password ? `:${this.password}` : ""}@` : "" , prefix = this.protocol === "file:" ? `file://${this.host === "localhost" ? "" : this.host}${this.pathname === "" ? "/" : ""}` : this.origin === "null" ? this.protocol + (this._hasAuthorityDelimiter ? `//${credentials}${this.host}` : "") : this.origin.replace(/^(\w+:\/\/)/, `$1${credentials}`);
     return `${prefix}${this.pathname}${this.search}${this.hash}`;
   }
   // prettier-ignore
