@@ -258,7 +258,9 @@
       set href(value) {
         if (typeof value === "symbol")
           throw new TypeError("Cannot convert a Symbol value to a string");
-        const parsed = new globalThis.__nodeURL(String(value));
+        const input = String(value);
+        if (input === "") throw new TypeError("Invalid URL");
+        const parsed = new globalThis.__nodeURL(input);
         for (const property of [
           "protocol",
           "username",
