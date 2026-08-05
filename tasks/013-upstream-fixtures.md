@@ -5422,3 +5422,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1693. `url-ipv4-embedded-ipv6.js` — canonicalize IPv4-embedded IPv6 hosts.
 1694. `url-ipv6-zero-compression.js` — compress zero runs in IPv6 URL hosts.
 1695. `url-single-slash-scheme.js` — resolve single-slash special schemes against bases.
+1696. `url-bare-single-slash.js` — resolve bare single-slash schemes to the base root.
