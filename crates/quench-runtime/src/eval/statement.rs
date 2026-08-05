@@ -3018,6 +3018,17 @@ fn get_module_exports(
                 },
             );
         }
+        if let Some(Value::Symbol(symbol)) =
+            crate::builtins::symbol::get_well_known_symbol_no_ctx("toStringTag")
+        {
+            let key = symbol.property_key();
+            module.set_symbol(&key, Value::String("Module".to_string()));
+            if let Some(flags) = module.descriptors.get_mut(&key) {
+                flags.writable = false;
+                flags.enumerable = false;
+                flags.configurable = false;
+            }
+        }
         module.extensible = false;
         return Ok(Rc::new(RefCell::new(module)));
     }

@@ -268,6 +268,22 @@ fn dynamic_import_of_current_module_exposes_default_function() {
 }
 
 #[test]
+fn dynamic_import_of_current_module_exposes_module_namespace_tag() {
+    let mut ctx = Context::new().unwrap();
+    crate::builtins::register_builtins(&mut ctx);
+    ctx.set_global(
+        "__quench_current_module__".to_string(),
+        Value::String("./self.js".into()),
+    );
+    ctx.eval_es_module(
+        "import * as ns from './self.js'; globalThis.result = Symbol.toStringTag in ns;",
+    )
+    .unwrap();
+    crate::builtins::promise::execute_pending_microtasks().unwrap();
+    assert_eq!(ctx.eval("result").unwrap(), Value::Boolean(true));
+}
+
+#[test]
 fn deferred_dynamic_import_is_not_source_phase_import() {
     let mut ctx = Context::new().unwrap();
     crate::builtins::register_builtins(&mut ctx);
