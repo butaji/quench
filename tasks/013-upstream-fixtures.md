@@ -4928,3 +4928,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1386: crypto key export
 
 - Expose private/public key objects with an `export()` method.
+
+### Stage 1387: crypto RSA constants
+
+- Expose RSA padding and PSS salt-length constants.
