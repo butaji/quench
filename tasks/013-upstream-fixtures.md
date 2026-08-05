@@ -4643,3 +4643,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1320: open sync flag values
 
 - Correct `as`/`sa` open-flag mappings to include the platform `O_SYNC` value.
+
+### Stage 1321: readdir dirent types
+
+- Preserve file `Dirent` names and type predicates for `readdirSync` results.

@@ -4,7 +4,7 @@ globalThis.__nodeFs.Dirent = class Dirent {
     this._type = type === true ? 2 : type === false ? 1 : type;
   }
   isFile() {
-    return this._type === 1;
+    return this._type === 0 || this._type === 1;
   }
   isDirectory() {
     return this._type === 2;
