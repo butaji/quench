@@ -1,6 +1,6 @@
 {
   "$schema": "quench stages v1",
-  "current_stage": 44,
+  "current_stage": 50,
   "coverage_ssot": "test262 digest output; this file is descriptive configuration only",
   "goal": "100% of the in-scope test262 suite with the smallest practical Rust core and self-hosted JS builtins.",
   "scope": {
@@ -548,13 +548,13 @@
       "id": 44,
       "path": "test/language/expressions",
       "tests": 11101,
-      "status": "pending",
+      "status": "done",
       "difficulty": 8,
       "impl": "rust",
       "rust_loc": "800\u20132000",
       "js_loc": "0\u20130",
-      "failed": 31,
-      "pass_rate": "99.7%"
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 45,
