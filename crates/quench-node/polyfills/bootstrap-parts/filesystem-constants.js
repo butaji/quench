@@ -18,8 +18,10 @@ const __quenchFsConstants = Object.freeze({
 globalThis.require = (specifier) => {
   if (String(specifier).replace(/^node:/, "") === "fs") {
     const module = __quenchOriginalRequireWithFsConstants(specifier);
-    module.constants = Object.assign({}, module.constants, __quenchFsConstants);
-    Object.freeze(module.constants);
+    module.constants = new Proxy(
+      Object.assign({}, module.constants, __quenchFsConstants),
+      { getPrototypeOf: () => null }
+    );
     return module;
   }
   return __quenchOriginalRequireWithFsConstants(specifier);

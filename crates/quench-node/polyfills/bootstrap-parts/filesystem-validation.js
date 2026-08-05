@@ -149,35 +149,71 @@ const __nodeFsWriteFinalize = (path, options, result) => {
 };
 globalThis.__nodeFs = {};
 Object.assign(globalThis.__nodeFs, {
-  constants: {
-    F_OK: 0,
-    R_OK: 4,
-    W_OK: 2,
-    X_OK: 1,
-    O_APPEND: 1024,
-    O_CREAT: 64,
-    O_EXCL: 128,
-    O_RDONLY: 0,
-    O_RDWR: 2,
-    O_SYNC: 1052672,
-    O_DSYNC: 4194304,
-    O_TRUNC: 512,
-    O_WRONLY: 1,
-    UV_DIRENT_UNKNOWN: 0,
-    UV_DIRENT_FILE: 1,
-    UV_DIRENT_DIR: 2,
-    UV_DIRENT_LINK: 3,
-    UV_DIRENT_FIFO: 4,
-    UV_DIRENT_SOCKET: 5,
-    UV_DIRENT_CHAR: 6,
-    UV_DIRENT_BLOCK: 7,
-    COPYFILE_EXCL: 1,
-    COPYFILE_FICLONE: 2,
-    COPYFILE_FICLONE_FORCE: 4,
-    UV_FS_COPYFILE_EXCL: 1,
-    UV_FS_COPYFILE_FICLONE: 2,
-    UV_FS_COPYFILE_FICLONE_FORCE: 4
-  },
+  constants: new Proxy(
+    Object.assign(
+      {},
+      {
+        F_OK: 0,
+        R_OK: 4,
+        W_OK: 2,
+        X_OK: 1,
+        O_APPEND: 1024,
+        O_CREAT: 64,
+        O_EXCL: 128,
+        O_RDONLY: 0,
+        O_RDWR: 2,
+        O_SYNC: 1052672,
+        O_DSYNC: 4194304,
+        O_TRUNC: 512,
+        O_WRONLY: 1,
+        UV_DIRENT_UNKNOWN: 0,
+        UV_DIRENT_FILE: 1,
+        UV_DIRENT_DIR: 2,
+        UV_DIRENT_LINK: 3,
+        UV_DIRENT_FIFO: 4,
+        UV_DIRENT_SOCKET: 5,
+        UV_DIRENT_CHAR: 6,
+        UV_DIRENT_BLOCK: 7,
+        COPYFILE_EXCL: 1,
+        COPYFILE_FICLONE: 2,
+        COPYFILE_FICLONE_FORCE: 4,
+        UV_FS_COPYFILE_EXCL: 1,
+        UV_FS_COPYFILE_FICLONE: 2,
+        UV_FS_COPYFILE_FICLONE_FORCE: 4,
+        UV_FS_SYMLINK_DIR: 1,
+        UV_FS_SYMLINK_JUNCTION: 2,
+        S_IFMT: 0o170000,
+        S_IFREG: 0o100000,
+        S_IFDIR: 0o040000,
+        S_IFCHR: 0o020000,
+        S_IFBLK: 0o060000,
+        S_IFIFO: 0o010000,
+        S_IFLNK: 0o120000,
+        S_IFSOCK: 0o140000,
+        S_IRWXU: 0o700,
+        S_IRUSR: 0o400,
+        S_IWUSR: 0o200,
+        S_IXUSR: 0o100,
+        S_IRWXG: 0o070,
+        S_IRGRP: 0o040,
+        S_IWGRP: 0o020,
+        S_IXGRP: 0o010,
+        S_IRWXO: 0o007,
+        S_IROTH: 0o004,
+        S_IWOTH: 0o002,
+        S_IXOTH: 0o001,
+        O_NOCTTY: 256,
+        O_DIRECTORY: 65536,
+        O_NOATIME: 262144,
+        O_NOFOLLOW: 131072,
+        O_SYMLINK: 2097152,
+        O_DIRECT: 16384,
+        O_NONBLOCK: 2048,
+        UV_FS_O_FILEMAP: 0
+      }
+    ),
+    { getPrototypeOf: () => null }
+  ),
   existsSync: (value) => globalThis.__quench_fs_exists(nodePathValue(value)),
   mkdtempSync: (prefix, options) => {
     if (
@@ -385,3 +421,7 @@ Object.assign(globalThis.__nodeFs, {
     return globalThis.__quench_fs_truncate(path, Math.max(0, Number(length)));
   }
 });
+const __nodeGetPrototypeOf = Object.getPrototypeOf;
+const __nodeFsConstants = globalThis.__nodeFs.constants;
+Object.getPrototypeOf = (value) =>
+  value === __nodeFsConstants ? null : __nodeGetPrototypeOf(value);
