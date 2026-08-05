@@ -5334,3 +5334,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1602. `url-resolve-object-escaped-delimiters.js` — preserve parsed escaped delimiters.
 1603. `url-resolve-object-ftp-relatives.js` — cover parsed FTP relative targets.
 1604. `url-parse-query-objects.js` — preserve legacy parsed query objects and duplicates.
+1605. `url-file-path-conversions.js` — verify POSIX file URL path conversions.
