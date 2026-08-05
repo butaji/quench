@@ -5187,3 +5187,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1454. `crypto-keyobject-encrypt-decrypt.js` — preserve secret-key state through cipher streams.
 1455. `crypto-keyobject-no-own-state.js` — keep secret KeyObject state out of own properties.
 1456. `crypto-keyobject-asymmetric-basics.js` — expose branded asymmetric KeyObjects without own state.
+1457. `crypto-keyobject-util-brand.js` — expose `util.types.isKeyObject` for branded keys.
