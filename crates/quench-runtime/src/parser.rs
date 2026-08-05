@@ -27,6 +27,17 @@ pub fn parse_script(source: &str) -> Result<Program, JsError> {
     if !ret.diagnostics.is_empty() {
         return Err(JsError(format!("Parse error: {:?}", ret.diagnostics)));
     }
+    if ret.program.body.iter().any(|statement| {
+        matches!(
+            statement,
+            oxc::ast::ast::Statement::ImportDeclaration(_)
+                | oxc::ast::ast::Statement::ExportAllDeclaration(_)
+                | oxc::ast::ast::Statement::ExportDefaultDeclaration(_)
+                | oxc::ast::ast::Statement::ExportNamedDeclaration(_)
+        )
+    }) {
+        return Err(JsError("SyntaxError: module declaration in script".to_string()));
+    }
     check_strict_reserved(&ret.program)?;
     check_strict_fn_params(&ret.program)?;
     check_strict_fn_body(&ret.program)?;
@@ -434,6 +445,12 @@ pub fn parse_ts(source: &str) -> Result<Program, JsError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn script_parser_rejects_module_declarations() {
+        assert!(parse_script("$DONOTEVALUATE(); export default null;").is_err());
+        assert!(parse_script("$DONOTEVALUATE(); import x from './x.js';").is_err());
+    }
 
     #[test]
     fn test_parse_simple() {
