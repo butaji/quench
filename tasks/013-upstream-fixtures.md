@@ -4479,3 +4479,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1282: access mode validation
 
 - Validate `fs.access` modes as finite integer bitmasks from `0` through `7`.
+
+### Stage 1283: preserve invalid path diagnostics
+
+- Preserve numeric path values while rejecting fd-only inputs, so validation
+  diagnostics report the actual received type and value.

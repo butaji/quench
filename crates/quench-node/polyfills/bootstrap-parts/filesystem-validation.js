@@ -62,10 +62,10 @@ const __nodeFsCheckMkdirParents = (path, recursive = false) => {
   }
   return firstCreated;
 };
-const __nodeFsReadPath = (value) => {
+const __nodeFsReadPath = (value, allowFd = true) => {
   if (
     typeof value !== "string" &&
-    typeof value !== "number" &&
+    (typeof value !== "number" || !allowFd) &&
     !(value instanceof NodeBuffer) &&
     !(value instanceof Uint8Array) &&
     !(value instanceof globalThis.__nodeURL)
@@ -85,8 +85,7 @@ const __nodeFsReadPath = (value) => {
   error.code = "EBADF";
   throw error;
 };
-const __nodeFsPathOnly = (value) =>
-  __nodeFsReadPath(typeof value === "number" ? false : value);
+const __nodeFsPathOnly = (value) => __nodeFsReadPath(value, false);
 const __nodeFsCopyPath = (value, name) => {
   try {
     return __nodeFsPathOnly(value);
