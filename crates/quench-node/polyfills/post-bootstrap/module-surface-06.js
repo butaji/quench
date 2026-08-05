@@ -180,10 +180,23 @@
     ]) {
       const accessor =
         prototype && Object.getOwnPropertyDescriptor(prototype, property);
-      if (accessor)
+      const readonly = property === "origin" || property === "searchParams";
+      const fallback = Object.getOwnPropertyDescriptor(
+        {
+          get [property]() {
+            return this[`_${property}`];
+          },
+          set [property](value) {
+            this[`_${property}`] = value;
+          }
+        },
+        property
+      );
+      if (prototype)
         Object.defineProperty(prototype, property, {
-          ...accessor,
-          enumerable: true
+          ...(accessor || fallback),
+          enumerable: true,
+          set: accessor?.set || (readonly ? undefined : fallback.set)
         });
     }
   };
@@ -268,6 +281,7 @@
     return URLPattern;
   };
 
+  installURLToStringDescriptor(globalThis.__nodeURL);
   if (globalThis.require) {
     const originalRequire = globalThis.require;
     globalThis.require = (name) => {
@@ -281,10 +295,12 @@
             String(value).endsWith(String(pattern).slice(1)));
       }
       if (normalized === "url") {
+        result = Object.assign({}, result);
         if (!result.URLPattern) {
-          result = Object.assign({}, result);
           result.URLPattern = createURLPattern();
         }
+        result.URL = globalThis.__nodeURL;
+        result.URLSearchParams = globalThis.__nodeURLSearchParams;
         installURLCanParse(result.URL);
         installURLToStringDescriptor(result.URL);
       }

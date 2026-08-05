@@ -255,3 +255,85 @@ globalThis.__nodeURLSearchParams.prototype.sort ||= function sort() {
     return globalThis.__nodeInvalidThis();
   this._pairs.sort(([left], [right]) => left.localeCompare(right));
 };
+for (const name of [
+  "append",
+  "delete",
+  "get",
+  "getAll",
+  "has",
+  "set",
+  "sort",
+  "toString"
+]) {
+  const descriptor = Object.getOwnPropertyDescriptor(
+    globalThis.__nodeURLSearchParams.prototype,
+    name
+  );
+  Object.defineProperty(globalThis.__nodeURLSearchParams.prototype, name, {
+    ...descriptor,
+    enumerable: true
+  });
+}
+const __nodeURLSearchEntries = Object.getOwnPropertyDescriptor(
+  {
+    entries() {
+      return this._pairs[Symbol.iterator]();
+    }
+  },
+  "entries"
+).value;
+const __nodeURLSearchKeys = Object.getOwnPropertyDescriptor(
+  {
+    keys() {
+      return this._pairs.map(([key]) => key)[Symbol.iterator]();
+    }
+  },
+  "keys"
+).value;
+const __nodeURLSearchValues = Object.getOwnPropertyDescriptor(
+  {
+    values() {
+      return this._pairs.map(([, value]) => value)[Symbol.iterator]();
+    }
+  },
+  "values"
+).value;
+globalThis.__nodeURLSearchParams.prototype.entries = __nodeURLSearchEntries;
+globalThis.__nodeURLSearchParams.prototype.keys = __nodeURLSearchKeys;
+globalThis.__nodeURLSearchParams.prototype.values = __nodeURLSearchValues;
+globalThis.__nodeURLSearchParams.prototype[Symbol.iterator] =
+  __nodeURLSearchEntries;
+globalThis.__nodeURLSearchParams.prototype.forEach =
+  Object.getOwnPropertyDescriptor(
+    {
+      forEach(callback, thisArg) {
+        this._pairs.forEach(([value, key]) =>
+          callback.call(thisArg, value, key, this)
+        );
+      }
+    },
+    "forEach"
+  ).value;
+globalThis.__nodeURLSearchParams.prototype[
+  Symbol.for("nodejs.util.inspect.custom")
+] = Object.getOwnPropertyDescriptor(
+  {
+    inspect() {
+      return this.toString();
+    }
+  },
+  "inspect"
+).value;
+for (const symbol of [
+  Symbol.iterator,
+  Symbol.for("nodejs.util.inspect.custom")
+]) {
+  const descriptor = Object.getOwnPropertyDescriptor(
+    globalThis.__nodeURLSearchParams.prototype,
+    symbol
+  );
+  Object.defineProperty(globalThis.__nodeURLSearchParams.prototype, symbol, {
+    ...descriptor,
+    enumerable: false
+  });
+}
