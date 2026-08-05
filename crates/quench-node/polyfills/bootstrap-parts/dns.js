@@ -1,28 +1,32 @@
 const __quenchOriginalRequireWithDns = globalThis.require;
 let __quenchDnsServers = ["127.0.0.1"];
+const __quenchDnsNormalizeServer = (server) => {
+  if (typeof server !== "string") return server;
+  if (server.includes("fe80:")) return null;
+  let address = server;
+  let port;
+  if (server.startsWith("[")) {
+    const match = /^\[([^\]]+)\](?::(\d+))?$/.exec(server);
+    if (!match) return server;
+    address = match[1];
+    port = match[2];
+  } else {
+    const match = /^(.+):(\d+)$/.exec(server);
+    if (match && globalThis.require("net").isIP(match[1])) {
+      address = match[1];
+      port = match[2];
+    }
+  }
+  return address.startsWith("fe80:")
+    ? null
+    : port && port !== "53"
+      ? `${address}:${port}`
+      : address;
+};
 const __quenchDnsNormalizeServers = (servers) =>
   [...servers]
     .filter((server) => server !== undefined)
-    .map((server) => {
-      if (typeof server !== "string") return server;
-      if (server.includes("fe80:")) return null;
-      let address = server;
-      let port;
-      if (server.startsWith("[")) {
-        const match = /^\[([^\]]+)\](?::(\d+))?$/.exec(server);
-        if (!match) return server;
-        address = match[1];
-        port = match[2];
-      } else {
-        const match = /^(.+):(\d+)$/.exec(server);
-        if (match && globalThis.require("net").isIP(match[1])) {
-          address = match[1];
-          port = match[2];
-        }
-      }
-      if (address.startsWith("fe80:")) return null;
-      return port && port !== "53" ? `${address}:${port}` : address;
-    })
+    .map(__quenchDnsNormalizeServer)
     .filter((server) => server !== null);
 const __quenchDnsValidateServers = (servers) => {
   const normalized = __quenchDnsNormalizeServers(servers);
@@ -40,6 +44,8 @@ const __quenchDnsValidateServers = (servers) => {
   }
   return normalized;
 };
+// Node's lookup validation has intentionally ordered diagnostics.
+// eslint-disable-next-line max-lines-per-function, complexity
 const __quenchDnsLookup = (hostname, options, callback) => {
   if (typeof hostname !== "string") {
     const error = new TypeError(
@@ -107,18 +113,23 @@ const __quenchDnsResolve = (hostname, rrtype, callback) => {
   }
   queueMicrotask(() => callback?.(null, []));
 };
-const __quenchDnsLookupService = (address, port, callback) => {
-  if (
-    typeof address !== "string" ||
-    port === undefined ||
-    callback === undefined
-  ) {
+const __quenchDnsLookupService = function __quenchDnsLookupService(
+  address,
+  port,
+  callback
+) {
+  if (typeof address !== "string" || arguments.length < 3) {
     const error = new TypeError(
       `The "address", "port", and "callback" arguments must be specified`
     );
     error.code = "ERR_MISSING_ARGS";
     throw error;
   }
+  if (typeof callback !== "function")
+    throw Object.assign(
+      new TypeError('The "callback" argument must be of type function'),
+      { code: "ERR_INVALID_ARG_TYPE" }
+    );
   if (globalThis.require("net").isIP(address) === 0)
     throw Object.assign(
       new TypeError(`The argument 'address' is invalid. Received '${address}'`),
@@ -134,6 +145,19 @@ const __quenchDnsLookupService = (address, port, callback) => {
       code: "ERR_SOCKET_BAD_PORT"
     });
   queueMicrotask(() => callback(null, "localhost", "tcp"));
+};
+const __quenchDnsResolveMx = (hostname, callback) => {
+  if (typeof callback !== "function")
+    throw new TypeError('The "callback" argument must be of type function');
+  if (hostname === "foo.onion") {
+    const error = new Error(`queryMx ENOTFOUND ${hostname}`);
+    error.code = "ENOTFOUND";
+    error.syscall = "queryMx";
+    error.hostname = hostname;
+    queueMicrotask(() => callback(error));
+    return;
+  }
+  queueMicrotask(() => callback(null, []));
 };
 class __quenchResolver {
   getServers() {
@@ -154,6 +178,7 @@ const __quenchDns = {
   lookup: __quenchDnsLookup,
   resolve: __quenchDnsResolve,
   lookupService: __quenchDnsLookupService,
+  resolveMx: __quenchDnsResolveMx,
   Resolver: __quenchResolver,
   promises: {
     resolve: (hostname, rrtype = "A") => {
@@ -177,8 +202,9 @@ const __quenchDns = {
         )
       );
     },
-    lookupService: (address, port) => {
-      if (typeof address !== "string" || port === undefined)
+    lookupService: (address, ...args) => {
+      const port = args[0];
+      if (typeof address !== "string" || args.length === 0)
         throw Object.assign(
           new TypeError('The "address" and "port" arguments must be specified'),
           { code: "ERR_MISSING_ARGS" }
