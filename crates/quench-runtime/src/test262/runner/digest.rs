@@ -199,7 +199,7 @@ fn run_parallel(
 }
 
 pub(crate) fn worker_count(available: usize) -> usize {
-    available.clamp(1, 4)
+    available.clamp(1, 8)
 }
 
 fn trim_quick(indexed: &mut Vec<(usize, String, TestOutcome)>, limit: usize) {

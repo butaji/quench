@@ -227,7 +227,7 @@ fn isolated_runner_matches_in_process_strictness() {
 
 #[test]
 fn digest_workers_are_capped_for_process_isolation() {
-    assert_eq!(crate::test262::runner::digest::worker_count(64), 4);
+    assert_eq!(crate::test262::runner::digest::worker_count(64), 8);
 }
 
 #[test]
