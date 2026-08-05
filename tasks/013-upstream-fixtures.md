@@ -5317,3 +5317,5 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1585. `url-resolve-object-path-parameters.js` — preserve parsed path-parameter bases.
 1586. `url-resolve-object-triple-slash-traversal.js` — preserve parsed triple-slash traversal.
 1587. `url-resolve-object-same-scheme-forms.js` — cover parsed same-scheme URL forms.
+1588. `url-resolve-object-triple-slash-authorities.js` — preserve parsed triple-slash authorities.
+1589. `url-resolve-object-path-parameter-directories.js` — cover parsed parameter-directory traversal.
