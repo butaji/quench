@@ -5394,3 +5394,5 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1664. `urlsearchparams-iterator-inspect.js` — inspect URLSearchParams iterators by remaining values.
 1665. `url-invalid-receiver.js` — reject invalid URL method and accessor receivers.
 1666. `url-search-unicode-setter.js` — preserve Unicode URL search setter serialization.
+1667. `local-json-require.js` — load local JSON fixtures through the module harness.
+1668. `url-invalid-inputs.js` — reject invalid URL input and base combinations.
