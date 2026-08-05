@@ -504,6 +504,8 @@ pub(crate) fn initialize_test_context(strict: bool) -> Result<crate::Context, St
     crate::builtins::register_builtins(&mut ctx);
     crate::builtins::bootstrap::bootstrap_js_builtins(&mut ctx)
         .map_err(|error| format!("builtin bootstrap failure: {error}"))?;
+    ctx.eval("delete AsyncFunction")
+        .map_err(|error| format!("AsyncFunction cleanup failure: {error:?}"))?;
     crate::interpreter::set_strict_mode(false);
     crate::test262::harness::try_inject_harness(&mut ctx)
         .map_err(|error| format!("harness load failure: {error}"))?;

@@ -1512,6 +1512,7 @@ mod tests {
         assert_eq!(r, Value::Boolean(true));
     }
 
+
     #[test]
     fn string_char_at_works() {
         let mut ctx = new_ctx();

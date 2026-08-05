@@ -43,6 +43,12 @@ fn initialized_context_exposes_the_main_realm_test262_error() {
 }
 
 #[test]
+fn initialized_test_context_hides_async_function_constructor() {
+    let ctx = initialize_test_context(false).unwrap();
+    assert_eq!(ctx.get_global("AsyncFunction"), None);
+}
+
+#[test]
 fn outcome_classification_preserves_positive_and_runtime_failures() {
     use crate::test262::metadata::{Negative, Test262Metadata};
 

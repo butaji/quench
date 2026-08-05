@@ -74,6 +74,24 @@ fn module_exported_function_is_initialized_before_module_body() {
 }
 
 #[test]
+fn async_function_instances_have_no_prototype_property() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx
+        .eval("async function foo() {}; foo.prototype === undefined && !foo.hasOwnProperty('prototype')")
+        .unwrap();
+    assert_eq!(result, crate::Value::Boolean(true));
+}
+
+#[test]
+fn async_function_constructor_inherits_from_function() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx
+        .eval("async function foo() {}; var AsyncFunction = foo.constructor; Object.getPrototypeOf(AsyncFunction) === Function")
+        .unwrap();
+    assert_eq!(result, crate::Value::Boolean(true));
+}
+
+#[test]
 fn top_level_await_using_initializes_module_binding() {
     let mut ctx = Context::new().unwrap();
     let result = ctx
