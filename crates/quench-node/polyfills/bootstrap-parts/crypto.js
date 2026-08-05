@@ -108,23 +108,6 @@ const __nodeCryptoHashCopy = (algorithm, chunks) => {
   for (const chunk of chunks) clone.update(chunk);
   return clone;
 };
-const __nodeCryptoHmacDigest = (inner, outer, chunks, encoding) => {
-  const message = [];
-  for (const chunk of chunks) message.push(...chunk);
-  const innerDigest = globalThis.__quench_digest_bytes("sha256", [
-    ...inner,
-    ...message
-  ]);
-  const result = NodeBuffer.from(
-    globalThis.__quench_digest_bytes("sha256", [...outer, ...innerDigest])
-  );
-  if (encoding === undefined || encoding === null) return result;
-  if (encoding === "hex" || encoding === "base64")
-    return result.toString(encoding);
-  const error = new TypeError(`Unknown encoding: ${encoding}`);
-  error.code = "ERR_UNKNOWN_ENCODING";
-  throw error;
-};
 const __nodeCryptoHmacPads = (key) => {
   let keyBytes =
     typeof key === "string"
@@ -357,8 +340,14 @@ const __nodeCryptoApi = {
       throw new Error("Digest method not supported");
     }
     const chunks = [];
+    const listeners = { data: [], end: [] };
     let finalized = false;
     const hash = {
+      _writableState: { defaultEncoding: options?.defaultEncoding || "utf8" },
+      on: (event, listener) => {
+        if (listeners[event]) listeners[event].push(listener);
+        return hash;
+      },
       update: (value, encoding) => {
         __nodeCryptoAssertDigestOpen(finalized);
         if (value === undefined) {
@@ -379,8 +368,13 @@ const __nodeCryptoApi = {
         return hash;
       },
       write: (value, encoding) => (hash.update(value, encoding), true),
-      end: (value, encoding) =>
-        value === undefined ? hash : hash.update(value, encoding),
+      end: (value, encoding) => {
+        if (value !== undefined) hash.update(value, encoding);
+        const output = hash.digest();
+        for (const listener of listeners.data) listener(output);
+        for (const listener of listeners.end) listener();
+        return hash;
+      },
       read: () => hash.digest(),
       digest: (encoding) => {
         __nodeCryptoAssertDigestOpen(finalized);

@@ -4780,3 +4780,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1349: TLS CRL validation
 
 - Reject malformed CRL input with Node’s expected TLS error.
+
+### Stage 1350: crypto hash stream
+
+- Support hash stream listeners, writes, completion, and default encoding state.

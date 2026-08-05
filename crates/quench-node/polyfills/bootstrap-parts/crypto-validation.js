@@ -33,3 +33,20 @@ const __nodeCryptoValidateStringEncoding = (value, encoding) => {
     throw error;
   }
 };
+const __nodeCryptoHmacDigest = (inner, outer, chunks, encoding) => {
+  const message = [];
+  for (const chunk of chunks) message.push(...chunk);
+  const innerDigest = globalThis.__quench_digest_bytes("sha256", [
+    ...inner,
+    ...message
+  ]);
+  const result = NodeBuffer.from(
+    globalThis.__quench_digest_bytes("sha256", [...outer, ...innerDigest])
+  );
+  if (encoding === undefined || encoding === null) return result;
+  if (encoding === "hex" || encoding === "base64")
+    return result.toString(encoding);
+  const error = new TypeError(`Unknown encoding: ${encoding}`);
+  error.code = "ERR_UNKNOWN_ENCODING";
+  throw error;
+};
