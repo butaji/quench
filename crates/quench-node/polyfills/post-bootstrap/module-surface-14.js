@@ -303,3 +303,78 @@ const __quenchCryptoKeyExchangeFallback = (result) => {
     return result.ECDH();
   };
 };
+const __quenchCryptoKeyObjectBrand = new WeakSet();
+const __quenchCryptoKeyObjectInvalidThis = () => {
+  throw Object.assign(new TypeError("Invalid this value"), {
+    code: "ERR_INVALID_THIS"
+  });
+};
+class __quenchKeyObject {
+  get type() {
+    if (!__quenchCryptoKeyObjectBrand.has(this))
+      __quenchCryptoKeyObjectInvalidThis();
+    return this.__quenchType;
+  }
+  export() {
+    if (!__quenchCryptoKeyObjectBrand.has(this))
+      __quenchCryptoKeyObjectInvalidThis();
+    return this.__quenchExport();
+  }
+}
+Object.defineProperties(__quenchKeyObject.prototype, {
+  symmetricKeySize: {
+    get() {
+      if (
+        !__quenchCryptoKeyObjectBrand.has(this) ||
+        this.__quenchType !== "secret"
+      )
+        __quenchCryptoKeyObjectInvalidThis();
+      return this.__quenchSize;
+    }
+  },
+  asymmetricKeyType: {
+    get() {
+      if (
+        !__quenchCryptoKeyObjectBrand.has(this) ||
+        this.__quenchType === "secret"
+      )
+        __quenchCryptoKeyObjectInvalidThis();
+      return this.__quenchAsymmetricType;
+    }
+  },
+  asymmetricKeyDetails: {
+    get() {
+      if (
+        !__quenchCryptoKeyObjectBrand.has(this) ||
+        this.__quenchType === "secret"
+      )
+        __quenchCryptoKeyObjectInvalidThis();
+      return this.__quenchDetails;
+    }
+  }
+});
+const __quenchCreateKeyObject = (type, source, exportValue) => {
+  const key = Object.create(__quenchKeyObject.prototype);
+  key.__quenchType = type;
+  key.__quenchExport = () => exportValue;
+  key.__quenchSize = type === "secret" ? 16 : undefined;
+  key.__quenchAsymmetricType =
+    type === "private" || type === "public" ? "rsa" : undefined;
+  key.__quenchDetails =
+    type === "private" || type === "public" ? {} : undefined;
+  key.source = source;
+  __quenchCryptoKeyObjectBrand.add(key);
+  return key;
+};
+const __quenchCryptoKeyObjectFallback = (result) => {
+  result.KeyObject ||= __quenchKeyObject;
+  result.createSecretKey = (key) => __quenchCreateKeyObject("secret", key, key);
+  const createPrivate = result.createPrivateKey;
+  const createPublic = result.createPublicKey;
+  if (createPrivate)
+    result.createPrivateKey = (key) =>
+      __quenchCreateKeyObject("private", key, createPrivate(key));
+  if (createPublic)
+    result.createPublicKey = (key) =>
+      __quenchCreateKeyObject("public", key, createPublic(key));
+};
