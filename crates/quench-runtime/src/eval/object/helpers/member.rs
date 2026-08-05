@@ -181,22 +181,21 @@ pub fn has_readonly_prototype_property(object: &Rc<RefCell<Object>>, property: &
 
 /// Check if a constructor has a read-only built-in property.
 pub fn is_readonly_constructor_property(constructor: &str, property: &str) -> bool {
-    if matches!(property, "length" | "name") {
+    if matches!(property, "length" | "name" | "prototype") {
         return true;
     }
-    (constructor == "BigInt" && property == "prototype")
-        || (constructor == "Number"
-            && matches!(
-                property,
-                "MAX_VALUE"
-                    | "MIN_VALUE"
-                    | "NaN"
-                    | "NEGATIVE_INFINITY"
-                    | "POSITIVE_INFINITY"
-                    | "MAX_SAFE_INTEGER"
-                    | "MIN_SAFE_INTEGER"
-                    | "EPSILON"
-            ))
+    constructor == "Number"
+        && matches!(
+            property,
+            "MAX_VALUE"
+                | "MIN_VALUE"
+                | "NaN"
+                | "NEGATIVE_INFINITY"
+                | "POSITIVE_INFINITY"
+                | "MAX_SAFE_INTEGER"
+                | "MIN_SAFE_INTEGER"
+                | "EPSILON"
+        )
 }
 
 #[cfg(test)]

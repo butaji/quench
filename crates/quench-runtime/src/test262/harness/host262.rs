@@ -340,8 +340,64 @@ pub fn inject_stub_agent(ctx: &mut Context) {
     );
 }
 
-/// Inject full $262 host API (createRealm, evalScript, gc, detachArrayBuffer).
-/// Call this AFTER harness files are loaded.
+/// $262.AbstractModuleSource constructor — throws TypeError when invoked.
+fn host_262_abstract_module_source(_args: Vec<Value>) -> Result<Value, JsError> {
+    let msg = "TypeError: AbstractModuleSource cannot be called directly".to_string();
+    let (err_val, js_err) = crate::value::error::create_js_error_with_type(&msg, "TypeError");
+    crate::value::set_thrown_value(err_val);
+    Err(js_err)
+}
+
+/// Inject $262.AbstractModuleSource per ECMA-262 §28.1.1.1.
+fn inject_abstract_module_source(ctx: &mut Context) {
+    use crate::value::NativeConstructor;
+    let proto = Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)));
+    if let Some(object_proto) = crate::builtins::get_object_prototype() {
+        proto.borrow_mut().prototype = Some(object_proto);
+    }
+    if let Some(Value::Symbol(tag_key)) =
+        crate::builtins::symbol::get_well_known_symbol_no_ctx("toStringTag")
+    {
+        let getter = make_native(|_args| Ok(Value::Undefined));
+        proto.borrow_mut().define_accessor(
+            &tag_key.property_key(),
+            Some(getter),
+            None,
+            crate::value::PropertyFlags {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                ..Default::default()
+            },
+        );
+        if let Some(flags) = proto.borrow_mut().descriptors.get_mut(&tag_key.property_key()) {
+            flags.enumerable = false;
+            flags.configurable = true;
+        }
+    }
+
+    let constructor =
+        NativeConstructor::new(host_262_abstract_module_source, Rc::clone(&proto));
+    constructor.set_name("AbstractModuleSource");
+    let ctor_val = Value::NativeConstructor(Rc::new(constructor));
+    proto.borrow_mut().set("constructor", ctor_val.clone());
+    if let Some(flags) = proto.borrow_mut().descriptors.get_mut("constructor") {
+        flags.writable = true;
+        flags.enumerable = false;
+        flags.configurable = true;
+    }
+    if let Some(Value::Object(obj)) = ctx.get_global("$262") {
+        obj.borrow_mut().set("AbstractModuleSource", ctor_val);
+        if let Some(flags) = obj.borrow_mut().descriptors.get_mut("AbstractModuleSource") {
+            flags.writable = false;
+            flags.enumerable = false;
+            flags.configurable = true;
+        }
+    }
+}
+
+/// Inject full $262 host API (createRealm, evalScript, gc, detachArrayBuffer,
+/// AbstractModuleSource). Call this AFTER harness files are loaded.
 pub fn inject(ctx: &mut Context) {
     // Inject stub first if $262 doesn't exist yet
     if ctx.get_global("$262").is_none() {
@@ -355,6 +411,7 @@ pub fn inject(ctx: &mut Context) {
         o.set("gc", make_native(host_262_gc));
         o.set("detachArrayBuffer", make_native(host_262_detach_buffer));
     }
+    inject_abstract_module_source(ctx);
 }
 
 #[cfg(test)]
@@ -705,6 +762,63 @@ mod tests {
             "cross-realm TypeError should not match local: {:?}",
             result
         );
+        assert_eq!(result.unwrap(), crate::Value::Boolean(true));
+    }
+
+    #[test]
+    fn test_abstract_module_source_is_function() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval("typeof $262.AbstractModuleSource");
+        assert_eq!(result.unwrap(), crate::Value::String("function".into()));
+    }
+
+    #[test]
+    fn test_abstract_module_source_length_is_zero() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval("$262.AbstractModuleSource.length");
+        assert_eq!(result.unwrap(), crate::Value::Number(0.0));
+    }
+
+    #[test]
+    fn test_abstract_module_source_name_is_constructor_name() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval("$262.AbstractModuleSource.name");
+        assert_eq!(result.unwrap(), crate::Value::String("AbstractModuleSource".into()));
+    }
+
+    #[test]
+    fn test_abstract_module_source_throws_typeerror() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval("try { new $262.AbstractModuleSource(); 'no' } catch(e) { e instanceof TypeError ? 'yes' : 'no' }");
+        assert_eq!(result.unwrap(), crate::Value::String("yes".into()));
+    }
+
+    #[test]
+    fn test_abstract_module_source_proto_is_function_prototype() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval("Object.getPrototypeOf($262.AbstractModuleSource) === Function.prototype");
+        assert_eq!(result.unwrap(), crate::Value::Boolean(true));
+    }
+
+    #[test]
+    fn test_abstract_module_source_prototype_inherits_object_prototype() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval("Object.getPrototypeOf($262.AbstractModuleSource.prototype) === Object.prototype");
+        assert_eq!(result.unwrap(), crate::Value::Boolean(true));
+    }
+
+    #[test]
+    fn test_abstract_module_source_prototype_descriptor_is_locked() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval("[Object.getOwnPropertyDescriptor($262.AbstractModuleSource, 'prototype').writable, Object.getOwnPropertyDescriptor($262.AbstractModuleSource, 'prototype').configurable].join('|')");
+        assert_eq!(result.unwrap(), crate::Value::String("false|false".into()));
+    }
+
+    #[test]
+    fn test_abstract_module_source_verify_property_passes() {
+        let mut ctx = harness_ctx();
+        ctx.eval("function verifyProperty(obj, name, desc) { var originalDesc = Object.getOwnPropertyDescriptor(obj, name); return originalDesc.writable === desc.writable && originalDesc.configurable === desc.configurable; }").unwrap();
+        let result = ctx.eval("verifyProperty($262.AbstractModuleSource, 'prototype', { value: $262.AbstractModuleSource.prototype, writable: false, enumerable: false, configurable: false })");
         assert_eq!(result.unwrap(), crate::Value::Boolean(true));
     }
 }
