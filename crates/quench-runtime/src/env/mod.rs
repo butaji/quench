@@ -470,6 +470,13 @@ impl Environment {
         }
     }
 
+    pub fn define_shared(&mut self, name: String, value: Value) -> Rc<RefCell<Value>> {
+        if let Some(mut scope) = self.current_scope_ref_mut() {
+            return scope.define_shared(name, value);
+        }
+        Rc::new(RefCell::new(value))
+    }
+
     pub fn declare(&mut self, name: String, value: Value) {
         self.define(name, value);
     }

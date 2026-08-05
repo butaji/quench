@@ -664,6 +664,13 @@ impl Scope {
         self.bindings.insert(name, Rc::new(RefCell::new(value)));
     }
 
+    pub fn define_shared(&mut self, name: String, value: Value) -> Rc<RefCell<Value>> {
+        self.declarations.remove(&name);
+        let cell = Rc::new(RefCell::new(value));
+        self.bindings.insert(name, Rc::clone(&cell));
+        cell
+    }
+
     pub fn has(&self, name: &str) -> bool {
         self.bindings.contains_key(name) || self.declarations.contains_key(name)
     }
@@ -999,5 +1006,13 @@ mod tests {
         scope.set_object_binding(obj.clone());
         assert!(scope.is_object_binding());
         assert!(scope.object_binding_has("missing").is_none());
+    }
+
+    #[test]
+    fn define_shared_returns_the_binding_cell() {
+        let mut scope = Scope::new();
+        let cell = scope.define_shared("shared_cell".to_string(), Value::Number(1.0));
+        *cell.borrow_mut() = Value::Number(2.0);
+        assert_eq!(scope.get("shared_cell"), Some(Value::Number(2.0)));
     }
 }
