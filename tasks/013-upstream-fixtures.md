@@ -4193,3 +4193,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Added regression coverage for filtering buffered `Readable.from()` values;
   asynchronous concurrency cases remain separate runtime work.
+
+### Stage 1219: stream flatMap
+
+- Added synchronous/asynchronous-compatible `Readable.flatMap()` flattening for
+  arrays and readable results.
