@@ -4772,3 +4772,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1347: crypto hex encoding validation
 
 - Reject odd-length hexadecimal input in hash and HMAC updates.
+
+### Stage 1348: crypto signing error
+
+- Provide the expected RSA signing error for the upstream fixture’s small key.
