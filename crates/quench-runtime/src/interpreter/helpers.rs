@@ -94,6 +94,7 @@ pub fn hoist_functions(statements: &[Statement], env: &Rc<RefCell<Environment>>)
     let strict = crate::interpreter::is_strict_mode();
     for stmt in statements {
         match stmt {
+            Statement::Export(inner) => hoist_functions(std::slice::from_ref(inner), env),
             Statement::FunctionDeclaration {
                 name,
                 params,

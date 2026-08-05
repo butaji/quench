@@ -534,6 +534,7 @@ fn run_sync_script_with_path(source: &str, is_module: bool, path: &Path) -> Resu
             "__quench_current_module__".to_string(),
             crate::Value::String(format!("./{name}")),
         );
+        propagate_current_module_resolution_error(&mut ctx, source);
     }
     if strict && crate::interpreter::has_legacy_octal(source) {
         return Err("SyntaxError: legacy octal literal in strict mode".to_string());
@@ -541,12 +542,42 @@ fn run_sync_script_with_path(source: &str, is_module: bool, path: &Path) -> Resu
     if strict && crate::interpreter::has_overlapping_regexp_modifiers(source) {
         return Err("SyntaxError: overlapping regexp modifiers".to_string());
     }
+    if is_module {
+        register_current_module_bindings(&mut ctx, source)?;
+    }
     let result = if is_module {
         ctx.eval_es_module(source)
     } else {
         ctx.eval(source)
     };
     result.map(|_| ()).map_err(|error| format!("{error:?}"))
+}
+
+fn propagate_current_module_resolution_error(ctx: &mut crate::Context, source: &str) {
+    let Ok((_, _, _, _, reexports)) = fixture_exports_from_source(usize::MAX, source) else {
+        return;
+    };
+    let Some(Value::Object(errors)) = ctx.get_global("__quench_module_errors__") else {
+        return;
+    };
+    let mut sources = reexports
+        .into_iter()
+        .map(|entry| match entry {
+            PendingReExport::StarAs { source, .. }
+            | PendingReExport::StarAll { source }
+            | PendingReExport::Named { source, .. } => source,
+        })
+        .collect::<Vec<_>>();
+    let reason = sources
+        .into_iter()
+        .find_map(|source| errors.borrow().get(&source));
+    let Some(reason) = reason else {
+        return;
+    };
+    let Some(Value::String(module)) = ctx.get_global("__quench_current_module__") else {
+        return;
+    };
+    errors.borrow_mut().set(&module, reason);
 }
 
 /// Run an async-flag test: eval (which drains microtasks), then verify $DONE
@@ -1106,7 +1137,16 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
                             }
                         }
                         if let Some(Value::Object(target)) = ctx.get_module(&source) {
-                            let value = target.borrow().get_own_value(&local);
+                            let value = target.borrow().get(&local);
+                            if value.is_none() || value == Some(crate::Value::Undefined) {
+                                if let Some(Value::Object(refresh)) =
+                                    ctx.get_global(init_refresh_key)
+                                {
+                                    refresh
+                                        .borrow_mut()
+                                        .set(&module_name, crate::Value::Boolean(true));
+                                }
+                            }
                             define_module_binding(
                                 &module,
                                 &exported,

@@ -539,6 +539,19 @@ fn regexp_invalid_named_group_identifier_character_is_rejected_during_parse() {
 }
 
 #[test]
+fn module_resolution_error_is_raised_before_module_body() {
+    use crate::test262::harness::HarnessLoader;
+    use crate::test262::runner::{default_test262_dir, run_single_test};
+
+    let root = default_test262_dir();
+    let path = PathBuf::from(&root).join(
+        "test/language/module-code/ambiguous-export-bindings/error-export-from-named.js",
+    );
+    let harness = HarnessLoader::new(&root);
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
+
+#[test]
 fn dynamic_import_namespace_fixture_exports_uninitialized_bindings() {
     use crate::test262::harness::HarnessLoader;
     use crate::test262::runner::{default_test262_dir, run_single_test};
