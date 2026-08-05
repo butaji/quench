@@ -55,12 +55,11 @@ LAST_RUN_OUTPUT=""
 run_one() {
     set +e
     if command -v timeout >/dev/null 2>&1; then
-        LAST_RUN_OUTPUT="$(timeout 15 cargo run --bin run-test -- "$1" 2>&1)"
+        LAST_RUN_OUTPUT="$(timeout 15 cargo run --bin run-test -- "$1" </dev/null 2>&1)"
     else
-        LAST_RUN_OUTPUT="$(cargo run --bin run-test -- "$1" 2>&1)"
+        LAST_RUN_OUTPUT="$(cargo run --bin run-test -- "$1" </dev/null 2>&1)"
     fi
     LAST_RUN_RC=$?
-    set -e
     return "$LAST_RUN_RC"
 }
 
