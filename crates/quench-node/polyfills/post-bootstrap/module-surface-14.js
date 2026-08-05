@@ -444,17 +444,25 @@ const __quenchCryptoKeyObjectFallback = (result) => {
   if (generatePair) {
     result.generateKeyPairSync = (algorithm, options) => {
       const pair = generatePair(algorithm, options);
+      const details = {
+        modulusLength: options?.modulusLength,
+        publicExponent: options?.publicExponent ?? 65537n
+      };
+      const privateKey = __quenchCreateKeyObject(
+        "private",
+        pair.privateKey,
+        pair.privateKey
+      );
+      const publicKey = __quenchCreateKeyObject(
+        "public",
+        pair.publicKey,
+        pair.publicKey
+      );
+      __quenchCryptoKeyObjectData.get(privateKey).details = details;
+      __quenchCryptoKeyObjectData.get(publicKey).details = { ...details };
       return {
-        privateKey: __quenchCreateKeyObject(
-          "private",
-          pair.privateKey,
-          pair.privateKey
-        ),
-        publicKey: __quenchCreateKeyObject(
-          "public",
-          pair.publicKey,
-          pair.publicKey
-        )
+        privateKey,
+        publicKey
       };
     };
   }

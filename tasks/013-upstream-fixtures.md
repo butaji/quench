@@ -5188,3 +5188,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1455. `crypto-keyobject-no-own-state.js` — keep secret KeyObject state out of own properties.
 1456. `crypto-keyobject-asymmetric-basics.js` — expose branded asymmetric KeyObjects without own state.
 1457. `crypto-keyobject-util-brand.js` — expose `util.types.isKeyObject` for branded keys.
+1458. `crypto-keygen-rsa-details.js` — preserve RSA generation details on KeyObjects.
