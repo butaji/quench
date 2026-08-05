@@ -4920,3 +4920,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1384: crypto Certificate callable
 
 - Support calling `Certificate()` with or without `new`.
+
+### Stage 1385: crypto certificate input validation
+
+- Reject invalid SPKAC input types with Node’s argument error code.
