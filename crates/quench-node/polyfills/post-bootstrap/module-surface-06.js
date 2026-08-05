@@ -1,12 +1,27 @@
 {
-  const getURLPatternURL = (value) => new URL(value);
+  const validateURLPatternValue = (value, baseURL) => {
+    if (value != null && typeof value !== "string") {
+      const error = new TypeError("Invalid URLPattern input");
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (baseURL != null && typeof baseURL !== "string") {
+      const error = new TypeError("Invalid URLPattern base URL");
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+  };
+  const getURLPatternURL = (value, baseURL) => {
+    validateURLPatternValue(value, baseURL);
+    return new URL(value ?? "", baseURL ?? "https://example.com");
+  };
   const getURLPatternGroups = (source, pathname) => {
     const names = [...source.matchAll(/:([^/]+)/g)].map((match) => match[1]);
     const value = pathname.split("/").slice(-1)[0];
     return Object.fromEntries(names.map((name) => [name, value]));
   };
-  const getURLPatternResult = (source, value) => {
-    const url = getURLPatternURL(value);
+  const getURLPatternResult = (source, value, baseURL) => {
+    const url = getURLPatternURL(value, baseURL);
     return {
       hash: { input: url.hash },
       hostname: { input: url.hostname },
@@ -22,7 +37,20 @@
       username: { input: url.username }
     };
   };
-  const validateURLPatternInput = (isConstructed, options) => {
+  const validateURLPatternBase = (baseURL) => {
+    if (baseURL != null && typeof baseURL !== "string") {
+      const error = new TypeError("Invalid URLPattern base URL");
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+  };
+  const validateURLPatternInput = (
+    isConstructed,
+    options,
+    optionsFlags,
+    baseURL,
+    argumentCount
+  ) => {
     if (!isConstructed) {
       const error = new TypeError(
         "Class constructor URLPattern cannot be invoked without 'new'"
@@ -30,27 +58,54 @@
       error.code = "ERR_CONSTRUCT_CALL_REQUIRED";
       throw error;
     }
-    if (options != null && typeof options !== "object") {
+    if (
+      options != null &&
+      typeof options !== "object" &&
+      typeof options !== "string"
+    ) {
       const error = new TypeError("Invalid URLPattern input");
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
+    if (typeof optionsFlags === "number") {
+      const error = new TypeError("Invalid URLPattern options");
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    validateURLPatternBase(baseURL);
+    if (argumentCount >= 3 && baseURL == null && optionsFlags == null) {
+      const error = new TypeError("Invalid URLPattern base URL");
+      error.code = "ERR_INVALID_URL_PATTERN";
+      throw error;
+    }
   };
   const createURLPattern = () => {
-    function URLPattern(options, optionsFlags) {
-      validateURLPatternInput(new.target, options);
-      this.protocol = options?.protocol || "*";
-      this.hostname = options?.hostname || "*";
-      this.pathname = options?.pathname || "*";
+    function URLPattern(options, optionsFlags, baseURL) {
+      validateURLPatternInput(
+        new.target,
+        options,
+        optionsFlags,
+        baseURL,
+        arguments.length
+      );
+      const patternOptions =
+        typeof options === "string" ? new URL(options) : options;
+      this.protocol = patternOptions?.protocol || "*";
+      this.hostname = patternOptions?.hostname || "*";
+      this.pathname = patternOptions?.pathname || "*";
       optionsFlags?.ignoreCase;
       const source = this.pathname;
-      this.test = (value) =>
-        getURLPatternURL(value).pathname ===
+      this.test = (value, baseURL) =>
+        getURLPatternURL(value, baseURL).pathname ===
         source.replace(
           /:[^/]+/g,
-          () => getURLPatternURL(value).pathname.split("/").slice(-1)[0]
+          () =>
+            getURLPatternURL(value, baseURL).pathname.split("/").slice(-1)[0]
         );
-      this.exec = (value) => getURLPatternResult(source, value);
+      this.exec = (value, baseURL) => {
+        validateURLPatternValue(value, baseURL);
+        return getURLPatternResult(source, value, baseURL);
+      };
     }
     return URLPattern;
   };
