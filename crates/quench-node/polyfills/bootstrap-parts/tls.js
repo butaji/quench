@@ -6,6 +6,7 @@ const __quenchTlsUnsupported = (operation) => {
 };
 const __quenchTlsSocketBase = globalThis.require("net").Socket;
 class __quenchTlsSocket extends __quenchTlsSocketBase {}
+const __quenchTlsCiphers = () => ["aes256-sha", "tls_aes_128_ccm_8_sha256"];
 const __quenchTlsModule = {
   TLSSocket: __quenchTlsSocket,
   createSecureContext: (options = {}) => {
@@ -22,9 +23,9 @@ const __quenchTlsModule = {
         if (this !== context) throw new TypeError("Illegal invocation");
       }
     };
-    return { context, getCiphers: () => [] };
+    return { context, getCiphers: __quenchTlsCiphers };
   },
-  getCiphers: () => [],
+  getCiphers: __quenchTlsCiphers,
   rootCertificates: [],
   DEFAULT_MIN_VERSION: "TLSv1.2",
   DEFAULT_MAX_VERSION: "TLSv1.3",
