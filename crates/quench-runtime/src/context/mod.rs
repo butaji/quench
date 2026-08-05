@@ -148,6 +148,19 @@ impl Context {
 
         let result = (|| {
             let program = parser::parse_es_module(source)?;
+            if let (Some(Value::String(module)), Some(Value::Object(errors))) = (
+                self.env.borrow().get("__quench_current_module__"),
+                self.env.borrow().get("__quench_module_errors__"),
+            ) {
+                if let Some(Value::String(reason)) = errors.borrow().get(&module) {
+                    let (value, error) = crate::value::error::create_js_error_with_type(
+                        &reason,
+                        "SyntaxError",
+                    );
+                    crate::value::set_thrown_value(value);
+                    return Err(error);
+                }
+            }
             self.env.borrow_mut().define(
                 "__import_meta__".to_string(),
                 Value::Object(Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)))),

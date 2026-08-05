@@ -2264,6 +2264,16 @@ fn eval_import(
         dynamic_import(source, env, None, false, true)?
     } else {
         initialize_fixture_module(source, env)?;
+        if let Some(Value::Object(errors)) = env.borrow().get("__quench_module_errors__") {
+            if let Some(Value::String(reason)) = errors.borrow().get(source) {
+                let (value, error) = crate::value::error::create_js_error_with_type(
+                    &reason,
+                    "SyntaxError",
+                );
+                crate::value::set_thrown_value(value);
+                return Err(error);
+            }
+        }
         Value::Object(get_module_exports(source, env)?)
     };
     let Value::Object(module_exports) = module_exports else {

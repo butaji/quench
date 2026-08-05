@@ -357,6 +357,18 @@ fn isolated_dynamic_import_registers_current_module_bindings() {
 }
 
 #[test]
+fn indirectly_exported_function_binding_is_initialized_before_evaluation() {
+    use crate::test262::harness::HarnessLoader;
+    use crate::test262::runner::{default_test262_dir, run_single_test};
+
+    let root = default_test262_dir();
+    let path = PathBuf::from(&root)
+        .join("test/language/module-code/instn-iee-bndng-fun.js");
+    let harness = HarnessLoader::new(&root);
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
+
+#[test]
 fn regexp_modifier_overlap_is_rejected_during_parse() {
     use crate::test262::harness::HarnessLoader;
     use crate::test262::runner::{default_test262_dir, run_single_test};

@@ -121,3 +121,41 @@ fn module_await_using_for_binding_shadows_outer_binding() {
         .unwrap();
     assert_eq!(result, crate::Value::Null);
 }
+
+#[test]
+fn module_resolution_error_prevents_module_body_evaluation() {
+    let mut ctx = Context::new().unwrap();
+    let mut errors = crate::value::Object::new(crate::value::ObjectKind::Ordinary);
+    errors.set("./current.js", crate::Value::String("Ambiguous export".to_string()));
+    ctx.set_global(
+        "__quench_module_errors__".to_string(),
+        crate::Value::Object(std::rc::Rc::new(std::cell::RefCell::new(errors))),
+    );
+    ctx.set_global(
+        "__quench_current_module__".to_string(),
+        crate::Value::String("./current.js".to_string()),
+    );
+    let result = ctx.eval_es_module("throw new Error('body reached'); export const x = 1;");
+    assert!(result.is_err());
+    let message = format!("{:?}", result.unwrap_err());
+    assert!(message.contains("Ambiguous export"), "{message}");
+}
+
+#[test]
+fn module_import_resolution_error_is_thrown_before_body() {
+    let mut ctx = Context::new().unwrap();
+    let mut errors = crate::value::Object::new(crate::value::ObjectKind::Ordinary);
+    errors.set("./dep.js", crate::Value::String("Ambiguous export".to_string()));
+    ctx.set_global(
+        "__quench_module_errors__".to_string(),
+        crate::Value::Object(std::rc::Rc::new(std::cell::RefCell::new(errors))),
+    );
+    ctx.register_module(
+        "./dep.js",
+        crate::value::Object::new(crate::value::ObjectKind::ModuleNamespace),
+    );
+    let result = ctx.eval_es_module("import x from './dep.js'; throw new Error('body reached');");
+    assert!(result.is_err());
+    let message = format!("{:?}", result.unwrap_err());
+    assert!(message.contains("Ambiguous export"), "{message}");
+}
