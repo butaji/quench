@@ -1,5 +1,12 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1148: Object.hasOwn static helper
+
+- Fixture: `test-vm-global-property-prototype.js`
+- Added the standard `Object.hasOwn()` helper used by context property checks.
+- Retrospective: restore missing ECMAScript statics at the global polyfill layer
+  so VM fixtures and ordinary user code share the same surface.
+
 ## Stage 1147: VM Script source map URL
 
 - Fixture: `test-vm-source-map-url.js`
