@@ -27,6 +27,7 @@ const __quenchCryptoSignFallback = (result) => {
         return this;
       },
       sign(key) {
+        __quenchCryptoSignMetadataFallback();
         if (String(key).includes("PRIVATE KEY")) return NodeBuffer.alloc(64);
         throw Object.assign(
           new Error("error:02000070:rsa routines::digest too big for rsa key"),
