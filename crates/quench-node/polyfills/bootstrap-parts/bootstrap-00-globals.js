@@ -487,5 +487,10 @@ globalThis.__nodeTimers = {
   setImmediate,
   clearImmediate
 };
-Object.hasOwn ||= (object, property) =>
-  Object.prototype.hasOwnProperty.call(object, property);
+if (typeof Object.hasOwn !== "function")
+  Object.defineProperty(Object, "hasOwn", {
+    value: (object, property) =>
+      Object.prototype.hasOwnProperty.call(object, property),
+    configurable: true,
+    writable: true
+  });
