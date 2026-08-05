@@ -5357,3 +5357,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1625. `fs-encoded-url-validation.js` — validate encoded file URL paths and hosts.
 1626. `fs-invalid-argument-message.js` — include received values in path errors.
 1627. `fs-exists-callback.js` — implement tolerant asynchronous fs.exists.
+1628. `urlsearchparams-surrogates.js` — encode unpaired UTF-16 surrogates safely.
