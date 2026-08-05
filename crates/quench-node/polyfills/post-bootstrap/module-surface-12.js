@@ -344,13 +344,23 @@ globalThis.__quenchResolveParsedObject = (result, from, to, originalResolve) =>
   typeof from === "string"
     ? null
     : result.parse(
-        to.startsWith("/")
-          ? to
-          : `${(from.pathname || from.href || "").slice(
-              0,
-              (from.pathname || from.href || "").lastIndexOf("/") + 1
-            )}${to}`
+        globalThis.__quenchResolveParsedPath(
+          from.pathname || from.href || "",
+          to
+        )
       );
+globalThis.__quenchResolveParsedPath = (base, to) => {
+  const path = to.startsWith("/")
+    ? to
+    : `${base.slice(0, base.lastIndexOf("/") + 1)}${to}`;
+  const parts = path.split("/");
+  const normalized = [];
+  for (const part of parts) {
+    if (part === ".." && normalized.length > 0) normalized.pop();
+    else if (part && part !== ".") normalized.push(part);
+  }
+  return `${path.startsWith("/") ? "/" : ""}${normalized.join("/")}`;
+};
 globalThis.__quenchResolveObjectEarly = (result, from, to, originalResolve) => {
   const fragmentOnly = globalThis.__quenchResolveFragmentOnly(from, to);
   if (fragmentOnly) return fragmentOnly;
