@@ -769,6 +769,11 @@ mod tests {
     }
 
     #[test]
+    fn module_rejects_restricted_import_binding() {
+        assert!(parse_es_module("import { x as arguments } from 'm';").is_err());
+    }
+
+    #[test]
     fn test_oxc_parses_class_getter_with_computed_key() {
         // What does OXC produce for `class C { get [expr]() {} }`?
         // Does it produce MethodDefinition with kind=Get, or AccessorProperty?

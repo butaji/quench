@@ -111,6 +111,12 @@ pub fn check_module_exported_bindings(program: &ast::Program) -> Result<(), JsEr
                                 &specifier.local.name
                             }
                         };
+                        if matches!(name.as_str(), "eval" | "arguments") {
+                            return Err(JsError(format!(
+                                "SyntaxError: invalid import binding '{}'",
+                                name
+                            )));
+                        }
                         bindings.insert(name.to_string());
                     }
                 }
