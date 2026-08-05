@@ -7,16 +7,45 @@ const __nodeCryptoRandomArguments = (minimum, maximum, callback) => {
   return { minimum, maximum, callback };
 };
 const __nodeCryptoValidatePbkdf2Types = (password, salt) => {
-  if (typeof password !== "string" && !(password instanceof Uint8Array))
-    throw new TypeError(
+  const isBinary = (value) =>
+    ArrayBuffer.isView(value) ||
+    value instanceof ArrayBuffer ||
+    (typeof SharedArrayBuffer !== "undefined" &&
+      value instanceof SharedArrayBuffer);
+  if (typeof password !== "string" && !isBinary(password)) {
+    const error = new TypeError(
       'The "password" argument must be of type string or an instance of Buffer'
     );
-  if (typeof salt !== "string" && !(salt instanceof Uint8Array))
-    throw new TypeError(
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  if (typeof salt !== "string" && !isBinary(salt)) {
+    const error = new TypeError(
       'The "salt" argument must be of type string or an instance of Buffer'
     );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+};
+const __nodeCryptoKeylenReceived = (keylen) => {
+  if (typeof keylen === "string") return ` Received type string ('${keylen}')`;
+  if (keylen === null || keylen === undefined) return ` Received ${keylen}`;
+  return ` Received an instance of ${keylen.constructor?.name || "Object"}`;
+};
+const __nodeCryptoNumberReceived = (value) => {
+  if (typeof value === "string") return ` Received type string ('${value}')`;
+  if (value === null || value === undefined) return ` Received ${value}`;
+  if (typeof value === "boolean") return ` Received type boolean (${value})`;
+  return ` Received an instance of ${value.constructor?.name || "Object"}`;
 };
 const __nodeCryptoValidatePbkdf2Numbers = (iterations, keylen) => {
+  if (typeof iterations !== "number") {
+    const error = new TypeError(
+      `The "iterations" argument must be of type number.${__nodeCryptoNumberReceived(iterations)}`
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
   if (
     !Number.isInteger(iterations) ||
     iterations <= 0 ||
@@ -26,17 +55,40 @@ const __nodeCryptoValidatePbkdf2Numbers = (iterations, keylen) => {
     error.code = "ERR_OUT_OF_RANGE";
     throw error;
   }
+  if (typeof keylen !== "number") {
+    const error = new TypeError(
+      `The "keylen" argument must be of type number.${__nodeCryptoKeylenReceived(keylen)}`
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
   if (!Number.isInteger(keylen) || keylen < 0 || keylen > 0x7fffffff) {
-    const error = new RangeError('The value of "keylen" is out of range');
+    const error = new RangeError(
+      `The value of "keylen" is out of range. It must be an integer. Received ${keylen}`
+    );
     error.code = "ERR_OUT_OF_RANGE";
     throw error;
   }
 };
 const __nodeCryptoValidatePbkdf2Digest = (digest) => {
-  if (typeof digest !== "string")
-    throw new TypeError('The "digest" argument must be of type string');
-  if (digest.toLowerCase() !== "sha256")
-    throw new Error(`Unsupported digest: ${digest}`);
+  if (typeof digest !== "string") {
+    const received =
+      digest === undefined
+        ? "undefined"
+        : digest === null
+          ? "null"
+          : typeof digest;
+    const error = new TypeError(
+      `The "digest" argument must be of type string. Received ${received}`
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  if (digest.toLowerCase() !== "sha256") {
+    const error = new TypeError(`Invalid digest: ${digest}`);
+    error.code = "ERR_CRYPTO_INVALID_DIGEST";
+    throw error;
+  }
 };
 const __nodeCryptoValidatePbkdf2 = (
   password,
@@ -48,6 +100,16 @@ const __nodeCryptoValidatePbkdf2 = (
   __nodeCryptoValidatePbkdf2Types(password, salt);
   __nodeCryptoValidatePbkdf2Numbers(iterations, keylen);
   __nodeCryptoValidatePbkdf2Digest(digest);
+};
+const __nodeCryptoPbkdf2Bytes = (value) => {
+  if (typeof value === "string") return new NodeTextEncoder().encode(value);
+  if (value instanceof ArrayBuffer) return new Uint8Array(value);
+  if (
+    typeof SharedArrayBuffer !== "undefined" &&
+    value instanceof SharedArrayBuffer
+  )
+    return new Uint8Array(value);
+  return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
 };
 const __nodeCryptoHashCopy = (chunks) => {
   const clone = globalThis.__nodeCrypto.createHash("sha256");
@@ -218,12 +280,8 @@ const __nodeCryptoApi = {
   },
   pbkdf2Sync: (password, salt, iterations, keylen, digest) => {
     __nodeCryptoValidatePbkdf2(password, salt, iterations, keylen, digest);
-    const passwordBytes =
-      typeof password === "string"
-        ? new NodeTextEncoder().encode(password)
-        : password;
-    const saltBytes =
-      typeof salt === "string" ? new NodeTextEncoder().encode(salt) : salt;
+    const passwordBytes = __nodeCryptoPbkdf2Bytes(password);
+    const saltBytes = __nodeCryptoPbkdf2Bytes(salt);
     const output = [];
     const blocks = Math.ceil(keylen / 32);
     for (let block = 1; block <= blocks; block++) {
@@ -255,6 +313,10 @@ const __nodeCryptoApi = {
     return NodeBuffer.from(output.slice(0, keylen));
   },
   pbkdf2: (password, salt, iterations, keylen, digest, callback) => {
+    if (typeof digest === "function") {
+      callback = digest;
+      digest = undefined;
+    }
     if (typeof callback !== "function") {
       const error = new TypeError(
         'The "callback" argument must be of type function'
