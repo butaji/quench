@@ -5271,3 +5271,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1539. `url-resolve-network-path-slash.js` — preserve network-path trailing slashes.
 1540. `url-resolve-file-fragment.js` — normalize file URL fragment bases.
 1541. `url-resolve-file-relative-path.js` — resolve file URL relative paths.
+1542. `url-resolve-file-authority.js` — normalize file URL authorities.
