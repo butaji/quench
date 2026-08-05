@@ -4494,3 +4494,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Validate `fchmod` mode types before callback presence, matching Node’s
   argument-validation order.
+
+### Stage 1286: async access mode validation
+
+- Cover invalid mode validation for callback-based `fs.access` calls.
