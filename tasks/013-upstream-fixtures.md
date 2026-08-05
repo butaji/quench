@@ -4657,3 +4657,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Provide numeric owner validation and no-op ownership compatibility for
   `fs.lchown`, `fs.lchownSync`, and promise calls.
+
+### Stage 1324: fchmod validation
+
+- Match Node's file-descriptor and mode validation errors for `fs.fchmod` and
+  `fs.fchmodSync`.

@@ -10,7 +10,14 @@ const nodeMode = (mode) => {
     error.code = "ERR_INVALID_ARG_VALUE";
     throw error;
   }
-  if (!Number.isFinite(value) || value < 0 || value > 0xffffffff) {
+  if (!Number.isFinite(value) || !Number.isInteger(value)) {
+    const error = new RangeError(
+      `The value of "mode" is out of range. It must be an integer. Received ${mode}`
+    );
+    error.code = "ERR_OUT_OF_RANGE";
+    throw error;
+  }
+  if (value < 0 || value > 0xffffffff) {
     const error = new RangeError(
       `The value of "mode" is out of range. It must be >= 0 && <= 4294967295. Received ${mode}`
     );
@@ -19,17 +26,37 @@ const nodeMode = (mode) => {
   }
   return value;
 };
-globalThis.__nodeFs.fchmodSync = (fd, mode) => {
-  if (!Number.isInteger(fd) || fd < 0 || fd > 0x7fffffff) {
-    const error = new RangeError('The value of "fd" is out of range');
+const nodeFd = (fd) => {
+  if (typeof fd !== "number") {
+    const error = new TypeError(
+      `The "fd" argument must be of type number.${__nodeInvalidArgSuffix(fd)}`
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  if (!Number.isInteger(fd)) {
+    const error = new RangeError(
+      `The value of "fd" is out of range. It must be an integer. Received ${fd}`
+    );
     error.code = "ERR_OUT_OF_RANGE";
     throw error;
   }
+  if (fd < 0 || fd > 0x7fffffff) {
+    const error = new RangeError(
+      `The value of "fd" is out of range. It must be >= 0 && <= 2147483647. Received ${fd}`
+    );
+    error.code = "ERR_OUT_OF_RANGE";
+    throw error;
+  }
+};
+globalThis.__nodeFs.fchmodSync = (fd, mode) => {
+  nodeFd(fd);
   const value = nodeMode(mode);
   if (globalThis.__nodeFdPaths[fd])
     globalThis.__nodeFs.chmodSync(globalThis.__nodeFdPaths[fd], value);
 };
 globalThis.__nodeFs.fchmod = (fd, mode, callback) => {
+  nodeFd(fd);
   nodeMode(mode);
   if (typeof callback !== "function")
     throw new TypeError('The "callback" argument must be of type function');
