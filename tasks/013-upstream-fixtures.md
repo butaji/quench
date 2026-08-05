@@ -4888,3 +4888,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1376: crypto Cipheriv prototype
 
 - Return cipher instances with Node’s `crypto.Cipheriv` prototype.
+
+### Stage 1377: crypto Sign prototype
+
+- Return signing instances with Node’s `crypto.Sign` prototype.
