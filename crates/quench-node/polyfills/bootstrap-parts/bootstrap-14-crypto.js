@@ -126,9 +126,12 @@ const __nodeCryptoAssertDigestOpen = (finalized) => {
 const __nodeCryptoHmacDigest = (inner, outer, chunks, encoding) => {
   const message = [];
   for (const chunk of chunks) message.push(...chunk);
-  const innerDigest = globalThis.__quench_sha256_bytes([...inner, ...message]);
+  const innerDigest = globalThis.__quench_digest_bytes("sha256", [
+    ...inner,
+    ...message
+  ]);
   const result = NodeBuffer.from(
-    globalThis.__quench_sha256_bytes([...outer, ...innerDigest])
+    globalThis.__quench_digest_bytes("sha256", [...outer, ...innerDigest])
   );
   if (encoding === undefined || encoding === null) return result;
   if (encoding === "hex" || encoding === "base64")
@@ -144,7 +147,7 @@ const __nodeCryptoHmacPads = (key) => {
       : NodeBuffer.from(key);
   if (keyBytes.length > 64)
     keyBytes = NodeBuffer.from(
-      globalThis.__quench_sha256_bytes(Array.from(keyBytes))
+      globalThis.__quench_digest_bytes("sha256", Array.from(keyBytes))
     );
   const padded = NodeBuffer.alloc(64);
   padded.set(keyBytes);
@@ -340,25 +343,27 @@ const __nodeCryptoApi = {
     }
     queueMicrotask(() => callback(null, result));
   },
-  // eslint-disable-next-line max-lines-per-function -- hash stream methods share one state object
-  createHash: (algorithm) => {
+  // eslint-disable-next-line max-lines-per-function, complexity -- hash stream methods share one state object
+  createHash: (algorithm, options) => {
     if (typeof algorithm !== "string") {
-      const error = new TypeError(
-        `The "algorithm" argument must be of type string. Received ${algorithm}`
+      throw Object.assign(
+        new TypeError(
+          `The "algorithm" argument must be of type string. Received ${algorithm}`
+        ),
+        { code: "ERR_INVALID_ARG_TYPE" }
       );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
     }
-    const normalized = String(algorithm).toLowerCase();
-    if (!["sha1", "sha256", "sha512", "md5"].includes(normalized)) {
-      const error = new Error(
-        normalized.startsWith("shake")
-          ? "not XOF or invalid length"
-          : "Digest method not supported"
-      );
-      if (normalized.startsWith("shake"))
-        error.code = "ERR_OSSL_EVP_NOT_XOF_OR_INVALID_LENGTH";
-      throw error;
+    // prettier-ignore
+    const normalized = algorithm.toLowerCase(), isXof = normalized.startsWith("shake");
+    // prettier-ignore
+    if (!isXof && options?.outputLength !== undefined) { if (typeof options.outputLength !== "number") throw Object.assign(new TypeError("The outputLength option must be a number"), { code: "ERR_INVALID_ARG_TYPE" }); throw Object.assign(new Error("not XOF or invalid length"), { code: "ERR_OSSL_EVP_NOT_XOF_OR_INVALID_LENGTH" }); }
+    // prettier-ignore
+    if (isXof && (!options || typeof options.outputLength !== "number")) throw Object.assign(new Error("not XOF or invalid length"), { code: "ERR_OSSL_EVP_NOT_XOF_OR_INVALID_LENGTH" });
+    if (
+      !isXof &&
+      !["sha1", "sha224", "sha256", "sha512", "md5"].includes(normalized)
+    ) {
+      throw new Error("Digest method not supported");
     }
     const chunks = [];
     let finalized = false;
@@ -366,11 +371,8 @@ const __nodeCryptoApi = {
       update: (value, encoding) => {
         __nodeCryptoAssertDigestOpen(finalized);
         if (value === undefined) {
-          const error = new TypeError(
-            "The data argument must be of type string or an instance of Buffer"
-          );
-          error.code = "ERR_INVALID_ARG_TYPE";
-          throw error;
+          // prettier-ignore
+          throw Object.assign(new TypeError("The data argument must be of type string or an instance of Buffer"), { code: "ERR_INVALID_ARG_TYPE" });
         }
         if (typeof value === "string")
           chunks.push(NodeBuffer.from(value, encoding || "utf8"));
@@ -378,14 +380,9 @@ const __nodeCryptoApi = {
         else chunks.push(new NodeTextEncoder().encode(String(value)));
         return hash;
       },
-      write: (value, encoding) => {
-        hash.update(value, encoding);
-        return true;
-      },
-      end: (value, encoding) => {
-        if (value !== undefined) hash.update(value, encoding);
-        return hash;
-      },
+      write: (value, encoding) => (hash.update(value, encoding), true),
+      end: (value, encoding) =>
+        value === undefined ? hash : hash.update(value, encoding),
       read: () => hash.digest(),
       digest: (encoding) => {
         __nodeCryptoAssertDigestOpen(finalized);
@@ -393,16 +390,21 @@ const __nodeCryptoApi = {
         const input = [];
         for (const chunk of chunks) input.push(...chunk);
         const bytes = NodeBuffer.from(
-          globalThis.__quench_digest_bytes(normalized, input)
+          isXof
+            ? globalThis.__quench_shake_bytes(
+                normalized,
+                input,
+                options.outputLength
+              )
+            : globalThis.__quench_digest_bytes(normalized, input)
         );
-        const result = bytes.toString("hex");
         if (
           encoding === undefined ||
           encoding === null ||
           encoding === "buffer"
         )
           return bytes;
-        if (encoding === "hex") return result;
+        if (encoding === "hex") return bytes.toString("hex");
         if (encoding === "base64") return bytes.toString("base64");
         if (encoding === "latin1") return bytes.toString("latin1");
         if (
@@ -411,12 +413,22 @@ const __nodeCryptoApi = {
           )
         )
           return bytes.toString(encoding);
-        const error = new TypeError(`Unknown encoding: ${encoding}`);
-        error.code = "ERR_UNKNOWN_ENCODING";
-        throw error;
+        throw Object.assign(new TypeError(`Unknown encoding: ${encoding}`), {
+          code: "ERR_UNKNOWN_ENCODING"
+        });
       },
-      copy: () => {
+      copy: (copyOptions) => {
         __nodeCryptoAssertDigestOpen(finalized);
+        if (isXof) {
+          if (!copyOptions || typeof copyOptions.outputLength !== "number") {
+            const error = new Error("not XOF or invalid length");
+            error.code = "ERR_OSSL_EVP_NOT_XOF_OR_INVALID_LENGTH";
+            throw error;
+          }
+          const clone = __nodeCryptoApi.createHash(normalized, copyOptions);
+          for (const chunk of chunks) clone.update(chunk);
+          return clone;
+        }
         return __nodeCryptoHashCopy(chunks);
       }
     };

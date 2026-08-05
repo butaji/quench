@@ -10,7 +10,8 @@ use md5::Md5;
 use rand::RngCore;
 use rquickjs::{function::Func, Context, Runtime};
 use sha1::Sha1;
-use sha2::{Digest, Sha256, Sha512};
+use sha2::{Digest, Sha224, Sha256, Sha512};
+use sha3::{digest::ExtendableOutput, digest::Update, Shake128, Shake256};
 use walkdir::WalkDir;
 
 mod host_context;
