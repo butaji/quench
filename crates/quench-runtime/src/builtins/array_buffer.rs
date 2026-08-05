@@ -16,6 +16,12 @@ fn array_buffer_type_error(message: &str) -> crate::JsError {
     js_error
 }
 
+fn array_buffer_range_error(message: &str) -> crate::JsError {
+    let (error, js_error) = crate::value::error::create_js_error_with_type(message, "RangeError");
+    crate::value::set_thrown_value(error);
+    js_error
+}
+
 pub fn register_array_buffer(ctx: &mut Context) {
     let proto_rc = Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)));
     if let Some(object_proto) = crate::builtins::get_object_prototype() {
@@ -143,6 +149,14 @@ pub fn register_array_buffer(ctx: &mut Context) {
                     return Err(array_buffer_type_error(
                         "ArrayBuffer method requires an ArrayBuffer receiver",
                     ));
+                }
+                if let Some(value) = args.first() {
+                    let new_length = to_number(value);
+                    if !new_length.is_finite() || !(0.0..=u32::MAX as f64).contains(&new_length) {
+                        return Err(array_buffer_range_error(
+                            "ArrayBuffer transfer length is out of range",
+                        ));
+                    }
                 }
                 let mut obj = this_obj.borrow_mut();
                 let start = args
@@ -463,6 +477,14 @@ mod tests {
     fn array_buffer_transfer_rejects_prototype_lookalikes() {
         let result = eval_ok(
             "try { Object.create(ArrayBuffer.prototype).transfer(); false } catch (error) { error instanceof TypeError }",
+        );
+        assert_eq!(result, Value::Boolean(true));
+    }
+
+    #[test]
+    fn array_buffer_transfer_rejects_excessive_new_length() {
+        let result = eval_ok(
+            "try { new ArrayBuffer(1).transfer(9007199254740991); false } catch (error) { error instanceof RangeError }",
         );
         assert_eq!(result, Value::Boolean(true));
     }
