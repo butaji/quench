@@ -59,10 +59,14 @@ const __quenchZlibStream = (transform) => {
   };
   return stream;
 };
-const __quenchZlibConstructor = (factory) =>
+const __quenchZlibConstructor = (factory) => {
   function ZlibStream() {
-    return factory();
-  };
+    const stream = factory();
+    Object.setPrototypeOf(stream, ZlibStream.prototype);
+    return stream;
+  }
+  return ZlibStream;
+};
 const __quenchZlibDeflateSync = (input, options) => {
   const config = __quenchZlibOptions(options);
   const bytes = __quenchZlibToArray(input, config.encoding);
