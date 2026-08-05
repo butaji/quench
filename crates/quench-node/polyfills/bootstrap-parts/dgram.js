@@ -1,6 +1,11 @@
 const __quenchOriginalRequireWithDgram = globalThis.require;
 const __quenchDgramBind = (socket, type, port, address, callback) => {
+  if (socket._bound)
+    throw Object.assign(new Error("Socket is already bound"), {
+      code: "ERR_SOCKET_ALREADY_BOUND"
+    });
   if (typeof address === "function") callback = address;
+  socket._bound = true;
   socket._address = {
     address: typeof address === "string" ? address : "0.0.0.0",
     family: type === "udp6" ? "IPv6" : "IPv4",
@@ -16,6 +21,7 @@ const __quenchDgramSend = (socket, message, address, callback) => {
   return socket;
 };
 const __quenchDgramClose = (socket, callback) => {
+  socket._bound = false;
   callback?.();
   queueMicrotask(() => socket.emit("close"));
   return socket;
