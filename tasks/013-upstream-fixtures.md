@@ -5288,3 +5288,5 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1556. `url-resolve-web-double-slash.js` — preserve double slashes in web paths.
 1557. `url-resolve-authority-slash.js` — append slashes to authority-only targets.
 1558. `url-resolve-network-authority.js` — preserve network authorities in same schemes.
+1559. `url-resolve-authenticated-target.js` — preserve authenticated source authorities.
+1560. `url-resolve-fragment-only.js` — resolve fragment-only legacy bases.
