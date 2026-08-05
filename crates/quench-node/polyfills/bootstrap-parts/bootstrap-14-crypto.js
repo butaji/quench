@@ -21,10 +21,16 @@ const __nodeCryptoValidatePbkdf2Numbers = (iterations, keylen) => {
     !Number.isInteger(iterations) ||
     iterations <= 0 ||
     iterations > 0x7fffffff
-  )
-    throw new RangeError('The value of "iterations" is out of range');
-  if (!Number.isInteger(keylen) || keylen < 0 || keylen > 0x7fffffff)
-    throw new RangeError('The value of "keylen" is out of range');
+  ) {
+    const error = new RangeError('The value of "iterations" is out of range');
+    error.code = "ERR_OUT_OF_RANGE";
+    throw error;
+  }
+  if (!Number.isInteger(keylen) || keylen < 0 || keylen > 0x7fffffff) {
+    const error = new RangeError('The value of "keylen" is out of range');
+    error.code = "ERR_OUT_OF_RANGE";
+    throw error;
+  }
 };
 const __nodeCryptoValidatePbkdf2Digest = (digest) => {
   if (typeof digest !== "string")
@@ -249,8 +255,13 @@ const __nodeCryptoApi = {
     return NodeBuffer.from(output.slice(0, keylen));
   },
   pbkdf2: (password, salt, iterations, keylen, digest, callback) => {
-    if (typeof callback !== "function")
-      throw new TypeError('The "callback" argument must be of type function');
+    if (typeof callback !== "function") {
+      const error = new TypeError(
+        'The "callback" argument must be of type function'
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
     __nodeCryptoValidatePbkdf2(password, salt, iterations, keylen, digest);
     let result;
     try {
