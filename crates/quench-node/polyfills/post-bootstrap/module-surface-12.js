@@ -165,9 +165,36 @@ globalThis.__quenchResolveEmptyNetworkPath = (from, to) =>
     "http:/"
   );
 globalThis.__quenchResolveFileFragment = (from, to) =>
-  /^file:\/[^/]/i.test(to) && /^#/.test(from)
-    ? to.replace(/^file:\//i, "file:///") + from
+  /^file:\/[^/]/i.test(from) && /^#/.test(to)
+    ? from.replace(/^file:\//i, "file:///") + to
+    : /^file:\/[^/]/i.test(to) && /^#/.test(from)
+      ? to.replace(/^file:\//i, "file:///") + from
+      : null;
+globalThis.__quenchResolveReversedFileRelative = (from, to) =>
+  /^file:\/[^/]/i.test(to) && !/^[a-z][a-z0-9+.-]*:/i.test(from)
+    ? globalThis.__quenchResolveFileRelative(to, from)
     : null;
+globalThis.__quenchResolveFileRelative = (from, to) => {
+  const reversed = globalThis.__quenchResolveReversedFileRelative(from, to);
+  if (reversed) return reversed;
+  if (/^file:\/[^/]/i.test(to) && from.startsWith("/"))
+    return to.replace(/^file:\//i, "file:///") + from;
+  if (
+    !/^file:\/[^/]/i.test(from) ||
+    /^[a-z][a-z0-9+.-]*:/i.test(to) ||
+    to.startsWith("#")
+  )
+    return null;
+  if (to === "") return from.replace(/^file:\//i, "file:///");
+  if (to.startsWith("/")) return `file://${to}`;
+  let base = from.replace(/^file:\//i, "file:///").replace(/[^/]*$/, "");
+  let target = to;
+  while (target.startsWith("../")) {
+    base = base.replace(/[^/]+\/$/, "");
+    target = target.slice(3);
+  }
+  return base + target.replace(/^\.\//, "").replace(/#$/, "");
+};
 globalThis.__quenchAddLegacyParseMethods = (result) => {
   const originalParse = result.parse;
   result.parse = (input) => {
