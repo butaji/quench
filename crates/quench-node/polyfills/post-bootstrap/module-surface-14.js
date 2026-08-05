@@ -307,7 +307,9 @@ const __quenchCryptoKeyObjectBrand =
   (globalThis.__quenchCryptoKeyObjectBrand ||= new WeakSet());
 const __quenchCryptoKeyInput = (args) =>
   args.map((value, index) =>
-    index === 1 && value?.__quenchType && typeof value.export === "function"
+    index === 1 &&
+    value?.source !== undefined &&
+    typeof value.export === "function"
       ? (value.source ?? value.export())
       : value
   );
