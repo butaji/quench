@@ -156,13 +156,28 @@ globalThis.__quenchResolveParsedEmptyOpaque = (result, from, to) => {
 };
 globalThis.__quenchResolveParsedTextSpecial = (result, from, to) =>
   globalThis.__quenchResolveParsedMailtoOrHash(result, from, to) ||
-  globalThis.__quenchResolveParsedEmptyOpaque(result, from, to);
+  globalThis.__quenchResolveParsedEmptyOpaque(result, from, to) ||
+  globalThis.__quenchResolveParsedFragmentBase(result, from, to);
+globalThis.__quenchResolveParsedFragmentBase = (result, from, to) => {
+  if (from.protocol || !from.hash) return null;
+  return result.parse(
+    to === ""
+      ? `${from.pathname}${from.hash}`
+      : to.startsWith("#")
+        ? `${from.pathname}${to}`
+        : to
+  );
+};
 globalThis.__quenchResolveParsedAbsoluteTarget = (result, from, to) => {
   if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(to)) return result.parse(to);
   return to.startsWith("//") && from.protocol
     ? result.parse(`${from.protocol}${to}`)
     : null;
 };
+globalThis.__quenchResolveStringFragmentOnly = (from, to) =>
+  typeof from === "string"
+    ? globalThis.__quenchResolveFragmentOnly(from, to)
+    : null;
 globalThis.__quenchResolveParsedFragment = (result, from, to) => {
   if (typeof from === "string") return null;
   const target = to.match(/^([A-Za-z][A-Za-z0-9+.-]*):(#.*)$/);

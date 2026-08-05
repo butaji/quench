@@ -393,7 +393,7 @@ globalThis.__quenchResolveParsedPath = (base, to) => {
   return `${path.startsWith("/") ? "/" : ""}${normalized.join("/")}`;
 };
 globalThis.__quenchResolveObjectEarly = (result, from, to, originalResolve) => {
-  const fragmentOnly = globalThis.__quenchResolveFragmentOnly(from, to);
+  const fragmentOnly = globalThis.__quenchResolveStringFragmentOnly(from, to);
   if (fragmentOnly) return fragmentOnly;
   if (to === "." && globalThis.__quenchIsOpaqueTarget(from))
     return `${from.match(/^([A-Za-z][A-Za-z0-9+.-]*):/)[1]}:`;
