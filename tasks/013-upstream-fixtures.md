@@ -5266,3 +5266,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1534. `url-parse-javascript.js` — preserve JavaScript URL opaque paths.
 1535. `url-parse-c0-boundaries.js` — trim legacy URL C0 boundary controls.
 1536. `url-parse-resolve-object.js` — expose legacy URL resolveObject behavior.
+1537. `url-resolve-empty-authority.js` — normalize empty-authority URL bases.
