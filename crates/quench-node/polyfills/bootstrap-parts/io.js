@@ -284,6 +284,15 @@ Object.assign(globalThis.__nodeFs, {
       error.path = path;
       throw error;
     }
+    const permissions = globalThis.__nodeModes[path] || 0o666;
+    if (mode && mode & 2 && !(permissions & 0o222)) {
+      const error = new Error(`EACCES: permission denied, access '${path}'`);
+      error.code = "EACCES";
+      error.errno = -13;
+      error.syscall = "access";
+      error.path = path;
+      throw error;
+    }
   },
   realpathSync: (value, options) => {
     const input = nodePathValue(value);
