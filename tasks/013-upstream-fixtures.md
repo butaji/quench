@@ -4120,3 +4120,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Added send queue size/count accessors and connected-send accounting used by
   the queue-info fixture.
+
+### Stage 1204: stream promises export
+
+- Connected the `stream.promises` property to the existing
+  `stream/promises` module surface.
