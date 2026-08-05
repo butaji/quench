@@ -5439,3 +5439,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1710. `url-unc-network-path.js` — resolve UNC paths as file network hosts.
 1711. `url-mixed-unc-prefix.js` — resolve mixed UNC prefixes as network hosts.
 1712. `url-empty-file-authority.js` — add a root path to empty file authorities.
+1713. `url-localhost.js` — normalize localhost authorities in file URLs.
