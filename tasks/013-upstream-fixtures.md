@@ -4412,3 +4412,11 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1267: chmod path validation
 
 - Reject invalid `fs.chmod` paths synchronously in both sync and callback APIs.
+
+### Stage 1268: filesystem Unix timestamps
+
+- Added the internal `_toUnixTimestamp` helper required by utimes fixtures.
+
+### Stage 1269: filesystem utimes surface
+
+- Added sync and callback `utimes`/`lutimes`/`futimes` compatibility methods.
