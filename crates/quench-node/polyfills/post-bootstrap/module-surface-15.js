@@ -363,3 +363,56 @@ const __nodeWindowsPlainUNCURL = (value, windows) => {
   const host = parts.shift();
   return { href: `file://${host}/${parts.map(encodeURIComponent).join("/")}` };
 };
+const __nodeUrlHostnameOption = (value) =>
+  value.host?.match(/^\[([^\]]+)\]/)?.[1] ||
+  (value.hostname !== "[" ? value.hostname : undefined);
+const __nodeUnbrandedHttpOptions = () => ({
+  protocol: undefined,
+  auth: undefined,
+  hostname: undefined,
+  port: NaN,
+  path: "",
+  pathname: undefined,
+  search: undefined,
+  hash: undefined,
+  href: undefined
+});
+const __nodeIsUnbrandedHttpValue = (value) =>
+  value &&
+  typeof value === "object" &&
+  !(value instanceof globalThis.__nodeURL);
+const __nodeHttpArgumentType = (value) => {
+  const type = typeof value;
+  if (type === "string") return `string ('${value}')`;
+  return type;
+};
+const __nodeUrlToHttpOptions = (value) => {
+  if (__nodeIsUnbrandedHttpValue(value)) return __nodeUnbrandedHttpOptions();
+  if (!value || typeof value !== "object") {
+    const received = __nodeHttpArgumentType(value);
+    const error = new TypeError(
+      `The "url" argument must be of type object. Received type ${received}`
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  const pathname = value.pathname;
+  const search = value.search;
+  const hrefAuth = value.href?.match(
+    /^[A-Za-z][A-Za-z0-9+.-]*:\/\/([^@]+)@/
+  )?.[1];
+  const auth = value.username
+    ? `${decodeURIComponent(value.username)}:${decodeURIComponent(value.password)}`
+    : hrefAuth;
+  return {
+    protocol: value.protocol,
+    auth,
+    hostname: __nodeUrlHostnameOption(value),
+    port: value.port ? Number(value.port) : NaN,
+    path: pathname ? `${pathname}${search || ""}` : "",
+    pathname,
+    search,
+    hash: value.hash
+  };
+};
+globalThis.__nodeUrlToHttpOptions = __nodeUrlToHttpOptions;
