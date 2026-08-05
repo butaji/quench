@@ -149,7 +149,10 @@ const __quenchValidateStatelessDhKeys = (options) => {
       { code: "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE" }
     );
   const publicType = options.publicKey?.type;
-  if (publicType === "secret" || publicType === "private")
+  if (
+    publicType === "secret" ||
+    (publicType === "private" && type !== "private")
+  )
     throw Object.assign(
       new Error(
         `Invalid key object type ${publicType}, expected ${type === "private" ? "private or public" : "public"}.`

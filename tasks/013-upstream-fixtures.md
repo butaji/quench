@@ -5064,3 +5064,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1420: crypto named DH groups
 
 - Support `modp5` and `modp18` named-group lookup.
+
+### Stage 1421: crypto DH key-pair exchange
+
+- Permit compatible generated DH key-pair handles through stateless exchange.
