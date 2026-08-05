@@ -100,7 +100,7 @@ const __quenchDgramEmit = (socket, listeners, event, args) => {
   for (const callback of listeners[event] || []) callback.apply(socket, args);
   return socket;
 };
-const __quenchDgramSocket = (type = "udp4") => {
+const __quenchDgramSocket = (type = "udp4", options = {}) => {
   const listeners = {};
   const socket = {
     type,
@@ -111,6 +111,8 @@ const __quenchDgramSocket = (type = "udp4") => {
       __quenchDgramConnect(socket, port, address, callback),
     disconnect: () => __quenchDgramDisconnect(socket),
     remoteAddress: () => __quenchDgramRemoteAddress(socket),
+    getRecvBufferSize: () => options.recvBufferSize || 0,
+    getSendBufferSize: () => options.sendBufferSize || 0,
     close: (callback) => __quenchDgramClose(socket, callback),
     address: () => __quenchDgramAddress(socket, type),
     on: (event, callback) =>
@@ -124,11 +126,37 @@ const __quenchDgramSocket = (type = "udp4") => {
   socket[__quenchDgramStateSymbol] = { handle: { fd: 0 } };
   return socket;
 };
+const __quenchDgramValidateType = (type) => {
+  if (type === "udp4" || type === "udp6") return type;
+  throw Object.assign(
+    new TypeError("Bad socket type specified. Valid types are: udp4, udp6"),
+    { code: "ERR_SOCKET_BAD_TYPE" }
+  );
+};
 const __quenchDgram = {
-  createSocket: (type, options) =>
-    __quenchDgramSocket(
-      typeof type === "string" ? type : options?.type || "udp4"
+  createSocket: function createSocket(type, options) {
+    if (
+      type === null ||
+      (type === undefined && options === undefined) ||
+      (typeof type !== "string" && typeof type !== "object") ||
+      Array.isArray(type) ||
+      type instanceof String
     )
+      return __quenchDgramValidateType(type);
+    const requested =
+      typeof type === "string" ? type : type?.type || options?.type;
+    const config = typeof type === "object" ? type : options;
+    for (const name of ["recvBufferSize", "sendBufferSize"]) {
+      if (config?.[name] !== undefined && typeof config[name] !== "number")
+        throw Object.assign(
+          new TypeError(`The "${name}" option must be a number`),
+          {
+            code: "ERR_INVALID_ARG_TYPE"
+          }
+        );
+    }
+    return __quenchDgramSocket(__quenchDgramValidateType(requested), config);
+  }
 };
 globalThis.require = (specifier) =>
   String(specifier).replace(/^node:/, "") === "dgram"
