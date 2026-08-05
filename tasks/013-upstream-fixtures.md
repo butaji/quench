@@ -4336,3 +4336,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Added the legacy `assert.deepEqual` API using the existing deep comparison
   implementation.
+
+### Stage 1252: assert constructor validation
+
+- Distinguished expected error constructors from predicate functions in
+  `assert.throws` validation and ensured `doesNotThrow` reports caught errors.

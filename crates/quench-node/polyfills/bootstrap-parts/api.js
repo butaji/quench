@@ -292,10 +292,8 @@ globalThis.__nodeAssert.notDeepStrictEqual = (actual, expected, message) => {
     __nodeAssertionFailure(message || "values are deeply equal");
 };
 const __nodeAssertMatchExpectedFunction = (error, expected) => {
-  const isErrorConstructor =
-    expected === Error || expected.prototype instanceof Error;
-  if (!isErrorConstructor && !expected(error)) throw error;
-  if (isErrorConstructor && !(error instanceof expected)) {
+  const isConstructor = expected.prototype !== undefined;
+  if (isConstructor && !(error instanceof expected)) {
     const assertion = new globalThis.__nodeAssert.AssertionError(
       `The error is expected to be an instance of "${expected.name}". Received "${error.constructor.name}"\n\nError message:\n\n${error.message}`
     );
@@ -306,6 +304,7 @@ const __nodeAssertMatchExpectedFunction = (error, expected) => {
     assertion.expected = expected;
     throw assertion;
   }
+  if (!isConstructor && !expected(error)) throw error;
 };
 const __nodeAssertMatchExpectedRegExp = (error, expected) => {
   if (expected instanceof RegExp && !expected.test(String(error))) {
@@ -371,8 +370,6 @@ globalThis.__nodeAssert.doesNotThrow = (fn, expected, message) => {
   try {
     fn();
   } catch (error) {
-    if (typeof expected === "function" && !(error instanceof expected))
-      throw error;
     const text = typeof expected === "string" ? expected : message;
     const assertion = new globalThis.__nodeAssert.AssertionError(
       `Got unwanted exception${text ? `: ${text}` : "."}\nActual message: "${error.message}"`
