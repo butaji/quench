@@ -379,7 +379,7 @@ fn uri_argument(value: Option<&Value>) -> Result<String, crate::JsError> {
 /// including ToPrimitive with hint "string" for objects. Unlike `to_js_string`,
 /// this propagates thrown errors from `toString` / `valueOf` so callers like
 /// parseFloat / parseInt can surface them (test262 parseFloat T7 #7).
-fn to_string_for_spec(arg: &Value) -> Result<String, crate::JsError> {
+pub(crate) fn to_string_for_spec(arg: &Value) -> Result<String, crate::JsError> {
     if let Some(s) = crate::value::convert::simple_string_value(arg) {
         return Ok(s);
     }

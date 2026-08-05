@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use crate::interpreter::get_native_this;
 use crate::value::convert::to_js_string;
-use crate::value::error::create_js_error_with_type;
+use crate::value::error::{create_js_error_with_type, set_thrown_value};
 use crate::value::object::PropertyDescriptor;
 use crate::value::{NativeConstructor, Object, ObjectKind, PropertyFlags, Value};
 use crate::Context;
@@ -226,14 +226,31 @@ fn register_aggregate_error(ctx: &mut Context, parent_proto: &Rc<RefCell<Object>
     let proto_for_closure = Rc::clone(&proto_rc);
     let constructor = NativeConstructor::new(
         move |args| {
+            // Per ES §22.1.7.1 AggregateError ( errors, message ): ToString
+            // the message argument; throw TypeError if it is a Symbol.
+            let msg_str = match args.get(1) {
+                Some(Value::Symbol(_)) => {
+                    let (err_val, js_err) = create_js_error_with_type(
+                        "Cannot convert a Symbol to a string",
+                        "TypeError",
+                    );
+                    set_thrown_value(err_val);
+                    return Err(js_err);
+                }
+                Some(value) if !matches!(value, Value::Undefined) => {
+                    match crate::builtins::uri::to_string_for_spec(value) {
+                        Ok(s) => Some(s),
+                        Err(e) => return Err(e),
+                    }
+                }
+                _ => None,
+            };
             let set_fields = |obj: &mut Object| {
                 if let Some(errors_arg) = args.first() {
                     obj.set("errors", errors_arg.clone());
                 }
-                if let Some(msg_arg) = args.get(1) {
-                    if !matches!(msg_arg, Value::Undefined) {
-                        obj.set("message", Value::String(to_js_string(msg_arg)));
-                    }
+                if let Some(msg) = &msg_str {
+                    obj.set("message", Value::String(msg.clone()));
                 }
                 if let Some(Value::Object(options)) = args.get(2) {
                     if let Some(cause) = options.borrow().get("cause") {
