@@ -768,6 +768,11 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
         }
         let source = std::fs::read_to_string(path).map_err(|e| format!("fixture read: {}", e))?;
         let module_name = format!("./{}", name);
+        if let Some(Value::Object(raw_modules)) = ctx.get_global(raw_modules_key) {
+            raw_modules
+                .borrow_mut()
+                .set(&module_name, Value::String(source.clone()));
+        }
         if name.ends_with("_FIXTURE.json") {
             if let Some(Value::Object(raw_modules)) = ctx.get_global(raw_modules_key) {
                 raw_modules
