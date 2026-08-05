@@ -433,6 +433,7 @@ Object.assign(globalThis.__nodeFs, {
   },
   readdirSync: (value, options = {}) => {
     const path = nodeFsPath(value);
+    if (typeof options === "string") options = { encoding: options };
     let kind;
     try {
       kind = globalThis.__quench_fs_kind(path);
@@ -447,6 +448,8 @@ Object.assign(globalThis.__nodeFs, {
       throw error;
     }
     const entries = globalThis.__quench_fs_readdir(path).sort();
+    if (options?.encoding === "hex")
+      return entries.map((name) => NodeBuffer.from(name));
     if (!options || !options.withFileTypes) return entries;
     return entries.map((name) => {
       const dirent = new globalThis.__nodeFs.Dirent(
