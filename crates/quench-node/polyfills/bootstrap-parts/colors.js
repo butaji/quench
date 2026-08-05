@@ -301,7 +301,7 @@ const __nodeURLAssignParts = (url, match) => {
   url.hash = match[5] ? `#${match[5]}` : "";
   // prettier-ignore
   // prettier-ignore
-  Object.defineProperty(url, "origin", { configurable: true, enumerable: true, value: url.protocol && url.host ? `${url.protocol}//${url.host}` : "null", writable: true }), Object.defineProperty(url, "searchParams", { configurable: true, enumerable: true, value: new NodeURLSearchParams(match[4] || ""), writable: true });
+  Object.defineProperty(url, "origin", { configurable: true, enumerable: true, value: url.protocol && url.host ? `${url.protocol}//${url.host}` : "null", writable: true }), Object.defineProperty(url, "searchParams", { configurable: true, enumerable: true, value: (() => { const params = new NodeURLSearchParams(match[4] || ""); params.__nodeURLOwner = url; return params; })(), writable: true });
 };
 globalThis.__nodeURL = class NodeURL {
   constructor(input, base) {
