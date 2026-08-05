@@ -1,5 +1,9 @@
 globalThis.__quenchInternalFsBinding = {
-  openFileHandle: (_path, _flags, _mode, _req, _context) => undefined
+  openFileHandle: (_path, _flags, _mode, _req, _context) => undefined,
+  readdir: (path) => {
+    const names = globalThis.__nodeFs.readdirSync(path);
+    return [names, names.map(() => 1)];
+  }
 };
 globalThis.__quenchInternalFallbackBinding = { fstat: () => undefined };
 globalThis.__quenchInternalBindingCore = (binding) => {
