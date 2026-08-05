@@ -5076,3 +5076,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1423: crypto DH parameter mismatch
 
 - Preserve generated DH parameters and reject mismatched domains.
+
+### Stage 1424: crypto equivalent DH parameters
+
+- Allow named and equivalent explicit-prime parameters to interoperate.
