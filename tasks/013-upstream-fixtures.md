@@ -4030,3 +4030,13 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Prevented queued send delivery from accessing a socket after it has been
   closed, matching the close-before-lookup behavior.
+
+### Stage 1186: dgram socket type validation
+
+- Added Node-shaped validation for invalid `createSocket()` types while
+  retaining the udp4/udp6 forms.
+
+### Stage 1187: dgram buffer options
+
+- Added creation-time buffer option validation and readable send/receive buffer
+  sizes for socket option fixtures.
