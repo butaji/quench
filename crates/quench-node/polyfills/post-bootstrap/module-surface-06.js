@@ -10,6 +10,13 @@
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
+    if (value === null && baseURL === null) {
+      const error = new TypeError(
+        "Base URL is not allowed for dictionary input"
+      );
+      error.code = "ERR_OPERATION_FAILED";
+      throw error;
+    }
   };
   const getURLPatternURL = (value, baseURL) => {
     validateURLPatternValue(value, baseURL);
@@ -36,6 +43,14 @@
       search: { input: url.search },
       username: { input: url.username }
     };
+  };
+  const isURLPatternMatch = (source, value, baseURL) => {
+    if (source === "*") return baseURL !== null;
+    const pathname = getURLPatternURL(value, baseURL).pathname;
+    return (
+      pathname ===
+      source.replace(/:[^/]+/g, () => pathname.split("/").slice(-1)[0])
+    );
   };
   const validateURLPatternBase = (baseURL) => {
     if (baseURL != null && typeof baseURL !== "string") {
@@ -79,6 +94,64 @@
       throw error;
     }
   };
+  const setURLPatternProperty = (instance, options, property) => {
+    instance[`_${property}`] = options?.[property] || "*";
+  };
+  const initializeURLPattern = (instance, options) => {
+    const patternOptions =
+      typeof options === "string" ? new URL(options) : options;
+    for (const property of [
+      "protocol",
+      "username",
+      "password",
+      "hostname",
+      "port",
+      "pathname",
+      "search",
+      "hash"
+    ]) {
+      setURLPatternProperty(instance, patternOptions, property);
+    }
+    instance._hasRegExpGroups = false;
+    return instance._pathname;
+  };
+  const installURLPatternProperties = (URLPattern) => {
+    const getProperty = (name) =>
+      function () {
+        if (!(this instanceof URLPattern))
+          throw new TypeError("Illegal invocation");
+        return this[name];
+      };
+    for (const [property, internal] of Object.entries({
+      protocol: "_protocol",
+      username: "_username",
+      password: "_password",
+      hostname: "_hostname",
+      port: "_port",
+      pathname: "_pathname",
+      search: "_search",
+      hash: "_hash",
+      hasRegExpGroups: "_hasRegExpGroups"
+    })) {
+      Object.defineProperty(URLPattern.prototype, property, {
+        configurable: true,
+        get: getProperty(internal)
+      });
+    }
+    URLPattern.prototype.test = function (value, baseURL) {
+      if (!(this instanceof URLPattern))
+        throw new TypeError("Illegal invocation");
+      validateURLPatternValue(value, baseURL);
+      return isURLPatternMatch(this._source, value, baseURL);
+    };
+    URLPattern.prototype.exec = function (value, baseURL) {
+      if (!(this instanceof URLPattern))
+        throw new TypeError("Illegal invocation");
+      validateURLPatternValue(value, baseURL);
+      if (baseURL === null && typeof value === "string") return null;
+      return getURLPatternResult(this._source, value, baseURL);
+    };
+  };
   const createURLPattern = () => {
     function URLPattern(options, optionsFlags, baseURL) {
       validateURLPatternInput(
@@ -88,25 +161,11 @@
         baseURL,
         arguments.length
       );
-      const patternOptions =
-        typeof options === "string" ? new URL(options) : options;
-      this.protocol = patternOptions?.protocol || "*";
-      this.hostname = patternOptions?.hostname || "*";
-      this.pathname = patternOptions?.pathname || "*";
+      const source = initializeURLPattern(this, options);
+      this._source = source;
       optionsFlags?.ignoreCase;
-      const source = this.pathname;
-      this.test = (value, baseURL) =>
-        getURLPatternURL(value, baseURL).pathname ===
-        source.replace(
-          /:[^/]+/g,
-          () =>
-            getURLPatternURL(value, baseURL).pathname.split("/").slice(-1)[0]
-        );
-      this.exec = (value, baseURL) => {
-        validateURLPatternValue(value, baseURL);
-        return getURLPatternResult(source, value, baseURL);
-      };
     }
+    installURLPatternProperties(URLPattern);
     return URLPattern;
   };
 

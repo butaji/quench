@@ -5350,3 +5350,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1618. `urlpattern-exec-result.js` — return structured URLPattern match results.
 1619. `urlpattern-options-validation.js` — validate URLPattern constructor options.
 1620. `urlpattern-method-input-validation.js` — validate URLPattern method inputs.
+1621. `urlpattern-overloads.js` — support URLPattern string and base URL overloads.
