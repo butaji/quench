@@ -174,6 +174,20 @@ globalThis.__quenchResolveParsedAbsoluteTarget = (result, from, to) => {
     ? result.parse(`${from.protocol}${to}`)
     : null;
 };
+globalThis.__quenchFileUrlHost = (input) =>
+  input?.host ||
+  (typeof input === "string" ? input.match(/^file:\/\/([^/]+)/)?.[1] : null);
+globalThis.__quenchValidateFileUrlHost = (input, options) => {
+  const host = globalThis.__quenchFileUrlHost(input);
+  if (
+    (input?.protocol === "file:" || typeof input === "string") &&
+    host &&
+    options?.windows !== true
+  )
+    throw Object.assign(new TypeError("File URL host must be empty"), {
+      code: "ERR_INVALID_FILE_URL_HOST"
+    });
+};
 globalThis.__quenchResolveStringFragmentOnly = (from, to) =>
   typeof from === "string"
     ? globalThis.__quenchResolveFragmentOnly(from, to)

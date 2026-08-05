@@ -5335,3 +5335,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1603. `url-resolve-object-ftp-relatives.js` — cover parsed FTP relative targets.
 1604. `url-parse-query-objects.js` — preserve legacy parsed query objects and duplicates.
 1605. `url-file-path-conversions.js` — verify POSIX file URL path conversions.
+1606. `url-file-path-errors.js` — handle file URL argument and host errors.
