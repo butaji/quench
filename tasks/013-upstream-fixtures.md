@@ -5263,3 +5263,6 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1531. `url-parse-bracketed-path.js` — preserve bracketed legacy paths.
 1532. `url-parse-ipv6-host.js` — preserve IPv6 legacy hostnames.
 1533. `url-parse-control-characters.js` — encode legacy URL control characters.
+1534. `url-parse-javascript.js` — preserve JavaScript URL opaque paths.
+1535. `url-parse-c0-boundaries.js` — trim legacy URL C0 boundary controls.
+1536. `url-parse-resolve-object.js` — expose legacy URL resolveObject behavior.

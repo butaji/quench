@@ -162,7 +162,8 @@ globalThis.__nodeLegacySchemeAddressParts = (input) => {
   const match = input.match(
     /^([a-z][a-z0-9+.-]*:)([^/?#]*@[^/?#]*)(?:\?([^#]*))?/i
   );
-  if (!match || match[1].toLowerCase() === "mailto:") return null;
+  if (!match || ["mailto:", "javascript:"].includes(match[1].toLowerCase()))
+    return null;
   const at = match[2].lastIndexOf("@");
   const auth = match[2].slice(0, at);
   const host = match[2].slice(at + 1);
