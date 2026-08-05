@@ -31,6 +31,21 @@ fn test_es_module_default_export() {
 }
 
 #[test]
+fn module_exported_let_is_in_tdz_before_initialization() {
+    let mut ctx = Context::new().unwrap();
+    let parsed =
+        crate::parser::parse_es_module("typeof test262; export let test262 = 23;").unwrap();
+    let crate::ast::Program::Script(statements) = parsed;
+    assert!(
+        crate::interpreter::collect_let_const_declarations(&statements)
+            .iter()
+            .any(|(name, _)| name == "test262")
+    );
+    let result = ctx.eval_es_module("typeof test262; export let test262 = 23;");
+    assert!(result.is_err());
+}
+
+#[test]
 fn module_import_meta_is_an_object() {
     let mut ctx = Context::new().unwrap();
     let result = ctx

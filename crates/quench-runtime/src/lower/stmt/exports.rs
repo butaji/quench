@@ -4,6 +4,7 @@
 //! This file is kept for backwards compatibility and any additional helpers.
 
 use crate::ast::{Expression, PropertyKey, Statement};
+use crate::lower::stmt::lower_var_decl;
 use oxc::ast::ast;
 
 use super::super::expr::lower_expr;
@@ -204,6 +205,9 @@ fn default_export_value(value: Expression) -> Statement {
 /// Lower export { foo, bar } to exports.foo = foo; exports.bar = bar;
 /// Lower export { foo } from 'module' to imports.foo; exports.foo = foo;
 pub fn lower_export_named(named: &ast::ExportNamedDeclaration) -> Option<Statement> {
+    if let Some(ast::Declaration::VariableDeclaration(declaration)) = &named.declaration {
+        return lower_var_decl(declaration).map(|statement| Statement::Export(Box::new(statement)));
+    }
     // Handle export-from syntax: export { x } from 'module'
     if let Some(src) = &named.source {
         let source = src.value.to_string();
