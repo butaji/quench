@@ -4692,3 +4692,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Verify descriptor callbacks remain usable when upstream wraps `fs.open` and
   `fs.close` to track active descriptors.
+
+### Stage 1331: read-only removal parent
+
+- Reject file removal when the tracked parent directory lacks write and
+  execute permissions.

@@ -339,6 +339,15 @@ Object.assign(globalThis.__nodeFs, {
   },
   rmSync: (value, options = {}) => {
     const path = nodeFsPath(value);
+    const parent = path.slice(0, path.lastIndexOf("/")) || ".";
+    const parentMode = globalThis.__nodeModes[parent];
+    if (parentMode !== undefined && (parentMode & 0o300) !== 0o300) {
+      const error = new Error(`EACCES: permission denied, rm '${path}'`);
+      error.code = "EACCES";
+      error.syscall = "unlink";
+      error.path = path;
+      throw error;
+    }
     let kind;
     try {
       kind = globalThis.__quench_fs_link_kind(path);
