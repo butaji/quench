@@ -5000,3 +5000,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1404: crypto DH group factory
 
 - Support `createDiffieHellmanGroup()` instances through the DH prototype.
+
+### Stage 1405: crypto DH group setters
+
+- Support `modp1` lookup and preserve the group type's lack of setters.
