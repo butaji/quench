@@ -52,7 +52,7 @@ fn throw_type_error_for_constructor(constructor: Option<Value>) -> Value {
             };
             let message =
                 Value::String("'caller' and 'callee' are not allowed in strict mode".into());
-            let error = call_value_with_this(constructor, vec![message], Value::Undefined)?;
+            let error = construct_type_error(&constructor, message)?;
             crate::value::set_thrown_value(error);
             Err(JsError(
                 "TypeError: 'caller' and 'callee' are not allowed in strict mode".into(),
@@ -83,6 +83,21 @@ fn throw_type_error_for_constructor(constructor: Option<Value>) -> Value {
         cell.borrow_mut().insert(key, value.clone());
         value
     })
+}
+
+fn construct_type_error(constructor: &Value, message: Value) -> Result<Value, JsError> {
+    let prototype = match constructor {
+        Value::NativeConstructor(value) => Rc::clone(&value.prototype),
+        _ => crate::builtins::get_object_prototype()
+            .ok_or_else(|| JsError("TypeError prototype is unavailable".into()))?,
+    };
+    let mut object = Object::with_prototype(ObjectKind::Ordinary, prototype);
+    object.set("constructor", constructor.clone());
+    let object = Value::Object(Rc::new(RefCell::new(object)));
+    match call_value_with_this(constructor.clone(), vec![message], object.clone())? {
+        Value::Object(value) => Ok(Value::Object(value)),
+        _ => Ok(object),
+    }
 }
 
 fn constructor_key(value: &Value) -> usize {

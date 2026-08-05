@@ -303,6 +303,17 @@ pub fn make_ops_object() -> Value {
                     arr,
                 ))))
             }
+            Value::NativeFunction(nf) => {
+                let mut keys = vec![
+                    Value::String("length".to_string()),
+                    Value::String("name".to_string()),
+                ];
+                if nf.get_property("prototype").is_some() {
+                    keys.push(Value::String("prototype".to_string()));
+                }
+                let arr = crate::value::object::Object::new_array_from(keys);
+                Ok(Value::Object(std::rc::Rc::new(std::cell::RefCell::new(arr))))
+            }
             _ => {
                 let empty = crate::value::object::Object::new_array_from(vec![]);
                 Ok(Value::Object(std::rc::Rc::new(std::cell::RefCell::new(
@@ -321,9 +332,9 @@ pub fn make_ops_object() -> Value {
         let v = args.first().cloned().unwrap_or(Value::Undefined);
         match &v {
             Value::Object(o) => Ok(Value::Boolean(o.borrow().extensible)),
-            Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_) => {
-                Ok(Value::Boolean(true))
-            }
+            Value::Function(_) => Ok(Value::Boolean(true)),
+            Value::NativeFunction(function) => Ok(Value::Boolean(function.is_extensible())),
+            Value::NativeConstructor(_) => Ok(Value::Boolean(true)),
             Value::Class(class) => Ok(Value::Boolean(class.is_extensible())),
             _ => Ok(Value::Boolean(false)),
         }
@@ -462,6 +473,7 @@ pub fn make_ops_object() -> Value {
                 }
                 Ok(Value::Boolean(true))
             }
+            Value::NativeFunction(function) => Ok(Value::Boolean(!function.is_extensible())),
             _ => Ok(Value::Boolean(false)),
         }
     });
@@ -719,12 +731,20 @@ pub fn make_ops_object() -> Value {
                     return Ok(Value::Undefined);
                 }
                 let value = crate::eval::member::eval_native_function_member(nf, &key)?;
+                let flags = nf.get_property_flags(&key).unwrap_or(
+                    crate::value::object::helpers::PropertyFlags {
+                        value: Some(value.clone()),
+                        writable: key != "name" && key != "length",
+                        enumerable: false,
+                        configurable: key != "prototype",
+                    },
+                );
                 let mut desc =
                     crate::value::object::Object::new(crate::value::ObjectKind::Ordinary);
                 desc.set("value", value);
-                desc.set("writable", Value::Boolean(key != "name" && key != "length"));
-                desc.set("enumerable", Value::Boolean(false));
-                desc.set("configurable", Value::Boolean(key != "prototype"));
+                desc.set("writable", Value::Boolean(flags.writable));
+                desc.set("enumerable", Value::Boolean(flags.enumerable));
+                desc.set("configurable", Value::Boolean(flags.configurable));
                 Ok(Value::Object(std::rc::Rc::new(std::cell::RefCell::new(
                     desc,
                 ))))
