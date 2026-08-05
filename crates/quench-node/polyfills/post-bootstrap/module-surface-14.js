@@ -263,6 +263,11 @@ const __quenchCryptoSigningPrototypes = (result) => {
     };
   }
 };
+const __quenchCryptoDecipherFallback = (result) => {
+  const decipher = result.createDecipheriv || result.createCipheriv;
+  result.createDecipheriv = (...args) =>
+    decipher(...__quenchCryptoKeyInput(args));
+};
 const __quenchCryptoKeyExchangeFallback = (result) => {
   __quenchPrepareDhGroup(result);
   result.ECDH.convertKey = __quenchEcdhConvertKey;
