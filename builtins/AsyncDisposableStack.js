@@ -1,4 +1,5 @@
 var ThrowTypeError = __ops__.ThrowTypeError;
+var DefineProp = __ops__.DefineProp;
 
 function AsyncDisposableStack() {
   if (!(this instanceof AsyncDisposableStack)) throw ThrowTypeError("AsyncDisposableStack requires new");
@@ -49,9 +50,68 @@ AsyncDisposableStack.prototype.move = function AsyncDisposableStackMove() {
   return moved;
 };
 
-Object.defineProperty(AsyncDisposableStack.prototype, "disposed", {
-  get: function() { return this.__disposed; }, enumerable: false, configurable: true
+DefineProp(AsyncDisposableStack.prototype, "adopt", {
+  value: AsyncDisposableStack.prototype.adopt,
+  writable: false,
+  enumerable: false,
+  configurable: true
 });
-Object.defineProperty(AsyncDisposableStack.prototype, Symbol.asyncDispose, {
-  value: AsyncDisposableStack.prototype.disposeAsync, writable: true, configurable: true
+DefineProp(AsyncDisposableStack.prototype, "defer", {
+  value: AsyncDisposableStack.prototype.defer,
+  writable: false,
+  enumerable: false,
+  configurable: true
+});
+DefineProp(AsyncDisposableStack.prototype, "disposeAsync", {
+  value: AsyncDisposableStack.prototype.disposeAsync,
+  writable: false,
+  enumerable: false,
+  configurable: true
+});
+DefineProp(AsyncDisposableStack.prototype, "use", {
+  value: AsyncDisposableStack.prototype.use,
+  writable: false,
+  enumerable: false,
+  configurable: true
+});
+DefineProp(AsyncDisposableStack.prototype, "move", {
+  value: AsyncDisposableStack.prototype.move,
+  writable: false,
+  enumerable: false,
+  configurable: true
+});
+DefineProp(AsyncDisposableStack.prototype, Symbol.toStringTag, {
+  value: "AsyncDisposableStack",
+  writable: false,
+  enumerable: false,
+  configurable: true
+});
+DefineProp(AsyncDisposableStack.prototype, Symbol.asyncDispose, {
+  value: AsyncDisposableStack.prototype.disposeAsync,
+  writable: false,
+  enumerable: false,
+  configurable: true
+});
+DefineProp(AsyncDisposableStack.prototype, "disposed", {
+  get: function() { return this.__disposed; },
+  enumerable: false,
+  configurable: true
+});
+DefineProp(AsyncDisposableStack, "prototype", {
+  value: AsyncDisposableStack.prototype,
+  writable: false,
+  enumerable: false,
+  configurable: false
+});
+DefineProp(AsyncDisposableStack, "length", {
+  value: 0,
+  writable: false,
+  enumerable: false,
+  configurable: true
+});
+DefineProp(AsyncDisposableStack, "name", {
+  value: "AsyncDisposableStack",
+  writable: false,
+  enumerable: false,
+  configurable: true
 });

@@ -34,6 +34,12 @@ pub(crate) fn restore_object_prototype(proto: Option<Rc<RefCell<Object>>>) {
 }
 
 pub fn register_object(ctx: &mut Context) {
+    // Object must be registered before any other builtins, but skip if already
+    // registered so that re-invoking register_builtins (e.g. in the test262
+    // harness path) does not blow away JS-side assignments to Object.
+    if let Some(Value::NativeConstructor(_)) = ctx.get_global("Object") {
+        return;
+    }
     // Object.prototype - the prototype object for all ordinary objects
     let object_proto = Object::new(ObjectKind::Ordinary);
     let object_proto_rc = Rc::new(RefCell::new(object_proto));

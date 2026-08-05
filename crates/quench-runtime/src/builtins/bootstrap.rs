@@ -425,6 +425,19 @@ mod tests {
     }
 
     #[test]
+    fn bootstrap_registers_object_static_methods() {
+        let mut ctx = Context::new().unwrap();
+        bootstrap_js_builtins(&mut ctx).unwrap();
+        // Per ECMA-262 §20.1, Object global must expose getOwnPropertyDescriptor,
+        // getPrototypeOf, keys, etc. as own properties (set via Object.js during
+        // bootstrap).
+        let r = ctx
+            .eval("[typeof Object.getOwnPropertyDescriptor, typeof Object.getPrototypeOf, typeof Object.keys, typeof Object.assign].join('|')")
+            .unwrap();
+        assert_eq!(r, Value::String("function|function|function|function".into()));
+    }
+
+    #[test]
     fn generator_function_to_string_tag() {
         let mut ctx = Context::new().unwrap();
         let r = ctx.eval("typeof GeneratorFunction === 'function'").unwrap();
