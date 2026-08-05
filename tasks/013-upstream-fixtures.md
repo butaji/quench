@@ -4800,3 +4800,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1354: crypto cipher constructors
 
 - Expose callable `Cipheriv` and `Decipheriv` constructors with instances.
+
+### Stage 1355: crypto cipher argument validation
+
+- Reject invalid cipher names, keys, and initialization vectors.
