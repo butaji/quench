@@ -5372,3 +5372,5 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1640. `url-module-descriptors.js` — expose URL accessors on the url module constructor.
 1641. `url-static-object-url.js` — expose URL object URL static methods.
 1642. `urlsearchparams-method-descriptors.js` — expose URLSearchParams prototype methods.
+1643. `urlsearchparams-size.js` — expose URLSearchParams size.
+1644. `url-href-searchparams-sync.js` — preserve URLSearchParams identity across href updates.
