@@ -4712,3 +4712,13 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Initialize interval generations so repeating timer callbacks pass their
   active-generation guard.
+
+### Stage 1335: malformed PFX input
+
+- Distinguish malformed string PFX input from incorrect PFX passphrases in the
+  TLS secure-context polyfill.
+
+### Stage 1336: hash update validation
+
+- Reject non-string, non-buffer hash update values with Node’s invalid-argument
+  error instead of stringifying arbitrary objects.

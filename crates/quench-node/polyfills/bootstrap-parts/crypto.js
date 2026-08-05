@@ -1,11 +1,3 @@
-const __nodeCryptoRandomArguments = (minimum, maximum, callback) => {
-  if (typeof minimum === "function")
-    return { minimum: 0, maximum: 0x1_0000_0000_0000, callback: minimum };
-  if (typeof maximum === "function")
-    return { minimum: 0, maximum: minimum, callback: maximum };
-  if (maximum === undefined) return { minimum: 0, maximum: minimum, callback };
-  return { minimum, maximum, callback };
-};
 const __nodeCryptoValidatePbkdf2Types = (password, salt) => {
   const isBinary = (value) =>
     ArrayBuffer.isView(value) ||
@@ -380,7 +372,13 @@ const __nodeCryptoApi = {
         if (typeof value === "string")
           chunks.push(NodeBuffer.from(value, encoding || "utf8"));
         else if (value instanceof Uint8Array) chunks.push(value);
-        else chunks.push(new NodeTextEncoder().encode(String(value)));
+        else
+          throw Object.assign(
+            new TypeError(
+              "The data argument must be of type string or an instance of Buffer"
+            ),
+            { code: "ERR_INVALID_ARG_TYPE" }
+          );
         return hash;
       },
       write: (value, encoding) => (hash.update(value, encoding), true),
