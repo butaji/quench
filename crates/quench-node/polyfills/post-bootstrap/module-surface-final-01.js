@@ -424,9 +424,9 @@ const __quenchAddUrlFormatting = (result) => {
   result.format = (input, ...args) => {
     __quenchValidateUrlFormatInput(input);
     __quenchValidateUrlFormatOptions(args[0]);
+    if (input?.protocol === "tel:") return `tel:${input.pathname}`;
     if (input && typeof input === "object")
       return __quenchFormatUrlObject(__quenchUrlFormatInput(input, args[0]));
-    if (input === "") return "";
     if (typeof input !== "string")
       return originalFormat.call(result, input, ...args);
     return __quenchFormatUrlString(input, originalFormat, args, result);
