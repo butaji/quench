@@ -50,6 +50,10 @@ const __quenchUtilTypesFallbacks = (result) => {
 };
 const __quenchApplyFinalModule01 = (name, originalRequire) => {
   const normalized = String(name).replace(/^node:/, "");
+  if (normalized === "internal/streams/end-of-stream")
+    return {
+      kEosNodeSynchronousCallback: Symbol("kEosNodeSynchronousCallback")
+    };
   if (normalized === "sqlite")
     return {
       DatabaseSync: function DatabaseSync() {},
