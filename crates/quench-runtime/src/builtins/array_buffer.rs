@@ -297,23 +297,24 @@ pub fn register_array_buffer(ctx: &mut Context) {
                     .borrow_mut()
                     .set("\0arrayBuffer", Value::Boolean(true));
                 // Read maxByteLength from options argument
-                let max_bl = args
-                    .get(1)
-                    .and_then(|v| {
-                        if let Value::Object(o) = v {
-                            Some(
-                                o.borrow()
-                                    .get("maxByteLength")
-                                    .map(|v| to_number(&v))
-                                    .unwrap_or(0.0),
-                            )
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or(0.0);
+                let max_bl = args.get(1).and_then(|v| {
+                    if let Value::Object(o) = v {
+                        o.borrow().get("maxByteLength").and_then(|value| {
+                            (!matches!(value, Value::Undefined)).then(|| to_number(&value))
+                        })
+                    } else {
+                        None
+                    }
+                });
+                if let Some(max_bl) = max_bl {
+                    if !max_bl.is_finite() || !(len..=u32::MAX as f64).contains(&max_bl) {
+                        return Err(array_buffer_range_error(
+                            "ArrayBuffer maxByteLength is out of range",
+                        ));
+                    }
+                }
                 this_obj.borrow_mut().set("byteLength", Value::Number(len));
-                if max_bl > 0.0 {
+                if let Some(max_bl) = max_bl {
                     this_obj
                         .borrow_mut()
                         .set("maxByteLength", Value::Number(max_bl));
@@ -444,6 +445,14 @@ mod tests {
     fn array_buffer_constructor_rejects_negative_length_with_range_error() {
         let result = eval_ok(
             "try { new ArrayBuffer(-1); false } catch (error) { error instanceof RangeError }",
+        );
+        assert_eq!(result, Value::Boolean(true));
+    }
+
+    #[test]
+    fn array_buffer_constructor_rejects_smaller_max_byte_length() {
+        let result = eval_ok(
+            "try { new ArrayBuffer(8, { maxByteLength: 4 }); false } catch (error) { error instanceof RangeError }",
         );
         assert_eq!(result, Value::Boolean(true));
     }
