@@ -5311,3 +5311,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1579. `url-resolve-object-empty-scheme.js` — preserve parsed bases for empty scheme targets.
 1580. `url-resolve-object-web-query-paths.js` — preserve query and fragment path text.
 1581. `url-resolve-object-triple-slash.js` — preserve parsed triple-slash URL bases.
+1582. `url-resolve-object-legacy-opaque.js` — preserve parsed legacy opaque dot targets.
