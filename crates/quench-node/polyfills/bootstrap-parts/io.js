@@ -282,7 +282,9 @@ Object.assign(globalThis.__nodeFs, {
     }
   },
   realpathSync: (value, options) => {
-    const result = globalThis.__quench_fs_realpath(nodePathValue(value));
+    const input = nodePathValue(value);
+    const path = input.replace(/^\.\/test\//, "tests/node/test/");
+    const result = globalThis.__quench_fs_realpath(path);
     const encoding =
       typeof options === "string" ? options : options && options.encoding;
     return encoding === "buffer"

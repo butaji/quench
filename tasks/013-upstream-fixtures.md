@@ -4420,3 +4420,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1269: filesystem utimes surface
 
 - Added sync and callback `utimes`/`lutimes`/`futimes` compatibility methods.
+
+### Stage 1270: realpath fixture-relative paths
+
+- Normalize the upstream test harness’s `./test/...` realpath fixture paths
+  relative to the repository root.
