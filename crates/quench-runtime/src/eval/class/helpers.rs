@@ -527,7 +527,7 @@ pub fn is_constructor_value(val: &Value) -> bool {
             if let Some(target) = nf.get_property("__quench_bound_target") {
                 return is_constructor_value(&target);
             }
-            nf.constructable || nf.prototype.borrow().is_some()
+            nf.constructable
         }
         Value::Function(f) => {
             if f.get_property("\0nonconstructable").is_some() {

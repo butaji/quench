@@ -1805,6 +1805,11 @@ mod class_declaration {
     }
 
     #[test]
+    fn class_invalid_heritage_throws() {
+        assert!(eval("class C extends 42 {}").is_err());
+    }
+
+    #[test]
     fn direct_eval_class_decl_preserves_prior_completion() {
         assert_eq!(eval("eval('1; class C {}')").unwrap(), Value::Number(1.0));
     }
