@@ -216,7 +216,7 @@ globalThis.__quenchWhatwgFormat = (input) =>
       ? input.href
       : null;
 globalThis.__quenchSpecialUrlProtocol = (protocol) =>
-  /^(?:http|https|ftp):$/.test(protocol);
+  /^(?:http|https|ftp|file):$/.test(protocol);
 globalThis.__quenchResolveStringFragmentOnly = (from, to) =>
   typeof from === "string"
     ? globalThis.__quenchResolveFragmentOnly(from, to)
