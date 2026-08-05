@@ -15,7 +15,11 @@ const __nodeFsReadStreamOptions = (options) => {
 };
 const __nodeFsReadStreamClose = (stream) => {
   if (stream.fd !== null) {
-    globalThis.__nodeFs.closeSync(stream.fd);
+    try {
+      globalThis.__nodeFs.closeSync(stream.fd);
+    } catch (error) {
+      if (error.code !== "EBADF") throw error;
+    }
     stream.fd = null;
   }
   stream.emit("close");

@@ -4198,3 +4198,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Added synchronous/asynchronous-compatible `Readable.flatMap()` flattening for
   arrays and readable results.
+
+### Stage 1220: idempotent read-stream close
+
+- Suppressed duplicate `EBADF` errors when filesystem read streams close after
+  their descriptor has already been released.
