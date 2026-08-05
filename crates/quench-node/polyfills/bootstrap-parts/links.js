@@ -1,6 +1,11 @@
 globalThis.__nodeFs.link = (existing, link, callback) => {
-  if (typeof callback !== "function")
-    throw new TypeError('The "callback" argument must be of type function');
+  if (typeof callback !== "function") {
+    const error = new TypeError(
+      'The "callback" argument must be of type function'
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
   if (
     (typeof existing !== "string" && !(existing instanceof Uint8Array)) ||
     (typeof link !== "string" && !(link instanceof Uint8Array))
@@ -113,8 +118,13 @@ globalThis.__nodeFs.copyFile = (from, to, mode, callback) => {
     callback = mode;
     mode = 0;
   }
-  if (typeof callback !== "function")
-    throw new TypeError('The "callback" argument must be of type function');
+  if (typeof callback !== "function") {
+    const error = new TypeError(
+      'The "callback" argument must be of type function'
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
   const source = nodeFsPath(from);
   const destination = nodeFsPath(to);
   if (typeof mode !== "number") {
