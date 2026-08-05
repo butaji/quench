@@ -4020,3 +4020,13 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Added the chainable `ref()` method to complete the socket handle lifecycle
   surface used by the upstream ref fixture.
+
+### Stage 1184: dgram internal state
+
+- Added the minimal `internal/dgram` state symbol and stable handle shape used
+  by the close-before-lookup fixture.
+
+### Stage 1185: dgram close cancellation
+
+- Prevented queued send delivery from accessing a socket after it has been
+  closed, matching the close-before-lookup behavior.
