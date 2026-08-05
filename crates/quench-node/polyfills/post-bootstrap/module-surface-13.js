@@ -63,20 +63,7 @@ const __quenchCryptoKeyExchangeFallback = (result) => {
     return () => Object.create(Constructor.prototype);
   };
   result.createDiffieHellman ||= (sizeOrKey, generator) => {
-    if (typeof sizeOrKey === "number" && !Number.isInteger(sizeOrKey))
-      throw Object.assign(
-        new RangeError(
-          `The value of "sizeOrKey" is out of range. It must be an integer. Received ${sizeOrKey}`
-        ),
-        { code: "ERR_OUT_OF_RANGE" }
-      );
-    if (typeof generator === "number" && !Number.isInteger(generator))
-      throw Object.assign(
-        new RangeError(
-          `The value of "generator" is out of range. It must be an integer. Received ${generator}`
-        ),
-        { code: "ERR_OUT_OF_RANGE" }
-      );
+    __quenchValidateDhNumbers(sizeOrKey, generator);
     return create("DiffieHellman")();
   };
   result.createDiffieHellmanGroup ||= create("DiffieHellmanGroup");
