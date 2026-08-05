@@ -463,6 +463,44 @@ fn register_shared_array_buffer(ctx: &mut Context) {
         .borrow_mut()
         .set_getter_func("maxByteLength", max_byte_length_getter);
 
+    proto_rc.borrow_mut().set(
+        "grow",
+        Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
+            let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+            let Value::Object(object) = this_val else {
+                return Err(array_buffer_type_error(
+                    "SharedArrayBuffer.prototype.grow requires a SharedArrayBuffer receiver",
+                ));
+            };
+            if object.borrow().get_own("\0sharedArrayBuffer").is_none() {
+                return Err(array_buffer_type_error(
+                    "SharedArrayBuffer.prototype.grow requires a SharedArrayBuffer receiver",
+                ));
+            }
+            let new_len = args.first().map(to_number).unwrap_or(f64::NAN);
+            let max_len = object
+                .borrow()
+                .get_own_value("maxByteLength")
+                .map(|value| to_number(&value))
+                .unwrap_or(0.0);
+            if !new_len.is_finite()
+                || new_len < 0.0
+                || new_len.fract() != 0.0
+                || new_len > max_len
+                || new_len > usize::MAX as f64
+            {
+                return Err(array_buffer_range_error(
+                    "SharedArrayBuffer grow length is out of range",
+                ));
+            }
+            let new_len = new_len as usize;
+            let mut object = object.borrow_mut();
+            object.elements.resize(new_len, Value::Number(0.0));
+            object.set("byteLength", Value::Number(new_len as f64));
+            Ok(Value::Undefined)
+        }))),
+    );
+
     let slice_proto = Rc::clone(&proto_rc);
     proto_rc.borrow_mut().set(
         "slice",
@@ -523,6 +561,23 @@ fn register_shared_array_buffer(ctx: &mut Context) {
                 elements.resize(len_usize, Value::Number(0.0));
                 this_obj.borrow_mut().set("byteLength", Value::Number(len));
                 this_obj.borrow_mut().elements = elements;
+                if let Some(Value::Object(options)) = args.get(1) {
+                    if let Some(value) = options.borrow().get_own_value("maxByteLength") {
+                        let max_len = to_number(&value);
+                        if !max_len.is_finite()
+                            || max_len < len
+                            || max_len.fract() != 0.0
+                            || max_len > usize::MAX as f64
+                        {
+                            return Err(array_buffer_range_error(
+                                "SharedArrayBuffer maxByteLength is out of range",
+                            ));
+                        }
+                        this_obj
+                            .borrow_mut()
+                            .set("maxByteLength", Value::Number(max_len));
+                    }
+                }
                 this_obj
                     .borrow_mut()
                     .set("\0sharedArrayBuffer", Value::Boolean(true));
@@ -643,6 +698,14 @@ mod tests {
     fn shared_array_buffer_rejects_unallocatable_length_before_allocation() {
         let result = eval_ok(
             "try { new SharedArrayBuffer(9007199254740991); false } catch (error) { error instanceof RangeError }",
+        );
+        assert_eq!(result, Value::Boolean(true));
+    }
+
+    #[test]
+    fn shared_array_buffer_grow_updates_length_and_zero_fills() {
+        let result = eval_ok(
+            "var sab = new SharedArrayBuffer(2, { maxByteLength: 4 }); sab.grow(4); sab.byteLength === 4 && sab.growable === true",
         );
         assert_eq!(result, Value::Boolean(true));
     }
