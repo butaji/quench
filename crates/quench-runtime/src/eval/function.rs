@@ -552,6 +552,12 @@ pub(crate) fn bind_params(
                     .into_iter()
                     .map(|name| (name, crate::ast::VarKind::Var)),
             )
+            .chain(f.body.iter().filter_map(|statement| match statement {
+                crate::ast::Statement::FunctionDeclaration { name, .. } => {
+                    Some((name.clone(), crate::ast::VarKind::Var))
+                }
+                _ => None,
+            }))
             .collect(),
     ));
     if params.iter().any(|p| p.default.is_some()) {

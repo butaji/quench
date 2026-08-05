@@ -199,7 +199,6 @@ pub fn collect_var_names(stmts: &[Statement]) -> Vec<String> {
 pub fn collect_var_names_recursive(stmts: &[Statement], names: &mut Vec<String>) {
     for stmt in stmts {
         match stmt {
-            Statement::FunctionDeclaration { name, .. } => names.push(name.clone()),
             Statement::VarDeclaration {
                 kind: VarKind::Var,
                 name,

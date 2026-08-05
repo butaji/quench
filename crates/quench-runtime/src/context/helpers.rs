@@ -884,6 +884,13 @@ mod tests {
     }
 
     #[test]
+    fn strict_eval_block_function_declaration_does_not_leak() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        assert!(ctx.eval("'use strict'; var err; eval('{ function f() {} }'); try { f; } catch (e) { err = e; } err instanceof ReferenceError").is_ok_and(|value| matches!(value, Value::Boolean(true))));
+    }
+
+    #[test]
     fn indirect_eval_var_ignores_lower_lexical_binding() {
         let mut ctx = Context::new().unwrap();
         crate::builtins::register_builtins(&mut ctx);
