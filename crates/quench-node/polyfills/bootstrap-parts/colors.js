@@ -277,11 +277,10 @@ class NodeURLSearchParams {
 }
 globalThis.__nodeURLSearchParams = NodeURLSearchParams;
 const __nodeURLResolveInput = (input, base) => {
-  let value = String(input)
-    .trim()
-    .replace(/[\t\n\r]/g, "");
-  if (base && !/^[a-z][a-z0-9+.-]*:/.test(value)) {
-    const baseUrl = new globalThis.__nodeURL(base);
+  // prettier-ignore
+  let value = String(input).trim().replace(/[\t\n\r]/g, "");
+  // prettier-ignore
+  if (base && (!/^[a-z][a-z0-9+.-]*:/.test(value) || /^(?:https?|ftp):[^/]/.test(value))) { const baseUrl = new globalThis.__nodeURL(base); value = value.replace(/^(?:https?|ftp):/, "");
     value = value.startsWith("/")
       ? baseUrl.origin + value
       : baseUrl.origin + baseUrl.pathname.replace(/\/[^/]*$/, "/") + value;

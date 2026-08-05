@@ -192,7 +192,10 @@
           ? String(value)
               .split("/")
               .map((segment) =>
-                globalThis.__nodeUrlEncode(segment).replace(/%3B/gi, ";")
+                globalThis
+                  .__nodeUrlEncode(segment)
+                  .replace(/%3B/gi, ";")
+                  .replace(/%3A/gi, ":")
               )
               .join("/")
           : property === "search"
