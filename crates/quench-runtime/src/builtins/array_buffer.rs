@@ -406,6 +406,41 @@ fn register_shared_array_buffer(ctx: &mut Context) {
         proto_rc.borrow_mut().prototype = Some(object_proto);
     }
 
+    let byte_length_getter = Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
+        let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+        let Value::Object(object) = this_val else {
+            return Err(array_buffer_type_error(
+                "SharedArrayBuffer.prototype.byteLength requires a SharedArrayBuffer receiver",
+            ));
+        };
+        let value = object
+            .borrow()
+            .get_own_value("byteLength")
+            .unwrap_or(Value::Number(0.0));
+        Ok(value)
+    })));
+    proto_rc
+        .borrow_mut()
+        .set_getter_func("byteLength", byte_length_getter);
+
+    let growable_getter = Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
+        let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+        let Value::Object(object) = this_val else {
+            return Err(array_buffer_type_error(
+                "SharedArrayBuffer.prototype.growable requires a SharedArrayBuffer receiver",
+            ));
+        };
+        let value = object
+            .borrow()
+            .get_own_value("maxByteLength")
+            .map(|value| to_number(&value) > 0.0)
+            .unwrap_or(false);
+        Ok(Value::Boolean(value))
+    })));
+    proto_rc
+        .borrow_mut()
+        .set_getter_func("growable", growable_getter);
+
     let proto_clone = Rc::clone(&proto_rc);
     let mut sab_native = NativeFunction::new_with_prototype(
         move |args| {
@@ -492,6 +527,22 @@ mod tests {
             "try { new ArrayBuffer(8, { maxByteLength: 4 }); false } catch (error) { error instanceof RangeError }",
         );
         assert_eq!(result, Value::Boolean(true));
+    }
+
+    #[test]
+    fn shared_array_buffer_byte_length_prototype_property_is_an_accessor() {
+        let result = eval_ok(
+            "typeof Object.getOwnPropertyDescriptor(SharedArrayBuffer.prototype, 'byteLength').get",
+        );
+        assert_eq!(result, Value::String("function".to_string()));
+    }
+
+    #[test]
+    fn shared_array_buffer_growable_prototype_property_is_an_accessor() {
+        let result = eval_ok(
+            "typeof Object.getOwnPropertyDescriptor(SharedArrayBuffer.prototype, 'growable').get",
+        );
+        assert_eq!(result, Value::String("function".to_string()));
     }
 
     #[test]
