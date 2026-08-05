@@ -57,6 +57,23 @@ const __quenchValidateGcmIv = (algorithm, iv) => {
   if (length < 8 || length > 64)
     throw new Error("Invalid initialization vector");
 };
+const __quenchValidateCipherKey = (algorithm, key) => {
+  const normalized = algorithm.toLowerCase();
+  const expected = normalized.includes("aes-128")
+    ? 16
+    : normalized.includes("aes-256")
+      ? 32
+      : normalized.includes("des-ede3")
+        ? 24
+        : undefined;
+  if (!expected) {
+    const error = new Error("Unknown cipher");
+    error.code = "ERR_CRYPTO_UNKNOWN_CIPHER";
+    throw error;
+  }
+  const length = typeof key === "string" ? key.length : key.byteLength;
+  if (length !== expected) throw new Error("Invalid key length");
+};
 const __quenchValidateCipherArguments = (algorithm, key, iv) => {
   if (typeof algorithm !== "string") {
     throw Object.assign(
@@ -88,6 +105,7 @@ const __quenchValidateCipherArguments = (algorithm, key, iv) => {
       { code: "ERR_INVALID_ARG_TYPE" }
     );
   __quenchValidateEcbIv(algorithm, iv);
+  __quenchValidateCipherKey(algorithm, key);
   if (!algorithm.toLowerCase().includes("ecb"))
     __quenchValidateCbcIv(algorithm, iv);
   __quenchValidateGcmIv(algorithm, iv);
