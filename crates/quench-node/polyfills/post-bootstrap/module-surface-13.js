@@ -70,6 +70,15 @@ const __quenchCryptoKeyFallback = (result) => {
   result.createPrivateKey ||= create("private");
   result.createPublicKey ||= create("public");
 };
+const __quenchCryptoConstantsFallback = (result) => {
+  result.constants ||= {};
+  Object.assign(result.constants, {
+    RSA_PKCS1_PADDING: 1,
+    RSA_PKCS1_PSS_PADDING: 6,
+    RSA_PSS_SALTLEN_MAX_SIGN: -2,
+    RSA_PSS_SALTLEN_DIGEST: -1
+  });
+};
 const __quenchSpkacPublicKey = `-----BEGIN PUBLIC KEY-----
 MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAt9xYiIonscC3vz/A2ceR7KhZZlDu/5bye53nCVTcKnWd2seY6UAdKersX6njr83Dd5OVe1BW/wJvp5EjWTAGYbFswlNmeD44edEGM939B6Lq+/8iBkrTi8mGN4YCytivE24YI0D4XZMPfkLSpab2y/Hy4DjQKBq1ThZ0UBnK+9IhX37Ju/ZoGYSlTIGIhzyaiYBh7wrZBoPczIEu6et/kN2VnnbRUtkYTF97ggcv5h+hDpUQjQW0ZgOMcTc8n+RkGpIt0/iM/bTjI3Tz/gsFdi6hHcpZgbopPL630296iByyigQCPJVzdusFrQN5DeC+zT/nGypQkZanLb4ZspSx9QIDAQAB
 -----END PUBLIC KEY-----`;
@@ -452,6 +461,7 @@ const __quenchCryptoFallbacks = (result) => {
   __quenchCryptoSignFallback(result);
   __quenchCryptoKeyExchangeFallback(result);
   __quenchCryptoKeyFallback(result);
+  __quenchCryptoConstantsFallback(result);
   __quenchCertificateFallback(result);
   __quenchCryptoCipherFallback(result);
   globalThis.__quenchCipherConstructor = result.Cipheriv;
