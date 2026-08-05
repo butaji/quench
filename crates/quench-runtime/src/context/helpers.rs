@@ -102,6 +102,15 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
     CURRENT_CONTEXT.with(|cell| {
         *cell.borrow_mut() = Some(ctx_ptr);
     });
+    let direct_eval_global_names = if crate::interpreter::is_direct_eval() {
+        ctx.get_global("globalThis")
+            .and_then(|global| match global {
+                Value::Object(global) => Some(global.borrow().own_property_names()),
+                _ => None,
+            })
+    } else {
+        None
+    };
     // Save label stack depth before parse so we can restore on any exit path.
     let label_depth = crate::interpreter::label_stack_depth();
     // Indirect eval should not inherit strict mode for parsing. Temporarily
@@ -287,6 +296,30 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
     crate::interpreter::pop_label_scope();
     crate::interpreter::clear_eval_barrier_depth();
     let ast::Program::Script(body) = &program;
+    if let (Some(before), Some(Value::Object(global))) =
+        (direct_eval_global_names, ctx.get_global("globalThis"))
+    {
+        let mut var_names = Vec::new();
+        crate::interpreter::collect_var_names_recursive(body, &mut var_names);
+        for name in var_names {
+            if before.contains(&name) {
+                continue;
+            }
+            let Some(descriptor) = global.borrow().get_own_property(&name) else {
+                continue;
+            };
+            global.borrow_mut().define(
+                &name,
+                descriptor.value.clone().unwrap_or(Value::Undefined),
+                crate::value::PropertyFlags {
+                    value: descriptor.value,
+                    writable: descriptor.writable.unwrap_or(false),
+                    enumerable: descriptor.enumerable.unwrap_or(false),
+                    configurable: true,
+                },
+            );
+        }
+    }
     if let Some(Value::Object(global)) = ctx.get_global("globalThis") {
         for statement in body {
             if let ast::Statement::FunctionDeclaration { name, .. } = statement {
@@ -418,9 +451,9 @@ pub fn reject_global_lexical_declarations(
         return Ok(());
     };
     for (name, _) in names {
-        if crate::context::get_current_env().is_some_and(|env| {
-            env.borrow().get_kind(&name) == Some(crate::ast::VarKind::Var)
-        }) {
+        if crate::context::get_current_env()
+            .is_some_and(|env| env.borrow().get_kind(&name) == Some(crate::ast::VarKind::Var))
+        {
             continue;
         }
         if global

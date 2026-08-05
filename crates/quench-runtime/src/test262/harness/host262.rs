@@ -1,7 +1,7 @@
 //! $262 host API object for test262
 
-use crate::context::CURRENT_CONTEXT;
 use crate::ast::Program;
+use crate::context::CURRENT_CONTEXT;
 use crate::test262::harness::make_native;
 use crate::value::{Object, ObjectKind};
 use crate::{Context, JsError, Value};
@@ -192,6 +192,18 @@ fn reject_restricted_global_lexicals(ctx: &Context, source: &str) -> Result<(), 
     };
     let current_env = crate::context::get_current_env();
     let has_lexical = |name: &str| {
+        current_env
+            .as_ref()
+            .is_some_and(|env| match env.borrow().get_kind(name) {
+                Some(crate::ast::VarKind::Let | crate::ast::VarKind::Const) => true,
+                Some(crate::ast::VarKind::Var) => global
+                    .borrow()
+                    .get_own_property(name)
+                    .is_some_and(|descriptor| descriptor.configurable == Some(false)),
+                None => false,
+            })
+    };
+    let has_declarative_lexical = |name: &str| {
         current_env.as_ref().is_some_and(|env| {
             matches!(
                 env.borrow().get_kind(name),
@@ -212,7 +224,7 @@ fn reject_restricted_global_lexicals(ctx: &Context, source: &str) -> Result<(), 
     let mut var_names = Vec::new();
     crate::interpreter::collect_var_names_recursive(&body, &mut var_names);
     for name in &var_names {
-        if has_lexical(name) {
+        if has_declarative_lexical(name) {
             let (error, js_error) = crate::value::error::create_js_error_with_type(
                 "Identifier has already been declared",
                 "SyntaxError",
@@ -228,7 +240,7 @@ fn reject_restricted_global_lexicals(ctx: &Context, source: &str) -> Result<(), 
         }) else {
             continue;
         };
-        if has_lexical(name) {
+        if has_declarative_lexical(name) {
             let (error, js_error) = crate::value::error::create_js_error_with_type(
                 "Identifier has already been declared",
                 "SyntaxError",
@@ -280,8 +292,7 @@ fn reject_restricted_global_lexicals(ctx: &Context, source: &str) -> Result<(), 
             .borrow()
             .get_own_property(&name)
             .is_some_and(|descriptor| descriptor.configurable == Some(false))
-            && crate::context::get_current_env()
-                .and_then(|env| env.borrow().get_kind(&name))
+            && crate::context::get_current_env().and_then(|env| env.borrow().get_kind(&name))
                 != Some(crate::ast::VarKind::Var)
         {
             let (error, js_error) = crate::value::error::create_js_error_with_type(
@@ -593,6 +604,22 @@ mod tests {
              Object.getOwnPropertyDescriptor(this, 'freshFunction').configurable",
         );
         assert_eq!(result, Ok(crate::Value::Boolean(false)));
+    }
+
+    #[test]
+    fn test_direct_eval_var_does_not_block_eval_script_lexical_binding() {
+        let mut ctx = harness_ctx();
+        ctx.eval("eval('var directEvalVar');").unwrap();
+        ctx.eval("$262.evalScript('var evalVar; let directEvalVar;');")
+            .unwrap();
+    }
+
+    #[test]
+    fn test_source_var_blocks_eval_script_lexical_binding() {
+        let mut ctx = harness_ctx();
+        ctx.eval("var sourceVar;").unwrap();
+        let error = ctx.eval("$262.evalScript('var evalVar; let sourceVar;');");
+        assert!(error.is_err());
     }
 
     #[test]
