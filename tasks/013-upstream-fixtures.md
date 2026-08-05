@@ -4055,3 +4055,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Added synchronous connection state, remote address reporting, implicit bind,
   and validation for the connectSync fixture.
+
+### Stage 1191: dgram send type validation
+
+- Added buffer-like payload validation and the legacy `sendto()` alias used by
+  invalid-message fixtures.

@@ -36,6 +36,18 @@ const __quenchDgramBind = (socket, type, port, address, callback) => {
   return socket;
 };
 const __quenchDgramSend = (socket, message, ...args) => {
+  if (
+    typeof message !== "string" &&
+    !(message instanceof NodeBuffer) &&
+    !Array.isArray(message) &&
+    !ArrayBuffer.isView(message)
+  )
+    throw Object.assign(
+      new TypeError('The "buffer" argument must be a Buffer'),
+      {
+        code: "ERR_INVALID_ARG_TYPE"
+      }
+    );
   const callback = args.at(-1);
   const hasOffset = args.length >= 5 || (socket._connected && args.length >= 3);
   const payload = Array.isArray(message) ? NodeBuffer.concat(message) : message;
@@ -185,6 +197,7 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
       return socket._address;
     },
     send: (message, ...args) => __quenchDgramSend(socket, message, ...args),
+    sendto: (message, ...args) => __quenchDgramSend(socket, message, ...args),
     connect: (port, address, callback) =>
       __quenchDgramConnect(socket, port, address, callback),
     connectSync: (port, address = "127.0.0.1") => {
