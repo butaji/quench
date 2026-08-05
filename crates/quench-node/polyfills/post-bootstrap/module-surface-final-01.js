@@ -113,7 +113,7 @@ const __quenchUrlPrefix = (input, protocol, authority) => {
 };
 const __quenchUrlSearch = (input) => {
   let search = input.search || "";
-  if (!search && input.query !== undefined) {
+  if (!search && input.query != null) {
     search =
       typeof input.query === "string"
         ? input.query
