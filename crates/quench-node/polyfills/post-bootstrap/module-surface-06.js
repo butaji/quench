@@ -198,6 +198,8 @@
                   .replace(/%3B/gi, ";")
                   .replace(/%3A/gi, ":")
                   .replace(/%40/gi, "@")
+                  .replace(/%5B/gi, "[")
+                  .replace(/%5D/gi, "]")
               )
               .join("/")
           : property === "search"
