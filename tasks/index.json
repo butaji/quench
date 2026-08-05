@@ -2,20 +2,101 @@
   "project": "quench-node",
   "description": "Node API compatibility and host-boundary improvements grounded in the current rquickjs implementation. Roadmap to 100% Node API surface.",
   "tasks": [
-    { "id": "001", "file": "001-buffer-binary-paths.md", "title": "Complete low-copy Buffer binary paths", "status": "complete" },
-    { "id": "002", "file": "002-fs-buffer-io.md", "title": "Add Buffer-based fs read and write paths", "status": "complete" },
-    { "id": "003", "file": "003-native-timers.md", "title": "Implement Node-compatible native timers", "status": "in-progress" },
-    { "id": "004", "file": "004-stream-backpressure.md", "title": "Implement stream backpressure semantics", "status": "in-progress" },
-    { "id": "005", "file": "005-native-crypto-bytes.md", "title": "Reduce crypto byte and string conversions", "status": "in-progress" },
-    { "id": "006", "file": "006-test-runtime-reuse.md", "title": "Add an isolated and reusable test execution mode", "status": "complete" },
-    { "id": "007", "file": "007-bootstrap-laziness.md", "title": "Make compatibility bootstrap initialization lazy", "status": "in-progress" },
-    { "id": "008", "file": "008-error-boundary.md", "title": "Preserve Node error codes across the host boundary", "status": "in-progress" },
-    { "id": "009", "file": "009-focused-gate-regressions.md", "title": "Fix focused stage gate regressions", "status": "complete" },
-    { "id": "010", "file": "010-node-api-surface-map.md", "title": "Node API surface map and 100% coverage strategy", "status": "in-progress" },
-    { "id": "011", "file": "011-module-surface.md", "title": "Module surface — register every builtinModules entry", "status": "in-progress" },
-    { "id": "012", "file": "012-global-surface.md", "title": "Global surface — every Node globalThis name", "status": "in-progress" },
-    { "id": "013", "file": "013-upstream-fixtures.md", "title": "Upstream fixtures — pass every tests/node/test/parallel/*.js", "status": "in-progress" },
-    { "id": "014", "file": "014-host-surface.md", "title": "Host (Rust) surface — the unsafe / OS-bound primitives", "status": "in-progress" },
-    { "id": "015", "file": "015-tooling.md", "title": "Tooling and harness improvements", "status": "in-progress" }
+    {
+      "id": "001",
+      "file": "001-buffer-binary-paths.md",
+      "title": "Complete low-copy Buffer binary paths",
+      "status": "complete"
+    },
+    {
+      "id": "002",
+      "file": "002-fs-buffer-io.md",
+      "title": "Add Buffer-based fs read and write paths",
+      "status": "complete"
+    },
+    {
+      "id": "003",
+      "file": "003-native-timers.md",
+      "title": "Implement Node-compatible native timers",
+      "status": "in-progress"
+    },
+    {
+      "id": "004",
+      "file": "004-stream-backpressure.md",
+      "title": "Implement stream backpressure semantics",
+      "status": "in-progress"
+    },
+    {
+      "id": "005",
+      "file": "005-native-crypto-bytes.md",
+      "title": "Reduce crypto byte and string conversions",
+      "status": "in-progress"
+    },
+    {
+      "id": "006",
+      "file": "006-test-runtime-reuse.md",
+      "title": "Add an isolated and reusable test execution mode",
+      "status": "complete"
+    },
+    {
+      "id": "007",
+      "file": "007-bootstrap-laziness.md",
+      "title": "Make compatibility bootstrap initialization lazy",
+      "status": "in-progress"
+    },
+    {
+      "id": "008",
+      "file": "008-error-boundary.md",
+      "title": "Preserve Node error codes across the host boundary",
+      "status": "in-progress"
+    },
+    {
+      "id": "009",
+      "file": "009-focused-gate-regressions.md",
+      "title": "Fix focused stage gate regressions",
+      "status": "complete"
+    },
+    {
+      "id": "010",
+      "file": "010-node-api-surface-map.md",
+      "title": "Node API surface map and 100% coverage strategy",
+      "status": "in-progress"
+    },
+    {
+      "id": "011",
+      "file": "011-module-surface.md",
+      "title": "Module surface — register every builtinModules entry",
+      "status": "in-progress"
+    },
+    {
+      "id": "012",
+      "file": "012-global-surface.md",
+      "title": "Global surface — every Node globalThis name",
+      "status": "in-progress"
+    },
+    {
+      "id": "013",
+      "file": "013-upstream-fixtures.md",
+      "title": "Upstream fixtures — pass every tests/node/test/parallel/*.js",
+      "status": "in-progress"
+    },
+    {
+      "id": "014",
+      "file": "014-host-surface.md",
+      "title": "Host (Rust) surface — the unsafe / OS-bound primitives",
+      "status": "in-progress"
+    },
+    {
+      "id": "015",
+      "file": "015-tooling.md",
+      "title": "Tooling and harness improvements",
+      "status": "in-progress"
+    },
+    {
+      "id": "016",
+      "file": "016-compatibility-throughput.md",
+      "title": "Compatibility throughput and differential triage",
+      "status": "planned"
+    }
   ]
 }

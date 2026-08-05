@@ -18,7 +18,6 @@ Feature-gated `stream/iter` stages are run with:
 ```sh
 cargo run -p quench-node -- --experimental-stream-iter --stage 169
 ```
-```
 
 The Node test suite is tracked as the `tests/node` submodule. Compatibility
 stages live under `tests/node-compat`; each stage is committed and verified
@@ -43,6 +42,21 @@ For the empirical test-file percentage requested during development, run
 `tools/measure-node-tests.sh [directory]`. It builds once and executes each
 JavaScript file individually, reporting passed, failed, skipped, and the
 resulting file pass rate.
+
+## Faster compatibility workflow
+
+The implementation roadmap for 2–5x faster progress is tracked in
+`tasks/016-compatibility-throughput.md`. The key investment is a local
+Node-vs-quench differential runner that persists normalized results, clusters
+failures, and emits an owned work queue. Related failures should be grouped
+into readable API slices instead of forcing one stage per mismatch.
+
+Work can be partitioned into up to five isolated streams: URL/encoding,
+streams/events, filesystem/modules, crypto/network/OS, and harness/globals.
+Each stream must own distinct files or use an isolated worktree. Local reports
+should show fixture pass/fail/skip/timeout counts, cluster rates, unique
+failure signatures, and regressions. These metrics measure test progress, not
+the percentage of the Node API surface.
 
 ## Runtime boundary
 
