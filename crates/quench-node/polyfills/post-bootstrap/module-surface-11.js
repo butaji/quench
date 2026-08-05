@@ -136,6 +136,18 @@ globalThis.__quenchResolveParsedHash = (result, from, to) => {
     ? result.parse(`${source.replace(/#.*$/, "")}${to}`)
     : null;
 };
+globalThis.__quenchResolveParsedMailto = (result, from, to) => {
+  const source = from.href || "";
+  const base = to.startsWith("?")
+    ? source.replace(/[?#].*$/, "")
+    : source.replace(/#.*$/, "");
+  return from.protocol === "mailto:" && /^[?#]/.test(to)
+    ? result.parse(`${base}${to}`)
+    : null;
+};
+globalThis.__quenchResolveParsedMailtoOrHash = (result, from, to) =>
+  globalThis.__quenchResolveParsedMailto(result, from, to) ||
+  globalThis.__quenchResolveParsedHash(result, from, to);
 globalThis.__quenchResolveParsedFragment = (result, from, to) => {
   if (typeof from === "string") return null;
   const target = to.match(/^([A-Za-z][A-Za-z0-9+.-]*):(#.*)$/);
