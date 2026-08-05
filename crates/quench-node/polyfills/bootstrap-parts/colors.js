@@ -297,7 +297,7 @@ const __nodeURLAssignParts = (url, match) => {
   // prettier-ignore
   ((url.protocol = match[1] || ""), (url.host = (match[2] || "").replace(/^.*@/, "")), (url._username = username), (url._password = password), Object.defineProperty(url, "_hostname", { configurable: true, value: url.host.split(":")[0], writable: true }));
   // prettier-ignore
-  url.port = url.host.includes(":") ? url.host.slice(url.host.lastIndexOf(":") + 1) : "";
+  url.port = url.host.includes(":") ? url.host.slice(url.host.lastIndexOf(":") + 1).replace(/^0+(?=\d)/, "") : "";
   // prettier-ignore
   url.pathname = match[3] || "/", url.search = match[4] ? `?${match[4]}` : "", url.hash = match[5] ? `#${match[5]}` : "";
   if (match[1] && !match[2]) url._pathname = match[3] || "";
