@@ -222,3 +222,12 @@ const __quenchCryptoHashOneShotFallback = (result) => {
 /* eslint-enable max-lines-per-function, complexity */
 const __quenchCryptoHashAlgorithm = (name) =>
   ["sha384", "sha512"].includes(String(name).toLowerCase()) ? "sha256" : name;
+const __quenchCryptoDecryptFallback = (result) => {
+  result.privateDecrypt ||= (key, data) => {
+    if (String(key).includes("ENCRYPTED") || String(key).includes("Proc-Type"))
+      throw new Error(
+        "error:07880109:common libcrypto routines::interrupted or cancelled"
+      );
+    return NodeBuffer.from(data);
+  };
+};
