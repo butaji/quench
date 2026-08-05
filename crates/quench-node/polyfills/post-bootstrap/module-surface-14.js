@@ -489,12 +489,10 @@ const __quenchCryptoKeyObjectFallback = (result) => {
     };
   }
 };
-const __quenchCryptoEncryptionFallback = (result) => {
-  result.publicEncrypt ||= (_key, data) => NodeBuffer.from(data);
-  result.privateDecrypt ||= (_key, data) => NodeBuffer.from(data);
-};
 const __quenchCryptoAllKeyFallbacks = (result) => {
   __quenchCryptoKeyFallback(result);
   __quenchCryptoKeyObjectFallback(result);
-  __quenchCryptoEncryptionFallback(result);
+  result.publicEncrypt ||= (_key, data) => NodeBuffer.from(data);
+  result.privateDecrypt ||= (_key, data) => NodeBuffer.from(data);
+  __quenchCryptoSecretKeyFallback(result);
 };
