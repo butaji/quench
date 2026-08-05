@@ -4442,3 +4442,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1274: rm missing targets
 
 - Throw `ENOENT` for missing `rm` targets unless `force:true` is supplied.
+
+### Stage 1275: lstat missing targets
+
+- Normalize missing `lstatSync` paths to Node-style `ENOENT` errors.
