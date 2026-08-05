@@ -40,8 +40,6 @@ globalThis.__nodeFs.chmod = (value, mode, callback) => {
 };
 globalThis.__nodeFs.appendFile = (value, data, options, callback) => {
   if (typeof options === "function") callback = options;
-  if (typeof callback !== "function")
-    throw new TypeError('The "callback" argument must be of type function');
   if (
     typeof data !== "string" &&
     !(data instanceof NodeBuffer) &&
@@ -53,6 +51,8 @@ globalThis.__nodeFs.appendFile = (value, data, options, callback) => {
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
+  if (typeof callback !== "function")
+    throw new TypeError('The "callback" argument must be of type function');
   queueMicrotask(() => {
     try {
       globalThis.__nodeFs.appendFileSync(value, data, options);
