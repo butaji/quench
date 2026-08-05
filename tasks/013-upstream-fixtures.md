@@ -4808,3 +4808,15 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1356: crypto decipher argument validation
 
 - Apply the same argument validation to `createDecipheriv()`.
+
+### Stage 1357: crypto cipher encoding state
+
+- Track cipher input and output encodings independently during updates.
+
+### Stage 1358: crypto cipher round trip
+
+- Preserve string/hex cipher round trips through the JavaScript fallback.
+
+### Stage 1359: crypto cipher stream interface
+
+- Provide `end()`, `read()`, and `readableLength` on cipher objects.
