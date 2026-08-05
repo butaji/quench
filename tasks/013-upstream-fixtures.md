@@ -4722,3 +4722,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Reject non-string, non-buffer hash update values with Node’s invalid-argument
   error instead of stringifying arbitrary objects.
+
+### Stage 1337: ArrayBufferView offsets
+
+- Reproduce upstream’s Buffer-backed typed-array view construction and verify
+  offsets and byte lengths through the stage harness.

@@ -216,7 +216,9 @@ const __nodeBufferFromText = (value, encoding) => {
     }
     return output;
   }
-  return new NodeBuffer(new NodeTextEncoder().encode(value));
+  const output = new Uint8Array(new NodeTextEncoder().encode(value));
+  Object.setPrototypeOf(output, NodeBuffer.prototype);
+  return output;
 };
 const __nodeBufferFromTypedArray = (value) => {
   if (value.length === undefined) return new NodeBuffer(value);
