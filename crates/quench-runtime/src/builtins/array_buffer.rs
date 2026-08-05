@@ -85,6 +85,25 @@ pub fn register_array_buffer(ctx: &mut Context) {
                 .map(|v| to_number(v) as isize)
                 .unwrap_or(len as isize)
                 .clamp(start as isize, len as isize) as usize;
+            if let Some(Value::Object(constructor)) = this_obj.borrow().get_own_value("constructor")
+            {
+                if let Some(Value::Symbol(species)) =
+                    crate::builtins::symbol::get_well_known_symbol_no_ctx("species")
+                {
+                    let species_value = constructor.borrow().get(&species.property_key());
+                    if !matches!(
+                        species_value,
+                        None | Some(Value::Undefined) | Some(Value::Null)
+                    ) && !species_value
+                        .as_ref()
+                        .is_some_and(crate::eval::class::helpers::is_constructor_value)
+                    {
+                        return Err(array_buffer_type_error(
+                            "ArrayBuffer species is not a constructor",
+                        ));
+                    }
+                }
+            }
             let sliced_len = (end - start) as f64;
             let proto = this_obj.borrow().prototype.clone();
             let mut sliced = Object::new(ObjectKind::Ordinary);
@@ -418,6 +437,14 @@ mod tests {
     fn array_buffer_accessor_rejection_is_a_type_error_object() {
         let result = eval_ok(
             "try { Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, 'byteLength').get.call({}); false } catch (error) { error instanceof TypeError }",
+        );
+        assert_eq!(result, Value::Boolean(true));
+    }
+
+    #[test]
+    fn array_buffer_slice_rejects_non_constructor_species() {
+        let result = eval_ok(
+            "var buffer = new ArrayBuffer(1); buffer.constructor = { [Symbol.species]: 1 }; try { buffer.slice(); false } catch (error) { error instanceof TypeError }",
         );
         assert_eq!(result, Value::Boolean(true));
     }
