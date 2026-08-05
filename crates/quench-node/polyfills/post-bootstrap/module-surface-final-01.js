@@ -144,6 +144,17 @@ const __quenchFormatUrlObject = (input) => {
   if (hash && !hash.startsWith("#")) hash = `#${hash}`;
   return `${__quenchUrlPrefix(input, protocol, authority)}${pathname}${search}${hash}`;
 };
+const __quenchParseQueryObject = (value) => {
+  const query = Object.create(null);
+  if (!value) return query;
+  for (const part of String(value).split("&")) {
+    const [key, item = ""] = part.split("=");
+    query[decodeURIComponent(key)] = decodeURIComponent(
+      item.replace(/\+/g, " ")
+    );
+  }
+  return query;
+};
 const __quenchUrlOptionEnabled = (options, name) =>
   !Object.prototype.hasOwnProperty.call(options, name) || options[name];
 const __quenchUrlOptionsPreserve = (options) =>
@@ -365,9 +376,18 @@ const __quenchResolvePath = (from, to, resolve) => {
   }
   return __quenchResolveRelativePath(from, to, resolve);
 };
+const __quenchAddUrlParseFallback = (result) => {
+  const originalParse = result.parse;
+  if (typeof originalParse !== "function") return;
+  result.parse = (input, ...args) => {
+    const parsed = originalParse.call(result, input, ...args);
+    if (args[0] === true) parsed.query = __quenchParseQueryObject(parsed.query);
+    return parsed;
+  };
+};
 const __quenchAddUrlFormatting = (result) => {
   if (typeof result.format !== "function") return result;
-  __quenchAddUrlDomainFallbacks(result);
+  (__quenchAddUrlDomainFallbacks(result), __quenchAddUrlParseFallback(result));
   const originalResolve = result.resolve;
   result.resolveObject ||= (from, to) => {
     const protocolTarget = __quenchResolveProtocolTarget(from, to);
