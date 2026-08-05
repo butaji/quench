@@ -350,7 +350,9 @@ Object.assign(globalThis.__nodeFs, {
   },
   closeSync: (fd) => {
     if (typeof fd !== "number") {
-      const error = new TypeError('The "fd" argument must be of type number');
+      const error = new TypeError(
+        `The "fd" argument must be of type number.${globalThis.__nodeCommon.invalidArgTypeHelper(fd)}`
+      );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }

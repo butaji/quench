@@ -5359,3 +5359,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1627. `fs-exists-callback.js` — implement tolerant asynchronous fs.exists.
 1628. `urlsearchparams-surrogates.js` — encode unpaired UTF-16 surrogates safely.
 1629. `fs-readdir-hex.js` — preserve directory entry bytes for hex encoding.
+1630. `fs-close-argument-message.js` — include received values in fd errors.
