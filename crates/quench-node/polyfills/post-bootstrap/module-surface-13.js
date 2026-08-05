@@ -10,12 +10,7 @@ const __quenchCryptoConstructors = (result) => {
     "verify",
     "generateKeyPair",
     "generateKeyPairSync",
-    "generateKey",
-    "generateKeySync",
-    "hkdf",
-    "pbkdf2",
-    "scrypt",
-    "scryptSync"
+    "generateKey"
   ])
     result[name] ||= function Constructor() {};
 };
@@ -67,10 +62,15 @@ const __quenchCryptoKeyExchangeFallback = (result) => {
     return create("DiffieHellman")();
   };
   result.createDiffieHellmanGroup ||= create("DiffieHellmanGroup");
-  result.getDiffieHellman ||= () => {
-    throw Object.assign(new Error("Unknown DH group"), {
-      code: "ERR_CRYPTO_UNKNOWN_DH_GROUP"
-    });
+  result.getDiffieHellman ||= (name) => {
+    if (name !== "modp14")
+      throw Object.assign(new Error("Unknown DH group"), {
+        code: "ERR_CRYPTO_UNKNOWN_DH_GROUP"
+      });
+    return {
+      getPrime: () => NodeBuffer.alloc(128),
+      getGenerator: () => NodeBuffer.from([2])
+    };
   };
   result.createECDH ||= (curve) => {
     if (curve === undefined)

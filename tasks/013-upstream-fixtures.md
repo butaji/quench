@@ -4968,3 +4968,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1396: crypto unknown DH group
 
 - Expose the unknown-group error from `getDiffieHellman()`.
+
+### Stage 1397: crypto supported DH group
+
+- Expose the `modp14` prime and generator accessors.
