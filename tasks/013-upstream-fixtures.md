@@ -4365,3 +4365,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Reject invalid callback-style `fs.readFile` paths synchronously instead of
   coercing arbitrary values to strings.
+
+### Stage 1258: filesystem constants
+
+- Added standard filesystem mode/open constants and Node’s null-prototype
+  `fs.constants` surface.
