@@ -4471,3 +4471,11 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Normalize cyclic symlink failures to Node-compatible `ELOOP` realpath
   errors.
+
+### Stage 1281: access callback error code
+
+- Mark missing `fs.access` callbacks with `ERR_INVALID_ARG_TYPE`.
+
+### Stage 1282: access mode validation
+
+- Validate `fs.access` modes as finite integer bitmasks from `0` through `7`.
