@@ -70,8 +70,14 @@ globalThis.__nodeFs.appendFile = (value, data, options, callback) => {
 };
 globalThis.__nodeFs.rmdir = (value, options, callback) => {
   if (typeof options === "function") callback = options;
-  if (typeof callback !== "function")
-    throw new TypeError('The "callback" argument must be of type function');
+  if (typeof callback !== "function") {
+    const error = new TypeError(
+      'The "callback" argument must be of type function'
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    error.toString = () => `TypeError [ERR_INVALID_ARG_TYPE]: ${error.message}`;
+    throw error;
+  }
   const path = nodeFsPath(value);
   queueMicrotask(() => {
     try {
@@ -209,41 +215,32 @@ globalThis.__nodeStats.prototype.isFIFO = function () {
 globalThis.__nodeStats.prototype.isSymbolicLink = function () {
   return this._symlink === true;
 };
-globalThis.__nodeFs.Dirent = class Dirent {
-  constructor(name, type = 1) {
-    this.name = name;
-    this._type = type === true ? 2 : type === false ? 1 : type;
-  }
-  isFile() {
-    return this._type === 1;
-  }
-  isDirectory() {
-    return this._type === 2;
-  }
-  isSymbolicLink() {
-    return this._type === 3;
-  }
-  isFIFO() {
-    return this._type === 4;
-  }
-  isSocket() {
-    return this._type === 5;
-  }
-  isCharacterDevice() {
-    return this._type === 6;
-  }
-  isBlockDevice() {
-    return this._type === 7;
-  }
-};
 globalThis.__nodeFs.Dir = class Dir {
   constructor(path) {
-    this.path = path;
+    this._path = path;
+    if (globalThis.__quench_fs_kind(path) === "file") {
+      const error = new Error(`ENOTDIR: not a directory, scandir '${path}'`);
+      error.code = "ENOTDIR";
+      throw error;
+    }
     this._entries = globalThis.__nodeFs.readdirSync(path, {
       withFileTypes: true
     });
     this._index = 0;
     this._closed = false;
+  }
+  get path() {
+    if (
+      this === globalThis.__nodeFs.Dir.prototype ||
+      !(this instanceof globalThis.__nodeFs.Dir)
+    ) {
+      const error = new TypeError(
+        "Method get path called on incompatible receiver"
+      );
+      error.code = "ERR_INVALID_THIS";
+      throw error;
+    }
+    return this._path;
   }
   readSync() {
     if (this._closed) {
@@ -262,8 +259,16 @@ globalThis.__nodeFs.Dir = class Dir {
     this._closed = true;
   }
   read(callback) {
-    if (typeof callback !== "function")
-      throw new TypeError('The "callback" argument must be of type function');
+    if (callback === undefined)
+      return Promise.resolve().then(() => this.readSync());
+    if (typeof callback !== "function") {
+      const error = new TypeError(
+        'The "callback" argument must be of type function'
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      error.toString = () => `TypeError [${error.code}]: ${error.message}`;
+      throw error;
+    }
     queueMicrotask(() => {
       try {
         callback(null, this.readSync());
@@ -273,8 +278,16 @@ globalThis.__nodeFs.Dir = class Dir {
     });
   }
   close(callback) {
-    if (typeof callback !== "function")
-      throw new TypeError('The "callback" argument must be of type function');
+    if (callback === undefined)
+      return Promise.resolve().then(() => this.closeSync());
+    if (typeof callback !== "function") {
+      const error = new TypeError(
+        'The "callback" argument must be of type function'
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      error.toString = () => `TypeError [${error.code}]: ${error.message}`;
+      throw error;
+    }
     queueMicrotask(() => {
       try {
         this.closeSync();
@@ -285,12 +298,23 @@ globalThis.__nodeFs.Dir = class Dir {
     });
   }
 };
-globalThis.__nodeFs.opendirSync = (value) =>
-  new globalThis.__nodeFs.Dir(nodeFsPath(value));
+globalThis.__nodeFs.opendirSync = (value, options) => {
+  globalThis.__validateOpendirOptions(options);
+  return new globalThis.__nodeFs.Dir(nodeFsPath(value));
+};
 globalThis.__nodeFs.opendir = (value, options, callback) => {
-  if (typeof options === "function") callback = options;
-  if (typeof callback !== "function")
-    throw new TypeError('The "callback" argument must be of type function');
+  if (typeof options === "function") {
+    callback = options;
+    options = undefined;
+  }
+  if (typeof callback !== "function") {
+    const error = new TypeError(
+      'The "callback" argument must be of type function'
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    error.toString = () => `TypeError [${error.code}]: ${error.message}`;
+    throw error;
+  }
   const path = nodeFsPath(value);
   queueMicrotask(() => {
     try {
@@ -474,5 +498,3 @@ globalThis.__nodeFs.createWriteStream = (value, options = {}) => {
   };
   return stream;
 };
-globalThis.__nodeFs.WriteStream = globalThis.__nodeFs.createWriteStream;
-globalThis.__nodeFs.ReadStream = globalThis.__nodeFs.createReadStream;
