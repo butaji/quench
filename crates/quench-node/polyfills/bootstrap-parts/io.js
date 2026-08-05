@@ -279,6 +279,8 @@ Object.assign(globalThis.__nodeFs, {
         `ENOENT: no such file or directory, access '${path}'`
       );
       error.code = "ENOENT";
+      error.errno = -2;
+      error.syscall = "access";
       error.path = path;
       throw error;
     }
