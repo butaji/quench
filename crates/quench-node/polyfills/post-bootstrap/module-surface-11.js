@@ -43,3 +43,8 @@ globalThis.__quenchResolveParsedWebRelative = (r, f, t) => {
   const normalized = globalThis.__quenchNormalizeAbsoluteTarget(`${base}${t}`);
   return r.parse(`${origin}${normalized}${t.endsWith("/") ? "/" : ""}`);
 };
+globalThis.__quenchResolveParsedAbsoluteOpaque = (r, f, t) =>
+  /^[A-Za-z][A-Za-z0-9+.-]*:[^/]/.test(t) &&
+  !/^([A-Za-z][A-Za-z0-9+.-]*):#/.test(t)
+    ? r.parse(t)
+    : null;

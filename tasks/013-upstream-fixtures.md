@@ -5305,3 +5305,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1573. `url-resolve-object-opaque-absolute.js` — preserve protocols for parsed opaque absolute paths.
 1574. `url-resolve-object-opaque-rfc-matrix.js` — cover parsed opaque RFC cases.
 1575. `url-resolve-object-web-rfc-matrix.js` — cover parsed web RFC cases.
+1576. `url-resolve-object-absolute-opaque.js` — preserve parsed absolute opaque targets.
