@@ -231,3 +231,14 @@ const __quenchCryptoDecryptFallback = (result) => {
     return NodeBuffer.from(data);
   };
 };
+const __quenchCryptoEncodedPair = (options) => {
+  if (
+    options.publicKeyEncoding?.format === "raw-public" ||
+    options.privateKeyEncoding?.format === "raw-private"
+  )
+    return {
+      publicKey: NodeBuffer.alloc(32),
+      privateKey: NodeBuffer.alloc(32)
+    };
+  return __quenchEncodedPair();
+};

@@ -5206,3 +5206,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1473. `crypto-hash-xof-output.js` — normalize one-shot XOF output encodings.
 1474. `crypto-rsa-pss-digest-aliases.js` — support RSA-PSS digest aliases.
 1475. `crypto-encrypted-private-decrypt.js` — reject encrypted private decrypt inputs consistently.
+1476. `crypto-keygen-raw-outputs.js` — expose raw Buffer key-generation outputs.
