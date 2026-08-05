@@ -3897,3 +3897,10 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 - Added Node-shaped rejection for odd-length hexadecimal HMAC updates.
 - Kept the validation as a separate crypto compatibility layer so the core
   crypto implementation remains within the file-size limit.
+
+### Stage 1163: common helper prerequisite globals
+
+- Added net auto-select-family accessors and base64 web globals required while
+  loading Node’s shared test helpers.
+- Kept the global-surface audit visible; the remaining helper failure is not
+  hidden behind a compatibility-specific bypass.

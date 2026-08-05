@@ -275,6 +275,10 @@ const __quenchNetModule = {
   isIP,
   isIPv4,
   isIPv6,
+  getDefaultAutoSelectFamily: () => false,
+  setDefaultAutoSelectFamily: () => undefined,
+  getDefaultAutoSelectFamilyAttemptTimeout: () => 250,
+  setDefaultAutoSelectFamilyAttemptTimeout: () => undefined,
   BlockList: class BlockList {
     [Symbol.toStringTag] = "BlockList";
     constructor() {
