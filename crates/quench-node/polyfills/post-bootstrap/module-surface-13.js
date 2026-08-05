@@ -346,7 +346,7 @@ const __quenchCryptoCipherFallback = (result) => {
       }
     );
   };
-  result.createDecipheriv ||= result.createCipheriv;
+  result.createDecipheriv ||= (...args) => result.createCipheriv(...args);
   __quenchCryptoCipherConstructors(result);
 };
 const __quenchCryptoCipherConstructors = (result) => {
