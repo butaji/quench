@@ -560,7 +560,7 @@ fn propagate_current_module_resolution_error(ctx: &mut crate::Context, source: &
     let Some(Value::Object(errors)) = ctx.get_global("__quench_module_errors__") else {
         return;
     };
-    let mut sources = reexports
+    let sources = reexports
         .into_iter()
         .map(|entry| match entry {
             PendingReExport::StarAs { source, .. }
