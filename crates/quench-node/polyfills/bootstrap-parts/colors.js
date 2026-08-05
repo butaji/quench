@@ -316,11 +316,11 @@ globalThis.__nodeURL = class NodeURL {
     return new Proxy(this, { get: (target, property, receiver) => { const value = Reflect.get(target, property, receiver); if (property === "searchParams") value.__nodeURLOwner = receiver; return value; }, set: (target, property, value, receiver) => property === "origin" || property === "searchParams" ? globalThis.__nodeThrowReadonlyURLSetter(property) : Reflect.set(target, property, value, receiver) });
   }
   get href() {
-    // prettier-ignore
-    const query = this instanceof globalThis.__nodeURL ? this.searchParams.toString() : (() => { throw new TypeError("Receiver must be an instance of class URL"); })();
+    if (!(this instanceof globalThis.__nodeURL))
+      throw new TypeError("Receiver must be an instance of class URL");
     // prettier-ignore
     const credentials = this.username || this.password ? `${this.username || ""}${this.password ? `:${this.password}` : ""}@` : "" , prefix = this.protocol === "file:" ? "file://" : this.origin === "null" ? "" : this.origin.replace(/^(\w+:\/\/)/, `$1${credentials}`);
-    return `${prefix}${this.pathname}${query ? `?${query}` : this.search}${this.hash}`;
+    return `${prefix}${this.pathname}${this.search}${this.hash}`;
   }
   // prettier-ignore
   toString() { if (!(this instanceof globalThis.__nodeURL)) throw new TypeError("Receiver must be an instance of class URL"); return this.href; }

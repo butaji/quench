@@ -165,6 +165,22 @@
       return original.call(this, value, base);
     };
   };
+  const normalizeURLSearchValue = (value) => {
+    const raw = String(value).replace(/^\?/, "");
+    return `?${raw
+      .split("&")
+      .map((part) =>
+        part
+          .split("=")
+          .map((segment) =>
+            globalThis
+              .__nodeUrlEncode(segment.replace(/\+/g, " "))
+              .replace(/%25([0-9A-F]{2})/gi, "%$1")
+          )
+          .join("=")
+      )
+      .join("&")}`;
+  };
   const normalizeURLSetterValue = (property, value) =>
     typeof value === "symbol"
       ? (() => {
@@ -177,9 +193,7 @@
           : property === "search"
             ? String(value) === ""
               ? ""
-              : String(value).startsWith("?")
-                ? String(value)
-                : `?${String(value)}`
+              : normalizeURLSearchValue(value)
             : property === "hash"
               ? String(value) === ""
                 ? ""
