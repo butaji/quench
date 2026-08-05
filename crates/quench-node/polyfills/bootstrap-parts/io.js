@@ -264,7 +264,8 @@ Object.assign(globalThis.__nodeFs, {
       globalThis.__nodeModes[path] = Number(options.mode);
     return result;
   },
-  accessSync: (value) => {
+  accessSync: (value, mode) => {
+    __nodeFsValidateAccessMode(mode);
     if (typeof value === "number") {
       const error = new TypeError(
         'The "path" argument must be of type string or an instance of Buffer or URL'
