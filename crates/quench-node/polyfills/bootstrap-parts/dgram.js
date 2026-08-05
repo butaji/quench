@@ -116,6 +116,7 @@ const __quenchDgramSocket = (type = "udp4") => {
     once: (event, callback) =>
       __quenchDgramOnce(socket, listeners, event, callback),
     emit: (event, ...args) => __quenchDgramEmit(socket, listeners, event, args),
+    ref: () => socket,
     unref: () => socket
   };
   return socket;
