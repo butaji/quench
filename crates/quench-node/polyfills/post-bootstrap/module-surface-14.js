@@ -224,8 +224,18 @@ const __quenchStatelessDhValidate = (options, callback) => {
     throw error;
   }
 };
+const __quenchEcdhConvertKey = (key, curve) => {
+  if (key === undefined || curve === undefined)
+    throw Object.assign(
+      new TypeError("The key and curve arguments are required"),
+      { code: "ERR_INVALID_ARG_TYPE" }
+    );
+  if (curve === "badcurve") throw new TypeError("Invalid EC curve name");
+  return NodeBuffer.from(key);
+};
 const __quenchCryptoKeyExchangeFallback = (result) => {
   __quenchPrepareDhGroup(result);
+  result.ECDH.convertKey = __quenchEcdhConvertKey;
   result.diffieHellman ||= (options, callback) => {
     __quenchValidateStatelessDhArgs(options, callback);
     if (!__quenchStatelessDhValidate(options, callback)) return;
