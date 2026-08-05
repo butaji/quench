@@ -119,6 +119,9 @@ impl Scope {
     }
 
     fn load_with_unscopables(&self) -> bool {
+        if !self.with_environment {
+            return true;
+        }
         if self.with_unscopables_loaded.get() {
             return true;
         }

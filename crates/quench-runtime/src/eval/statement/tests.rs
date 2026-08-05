@@ -19,6 +19,14 @@ fn try_without_catch_finally_preserves_try_completion() {
 }
 
 #[test]
+fn global_environment_ignores_symbol_unscopables() {
+    assert_eq!(
+        eval("var callCount = 0; Object.defineProperty(this, Symbol.unscopables, { get: function() { callCount++; } }); this.test262 = true; test262; callCount"),
+        Ok(Value::Number(0.0))
+    );
+}
+
+#[test]
 fn switch_case_still_matches_when_default_calls_function() {
     assert_eq!(
         eval("function boxed(value) { return false; } function classify(value) { switch (typeof value) { case 'string': return true; default: return boxed(value); } } classify('a')").unwrap(),
