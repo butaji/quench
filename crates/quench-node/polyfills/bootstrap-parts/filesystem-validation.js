@@ -36,9 +36,10 @@ const __nodeFsValidateMkdirOptions = (options) => {
     throw error;
   }
 };
-const __nodeFsCheckMkdirParents = (path) => {
+const __nodeFsCheckMkdirParents = (path, recursive = false) => {
   const parts = path.split("/").filter(Boolean);
   let prefix = path.startsWith("/") ? "" : ".";
+  let firstCreated;
   for (const part of parts.slice(0, -1)) {
     prefix += `/${part}`;
     let kind;
@@ -54,7 +55,12 @@ const __nodeFsCheckMkdirParents = (path) => {
       error.path = path;
       throw error;
     }
+    if (!kind && recursive) {
+      globalThis.__quench_fs_mkdir(prefix);
+      firstCreated ||= prefix;
+    }
   }
+  return firstCreated;
 };
 const __nodeFsReadPath = (value) => {
   if (
@@ -85,6 +91,15 @@ const __nodeFsApplyMkdirMode = (path, options) => {
   const numericMode =
     typeof mode === "string" ? parseInt(mode, 8) : Number(mode);
   globalThis.__nodeModes[path] = numericMode & 0o777;
+};
+const __nodeFsCreateMkdir = (path, options, targetKind) => {
+  const firstCreated = __nodeFsCheckMkdirParents(path, options?.recursive);
+  const result = globalThis.__quench_fs_mkdir(path);
+  __nodeFsApplyMkdirMode(path, options);
+  return (
+    firstCreated ||
+    (options?.recursive && targetKind !== "directory" ? path : result)
+  );
 };
 const __nodeFsReadBytes = (path, options) => {
   try {
@@ -366,11 +381,8 @@ Object.assign(globalThis.__nodeFs, {
       error.path = path;
       throw error;
     }
-    __nodeFsCheckMkdirParents(path);
     try {
-      const result = globalThis.__quench_fs_mkdir(path);
-      __nodeFsApplyMkdirMode(path, options);
-      return result;
+      return __nodeFsCreateMkdir(path, options, targetKind);
     } catch (_) {
       const error = new Error(
         `ENOENT: no such file or directory, mkdir '${path}'`
