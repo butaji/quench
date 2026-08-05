@@ -587,6 +587,18 @@ fn dynamic_import_namespace_descriptor_has_spec_fields() {
     );
 }
 
+#[test]
+fn dynamic_import_namespace_own_keys_are_sorted_and_immutable() {
+    let mut ctx = crate::Context::new().unwrap();
+    let mut exports = crate::value::Object::new(crate::value::ObjectKind::Ordinary);
+    exports.set("z", Value::Number(1.0));
+    exports.set("a", Value::Number(2.0));
+    ctx.register_module("module-name", exports);
+    ctx.eval("var result; import('module-name').then(ns => { result = [Object.keys(ns).join(','), Reflect.ownKeys(ns).map(String).join(','), Reflect.deleteProperty(ns, 'z'), Reflect.set(ns, 'z', 3)].join('|'); });").unwrap();
+    crate::builtins::promise::execute_pending_microtasks().unwrap();
+    assert_eq!(ctx.eval("result").unwrap(), Value::String("a,z|a,z,Symbol(Symbol.toStringTag)|false|false".into()));
+}
+
 mod return_statement {
     use super::*;
 

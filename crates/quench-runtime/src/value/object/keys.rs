@@ -17,6 +17,9 @@ pub fn own_keys(obj: &crate::value::Object) -> Vec<String> {
         add_non_numeric_keys(obj, &mut keys, &mut seen);
         add_accessor_keys(obj, &mut keys, &mut seen);
     }
+    if obj.kind == crate::value::kind::ObjectKind::ModuleNamespace {
+        keys.sort();
+    }
     keys
 }
 
