@@ -65,15 +65,22 @@ const __quenchCryptoKeyExchangeFallback = (result) => {
   result.createDiffieHellman ||= (
     sizeOrKey,
     generatorOrEncoding,
-    maybeGenerator
+    maybeGenerator = generatorOrEncoding
   ) => {
-    const generator =
-      maybeGenerator === undefined ? generatorOrEncoding : maybeGenerator;
-    __quenchValidateDhNumbers(sizeOrKey, generator);
+    __quenchValidateDhNumbers(sizeOrKey, maybeGenerator);
     return create("DiffieHellman")();
   };
   result.createDiffieHellmanGroup ||= create("DiffieHellmanGroup");
-  result.createECDH ||= create("ECDH");
+  result.createECDH ||= (curve) => {
+    if (curve === undefined)
+      throw Object.assign(
+        new TypeError(
+          'The "curve" argument must be of type string. Received undefined'
+        ),
+        { code: "ERR_INVALID_ARG_TYPE" }
+      );
+    return create("ECDH")();
+  };
 };
 const __quenchCryptoKeyFallback = (result) => {
   const create = (type) => (key) => ({
