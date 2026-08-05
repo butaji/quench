@@ -1,12 +1,22 @@
 const __quenchOriginalRequireWithDgram = globalThis.require;
 const __quenchDgramStateSymbol = Symbol.for("quench.dgram.state");
+const __quenchDgramBoundPorts = new Set();
+let __quenchDgramNextPort = 40000;
 const __quenchDgramBind = (socket, type, port, address, callback) => {
   if (socket._bound)
     throw Object.assign(new Error("Socket is already bound"), {
       code: "ERR_SOCKET_ALREADY_BOUND"
     });
   if (typeof address === "function") callback = address;
+  const resolvedPort =
+    typeof port === "number" && port > 0 ? port : __quenchDgramNextPort++;
+  if (__quenchDgramBoundPorts.has(resolvedPort))
+    throw Object.assign(new Error("bind EADDRINUSE"), {
+      code: "EADDRINUSE",
+      syscall: "bind"
+    });
   socket._bound = true;
+  __quenchDgramBoundPorts.add(resolvedPort);
   socket._address = {
     address:
       typeof address === "string"
@@ -15,7 +25,7 @@ const __quenchDgramBind = (socket, type, port, address, callback) => {
           ? "::"
           : "0.0.0.0",
     family: type === "udp6" ? "IPv6" : "IPv4",
-    port: typeof port === "number" && port > 0 ? port : 40000
+    port: resolvedPort
   };
   queueMicrotask(() => callback?.call(socket));
   queueMicrotask(() => socket.emit("listening"));
@@ -74,6 +84,7 @@ const __quenchDgramRemoteAddress = (socket) => {
 };
 const __quenchDgramClose = (socket, callback) => {
   socket._bound = false;
+  if (socket._address) __quenchDgramBoundPorts.delete(socket._address.port);
   callback?.();
   queueMicrotask(() => socket.emit("close"));
   return socket;
@@ -111,6 +122,55 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
     type,
     bind: (port, address, callback) =>
       __quenchDgramBind(socket, type, port, address, callback),
+    bindSync: (options = {}) => {
+      if (socket._bound)
+        throw Object.assign(new Error("Socket is already bound"), {
+          code: "ERR_SOCKET_ALREADY_BOUND"
+        });
+      if (
+        options !== undefined &&
+        (options === null || typeof options !== "object")
+      )
+        throw Object.assign(
+          new TypeError('The "options" argument must be of type object'),
+          {
+            code: "ERR_INVALID_ARG_TYPE"
+          }
+        );
+      const config = options;
+      const port = config?.port ?? 0;
+      const resolvedPort = port || __quenchDgramNextPort++;
+      const address = config?.address || (type === "udp6" ? "::" : "0.0.0.0");
+      if (!Number.isInteger(port) || port < 0 || port > 65535)
+        throw Object.assign(new RangeError("Port should be >= 0 and < 65536"), {
+          code: "ERR_SOCKET_BAD_PORT"
+        });
+      if (typeof address !== "string")
+        throw Object.assign(
+          new TypeError('The "address" argument must be of type string'),
+          {
+            code: "ERR_INVALID_ARG_TYPE"
+          }
+        );
+      if (address === "localhost")
+        throw Object.assign(new TypeError("Invalid IP address"), {
+          code: "ERR_INVALID_ARG_VALUE"
+        });
+      if (__quenchDgramBoundPorts.has(resolvedPort))
+        throw Object.assign(new Error("bind EADDRINUSE"), {
+          code: "EADDRINUSE",
+          syscall: "bind"
+        });
+      socket._bound = true;
+      __quenchDgramBoundPorts.add(resolvedPort);
+      socket._address = {
+        address,
+        family: type === "udp6" ? "IPv6" : "IPv4",
+        port: resolvedPort
+      };
+      queueMicrotask(() => socket._bound && socket.emit("listening"));
+      return socket._address;
+    },
     send: (message, ...args) => __quenchDgramSend(socket, message, ...args),
     connect: (port, address, callback) =>
       __quenchDgramConnect(socket, port, address, callback),
