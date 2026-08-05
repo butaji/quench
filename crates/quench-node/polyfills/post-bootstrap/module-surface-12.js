@@ -341,15 +341,6 @@ globalThis.__quenchResolveParsedAbsolute = (result, from, to) => {
     href: resolved
   });
 };
-globalThis.__quenchResolveParsedFragment = (result, from, to) => {
-  if (typeof from === "string") return null;
-  const target = to.match(/^([A-Za-z][A-Za-z0-9+.-]*):(#.*)$/);
-  const source = from.href || from.pathname || "";
-  if (to.startsWith("#") && source.includes("://"))
-    return result.parse(`${source.replace(/#.*$/, "")}${to}`);
-  if (!target || !source.startsWith(`${target[1]}://`)) return null;
-  return result.parse(`${source.replace(/#.*$/, "")}${target[2]}`);
-};
 globalThis.__quenchResolveScopedObject = (r, f, t) =>
   typeof f === "string" || !t.startsWith("@") || !f.href
     ? null
@@ -358,6 +349,8 @@ globalThis.__quenchResolveScopedObject = (r, f, t) =>
       );
 globalThis.__quenchResolveParsedSpecial = (r, f, t) =>
   globalThis.__quenchResolveScopedObject(r, f, t) ||
+  globalThis.__quenchResolveParsedFile(r, f, t) ||
+  globalThis.__quenchResolveParsedHash(r, f, t) ||
   globalThis.__quenchResolveParsedFragment(r, f, t) ||
   globalThis.__quenchResolveParsedWebAbsolute(r, f, t) ||
   globalThis.__quenchResolveParsedSameSchemeOpaque(r, f, t) ||
