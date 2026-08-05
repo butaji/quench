@@ -188,6 +188,21 @@ globalThis.__quenchValidateFileUrlHost = (input, options) => {
       code: "ERR_INVALID_FILE_URL_HOST"
     });
 };
+globalThis.__quenchPreserveEmptyQuery = (parsed, input) => {
+  globalThis.__quenchEncodeLegacyPath(parsed);
+  if (!input.endsWith("?") || parsed.hash) return;
+  Object.assign(parsed, {
+    search: "?",
+    path: `${parsed.pathname || ""}?`,
+    href: `${parsed.href || ""}?`
+  });
+};
+globalThis.__quenchEncodeLegacyPath = (parsed) => {
+  if (parsed.pathname)
+    parsed.pathname = parsed.pathname.replace(/[" <>]/g, (value) =>
+      encodeURIComponent(value)
+    );
+};
 globalThis.__quenchResolveStringFragmentOnly = (from, to) =>
   typeof from === "string"
     ? globalThis.__quenchResolveFragmentOnly(from, to)
