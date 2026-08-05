@@ -280,14 +280,15 @@ const __nodeURLResolveInput = (input, base) => {
   // prettier-ignore
   let value = String(input).trim().replace(/[\t\n\r]/g, "");
   // prettier-ignore
+  if (base && value === "") value = String(base).trim().replace(/[\t\n\r]/g, "");
+  // prettier-ignore
   if (base && (!/^[a-z][a-z0-9+.-]*:/.test(value) || /^(?:https?|ftp):[^/]/.test(value))) { const baseUrl = new globalThis.__nodeURL(base); value = value.replace(/^(?:https?|ftp):/, "");
     value = value.startsWith("/")
       ? baseUrl.origin + value
       : baseUrl.origin + baseUrl.pathname.replace(/\/[^/]*$/, "/") + value;
   }
-  return globalThis
-    .__quenchNormalizeSpecialUrlInput(value)
-    .replace(/\/\.\//g, "/");
+  // prettier-ignore
+  return globalThis.__quenchNormalizeSpecialUrlInput(value).replace(/\/\.\//g, "/");
 };
 // prettier-ignore
 const __nodeURLCredentials = (authority) => { const match = authority.match(/^(?:([^:@]*)(?::([^@]*))?@)/); return [match?.[1] || "", match?.[2] || ""]; };
@@ -295,9 +296,7 @@ const __nodeURLCredentials = (authority) => { const match = authority.match(/^(?
 const __nodeURLAssignParts = (url, match) => {
   const [username, password] = __nodeURLCredentials(match[2] || "");
   // prettier-ignore
-  ((url.protocol = match[1] || ""), (url.host = (match[2] || "").replace(/^.*@/, "")), (url._username = username), (url._password = password), Object.defineProperty(url, "_hostname", { configurable: true, value: url.host.split(":")[0], writable: true }));
-  // prettier-ignore
-  url.port = url.host.includes(":") ? url.host.slice(url.host.lastIndexOf(":") + 1).replace(/^0+(?=\d)/, "") : "";
+  ((url.protocol = match[1] || ""), (url.host = (match[2] || "").replace(/^.*@/, "")), (url._username = username), (url._password = password), Object.defineProperty(url, "_hostname", { configurable: true, value: url.host.split(":")[0], writable: true }), (url.port = url.host.includes(":") ? url.host.slice(url.host.lastIndexOf(":") + 1).replace(/^0+(?=\d)/, "") : ""));
   if (["http:80", "https:443"].includes(url.protocol + url.port)) url.port = "";
   // prettier-ignore
   url.pathname = match[3] || "/", url.search = match[4] ? `?${match[4]}` : "", url.hash = match[5] ? `#${match[5]}` : "", match[1] && !match[2] && (url._pathname = match[3] || "");
