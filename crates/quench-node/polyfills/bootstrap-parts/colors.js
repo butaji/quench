@@ -279,7 +279,7 @@ globalThis.__nodeURLSearchParams = NodeURLSearchParams;
 // eslint-disable-next-line complexity
 const __nodeURLResolveInput = (input, base) => {
   // prettier-ignore
-  let value = String(input).trim().replace(/[\t\n\r]/g, "");
+  let value = /^file:[a-z]:[\\/]/i.test(String(input).trim().replace(/[\t\n\r]/g, "")) ? `file:///${String(input).trim().replace(/[\t\n\r]/g, "").slice(5).replace(/\\/g, "/")}` : String(input).trim().replace(/[\t\n\r]/g, "");
   // prettier-ignore
   if (base && (value === "" ? (value = String(base).trim().replace(/[\t\n\r]/g, "")) : /^(?:https?|ftp):\/\//i.test(base) && (value = value.replace(/^[^?#]*/, (path) => path.replace(/\\/g, "/")))));
   // prettier-ignore
