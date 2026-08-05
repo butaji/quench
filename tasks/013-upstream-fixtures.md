@@ -4303,3 +4303,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1243: net half-open default
 
 - Added Node’s default `allowHalfOpen: false` socket property.
+
+### Stage 1244: TCP binding constants
+
+- Added `tcp_wrap.constants.SOCKET` and minimal TCP handle lifecycle methods
+  for dgram file-descriptor validation tests.
