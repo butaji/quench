@@ -83,6 +83,14 @@ const __quenchZlibInflateSync = (input, options) => {
     : globalThis.__quench_zlib_inflate(bytes);
   return __quenchZlibFromArray(output);
 };
+const __quenchZlibUnzipSync = (input) => {
+  const bytes = __quenchZlibToArray(input);
+  const inflate =
+    bytes[0] === 0x1f && bytes[1] === 0x8b
+      ? globalThis.__quench_zlib_gunzip
+      : globalThis.__quench_zlib_inflate;
+  return __quenchZlibFromArray(inflate(bytes));
+};
 const __quenchZlibRawSync = (input, operation, encoding) =>
   __quenchZlibFromArray(operation(__quenchZlibToArray(input, encoding)));
 const __quenchZlibModule = {
@@ -105,7 +113,7 @@ const __quenchZlibModule = {
     __quenchZlibStream((input) => __quenchZlibModule.inflateRawSync(input))
   ),
   Unzip: __quenchZlibConstructor(() =>
-    __quenchZlibStream((input) => __quenchZlibModule.gunzipSync(input))
+    __quenchZlibStream(__quenchZlibUnzipSync)
   ),
   BrotliCompress: __quenchZlibConstructor(() =>
     __quenchZlibStream((input) => __quenchZlibModule.gzipSync(input))
@@ -147,6 +155,7 @@ const __quenchZlibModule = {
     __quenchZlibStream((input) => __quenchZlibModule.gzipSync(input)),
   createGunzip: () =>
     __quenchZlibStream((input) => __quenchZlibModule.gunzipSync(input)),
+  createUnzip: () => __quenchZlibStream(__quenchZlibUnzipSync),
   constants: globalThis.__quench_zlib_constants,
   crc32: () => 0,
   isZlib: () => true,
