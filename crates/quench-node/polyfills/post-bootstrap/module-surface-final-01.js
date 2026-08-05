@@ -106,23 +106,10 @@ const __quenchUrlAuth = (input) =>
       ? `${input.host.split("@")[0]}@`
       : "";
 const __quenchUrlPrefix = (input, protocol, authority) => {
-  const slashedProtocol = ["http:", "https:", "ftp:", "gopher:", "file:"];
-  if (!input.slashes && !slashedProtocol.includes(protocol))
+  if (protocol === "mailto:")
     return `${protocol}${__quenchUrlAuth(input)}${authority}`;
+  if (!input.slashes) return `${protocol}${__quenchUrlAuth(input)}${authority}`;
   return `${protocol}//${__quenchUrlAuth(input)}${authority}`;
-};
-const __quenchUrlPath = (input, authority) => {
-  let pathname = input.pathname || "";
-  pathname = pathname.replace(/#/g, "%23").replace(/\?/g, "%3F");
-  if (authority && pathname && !pathname.startsWith("/"))
-    pathname = `/${pathname}`;
-  if (
-    authority &&
-    !pathname &&
-    (input.search !== undefined || input.query !== undefined)
-  )
-    pathname = "/";
-  return pathname;
 };
 const __quenchUrlSearch = (input) => {
   let search = input.search || "";
@@ -138,7 +125,7 @@ const __quenchUrlSearch = (input) => {
 const __quenchFormatUrlObject = (input) => {
   const protocol = input.protocol ? `${input.protocol.replace(/:$/, "")}:` : "";
   const authority = __quenchUrlAuthority(input);
-  const pathname = __quenchUrlPath(input, authority);
+  const pathname = globalThis.__quenchUrlPath(input, authority);
   const search = __quenchUrlSearch(input);
   let hash = input.hash || "";
   if (hash && !hash.startsWith("#")) hash = `#${hash}`;

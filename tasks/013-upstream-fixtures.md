@@ -5257,3 +5257,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1525. `url-parse-invalid-input.js` — preserve legacy URL parser input errors.
 1526. `url-parse-protocol-relative.js` — preserve protocol-relative legacy paths.
 1527. `url-parse-semicolon-path.js` — preserve semicolon URL path boundaries.
+1528. `url-parse-legacy-shapes.js` — preserve legacy URL object shapes.

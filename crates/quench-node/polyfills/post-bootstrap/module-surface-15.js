@@ -425,7 +425,7 @@ globalThis.__nodeURL.revokeObjectURL = (value) => {
 };
 globalThis.__nodeIsURL = (value) => value instanceof globalThis.__nodeURL;
 globalThis.__nodeLegacyProtocolRelativeParts = (input) =>
-  input.startsWith("//")
+  input.startsWith("//") && !/@|:\d+\//.test(input)
     ? {
         protocol: null,
         slashes: null,
@@ -455,7 +455,7 @@ const __nodePrepareLegacyUrlInput = (value) => {
   const head = suffixIndex < 0 ? input : input.slice(0, suffixIndex);
   const suffix = suffixIndex < 0 ? "" : input.slice(suffixIndex);
   input =
-    head.replaceAll("\\", "/") +
+    head.replaceAll("\\", "/").replaceAll('"', "%22").replaceAll(" ", "%20") +
     suffix
       .replaceAll("\\", "%5C")
       .replaceAll('"', "%22")
@@ -464,6 +464,7 @@ const __nodePrepareLegacyUrlInput = (value) => {
       .replaceAll(">", "%3E")
       .replaceAll(" ", "%20");
   input = input.replace(/^([a-z][a-z0-9+.-]*:\/\/[^/?#;]+);/i, "$1/;");
+  input = input.replace(/^([^/?#]+):([?#])/, "$1$2");
   return input.replace(
     /^([a-z][a-z0-9+.-]*:\/\/)([^/@]*)@/i,
     (_, prefix, auth) =>
