@@ -291,6 +291,7 @@ const __nodeURLResolveInput = (input, base) => {
 };
 // prettier-ignore
 const __nodeURLCredentials = (authority) => { const match = authority.match(/^(?:([^:@]*)(?::([^@]*))?@)/); return [match?.[1] || "", match?.[2] || ""]; };
+// eslint-disable-next-line complexity
 const __nodeURLAssignParts = (url, match) => {
   const [username, password] = __nodeURLCredentials(match[2] || "");
   // prettier-ignore
@@ -299,6 +300,7 @@ const __nodeURLAssignParts = (url, match) => {
   url.port = url.host.includes(":") ? url.host.slice(url.host.lastIndexOf(":") + 1) : "";
   // prettier-ignore
   url.pathname = match[3] || "/", url.search = match[4] ? `?${match[4]}` : "", url.hash = match[5] ? `#${match[5]}` : "";
+  if (match[1] && !match[2]) url._pathname = match[3] || "";
   // prettier-ignore
   Object.defineProperty(url, "origin", { configurable: true, enumerable: false, value: url.protocol && url.host ? `${url.protocol}//${url.host}` : "null", writable: true }), Object.defineProperty(url, "searchParams", { configurable: true, enumerable: false, value: (() => { const params = new NodeURLSearchParams(match[4] || ""); Object.defineProperty(params, "__nodeURLOwner", { configurable: true, value: url, writable: true }); return params; })(), writable: true }), url._origin = url.origin, url._searchParams = url.searchParams, delete url.origin, delete url.searchParams;
   // prettier-ignore
@@ -319,7 +321,7 @@ globalThis.__nodeURL = class NodeURL {
     if (!(this instanceof globalThis.__nodeURL))
       throw new TypeError("Receiver must be an instance of class URL");
     // prettier-ignore
-    const credentials = this.username || this.password ? `${this.username || ""}${this.password ? `:${this.password}` : ""}@` : "" , prefix = this.protocol === "file:" ? "file://" : this.origin === "null" ? "" : this.origin.replace(/^(\w+:\/\/)/, `$1${credentials}`);
+    const credentials = this.username || this.password ? `${this.username || ""}${this.password ? `:${this.password}` : ""}@` : "" , prefix = this.protocol === "file:" ? "file://" : this.origin === "null" ? this.protocol : this.origin.replace(/^(\w+:\/\/)/, `$1${credentials}`);
     return `${prefix}${this.pathname}${this.search}${this.hash}`;
   }
   // prettier-ignore
@@ -480,7 +482,6 @@ const __nodeUrlModuleExports = {
   resolve: (from, to) => globalThis.__nodeLegacyResolve(from, to)
 };
 let __nodeUrlModuleInstance;
-globalThis.__nodeUrlInitialized = false;
 globalThis.__nodeUrlModule = new Proxy(
   {},
   {
