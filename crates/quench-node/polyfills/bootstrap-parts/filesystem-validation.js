@@ -416,14 +416,15 @@ Object.assign(globalThis.__nodeFs, {
     }
     try {
       return __nodeFsCreateMkdir(path, options, targetKind);
-    } catch (_) {
-      const error = new Error(
+    } catch (error) {
+      if (error.code) throw error;
+      const mkdirError = new Error(
         `ENOENT: no such file or directory, mkdir '${path}'`
       );
-      error.code = "ENOENT";
-      error.syscall = "mkdir";
-      error.path = path;
-      throw error;
+      mkdirError.code = "ENOENT";
+      mkdirError.syscall = "mkdir";
+      mkdirError.path = path;
+      throw mkdirError;
     }
   },
   readdirSync: (value, options = {}) => {
