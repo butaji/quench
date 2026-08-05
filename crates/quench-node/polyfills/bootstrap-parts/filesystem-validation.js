@@ -15,6 +15,14 @@ const __nodeFsSetMode = (path, mode) => {
     globalThis.__nodeModes[path] =
       typeof mode === "string" ? parseInt(mode, 8) : Number(mode);
 };
+const __nodeInvalidArgSuffix = (value) => {
+  if (value === null || value === undefined) return ` Received ${value}`;
+  if (typeof value === "function") return ` Received function ${value.name}`;
+  if (typeof value === "object")
+    return ` Received an instance of ${value.constructor?.name || "Object"}`;
+  const inspected = typeof value === "string" ? `'${value}'` : String(value);
+  return ` Received type ${typeof value} (${inspected})`;
+};
 const __nodeFsValidateMkdirOptions = (options) => {
   if (
     options &&
@@ -22,7 +30,7 @@ const __nodeFsValidateMkdirOptions = (options) => {
     typeof options.recursive !== "boolean"
   ) {
     const error = new TypeError(
-      'The "options.recursive" property must be of type boolean.'
+      `The "options.recursive" property must be of type boolean.${__nodeInvalidArgSuffix(options.recursive)}`
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
