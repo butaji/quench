@@ -167,7 +167,11 @@ impl Context {
             );
             // Module code: `this` is undefined (ThisMode::module per ES spec)
             interpreter::set_this_binding(&self.env, Value::Undefined);
-            interpreter::eval_program(&program, &mut self.env, Some(source), false)
+            let previous_strict = interpreter::is_strict_mode();
+            interpreter::set_strict_mode(true);
+            let result = interpreter::eval_program(&program, &mut self.env, Some(source), false);
+            interpreter::set_strict_mode(previous_strict);
+            result
         })();
 
         // Microtask checkpoint (see Context::eval)

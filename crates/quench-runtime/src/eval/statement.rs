@@ -2680,7 +2680,11 @@ fn initialize_fixture_module(source: &str, env: &Rc<RefCell<Environment>>) -> Re
         })
         .unwrap_or(false);
     let mut eval_env = Rc::new(RefCell::new(Environment::with_parent(Rc::clone(env))));
-    crate::interpreter::eval_program(&program, &mut eval_env, Some(&script), false)?;
+    let previous_strict = crate::interpreter::is_strict_mode();
+    crate::interpreter::set_strict_mode(true);
+    let result = crate::interpreter::eval_program(&program, &mut eval_env, Some(&script), false);
+    crate::interpreter::set_strict_mode(previous_strict);
+    result?;
     let current_needs_refresh = env
         .borrow()
         .get("__quench_modules__")
