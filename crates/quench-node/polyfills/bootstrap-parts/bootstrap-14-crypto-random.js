@@ -31,11 +31,7 @@ const __nodeCryptoRandomBytes = (size, callback) => {
   return output;
 };
 __nodeCryptoApi.randomBytes = __nodeCryptoRandomBytes;
-Object.defineProperty(__nodeCryptoApi, "pseudoRandomBytes", {
-  value: __nodeCryptoRandomBytes,
-  configurable: true,
-  writable: true
-});
+__nodeCryptoApi.pseudoRandomBytes = __nodeCryptoRandomBytes;
 // eslint-disable-next-line max-lines-per-function -- shared validation and byte-view handling
 __nodeCryptoApi.randomFillSync = (
   buffer,

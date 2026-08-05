@@ -236,6 +236,7 @@ const __nodeCryptoApi = {
       queueMicrotask(() => callback(null, output));
     return output;
   },
+  pseudoRandomBytes: (...args) => __nodeCryptoRandomBytes(...args),
   randomFillSync: (buffer, offset = 0, size = buffer.length - offset) => {
     if (!ArrayBuffer.isView(buffer)) {
       const error = new TypeError(
