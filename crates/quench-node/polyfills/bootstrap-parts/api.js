@@ -168,13 +168,21 @@ class NodeTextDecoder {
   }
 }
 globalThis.TextDecoder = NodeTextDecoder;
+const nodePathFromURL = (value) => {
+  if (value.protocol !== "file:") {
+    const error = new TypeError("The URL must use the file: protocol");
+    error.code = "ERR_INVALID_URL_SCHEME";
+    throw error;
+  }
+  return globalThis.__nodeUrlModule.fileURLToPath(value);
+};
 const nodePathValue = (value) =>
   value instanceof NodeBuffer
     ? value.toString()
     : value instanceof Uint8Array
       ? new NodeTextDecoder().decode(value)
       : value instanceof globalThis.__nodeURL
-        ? globalThis.__nodeUrlModule.fileURLToPath(value)
+        ? nodePathFromURL(value)
         : String(value);
 const nodeFsPath = (value) => {
   if (
