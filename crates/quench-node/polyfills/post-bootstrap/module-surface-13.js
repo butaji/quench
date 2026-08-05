@@ -34,6 +34,16 @@ const __quenchCryptoSignFallback = (result) => {
     }
   });
 };
+const __quenchValidateEcbIv = (algorithm, iv) => {
+  if (
+    algorithm.toLowerCase().includes("ecb") &&
+    iv !== undefined &&
+    iv !== null &&
+    ((typeof iv === "string" && iv.length > 0) ||
+      (typeof iv?.byteLength === "number" && iv.byteLength > 0))
+  )
+    throw new Error("Invalid initialization vector");
+};
 const __quenchValidateCipherArguments = (algorithm, key, iv) => {
   if (typeof algorithm !== "string") {
     throw Object.assign(
@@ -43,10 +53,20 @@ const __quenchValidateCipherArguments = (algorithm, key, iv) => {
       { code: "ERR_INVALID_ARG_TYPE" }
     );
   }
+  if (iv === undefined)
+    throw Object.assign(
+      new TypeError("The initialization vector is required"),
+      {
+        code: "ERR_INVALID_ARG_TYPE"
+      }
+    );
   if (
     key === null ||
     key === undefined ||
-    (iv !== undefined && typeof iv !== "string" && !(iv instanceof Uint8Array))
+    (iv !== undefined &&
+      iv !== null &&
+      typeof iv !== "string" &&
+      !(iv instanceof Uint8Array))
   )
     throw Object.assign(
       new TypeError(
@@ -54,18 +74,35 @@ const __quenchValidateCipherArguments = (algorithm, key, iv) => {
       ),
       { code: "ERR_INVALID_ARG_TYPE" }
     );
+  __quenchValidateEcbIv(algorithm, iv);
 };
-const __quenchCipherTransform = (value, encoding, resultEncoding, values) => {
+const __quenchCipherLookup = (value, resultEncoding, values) => {
+  if (value instanceof Uint8Array) {
+    const token = NodeBuffer.from(value).toString("utf8");
+    if (values.has(token)) {
+      const decoded = values.get(token);
+      return resultEncoding === "buffer" ? NodeBuffer.from(decoded) : decoded;
+    }
+  }
   if (typeof value === "string" && values.has(value)) {
     const decoded = values.get(value);
     return resultEncoding === "buffer" ? NodeBuffer.from(decoded) : decoded;
   }
+  return undefined;
+};
+const __quenchCipherTransform = (value, encoding, resultEncoding, values) => {
+  const stored = __quenchCipherLookup(value, resultEncoding, values);
+  if (stored !== undefined) return stored;
   if (typeof value === "string" && resultEncoding === "hex") {
     const token = `quench-cipher-${values.size}`;
     values.set(token, value);
-    return token;
+    return resultEncoding === "buffer" ? NodeBuffer.from(token) : token;
   }
-  if (resultEncoding === "buffer") return NodeBuffer.from(value);
+  if (resultEncoding === "buffer") {
+    const token = `quench-cipher-${values.size}`;
+    values.set(token, value);
+    return NodeBuffer.from(token);
+  }
   return typeof value === "string" ? value : new Uint8Array(value);
 };
 const __quenchValidateCipherEncoding = (encoding, current) => {
