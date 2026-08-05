@@ -60,6 +60,9 @@ pub fn eval_function_member(f: &ValueFunction, prop_name: &str) -> Result<Value,
         "length" if f.is_property_deleted("length") => Ok(Value::Undefined),
         "length" => eval_function_length(f),
         "prototype" if f.is_method && !f.is_generator => Ok(Value::Undefined),
+        // Per ES §20.2.1.1.1 / §25.2.1.1: async (incl. async generator)
+        // functions do not have a `.prototype` property.
+        "prototype" if f.is_async => Ok(Value::Undefined),
         "prototype" => Ok(Value::Object(f.get_prototype())),
         "call" => eval_callable_call_method(Value::Function(f.clone())),
         "apply" => eval_callable_apply_method(Value::Function(f.clone())),
