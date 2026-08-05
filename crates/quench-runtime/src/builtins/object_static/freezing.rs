@@ -244,15 +244,9 @@ pub fn object_get_prototype_of(args: Vec<Value>) -> Result<Value, JsError> {
             .clone()
             .or_else(|| crate::builtins::function::get_function_prototype().map(Value::Object))
             .unwrap_or(Value::Null)),
-        Value::NativeConstructor(_) => {
-            let function = crate::context::CURRENT_CONTEXT.with(|cell| {
-                cell.borrow()
-                    .and_then(|ptr| unsafe { (*ptr).get_global("Function") })
-            });
-            Ok(function
-                .or_else(|| crate::builtins::function::get_function_prototype().map(Value::Object))
-                .unwrap_or(Value::Null))
-        }
+        Value::NativeConstructor(_) => Ok(crate::builtins::function::get_function_prototype()
+            .map(Value::Object)
+            .unwrap_or(Value::Null)),
         Value::Class(class) => {
             // Object.getPrototypeOf(class) returns the class constructor's own
             // [[Prototype]] — i.e., the superclass VALUE (or null for extends null).

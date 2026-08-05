@@ -159,7 +159,6 @@ pub fn register_builtins(ctx: &mut Context) {
     string::register_string(ctx);
     // Number must be registered before Date (for timestamp conversion)
     number::register_number(ctx);
-    bigint::register_bigint(ctx);
     date::register_global_functions(ctx);
     error::register_error(ctx);
     // Date needs to be registered after global functions (for Number, String, etc.)
@@ -168,6 +167,7 @@ pub fn register_builtins(ctx: &mut Context) {
     promise::register_promise(ctx);
     // Function needs to be registered after Promise (for %AsyncGeneratorPrototype% methods)
     function::register_function(ctx);
+    bigint::register_bigint(ctx);
     // RegExp needs to be registered for regex support
     regex::register_regexp(ctx);
     // String regex methods need to be registered after RegExp
