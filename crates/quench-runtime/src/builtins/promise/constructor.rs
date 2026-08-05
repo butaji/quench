@@ -14,6 +14,7 @@ use super::callbacks::{
 use super::helpers::{get_promise_proto, set_promise_proto};
 use super::static_methods::{
     promise_all_impl, promise_race_impl, promise_reject_impl_static, promise_resolve_impl_static,
+    promise_with_resolvers_impl,
 };
 
 /// Create the Promise constructor
@@ -131,6 +132,13 @@ pub fn create_promise_constructor(
         Value::NativeFunction(Rc::new(NativeFunction::new(move |args: Vec<Value>| {
             let this_val = crate::interpreter::get_native_this().unwrap_or(Value::Undefined);
             promise_race_impl(args, this_val, Rc::clone(&proto_for_static_clone4))
+        }))),
+    );
+    let proto_for_with_resolvers = Rc::clone(&proto_for_static);
+    constructor.set_static_method(
+        "withResolvers",
+        Value::NativeFunction(Rc::new(NativeFunction::new(move |_args: Vec<Value>| {
+            promise_with_resolvers_impl(Rc::clone(&proto_for_with_resolvers))
         }))),
     );
 

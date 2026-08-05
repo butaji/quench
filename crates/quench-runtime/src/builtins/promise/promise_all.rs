@@ -63,6 +63,37 @@ pub fn promise_reject_impl_static(
     Ok(Value::Object(promise_rc))
 }
 
+/// Implements Promise.withResolvers, returning a promise and its settlement functions.
+pub fn promise_with_resolvers_impl(proto: Rc<RefCell<Object>>) -> Result<Value, JsError> {
+    let promise_rc = Rc::new(RefCell::new(Object::new(ObjectKind::Promise)));
+    {
+        let mut promise = promise_rc.borrow_mut();
+        promise.prototype = Some(proto);
+        promise.promise_data = Some(PromiseObjectData::new());
+    }
+    let resolve_target = Rc::clone(&promise_rc);
+    let resolve = Value::NativeFunction(Rc::new(NativeFunction::new(move |args| {
+        crate::builtins::promise::settle_resolve(
+            &resolve_target,
+            args.first().cloned().unwrap_or(Value::Undefined),
+        );
+        Ok(Value::Undefined)
+    })));
+    let reject_target = Rc::clone(&promise_rc);
+    let reject = Value::NativeFunction(Rc::new(NativeFunction::new(move |args| {
+        crate::builtins::promise::settle_reject(
+            &reject_target,
+            args.first().cloned().unwrap_or(Value::Undefined),
+        );
+        Ok(Value::Undefined)
+    })));
+    let mut result = Object::new(ObjectKind::Ordinary);
+    result.set("promise", Value::Object(promise_rc));
+    result.set("resolve", resolve);
+    result.set("reject", reject);
+    Ok(Value::Object(Rc::new(RefCell::new(result))))
+}
+
 /// Implements Promise.all
 pub fn promise_all_impl(args: Vec<Value>, proto: Rc<RefCell<Object>>) -> Result<Value, JsError> {
     let input = args.first().cloned().unwrap_or(Value::Undefined);

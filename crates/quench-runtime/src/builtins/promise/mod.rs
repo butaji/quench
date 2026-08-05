@@ -111,6 +111,20 @@ mod tests {
     }
 
     #[test]
+    fn promise_with_resolvers_returns_live_capability() {
+        let mut ctx = crate::Context::new().unwrap();
+        let result = ctx
+            .eval("var c = Promise.withResolvers(); c.resolve(42); c.promise.then(v => globalThis.result = v);")
+            .unwrap();
+        assert!(!matches!(result, crate::value::Value::Undefined));
+        crate::builtins::execute_pending_microtasks().unwrap();
+        assert_eq!(
+            ctx.get_global("result"),
+            Some(crate::value::Value::Number(42.0))
+        );
+    }
+
+    #[test]
     fn test_queue_microtask_runs_at_checkpoint() {
         let mut ctx = crate::Context::new().unwrap();
         ctx.eval("var q = []; queueMicrotask(() => q.push(1)); q.push(2);")

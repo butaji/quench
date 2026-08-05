@@ -7,5 +7,8 @@ pub mod promise_all;
 #[path = "promise_race.rs"]
 pub mod promise_race;
 
-pub use promise_all::{promise_all_impl, promise_reject_impl_static, promise_resolve_impl_static};
+pub use promise_all::{
+    promise_all_impl, promise_reject_impl_static, promise_resolve_impl_static,
+    promise_with_resolvers_impl,
+};
 pub use promise_race::promise_race_impl;
