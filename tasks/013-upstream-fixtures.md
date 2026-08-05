@@ -4964,3 +4964,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1395: crypto ECDH curve validation
 
 - Reject a missing ECDH curve argument with Node-compatible metadata.
+
+### Stage 1396: crypto unknown DH group
+
+- Expose the unknown-group error from `getDiffieHellman()`.

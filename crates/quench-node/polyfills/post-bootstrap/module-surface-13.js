@@ -2,12 +2,8 @@ const __quenchCryptoConstructors = (result) => {
   for (const name of [
     "Hash",
     "Hmac",
-    "DiffieHellman",
-    "ECDH",
     "Sign",
     "Verify",
-    "DiffieHellmanGroup",
-    "KeyObject",
     "Certificate",
     "X509Certificate",
     "sign",
@@ -71,6 +67,11 @@ const __quenchCryptoKeyExchangeFallback = (result) => {
     return create("DiffieHellman")();
   };
   result.createDiffieHellmanGroup ||= create("DiffieHellmanGroup");
+  result.getDiffieHellman ||= () => {
+    throw Object.assign(new Error("Unknown DH group"), {
+      code: "ERR_CRYPTO_UNKNOWN_DH_GROUP"
+    });
+  };
   result.createECDH ||= (curve) => {
     if (curve === undefined)
       throw Object.assign(
