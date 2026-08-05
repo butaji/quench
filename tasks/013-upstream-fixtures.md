@@ -4667,3 +4667,18 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Apply `lchmod` mode metadata to symlinks without invoking host chmod on the
   link target.
+
+### Stage 1326: descriptor stat
+
+- Expose `fstatSync` for open descriptors so permission changes can be
+  verified through Node's descriptor API.
+
+### Stage 1327: close callback
+
+- Provide callback-based `fs.close` using the existing descriptor close
+  implementation.
+
+### Stage 1328: open callback
+
+- Provide callback-based `fs.open` using the existing synchronous descriptor
+  implementation.
