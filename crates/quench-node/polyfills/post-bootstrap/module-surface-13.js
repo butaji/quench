@@ -65,7 +65,9 @@ const __quenchValidateCipherKey = (algorithm, key) => {
       ? 32
       : normalized.includes("des-ede3")
         ? 24
-        : undefined;
+        : normalized === "chacha20-poly1305"
+          ? 32
+          : undefined;
   if (!expected) {
     const error = new Error("Unknown cipher");
     error.code = "ERR_CRYPTO_UNKNOWN_CIPHER";
@@ -184,12 +186,18 @@ const __quenchCipherAuthentication = (state) => ({
     return state.authTag || NodeBuffer.alloc(16);
   }
 });
+const __quenchValidateFinalState = (algorithm, state) => {
+  if (algorithm.toLowerCase() === "chacha20-poly1305" && !state.authTag)
+    throw new Error("Unsupported state or unable to authenticate data");
+};
+// eslint-disable-next-line max-lines-per-function -- cipher stream methods share state
 const __quenchCryptoCipherFallback = (result) => {
   const values = (globalThis.__quenchCipherValues ||= new Map());
   result.createCipheriv ||= (algorithm, key, iv, options) => {
     __quenchValidateCipherArguments(algorithm, key, iv, options);
-    let inputEncoding, outputEncoding;
-    let readable,
+    let inputEncoding,
+      outputEncoding,
+      readable,
       state = {};
     return {
       update(value, encoding, resultEncoding) {
@@ -208,14 +216,16 @@ const __quenchCryptoCipherFallback = (result) => {
       },
       ...__quenchCipherAuthentication(state),
       end(value) {
-        if (value !== undefined)
-          readable = this.update(value, "utf8", "buffer");
-        else readable = new Uint8Array(0);
+        readable =
+          value !== undefined
+            ? this.update(value, "utf8", "buffer")
+            : new Uint8Array(0);
         this.readableLength = readable.length;
         return this;
       },
       read: () => readable,
       final(resultEncoding) {
+        __quenchValidateFinalState(algorithm, state);
         __quenchValidateCipherEncoding(resultEncoding, outputEncoding);
         return new Uint8Array(0);
       }
