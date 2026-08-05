@@ -5342,3 +5342,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1610. `url-format-legacy-objects.js` — preserve legacy formatting edge cases.
 1611. `url-whatwg-special-slashes.js` — normalize special WHATWG schemes.
 1612. `url-format-whatwg-tel.js` — format WHATWG opaque `tel:` URLs.
+1613. `url-format-file-object.js` — format protocol-only file URL objects.

@@ -126,7 +126,8 @@ globalThis.__nodeLegacyUrlSlashes = (input, protocol) =>
 globalThis.__quenchUrlPath = (input, authority) => {
   let pathname = (input.pathname || "")
     .replace(/#/g, "%23")
-    .replace(/\?/g, "%3F");
+    .replace(/\?/g, "%3F")
+    .replace(/ /g, "%20");
   if (authority && pathname && !pathname.startsWith("/"))
     pathname = `/${pathname}`;
   if (
