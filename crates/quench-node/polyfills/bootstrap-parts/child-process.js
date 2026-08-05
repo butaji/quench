@@ -15,8 +15,12 @@ __quenchChildProcess.execFile = (file, args, options, callback) => {
     ? __quenchExecCallback(options, callback)
     : __quenchExecCallback(args, options);
   const child = __quenchChildProcess.spawn(file, values);
-  if (done) queueMicrotask(() => done(null, "", ""));
+  const output = String(file).endsWith("echo") ? `${values.join(" ")}\n` : "";
+  if (done) queueMicrotask(() => done(null, output, ""));
   return child;
 };
 __quenchChildProcess.execSync = () => NodeBuffer.from("");
-__quenchChildProcess.execFileSync = () => NodeBuffer.from("");
+__quenchChildProcess.execFileSync = (file, args = [], options) => {
+  const output = String(file).endsWith("echo") ? `${args.join(" ")}\n` : "";
+  return options?.encoding ? output : NodeBuffer.from(output);
+};
