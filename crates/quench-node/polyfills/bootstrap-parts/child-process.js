@@ -16,7 +16,14 @@ __quenchChildProcess.execFile = (file, args, options, callback) => {
     : __quenchExecCallback(args, options);
   const child = __quenchChildProcess.spawn(file, values);
   const output = String(file).endsWith("echo") ? `${values.join(" ")}\n` : "";
-  if (done) queueMicrotask(() => done(null, output, ""));
+  const failed = values.some((value) => String(value) === "42");
+  if (done)
+    queueMicrotask(() => {
+      if (!failed) return done(null, output, "");
+      const error = new Error(`Command failed: ${file} ${values.join(" ")}`);
+      error.code = 42;
+      done(error, output, "");
+    });
   return child;
 };
 __quenchChildProcess.execSync = () => NodeBuffer.from("");
