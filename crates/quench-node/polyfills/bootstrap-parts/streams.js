@@ -200,7 +200,8 @@ globalThis.__nodeFs.readFile = (value, options, callback) => {
     callback(null, data);
   });
 };
-globalThis.__nodeFs.watch = () => {
+globalThis.__nodeFs.watch = (value) => {
+  __nodeFsReadPath(typeof value === "number" ? false : value);
   const watcher = new globalThis.__nodeEventEmitter();
   watcher.close = () => watcher;
   return watcher;
