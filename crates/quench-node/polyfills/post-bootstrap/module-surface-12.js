@@ -333,7 +333,7 @@ globalThis.__quenchResolveParsedAbsolute = (result, from, to) => {
   const resolved = globalThis.__quenchResolveAbsolutePath(source, to);
   if (!resolved) return null;
   const parsed = result.parse(resolved);
-  const resolvedPath = resolved.includes("://") ? to : resolved;
+  const resolvedPath = resolved.includes("://") ? parsed.pathname : resolved;
   return Object.assign(parsed, {
     protocol: from.protocol,
     pathname: resolvedPath,
@@ -357,6 +357,8 @@ globalThis.__quenchResolveScopedObject = (r, f, t) =>
 globalThis.__quenchResolveParsedSpecial = (r, f, t) =>
   globalThis.__quenchResolveScopedObject(r, f, t) ||
   globalThis.__quenchResolveParsedFragment(r, f, t) ||
+  globalThis.__quenchResolveParsedWebAbsolute(r, f, t) ||
+  globalThis.__quenchResolveParsedWebRelative(r, f, t) ||
   globalThis.__quenchResolveParsedOpaque(r, f, t);
 globalThis.__quenchResolveParsedObject = (result, from, to) => {
   if (typeof from === "string") return null;

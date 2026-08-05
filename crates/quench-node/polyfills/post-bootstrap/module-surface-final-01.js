@@ -254,6 +254,7 @@ const __quenchNormalizeAbsoluteTarget = (target) => {
   }
   return `/${normalized.join("/")}`;
 };
+globalThis.__quenchNormalizeAbsoluteTarget = __quenchNormalizeAbsoluteTarget;
 const __quenchNetworkPathTarget = (from, to) => {
   if (!to.startsWith("//")) return null;
   const scheme = from.match(/^([A-Za-z][A-Za-z0-9+.-]*):/)?.[1];
