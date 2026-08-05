@@ -1,5 +1,13 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1152: filesystem appendFile invalid data
+
+- Fixture: `test-fs-append-file.js`
+- Added focused coverage for rejecting non-string and non-buffer append data
+  with `ERR_INVALID_ARG_TYPE` before creating a file.
+- Retrospective: validate negative filesystem contracts independently from
+  asynchronous completion paths so error timing and file creation are clear.
+
 ## Stage 1151: filesystem appendFile callback and promise APIs
 
 - Fixture: `test-fs-append-file.js`
