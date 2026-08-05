@@ -289,7 +289,14 @@ const __quenchNetModule = {
       this.encoding = String(encoding);
       return this;
     }
+    resume() {
+      return this;
+    }
+    pause() {
+      return this;
+    }
     connect(_options, callback) {
+      globalThis.__quenchValidateConnectionOptions(_options);
       if (typeof callback === "function") this.once("connect", callback);
       queueMicrotask(() => this.emit("connect"));
       return this;
@@ -308,6 +315,7 @@ const __quenchNetModule = {
     }
   },
   createConnection: (options, callback) => {
+    globalThis.__quenchValidateConnectionOptions(options);
     const socket = new __quenchNetModule.Socket();
     return socket.connect(options, callback);
   },
