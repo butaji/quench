@@ -283,7 +283,7 @@ const __nodeURLResolveInput = (input, base) => {
   // prettier-ignore
   if (base && (value === "" ? (value = String(base).trim().replace(/[\t\n\r]/g, "")) : /^(?:https?|ftp):\/\//i.test(base) && (value = value.replace(/^[^?#]*/, (path) => path.replace(/\\/g, "/")))));
   // prettier-ignore
-  if (base && (!/^[a-z][a-z0-9+.-]*:/.test(value) || /^(?:https?|ftp):[^/]/.test(value) || (/^(?:https?):\/(?:[^/]|$)/.test(value) && value.slice(0, value.indexOf(":")) === String(base).slice(0, String(base).indexOf(":"))))) { const baseUrl = new globalThis.__nodeURL(base); value = value.replace(/^(?:https?|ftp):/, "");
+  if (base && (!/^[a-z][a-z0-9+.-]*:/.test(value) || /^https?:[^/]/.test(value) || (/^(?:https?):\/(?:[^/]|$)/.test(value) && value.slice(0, value.indexOf(":")) === String(base).slice(0, String(base).indexOf(":"))))) { const baseUrl = new globalThis.__nodeURL(base); value = value.replace(/^(?:https?|ftp):/, "");
     if (/^[?#]/.test(value)) value = baseUrl.origin + baseUrl.pathname + value; else value = value.startsWith("//") ? baseUrl.protocol + value : value.startsWith("/") ? baseUrl.origin + value : baseUrl.origin + baseUrl.pathname.replace(/\/[^/]*$/, "/") + value;
   }
   // prettier-ignore
