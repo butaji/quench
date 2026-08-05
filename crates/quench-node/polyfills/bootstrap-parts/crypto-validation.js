@@ -17,3 +17,10 @@ const __nodeCryptoCipherInfo = (name) =>
         mode: "cbc"
       }
     : undefined;
+const __nodeCryptoAssertDigestOpen = (finalized) => {
+  if (finalized) {
+    const error = new Error("Digest already called");
+    error.code = "ERR_CRYPTO_HASH_FINALIZED";
+    throw error;
+  }
+};
