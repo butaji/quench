@@ -8,11 +8,16 @@ const __quenchDgramBind = (socket, type, port, address, callback) => {
   if (typeof address === "function") callback = address;
   socket._bound = true;
   socket._address = {
-    address: typeof address === "string" ? address : "0.0.0.0",
+    address:
+      typeof address === "string"
+        ? address
+        : type === "udp6"
+          ? "::"
+          : "0.0.0.0",
     family: type === "udp6" ? "IPv6" : "IPv4",
     port: typeof port === "number" && port > 0 ? port : 40000
   };
-  queueMicrotask(() => callback?.());
+  queueMicrotask(() => callback?.call(socket));
   queueMicrotask(() => socket.emit("listening"));
   return socket;
 };
