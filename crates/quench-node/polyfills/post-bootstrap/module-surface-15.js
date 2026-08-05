@@ -242,3 +242,41 @@ const __quenchCryptoEncodedPair = (options) => {
     };
   return __quenchEncodedPair();
 };
+const __quenchFileUrlDrivePath = (input, converted) => {
+  const href = typeof input === "string" ? input : input?.href;
+  if (input?.protocol === "file:" && input.host && input.pathname)
+    return `\\\\${input.host}${decodeURIComponent(input.pathname).replace(/\//g, "\\")}`;
+  const unc = href?.match(/^file:\/\/([^/]+)(\/.*)$/);
+  if (unc)
+    return `\\\\${unc[1]}${decodeURIComponent(unc[2]).replace(/\//g, "\\")}`;
+  if (!/^file:\/\/\/[A-Za-z]:\//.test(href)) return converted;
+  return converted
+    .replace(/^\/[A-Za-z]:/, (drive) => drive.slice(1))
+    .replace(/\//g, "\\");
+};
+const __quenchValidateFileUrlHost = (input, options) => {
+  if (input?.protocol === "file:" && input.host && options?.windows !== true)
+    throw Object.assign(new TypeError("File URL host must be empty"), {
+      code: "ERR_INVALID_FILE_URL_HOST"
+    });
+};
+const __quenchAddFileUrlFallback = (result) => {
+  const fileURLToPath = result.fileURLToPath;
+  if (typeof fileURLToPath !== "function") return;
+  result.fileURLToPath = (input, ...args) => {
+    __quenchValidateFileUrlHost(input, args[0]);
+    try {
+      const converted = fileURLToPath(input, ...args);
+      return __quenchFileUrlDrivePath(input, converted);
+    } catch (error) {
+      if (
+        typeof input !== "string" &&
+        !(input && typeof input.href === "string")
+      )
+        error.code = "ERR_INVALID_ARG_TYPE";
+      else if (typeof input === "string" && !input.startsWith("file:"))
+        error.code = "ERR_INVALID_URL_SCHEME";
+      throw error;
+    }
+  };
+};
