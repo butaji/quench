@@ -4110,3 +4110,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 - The dgram polyfill reached the file-size gate as multicast methods grew.
   Extracting membership methods into a dedicated `membership.js` preserved the
   500-line limit and made the next API cluster independently maintainable.
+
+### Stage 1202: dgram multicast interface
+
+- Added bound-state, type, and invalid-address behavior for
+  `setMulticastInterface()`.
