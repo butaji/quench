@@ -4746,3 +4746,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Verify UTF-8 and UTF-16 decoder output across every split sequence for
   representative multibyte inputs.
+
+### Stage 1342: crypto hash list
+
+- Advertise the SHA-1 and SHA-256 hash algorithms required by Node’s crypto
+  surface.
