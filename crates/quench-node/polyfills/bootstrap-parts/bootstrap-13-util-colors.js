@@ -401,14 +401,6 @@ const __nodeLegacyUrlParts = (input, parsed) => {
     href: `${protocol}${host ? `//${host}` : ""}${pathname}${search || ""}${parsed.hash || ""}`
   };
 };
-const __nodeLegacyUrlFormatString = (value) => {
-  try {
-    const href = new globalThis.__nodeURL(value).href;
-    return value.endsWith("?") && !href.endsWith("?") ? `${href}?` : href;
-  } catch (_) {
-    return value;
-  }
-};
 const __nodeLegacyUrlFormatSearch = (value) => {
   if (value.search !== undefined) return value.search;
   if (value.query === undefined) return "";
