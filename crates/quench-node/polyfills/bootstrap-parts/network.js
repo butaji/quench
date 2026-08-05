@@ -278,6 +278,39 @@ const __quenchNetModule = {
   getDefaultAutoSelectFamily: () => false,
   setDefaultAutoSelectFamily: () => undefined,
   getDefaultAutoSelectFamilyAttemptTimeout: () => 250,
+  Socket: class Socket extends globalThis.__nodeEventEmitter {
+    constructor() {
+      super();
+      this.readable = true;
+      this.writable = true;
+      this.destroyed = false;
+    }
+    setEncoding(encoding) {
+      this.encoding = String(encoding);
+      return this;
+    }
+    connect(_options, callback) {
+      if (typeof callback === "function") this.once("connect", callback);
+      queueMicrotask(() => this.emit("connect"));
+      return this;
+    }
+    write(_data, callback) {
+      if (typeof callback === "function") queueMicrotask(callback);
+      return true;
+    }
+    end(_data, callback) {
+      if (typeof callback === "function") queueMicrotask(callback);
+      queueMicrotask(() => {
+        this.emit("end");
+        this.emit("close");
+      });
+      return this;
+    }
+  },
+  createConnection: (options, callback) => {
+    const socket = new __quenchNetModule.Socket();
+    return socket.connect(options, callback);
+  },
   setDefaultAutoSelectFamilyAttemptTimeout: () => undefined,
   BlockList: class BlockList {
     [Symbol.toStringTag] = "BlockList";
