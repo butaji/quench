@@ -4581,3 +4581,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Validate `fs.read` buffer arguments before the callback when both are
   invalid, matching Node's error precedence.
+
+### Stage 1308: open mode validation
+
+- Reject non-octal string modes passed to `fs.open` and `fs.openSync` with
+  `ERR_INVALID_ARG_VALUE`.
