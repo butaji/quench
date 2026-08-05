@@ -345,12 +345,14 @@ globalThis.__quenchResolveParsedObject = (result, from, to, originalResolve) =>
     ? null
     : /^([A-Za-z][A-Za-z0-9+.-]*):(#.*)$/.test(to)
       ? result.parse(to.replace(/^([A-Za-z][A-Za-z0-9+.-]*):/, "$1:///"))
-      : result.parse(
-          globalThis.__quenchResolveParsedPath(
-            from.pathname || from.href || "",
-            to
-          )
-        );
+      : /^([A-Za-z][A-Za-z0-9+.-]*):\/([^/].*)$/.test(to)
+        ? result.parse(to.replace(/^([A-Za-z][A-Za-z0-9+.-]*):\//, "$1://"))
+        : result.parse(
+            globalThis.__quenchResolveParsedPath(
+              from.pathname || from.href || "",
+              to
+            )
+          );
 globalThis.__quenchResolveParsedPath = (base, to) => {
   const path = to.startsWith("/")
     ? to
