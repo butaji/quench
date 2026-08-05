@@ -19,12 +19,12 @@ FinalizationRegistry.prototype.cleanupSome = function FinalizationRegistryCleanu
   // No-op until native backing lands.
 };
 
-FinalizationRegistry.prototype.register = function FinalizationRegistryRegister(target, heldValue, unregisterToken) {
+FinalizationRegistry.prototype.register = function FinalizationRegistryRegister(target, heldValue, unregisterToken = undefined) {
   if (this === null || this === undefined) throw ThrowTypeError("FinalizationRegistry.prototype.register called on null or undefined");
   // No-op until native backing lands.
 };
 
-FinalizationRegistry.prototype.unregister = function FinalizationRegistryUnregister(unregisterToken) {
+FinalizationRegistry.prototype.unregister = function FinalizationRegistryUnregister(unregisterToken = undefined) {
   if (this === null || this === undefined) throw ThrowTypeError("FinalizationRegistry.prototype.unregister called on null or undefined");
   return false;
 };

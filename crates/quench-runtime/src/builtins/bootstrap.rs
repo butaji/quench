@@ -325,13 +325,30 @@ fn normalize_intrinsic_prototypes(ctx: &Context) {
         "SharedArrayBuffer",
         "DataView",
         "TypedArray",
+        "FinalizationRegistry",
     ] {
         if let Some(value) = ctx.get_global(name) {
-            if let crate::value::Value::NativeConstructor(constructor) = value {
-                normalize_prototype(&constructor.prototype);
-                for method in constructor.static_method_names() {
-                    constructor.normalize_static_method(&method);
+            match value {
+                crate::value::Value::NativeConstructor(constructor) => {
+                    normalize_prototype(&constructor.prototype);
+                    for method in constructor.static_method_names() {
+                        constructor.normalize_static_method(&method);
+                    }
                 }
+                crate::value::Value::NativeFunction(nf) => {
+                    if let Some(crate::value::Value::Object(proto_obj)) = nf.get_property("prototype") {
+                        normalize_prototype(&proto_obj);
+                    }
+                }
+                crate::value::Value::Function(_f) => {
+                    // Value::Function globals (e.g. FinalizationRegistry after
+                    // builtins/FinalizationRegistry.js reassigns it) carry the
+                    // same prototype object as the original NativeFunction
+                    // constructor. Skip here — normalize runs on the
+                    // NativeConstructor/FinalizationRegistry path above
+                    // during the first bootstrap pass.
+                }
+                _ => {}
             }
         }
     }

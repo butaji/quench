@@ -189,9 +189,9 @@ pub fn register_finalization_registry(ctx: &mut Context) {
     let fr_fn_rc = Rc::new(fr_native);
     fr_fn_rc.define_property(
         "length",
-        Value::Number(1.0),
+        Value::Number(2.0),
         PropertyFlags {
-            value: Some(Value::Number(1.0)),
+            value: Some(Value::Number(2.0)),
             writable: false,
             enumerable: false,
             configurable: true,
