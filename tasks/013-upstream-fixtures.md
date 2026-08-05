@@ -4040,3 +4040,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Added creation-time buffer option validation and readable send/receive buffer
   sizes for socket option fixtures.
+
+### Stage 1188: dgram bind callback context
+
+- Bound callback `this` to the socket and resolved default IPv4/IPv6 bind
+  addresses for the default-address fixtures.
