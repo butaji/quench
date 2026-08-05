@@ -4341,3 +4341,13 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Distinguished expected error constructors from predicate functions in
   `assert.throws` validation and ensured `doesNotThrow` reports caught errors.
+
+### Stage 1253: fstat validation order
+
+- Validate the file descriptor before requiring the asynchronous callback in
+  `fs.fstat`.
+
+### Stage 1254: filesystem descriptor allocation
+
+- Allocate distinct synthetic descriptors for simultaneous filesystem opens in
+  the JavaScript compatibility layer.
