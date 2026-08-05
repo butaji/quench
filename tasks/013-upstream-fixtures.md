@@ -4792,3 +4792,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1352: crypto cipher encoding validation
 
 - Enforce cipher input/output encoding consistency and reject unknown encodings.
+
+### Stage 1353: crypto encoding name normalization
+
+- Normalize `utf-8` to Node’s canonical `utf8` name in cipher errors.
