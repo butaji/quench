@@ -5008,3 +5008,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1406: crypto DH encoded private keys
 
 - Ensure the DH fallback factory exposes encoded private-key setters.
+
+### Stage 1407: crypto DH group-prime input
+
+- Preserve the DH prototype when the modulus is supplied as a group prime buffer.
