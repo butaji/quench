@@ -230,3 +230,9 @@ globalThis.__quenchResolveParsedFragment = (result, from, to) => {
   if (!target || !source.startsWith(`${target[1]}://`)) return null;
   return result.parse(`${source.replace(/#.*$/, "")}${target[2]}`);
 };
+globalThis.__nodeUrlEncode = (value) =>
+  encodeURIComponent(
+    String(value)
+      .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, "\uFFFD")
+      .replace(/(^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "$1\uFFFD")
+  );

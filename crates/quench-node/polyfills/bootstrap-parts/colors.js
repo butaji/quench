@@ -273,7 +273,7 @@ class NodeURLSearchParams {
     return this._pairs
       .map(
         ([key, value]) =>
-          `${encodeURIComponent(key)}=${encodeURIComponent(value)}`
+          `${globalThis.__nodeUrlEncode(key).replace(/%20/g, "+")}=${globalThis.__nodeUrlEncode(value).replace(/%20/g, "+")}`
       )
       .join("&");
   }
