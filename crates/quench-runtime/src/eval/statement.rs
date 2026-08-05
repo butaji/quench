@@ -2296,7 +2296,7 @@ fn eval_import(
             .borrow()
             .get("default")
             .unwrap_or(Value::Undefined);
-        env.borrow_mut().define(name.clone(), default_val);
+        env.borrow_mut().define_shared(name.clone(), default_val);
     }
 
     // Handle named imports: `import { x, y as z } from 'mod'`
@@ -2305,7 +2305,7 @@ fn eval_import(
             .borrow()
             .get(exported_name)
             .unwrap_or(Value::Undefined);
-        env.borrow_mut().define(local_name.clone(), val);
+        env.borrow_mut().define_shared(local_name.clone(), val);
     }
 
     // Handle namespace import: `import * as ns from 'mod'`
