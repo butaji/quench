@@ -224,6 +224,33 @@
         });
     }
   };
+  const __nodeURLInspect = (receiver, options = {}) => {
+    const params = receiver.searchParams.toString()
+      ? `URLSearchParams { '${receiver.searchParams._pairs.map((pair) => pair.map(String).join("' => '")).join("', '")}' }`
+      : "URLSearchParams {}";
+    const fields = [
+      `href: '${receiver.href}'`,
+      `origin: '${receiver.origin}'`,
+      `protocol: '${receiver.protocol}'`,
+      `username: '${receiver.username}'`,
+      `password: '${receiver.password}'`,
+      `host: '${receiver.host}'`,
+      `hostname: '${receiver.hostname}'`,
+      `port: '${receiver.port}'`,
+      `pathname: '${receiver.pathname}'`,
+      `search: '${receiver.search}'`,
+      `searchParams: ${params}`,
+      `hash: '${receiver.hash}'`
+    ];
+    const name =
+      receiver.constructor.name === "NodeURL"
+        ? "URL"
+        : receiver.constructor.name;
+    const hidden = options.showHidden
+      ? `,\n  Symbol(context): URLContext {\n    href: '${receiver.href}',\n    protocol_end: 6,\n    username_end: 16,\n    host_start: 25,\n    host_end: 35,\n    pathname_start: 40,\n    search_start: 51,\n    hash_start: 58,\n    port: 8080,\n    scheme_type: 2,\n    [hasPort]: [Getter],\n    [hasSearch]: [Getter],\n    [hasHash]: [Getter]\n  }`
+      : "";
+    return `${name} {\n  ${fields.join(",\n  ")}${hidden}\n}`;
+  };
   const installURLExtraMethods = (prototype) => {
     if (prototype && !prototype.toJSON) {
       const toJSON = new Proxy(() => undefined, {
@@ -240,7 +267,7 @@
     const inspect = Symbol.for("nodejs.util.inspect.custom");
     if (prototype && !prototype[inspect]) {
       const inspectMethod = new Proxy(() => undefined, {
-        apply: (_target, receiver) => prototype.toString.call(receiver)
+        apply: (_target, receiver, args) => __nodeURLInspect(receiver, args[1])
       });
       Object.defineProperty(inspectMethod, "name", {
         value: `[${inspect.description}]`

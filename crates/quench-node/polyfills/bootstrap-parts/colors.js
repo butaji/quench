@@ -296,7 +296,7 @@ const __nodeURLCredentials = (authority) => { const match = authority.match(/^(?
 const __nodeURLAssignParts = (url, match) => {
   const [username, password] = __nodeURLCredentials(match[2] || "");
   // prettier-ignore
-  ((url.protocol = match[1] || ""), (url.host = match[2] || ""), (url._username = username), (url._password = password), Object.defineProperty(url, "_hostname", { configurable: true, value: url.host.replace(/^.*@/, "").split(":")[0], writable: true }));
+  ((url.protocol = match[1] || ""), (url.host = (match[2] || "").replace(/^.*@/, "")), (url._username = username), (url._password = password), Object.defineProperty(url, "_hostname", { configurable: true, value: url.host.split(":")[0], writable: true }));
   // prettier-ignore
   url.port = url.host.includes(":") ? url.host.slice(url.host.lastIndexOf(":") + 1) : "";
   // prettier-ignore
