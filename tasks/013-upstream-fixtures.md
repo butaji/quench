@@ -5245,3 +5245,5 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1513. `url-resolve-empty-scheme.js` — preserve bases for empty scheme targets.
 1514. `url-resolve-empty-host.js` — preserve empty-host URL resolution paths.
 1515. `url-parse-query-object.js` — return null-prototype query objects.
+1516. `url-fileurltopath-errors.js` — preserve fileURLToPath argument error codes.
+1517. `url-fileurltopath-drive.js` — convert Windows drive-letter file URLs.

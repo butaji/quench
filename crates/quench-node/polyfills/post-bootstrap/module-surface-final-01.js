@@ -388,6 +388,7 @@ const __quenchAddUrlParseFallback = (result) => {
 const __quenchAddUrlFormatting = (result) => {
   if (typeof result.format !== "function") return result;
   (__quenchAddUrlDomainFallbacks(result), __quenchAddUrlParseFallback(result));
+  __quenchAddFileUrlFallback(result);
   const originalResolve = result.resolve;
   result.resolveObject ||= (from, to) => {
     const protocolTarget = __quenchResolveProtocolTarget(from, to);
@@ -403,17 +404,6 @@ const __quenchAddUrlFormatting = (result) => {
     return __quenchResolvePath(from, to, originalResolve);
   };
   result.resolve = result.resolveObject;
-  const fileURLToPath = result.fileURLToPath;
-  if (typeof fileURLToPath === "function")
-    result.fileURLToPath = (input, ...args) => {
-      try {
-        return fileURLToPath(input, ...args);
-      } catch (error) {
-        if (typeof input === "string" && !input.startsWith("file:"))
-          error.code = "ERR_INVALID_URL_SCHEME";
-        throw error;
-      }
-    };
   const originalFormat = result.format;
   result.format = (input, ...args) => {
     __quenchValidateUrlFormatOptions(args[0]);
