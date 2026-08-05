@@ -3,7 +3,7 @@ set -eu
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 jobs=${QUENCH_NODE_STAGE_JOBS:-${JOBS:-4}}
-timeout_seconds=${QUENCH_NODE_TEST_TIMEOUT_SECONDS:-30}
+timeout_seconds=${QUENCH_NODE_TEST_TIMEOUT_SECONDS:-10}
 failures=$(mktemp)
 trap 'rm -f "$failures"' EXIT HUP INT TERM
 export root failures
