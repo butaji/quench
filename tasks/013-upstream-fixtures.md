@@ -3926,3 +3926,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
   isolate numeric diagnostic formatting.
 - Verified the complete upstream `test-crypto-random.js` fixture after adding
   `util.getCallSites()` and correcting special-number inspection.
+
+### Stage 1168: TLS context invocation
+
+- Added the minimal `SecureContext.setOptions()` surface and Node-shaped
+  detached-method `Illegal invocation` behavior.

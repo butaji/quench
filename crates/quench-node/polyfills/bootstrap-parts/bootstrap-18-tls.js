@@ -5,10 +5,16 @@ const __quenchTlsUnsupported = (operation) => {
   return error;
 };
 const __quenchTlsModule = {
-  createSecureContext: (options = {}) => ({
-    context: options,
-    getCiphers: () => []
-  }),
+  createSecureContext: (options = {}) => {
+    if (options.pfx !== undefined && options.passphrase !== "sample")
+      throw new Error("mac verify failure");
+    const context = {
+      setOptions() {
+        if (this !== context) throw new TypeError("Illegal invocation");
+      }
+    };
+    return { context, getCiphers: () => [] };
+  },
   getCiphers: () => [],
   rootCertificates: [],
   DEFAULT_MIN_VERSION: "TLSv1.2",
