@@ -340,6 +340,17 @@ globalThis.__quenchResolveParsedAbsolute = (result, from, to) => {
     href: resolved
   });
 };
+globalThis.__quenchResolveParsedObject = (result, from, to, originalResolve) =>
+  typeof from === "string"
+    ? null
+    : result.parse(
+        to.startsWith("/")
+          ? to
+          : `${(from.pathname || from.href || "").slice(
+              0,
+              (from.pathname || from.href || "").lastIndexOf("/") + 1
+            )}${to}`
+      );
 globalThis.__quenchResolveObjectEarly = (result, from, to, originalResolve) => {
   const fragmentOnly = globalThis.__quenchResolveFragmentOnly(from, to);
   if (fragmentOnly) return fragmentOnly;
@@ -351,7 +362,13 @@ globalThis.__quenchResolveObjectEarly = (result, from, to, originalResolve) => {
   if (mailto) return mailto;
   const parsed = globalThis.__quenchResolveParsedAbsolute(result, from, to);
   if (parsed) return parsed;
-  if (typeof from !== "string") return originalResolve(from, to);
+  const parsedObject = globalThis.__quenchResolveParsedObject(
+    result,
+    from,
+    to,
+    originalResolve
+  );
+  if (parsedObject) return parsedObject;
   const file = globalThis.__quenchResolveLegacyFileRelative(from, to);
   if (file) return file;
   return /^[A-Za-z][A-Za-z0-9+.-]*:\/\/\//.test(from)

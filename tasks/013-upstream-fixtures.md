@@ -5290,3 +5290,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1558. `url-resolve-network-authority.js` — preserve network authorities in same schemes.
 1559. `url-resolve-authenticated-target.js` — preserve authenticated source authorities.
 1560. `url-resolve-fragment-only.js` — resolve fragment-only legacy bases.
+1561. `url-resolve-object-path.js` — preserve parsed relative path object shapes.
