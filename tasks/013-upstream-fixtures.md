@@ -4960,3 +4960,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1394: crypto DH encoding overload
 
 - Validate generators passed through the explicit encoding overload.
+
+### Stage 1395: crypto ECDH curve validation
+
+- Reject a missing ECDH curve argument with Node-compatible metadata.
