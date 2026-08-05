@@ -4682,3 +4682,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Provide callback-based `fs.open` using the existing synchronous descriptor
   implementation.
+
+### Stage 1329: asynchronous descriptor chmod
+
+- Verify the complete asynchronous `open`/`fchmod`/`fstat`/`close` lifecycle
+  through a focused compatibility stage.
