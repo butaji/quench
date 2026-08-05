@@ -413,8 +413,8 @@ globalThis.__quenchResolveObjectEarly = (result, from, to, originalResolve) => {
 };
 globalThis.__quenchAddLegacyParseMethods = (result) => {
   const originalParse = result.parse;
-  result.parse = (input) => {
-    const parsed = originalParse(input);
+  result.parse = (input, ...args) => {
+    const parsed = originalParse(input, ...args);
     parsed.resolveObject = (target) =>
       /^javascript:/i.test(target) ? originalParse(target) : parsed;
     parsed.resolve = parsed.resolveObject;
