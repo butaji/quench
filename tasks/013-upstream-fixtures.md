@@ -1,5 +1,13 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1150: VM realm Object.hasOwn
+
+- Fixture: `test-vm-global-property-prototype.js`
+- Restore `Object.hasOwn()` inside VM context intrinsics.
+- Retrospective: a global polyfill does not prove availability in a separately
+  evaluated VM realm; add a realm-focused contract before changing context
+  installation.
+
 ## Stage 1149: legacy URL raw query formatting
 
 - Fixture: `test-url-format.js`
