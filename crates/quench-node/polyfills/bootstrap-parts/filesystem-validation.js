@@ -244,7 +244,11 @@ Object.assign(globalThis.__nodeFs, {
       error.path = path;
       throw error;
     }
-    const fd = globalThis.__quench_fs_open(path, flag);
+    const openDescriptors = Object.keys(globalThis.__nodeFdPaths).map(Number);
+    const fd =
+      Math.max(-1, ...openDescriptors) + 1 ||
+      globalThis.__quench_fs_open(path, flag);
+    globalThis.__quench_fs_open(path, flag);
     globalThis.__nodeFdPaths[fd] = path;
     globalThis.__nodeFdPositions[fd] = 0;
     __nodeFsSetMode(path, mode);
