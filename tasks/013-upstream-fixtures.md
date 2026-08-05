@@ -4183,3 +4183,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Added event-backed `Readable.drop()`, `Readable.take()`, and `toArray()`
   chaining for finite stream slices.
+
+### Stage 1217: stream iterable helpers
+
+- Added event-backed `map()`, `filter()`, `forEach()`, and async iteration
+  helpers for readable slices.

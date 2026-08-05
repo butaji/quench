@@ -119,6 +119,18 @@ const __quenchAddAbortSignal = (signal, stream) => {
   }
   return stream;
 };
+const __quenchApplyReadableOperations = async (values, operations) => {
+  let result = values.slice(operations.drop, operations.drop + operations.take);
+  for (const operation of operations.operations) {
+    if (operation.type === "map")
+      result = await Promise.all(result.map(operation.callback));
+    if (operation.type === "filter") {
+      const keep = await Promise.all(result.map(operation.callback));
+      result = result.filter((_value, index) => keep[index]);
+    }
+  }
+  return result;
+};
 const __quenchCollectReadable = (stream, operations) =>
   new Promise((resolve, reject) => {
     const values = [];
@@ -131,7 +143,9 @@ const __quenchCollectReadable = (stream, operations) =>
       if (values.length < operations.take) values.push(value);
       if (values.length === operations.take && stream.pause) stream.pause();
     });
-    stream.once("end", () => resolve(values));
+    stream.once("end", () =>
+      __quenchApplyReadableOperations(values, operations).then(resolve, reject)
+    );
     stream.once("error", reject);
   });
 const __quenchSliceCount = (count) => {
@@ -162,25 +176,119 @@ const __quenchSliceOptions = (options) => {
     throw error;
   }
 };
+const __quenchIterableOptions = (callback, options) => {
+  if (typeof callback !== "function") {
+    const error = new TypeError(
+      "ERR_INVALID_ARG_TYPE: callback must be a function"
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  if (options === undefined) return;
+  if (!options || typeof options !== "object") {
+    const error = new TypeError(
+      "ERR_INVALID_ARG_TYPE: options must be an object"
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  if (
+    options.concurrency !== undefined &&
+    (!Number.isInteger(options.concurrency) || options.concurrency < 1)
+  ) {
+    const error = new RangeError(
+      "ERR_OUT_OF_RANGE: concurrency must be positive"
+    );
+    error.code = "ERR_OUT_OF_RANGE";
+    throw error;
+  }
+};
+const __quenchForEachReadable = (slice, callback) =>
+  slice.toArray().then((values) => Promise.all(values.map(callback)));
+const __quenchReadableSliceIterator = (stream, operations) =>
+  (async function* () {
+    yield* await __quenchCollectReadable(stream, operations);
+  })();
+const __quenchSliceMap = (stream, operations, callback, options) => {
+  __quenchIterableOptions(callback, options);
+  return __quenchReadableSlice(stream, {
+    ...operations,
+    operations: operations.operations.concat({ type: "map", callback })
+  });
+};
+const __quenchSliceFilter = (stream, operations, callback, options) => {
+  __quenchIterableOptions(callback, options);
+  return __quenchReadableSlice(stream, {
+    ...operations,
+    operations: operations.operations.concat({ type: "filter", callback })
+  });
+};
 const __quenchReadableSlice = (stream, operations) => ({
+  readable: true,
   drop(count, options) {
     __quenchSliceOptions(options);
     return __quenchReadableSlice(stream, {
       drop: operations.drop + __quenchSliceCount(count),
-      take: operations.take
+      take: operations.take,
+      operations: operations.operations
     });
   },
   take(count, options) {
     __quenchSliceOptions(options);
     return __quenchReadableSlice(stream, {
       drop: operations.drop,
-      take: Math.min(operations.take, __quenchSliceCount(count))
+      take: Math.min(operations.take, __quenchSliceCount(count)),
+      operations: operations.operations
     });
+  },
+  map(callback, options) {
+    return __quenchSliceMap(stream, operations, callback, options);
+  },
+  filter(callback, options) {
+    return __quenchSliceFilter(stream, operations, callback, options);
+  },
+  forEach(callback) {
+    return __quenchForEachReadable(this, callback);
   },
   toArray() {
     return __quenchCollectReadable(stream, operations);
+  },
+  [Symbol.asyncIterator]() {
+    return __quenchReadableSliceIterator(stream, operations);
   }
 });
+const __quenchAddSliceMethods = (prototype) => {
+  prototype.map ||= function (callback, options) {
+    __quenchIterableOptions(callback, options);
+    return __quenchReadableSlice(this, {
+      drop: 0,
+      take: Infinity,
+      operations: []
+    }).map(callback, options);
+  };
+  prototype.filter ||= function (callback, options) {
+    __quenchIterableOptions(callback, options);
+    return __quenchReadableSlice(this, {
+      drop: 0,
+      take: Infinity,
+      operations: []
+    }).filter(callback, options);
+  };
+  prototype.toArray ||= function () {
+    return __quenchReadableSlice(this, {
+      drop: 0,
+      take: Infinity,
+      operations: []
+    }).toArray();
+  };
+  prototype.forEach ||= function (callback) {
+    return __quenchReadableSlice(this, {
+      drop: 0,
+      take: Infinity,
+      operations: []
+    }).forEach(callback);
+  };
+};
 const __quenchAddReadableSlices = (result) => {
   for (const name of ["Readable", "Transform", "Duplex", "PassThrough"]) {
     const prototype = result[name]?.prototype;
@@ -189,16 +297,19 @@ const __quenchAddReadableSlices = (result) => {
       __quenchSliceOptions(options);
       return __quenchReadableSlice(this, {
         drop: __quenchSliceCount(count),
-        take: Infinity
+        take: Infinity,
+        operations: []
       });
     };
     prototype.take ||= function (count, options) {
       __quenchSliceOptions(options);
       return __quenchReadableSlice(this, {
         drop: 0,
-        take: __quenchSliceCount(count)
+        take: __quenchSliceCount(count),
+        operations: []
       });
     };
+    __quenchAddSliceMethods(prototype);
   }
 };
 const __quenchAddHttpEvents = (result) => {
