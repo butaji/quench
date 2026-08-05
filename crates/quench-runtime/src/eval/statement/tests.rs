@@ -876,6 +876,15 @@ mod with_statement {
     }
 
     #[test]
+    fn strict_unresolvable_assignment_throws_reference_error() {
+        let mut ctx = Context::new().unwrap();
+        crate::interpreter::set_strict_mode(true);
+        let result = ctx.eval("'use strict'; undeclared = (this.undeclared = 5);");
+        crate::interpreter::set_strict_mode(false);
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn strict_assignment_to_global_constant_throws_type_error() {
         let result = eval("'use strict'; undefined = 12;");
         assert!(result.unwrap_err().0.contains("TypeError"));

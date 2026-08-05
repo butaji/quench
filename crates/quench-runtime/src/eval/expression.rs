@@ -367,6 +367,19 @@ pub fn eval_expression(
                 Expression::Parenthesized(inner) => inner.as_ref(),
                 other => other,
             };
+            if identifier_scope.is_none()
+                && crate::interpreter::is_strict_mode()
+                && matches!(assignment_target, Expression::Identifier(_))
+            {
+                let Expression::Identifier(name) = assignment_target else {
+                    unreachable!();
+                };
+                let (_, error) = crate::value::error::create_js_error_with_type(
+                    &format!("{} is not defined", name),
+                    "ReferenceError",
+                );
+                return Err(error);
+            }
             if matches!(assignment_target, Expression::Member { .. }) {
                 crate::eval::object::touch_assignment_target(assignment_target, env)?;
             }
