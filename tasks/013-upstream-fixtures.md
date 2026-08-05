@@ -5398,3 +5398,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1668. `url-invalid-inputs.js` — reject invalid URL input and base combinations.
 1670. `url-control-whitespace.js` — normalize URL control whitespace in authorities.
 1671. `url-pathname-semicolon.js` — preserve semicolons in URL pathname segments.
+1672. `url-empty-password.js` — serialize URLs with empty passwords correctly.
