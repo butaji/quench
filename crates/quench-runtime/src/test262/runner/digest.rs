@@ -117,7 +117,7 @@ fn inprocess_digest() -> bool {
     std::env::var("TEST262_INPROCESS")
         .ok()
         .map(|s| s == "1" || s.eq_ignore_ascii_case("true"))
-        .unwrap_or(false) // default to isolated (crash = failure, not skip)
+        .unwrap_or(true)
 }
 
 fn run_serial(
