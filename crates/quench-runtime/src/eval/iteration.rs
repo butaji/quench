@@ -542,6 +542,11 @@ fn eval_for_of_iterator_owned(mut run: ForOfIteratorRunOwned) -> Result<Value, J
             Ok(ForOfIterResult::Done(val)) => return abrupt_close(&run.iterator, Ok(val)),
             Ok(ForOfIterResult::Break(val)) => {
                 let closed = abrupt_close(&run.iterator, Ok(val));
+                if let Some(control_flow) = take_control_flow() {
+                    if !matches!(control_flow, ControlFlow::Break(None)) {
+                        set_control_flow(control_flow);
+                    }
+                }
                 if run.await_of {
                     match closed {
                         Ok(value) => return Ok(value),

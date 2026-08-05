@@ -55,6 +55,18 @@ fn module_import_meta_is_an_object() {
 }
 
 #[test]
+fn top_level_for_await_accepts_awaited_array_expression() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval_es_module(
+        "var binding;\
+        for await (binding of [await []]) { await []; break; }\
+        for await (var binding of [await []]) { await []; break; }\
+        for await (let binding of [await []]) { await []; break; }",
+    );
+    assert!(result.is_ok(), "for-await module failed: {:?}", result);
+}
+
+#[test]
 fn module_exported_function_is_initialized_before_module_body() {
     let mut ctx = Context::new().unwrap();
     let result = ctx.eval_es_module("typeof test262; export function test262() {};");
