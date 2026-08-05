@@ -4231,3 +4231,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1227: console assert output
 
 - Added non-throwing `console.assert()` output with Node-compatible prefixes.
+
+### Stage 1228: timers promises alias
+
+- Exposed `timers.promises` as the same module object as
+  `timers/promises`.
