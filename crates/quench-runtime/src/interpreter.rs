@@ -480,14 +480,6 @@ pub fn eval_program(
             hoist_functions(statements, env);
             predeclare_let_const(statements, &mut env.borrow_mut());
 
-            if !set_this {
-                for stmt in statements {
-                    if matches!(stmt, Statement::Import { .. }) {
-                        crate::eval::eval_statement(stmt, env, false, false)?;
-                    }
-                }
-            }
-
             if set_this {
                 let this_value = env.borrow().get("globalThis").unwrap_or(Value::Undefined);
                 set_this_binding(env, this_value);
@@ -495,7 +487,7 @@ pub fn eval_program(
 
             let mut last_value = Value::Undefined;
             for stmt in statements {
-                if matches!(stmt, Statement::FunctionDeclaration { .. } | Statement::Import { .. }) {
+                if matches!(stmt, Statement::FunctionDeclaration { .. }) {
                     continue;
                 }
                 let val = crate::eval::eval_statement(stmt, env, false, false)?;
