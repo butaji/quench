@@ -576,6 +576,14 @@ mod tests {
     }
 
     #[test]
+    fn array_buffer_byte_length_getter_length_is_non_writable() {
+        let result = eval_ok(
+            "var getter = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, 'byteLength').get; Object.getOwnPropertyDescriptor(getter, 'length').writable === false",
+        );
+        assert_eq!(result, Value::Boolean(true));
+    }
+
+    #[test]
     fn array_buffer_transfer_methods_are_functions() {
         let result = eval_ok(
             "typeof ArrayBuffer.prototype.transfer === 'function' && typeof ArrayBuffer.prototype.transferToFixedLength === 'function' && typeof ArrayBuffer.prototype.sliceToImmutable === 'function'",
