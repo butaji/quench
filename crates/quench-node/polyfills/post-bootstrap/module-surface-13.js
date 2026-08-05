@@ -46,10 +46,16 @@ const __quenchCryptoSignFallback = (result) => {
 const __quenchCryptoKeyFallback = (result) => {
   const create = (type) => (key) => ({
     type,
+    asymmetricKeyType:
+      type === "private" || type === "public" ? "ec" : undefined,
     export: () => NodeBuffer.from(typeof key === "string" ? key : "")
   });
   result.createPrivateKey ||= create("private");
   result.createPublicKey ||= create("public");
+  result.generateKeyPairSync = () => ({
+    privateKey: create("private")(),
+    publicKey: create("public")()
+  });
 };
 const __quenchCryptoConstantsFallback = (result) => {
   result.constants ||= {};

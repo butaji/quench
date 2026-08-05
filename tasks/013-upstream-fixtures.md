@@ -5028,3 +5028,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1411: crypto stateless DH options
 
 - Add `diffieHellman()` options and callback argument validation.
+
+### Stage 1412: crypto key-pair handles
+
+- Return minimal private/public handles from `generateKeyPairSync()`.
