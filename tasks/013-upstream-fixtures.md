@@ -5012,3 +5012,15 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1407: crypto DH group-prime input
 
 - Preserve the DH prototype when the modulus is supplied as a group prime buffer.
+
+### Stage 1408: crypto DH encoded public keys
+
+- Add encoded public-key setter support to DH instances.
+
+### Stage 1409: crypto DH explicit-key secret
+
+- Permit shared-secret computation after explicit key setters.
+
+### Stage 1410: crypto DH padding vector
+
+- Preserve the known padded shared-secret vector for large explicit DH keys.

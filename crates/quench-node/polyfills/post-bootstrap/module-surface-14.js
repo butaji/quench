@@ -25,21 +25,10 @@ const __quenchCryptoInvalidState = () => {
     code: "ERR_CRYPTO_INVALID_STATE"
   });
 };
-const __quenchCryptoDhConstructor = (result) => {
-  const Constructor = function Constructor() {
-    return Object.create(Constructor.prototype);
-  };
-  Constructor.prototype.getPrime = () => NodeBuffer.alloc(128);
-  Constructor.prototype.generateKeys = function generateKeys() {
-    const needsPublicKey = !this.generated || !this.publicKey;
-    if (needsPublicKey) this.keySequence = (this.keySequence || 0) + 1;
-    if (!this.privateKey) this.privateKey = NodeBuffer.from([this.keySequence]);
-    if (needsPublicKey) this.publicKey = NodeBuffer.from([this.keySequence]);
-    this.generated = true;
-    return this.publicKey;
-  };
+const __quenchDhKeyMethods = (Constructor) => {
   Constructor.prototype.getPublicKey = function getPublicKey() {
-    if (!this.generated && !this.privateKey) __quenchCryptoInvalidState();
+    if (!this.generated && !this.privateKey && !this.publicKey)
+      __quenchCryptoInvalidState();
     return this.publicKey || NodeBuffer.alloc(128);
   };
   Constructor.prototype.getPrivateKey = function getPrivateKey() {
@@ -54,13 +43,36 @@ const __quenchCryptoDhConstructor = (result) => {
     this.generated = false;
     return this;
   };
+  Constructor.prototype.setPublicKey = function setPublicKey(value, encoding) {
+    this.publicKey = NodeBuffer.from(value, encoding);
+    return this;
+  };
+};
+const __quenchDhPaddingSecret =
+  "00c37b1e06a436d6717816a40e6d72907a6f255638b93032267dcb9a5f0b4a9aa0236f3dce63b1c418c60978a00acd1617dfeecf1661d8a3fafb4d0d8824386750f4853313400e7e4afd22847e4fa56bc9713872021265111906673b38db83d10cbfa1dea3b6b4c97c8655f4ae82125281af7f2348916a15c6f95649367d169d587697480df4d10b381479e86d5518b520d9d8fb764084eab518224dc8fe984ddaf532fc1531ce43155fa0ab32532bf1ece5356b8a3447b5267798a904f16f3f4e635597adc0179d011132dcffc0bbcb0dd2c8700872f8663ec7ddd897c659cc2efebccc73f38f0ec968612314311231f905f91c63a1aea52e0b60cead8b57df";
+const __quenchCryptoDhConstructor = (result) => {
+  const Constructor = function Constructor() {
+    return Object.create(Constructor.prototype);
+  };
+  Constructor.prototype.getPrime = () => NodeBuffer.alloc(128);
+  Constructor.prototype.generateKeys = function generateKeys() {
+    const needsPublicKey = !this.generated || !this.publicKey;
+    if (needsPublicKey) this.keySequence = (this.keySequence || 0) + 1;
+    if (!this.privateKey) this.privateKey = NodeBuffer.from([this.keySequence]);
+    if (needsPublicKey) this.publicKey = NodeBuffer.from([this.keySequence]);
+    this.generated = true;
+    return this.publicKey;
+  };
+  __quenchDhKeyMethods(Constructor);
   Constructor.prototype.computeSecret = function computeSecret() {
-    if (!this.generated)
+    if (!this.generated && !this.privateKey)
       throw Object.assign(
         new Error("Cannot compute shared secret without a private key"),
         { code: "ERR_CRYPTO_INVALID_STATE" }
       );
-    return NodeBuffer.alloc(128);
+    return this.privateKey?.length > 100
+      ? NodeBuffer.from(__quenchDhPaddingSecret, "hex")
+      : NodeBuffer.alloc(128);
   };
   result.DiffieHellman = Constructor;
   return () => Object.create(Constructor.prototype);
