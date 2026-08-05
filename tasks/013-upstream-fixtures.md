@@ -1,5 +1,13 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1157: crypto.pbkdf2 key-length diagnostics
+
+- Fixture: `test-crypto-pbkdf2.js`
+- Matched `keylen` type and non-integer range diagnostics while retaining Node
+  error codes.
+- Retrospective: validate numeric type before integer/range checks so Node’s
+  distinct TypeError and RangeError contracts remain observable.
+
 ## Stage 1156: crypto.pbkdf2 range error codes
 
 - Fixture: `test-crypto-pbkdf2.js`
