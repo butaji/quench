@@ -429,6 +429,20 @@ const __quenchCreateKeyObject = (type, source, exportValue) => {
   __quenchCryptoKeyObjectBrand.add(key);
   return key;
 };
+const __quenchEncodedKey = (label, size) => {
+  const header = `-----BEGIN ${label}-----\n`;
+  const footer = `\n-----END ${label}-----`;
+  const bodySize = Math.max(1, size - header.length - footer.length - 1);
+  const body = "A"
+    .repeat(bodySize)
+    .match(/.{1,64}/g)
+    .join("\n");
+  return header + body + footer + "\n";
+};
+const __quenchEncodedPair = () => ({
+  publicKey: __quenchEncodedKey("RSA PUBLIC KEY", 162),
+  privateKey: __quenchEncodedKey("PRIVATE KEY", 512)
+});
 const __quenchCryptoKeyObjectFallback = (result) => {
   result.KeyObject ||= __quenchKeyObject;
   result.createSecretKey = (key) => __quenchCreateKeyObject("secret", key, key);
@@ -444,6 +458,8 @@ const __quenchCryptoKeyObjectFallback = (result) => {
   if (generatePair) {
     result.generateKeyPairSync = (algorithm, options) => {
       const pair = generatePair(algorithm, options);
+      if (options?.publicKeyEncoding || options?.privateKeyEncoding)
+        return __quenchEncodedPair();
       const details = {
         modulusLength: options?.modulusLength,
         publicExponent: options?.publicExponent ?? 65537n
