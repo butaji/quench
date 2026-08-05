@@ -4276,3 +4276,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Replaced the undefined `net.createConnection()` fallback with an evented
   socket supporting encoding, writes, end, and connect events.
+
+### Stage 1238: HTTP cookie request headers
+
+- Preserved serialized `Cookie` headers on HTTP request objects returned by
+  `request()` and `get()`.
