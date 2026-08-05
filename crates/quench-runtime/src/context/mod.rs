@@ -81,8 +81,10 @@ impl Context {
 
         // Set thread-local for eval function to access this context
         let ctx_ptr: *mut Context = self;
-        CURRENT_CONTEXT.with(|cell| {
+        let previous_context = CURRENT_CONTEXT.with(|cell| {
+            let previous = *cell.borrow();
             *cell.borrow_mut() = Some(ctx_ptr);
+            previous
         });
 
         // Set source for function source_text capture
@@ -103,7 +105,7 @@ impl Context {
 
         // Clear thread-local after eval completes
         CURRENT_CONTEXT.with(|cell| {
-            *cell.borrow_mut() = None;
+            *cell.borrow_mut() = previous_context;
         });
         CURRENT_SOURCE.with(|cell| {
             *cell.borrow_mut() = None;
@@ -125,8 +127,10 @@ impl Context {
 
         // Set thread-locals for eval function to access this context and source
         let ctx_ptr: *mut Context = self;
-        CURRENT_CONTEXT.with(|cell| {
+        let previous_context = CURRENT_CONTEXT.with(|cell| {
+            let previous = *cell.borrow();
             *cell.borrow_mut() = Some(ctx_ptr);
+            previous
         });
         CURRENT_SOURCE.with(|cell| {
             *cell.borrow_mut() = Some(unsafe { std::mem::transmute::<&str, &str>(source) });
@@ -148,7 +152,7 @@ impl Context {
 
         // Clear thread-locals after eval completes
         CURRENT_CONTEXT.with(|cell| {
-            *cell.borrow_mut() = None;
+            *cell.borrow_mut() = previous_context;
         });
         CURRENT_SOURCE.with(|cell| {
             *cell.borrow_mut() = None;
@@ -177,8 +181,10 @@ impl Context {
     pub fn eval_typescript(&mut self, source: &str) -> Result<Value, JsError> {
         interpreter::reset_depth();
         let ctx_ptr: *mut Context = self;
-        CURRENT_CONTEXT.with(|cell| {
+        let previous_context = CURRENT_CONTEXT.with(|cell| {
+            let previous = *cell.borrow();
             *cell.borrow_mut() = Some(ctx_ptr);
+            previous
         });
         CURRENT_SOURCE.with(|cell| {
             *cell.borrow_mut() = Some(unsafe { std::mem::transmute::<&str, &str>(source) });
@@ -191,7 +197,7 @@ impl Context {
         // Microtask checkpoint (see Context::eval)
         let microtask_result = crate::builtins::execute_pending_microtasks();
         CURRENT_CONTEXT.with(|cell| {
-            *cell.borrow_mut() = None;
+            *cell.borrow_mut() = previous_context;
         });
         CURRENT_SOURCE.with(|cell| {
             *cell.borrow_mut() = None;

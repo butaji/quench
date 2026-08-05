@@ -378,6 +378,16 @@ mod tests {
     }
 
     #[test]
+    fn test_eval_script_survives_nested_context_eval() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval("eval('1'); $262.evalScript('var nested = 1'); nested === 1");
+        assert!(
+            result.is_ok(),
+            "$262.evalScript lost its context: {result:?}"
+        );
+    }
+
+    #[test]
     fn test_gc_throws_reference_error() {
         let mut ctx = harness_ctx();
         let result =
