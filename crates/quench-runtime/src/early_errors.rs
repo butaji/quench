@@ -180,12 +180,34 @@ impl<'a> Visit<'a> for StrictHeritageChecker {
 }
 
 impl<'a> Visit<'a> for DuplicateLabelChecker {
+    fn visit_function(
+        &mut self,
+        _function: &ast::Function<'a>,
+        _flags: oxc::syntax::scope::ScopeFlags,
+    ) {
+    }
+
     fn visit_labeled_statement(&mut self, statement: &ast::LabeledStatement<'a>) {
         if !self.labels.insert(statement.label.name.to_string()) {
             self.duplicate = true;
             return;
         }
         self.visit_statement(&statement.body);
+    }
+}
+
+pub fn check_module_duplicate_labels(program: &ast::Program) -> Result<(), JsError> {
+    let mut checker = DuplicateLabelChecker {
+        labels: HashSet::new(),
+        duplicate: false,
+    };
+    for statement in &program.body {
+        checker.visit_statement(statement);
+    }
+    if checker.duplicate {
+        Err(JsError("SyntaxError: duplicate labels in module".into()))
+    } else {
+        Ok(())
     }
 }
 
