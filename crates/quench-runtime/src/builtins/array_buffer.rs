@@ -284,6 +284,11 @@ pub fn register_array_buffer(ctx: &mut Context) {
             let len = args.first().map(to_number).unwrap_or(0.0);
             let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
             if let Value::Object(this_obj) = this_val {
+                if !len.is_finite() || !(0.0..=u32::MAX as f64).contains(&len) {
+                    return Err(array_buffer_range_error(
+                        "ArrayBuffer length is out of range",
+                    ));
+                }
                 crate::builtins::object::set_boxed_value(
                     &mut this_obj.borrow_mut(),
                     Value::Number(len),
@@ -433,6 +438,14 @@ mod tests {
     fn array_buffer_constructor_with_zero_length() {
         let result = eval_ok("(new ArrayBuffer(0)).byteLength");
         assert_eq!(result.to_string(), "0");
+    }
+
+    #[test]
+    fn array_buffer_constructor_rejects_negative_length_with_range_error() {
+        let result = eval_ok(
+            "try { new ArrayBuffer(-1); false } catch (error) { error instanceof RangeError }",
+        );
+        assert_eq!(result, Value::Boolean(true));
     }
 
     #[test]
