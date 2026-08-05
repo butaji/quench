@@ -91,15 +91,20 @@ const __quenchApplyFinalSurface = (normalized, result) => {
   return result;
 };
 const __quenchUrlAuthority = (input) => {
-  let authority = input.host || input.hostname || "";
+  let authority = input.hostname || input.host || "";
+  if (authority.includes("@")) authority = authority.split("@").pop();
   if (authority.includes(":") && !authority.startsWith("[") && input.hostname)
     authority = `[${authority}]`;
-  if (input.port && !authority.endsWith(`:${input.port}`))
+  if (/^\d+$/.test(input.port) && !authority.endsWith(`:${input.port}`))
     authority = `${authority}:${input.port}`;
   return authority;
 };
 const __quenchUrlAuth = (input) =>
-  input.auth ? `${encodeURIComponent(input.auth).replace(/%3A/gi, ":")}@` : "";
+  input.auth
+    ? `${encodeURIComponent(input.auth).replace(/%3A/gi, ":")}@`
+    : input.host?.includes("@")
+      ? `${input.host.split("@")[0]}@`
+      : "";
 const __quenchUrlPrefix = (input, protocol, authority) => {
   const slashedProtocol = ["http:", "https:", "ftp:", "gopher:", "file:"];
   if (!input.slashes && !slashedProtocol.includes(protocol))
