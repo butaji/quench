@@ -299,7 +299,7 @@ const __nodeURLAssignParts = (url, match) => {
   ((url.protocol = match[1] || ""), (url.host = (match[2] || "").replace(/^.*@/, "")), (url._username = username), (url._password = password), Object.defineProperty(url, "_hostname", { configurable: true, value: url.host.split(":")[0], writable: true }), (url.port = url.host.includes(":") ? url.host.slice(url.host.lastIndexOf(":") + 1).replace(/^0+(?=\d)/, "") : ""));
   if (["http:80", "https:443"].includes(url.protocol + url.port)) url.port = "";
   // prettier-ignore
-  url.pathname = match[3] || "/", url.search = match[4] ? `?${match[4]}` : "", url.hash = match[5] ? `#${match[5]}` : "", match[1] && !match[2] && (url._pathname = match[3] || "");
+  url.pathname = match[3] || "/", url.search = match[4] ? `?${match[4]}` : "", url.hash = match[5] !== undefined ? `#${match[5]}` : "", match[1] && !match[2] && (url._pathname = match[3] || "");
   // prettier-ignore
   Object.defineProperty(url, "origin", { configurable: true, enumerable: false, value: url.protocol && url.host ? `${url.protocol}//${url.host}` : "null", writable: true }), Object.defineProperty(url, "searchParams", { configurable: true, enumerable: false, value: (() => { const params = new NodeURLSearchParams(match[4] || ""); Object.defineProperty(params, "__nodeURLOwner", { configurable: true, value: url, writable: true }); return params; })(), writable: true }), url._origin = url.origin, url._searchParams = url.searchParams, delete url.origin, delete url.searchParams;
   // prettier-ignore

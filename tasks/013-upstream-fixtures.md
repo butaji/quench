@@ -5405,3 +5405,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1676. `url-default-port.js` — omit default HTTP and HTTPS ports.
 1677. `url-empty-reference.js` — preserve the base URL for empty references.
 1678. `url-special-backslash.js` — normalize backslashes in special URL paths.
+1679. `url-empty-fragment.js` — preserve empty URL fragment markers.
