@@ -4207,3 +4207,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1221: zlib window-bits validation
 
 - Added range validation for zlib convenience methods' `windowBits` option.
+
+### Stage 1222: console label validation
+
+- Rejected symbol labels for `console.time()`, `timeEnd()`, and `timeLog()`.
