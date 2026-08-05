@@ -4992,3 +4992,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1402: crypto DH private-key access
 
 - Add private-key getters/setters and invalid-state behavior.
+
+### Stage 1403: crypto DH generated-key state
+
+- Track deterministic public/private key changes across `generateKeys()` calls.
