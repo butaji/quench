@@ -350,7 +350,7 @@ globalThis.__quenchResolveScopedObject = (r, f, t) =>
 globalThis.__quenchResolveParsedSpecial = (r, f, t) =>
   globalThis.__quenchResolveScopedObject(r, f, t) ||
   globalThis.__quenchResolveParsedFile(r, f, t) ||
-  globalThis.__quenchResolveParsedHash(r, f, t) ||
+  globalThis.__quenchResolveParsedMailtoOrHash(r, f, t) ||
   globalThis.__quenchResolveParsedFragment(r, f, t) ||
   globalThis.__quenchResolveParsedWebAbsolute(r, f, t) ||
   globalThis.__quenchResolveParsedSameSchemeOpaque(r, f, t) ||
