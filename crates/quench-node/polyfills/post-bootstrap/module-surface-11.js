@@ -336,16 +336,14 @@ for (const name of ["append", "delete", "get", "getAll", "has", "set"]) {
 const __nodeURLSearchIterator = (values) => {
   let index = 0;
   const iterator = Object.create(__nodeURLSearchIteratorPrototype);
+  // prettier-ignore
+  Object.defineProperties(iterator, { __values: { configurable: true, value: values }, __index: { configurable: true, value: 0, writable: true } });
   iterator.next = function next() {
-    if (this !== iterator) {
-      const error = new TypeError(
-        'Value of "this" must be of type URLSearchParamsIterator'
-      );
-      error.code = "ERR_INVALID_THIS";
-      throw error;
-    }
+    // prettier-ignore
+    if (this !== iterator) throw Object.assign(new TypeError('Value of "this" must be of type URLSearchParamsIterator'), { code: "ERR_INVALID_THIS" });
     return index < values.length
-      ? { done: false, value: values[index++] }
+      ? ((iterator.__index = index + 1),
+        { done: false, value: values[index++] })
       : { done: true, value: undefined };
   };
   return iterator;
@@ -353,6 +351,15 @@ const __nodeURLSearchIterator = (values) => {
 const __nodeURLSearchIteratorPrototype = {
   [Symbol.iterator]() {
     return this;
+  },
+  [Symbol.for("nodejs.util.inspect.custom")](depth, options = {}) {
+    const values = this.__values.slice(this.__index);
+    const rendered = values.map((value) =>
+      Array.isArray(value) ? `[ '${value[0]}', '${value[1]}' ]` : `'${value}'`
+    );
+    if (options.breakLength <= 1)
+      return `URLSearchParams Iterator {\n  ${rendered.join(",\n  ")} }`;
+    return `URLSearchParams Iterator { ${rendered.join(", ")} }`;
   }
 };
 Object.defineProperty(__nodeURLSearchIteratorPrototype, Symbol.toStringTag, {
@@ -416,8 +423,17 @@ globalThis.__nodeURLSearchParams.prototype.forEach =
   ).value;
 const __nodeURLSearchInspect = Object.getOwnPropertyDescriptor(
   {
-    inspect() {
-      return this.toString();
+    inspect(depth, options = {}) {
+      if (!(this instanceof globalThis.__nodeURLSearchParams))
+        return globalThis.__nodeInvalidThis();
+      if (depth < 0) return "[Object]";
+      const values = this._pairs.map(
+        ([key, value]) => `'${key}' => '${value}'`
+      );
+      if (!values.length) return "URLSearchParams {}";
+      if (options.breakLength <= 1)
+        return `URLSearchParams {\n  ${values.join(",\n  ")} }`;
+      return `URLSearchParams { ${values.join(", ")} }`;
     }
   },
   "inspect"

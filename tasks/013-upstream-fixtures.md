@@ -5390,3 +5390,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1660. `url-custom-inspect.js` — format URL instances with Node-style inspect fields.
 1661. `url-tostring-tags.js` — expose URL and URLSearchParams toString tags.
 1662. `urlsearchparams-argument-validation.js` — validate URLSearchParams receiver and arguments.
+1663. `url-enumerable-properties.js` — hide URL internal slots from enumeration.
