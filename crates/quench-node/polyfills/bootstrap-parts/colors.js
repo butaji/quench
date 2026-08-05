@@ -310,7 +310,8 @@ globalThis.__nodeURL = class NodeURL {
     const value = __nodeURLResolveInput(input, base);
     // prettier-ignore
     const match = value.match(/^([a-z][a-z0-9+.-]*:)?(?:\/\/([^/?#]*))?([^?#]*)(?:\?([^#]*))?(?:#(.*))?$/i);
-    if (!match) throw new TypeError("Invalid URL");
+    // prettier-ignore
+    if (input === undefined || base === null || (!base && !/^[a-z][a-z0-9+.-]*:/i.test(value)) || !match) throw Object.assign(new TypeError("Invalid URL"), { code: "ERR_INVALID_URL" });
     __nodeURLAssignParts(this, match);
     // prettier-ignore
     return new Proxy(this, { get: (target, property, receiver) => { const value = Reflect.get(target, property, receiver); if (property === "searchParams") value.__nodeURLOwner = receiver; return value; }, set: (target, property, value, receiver) => property === "origin" || property === "searchParams" ? globalThis.__nodeThrowReadonlyURLSetter(property) : Reflect.set(target, property, value, receiver) });
