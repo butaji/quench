@@ -232,6 +232,8 @@ pub(crate) fn get_current_eval_env() -> Option<Rc<RefCell<Environment>>> {
 
 thread_local! {
     static DIRECT_EVAL: Cell<bool> = const { Cell::new(false) };
+    static EVAL_CONFLICT_NAMES: RefCell<Option<Vec<(String, crate::ast::VarKind)>>> =
+        const { RefCell::new(None) };
 }
 
 pub(crate) fn set_direct_eval(is_direct: bool) {
@@ -240,6 +242,16 @@ pub(crate) fn set_direct_eval(is_direct: bool) {
 
 pub(crate) fn is_direct_eval() -> bool {
     DIRECT_EVAL.with(|cell| cell.get())
+}
+
+pub(crate) fn set_eval_conflict_names(
+    names: Option<Vec<(String, crate::ast::VarKind)>>,
+) -> Option<Vec<(String, crate::ast::VarKind)>> {
+    EVAL_CONFLICT_NAMES.with(|cell| std::mem::replace(&mut *cell.borrow_mut(), names))
+}
+
+pub(crate) fn eval_conflict_names() -> Option<Vec<(String, crate::ast::VarKind)>> {
+    EVAL_CONFLICT_NAMES.with(|cell| cell.borrow().clone())
 }
 
 thread_local! {

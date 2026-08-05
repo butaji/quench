@@ -354,6 +354,16 @@ pub fn reject_eval_var_lexical_conflict(
     let eval_env =
         crate::interpreter::get_current_eval_env().unwrap_or_else(|| Rc::clone(&ctx.env));
     for name in &names {
+        if crate::interpreter::eval_conflict_names()
+            .is_some_and(|extra| extra.iter().any(|(extra_name, _)| extra_name == name))
+        {
+            let (error, js_error) = crate::value::error::create_js_error_with_type(
+                &format!("Identifier '{}' has already been declared", name),
+                "SyntaxError",
+            );
+            crate::value::set_thrown_value(error);
+            return Err(js_error);
+        }
         if matches!(
             eval_env.borrow().get_kind(name),
             Some(ast::VarKind::Let | ast::VarKind::Const)

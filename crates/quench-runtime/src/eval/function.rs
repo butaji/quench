@@ -544,6 +544,16 @@ pub(crate) fn bind_params(
     // can detect var/lexical conflicts. Set the eval env to the call env
     // before evaluating defaults, then restore.
     let prev_eval_env = crate::interpreter::get_current_eval_env();
+    let previous_conflicts = crate::interpreter::set_eval_conflict_names(Some(
+        crate::interpreter::collect_let_const_declarations(&f.body)
+            .into_iter()
+            .chain(
+                crate::interpreter::collect_var_names(&f.body)
+                    .into_iter()
+                    .map(|name| (name, crate::ast::VarKind::Var)),
+            )
+            .collect(),
+    ));
     if params.iter().any(|p| p.default.is_some()) {
         crate::interpreter::set_current_eval_env(Some(Rc::clone(call_env_rc)));
     }
@@ -634,6 +644,7 @@ pub(crate) fn bind_params(
     if params.iter().any(|p| p.default.is_some()) {
         crate::interpreter::set_current_eval_env(prev_eval_env);
     }
+    crate::interpreter::set_eval_conflict_names(previous_conflicts);
     result
 }
 
