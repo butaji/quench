@@ -372,11 +372,8 @@ globalThis.__nodeUtil = {
     if (value && typeof value === "object" && Object.keys(value).some((key) => ["URL", "NodeURL"].includes(value[key]?.constructor?.name))) return `{ ${Object.keys(value).map((key) => `${key}: URL {}`).join(", ")} }`;
     // prettier-ignore
     if (options.depth === 0 && value && typeof value === "object") return `{ ${Object.keys(value).map((key) => `${key}: ${value[key] && typeof value[key] === "object" ? `${value[key].constructor.name} {}` : String(value[key])}`).join(", ")} }`;
-    if (
-      value &&
-      typeof value[Symbol.for("nodejs.util.inspect.custom")] === "function"
-    )
-      return value[Symbol.for("nodejs.util.inspect.custom")](2, options);
+    // prettier-ignore
+    if (value && typeof value[Symbol.for("nodejs.util.inspect.custom")] === "function") return value[Symbol.for("nodejs.util.inspect.custom")](options.depth ?? 2, options);
     // prettier-ignore
     try { return JSON.stringify(value); } catch (_) { return String(value); }
   },
@@ -497,4 +494,5 @@ globalThis.__nodeUtil = {
   }
 };
 globalThis.__nodeUtil.inspect.defaultOptions = { numericSeparator: false };
+globalThis.__nodeUtil.inspect.custom = Symbol.for("nodejs.util.inspect.custom");
 let __nodeInspectMaxBytes = 50;

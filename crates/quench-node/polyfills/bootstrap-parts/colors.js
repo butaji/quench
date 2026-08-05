@@ -299,16 +299,21 @@ const __nodeURLAssignParts = (url, match) => {
   // prettier-ignore
   url.pathname = match[3] || "/", url.search = match[4] ? `?${match[4]}` : "", url.hash = match[5] ? `#${match[5]}` : "";
   // prettier-ignore
-  Object.defineProperty(url, "origin", { configurable: true, enumerable: true, value: url.protocol && url.host ? `${url.protocol}//${url.host}` : "null", writable: true }), Object.defineProperty(url, "searchParams", { configurable: true, enumerable: true, value: (() => { const params = new NodeURLSearchParams(match[4] || ""); Object.defineProperty(params, "__nodeURLOwner", { configurable: true, value: url }); return params; })(), writable: true });
+  Object.defineProperty(url, "origin", { configurable: true, enumerable: false, value: url.protocol && url.host ? `${url.protocol}//${url.host}` : "null", writable: true }), Object.defineProperty(url, "searchParams", { configurable: true, enumerable: false, value: (() => { const params = new NodeURLSearchParams(match[4] || ""); Object.defineProperty(params, "__nodeURLOwner", { configurable: true, value: url, writable: true }); return params; })(), writable: true });
+  // prettier-ignore
+  url._origin = url.origin, url._searchParams = url.searchParams, delete url.origin, delete url.searchParams;
+  // prettier-ignore
+  Object.keys(url).filter((key) => key.startsWith("_")).forEach((key) => Object.defineProperty(url, key, { enumerable: false }));
 };
 globalThis.__nodeURL = class NodeURL {
   constructor(input, base) {
     const value = __nodeURLResolveInput(input, base);
-    const match = value.match(
-      /^([a-z][a-z0-9+.-]*:)?(?:\/\/([^/?#]*))?([^?#]*)(?:\?([^#]*))?(?:#(.*))?$/i
-    );
+    // prettier-ignore
+    const match = value.match(/^([a-z][a-z0-9+.-]*:)?(?:\/\/([^/?#]*))?([^?#]*)(?:\?([^#]*))?(?:#(.*))?$/i);
     if (!match) throw new TypeError("Invalid URL");
     __nodeURLAssignParts(this, match);
+    // prettier-ignore
+    return new Proxy(this, { get: (target, property, receiver) => { const value = Reflect.get(target, property, receiver); if (property === "searchParams") value.__nodeURLOwner = receiver; return value; }, set: (target, property, value, receiver) => property === "origin" || property === "searchParams" ? globalThis.__nodeThrowReadonlyURLSetter(property) : Reflect.set(target, property, value, receiver) });
   }
   get href() {
     const query = this.searchParams.toString();
@@ -318,9 +323,8 @@ globalThis.__nodeURL = class NodeURL {
     const prefix = this.protocol === "file:" ? "file://" : this.origin === "null" ? "" : this.origin.replace(/^(\w+:\/\/)/, `$1${credentials}`);
     return `${prefix}${this.pathname}${query ? `?${query}` : this.search}${this.hash}`;
   }
-  toString() {
-    return this.href;
-  }
+  // prettier-ignore
+  toString() { return this.href; }
 };
 // prettier-ignore
 Object.defineProperty(globalThis, "URL", { configurable: true, enumerable: false, value: globalThis.__nodeURL, writable: true }), Object.defineProperty(globalThis, "URLSearchParams", { configurable: true, enumerable: false, value: globalThis.__nodeURLSearchParams, writable: true });

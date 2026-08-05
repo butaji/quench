@@ -101,6 +101,7 @@
     const patternOptions =
       typeof options === "string" ? new URL(options) : options;
     for (const property of [
+      "origin",
       "protocol",
       "username",
       "password",
@@ -184,17 +185,33 @@
                 ? ""
                 : `#${globalThis.__nodeUrlEncode(String(value).replace(/^#/, ""))}`
               : String(value);
+  // eslint-disable-next-line complexity
   const setURLAccessorValue = (target, property, value) => {
     const normalized = normalizeURLSetterValue(property, value);
     target[`_${property}`] =
       property === "pathname" && normalized === "" ? "/" : normalized;
+    if (property === "hostname")
+      target._host = normalized + (target._port ? `:${target._port}` : "");
+    if (property === "host")
+      target._port = normalized.includes(":")
+        ? normalized.slice(normalized.lastIndexOf(":") + 1)
+        : "";
+    if (property === "port")
+      target._host =
+        target._host.replace(/:\d*$/, "") +
+        (normalized ? `:${normalized}` : "");
     if (property === "search" && target.searchParams)
       target.searchParams._pairs = new globalThis.__nodeURLSearchParams(
         normalized
       )._pairs;
   };
+  // prettier-ignore
+  const throwReadonlyURLSetter = (property) => { throw new TypeError(`Cannot set property ${property} of [object URL] which has only a getter`); };
+  globalThis.__nodeThrowReadonlyURLSetter = throwReadonlyURLSetter;
+  // eslint-disable-next-line max-lines-per-function
   const installURLAccessorDescriptors = (prototype) => {
     for (const property of [
+      "origin",
       "protocol",
       "username",
       "password",
@@ -203,9 +220,8 @@
       "port",
       "pathname",
       "search",
-      "hash",
-      "origin",
-      "searchParams"
+      "searchParams",
+      "hash"
     ]) {
       const accessor =
         prototype && Object.getOwnPropertyDescriptor(prototype, property);
@@ -213,7 +229,16 @@
       const fallback = Object.getOwnPropertyDescriptor(
         {
           get [property]() {
-            return this[`_${property}`];
+            return property === "origin"
+              ? this.protocol === "blob:" && this.pathname
+                ? new globalThis.__nodeURL(decodeURIComponent(this.pathname))
+                    .origin
+                : ["http:", "https:", "ftp:", "ws:", "wss:"].includes(
+                      this.protocol
+                    ) && this.host
+                  ? `${this.protocol}//${this.host}`
+                  : "null"
+              : this[`_${property}`];
           },
           set [property](value) {
             setURLAccessorValue(this, property, value);
@@ -302,8 +327,7 @@
           "port",
           "pathname",
           "search",
-          "hash",
-          "origin"
+          "hash"
         ])
           this[property] = parsed[property];
         this.searchParams._pairs = parsed.searchParams._pairs;
@@ -321,6 +345,34 @@
         enumerable: false,
         value: "URL"
       });
+  };
+  const reorderURLProperties = (prototype) => {
+    for (const property of [
+      "toString",
+      "href",
+      "origin",
+      "protocol",
+      "username",
+      "password",
+      "host",
+      "hostname",
+      "port",
+      "pathname",
+      "search",
+      "searchParams",
+      "hash",
+      "toJSON"
+    ]) {
+      const descriptor = Object.getOwnPropertyDescriptor(prototype, property);
+      if (descriptor?.configurable) {
+        if (property === "href" && !descriptor.set) descriptor.set = setURLHref;
+        delete prototype[property];
+        Object.defineProperty(prototype, property, {
+          ...descriptor,
+          enumerable: true
+        });
+      }
+    }
   };
   const installURLToStringDescriptor = (URLConstructor) => {
     const prototype = URLConstructor?.prototype;
@@ -344,6 +396,7 @@
     }
     installURLAccessorDescriptors(prototype);
     installURLExtraMethods(prototype);
+    reorderURLProperties(prototype);
   };
   const createURLPattern = () => {
     function URLPattern(options, optionsFlags, baseURL) {
