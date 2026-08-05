@@ -164,6 +164,16 @@
       return original.call(this, value, base);
     };
   };
+  const installURLToStringDescriptor = (URLConstructor) => {
+    const prototype = URLConstructor?.prototype;
+    const descriptor =
+      prototype && Object.getOwnPropertyDescriptor(prototype, "toString");
+    if (descriptor)
+      Object.defineProperty(prototype, "toString", {
+        ...descriptor,
+        enumerable: true
+      });
+  };
   const createURLPattern = () => {
     function URLPattern(options, optionsFlags, baseURL) {
       validateURLPatternInput(
@@ -196,6 +206,7 @@
       if (normalized === "url" && !result.URLPattern) {
         result = Object.assign({}, result);
         installURLCanParse(result.URL);
+        installURLToStringDescriptor(result.URL);
         result.URLPattern = createURLPattern();
       }
       return result;
