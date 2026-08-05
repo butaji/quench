@@ -4864,3 +4864,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1370: crypto authenticated state
 
 - Reject setting AAD after cipher data processing has started.
+
+### Stage 1371: crypto authentication final state
+
+- Reject unauthenticated ChaCha20-Poly1305 decryption at `final()`.
