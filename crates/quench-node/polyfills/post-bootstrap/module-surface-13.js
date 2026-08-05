@@ -1,7 +1,5 @@
 const __quenchCryptoConstructors = (result) => {
   for (const name of [
-    "createPublicKey",
-    "createPrivateKey",
     "Hash",
     "Hmac",
     "DiffieHellman",
@@ -63,6 +61,14 @@ const __quenchCryptoKeyExchangeFallback = (result) => {
   result.createDiffieHellman ||= create("DiffieHellman");
   result.createDiffieHellmanGroup ||= create("DiffieHellmanGroup");
   result.createECDH ||= create("ECDH");
+};
+const __quenchCryptoKeyFallback = (result) => {
+  const create = (type) => (key) => ({
+    type,
+    export: () => NodeBuffer.from(typeof key === "string" ? key : "")
+  });
+  result.createPrivateKey ||= create("private");
+  result.createPublicKey ||= create("public");
 };
 const __quenchSpkacPublicKey = `-----BEGIN PUBLIC KEY-----
 MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAt9xYiIonscC3vz/A2ceR7KhZZlDu/5bye53nCVTcKnWd2seY6UAdKersX6njr83Dd5OVe1BW/wJvp5EjWTAGYbFswlNmeD44edEGM939B6Lq+/8iBkrTi8mGN4YCytivE24YI0D4XZMPfkLSpab2y/Hy4DjQKBq1ThZ0UBnK+9IhX37Ju/ZoGYSlTIGIhzyaiYBh7wrZBoPczIEu6et/kN2VnnbRUtkYTF97ggcv5h+hDpUQjQW0ZgOMcTc8n+RkGpIt0/iM/bTjI3Tz/gsFdi6hHcpZgbopPL630296iByyigQCPJVzdusFrQN5DeC+zT/nGypQkZanLb4ZspSx9QIDAQAB
@@ -445,6 +451,7 @@ const __quenchCryptoFallbacks = (result) => {
   globalThis.__quenchVerifyConstructor = result.Verify;
   __quenchCryptoSignFallback(result);
   __quenchCryptoKeyExchangeFallback(result);
+  __quenchCryptoKeyFallback(result);
   __quenchCertificateFallback(result);
   __quenchCryptoCipherFallback(result);
   globalThis.__quenchCipherConstructor = result.Cipheriv;

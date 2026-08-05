@@ -4924,3 +4924,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1385: crypto certificate input validation
 
 - Reject invalid SPKAC input types with Node’s argument error code.
+
+### Stage 1386: crypto key export
+
+- Expose private/public key objects with an `export()` method.
