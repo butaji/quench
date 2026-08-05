@@ -15,6 +15,12 @@ const __quenchCryptoConstructors = (result) => {
     result[name] ||= function Constructor() {};
 };
 const __quenchCryptoSignFallback = (result) => {
+  result.Sign = function Sign(...args) {
+    return result.createSign(...args);
+  };
+  result.Verify = function Verify(...args) {
+    return result.createVerify(...args);
+  };
   result.createSign ||= () => {
     const signer = {
       update() {
@@ -28,7 +34,7 @@ const __quenchCryptoSignFallback = (result) => {
         );
       }
     };
-    __nodeCryptoSetPrototype(signer, globalThis.__quenchSignConstructor);
+    __nodeCryptoSetPrototype(signer, result.Sign);
     return signer;
   };
   result.createVerify ||= () => {
@@ -40,7 +46,7 @@ const __quenchCryptoSignFallback = (result) => {
         return true;
       }
     };
-    __nodeCryptoSetPrototype(verifier, globalThis.__quenchVerifyConstructor);
+    __nodeCryptoSetPrototype(verifier, result.Verify);
     return verifier;
   };
 };

@@ -5197,3 +5197,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1464. `crypto-randomuuidv7.js` — provide timestamp-ordered UUIDv7 generation.
 1465. `crypto-prime-api.js` — expose prime generation and checking APIs.
 1466. `crypto-shared-module-fallbacks.js` — share crypto fallback exports across specifiers.
+1467. `crypto-sign-constructors.js` — preserve callable Sign and Verify constructor behavior.
