@@ -97,6 +97,16 @@ const __quenchAddHttpEvents = (result) => {
 const __quenchAddStreamCompat = (result) => {
   __quenchAddStreamAliases(result);
   result.Writable = __quenchMakeCallableConstructor(result.Writable);
+  for (const name of ["Readable", "Transform", "Duplex", "PassThrough"]) {
+    const prototype = result[name]?.prototype;
+    if (!prototype) continue;
+    prototype.resume ||= function () {
+      return this;
+    };
+    prototype.pause ||= function () {
+      return this;
+    };
+  }
   __quenchAddStreamWebCompat(result);
   __quenchAddStreamDefaults(result);
   const pipeline = result.pipeline;
