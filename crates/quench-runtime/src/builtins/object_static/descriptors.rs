@@ -1268,7 +1268,11 @@ pub fn get_native_constructor_property_descriptor(
         return Ok(make_descriptor_value(
             PropertyFlags {
                 value: Some(value),
-                writable: false,
+                // Per ES §20.2.5.1.5: built-in static methods on constructors
+                // (e.g. Object.keys, BigInt.asIntN) are writable so user code
+                // can replace them. The non-deletable flag (used for the
+                // platform's own built-in props) controls configurability.
+                writable: true,
                 enumerable: false,
                 configurable: !immutable,
             },
