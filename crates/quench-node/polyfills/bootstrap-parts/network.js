@@ -283,6 +283,7 @@ const __quenchNetModule = {
       super();
       this.readable = true;
       this.writable = true;
+      this.allowHalfOpen = false;
       this.destroyed = false;
     }
     setEncoding(encoding) {
