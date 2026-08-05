@@ -5315,3 +5315,5 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1583. `url-resolve-object-rfc-relative.js` — cover parsed RFC relative URL targets.
 1584. `url-resolve-object-query-base.js` — preserve parsed query-bearing URL bases.
 1585. `url-resolve-object-path-parameters.js` — preserve parsed path-parameter bases.
+1586. `url-resolve-object-triple-slash-traversal.js` — preserve parsed triple-slash traversal.
+1587. `url-resolve-object-same-scheme-forms.js` — cover parsed same-scheme URL forms.
