@@ -215,6 +215,8 @@ pub struct Object {
     /// Used for `Value::Object` wrappers around NativeFunction/NativeConstructor.
     pub callable: bool,
     pub deferred_module_get: Option<Value>,
+    /// Internal [[Target]] slot for WeakRef instances.
+    pub weak_ref_target: Option<Value>,
 }
 
 impl Object {

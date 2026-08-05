@@ -1280,6 +1280,8 @@ pub fn get_native_constructor_property_descriptor(
                     | "SyntaxError"
                     | "TypeError"
                     | "URIError"
+                    | "WeakRef"
+                    | "FinalizationRegistry"
             )
         {
             1.0
