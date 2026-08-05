@@ -181,6 +181,11 @@ const __nodeFsWriteFinalize = (path, options, result) => {
 };
 globalThis.__nodeFs = {};
 Object.assign(globalThis.__nodeFs, {
+  _toUnixTimestamp: (value) => {
+    const seconds =
+      value instanceof Date ? value.getTime() / 1000 : Number(value);
+    return seconds < 0 ? Date.now() / 1000 : seconds;
+  },
   constants: new Proxy(
     Object.assign(
       {},
