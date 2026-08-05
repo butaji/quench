@@ -287,7 +287,9 @@ const __nodeURLResolveInput = (input, base) => {
       ? baseUrl.origin + value
       : baseUrl.origin + baseUrl.pathname.replace(/\/[^/]*$/, "/") + value;
   }
-  return globalThis.__quenchNormalizeSpecialUrlInput(value);
+  return globalThis
+    .__quenchNormalizeSpecialUrlInput(value)
+    .replace(/\/\.\//g, "/");
 };
 const __nodeURLAssignParts = (url, match) => {
   url.protocol = match[1] || "";
@@ -301,7 +303,7 @@ const __nodeURLAssignParts = (url, match) => {
   url.hash = match[5] ? `#${match[5]}` : "";
   // prettier-ignore
   // prettier-ignore
-  Object.defineProperty(url, "origin", { configurable: true, enumerable: true, value: url.protocol && url.host ? `${url.protocol}//${url.host}` : "null", writable: true }), Object.defineProperty(url, "searchParams", { configurable: true, enumerable: true, value: (() => { const params = new NodeURLSearchParams(match[4] || ""); params.__nodeURLOwner = url; return params; })(), writable: true });
+  Object.defineProperty(url, "origin", { configurable: true, enumerable: true, value: url.protocol && url.host ? `${url.protocol}//${url.host}` : "null", writable: true }), Object.defineProperty(url, "searchParams", { configurable: true, enumerable: true, value: (() => { const params = new NodeURLSearchParams(match[4] || ""); Object.defineProperty(params, "__nodeURLOwner", { configurable: true, value: url }); return params; })(), writable: true });
 };
 globalThis.__nodeURL = class NodeURL {
   constructor(input, base) {
