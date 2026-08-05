@@ -787,11 +787,24 @@ pub fn eval_expression(
                 let object_value = eval_expression(object, env, in_arrow_function)?;
                 if matches!(object_value, Value::Null | Value::Undefined) {
                     if let PropertyKey::Computed(expression) = property {
+                        // Per ES §13.15.2 step 1.a: evaluate the key first
+                        // (so a throwing toString propagates) before the
+                        // base check. Errors must be a proper TypeError
+                        // object so the harness's assert.throws sees it.
                         eval_expression(expression, env, in_arrow_function)?;
                     }
-                    return Err(JsError(
-                        "TypeError: Cannot read properties of null or undefined".into(),
-                    ));
+                    let msg = format!(
+                        "TypeError: Cannot read properties of {} (reading)",
+                        match &object_value {
+                            Value::Null => "null",
+                            Value::Undefined => "undefined",
+                            _ => "non-object",
+                        },
+                    );
+                    let (err, js_err) =
+                        crate::value::error::create_js_error_with_type(&msg, "TypeError");
+                    crate::value::set_thrown_value(err);
+                    return Err(js_err);
                 }
                 let property_name = crate::eval::call::extract_property_name(
                     property.clone(),
