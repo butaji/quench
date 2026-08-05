@@ -65,7 +65,8 @@ globalThis.__quenchResolveParsedWebRelative = (r, f, t) => {
   if (t === "") return r.parse(source);
   const path = source.slice(origin.length).split(/[?#]/)[0] || "/";
   if (/^[?#]/.test(t)) return r.parse(`${origin}${path}${t}`);
-  const base = path.slice(0, path.lastIndexOf("/") + 1);
+  const parameterBase = globalThis.__quenchParsedParameterBase(path, t);
+  const base = parameterBase || path.slice(0, path.lastIndexOf("/") + 1);
   const targetPath = t.split(/[?#]/)[0];
   const suffix = t.slice(targetPath.length);
   const normalized = globalThis.__quenchNormalizeAbsoluteTarget(
@@ -79,6 +80,14 @@ globalThis.__quenchParsedWebTrailing = (target, normalized) =>
   !normalized.endsWith("/")
     ? "/"
     : "";
+globalThis.__quenchParsedParameterBase = (path, target) => {
+  const parameter = path.indexOf(";");
+  return parameter >= 0 &&
+    path.slice(parameter).includes("/") &&
+    !target.startsWith("../")
+    ? `${path}/`
+    : null;
+};
 globalThis.__quenchResolveParsedAbsoluteOpaque = (r, f, t) =>
   /^[A-Za-z][A-Za-z0-9+.-]*:[^/]/.test(t) &&
   !/^([A-Za-z][A-Za-z0-9+.-]*):[#.]/.test(t)
