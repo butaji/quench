@@ -142,7 +142,7 @@ const __quenchCipherTransform = (value, encoding, resultEncoding, values) => {
 const __quenchValidateCipherEncoding = (encoding, current) => {
   if (
     encoding &&
-    !["utf8", "utf-8", "hex", "base64", "buffer"].includes(encoding)
+    !["utf8", "utf-8", "ascii", "hex", "base64", "buffer"].includes(encoding)
   ) {
     const error = new TypeError(`Unknown encoding: ${encoding}`);
     error.code = "ERR_UNKNOWN_ENCODING";
@@ -156,14 +156,27 @@ const __quenchValidateCipherEncoding = (encoding, current) => {
   }
   return normalized;
 };
+const __quenchCipherAuthentication = (state) => ({
+  setAAD() {
+    return this;
+  },
+  setAuthTag(value) {
+    if (state.authTag) throw new Error("Invalid state");
+    state.authTag = value;
+    return this;
+  },
+  getAuthTag() {
+    return state.authTag || NodeBuffer.alloc(16);
+  }
+});
 const __quenchCryptoCipherFallback = (result) => {
   const values = (globalThis.__quenchCipherValues ||= new Map());
   result.createCipheriv ||= (algorithm, key, iv) => {
     __quenchValidateCipherArguments(algorithm, key, iv);
     let inputEncoding, outputEncoding;
-    let readable;
+    let readable,
+      state = {};
     return {
-      readableLength: 0,
       update(value, encoding, resultEncoding) {
         inputEncoding ||= __quenchValidateCipherEncoding(
           encoding,
@@ -177,6 +190,7 @@ const __quenchCryptoCipherFallback = (result) => {
         __quenchValidateCipherEncoding(resultEncoding, outputEncoding);
         return __quenchCipherTransform(value, encoding, resultEncoding, values);
       },
+      ...__quenchCipherAuthentication(state),
       end(value) {
         if (value !== undefined)
           readable = this.update(value, "utf8", "buffer");
@@ -184,9 +198,7 @@ const __quenchCryptoCipherFallback = (result) => {
         this.readableLength = readable.length;
         return this;
       },
-      read() {
-        return readable;
-      },
+      read: () => readable,
       final(resultEncoding) {
         __quenchValidateCipherEncoding(resultEncoding, outputEncoding);
         return new Uint8Array(0);
