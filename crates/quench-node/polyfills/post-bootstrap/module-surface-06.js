@@ -189,7 +189,7 @@
           set [property](value) {
             this[`_${property}`] =
               property === "username" || property === "password"
-                ? encodeURIComponent(String(value))
+                ? globalThis.__nodeUrlEncode(value)
                 : value;
           }
         },
