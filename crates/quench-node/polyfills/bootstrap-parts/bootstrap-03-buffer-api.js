@@ -418,3 +418,5 @@ const __nodePathArg = (value) => {
   }
   return value;
 };
+globalThis.atob ||= nodeAtob;
+globalThis.btoa ||= nodeBtoa;
