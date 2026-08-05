@@ -4751,3 +4751,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Advertise the SHA-1 and SHA-256 hash algorithms required by Node’s crypto
   surface.
+
+### Stage 1343: crypto RSA-SHA1 alias
+
+- Expose Node’s `RSA-SHA1` hash alias and map it to the supported SHA-1 digest.
