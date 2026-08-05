@@ -4860,3 +4860,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1369: crypto auth-tag length
 
 - Reject invalid ChaCha20-Poly1305 authentication-tag lengths.
+
+### Stage 1370: crypto authenticated state
+
+- Reject setting AAD after cipher data processing has started.
