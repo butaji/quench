@@ -4286,3 +4286,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Added the minimal `internal/test/binding` TCP wrapper required by net tests
   that instrument `TCPWrap.prototype.setNoDelay`.
+
+### Stage 1240: net socket flow controls
+
+- Added chainable `resume()` and `pause()` methods to compatibility sockets.
