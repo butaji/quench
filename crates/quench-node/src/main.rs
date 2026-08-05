@@ -54,6 +54,7 @@ const BOOTSTRAP_PARTS: &[&str] = &[
     include_str!("../polyfills/bootstrap-parts/core.js"),
     include_str!("../polyfills/bootstrap-parts/network.js"),
     include_str!("../polyfills/bootstrap-parts/network-validation.js"),
+    include_str!("../polyfills/bootstrap-parts/filesystem-internals.js"),
     include_str!("../polyfills/bootstrap-parts/cluster.js"),
     include_str!("../polyfills/bootstrap-parts/tcp-binding.js"),
     include_str!("../polyfills/bootstrap-parts/context.js"),

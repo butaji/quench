@@ -437,7 +437,8 @@ const __nodeUrlModuleExports = {
     const isAbsolute = globalThis.__nodePath.isAbsolute(resolved);
     let p = resolved.split(sep).join("/");
     if (windows && /^[A-Za-z]:/.test(p)) p = "/" + p;
-    const trailing = resolved.endsWith(sep) || resolved.endsWith("/");
+    const input = String(value);
+    const trailing = input.endsWith(sep) || input.endsWith("/");
     p = p
       .split("/")
       .map((seg, i) => {

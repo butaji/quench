@@ -160,7 +160,7 @@ globalThis.__nodePath = {
         : part.startsWith("/")
           ? part
           : globalThis.__quench_cwd_get() + "/" + part;
-      if (part.endsWith("/") && !part.endsWith("\\")) trailing = true;
+      trailing = part.endsWith("/") && !part.endsWith("\\");
     }
     const out = globalThis.__nodePath.normalize(resolved);
     return trailing && !out.endsWith("/") ? out + "/" : out;
