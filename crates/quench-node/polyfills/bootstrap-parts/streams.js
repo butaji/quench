@@ -89,18 +89,14 @@ globalThis.__nodeFs.open = (value, flags, mode, callback) => {
     callback = mode;
     mode = undefined;
   }
-  if (typeof callback !== "function")
-    throw new TypeError('The "callback" argument must be of type function');
-  if (
-    mode !== undefined &&
-    mode !== null &&
-    typeof mode !== "number" &&
-    typeof mode !== "string"
-  ) {
-    const error = new TypeError('The "mode" argument must be of type number');
+  if (typeof callback !== "function") {
+    const error = new TypeError(
+      'The "callback" argument must be of type function'
+    );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
+  __nodeFsValidateMode(mode);
   const path = nodeFsPath(value);
   queueMicrotask(() => {
     let fd;
