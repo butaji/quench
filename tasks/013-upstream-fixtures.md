@@ -4988,3 +4988,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1401: crypto DH constructors
 
 - Expose callable `DiffieHellmanGroup` and `ECDH` constructors with correct prototypes.
+
+### Stage 1402: crypto DH private-key access
+
+- Add private-key getters/setters and invalid-state behavior.
