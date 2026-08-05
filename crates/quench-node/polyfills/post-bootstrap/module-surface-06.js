@@ -164,19 +164,30 @@
       return original.call(this, value, base);
     };
   };
-  const installURLToStringDescriptor = (URLConstructor) => {
-    const prototype = URLConstructor?.prototype;
-    const descriptor =
-      prototype && Object.getOwnPropertyDescriptor(prototype, "toString");
-    if (descriptor)
-      Object.defineProperty(prototype, "toString", {
-        ...descriptor,
-        enumerable: true
-      });
-    const href =
-      prototype && Object.getOwnPropertyDescriptor(prototype, "href");
-    if (href)
-      Object.defineProperty(prototype, "href", { ...href, enumerable: true });
+  const installURLAccessorDescriptors = (prototype) => {
+    for (const property of [
+      "protocol",
+      "username",
+      "password",
+      "host",
+      "hostname",
+      "port",
+      "pathname",
+      "search",
+      "hash",
+      "origin",
+      "searchParams"
+    ]) {
+      const accessor =
+        prototype && Object.getOwnPropertyDescriptor(prototype, property);
+      if (accessor)
+        Object.defineProperty(prototype, property, {
+          ...accessor,
+          enumerable: true
+        });
+    }
+  };
+  const installURLExtraMethods = (prototype) => {
     if (prototype && !prototype.toJSON) {
       const toJSON = new Proxy(() => undefined, {
         apply: (_target, receiver) => prototype.toString.call(receiver)
@@ -204,6 +215,22 @@
         writable: true
       });
     }
+  };
+  const installURLToStringDescriptor = (URLConstructor) => {
+    const prototype = URLConstructor?.prototype;
+    const descriptor =
+      prototype && Object.getOwnPropertyDescriptor(prototype, "toString");
+    if (descriptor)
+      Object.defineProperty(prototype, "toString", {
+        ...descriptor,
+        enumerable: true
+      });
+    const href =
+      prototype && Object.getOwnPropertyDescriptor(prototype, "href");
+    if (href)
+      Object.defineProperty(prototype, "href", { ...href, enumerable: true });
+    installURLAccessorDescriptors(prototype);
+    installURLExtraMethods(prototype);
   };
   const createURLPattern = () => {
     function URLPattern(options, optionsFlags, baseURL) {
