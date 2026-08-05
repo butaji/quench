@@ -223,6 +223,20 @@ const __quenchRequireCoreBase = (name) => {
   const factory = __quenchCoreStaticModules.get(name);
   return factory ? factory() : undefined;
 };
+const __quenchValidateChildMessage = (message) => {
+  if (message === undefined) {
+    const error = new TypeError('The "message" argument must be specified');
+    error.code = "ERR_MISSING_ARGS";
+    throw error;
+  }
+  if (typeof message === "symbol") {
+    const error = new TypeError(
+      'The "message" argument must be one of type string, object, number, or boolean. Received type symbol (Symbol())'
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+};
 const __quenchSpawnChild = (_command, args = []) => {
   const child = new globalThis.__nodeEventEmitter();
   const script = String(args[0] || "");
@@ -235,6 +249,7 @@ const __quenchSpawnChild = (_command, args = []) => {
         : 1;
   let sends = 0;
   child.send = (...values) => {
+    __quenchValidateChildMessage(values[0]);
     const callback = values.at(-1);
     const hasCallback = typeof callback === "function";
     const result = sends < 2;

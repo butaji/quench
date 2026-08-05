@@ -4513,3 +4513,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Report `AbortError`/`ABORT_ERR` for already-aborted and aborted-during-call
   `execFile` signals.
+
+### Stage 1291: fork send validation
+
+- Validate missing and symbol messages passed to forked child `send` calls.
