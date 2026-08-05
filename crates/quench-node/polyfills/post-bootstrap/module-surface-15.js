@@ -423,3 +423,4 @@ globalThis.__nodeURL.revokeObjectURL = (value) => {
     throw error;
   }
 };
+globalThis.__nodeIsURL = (value) => value instanceof globalThis.__nodeURL;
