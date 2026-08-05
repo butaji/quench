@@ -18,6 +18,15 @@ __quenchExecErrorChildProcess.exec = (command, options, callback) => {
   return __quenchExecSuccess(command, options, callback);
 };
 __quenchExecErrorChildProcess.execFile = (file, args, options, callback) => {
+  const settings = Array.isArray(args) ? options : args;
+  if (
+    settings?.signal !== undefined &&
+    !(settings.signal instanceof AbortSignal)
+  ) {
+    const error = new TypeError("The signal option must be an AbortSignal");
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
   const done = Array.isArray(args)
     ? __quenchExecErrorCallback(options, callback)
     : __quenchExecErrorCallback(args, options);

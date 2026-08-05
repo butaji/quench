@@ -4384,3 +4384,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Added Node-compatible received-value details to invalid `mkdir` recursive
   option errors.
+
+### Stage 1262: execFile signal validation
+
+- Reject non-AbortSignal `execFile` options synchronously with Node’s error
+  code.
