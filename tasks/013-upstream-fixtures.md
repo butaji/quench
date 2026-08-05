@@ -5144,3 +5144,11 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1440: crypto Hash class identity
 
 - Preserve `Hash` prototype identity for `createHash()` results.
+
+### Stage 1441: crypto Hmac class identity
+
+- Preserve `Hmac` prototype identity for `createHmac()` results.
+
+### Stage 1442: crypto cipher class identity
+
+- Preserve Cipheriv and Decipheriv prototypes for cipher factories.

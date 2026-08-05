@@ -235,6 +235,20 @@ const __quenchEcdhConvertKey = (key, curve) => {
     throw new Error("Failed to convert Buffer to EC_POINT");
   return NodeBuffer.from(key);
 };
+const __quenchCryptoCipherPrototypes = (result) => {
+  for (const [factory, constructor] of [
+    ["createCipheriv", "Cipheriv"],
+    ["createDecipheriv", "Decipheriv"]
+  ]) {
+    const create = result[factory];
+    if (typeof create !== "function") continue;
+    result[factory] = (...args) => {
+      const value = create(...args);
+      __nodeCryptoSetPrototype(value, result[constructor]);
+      return value;
+    };
+  }
+};
 const __quenchCryptoKeyExchangeFallback = (result) => {
   __quenchPrepareDhGroup(result);
   result.ECDH.convertKey = __quenchEcdhConvertKey;
