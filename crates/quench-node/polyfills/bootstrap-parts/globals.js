@@ -1,5 +1,4 @@
 globalThis.global = globalThis;
-globalThis.globalThis = globalThis;
 const __nodeNativeEval = globalThis.eval;
 globalThis.eval = (source) => {
   if (typeof source === "string" && source.trimStart().startsWith("%"))
@@ -205,6 +204,7 @@ globalThis.process = {
       set: (_, key, value) => {
         if (typeof key === "symbol" || typeof value === "symbol")
           throw new TypeError("Cannot convert a Symbol value to a string");
+        if (String(key) === "") return true;
         globalThis.__quench_env_set(String(key), String(value));
         globalThis.__quench_env_keys = [
           ...new Set([...globalThis.__quench_env_keys, String(key)])
