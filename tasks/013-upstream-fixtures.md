@@ -4634,3 +4634,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Preserve constructibility of `fs.createReadStream` for upstream callers that
   instantiate it with `new`.
+
+### Stage 1319: internal fs binding
+
+- Provide the minimal `internalBinding('fs').openFileHandle` contract used by
+  Node's FileHandle lifecycle fixture.
