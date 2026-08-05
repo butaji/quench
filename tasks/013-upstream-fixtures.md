@@ -4251,3 +4251,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Replaced throwing zlib stream stubs with evented transforms backed by the
   existing synchronous compression primitives.
+
+### Stage 1233: zlib binary stream coverage
+
+- Added arbitrary-byte gzip/gunzip round-trip coverage to isolate binary
+  stream mismatches from text-only behavior.
