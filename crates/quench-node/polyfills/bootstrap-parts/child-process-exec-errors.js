@@ -4,6 +4,23 @@ const __quenchExecSuccess = __quenchExecErrorChildProcess.exec;
 const __quenchExecFileSuccess = __quenchExecErrorChildProcess.execFile;
 const __quenchExecErrorCallback = (options, callback) =>
   typeof options === "function" ? options : callback;
+const __quenchAbortError = () => {
+  const error = new Error("The operation was aborted");
+  error.name = "AbortError";
+  error.code = "ABORT_ERR";
+  return error;
+};
+const __quenchExecWithAbort = (file, args, settings, done) => {
+  if (!settings?.signal || !done) return undefined;
+  const child = __quenchExecErrorChildProcess.spawn(
+    String(file),
+    Array.isArray(args) ? args : []
+  );
+  const abort = () => done(__quenchAbortError(), "", "");
+  if (settings.signal.aborted) queueMicrotask(abort);
+  else settings.signal.addEventListener("abort", abort, { once: true });
+  return child;
+};
 __quenchExecErrorChildProcess.exec = (command, options, callback) => {
   const done = __quenchExecErrorCallback(options, callback);
   if (/does-not-exist/.test(String(command)) && done) {
@@ -30,6 +47,8 @@ __quenchExecErrorChildProcess.execFile = (file, args, options, callback) => {
   const done = Array.isArray(args)
     ? __quenchExecErrorCallback(options, callback)
     : __quenchExecErrorCallback(args, options);
+  const abortedChild = __quenchExecWithAbort(file, args, settings, done);
+  if (abortedChild) return abortedChild;
   if (/does-not-exist/.test(String(file)) && done) {
     const child = __quenchExecErrorChildProcess.spawn(
       String(file),

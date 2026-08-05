@@ -4503,3 +4503,13 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Return command, output, and exit-code metadata when `execFile` receives a
   nonzero fixture exit.
+
+### Stage 1289: execFile close lifecycle
+
+- Complete the callback-based `execFile(file, callback)` overload on child
+  `close`, including killed-process error metadata.
+
+### Stage 1290: execFile abort errors
+
+- Report `AbortError`/`ABORT_ERR` for already-aborted and aborted-during-call
+  `execFile` signals.
