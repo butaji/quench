@@ -381,6 +381,12 @@ const __quenchAddUrlParseFallback = (result) => {
   if (typeof originalParse !== "function") return;
   result.parse = (input, ...args) => {
     const parsed = originalParse.call(result, input, ...args);
+    if (
+      typeof input === "string" &&
+      input.startsWith("//") &&
+      parsed.pathname === "/"
+    )
+      Object.assign(parsed, { pathname: input, path: input, href: input });
     if (args[0] === true) parsed.query = __quenchParseQueryObject(parsed.query);
     return parsed;
   };

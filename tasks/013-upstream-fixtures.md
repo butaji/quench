@@ -5247,3 +5247,4 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 1515. `url-parse-query-object.js` — return null-prototype query objects.
 1516. `url-fileurltopath-errors.js` — preserve fileURLToPath argument error codes.
 1517. `url-fileurltopath-drive.js` — convert Windows drive-letter file URLs.
+1518. `url-parse-protocol-relative-path.js` — preserve protocol-relative parse paths.
