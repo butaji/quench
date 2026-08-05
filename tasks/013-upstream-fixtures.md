@@ -4904,3 +4904,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1380: crypto Decipheriv prototype
 
 - Return decipher instances with Node’s `crypto.Decipheriv` prototype.
+
+### Stage 1381: crypto certificate methods
+
+- Expose static and instance SPKAC certificate methods.
