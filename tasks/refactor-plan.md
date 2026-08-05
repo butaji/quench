@@ -1,8 +1,6 @@
 # Refactor Plan — active queue
 
-Active refactor queue, in priority order. R0–R17 (the self-hosting pivot and
-earlier splits) are complete; R18+ come from the 2026-08 architecture review
-(`docs/review-2026-08.md`). Every item starts with a failing unit test per
+Refactor queue, in priority order. Every item starts with a failing unit test per
 `AGENTS.md` (reproducer or refactor pin), then the minimal change, then the
 relevant test262 stage.
 
@@ -63,9 +61,8 @@ relevant test262 stage.
   scoped source. Pin each with a refactor-pin test (nested eval, nested
   generators, panic mid-eval hygiene).
 
-- **R24 — Stage catalog reconciliation.** The test262 digest is the sole
-  coverage authority. `tasks/index.json` is descriptive configuration only;
-  never treat its statuses or counts as evidence of coverage.
+- **R24 — Stage catalog reconciliation.** Keep `tasks/index.json` as a
+  descriptive stage catalog only. Test runs provide all conformance results.
 
 - **R25 — Dead code and dependencies.** Remove `anyhow`, `tracing`, `phf`
   from `Cargo.toml` (zero uses in `src/`); delete `interner.rs`

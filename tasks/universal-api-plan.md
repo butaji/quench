@@ -5,7 +5,7 @@ based on the handle model shared by V8, QuickJS, JavaScriptCore,
 SpiderMonkey, and Hermes. It is an additive embedding layer over the existing
 OXC + wakler runtime architecture; it does not change the Test262 runner.
 
-The Test262 digest remains the only conformance and progress source of truth.
+Test262 runs are the only conformance source of truth.
 Each implementation milestone requires focused Rust unit tests first, then
 the affected Test262 stage, with no changes under `tests/test262`.
 
@@ -101,7 +101,7 @@ For every milestone:
 1. Add a failing unit test for the exact new contract.
 2. Implement the smallest API surface that makes it pass.
 3. Run the affected unit suite, formatting, and clippy with zero warnings.
-4. Run the relevant Test262 stage and record its digest in the progress log.
+4. Run the relevant Test262 stage and inspect its digest.
 5. Commit and push the milestone independently.
 
 The API work must not regress the 100% Test262 target, increase Rust core

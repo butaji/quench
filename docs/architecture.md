@@ -1,9 +1,7 @@
 # Architecture
 
 **Goal:** 100% of the in-scope test262 suite with the smallest practical Rust
-core. Conformance progress is established only by an authoritative test262
-digest run. `tasks/index.json` is descriptive configuration, never coverage
-evidence.
+core. Test262 runs are the sole authority for conformance.
 
 **Shape:** OXC parser + tree-walking interpreter + self-hosted JS
 builtins. Three layers, each minimal:
@@ -34,21 +32,15 @@ This is the fastest path to 100% conformance with minimum LOC because:
   Rust for spec algorithms. Once `__ops__` is complete, builtins move
   to JS (`builtins/*.js`) and the Rust core shrinks.
 
-## Current state (2026-08 review)
-
-This document describes the design target. The current implementation
-differs materially; full findings in `docs/review-2026-08.md`, active
-queue in `tasks/refactor-plan.md` (R18+).
-
-- **Builtin migration is active.** Normal context initialization now loads the
+- **Builtin ownership:** Normal context initialization loads the
   self-hosted JS builtin layer after Rust registration. Rust implementations
   are being removed family by family. The required end state is that every
   observable ECMAScript algorithm, public method, constructor behavior,
   prototype method, and descriptor authored over `__ops__` is JavaScript-owned;
   Rust retains only the core, native-memory, performance-sensitive,
   crate-backed, engine-integration, and explicitly documented lower-LOC
-  direct-binding exceptions. Migration status is tracked in
-  `tasks/builtin-migration.md`; conformance polish follows the migration pass.
+  direct-binding exceptions. Migration work is tracked in
+  `tasks/builtin-migration.md`.
 - **Builtin ownership rule:** every algorithm, public method, constructor
   wiring, and property descriptor that can be authored in `builtins/*.js`
   belongs there. Rust is reserved for interpreter/core operations and
@@ -59,13 +51,10 @@ queue in `tasks/refactor-plan.md` (R18+).
   LOC; that exception must be recorded in `tasks/builtin-migration.md`.
   A one-line JS forwarding proxy is not considered a migration: it increases
   maintained LOC without moving an ECMAScript algorithm.
-- **`__ops__` diverges from the canonical ops** (R21): `SameValueZero` calls
+- **`__ops__` must remain aligned with canonical ops:** `SameValueZero` calls
   `same_value`, `HasProperty` implements `has_own`, `IsCallable` misses
   callable objects, and `DefineProp`/`SealObject`/`FreezeObject` duplicate
   descriptor logic in `builtins/object_static/descriptors.rs`.
-- **Verified live bugs** in the Map/Set path: symbol keys never match under
-  `same_value_zero` (R18); `_entries`/`size` leak as enumerable own
-  properties (R19).
 
 ## Rust core
 

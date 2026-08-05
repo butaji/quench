@@ -1,6 +1,6 @@
 # Development Tools
 
-The test262 digest output is the sole source of conformance/progress status.
+Test262 runs are the sole source of conformance results.
 `tasks/index.json` is descriptive configuration only. This document contains
 commands, not copied status or milestones.
 
@@ -23,7 +23,7 @@ cargo nextest run -p quench-runtime --test test262 --profile test262 -E 'test(te
 # Run one test
 cargo run --bin run-test -- tests/test262/path/to/test.js
 
-# Run the configured stage
+# Run the default stage (stage 0 unless TEST262_STAGE is set)
 cargo nextest run -p quench-runtime --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all --no-capture
 
 # Run a selected stage
@@ -43,8 +43,9 @@ TEST262_STAGE=N bash tools/run-each.sh
 ALL_STAGES=1 cargo nextest run -p quench-runtime --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all --no-capture
 ```
 
-The runner may use `tasks/index.json` to determine the configured stage. Do not infer
-completion from an old command log or from this document.
+The runner does not read progress state from `tasks/index.json`. Set
+`TEST262_STAGE` explicitly when selecting a stage. Do not infer results from an
+old command log or from this document.
 
 ## Verification
 
