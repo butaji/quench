@@ -4534,3 +4534,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1296: access error metadata
 
 - Include the `access` syscall in missing-path `ENOENT` errors.
+
+### Stage 1297: access permission checks
+
+- Enforce write permission bits for `fs.access` `W_OK` checks and report
+  Node-style `EACCES` metadata.
