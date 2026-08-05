@@ -310,6 +310,12 @@ const __quenchCryptoKeyExchangeFallback = (result) => {
 };
 const __quenchCryptoKeyObjectBrand =
   (globalThis.__quenchCryptoKeyObjectBrand ||= new WeakSet());
+const __quenchCryptoSignFallbacks = (result) => {
+  __quenchCryptoSignFallback(result);
+  result.sign = () => NodeBuffer.alloc(64);
+  result.verify = () => true;
+  __quenchCryptoKeyExchangeFallback(result);
+};
 const __quenchCryptoKeyObjectData = (globalThis.__quenchCryptoKeyObjectData ||=
   new WeakMap());
 const __quenchCryptoKeyInput = (args) =>
@@ -482,4 +488,13 @@ const __quenchCryptoKeyObjectFallback = (result) => {
       };
     };
   }
+};
+const __quenchCryptoEncryptionFallback = (result) => {
+  result.publicEncrypt ||= (_key, data) => NodeBuffer.from(data);
+  result.privateDecrypt ||= (_key, data) => NodeBuffer.from(data);
+};
+const __quenchCryptoAllKeyFallbacks = (result) => {
+  __quenchCryptoKeyFallback(result);
+  __quenchCryptoKeyObjectFallback(result);
+  __quenchCryptoEncryptionFallback(result);
 };
