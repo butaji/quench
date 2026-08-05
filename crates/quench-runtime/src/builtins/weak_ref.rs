@@ -60,6 +60,42 @@ fn make_deref_native() -> NativeFunction {
     f
 }
 
+/// Build a placeholder native method for the FinalizationRegistry prototype
+/// with the correct name and length (per spec).
+fn make_fr_proto_method<F>(name: &str, f: F) -> NativeFunction
+where
+    F: Fn(Vec<Value>) -> Result<Value, crate::value::JsError> + 'static,
+{
+    let mut nf = NativeFunction::new(f);
+    nf.name = name.to_string();
+    let length = if name == "register" || name == "unregister" {
+        2.0
+    } else {
+        1.0
+    };
+    nf.define_property(
+        "length",
+        Value::Number(length),
+        PropertyFlags {
+            value: Some(Value::Number(length)),
+            writable: false,
+            enumerable: false,
+            configurable: true,
+        },
+    );
+    nf.define_property(
+        "name",
+        Value::String(name.to_string()),
+        PropertyFlags {
+            value: Some(Value::String(name.to_string())),
+            writable: false,
+            enumerable: false,
+            configurable: true,
+        },
+    );
+    nf
+}
+
 pub fn register_weak_ref(ctx: &mut Context) {
     let proto_rc = Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)));
     if let Some(object_proto) = crate::builtins::get_object_prototype() {
@@ -164,6 +200,58 @@ pub fn register_finalization_registry(ctx: &mut Context) {
     let proto_rc = Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)));
     if let Some(object_proto) = crate::builtins::get_object_prototype() {
         proto_rc.borrow_mut().prototype = Some(object_proto);
+    }
+
+    // Native placeholder methods (no-op until native backing lands).
+    // These carry proper name/length descriptors so test262 sees the spec
+    // shape even before builtins/FinalizationRegistry.js overrides them
+    // with the no-op wrappers used by the harness.
+    let register_fn = Rc::new(make_fr_proto_method("register", |_args| Ok(Value::Undefined)));
+    let unregister_fn = Rc::new(make_fr_proto_method("unregister", |_args| Ok(Value::Boolean(false))));
+    let cleanup_some_fn = Rc::new(make_fr_proto_method("cleanupSome", |_args| Ok(Value::Undefined)));
+    proto_rc.borrow_mut().define(
+        "register",
+        Value::NativeFunction(Rc::clone(&register_fn)),
+        PropertyFlags {
+            value: Some(Value::NativeFunction(Rc::clone(&register_fn))),
+            writable: true,
+            enumerable: false,
+            configurable: true,
+        },
+    );
+    proto_rc.borrow_mut().define(
+        "unregister",
+        Value::NativeFunction(Rc::clone(&unregister_fn)),
+        PropertyFlags {
+            value: Some(Value::NativeFunction(Rc::clone(&unregister_fn))),
+            writable: true,
+            enumerable: false,
+            configurable: true,
+        },
+    );
+    proto_rc.borrow_mut().define(
+        "cleanupSome",
+        Value::NativeFunction(Rc::clone(&cleanup_some_fn)),
+        PropertyFlags {
+            value: Some(Value::NativeFunction(Rc::clone(&cleanup_some_fn))),
+            writable: true,
+            enumerable: false,
+            configurable: true,
+        },
+    );
+    if let Some(Value::Symbol(tag_key)) =
+        crate::builtins::symbol::get_well_known_symbol_no_ctx("toStringTag")
+    {
+        proto_rc.borrow_mut().define(
+            &tag_key.property_key(),
+            Value::String("FinalizationRegistry".into()),
+            PropertyFlags {
+                value: Some(Value::String("FinalizationRegistry".into())),
+                writable: false,
+                enumerable: false,
+                configurable: true,
+            },
+        );
     }
 
     let proto_clone = Rc::clone(&proto_rc);

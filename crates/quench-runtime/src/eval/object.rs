@@ -945,7 +945,18 @@ pub(crate) fn assign_to_object(
     if prop_name.contains('\0') {
         o.borrow_mut().set_symbol(prop_name, value_to_set);
     } else {
-        o.borrow_mut().set(prop_name, value_to_set);
+        // Per ES §13.15.2 step 7: SetFunctionName — if value is a function
+        // without an existing name, set its name to propName. This makes
+        // `o.foo = function(){}` give foo a name of "foo" per spec.
+        if let Value::Function(mut f) = value_to_set {
+            if f.name.is_none() && !f.is_arrow {
+                f.name = Some(prop_name.to_string());
+                let _ = f.set_property("name", Value::String(prop_name.to_string()));
+            }
+            o.borrow_mut().set(prop_name, Value::Function(f));
+        } else {
+            o.borrow_mut().set(prop_name, value_to_set);
+        }
     }
 
     Ok(())

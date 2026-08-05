@@ -278,6 +278,17 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
         } else if setter.is_some() {
             function.define_accessor(&prop, None, setter);
         } else if let Some(value) = flags.value {
+            // Per ES §15.4.5: SetFunctionName — if value is an anonymous
+            // non-arrow function, name it after the property key.
+            let value = if let Value::Function(mut f) = value {
+                if f.name.is_none() && !f.is_arrow {
+                    f.name = Some(prop.clone());
+                    let _ = f.set_property("name", Value::String(prop.clone()));
+                }
+                Value::Function(f)
+            } else {
+                value
+            };
             function.set_property(&prop, value)?;
         }
         if !flags.writable {
@@ -766,6 +777,17 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
             .or(mapped_value)
             .or_else(|| obj.get_own_value(&prop))
             .unwrap_or(Value::Undefined);
+        // Per ES §15.4.5: SetFunctionName — if value is an anonymous
+        // non-arrow function, name it after the property key.
+        let value = if let Value::Function(mut f) = value {
+            if f.name.is_none() && !f.is_arrow {
+                f.name = Some(prop.clone());
+                let _ = f.set_property("name", Value::String(prop.clone()));
+            }
+            Value::Function(f)
+        } else {
+            value
+        };
         // Per ES §9.4.2.1 (Array Exotic Objects): if defining an array index
         // >= length, update length. For ordinary objects this does not apply.
         if obj.kind == ObjectKind::Array {

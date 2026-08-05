@@ -581,7 +581,20 @@ pub fn make_ops_object() -> Value {
                             .descriptors
                             .insert(key.clone(), flags);
                     } else {
-                        obj_rc.borrow_mut().define(&key, val, flags);
+                        // Per ES §15.4.5: SetFunctionName — if value is an
+                        // anonymous non-arrow function, name it after the key.
+                        eprintln!("DefineProp key={} is_fn={}", key, matches!(val, Value::Function(_)));
+                        let val_to_set =
+                            if let Value::Function(mut f) = val {
+                                if f.name.is_none() && !f.is_arrow {
+                                    f.name = Some(key.clone());
+                                    let _ = f.set_property("name", Value::String(key.clone()));
+                                }
+                                Value::Function(f)
+                            } else {
+                                val.clone()
+                            };
+                        obj_rc.borrow_mut().define(&key, val_to_set, flags);
                     }
                     Ok(Value::Boolean(true))
                 }
