@@ -487,3 +487,5 @@ globalThis.__nodeTimers = {
   setImmediate,
   clearImmediate
 };
+Object.hasOwn ||= (object, property) =>
+  Object.prototype.hasOwnProperty.call(object, property);
