@@ -279,7 +279,7 @@ globalThis.__nodeURLSearchParams = NodeURLSearchParams;
 // eslint-disable-next-line complexity
 const __nodeURLResolveInput = (input, base) => {
   // prettier-ignore
-  let value = (/^file:[a-z][|:][\\/]/i.test(String(input).trim().replace(/[\t\n\r]/g, "")) || (/^\/?[a-z][|:][\\/]/i.test(String(input).trim().replace(/[\t\n\r]/g, "")) && /^file:/i.test(base || ""))) ? `file:///${String(input).trim().replace(/[\t\n\r]/g, "").replace(/^file:/i, "").replace(/^\/(?=[a-z][|:])/i, "").replace(/^([a-z])\|/i, "$1:").replace(/\\/g, "/")}` : String(input).trim().replace(/[\t\n\r]/g, "");
+  let value = (/^file:[a-z][|:][\\/]/i.test(String(input).trim().replace(/[\t\n\r]/g, "")) || (/^\/{0,2}[a-z][|:][\\/]/i.test(String(input).trim().replace(/[\t\n\r]/g, "")) && /^file:/i.test(base || ""))) ? `file:///${String(input).trim().replace(/[\t\n\r]/g, "").replace(/^file:/i, "").replace(/^\/{0,2}(?=[a-z][|:])/i, "").replace(/^([a-z])\|/i, "$1:").replace(/\\/g, "/")}` : String(input).trim().replace(/[\t\n\r]/g, "");
   // prettier-ignore
   if (base && (value === "" ? (value = String(base).trim().replace(/[\t\n\r]/g, "")) : /^(?:https?|ftp):\/\//i.test(base) && (value = value.replace(/^[^?#]*/, (path) => path.replace(/\\/g, "/")))));
   // prettier-ignore
