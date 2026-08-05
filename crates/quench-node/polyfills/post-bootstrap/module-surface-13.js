@@ -478,6 +478,7 @@ const __quenchCryptoFallbacks = (result) => {
   __quenchCryptoCipherFallback(result);
   globalThis.__quenchCipherConstructor = result.Cipheriv;
   __quenchCryptoWebFallbacks(result);
+  Object.assign(source, result);
   return result;
 };
 if (globalThis.require) {
