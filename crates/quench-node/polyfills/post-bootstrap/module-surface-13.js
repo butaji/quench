@@ -69,10 +69,6 @@ const __quenchCryptoKeyFallback = (result) => {
     publicKey.dhParams = privateKey.dhParams;
     return { privateKey, publicKey };
   };
-  result.generateKeySync = () => ({
-    type: "secret",
-    export: () => NodeBuffer.alloc(16)
-  });
 };
 const __quenchCryptoClassPrototypes = (result) => {
   const createHash = result.createHash;
