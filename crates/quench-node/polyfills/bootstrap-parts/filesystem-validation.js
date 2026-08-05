@@ -385,6 +385,15 @@ Object.assign(globalThis.__nodeFs, {
       globalThis.__nodeModes[path] || (file ? 0o666 & ~process.umask() : 0);
     return stats;
   },
+  fstatSync: (fd) => {
+    if (typeof fd !== "number" || globalThis.__nodeFdPaths[fd] === undefined) {
+      const error = new Error("EBADF: bad file descriptor, fstat");
+      error.code = "EBADF";
+      error.syscall = "fstat";
+      throw error;
+    }
+    return globalThis.__nodeFs.statSync(globalThis.__nodeFdPaths[fd]);
+  },
   mkdirSync: (value, options = {}) => {
     const path = nodeFsPath(value);
     __nodeFsValidateMkdirOptions(options);
