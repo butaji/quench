@@ -154,6 +154,20 @@ fn reject_restricted_global_lexicals(ctx: &Context, source: &str) -> Result<(), 
     let Some(Value::Object(global)) = ctx.get_global("globalThis") else {
         return Ok(());
     };
+    let mut var_names = Vec::new();
+    crate::interpreter::collect_var_names_recursive(&body, &mut var_names);
+    if !global.borrow().extensible {
+        for name in var_names {
+            if !global.borrow().has_own(&name) {
+                let (error, js_error) = crate::value::error::create_js_error_with_type(
+                    "Cannot declare global variable on a non-extensible object",
+                    "TypeError",
+                );
+                crate::value::set_thrown_value(error);
+                return Err(js_error);
+            }
+        }
+    }
     for (name, _) in names {
         if global
             .borrow()
@@ -428,6 +442,17 @@ mod tests {
             "Object.defineProperty(this, 'restricted', { configurable: false }); \
              try { $262.evalScript('let x; let restricted;'); false } \
              catch (e) { e instanceof SyntaxError }",
+        );
+        assert_eq!(result, Ok(crate::Value::Boolean(true)));
+    }
+
+    #[test]
+    fn test_eval_script_rejects_new_var_on_non_extensible_global() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval(
+            "Object.preventExtensions(this); \
+             try { $262.evalScript('var freshGlobal;'); false } \
+             catch (e) { e instanceof TypeError }",
         );
         assert_eq!(result, Ok(crate::Value::Boolean(true)));
     }
