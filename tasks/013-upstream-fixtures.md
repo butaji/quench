@@ -4896,3 +4896,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 ### Stage 1378: crypto Verify prototype
 
 - Return verification instances with Node’s `crypto.Verify` prototype.
+
+### Stage 1379: crypto key-exchange prototypes
+
+- Expose prototype-correct Diffie-Hellman and ECDH constructor results.
