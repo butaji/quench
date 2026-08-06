@@ -1316,10 +1316,11 @@ pub fn get_native_constructor_property_descriptor(
     // Check for custom static methods first
     if let Some(value) = nc.get_static_method(prop) {
         let immutable = nc.is_non_deletable_static_method(prop);
+        let length = prop == "length" && nc.name() == "AggregateError";
         return Ok(make_descriptor_value(
             PropertyFlags {
                 value: Some(value),
-                writable: !immutable,
+                writable: !immutable && !length,
                 enumerable: false,
                 configurable: !immutable,
             },
