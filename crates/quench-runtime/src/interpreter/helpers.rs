@@ -154,6 +154,9 @@ pub fn hoist_functions(statements: &[Statement], env: &Rc<RefCell<Environment>>)
             Statement::For { body, .. } if !strict => {
                 hoist_functions(std::slice::from_ref(body.as_ref()), env);
             }
+            Statement::Export(inner) => {
+                hoist_functions(std::slice::from_ref(inner.as_ref()), env);
+            }
             _ => {}
         }
     }

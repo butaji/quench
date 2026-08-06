@@ -74,6 +74,34 @@ fn module_exported_function_is_initialized_before_module_body() {
 }
 
 #[test]
+fn named_import_reads_live_export_accessor_after_initialization() {
+    use std::rc::Rc;
+
+    let mut ctx = Context::new().unwrap();
+    let mut module = crate::value::Object::new(crate::value::ObjectKind::ModuleNamespace);
+    let env = Rc::clone(ctx.environment_view());
+    let getter = crate::Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(
+        move |_| Ok(env.borrow().get("A").unwrap_or(crate::Value::Undefined)),
+    )));
+    module.define_accessor(
+        "A",
+        Some(getter),
+        None,
+        crate::value::PropertyFlags {
+            value: None,
+            writable: false,
+            enumerable: true,
+            configurable: false,
+        },
+    );
+    ctx.register_module("./dep.js", module);
+    let result = ctx.eval_es_module(
+        "import { A as B } from './dep.js'; B(); export function A() { return 77; }",
+    );
+    assert_eq!(result, Ok(crate::Value::Number(77.0)));
+}
+
+#[test]
 fn async_function_instances_have_no_prototype_property() {
     let mut ctx = Context::new().unwrap();
     let result = ctx

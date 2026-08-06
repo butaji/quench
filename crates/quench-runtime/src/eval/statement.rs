@@ -2354,19 +2354,13 @@ fn eval_import(
 
     // Handle default import: `import x from 'mod'`
     if let Some(name) = default {
-        let default_val = module_exports
-            .borrow()
-            .get("default")
-            .unwrap_or(Value::Undefined);
+        let default_val = imported_module_value(&module_exports, "default");
         env.borrow_mut().define_shared(name.clone(), default_val);
     }
 
     // Handle named imports: `import { x, y as z } from 'mod'`
     for (local_name, exported_name) in named {
-        let val = module_exports
-            .borrow()
-            .get(exported_name)
-            .unwrap_or(Value::Undefined);
+        let val = imported_module_value(&module_exports, exported_name);
         env.borrow_mut().define_shared(local_name.clone(), val);
     }
 
@@ -2387,6 +2381,14 @@ fn eval_import(
     }
 
     Ok(Value::Undefined)
+}
+
+fn imported_module_value(module: &Rc<RefCell<Object>>, key: &str) -> Value {
+    if crate::value::object::has_getter(&module.borrow(), key) {
+        return crate::eval::member::eval_object_member(module, key, None)
+            .unwrap_or_else(|_| get_thrown_value().unwrap_or(Value::Undefined));
+    }
+    module.borrow().get(key).unwrap_or(Value::Undefined)
 }
 
 /// Get exports from a module (CommonJS-style lookup)
@@ -2691,10 +2693,10 @@ pub(crate) fn dynamic_import(
         Err(error) => {
             let kind =
                 if error.0.starts_with("Cannot find module") && source.contains("script-code") {
-                    "SyntaxError"
-                } else {
-                    "TypeError"
-                };
+                "SyntaxError"
+            } else {
+                "TypeError"
+            };
             let (reason, _) = crate::value::error::create_js_error_with_type(&error.0, kind);
             Ok(Value::Object(
                 crate::builtins::promise::create_rejected_promise(reason)?,
