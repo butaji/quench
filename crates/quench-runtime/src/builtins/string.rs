@@ -313,6 +313,27 @@ mod tests {
     }
 
     #[test]
+    fn string_concat_uses_string_hint_for_bigint_wrappers() {
+        let mut ctx = Context::new().unwrap();
+        let value = ctx
+            .eval(
+                r#"
+            let gets = 0;
+            let original = BigInt.prototype.toString;
+            Object.defineProperty(BigInt.prototype, "toString", {
+                get() {
+                    ++gets;
+                    return function() { return original.call(this) + "foo"; };
+                },
+            });
+            "".concat(Object(1n)) + "|" + gets;
+        "#,
+            )
+            .unwrap();
+        assert_eq!(value, Value::String("1foo|1".into()));
+    }
+
+    #[test]
     fn test_string_subclass_no_args() {
         let mut ctx = Context::new().unwrap();
         let r = ctx

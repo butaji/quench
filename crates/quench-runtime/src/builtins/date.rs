@@ -8,8 +8,8 @@ use std::rc::Rc;
 pub use helpers::{spec_parse_float, spec_parse_int};
 
 use crate::value::{
-    to_bool, to_js_string, to_number, NativeConstructor, NativeFunction, Object, ObjectKind,
-    PropertyFlags, Value,
+    to_bool, to_js_string, to_number, try_to_number, NativeConstructor, NativeFunction, Object,
+    ObjectKind, PropertyFlags, Value,
 };
 use crate::Context;
 
@@ -447,29 +447,39 @@ pub fn register_date(ctx: &mut Context) {
             let timestamp = if args.is_empty() {
                 chrono_now() as f64
             } else if args.len() == 1 {
-                crate::value::to_number(&args[0])
+                try_to_number(&args[0])?
             } else {
-                let year = crate::value::to_number(&args[0]) as i32;
-                let month = crate::value::to_number(&args[1]) as i32;
+                let year = try_to_number(&args[0])? as i32;
+                let month = try_to_number(&args[1])? as i32;
                 let day = args
                     .get(2)
-                    .map(|v| crate::value::to_number(v) as i32)
+                    .map(try_to_number)
+                    .transpose()?
+                    .map(|v| v as i32)
                     .unwrap_or(1);
                 let hour = args
                     .get(3)
-                    .map(|v| crate::value::to_number(v) as i32)
+                    .map(try_to_number)
+                    .transpose()?
+                    .map(|v| v as i32)
                     .unwrap_or(0);
                 let min = args
                     .get(4)
-                    .map(|v| crate::value::to_number(v) as i32)
+                    .map(try_to_number)
+                    .transpose()?
+                    .map(|v| v as i32)
                     .unwrap_or(0);
                 let sec = args
                     .get(5)
-                    .map(|v| crate::value::to_number(v) as i32)
+                    .map(try_to_number)
+                    .transpose()?
+                    .map(|v| v as i32)
                     .unwrap_or(0);
                 let ms = args
                     .get(6)
-                    .map(|v| crate::value::to_number(v) as i32)
+                    .map(try_to_number)
+                    .transpose()?
+                    .map(|v| v as i32)
                     .unwrap_or(0);
 
                 let total_secs = chrono_to_timestamp(year, month + 1, day, hour, min, sec);

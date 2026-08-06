@@ -112,7 +112,7 @@ String.prototype.toLocaleLowerCase = String.prototype.toLowerCase;
 
 String.prototype.concat = function StringConcat() {
   var result = this + '';
-  for (var i = 0; i < arguments.length; i++) result += arguments[i];
+  for (var i = 0; i < arguments.length; i++) result += String(arguments[i]);
   return result;
 };
 

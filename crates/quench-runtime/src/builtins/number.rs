@@ -4,7 +4,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::value::{
-    to_js_string, to_number, NativeFunction, Object, ObjectKind, PropertyFlags, Value,
+    to_js_string, to_number, try_to_number, NativeFunction, Object, ObjectKind, PropertyFlags,
+    Value,
 };
 use crate::Context;
 
@@ -195,7 +196,7 @@ fn setup_number_static(proto: &Rc<RefCell<Object>>, ctx: &mut Context) {
     let proto_for_closure = Rc::clone(proto);
     let number_ctor = crate::value::NativeConstructor::new(
         move |args: Vec<Value>| {
-            let n = args.first().map(to_number).unwrap_or(0.0);
+            let n = args.first().map(try_to_number).transpose()?.unwrap_or(0.0);
             let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
             if let Value::Object(this_obj) = this_val {
                 crate::builtins::object::set_boxed_value(
