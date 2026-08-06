@@ -216,6 +216,7 @@ impl DigestWorker {
                     None => run_single_test(&self.harness, path),
                 }
             };
+            let outcome = isolate_after_worker_panic(path, outcome);
             let _ = self.tx.send((index, label(path, false), outcome));
         }
     }
@@ -239,7 +240,9 @@ pub(crate) fn worker_count(available: usize) -> usize {
 }
 
 fn worker_count_with_limit(available: usize, configured: Option<usize>) -> usize {
-    configured.unwrap_or(available).clamp(1, available.min(8).max(1))
+    configured
+        .unwrap_or(available)
+        .clamp(1, available.min(8).max(1))
 }
 
 fn trim_quick(indexed: &mut Vec<(usize, String, TestOutcome)>, limit: usize) {
@@ -260,7 +263,23 @@ fn one_test(harness: &HarnessLoader, path: &Path, isolated: bool) -> TestOutcome
     if isolated {
         return run_isolated(path);
     }
-    run_single_test(harness, path)
+    isolate_after_worker_panic(path, run_single_test(harness, path))
+}
+
+fn isolate_after_worker_panic(path: &Path, outcome: TestOutcome) -> TestOutcome {
+    let should_isolate = match &outcome {
+        TestOutcome::Fail { failure } => should_isolate_after_failure(&failure.message),
+        TestOutcome::Pass | TestOutcome::Skip { .. } => false,
+    };
+    if should_isolate {
+        run_isolated(path)
+    } else {
+        outcome
+    }
+}
+
+fn should_isolate_after_failure(message: &str) -> bool {
+    message == "panicked" || message.ends_with("not a test result: panicked")
 }
 
 /// A failure group key plus per-test detail entries.
@@ -582,6 +601,16 @@ mod tests {
         assert_eq!(worker_count_with_limit(64, Some(0)), 1);
         assert_eq!(worker_count_with_limit(2, Some(64)), 2);
         assert_eq!(worker_count_with_limit(2, Some(8)), 2);
+    }
+
+    #[test]
+    fn only_worker_panics_trigger_process_isolation_fallback() {
+        assert!(should_isolate_after_failure("panicked"));
+        assert!(should_isolate_after_failure(
+            "infrastructure failure, not a test result: panicked"
+        ));
+        assert!(!should_isolate_after_failure("timed out after 120s"));
+        assert!(!should_isolate_after_failure("TypeError: boom"));
     }
 
     #[test]
