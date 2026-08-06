@@ -231,7 +231,7 @@ fn register_aggregate_error(ctx: &mut Context, parent_proto: &Rc<RefCell<Object>
     let proto_rc = Rc::new(RefCell::new(proto));
     proto_rc.borrow_mut().prototype = Some(Rc::clone(parent_proto));
     let proto_for_closure = Rc::clone(&proto_rc);
-    let constructor = NativeConstructor::new(
+    let mut constructor = NativeConstructor::new(
         move |args| {
             // Per ES §22.1.7.1 AggregateError ( errors, message ): ToString
             // the message argument; throw TypeError if it is a Symbol.
@@ -332,6 +332,9 @@ fn register_aggregate_error(ctx: &mut Context, parent_proto: &Rc<RefCell<Object>
     );
     constructor.set_name("AggregateError");
     constructor.set_static_method("length", Value::Number(2.0));
+    if let Some(error_constructor) = ctx.get_global("Error") {
+        constructor.set_own_prototype(error_constructor);
+    }
     let ctor = Value::NativeConstructor(Rc::new(constructor));
     let mut prototype = proto_rc.borrow_mut();
     prototype.define(

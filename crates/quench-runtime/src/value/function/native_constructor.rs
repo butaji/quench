@@ -21,6 +21,8 @@ pub struct NativeConstructor {
     func: super::NativeFn,
     /// The prototype object for instanceof checks
     pub prototype: std::rc::Rc<std::cell::RefCell<Object>>,
+    /// The constructor function's own [[Prototype]], when it differs from Function.prototype.
+    pub own_prototype: Option<Value>,
     /// Static methods on the constructor
     /// Wrapped in RefCell so we can mutate even when shared via Rc
     static_methods: std::cell::RefCell<std::collections::HashMap<String, Value>>,
@@ -43,6 +45,7 @@ impl NativeConstructor {
         NativeConstructor {
             func: std::rc::Rc::new(Box::new(f)),
             prototype,
+            own_prototype: None,
             static_methods: std::cell::RefCell::new(std::collections::HashMap::new()),
             deleted_static_methods: std::cell::RefCell::new(HashSet::new()),
             non_deletable_static_methods: std::cell::RefCell::new(HashSet::new()),
@@ -59,6 +62,10 @@ impl NativeConstructor {
     /// Set the name of this constructor
     pub fn set_name(&self, name: &str) {
         *self.name.borrow_mut() = name.to_string();
+    }
+
+    pub fn set_own_prototype(&mut self, proto: Value) {
+        self.own_prototype = Some(proto);
     }
 
     pub fn inherits_function_constructor(&self) -> bool {
@@ -199,6 +206,7 @@ impl Clone for NativeConstructor {
         NativeConstructor {
             func: self.func.clone(),
             prototype: std::rc::Rc::clone(&self.prototype),
+            own_prototype: self.own_prototype.clone(),
             static_methods: std::cell::RefCell::new(self.static_methods.borrow().clone()),
             deleted_static_methods: std::cell::RefCell::new(
                 self.deleted_static_methods.borrow().clone(),
