@@ -627,8 +627,10 @@ pub fn create_class_prototype_helper_with_env(
             None
         } else if let Value::NativeFunction(nf) = &super_class_val {
             if nf.name == "Proxy" {
-                let message = "TypeError: superclass constructor prototype is not an object or null";
-                let (thrown, error) = crate::value::error::create_js_error_with_type(message, "TypeError");
+                let message =
+                    "TypeError: superclass constructor prototype is not an object or null";
+                let (thrown, error) =
+                    crate::value::error::create_js_error_with_type(message, "TypeError");
                 crate::value::set_thrown_value(thrown);
                 return Err(error);
             }
@@ -638,8 +640,10 @@ pub fn create_class_prototype_helper_with_env(
             } else if let Value::Object(o) = &proto_val {
                 Some(Rc::clone(o))
             } else {
-                let message = "TypeError: superclass constructor prototype is not an object or null";
-                let (thrown, error) = crate::value::error::create_js_error_with_type(message, "TypeError");
+                let message =
+                    "TypeError: superclass constructor prototype is not an object or null";
+                let (thrown, error) =
+                    crate::value::error::create_js_error_with_type(message, "TypeError");
                 crate::value::set_thrown_value(thrown);
                 return Err(error);
             }
@@ -1814,6 +1818,14 @@ mod tests {
         )
         .unwrap();
         assert_eq!(named, Value::String("[test262]".into()), "named sym");
+    }
+
+    #[test]
+    fn class_symbol_methods_are_own_symbols_on_prototype() {
+        assert_eq!(
+            eval("class C { [Symbol()]() {} [Symbol()]() {} } Object.getOwnPropertySymbols(C.prototype).length"),
+            Ok(Value::Number(2.0))
+        );
     }
 
     #[test]

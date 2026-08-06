@@ -215,6 +215,12 @@ impl Object {
 
     /// Define a property with explicit flags.
     pub fn define(&mut self, key: &str, value: Value, mut flags: PropertyFlags) {
+        if key.contains('\0') {
+            self.symbol_properties.insert(key.to_string(), value.clone());
+            flags.value = Some(value);
+            self.descriptors.insert(key.to_string(), flags);
+            return;
+        }
         let mapped = matches!(&self.data, ObjData::Args { .. }) && as_array_index(key).is_some();
         if !mapped {
             self.getters.shift_remove(key);
