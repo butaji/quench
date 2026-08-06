@@ -373,7 +373,11 @@ pub fn create_class_prototype_helper(class: &ClassValue) -> Result<Rc<RefCell<Ob
 pub fn get_constructor_prototype(val: &Value) -> Result<Option<Rc<RefCell<Object>>>, JsError> {
     match val {
         Value::Object(o) => {
-            let proto = o.borrow().get("prototype");
+            let proto = if crate::eval::object::proxy_handler_and_target(o).is_some() {
+                Some(crate::eval::object::proxy_get_property(o, "prototype")?)
+            } else {
+                o.borrow().get("prototype")
+            };
             if let Some(Value::Object(proto_obj)) = proto {
                 Ok(Some(proto_obj.clone()))
             } else {
