@@ -2169,6 +2169,23 @@ fn await_using_reads_dispose_method_before_following_statement() {
 }
 
 #[test]
+fn await_using_does_not_read_sync_dispose_when_async_method_exists() {
+    let mut ctx = Context::new().unwrap();
+    ctx
+        .eval(
+            "var order = []; var resource = {
+               get [Symbol.asyncDispose]() { order.push('async'); return async function() {}; },
+               get [Symbol.dispose]() { order.push('sync'); return function() {}; }
+             }; async function f() { { await using _ = resource; } } f().then(function() { order.push('done'); });",
+        )
+        .unwrap();
+    let value = ctx.eval("order.join(',')").unwrap();
+    assert_eq!(value, Value::String("async,done".into()));
+    assert_eq!(ctx.eval("JSON.stringify(order)").unwrap(), Value::String("[\"async\",\"done\"]".into()));
+    assert_eq!(ctx.eval("Array.isArray(order)").unwrap(), Value::Boolean(true));
+}
+
+#[test]
 fn await_using_for_initializer_disposes_after_loop() {
     let mut ctx = Context::new().unwrap();
     ctx.eval(
@@ -2528,6 +2545,31 @@ fn await_using_async_dispose_literal_method_keeps_binding_through_async_test_wra
     )
     .unwrap();
     assert_eq!(ctx.eval("same").unwrap(), Value::Boolean(true));
+}
+
+#[test]
+fn await_using_dispose_lookup_order_compares_equal_as_array() {
+    let mut ctx = Context::new().unwrap();
+    let deep_equal = include_str!("../../../../../tests/test262/harness/deepEqual.js");
+    ctx.eval("var assert = {}; assert._formatIdentityFreeValue = function() {}; ")
+        .unwrap();
+    ctx.eval(deep_equal).unwrap();
+    ctx.eval(
+        "var order = []; var resource = { get [Symbol.asyncDispose]() { order.push('Symbol.asyncDispose'); return null; }, get [Symbol.dispose]() { order.push('Symbol.dispose'); return function() {}; } }; async function f() { { await using _ = resource; } } f();",
+    )
+    .unwrap();
+    let equal = ctx
+        .eval("assert.deepEqual._compare(order, ['Symbol.asyncDispose', 'Symbol.dispose'])")
+        .unwrap();
+    assert_eq!(ctx.eval("order.length === 2").unwrap(), Value::Boolean(true));
+    assert_eq!(ctx.eval("order[0] === 'Symbol.asyncDispose'").unwrap(), Value::Boolean(true));
+    assert_eq!(ctx.eval("order[1] === 'Symbol.dispose'").unwrap(), Value::Boolean(true));
+    assert_eq!(ctx.eval("Array.isArray(order)").unwrap(), Value::Boolean(true));
+    assert_eq!(ctx.eval("Array.isArray(['Symbol.asyncDispose', 'Symbol.dispose'])").unwrap(), Value::Boolean(true));
+    assert_eq!(ctx.eval("assert.deepEqual._compare('a', 'a')").unwrap(), Value::Boolean(true));
+    assert_eq!(ctx.eval("assert.deepEqual._compare(['a'], ['a'])").unwrap(), Value::Boolean(true));
+    assert_eq!(ctx.eval("assert.deepEqual._compare(['Symbol.asyncDispose', 'Symbol.dispose'], ['Symbol.asyncDispose', 'Symbol.dispose'])").unwrap(), Value::Boolean(true));
+    assert_eq!(equal, Value::Boolean(true));
 }
 
 #[test]
