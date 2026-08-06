@@ -223,7 +223,11 @@ pub(crate) fn call_value_impl(
                     .borrow_mut()
                     .define("arguments".to_string(), args_obj);
                 predeclare_var(&f.body, &mut call_env_rc.borrow_mut());
-                bind_params(&f, &f.params, &args, &call_env_rc)?;
+                let prev_strict = crate::interpreter::is_strict_mode();
+                crate::interpreter::set_strict_mode(f.strict);
+                let bind_result = bind_params(&f, &f.params, &args, &call_env_rc);
+                crate::interpreter::set_strict_mode(prev_strict);
+                bind_result?;
                 let body_env_rc = function_body_env(&call_env_rc, &f, &this_val, &f.params);
                 body_env_rc.borrow_mut().push_scope();
                 if let Some(name) = &f.name {
@@ -273,7 +277,11 @@ pub(crate) fn call_value_impl(
                         .borrow_mut()
                         .define("arguments".to_string(), args_obj);
                 }
-                bind_params(&f, &f.params, &args, &call_env_rc)?;
+                let prev_strict = crate::interpreter::is_strict_mode();
+                crate::interpreter::set_strict_mode(f.strict);
+                let bind_result = bind_params(&f, &f.params, &args, &call_env_rc);
+                crate::interpreter::set_strict_mode(prev_strict);
+                bind_result?;
 
                 let body_env_rc = if f.strict {
                     function_body_env(&call_env_rc, &f, &this_val, &f.params)
@@ -467,12 +475,16 @@ pub(crate) fn call_js_function_impl_with_strict(
         if !has_parameter_expressions(&params) {
             predeclare_var(&f.body, &mut call_env_rc.borrow_mut());
         }
-        bind_params(&f, &params, &args, &call_env_rc)?;
+        let prev_strict = crate::interpreter::is_strict_mode();
+        crate::interpreter::set_strict_mode(in_strict);
+        let bind_result = bind_params(&f, &params, &args, &call_env_rc);
+        if let Err(error) = bind_result {
+            crate::interpreter::set_strict_mode(prev_strict);
+            return Err(error);
+        }
 
         let body_env_rc = function_body_env(&call_env_rc, &f, &this_val, &params);
         body_env_rc.borrow_mut().push_scope();
-        let prev_strict = crate::interpreter::is_strict_mode();
-        crate::interpreter::set_strict_mode(in_strict);
         predeclare_var(&f.body, &mut body_env_rc.borrow_mut());
         predeclare_let_const(&f.body, &mut body_env_rc.borrow_mut());
         hoist_functions(&f.body, &body_env_rc);
