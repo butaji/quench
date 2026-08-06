@@ -124,6 +124,6 @@ echo ""
 echo ""
 echo "=== Results: $PASSED passed, $FAILED failed, $SKIPPED skipped ($TOTAL total) ==="
 
-if [[ "$FAILED" -ne 0 ]]; then
+if [[ "$FAILED" -ne 0 || "$SKIPPED" -ne 0 ]]; then
     exit 1
 fi
