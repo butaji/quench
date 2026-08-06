@@ -137,8 +137,10 @@ relevant test262 stage.
   Inventory is complete: 17 runtime-side files remain. The first move exposed
   private intrinsic/interpreter state, `Context::env`, dynamic-import, and
   object-storage dependencies; replace these with neutral host-script and
-  realm APIs before physically moving the tree. The current facade is not the
-  completed boundary.
+  realm APIs before physically moving the tree. The physical move landed in
+  `e824f88a`; runtime now builds without `src/test262`, while `quench-test262`
+  is the active compile gate until its 38 private-internal API uses are
+  replaced by neutral runtime APIs. The boundary is not complete yet.
 
 - **R38 — Module fixture identity.** Preserve canonical module identity for
   `-as.js` resolution fixtures and follow named re-export chains without
