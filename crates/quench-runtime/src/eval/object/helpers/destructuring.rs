@@ -213,6 +213,23 @@ pub fn obtain_iterator(o: &Rc<RefCell<Object>>) -> Result<Rc<RefCell<Object>>, J
     }
 }
 
+pub fn iterable_to_list(value: &Value) -> Result<Vec<Value>, JsError> {
+    let Value::Object(object) = value else {
+        return Err(non_iterable_type_error());
+    };
+    let iterator = obtain_iterator(object)?;
+    let env = Rc::new(RefCell::new(Environment::new()));
+    let mut index = 0;
+    let mut values = Vec::new();
+    loop {
+        let (item, done) = take_iterator_step(&iterator, &mut index, &env)?;
+        if done {
+            return Ok(values);
+        }
+        values.push(item);
+    }
+}
+
 /// Get @@iterator method from own or inherited properties (both storage key forms).
 fn resolve_iterator_method(
     o: &Rc<RefCell<Object>>,

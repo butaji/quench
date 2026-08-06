@@ -250,6 +250,31 @@ fn aggregate_error_uses_new_target_prototype_and_standard_length() {
 }
 
 #[test]
+fn aggregate_error_uses_custom_new_target_prototype() {
+    let mut ctx = crate::Context::new().unwrap();
+    let result = ctx
+        .eval("var custom = {x: 42}; var newt = new Proxy(function() {}, {get(t, p) { if (p === 'prototype') return custom; return t[p]; }}); var obj = Reflect.construct(AggregateError, [[]], newt); [Object.getPrototypeOf(obj) === custom, obj.x].join('|')")
+        .unwrap();
+    assert_eq!(result, crate::value::Value::String("true|42".into()));
+}
+
+#[test]
+fn aggregate_error_materializes_iterable_errors() {
+    let mut ctx = crate::Context::new().unwrap();
+    let result = ctx
+        .eval("var count = 0; var values = []; var input = {[Symbol.iterator]() { return {next() { count += 1; return {done: count === 3, get value() { values.push(count); }}; }}; }}; new AggregateError(input); [count, values.join(',')].join('|')")
+        .unwrap();
+    assert_eq!(result, crate::value::Value::String("3|1,2".into()));
+}
+
+#[test]
+fn aggregate_error_propagates_iterable_errors() {
+    let mut ctx = crate::Context::new().unwrap();
+    let result = ctx.eval("var input = {get [Symbol.iterator]() { throw new Error('iterator'); }}; try { new AggregateError(input); 'no error'; } catch (error) { error.message; }").unwrap();
+    assert_eq!(result, crate::value::Value::String("iterator".into()));
+}
+
+#[test]
 fn suppressed_error_constructor_metadata_is_standard() {
     let mut ctx = crate::Context::new().unwrap();
     let result = ctx

@@ -902,6 +902,22 @@ fn call_native_constructor(
     // created by eval_new. We just need to use it as `this`.
     let effective_this = this_val.clone();
 
+    let args = if nc.name() == "AggregateError" {
+        let mut args = args;
+        if let Some(errors) = args.first().cloned() {
+            let already_list = matches!(&errors, Value::Object(object) if object.borrow().kind == ObjectKind::Array);
+            if !already_list {
+                let values = crate::eval::object::iterable_to_list(&errors)?;
+                let mut array = Object::new(ObjectKind::Array);
+                array.elements = values;
+                args[0] = Value::Object(Rc::new(RefCell::new(array)));
+            }
+        }
+        args
+    } else {
+        args
+    };
+
     crate::interpreter::set_native_this(effective_this.clone());
     crate::interpreter::set_this_value(effective_this.clone());
     let result = nc.call_func(args);
