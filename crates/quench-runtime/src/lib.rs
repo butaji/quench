@@ -113,6 +113,13 @@ mod tests {
     }
 
     #[test]
+    fn test_context_eval_script_controls_strictness() {
+        let mut ctx = Context::new().unwrap();
+        assert!(ctx.eval_script("with ({}) {}", false).is_ok());
+        assert!(ctx.eval_script("with ({}) {}", true).is_err());
+    }
+
+    #[test]
     fn test_context_eval_identifier() {
         let mut ctx = Context::new().unwrap();
         let result = ctx.eval("undefined");

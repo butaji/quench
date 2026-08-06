@@ -146,6 +146,18 @@ impl Context {
         }
     }
 
+    /// Evaluate a script with an explicit strictness mode.
+    pub fn eval_script(&mut self, source: &str, strict: bool) -> Result<Value, JsError> {
+        let previous_strict = interpreter::is_strict_mode();
+        let previous_direct_eval = interpreter::is_direct_eval();
+        interpreter::set_strict_mode(strict);
+        interpreter::set_direct_eval(false);
+        let result = self.eval(source);
+        interpreter::set_strict_mode(previous_strict);
+        interpreter::set_direct_eval(previous_direct_eval);
+        result
+    }
+
     /// Evaluate an ES module source string using the recursive interpreter.
     pub fn eval_es_module(&mut self, source: &str) -> Result<Value, JsError> {
         interpreter::reset_depth();
