@@ -107,6 +107,12 @@ mod tests {
     }
 
     #[test]
+    fn test_context_import_module_operation() {
+        let mut ctx = Context::new().unwrap();
+        assert!(ctx.import_module("missing-module").is_ok());
+    }
+
+    #[test]
     fn test_context_eval_identifier() {
         let mut ctx = Context::new().unwrap();
         let result = ctx.eval("undefined");
