@@ -2425,10 +2425,22 @@ pub(crate) fn dynamic_import(
                     reason
                 }
                 Value::Object(boxed) if boxed.borrow().has("__quench_cached_module_reason__") => {
-                    boxed
+                    match boxed
                         .borrow()
                         .get("__quench_cached_module_reason__")
                         .unwrap_or(Value::Undefined)
+                    {
+                        Value::String(message) => {
+                            let reason = crate::value::error::create_js_error_with_type(
+                                &message,
+                                "SyntaxError",
+                            )
+                            .0;
+                            crate::value::take_thrown_value();
+                            reason
+                        }
+                        reason => reason,
+                    }
                 }
                 reason => reason,
             };

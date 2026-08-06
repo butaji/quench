@@ -388,6 +388,33 @@ fn dynamic_import_missing_script_fixture_rejects_with_syntax_error() {
 }
 
 #[test]
+fn dynamic_import_cached_string_module_error_rejects_with_syntax_error() {
+    let mut ctx = Context::new().unwrap();
+    crate::builtins::register_builtins(&mut ctx);
+    let mut cached = crate::value::Object::new(crate::value::ObjectKind::Ordinary);
+    cached.set(
+        "__quench_cached_module_reason__",
+        Value::String("Circular module export".into()),
+    );
+    let mut errors = crate::value::Object::new(crate::value::ObjectKind::Ordinary);
+    errors.set(
+        "./circular_FIXTURE.js",
+        Value::Object(std::rc::Rc::new(std::cell::RefCell::new(cached))),
+    );
+    ctx.set_global(
+        "__quench_module_errors__".into(),
+        Value::Object(std::rc::Rc::new(std::cell::RefCell::new(errors))),
+    );
+    ctx.eval("var result; import('./circular_FIXTURE.js').then(() => { result = 'fulfilled'; }, error => { result = error.name; });")
+        .unwrap();
+    crate::builtins::promise::execute_pending_microtasks().unwrap();
+    assert_eq!(
+        ctx.eval("result").unwrap(),
+        Value::String("SyntaxError".into())
+    );
+}
+
+#[test]
 fn dynamic_import_specifier_error_rejects_with_original_value() {
     let mut ctx = Context::new().unwrap();
     crate::builtins::register_builtins(&mut ctx);
