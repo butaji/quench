@@ -1,9 +1,9 @@
 # Test262 Runner Integrity Plan
 
-Test262 is the conformance oracle. The runner must execute the selected
-corpus without rewriting fixtures, hiding failures, or treating skipped cases
-as passes. Unit tests cover runner invariants and regressions; they do not
-duplicate Test262 assertions.
+Test262 is the conformance oracle. Release verification executes the pinned
+ECMA-262 `test/` corpus with zero failures and zero skips, without rewriting
+fixtures or hiding failures. Unit tests cover runner invariants and regressions;
+they do not duplicate Test262 assertions.
 
 ## Invariants
 

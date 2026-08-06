@@ -84,8 +84,10 @@ for the digest command.
 
 ## Fast conformance loop
 
-Use quick mode to find representative failures, then use a complete digest for
-evidence:
+Use `TEST262_QUICK=1` to reduce retained failure groups, then use a complete
+digest for evidence. It is not currently a bounded representative sample: the
+serial runner continues through passing tests until it observes the configured
+number of distinct failure groups.
 
 ```bash
 TEST262_STAGE=N TEST262_DIGEST=1 TEST262_QUICK=1 \

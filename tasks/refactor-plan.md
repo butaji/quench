@@ -4,6 +4,14 @@ Refactor queue, in priority order. Every item starts with a failing unit test pe
 `AGENTS.md` (reproducer or refactor pin), then the minimal change, then the
 relevant test262 stage.
 
+## Phase order
+
+Phase 0 contains the conformance and runner work through R40. Phase 1 is the
+fresh baseline (R41) and minimal rooted-handle/isolate boundaries (R42). Phase
+2 is IR parity (R43). Phases 3–5 add layouts (R45), the collector spike (R46),
+and the entry-guarded native tier (R47), each only after the prior phase's
+conformance and measurement gates pass.
+
 - **R18 — SameValueZero symbol identity (verified bug).**
   `value/compare.rs::same_value_zero` falls to `a == b` for Symbols;
   `Value::PartialEq` is false for all Symbols, so Map/Set symbol keys never
@@ -125,9 +133,10 @@ relevant test262 stage.
   digest, and final lint checks. It must not edit Test262 fixtures, write
   conformance status to `docs/` or `tasks/`, or manufacture coverage.
 
-- **R36 — Conformance acceleration gate.** Freeze the universal embedding API
-  and engine-performance work until Test262 is complete. Revisit only after
-  runner timing data shows a conformance-relevant bottleneck.
+- **R36 — Conformance acceleration gate.** Conformance remains the release
+  gate. Architectural experiments may proceed only behind differential tests
+  and must not delay Test262 fixes; performance claims require the separate
+  reproducible framework and VM-kernel benchmarks.
 
 - **R37 — Test262 crate boundary.** Move harness, metadata, host, and runner
   implementation out of `quench-runtime`; keep the runtime limited to the
@@ -154,32 +163,24 @@ relevant test262 stage.
   do not treat partial output or unit-test counts as conformance evidence.
 
 - **R40 — Remaining unit gates.** The lower-switch pin, stale timeout probes,
-  and async-generator dynamic-import queueing are resolved. The runtime sweep
-  now has one remaining semantic gate: indirect module function binding
-  fixture evaluation order. Dynamic circular-import error propagation is
-  resolved in `a7da99c4`; imported accessor and immutable-binding behavior are
-  covered by Rust reproducers in `247757e5` and `929813a9`. Resolve the final
-  fixture-order gate before claiming the conformance crate green.
+  and async-generator dynamic-import queueing are resolved. Current module
+  work has pins for lexical isolation, self-imported named and `export * as`
+  re-exports, string export/import names, and indirect alias cycles. Remaining
+  semantic gates are live imported bindings, TDZ during module instantiation,
+  and top-level-await scheduling. Resolve them through runtime/module
+  operations rather than runner-only special cases before claiming the
+  conformance crate green.
 
 - **R41 — Fresh conformance and performance baseline.** Run a complete digest
   from stage 0 before architectural changes. Record pass/fail/skip counts,
   wall time, RSS, worker count, and discovery, bootstrap, parse, execution,
   microtask, and cleanup timings outside `docs/` and `tasks/`.
 
-- **R42 — Heap and execution boundaries.** Introduce explicit ownership
-  boundaries for heap allocation, object identity, execution frames, roots,
-  and worker-local job state only where measurements or tests justify them.
-  Begin with handles or an allocation facade over the existing representation;
-  a garbage collector is not required for this phase. Target a single
-  composition boundary:
-  `Runtime<Heap, Collector, Allocator, Frames, Executor, Exceptions, Environments>`.
-  `Heap` owns storage and identity, `Allocator` creates values, `Collector`
-  tracks roots/reclamation, `Frames` owns locals and suspension, `Executor`
-  runs AST or IR, `Exceptions` carries completion/control flow, and
-  `Environments` owns lexical/global/module/closure bindings. Start with an
-  adapter over the current reference-counted representation and a no-op
-  collector. Keep generic strategy selection at the boundary and use stable
-  handles internally.
+- **R42 — Heap and execution boundaries.** Introduce concrete isolate-local
+  ownership for heap allocation, object identity, execution frames, roots, and
+  job state. Define opaque rooted handles for the Rust host API without
+  exposing object layouts. Preserve the current collector and object layout;
+  do not build a generic runtime-strategy framework.
 
 - **R43 — Interpreter-first IR.** Add a compact IR for constants, locals,
   control flow, calls, property operations, throws, and suspension points.
@@ -188,7 +189,36 @@ relevant test262 stage.
   default execution path until parity is established and affected Test262
   stages pass.
 
-- **Future considerations — post-Phase 3.** Multiple execution models,
-  moving/generational GC, NaN-boxing, Cranelift JIT/AOT, inline caches, and
-  deoptimization are not active tasks, dependencies, or conformance gates.
-  Revisit them only after the Phase 3 IR and baseline measurements justify it.
+- **R44 — Runtime LOC budget.** Keep `quench-runtime` production Rust under
+  100,000 lines, excluding test modules. Measure with
+  `rg --files crates/quench-runtime/src -g '*.rs' | grep -vE '(/tests\.rs$|/tests/)' | xargs wc -l`;
+  the current baseline is below budget. Before adding an abstraction, remove
+  or consolidate duplicate runtime code where possible; do not trade the LOC
+  target for narrowly tailored conformance glue. Keep the Rust host API narrow
+  and concrete; do not introduce generic heap, collector, or executor
+  strategies without measured need.
+
+- **R45 — Hot object layouts (Phase 3).** Only after Phase 2 IR parity and
+  profiles identify property/array storage as the bottleneck, add immutable
+  shapes with compact slots for ordinary objects, dictionary fallback for
+  dynamic objects, and dense/holey/dictionary array representations. Preserve
+  one canonical property-operation path and prove Test262 parity before the
+  next phase.
+
+- **R46 — Collector spike (Phase 4).** Run a bounded single-isolate MMTk
+  integration spike. It must prove roots, write barriers, weak edges,
+  ephemerons, host handles, `WeakRef`/`FinalizationRegistry` cleanup ordering,
+  native-code safepoints, RSS, and complete Test262 parity before selecting a
+  production collector or enabling multi-isolate deployment.
+
+- **R47 — Entry-guarded native tier (Phase 5).** After the collector decision
+  and benchmark evidence, lower only hot, IR-parity-proven functions to
+  Cranelift. Check all specialization assumptions at entry; a failed guard
+  restarts in the generic IR interpreter. Do not add OSR or mid-function
+  deoptimization in this phase.
+
+- **Future considerations — post-Phase 3.** Moving/generational GC follows a
+  successful MMTk spike. A Cranelift entry-guarded tier follows IR parity and
+  benchmark evidence; mid-function deoptimization and OSR remain deferred
+  until that tier demonstrates a need. NaN-boxing and additional execution
+  models remain measurement-driven.

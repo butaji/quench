@@ -22,7 +22,9 @@ Reduce time from failure discovery to a verified canonical fix while keeping
 the digest as the sole conformance SSOT. Optimize verified failures cleared
 per developer hour, not merely tests per second.
 
-1. Run quick representatives and collect phase timing.
+1. Run digest collection and collect phase timing. `TEST262_QUICK=1` currently
+   limits retained failure groups rather than sampling a bounded number of
+   passing tests.
 2. Group by stable root-cause fingerprint and rank by affected tests per hour.
 3. Write one unit-test reproducer per distinct root cause and fix the canonical
    spec-op or builtin path.

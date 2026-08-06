@@ -1,21 +1,24 @@
 # Architecture
 
-**Goal:** 100% of the in-scope test262 suite with the smallest practical Rust
-core. Test262 runs are the sole authority for conformance.
+**Goal:** 100% of the pinned test262 revision with zero failures and zero
+skips, across script, module, async, and negative tests, using the smallest
+practical Rust core. Test262 runs are the sole authority for conformance.
 
-**Shape:** OXC parser + lowering + interpreter-first IR + an optional
-self-hosted JS builtins layer. The existing tree walker remains the semantic
-reference while the IR is introduced incrementally:
+**Shape:** OXC parser + type-fact sidecar + lowering + interpreter-first IR +
+an optional self-hosted JS builtins layer. The existing tree walker remains the
+semantic reference while the IR is introduced incrementally:
 
 1. **OXC parse** — `oxc` parses JS source into a spec-compliant AST
    (~20k LOC of parser logic we don't write).
-2. **Lower** — `lower/` converts oxc AST nodes into our simpler internal
-   AST (`ast.rs`), stripping arena lifetimes and collapsing nodes the
-   walker doesn't need to distinguish.
-3. **IR** — a compact interpreter-oriented representation for constants,
+2. **Type facts** — an external TypeScript-compatible checker consumes the
+   resolved source and declaration graph. It provides a versioned sidecar of
+   facts for TS and JS; facts are optimization hints, never runtime semantics.
+3. **Lower** — `lower/` converts oxc AST nodes into our simpler internal
+   AST (`ast.rs`), stripping arena lifetimes while preserving sidecar identity.
+4. **IR** — a compact interpreter-oriented representation for constants,
    locals, control flow, calls, property operations, throws, and suspension
    points. Complex behavior continues to call canonical runtime operations.
-4. **Interpret** — the current AST evaluator remains the reference path while
+5. **Interpret** — the current AST evaluator remains the reference path while
    an IR interpreter is added and differentially tested. The IR becomes the
    default only after semantic parity is demonstrated.
 
@@ -56,6 +59,17 @@ This is the fastest path to 100% conformance with minimum LOC because:
   `same_value`, `HasProperty` implements `has_own`, `IsCallable` misses
   callable objects, and `DefineProp`/`SealObject`/`FreezeObject` duplicate
   descriptor logic in `builtins/object_static/descriptors.rs`.
+
+## Phased delivery
+
+Complexity is added only after the preceding implementation is demonstrated
+correct and measured. Phase 0 is the current evaluator and canonical operations
+with the pinned test262 zero-failure, zero-skip gate. Phase 1 adds measurement,
+rooted-handle, and isolate boundaries. Phase 2 adds the type-fact sidecar and
+IR interpreter with differential parity. Phase 3 introduces shapes/slots and
+array layouts only when profiles justify them. Phase 4 is the bounded
+single-isolate MMTk spike. Phase 5 is Cranelift entry-guarded specialization.
+Mid-function deoptimization and OSR are later work, not Phase 5 scope.
 
 ## Rust core
 
@@ -146,50 +160,38 @@ Array.prototype.map = function (callback, thisArg) {
 New op → add to `eval/ops.rs` with a failing test → expose on `__ops__` →
 JS callsite. No second copy anywhere.
 
-## Object model — one canonical store
+## Object model — one canonical semantic path
 
-`Object` has a single own-property store (R5 target:
-`IndexMap<Key, Prop>`, `Key::Sym` carrying unique symbol identity).
-eval nodes, builtins, and `__ops__` all route through it — no parallel
-lookup paths, no per-callsite prototype walks, no shadow stores (the
-dead `props`/`VTable` layer was removed in R4). Descriptor semantics
-follow the spec: `defineProperty` defaults absent attributes to `false`,
-non-configurable invariants are enforced (ValidateAndApply), and writes
-to non-writable/non-extensible targets throw in strict mode.
+Ordinary objects use immutable shapes from property keys to compact slot
+offsets and a slot vector. Dynamic objects use dictionary mode. Arrays use
+dense and holey vectors, with dictionary fallback for sparse or exotic cases.
+Eval nodes, builtins, and `__ops__` all route through one canonical property
+operation path — no parallel lookup paths or shadow stores. Descriptor,
+prototype, accessor, proxy, and indexed-property behavior stays on that path:
+`defineProperty` defaults absent attributes to `false`, non-configurable
+invariants are enforced (ValidateAndApply), and writes to
+non-writable/non-extensible targets throw in strict mode.
 
 ## Execution and memory boundaries
 
-Phase 3 may introduce explicit `Heap`, object handles, execution frames, and
-root accounting where they simplify ownership, reset hygiene, or allocation
-measurement. The first goal is a clear boundary around the existing
-`Rc<RefCell<...>>` representation; a garbage collector is not required.
+Use concrete isolate-local heap, rooted-handle, execution-frame, and job-queue
+boundaries. The current `Rc<RefCell<...>>` representation is a conformance
+reference, not the future JIT heap ABI. A bounded MMTk spike must prove roots,
+write barriers, weak edges/ephemerons, host handles, cleanup-job ordering, and
+a native-code safepoint before a collector is selected.
 
 The AST evaluator and IR interpreter share canonical values, objects,
-environments, scheduler state, and abstract operations. Mutable realms,
-pending jobs, thrown values, and host state remain worker-local.
+environments, scheduler state, and abstract operations. Each isolate owns one
+heap and OS thread; realms, pending jobs, thrown values, and host handles are
+isolate-local. `quench-node` distributes work between isolates and serializes
+cross-isolate messages.
 
-The runtime is intended to make these policies configurable through one
-composition boundary:
-
-```text
-Runtime<Heap, Collector, Allocator, Frames, Executor, Exceptions, Environments>
-```
-
-Each parameter supplies a strategy for one concern. `Heap` owns identity and
-storage; `Allocator` creates heap values; `Collector` accounts for roots and
-reclaims storage; `Frames` owns call locals and suspension state; `Executor`
-runs the AST or IR; `Exceptions` carries JavaScript completion/control-flow
-states; and `Environments` owns lexical, global, module, and closure bindings.
-The first implementation may adapt the existing reference-counted storage
-and use a no-op collector. The interfaces must not expose that representation
-to the evaluator.
-
-`Exceptions` should model completion states, not only thrown errors: normal
-values, throws, returns, breaks, continues, and suspension. Heap and allocator
-strategies should share stable, copyable handles so later storage strategies
-do not require an evaluator rewrite. Keep generic composition at the runtime
-boundary; internal helpers should remain concrete where that preserves the
-minimum-LOC goal.
+The Rust host API is narrow and versioned: realm lifecycle, module
+registration, host calls, opaque rooted handles, promise/job scheduling, and
+metrics hooks. It does not expose object layouts or evaluator internals.
+Exceptions model normal values, throws, returns, breaks, continues, and
+suspension. Keep runtime helpers concrete; do not introduce generic strategy
+parameters before a measured need exists.
 
 ## Crate-backed primitives stay in Rust
 
@@ -211,11 +213,13 @@ Hand-rolled copies — including `chrono_*` helpers that never import
 | Target | Ref plan | Timeline |
 |--------|----------|----------|
 | NaN-boxed values, arenas, string interning | Future consideration | After measurements and conformance |
-| Moving or generational GC | Future consideration | After heap handles and root accounting |
+| MMTk collector spike | Active design gate | Before choosing the production collector |
+| Moving or generational GC | Future consideration | After the collector spike succeeds |
 | Multiple execution models | Future consideration | After IR interpreter parity |
-| Cranelift JIT/AOT, inline caches, deoptimization | Future consideration | After IR and profiling justify it |
+| Cranelift entry-guarded tier | Future consideration | After IR parity and benchmarks justify it |
+| Mid-function deopt / OSR | Future consideration | After entry-guarded specialization is measured |
 
-Runner phase instrumentation and RSS profiling are active Phase 3 work because
+Runner phase instrumentation and RSS profiling are Phase 1 work because
 they shorten the conformance loop. They do not authorize performance claims
 without reproducible benchmarks.
 

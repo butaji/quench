@@ -1,55 +1,46 @@
-# Universal JavaScript Engine API Plan
+# Rust Host API Plan
 
-This plan defines the lowest-common-denominator embedding API for Quench,
-based on the handle model shared by V8, QuickJS, JavaScriptCore,
-SpiderMonkey, and Hermes. It is an additive embedding layer over the existing
-OXC + wakler runtime architecture; it does not change the Test262 runner.
+This plan defines Quench's small, versioned Rust embedding API for hosts such
+as `quench-node`. It is an additive layer over the existing OXC + interpreter
+architecture; it does not change the Test262 runner or expose a C ABI.
 
-Test262 runs are the only conformance source of truth. This work is deferred
-until in-scope Test262 conformance is complete; it must not compete with
-semantic foundations, runner throughput, or failure triage.
+Test262 runs are the only conformance source of truth. This work must not
+compete with semantic foundations, runner throughput, or failure triage.
 Each implementation milestone requires focused Rust unit tests first, then
 the affected Test262 stage, with no changes under `tests/test262`.
 
 ## API boundary
 
-The public C ABI uses opaque handles:
-
-```c
-typedef struct js_rt  js_rt;
-typedef struct js_ctx js_ctx;
-typedef struct js_val js_val;
-```
-
-The native Rust API may use `Runtime`, `Context`, and `Value` directly. C
-handles must be runtime-owned, context-checked, and invalidated on free; no
-Rust layout or `Rc`/`RefCell` detail is exposed.
+The public boundary is a Rust crate API. It exposes isolate/realm lifecycle,
+module registration, host callbacks, opaque rooted value handles, job driving,
+and metrics hooks. Handles are isolate-local and must not expose `Value`,
+object-layout, or `Rc`/`RefCell` details.
 
 ## Milestones
 
+## Phase ordering
+
+U0 and the smallest useful part of U1 belong to Phase 1. Property, conversion,
+and callback expansion follow Phase 2 IR parity. Promise/heap-limit hooks and
+multi-isolate deployment wait for the Phase 4 collector gate. Do not expose an
+API merely because a later phase intends to support it.
+
 ### U0 — ownership and error contract
 
-- Define `Runtime` ownership, context lifetime, thread affinity, and handle
+- Define isolate ownership, realm lifetime, thread affinity, and rooted-handle
   validity rules.
-- Define whether returned values are borrowed or rooted handles.
-- Add `js_exception` get-and-clear semantics and an explicit `js_throw` path.
-- Add ABI compile tests and lifecycle tests; no production API until those
+- Define whether returned values are borrowed or rooted handles; handles never
+  cross isolates.
+- Define explicit throw and exception-observation paths.
+- Add crate API compile tests and lifecycle tests; no production API until those
   tests fail for the missing behavior.
 
 ### U1 — lifecycle and evaluation
 
-Implement:
+Implement isolate and realm creation/destruction, script/module evaluation,
+and global access through opaque rooted handles.
 
-```c
-js_rt*  js_rt_new(size_t max_heap, size_t max_stack);
-void    js_rt_free(js_rt*);
-js_ctx* js_ctx_new(js_rt*);
-void    js_ctx_free(js_ctx*);
-js_val* js_eval(js_ctx*, const char* source, const char* filename, int is_module);
-js_val* js_global(js_ctx*);
-```
-
-Map `js_eval` to the existing context evaluation boundary, preserving reset,
+Map evaluation to the existing context evaluation boundary, preserving reset,
 microtask, exception, and module semantics.
 
 ### U2 — property and primitive construction
@@ -69,10 +60,6 @@ pending-exception contract and never panic.
 
 Expose native function registration and:
 
-```c
-js_val* js_call(js_ctx*, js_val* fn, js_val* this_, js_val** argv, int argc);
-```
-
 Verify strict `this` behavior, argument ownership, thrown exceptions, and
 native callback userdata with Rust tests before wiring the ABI.
 
@@ -86,8 +73,8 @@ until then these functions must not be exported as false success APIs.
 
 | Universal concept | Quench implementation target |
 | --- | --- |
-| Runtime / Isolate | runtime-owned allocator and intrinsic state |
-| Context / Global | `Context` and its global environment |
+| Runtime / Isolate | isolate-owned heap, collector, job queue, and intrinsic state |
+| Context / Global | realm and its global environment |
 | Value handle | rooted opaque wrapper around `Value` |
 | Eval | `Context::eval` / module evaluation |
 | Get / Set | canonical object property operations |

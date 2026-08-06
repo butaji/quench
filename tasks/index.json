@@ -1,7 +1,7 @@
 {
   "$schema": "quench stages v1",
   "note": "This file is a descriptive stage catalog only; test runs provide conformance results.",
-  "goal": "100% of the in-scope test262 suite with the smallest practical Rust core and self-hosted JS builtins.",
+  "goal": "100% of the pinned test262 revision's ECMA-262 test/ corpus, with zero failures and zero skips, using the smallest practical Rust core and self-hosted JS builtins.",
   "scope": {
     "includes": [
       "test/"
