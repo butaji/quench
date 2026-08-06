@@ -275,6 +275,15 @@ fn aggregate_error_propagates_iterable_errors() {
 }
 
 #[test]
+fn aggregate_error_without_errors_throws_for_undefined_iterator() {
+    let mut ctx = crate::Context::new().unwrap();
+    let result = ctx
+        .eval("try { new AggregateError(); 'no error'; } catch (error) { error instanceof TypeError; }")
+        .unwrap();
+    assert_eq!(result, crate::value::Value::Boolean(true));
+}
+
+#[test]
 fn suppressed_error_constructor_metadata_is_standard() {
     let mut ctx = crate::Context::new().unwrap();
     let result = ctx
