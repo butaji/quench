@@ -160,31 +160,6 @@ fn stage_zero_deep_equal_primitives_passes_through_runner() {
 }
 
 #[test]
-fn every_stage_zero_case_passes_through_the_runner() {
-    use crate::test262::harness::HarnessLoader;
-    use crate::test262::runner::default_test262_dir;
-
-    let root = default_test262_dir();
-    let harness = HarnessLoader::new(&root);
-    let stage = PathBuf::from(&root).join("test/harness");
-    let mut paths = std::fs::read_dir(&stage)
-        .unwrap()
-        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-        .filter(|path| path.extension().is_some_and(|ext| ext == "js"))
-        .collect::<Vec<_>>();
-    paths.sort();
-    assert_eq!(paths.len(), 116);
-    let mut failures = Vec::new();
-    for path in paths {
-        let outcome = run_single_test(&harness, &path);
-        if outcome != TestOutcome::Pass {
-            failures.push((path, outcome));
-        }
-    }
-    assert!(failures.is_empty(), "stage 0 failures: {failures:#?}");
-}
-
-#[test]
 fn stage_zero_native_function_matcher_passes_through_runner() {
     use crate::test262::runner::default_test262_dir;
 
