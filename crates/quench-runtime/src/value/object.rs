@@ -56,6 +56,7 @@ impl Object {
             callable: false,
             deferred_module_get: None,
             weak_ref_target: None,
+            error_data: false,
         }
     }
 
@@ -86,6 +87,7 @@ impl Object {
             callable: false,
             deferred_module_get: None,
             weak_ref_target: None,
+            error_data: false,
         }
     }
 

@@ -158,6 +158,20 @@ fn test_uri_error_name() {
     assert_eq!(to_js_string(&result), "URIError");
 }
 
+#[test]
+fn native_error_instances_have_error_object_tag() {
+    let mut ctx = crate::Context::new().unwrap();
+    let result = ctx
+        .eval("[EvalError,RangeError,ReferenceError,SyntaxError,TypeError,URIError].map(function (C) { return Object.prototype.toString.call(new C()); }).join('|')")
+        .unwrap();
+    assert_eq!(
+        result,
+        crate::value::Value::String(
+            "[object Error]|[object Error]|[object Error]|[object Error]|[object Error]|[object Error]".into()
+        )
+    );
+}
+
 // ── Error prototype chain ──────────────────────────────────────────────────────
 
 #[test]
@@ -209,6 +223,15 @@ fn aggregate_error_constructor_inherits_from_error() {
     let mut ctx = crate::Context::new().unwrap();
     let result = ctx
         .eval("Object.getPrototypeOf(AggregateError) === Error")
+        .unwrap();
+    assert_eq!(result, crate::value::Value::Boolean(true));
+}
+
+#[test]
+fn native_error_constructors_inherit_from_error() {
+    let mut ctx = crate::Context::new().unwrap();
+    let result = ctx
+        .eval("[EvalError,RangeError,ReferenceError,SyntaxError,TypeError,URIError].every(function (C) { return Object.getPrototypeOf(C) === Error; })")
         .unwrap();
     assert_eq!(result, crate::value::Value::Boolean(true));
 }
@@ -359,4 +382,18 @@ fn core_error_message_own_property_spec() {
         .eval("var e2 = new Error(); Object.prototype.hasOwnProperty.call(e2, 'message')")
         .unwrap();
     assert_eq!(r2, crate::value::Value::Boolean(false));
+}
+
+#[test]
+fn suppressed_error_converts_message_and_propagates_abrupt_completion() {
+    let mut ctx = crate::Context::new().unwrap();
+    let result = ctx
+        .eval("var e = new SuppressedError(undefined, undefined, 1); [e.message, Object.prototype.hasOwnProperty.call(e, 'message')].join('|')")
+        .unwrap();
+    assert_eq!(result, crate::value::Value::String("1|true".into()));
+
+    let result = ctx
+        .eval("try { new SuppressedError(undefined, undefined, {toString() { throw new Error('boom'); }}); false; } catch (e) { e.message === 'boom'; }")
+        .unwrap();
+    assert_eq!(result, crate::value::Value::Boolean(true));
 }

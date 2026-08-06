@@ -217,6 +217,7 @@ pub struct Object {
     pub deferred_module_get: Option<Value>,
     /// Internal [[Target]] slot for WeakRef instances.
     pub weak_ref_target: Option<Value>,
+    pub error_data: bool,
 }
 
 impl Object {

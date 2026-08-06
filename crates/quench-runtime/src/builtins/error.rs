@@ -72,9 +72,19 @@ fn create_error_proto(name: &str) -> Object {
     proto
 }
 
+fn convert_error_message(message: Value) -> Result<String, crate::JsError> {
+    let primitive = crate::value::primitive::to_primitive(&message, Some("string"))?;
+    if matches!(primitive, Value::Symbol(_)) {
+        let (_, error) =
+            create_js_error_with_type("Cannot convert a Symbol to a string", "TypeError");
+        return Err(error);
+    }
+    Ok(crate::value::convert::to_js_string(&primitive))
+}
+
 fn register_error_constructor(ctx: &mut Context, name: &str, proto: &Rc<RefCell<Object>>) {
     let proto_for_closure = Rc::clone(proto);
-    let constructor = NativeConstructor::new(
+    let mut constructor = NativeConstructor::new(
         move |args| {
             let message = args.first().cloned();
             // Use the passed `this` (from super()) or create a new object
@@ -86,6 +96,7 @@ fn register_error_constructor(ctx: &mut Context, name: &str, proto: &Rc<RefCell<
                     Rc::new(RefCell::new(obj))
                 }
             };
+            error_rc.borrow_mut().error_data = true;
             // Per ES spec: only set message as own property when argument is provided
             // and not undefined. Descriptor uses enumerable: false.
             if let Some(msg) = message {
@@ -94,20 +105,7 @@ fn register_error_constructor(ctx: &mut Context, name: &str, proto: &Rc<RefCell<
                     // ToString = ToPrimitive with hint "string" then to string.
                     // A Symbol result throws TypeError; other thrown errors
                     // propagate unchanged.
-                    let msg_str = match crate::value::primitive::to_primitive(&msg, Some("string"))
-                    {
-                        Ok(prim) => {
-                            if matches!(prim, Value::Symbol(_)) {
-                                let (_, err) = create_js_error_with_type(
-                                    "Cannot convert a Symbol to a string",
-                                    "TypeError",
-                                );
-                                return Err(err);
-                            }
-                            crate::value::convert::to_js_string(&prim)
-                        }
-                        Err(e) => return Err(e),
-                    };
+                    let msg_str = convert_error_message(msg)?;
                     error_rc.borrow_mut().define_own_property(
                         "message",
                         &PropertyDescriptor {
@@ -139,6 +137,11 @@ fn register_error_constructor(ctx: &mut Context, name: &str, proto: &Rc<RefCell<
         Rc::clone(proto),
     );
     constructor.set_name(name);
+    if name != "Error" {
+        if let Some(error_constructor) = ctx.get_global("Error") {
+            constructor.set_own_prototype(error_constructor);
+        }
+    }
     let ctor = Value::NativeConstructor(Rc::new(constructor));
     // Set Error.prototype.constructor = Error
     let mut prototype = proto.borrow_mut();
@@ -212,6 +215,21 @@ fn register_suppressed_error(ctx: &mut Context, parent_proto: &Rc<RefCell<Object
                 "suppressed",
                 args.get(1).cloned().unwrap_or(Value::Undefined),
             );
+            if let Some(message) = args.get(2).cloned() {
+                if message != Value::Undefined {
+                    let message = convert_error_message(message)?;
+                    object.define_own_property(
+                        "message",
+                        &PropertyDescriptor {
+                            value: Some(Value::String(message)),
+                            writable: Some(true),
+                            enumerable: Some(false),
+                            configurable: Some(true),
+                            ..Default::default()
+                        },
+                    );
+                }
+            }
             Ok(Value::Object(Rc::new(RefCell::new(object))))
         },
         Rc::clone(&proto),

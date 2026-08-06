@@ -50,6 +50,9 @@ pub fn get_builtin_tag(this_val: &Value) -> String {
 
 /// Get builtin tag for object values
 pub fn get_object_builtin_tag(o: &Rc<RefCell<Object>>) -> String {
+    if o.borrow().error_data {
+        return "Error".to_string();
+    }
     let fallback = get_object_kind_tag(o.borrow().kind.clone());
     let mut current = Some(Rc::clone(o));
     while let Some(obj_rc) = current {
