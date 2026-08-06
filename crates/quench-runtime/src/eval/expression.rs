@@ -544,6 +544,10 @@ pub fn eval_expression(
                 if let Some(thrown) = crate::value::get_thrown_value() {
                     return Err(JsError(crate::value::to_js_string(&thrown)));
                 }
+                if object_property_result.is_none() && scope.borrow().is_with_environment() {
+                    return crate::eval::object::assign_to(left, &right_val, env)
+                        .map(|_| right_val);
+                }
                 if !scope.borrow_mut().set(
                     name.clone(),
                     right_val.clone(),
@@ -691,12 +695,25 @@ pub fn eval_expression(
                 return Ok(result);
             }
             // Evaluate left first (needed for binary op value).
-            let identifier_scope = if let Expression::Identifier(name) = left.as_ref() {
+            let mut identifier_scope = if let Expression::Identifier(name) = left.as_ref() {
                 env.borrow().binding_scope(name)
             } else {
                 None
             };
-            let left_result = eval_expression(left, env, in_arrow_function);
+            let left_result = if let (Expression::Identifier(name), Some(scope)) =
+                (left.as_ref(), identifier_scope.as_ref())
+            {
+                if scope.borrow().is_with_environment() {
+                    scope
+                        .borrow()
+                        .get_object_binding_value_once(name)
+                        .ok_or_else(|| JsError(format!("ReferenceError: {} is not defined", name)))
+                } else {
+                    eval_expression(left, env, in_arrow_function)
+                }
+            } else {
+                eval_expression(left, env, in_arrow_function)
+            };
             let left_val = left_result?;
             // Extract identifier info before dropping borrow.
             let ident_name = if let Expression::Identifier(name) = left.as_ref() {
@@ -709,18 +726,22 @@ pub fn eval_expression(
             let right_val = eval_expression(right, env, in_arrow_function)?;
             let result = eval_binary_op(op.to_binary(), &left_val, &right_val)?;
             // Identifier with known scope: update binding directly (avoids nested borrow).
+            let mut rebind_identifier = false;
             if ident_name.is_some() {
                 if let Some(name) = ident_name.as_ref() {
                     if let Some(ref scope) = identifier_scope {
                         let scope_ref = scope.borrow();
                         if scope_ref.is_with_environment() {
-                            if scope_ref.set_object_property_after_get(
+                            let set_result = scope_ref.set_object_property_after_get(
                                 name,
                                 result.clone(),
                                 crate::interpreter::is_strict_mode(),
-                            ) == Some(true)
-                            {
+                            );
+                            if set_result == Some(true) {
                                 return Ok(result);
+                            }
+                            if set_result.is_none() && !crate::interpreter::is_strict_mode() {
+                                rebind_identifier = true;
                             }
                             if crate::interpreter::is_strict_mode()
                                 && scope_ref.object_binding_has(name) != Some(true)
@@ -734,6 +755,9 @@ pub fn eval_expression(
                             }
                         }
                     }
+                }
+                if rebind_identifier {
+                    identifier_scope = None;
                 }
                 if let Some(scope) = identifier_scope {
                     if let Some(name) = ident_name.as_ref() {

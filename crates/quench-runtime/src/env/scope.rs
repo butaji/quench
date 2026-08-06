@@ -223,6 +223,9 @@ impl Scope {
         if !self.load_with_unscopables() {
             return None;
         }
+        if self.was_deleted_during_unscopables(name) {
+            return Some(false);
+        }
         Some(!self.is_unscopable(name))
     }
 
@@ -251,6 +254,14 @@ impl Scope {
 
     pub fn with_base_object(&self) -> Option<Rc<RefCell<crate::value::Object>>> {
         self.object_binding.clone()
+    }
+
+    pub fn get_object_binding_value_once(&self, name: &str) -> Option<Value> {
+        let object = self.object_binding.as_ref()?;
+        if self.object_binding_has(name) != Some(true) || self.is_unscopable(name) {
+            return None;
+        }
+        proxy_get_property(object, name).ok()
     }
 
     pub fn mark_function_name(&mut self, name: String) {
@@ -362,8 +373,9 @@ impl Scope {
         if !self.load_with_unscopables() || self.is_unscopable(name) {
             return None;
         }
-        if _strict && self.object_has_binding_property(name) != Some(true) {
-            return Some(false);
+        let is_proxy = proxy_handler_and_target(&object).is_some();
+        if !is_proxy && !object.borrow().has(name) {
+            return if _strict { Some(false) } else { None };
         }
         if matches!(object.borrow().get_descriptor(name), Some(flags) if !flags.writable) {
             return Some(false);

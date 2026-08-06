@@ -1061,6 +1061,27 @@ mod with_statement {
     }
 
     #[test]
+    fn with_proxy_compound_assignment_uses_one_has_for_get_binding_value() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        let result = ctx.eval(
+            r#"var log=[]; var env={p:0}; var proxy=new Proxy(env,{has(t,k){log.push('has:'+String(k));return Reflect.has(t,k)},get(t,k,r){log.push('get:'+String(k));return Reflect.get(t,k,r)},set(t,k,v,r){log.push('set:'+String(k));return Reflect.set(t,k,v,r)},getOwnPropertyDescriptor(t,k){log.push('getOwnPropertyDescriptor:'+String(k));return Reflect.getOwnPropertyDescriptor(t,k)},defineProperty(t,k,d){log.push('defineProperty:'+String(k));return Reflect.defineProperty(t,k,d)}}); with(proxy){p+=1} log.join(',')"#,
+        );
+        assert_eq!(
+            result.unwrap(),
+            Value::String("has:p,get:Symbol(Symbol.unscopables),has:p,get:p,has:p,set:p,getOwnPropertyDescriptor:p,defineProperty:p".into()),
+        );
+    }
+
+    #[test]
+    fn with_deleted_typed_array_binding_assigns_without_recreating_property() {
+        let result = eval(
+            "var typedArray = new Int32Array(10); var env = Object.create(typedArray); Object.defineProperty(env, 'NaN', { configurable: true, value: 100 }); with (env) { NaN = (delete env.NaN, 0); } Object.getOwnPropertyDescriptor(env, 'NaN') === undefined",
+        );
+        assert_eq!(result.unwrap(), Value::Boolean(true));
+    }
+
+    #[test]
     fn with_proxy_binding_object_lookup_follows_proxy_get_for_call_expression() {
         let result = eval(
             "var log = [];\n\
