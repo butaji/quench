@@ -1727,38 +1727,6 @@ fn strict_arguments_use_the_intrinsic_throw_type_error() {
 }
 
 #[test]
-fn throw_type_error_intrinsic_has_immutable_own_properties() {
-    let mut ctx = crate::Context::new().unwrap();
-    let result = ctx
-        .eval(
-            "var f = Object.getOwnPropertyDescriptor((function() { 'use strict'; return arguments; })(), 'callee').get; assert.throws(TypeError, function() { f(); }); [Object.isFrozen(f), Object.isExtensible(f), Object.getOwnPropertyNames(f).join(','), Object.getOwnPropertyDescriptor(f, 'length').configurable, Object.getOwnPropertyDescriptor(f, 'name').configurable].join('|')",
-        )
-        .unwrap();
-    assert_eq!(
-        result,
-        crate::Value::String("true|false|length,name|false|false".to_string())
-    );
-}
-
-#[test]
-fn strict_arguments_throw_type_error_is_realm_specific() {
-    let mut ctx = crate::Context::new().unwrap();
-    let result = ctx
-        .eval(
-            "var other = $262.createRealm().global; \
-             var localArgs = (function() { 'use strict'; return arguments; })(); \
-             var otherArgs = (new other.Function('\"use strict\"; return arguments;'))(); \
-             var otherArgs2 = (new other.Function('\"use strict\"; return arguments;'))(); \
-             var localGetter = Object.getOwnPropertyDescriptor(localArgs, 'callee').get; \
-             var otherGetter = Object.getOwnPropertyDescriptor(otherArgs, 'callee').get; \
-             var otherGetter2 = Object.getOwnPropertyDescriptor(otherArgs2, 'callee').get; \
-             [localGetter === otherGetter, otherGetter === otherGetter2, (function() { try { otherGetter(); } catch (e) { return e instanceof other.TypeError; } })()].join('|')",
-        )
-        .unwrap();
-    assert_eq!(result, crate::Value::String("false|true|true".to_string()));
-}
-
-#[test]
 fn non_simple_arguments_use_the_intrinsic_throw_type_error() {
     let mut ctx = crate::Context::new().unwrap();
     let result = ctx

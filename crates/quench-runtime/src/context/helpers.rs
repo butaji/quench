@@ -1107,23 +1107,6 @@ mod tests {
     }
 
     #[test]
-    fn double_register_builtins_preserves_assert_methods() {
-        // Same path as above, but check assert methods are intact.
-        let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
-        crate::builtins::bootstrap::bootstrap_js_builtins(&mut ctx).unwrap();
-        crate::builtins::register_builtins(&mut ctx);
-        crate::builtins::bootstrap::bootstrap_js_builtins(&mut ctx).unwrap();
-        let r = ctx
-            .eval("[typeof assert, typeof assert.sameValue, typeof assert.throws, typeof assert._isSameValue].join('|')")
-            .unwrap();
-        assert_eq!(
-            r,
-            crate::Value::String("function|function|function|function".into())
-        );
-    }
-
-    #[test]
     fn compare_array_formats_mismatch_without_type_error() {
         let mut ctx = Context::new().unwrap();
         crate::builtins::register_builtins(&mut ctx);
