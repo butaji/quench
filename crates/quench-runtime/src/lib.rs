@@ -1,4 +1,4 @@
-//! quench-runtime — Rust-native JavaScript runtime targeting 100% test262 ECMAScript conformance.
+//! quench-runtime — Rust-native JavaScript runtime targeting full ECMAScript conformance.
 //!
 //! Uses OXC for parsing and a custom tree-walking interpreter for execution.
 //!

@@ -195,7 +195,7 @@ pub fn register_error_constructor(error: Value, error_prototype: Rc<RefCell<Obje
 }
 
 /// Create a JS Error object and set it as the thrown value.
-/// Tries Test262Error first (preferred by test262 harness), falls back to Error.
+/// Tries the registered host error first, then falls back to Error.
 /// Returns the error value and the JsError wrapper.
 pub fn create_js_error(message: &str) -> (Value, JsError) {
     create_js_error_with_type(message, "Error")
@@ -631,13 +631,13 @@ mod tests {
     // ── Test262Error ─────────────────────────────────────────────────────
 
     #[test]
-    fn test262_error_set_and_get() {
+    fn host_error_set_and_get() {
         set_host_error(Value::Null);
         assert_eq!(get_host_error(), Some(Value::Null));
     }
 
     #[test]
-    fn test262_error_overwrite() {
+    fn host_error_overwrite() {
         set_host_error(Value::Boolean(false));
         set_host_error(Value::Boolean(true));
         assert_eq!(get_host_error(), Some(Value::Boolean(true)));
