@@ -841,6 +841,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "quench-test262"
+version = "0.1.0"
+dependencies = [
+ "quench-runtime",
+]
+
+[[package]]
 name = "quote"
 version = "1.0.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -870,6 +877,7 @@ name = "run-test"
 version = "0.1.0"
 dependencies = [
  "quench-runtime",
+ "quench-test262",
 ]
 
 [[package]]

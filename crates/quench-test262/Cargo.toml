@@ -1,0 +1,9 @@
+[package]
+name = "quench-test262"
+version = "0.1.0"
+edition = "2021"
+description = "Test262 harness and conformance runner for Quench"
+license = "MIT"
+
+[dependencies]
+quench-runtime = { path = "../quench-runtime" }

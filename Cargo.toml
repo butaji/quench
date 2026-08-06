@@ -1,3 +1,9 @@
 [workspace]
 resolver = "2"
-members = ["crates/quench-runtime", "tools/run-test", "tools/inspect-test", "tools/quench-cli"]
+members = [
+    "crates/quench-runtime",
+    "crates/quench-test262",
+    "tools/run-test",
+    "tools/inspect-test",
+    "tools/quench-cli",
+]

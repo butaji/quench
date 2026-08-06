@@ -20,15 +20,15 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use quench_runtime::test262::harness::try_inject_harness;
-use quench_runtime::test262::host::{capture_thrown_diagnostics, TestFailure};
-use quench_runtime::test262::metadata::Test262Metadata;
-use quench_runtime::test262::runner::execute::load_fixture_modules;
-use quench_runtime::test262::runner::execute::register_current_module_bindings;
-use quench_runtime::test262::runner::execute::register_current_script_module;
-use quench_runtime::test262::runner::execute::ASYNC_DONE_PRELUDE;
-use quench_runtime::test262::runner::run_single_test;
-use quench_runtime::test262::HarnessLoader;
+use quench_test262::harness::try_inject_harness;
+use quench_test262::host::{capture_thrown_diagnostics, TestFailure};
+use quench_test262::metadata::Test262Metadata;
+use quench_test262::runner::execute::load_fixture_modules;
+use quench_test262::runner::execute::register_current_module_bindings;
+use quench_test262::runner::execute::register_current_script_module;
+use quench_test262::runner::execute::ASYNC_DONE_PRELUDE;
+use quench_test262::runner::run_single_test;
+use quench_test262::HarnessLoader;
 use quench_runtime::{builtins, Context, JsError, Value};
 
 fn main() -> ExitCode {
@@ -77,11 +77,11 @@ fn main() -> ExitCode {
 
     if runner {
         let test262_dir = std::env::var("TEST262_DIR")
-            .unwrap_or_else(|_| quench_runtime::test262::runner::default_test262_dir());
+            .unwrap_or_else(|_| quench_test262::runner::default_test262_dir());
         let harness = HarnessLoader::new(&test262_dir);
         return match run_single_test(&harness, &path) {
-            quench_runtime::test262::host::TestOutcome::Pass => ExitCode::SUCCESS,
-            quench_runtime::test262::host::TestOutcome::Fail { failure } => {
+            quench_test262::host::TestOutcome::Pass => ExitCode::SUCCESS,
+            quench_test262::host::TestOutcome::Fail { failure } => {
                 eprintln!("Reason: {}", failure.message);
                 if let Some(error_type) = failure.error_type {
                     eprintln!("Type: {}", error_type);
@@ -94,7 +94,7 @@ fn main() -> ExitCode {
                 }
                 ExitCode::from(1)
             }
-            quench_runtime::test262::host::TestOutcome::Skip { reason } => {
+            quench_test262::host::TestOutcome::Skip { reason } => {
                 eprintln!("Reason: test was skipped: {reason}");
                 ExitCode::from(1)
             }
@@ -878,7 +878,7 @@ fn error_type_matches(phase: &str, typ: &str, msg: &str) -> bool {
 /// Negative-test verdict: exit 0 only when the error matches the expected
 /// type (both parse and runtime phases); 3 when no error occurred at all.
 fn judge_negative(
-    neg: &quench_runtime::test262::metadata::Negative,
+    neg: &quench_test262::metadata::Negative,
     label: &str,
     result: Result<Value, JsError>,
     test_path: &std::path::Path,
