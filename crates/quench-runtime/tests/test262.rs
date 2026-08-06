@@ -913,16 +913,47 @@ fn test262_staged() {
     // Spawn on a thread with a larger stack to avoid stack overflows
     // during deep parsing (default Rust test threads have ~2MB stack).
     let builder = std::thread::Builder::new().stack_size(64 * 1024 * 1024);
-    let result = builder
-        .spawn(|| test262_staged_impl())
-        .expect("failed to spawn runner thread")
-        .join();
-    match result {
-        Ok(()) => {}
-        Err(e) => {
-            panic!("runner thread panicked: {:?}", e);
+    let (tx, rx) = std::sync::mpsc::channel();
+    builder
+        .spawn(move || {
+            let result = std::panic::catch_unwind(test262_staged_impl);
+            let _ = tx.send(result);
+        })
+        .expect("failed to spawn runner thread");
+    match rx.recv_timeout(std::time::Duration::from_secs(test262_run_timeout_secs())) {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => panic!("runner thread panicked: {:?}", error),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            panic!(
+                "test262 runner timed out after {}s",
+                test262_run_timeout_secs()
+            );
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            panic!("test262 runner thread disconnected")
         }
     }
+}
+
+const DEFAULT_TEST262_RUN_TIMEOUT_SECS: u64 = 1800;
+
+fn test262_run_timeout_secs() -> u64 {
+    parse_test262_run_timeout(std::env::var("TEST262_RUN_TIMEOUT_SECS").ok().as_deref())
+}
+
+fn parse_test262_run_timeout(value: Option<&str>) -> u64 {
+    value
+        .and_then(|value| value.parse().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_TEST262_RUN_TIMEOUT_SECS)
+}
+
+#[test]
+fn staged_runner_timeout_has_bounded_default_and_rejects_invalid_values() {
+    assert_eq!(parse_test262_run_timeout(None), 1800);
+    assert_eq!(parse_test262_run_timeout(Some("0")), 1800);
+    assert_eq!(parse_test262_run_timeout(Some("invalid")), 1800);
+    assert_eq!(parse_test262_run_timeout(Some("7")), 7);
 }
 
 fn test262_staged_impl() {
