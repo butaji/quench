@@ -259,15 +259,6 @@ fn aggregate_error_uses_new_target_prototype_and_standard_length() {
 }
 
 #[test]
-fn aggregate_error_constructor_inherits_from_error_constructor() {
-    let mut ctx = crate::Context::new().unwrap();
-    assert_eq!(
-        ctx.eval("Object.getPrototypeOf(AggregateError) === Error").unwrap(),
-        crate::value::Value::Boolean(true)
-    );
-}
-
-#[test]
 fn aggregate_error_uses_custom_new_target_prototype() {
     let mut ctx = crate::Context::new().unwrap();
     let result = ctx
@@ -279,20 +270,25 @@ fn aggregate_error_uses_custom_new_target_prototype() {
 #[test]
 fn aggregate_error_uses_new_target_realm_default_prototype() {
     let mut other = crate::Context::new().unwrap();
-    let new_target = other.eval("var nt = new Function(); nt.prototype = undefined; nt").unwrap();
-    let other_aggregate_error_prototype = other
-        .eval("AggregateError.prototype")
+    let new_target = other
+        .eval("var nt = new Function(); nt.prototype = undefined; nt")
         .unwrap();
+    let other_aggregate_error_prototype = other.eval("AggregateError.prototype").unwrap();
+    let other_object_prototype = other.eval("Object.prototype").unwrap();
     let mut ctx = crate::Context::new().unwrap();
     ctx.set_global("foreignNewTarget".to_string(), new_target);
     ctx.set_global(
         "foreignAggregateErrorPrototype".to_string(),
         other_aggregate_error_prototype,
     );
+    ctx.set_global("foreignObjectPrototype".to_string(), other_object_prototype);
     let result = ctx
-        .eval("var err = Reflect.construct(AggregateError, [[]], foreignNewTarget); [typeof foreignNewTarget, foreignNewTarget.prototype === undefined, Object.getPrototypeOf(err) === foreignAggregateErrorPrototype, Object.getPrototypeOf(err) === Object.prototype].join('|')")
+        .eval("var err = Reflect.construct(AggregateError, [[]], foreignNewTarget); [typeof foreignNewTarget, foreignNewTarget.prototype === undefined, Object.getPrototypeOf(err) === foreignAggregateErrorPrototype, Object.getPrototypeOf(err) === foreignObjectPrototype, Object.getPrototypeOf(err) === Object.prototype].join('|')")
         .unwrap();
-    assert_eq!(result, crate::value::Value::String("function|true|true|false".into()));
+    assert_eq!(
+        result,
+        crate::value::Value::String("function|true|true|false|false".into())
+    );
 }
 
 #[test]

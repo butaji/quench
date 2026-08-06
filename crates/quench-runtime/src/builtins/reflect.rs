@@ -36,14 +36,27 @@ fn reflect_construct(args: Vec<Value>) -> Result<Value, JsError> {
         return Err(reflect_type_error("newTarget is not a constructor"));
     }
     let realm_default = match &new_target {
-        Value::Function(function) => function.closure.borrow().get("Object").and_then(|object| {
-            crate::eval::class::get_constructor_prototype(&object)
-                .ok()
-                .flatten()
-        }),
+        Value::Function(function) => {
+            let intrinsic = match &target {
+                Value::NativeConstructor(constructor) => constructor.name(),
+                _ => "Object".to_string(),
+            };
+            function.closure.borrow().get(&intrinsic).and_then(|object| {
+                crate::eval::class::get_constructor_prototype(&object)
+                    .ok()
+                    .flatten()
+            })
+        }
         _ => None,
     };
-    let mut prototype = crate::eval::class::get_constructor_prototype(&new_target)?
+    let new_target_prototype = match &new_target {
+        Value::Function(function) => match function.get_property("prototype") {
+            Some(Value::Object(prototype)) => Some(prototype),
+            _ => None,
+        },
+        _ => crate::eval::class::get_constructor_prototype(&new_target)?,
+    };
+    let mut prototype = new_target_prototype
         .or(realm_default)
         .or_else(|| {
             crate::eval::class::get_constructor_prototype(&target)

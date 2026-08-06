@@ -267,7 +267,8 @@ fn register_aggregate_error(ctx: &mut Context, parent_proto: &Rc<RefCell<Object>
             };
             let mut args = args;
             let errors = args.first().cloned().unwrap_or(Value::Undefined);
-            if !matches!(&errors, Value::Object(object) if object.borrow().kind == ObjectKind::Array) {
+            if !matches!(&errors, Value::Object(object) if object.borrow().kind == ObjectKind::Array)
+            {
                 let values = crate::eval::object::iterable_to_list(&errors)?;
                 let mut array = Object::new(ObjectKind::Array);
                 array.elements = values;
