@@ -115,24 +115,16 @@ like `-0n`, signed division truncation towards zero, or the
 `BigInt.asIntN` / `BigInt.asUintN` wrap semantics. `num-bigint` already
 covers all of them.
 
-## Conformance tooling — `walkdir`, `chrono`
-
-- **Crate:** `walkdir = "2"`, `chrono = "0.4"`.
-- **Why:** Used exclusively by the test262 runner
-  (`src/test262/runner.rs`) to enumerate the test corpus and timestamp
-  checkpoint files. Not part of the runtime path.
-
-### Why not `time`?
-
-`time` is lighter and pure Rust, but `chrono` already covers what the
-runner needs (timestamp formatting on the checkpoint file). Switching
-would save <2K LOC with no behavioural difference; not worth the churn.
-
 ## Dev-only — `tempfile`, `serial_test`
 
 - **Crate:** `tempfile = "3"`, `serial_test = "3"`.
 - **Why:** Integration tests need scratch directories; some tests touch
   the `CURRENT_CONTEXT` thread-local and must not run in parallel.
+
+## Date/time — `chrono`
+
+- **Crate:** `chrono = "0.4"`.
+- **Used by:** date parsing and calendar calculations in `src/builtins/date.rs`.
 
 ## Integration notes
 

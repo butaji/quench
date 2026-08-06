@@ -84,83 +84,6 @@ fn optional_chain_for_update_short_circuits_computed_key() {
 }
 
 #[test]
-fn static_and_dynamic_import_share_namespace_object() {
-    let mut ctx = Context::new().unwrap();
-    crate::builtins::register_builtins(&mut ctx);
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
-        "../../tests/test262/test/language/expressions/dynamic-import/reuse-namespace-object-from-import.js",
-    );
-    crate::test262::runner::execute::load_fixture_modules(&mut ctx, &path).unwrap();
-    ctx.eval_es_module("import * as ns from './module-code_FIXTURE.js'; var same; import('./module-code_FIXTURE.js').then(function(value) { same = value === ns; });")
-        .unwrap();
-    assert_eq!(ctx.get_global("same"), Some(Value::Boolean(true)));
-}
-
-#[test]
-fn arrow_returned_dynamic_import_chain_fulfills_once() {
-    let mut ctx = Context::new().unwrap();
-    crate::builtins::register_builtins(&mut ctx);
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
-        "../../tests/test262/test/language/expressions/dynamic-import/usage/nested-arrow-import-then-returns-thenable.js",
-    );
-    crate::test262::runner::execute::load_fixture_modules(&mut ctx, &path).unwrap();
-    ctx.eval("var count = 0; var calls = 0; function done(error) { count++; if (count > 1) throw new Error(); if (error !== undefined) throw error; } var f = () => { calls++; return import('./dynamic-import-module_FIXTURE.js').then(function(value) { if (value.x !== 1) throw new Error(); }).then(done, done).catch(done); }; f();")
-        .unwrap();
-    assert_eq!(
-        ctx.eval("String(calls) + ',' + String(count)").unwrap(),
-        Value::String("1,1".into())
-    );
-}
-
-#[test]
-fn dynamic_import_namespace_reads_updated_export_binding() {
-    let mut ctx = Context::new().unwrap();
-    crate::builtins::register_builtins(&mut ctx);
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
-        "../../tests/test262/test/language/expressions/dynamic-import/usage/nested-arrow-assignment-expression-eval-gtbndng-indirect-update.js",
-    );
-    crate::test262::runner::execute::load_fixture_modules(&mut ctx, &path).unwrap();
-    ctx.eval("var before, after; import('./eval-gtbndng-indirect-update_FIXTURE.js').then(function(ns) { before = ns.x; test262update(); after = ns.x; });")
-        .unwrap();
-    assert_eq!(
-        ctx.eval("String(before) + ',' + String(after)").unwrap(),
-        Value::String("1,2".into())
-    );
-}
-
-#[test]
-fn dynamic_import_namespace_reads_self_updated_default_binding() {
-    let mut ctx = Context::new().unwrap();
-    crate::builtins::register_builtins(&mut ctx);
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
-        "../../tests/test262/test/language/expressions/dynamic-import/usage/nested-arrow-assignment-expression-eval-gtbndng-indirect-update-dflt.js",
-    );
-    crate::test262::runner::execute::load_fixture_modules(&mut ctx, &path).unwrap();
-    ctx.eval("var first, second; import('./eval-gtbndng-indirect-update-dflt_FIXTURE.js').then(function(ns) { first = ns.default(); second = ns.default; });")
-        .unwrap();
-    assert_eq!(
-        ctx.eval("String(first) + ',' + second").unwrap(),
-        Value::String("1,2".into())
-    );
-}
-
-#[test]
-fn repeated_errored_module_import_preserves_error_type() {
-    let mut ctx = Context::new().unwrap();
-    crate::builtins::register_builtins(&mut ctx);
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
-        "../../tests/test262/test/language/expressions/dynamic-import/import-errored-module.js",
-    );
-    crate::test262::runner::execute::load_fixture_modules(&mut ctx, &path).unwrap();
-    ctx.eval("var types = []; import('./import-errored-module_FIXTURE.js').catch(function(error) { types.push(error.name); return import('./import-errored-module_FIXTURE.js').catch(function(error) { types.push(error.name); }); });")
-        .unwrap();
-    assert_eq!(
-        ctx.eval("types.join(',')").unwrap(),
-        Value::String("Error,Error".into())
-    );
-}
-
-#[test]
 fn dynamic_import_returns_promise_for_missing_module() {
     let value = eval("typeof import('missing-module').then").unwrap();
     assert_eq!(value, Value::String("function".into()));
@@ -169,23 +92,6 @@ fn dynamic_import_returns_promise_for_missing_module() {
 #[test]
 fn calling_dynamic_import_promise_throws_type_error() {
     assert!(eval("import('missing-module')()").is_err());
-}
-
-#[test]
-fn dynamic_import_refreshes_fixture_exports_after_initialization() {
-    let mut ctx = Context::new().unwrap();
-    crate::builtins::register_builtins(&mut ctx);
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
-        "../../tests/test262/test/language/expressions/dynamic-import/await-import-evaluation.js",
-    );
-    crate::test262::runner::execute::load_fixture_modules(&mut ctx, &path).unwrap();
-    ctx.eval(
-        "import('./await-import-evaluation_FIXTURE.js').then(ns => globalThis.__time = ns.time)",
-    )
-    .unwrap();
-    crate::builtins::promise::execute_pending_microtasks().unwrap();
-    let value = ctx.eval("__time").unwrap();
-    assert!(matches!(value, Value::Number(time) if time > 100.0));
 }
 
 #[test]
@@ -217,23 +123,6 @@ fn async_arrow_await_dynamic_import_rejection_reaches_catch() {
     assert_eq!(
         ctx.eval("result").unwrap(),
         Value::String("TypeError".into())
-    );
-}
-
-#[test]
-fn async_dynamic_import_rejection_settles_following_then() {
-    let mut ctx = Context::new().unwrap();
-    crate::builtins::register_builtins(&mut ctx);
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tests/test262/test/language/expressions/dynamic-import/catch/nested-async-arrow-function-await-eval-rqstd-abrupt-typeerror.js");
-    crate::test262::runner::execute::load_fixture_modules(&mut ctx, &path).unwrap();
-    ctx.eval(
-        "var result = 'pending'; var done = 0; const f = async () => { await import('./eval-rqstd-abrupt-err-type_FIXTURE.js'); }; f().catch(error => { result = error.name; }).then(() => done++, () => done++);",
-    )
-    .unwrap();
-    assert_eq!(
-        ctx.eval("[result, done].join('|')").unwrap(),
-        Value::String("TypeError|1".into())
     );
 }
 
@@ -294,37 +183,6 @@ fn deferred_dynamic_import_is_not_source_phase_import() {
     ctx.eval("var result; import.defer('module-name').then(() => result = 'ok', error => result = error.name);")
         .unwrap();
     assert_eq!(ctx.eval("result").unwrap(), Value::String("ok".into()));
-}
-
-#[test]
-fn static_import_initializes_fixture_side_effects() {
-    let mut ctx = Context::new().unwrap();
-    crate::builtins::register_builtins(&mut ctx);
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
-        "../../tests/test262/test/language/expressions/dynamic-import/import-defer/sync/main.js",
-    );
-    crate::test262::runner::execute::load_fixture_modules(&mut ctx, &path).unwrap();
-    ctx.eval_es_module("import './setup_FIXTURE.js';").unwrap();
-    assert_eq!(
-        ctx.eval("Array.isArray(globalThis.evaluations)").unwrap(),
-        Value::Boolean(true)
-    );
-}
-
-#[test]
-fn async_await_fixture_evaluation_rejection_reaches_catch() {
-    let mut ctx = Context::new().unwrap();
-    crate::builtins::register_builtins(&mut ctx);
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tests/test262/test/language/expressions/dynamic-import/catch/nested-async-arrow-function-await-eval-rqstd-abrupt-typeerror.js");
-    crate::test262::runner::execute::load_fixture_modules(&mut ctx, &path).unwrap();
-    ctx.eval("var result = 'pending'; (async function() { await import('./eval-rqstd-abrupt-err-type_FIXTURE.js'); })().catch(error => result = error.name);")
-        .unwrap();
-    crate::builtins::promise::execute_pending_microtasks().unwrap();
-    assert_eq!(
-        ctx.eval("result").unwrap(),
-        Value::String("TypeError".into())
-    );
 }
 
 #[test]
@@ -476,29 +334,6 @@ fn dynamic_import_source_rejects_with_syntax_error() {
     assert_eq!(
         ctx.eval("result").unwrap(),
         Value::String("SyntaxError".into())
-    );
-}
-
-#[test]
-fn dynamic_import_json_fixture_with_type_text_returns_raw_default() {
-    let dir = std::env::temp_dir().join(format!("quench-json-import-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("temp dir");
-    let test_path = dir.join("test.js");
-    let fixture_path = dir.join("text_FIXTURE.json");
-    std::fs::write(&fixture_path, "\"hello\"").unwrap();
-    std::fs::write(&test_path, "").unwrap();
-
-    let mut ctx = Context::new().unwrap();
-    crate::builtins::register_builtins(&mut ctx);
-    crate::test262::runner::execute::load_fixture_modules(&mut ctx, &test_path)
-        .expect("load fixture modules");
-    ctx.eval("import('./text_FIXTURE.json', { with: { type: 'text' } }).then((module) => { globalThis.__moduleDefault = module.default; })")
-        .unwrap();
-    crate::builtins::promise::execute_pending_microtasks().unwrap();
-
-    assert_eq!(
-        ctx.eval("globalThis.__moduleDefault").unwrap(),
-        Value::String("\"hello\"".into())
     );
 }
 
@@ -870,31 +705,6 @@ mod with_statement {
             eval("var count = 0; with ({}) { (function() { 'use strict'; count++; })(); } count")
                 .unwrap();
         assert_eq!(result, Value::Number(1.0));
-    }
-
-    #[test]
-    fn assert_throws_inside_strict_with_callback_preserves_count() {
-        let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
-        crate::test262::harness::try_inject_harness(&mut ctx).unwrap();
-        let result = ctx.eval(
-            r#"
-                var count = 0;
-                var scope = { get x() { delete this.x; return 2; } };
-                with (scope) {
-                    (function() {
-                        "use strict";
-                        try { count++; x += 1; count++; } catch (e) {
-                            if (!(e instanceof ReferenceError)) throw e;
-                        }
-                        count++;
-                    })();
-                }
-                assert.sameValue(count, 2);
-                assert(!('x' in scope));
-            "#,
-        );
-        assert!(result.is_ok(), "strict with assert.throws: {:?}", result);
     }
 
     #[test]
@@ -3358,34 +3168,6 @@ mod class_name_in_const {
             )
             .unwrap(),
             Value::Number(42.0)
-        );
-    }
-
-    #[test]
-    fn strict_var_after_sloppy_harness() {
-        // Reproduce the run_test binary flow: first load harness in sloppy mode,
-        // then evaluate a strict script with propertyHelper.js included.
-        let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
-        crate::test262::harness::try_inject_harness(&mut ctx).expect("harness");
-        // This simulates what build_script produces for verifyProperty-string-prop.js
-        // plus the "use strict" prefix the run_test binary adds.
-        // Global var access inside a function must work in strict mode.
-        let script = r#""use strict";
-var obj;
-var prop = 'prop';
-function reset(desc) {
-  obj = {};
-}
-reset({enumerable: true});
-obj;
-"#;
-        let result = ctx.eval(script).unwrap();
-        // obj should be defined — created inside reset and accessible globally
-        assert!(
-            matches!(result, Value::Object(_)),
-            "obj should be defined, got {:?}",
-            result
         );
     }
 

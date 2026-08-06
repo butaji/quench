@@ -1,8 +1,8 @@
 //! $262 host API object for test262
 
+use crate::harness::make_native;
 use quench_runtime::ast::Program;
 use quench_runtime::context::CURRENT_CONTEXT;
-use crate::harness::make_native;
 use quench_runtime::value::{Object, ObjectKind};
 use quench_runtime::{Context, JsError, Value};
 use std::cell::RefCell;
@@ -91,9 +91,7 @@ fn host_262_create_realm(_args: Vec<Value>) -> Result<Value, JsError> {
     // Create a shared context storage; we need interior mutability so the
     // realm_eval_script closure (which must be 'static) can mutate it.
     let realm_ctx = Rc::new(RefCell::new(Some(ctx)));
-    let realm_intrinsics = Rc::new(RefCell::new(Some(
-        quench_runtime::RealmSnapshot::capture(),
-    )));
+    let realm_intrinsics = Rc::new(RefCell::new(Some(quench_runtime::RealmSnapshot::capture())));
 
     // Set realm's eval to use the shared context
     let eval_ctx = Rc::clone(&realm_ctx);
@@ -196,7 +194,9 @@ fn reject_restricted_global_lexicals(ctx: &Context, source: &str) -> Result<(), 
         current_env
             .as_ref()
             .is_some_and(|env| match env.borrow().get_kind(name) {
-                Some(quench_runtime::ast::VarKind::Let | quench_runtime::ast::VarKind::Const) => true,
+                Some(quench_runtime::ast::VarKind::Let | quench_runtime::ast::VarKind::Const) => {
+                    true
+                }
                 Some(quench_runtime::ast::VarKind::Var) => global
                     .borrow()
                     .get_own_property(name)
@@ -293,7 +293,8 @@ fn reject_restricted_global_lexicals(ctx: &Context, source: &str) -> Result<(), 
             .borrow()
             .get_own_property(&name)
             .is_some_and(|descriptor| descriptor.configurable == Some(false))
-            && quench_runtime::context::get_current_env().and_then(|env| env.borrow().get_kind(&name))
+            && quench_runtime::context::get_current_env()
+                .and_then(|env| env.borrow().get_kind(&name))
                 != Some(quench_runtime::ast::VarKind::Var)
         {
             let (error, js_error) = quench_runtime::value::error::create_js_error_with_type(
@@ -344,7 +345,8 @@ pub fn inject_stub_agent(ctx: &mut Context) {
 /// $262.AbstractModuleSource constructor — throws TypeError when invoked.
 fn host_262_abstract_module_source(_args: Vec<Value>) -> Result<Value, JsError> {
     let msg = "TypeError: AbstractModuleSource cannot be called directly".to_string();
-    let (err_val, js_err) = quench_runtime::value::error::create_js_error_with_type(&msg, "TypeError");
+    let (err_val, js_err) =
+        quench_runtime::value::error::create_js_error_with_type(&msg, "TypeError");
     quench_runtime::value::set_thrown_value(err_val);
     Err(js_err)
 }
@@ -773,7 +775,10 @@ mod tests {
     fn test_abstract_module_source_is_function() {
         let mut ctx = harness_ctx();
         let result = ctx.eval("typeof $262.AbstractModuleSource");
-        assert_eq!(result.unwrap(), quench_runtime::Value::String("function".into()));
+        assert_eq!(
+            result.unwrap(),
+            quench_runtime::Value::String("function".into())
+        );
     }
 
     #[test]
@@ -821,7 +826,10 @@ mod tests {
     fn test_abstract_module_source_prototype_descriptor_is_locked() {
         let mut ctx = harness_ctx();
         let result = ctx.eval("[Object.getOwnPropertyDescriptor($262.AbstractModuleSource, 'prototype').writable, Object.getOwnPropertyDescriptor($262.AbstractModuleSource, 'prototype').configurable].join('|')");
-        assert_eq!(result.unwrap(), quench_runtime::Value::String("false|false".into()));
+        assert_eq!(
+            result.unwrap(),
+            quench_runtime::Value::String("false|false".into())
+        );
     }
 
     #[test]

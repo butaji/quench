@@ -9,8 +9,8 @@ use std::thread;
 use std::time::Duration;
 
 use crate::harness::HarnessLoader;
-use crate::{capture_thrown_diagnostics, TestFailure, TestOutcome};
 use crate::metadata::Test262Metadata;
+use crate::{capture_thrown_diagnostics, TestFailure, TestOutcome};
 use quench_runtime::Value;
 
 /// Per-test timeout in seconds — one value shared by the in-process and
@@ -642,7 +642,12 @@ fn propagate_current_module_resolution_error(ctx: &mut quench_runtime::Context, 
     errors.borrow_mut().set(&module, reason);
 }
 
-fn fixture_reexports_to(ctx: &quench_runtime::Context, module: &str, target: &str, exported: &str) -> bool {
+fn fixture_reexports_to(
+    ctx: &quench_runtime::Context,
+    module: &str,
+    target: &str,
+    exported: &str,
+) -> bool {
     let mut visited = HashSet::new();
     fixture_reexports_to_inner(ctx, module, target, exported, &mut visited)
 }
@@ -767,7 +772,11 @@ fn run_async_script_with_path(
     async_done_probe(&mut ctx)
 }
 
-fn register_current_module_placeholder(ctx: &mut quench_runtime::Context, path: &Path, is_module: bool) {
+fn register_current_module_placeholder(
+    ctx: &mut quench_runtime::Context,
+    path: &Path,
+    is_module: bool,
+) {
     if !is_module {
         return;
     }
@@ -783,20 +792,26 @@ fn register_current_module_placeholder(ctx: &mut quench_runtime::Context, path: 
             quench_runtime::Value::Boolean(true),
         );
     }
-    let mut module = quench_runtime::value::Object::new(quench_runtime::value::ObjectKind::ModuleNamespace);
+    let mut module =
+        quench_runtime::value::Object::new(quench_runtime::value::ObjectKind::ModuleNamespace);
     if let Some(quench_runtime::Value::Object(bindings)) =
         ctx.get_global("__quench_current_module_bindings__")
     {
         let env = ctx.environment_view();
         for exported in bindings.borrow().own_property_names() {
-            let Some(quench_runtime::Value::String(local)) = bindings.borrow().get(&exported) else {
+            let Some(quench_runtime::Value::String(local)) = bindings.borrow().get(&exported)
+            else {
                 continue;
             };
             let env = std::rc::Rc::clone(&env);
-            let getter =
-                quench_runtime::Value::NativeFunction(std::rc::Rc::new(quench_runtime::value::NativeFunction::new(
-                    move |_| Ok(env.borrow().get(&local).unwrap_or(quench_runtime::Value::Undefined)),
-                )));
+            let getter = quench_runtime::Value::NativeFunction(std::rc::Rc::new(
+                quench_runtime::value::NativeFunction::new(move |_| {
+                    Ok(env
+                        .borrow()
+                        .get(&local)
+                        .unwrap_or(quench_runtime::Value::Undefined))
+                }),
+            ));
             module.define_accessor(
                 &exported,
                 Some(getter),
@@ -818,7 +833,8 @@ pub fn register_current_module_bindings(
     source: &str,
 ) -> Result<(), String> {
     let (_, _, exports, _, _) = fixture_exports_from_source(usize::MAX, source)?;
-    let mut bindings = quench_runtime::value::Object::new(quench_runtime::value::ObjectKind::Ordinary);
+    let mut bindings =
+        quench_runtime::value::Object::new(quench_runtime::value::ObjectKind::Ordinary);
     for name in exports.named {
         bindings.set(&name, quench_runtime::Value::String(name.clone()));
     }
@@ -839,7 +855,10 @@ pub fn register_current_module_bindings(
             let (local, exported) = specifier
                 .split_once(" as ")
                 .unwrap_or((specifier, specifier));
-            bindings.set(exported.trim(), quench_runtime::Value::String(local.trim().into()));
+            bindings.set(
+                exported.trim(),
+                quench_runtime::Value::String(local.trim().into()),
+            );
         }
     }
     ctx.set_global(
@@ -861,7 +880,10 @@ fn default_function_updates_itself(source: &str) -> bool {
     })
 }
 
-pub fn register_current_script_module(ctx: &mut quench_runtime::Context, path: &Path) -> Result<(), String> {
+pub fn register_current_script_module(
+    ctx: &mut quench_runtime::Context,
+    path: &Path,
+) -> Result<(), String> {
     let name = path
         .file_name()
         .and_then(|name| name.to_str())
@@ -875,10 +897,13 @@ pub fn register_current_script_module(ctx: &mut quench_runtime::Context, path: &
         .get_global("__quench_fixture_init_done__")
         .ok_or("fixture done")?;
     if let quench_runtime::Value::Object(scripts) = scripts {
-        scripts.borrow_mut().set(&key, quench_runtime::Value::String(source));
+        scripts
+            .borrow_mut()
+            .set(&key, quench_runtime::Value::String(source));
     }
     if let quench_runtime::Value::Object(done) = done {
-        done.borrow_mut().set(&key, quench_runtime::Value::Boolean(false));
+        done.borrow_mut()
+            .set(&key, quench_runtime::Value::Boolean(false));
     }
     ctx.register_module(
         &key,
@@ -887,7 +912,10 @@ pub fn register_current_script_module(ctx: &mut quench_runtime::Context, path: &
     Ok(())
 }
 
-pub fn load_fixture_modules(ctx: &mut quench_runtime::Context, test_path: &Path) -> Result<(), String> {
+pub fn load_fixture_modules(
+    ctx: &mut quench_runtime::Context,
+    test_path: &Path,
+) -> Result<(), String> {
     let directory = test_path
         .parent()
         .ok_or_else(|| "test has no parent directory".to_string())?;
@@ -998,7 +1026,8 @@ pub fn load_fixture_modules(ctx: &mut quench_runtime::Context, test_path: &Path)
     for (index, (name, path)) in fixtures.iter().enumerate() {
         let bytes = std::fs::read(path).map_err(|e| format!("fixture read: {}", e))?;
         if let Some(Value::Object(raw_bytes)) = ctx.get_global(raw_bytes_key) {
-            let mut value = quench_runtime::value::Object::new(quench_runtime::value::ObjectKind::Array);
+            let mut value =
+                quench_runtime::value::Object::new(quench_runtime::value::ObjectKind::Array);
             value.elements = bytes
                 .iter()
                 .map(|byte| Value::Number(f64::from(*byte)))
@@ -1018,7 +1047,9 @@ pub fn load_fixture_modules(ctx: &mut quench_runtime::Context, test_path: &Path)
             }
             ctx.register_module(
                 &module_name,
-                quench_runtime::value::Object::new(quench_runtime::value::ObjectKind::ModuleNamespace),
+                quench_runtime::value::Object::new(
+                    quench_runtime::value::ObjectKind::ModuleNamespace,
+                ),
             );
             continue;
         }
@@ -1039,8 +1070,9 @@ pub fn load_fixture_modules(ctx: &mut quench_runtime::Context, test_path: &Path)
                 Ok(value) => value,
                 Err(_) => Value::Undefined,
             };
-            let mut module_exports =
-                quench_runtime::value::Object::new(quench_runtime::value::ObjectKind::ModuleNamespace);
+            let mut module_exports = quench_runtime::value::Object::new(
+                quench_runtime::value::ObjectKind::ModuleNamespace,
+            );
             module_exports.define(
                 "default",
                 json_default,
@@ -1071,7 +1103,9 @@ pub fn load_fixture_modules(ctx: &mut quench_runtime::Context, test_path: &Path)
             }
             ctx.register_module(
                 &module_name,
-                quench_runtime::value::Object::new(quench_runtime::value::ObjectKind::ModuleNamespace),
+                quench_runtime::value::Object::new(
+                    quench_runtime::value::ObjectKind::ModuleNamespace,
+                ),
             );
             continue;
         }
@@ -1111,9 +1145,10 @@ pub fn load_fixture_modules(ctx: &mut quench_runtime::Context, test_path: &Path)
         }
         if !side_effect_source.trim().is_empty() {
             if let Some(Value::Object(scripts)) = ctx.get_global(init_scripts_key) {
-                scripts
-                    .borrow_mut()
-                    .set(&module_name, quench_runtime::Value::String(side_effect_source));
+                scripts.borrow_mut().set(
+                    &module_name,
+                    quench_runtime::Value::String(side_effect_source),
+                );
             }
             if let Some(Value::Object(done)) = ctx.get_global(init_done_key) {
                 done.borrow_mut()
@@ -1126,7 +1161,9 @@ pub fn load_fixture_modules(ctx: &mut quench_runtime::Context, test_path: &Path)
         let mut needs_refresh = side_effects_need_refresh;
         let mut values = std::collections::HashMap::new();
         for name in exports.named {
-            let value = ctx.get_global(&name).unwrap_or(quench_runtime::Value::Undefined);
+            let value = ctx
+                .get_global(&name)
+                .unwrap_or(quench_runtime::Value::Undefined);
             if value == quench_runtime::Value::Undefined {
                 needs_refresh = true;
             }
@@ -1223,7 +1260,8 @@ pub fn load_fixture_modules(ctx: &mut quench_runtime::Context, test_path: &Path)
             pending_reexports.insert(module_name.clone(), reexports);
         }
         if let Some(Value::Object(bindings)) = ctx.get_global(init_bindings_key) {
-            let mut mapping = quench_runtime::value::Object::new(quench_runtime::value::ObjectKind::Ordinary);
+            let mut mapping =
+                quench_runtime::value::Object::new(quench_runtime::value::ObjectKind::Ordinary);
             for (exported, local) in &module_bindings {
                 mapping.set(exported, quench_runtime::Value::String(local.clone()));
             }
@@ -1234,20 +1272,25 @@ pub fn load_fixture_modules(ctx: &mut quench_runtime::Context, test_path: &Path)
         }
         if exposes_update {
             if let Some(Value::Object(getters)) = ctx.get_global(init_getters_key) {
-                let mut mapping = quench_runtime::value::Object::new(quench_runtime::value::ObjectKind::Ordinary);
+                let mut mapping =
+                    quench_runtime::value::Object::new(quench_runtime::value::ObjectKind::Ordinary);
                 for (exported, local) in &module_bindings {
                     let Some(binding) = ctx.environment_view().borrow().get_shared(local) else {
                         continue;
                     };
                     needs_refresh = true;
                     let getter = quench_runtime::Value::NativeFunction(std::rc::Rc::new(
-                        quench_runtime::value::NativeFunction::new(move |_| Ok(binding.borrow().clone())),
+                        quench_runtime::value::NativeFunction::new(move |_| {
+                            Ok(binding.borrow().clone())
+                        }),
                     ));
                     mapping.set(exported, getter);
                 }
                 getters.borrow_mut().set(
                     &module_name,
-                    quench_runtime::Value::Object(std::rc::Rc::new(std::cell::RefCell::new(mapping))),
+                    quench_runtime::Value::Object(std::rc::Rc::new(std::cell::RefCell::new(
+                        mapping,
+                    ))),
                 );
             }
         }
@@ -1277,9 +1320,10 @@ pub fn load_fixture_modules(ctx: &mut quench_runtime::Context, test_path: &Path)
         if let Some(Value::Object(errors)) = ctx.get_global(module_errors_key) {
             for (module, target) in &fixture_module_requests {
                 if Some(target) != current_module.as_ref() && ctx.get_module(target).is_none() {
-                    errors
-                        .borrow_mut()
-                        .set(module, quench_runtime::Value::String("Missing module".into()));
+                    errors.borrow_mut().set(
+                        module,
+                        quench_runtime::Value::String("Missing module".into()),
+                    );
                 }
             }
             for (module, imported, target) in &fixture_import_edges {
@@ -1328,8 +1372,9 @@ pub fn load_fixture_modules(ctx: &mut quench_runtime::Context, test_path: &Path)
                         let Some(Value::Object(target)) = ctx.get_module(&source) else {
                             continue;
                         };
-                        let mut namespace =
-                            quench_runtime::value::Object::new(quench_runtime::value::ObjectKind::ModuleNamespace);
+                        let mut namespace = quench_runtime::value::Object::new(
+                            quench_runtime::value::ObjectKind::ModuleNamespace,
+                        );
                         let mut keys = target.borrow().own_property_names();
                         keys.sort();
                         for key in keys {
@@ -1435,14 +1480,15 @@ pub fn load_fixture_modules(ctx: &mut quench_runtime::Context, test_path: &Path)
                             if target.borrow().has_getter(&local) {
                                 let target = std::rc::Rc::clone(&target);
                                 let local_key = local.clone();
-                                let getter = quench_runtime::Value::NativeFunction(std::rc::Rc::new(
-                                    quench_runtime::value::NativeFunction::new(move |_| {
-                                        Ok(target
-                                            .borrow()
-                                            .get(&local_key)
-                                            .unwrap_or(quench_runtime::Value::Undefined))
-                                    }),
-                                ));
+                                let getter =
+                                    quench_runtime::Value::NativeFunction(std::rc::Rc::new(
+                                        quench_runtime::value::NativeFunction::new(move |_| {
+                                            Ok(target
+                                                .borrow()
+                                                .get(&local_key)
+                                                .unwrap_or(quench_runtime::Value::Undefined))
+                                        }),
+                                    ));
                                 module.borrow_mut().define_accessor(
                                     &exported,
                                     Some(getter),
@@ -1472,7 +1518,11 @@ pub fn load_fixture_modules(ctx: &mut quench_runtime::Context, test_path: &Path)
                                 value.unwrap_or(quench_runtime::Value::Undefined),
                             );
                         } else {
-                            define_module_binding(&module, &exported, quench_runtime::Value::Undefined);
+                            define_module_binding(
+                                &module,
+                                &exported,
+                                quench_runtime::Value::Undefined,
+                            );
                         }
                     }
                 }
@@ -1493,17 +1543,18 @@ pub fn load_fixture_modules(ctx: &mut quench_runtime::Context, test_path: &Path)
             continue;
         };
         if let Some(Value::Object(target)) = ctx.get_module(&source) {
-            let promise =
-                quench_runtime::builtins::promise::create_resolved_promise(quench_runtime::Value::Object(target));
+            let promise = quench_runtime::builtins::promise::create_resolved_promise(
+                quench_runtime::Value::Object(target),
+            );
             define_module_binding(&module, "default", quench_runtime::Value::Object(promise));
         } else {
             define_module_binding(&module, "default", quench_runtime::Value::Undefined);
         }
     }
     for (module_name, local, source) in deferred_namespace_imports {
-        let promise =
-            ctx.dynamic_import_module(&source, None, false, true)
-                .map_err(|error| format!("deferred fixture import: {error:?}"))?;
+        let promise = ctx
+            .dynamic_import_module(&source, None, false, true)
+            .map_err(|error| format!("deferred fixture import: {error:?}"))?;
         let Value::Object(promise) = promise else {
             continue;
         };
@@ -1818,7 +1869,8 @@ fn json_to_value(value: serde_json::Value) -> Result<quench_runtime::Value, Stri
             )))
         }
         serde_json::Value::Object(values) => {
-            let mut object = quench_runtime::value::Object::new(quench_runtime::value::ObjectKind::Ordinary);
+            let mut object =
+                quench_runtime::value::Object::new(quench_runtime::value::ObjectKind::Ordinary);
             for (key, value) in values {
                 object.properties.insert(key, json_to_value(value)?);
             }

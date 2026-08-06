@@ -40,8 +40,7 @@ anyhow = "1"
 # BigInt support
 num-bigint = "0.4"
 
-# Conformance testing
-walkdir = "2"
+# Date/time primitives
 chrono = "0.4"
 
 [dev-dependencies]

@@ -5,7 +5,7 @@
 //!   cargo run --bin inspect-test -- --source <path-to-test.js>
 
 use std::path::PathBuf;
-use quench_runtime::test262::metadata::Test262Metadata;
+use quench_test262::metadata::Test262Metadata;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();

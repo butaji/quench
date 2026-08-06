@@ -532,7 +532,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn typed_array_constructor_is_callable() {
         let ctx = &mut Context::new().unwrap();
@@ -1059,12 +1058,6 @@ mod tests {
         );
     }
 
-
-
-
-
-
-
     /// Isolates the NaN bug to either the builtin Float32Array or MyFloat32Array (subclass).
     #[test]
     fn typed_array_float32_subclass_minimal() {
@@ -1164,13 +1157,6 @@ mod tests {
         );
     }
 
-
-
-
-
-
-
-
     #[test]
     fn typed_array_shrink_mid_iteration_throws_typeerror() {
         let ctx = &mut Context::new().unwrap();
@@ -1253,10 +1239,6 @@ mod tests {
         assert_eq!(result.unwrap(), Value::Boolean(true));
     }
 
-
-
-
-
     #[test]
     fn typed_array_shrink_list_ctors() {
         let ctx = &mut Context::new().unwrap();
@@ -1307,7 +1289,6 @@ mod tests {
             "Float32Array shrink should throw TypeError"
         );
     }
-
 
     #[test]
     fn typed_array_shrink_does_not_throw_for_length_tracking() {
@@ -1362,7 +1343,6 @@ mod tests {
         );
         assert_eq!(result.unwrap(), Value::Number(0.0));
     }
-
 
     #[test]
     fn typed_array_iterator_rejects_detached_buffer() {

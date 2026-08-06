@@ -68,7 +68,7 @@ TEST262_STAGE=N cargo nextest run -p quench-test262 --test test262 --profile tes
 ALL_STAGES=1 cargo nextest run -p quench-test262 --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all --no-capture
 ```
 
-122 stages. No checkpoints. No skips. `src/test262/runner.rs::STAGES` mirrors
+122 stages. No checkpoints. No skips. `crates/quench-test262/src/test262/runner` mirrors
 `tasks/index.json`. `test/intl402` (ECMA-402) and `test/staging` are
 out of scope.
 

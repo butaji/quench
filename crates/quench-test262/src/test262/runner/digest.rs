@@ -7,10 +7,10 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 
 use crate::harness::HarnessLoader;
-use crate::{TestFailure, TestOutcome};
 use crate::runner::execute::{run_isolated, run_single_test};
 use crate::runner::flags::RunnerFlags;
 use crate::runner::RunSummary;
+use crate::{TestFailure, TestOutcome};
 
 #[derive(Debug, Default)]
 pub struct DigestResult {

@@ -1069,7 +1069,8 @@ if (opd.configurable !== true) throw new Error('FAIL: configurable should be tru
         // Plant a thrown_value as if a subsequent test's body had thrown and
         // the harness catch had cleared it — except in this scenario, the
         // catch didn't fully consume. The next harness load should clear it.
-        let (stale, _) = quench_runtime::value::error::create_js_error_with_type("from prior test", "Error");
+        let (stale, _) =
+            quench_runtime::value::error::create_js_error_with_type("from prior test", "Error");
         quench_runtime::value::set_thrown_value(stale);
 
         let mut ctx2 = Context::new().unwrap();
@@ -1086,7 +1087,9 @@ if (opd.configurable !== true) throw new Error('FAIL: configurable should be tru
         use quench_runtime::value::function::ValueFunction;
 
         // Create a Value::Function (mimics what (function(){}) evaluates to)
-        let closure = std::rc::Rc::new(std::cell::RefCell::new(quench_runtime::env::Environment::new()));
+        let closure = std::rc::Rc::new(std::cell::RefCell::new(
+            quench_runtime::env::Environment::new(),
+        ));
         let mut func = ValueFunction::new(None, vec![], vec![], closure, false, false);
         func.strict = false; // sloppy mode
         let func_val = Value::Function(func);
@@ -1181,7 +1184,9 @@ if (opd.configurable !== true) throw new Error('FAIL: configurable should be tru
         // Arrow function → NOT constructor
         let mut arrow = ValueFunction::new_arrow(
             vec![],
-            Box::new(quench_runtime::ast::ArrowBody::Block(std::rc::Rc::new(vec![]))),
+            Box::new(quench_runtime::ast::ArrowBody::Block(std::rc::Rc::new(
+                vec![],
+            ))),
             make_env(),
         );
         arrow.strict = false;

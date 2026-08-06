@@ -14,8 +14,8 @@ pub mod metadata {
     pub use super::test262::metadata::*;
 }
 pub mod runner {
-    pub use super::test262::runner::*;
     pub use super::test262::runner::execute;
+    pub use super::test262::runner::*;
 }
 pub mod skip {
     pub use super::test262::skip::*;
@@ -23,8 +23,8 @@ pub mod skip {
 
 mod test262;
 
-pub use test262::*;
 pub use quench_runtime::{DefaultQuenchRuntime, HostCallback, JsResult, QuenchRuntime};
+pub use test262::*;
 
 #[cfg(test)]
 mod tests {
