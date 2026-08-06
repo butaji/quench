@@ -23,9 +23,17 @@ Quick mode accelerates diagnosis only. A complete digest with zero failures and
 zero skips is the only conformance evidence.
 
 Prioritize expected failures cleared per hour. Canonical operations and shared
-engine paths outrank local symptoms. The R18–R22 direction is high leverage:
-equality, internal storage, `ToPrimitive`, `__ops__`, and builtin ownership
-migration.
+engine paths outrank local symptoms. The R18–R21 direction is the highest
+leverage: `SameValueZero` symbol identity, Map/Set internal storage leakage,
+`loose_eq`/`ToPrimitive` canonicalization, and `__ops__` bridge divergence.
+R22 builtin migration is opportunistic, not a throughput objective: migrate a
+family only when failure fan-out or LOC data shows leverage. Runner throughput
+work (R30–R34) runs in parallel. The embedding API and engine performance work
+(R36) stay frozen until 100%.
+
+No current stage is recorded anywhere; the milestones log is stale and is not
+evidence. The first move of any session is a fresh complete digest from the
+lowest failing stage (starting at stage 0) to establish ground truth.
 
 ## Instruments
 
@@ -35,7 +43,8 @@ migration.
 - `run-test` and `inspect-test` for single-case diagnosis;
 - focused Rust unit tests as the TDD reproducer gate;
 - isolated execution and `run-each.sh` for crash-safe verification;
-- stage and pending-batch tools for prioritization;
+- explicit `TEST262_STAGE=N` selection (the `current-stage`/`advance-stage`
+  script family is legacy and must not be treated as progress state);
 - phase timing for discovery, bootstrap, parsing, execution, and cleanup;
 - worker benchmarks using wall time, throughput, memory, timeout, and crash rate;
 - ownership and lint checks to prevent duplicate implementations and debt.
