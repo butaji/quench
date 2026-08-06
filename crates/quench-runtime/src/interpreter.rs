@@ -454,6 +454,16 @@ pub fn eval_program(
             | crate::ast::Statement::Empty => true,
             crate::ast::Statement::Block(stmts) => stmts.iter().all(is_empty_completion),
             crate::ast::Statement::SequenceDecls(stmts) => stmts.iter().all(is_empty_completion),
+            crate::ast::Statement::Try {
+                body,
+                handler,
+                finalizer,
+                ..
+            } => {
+                is_empty_completion(body)
+                    && handler.as_deref().is_none_or(is_empty_completion)
+                    && finalizer.as_deref().is_none_or(is_empty_completion)
+            }
             _ => false,
         }
     }

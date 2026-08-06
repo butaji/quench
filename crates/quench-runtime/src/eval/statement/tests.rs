@@ -1987,6 +1987,11 @@ mod multiple_statements {
     }
 
     #[test]
+    fn using_block_does_not_override_completion() {
+        assert_eq!(eval("4; { using resource = null; }").unwrap(), Value::Number(4.0));
+    }
+
+    #[test]
     fn sequence_of_expression_statements() {
         assert_eq!(eval("1 + 1; 2 + 2; 3 + 3").unwrap(), Value::Number(6.0));
     }
