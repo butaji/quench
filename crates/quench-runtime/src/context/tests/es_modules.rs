@@ -30,6 +30,35 @@ fn test_es_module_default_export() {
     assert!(result.is_ok(), "default export failed: {:?}", result);
 }
 
+#[cfg(test)]
+#[test]
+fn imported_binding_assignment_throws_type_error() {
+    let mut ctx = Context::new().unwrap();
+    let mut module = crate::value::Object::new(crate::value::ObjectKind::ModuleNamespace);
+    module.define(
+        "x",
+        crate::value::Value::Number(1.0),
+        crate::value::PropertyFlags {
+            value: None,
+            writable: false,
+            enumerable: true,
+            configurable: false,
+        },
+    );
+    ctx.register_module("module-name", module);
+    let result = ctx.eval_es_module(
+        "import { x } from 'module-name'; try { x = 2; } catch (error) { globalThis.result = error.name; }",
+    );
+    assert!(
+        result.is_ok(),
+        "import assignment should be caught: {result:?}"
+    );
+    assert_eq!(
+        ctx.eval("result").unwrap(),
+        crate::value::Value::String("TypeError".into())
+    );
+}
+
 #[test]
 fn module_exported_let_is_in_tdz_before_initialization() {
     let mut ctx = Context::new().unwrap();
@@ -80,9 +109,10 @@ fn named_import_reads_live_export_accessor_after_initialization() {
     let mut ctx = Context::new().unwrap();
     let mut module = crate::value::Object::new(crate::value::ObjectKind::ModuleNamespace);
     let env = Rc::clone(ctx.environment_view());
-    let getter = crate::Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(
-        move |_| Ok(env.borrow().get("A").unwrap_or(crate::Value::Undefined)),
-    )));
+    let getter =
+        crate::Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(move |_| {
+            Ok(env.borrow().get("A").unwrap_or(crate::Value::Undefined))
+        })));
     module.define_accessor(
         "A",
         Some(getter),

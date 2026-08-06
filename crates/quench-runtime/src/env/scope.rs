@@ -697,6 +697,14 @@ impl Scope {
         cell
     }
 
+    pub fn define_import_shared(&mut self, name: String, value: Value) -> Rc<RefCell<Value>> {
+        self.declarations.remove(&name);
+        self.var_kinds.insert(name.clone(), VarKind::Const);
+        let cell = Rc::new(RefCell::new(value));
+        self.bindings.insert(name, Rc::clone(&cell));
+        cell
+    }
+
     pub fn has(&self, name: &str) -> bool {
         self.bindings.contains_key(name) || self.declarations.contains_key(name)
     }

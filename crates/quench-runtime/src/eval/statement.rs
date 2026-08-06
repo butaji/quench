@@ -2355,13 +2355,15 @@ fn eval_import(
     // Handle default import: `import x from 'mod'`
     if let Some(name) = default {
         let default_val = imported_module_value(&module_exports, "default");
-        env.borrow_mut().define_shared(name.clone(), default_val);
+        env.borrow_mut()
+            .define_import_shared(name.clone(), default_val);
     }
 
     // Handle named imports: `import { x, y as z } from 'mod'`
     for (local_name, exported_name) in named {
         let val = imported_module_value(&module_exports, exported_name);
-        env.borrow_mut().define_shared(local_name.clone(), val);
+        env.borrow_mut()
+            .define_import_shared(local_name.clone(), val);
     }
 
     // Handle namespace import: `import * as ns from 'mod'`
@@ -2693,10 +2695,10 @@ pub(crate) fn dynamic_import(
         Err(error) => {
             let kind =
                 if error.0.starts_with("Cannot find module") && source.contains("script-code") {
-                "SyntaxError"
-            } else {
-                "TypeError"
-            };
+                    "SyntaxError"
+                } else {
+                    "TypeError"
+                };
             let (reason, _) = crate::value::error::create_js_error_with_type(&error.0, kind);
             Ok(Value::Object(
                 crate::builtins::promise::create_rejected_promise(reason)?,
@@ -2858,6 +2860,12 @@ fn deferred_ready(
 
 fn initialize_fixture_module(source: &str, env: &Rc<RefCell<Environment>>) -> Result<(), JsError> {
     if let Some(Value::Object(errors)) = env.borrow().get("__quench_module_errors__") {
+        if let Some(Value::String(reason)) = errors.borrow().get(source) {
+            let (value, error) =
+                crate::value::error::create_js_error_with_type(&reason, "SyntaxError");
+            crate::value::set_thrown_value(value);
+            return Err(error);
+        }
         if let Some(Value::Object(cached)) = errors.borrow().get(source) {
             if let Some(reason) = cached.borrow().get("__quench_cached_module_reason__") {
                 crate::value::set_thrown_value(reason);
