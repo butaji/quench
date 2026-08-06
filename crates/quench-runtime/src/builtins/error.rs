@@ -208,8 +208,14 @@ fn register_suppressed_error(ctx: &mut Context, parent_proto: &Rc<RefCell<Object
     let constructor_proto = Rc::clone(&proto);
     let mut constructor = NativeConstructor::new(
         move |args| {
-            let mut object =
-                Object::with_prototype(ObjectKind::Ordinary, Rc::clone(&constructor_proto));
+            let object_rc = match get_native_this() {
+                Some(Value::Object(object)) => object,
+                _ => Rc::new(RefCell::new(Object::with_prototype(
+                    ObjectKind::Ordinary,
+                    Rc::clone(&constructor_proto),
+                ))),
+            };
+            let mut object = object_rc.borrow_mut();
             let message = match args.get(2).cloned() {
                 Some(message) if message != Value::Undefined => {
                     Some(convert_error_message(message)?)
@@ -233,7 +239,8 @@ fn register_suppressed_error(ctx: &mut Context, parent_proto: &Rc<RefCell<Object
                 "suppressed",
                 args.get(1).cloned().unwrap_or(Value::Undefined),
             );
-            Ok(Value::Object(Rc::new(RefCell::new(object))))
+            drop(object);
+            Ok(Value::Object(object_rc))
         },
         Rc::clone(&proto),
     );

@@ -41,11 +41,15 @@ fn reflect_construct(args: Vec<Value>) -> Result<Value, JsError> {
                 Value::NativeConstructor(constructor) => constructor.name(),
                 _ => "Object".to_string(),
             };
-            function.closure.borrow().get(&intrinsic).and_then(|object| {
-                crate::eval::class::get_constructor_prototype(&object)
-                    .ok()
-                    .flatten()
-            })
+            function
+                .closure
+                .borrow()
+                .get(&intrinsic)
+                .and_then(|object| {
+                    crate::eval::class::get_constructor_prototype(&object)
+                        .ok()
+                        .flatten()
+                })
         }
         _ => None,
     };
@@ -54,6 +58,12 @@ fn reflect_construct(args: Vec<Value>) -> Result<Value, JsError> {
             Some(Value::Object(prototype)) => Some(prototype),
             _ => None,
         },
+        Value::Object(proxy) if crate::eval::object::proxy_handler_and_target(proxy).is_some() => {
+            match crate::eval::object::proxy_get_property(proxy, "prototype")? {
+                Value::Object(prototype) => Some(prototype),
+                _ => None,
+            }
+        }
         _ => crate::eval::class::get_constructor_prototype(&new_target)?,
     };
     let mut prototype = new_target_prototype
