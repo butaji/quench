@@ -138,9 +138,10 @@ relevant test262 stage.
   private intrinsic/interpreter state, `Context::env`, dynamic-import, and
   object-storage dependencies; replace these with neutral host-script and
   realm APIs before physically moving the tree. The physical move landed in
-  `e824f88a`; runtime now builds without `src/test262`, while `quench-test262`
-  is the active compile gate until its 38 private-internal API uses are
-  replaced by neutral runtime APIs. The boundary is not complete yet.
+  `e824f88a`; neutral runtime APIs landed in `5ea5daa8`, and `quench-test262`
+  passes its compile gate in `725737f5`. Runtime production code builds without
+  `src/test262`; remaining work is removing Test262-specific nested unit tests
+  from the runtime test target.
 
 - **R38 — Module fixture identity.** Preserve canonical module identity for
   `-as.js` resolution fixtures and follow named re-export chains without
