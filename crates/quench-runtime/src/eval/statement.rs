@@ -595,10 +595,40 @@ fn handle_tail_call_in_block(
     let last_stmt = &stmts[stmts.len() - 1];
 
     // Last statement is a nested Block → recurse.
-    if let Statement::Block(inner_stmts) = last_stmt {
+    if let Statement::Block(inner_stmts) | Statement::SequenceDecls(inner_stmts) = last_stmt {
         // Pop current scope before recursing — the recursive call pushes its own.
         env.borrow_mut().pop_scope();
         return handle_tail_call_in_block(inner_stmts, env, in_arrow_function, tail_calls_only);
+    }
+
+    if let Statement::If {
+        condition,
+        consequent,
+        alternate,
+    } = last_stmt
+    {
+        let branch = if to_bool(&eval_expression(condition, env, in_arrow_function)?) {
+            consequent.as_ref()
+        } else if let Some(alternate) = alternate {
+            alternate.as_ref()
+        } else {
+            env.borrow_mut().pop_scope();
+            return Ok(None);
+        };
+        let found = handle_tail_call_in_block(
+            std::slice::from_ref(branch),
+            env,
+            in_arrow_function,
+            tail_calls_only,
+        )?;
+        if found.is_some() {
+            env.borrow_mut().pop_scope();
+            return Ok(found);
+        }
+        if tail_calls_only {
+            env.borrow_mut().pop_scope();
+            return Ok(None);
+        }
     }
 
     // Last statement can be the switch lowering loop wrapper used to convert
