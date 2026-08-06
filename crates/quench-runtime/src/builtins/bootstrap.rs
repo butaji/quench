@@ -403,6 +403,13 @@ fn normalize_intrinsic_object(object: &Rc<RefCell<crate::value::Object>>) {
         .filter_map(|key| object.borrow().get_own(&key).map(|value| (key, value)))
         .collect::<Vec<_>>();
     for (key, value) in values {
+        if let crate::value::Value::Function(function) = &value {
+            let _ = function.set_property("prototype", crate::value::Value::Undefined);
+            let _ = function.set_property(
+                "\0nonconstructable",
+                crate::value::Value::Boolean(true),
+            );
+        }
         object.borrow_mut().define(
             &key,
             value,
