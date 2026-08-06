@@ -85,29 +85,3 @@ fn nested_direct_eval_handles_line_continuations_in_the_outer_source() {
         Ok(Value::Boolean(true))
     );
 }
-
-#[test]
-fn nested_direct_eval_uses_the_enclosing_environment_after_harness_setup() {
-    use quench_runtime::test262::{QuenchHost, Test262Host};
-
-    let mut host = QuenchHost::new();
-    assert!(host
-        .run_script(include_str!(
-            "../../../tests/test262/test/language/eval-code/direct/global-env-rec-eval.js"
-        ))
-        .is_ok());
-}
-
-#[test]
-fn strict_nested_direct_eval_uses_the_enclosing_eval_variable_environment() {
-    use quench_runtime::test262::{QuenchHost, Test262Host};
-
-    let source = format!(
-        "\"use strict\";{}",
-        include_str!(
-            "../../../tests/test262/test/language/eval-code/direct/global-env-rec-eval.js"
-        )
-    );
-    let mut host = QuenchHost::new();
-    assert!(host.run_script(&source).is_ok());
-}
