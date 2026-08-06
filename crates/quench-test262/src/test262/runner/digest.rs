@@ -161,26 +161,16 @@ fn run_parallel(
     let (tx, rx) = mpsc::channel();
     let next = Arc::new(AtomicUsize::new(0));
     let tests = Arc::new(tests.to_vec());
-    let harness = harness.clone();
-    let isolated = use_isolated;
     let mut handles = Vec::new();
     for _ in 0..workers {
-        let tx = tx.clone();
-        let next = Arc::clone(&next);
-        let tests = Arc::clone(&tests);
-        let harness = harness.clone();
-        handles.push(std::thread::spawn(move || loop {
-            let i = {
-                let i = next.fetch_add(1, Ordering::Relaxed);
-                if i >= tests.len() {
-                    break;
-                }
-                i
-            };
-            let path = &tests[i];
-            let outcome = one_test(&harness, path, isolated);
-            let _ = tx.send((i, label(path, false), outcome));
-        }));
+        let worker = DigestWorker {
+            next: Arc::clone(&next),
+            tests: Arc::clone(&tests),
+            harness: harness.clone(),
+            isolated: use_isolated,
+            tx: tx.clone(),
+        };
+        handles.push(std::thread::spawn(move || worker.run()));
     }
     drop(tx);
     let mut indexed: Vec<(usize, String, TestOutcome)> = rx.into_iter().collect();
@@ -192,6 +182,28 @@ fn run_parallel(
         trim_quick(&mut indexed, flags.quick_limit);
     }
     indexed.into_iter().map(|(_, p, o)| (p, o)).collect()
+}
+
+struct DigestWorker {
+    next: Arc<AtomicUsize>,
+    tests: Arc<Vec<PathBuf>>,
+    harness: HarnessLoader,
+    isolated: bool,
+    tx: mpsc::Sender<(usize, String, TestOutcome)>,
+}
+
+impl DigestWorker {
+    fn run(self) {
+        loop {
+            let index = self.next.fetch_add(1, Ordering::Relaxed);
+            if index >= self.tests.len() {
+                return;
+            }
+            let path = &self.tests[index];
+            let outcome = one_test(&self.harness, path, self.isolated);
+            let _ = self.tx.send((index, label(path, false), outcome));
+        }
+    }
 }
 
 pub(crate) fn worker_count(available: usize) -> usize {
