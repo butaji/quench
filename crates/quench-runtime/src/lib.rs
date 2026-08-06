@@ -120,6 +120,17 @@ mod tests {
     }
 
     #[test]
+    fn module_rejects_nested_export_before_evaluation() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval_es_module("$DONOTEVALUATE(); () => { export default null; };");
+        let error = result.expect_err("nested export must be rejected during parsing");
+        assert!(
+            error.0.contains("SyntaxError"),
+            "unexpected error: {error:?}"
+        );
+    }
+
+    #[test]
     fn test_context_eval_identifier() {
         let mut ctx = Context::new().unwrap();
         let result = ctx.eval("undefined");

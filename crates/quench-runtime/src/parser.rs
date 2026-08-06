@@ -377,6 +377,7 @@ pub fn parse_es_module(source: &str) -> Result<Program, JsError> {
     check_strict_fn_body(&ret.program)?;
     early_errors::check_early_errors(&ret.program)?;
     early_errors::check_module_exported_bindings(&ret.program)?;
+    early_errors::check_nested_module_exports(&ret.program)?;
     early_errors::check_module_duplicate_labels(&ret.program)?;
     early_errors::check_module_duplicate_function_names(&ret.program)?;
     early_errors::check_break_continue_errors(&ret.program)?;

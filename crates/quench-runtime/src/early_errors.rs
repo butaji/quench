@@ -10,6 +10,7 @@
 use crate::value::JsError;
 use oxc::ast::ast::{self, ForStatementLeft};
 use oxc::ast_visit::Visit;
+use oxc::syntax::scope::ScopeFlags;
 use std::collections::{HashMap, HashSet};
 
 /// Check all early errors on the OXC program before lowering.
@@ -143,6 +144,54 @@ pub fn check_module_exported_bindings(program: &ast::Program) -> Result<(), JsEr
         }
     }
     Ok(())
+}
+
+/// Reject export declarations nested inside function bodies.
+pub fn check_nested_module_exports(program: &ast::Program) -> Result<(), JsError> {
+    let mut checker = NestedModuleExportChecker {
+        function_depth: 0,
+        found: false,
+    };
+    checker.visit_program(program);
+    if checker.found {
+        return Err(JsError(
+            "SyntaxError: export declaration is only valid at module top level".into(),
+        ));
+    }
+    Ok(())
+}
+
+struct NestedModuleExportChecker {
+    function_depth: usize,
+    found: bool,
+}
+
+impl<'a> Visit<'a> for NestedModuleExportChecker {
+    fn visit_function(&mut self, function: &ast::Function<'a>, _flags: ScopeFlags) {
+        self.function_depth += 1;
+        if let Some(body) = &function.body {
+            self.visit_function_body(body);
+        }
+        self.function_depth -= 1;
+    }
+
+    fn visit_arrow_function_expression(&mut self, arrow: &ast::ArrowFunctionExpression<'a>) {
+        self.function_depth += 1;
+        self.visit_arrow_function_body(&arrow.body);
+        self.function_depth -= 1;
+    }
+
+    fn visit_export_default_declaration(&mut self, _export: &ast::ExportDefaultDeclaration<'a>) {
+        if self.function_depth > 0 {
+            self.found = true;
+        }
+    }
+
+    fn visit_export_named_declaration(&mut self, _export: &ast::ExportNamedDeclaration<'a>) {
+        if self.function_depth > 0 {
+            self.found = true;
+        }
+    }
 }
 
 struct StrictDeleteIdentifierChecker(bool);
