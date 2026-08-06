@@ -243,7 +243,7 @@ fn inject_test262_error(ctx: &mut Context) {
     proto.borrow_mut().set(
         "toString",
         make_native(|_args: Vec<Value>| {
-            let this_val = quench_runtime::interpreter::get_native_this().unwrap_or(Value::Undefined);
+            let this_val = quench_runtime::api::native_this().unwrap_or(Value::Undefined);
             let (name_str, msg_str) = match &this_val {
                 Value::Object(obj_rc) => {
                     let obj = obj_rc.borrow();
@@ -275,7 +275,7 @@ fn inject_test262_error(ctx: &mut Context) {
                 .map(quench_runtime::value::to_js_string)
                 .unwrap_or_default();
             // Get the this_val - it should be the new object created by call_native_constructor
-            let this_val = quench_runtime::interpreter::get_native_this().unwrap_or(Value::Undefined);
+            let this_val = quench_runtime::api::native_this().unwrap_or(Value::Undefined);
             if let Value::Object(obj_rc) = &this_val {
                 let mut obj = obj_rc.borrow_mut();
                 obj.set("message", Value::String(msg.clone()));
@@ -345,10 +345,10 @@ fn eval_harness_file(ctx: &mut Context, filename: &str) -> Result<(), String> {
         js_code
     };
     // Harness files must run in sloppy mode (legacy octal literals are permitted).
-    let was_strict = quench_runtime::interpreter::is_strict_mode();
-    quench_runtime::interpreter::set_strict_mode(false);
+    let was_strict = quench_runtime::api::strict_mode();
+    quench_runtime::api::set_strict_mode(false);
     let result = ctx.eval(&code);
-    quench_runtime::interpreter::set_strict_mode(was_strict);
+    quench_runtime::api::set_strict_mode(was_strict);
     if let Err(e) = result {
         return Err(format!(
             "harness file {} failed to evaluate: {:?}",
@@ -691,7 +691,7 @@ mod tests {
     fn diagnostic_step_by_step_verify_property_symbol() {
         let mut ctx = Context::new().unwrap();
         quench_runtime::builtins::register_builtins(&mut ctx);
-        quench_runtime::interpreter::set_strict_mode(false);
+        quench_runtime::api::set_strict_mode(false);
 
         // Load the exact JS files that the test includes (via HarnessLoader)
         let test262_root = harness_dir().parent().unwrap().to_path_buf();
@@ -740,7 +740,7 @@ if (hasOwn !== false) throw new Error('FAIL: hasOwn should be false, got ' + has
     fn diagnostic_assert_same_value_with_disk_assert_js() {
         let mut ctx = Context::new().unwrap();
         quench_runtime::builtins::register_builtins(&mut ctx);
-        quench_runtime::interpreter::set_strict_mode(false);
+        quench_runtime::api::set_strict_mode(false);
 
         let test262_root = harness_dir().parent().unwrap().to_path_buf();
         let harness = HarnessLoader::new(&test262_root.to_string_lossy());
@@ -785,7 +785,7 @@ assert.sameValue(
     fn diagnostic_assert_tostring_function_in_disk_js_context() {
         let mut ctx = Context::new().unwrap();
         quench_runtime::builtins::register_builtins(&mut ctx);
-        quench_runtime::interpreter::set_strict_mode(false);
+        quench_runtime::api::set_strict_mode(false);
 
         let test262_root = harness_dir().parent().unwrap().to_path_buf();
         let harness = HarnessLoader::new(&test262_root.to_string_lossy());
@@ -821,7 +821,7 @@ typeof getterFn === 'function' && typeof assert._toString(getterFn) === 'string'
         let mut ctx = Context::new().unwrap();
         quench_runtime::builtins::register_builtins(&mut ctx);
         try_inject_harness(&mut ctx).expect("harness ok");
-        quench_runtime::interpreter::set_strict_mode(false);
+        quench_runtime::api::set_strict_mode(false);
 
         // STEP A: verify that hasOwnProperty returns true after defineProperty
         let step_a = ctx.eval(
@@ -916,7 +916,7 @@ JSON.stringify({step:'C', hasOwn_after_restore:hasOwn3, vpError2:vpError2, gette
     fn diagnostic_js_propertyhelper_verify_property_symbol() {
         let mut ctx = Context::new().unwrap();
         quench_runtime::builtins::register_builtins(&mut ctx);
-        quench_runtime::interpreter::set_strict_mode(false);
+        quench_runtime::api::set_strict_mode(false);
 
         let test262_root = harness_dir().parent().unwrap().to_path_buf();
         let harness = HarnessLoader::new(&test262_root.to_string_lossy());
@@ -971,7 +971,7 @@ if (hasOwn !== false) throw new Error('FAIL: hasOwn should be false after JS ver
     fn diagnostic_js_has_own_property_with_symbol_key() {
         let mut ctx = Context::new().unwrap();
         quench_runtime::builtins::register_builtins(&mut ctx);
-        quench_runtime::interpreter::set_strict_mode(false);
+        quench_runtime::api::set_strict_mode(false);
 
         let test262_root = harness_dir().parent().unwrap().to_path_buf();
         let harness = HarnessLoader::new(&test262_root.to_string_lossy());

@@ -16,7 +16,7 @@ use std::rc::Rc;
 type Proto = Option<Rc<RefCell<Object>>>;
 
 /// All thread-local intrinsic caches that a fresh realm overwrites.
-pub(crate) struct IntrinsicSnapshot {
+pub struct IntrinsicSnapshot {
     array: Proto,
     object: Proto,
     string: Proto,
@@ -33,7 +33,7 @@ pub(crate) struct IntrinsicSnapshot {
 
 impl IntrinsicSnapshot {
     /// Snapshot every thread-local intrinsic cache.
-    pub(crate) fn save() -> Self {
+    pub fn save() -> Self {
         IntrinsicSnapshot {
             array: builtins::array::save_array_prototype(),
             object: builtins::object::save_object_prototype(),
@@ -51,7 +51,7 @@ impl IntrinsicSnapshot {
     }
 
     /// Restore every thread-local intrinsic cache from the snapshot.
-    pub(crate) fn restore(self) {
+    pub fn restore(self) {
         builtins::array::restore_array_prototype(self.array);
         builtins::object::restore_object_prototype(self.object);
         builtins::string::restore_string_prototype(self.string);

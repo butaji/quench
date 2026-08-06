@@ -37,7 +37,7 @@ pub fn host_262_detach_buffer(args: Vec<Value>) -> Result<Value, JsError> {
 /// persist across eval calls.
 fn realm_eval_script(
     realm_ctx: &RefCell<Option<Context>>,
-    realm_intrinsics: &RefCell<Option<quench_runtime::context::intrinsics::IntrinsicSnapshot>>,
+    realm_intrinsics: &RefCell<Option<quench_runtime::RealmSnapshot>>,
     args: Vec<Value>,
 ) -> Result<Value, JsError> {
     let code = args
@@ -51,21 +51,21 @@ fn realm_eval_script(
         quench_runtime::value::set_thrown_value(err_val);
         return Err(js_err);
     };
-    let caller_intrinsics = quench_runtime::context::intrinsics::IntrinsicSnapshot::save();
+    let caller_intrinsics = quench_runtime::RealmSnapshot::capture();
     let realm_snapshot = realm_intrinsics.borrow_mut().take();
     if let Some(snapshot) = realm_snapshot {
         snapshot.restore();
     }
     // evalScript runs a NEW script: non-strict unless the source itself
     // declares 'use strict' — never inherit the caller's strictness.
-    let was_strict = quench_runtime::interpreter::is_strict_mode();
-    let was_direct_eval = quench_runtime::interpreter::is_direct_eval();
-    quench_runtime::interpreter::set_strict_mode(false);
-    quench_runtime::interpreter::set_direct_eval(false);
+    let was_strict = quench_runtime::api::strict_mode();
+    let was_direct_eval = quench_runtime::api::direct_eval();
+    quench_runtime::api::set_strict_mode(false);
+    quench_runtime::api::set_direct_eval(false);
     let result = ctx.eval(&code);
-    quench_runtime::interpreter::set_strict_mode(was_strict);
-    quench_runtime::interpreter::set_direct_eval(was_direct_eval);
-    let updated_realm = quench_runtime::context::intrinsics::IntrinsicSnapshot::save();
+    quench_runtime::api::set_strict_mode(was_strict);
+    quench_runtime::api::set_direct_eval(was_direct_eval);
+    let updated_realm = quench_runtime::RealmSnapshot::capture();
     *realm_intrinsics.borrow_mut() = Some(updated_realm);
     caller_intrinsics.restore();
     // Put the context back for the next call
@@ -80,7 +80,7 @@ fn host_262_create_realm(_args: Vec<Value>) -> Result<Value, JsError> {
     // Building the sub-realm overwrites the shared thread-local intrinsic
     // caches; snapshot them first and restore afterwards so the main realm
     // keeps its own intrinsics.
-    let snapshot = quench_runtime::context::intrinsics::IntrinsicSnapshot::save();
+    let snapshot = quench_runtime::RealmSnapshot::capture();
     let mut ctx = Context::new()?;
     crate::harness::inject_harness(&mut ctx);
     snapshot.restore();
@@ -92,7 +92,7 @@ fn host_262_create_realm(_args: Vec<Value>) -> Result<Value, JsError> {
     // realm_eval_script closure (which must be 'static) can mutate it.
     let realm_ctx = Rc::new(RefCell::new(Some(ctx)));
     let realm_intrinsics = Rc::new(RefCell::new(Some(
-        quench_runtime::context::intrinsics::IntrinsicSnapshot::save(),
+        quench_runtime::RealmSnapshot::capture(),
     )));
 
     // Set realm's eval to use the shared context
@@ -137,10 +137,10 @@ fn host_262_eval_script(args: Vec<Value>) -> Result<Value, JsError> {
     let ctx = unsafe { &mut *ctx_ptr };
     // evalScript runs a NEW script: non-strict unless the source itself
     // declares 'use strict' — never inherit the caller's strictness.
-    let was_strict = quench_runtime::interpreter::is_strict_mode();
-    let was_direct_eval = quench_runtime::interpreter::is_direct_eval();
-    quench_runtime::interpreter::set_strict_mode(false);
-    quench_runtime::interpreter::set_direct_eval(false);
+    let was_strict = quench_runtime::api::strict_mode();
+    let was_direct_eval = quench_runtime::api::direct_eval();
+    quench_runtime::api::set_strict_mode(false);
+    quench_runtime::api::set_direct_eval(false);
     let result = (|| {
         reject_restricted_global_lexicals(ctx, &code)?;
         let function_names = global_function_names(ctx, &code)?;
@@ -148,8 +148,8 @@ fn host_262_eval_script(args: Vec<Value>) -> Result<Value, JsError> {
         set_global_function_descriptors(ctx, &function_names);
         Ok(value)
     })();
-    quench_runtime::interpreter::set_strict_mode(was_strict);
-    quench_runtime::interpreter::set_direct_eval(was_direct_eval);
+    quench_runtime::api::set_strict_mode(was_strict);
+    quench_runtime::api::set_direct_eval(was_direct_eval);
     result
 }
 
@@ -553,10 +553,10 @@ mod tests {
         // source itself declares 'use strict'. Inside a strict context,
         // sloppy-only syntax (strict reserved word as binding) must parse.
         let mut ctx = harness_ctx();
-        let prev = quench_runtime::interpreter::is_strict_mode();
-        quench_runtime::interpreter::set_strict_mode(true);
+        let prev = quench_runtime::api::strict_mode();
+        quench_runtime::api::set_strict_mode(true);
         let result = ctx.eval("$262.evalScript('var public = 1;')");
-        quench_runtime::interpreter::set_strict_mode(prev);
+        quench_runtime::api::set_strict_mode(prev);
         assert!(
             result.is_ok(),
             "$262.evalScript must run as a new sloppy script: {:?}",
@@ -567,11 +567,11 @@ mod tests {
     #[test]
     fn test_realm_eval_script_runs_sloppy_in_strict_context() {
         let mut ctx = harness_ctx();
-        let prev = quench_runtime::interpreter::is_strict_mode();
-        quench_runtime::interpreter::set_strict_mode(true);
+        let prev = quench_runtime::api::strict_mode();
+        quench_runtime::api::set_strict_mode(true);
         let result =
             ctx.eval("var realm = $262.createRealm(); realm.evalScript('var public = 1;')");
-        quench_runtime::interpreter::set_strict_mode(prev);
+        quench_runtime::api::set_strict_mode(prev);
         assert!(
             result.is_ok(),
             "realm.evalScript must run as a new sloppy script: {:?}",

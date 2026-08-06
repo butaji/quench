@@ -141,7 +141,7 @@ impl Object {
     }
 
     /// Check own property only.
-    pub(crate) fn has_own(&self, key: &str) -> bool {
+    pub fn has_own(&self, key: &str) -> bool {
         if self.symbol_properties.contains_key(key) {
             return true;
         }

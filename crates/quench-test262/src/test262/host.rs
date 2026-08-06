@@ -863,12 +863,12 @@ verifyProperty(obj, prop, desc);
         // When QuenchHost::run_script is called, it explicitly sets strict=false
         let mut ctx = Context::new().unwrap();
         quench_runtime::builtins::register_builtins(&mut ctx);
-        quench_runtime::interpreter::set_strict_mode(true);
-        let prev = quench_runtime::interpreter::is_strict_mode();
+        quench_runtime::api::set_strict_mode(true);
+        let prev = quench_runtime::api::strict_mode();
         // This simulates what QuenchHost.run_script does internally
-        quench_runtime::interpreter::set_strict_mode(false);
+        quench_runtime::api::set_strict_mode(false);
         let result = ctx.eval("with ({}) {}");
-        quench_runtime::interpreter::set_strict_mode(prev);
+        quench_runtime::api::set_strict_mode(prev);
         assert_eq!(
             result,
             Ok(quench_runtime::value::Value::Undefined),
@@ -1012,12 +1012,12 @@ verifyProperty(obj, prop, desc);
     fn test_quench_host_sets_main_realm_host_error() {
         let mut ctx = Context::new().unwrap();
         quench_runtime::builtins::register_builtins(&mut ctx);
-        quench_runtime::interpreter::set_strict_mode(false);
+        quench_runtime::api::set_strict_mode(false);
         try_inject_harness(&mut ctx).expect("harness ok");
         if let Some(te) = ctx.get_global("Test262Error") {
             quench_runtime::value::error::set_main_realm_host_error(te);
         }
-        quench_runtime::interpreter::set_strict_mode(false);
+        quench_runtime::api::set_strict_mode(false);
 
         // Now eval something that throws a Test262Error
         let result = ctx.eval("assert(false, 'msg')");

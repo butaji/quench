@@ -9,7 +9,7 @@ use std::thread;
 use std::time::Duration;
 
 use crate::harness::HarnessLoader;
-use quench_runtime::host::{capture_thrown_diagnostics, TestFailure, TestOutcome};
+use crate::{capture_thrown_diagnostics, TestFailure, TestOutcome};
 use crate::metadata::Test262Metadata;
 use quench_runtime::Value;
 
@@ -505,13 +505,13 @@ pub(crate) fn initialize_test_context(strict: bool) -> Result<quench_runtime::Co
     let mut ctx = quench_runtime::Context::new().map_err(|error| format!("{error:?}"))?;
     ctx.eval("delete AsyncFunction")
         .map_err(|error| format!("AsyncFunction cleanup failure: {error:?}"))?;
-    quench_runtime::interpreter::set_strict_mode(false);
+    quench_runtime::api::set_strict_mode(false);
     crate::harness::try_inject_harness(&mut ctx)
         .map_err(|error| format!("harness load failure: {error}"))?;
     if let Some(error) = ctx.get_global("Test262Error") {
         quench_runtime::value::error::set_main_realm_host_error(error);
     }
-    quench_runtime::interpreter::set_strict_mode(strict);
+    quench_runtime::api::set_strict_mode(strict);
     Ok(ctx)
 }
 
@@ -787,7 +787,7 @@ fn register_current_module_placeholder(ctx: &mut quench_runtime::Context, path: 
     if let Some(quench_runtime::Value::Object(bindings)) =
         ctx.get_global("__quench_current_module_bindings__")
     {
-        let env = ctx.env();
+        let env = ctx.environment_view();
         for exported in bindings.borrow().own_property_names() {
             let Some(quench_runtime::Value::String(local)) = bindings.borrow().get(&exported) else {
                 continue;
@@ -1236,7 +1236,7 @@ pub fn load_fixture_modules(ctx: &mut quench_runtime::Context, test_path: &Path)
             if let Some(Value::Object(getters)) = ctx.get_global(init_getters_key) {
                 let mut mapping = quench_runtime::value::Object::new(quench_runtime::value::ObjectKind::Ordinary);
                 for (exported, local) in &module_bindings {
-                    let Some(binding) = ctx.env().borrow().get_shared(local) else {
+                    let Some(binding) = ctx.environment_view().borrow().get_shared(local) else {
                         continue;
                     };
                     needs_refresh = true;
@@ -1408,7 +1408,7 @@ pub fn load_fixture_modules(ctx: &mut quench_runtime::Context, test_path: &Path)
                             Some(Value::String(ref current)) if current == source
                         );
                         if current_source {
-                            let env = std::rc::Rc::clone(ctx.env());
+                            let env = std::rc::Rc::clone(ctx.environment_view());
                             let local_key = local.clone();
                             let getter = quench_runtime::Value::NativeFunction(std::rc::Rc::new(
                                 quench_runtime::value::NativeFunction::new(move |_| {
@@ -1502,7 +1502,7 @@ pub fn load_fixture_modules(ctx: &mut quench_runtime::Context, test_path: &Path)
     }
     for (module_name, local, source) in deferred_namespace_imports {
         let promise =
-            quench_runtime::eval::statement::dynamic_import(&source, &ctx.env(), None, false, true)
+            ctx.dynamic_import_module(&source, None, false, true)
                 .map_err(|error| format!("deferred fixture import: {error:?}"))?;
         let Value::Object(promise) = promise else {
             continue;

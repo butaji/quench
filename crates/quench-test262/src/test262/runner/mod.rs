@@ -8,7 +8,7 @@ pub mod flags;
 use std::path::PathBuf;
 
 use crate::harness::HarnessLoader;
-use quench_runtime::host::{TestFailure, TestOutcome};
+use crate::{TestFailure, TestOutcome};
 
 pub use execute::run_single_test;
 pub use flags::default_stage;

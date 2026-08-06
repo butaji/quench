@@ -2,6 +2,26 @@
 
 use crate::{Context, JsError, Value};
 
+pub fn strict_mode() -> bool {
+    crate::interpreter::is_strict_mode()
+}
+
+pub fn set_strict_mode(strict: bool) {
+    crate::interpreter::set_strict_mode(strict);
+}
+
+pub fn direct_eval() -> bool {
+    crate::interpreter::is_direct_eval()
+}
+
+pub fn set_direct_eval(direct: bool) {
+    crate::interpreter::set_direct_eval(direct);
+}
+
+pub fn native_this() -> Option<Value> {
+    crate::interpreter::get_native_this()
+}
+
 /// Result returned by runtime operations.
 pub type JsResult<T> = Result<T, JsError>;
 /// Host callback exposed as a JavaScript function value.

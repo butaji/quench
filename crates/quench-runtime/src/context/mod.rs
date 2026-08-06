@@ -314,6 +314,26 @@ impl Context {
         self.env.borrow().get(name)
     }
 
+    pub fn environment_view(&self) -> &Rc<RefCell<Environment>> {
+        &self.env
+    }
+
+    pub fn dynamic_import_module(
+        &self,
+        source: &str,
+        options: Option<&Value>,
+        source_phase: bool,
+        deferred: bool,
+    ) -> Result<Value, JsError> {
+        crate::eval::statement::dynamic_import(
+            source,
+            &self.env,
+            options,
+            source_phase,
+            deferred,
+        )
+    }
+
     /// Get the inner environment.
     #[allow(dead_code)]
     pub(crate) fn env(&self) -> &Rc<RefCell<Environment>> {
