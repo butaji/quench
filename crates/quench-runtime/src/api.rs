@@ -1,8 +1,13 @@
+//! Public embedding API for driving a Quench JavaScript context.
+
 use crate::{Context, JsError, Value};
 
+/// Result returned by runtime operations.
 pub type JsResult<T> = Result<T, JsError>;
+/// Host callback exposed as a JavaScript function value.
 pub type HostCallback = Box<dyn Fn(Vec<Value>) -> JsResult<Value>>;
 
+/// Operations required by a host-facing JavaScript runtime adapter.
 pub trait QuenchRuntime {
     type Context;
     type Value;
@@ -38,9 +43,10 @@ pub trait QuenchRuntime {
 }
 
 #[derive(Default)]
-pub struct RuntimeEngine;
+/// The built-in Quench adapter backed by [`Context`].
+pub struct DefaultQuenchRuntime;
 
-impl QuenchRuntime for RuntimeEngine {
+impl QuenchRuntime for DefaultQuenchRuntime {
     type Context = Context;
     type Value = Value;
 
@@ -117,12 +123,12 @@ impl QuenchRuntime for RuntimeEngine {
 
 #[cfg(test)]
 mod tests {
-    use super::{QuenchRuntime, RuntimeEngine};
+    use super::{DefaultQuenchRuntime, QuenchRuntime};
     use crate::Value;
 
     #[test]
     fn runtime_api_evaluates_and_reads_global_property() {
-        let mut engine = RuntimeEngine;
+        let mut engine = DefaultQuenchRuntime;
         let mut ctx = engine.new_context().unwrap();
         engine.eval(&mut ctx, "globalThis.answer = 42").unwrap();
         let global = engine.global(&mut ctx);
