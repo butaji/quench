@@ -238,6 +238,7 @@ fn test_has_and_has_own() {
     let mut obj = Object::new(ObjectKind::Ordinary);
     obj.set("own", Value::Boolean(true));
     assert!(obj.has_own("own") && !obj.has_own("missing"));
+    assert!(obj.has_own_property("own") && !obj.has_own_property("missing"));
     let mut proto = Object::new(ObjectKind::Ordinary);
     proto.set("parent", Value::String("yes".to_string()));
     let mut child = Object::new(ObjectKind::Ordinary);

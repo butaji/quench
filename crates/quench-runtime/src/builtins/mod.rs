@@ -112,7 +112,7 @@ impl serde::Serialize for JsValueProxy<'_> {
 
 impl Object {
     /// Create a new array from a list of values
-    pub(crate) fn new_array_from(items: Vec<Value>) -> Self {
+    pub fn new_array_from(items: Vec<Value>) -> Self {
         let mut obj = Object::new(ObjectKind::Array);
         obj.elements = items.clone();
         for (index, value) in items.iter().enumerate() {

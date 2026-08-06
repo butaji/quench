@@ -160,6 +160,11 @@ impl Object {
         index < self.elements.len() && !self.holes.contains(&index)
     }
 
+    /// Return whether this object has an own string-keyed property.
+    pub fn has_own_property(&self, key: &str) -> bool {
+        self.has_own(key)
+    }
+
     /// Delete own property.
     pub fn delete(&mut self, key: &str) -> bool {
         if let Some(flags) = self.descriptors.get(key) {
