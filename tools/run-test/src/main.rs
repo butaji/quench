@@ -214,7 +214,7 @@ fn main() -> ExitCode {
                 return 4;
             }
             if let Some(te) = ctx.get_global("Test262Error") {
-                quench_runtime::value::error::set_main_realm_test262_error(te);
+                quench_runtime::value::error::set_main_realm_host_error(te);
             }
             if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
                 ctx.set_global(

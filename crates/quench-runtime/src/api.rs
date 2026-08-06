@@ -14,6 +14,12 @@ pub trait QuenchRuntime {
 
     fn new_context(&mut self) -> JsResult<Self::Context>;
     fn eval(&mut self, ctx: &mut Self::Context, source: &str) -> JsResult<Self::Value>;
+    fn eval_script(
+        &mut self,
+        ctx: &mut Self::Context,
+        source: &str,
+        strict: bool,
+    ) -> JsResult<Self::Value>;
     fn eval_module(&mut self, ctx: &mut Self::Context, source: &str) -> JsResult<Self::Value>;
     fn global(&mut self, ctx: &mut Self::Context) -> Self::Value;
     fn get(
@@ -56,6 +62,14 @@ impl QuenchRuntime for DefaultQuenchRuntime {
     }
     fn eval(&mut self, ctx: &mut Self::Context, source: &str) -> JsResult<Self::Value> {
         ctx.eval(source)
+    }
+    fn eval_script(
+        &mut self,
+        ctx: &mut Self::Context,
+        source: &str,
+        strict: bool,
+    ) -> JsResult<Self::Value> {
+        ctx.eval_script(source, strict)
     }
     fn eval_module(&mut self, ctx: &mut Self::Context, source: &str) -> JsResult<Self::Value> {
         ctx.eval_es_module(source)
@@ -150,5 +164,13 @@ mod tests {
         assert!(engine
             .eval_module(&mut ctx, "export const answer = 42;")
             .is_ok());
+    }
+
+    #[test]
+    fn runtime_api_evaluates_strict_scripts() {
+        let mut engine = DefaultQuenchRuntime;
+        let mut ctx = engine.new_context().unwrap();
+        assert!(engine.eval_script(&mut ctx, "with ({}) {}", false).is_ok());
+        assert!(engine.eval_script(&mut ctx, "with ({}) {}", true).is_err());
     }
 }
