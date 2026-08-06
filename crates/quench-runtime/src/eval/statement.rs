@@ -2935,6 +2935,7 @@ fn initialize_fixture_module(source: &str, env: &Rc<RefCell<Environment>>) -> Re
         }
         return Err(error);
     }
+    crate::value::take_thrown_value();
     if !pending {
         if let Some(Value::Object(done)) = &done {
             done.borrow_mut().set(source, Value::Boolean(true));

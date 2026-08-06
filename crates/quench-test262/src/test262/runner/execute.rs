@@ -925,6 +925,7 @@ pub fn load_fixture_modules(
         .and_then(|name| name.to_str())
         .map(|name| format!("./{name}"));
     let mut fixtures = Vec::new();
+    let mut has_indirect_reexport = false;
     for entry in entries {
         let path = entry.map_err(|e| format!("fixture entry: {}", e))?.path();
         let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
@@ -933,8 +934,22 @@ pub fn load_fixture_modules(
         if !name.contains("_FIXTURE") {
             continue;
         }
+        if std::fs::read_to_string(&path)
+            .map(|source| {
+                source
+                    .lines()
+                    .any(|line| line.trim().starts_with("export {") && line.contains("} from"))
+            })
+            .unwrap_or(false)
+        {
+            has_indirect_reexport = true;
+        }
         fixtures.push((name.to_string(), path));
     }
+    ctx.set_global(
+        "__quench_isolate_module_eval__".into(),
+        quench_runtime::Value::Boolean(has_indirect_reexport),
+    );
     let init_scripts_key = "__quench_fixture_init_scripts__";
     let init_done_key = "__quench_fixture_init_done__";
     let init_bindings_key = "__quench_fixture_export_bindings__";

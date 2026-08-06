@@ -198,11 +198,9 @@ impl Context {
                 "__quench_current_module_evaluating__".to_string(),
                 Value::Boolean(true),
             );
-            let mut module_env = if self
-                .env
-                .borrow()
-                .get("__quench_fixture_init_scripts__")
-                .is_some()
+            let mut module_env = if self.env.borrow().get("__quench_isolate_module_eval__")
+                == Some(Value::Boolean(true))
+                && source.contains("import {")
             {
                 Rc::new(RefCell::new(Environment::with_parent(Rc::clone(&self.env))))
             } else {
