@@ -52,6 +52,7 @@ impl Context {
     /// Create a new runtime context
     pub fn new() -> Result<Self, JsError> {
         interpreter::reset_depth();
+        crate::builtins::promise::clear_pending_microtasks();
         let env = Environment::new();
         let mut ctx = Context {
             env: Rc::new(RefCell::new(env)),
@@ -80,6 +81,7 @@ impl Context {
     /// Reset the context to a clean state (useful for testing)
     pub fn reset(&mut self) -> Result<(), JsError> {
         interpreter::reset_depth();
+        crate::builtins::promise::clear_pending_microtasks();
         self.env = Rc::new(RefCell::new(Environment::new()));
         self.string_interner = crate::interner::StringInterner::new();
         self.builtins_bootstrapped = false;

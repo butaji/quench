@@ -12,6 +12,27 @@ fn test_context_creation() {
     assert!(ctx.is_ok());
 }
 
+#[test]
+fn reset_discards_pending_microtasks_from_previous_realm() {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    let mut ctx = Context::new().unwrap();
+    let ran = Rc::new(Cell::new(false));
+    let callback_ran = Rc::clone(&ran);
+    crate::builtins::promise::queue_microtask_impl(Value::NativeFunction(Rc::new(
+        crate::value::NativeFunction::new(move |_| {
+            callback_ran.set(true);
+            Ok(Value::Undefined)
+        }),
+    )));
+
+    ctx.reset().unwrap();
+    crate::builtins::promise::execute_pending_microtasks().unwrap();
+
+    assert!(!ran.get());
+}
+
 #[cfg(test)]
 #[test]
 fn test_globals() {

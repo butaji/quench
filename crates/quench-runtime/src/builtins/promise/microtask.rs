@@ -16,6 +16,10 @@ pub fn get_pending_microtasks() -> Vec<Value> {
     MICROTASK_QUEUE.with(|queue| queue.borrow_mut().drain(..).collect())
 }
 
+pub(crate) fn clear_pending_microtasks() {
+    MICROTASK_QUEUE.with(|queue| queue.borrow_mut().clear());
+}
+
 /// Execute all pending microtasks
 pub fn execute_pending_microtasks() -> Result<(), JsError> {
     // Process all microtasks, including those added during callback execution.
