@@ -139,3 +139,8 @@ relevant test262 stage.
   `-as.js` resolution fixtures and follow named re-export chains without
   changing Test262 inputs. The stage-53 digest improved to 393/599; remaining
   failures stay grouped by the digest output.
+
+- **R39 — Long-stage conformance execution.** Keep stages 44, 53, and 65
+  explicitly unresolved until complete digests are collected. Diagnose long
+  stages with external subdirectory sharding or a longer-lived runner process;
+  do not treat partial output or unit-test counts as conformance evidence.
