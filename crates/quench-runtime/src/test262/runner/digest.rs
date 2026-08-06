@@ -199,7 +199,14 @@ fn run_parallel(
 }
 
 pub(crate) fn worker_count(available: usize) -> usize {
-    available.clamp(1, 8)
+    let configured = std::env::var("TEST262_WORKERS")
+        .ok()
+        .and_then(|value| value.parse().ok());
+    worker_count_with_limit(available, configured)
+}
+
+fn worker_count_with_limit(available: usize, configured: Option<usize>) -> usize {
+    configured.unwrap_or(available).clamp(1, 8)
 }
 
 fn trim_quick(indexed: &mut Vec<(usize, String, TestOutcome)>, limit: usize) {
@@ -533,6 +540,14 @@ mod tests {
     #[test]
     fn elapsed_millis_reports_subsecond_precision() {
         assert_eq!(elapsed_millis(std::time::Duration::from_millis(1234)), 1234);
+    }
+
+    #[test]
+    fn worker_limit_is_bounded_and_configurable() {
+        assert_eq!(worker_count_with_limit(64, None), 8);
+        assert_eq!(worker_count_with_limit(64, Some(2)), 2);
+        assert_eq!(worker_count_with_limit(64, Some(0)), 1);
+        assert_eq!(worker_count_with_limit(2, Some(64)), 8);
     }
 
     #[test]
