@@ -145,8 +145,8 @@ relevant test262 stage.
 
 - **R38 — Module fixture identity.** Preserve canonical module identity for
   `-as.js` resolution fixtures and follow named re-export chains without
-  changing Test262 inputs. The stage-53 digest improved to 393/599; remaining
-  failures stay grouped by the digest output.
+  changing Test262 inputs. Use a fresh digest to assess remaining failures;
+  this plan does not retain conformance counts.
 
 - **R39 — Long-stage conformance execution.** Keep stages 44, 53, and 65
   explicitly unresolved until complete digests are collected. Diagnose long
@@ -160,3 +160,35 @@ relevant test262 stage.
   resolved in `a7da99c4`; imported accessor and immutable-binding behavior are
   covered by Rust reproducers in `247757e5` and `929813a9`. Resolve the final
   fixture-order gate before claiming the conformance crate green.
+
+- **R41 — Fresh conformance and performance baseline.** Run a complete digest
+  from stage 0 before architectural changes. Record pass/fail/skip counts,
+  wall time, RSS, worker count, and discovery, bootstrap, parse, execution,
+  microtask, and cleanup timings outside `docs/` and `tasks/`.
+
+- **R42 — Heap and execution boundaries.** Introduce explicit ownership
+  boundaries for heap allocation, object identity, execution frames, roots,
+  and worker-local job state only where measurements or tests justify them.
+  Begin with handles or an allocation facade over the existing representation;
+  a garbage collector is not required for this phase. Target a single
+  composition boundary:
+  `Runtime<Heap, Collector, Allocator, Frames, Executor, Exceptions, Environments>`.
+  `Heap` owns storage and identity, `Allocator` creates values, `Collector`
+  tracks roots/reclamation, `Frames` owns locals and suspension, `Executor`
+  runs AST or IR, `Exceptions` carries completion/control flow, and
+  `Environments` owns lexical/global/module/closure bindings. Start with an
+  adapter over the current reference-counted representation and a no-op
+  collector. Keep generic strategy selection at the boundary and use stable
+  handles internally.
+
+- **R43 — Interpreter-first IR.** Add a compact IR for constants, locals,
+  control flow, calls, property operations, throws, and suspension points.
+  Add lowering incrementally and differential tests against the AST evaluator.
+  Keep complex behavior in canonical runtime operations. Do not change the
+  default execution path until parity is established and affected Test262
+  stages pass.
+
+- **Future considerations — post-Phase 3.** Multiple execution models,
+  moving/generational GC, NaN-boxing, Cranelift JIT/AOT, inline caches, and
+  deoptimization are not active tasks, dependencies, or conformance gates.
+  Revisit them only after the Phase 3 IR and baseline measurements justify it.

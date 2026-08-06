@@ -3,44 +3,45 @@
 **Goal:** 100% of the in-scope test262 suite with the smallest practical Rust
 core. Test262 runs are the sole authority for conformance.
 
-**Shape:** OXC parser + tree-walking interpreter + self-hosted JS
-builtins. Three layers, each minimal:
+**Shape:** OXC parser + lowering + interpreter-first IR + an optional
+self-hosted JS builtins layer. The existing tree walker remains the semantic
+reference while the IR is introduced incrementally:
 
 1. **OXC parse** — `oxc` parses JS source into a spec-compliant AST
    (~20k LOC of parser logic we don't write).
 2. **Lower** — `lower/` converts oxc AST nodes into our simpler internal
    AST (`ast.rs`), stripping arena lifetimes and collapsing nodes the
    walker doesn't need to distinguish.
-3. **Walk** — `eval/` walks the internal AST node by node, evaluating
-   expressions and statements directly. No bytecode, no JIT, no
-   intermediate compilation step.
+3. **IR** — a compact interpreter-oriented representation for constants,
+   locals, control flow, calls, property operations, throws, and suspension
+   points. Complex behavior continues to call canonical runtime operations.
+4. **Interpret** — the current AST evaluator remains the reference path while
+   an IR interpreter is added and differentially tested. The IR becomes the
+   default only after semantic parity is demonstrated.
 
 This is the fastest path to 100% conformance with minimum LOC because:
 
 - **No hand-written parser.** OXC is spec-compliant and covers full
   ECMAScript + TypeScript + JSX. We save ~20k LOC and get correctness
   for free.
-- **No bytecode layer.** A tree-walking interpreter is the simplest
-  possible evaluator — each AST node maps to one `eval_*` function.
-  Bytecode compilation would add a compiler pass + a VM loop (~5–10k
-  LOC) with no conformance benefit — test262 tests behavior, not speed.
+- **Interpreter-first IR.** The IR is introduced as a shared semantic boundary
+  and a way to measure execution costs, not as a speculative optimizer. It
+  must not duplicate abstract operations or make conformance depend on a large
+  compiler rewrite.
 - **Spec ops in one place.** `eval/ops.rs` owns every canonical
   abstract operation (`ToPrimitive`, `ToObject`, `IteratorNext`, …),
   exposed to JS as `__ops__`. Every eval node and every builtin routes
   through them — no duplicate implementations.
-- **Builtins self-hosted in JS.** JS is ~1/3 the LOC of equivalent
-  Rust for spec algorithms. Once `__ops__` is complete, builtins move
-  to JS (`builtins/*.js`) and the Rust core shrinks.
+- **Selected builtins can be self-hosted in JS.** The embedded layer is loaded
+  only when a host calls `bootstrap_js_builtins`; `Context::new` initializes
+  Rust builtins and `__ops__` but does not load it. JS migration remains a
+  direction, not a statement that all builtins are already JS-owned.
 
-- **Builtin ownership:** Normal context initialization loads the
-  self-hosted JS builtin layer after Rust registration. Rust implementations
-  are being removed family by family. The required end state is that every
-  observable ECMAScript algorithm, public method, constructor behavior,
-  prototype method, and descriptor authored over `__ops__` is JavaScript-owned;
-  Rust retains only the core, native-memory, performance-sensitive,
-  crate-backed, engine-integration, and explicitly documented lower-LOC
-  direct-binding exceptions. Migration work is tracked in
-  `tasks/builtin-migration.md`.
+- **Builtin ownership:** Rust registration is the normal initialization path.
+  A host may then load the optional self-hosted layer and use it to replace
+  selected observable algorithms. Migration work and intentional direct
+  bindings are tracked in `tasks/builtin-migration.md` and
+  `tasks/builtin-direct-bindings.txt`.
 - **Builtin ownership rule:** every algorithm, public method, constructor
   wiring, and property descriptor that can be authored in `builtins/*.js`
   belongs there. Rust is reserved for interpreter/core operations and
@@ -87,8 +88,9 @@ Remainder of `eval/` is eval nodes only — no spec-op re-implementations.
 
 ## JS builtins
 
-35 `.js` files in `builtins/` (root of repo). `bootstrap_js_builtins`
-(`builtins/bootstrap.rs`) loads them during normal context initialization.
+36 `.js` files are present in `builtins/` (root of repo), while
+`bootstrap_js_builtins` embeds and loads the subset listed in
+`builtins/bootstrap.rs` when explicitly called.
 `__ops__` is scaffolded in
 `builtins/core/ops_wrapper.rs`. Order:
 
@@ -155,6 +157,40 @@ follow the spec: `defineProperty` defaults absent attributes to `false`,
 non-configurable invariants are enforced (ValidateAndApply), and writes
 to non-writable/non-extensible targets throw in strict mode.
 
+## Execution and memory boundaries
+
+Phase 3 may introduce explicit `Heap`, object handles, execution frames, and
+root accounting where they simplify ownership, reset hygiene, or allocation
+measurement. The first goal is a clear boundary around the existing
+`Rc<RefCell<...>>` representation; a garbage collector is not required.
+
+The AST evaluator and IR interpreter share canonical values, objects,
+environments, scheduler state, and abstract operations. Mutable realms,
+pending jobs, thrown values, and host state remain worker-local.
+
+The runtime is intended to make these policies configurable through one
+composition boundary:
+
+```text
+Runtime<Heap, Collector, Allocator, Frames, Executor, Exceptions, Environments>
+```
+
+Each parameter supplies a strategy for one concern. `Heap` owns identity and
+storage; `Allocator` creates heap values; `Collector` accounts for roots and
+reclaims storage; `Frames` owns call locals and suspension state; `Executor`
+runs the AST or IR; `Exceptions` carries JavaScript completion/control-flow
+states; and `Environments` owns lexical, global, module, and closure bindings.
+The first implementation may adapt the existing reference-counted storage
+and use a no-op collector. The interfaces must not expose that representation
+to the evaluator.
+
+`Exceptions` should model completion states, not only thrown errors: normal
+values, throws, returns, breaks, continues, and suspension. Heap and allocator
+strategies should share stable, copyable handles so later storage strategies
+do not require an evaluator rewrite. Keep generic composition at the runtime
+boundary; internal helpers should remain concrete where that preserves the
+minimum-LOC goal.
+
 ## Crate-backed primitives stay in Rust
 
 | Spec area      | Crate         | Rust file                |
@@ -170,16 +206,18 @@ Each exposes a tiny primitive; the surrounding `.prototype.*` is JS.
 Hand-rolled copies — including `chrono_*` helpers that never import
 `chrono` — are forbidden.
 
-## Future optimization targets
-
-Defer engine-performance work until conformance is complete. Runner throughput
-work directly shortens the conformance loop and is required before making
-performance claims:
+## Future considerations
 
 | Target | Ref plan | Timeline |
 |--------|----------|----------|
-| NaN-boxed values, arenas, string interning | Deferred | After 100% |
-| Profiling | Runner phase instrumentation first | Required to choose the next bottleneck |
+| NaN-boxed values, arenas, string interning | Future consideration | After measurements and conformance |
+| Moving or generational GC | Future consideration | After heap handles and root accounting |
+| Multiple execution models | Future consideration | After IR interpreter parity |
+| Cranelift JIT/AOT, inline caches, deoptimization | Future consideration | After IR and profiling justify it |
+
+Runner phase instrumentation and RSS profiling are active Phase 3 work because
+they shorten the conformance loop. They do not authorize performance claims
+without reproducible benchmarks.
 
 The conformance runner should use persistent workers, configurable bounded
 parallelism, and immutable parsed/bootstrap caches. Mutable contexts, pending
