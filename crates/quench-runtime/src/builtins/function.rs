@@ -475,6 +475,15 @@ pub fn register_function(ctx: &mut Context) {
     generator_function_proto_rc
         .borrow_mut()
         .set("prototype", Value::Object(Rc::clone(&generator_proto_rc)));
+    if let Some(descriptor) = generator_function_proto_rc
+        .borrow_mut()
+        .descriptors
+        .get_mut("prototype")
+    {
+        descriptor.writable = false;
+        descriptor.enumerable = false;
+        descriptor.configurable = true;
+    }
 
     // Create %AsyncGeneratorPrototype% — the intrinsic prototype of async generator instances.
     let async_generator_proto_rc = Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)));
@@ -858,6 +867,17 @@ fn make_function_constructor(
     global_env: Rc<RefCell<crate::env::Environment>>,
     kind: FunctionCtorKind,
 ) -> NativeConstructor {
+    let generator_prototype = if matches!(kind, FunctionCtorKind::Generator) {
+        function_proto.borrow().get("prototype").and_then(|value| {
+            if let Value::Object(object) = value {
+                Some(object)
+            } else {
+                None
+            }
+        })
+    } else {
+        None
+    };
     NativeConstructor::new(
         move |args| {
             // new Function(arg1, ..., argN, body): compile a real function
@@ -926,6 +946,9 @@ fn make_function_constructor(
                         ) {
                             func.set_empty_prototype(true);
                         }
+                        if let Some(ref prototype) = generator_prototype {
+                            func.set_generator_prototype(Rc::clone(prototype));
+                        }
                         if let Some(Value::Object(this_obj)) = crate::builtins::get_native_this() {
                             if let Some(sub_proto) = this_obj.borrow().prototype.clone() {
                                 func.set_instance_proto(sub_proto);
@@ -993,6 +1016,41 @@ mod tests {
             .eval("Object.getOwnPropertyDescriptor(function*() {}, 'prototype').configurable")
             .unwrap();
         assert_eq!(value, crate::Value::Boolean(false));
+    }
+
+    #[test]
+    fn generator_function_prototype_prototype_is_non_writable() {
+        let mut context = crate::Context::new().unwrap();
+        let value = context
+            .eval("var d = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(function*() {}), 'prototype'); [d.value === Object.getPrototypeOf(function*() {}.prototype), d.writable, d.enumerable, d.configurable].join('|')")
+            .unwrap();
+        assert_eq!(value, crate::Value::String("true|false|false|true".into()));
+    }
+
+    #[test]
+    fn generator_function_constructor_uses_constructor_realm_generator_prototype() {
+        let mut constructor_realm = crate::Context::new().unwrap();
+        let generator_constructor = constructor_realm
+            .eval("Object.getPrototypeOf(function*() {}).constructor")
+            .unwrap();
+        let constructor_generator_prototype = constructor_realm
+            .eval("Object.getPrototypeOf(function*() {}.prototype)")
+            .unwrap();
+        let mut new_target_realm = crate::Context::new().unwrap();
+        let new_target = new_target_realm
+            .eval("var nt = new Function(); nt.prototype = null; nt")
+            .unwrap();
+        let new_target_generator_function_prototype = new_target_realm
+            .eval("Object.getPrototypeOf(function*() {})")
+            .unwrap();
+        new_target_realm.set_global("generatorConstructor".into(), generator_constructor);
+        new_target_realm.set_global("constructorGeneratorPrototype".into(), constructor_generator_prototype);
+        new_target_realm.set_global("newTarget".into(), new_target);
+        new_target_realm.set_global("newTargetGeneratorFunctionPrototype".into(), new_target_generator_function_prototype);
+        let value = new_target_realm
+            .eval("var fn = Reflect.construct(generatorConstructor, [''], newTarget); [Object.getPrototypeOf(fn) === newTargetGeneratorFunctionPrototype, Object.getPrototypeOf(fn.prototype) === constructorGeneratorPrototype].join('|')")
+            .unwrap();
+        assert_eq!(value, crate::Value::String("true|true".into()));
     }
 
     #[test]

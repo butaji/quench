@@ -202,6 +202,16 @@ impl ValueFunction {
         self.empty_prototype = empty;
     }
 
+    pub fn set_generator_prototype(&mut self, prototype: Rc<RefCell<Object>>) {
+        let instance = Rc::new(RefCell::new(Object::with_prototype(
+            ObjectKind::Ordinary,
+            prototype,
+        )));
+        self.properties
+            .borrow_mut()
+            .insert("prototype".to_string(), Value::Object(instance));
+    }
+
     /// Create a new arrow function
     #[allow(clippy::boxed_local)]
     pub fn new_arrow(
