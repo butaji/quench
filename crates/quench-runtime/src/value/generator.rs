@@ -1050,6 +1050,7 @@ fn delegate_abrupt(
     };
     match finish_delegate_abrupt(generator, state.clone(), result) {
         Ok(result) => Ok(result),
+        Err(error) if generator.borrow().is_async => Err(error),
         Err(error) => resume_delegate_error(generator, state, error),
     }
 }
@@ -2029,6 +2030,23 @@ mod tests {
         .unwrap();
         let result = ctx.eval("received + ',' + returned").unwrap();
         assert_eq!(result, Value::String("7,8".into()));
+    }
+
+    #[test]
+    fn async_generator_yield_delegate_throw_value_getter_error_is_caught() {
+        let mut ctx = crate::Context::new().unwrap();
+        ctx.eval(
+            "var token = {}; var result; var iterator = { \
+             [Symbol.asyncIterator]: function() { return this; }, \
+             next: function() { return { done: false, value: undefined }; }, \
+             throw: function() { return { done: false, get value() { throw token; } }; } \
+             }; \
+             async function* f() { var thrown; try { yield* iterator; } catch (e) { thrown = e; } return thrown; } \
+             var generator = f(); generator.next().then(function() { generator.throw().then(function(step) { result = step.value; }); });",
+        )
+        .unwrap();
+        crate::builtins::promise::execute_pending_microtasks().unwrap();
+        assert_eq!(ctx.eval("result === token").unwrap(), Value::Boolean(true));
     }
 
     #[test]
