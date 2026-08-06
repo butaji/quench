@@ -94,7 +94,7 @@ fi
 
 if [[ "$NEEDS_JSON_PARSE" -eq 0 ]]; then
   echo "[test-run-stage] Stage $STAGE (digest)"
-  env TEST262_STAGE="$STAGE" "${EXTRA_ENV_ARGS[@]}" cargo nextest run -p quench-runtime --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all --no-capture "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"
+  env TEST262_STAGE="$STAGE" "${EXTRA_ENV_ARGS[@]}" cargo nextest run -p quench-test262 --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all --no-capture "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"
   exit $?
 fi
 
@@ -102,9 +102,9 @@ TMP_OUTPUT="$(mktemp)"
 set +e
 if [[ "$OUTPUT_JSON" -eq 0 ]]; then
   echo "[test-run-stage] Stage $STAGE (digest)"
-  env TEST262_STAGE="$STAGE" "${EXTRA_ENV_ARGS[@]}" cargo nextest run -p quench-runtime --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all --no-capture "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" | tee "$TMP_OUTPUT"
+  env TEST262_STAGE="$STAGE" "${EXTRA_ENV_ARGS[@]}" cargo nextest run -p quench-test262 --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all --no-capture "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" | tee "$TMP_OUTPUT"
 else
-  env TEST262_STAGE="$STAGE" "${EXTRA_ENV_ARGS[@]}" cargo nextest run -p quench-runtime --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all --no-capture "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" > "$TMP_OUTPUT" 2>&1
+  env TEST262_STAGE="$STAGE" "${EXTRA_ENV_ARGS[@]}" cargo nextest run -p quench-test262 --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all --no-capture "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" > "$TMP_OUTPUT" 2>&1
 fi
 RUN_RC=$?
 set -e

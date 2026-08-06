@@ -18,9 +18,9 @@ STAGE_TIMEOUT=$((10 + STAGE_COUNT / 5))
 [ "$STAGE_TIMEOUT" -lt 120 ] && STAGE_TIMEOUT=120
 
 if command -v timeout >/dev/null 2>&1; then
-    OUTPUT=$(TEST262_STAGE=$STAGE timeout "$STAGE_TIMEOUT" cargo nextest run -p quench-runtime --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all --no-capture 2>&1 || true)
+    OUTPUT=$(TEST262_STAGE=$STAGE timeout "$STAGE_TIMEOUT" cargo nextest run -p quench-test262 --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all --no-capture 2>&1 || true)
 else
-    OUTPUT=$(TEST262_STAGE=$STAGE cargo nextest run -p quench-runtime --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all --no-capture 2>&1 || true)
+    OUTPUT=$(TEST262_STAGE=$STAGE cargo nextest run -p quench-test262 --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all --no-capture 2>&1 || true)
 fi
 
 # Success requires the exact footer AND zero skipped tests (the footer is

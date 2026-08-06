@@ -19,29 +19,29 @@ crash-isolated fallback.
 cargo nextest run -p quench-runtime
 
 # Test262 harness (the staged test is one harness test; the harness runs files)
-cargo nextest run -p quench-runtime --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all
+cargo nextest run -p quench-test262 --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all
 
 # Run one test
 cargo run --bin run-test -- tests/test262/path/to/test.js
 
 # Run the default stage (stage 0 unless TEST262_STAGE is set)
-cargo nextest run -p quench-runtime --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all --no-capture
+cargo nextest run -p quench-test262 --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all --no-capture
 
 # Run a selected stage
-TEST262_STAGE=N cargo nextest run -p quench-runtime --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all --no-capture
+TEST262_STAGE=N cargo nextest run -p quench-test262 --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all --no-capture
 
 # Collect all failures and group them by error
-TEST262_STAGE=N TEST262_DIGEST=1 cargo nextest run -p quench-runtime --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all --no-capture
+TEST262_STAGE=N TEST262_DIGEST=1 cargo nextest run -p quench-test262 --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all --no-capture
 
 # Fast digest invocation; output remains the Test262 SSOT
-TEST262_STAGE=N TEST262_DIGEST=1 cargo nextest run -p quench-runtime --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all
+TEST262_STAGE=N TEST262_DIGEST=1 cargo nextest run -p quench-test262 --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all
 
 # Crash-isolated fallback for a stage (slower, useful after a runtime crash;
 # exits non-zero when any test fails or times out)
 TEST262_STAGE=N bash tools/run-each.sh
 
 # Run every stage in order
-ALL_STAGES=1 cargo nextest run -p quench-runtime --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all --no-capture
+ALL_STAGES=1 cargo nextest run -p quench-test262 --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all --no-capture
 ```
 
 The runner does not read progress state from `tasks/index.json`. Set
@@ -89,11 +89,11 @@ evidence:
 
 ```bash
 TEST262_STAGE=N TEST262_DIGEST=1 TEST262_QUICK=1 \
-  cargo nextest run -p quench-runtime --test test262 --profile test262 \
+  cargo nextest run -p quench-test262 --test test262 --profile test262 \
   -E 'test(test262_staged)' --run-ignored all --no-capture
 
 TEST262_STAGE=N TEST262_DIGEST=1 \
-  cargo nextest run -p quench-runtime --test test262 --profile test262 \
+  cargo nextest run -p quench-test262 --test test262 --profile test262 \
   -E 'test(test262_staged)' --run-ignored all --no-capture
 ```
 

@@ -124,7 +124,7 @@ if [[ "$TEST" == "" ]]; then
   fi
 
   set +e
-  TEST_OUTPUT="$(TEST262_STAGE=$STAGE TEST262_DIGEST=1 TEST262_QUICK=1 cargo nextest run -p quench-runtime --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all --no-capture 2>&1)"
+  TEST_OUTPUT="$(TEST262_STAGE=$STAGE TEST262_DIGEST=1 TEST262_QUICK=1 cargo nextest run -p quench-test262 --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all --no-capture 2>&1)"
   TEST_RC=$?
   set -e
 
