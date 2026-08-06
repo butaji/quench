@@ -1814,6 +1814,10 @@ mod class_declaration {
         );
         assert!(eval("class C extends function() {}.bind() {}").is_err());
         assert!(crate::value::take_thrown_value().is_some());
+        assert_eq!(
+            eval("var D = class extends function() { arguments.callee; } {}; try { Object.getPrototypeOf(D).arguments; } catch (e) { typeof e + ':' + (e && e.name) }").unwrap(),
+            Value::String("object:TypeError".into())
+        );
     }
 
     #[test]

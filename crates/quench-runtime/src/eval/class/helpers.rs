@@ -585,9 +585,10 @@ pub fn get_super_class_own_proto(super_class_val: &Value) -> Option<Value> {
         // For `class Derived extends Base`, the superclass VALUE IS the class itself.
         // Object.getPrototypeOf(Derived) should return `Base` as a Value.
         Value::Class(class) => Some(Value::Class(class.clone())),
-        Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_) => {
-            // Function's own [[Prototype]] is %FunctionPrototype%
-            builtins::get_function_prototype().map(Value::Object)
+        Value::Function(function) => Some(Value::Function(function.clone())),
+        Value::NativeFunction(function) => Some(Value::NativeFunction(function.clone())),
+        Value::NativeConstructor(constructor) => {
+            Some(Value::NativeConstructor(constructor.clone()))
         }
         Value::Object(_) => {
             // Object's own [[Prototype]] is Object.prototype
