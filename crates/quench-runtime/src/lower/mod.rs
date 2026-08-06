@@ -584,10 +584,9 @@ mod tests {
     fn test_lower_switch_stmt() {
         let stmt = first_stmt("switch (x) { case 1: break; }");
         let has_for = match stmt {
-            Statement::SequenceDecls(stmts) => stmts.iter().any(|stmt| {
+            Statement::Block(stmts) => stmts.iter().any(|stmt| {
                 matches!(stmt, Statement::Block(body) if body.iter().any(|stmt| matches!(stmt, Statement::For { .. })))
             }),
-            Statement::For { .. } => true,
             _ => false,
         };
         assert!(has_for);
