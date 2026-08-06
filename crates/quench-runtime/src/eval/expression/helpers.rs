@@ -397,11 +397,19 @@ pub fn eval_update(
                 Some(crate::ast::VarKind::Let | crate::ast::VarKind::Const)
             )
         {
-            scope.borrow_mut().set(
+            let updated = scope.borrow_mut().set(
                 name.clone(),
                 new_value.clone(),
                 crate::interpreter::is_strict_mode(),
             );
+            if !updated {
+                let (thrown, error) = crate::value::error::create_js_error_with_type(
+                    &format!("Assignment to constant variable '{name}'"),
+                    "TypeError",
+                );
+                crate::value::set_thrown_value(thrown);
+                return Err(error);
+            }
             return if prefix { Ok(new_value) } else { Ok(old_value) };
         }
         let scope_ref = scope.borrow();
