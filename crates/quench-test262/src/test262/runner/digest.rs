@@ -1,14 +1,16 @@
 //! Digest mode: run every test, group failures, optional parallel/JSON/quick.
 //! Includes per-test diagnostic details (source context, error type, JS stack).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::Duration;
 
 use crate::harness::HarnessLoader;
-use crate::runner::execute::{run_isolated, run_single_test};
+use crate::runner::execute::{
+    prepare_test, run_isolated, run_prepared_test, run_single_test, PreparedTest,
+};
 use crate::runner::flags::RunnerFlags;
 use crate::runner::RunSummary;
 use crate::{TestFailure, TestOutcome};
@@ -161,12 +163,14 @@ fn run_parallel(
     let (tx, rx) = mpsc::channel();
     let next = Arc::new(AtomicUsize::new(0));
     let tests = Arc::new(tests.to_vec());
+    let prepared = Arc::new(prepare_stage(tests.as_ref()));
     let mut handles = Vec::new();
     for _ in 0..workers {
         let worker = DigestWorker {
             next: Arc::clone(&next),
             tests: Arc::clone(&tests),
             harness: harness.clone(),
+            prepared: Arc::clone(&prepared),
             isolated: use_isolated,
             tx: tx.clone(),
         };
@@ -188,6 +192,7 @@ struct DigestWorker {
     next: Arc<AtomicUsize>,
     tests: Arc<Vec<PathBuf>>,
     harness: HarnessLoader,
+    prepared: Arc<HashMap<PathBuf, Result<PreparedTest, String>>>,
     isolated: bool,
     tx: mpsc::Sender<(usize, String, TestOutcome)>,
 }
@@ -200,10 +205,27 @@ impl DigestWorker {
                 return;
             }
             let path = &self.tests[index];
-            let outcome = one_test(&self.harness, path, self.isolated);
+            let outcome = if self.isolated {
+                run_isolated(path)
+            } else {
+                match self.prepared.get(path) {
+                    Some(Ok(test)) => run_prepared_test(&self.harness, path, test),
+                    Some(Err(error)) => TestOutcome::Fail {
+                        failure: TestFailure::from_message(error.clone()),
+                    },
+                    None => run_single_test(&self.harness, path),
+                }
+            };
             let _ = self.tx.send((index, label(path, false), outcome));
         }
     }
+}
+
+fn prepare_stage(tests: &[PathBuf]) -> HashMap<PathBuf, Result<PreparedTest, String>> {
+    tests
+        .iter()
+        .map(|path| (path.clone(), prepare_test(path)))
+        .collect()
 }
 
 pub(crate) fn worker_count(available: usize) -> usize {

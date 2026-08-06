@@ -5,6 +5,7 @@ use std::io::Read;
 use std::path::Path;
 use std::process::{ExitStatus, Stdio};
 use std::sync::mpsc;
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
@@ -163,24 +164,39 @@ pub fn check_outcome(
     }
 }
 
+#[derive(Clone)]
+pub struct PreparedTest {
+    source: Arc<str>,
+    metadata: Arc<Test262Metadata>,
+}
+
+pub fn prepare_test(test_path: &Path) -> Result<PreparedTest, String> {
+    let source = std::fs::read_to_string(test_path).map_err(|e| format!("read: {}", e))?;
+    let metadata = Test262Metadata::parse(&source).ok_or_else(|| "bad frontmatter".to_string())?;
+    Ok(PreparedTest {
+        source: Arc::from(source),
+        metadata: Arc::new(metadata),
+    })
+}
+
 pub fn run_single_test(harness: &HarnessLoader, test_path: &Path) -> TestOutcome {
-    let source = match std::fs::read_to_string(test_path) {
-        Ok(s) => s,
-        Err(e) => {
+    let prepared = match prepare_test(test_path) {
+        Ok(test) => test,
+        Err(error) => {
             return TestOutcome::Fail {
-                failure: TestFailure::from_message(format!("read: {}", e)),
+                failure: TestFailure::from_message(error),
             }
         }
     };
-    let meta = match Test262Metadata::parse(&source) {
-        Some(m) => m,
-        None => {
-            return TestOutcome::Fail {
-                failure: TestFailure::from_message("bad frontmatter"),
-            }
-        }
-    };
-    run_prepared(harness, test_path, &source, &meta)
+    run_prepared_test(harness, test_path, &prepared)
+}
+
+pub fn run_prepared_test(
+    harness: &HarnessLoader,
+    test_path: &Path,
+    prepared: &PreparedTest,
+) -> TestOutcome {
+    run_prepared(harness, test_path, &prepared.source, &prepared.metadata)
 }
 
 fn run_prepared(
