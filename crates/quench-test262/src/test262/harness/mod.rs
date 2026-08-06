@@ -13,6 +13,7 @@ use quench_runtime::value::function::NativeConstructor;
 use quench_runtime::value::{Object, ObjectKind};
 use quench_runtime::{Context, JsError, NativeFunction, Value};
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 /// Make a native function value from a Rust closure.
 pub fn make_native<F>(f: F) -> Value
@@ -27,16 +28,17 @@ where
 // =============================================================================
 
 /// Cached loader for test262 harness JS files.
+#[derive(Clone)]
 pub struct HarnessLoader {
     harness_dir: String,
-    cache: std::cell::RefCell<std::collections::HashMap<String, String>>,
+    cache: Arc<Mutex<std::collections::HashMap<String, String>>>,
 }
 
 impl HarnessLoader {
     pub fn new(test262_dir: &str) -> Self {
         Self {
             harness_dir: format!("{}/harness", test262_dir),
-            cache: Default::default(),
+            cache: Arc::new(Mutex::new(std::collections::HashMap::new())),
         }
     }
 
@@ -49,7 +51,7 @@ impl HarnessLoader {
 
     /// Load a named harness file, caching results. Strips frontmatter.
     pub fn load(&self, name: &str) -> Option<String> {
-        if let Some(cached) = self.cache.borrow().get(name) {
+        if let Some(cached) = self.cache.lock().unwrap().get(name) {
             return Some(cached.clone());
         }
         let path = format!("{}/{}", self.harness_dir, name);
@@ -68,7 +70,8 @@ impl HarnessLoader {
         let trimmed = js_code.trim().to_string();
         let patched = trimmed.clone();
         self.cache
-            .borrow_mut()
+            .lock()
+            .unwrap()
             .insert(name.to_string(), patched.clone());
         Some(patched)
     }

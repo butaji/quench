@@ -143,6 +143,13 @@ fn test_harness_loader_load_caches() {
 }
 
 #[test]
+fn cloned_harness_loaders_share_cached_sources() {
+    let loader = make_loader();
+    let clone = loader.clone();
+    assert_eq!(loader.load("sta.js"), clone.load("sta.js"));
+}
+
+#[test]
 fn test_harness_loader_load_returns_none_for_missing() {
     let loader = make_loader();
     let result = loader.load("does_not_exist_xyz.js");

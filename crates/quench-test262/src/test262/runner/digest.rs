@@ -159,17 +159,16 @@ fn run_parallel(
         .unwrap_or(4);
     let (tx, rx) = mpsc::channel();
     let next = Arc::new(Mutex::new(0usize));
-    let tests = tests.to_vec();
-    let harness_root = harness.root_dir().to_string();
+    let tests = Arc::new(tests.to_vec());
+    let harness = harness.clone();
     let isolated = use_isolated;
     let mut handles = Vec::new();
     for _ in 0..workers {
         let tx = tx.clone();
         let next = Arc::clone(&next);
-        let tests = tests.clone();
-        let root = harness_root.clone();
+        let tests = Arc::clone(&tests);
+        let harness = harness.clone();
         handles.push(std::thread::spawn(move || {
-            let harness = HarnessLoader::new(&root);
             loop {
                 let i = {
                     let mut g = next.lock().unwrap();
