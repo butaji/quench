@@ -167,16 +167,6 @@ fn is_empty_completion(stmt: &Statement) -> bool {
         | Statement::Empty => true,
         Statement::Block(stmts) => stmts.iter().all(is_empty_completion),
         Statement::SequenceDecls(stmts) => stmts.iter().all(is_empty_completion),
-        Statement::Try {
-            body,
-            handler,
-            finalizer,
-            ..
-        } => {
-            is_empty_completion(body)
-                && handler.as_deref().is_none_or(is_empty_completion)
-                && finalizer.as_deref().is_none_or(is_empty_completion)
-        }
         _ => false,
     }
 }

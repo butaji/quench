@@ -6,7 +6,7 @@ fn eval(src: &str) -> Result<Value, crate::value::JsError> {
 
 #[test]
 fn try_without_catch_finally_preserves_try_completion() {
-    assert_eq!(eval("1; try { } finally { }").unwrap(), Value::Number(1.0));
+    assert_eq!(eval("1; try { } finally { }").unwrap(), Value::Undefined);
     assert_eq!(
         eval("2; try { 3; } finally { }").unwrap(),
         Value::Number(3.0)
