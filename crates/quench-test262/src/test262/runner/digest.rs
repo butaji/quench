@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use crate::harness::HarnessLoader;
 use crate::runner::execute::{
-    prepare_test, run_isolated, run_prepared_test, run_single_test, PreparedTest,
+    prepare_test_with_harness, run_isolated, run_prepared_test, run_single_test, PreparedTest,
 };
 use crate::runner::flags::RunnerFlags;
 use crate::runner::RunSummary;
@@ -163,7 +163,7 @@ fn run_parallel(
     let (tx, rx) = mpsc::channel();
     let next = Arc::new(AtomicUsize::new(0));
     let tests = Arc::new(tests.to_vec());
-    let prepared = Arc::new(prepare_stage(tests.as_ref()));
+    let prepared = Arc::new(prepare_stage(harness, tests.as_ref()));
     let mut handles = Vec::new();
     for _ in 0..workers {
         let worker = DigestWorker {
@@ -221,10 +221,13 @@ impl DigestWorker {
     }
 }
 
-fn prepare_stage(tests: &[PathBuf]) -> HashMap<PathBuf, Result<PreparedTest, String>> {
+fn prepare_stage(
+    harness: &HarnessLoader,
+    tests: &[PathBuf],
+) -> HashMap<PathBuf, Result<PreparedTest, String>> {
     tests
         .iter()
-        .map(|path| (path.clone(), prepare_test(path)))
+        .map(|path| (path.clone(), prepare_test_with_harness(harness, path)))
         .collect()
 }
 
@@ -236,7 +239,7 @@ pub(crate) fn worker_count(available: usize) -> usize {
 }
 
 fn worker_count_with_limit(available: usize, configured: Option<usize>) -> usize {
-    configured.unwrap_or(available).clamp(1, 8)
+    configured.unwrap_or(available).clamp(1, available.min(8).max(1))
 }
 
 fn trim_quick(indexed: &mut Vec<(usize, String, TestOutcome)>, limit: usize) {
@@ -577,7 +580,8 @@ mod tests {
         assert_eq!(worker_count_with_limit(64, None), 8);
         assert_eq!(worker_count_with_limit(64, Some(2)), 2);
         assert_eq!(worker_count_with_limit(64, Some(0)), 1);
-        assert_eq!(worker_count_with_limit(2, Some(64)), 8);
+        assert_eq!(worker_count_with_limit(2, Some(64)), 2);
+        assert_eq!(worker_count_with_limit(2, Some(8)), 2);
     }
 
     #[test]

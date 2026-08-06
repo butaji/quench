@@ -168,6 +168,7 @@ pub fn check_outcome(
 pub struct PreparedTest {
     source: Arc<str>,
     metadata: Arc<Test262Metadata>,
+    script: Option<Arc<str>>,
 }
 
 pub fn prepare_test(test_path: &Path) -> Result<PreparedTest, String> {
@@ -176,7 +177,19 @@ pub fn prepare_test(test_path: &Path) -> Result<PreparedTest, String> {
     Ok(PreparedTest {
         source: Arc::from(source),
         metadata: Arc::new(metadata),
+        script: None,
     })
+}
+
+pub fn prepare_test_with_harness(
+    harness: &HarnessLoader,
+    test_path: &Path,
+) -> Result<PreparedTest, String> {
+    let mut prepared = prepare_test(test_path)?;
+    let is_raw = prepared.metadata.flags.contains(&"raw".to_string());
+    let script = build_script(harness, &prepared.source, &prepared.metadata, is_raw)?;
+    prepared.script = Some(Arc::from(script));
+    Ok(prepared)
 }
 
 pub fn run_single_test(harness: &HarnessLoader, test_path: &Path) -> TestOutcome {
@@ -196,7 +209,13 @@ pub fn run_prepared_test(
     test_path: &Path,
     prepared: &PreparedTest,
 ) -> TestOutcome {
-    run_prepared(harness, test_path, &prepared.source, &prepared.metadata)
+    run_prepared(
+        harness,
+        test_path,
+        &prepared.source,
+        &prepared.metadata,
+        prepared.script.as_deref(),
+    )
 }
 
 fn run_prepared(
@@ -204,10 +223,15 @@ fn run_prepared(
     test_path: &Path,
     source: &str,
     meta: &Test262Metadata,
+    prepared_script: Option<&str>,
 ) -> TestOutcome {
     let is_module = meta.flags.contains(&"module".to_string());
     let is_raw = meta.flags.contains(&"raw".to_string());
-    let script = match build_script(harness, source, meta, is_raw) {
+    let script = match prepared_script
+        .map(str::to_string)
+        .map(Ok)
+        .unwrap_or_else(|| build_script(harness, source, meta, is_raw))
+    {
         Ok(s) => s,
         Err(e) => {
             return TestOutcome::Fail {
