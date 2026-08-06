@@ -128,3 +128,9 @@ relevant test262 stage.
 - **R36 — Conformance acceleration gate.** Freeze the universal embedding API
   and engine-performance work until Test262 is complete. Revisit only after
   runner timing data shows a conformance-relevant bottleneck.
+
+- **R37 — Test262 crate boundary.** Move harness, metadata, host, and runner
+  implementation out of `quench-runtime`; keep the runtime limited to the
+  neutral `QuenchRuntime` API (`eval`, `eval_module`, `eval_script`, module
+  import, realm snapshots, property access, calls, and host callbacks). Do
+  not export interpreter/environment internals to make the move compile.
