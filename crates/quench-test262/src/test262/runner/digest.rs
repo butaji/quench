@@ -46,6 +46,7 @@ pub fn run_stage_digest(
 
     let use_isolated = flags.isolated || (flags.digest && !inprocess_digest());
 
+    let execution_started = std::time::Instant::now();
     let outcomes = if flags.parallel {
         run_parallel(harness, tests, flags, use_isolated)
     } else {
@@ -81,6 +82,21 @@ pub fn run_stage_digest(
         duration_ms: elapsed_millis(started.elapsed()),
     };
     print_digest(&digest_out);
+    if metrics_enabled() {
+        println!(
+            "{}",
+            serde_json::json!({
+                "stage": stage,
+                "tests": count,
+                "workers": metrics_worker_count(flags.parallel, available_workers()),
+                "execution_ms": elapsed_millis(execution_started.elapsed()),
+                "wall_ms": digest_out.duration_ms,
+                "passed": passed,
+                "failed": failures.len(),
+                "skipped": skipped,
+            })
+        );
+    }
 
     DigestResult {
         summary: RunSummary {
@@ -96,6 +112,26 @@ pub fn run_stage_digest(
 
 fn elapsed_millis(duration: Duration) -> u128 {
     duration.as_millis()
+}
+
+fn metrics_enabled() -> bool {
+    std::env::var("TEST262_METRICS")
+        .ok()
+        .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+}
+
+fn available_workers() -> usize {
+    std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(4)
+}
+
+fn metrics_worker_count(parallel: bool, available: usize) -> usize {
+    if parallel {
+        worker_count(available)
+    } else {
+        1
+    }
 }
 
 fn record_outcome(
@@ -157,9 +193,7 @@ fn run_parallel(
     flags: &RunnerFlags,
     use_isolated: bool,
 ) -> Vec<(String, TestOutcome)> {
-    let workers = std::thread::available_parallelism()
-        .map(|n| worker_count(n.get()))
-        .unwrap_or(4);
+    let workers = worker_count(available_workers());
     let (tx, rx) = mpsc::channel();
     let next = Arc::new(AtomicUsize::new(0));
     let tests = Arc::new(tests.to_vec());
@@ -759,5 +793,14 @@ mod tests {
     fn normalize_comparison_handles_overlapping_operands() {
         let result = normalize_comparison_values("a !== b !== c");
         assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn metrics_worker_count_reflects_serial_and_parallel_modes() {
+        assert_eq!(metrics_worker_count(false, 8), 1);
+        assert_eq!(
+            metrics_worker_count(true, 8),
+            worker_count_with_limit(8, None)
+        );
     }
 }
