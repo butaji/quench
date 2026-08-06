@@ -134,3 +134,8 @@ relevant test262 stage.
   neutral `QuenchRuntime` API (`eval`, `eval_module`, `eval_script`, module
   import, realm snapshots, property access, calls, and host callbacks). Do
   not export interpreter/environment internals to make the move compile.
+
+- **R38 — Module fixture identity.** Preserve canonical module identity for
+  `-as.js` resolution fixtures and follow named re-export chains without
+  changing Test262 inputs. The stage-53 digest improved to 393/599; remaining
+  failures stay grouped by the digest output.
