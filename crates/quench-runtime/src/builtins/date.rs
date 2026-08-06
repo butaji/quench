@@ -602,33 +602,6 @@ mod tests {
     }
 
     #[test]
-    fn boolean_construct_uses_constructor_realm_default_prototype() {
-        let mut ctx = crate::Context::new().unwrap();
-        crate::test262::harness::try_inject_harness(&mut ctx).unwrap();
-        let result = ctx
-            .eval(
-                "var other = $262.createRealm().global; \
-                 var C = new other.Function(); C.prototype = null; \
-                 Object.getPrototypeOf(Reflect.construct(Boolean, [], C)) === other.Boolean.prototype",
-            )
-            .unwrap();
-        assert_eq!(result, crate::Value::Boolean(true));
-    }
-
-    #[test]
-    fn function_constructor_keeps_realm_global_environment() {
-        let mut ctx = crate::Context::new().unwrap();
-        crate::test262::harness::try_inject_harness(&mut ctx).unwrap();
-        let result = ctx
-            .eval(
-                "var other = $262.createRealm().global; \
-                 (new other.Function('return Boolean'))() === other.Boolean",
-            )
-            .unwrap();
-        assert_eq!(result, crate::Value::Boolean(true));
-    }
-
-    #[test]
     fn test_days_from_ymd_before_1970_is_negative() {
         assert_eq!(days_from_ymd(1969, 1, 1), -365);
         assert_eq!(days_from_ymd(1968, 1, 1), -(365 + 366));

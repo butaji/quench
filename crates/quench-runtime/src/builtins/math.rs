@@ -228,11 +228,10 @@ mod tests {
     fn math_has_configurable_to_string_tag() {
         let mut ctx = crate::Context::new().unwrap();
         crate::builtins::register_builtins(&mut ctx);
-        crate::test262::harness::try_inject_harness(&mut ctx).unwrap();
         let result = ctx
-            .eval("verifyProperty(Math, Symbol.toStringTag, { writable: false, enumerable: false, configurable: true }); 'ok'")
+            .eval("var d = Object.getOwnPropertyDescriptor(Math, Symbol.toStringTag); d.writable === false && d.enumerable === false && d.configurable === true")
             .unwrap();
-        assert_eq!(result, crate::Value::String("ok".to_string()));
+        assert_eq!(result, crate::Value::Boolean(true));
     }
 
     #[test]

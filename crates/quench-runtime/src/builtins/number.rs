@@ -627,23 +627,15 @@ mod tests {
     }
 
     #[test]
-    fn test_number_subclass_via_harness_combined() {
-        // Test that the Number constructor correctly handles subclassing
-        // even after test262 harness injection (a realistic scenario for
-        // test262 runs). Uses only methods that are guaranteed to exist.
+    fn test_number_subclass_combined() {
         let mut ctx = crate::Context::new().unwrap();
         crate::builtins::register_builtins(&mut ctx);
-        crate::test262::harness::try_inject_harness(&mut ctx).unwrap();
         let r = ctx.eval(
             "class N extends Number {} \
              var n = new N(42); \
-             assert.sameValue(n.toFixed(2), '42.00'); \
-             assert.sameValue(n.valueOf(), 42);",
+             n.toFixed(2) === '42.00' && n.valueOf() === 42",
         );
-        match r {
-            Ok(v) => assert_eq!(v, Value::Undefined),
-            Err(e) => panic!("FAILED: {:?}", e),
-        }
+        assert_eq!(r.unwrap(), Value::Boolean(true));
     }
 
     #[test]
