@@ -2573,6 +2573,16 @@ fn await_using_dispose_lookup_order_compares_equal_as_array() {
 }
 
 #[test]
+fn nested_switch_sibling_parameter_name_does_not_shadow() {
+    let mut ctx = Context::new().unwrap();
+    let value = ctx
+        .eval("(function(){ function boxed(other) { return false; } function classify(value) { switch (typeof value) { case 'string': return true; default: return boxed(value); } } return classify('a'); })()")
+        .unwrap();
+    assert_eq!(value, Value::Boolean(true));
+}
+
+
+#[test]
 fn tagged_template_tail_call_completes_deep_recursion() {
     let mut ctx = Context::new().unwrap();
     let value = ctx

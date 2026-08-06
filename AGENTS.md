@@ -31,6 +31,11 @@ active migration: `bootstrap_js_builtins` runs during normal context
 initialization — decision R22)*. Single
 crate: `crates/quench-runtime`. Never modify `tests/test262`.
 
+Test262 must execute unmodified for conformance evidence. Never override,
+replace, bypass, or shadow Test262 harness code or assertions in the runtime;
+doing so is not pure 100% conformance. Fix the engine or owned runtime
+integration instead.
+
 - `docs/architecture.md` — the Rust↔JS split, `__ops__` contract, bootstrap order.
 - `docs/review-2026-08.md` — 2026-08 architecture/code review, ranked findings.
 - `tasks/refactor-plan.md` — active queue (R18+ from the 2026-08 review).
