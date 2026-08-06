@@ -367,7 +367,7 @@ impl Scope {
         &self,
         name: &str,
         value: Value,
-        _strict: bool,
+        strict: bool,
     ) -> Option<bool> {
         let object = self.object_binding.as_ref()?.clone();
         if !self.load_with_unscopables() || self.is_unscopable(name) {
@@ -375,6 +375,9 @@ impl Scope {
         }
         let is_proxy = proxy_handler_and_target(&object).is_some();
         if !is_proxy && !object.borrow().has(name) {
+            if strict {
+                return None;
+            }
             let typed_array_prototype =
                 object.borrow().prototype.as_ref().is_some_and(|prototype| {
                     matches!(
