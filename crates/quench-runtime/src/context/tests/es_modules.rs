@@ -225,6 +225,30 @@ fn module_import_resolution_error_is_thrown_before_body() {
 }
 
 #[test]
+fn module_link_error_prevents_static_import_body_evaluation() {
+    let mut ctx = Context::new().unwrap();
+    let mut errors = crate::value::Object::new(crate::value::ObjectKind::Ordinary);
+    errors.set(
+        "./dep.js",
+        crate::Value::String("Ambiguous export".to_string()),
+    );
+    ctx.set_global(
+        "__quench_module_errors__".to_string(),
+        crate::Value::Object(std::rc::Rc::new(std::cell::RefCell::new(errors))),
+    );
+    ctx.register_module(
+        "./dep.js",
+        crate::value::Object::new(crate::value::ObjectKind::ModuleNamespace),
+    );
+    ctx.set_global("reached".to_string(), crate::Value::Boolean(false));
+    let result = ctx.eval_es_module(
+        "import x from './dep.js'; reached = true; export const value = x;",
+    );
+    assert!(result.is_err());
+    assert_eq!(ctx.get_global("reached"), Some(crate::Value::Boolean(false)));
+}
+
+#[test]
 fn module_import_rejects_unknown_import_attribute() {
     let mut ctx = Context::new().unwrap();
     let result = ctx.eval_es_module("import './missing.js' with {custom: 'value'};");
