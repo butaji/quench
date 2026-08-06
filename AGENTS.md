@@ -29,7 +29,7 @@ staged to 100% per stage, with the **minimum possible LOC** as a
 **small Rust core** plus a **self-hosted JS builtins layer** *(currently
 active migration: `bootstrap_js_builtins` runs during normal context
 initialization — decision R22)*. Single
-crate: `crates/quench-runtime`. Never modify `tests/test262`.
+crates: `crates/quench-runtime` (runtime) and `crates/quench-test262` (harness/runner). Never modify `tests/test262`.
 
 Test262 must execute unmodified for conformance evidence. Never override,
 replace, bypass, or shadow Test262 harness code or assertions in the runtime;
@@ -56,16 +56,16 @@ cargo clippy -p quench-runtime --all-targets
 
 # Diagnostic tools (see docs/tools.md)
 cargo run --bin run-test -- <test.js>        # single-test runner with metadata
-TEST262_DIGEST=1 TEST262_STAGE=N cargo nextest run -p quench-runtime --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all --no-capture   # collect ALL failures, grouped by error
-TEST262_STAGE=N TEST262_DIGEST=1 cargo nextest run -p quench-runtime --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all
+TEST262_DIGEST=1 TEST262_STAGE=N cargo nextest run -p quench-test262 --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all --no-capture   # collect ALL failures, grouped by error
+TEST262_STAGE=N TEST262_DIGEST=1 cargo nextest run -p quench-test262 --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all
 bash tools/run-each.sh                        # process-isolated (survives crashes)
 
 # Run the configured stage (the digest output is the coverage SSOT)
-cargo nextest run -p quench-runtime --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all --no-capture
+cargo nextest run -p quench-test262 --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all --no-capture
 # Specific stage
-TEST262_STAGE=N cargo nextest run -p quench-runtime --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all --no-capture
+TEST262_STAGE=N cargo nextest run -p quench-test262 --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all --no-capture
 # All stages in order, stop on first failure
-ALL_STAGES=1 cargo nextest run -p quench-runtime --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all --no-capture
+ALL_STAGES=1 cargo nextest run -p quench-test262 --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all --no-capture
 ```
 
 122 stages. No checkpoints. No skips. `src/test262/runner.rs::STAGES` mirrors
