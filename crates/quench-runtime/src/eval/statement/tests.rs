@@ -1808,6 +1808,10 @@ mod class_declaration {
     fn class_invalid_heritage_throws() {
         assert!(eval("class C extends 42 {}").is_err());
         assert!(eval("(function() { class C extends 42 {} })()").is_err());
+        assert_eq!(
+            eval("try { (function() { class C extends 42 {} })(); } catch (e) { typeof e + ':' + e.constructor.name }").unwrap(),
+            Value::String("object:TypeError".into())
+        );
         assert!(eval("class C extends function() {}.bind() {}").is_err());
         assert!(crate::value::take_thrown_value().is_some());
         assert_eq!(eval("typeof Math.abs").unwrap(), Value::String("function".into()));
