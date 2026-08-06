@@ -434,7 +434,7 @@ pub fn lower_switch(switch: &ast::SwitchStatement) -> Option<Statement> {
     }
     switch_scope_stmts.push(for_stmt);
 
-    let lowered_switch = Statement::SequenceDecls(vec![
+    let lowered_switch = Statement::Block(vec![
         Statement::VarDeclaration {
             kind: VarKind::Var,
             name: disc_name,
