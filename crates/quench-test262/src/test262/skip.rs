@@ -1,7 +1,7 @@
 //! test262 skip policy — zero skips. Every test runs; crashes become failures
 //! via process isolation. See `runner/digest.rs` `inprocess_digest()`.
 
-use crate::test262::metadata::Test262Metadata;
+use crate::metadata::Test262Metadata;
 
 const UNSUPPORTED_FEATURES: &[&str] = &[];
 

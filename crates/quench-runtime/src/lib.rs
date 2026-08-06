@@ -59,7 +59,6 @@ pub mod interpreter;
 pub mod lower;
 pub mod parser;
 pub mod strict_reserved;
-pub mod test262;
 pub mod value;
 
 // Re-export commonly used types from the context module

@@ -6,11 +6,11 @@ use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 
-use crate::test262::harness::HarnessLoader;
-use crate::test262::host::{TestFailure, TestOutcome};
-use crate::test262::runner::execute::{run_isolated, run_single_test};
-use crate::test262::runner::flags::RunnerFlags;
-use crate::test262::runner::RunSummary;
+use crate::harness::HarnessLoader;
+use quench_runtime::host::{TestFailure, TestOutcome};
+use crate::runner::execute::{run_isolated, run_single_test};
+use crate::runner::flags::RunnerFlags;
+use crate::runner::RunSummary;
 
 #[derive(Debug, Default)]
 pub struct DigestResult {

@@ -92,7 +92,7 @@ fn output_for(
 }
 
 fn fake_isolated_path() -> std::path::PathBuf {
-    std::path::PathBuf::from(crate::test262::runner::default_test262_dir())
+    std::path::PathBuf::from(crate::runner::default_test262_dir())
         .join("test/harness/assert-obj.js")
 }
 

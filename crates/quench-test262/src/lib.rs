@@ -4,7 +4,26 @@
 //! users depend only on `quench-runtime`; Test262 consumers depend on this
 //! crate for harness loading, metadata, host integration, and runners.
 
-pub use quench_runtime::test262::*;
+pub mod harness {
+    pub use super::test262::harness::*;
+}
+pub mod host {
+    pub use super::test262::host::*;
+}
+pub mod metadata {
+    pub use super::test262::metadata::*;
+}
+pub mod runner {
+    pub use super::test262::runner::*;
+    pub use super::test262::runner::execute;
+}
+pub mod skip {
+    pub use super::test262::skip::*;
+}
+
+mod test262;
+
+pub use test262::*;
 pub use quench_runtime::{DefaultQuenchRuntime, HostCallback, JsResult, QuenchRuntime};
 
 #[cfg(test)]

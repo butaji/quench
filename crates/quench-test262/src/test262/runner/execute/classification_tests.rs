@@ -1,5 +1,5 @@
 use super::*;
-use crate::test262::runner::execute::classification_helpers::*;
+use crate::runner::execute::classification_helpers::*;
 use std::path::PathBuf;
 
 #[test]

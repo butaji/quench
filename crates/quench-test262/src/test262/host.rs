@@ -3,11 +3,11 @@
 use std::path::Path;
 
 #[cfg(test)]
-use crate::test262::harness::try_inject_harness;
-use crate::value::error::take_thrown_value;
+use crate::harness::try_inject_harness;
+use quench_runtime::value::error::take_thrown_value;
 #[cfg(test)]
-use crate::Context;
-use crate::Value;
+use quench_runtime::Context;
+use quench_runtime::Value;
 
 /// Implement this for your engine to plug it into the test262 runner.
 pub trait Test262Host: Send {
@@ -316,12 +316,12 @@ impl Default for QuenchHost {
 
 impl Test262Host for QuenchHost {
     fn run_script(&mut self, source: &str) -> Result<(), String> {
-        let mut ctx = crate::test262::runner::execute::initialize_test_context(false)?;
+        let mut ctx = crate::runner::execute::initialize_test_context(false)?;
         ctx.eval(source).map(|_| ()).map_err(|e| format!("{:?}", e))
     }
 
     fn run_module_script(&mut self, source: &str) -> Result<(), String> {
-        let mut ctx = crate::test262::runner::execute::initialize_test_context(false)?;
+        let mut ctx = crate::runner::execute::initialize_test_context(false)?;
         ctx.eval_es_module(source)
             .map(|_| ())
             .map_err(|e| format!("{:?}", e))
@@ -334,9 +334,9 @@ mod tests {
 
     #[test]
     fn class_definition_null_proto_test262_case() {
-        use crate::test262::harness::HarnessLoader;
-        use crate::test262::runner::default_test262_dir;
-        use crate::test262::runner::run_single_test;
+        use crate::harness::HarnessLoader;
+        use crate::runner::default_test262_dir;
+        use crate::runner::run_single_test;
         let harness = HarnessLoader::new(&default_test262_dir());
         let path = std::path::PathBuf::from(default_test262_dir())
             .join("test/language/statements/class/subclass/class-definition-null-proto.js");
@@ -365,7 +365,7 @@ mod tests {
 
     #[test]
     fn dstr_array_pattern_with_null_value_throws_typeerror_object() {
-        use crate::test262::runner::execute::initialize_test_context;
+        use crate::runner::execute::initialize_test_context;
         let mut ctx = initialize_test_context(false).expect("ctx");
         let script = r#"
             var f = ([[x]]) => {};
@@ -404,7 +404,7 @@ mod tests {
 
     #[test]
     fn unscopables_with_blocks_property_lookup_in_arrow() {
-        use crate::test262::runner::execute::initialize_test_context;
+        use crate::runner::execute::initialize_test_context;
         let mut ctx = initialize_test_context(false).expect("ctx");
         // The arrow function has its own `var v = x` after the with block;
         // var hoisting makes v DeclaredOnly at function entry. Inside the
@@ -434,7 +434,7 @@ mod tests {
 
     #[test]
     fn member_assignment_on_null_throws_typeerror_object() {
-        use crate::test262::runner::execute::initialize_test_context;
+        use crate::runner::execute::initialize_test_context;
         let mut ctx = initialize_test_context(false).expect("ctx");
         let script = r#"
             var count = 0;
@@ -482,7 +482,7 @@ mod tests {
 
     #[test]
     fn harness_string_underscore_native_helpers_are_present() {
-        use crate::test262::runner::execute::initialize_test_context;
+        use crate::runner::execute::initialize_test_context;
         let mut ctx = initialize_test_context(false).expect("ctx");
         // The JS String.js builtin layer wraps `String.fromCharCode` /
         // `String.fromCodePoint` with JS functions that call the underscore
@@ -506,7 +506,7 @@ mod tests {
 
     #[test]
     fn harness_assert_settable_in_test_context() {
-        use crate::test262::runner::execute::initialize_test_context;
+        use crate::runner::execute::initialize_test_context;
         let mut ctx = initialize_test_context(false).expect("ctx");
         let v = ctx.get_global("assert");
         assert!(v.is_some(), "assert must be defined");
@@ -521,9 +521,9 @@ mod tests {
 
     #[test]
     fn fn_name_method_test262_case() {
-        use crate::test262::harness::HarnessLoader;
-        use crate::test262::runner::default_test262_dir;
-        use crate::test262::runner::run_single_test;
+        use crate::harness::HarnessLoader;
+        use crate::runner::default_test262_dir;
+        use crate::runner::run_single_test;
         let harness = HarnessLoader::new(&default_test262_dir());
         let path = std::path::PathBuf::from(default_test262_dir())
             .join("test/language/statements/class/definition/fn-name-method.js");
@@ -533,8 +533,8 @@ mod tests {
 
     #[test]
     fn fn_name_method_static_id_via_build_script() {
-        use crate::test262::harness::HarnessLoader;
-        use crate::test262::runner::default_test262_dir;
+        use crate::harness::HarnessLoader;
+        use crate::runner::default_test262_dir;
         let harness = HarnessLoader::new(&default_test262_dir());
         let ph = harness
             .build_script("", &["propertyHelper.js".to_string()])
@@ -550,8 +550,8 @@ mod tests {
 
     #[test]
     fn fn_name_method_via_build_script_first_two() {
-        use crate::test262::harness::HarnessLoader;
-        use crate::test262::runner::default_test262_dir;
+        use crate::harness::HarnessLoader;
+        use crate::runner::default_test262_dir;
         let harness = HarnessLoader::new(&default_test262_dir());
         let ph = harness
             .build_script("", &["propertyHelper.js".to_string()])
@@ -569,9 +569,9 @@ mod tests {
 
     #[test]
     fn fn_name_method_via_build_script() {
-        use crate::test262::harness::HarnessLoader;
-        use crate::test262::metadata::Test262Metadata;
-        use crate::test262::runner::default_test262_dir;
+        use crate::harness::HarnessLoader;
+        use crate::metadata::Test262Metadata;
+        use crate::runner::default_test262_dir;
         use std::fs;
         let path = std::path::PathBuf::from(default_test262_dir())
             .join("test/language/statements/class/definition/fn-name-method.js");
@@ -862,16 +862,16 @@ verifyProperty(obj, prop, desc);
     fn test_quench_host_sloppy_regardless_of_caller_strict() {
         // When QuenchHost::run_script is called, it explicitly sets strict=false
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
-        crate::interpreter::set_strict_mode(true);
-        let prev = crate::interpreter::is_strict_mode();
+        quench_runtime::builtins::register_builtins(&mut ctx);
+        quench_runtime::interpreter::set_strict_mode(true);
+        let prev = quench_runtime::interpreter::is_strict_mode();
         // This simulates what QuenchHost.run_script does internally
-        crate::interpreter::set_strict_mode(false);
+        quench_runtime::interpreter::set_strict_mode(false);
         let result = ctx.eval("with ({}) {}");
-        crate::interpreter::set_strict_mode(prev);
+        quench_runtime::interpreter::set_strict_mode(prev);
         assert_eq!(
             result,
-            Ok(crate::value::Value::Undefined),
+            Ok(quench_runtime::value::Value::Undefined),
             "QuenchHost should set sloppy mode regardless of caller's strictness"
         );
     }
@@ -1011,20 +1011,20 @@ verifyProperty(obj, prop, desc);
     #[test]
     fn test_quench_host_sets_main_realm_host_error() {
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
-        crate::interpreter::set_strict_mode(false);
+        quench_runtime::builtins::register_builtins(&mut ctx);
+        quench_runtime::interpreter::set_strict_mode(false);
         try_inject_harness(&mut ctx).expect("harness ok");
         if let Some(te) = ctx.get_global("Test262Error") {
-            crate::value::error::set_main_realm_host_error(te);
+            quench_runtime::value::error::set_main_realm_host_error(te);
         }
-        crate::interpreter::set_strict_mode(false);
+        quench_runtime::interpreter::set_strict_mode(false);
 
         // Now eval something that throws a Test262Error
         let result = ctx.eval("assert(false, 'msg')");
         assert!(result.is_err(), "assert(false) should throw");
 
         // The thrown value should be a Test262Error
-        let thrown = crate::value::take_thrown_value();
+        let thrown = quench_runtime::value::take_thrown_value();
         assert!(
             thrown.is_some(),
             "thrown value should be set after assert(false)"
@@ -1056,8 +1056,8 @@ verifyProperty(obj, prop, desc);
 
     #[test]
     fn s12_2_a11_via_run_single_test() {
-        use crate::test262::harness::HarnessLoader;
-        use crate::test262::runner::{default_test262_dir, run_single_test};
+        use crate::harness::HarnessLoader;
+        use crate::runner::{default_test262_dir, run_single_test};
         let harness = HarnessLoader::new(&default_test262_dir());
         let path = std::path::PathBuf::from(default_test262_dir())
             .join("test/language/statements/variable/S12.2_A11.js");

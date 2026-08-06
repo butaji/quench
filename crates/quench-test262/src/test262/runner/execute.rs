@@ -8,10 +8,10 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
-use crate::test262::harness::HarnessLoader;
-use crate::test262::host::{capture_thrown_diagnostics, TestFailure, TestOutcome};
-use crate::test262::metadata::Test262Metadata;
-use crate::Value;
+use crate::harness::HarnessLoader;
+use quench_runtime::host::{capture_thrown_diagnostics, TestFailure, TestOutcome};
+use crate::metadata::Test262Metadata;
+use quench_runtime::Value;
 
 /// Per-test timeout in seconds — one value shared by the in-process and
 /// subprocess (isolated) paths so a test cannot pass one way and fail the other.
@@ -276,7 +276,7 @@ fn run_with_timeout(
         .negative
         .as_ref()
         .is_some_and(|negative| negative.phase == "parse")
-        && crate::interpreter::has_legacy_octal(script)
+        && quench_runtime::interpreter::has_legacy_octal(script)
     {
         return TestOutcome::Pass;
     }
@@ -284,7 +284,7 @@ fn run_with_timeout(
         .negative
         .as_ref()
         .is_some_and(|negative| negative.phase == "parse")
-        && crate::interpreter::has_invalid_strict_numeric_literal(script)
+        && quench_runtime::interpreter::has_invalid_strict_numeric_literal(script)
     {
         return TestOutcome::Pass;
     }
@@ -292,7 +292,7 @@ fn run_with_timeout(
         .negative
         .as_ref()
         .is_some_and(|negative| negative.phase == "parse")
-        && crate::interpreter::has_invalid_strict_legacy_octal_escape(script)
+        && quench_runtime::interpreter::has_invalid_strict_legacy_octal_escape(script)
     {
         return TestOutcome::Pass;
     }
@@ -300,7 +300,7 @@ fn run_with_timeout(
         .negative
         .as_ref()
         .is_some_and(|negative| negative.phase == "parse")
-        && crate::interpreter::has_invalid_regexp_pattern(script)
+        && quench_runtime::interpreter::has_invalid_regexp_pattern(script)
     {
         return TestOutcome::Pass;
     }
@@ -308,7 +308,7 @@ fn run_with_timeout(
         .negative
         .as_ref()
         .is_some_and(|negative| negative.phase == "parse")
-        && crate::interpreter::has_invalid_unicode_legacy_octal_escape(script)
+        && quench_runtime::interpreter::has_invalid_unicode_legacy_octal_escape(script)
     {
         return TestOutcome::Pass;
     }
@@ -316,7 +316,7 @@ fn run_with_timeout(
         .negative
         .as_ref()
         .is_some_and(|negative| negative.phase == "parse")
-        && crate::interpreter::has_invalid_unicode_out_of_bounds_decimal_escape(script)
+        && quench_runtime::interpreter::has_invalid_unicode_out_of_bounds_decimal_escape(script)
     {
         return TestOutcome::Pass;
     }
@@ -324,7 +324,7 @@ fn run_with_timeout(
         .negative
         .as_ref()
         .is_some_and(|negative| negative.phase == "parse")
-        && crate::interpreter::has_invalid_unicode_optional_assertion(script)
+        && quench_runtime::interpreter::has_invalid_unicode_optional_assertion(script)
     {
         return TestOutcome::Pass;
     }
@@ -332,7 +332,7 @@ fn run_with_timeout(
         .negative
         .as_ref()
         .is_some_and(|negative| negative.phase == "parse")
-        && crate::interpreter::has_invalid_unicode_assertion_range(script)
+        && quench_runtime::interpreter::has_invalid_unicode_assertion_range(script)
     {
         return TestOutcome::Pass;
     }
@@ -340,7 +340,7 @@ fn run_with_timeout(
         .negative
         .as_ref()
         .is_some_and(|negative| negative.phase == "parse")
-        && crate::interpreter::has_invalid_unicode_class_control_escape(script)
+        && quench_runtime::interpreter::has_invalid_unicode_class_control_escape(script)
     {
         return TestOutcome::Pass;
     }
@@ -348,7 +348,7 @@ fn run_with_timeout(
         .negative
         .as_ref()
         .is_some_and(|negative| negative.phase == "parse")
-        && crate::interpreter::has_invalid_unicode_class_range_escape(script)
+        && quench_runtime::interpreter::has_invalid_unicode_class_range_escape(script)
     {
         return TestOutcome::Pass;
     }
@@ -356,7 +356,7 @@ fn run_with_timeout(
         .negative
         .as_ref()
         .is_some_and(|negative| negative.phase == "parse")
-        && crate::interpreter::has_invalid_unicode_identity_escape(script)
+        && quench_runtime::interpreter::has_invalid_unicode_identity_escape(script)
     {
         return TestOutcome::Pass;
     }
@@ -364,7 +364,7 @@ fn run_with_timeout(
         .negative
         .as_ref()
         .is_some_and(|negative| negative.phase == "parse")
-        && crate::interpreter::has_invalid_unicode_code_point_escape(script)
+        && quench_runtime::interpreter::has_invalid_unicode_code_point_escape(script)
     {
         return TestOutcome::Pass;
     }
@@ -372,7 +372,7 @@ fn run_with_timeout(
         .negative
         .as_ref()
         .is_some_and(|negative| negative.phase == "parse")
-        && crate::interpreter::has_invalid_unicode_numeric_separator_escape(script)
+        && quench_runtime::interpreter::has_invalid_unicode_numeric_separator_escape(script)
     {
         return TestOutcome::Pass;
     }
@@ -380,7 +380,7 @@ fn run_with_timeout(
         .negative
         .as_ref()
         .is_some_and(|negative| negative.phase == "parse")
-        && crate::interpreter::has_overlapping_regexp_modifiers(script)
+        && quench_runtime::interpreter::has_overlapping_regexp_modifiers(script)
     {
         return TestOutcome::Pass;
     }
@@ -388,7 +388,7 @@ fn run_with_timeout(
         .negative
         .as_ref()
         .is_some_and(|negative| negative.phase == "parse")
-        && crate::interpreter::has_invalid_named_group_identifier(script)
+        && quench_runtime::interpreter::has_invalid_named_group_identifier(script)
     {
         return TestOutcome::Pass;
     }
@@ -396,7 +396,7 @@ fn run_with_timeout(
         .negative
         .as_ref()
         .is_some_and(|negative| negative.phase == "parse")
-        && crate::interpreter::has_malformed_named_backreference_prefix(script)
+        && quench_runtime::interpreter::has_malformed_named_backreference_prefix(script)
     {
         return TestOutcome::Pass;
     }
@@ -404,7 +404,7 @@ fn run_with_timeout(
         .negative
         .as_ref()
         .is_some_and(|negative| negative.phase == "parse")
-        && crate::interpreter::has_unicode_identity_escape_in_named_group(script)
+        && quench_runtime::interpreter::has_unicode_identity_escape_in_named_group(script)
     {
         return TestOutcome::Pass;
     }
@@ -412,8 +412,8 @@ fn run_with_timeout(
         .negative
         .as_ref()
         .is_some_and(|negative| negative.phase == "parse")
-        && (crate::interpreter::has_incomplete_named_group(script)
-            || crate::interpreter::has_incomplete_named_backreference(script))
+        && (quench_runtime::interpreter::has_incomplete_named_group(script)
+            || quench_runtime::interpreter::has_incomplete_named_backreference(script))
     {
         return TestOutcome::Pass;
     }
@@ -421,7 +421,7 @@ fn run_with_timeout(
         .negative
         .as_ref()
         .is_some_and(|negative| negative.phase == "parse")
-        && crate::interpreter::has_empty_named_group(script)
+        && quench_runtime::interpreter::has_empty_named_group(script)
     {
         return TestOutcome::Pass;
     }
@@ -429,7 +429,7 @@ fn run_with_timeout(
         .negative
         .as_ref()
         .is_some_and(|negative| negative.phase == "parse")
-        && crate::interpreter::has_duplicate_named_group(script)
+        && quench_runtime::interpreter::has_duplicate_named_group(script)
     {
         return TestOutcome::Pass;
     }
@@ -437,7 +437,7 @@ fn run_with_timeout(
         .negative
         .as_ref()
         .is_some_and(|negative| negative.phase == "parse")
-        && crate::interpreter::has_dangling_named_backreference(script)
+        && quench_runtime::interpreter::has_dangling_named_backreference(script)
     {
         return TestOutcome::Pass;
     }
@@ -445,7 +445,7 @@ fn run_with_timeout(
         .negative
         .as_ref()
         .is_some_and(|negative| negative.phase == "parse")
-        && crate::interpreter::has_quantified_lookbehind(script)
+        && quench_runtime::interpreter::has_quantified_lookbehind(script)
     {
         return TestOutcome::Pass;
     }
@@ -453,7 +453,7 @@ fn run_with_timeout(
         .negative
         .as_ref()
         .is_some_and(|negative| negative.phase == "parse")
-        && crate::interpreter::has_invalid_braced_regexp_quantifier(script)
+        && quench_runtime::interpreter::has_invalid_braced_regexp_quantifier(script)
     {
         return TestOutcome::Pass;
     }
@@ -500,18 +500,18 @@ fn execute_script(
     run_sync_script_with_path(script, is_module, test_path)
 }
 
-pub(crate) fn initialize_test_context(strict: bool) -> Result<crate::Context, String> {
-    crate::interpreter::reset_interpreter_state();
-    let mut ctx = crate::Context::new().map_err(|error| format!("{error:?}"))?;
+pub(crate) fn initialize_test_context(strict: bool) -> Result<quench_runtime::Context, String> {
+    quench_runtime::interpreter::reset_interpreter_state();
+    let mut ctx = quench_runtime::Context::new().map_err(|error| format!("{error:?}"))?;
     ctx.eval("delete AsyncFunction")
         .map_err(|error| format!("AsyncFunction cleanup failure: {error:?}"))?;
-    crate::interpreter::set_strict_mode(false);
-    crate::test262::harness::try_inject_harness(&mut ctx)
+    quench_runtime::interpreter::set_strict_mode(false);
+    crate::harness::try_inject_harness(&mut ctx)
         .map_err(|error| format!("harness load failure: {error}"))?;
     if let Some(error) = ctx.get_global("Test262Error") {
-        crate::value::error::set_main_realm_host_error(error);
+        quench_runtime::value::error::set_main_realm_host_error(error);
     }
-    crate::interpreter::set_strict_mode(strict);
+    quench_runtime::interpreter::set_strict_mode(strict);
     Ok(ctx)
 }
 
@@ -523,7 +523,7 @@ fn run_sync_script_with_path(source: &str, is_module: bool, path: &Path) -> Resu
         if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
             ctx.set_global(
                 "__quench_current_module__".into(),
-                crate::Value::String(format!("./{name}")),
+                quench_runtime::Value::String(format!("./{name}")),
             );
         }
         register_current_module_bindings(&mut ctx, source)?;
@@ -531,31 +531,31 @@ fn run_sync_script_with_path(source: &str, is_module: bool, path: &Path) -> Resu
     register_current_module_placeholder(&mut ctx, path, is_module);
     load_fixture_modules(&mut ctx, path)?;
     if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
-        if let Some(crate::Value::Object(raw_modules)) =
+        if let Some(quench_runtime::Value::Object(raw_modules)) =
             ctx.get_global("__quench_fixture_raw_modules__")
         {
             raw_modules.borrow_mut().set(
                 &format!("./{name}"),
-                crate::Value::String(source.to_string()),
+                quench_runtime::Value::String(source.to_string()),
             );
             if let Some(base) = name.strip_suffix("-as.js") {
                 raw_modules.borrow_mut().set(
                     &format!("./{base}.js"),
-                    crate::Value::String(source.to_string()),
+                    quench_runtime::Value::String(source.to_string()),
                 );
             }
         }
         ctx.set_global(
             "__quench_current_module__".to_string(),
-            crate::Value::String(format!("./{name}")),
+            quench_runtime::Value::String(format!("./{name}")),
         );
         propagate_missing_import_resolution_error(&mut ctx, source);
         propagate_current_module_resolution_error(&mut ctx, source);
     }
-    if strict && crate::interpreter::has_legacy_octal(source) {
+    if strict && quench_runtime::interpreter::has_legacy_octal(source) {
         return Err("SyntaxError: legacy octal literal in strict mode".to_string());
     }
-    if strict && crate::interpreter::has_overlapping_regexp_modifiers(source) {
+    if strict && quench_runtime::interpreter::has_overlapping_regexp_modifiers(source) {
         return Err("SyntaxError: overlapping regexp modifiers".to_string());
     }
     let result = if is_module {
@@ -566,7 +566,7 @@ fn run_sync_script_with_path(source: &str, is_module: bool, path: &Path) -> Resu
     result.map(|_| ()).map_err(|error| format!("{error:?}"))
 }
 
-fn propagate_current_module_resolution_error(ctx: &mut crate::Context, source: &str) {
+fn propagate_current_module_resolution_error(ctx: &mut quench_runtime::Context, source: &str) {
     let Ok((_, _, _, _, reexports)) = fixture_exports_from_source(usize::MAX, source) else {
         return;
     };
@@ -642,13 +642,13 @@ fn propagate_current_module_resolution_error(ctx: &mut crate::Context, source: &
     errors.borrow_mut().set(&module, reason);
 }
 
-fn fixture_reexports_to(ctx: &crate::Context, module: &str, target: &str, exported: &str) -> bool {
+fn fixture_reexports_to(ctx: &quench_runtime::Context, module: &str, target: &str, exported: &str) -> bool {
     let mut visited = HashSet::new();
     fixture_reexports_to_inner(ctx, module, target, exported, &mut visited)
 }
 
 fn fixture_reexports_to_inner(
-    ctx: &crate::Context,
+    ctx: &quench_runtime::Context,
     module: &str,
     target: &str,
     exported: &str,
@@ -687,7 +687,7 @@ fn module_targets(source: &str, target: &str) -> bool {
             .is_some_and(|base| source == format!("{base}.js"))
 }
 
-fn propagate_missing_import_resolution_error(ctx: &mut crate::Context, source: &str) {
+fn propagate_missing_import_resolution_error(ctx: &mut quench_runtime::Context, source: &str) {
     let Some(Value::String(module_name)) = ctx.get_global("__quench_current_module__") else {
         return;
     };
@@ -727,7 +727,7 @@ fn run_async_script_with_path(
         if let Some(name) = test_path.file_name().and_then(|name| name.to_str()) {
             ctx.set_global(
                 "__quench_current_module__".to_string(),
-                crate::Value::String(format!("./{name}")),
+                quench_runtime::Value::String(format!("./{name}")),
             );
         }
         if is_module {
@@ -736,12 +736,12 @@ fn run_async_script_with_path(
         }
         load_fixture_modules(&mut ctx, test_path)?;
         if let Some(name) = test_path.file_name().and_then(|name| name.to_str()) {
-            if let Some(crate::Value::Object(raw_modules)) =
+            if let Some(quench_runtime::Value::Object(raw_modules)) =
                 ctx.get_global("__quench_fixture_raw_modules__")
             {
                 raw_modules.borrow_mut().set(
                     &format!("./{name}"),
-                    crate::Value::String(source.to_string()),
+                    quench_runtime::Value::String(source.to_string()),
                 );
             }
         }
@@ -758,16 +758,16 @@ fn run_async_script_with_path(
         ctx.eval(source)
     };
     result.map_err(|e| format!("{:?}", e))?;
-    let _ = crate::builtins::promise::execute_pending_microtasks();
+    let _ = quench_runtime::builtins::promise::execute_pending_microtasks();
     // Clear any stale thrown_value left by an uncaught error that was
     // converted to a rejected Promise (e.g. TDZ ReferenceError in for-of
     // head with `await using`). The probe below evaluates JS which would
     // otherwise see the stale thrown_value and fail spuriously.
-    crate::value::take_thrown_value();
+    quench_runtime::value::take_thrown_value();
     async_done_probe(&mut ctx)
 }
 
-fn register_current_module_placeholder(ctx: &mut crate::Context, path: &Path, is_module: bool) {
+fn register_current_module_placeholder(ctx: &mut quench_runtime::Context, path: &Path, is_module: bool) {
     if !is_module {
         return;
     }
@@ -780,28 +780,28 @@ fn register_current_module_placeholder(ctx: &mut crate::Context, path: &Path, is
     if path.to_string_lossy().contains("import-defer") {
         ctx.set_global(
             "__quench_import_defer_context__".into(),
-            crate::Value::Boolean(true),
+            quench_runtime::Value::Boolean(true),
         );
     }
-    let mut module = crate::value::Object::new(crate::value::ObjectKind::ModuleNamespace);
-    if let Some(crate::Value::Object(bindings)) =
+    let mut module = quench_runtime::value::Object::new(quench_runtime::value::ObjectKind::ModuleNamespace);
+    if let Some(quench_runtime::Value::Object(bindings)) =
         ctx.get_global("__quench_current_module_bindings__")
     {
         let env = ctx.env();
         for exported in bindings.borrow().own_property_names() {
-            let Some(crate::Value::String(local)) = bindings.borrow().get(&exported) else {
+            let Some(quench_runtime::Value::String(local)) = bindings.borrow().get(&exported) else {
                 continue;
             };
             let env = std::rc::Rc::clone(&env);
             let getter =
-                crate::Value::NativeFunction(std::rc::Rc::new(crate::value::NativeFunction::new(
-                    move |_| Ok(env.borrow().get(&local).unwrap_or(crate::Value::Undefined)),
+                quench_runtime::Value::NativeFunction(std::rc::Rc::new(quench_runtime::value::NativeFunction::new(
+                    move |_| Ok(env.borrow().get(&local).unwrap_or(quench_runtime::Value::Undefined)),
                 )));
             module.define_accessor(
                 &exported,
                 Some(getter),
                 None,
-                crate::value::PropertyFlags {
+                quench_runtime::value::PropertyFlags {
                     value: None,
                     writable: true,
                     enumerable: true,
@@ -814,19 +814,19 @@ fn register_current_module_placeholder(ctx: &mut crate::Context, path: &Path, is
 }
 
 pub fn register_current_module_bindings(
-    ctx: &mut crate::Context,
+    ctx: &mut quench_runtime::Context,
     source: &str,
 ) -> Result<(), String> {
     let (_, _, exports, _, _) = fixture_exports_from_source(usize::MAX, source)?;
-    let mut bindings = crate::value::Object::new(crate::value::ObjectKind::Ordinary);
+    let mut bindings = quench_runtime::value::Object::new(quench_runtime::value::ObjectKind::Ordinary);
     for name in exports.named {
-        bindings.set(&name, crate::Value::String(name.clone()));
+        bindings.set(&name, quench_runtime::Value::String(name.clone()));
     }
     for (local, exported) in exports.aliases {
-        bindings.set(&exported, crate::Value::String(local));
+        bindings.set(&exported, quench_runtime::Value::String(local));
     }
     for local in exports.default_aliases {
-        bindings.set("default", crate::Value::String(local));
+        bindings.set("default", quench_runtime::Value::String(local));
     }
     for line in source.lines().map(str::trim) {
         let Some(clause) = line
@@ -839,12 +839,12 @@ pub fn register_current_module_bindings(
             let (local, exported) = specifier
                 .split_once(" as ")
                 .unwrap_or((specifier, specifier));
-            bindings.set(exported.trim(), crate::Value::String(local.trim().into()));
+            bindings.set(exported.trim(), quench_runtime::Value::String(local.trim().into()));
         }
     }
     ctx.set_global(
         "__quench_current_module_bindings__".into(),
-        crate::Value::Object(std::rc::Rc::new(std::cell::RefCell::new(bindings))),
+        quench_runtime::Value::Object(std::rc::Rc::new(std::cell::RefCell::new(bindings))),
     );
     Ok(())
 }
@@ -861,7 +861,7 @@ fn default_function_updates_itself(source: &str) -> bool {
     })
 }
 
-pub fn register_current_script_module(ctx: &mut crate::Context, path: &Path) -> Result<(), String> {
+pub fn register_current_script_module(ctx: &mut quench_runtime::Context, path: &Path) -> Result<(), String> {
     let name = path
         .file_name()
         .and_then(|name| name.to_str())
@@ -874,20 +874,20 @@ pub fn register_current_script_module(ctx: &mut crate::Context, path: &Path) -> 
     let done = ctx
         .get_global("__quench_fixture_init_done__")
         .ok_or("fixture done")?;
-    if let crate::Value::Object(scripts) = scripts {
-        scripts.borrow_mut().set(&key, crate::Value::String(source));
+    if let quench_runtime::Value::Object(scripts) = scripts {
+        scripts.borrow_mut().set(&key, quench_runtime::Value::String(source));
     }
-    if let crate::Value::Object(done) = done {
-        done.borrow_mut().set(&key, crate::Value::Boolean(false));
+    if let quench_runtime::Value::Object(done) = done {
+        done.borrow_mut().set(&key, quench_runtime::Value::Boolean(false));
     }
     ctx.register_module(
         &key,
-        crate::value::Object::new(crate::value::ObjectKind::Ordinary),
+        quench_runtime::value::Object::new(quench_runtime::value::ObjectKind::Ordinary),
     );
     Ok(())
 }
 
-pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Result<(), String> {
+pub fn load_fixture_modules(ctx: &mut quench_runtime::Context, test_path: &Path) -> Result<(), String> {
     let directory = test_path
         .parent()
         .ok_or_else(|| "test has no parent directory".to_string())?;
@@ -919,72 +919,72 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
     if ctx.get_global(init_scripts_key).is_none() {
         ctx.set_global(
             init_scripts_key.to_string(),
-            crate::Value::Object(std::rc::Rc::new(std::cell::RefCell::new(
-                crate::value::Object::new(crate::value::ObjectKind::Ordinary),
+            quench_runtime::Value::Object(std::rc::Rc::new(std::cell::RefCell::new(
+                quench_runtime::value::Object::new(quench_runtime::value::ObjectKind::Ordinary),
             ))),
         );
     }
     if ctx.get_global(init_done_key).is_none() {
         ctx.set_global(
             init_done_key.to_string(),
-            crate::Value::Object(std::rc::Rc::new(std::cell::RefCell::new(
-                crate::value::Object::new(crate::value::ObjectKind::Ordinary),
+            quench_runtime::Value::Object(std::rc::Rc::new(std::cell::RefCell::new(
+                quench_runtime::value::Object::new(quench_runtime::value::ObjectKind::Ordinary),
             ))),
         );
     }
     if ctx.get_global(init_bindings_key).is_none() {
         ctx.set_global(
             init_bindings_key.to_string(),
-            crate::Value::Object(std::rc::Rc::new(std::cell::RefCell::new(
-                crate::value::Object::new(crate::value::ObjectKind::Ordinary),
+            quench_runtime::Value::Object(std::rc::Rc::new(std::cell::RefCell::new(
+                quench_runtime::value::Object::new(quench_runtime::value::ObjectKind::Ordinary),
             ))),
         );
     }
     if ctx.get_global(init_getters_key).is_none() {
         ctx.set_global(
             init_getters_key.to_string(),
-            crate::Value::Object(std::rc::Rc::new(std::cell::RefCell::new(
-                crate::value::Object::new(crate::value::ObjectKind::Ordinary),
+            quench_runtime::Value::Object(std::rc::Rc::new(std::cell::RefCell::new(
+                quench_runtime::value::Object::new(quench_runtime::value::ObjectKind::Ordinary),
             ))),
         );
     }
     if ctx.get_global(init_imported_key).is_none() {
         ctx.set_global(
             init_imported_key.to_string(),
-            crate::Value::Object(std::rc::Rc::new(std::cell::RefCell::new(
-                crate::value::Object::new(crate::value::ObjectKind::Ordinary),
+            quench_runtime::Value::Object(std::rc::Rc::new(std::cell::RefCell::new(
+                quench_runtime::value::Object::new(quench_runtime::value::ObjectKind::Ordinary),
             ))),
         );
     }
     if ctx.get_global(init_refresh_key).is_none() {
         ctx.set_global(
             init_refresh_key.to_string(),
-            crate::Value::Object(std::rc::Rc::new(std::cell::RefCell::new(
-                crate::value::Object::new(crate::value::ObjectKind::Ordinary),
+            quench_runtime::Value::Object(std::rc::Rc::new(std::cell::RefCell::new(
+                quench_runtime::value::Object::new(quench_runtime::value::ObjectKind::Ordinary),
             ))),
         );
     }
     if ctx.get_global(raw_modules_key).is_none() {
         ctx.set_global(
             raw_modules_key.to_string(),
-            crate::Value::Object(std::rc::Rc::new(std::cell::RefCell::new(
-                crate::value::Object::new(crate::value::ObjectKind::Ordinary),
+            quench_runtime::Value::Object(std::rc::Rc::new(std::cell::RefCell::new(
+                quench_runtime::value::Object::new(quench_runtime::value::ObjectKind::Ordinary),
             ))),
         );
     }
     if ctx.get_global(raw_bytes_key).is_none() {
         ctx.set_global(
             raw_bytes_key.to_string(),
-            crate::Value::Object(std::rc::Rc::new(std::cell::RefCell::new(
-                crate::value::Object::new(crate::value::ObjectKind::Ordinary),
+            quench_runtime::Value::Object(std::rc::Rc::new(std::cell::RefCell::new(
+                quench_runtime::value::Object::new(quench_runtime::value::ObjectKind::Ordinary),
             ))),
         );
     }
     if ctx.get_global(module_errors_key).is_none() {
         ctx.set_global(
             module_errors_key.to_string(),
-            crate::Value::Object(std::rc::Rc::new(std::cell::RefCell::new(
-                crate::value::Object::new(crate::value::ObjectKind::Ordinary),
+            quench_runtime::Value::Object(std::rc::Rc::new(std::cell::RefCell::new(
+                quench_runtime::value::Object::new(quench_runtime::value::ObjectKind::Ordinary),
             ))),
         );
     }
@@ -998,7 +998,7 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
     for (index, (name, path)) in fixtures.iter().enumerate() {
         let bytes = std::fs::read(path).map_err(|e| format!("fixture read: {}", e))?;
         if let Some(Value::Object(raw_bytes)) = ctx.get_global(raw_bytes_key) {
-            let mut value = crate::value::Object::new(crate::value::ObjectKind::Array);
+            let mut value = quench_runtime::value::Object::new(quench_runtime::value::ObjectKind::Array);
             value.elements = bytes
                 .iter()
                 .map(|byte| Value::Number(f64::from(*byte)))
@@ -1018,7 +1018,7 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
             }
             ctx.register_module(
                 &module_name,
-                crate::value::Object::new(crate::value::ObjectKind::ModuleNamespace),
+                quench_runtime::value::Object::new(quench_runtime::value::ObjectKind::ModuleNamespace),
             );
             continue;
         }
@@ -1040,11 +1040,11 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
                 Err(_) => Value::Undefined,
             };
             let mut module_exports =
-                crate::value::Object::new(crate::value::ObjectKind::ModuleNamespace);
+                quench_runtime::value::Object::new(quench_runtime::value::ObjectKind::ModuleNamespace);
             module_exports.define(
                 "default",
                 json_default,
-                crate::value::PropertyFlags {
+                quench_runtime::value::PropertyFlags {
                     value: None,
                     writable: true,
                     enumerable: true,
@@ -1052,18 +1052,18 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
                 },
             );
             if let Some(Value::Symbol(symbol)) =
-                crate::builtins::symbol::get_well_known_symbol_no_ctx("toStringTag")
+                quench_runtime::builtins::symbol::get_well_known_symbol_no_ctx("toStringTag")
             {
                 module_exports.set_symbol(
                     &symbol.property_key(),
-                    crate::Value::String("Module".to_string()),
+                    quench_runtime::Value::String("Module".to_string()),
                 );
             }
             module_exports.extensible = false;
             ctx.register_module(&module_name, module_exports);
             continue;
         }
-        if crate::parser::parse_es_module(&source).is_err() {
+        if quench_runtime::parser::parse_es_module(&source).is_err() {
             if let Some(Value::Object(errors)) = ctx.get_global(module_errors_key) {
                 errors
                     .borrow_mut()
@@ -1071,7 +1071,7 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
             }
             ctx.register_module(
                 &module_name,
-                crate::value::Object::new(crate::value::ObjectKind::ModuleNamespace),
+                quench_runtime::value::Object::new(quench_runtime::value::ObjectKind::ModuleNamespace),
             );
             continue;
         }
@@ -1113,28 +1113,28 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
             if let Some(Value::Object(scripts)) = ctx.get_global(init_scripts_key) {
                 scripts
                     .borrow_mut()
-                    .set(&module_name, crate::Value::String(side_effect_source));
+                    .set(&module_name, quench_runtime::Value::String(side_effect_source));
             }
             if let Some(Value::Object(done)) = ctx.get_global(init_done_key) {
                 done.borrow_mut()
-                    .set(&module_name, crate::Value::Boolean(false));
+                    .set(&module_name, quench_runtime::Value::Boolean(false));
             }
         }
         let mut module_exports =
-            crate::value::Object::new(crate::value::ObjectKind::ModuleNamespace);
+            quench_runtime::value::Object::new(quench_runtime::value::ObjectKind::ModuleNamespace);
         let mut module_bindings = Vec::<(String, String)>::new();
         let mut needs_refresh = side_effects_need_refresh;
         let mut values = std::collections::HashMap::new();
         for name in exports.named {
-            let value = ctx.get_global(&name).unwrap_or(crate::Value::Undefined);
-            if value == crate::Value::Undefined {
+            let value = ctx.get_global(&name).unwrap_or(quench_runtime::Value::Undefined);
+            if value == quench_runtime::Value::Undefined {
                 needs_refresh = true;
             }
             values.insert(name.clone(), value.clone());
             module_exports.define(
                 &name,
                 value,
-                crate::value::PropertyFlags {
+                quench_runtime::value::PropertyFlags {
                     value: None,
                     writable: true,
                     enumerable: true,
@@ -1148,12 +1148,12 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
                 .get(&local)
                 .cloned()
                 .or_else(|| ctx.get_global(&local))
-                .unwrap_or(crate::Value::Undefined);
+                .unwrap_or(quench_runtime::Value::Undefined);
             needs_refresh |= !values.contains_key(&local) && matches!(value, Value::Undefined);
             module_exports.define(
                 &exported,
                 value,
-                crate::value::PropertyFlags {
+                quench_runtime::value::PropertyFlags {
                     value: None,
                     writable: true,
                     enumerable: true,
@@ -1167,14 +1167,14 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
                 .get(&local)
                 .cloned()
                 .or_else(|| ctx.get_global(&local))
-                .unwrap_or(crate::Value::Undefined);
+                .unwrap_or(quench_runtime::Value::Undefined);
             if !values.contains_key(&local) {
                 needs_refresh = true;
             }
             module_exports.define(
                 "default",
                 default,
-                crate::value::PropertyFlags {
+                quench_runtime::value::PropertyFlags {
                     value: None,
                     writable: true,
                     enumerable: true,
@@ -1186,11 +1186,11 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
         if let Some(default_marker) = exports.default_marker {
             let default = ctx
                 .get_global(&default_marker)
-                .unwrap_or(crate::Value::Undefined);
+                .unwrap_or(quench_runtime::Value::Undefined);
             module_exports.define(
                 "default",
                 default,
-                crate::value::PropertyFlags {
+                quench_runtime::value::PropertyFlags {
                     value: None,
                     writable: true,
                     enumerable: true,
@@ -1200,10 +1200,10 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
             module_bindings.push(("default".to_string(), default_marker));
         }
         if let Some(Value::Symbol(symbol)) =
-            crate::builtins::symbol::get_well_known_symbol_no_ctx("toStringTag")
+            quench_runtime::builtins::symbol::get_well_known_symbol_no_ctx("toStringTag")
         {
             let key = symbol.property_key();
-            module_exports.set_symbol(&key, crate::Value::String("Module".to_string()));
+            module_exports.set_symbol(&key, quench_runtime::Value::String("Module".to_string()));
             if let Some(flags) = module_exports.descriptors.get_mut(&key) {
                 flags.writable = false;
                 flags.enumerable = false;
@@ -1223,45 +1223,45 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
             pending_reexports.insert(module_name.clone(), reexports);
         }
         if let Some(Value::Object(bindings)) = ctx.get_global(init_bindings_key) {
-            let mut mapping = crate::value::Object::new(crate::value::ObjectKind::Ordinary);
+            let mut mapping = quench_runtime::value::Object::new(quench_runtime::value::ObjectKind::Ordinary);
             for (exported, local) in &module_bindings {
-                mapping.set(exported, crate::Value::String(local.clone()));
+                mapping.set(exported, quench_runtime::Value::String(local.clone()));
             }
             bindings.borrow_mut().set(
                 &module_name,
-                crate::Value::Object(std::rc::Rc::new(std::cell::RefCell::new(mapping))),
+                quench_runtime::Value::Object(std::rc::Rc::new(std::cell::RefCell::new(mapping))),
             );
         }
         if exposes_update {
             if let Some(Value::Object(getters)) = ctx.get_global(init_getters_key) {
-                let mut mapping = crate::value::Object::new(crate::value::ObjectKind::Ordinary);
+                let mut mapping = quench_runtime::value::Object::new(quench_runtime::value::ObjectKind::Ordinary);
                 for (exported, local) in &module_bindings {
                     let Some(binding) = ctx.env().borrow().get_shared(local) else {
                         continue;
                     };
                     needs_refresh = true;
-                    let getter = crate::Value::NativeFunction(std::rc::Rc::new(
-                        crate::value::NativeFunction::new(move |_| Ok(binding.borrow().clone())),
+                    let getter = quench_runtime::Value::NativeFunction(std::rc::Rc::new(
+                        quench_runtime::value::NativeFunction::new(move |_| Ok(binding.borrow().clone())),
                     ));
                     mapping.set(exported, getter);
                 }
                 getters.borrow_mut().set(
                     &module_name,
-                    crate::Value::Object(std::rc::Rc::new(std::cell::RefCell::new(mapping))),
+                    quench_runtime::Value::Object(std::rc::Rc::new(std::cell::RefCell::new(mapping))),
                 );
             }
         }
         if let Some(Value::Object(refresh)) = ctx.get_global(init_refresh_key) {
             refresh
                 .borrow_mut()
-                .set(&module_name, crate::Value::Boolean(needs_refresh));
+                .set(&module_name, quench_runtime::Value::Boolean(needs_refresh));
         }
         ctx.register_module(&module_name, module_exports);
         if name.contains("script-code") {
             if let Some(Value::Object(errors)) = ctx.get_global(module_errors_key) {
                 errors.borrow_mut().set(
                     &module_name,
-                    crate::Value::String("Script fixture is not valid module code".into()),
+                    quench_runtime::Value::String("Script fixture is not valid module code".into()),
                 );
             }
         }
@@ -1279,7 +1279,7 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
                 if Some(target) != current_module.as_ref() && ctx.get_module(target).is_none() {
                     errors
                         .borrow_mut()
-                        .set(module, crate::Value::String("Missing module".into()));
+                        .set(module, quench_runtime::Value::String("Missing module".into()));
                 }
             }
             for (module, imported, target) in &fixture_import_edges {
@@ -1293,7 +1293,7 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
                 if missing {
                     errors.borrow_mut().set(
                         module,
-                        crate::Value::String("Missing indirect export".into()),
+                        quench_runtime::Value::String("Missing indirect export".into()),
                     );
                 }
             }
@@ -1302,7 +1302,7 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
                 if source != module && has_module_path(&named_graph, source, module, &mut seen) {
                     errors.borrow_mut().set(
                         module,
-                        crate::Value::String("Circular indirect export".into()),
+                        quench_runtime::Value::String("Circular indirect export".into()),
                     );
                 }
             }
@@ -1329,7 +1329,7 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
                             continue;
                         };
                         let mut namespace =
-                            crate::value::Object::new(crate::value::ObjectKind::ModuleNamespace);
+                            quench_runtime::value::Object::new(quench_runtime::value::ObjectKind::ModuleNamespace);
                         let mut keys = target.borrow().own_property_names();
                         keys.sort();
                         for key in keys {
@@ -1337,7 +1337,7 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
                                 namespace.define(
                                     &key,
                                     value,
-                                    crate::value::PropertyFlags {
+                                    quench_runtime::value::PropertyFlags {
                                         value: None,
                                         writable: true,
                                         enumerable: true,
@@ -1374,7 +1374,7 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
                                     {
                                         errors.borrow_mut().set(
                                             &module_name,
-                                            crate::Value::String(
+                                            quench_runtime::Value::String(
                                                 "Ambiguous indirect export".into(),
                                             ),
                                         );
@@ -1387,7 +1387,7 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
                             let value = target
                                 .borrow()
                                 .get_own_value(&key)
-                                .unwrap_or(crate::Value::Undefined);
+                                .unwrap_or(quench_runtime::Value::Undefined);
                             define_module_binding(&module, &key, value);
                         }
                     }
@@ -1410,19 +1410,19 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
                         if current_source {
                             let env = std::rc::Rc::clone(ctx.env());
                             let local_key = local.clone();
-                            let getter = crate::Value::NativeFunction(std::rc::Rc::new(
-                                crate::value::NativeFunction::new(move |_| {
+                            let getter = quench_runtime::Value::NativeFunction(std::rc::Rc::new(
+                                quench_runtime::value::NativeFunction::new(move |_| {
                                     Ok(env
                                         .borrow()
                                         .get(&local_key)
-                                        .unwrap_or(crate::Value::Undefined))
+                                        .unwrap_or(quench_runtime::Value::Undefined))
                                 }),
                             ));
                             module.borrow_mut().define_accessor(
                                 &exported,
                                 Some(getter),
                                 None,
-                                crate::value::PropertyFlags {
+                                quench_runtime::value::PropertyFlags {
                                     value: None,
                                     writable: true,
                                     enumerable: true,
@@ -1435,19 +1435,19 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
                             if target.borrow().has_getter(&local) {
                                 let target = std::rc::Rc::clone(&target);
                                 let local_key = local.clone();
-                                let getter = crate::Value::NativeFunction(std::rc::Rc::new(
-                                    crate::value::NativeFunction::new(move |_| {
+                                let getter = quench_runtime::Value::NativeFunction(std::rc::Rc::new(
+                                    quench_runtime::value::NativeFunction::new(move |_| {
                                         Ok(target
                                             .borrow()
                                             .get(&local_key)
-                                            .unwrap_or(crate::Value::Undefined))
+                                            .unwrap_or(quench_runtime::Value::Undefined))
                                     }),
                                 ));
                                 module.borrow_mut().define_accessor(
                                     &exported,
                                     Some(getter),
                                     None,
-                                    crate::value::PropertyFlags {
+                                    quench_runtime::value::PropertyFlags {
                                         value: None,
                                         writable: true,
                                         enumerable: true,
@@ -1457,22 +1457,22 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
                                 continue;
                             }
                             let value = target.borrow().get(&local);
-                            if value.is_none() || value == Some(crate::Value::Undefined) {
+                            if value.is_none() || value == Some(quench_runtime::Value::Undefined) {
                                 if let Some(Value::Object(refresh)) =
                                     ctx.get_global(init_refresh_key)
                                 {
                                     refresh
                                         .borrow_mut()
-                                        .set(&module_name, crate::Value::Boolean(true));
+                                        .set(&module_name, quench_runtime::Value::Boolean(true));
                                 }
                             }
                             define_module_binding(
                                 &module,
                                 &exported,
-                                value.unwrap_or(crate::Value::Undefined),
+                                value.unwrap_or(quench_runtime::Value::Undefined),
                             );
                         } else {
-                            define_module_binding(&module, &exported, crate::Value::Undefined);
+                            define_module_binding(&module, &exported, quench_runtime::Value::Undefined);
                         }
                     }
                 }
@@ -1494,15 +1494,15 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
         };
         if let Some(Value::Object(target)) = ctx.get_module(&source) {
             let promise =
-                crate::builtins::promise::create_resolved_promise(crate::Value::Object(target));
-            define_module_binding(&module, "default", crate::Value::Object(promise));
+                quench_runtime::builtins::promise::create_resolved_promise(quench_runtime::Value::Object(target));
+            define_module_binding(&module, "default", quench_runtime::Value::Object(promise));
         } else {
-            define_module_binding(&module, "default", crate::Value::Undefined);
+            define_module_binding(&module, "default", quench_runtime::Value::Undefined);
         }
     }
     for (module_name, local, source) in deferred_namespace_imports {
         let promise =
-            crate::eval::statement::dynamic_import(&source, &ctx.env(), None, false, true)
+            quench_runtime::eval::statement::dynamic_import(&source, &ctx.env(), None, false, true)
                 .map_err(|error| format!("deferred fixture import: {error:?}"))?;
         let Value::Object(promise) = promise else {
             continue;
@@ -1524,15 +1524,15 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
 }
 
 fn define_module_binding(
-    module: &std::rc::Rc<std::cell::RefCell<crate::value::Object>>,
+    module: &std::rc::Rc<std::cell::RefCell<quench_runtime::value::Object>>,
     key: &str,
-    value: crate::Value,
+    value: quench_runtime::Value,
 ) {
-    if module.borrow().kind == crate::value::ObjectKind::ModuleNamespace {
+    if module.borrow().kind == quench_runtime::value::ObjectKind::ModuleNamespace {
         module.borrow_mut().define(
             key,
             value,
-            crate::value::PropertyFlags {
+            quench_runtime::value::PropertyFlags {
                 value: None,
                 writable: true,
                 enumerable: true,
@@ -1790,39 +1790,39 @@ fn is_fixture_declaration(line: &str) -> bool {
     .any(|prefix| line.starts_with(prefix))
 }
 
-fn parse_fixture_json_value(source: &str) -> Result<crate::Value, String> {
+fn parse_fixture_json_value(source: &str) -> Result<quench_runtime::Value, String> {
     let parsed: serde_json::Value =
         serde_json::from_str(source).map_err(|e| format!("failed to parse JSON fixture: {e}"))?;
     json_to_value(parsed)
 }
 
-fn json_to_value(value: serde_json::Value) -> Result<crate::Value, String> {
+fn json_to_value(value: serde_json::Value) -> Result<quench_runtime::Value, String> {
     match value {
-        serde_json::Value::Null => Ok(crate::Value::Null),
-        serde_json::Value::Bool(value) => Ok(crate::Value::Boolean(value)),
+        serde_json::Value::Null => Ok(quench_runtime::Value::Null),
+        serde_json::Value::Bool(value) => Ok(quench_runtime::Value::Boolean(value)),
         serde_json::Value::Number(value) => {
             if let Some(value) = value.as_f64() {
-                Ok(crate::Value::Number(value))
+                Ok(quench_runtime::Value::Number(value))
             } else {
                 Err("JSON number out of range".to_string())
             }
         }
-        serde_json::Value::String(value) => Ok(crate::Value::String(value)),
+        serde_json::Value::String(value) => Ok(quench_runtime::Value::String(value)),
         serde_json::Value::Array(values) => {
             let mut elements = Vec::new();
             for value in values {
                 elements.push(json_to_value(value)?);
             }
-            Ok(crate::Value::Object(std::rc::Rc::new(
-                std::cell::RefCell::new(crate::value::Object::new_array_from(elements)),
+            Ok(quench_runtime::Value::Object(std::rc::Rc::new(
+                std::cell::RefCell::new(quench_runtime::value::Object::new_array_from(elements)),
             )))
         }
         serde_json::Value::Object(values) => {
-            let mut object = crate::value::Object::new(crate::value::ObjectKind::Ordinary);
+            let mut object = quench_runtime::value::Object::new(quench_runtime::value::ObjectKind::Ordinary);
             for (key, value) in values {
                 object.properties.insert(key, json_to_value(value)?);
             }
-            Ok(crate::Value::Object(std::rc::Rc::new(
+            Ok(quench_runtime::Value::Object(std::rc::Rc::new(
                 std::cell::RefCell::new(object),
             )))
         }
@@ -2008,16 +2008,16 @@ fn decode_identifier_escape(value: &str) -> String {
 }
 
 /// Verify the async $DONE count recorded by `ASYNC_DONE_PRELUDE` is exactly 1.
-fn async_done_probe(ctx: &mut crate::Context) -> Result<(), String> {
+fn async_done_probe(ctx: &mut quench_runtime::Context) -> Result<(), String> {
     if let Ok(error) = ctx.eval("globalThis.__test262DoneError") {
-        if !matches!(error, crate::Value::Undefined) {
-            return Err(crate::value::to_js_string(&error));
+        if !matches!(error, quench_runtime::Value::Undefined) {
+            return Err(quench_runtime::value::to_js_string(&error));
         }
     }
     match ctx
         .eval("(globalThis.__test262DoneCount|0) || (globalThis.__test262ReplacementDoneCount|0)")
     {
-        Ok(crate::Value::Number(1.0)) => Ok(()),
+        Ok(quench_runtime::Value::Number(1.0)) => Ok(()),
         Ok(v) => Err(format!(
             "async test did not call $DONE exactly once (count: {:?})",
             v
@@ -2034,7 +2034,7 @@ pub fn run_isolated(test_path: &Path) -> TestOutcome {
         .arg("--runner")
         .arg(&path)
         .env("TEST262_NOSKIP", "1")
-        .env("TEST262_DIR", crate::test262::runner::default_test262_dir())
+        .env("TEST262_DIR", crate::runner::default_test262_dir())
         .env("RUST_MIN_STACK", "33554432")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

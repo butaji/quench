@@ -1,18 +1,18 @@
 //! $262 host API object for test262
 
-use crate::ast::Program;
-use crate::context::CURRENT_CONTEXT;
-use crate::test262::harness::make_native;
-use crate::value::{Object, ObjectKind};
-use crate::{Context, JsError, Value};
+use quench_runtime::ast::Program;
+use quench_runtime::context::CURRENT_CONTEXT;
+use crate::harness::make_native;
+use quench_runtime::value::{Object, ObjectKind};
+use quench_runtime::{Context, JsError, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
 
 /// $262.gc - trigger garbage collection (not supported, throws ReferenceError)
 pub fn host_262_gc(_args: Vec<Value>) -> Result<Value, JsError> {
     let msg = "ReferenceError: $262.gc is not supported".to_string();
-    let (err_val, js_err) = crate::value::error::create_js_error(&msg);
-    crate::value::set_thrown_value(err_val);
+    let (err_val, js_err) = quench_runtime::value::error::create_js_error(&msg);
+    quench_runtime::value::set_thrown_value(err_val);
     Err(js_err)
 }
 
@@ -26,8 +26,8 @@ pub fn host_262_detach_buffer(args: Vec<Value>) -> Result<Value, JsError> {
         Ok(Value::Undefined)
     } else {
         let msg = "$262.detachArrayBuffer: buffer object required".to_string();
-        let (err_val, js_err) = crate::value::error::create_js_error(&msg);
-        crate::value::set_thrown_value(err_val);
+        let (err_val, js_err) = quench_runtime::value::error::create_js_error(&msg);
+        quench_runtime::value::set_thrown_value(err_val);
         Err(js_err)
     }
 }
@@ -37,35 +37,35 @@ pub fn host_262_detach_buffer(args: Vec<Value>) -> Result<Value, JsError> {
 /// persist across eval calls.
 fn realm_eval_script(
     realm_ctx: &RefCell<Option<Context>>,
-    realm_intrinsics: &RefCell<Option<crate::context::intrinsics::IntrinsicSnapshot>>,
+    realm_intrinsics: &RefCell<Option<quench_runtime::context::intrinsics::IntrinsicSnapshot>>,
     args: Vec<Value>,
 ) -> Result<Value, JsError> {
     let code = args
         .first()
-        .map(crate::value::to_js_string)
+        .map(quench_runtime::value::to_js_string)
         .unwrap_or_default();
     let taken = realm_ctx.borrow_mut().take();
     let Some(mut ctx) = taken else {
         let msg = "realm.evalScript: realm context missing (reentrant call)".to_string();
-        let (err_val, js_err) = crate::value::error::create_js_error(&msg);
-        crate::value::set_thrown_value(err_val);
+        let (err_val, js_err) = quench_runtime::value::error::create_js_error(&msg);
+        quench_runtime::value::set_thrown_value(err_val);
         return Err(js_err);
     };
-    let caller_intrinsics = crate::context::intrinsics::IntrinsicSnapshot::save();
+    let caller_intrinsics = quench_runtime::context::intrinsics::IntrinsicSnapshot::save();
     let realm_snapshot = realm_intrinsics.borrow_mut().take();
     if let Some(snapshot) = realm_snapshot {
         snapshot.restore();
     }
     // evalScript runs a NEW script: non-strict unless the source itself
     // declares 'use strict' — never inherit the caller's strictness.
-    let was_strict = crate::interpreter::is_strict_mode();
-    let was_direct_eval = crate::interpreter::is_direct_eval();
-    crate::interpreter::set_strict_mode(false);
-    crate::interpreter::set_direct_eval(false);
+    let was_strict = quench_runtime::interpreter::is_strict_mode();
+    let was_direct_eval = quench_runtime::interpreter::is_direct_eval();
+    quench_runtime::interpreter::set_strict_mode(false);
+    quench_runtime::interpreter::set_direct_eval(false);
     let result = ctx.eval(&code);
-    crate::interpreter::set_strict_mode(was_strict);
-    crate::interpreter::set_direct_eval(was_direct_eval);
-    let updated_realm = crate::context::intrinsics::IntrinsicSnapshot::save();
+    quench_runtime::interpreter::set_strict_mode(was_strict);
+    quench_runtime::interpreter::set_direct_eval(was_direct_eval);
+    let updated_realm = quench_runtime::context::intrinsics::IntrinsicSnapshot::save();
     *realm_intrinsics.borrow_mut() = Some(updated_realm);
     caller_intrinsics.restore();
     // Put the context back for the next call
@@ -80,9 +80,9 @@ fn host_262_create_realm(_args: Vec<Value>) -> Result<Value, JsError> {
     // Building the sub-realm overwrites the shared thread-local intrinsic
     // caches; snapshot them first and restore afterwards so the main realm
     // keeps its own intrinsics.
-    let snapshot = crate::context::intrinsics::IntrinsicSnapshot::save();
+    let snapshot = quench_runtime::context::intrinsics::IntrinsicSnapshot::save();
     let mut ctx = Context::new()?;
-    crate::test262::harness::inject_harness(&mut ctx);
+    crate::harness::inject_harness(&mut ctx);
     snapshot.restore();
     let Value::Object(global) = ctx.get_global("globalThis").unwrap_or(Value::Undefined) else {
         return Err(JsError("createRealm: globalThis missing".to_string()));
@@ -92,7 +92,7 @@ fn host_262_create_realm(_args: Vec<Value>) -> Result<Value, JsError> {
     // realm_eval_script closure (which must be 'static) can mutate it.
     let realm_ctx = Rc::new(RefCell::new(Some(ctx)));
     let realm_intrinsics = Rc::new(RefCell::new(Some(
-        crate::context::intrinsics::IntrinsicSnapshot::save(),
+        quench_runtime::context::intrinsics::IntrinsicSnapshot::save(),
     )));
 
     // Set realm's eval to use the shared context
@@ -122,7 +122,7 @@ fn host_262_create_realm(_args: Vec<Value>) -> Result<Value, JsError> {
 fn host_262_eval_script(args: Vec<Value>) -> Result<Value, JsError> {
     let code = args
         .first()
-        .map(crate::value::to_js_string)
+        .map(quench_runtime::value::to_js_string)
         .unwrap_or_default();
     let ctx_ptr: *mut Context = CURRENT_CONTEXT.with(|cell| {
         cell.borrow()
@@ -130,17 +130,17 @@ fn host_262_eval_script(args: Vec<Value>) -> Result<Value, JsError> {
     });
     if ctx_ptr.is_null() {
         let msg = "$262.evalScript: no active context".to_string();
-        let (err_val, js_err) = crate::value::error::create_js_error(&msg);
-        crate::value::set_thrown_value(err_val);
+        let (err_val, js_err) = quench_runtime::value::error::create_js_error(&msg);
+        quench_runtime::value::set_thrown_value(err_val);
         return Err(js_err);
     }
     let ctx = unsafe { &mut *ctx_ptr };
     // evalScript runs a NEW script: non-strict unless the source itself
     // declares 'use strict' — never inherit the caller's strictness.
-    let was_strict = crate::interpreter::is_strict_mode();
-    let was_direct_eval = crate::interpreter::is_direct_eval();
-    crate::interpreter::set_strict_mode(false);
-    crate::interpreter::set_direct_eval(false);
+    let was_strict = quench_runtime::interpreter::is_strict_mode();
+    let was_direct_eval = quench_runtime::interpreter::is_direct_eval();
+    quench_runtime::interpreter::set_strict_mode(false);
+    quench_runtime::interpreter::set_direct_eval(false);
     let result = (|| {
         reject_restricted_global_lexicals(ctx, &code)?;
         let function_names = global_function_names(ctx, &code)?;
@@ -148,8 +148,8 @@ fn host_262_eval_script(args: Vec<Value>) -> Result<Value, JsError> {
         set_global_function_descriptors(ctx, &function_names);
         Ok(value)
     })();
-    crate::interpreter::set_strict_mode(was_strict);
-    crate::interpreter::set_direct_eval(was_direct_eval);
+    quench_runtime::interpreter::set_strict_mode(was_strict);
+    quench_runtime::interpreter::set_direct_eval(was_direct_eval);
     result
 }
 
@@ -158,7 +158,7 @@ fn global_function_names(ctx: &Context, source: &str) -> Result<Vec<String>, JsE
     Ok(body
         .iter()
         .filter_map(|statement| match statement {
-            crate::ast::Statement::FunctionDeclaration { name, .. } => Some(name.clone()),
+            quench_runtime::ast::Statement::FunctionDeclaration { name, .. } => Some(name.clone()),
             _ => None,
         })
         .collect())
@@ -175,7 +175,7 @@ fn set_global_function_descriptors(ctx: &Context, names: &[String]) {
         global.borrow_mut().define(
             name,
             value.clone(),
-            crate::value::PropertyFlags {
+            quench_runtime::value::PropertyFlags {
                 value: Some(value),
                 writable: true,
                 enumerable: true,
@@ -187,17 +187,17 @@ fn set_global_function_descriptors(ctx: &Context, names: &[String]) {
 
 fn reject_restricted_global_lexicals(ctx: &Context, source: &str) -> Result<(), JsError> {
     let Program::Script(body) = ctx.parse(source)?;
-    let names = crate::interpreter::collect_let_const_declarations(&body);
+    let names = quench_runtime::interpreter::collect_let_const_declarations(&body);
     let Some(Value::Object(global)) = ctx.get_global("globalThis") else {
         return Ok(());
     };
-    let current_env = crate::context::get_current_env();
+    let current_env = quench_runtime::context::get_current_env();
     let has_lexical = |name: &str| {
         current_env
             .as_ref()
             .is_some_and(|env| match env.borrow().get_kind(name) {
-                Some(crate::ast::VarKind::Let | crate::ast::VarKind::Const) => true,
-                Some(crate::ast::VarKind::Var) => global
+                Some(quench_runtime::ast::VarKind::Let | quench_runtime::ast::VarKind::Const) => true,
+                Some(quench_runtime::ast::VarKind::Var) => global
                     .borrow()
                     .get_own_property(name)
                     .is_some_and(|descriptor| descriptor.configurable == Some(false)),
@@ -208,63 +208,63 @@ fn reject_restricted_global_lexicals(ctx: &Context, source: &str) -> Result<(), 
         current_env.as_ref().is_some_and(|env| {
             matches!(
                 env.borrow().get_kind(name),
-                Some(crate::ast::VarKind::Let | crate::ast::VarKind::Const)
+                Some(quench_runtime::ast::VarKind::Let | quench_runtime::ast::VarKind::Const)
             )
         })
     };
     for (name, _) in &names {
         if has_lexical(name) {
-            let (error, js_error) = crate::value::error::create_js_error_with_type(
+            let (error, js_error) = quench_runtime::value::error::create_js_error_with_type(
                 "Identifier has already been declared",
                 "SyntaxError",
             );
-            crate::value::set_thrown_value(error);
+            quench_runtime::value::set_thrown_value(error);
             return Err(js_error);
         }
     }
     let mut var_names = Vec::new();
-    crate::interpreter::collect_var_names_recursive(&body, &mut var_names);
+    quench_runtime::interpreter::collect_var_names_recursive(&body, &mut var_names);
     for name in &var_names {
         if has_declarative_lexical(name) {
-            let (error, js_error) = crate::value::error::create_js_error_with_type(
+            let (error, js_error) = quench_runtime::value::error::create_js_error_with_type(
                 "Identifier has already been declared",
                 "SyntaxError",
             );
-            crate::value::set_thrown_value(error);
+            quench_runtime::value::set_thrown_value(error);
             return Err(js_error);
         }
     }
     for statement in &body {
         let Some(name) = (match statement {
-            crate::ast::Statement::FunctionDeclaration { name, .. } => Some(name),
+            quench_runtime::ast::Statement::FunctionDeclaration { name, .. } => Some(name),
             _ => None,
         }) else {
             continue;
         };
         if has_declarative_lexical(name) {
-            let (error, js_error) = crate::value::error::create_js_error_with_type(
+            let (error, js_error) = quench_runtime::value::error::create_js_error_with_type(
                 "Identifier has already been declared",
                 "SyntaxError",
             );
-            crate::value::set_thrown_value(error);
+            quench_runtime::value::set_thrown_value(error);
             return Err(js_error);
         }
     }
     if !global.borrow().extensible {
         for name in var_names {
             if !global.borrow().has_own(&name) {
-                let (error, js_error) = crate::value::error::create_js_error_with_type(
+                let (error, js_error) = quench_runtime::value::error::create_js_error_with_type(
                     "Cannot declare global variable on a non-extensible object",
                     "TypeError",
                 );
-                crate::value::set_thrown_value(error);
+                quench_runtime::value::set_thrown_value(error);
                 return Err(js_error);
             }
         }
     }
     for statement in &body {
         let Some(name) = (match statement {
-            crate::ast::Statement::FunctionDeclaration { name, .. } => Some(name),
+            quench_runtime::ast::Statement::FunctionDeclaration { name, .. } => Some(name),
             _ => None,
         }) else {
             continue;
@@ -280,11 +280,11 @@ fn reject_restricted_global_lexicals(ctx: &Context, source: &str) -> Result<(), 
             }
         };
         if !allowed {
-            let (error, js_error) = crate::value::error::create_js_error_with_type(
+            let (error, js_error) = quench_runtime::value::error::create_js_error_with_type(
                 "Cannot declare global function",
                 "TypeError",
             );
-            crate::value::set_thrown_value(error);
+            quench_runtime::value::set_thrown_value(error);
             return Err(js_error);
         }
     }
@@ -293,14 +293,14 @@ fn reject_restricted_global_lexicals(ctx: &Context, source: &str) -> Result<(), 
             .borrow()
             .get_own_property(&name)
             .is_some_and(|descriptor| descriptor.configurable == Some(false))
-            && crate::context::get_current_env().and_then(|env| env.borrow().get_kind(&name))
-                != Some(crate::ast::VarKind::Var)
+            && quench_runtime::context::get_current_env().and_then(|env| env.borrow().get_kind(&name))
+                != Some(quench_runtime::ast::VarKind::Var)
         {
-            let (error, js_error) = crate::value::error::create_js_error_with_type(
+            let (error, js_error) = quench_runtime::value::error::create_js_error_with_type(
                 "Identifier conflicts with a restricted global property",
                 "SyntaxError",
             );
-            crate::value::set_thrown_value(error);
+            quench_runtime::value::set_thrown_value(error);
             return Err(js_error);
         }
     }
@@ -344,27 +344,27 @@ pub fn inject_stub_agent(ctx: &mut Context) {
 /// $262.AbstractModuleSource constructor — throws TypeError when invoked.
 fn host_262_abstract_module_source(_args: Vec<Value>) -> Result<Value, JsError> {
     let msg = "TypeError: AbstractModuleSource cannot be called directly".to_string();
-    let (err_val, js_err) = crate::value::error::create_js_error_with_type(&msg, "TypeError");
-    crate::value::set_thrown_value(err_val);
+    let (err_val, js_err) = quench_runtime::value::error::create_js_error_with_type(&msg, "TypeError");
+    quench_runtime::value::set_thrown_value(err_val);
     Err(js_err)
 }
 
 /// Inject $262.AbstractModuleSource per ECMA-262 §28.1.1.1.
 fn inject_abstract_module_source(ctx: &mut Context) {
-    use crate::value::NativeConstructor;
+    use quench_runtime::value::NativeConstructor;
     let proto = Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)));
-    if let Some(object_proto) = crate::builtins::get_object_prototype() {
+    if let Some(object_proto) = quench_runtime::builtins::get_object_prototype() {
         proto.borrow_mut().prototype = Some(object_proto);
     }
     if let Some(Value::Symbol(tag_key)) =
-        crate::builtins::symbol::get_well_known_symbol_no_ctx("toStringTag")
+        quench_runtime::builtins::symbol::get_well_known_symbol_no_ctx("toStringTag")
     {
         let getter = make_native(|_args| Ok(Value::Undefined));
         proto.borrow_mut().define_accessor(
             &tag_key.property_key(),
             Some(getter),
             None,
-            crate::value::PropertyFlags {
+            quench_runtime::value::PropertyFlags {
                 writable: false,
                 enumerable: false,
                 configurable: true,
@@ -420,10 +420,10 @@ pub fn inject(ctx: &mut Context) {
 
 #[cfg(test)]
 mod tests {
-    use crate::test262::harness::try_inject_harness;
+    use crate::harness::try_inject_harness;
 
-    fn harness_ctx() -> crate::Context {
-        let mut ctx = crate::Context::new().unwrap();
+    fn harness_ctx() -> quench_runtime::Context {
+        let mut ctx = quench_runtime::Context::new().unwrap();
         try_inject_harness(&mut ctx).unwrap();
         ctx
     }
@@ -521,7 +521,7 @@ mod tests {
         );
         assert_eq!(
             result,
-            Ok(crate::Value::Boolean(true)),
+            Ok(quench_runtime::Value::Boolean(true)),
             "createRealm must not repoint main-realm intrinsic caches"
         );
     }
@@ -535,7 +535,7 @@ mod tests {
         );
         assert_eq!(
             result,
-            Ok(crate::Value::Boolean(true)),
+            Ok(quench_runtime::Value::Boolean(true)),
             "createRealm must restore harness GLOBAL_OBJECT cache"
         );
     }
@@ -553,10 +553,10 @@ mod tests {
         // source itself declares 'use strict'. Inside a strict context,
         // sloppy-only syntax (strict reserved word as binding) must parse.
         let mut ctx = harness_ctx();
-        let prev = crate::interpreter::is_strict_mode();
-        crate::interpreter::set_strict_mode(true);
+        let prev = quench_runtime::interpreter::is_strict_mode();
+        quench_runtime::interpreter::set_strict_mode(true);
         let result = ctx.eval("$262.evalScript('var public = 1;')");
-        crate::interpreter::set_strict_mode(prev);
+        quench_runtime::interpreter::set_strict_mode(prev);
         assert!(
             result.is_ok(),
             "$262.evalScript must run as a new sloppy script: {:?}",
@@ -567,11 +567,11 @@ mod tests {
     #[test]
     fn test_realm_eval_script_runs_sloppy_in_strict_context() {
         let mut ctx = harness_ctx();
-        let prev = crate::interpreter::is_strict_mode();
-        crate::interpreter::set_strict_mode(true);
+        let prev = quench_runtime::interpreter::is_strict_mode();
+        quench_runtime::interpreter::set_strict_mode(true);
         let result =
             ctx.eval("var realm = $262.createRealm(); realm.evalScript('var public = 1;')");
-        crate::interpreter::set_strict_mode(prev);
+        quench_runtime::interpreter::set_strict_mode(prev);
         assert!(
             result.is_ok(),
             "realm.evalScript must run as a new sloppy script: {:?}",
@@ -622,7 +622,7 @@ mod tests {
              try { $262.evalScript('let x; let restricted;'); false } \
              catch (e) { e instanceof SyntaxError }",
         );
-        assert_eq!(result, Ok(crate::Value::Boolean(true)));
+        assert_eq!(result, Ok(quench_runtime::Value::Boolean(true)));
     }
 
     #[test]
@@ -633,7 +633,7 @@ mod tests {
              try { $262.evalScript('var freshGlobal;'); false } \
              catch (e) { e instanceof TypeError }",
         );
-        assert_eq!(result, Ok(crate::Value::Boolean(true)));
+        assert_eq!(result, Ok(quench_runtime::Value::Boolean(true)));
     }
 
     #[test]
@@ -644,7 +644,7 @@ mod tests {
              try { $262.evalScript('function fixed() {}'); false } \
              catch (e) { e instanceof TypeError }",
         );
-        assert_eq!(result, Ok(crate::Value::Boolean(true)));
+        assert_eq!(result, Ok(quench_runtime::Value::Boolean(true)));
     }
 
     #[test]
@@ -654,7 +654,7 @@ mod tests {
             "let existing; try { $262.evalScript('var x; let existing;'); false } \
              catch (e) { e instanceof SyntaxError }",
         );
-        assert_eq!(result, Ok(crate::Value::Boolean(true)));
+        assert_eq!(result, Ok(quench_runtime::Value::Boolean(true)));
     }
 
     #[test]
@@ -664,7 +664,7 @@ mod tests {
             "$262.evalScript('function freshFunction() {}'); \
              Object.getOwnPropertyDescriptor(this, 'freshFunction').configurable",
         );
-        assert_eq!(result, Ok(crate::Value::Boolean(false)));
+        assert_eq!(result, Ok(quench_runtime::Value::Boolean(false)));
     }
 
     #[test]
@@ -689,7 +689,7 @@ mod tests {
         let result =
             ctx.eval("var threw = false; try { $262.gc(); } catch(e) { threw = true; } threw");
         assert!(result.is_ok(), "$262.gc should throw: {:?}", result);
-        assert_eq!(result.unwrap(), crate::Value::Boolean(true));
+        assert_eq!(result.unwrap(), quench_runtime::Value::Boolean(true));
     }
 
     #[test]
@@ -766,21 +766,21 @@ mod tests {
             "cross-realm TypeError should not match local: {:?}",
             result
         );
-        assert_eq!(result.unwrap(), crate::Value::Boolean(true));
+        assert_eq!(result.unwrap(), quench_runtime::Value::Boolean(true));
     }
 
     #[test]
     fn test_abstract_module_source_is_function() {
         let mut ctx = harness_ctx();
         let result = ctx.eval("typeof $262.AbstractModuleSource");
-        assert_eq!(result.unwrap(), crate::Value::String("function".into()));
+        assert_eq!(result.unwrap(), quench_runtime::Value::String("function".into()));
     }
 
     #[test]
     fn test_abstract_module_source_length_is_zero() {
         let mut ctx = harness_ctx();
         let result = ctx.eval("$262.AbstractModuleSource.length");
-        assert_eq!(result.unwrap(), crate::Value::Number(0.0));
+        assert_eq!(result.unwrap(), quench_runtime::Value::Number(0.0));
     }
 
     #[test]
@@ -789,7 +789,7 @@ mod tests {
         let result = ctx.eval("$262.AbstractModuleSource.name");
         assert_eq!(
             result.unwrap(),
-            crate::Value::String("AbstractModuleSource".into())
+            quench_runtime::Value::String("AbstractModuleSource".into())
         );
     }
 
@@ -797,7 +797,7 @@ mod tests {
     fn test_abstract_module_source_throws_typeerror() {
         let mut ctx = harness_ctx();
         let result = ctx.eval("try { new $262.AbstractModuleSource(); 'no' } catch(e) { e instanceof TypeError ? 'yes' : 'no' }");
-        assert_eq!(result.unwrap(), crate::Value::String("yes".into()));
+        assert_eq!(result.unwrap(), quench_runtime::Value::String("yes".into()));
     }
 
     #[test]
@@ -805,7 +805,7 @@ mod tests {
         let mut ctx = harness_ctx();
         let result =
             ctx.eval("Object.getPrototypeOf($262.AbstractModuleSource) === Function.prototype");
-        assert_eq!(result.unwrap(), crate::Value::Boolean(true));
+        assert_eq!(result.unwrap(), quench_runtime::Value::Boolean(true));
     }
 
     #[test]
@@ -814,14 +814,14 @@ mod tests {
         let result = ctx.eval(
             "Object.getPrototypeOf($262.AbstractModuleSource.prototype) === Object.prototype",
         );
-        assert_eq!(result.unwrap(), crate::Value::Boolean(true));
+        assert_eq!(result.unwrap(), quench_runtime::Value::Boolean(true));
     }
 
     #[test]
     fn test_abstract_module_source_prototype_descriptor_is_locked() {
         let mut ctx = harness_ctx();
         let result = ctx.eval("[Object.getOwnPropertyDescriptor($262.AbstractModuleSource, 'prototype').writable, Object.getOwnPropertyDescriptor($262.AbstractModuleSource, 'prototype').configurable].join('|')");
-        assert_eq!(result.unwrap(), crate::Value::String("false|false".into()));
+        assert_eq!(result.unwrap(), quench_runtime::Value::String("false|false".into()));
     }
 
     #[test]
@@ -829,6 +829,6 @@ mod tests {
         let mut ctx = harness_ctx();
         ctx.eval("function verifyProperty(obj, name, desc) { var originalDesc = Object.getOwnPropertyDescriptor(obj, name); return originalDesc.writable === desc.writable && originalDesc.configurable === desc.configurable; }").unwrap();
         let result = ctx.eval("verifyProperty($262.AbstractModuleSource, 'prototype', { value: $262.AbstractModuleSource.prototype, writable: false, enumerable: false, configurable: false })");
-        assert_eq!(result.unwrap(), crate::Value::Boolean(true));
+        assert_eq!(result.unwrap(), quench_runtime::Value::Boolean(true));
     }
 }

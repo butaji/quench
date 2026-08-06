@@ -1,5 +1,5 @@
 use super::*;
-use crate::test262::metadata::{Negative, Test262Metadata};
+use crate::metadata::{Negative, Test262Metadata};
 
 pub(super) fn meta_with(phase: &str, typ: &str) -> Test262Metadata {
     Test262Metadata {

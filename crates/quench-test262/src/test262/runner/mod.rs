@@ -3,12 +3,12 @@
 mod collect;
 mod digest;
 pub mod execute;
-mod flags;
+pub mod flags;
 
 use std::path::PathBuf;
 
-use crate::test262::harness::HarnessLoader;
-use crate::test262::host::{TestFailure, TestOutcome};
+use crate::harness::HarnessLoader;
+use quench_runtime::host::{TestFailure, TestOutcome};
 
 pub use execute::run_single_test;
 pub use flags::default_stage;

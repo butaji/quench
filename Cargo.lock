@@ -844,7 +844,11 @@ dependencies = [
 name = "quench-test262"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "quench-runtime",
+ "serde",
+ "serde_json",
+ "walkdir",
 ]
 
 [[package]]

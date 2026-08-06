@@ -9,9 +9,9 @@ mod harness_loader_tests;
 mod harness_scope_tests;
 pub mod host262;
 
-use crate::value::function::NativeConstructor;
-use crate::value::{Object, ObjectKind};
-use crate::{Context, JsError, NativeFunction, Value};
+use quench_runtime::value::function::NativeConstructor;
+use quench_runtime::value::{Object, ObjectKind};
+use quench_runtime::{Context, JsError, NativeFunction, Value};
 use std::rc::Rc;
 
 /// Make a native function value from a Rust closure.
@@ -233,7 +233,7 @@ fn skip_block_comment(bytes: &[u8], start: usize) -> usize {
 /// This must happen FIRST because assert.js and sta.js depend on it.
 fn inject_test262_error(ctx: &mut Context) {
     // Get Object.prototype for proper prototype chain (Test262Error.prototype -> Object.prototype -> null)
-    let object_proto = crate::builtins::get_object_prototype()
+    let object_proto = quench_runtime::builtins::get_object_prototype()
         .expect("Object.prototype should be set up before Test262Error");
     let proto = Rc::new(std::cell::RefCell::new(Object::with_prototype(
         ObjectKind::Ordinary,
@@ -243,15 +243,15 @@ fn inject_test262_error(ctx: &mut Context) {
     proto.borrow_mut().set(
         "toString",
         make_native(|_args: Vec<Value>| {
-            let this_val = crate::interpreter::get_native_this().unwrap_or(Value::Undefined);
+            let this_val = quench_runtime::interpreter::get_native_this().unwrap_or(Value::Undefined);
             let (name_str, msg_str) = match &this_val {
                 Value::Object(obj_rc) => {
                     let obj = obj_rc.borrow();
                     let name = obj.get("name").unwrap_or(Value::Undefined);
                     let msg = obj.get("message").unwrap_or(Value::Undefined);
                     (
-                        crate::value::to_js_string(&name),
-                        crate::value::to_js_string(&msg),
+                        quench_runtime::value::to_js_string(&name),
+                        quench_runtime::value::to_js_string(&msg),
                     )
                 }
                 _ => (String::new(), String::new()),
@@ -272,10 +272,10 @@ fn inject_test262_error(ctx: &mut Context) {
         move |args: Vec<Value>| {
             let msg = args
                 .first()
-                .map(crate::value::to_js_string)
+                .map(quench_runtime::value::to_js_string)
                 .unwrap_or_default();
             // Get the this_val - it should be the new object created by call_native_constructor
-            let this_val = crate::interpreter::get_native_this().unwrap_or(Value::Undefined);
+            let this_val = quench_runtime::interpreter::get_native_this().unwrap_or(Value::Undefined);
             if let Value::Object(obj_rc) = &this_val {
                 let mut obj = obj_rc.borrow_mut();
                 obj.set("message", Value::String(msg.clone()));
@@ -297,11 +297,11 @@ fn inject_test262_error(ctx: &mut Context) {
     let thrower = make_native(|args: Vec<Value>| {
         let msg = args
             .first()
-            .map(crate::value::to_js_string)
+            .map(quench_runtime::value::to_js_string)
             .unwrap_or_else(|| "Test262Error.thrower called".to_string());
         let (err_val, js_err) =
-            crate::value::error::create_js_error_with_type(&msg, "Test262Error");
-        crate::value::set_thrown_value(err_val);
+            quench_runtime::value::error::create_js_error_with_type(&msg, "Test262Error");
+        quench_runtime::value::set_thrown_value(err_val);
         Err(js_err)
     });
     test262_error.set_static_method("thrower", thrower.clone());
@@ -311,8 +311,8 @@ fn inject_test262_error(ctx: &mut Context) {
     proto.borrow_mut().set("constructor", ctor_val.clone());
     ctx.set_global("Test262Error".to_string(), ctor_val.clone());
     ctx.set_global("Test262ErrorThrower".to_string(), thrower);
-    crate::value::error::set_host_error(ctor_val.clone());
-    crate::value::error::set_host_error_proto(Rc::clone(&proto));
+    quench_runtime::value::error::set_host_error(ctor_val.clone());
+    quench_runtime::value::error::set_host_error_proto(Rc::clone(&proto));
 }
 
 /// Load and evaluate a JS harness file (strips frontmatter).
@@ -345,10 +345,10 @@ fn eval_harness_file(ctx: &mut Context, filename: &str) -> Result<(), String> {
         js_code
     };
     // Harness files must run in sloppy mode (legacy octal literals are permitted).
-    let was_strict = crate::interpreter::is_strict_mode();
-    crate::interpreter::set_strict_mode(false);
+    let was_strict = quench_runtime::interpreter::is_strict_mode();
+    quench_runtime::interpreter::set_strict_mode(false);
     let result = ctx.eval(&code);
-    crate::interpreter::set_strict_mode(was_strict);
+    quench_runtime::interpreter::set_strict_mode(was_strict);
     if let Err(e) = result {
         return Err(format!(
             "harness file {} failed to evaluate: {:?}",
@@ -362,14 +362,14 @@ fn eval_harness_file(ctx: &mut Context, filename: &str) -> Result<(), String> {
 fn done(args: Vec<Value>) -> Result<Value, JsError> {
     if let Some(err) = args.first() {
         if !matches!(err, Value::Undefined | Value::Null) {
-            let msg = crate::value::to_js_string(err);
+            let msg = quench_runtime::value::to_js_string(err);
             let (err_val, js_err) =
-                crate::value::error::create_js_error_with_type(&msg, "Test262Error");
+                quench_runtime::value::error::create_js_error_with_type(&msg, "Test262Error");
             if let Value::Object(o) = &err_val {
                 o.borrow_mut()
                     .set("name", Value::String("Test262Error".to_string()));
             }
-            crate::value::set_thrown_value(err_val);
+            quench_runtime::value::set_thrown_value(err_val);
             return Err(js_err);
         }
     }
@@ -378,7 +378,7 @@ fn done(args: Vec<Value>) -> Result<Value, JsError> {
 
 // Returns a reference to the global object
 thread_local! {
-    static GLOBAL_OBJECT: std::cell::RefCell<Option<Rc<std::cell::RefCell<crate::value::Object>>>> =
+    static GLOBAL_OBJECT: std::cell::RefCell<Option<Rc<std::cell::RefCell<quench_runtime::value::Object>>>> =
         const { std::cell::RefCell::new(None) };
 }
 
@@ -386,8 +386,8 @@ fn fn_global_object(_args: Vec<Value>) -> Result<Value, JsError> {
     GLOBAL_OBJECT.with(|g| {
         Ok(Value::Object(match g.borrow().as_ref() {
             Some(obj) => Rc::clone(obj),
-            None => Rc::new(std::cell::RefCell::new(crate::value::Object::new(
-                crate::value::ObjectKind::Global,
+            None => Rc::new(std::cell::RefCell::new(quench_runtime::value::Object::new(
+                quench_runtime::value::ObjectKind::Global,
             ))),
         }))
     })
@@ -395,7 +395,7 @@ fn fn_global_object(_args: Vec<Value>) -> Result<Value, JsError> {
 
 /// Build an array of native error constructors
 fn make_error_constructor_array(ctx: &Context, include_extra: bool) -> Value {
-    use crate::value::{Object, ObjectKind};
+    use quench_runtime::value::{Object, ObjectKind};
     let mut arr = Object::new(ObjectKind::Array);
     let mut idx = 0usize;
     for name in [
@@ -434,7 +434,7 @@ fn make_error_constructor_array(ctx: &Context, include_extra: bool) -> Value {
 fn is_constructor(args: Vec<Value>) -> Result<Value, JsError> {
     let f = args.first().cloned().unwrap_or(Value::Undefined);
     let throw_err = || {
-        let (err_val, js_err) = crate::value::error::create_js_error_with_type(
+        let (err_val, js_err) = quench_runtime::value::error::create_js_error_with_type(
             "isConstructor requires a function argument",
             "Test262Error",
         );
@@ -442,7 +442,7 @@ fn is_constructor(args: Vec<Value>) -> Result<Value, JsError> {
             o.borrow_mut()
                 .set("name", Value::String("Test262Error".to_string()));
         }
-        crate::value::set_thrown_value(err_val);
+        quench_runtime::value::set_thrown_value(err_val);
         Err(js_err)
     };
     match &f {
@@ -484,7 +484,7 @@ fn print_fn(args: Vec<Value>) -> Result<Value, JsError> {
         if i > 0 {
             eprint!(" ");
         }
-        eprint!("{}", crate::value::to_js_string(arg));
+        eprint!("{}", quench_runtime::value::to_js_string(arg));
     }
     eprintln!();
     Ok(Value::Undefined)
@@ -493,8 +493,8 @@ fn print_fn(args: Vec<Value>) -> Result<Value, JsError> {
 /// $DONOTEVALUATE - throws if ever called (marks unreachable code)
 fn donotevaluate(_args: Vec<Value>) -> Result<Value, JsError> {
     let (err_val, js_err) =
-        crate::value::error::create_js_error("$DONOTEVALUATE called: code was reached");
-    crate::value::set_thrown_value(err_val);
+        quench_runtime::value::error::create_js_error("$DONOTEVALUATE called: code was reached");
+    quench_runtime::value::set_thrown_value(err_val);
     Err(js_err)
 }
 
@@ -509,8 +509,8 @@ fn detach_buffer(args: Vec<Value>) -> Result<Value, JsError> {
         Ok(Value::Undefined)
     } else {
         let msg = "$DETACHBUFFER: buffer object required".to_string();
-        let (err_val, js_err) = crate::value::error::create_js_error(&msg);
-        crate::value::set_thrown_value(err_val);
+        let (err_val, js_err) = quench_runtime::value::error::create_js_error(&msg);
+        quench_runtime::value::set_thrown_value(err_val);
         Err(js_err)
     }
 }
@@ -533,7 +533,7 @@ pub fn try_inject_harness(ctx: &mut Context) -> Result<(), String> {
     // Context boundaries, so a leftover ReferenceError from a tolerated
     // harness failure (or an uncaught throw from a prior test) would otherwise
     // be observed by the very first harness file we eval here.
-    crate::value::take_thrown_value();
+    quench_runtime::value::take_thrown_value();
 
     // STEP 1: Inject Test262Error FIRST (before any JS harness files).
     // assert.js and sta.js both use Test262Error.
@@ -550,7 +550,7 @@ pub fn try_inject_harness(ctx: &mut Context) -> Result<(), String> {
     let same_value_fn = make_native(|args: Vec<Value>| {
         let a = args.first().cloned().unwrap_or(Value::Undefined);
         let b = args.get(1).cloned().unwrap_or(Value::Undefined);
-        let result = crate::value::same_value(&a, &b);
+        let result = quench_runtime::value::same_value(&a, &b);
         Ok(Value::Boolean(result))
     });
     ctx.set_global("__quenchSameValue".to_string(), same_value_fn);
@@ -649,7 +649,7 @@ pub fn try_inject_harness(ctx: &mut Context) -> Result<(), String> {
     // Final defensive cleanup: clear any thrown_value that the harness files
     // (or the helper shim above) may have left set. The first test262 line
     // sees this state, so we want it clean.
-    crate::value::take_thrown_value();
+    quench_runtime::value::take_thrown_value();
     Ok(())
 }
 
@@ -690,8 +690,8 @@ mod tests {
     #[test]
     fn diagnostic_step_by_step_verify_property_symbol() {
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
-        crate::interpreter::set_strict_mode(false);
+        quench_runtime::builtins::register_builtins(&mut ctx);
+        quench_runtime::interpreter::set_strict_mode(false);
 
         // Load the exact JS files that the test includes (via HarnessLoader)
         let test262_root = harness_dir().parent().unwrap().to_path_buf();
@@ -739,8 +739,8 @@ if (hasOwn !== false) throw new Error('FAIL: hasOwn should be false, got ' + has
     #[test]
     fn diagnostic_assert_same_value_with_disk_assert_js() {
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
-        crate::interpreter::set_strict_mode(false);
+        quench_runtime::builtins::register_builtins(&mut ctx);
+        quench_runtime::interpreter::set_strict_mode(false);
 
         let test262_root = harness_dir().parent().unwrap().to_path_buf();
         let harness = HarnessLoader::new(&test262_root.to_string_lossy());
@@ -784,8 +784,8 @@ assert.sameValue(
     #[test]
     fn diagnostic_assert_tostring_function_in_disk_js_context() {
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
-        crate::interpreter::set_strict_mode(false);
+        quench_runtime::builtins::register_builtins(&mut ctx);
+        quench_runtime::interpreter::set_strict_mode(false);
 
         let test262_root = harness_dir().parent().unwrap().to_path_buf();
         let harness = HarnessLoader::new(&test262_root.to_string_lossy());
@@ -819,9 +819,9 @@ typeof getterFn === 'function' && typeof assert._toString(getterFn) === 'string'
     #[test]
     fn diagnostic_verify_property_with_try_inject_harness() {
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
+        quench_runtime::builtins::register_builtins(&mut ctx);
         try_inject_harness(&mut ctx).expect("harness ok");
-        crate::interpreter::set_strict_mode(false);
+        quench_runtime::interpreter::set_strict_mode(false);
 
         // STEP A: verify that hasOwnProperty returns true after defineProperty
         let step_a = ctx.eval(
@@ -915,8 +915,8 @@ JSON.stringify({step:'C', hasOwn_after_restore:hasOwn3, vpError2:vpError2, gette
     #[test]
     fn diagnostic_js_propertyhelper_verify_property_symbol() {
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
-        crate::interpreter::set_strict_mode(false);
+        quench_runtime::builtins::register_builtins(&mut ctx);
+        quench_runtime::interpreter::set_strict_mode(false);
 
         let test262_root = harness_dir().parent().unwrap().to_path_buf();
         let harness = HarnessLoader::new(&test262_root.to_string_lossy());
@@ -970,8 +970,8 @@ if (hasOwn !== false) throw new Error('FAIL: hasOwn should be false after JS ver
     #[test]
     fn diagnostic_js_has_own_property_with_symbol_key() {
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
-        crate::interpreter::set_strict_mode(false);
+        quench_runtime::builtins::register_builtins(&mut ctx);
+        quench_runtime::interpreter::set_strict_mode(false);
 
         let test262_root = harness_dir().parent().unwrap().to_path_buf();
         let harness = HarnessLoader::new(&test262_root.to_string_lossy());
@@ -1024,7 +1024,7 @@ if (opd.configurable !== true) throw new Error('FAIL: configurable should be tru
     #[test]
     fn resizable_array_buffer_utils_loads_without_tolerance() {
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
+        quench_runtime::builtins::register_builtins(&mut ctx);
         eval_harness_file(&mut ctx, "resizableArrayBufferUtils.js")
             .expect("resizable array buffer harness should load");
     }
@@ -1038,21 +1038,21 @@ if (opd.configurable !== true) throw new Error('FAIL: configurable should be tru
     #[test]
     fn harness_loader_clears_stale_thrown_value_before_harness_eval() {
         // Plant a stale thrown_value as if a previous test left it behind.
-        let (stale, _) = crate::value::error::create_js_error_with_type(
+        let (stale, _) = quench_runtime::value::error::create_js_error_with_type(
             "ReferenceError: stale",
             "ReferenceError",
         );
-        crate::value::set_thrown_value(stale);
+        quench_runtime::value::set_thrown_value(stale);
 
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
+        quench_runtime::builtins::register_builtins(&mut ctx);
         // Must not propagate the stale thrown_value; harness load succeeds.
         try_inject_harness(&mut ctx).expect("harness load should succeed");
 
         // After harness load, thrown_value must be cleared so test source
         // starts with a clean slate.
         assert!(
-            crate::value::take_thrown_value().is_none(),
+            quench_runtime::value::take_thrown_value().is_none(),
             "harness loader must clear thrown_value at end"
         );
     }
@@ -1063,30 +1063,30 @@ if (opd.configurable !== true) throw new Error('FAIL: configurable should be tru
     #[test]
     fn harness_loader_clears_thrown_value_left_by_internal_eval() {
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
+        quench_runtime::builtins::register_builtins(&mut ctx);
         try_inject_harness(&mut ctx).expect("first harness load ok");
 
         // Plant a thrown_value as if a subsequent test's body had thrown and
         // the harness catch had cleared it — except in this scenario, the
         // catch didn't fully consume. The next harness load should clear it.
-        let (stale, _) = crate::value::error::create_js_error_with_type("from prior test", "Error");
-        crate::value::set_thrown_value(stale);
+        let (stale, _) = quench_runtime::value::error::create_js_error_with_type("from prior test", "Error");
+        quench_runtime::value::set_thrown_value(stale);
 
         let mut ctx2 = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx2);
+        quench_runtime::builtins::register_builtins(&mut ctx2);
         try_inject_harness(&mut ctx2).expect("second harness load ok");
         assert!(
-            crate::value::take_thrown_value().is_none(),
+            quench_runtime::value::take_thrown_value().is_none(),
             "harness loader must clear stale thrown_value at start of next load"
         );
     }
 
     #[test]
     fn is_constructor_rust_fn_direct_with_function_expression() {
-        use crate::value::function::ValueFunction;
+        use quench_runtime::value::function::ValueFunction;
 
         // Create a Value::Function (mimics what (function(){}) evaluates to)
-        let closure = std::rc::Rc::new(std::cell::RefCell::new(crate::env::Environment::new()));
+        let closure = std::rc::Rc::new(std::cell::RefCell::new(quench_runtime::env::Environment::new()));
         let mut func = ValueFunction::new(None, vec![], vec![], closure, false, false);
         func.strict = false; // sloppy mode
         let func_val = Value::Function(func);
@@ -1105,7 +1105,7 @@ if (opd.configurable !== true) throw new Error('FAIL: configurable should be tru
     #[test]
     fn is_constructor_via_native_function_with_function_expression() {
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
+        quench_runtime::builtins::register_builtins(&mut ctx);
         try_inject_harness(&mut ctx).expect("harness ok");
 
         // isConstructor should be the native function (not a JS wrapper)
@@ -1164,11 +1164,11 @@ if (opd.configurable !== true) throw new Error('FAIL: configurable should be tru
     /// is_constructor Rust function: direct unit test of the core logic.
     #[test]
     fn is_constructor_rust_fn_direct() {
-        use crate::value::function::ValueFunction;
+        use quench_runtime::value::function::ValueFunction;
         use std::cell::RefCell;
         use std::rc::Rc;
 
-        let make_env = || Rc::new(RefCell::new(crate::env::Environment::new()));
+        let make_env = || Rc::new(RefCell::new(quench_runtime::env::Environment::new()));
 
         // Regular function expression → constructor
         let mut func = ValueFunction::new(None, vec![], vec![], make_env(), false, false);
@@ -1181,7 +1181,7 @@ if (opd.configurable !== true) throw new Error('FAIL: configurable should be tru
         // Arrow function → NOT constructor
         let mut arrow = ValueFunction::new_arrow(
             vec![],
-            Box::new(crate::ast::ArrowBody::Block(std::rc::Rc::new(vec![]))),
+            Box::new(quench_runtime::ast::ArrowBody::Block(std::rc::Rc::new(vec![]))),
             make_env(),
         );
         arrow.strict = false;
@@ -1218,7 +1218,7 @@ if (opd.configurable !== true) throw new Error('FAIL: configurable should be tru
     #[test]
     fn object_define_property_setter_works() {
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
+        quench_runtime::builtins::register_builtins(&mut ctx);
         try_inject_harness(&mut ctx).expect("harness ok");
 
         // Test Object.defineProperty with accessor descriptor
@@ -1246,7 +1246,7 @@ if (opd.configurable !== true) throw new Error('FAIL: configurable should be tru
     #[test]
     fn object_literal_function_property_identity() {
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
+        quench_runtime::builtins::register_builtins(&mut ctx);
         try_inject_harness(&mut ctx).expect("harness ok");
 
         let js = r#"
@@ -1269,7 +1269,7 @@ if (opd.configurable !== true) throw new Error('FAIL: configurable should be tru
     #[test]
     fn allow_proxy_traps_returns_object() {
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
+        quench_runtime::builtins::register_builtins(&mut ctx);
         try_inject_harness(&mut ctx).expect("harness ok");
 
         let js = r#"
@@ -1290,7 +1290,7 @@ if (opd.configurable !== true) throw new Error('FAIL: configurable should be tru
     #[test]
     fn allow_proxy_traps_get_trap_identity() {
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
+        quench_runtime::builtins::register_builtins(&mut ctx);
         try_inject_harness(&mut ctx).expect("harness ok");
 
         let js = r#"
@@ -1314,7 +1314,7 @@ if (opd.configurable !== true) throw new Error('FAIL: configurable should be tru
     #[test]
     fn allow_proxy_traps_preserves_overrides_by_identity() {
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
+        quench_runtime::builtins::register_builtins(&mut ctx);
         try_inject_harness(&mut ctx).expect("harness ok");
 
         // Evaluate the exact JS from proxytrapshelper-overrides.js that fails
@@ -1460,7 +1460,7 @@ if (opd.configurable !== true) throw new Error('FAIL: configurable should be tru
     #[test]
     fn test_harness_injection_is_idempotent() {
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
+        quench_runtime::builtins::register_builtins(&mut ctx);
         try_inject_harness(&mut ctx).expect("first ok");
         try_inject_harness(&mut ctx).expect("second ok");
 
