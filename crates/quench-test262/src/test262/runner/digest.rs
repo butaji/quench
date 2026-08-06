@@ -3,7 +3,8 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{mpsc, Arc};
 use std::time::Duration;
 
 use crate::harness::HarnessLoader;
@@ -158,7 +159,7 @@ fn run_parallel(
         .map(|n| worker_count(n.get()))
         .unwrap_or(4);
     let (tx, rx) = mpsc::channel();
-    let next = Arc::new(Mutex::new(0usize));
+    let next = Arc::new(AtomicUsize::new(0));
     let tests = Arc::new(tests.to_vec());
     let harness = harness.clone();
     let isolated = use_isolated;
@@ -168,21 +169,17 @@ fn run_parallel(
         let next = Arc::clone(&next);
         let tests = Arc::clone(&tests);
         let harness = harness.clone();
-        handles.push(std::thread::spawn(move || {
-            loop {
-                let i = {
-                    let mut g = next.lock().unwrap();
-                    let i = *g;
-                    if i >= tests.len() {
-                        break;
-                    }
-                    *g += 1;
-                    i
-                };
-                let path = &tests[i];
-                let outcome = one_test(&harness, path, isolated);
-                let _ = tx.send((i, label(path, false), outcome));
-            }
+        handles.push(std::thread::spawn(move || loop {
+            let i = {
+                let i = next.fetch_add(1, Ordering::Relaxed);
+                if i >= tests.len() {
+                    break;
+                }
+                i
+            };
+            let path = &tests[i];
+            let outcome = one_test(&harness, path, isolated);
+            let _ = tx.send((i, label(path, false), outcome));
         }));
     }
     drop(tx);
