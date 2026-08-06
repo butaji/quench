@@ -21,6 +21,14 @@ fn test_harness_deep_equal_basic() {
 }
 
 #[test]
+fn module_resolution_rejects_transitive_circular_reexport() {
+    let root = quench_test262::runner::default_test262_dir();
+    let harness = HarnessLoader::new(&root);
+    let path = PathBuf::from(root).join("test/language/module-code/instn-iee-err-circular-as.js");
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
+
+#[test]
 fn test_harness_deep_equal_formats_symbol_primitive() {
     let mut host = QuenchHost::new();
     let result =

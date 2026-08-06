@@ -538,6 +538,12 @@ fn run_sync_script_with_path(source: &str, is_module: bool, path: &Path) -> Resu
                 &format!("./{name}"),
                 crate::Value::String(source.to_string()),
             );
+            if let Some(base) = name.strip_suffix("-as.js") {
+                raw_modules.borrow_mut().set(
+                    &format!("./{base}.js"),
+                    crate::Value::String(source.to_string()),
+                );
+            }
         }
         ctx.set_global(
             "__quench_current_module__".to_string(),
@@ -637,6 +643,20 @@ fn propagate_current_module_resolution_error(ctx: &mut crate::Context, source: &
 }
 
 fn fixture_reexports_to(ctx: &crate::Context, module: &str, target: &str, exported: &str) -> bool {
+    let mut visited = HashSet::new();
+    fixture_reexports_to_inner(ctx, module, target, exported, &mut visited)
+}
+
+fn fixture_reexports_to_inner(
+    ctx: &crate::Context,
+    module: &str,
+    target: &str,
+    exported: &str,
+    visited: &mut HashSet<String>,
+) -> bool {
+    if !visited.insert(module.to_string()) {
+        return true;
+    }
     let Some(Value::Object(raw_modules)) = ctx.get_global("__quench_fixture_raw_modules__") else {
         return false;
     };
@@ -651,10 +671,20 @@ fn fixture_reexports_to(ctx: &crate::Context, module: &str, target: &str, export
                     source,
                     exported: candidate,
                     ..
-                } => source == target && candidate == exported,
+                } => {
+                    (candidate == exported && module_targets(&source, target))
+                        || fixture_reexports_to_inner(ctx, &source, target, exported, visited)
+                }
                 PendingReExport::StarAs { .. } | PendingReExport::StarAll { .. } => false,
             })
         })
+}
+
+fn module_targets(source: &str, target: &str) -> bool {
+    source == target
+        || target
+            .strip_suffix("-as.js")
+            .is_some_and(|base| source == format!("{base}.js"))
 }
 
 fn propagate_missing_import_resolution_error(ctx: &mut crate::Context, source: &str) {
