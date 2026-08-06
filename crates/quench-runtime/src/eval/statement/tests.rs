@@ -1443,8 +1443,7 @@ mod switch_statement {
 
     #[test]
     fn switch_tail_call_with_default_can_run_many_iterations() {
-        let src = "var callCount = 0;\n"
-            .to_owned()
+        let src = "var callCount = 0;\n".to_owned()
             + "(function f(n) {\n"
             + "  if (n === 0) { callCount += 1; return; }\n"
             + "  switch(0) { case 0: return f(n - 1); default: }\n"
@@ -1988,7 +1987,10 @@ mod multiple_statements {
 
     #[test]
     fn using_block_does_not_override_completion() {
-        assert_eq!(eval("4; { using resource = null; }").unwrap(), Value::Number(4.0));
+        assert_eq!(
+            eval("4; { using resource = null; }").unwrap(),
+            Value::Number(4.0)
+        );
     }
 
     #[test]
@@ -2243,6 +2245,22 @@ mod try_catch_edge_cases {
             Value::String("error".into())
         );
     }
+}
+
+#[test]
+fn throw_function_call_sequence_preserves_parameter_value() {
+    let value = eval(
+        "var i=0; function adding1(){ i++; return 1; } \
+         try { throw (adding1()); } catch(e) {} \
+         var i=0; function adding2(){ i++; return i; } \
+         try { throw adding2(); } catch(e) {} \
+         var i=0; function adding3(){ i++; } \
+         try { throw adding3(); } catch(e) {} \
+         function adding4(i){ i++; return i; } \
+         try { throw (adding4(1)); } catch(e) { e }",
+    )
+    .unwrap();
+    assert_eq!(value, Value::Number(2.0));
 }
 
 // ─── For-in edge cases ────────────────────────────────────────────────────

@@ -390,6 +390,20 @@ pub fn eval_update(
         }
     };
     if let (Expression::Identifier(name), Some(scope)) = (argument, identifier_scope) {
+        if !scope.borrow().is_global_object_binding()
+            && !scope.borrow().is_with_environment()
+            && matches!(
+                scope.borrow().get_kind(name),
+                Some(crate::ast::VarKind::Let | crate::ast::VarKind::Const)
+            )
+        {
+            scope.borrow_mut().set(
+                name.clone(),
+                new_value.clone(),
+                crate::interpreter::is_strict_mode(),
+            );
+            return if prefix { Ok(new_value) } else { Ok(old_value) };
+        }
         let scope_ref = scope.borrow();
         if scope_ref.is_with_environment()
             && scope_ref.set_object_property_after_get(
