@@ -155,6 +155,8 @@ relevant test262 stage.
 
 - **R40 — Remaining unit gates.** The lower-switch pin, stale timeout probes,
   and async-generator dynamic-import queueing are resolved. The runtime sweep
-  still has two semantic gates: indirect module function binding and dynamic
-  circular-import error propagation. Resolve each with its existing Rust
-  reproducer before claiming the unit suite green.
+  now has one remaining semantic gate: indirect module function binding
+  fixture evaluation order. Dynamic circular-import error propagation is
+  resolved in `a7da99c4`; imported accessor and immutable-binding behavior are
+  covered by Rust reproducers in `247757e5` and `929813a9`. Resolve the final
+  fixture-order gate before claiming the conformance crate green.
