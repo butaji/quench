@@ -313,6 +313,27 @@ fn test_own_keys_vs_property_names() {
 }
 
 #[test]
+fn own_keys_preserve_interleaved_data_and_accessor_order() {
+    use std::rc::Rc;
+
+    let mut obj = Object::new(ObjectKind::Ordinary);
+    obj.set("data", Value::Number(1.0));
+    obj.define_accessor(
+        "accessor",
+        Some(Value::NativeFunction(Rc::new(
+            crate::value::NativeFunction::new(|_| Ok(Value::Undefined)),
+        ))),
+        None,
+        PropertyFlags {
+            enumerable: true,
+            ..PropertyFlags::default()
+        },
+    );
+    obj.set("tail", Value::Number(2.0));
+    assert_eq!(obj.own_keys(), vec!["data", "accessor", "tail"]);
+}
+
+#[test]
 fn test_get_descriptor() {
     let mut obj = Object::new(ObjectKind::Ordinary);
     obj.set("key", Value::Number(1.0));
