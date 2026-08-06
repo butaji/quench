@@ -567,8 +567,30 @@ fn propagate_current_module_resolution_error(ctx: &mut crate::Context, source: &
     let Some(Value::Object(errors)) = ctx.get_global("__quench_module_errors__") else {
         return;
     };
+    let current_module = ctx
+        .get_global("__quench_current_module__")
+        .and_then(|value| match value {
+            Value::String(name) => Some(name),
+            _ => None,
+        });
     for entry in &reexports {
-        if let PendingReExport::Named { source, local, .. } = entry {
+        if let PendingReExport::Named {
+            source,
+            local,
+            exported,
+        } = entry
+        {
+            if current_module
+                .as_deref()
+                .is_some_and(|current| fixture_reexports_to(ctx, source, current, exported))
+            {
+                if let Some(module) = current_module.as_deref() {
+                    errors
+                        .borrow_mut()
+                        .set(module, Value::String("Circular module export".into()));
+                }
+                return;
+            }
             let missing = ctx
                 .get_module(source)
                 .and_then(|value| match value {
@@ -612,6 +634,32 @@ fn propagate_current_module_resolution_error(ctx: &mut crate::Context, source: &
         return;
     };
     errors.borrow_mut().set(&module, reason);
+}
+
+fn fixture_reexports_to(
+    ctx: &crate::Context,
+    module: &str,
+    target: &str,
+    exported: &str,
+) -> bool {
+    let Some(Value::Object(raw_modules)) = ctx.get_global("__quench_fixture_raw_modules__") else {
+        return false;
+    };
+    let Some(Value::String(source)) = raw_modules.borrow().get(module) else {
+        return false;
+    };
+    fixture_exports_from_source(usize::MAX, &source)
+        .ok()
+        .is_some_and(|(_, _, _, _, entries)| {
+            entries.into_iter().any(|entry| match entry {
+                PendingReExport::Named {
+                    source,
+                    exported: candidate,
+                    ..
+                } => source == target && candidate == exported,
+                PendingReExport::StarAs { .. } | PendingReExport::StarAll { .. } => false,
+            })
+        })
 }
 
 fn propagate_missing_import_resolution_error(ctx: &mut crate::Context, source: &str) {

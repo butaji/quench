@@ -905,6 +905,26 @@ fn test_runner_path_using_completion_value() {
     assert_eq!(run_single_test(&harness, &test_path), TestOutcome::Pass);
 }
 
+#[test]
+fn module_resolution_negative_case_reports_syntax_error() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let test262_dir = manifest_dir
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("tests/test262");
+    let harness = HarnessLoader::new(test262_dir.to_str().unwrap());
+    let path = test262_dir.join(
+        "test/language/module-code/instn-iee-err-circular.js",
+    );
+    let outcome = run_single_test(&harness, &path);
+    assert!(
+        matches!(outcome, TestOutcome::Pass),
+        "module resolution negative case: {outcome:?}"
+    );
+}
+
 // ── Staged runner ───────────────────────────────────────────────────────────
 
 #[test]
