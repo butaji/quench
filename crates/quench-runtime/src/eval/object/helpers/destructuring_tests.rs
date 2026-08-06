@@ -38,6 +38,20 @@ mod iterator_protocol_tests {
         );
     }
 
+    #[test]
+    fn var_destructuring_with_proxy_scope_does_not_repeat_binding_lookup() {
+        let result = eval(
+            "var log=[]; var sourceKey={toString:()=>{log.push('sourceKey');return 'p'}}; var source={get p(){log.push('get source');return undefined}}; var env=new Proxy({}, {has(t,pk){log.push('binding::'+pk);return false}}); var defaultValue=0; with(env){var {[sourceKey]: varTarget = defaultValue}=source;} log.join('|')",
+        )
+        .unwrap();
+        assert_eq!(
+            result,
+            Value::String(
+                "binding::source|binding::sourceKey|sourceKey|binding::varTarget|get source|binding::defaultValue".into(),
+            )
+        );
+    }
+
     // ─── take_iterator_value: basic next() ─────────────────────────────────────
 
     /// iterator.next() returns correct value

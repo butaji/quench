@@ -1475,6 +1475,14 @@ pub fn assign_to_identifier(
         return Err(js_err);
     }
 
+    if !crate::interpreter::is_strict_mode() {
+        if let Some(scope) = env.borrow().var_binding_scope(name) {
+            if scope.borrow_mut().set(name.to_string(), value.clone(), false) {
+                return Ok(());
+            }
+        }
+    }
+
     if !env.borrow().has(name) {
         if let Some(Value::Object(global_obj)) = env.borrow().get("globalThis") {
             if global_obj.borrow().has_own(name) {
