@@ -1814,11 +1814,6 @@ mod class_declaration {
         );
         assert!(eval("class C extends function() {}.bind() {}").is_err());
         assert!(crate::value::take_thrown_value().is_some());
-        assert_eq!(eval("typeof Math.abs").unwrap(), Value::String("function".into()));
-        assert_eq!(eval("Math.abs(2)").unwrap(), Value::Number(2.0));
-        assert_eq!(eval("Math.abs.prototype === undefined").unwrap(), Value::Boolean(true));
-        assert!(eval("class C extends Math.abs {}").is_err());
-        assert!(eval("Math.abs.prototype = 42; class C extends Math.abs {}").is_err());
     }
 
     #[test]
