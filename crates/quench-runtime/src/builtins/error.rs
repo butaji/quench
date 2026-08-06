@@ -206,35 +206,41 @@ fn register_suppressed_error(ctx: &mut Context, parent_proto: &Rc<RefCell<Object
     proto.prototype = Some(Rc::clone(parent_proto));
     let proto = Rc::new(RefCell::new(proto));
     let constructor_proto = Rc::clone(&proto);
-    let constructor = NativeConstructor::new(
+    let mut constructor = NativeConstructor::new(
         move |args| {
             let mut object =
                 Object::with_prototype(ObjectKind::Ordinary, Rc::clone(&constructor_proto));
+            let message = match args.get(2).cloned() {
+                Some(message) if message != Value::Undefined => {
+                    Some(convert_error_message(message)?)
+                }
+                _ => None,
+            };
+            if let Some(message) = message {
+                object.define_own_property(
+                    "message",
+                    &PropertyDescriptor {
+                        value: Some(Value::String(message)),
+                        writable: Some(true),
+                        enumerable: Some(false),
+                        configurable: Some(true),
+                        ..Default::default()
+                    },
+                );
+            }
             object.set("error", args.first().cloned().unwrap_or(Value::Undefined));
             object.set(
                 "suppressed",
                 args.get(1).cloned().unwrap_or(Value::Undefined),
             );
-            if let Some(message) = args.get(2).cloned() {
-                if message != Value::Undefined {
-                    let message = convert_error_message(message)?;
-                    object.define_own_property(
-                        "message",
-                        &PropertyDescriptor {
-                            value: Some(Value::String(message)),
-                            writable: Some(true),
-                            enumerable: Some(false),
-                            configurable: Some(true),
-                            ..Default::default()
-                        },
-                    );
-                }
-            }
             Ok(Value::Object(Rc::new(RefCell::new(object))))
         },
         Rc::clone(&proto),
     );
     constructor.set_name("SuppressedError");
+    if let Some(error_constructor) = ctx.get_global("Error") {
+        constructor.set_own_prototype(error_constructor);
+    }
     let constructor = Value::NativeConstructor(Rc::new(constructor));
     let mut prototype = proto.borrow_mut();
     prototype.set("constructor", constructor.clone());

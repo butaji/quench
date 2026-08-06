@@ -397,3 +397,40 @@ fn suppressed_error_converts_message_and_propagates_abrupt_completion() {
         .unwrap();
     assert_eq!(result, crate::value::Value::Boolean(true));
 }
+
+#[test]
+fn suppressed_error_constructor_inherits_from_error() {
+    let mut ctx = crate::Context::new().unwrap();
+    let result = ctx.eval("Object.getPrototypeOf(SuppressedError) === Error").unwrap();
+    assert_eq!(result, crate::value::Value::Boolean(true));
+}
+
+#[test]
+fn suppressed_error_uses_custom_new_target_prototype() {
+    let mut ctx = crate::Context::new().unwrap();
+    let result = ctx
+        .eval("var custom = {x: 42}; var newTarget = new Proxy(function() {}, {get(t, p) { return p === 'prototype' ? custom : t[p]; }}); var error = Reflect.construct(SuppressedError, [], newTarget); [Object.getPrototypeOf(error) === custom, error.x].join('|')")
+        .unwrap();
+    assert_eq!(result, crate::value::Value::String("true|42".into()));
+}
+
+#[test]
+fn suppressed_error_uses_new_target_realm_prototype() {
+    let mut ctx = crate::Context::new().unwrap();
+    let result = ctx
+        .eval("var other = $262.createRealm().global; var newTarget = new other.Function(); newTarget.prototype = undefined; var error = Reflect.construct(SuppressedError, [[]], newTarget); Object.getPrototypeOf(error) === other.SuppressedError.prototype")
+        .unwrap();
+    assert_eq!(result, crate::value::Value::Boolean(true));
+}
+
+#[test]
+fn suppressed_error_evaluates_message_before_error_properties() {
+    let mut ctx = crate::Context::new().unwrap();
+    let result = ctx
+        .eval("var sequence = []; var message = {toString() { sequence.push('message'); return ''; }}; var error = {}; var suppressed = {}; var e = new SuppressedError(error, suppressed, message); sequence.concat(Object.getOwnPropertyNames(e).filter(function (key) { return key === 'message' || key === 'error' || key === 'suppressed'; })).join('|')")
+        .unwrap();
+    assert_eq!(
+        result,
+        crate::value::Value::String("message|message|error|suppressed".into())
+    );
+}
