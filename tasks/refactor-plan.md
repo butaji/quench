@@ -145,7 +145,8 @@ relevant test262 stage.
   stages with external subdirectory sharding or a longer-lived runner process;
   do not treat partial output or unit-test counts as conformance evidence.
 
-- **R40 — Remaining unit gates.** The runtime sweep is down to the lower-switch
-  pin, indirect module function binding, dynamic circular-import error
-  propagation, and two intentional timeout probes. Resolve each with its
-  existing Rust reproducer before claiming the unit suite green.
+- **R40 — Remaining unit gates.** The lower-switch pin and two stale timeout
+  probes are resolved. The runtime sweep still has three semantic gates:
+  indirect module function binding, dynamic circular-import error propagation,
+  and async-generator dynamic-import queueing. Resolve each with its existing
+  Rust reproducer before claiming the unit suite green.
