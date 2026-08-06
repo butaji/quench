@@ -1,12 +1,12 @@
 //! test262 conformance integration test
 //!
 //! Run with:
-//!   cargo test -p quench-runtime --test test262 test262_staged -- --nocapture
+//!   cargo test -p quench-test262 --test test262 test262_staged -- --nocapture
 
-use quench_runtime::test262::host::TestOutcome;
-use quench_runtime::test262::runner::execute::run_single_test;
-use quench_runtime::test262::{HarnessLoader, QuenchHost, Test262Host, Test262Runner};
 use quench_runtime::{builtins, Context, Value};
+use quench_test262::host::TestOutcome;
+use quench_test262::runner::execute::run_single_test;
+use quench_test262::{HarnessLoader, QuenchHost, Test262Host, Test262Runner};
 use std::path::PathBuf;
 
 #[test]
@@ -174,7 +174,7 @@ fn test_bind_native_function_does_not_require_derived_super() {
 fn test_harness_then_strict_async_super_await_returns_string() {
     let mut ctx = Context::new().unwrap();
     builtins::register_builtins(&mut ctx);
-    quench_runtime::test262::harness::try_inject_harness(&mut ctx).unwrap();
+    quench_test262::harness::try_inject_harness(&mut ctx).unwrap();
     let _ = ctx.eval(
         r#"
         "use strict";
@@ -556,7 +556,7 @@ fn exact_arguments_descriptor_test_source_passes_in_unit_host() {
 fn exact_arguments_descriptor_test_matches_process_runner_setup() {
     let mut ctx = Context::new().unwrap();
     builtins::register_builtins(&mut ctx);
-    quench_runtime::test262::harness::try_inject_harness(&mut ctx).unwrap();
+    quench_test262::harness::try_inject_harness(&mut ctx).unwrap();
     if let Some(error) = ctx.get_global("Test262Error") {
         quench_runtime::value::error::set_main_realm_test262_error(error);
     }
@@ -570,7 +570,7 @@ fn exact_arguments_descriptor_test_matches_process_runner_setup() {
 fn arguments_caller_fixture_parses_no_strict_flag() {
     let source =
         include_str!("../../../tests/test262/test/language/arguments-object/10.6-13-a-2.js");
-    let metadata = quench_runtime::test262::metadata::Test262Metadata::parse(source).unwrap();
+    let metadata = quench_test262::metadata::Test262Metadata::parse(source).unwrap();
     assert!(metadata.flags.iter().any(|flag| flag == "noStrict"));
 }
 
@@ -915,9 +915,7 @@ fn module_resolution_negative_case_reports_syntax_error() {
         .unwrap()
         .join("tests/test262");
     let harness = HarnessLoader::new(test262_dir.to_str().unwrap());
-    let path = test262_dir.join(
-        "test/language/module-code/instn-iee-err-circular.js",
-    );
+    let path = test262_dir.join("test/language/module-code/instn-iee-err-circular.js");
     let outcome = run_single_test(&harness, &path);
     assert!(
         matches!(outcome, TestOutcome::Pass),
@@ -993,7 +991,7 @@ fn test262_staged_impl() {
     if summary.skipped > 0 && !digest {
         let mut reason_counts: std::collections::BTreeMap<&str, usize> =
             std::collections::BTreeMap::new();
-        for (_path, reason) in quench_runtime::test262::skip::crash_files() {
+        for (_path, reason) in quench_test262::skip::crash_files() {
             *reason_counts.entry(*reason).or_default() += 1;
         }
         panic!(
@@ -1021,7 +1019,7 @@ fn test262_staged_impl() {
 
 fn current_stage_label() -> String {
     std::env::var("TEST262_STAGE")
-        .unwrap_or_else(|_| quench_runtime::test262::runner::default_stage().to_string())
+        .unwrap_or_else(|_| quench_test262::runner::default_stage().to_string())
 }
 
 #[test]
@@ -1039,7 +1037,7 @@ fn test262_one() {
 
     let runner = Test262Runner::new(test262_dir);
     let src = std::fs::read_to_string(path).expect("read test file");
-    let meta = quench_runtime::test262::metadata::Test262Metadata::parse(&src).unwrap_or_default();
+    let meta = quench_test262::metadata::Test262Metadata::parse(&src).unwrap_or_default();
     let mut host = QuenchHost::new();
     let script = runner
         .harness

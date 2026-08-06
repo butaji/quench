@@ -46,6 +46,7 @@ macro_rules! throw {
     }};
 }
 
+pub mod api;
 pub mod ast;
 pub mod builtins;
 pub mod context;
@@ -62,6 +63,7 @@ pub mod test262;
 pub mod value;
 
 // Re-export commonly used types from the context module
+pub use api::{HostCallback, JsResult, QuenchRuntime, RuntimeEngine};
 pub use ast::Program;
 pub use context::Context;
 pub use env::Environment;

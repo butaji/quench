@@ -1,0 +1,135 @@
+use crate::{Context, JsError, Value};
+
+pub type JsResult<T> = Result<T, JsError>;
+pub type HostCallback = Box<dyn Fn(Vec<Value>) -> JsResult<Value>>;
+
+pub trait QuenchRuntime {
+    type Context;
+    type Value;
+
+    fn new_context(&mut self) -> JsResult<Self::Context>;
+    fn eval(&mut self, ctx: &mut Self::Context, source: &str) -> JsResult<Self::Value>;
+    fn global(&mut self, ctx: &mut Self::Context) -> Self::Value;
+    fn get(
+        &mut self,
+        ctx: &mut Self::Context,
+        target: &Self::Value,
+        key: &Self::Value,
+    ) -> JsResult<Self::Value>;
+    fn set(
+        &mut self,
+        ctx: &mut Self::Context,
+        target: &Self::Value,
+        key: Self::Value,
+        value: Self::Value,
+    ) -> JsResult<bool>;
+    fn call(
+        &mut self,
+        ctx: &mut Self::Context,
+        function: &Self::Value,
+        this: Self::Value,
+        args: &[Self::Value],
+    ) -> JsResult<Self::Value>;
+    fn host_function(
+        &mut self,
+        ctx: &mut Self::Context,
+        callback: HostCallback,
+    ) -> JsResult<Self::Value>;
+}
+
+#[derive(Default)]
+pub struct RuntimeEngine;
+
+impl QuenchRuntime for RuntimeEngine {
+    type Context = Context;
+    type Value = Value;
+
+    fn new_context(&mut self) -> JsResult<Self::Context> {
+        Context::new()
+    }
+    fn eval(&mut self, ctx: &mut Self::Context, source: &str) -> JsResult<Self::Value> {
+        ctx.eval(source)
+    }
+    fn global(&mut self, ctx: &mut Self::Context) -> Self::Value {
+        ctx.get_global("globalThis").unwrap_or(Value::Undefined)
+    }
+    fn get(
+        &mut self,
+        _ctx: &mut Self::Context,
+        target: &Self::Value,
+        key: &Self::Value,
+    ) -> JsResult<Self::Value> {
+        match target {
+            Value::Object(object) => match key {
+                Value::String(name) => object
+                    .borrow()
+                    .get(name)
+                    .ok_or_else(|| JsError("property not found".into())),
+                _ => object
+                    .borrow()
+                    .get_property(key)
+                    .ok_or_else(|| JsError("property not found".into())),
+            },
+            _ => Err(JsError("target is not an object".into())),
+        }
+    }
+    fn set(
+        &mut self,
+        _ctx: &mut Self::Context,
+        target: &Self::Value,
+        key: Self::Value,
+        value: Self::Value,
+    ) -> JsResult<bool> {
+        match target {
+            Value::Object(object) => {
+                match key {
+                    Value::String(name) => object.borrow_mut().set(&name, value),
+                    Value::Symbol(symbol) => object
+                        .borrow_mut()
+                        .set_symbol(&symbol.property_key(), value),
+                    _ => return Err(JsError("property key is not coercible".into())),
+                }
+                Ok(true)
+            }
+            _ => Err(JsError("target is not an object".into())),
+        }
+    }
+    fn call(
+        &mut self,
+        ctx: &mut Self::Context,
+        function: &Self::Value,
+        this: Self::Value,
+        args: &[Self::Value],
+    ) -> JsResult<Self::Value> {
+        let _ = ctx;
+        crate::eval::function::call_value_with_this(function.clone(), args.to_vec(), this)
+    }
+    fn host_function(
+        &mut self,
+        _ctx: &mut Self::Context,
+        callback: HostCallback,
+    ) -> JsResult<Self::Value> {
+        Ok(Value::NativeFunction(std::rc::Rc::new(
+            crate::value::NativeFunction::new(callback),
+        )))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{QuenchRuntime, RuntimeEngine};
+    use crate::Value;
+
+    #[test]
+    fn runtime_api_evaluates_and_reads_global_property() {
+        let mut engine = RuntimeEngine;
+        let mut ctx = engine.new_context().unwrap();
+        engine.eval(&mut ctx, "globalThis.answer = 42").unwrap();
+        let global = engine.global(&mut ctx);
+        let key = Value::String("answer".into());
+        assert_eq!(
+            engine.get(&mut ctx, &global, &key).unwrap(),
+            Value::Number(42.0)
+        );
+    }
+}
