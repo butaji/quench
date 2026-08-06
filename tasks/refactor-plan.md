@@ -144,3 +144,8 @@ relevant test262 stage.
   explicitly unresolved until complete digests are collected. Diagnose long
   stages with external subdirectory sharding or a longer-lived runner process;
   do not treat partial output or unit-test counts as conformance evidence.
+
+- **R40 — Remaining unit gates.** The runtime sweep is down to the lower-switch
+  pin, indirect module function binding, dynamic circular-import error
+  propagation, and two intentional timeout probes. Resolve each with its
+  existing Rust reproducer before claiming the unit suite green.
