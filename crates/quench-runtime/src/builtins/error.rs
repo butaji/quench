@@ -238,6 +238,7 @@ fn register_suppressed_error(ctx: &mut Context, parent_proto: &Rc<RefCell<Object
         Rc::clone(&proto),
     );
     constructor.set_name("SuppressedError");
+    constructor.set_static_method("length", Value::Number(3.0));
     if let Some(error_constructor) = ctx.get_global("Error") {
         constructor.set_own_prototype(error_constructor);
     }
