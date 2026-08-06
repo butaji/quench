@@ -226,6 +226,15 @@ fn native_error_constructor_properties_are_non_enumerable() {
 }
 
 #[test]
+fn native_error_constructor_length_is_not_writable() {
+    let mut ctx = crate::Context::new().unwrap();
+    let result = ctx
+        .eval("[EvalError,RangeError,ReferenceError,SyntaxError,TypeError,URIError].every(function (C) { return Object.getOwnPropertyDescriptor(C, 'length').writable === false; })")
+        .unwrap();
+    assert_eq!(result, crate::value::Value::Boolean(true));
+}
+
+#[test]
 fn native_error_constructor_cause_is_an_own_property() {
     let mut ctx = crate::Context::new().unwrap();
     let result = ctx
