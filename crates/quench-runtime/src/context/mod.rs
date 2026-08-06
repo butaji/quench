@@ -200,6 +200,11 @@ impl Context {
         }
     }
 
+    /// Start a dynamic module import using this context's module environment.
+    pub fn import_module(&mut self, source: &str) -> Result<Value, JsError> {
+        crate::eval::statement::dynamic_import(source, &self.env, None, false, true)
+    }
+
     /// Parse JavaScript source into an AST using OXC
     pub fn parse(&self, source: &str) -> Result<crate::ast::Program, JsError> {
         parser::parse_script(source)
