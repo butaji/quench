@@ -545,6 +545,15 @@ pub fn eval_expression(
                     return Err(JsError(crate::value::to_js_string(&thrown)));
                 }
                 if object_property_result.is_none() && scope.borrow().is_with_environment() {
+                    if crate::interpreter::is_strict_mode()
+                        && scope.borrow().object_binding_has(name) != Some(true)
+                    {
+                        let (_, error) = crate::value::error::create_js_error_with_type(
+                            &format!("{} is not defined", name),
+                            "ReferenceError",
+                        );
+                        return Err(error);
+                    }
                     return crate::eval::object::assign_to(left, &right_val, env)
                         .map(|_| right_val);
                 }

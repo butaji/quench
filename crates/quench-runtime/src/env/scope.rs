@@ -375,6 +375,16 @@ impl Scope {
         }
         let is_proxy = proxy_handler_and_target(&object).is_some();
         if !is_proxy && !object.borrow().has(name) {
+            let typed_array_prototype =
+                object.borrow().prototype.as_ref().is_some_and(|prototype| {
+                    matches!(
+                        prototype.borrow().data,
+                        crate::value::object::helpers::ObjData::Idx { .. }
+                    )
+                });
+            if typed_array_prototype {
+                return None;
+            }
             object.borrow_mut().set(name, value);
             return Some(true);
         }

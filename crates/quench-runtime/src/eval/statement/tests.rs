@@ -1082,6 +1082,14 @@ mod with_statement {
     }
 
     #[test]
+    fn strict_with_deleted_typed_array_binding_throws_reference_error() {
+        let result = eval(
+            "var typedArray = new Int32Array(10); var env = Object.create(typedArray); Object.defineProperty(env, 'NaN', { configurable: true, value: 100 }); with (env) { (function() { 'use strict'; NaN = (delete env.NaN, 0); })(); }",
+        );
+        assert!(result.is_err_and(|error| error.0.contains("ReferenceError")));
+    }
+
+    #[test]
     fn with_proxy_binding_object_lookup_follows_proxy_get_for_call_expression() {
         let result = eval(
             "var log = [];\n\
