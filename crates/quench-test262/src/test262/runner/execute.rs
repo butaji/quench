@@ -1316,6 +1316,17 @@ pub fn load_fixture_modules(
             .or_default()
             .push(source.clone());
     }
+    if let Some(Value::Object(errors)) = ctx.get_global(module_errors_key) {
+        for (module, source) in &named_reexport_edges {
+            let mut seen = HashSet::new();
+            if source != module && has_module_path(&named_graph, source, module, &mut seen) {
+                errors.borrow_mut().set(
+                    module,
+                    quench_runtime::Value::String("Circular indirect export".into()),
+                );
+            }
+        }
+    }
     if test_path.to_string_lossy().contains("import-defer") {
         if let Some(Value::Object(errors)) = ctx.get_global(module_errors_key) {
             for (module, target) in &fixture_module_requests {
@@ -1338,15 +1349,6 @@ pub fn load_fixture_modules(
                     errors.borrow_mut().set(
                         module,
                         quench_runtime::Value::String("Missing indirect export".into()),
-                    );
-                }
-            }
-            for (module, source) in &named_reexport_edges {
-                let mut seen = HashSet::new();
-                if source != module && has_module_path(&named_graph, source, module, &mut seen) {
-                    errors.borrow_mut().set(
-                        module,
-                        quench_runtime::Value::String("Circular indirect export".into()),
                     );
                 }
             }
