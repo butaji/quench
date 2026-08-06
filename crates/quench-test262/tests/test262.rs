@@ -558,7 +558,7 @@ fn exact_arguments_descriptor_test_matches_process_runner_setup() {
     builtins::register_builtins(&mut ctx);
     quench_test262::harness::try_inject_harness(&mut ctx).unwrap();
     if let Some(error) = ctx.get_global("Test262Error") {
-        quench_runtime::value::error::set_main_realm_test262_error(error);
+        quench_runtime::value::error::set_main_realm_host_error(error);
     }
     quench_runtime::interpreter::reset_interpreter_state();
     let source =
