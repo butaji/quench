@@ -167,7 +167,22 @@ fn is_empty_completion(stmt: &Statement) -> bool {
         | Statement::Empty => true,
         Statement::Block(stmts) => stmts.iter().all(is_empty_completion),
         Statement::SequenceDecls(stmts) => stmts.iter().all(is_empty_completion),
-        Statement::Try { .. } => false,
+        Statement::Try {
+            body, finalizer, ..
+        } => is_empty_completion(body) && finalizer.as_deref().is_some_and(is_disposal_block),
+        _ => false,
+    }
+}
+
+fn is_disposal_block(stmt: &Statement) -> bool {
+    match stmt {
+        Statement::Block(stmts) | Statement::SequenceDecls(stmts) => {
+            !stmts.is_empty()
+                && stmts
+                    .iter()
+                    .all(|stmt| matches!(stmt, Statement::Dispose { .. }))
+        }
+        Statement::Dispose { .. } => true,
         _ => false,
     }
 }

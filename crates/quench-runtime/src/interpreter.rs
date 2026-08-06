@@ -454,7 +454,23 @@ pub fn eval_program(
             | crate::ast::Statement::Empty => true,
             crate::ast::Statement::Block(stmts) => stmts.iter().all(is_empty_completion),
             crate::ast::Statement::SequenceDecls(stmts) => stmts.iter().all(is_empty_completion),
-            crate::ast::Statement::Try { .. } => false,
+            crate::ast::Statement::Try {
+                body, finalizer, ..
+            } => {
+                is_empty_completion(body)
+                    && finalizer
+                        .as_deref()
+                        .is_some_and(|statement| match statement {
+                            crate::ast::Statement::Block(stmts)
+                            | crate::ast::Statement::SequenceDecls(stmts) => {
+                                stmts.iter().all(|stmt| {
+                                    matches!(stmt, crate::ast::Statement::Dispose { .. })
+                                }) && !stmts.is_empty()
+                            }
+                            crate::ast::Statement::Dispose { .. } => true,
+                            _ => false,
+                        })
+            }
             _ => false,
         }
     }
