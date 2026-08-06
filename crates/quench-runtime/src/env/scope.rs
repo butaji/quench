@@ -375,7 +375,8 @@ impl Scope {
         }
         let is_proxy = proxy_handler_and_target(&object).is_some();
         if !is_proxy && !object.borrow().has(name) {
-            return if _strict { Some(false) } else { None };
+            object.borrow_mut().set(name, value);
+            return Some(true);
         }
         if matches!(object.borrow().get_descriptor(name), Some(flags) if !flags.writable) {
             return Some(false);
