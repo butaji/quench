@@ -134,6 +134,11 @@ relevant test262 stage.
   neutral `QuenchRuntime` API (`eval`, `eval_module`, `eval_script`, module
   import, realm snapshots, property access, calls, and host callbacks). Do
   not export interpreter/environment internals to make the move compile.
+  Inventory is complete: 17 runtime-side files remain. The first move exposed
+  private intrinsic/interpreter state, `Context::env`, dynamic-import, and
+  object-storage dependencies; replace these with neutral host-script and
+  realm APIs before physically moving the tree. The current facade is not the
+  completed boundary.
 
 - **R38 — Module fixture identity.** Preserve canonical module identity for
   `-as.js` resolution fixtures and follow named re-export chains without
