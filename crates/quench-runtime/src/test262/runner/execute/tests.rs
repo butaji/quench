@@ -37,7 +37,7 @@ fn large_scripts_get_the_deep_execution_stack() {
 }
 
 #[test]
-fn initialized_context_exposes_the_main_realm_test262_error() {
+fn initialized_context_exposes_the_main_realm_host_error() {
     let ctx = initialize_test_context(false).unwrap();
     assert!(ctx.get_global("Test262Error").is_some());
 }

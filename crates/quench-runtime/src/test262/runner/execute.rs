@@ -509,7 +509,7 @@ pub(crate) fn initialize_test_context(strict: bool) -> Result<crate::Context, St
     crate::test262::harness::try_inject_harness(&mut ctx)
         .map_err(|error| format!("harness load failure: {error}"))?;
     if let Some(error) = ctx.get_global("Test262Error") {
-        crate::value::error::set_main_realm_test262_error(error);
+        crate::value::error::set_main_realm_host_error(error);
     }
     crate::interpreter::set_strict_mode(strict);
     Ok(ctx)
@@ -567,12 +567,12 @@ fn propagate_current_module_resolution_error(ctx: &mut crate::Context, source: &
     let Some(Value::Object(errors)) = ctx.get_global("__quench_module_errors__") else {
         return;
     };
-    let current_module = ctx
-        .get_global("__quench_current_module__")
-        .and_then(|value| match value {
-            Value::String(name) => Some(name),
-            _ => None,
-        });
+    let current_module =
+        ctx.get_global("__quench_current_module__")
+            .and_then(|value| match value {
+                Value::String(name) => Some(name),
+                _ => None,
+            });
     for entry in &reexports {
         if let PendingReExport::Named {
             source,
@@ -636,12 +636,7 @@ fn propagate_current_module_resolution_error(ctx: &mut crate::Context, source: &
     errors.borrow_mut().set(&module, reason);
 }
 
-fn fixture_reexports_to(
-    ctx: &crate::Context,
-    module: &str,
-    target: &str,
-    exported: &str,
-) -> bool {
+fn fixture_reexports_to(ctx: &crate::Context, module: &str, target: &str, exported: &str) -> bool {
     let Some(Value::Object(raw_modules)) = ctx.get_global("__quench_fixture_raw_modules__") else {
         return false;
     };

@@ -1009,13 +1009,13 @@ verifyProperty(obj, prop, desc);
 
     /// MAIN_REALM_TEST262_ERROR is set after QuenchHost::run_script.
     #[test]
-    fn test_quench_host_sets_main_realm_test262_error() {
+    fn test_quench_host_sets_main_realm_host_error() {
         let mut ctx = Context::new().unwrap();
         crate::builtins::register_builtins(&mut ctx);
         crate::interpreter::set_strict_mode(false);
         try_inject_harness(&mut ctx).expect("harness ok");
         if let Some(te) = ctx.get_global("Test262Error") {
-            crate::value::error::set_main_realm_test262_error(te);
+            crate::value::error::set_main_realm_host_error(te);
         }
         crate::interpreter::set_strict_mode(false);
 

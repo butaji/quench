@@ -90,12 +90,12 @@ thread_local! {
 }
 
 /// Set the native Test262Error constructor (called by harness injection)
-pub fn set_test262_error(val: Value) {
+pub fn set_host_error(val: Value) {
     TEST262_ERROR.with(|cell| *cell.borrow_mut() = Some(val));
 }
 
 /// Set the Test262Error prototype (called by harness injection)
-pub fn set_test262_error_proto(proto: Rc<RefCell<Object>>) {
+pub fn set_host_error_proto(proto: Rc<RefCell<Object>>) {
     TEST262_ERROR_PROTO.with(|cell| *cell.borrow_mut() = Some(proto));
 }
 
@@ -107,7 +107,7 @@ pub fn set_test262_error_proto(proto: Rc<RefCell<Object>>) {
 /// ALWAYS overwrites so each top-level realm gets its own constructor.
 /// Sub-realms ($262.createRealm()) do NOT call this, so the main realm's
 /// Test262Error is preserved even after a sub-realm creates its own.
-pub fn set_main_realm_test262_error(val: Value) {
+pub fn set_main_realm_host_error(val: Value) {
     MAIN_REALM_TEST262_ERROR.with(|cell| {
         *cell.borrow_mut() = Some(val);
     });
@@ -115,27 +115,27 @@ pub fn set_main_realm_test262_error(val: Value) {
 
 /// Reset the main realm's Test262Error. Called at the start of each
 /// `try_inject_harness` so that each top-level realm gets its own constructor.
-pub fn reset_main_realm_test262_error() {
+pub fn reset_main_realm_host_error() {
     MAIN_REALM_TEST262_ERROR.with(|cell| {
         *cell.borrow_mut() = None;
     });
 }
 
 /// Get the main realm's Test262Error Value (used by create_js_error_with_type)
-fn get_main_realm_test262_error() -> Option<Value> {
+fn get_main_realm_host_error() -> Option<Value> {
     MAIN_REALM_TEST262_ERROR.with(|cell| cell.borrow().clone())
 }
 
 /// Get the native Test262Error constructor (used by create_js_error_with_type)
-pub fn get_test262_error() -> Option<Value> {
+pub fn get_host_error() -> Option<Value> {
     TEST262_ERROR.with(|cell| cell.borrow().clone())
 }
 
 /// Get the native Test262Error constructor with its prototype.
 /// Returns (prototype, constructor_value) for building error objects with proper
 /// prototype chains and constructor identity.
-pub fn get_test262_error_with_proto() -> Option<(Rc<RefCell<Object>>, Value)> {
-    let ctor = get_test262_error()?;
+pub fn get_host_error_with_proto() -> Option<(Rc<RefCell<Object>>, Value)> {
+    let ctor = get_host_error()?;
     let proto = TEST262_ERROR_PROTO.with(|cell| cell.borrow().clone());
     proto.map(|p| (p, ctor))
 }
@@ -213,7 +213,7 @@ where
     let proto_rc = if let Some(Value::Object(p)) = get_proto(ctor) {
         p.clone()
     } else {
-        get_test262_error_with_proto()
+        get_host_error_with_proto()
             .map(|(p, _)| p)
             .unwrap_or_else(|| {
                 crate::builtins::get_object_prototype().expect("Object.prototype must be available")
@@ -267,7 +267,7 @@ pub fn create_js_error_with_type(message: &str, error_type: &str) -> (Value, JsE
     // .constructor matches the main realm's Test262Error, even when called from
     // a sub-realm context. The main realm's Test262Error is the canonical one.
     if error_type == "Test262Error" {
-        if let Some(te) = get_main_realm_test262_error() {
+        if let Some(te) = get_main_realm_host_error() {
             let final_val = match &te {
                 Value::NativeConstructor(nc) => {
                     // Build error with the main realm's Test262Error as .constructor.
@@ -298,7 +298,7 @@ pub fn create_js_error_with_type(message: &str, error_type: &str) -> (Value, JsE
                 }
                 _ => {
                     // Unexpected type; build a plain error with main realm Test262Error.
-                    let proto = get_test262_error_with_proto()
+                    let proto = get_host_error_with_proto()
                         .map(|(p, _)| p)
                         .unwrap_or_else(|| {
                             Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)))
@@ -313,7 +313,7 @@ pub fn create_js_error_with_type(message: &str, error_type: &str) -> (Value, JsE
             return (final_val, JsError(format!("Test262Error: {}", message)));
         }
         // No main realm Test262Error: fall back to thread-local native Test262Error.
-        if let Some((proto, constructor)) = get_test262_error_with_proto() {
+        if let Some((proto, constructor)) = get_host_error_with_proto() {
             let mut obj = Object::with_prototype(ObjectKind::Ordinary, proto);
             obj.set("message", Value::String(message.to_string()));
             obj.set("name", Value::String("Test262Error".to_string()));
@@ -632,14 +632,14 @@ mod tests {
 
     #[test]
     fn test262_error_set_and_get() {
-        set_test262_error(Value::Null);
-        assert_eq!(get_test262_error(), Some(Value::Null));
+        set_host_error(Value::Null);
+        assert_eq!(get_host_error(), Some(Value::Null));
     }
 
     #[test]
     fn test262_error_overwrite() {
-        set_test262_error(Value::Boolean(false));
-        set_test262_error(Value::Boolean(true));
-        assert_eq!(get_test262_error(), Some(Value::Boolean(true)));
+        set_host_error(Value::Boolean(false));
+        set_host_error(Value::Boolean(true));
+        assert_eq!(get_host_error(), Some(Value::Boolean(true)));
     }
 }

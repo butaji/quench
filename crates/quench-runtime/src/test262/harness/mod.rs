@@ -311,8 +311,8 @@ fn inject_test262_error(ctx: &mut Context) {
     proto.borrow_mut().set("constructor", ctor_val.clone());
     ctx.set_global("Test262Error".to_string(), ctor_val.clone());
     ctx.set_global("Test262ErrorThrower".to_string(), thrower);
-    crate::value::error::set_test262_error(ctor_val.clone());
-    crate::value::error::set_test262_error_proto(Rc::clone(&proto));
+    crate::value::error::set_host_error(ctor_val.clone());
+    crate::value::error::set_host_error_proto(Rc::clone(&proto));
 }
 
 /// Load and evaluate a JS harness file (strips frontmatter).
@@ -391,16 +391,6 @@ fn fn_global_object(_args: Vec<Value>) -> Result<Value, JsError> {
             ))),
         }))
     })
-}
-
-/// Save the harness global-object cache (realm snapshot support)
-pub(crate) fn save_global_object() -> Option<Rc<std::cell::RefCell<crate::value::Object>>> {
-    GLOBAL_OBJECT.with(|g| g.borrow().clone())
-}
-
-/// Restore the harness global-object cache (realm snapshot support)
-pub(crate) fn restore_global_object(saved: Option<Rc<std::cell::RefCell<crate::value::Object>>>) {
-    GLOBAL_OBJECT.with(|g| *g.borrow_mut() = saved);
 }
 
 /// Build an array of native error constructors

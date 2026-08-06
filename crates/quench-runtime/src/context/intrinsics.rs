@@ -28,7 +28,6 @@ pub(crate) struct IntrinsicSnapshot {
     errors: crate::value::error::ErrorIntrinsics,
     well_known_symbols: HashMap<&'static str, Value>,
     regex_cache: rustc_hash::FxHashMap<char, Value>,
-    harness_global: Proto,
     throw_type_error: Option<Value>,
 }
 
@@ -47,7 +46,6 @@ impl IntrinsicSnapshot {
             errors: crate::value::error::save_error_intrinsics(),
             well_known_symbols: builtins::symbol::save_well_known_symbols(),
             regex_cache: super::helpers::save_regex_cache(),
-            harness_global: crate::test262::harness::save_global_object(),
             throw_type_error: crate::eval::function::save_throw_type_error(),
         }
     }
@@ -65,7 +63,6 @@ impl IntrinsicSnapshot {
         crate::value::error::restore_error_intrinsics(self.errors);
         builtins::symbol::restore_well_known_symbols(self.well_known_symbols);
         super::helpers::restore_regex_cache(self.regex_cache);
-        crate::test262::harness::restore_global_object(self.harness_global);
         crate::eval::function::restore_throw_type_error(self.throw_type_error);
     }
 }
@@ -84,7 +81,6 @@ pub(crate) fn clear_intrinsics() {
         errors: (None, None, None, None),
         well_known_symbols: HashMap::new(),
         regex_cache: rustc_hash::FxHashMap::default(),
-        harness_global: None,
         throw_type_error: None,
     }
     .restore();
@@ -116,15 +112,13 @@ mod tests {
     #[test]
     fn test_clear_intrinsics_empties_caches() {
         let mut ctx = crate::Context::new().unwrap();
-        crate::test262::harness::try_inject_harness(&mut ctx).unwrap();
         assert!(builtins::array::get_array_prototype().is_some());
         clear_intrinsics();
         assert!(builtins::array::get_array_prototype().is_none());
         assert!(builtins::object::get_object_prototype().is_none());
         assert!(builtins::string::get_string_prototype().is_none());
         assert!(builtins::function::get_function_prototype().is_none());
-        assert!(crate::value::error::get_test262_error().is_none());
-        assert!(crate::test262::harness::save_global_object().is_none());
+        assert!(crate::value::error::get_host_error().is_none());
         // Rebuild so later tests on this thread see initialized caches.
         ctx.reset().unwrap();
         assert!(builtins::array::get_array_prototype().is_some());
