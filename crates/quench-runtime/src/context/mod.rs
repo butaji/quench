@@ -198,7 +198,17 @@ impl Context {
                 "__quench_current_module_evaluating__".to_string(),
                 Value::Boolean(true),
             );
-            let result = interpreter::eval_program(&program, &mut self.env, Some(source), false);
+            let mut module_env = if self
+                .env
+                .borrow()
+                .get("__quench_fixture_init_scripts__")
+                .is_some()
+            {
+                Rc::new(RefCell::new(Environment::with_parent(Rc::clone(&self.env))))
+            } else {
+                Rc::clone(&self.env)
+            };
+            let result = interpreter::eval_program(&program, &mut module_env, Some(source), false);
             self.env.borrow_mut().define(
                 "__quench_current_module_evaluating__".to_string(),
                 Value::Boolean(false),
@@ -325,13 +335,7 @@ impl Context {
         source_phase: bool,
         deferred: bool,
     ) -> Result<Value, JsError> {
-        crate::eval::statement::dynamic_import(
-            source,
-            &self.env,
-            options,
-            source_phase,
-            deferred,
-        )
+        crate::eval::statement::dynamic_import(source, &self.env, options, source_phase, deferred)
     }
 
     /// Get the inner environment.

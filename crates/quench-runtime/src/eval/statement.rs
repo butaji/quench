@@ -2025,6 +2025,9 @@ fn eval_try(
                 if has_catch_param {
                     env.borrow_mut().pop_scope();
                 }
+                if catch_result.is_ok() {
+                    crate::value::take_thrown_value();
+                }
                 let catch_thrown = if catch_result.is_err() {
                     take_thrown_value()
                 } else {
@@ -2905,7 +2908,8 @@ fn initialize_fixture_module(source: &str, env: &Rc<RefCell<Environment>>) -> Re
             _ => None,
         })
         .unwrap_or(false);
-    let mut eval_env = Rc::new(RefCell::new(Environment::with_parent(Rc::clone(env))));
+    let fixture_parent = env.borrow().get_parent().unwrap_or_else(|| Rc::clone(env));
+    let mut eval_env = Rc::new(RefCell::new(Environment::with_parent(fixture_parent)));
     eval_env
         .borrow_mut()
         .define("__quench_fixture_evaluation__".into(), Value::Boolean(true));

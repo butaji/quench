@@ -12,6 +12,17 @@ fn fixture_declarations_are_evaluated_before_default_expression() {
 }
 
 #[test]
+fn unresolved_fixture_probe_catches_reference_error_and_typeof_is_undefined() {
+    let mut ctx = quench_runtime::Context::new().expect("context");
+    let value = ctx
+        .eval(
+            "const results=[]; try { A; } catch(error) { results.push(error.name, typeof A); } results[1]",
+        )
+        .expect("probe");
+    assert_eq!(value, quench_runtime::Value::String("undefined".into()));
+}
+
+#[test]
 fn in_process_and_isolated_share_one_timeout() {
     // Both paths read TEST_TIMEOUT_SECS; pin the value so a slow test cannot
     // pass in-process (formerly 10s) and fail isolated (formerly 15s).

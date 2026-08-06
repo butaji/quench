@@ -32,6 +32,14 @@ fn strict_delete_this_returns_true() {
 }
 
 #[test]
+fn tdz_reference_error_is_catchable() {
+    assert_eq!(
+        eval("try { missing; let missing; } catch (error) { error.name }").unwrap(),
+        Value::String("ReferenceError".to_string())
+    );
+}
+
+#[test]
 fn arrow_typeof_arguments_uses_local_function_binding() {
     assert_eq!(
         eval("const f = () => { function arguments() {} return typeof arguments; }; f()"),

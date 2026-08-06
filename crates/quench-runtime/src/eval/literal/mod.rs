@@ -79,13 +79,14 @@ pub fn eval_identifier(
         // Arrow can access enclosing arguments - fall through to normal lookup
     }
     if env.borrow().is_tdz(name) {
-        let (_, js_err) = create_js_error_with_type(
+        let (value, js_err) = create_js_error_with_type(
             &format!(
                 "ReferenceError: Cannot access '{}' before initialization",
                 name
             ),
             "ReferenceError",
         );
+        crate::value::set_thrown_value(value);
         return Err(js_err);
     }
 
@@ -109,8 +110,9 @@ pub fn eval_identifier(
             if let Some(global_val) = crate::context::get_global_from_context(name) {
                 return Ok(global_val);
             }
-            let (_, js_err) =
+            let (value, js_err) =
                 create_js_error_with_type(&format!("{} is not defined", name), "ReferenceError");
+            crate::value::set_thrown_value(value);
             Err(js_err)
         }
     }
