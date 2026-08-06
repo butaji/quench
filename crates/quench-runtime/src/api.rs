@@ -14,6 +14,7 @@ pub trait QuenchRuntime {
 
     fn new_context(&mut self) -> JsResult<Self::Context>;
     fn eval(&mut self, ctx: &mut Self::Context, source: &str) -> JsResult<Self::Value>;
+    fn eval_module(&mut self, ctx: &mut Self::Context, source: &str) -> JsResult<Self::Value>;
     fn global(&mut self, ctx: &mut Self::Context) -> Self::Value;
     fn get(
         &mut self,
@@ -55,6 +56,9 @@ impl QuenchRuntime for DefaultQuenchRuntime {
     }
     fn eval(&mut self, ctx: &mut Self::Context, source: &str) -> JsResult<Self::Value> {
         ctx.eval(source)
+    }
+    fn eval_module(&mut self, ctx: &mut Self::Context, source: &str) -> JsResult<Self::Value> {
+        ctx.eval_es_module(source)
     }
     fn global(&mut self, ctx: &mut Self::Context) -> Self::Value {
         ctx.get_global("globalThis").unwrap_or(Value::Undefined)
@@ -137,5 +141,14 @@ mod tests {
             engine.get(&mut ctx, &global, &key).unwrap(),
             Value::Number(42.0)
         );
+    }
+
+    #[test]
+    fn runtime_api_evaluates_modules() {
+        let mut engine = DefaultQuenchRuntime;
+        let mut ctx = engine.new_context().unwrap();
+        assert!(engine
+            .eval_module(&mut ctx, "export const answer = 42;")
+            .is_ok());
     }
 }
