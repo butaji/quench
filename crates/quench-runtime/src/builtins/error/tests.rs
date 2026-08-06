@@ -241,6 +241,15 @@ fn aggregate_error_cause_is_an_own_property() {
 }
 
 #[test]
+fn aggregate_error_uses_new_target_prototype_and_standard_length() {
+    let mut ctx = crate::Context::new().unwrap();
+    let result = ctx
+        .eval("var C = function() {}; C.prototype = {marker: 1}; var e = Reflect.construct(AggregateError, [[]], C); var d = Object.getOwnPropertyDescriptor(AggregateError, 'length'); [Object.getPrototypeOf(e).marker, d.value, d.writable].join('|')")
+        .unwrap();
+    assert_eq!(result, crate::value::Value::String("1|2|false".into()));
+}
+
+#[test]
 fn suppressed_error_constructor_metadata_is_standard() {
     let mut ctx = crate::Context::new().unwrap();
     let result = ctx

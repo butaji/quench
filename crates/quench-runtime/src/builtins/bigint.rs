@@ -621,7 +621,7 @@ mod tests {
         );
         assert_eq!(
             eval("Object.getOwnPropertyDescriptor(BigInt.prototype.toString, 'length').value"),
-            Value::Number(1.0)
+            Value::Number(0.0)
         );
     }
 

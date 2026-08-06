@@ -5,8 +5,8 @@ var _bigIntValueOf = BigInt.prototype.__valueOf;
 var _bigIntAsIntN = BigInt.__asIntN;
 var _bigIntAsUintN = BigInt.__asUintN;
 
-BigInt.prototype.toString = function BigIntToString(radix) {
-  return _bigIntToString.call(this, radix);
+BigInt.prototype.toString = function BigIntToString() {
+  return _bigIntToString.call(this, arguments[0]);
 };
 
 BigInt.prototype.valueOf = function BigIntValueOf() {
