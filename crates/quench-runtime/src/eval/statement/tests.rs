@@ -1421,6 +1421,17 @@ mod switch_statement {
     }
 
     #[test]
+    fn switch_tail_call_with_default_can_run_many_iterations() {
+        let src = "var callCount = 0;\n"
+            .to_owned()
+            + "(function f(n) {\n"
+            + "  if (n === 0) { callCount += 1; return; }\n"
+            + "  switch(0) { case 0: return f(n - 1); default: }\n"
+            + "})(10000); callCount;";
+        assert_eq!(eval(&src).unwrap(), Value::Number(1.0));
+    }
+
+    #[test]
     fn switch_default_abrupt_empty_does_not_preserve_prior_completion() {
         assert_eq!(
             eval(

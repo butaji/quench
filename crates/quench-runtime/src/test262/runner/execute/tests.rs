@@ -34,6 +34,10 @@ fn large_scripts_get_the_deep_execution_stack() {
         worker_stack_size("x", &PathBuf::from("nativeFunctionMatcher.js")),
         1024 * 1024 * 1024
     );
+    assert_eq!(
+        worker_stack_size("x", &PathBuf::from("tco-case-body-dflt.js")),
+        1024 * 1024 * 1024
+    );
 }
 
 #[test]
