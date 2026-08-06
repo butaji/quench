@@ -275,6 +275,15 @@ fn aggregate_error_propagates_iterable_errors() {
 }
 
 #[test]
+fn aggregate_error_evaluates_message_before_errors() {
+    let mut ctx = crate::Context::new().unwrap();
+    let result = ctx
+        .eval("var sequence = []; var message = {toString() { sequence.push(1); return ''; }}; var errors = {[Symbol.iterator]() { sequence.push(2); return {next() { sequence.push(3); return {done: true}; }}; }}; new AggregateError(errors, message); sequence.join(',')")
+        .unwrap();
+    assert_eq!(to_js_string(&result), "1,2,3");
+}
+
+#[test]
 fn aggregate_error_without_errors_throws_for_undefined_iterator() {
     let mut ctx = crate::Context::new().unwrap();
     let result = ctx
