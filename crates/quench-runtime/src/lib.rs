@@ -65,7 +65,7 @@ pub mod value;
 // Re-export commonly used types from the context module
 pub use api::{DefaultQuenchRuntime, HostCallback, JsResult, QuenchRuntime};
 pub use ast::Program;
-pub use context::Context;
+pub use context::{Context, RealmSnapshot};
 pub use env::Environment;
 pub use host::{register_native, HostFunctions};
 pub use value::{JsError, Value};

@@ -21,6 +21,21 @@ pub fn current_source() -> Option<&'static str> {
     CURRENT_SOURCE.with(|cell| *cell.borrow())
 }
 
+/// A restorable snapshot of the runtime's current realm state.
+pub struct RealmSnapshot(intrinsics::IntrinsicSnapshot);
+
+impl RealmSnapshot {
+    /// Capture the current realm state.
+    pub fn capture() -> Self {
+        Self(intrinsics::IntrinsicSnapshot::save())
+    }
+
+    /// Restore the captured realm state.
+    pub fn restore(self) {
+        self.0.restore();
+    }
+}
+
 /// Runtime context - holds the execution environment and globals
 pub struct Context {
     env: Rc<RefCell<Environment>>,
