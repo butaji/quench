@@ -6,6 +6,12 @@ use std::rc::Rc;
 use crate::context::Context;
 use crate::value::{to_number, NativeFunction, Object, ObjectKind, Value};
 
+fn type_error(message: &str) -> crate::JsError {
+    let (thrown, error) = crate::value::error::create_js_error_with_type(message, "TypeError");
+    crate::value::set_thrown_value(thrown);
+    error
+}
+
 pub fn register_data_view(ctx: &mut Context) {
     let proto_rc = Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)));
     if let Some(object_proto) = crate::builtins::get_object_prototype() {
@@ -44,7 +50,7 @@ pub fn register_data_view(ctx: &mut Context) {
     let mut dv_native = NativeFunction::new_with_prototype(
         move |args| {
             let Some(buffer) = args.first() else {
-                return Err(crate::JsError::new(
+                return Err(type_error(
                     "TypeError: DataView constructor requires an ArrayBuffer argument",
                 ));
             };
@@ -121,6 +127,7 @@ mod tests {
     #[test]
     fn data_view_constructor_without_buffer_throws() {
         assert!(eval_err("class DV extends DataView {} new DV()"));
+        assert!(crate::value::take_thrown_value().is_some());
     }
 
     #[test]

@@ -29,9 +29,11 @@ pub fn create_promise_constructor(
             let executor = args.first().cloned().unwrap_or(Value::Undefined);
 
             if !matches!(executor, Value::Function(_) | Value::NativeFunction(_)) {
-                return Err(JsError(
-                    "TypeError: Promise resolver is not a function".to_string(),
-                ));
+                let message = "TypeError: Promise resolver is not a function";
+                let (thrown, error) =
+                    crate::value::error::create_js_error_with_type(message, "TypeError");
+                crate::value::set_thrown_value(thrown);
+                return Err(error);
             }
 
             let promise_rc =
