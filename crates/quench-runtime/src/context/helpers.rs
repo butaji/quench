@@ -1097,7 +1097,6 @@ mod tests {
         crate::builtins::register_builtins(&mut ctx);
         crate::builtins::bootstrap::bootstrap_js_builtins(&mut ctx).unwrap();
         // Now load the test262 harness to mirror the full path
-        crate::test262::harness::try_inject_harness(&mut ctx).unwrap();
         let r = ctx
             .eval("[typeof Object.getOwnPropertyDescriptor, typeof Object.getPrototypeOf, typeof Object.keys, typeof Object.assign].join('|')")
             .unwrap();
@@ -1115,7 +1114,6 @@ mod tests {
         crate::builtins::bootstrap::bootstrap_js_builtins(&mut ctx).unwrap();
         crate::builtins::register_builtins(&mut ctx);
         crate::builtins::bootstrap::bootstrap_js_builtins(&mut ctx).unwrap();
-        crate::test262::harness::try_inject_harness(&mut ctx).unwrap();
         let r = ctx
             .eval("[typeof assert, typeof assert.sameValue, typeof assert.throws, typeof assert._isSameValue].join('|')")
             .unwrap();
@@ -1130,7 +1128,6 @@ mod tests {
         let mut ctx = Context::new().unwrap();
         crate::builtins::register_builtins(&mut ctx);
         crate::builtins::bootstrap::bootstrap_js_builtins(&mut ctx).unwrap();
-        crate::test262::harness::try_inject_harness(&mut ctx).unwrap();
         let value = ctx
             .eval("[typeof String.call, typeof (function(x) { return x; }).call].join('|')")
             .unwrap();

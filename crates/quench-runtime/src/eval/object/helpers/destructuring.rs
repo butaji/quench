@@ -1681,7 +1681,6 @@ pub fn is_anonymous_function_definition(expr: &Expression) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::test262::host::Test262Host;
     use crate::Context;
     use crate::Value;
     use std::cell::RefCell;
@@ -1980,8 +1979,8 @@ mod tests {
 
     #[test]
     fn destructure_generator_elision_advances_iterator() {
-        let mut host = crate::test262::QuenchHost::new();
-        host.run_script(
+        let mut ctx = Context::new().unwrap();
+        ctx.eval(
             "var first = 0, second = 0; \
              function* g() { first += 1; yield; second += 1; } \
              class C { method([,]) {} } \

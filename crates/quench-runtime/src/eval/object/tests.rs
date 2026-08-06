@@ -596,9 +596,7 @@ fn sloppy_arrow_assigns_undeclared_creates_global() {
 
 #[test]
 fn arrow_fn_caller_full_test262() {
-    use crate::test262::harness::try_inject_harness;
     let mut ctx = Context::new().unwrap();
-    try_inject_harness(&mut ctx).unwrap();
     let res = ctx.eval(
         "var arrowFn = () => {}; \
              var got1 = false; try { var x = arrowFn.caller; } catch (e) { got1 = (e instanceof TypeError); } \

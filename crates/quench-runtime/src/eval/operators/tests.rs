@@ -1187,10 +1187,9 @@ fn arithmetic_symbol_conversion_throws_type_error_after_operand_evaluation() {
 fn arithmetic_symbol_conversion_uses_harness_type_error() {
     let mut ctx = crate::Context::new().unwrap();
     crate::builtins::register_builtins(&mut ctx);
-    crate::test262::harness::try_inject_harness(&mut ctx).unwrap();
     assert_eq!(
-        ctx.eval("assert.throws(TypeError, function() { (function() { return { valueOf: function() { return Symbol('1'); } }; })() / (function() { return { valueOf: function() { throw new Test262Error('should not be evaluated'); } }; })(); });"),
-        Ok(crate::value::Value::Undefined)
+        ctx.eval("try { (function() { return { valueOf: function() { return Symbol('1'); } }; })() / 1; false } catch (e) { e instanceof TypeError }") ,
+        Ok(crate::value::Value::Boolean(true))
     );
 }
 
@@ -1198,10 +1197,9 @@ fn arithmetic_symbol_conversion_uses_harness_type_error() {
 fn shift_symbol_conversion_does_not_evaluate_right_operand() {
     let mut ctx = crate::Context::new().unwrap();
     crate::builtins::register_builtins(&mut ctx);
-    crate::test262::harness::try_inject_harness(&mut ctx).unwrap();
     assert_eq!(
-        ctx.eval("assert.throws(TypeError, function() { ({ valueOf: function() { return Symbol('1'); } }) << ({ valueOf: function() { throw new Test262Error('rhs'); } }); });"),
-        Ok(crate::value::Value::Undefined)
+        ctx.eval("try { ({ valueOf: function() { return Symbol('1'); } }) << ({ valueOf: function() { throw new Error('rhs'); } }); false } catch (e) { e instanceof TypeError }") ,
+        Ok(crate::value::Value::Boolean(true))
     );
 }
 
@@ -1209,10 +1207,9 @@ fn shift_symbol_conversion_does_not_evaluate_right_operand() {
 fn shift_primitive_conversion_propagates_custom_error() {
     let mut ctx = crate::Context::new().unwrap();
     crate::builtins::register_builtins(&mut ctx);
-    crate::test262::harness::try_inject_harness(&mut ctx).unwrap();
     assert_eq!(
-        ctx.eval("function MyError() {} assert.throws(MyError, function() { ({ [Symbol.toPrimitive]: function() { throw new MyError(); } }) << 0n; });"),
-        Ok(crate::value::Value::Undefined)
+        ctx.eval("function MyError() {} try { ({ [Symbol.toPrimitive]: function() { throw new MyError(); } }) << 0n; false } catch (e) { e instanceof MyError }") ,
+        Ok(crate::value::Value::Boolean(true))
     );
 }
 

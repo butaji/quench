@@ -1729,7 +1729,6 @@ fn strict_arguments_use_the_intrinsic_throw_type_error() {
 #[test]
 fn throw_type_error_intrinsic_has_immutable_own_properties() {
     let mut ctx = crate::Context::new().unwrap();
-    crate::test262::harness::try_inject_harness(&mut ctx).unwrap();
     let result = ctx
         .eval(
             "var f = Object.getOwnPropertyDescriptor((function() { 'use strict'; return arguments; })(), 'callee').get; assert.throws(TypeError, function() { f(); }); [Object.isFrozen(f), Object.isExtensible(f), Object.getOwnPropertyNames(f).join(','), Object.getOwnPropertyDescriptor(f, 'length').configurable, Object.getOwnPropertyDescriptor(f, 'name').configurable].join('|')",
@@ -1744,7 +1743,6 @@ fn throw_type_error_intrinsic_has_immutable_own_properties() {
 #[test]
 fn strict_arguments_throw_type_error_is_realm_specific() {
     let mut ctx = crate::Context::new().unwrap();
-    crate::test262::harness::try_inject_harness(&mut ctx).unwrap();
     let result = ctx
         .eval(
             "var other = $262.createRealm().global; \
@@ -1961,10 +1959,8 @@ fn var_function_initializer_inside_with_can_be_called_after_scope() {
 
 #[test]
 fn global_this_inherits_object_prototype_for_with_function_case() {
-    use crate::test262::host::{QuenchHost, Test262Host};
-
-    let mut host = QuenchHost::new();
-    let result = host.run_script(
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval(
         "var a=1; var __obj={a:2}; with(__obj){ var __func=function(){return a;} } this.hasOwnProperty('__func')",
     );
     assert!(
@@ -2003,10 +1999,8 @@ fn deleting_mapped_arguments_index_removes_property() {
 
 #[test]
 fn deleting_mapped_arguments_index_in_harness_host_removes_property() {
-    use crate::test262::host::{QuenchHost, Test262Host};
-
-    let mut host = QuenchHost::new();
-    let result = host.run_script(
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval(
         "function f(value) { delete arguments[0]; if (arguments[0] !== undefined) throw new Error('not deleted'); } f(1);",
     );
     assert!(result.is_ok(), "arguments deletion failed: {result:?}");
@@ -2181,8 +2175,14 @@ fn await_using_does_not_read_sync_dispose_when_async_method_exists() {
         .unwrap();
     let value = ctx.eval("order.join(',')").unwrap();
     assert_eq!(value, Value::String("async,done".into()));
-    assert_eq!(ctx.eval("JSON.stringify(order)").unwrap(), Value::String("[\"async\",\"done\"]".into()));
-    assert_eq!(ctx.eval("Array.isArray(order)").unwrap(), Value::Boolean(true));
+    assert_eq!(
+        ctx.eval("JSON.stringify(order)").unwrap(),
+        Value::String("[\"async\",\"done\"]".into())
+    );
+    assert_eq!(
+        ctx.eval("Array.isArray(order)").unwrap(),
+        Value::Boolean(true)
+    );
 }
 
 #[test]
@@ -2561,13 +2561,35 @@ fn await_using_dispose_lookup_order_compares_equal_as_array() {
     let equal = ctx
         .eval("assert.deepEqual._compare(order, ['Symbol.asyncDispose', 'Symbol.dispose'])")
         .unwrap();
-    assert_eq!(ctx.eval("order.length === 2").unwrap(), Value::Boolean(true));
-    assert_eq!(ctx.eval("order[0] === 'Symbol.asyncDispose'").unwrap(), Value::Boolean(true));
-    assert_eq!(ctx.eval("order[1] === 'Symbol.dispose'").unwrap(), Value::Boolean(true));
-    assert_eq!(ctx.eval("Array.isArray(order)").unwrap(), Value::Boolean(true));
-    assert_eq!(ctx.eval("Array.isArray(['Symbol.asyncDispose', 'Symbol.dispose'])").unwrap(), Value::Boolean(true));
-    assert_eq!(ctx.eval("assert.deepEqual._compare('a', 'a')").unwrap(), Value::Boolean(true));
-    assert_eq!(ctx.eval("assert.deepEqual._compare(['a'], ['a'])").unwrap(), Value::Boolean(true));
+    assert_eq!(
+        ctx.eval("order.length === 2").unwrap(),
+        Value::Boolean(true)
+    );
+    assert_eq!(
+        ctx.eval("order[0] === 'Symbol.asyncDispose'").unwrap(),
+        Value::Boolean(true)
+    );
+    assert_eq!(
+        ctx.eval("order[1] === 'Symbol.dispose'").unwrap(),
+        Value::Boolean(true)
+    );
+    assert_eq!(
+        ctx.eval("Array.isArray(order)").unwrap(),
+        Value::Boolean(true)
+    );
+    assert_eq!(
+        ctx.eval("Array.isArray(['Symbol.asyncDispose', 'Symbol.dispose'])")
+            .unwrap(),
+        Value::Boolean(true)
+    );
+    assert_eq!(
+        ctx.eval("assert.deepEqual._compare('a', 'a')").unwrap(),
+        Value::Boolean(true)
+    );
+    assert_eq!(
+        ctx.eval("assert.deepEqual._compare(['a'], ['a'])").unwrap(),
+        Value::Boolean(true)
+    );
     assert_eq!(ctx.eval("assert.deepEqual._compare(['Symbol.asyncDispose', 'Symbol.dispose'], ['Symbol.asyncDispose', 'Symbol.dispose'])").unwrap(), Value::Boolean(true));
     assert_eq!(equal, Value::Boolean(true));
 }
@@ -2580,7 +2602,6 @@ fn nested_switch_sibling_parameter_name_does_not_shadow() {
         .unwrap();
     assert_eq!(value, Value::Boolean(true));
 }
-
 
 #[test]
 fn tagged_template_tail_call_completes_deep_recursion() {

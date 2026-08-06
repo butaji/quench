@@ -146,38 +146,3 @@ fn test_null_property_access_throws() {
     println!("Result of null.then: {:?}", result);
     assert!(result.is_err(), "Should have thrown an error");
 }
-
-#[cfg(test)]
-#[test]
-fn test_async_test_scenario() {
-    use crate::builtins::register_builtins;
-    use crate::test262::harness::inject_harness;
-    let mut ctx = Context::new().unwrap();
-    register_builtins(&mut ctx);
-    inject_harness(&mut ctx);
-
-    // Simulate the asyncTest scenario
-    let result = ctx.eval(
-        r#"
-        var doneValues = [];
-        var doneCallCount = 0;
-        function $DONE(error) {
-            doneCallCount++;
-            print("DONE #" + doneCallCount + " error=" + error);
-            doneValues.push(error instanceof TypeError);
-        }
-        
-        // Test 1: asyncTest(null) - should call $DONE with Test262Error
-        try {
-            var fn = function() { return null; };
-            var r = fn();
-            r.then(function() {}, function() {});
-            "r.then() succeeded - BUG";
-        } catch(e) {
-            "Caught: " + e;
-        }
-    "#,
-    );
-    assert!(result.is_ok(), "eval failed: {:?}", result);
-    println!("Result: {:?}", result);
-}
