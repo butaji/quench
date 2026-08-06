@@ -218,6 +218,30 @@ fn isolated_runner_matches_in_process_strictness() {
 }
 
 #[test]
+fn generator_function_constructor_realm_prototype_matches_test262() {
+    use crate::harness::HarnessLoader;
+    use crate::runner::default_test262_dir;
+
+    let root = default_test262_dir();
+    let harness = HarnessLoader::new(&root);
+    let path = PathBuf::from(&root)
+        .join("test/built-ins/GeneratorFunction/proto-from-ctor-realm-prototype.js");
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
+
+#[test]
+fn bigint_wrapper_ordinary_to_primitive_matches_test262() {
+    use crate::harness::HarnessLoader;
+    use crate::runner::default_test262_dir;
+
+    let root = default_test262_dir();
+    let harness = HarnessLoader::new(&root);
+    let path = PathBuf::from(&root)
+        .join("test/built-ins/BigInt/wrapper-object-ordinary-toprimitive.js");
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
+
+#[test]
 fn digest_workers_are_capped_for_process_isolation() {
     assert_eq!(crate::test262::runner::digest::worker_count(64), 8);
 }
