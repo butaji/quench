@@ -42,6 +42,8 @@ inspect engine internals.
 - [x] Add runner-owned file loading with explicit UTF-8 I/O errors.
 - [x] Add harness-aware file execution so disk-loaded tests use the same
   include/strict composition path as in-memory tests.
+- [x] Add deterministic batch execution with `StageReport` counts and
+  retained failure paths/reasons.
 - [x] Record a Stage 44 native performance/conformance baseline.
 - [ ] Move metadata, harness loading, stages, isolation, and metrics from the
   transitional runtime module into `crates/quench-test262`.

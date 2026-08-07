@@ -96,6 +96,15 @@ pub enum TestOutcome {
     Fail { reason: String },
 }
 
+/// Aggregate result for one runner-selected batch or stage.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct StageReport {
+    pub total: usize,
+    pub passed: usize,
+    pub failed: usize,
+    pub failures: Vec<(std::path::PathBuf, String)>,
+}
+
 /// Runner parameterized over the engine host implementation.
 pub struct Test262Runner<H: Test262Host> {
     host: H,
@@ -167,6 +176,27 @@ impl<H: Test262Host> Test262Runner<H> {
         let source = std::fs::read_to_string(path.as_ref())
             .map_err(|error| format!("test262 read failed: {error}"))?;
         self.run_test_with_harness(&source, load)
+    }
+
+    /// Run files in iterator order and collect all outcomes.
+    pub fn run_files<I, P>(&mut self, paths: I) -> Result<StageReport, String>
+    where
+        I: IntoIterator<Item = P>,
+        P: AsRef<Path>,
+    {
+        let mut report = StageReport::default();
+        for input in paths {
+            let path = input.as_ref().to_path_buf();
+            report.total += 1;
+            match self.run_file(&path)? {
+                TestOutcome::Pass => report.passed += 1,
+                TestOutcome::Fail { reason } => {
+                    report.failed += 1;
+                    report.failures.push((path, reason));
+                }
+            }
+        }
+        Ok(report)
     }
 
     fn dispatch(&mut self, source: &str, is_module: bool) -> TestOutcome {
