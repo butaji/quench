@@ -81,3 +81,5 @@ The concrete first gap was the missing global `Request`; stage 2043 adds
 minimal Web `Request`/`Response` behavior used by Hono-style handlers.
 Stage 2044 adds `Request.text()` and `Request.json()` for body-consuming
 application handlers.
+Live Hono comparisons now match Node for both `GET /` (`200: Hono!`) and
+`POST /` JSON (`200: {"doubled":14}`), including the JSON content-type header.
