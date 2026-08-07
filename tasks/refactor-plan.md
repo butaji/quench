@@ -37,12 +37,12 @@ repo-wide split sweeps ahead of failing test262 clusters.
 | Target (aspirational) | **~8–12k Rust** + **~19k JS** (100%) |
 | Benchmarks | Boa ~25k Rust → 94%; Kiesel ~50k Zig → 94%; QuickJS ~80k C → 83% |
 | Current stage | 16 `class` (4,367 tests) · full digest 27,323/42,892 = 63.7% (2026-07-23) |
-| Crate candidates | `DEPENDENCIES.md` — verified 2026-07-23; new: `bumpalo`, `string_interner`, `fnv`, `regex` (for Unicode) |
+| Crate candidates | `docs/DEPENDENCIES.md` — verified 2026-07-23; new: `bumpalo`, `string_interner`, `fnv`, `regex` (for Unicode) |
 
 File:line references in this plan and in `tasks/review-2026-07-19*.md`
 are snapshots; re-locate by symbol name before editing. Object-model
 audit: `tasks/review-2026-07-22-object-model.md`. Crate candidates:
-`DEPENDENCIES.md`.
+`docs/DEPENDENCIES.md`.
 
 ## Critical path (ASAP × min LOC)
 
@@ -125,7 +125,7 @@ under the main oxc crate — verify if a feature flag is needed or if
 
 - [ ] Verify `oxc_semantic` API in current `oxc` version (0.47): does
       `Parser::parse` → `SemanticAnalysis::build` give early errors?
-- [ ] `DEPENDENCIES.md` row if a new feature or version is needed.
+- [ ] `docs/DEPENDENCIES.md` row if a new feature or version is needed.
 - [ ] `#[test]`: duplicate `let` in one block → catchable `SyntaxError`.
 - [ ] Parse → semantic check → SyntaxError before lowering; delete
       redundant hand-rolled checks.
@@ -191,13 +191,13 @@ duplicate) in Phase A without waiting for full R0.
 
 `builtins/date.rs` hand-rolls leap-year math under `chrono_*` names but
 never imports `chrono` (confirmed via grep: zero `use chrono` hits). R3
-implements the fix documented in `DEPENDENCIES.md`.
+implements the fix documented in `docs/DEPENDENCIES.md`.
 
 - [ ] `builtins/core/date.rs`: `UtcTimestamp`, `YmdToMs`, `MsToYmd` over
       `chrono::NaiveDate` + `chrono::Utc`.
 - [ ] `builtins/Date.js` thin shell.
 - [ ] `#[test]` for `Date.UTC` covering leap years + pre-1970.
-- [ ] `DEPENDENCIES.md` row for the upgrade (if any).
+- [ ] `docs/DEPENDENCIES.md` row for the upgrade (if any).
 
 ~50 LOC saved.
 
@@ -280,7 +280,7 @@ Use `Object.extensible` (and proper descriptors from R5); delete
 
 ## R18 — RegExp Unicode property escapes  *(LATER / stage 84, diff=2)*
 
-`regress` (ES2018, confirmed in `DEPENDENCIES.md`) does NOT support
+`regress` (ES2018, confirmed in `docs/DEPENDENCIES.md`) does NOT support
 Unicode property escapes `\p{}` (docs.rs regress: "features which have
 yet to be implemented: Unicode property escapes like `\p{Sc}`"). Stage 84
 tests `\p{Script}`, `\p{Emoji}`, `\p{General_Category}`, etc.
@@ -290,7 +290,7 @@ tests `\p{Script}`, `\p{Emoji}`, `\p{General_Category}`, etc.
       lookbehind, and dotAll?
 - [ ] If yes: add `regex` to `Cargo.toml` alongside `regress`; or replace
       `regress` if the feature set is a superset.
-- [ ] `DEPENDENCIES.md` row in the same diff.
+- [ ] `docs/DEPENDENCIES.md` row in the same diff.
 - [ ] `#[test]` for `\p{Emoji}` matching, `\p{Script=Latin}`,
       `\p{General_Category=Number}`.
 
@@ -314,7 +314,7 @@ Usage in Quench:
   objects means less GC pressure.
 
 - [ ] `bumpalo = "3"` in `Cargo.toml` (or `bump_scope` if bench proves it).
-- [ ] `DEPENDENCIES.md` row.
+- [ ] `docs/DEPENDENCIES.md` row.
 - [ ] `#[test]`: no Drop impls on freed arena objects.
 - [ ] Migration order: eval frames first, then parser, then Value constructors.
 
@@ -377,7 +377,7 @@ Usage:
 - String values: `StringId` type wrapping `string_interner::DefaultSymbol`.
 
 - [ ] `string_interner = "0.18"` + `fnv = "2"` in `Cargo.toml`.
-- [ ] `DEPENDENCIES.md` row.
+- [ ] `docs/DEPENDENCIES.md` row.
 - [ ] `value/string_interner.rs` — `Interner` on `Context`, `StringId` type.
 - [ ] `#[test]`: interned string pointer equality; `"abc" == "abc"` pointer compare.
 - [ ] `#[test]`: `Map` with 10k distinct string keys — baseline benchmark.

@@ -214,7 +214,7 @@ for benchmarks. `bumpalo` is battle-tested (Boa, many WASM engines);
 `bump-scope` benches ~2x faster but is less proven. Land `bumpalo` first,
 optimize later.
 
-Add `DEPENDENCIES.md` row in the same diff as the first arena use.
+Add `docs/DEPENDENCIES.md` row in the same diff as the first arena use.
 
 ## Strings — atom table interning *(R12 target)*
 
@@ -238,7 +238,7 @@ interned identifier strings) and in `eval/ops.rs` (all spec op names are
 static atoms). A single atom table means `ToPropertyKey` on an identifier
 string is O(1) pointer comparison, not O(n) string compare.
 
-Add `DEPENDENCIES.md` row in the same diff.
+Add `docs/DEPENDENCIES.md` row in the same diff.
 
 ## Profiling on macOS
 

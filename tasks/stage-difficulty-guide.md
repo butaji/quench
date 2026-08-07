@@ -39,7 +39,7 @@ These are the final-stages gate.
 - **Rust LOC:** 500–1,500 (Rust-side wrapper + date math)
 - **JS LOC:** 200–600 (JS facade over the crate)
 - **Risk:** ICU4X API surface vs. ES spec version; evaluate before committing.
-- **Crate:** `temporal_rs` + `zoneinfo_rs` (new rows in `DEPENDENCIES.md`).
+- **Crate:** `temporal_rs` + `zoneinfo_rs` (new rows in `docs/DEPENDENCIES.md`).
 - **Note:** Boa achieves 94.12% with this exact approach.
 
 ### Stage 118 — `ShadowRealm` (difficulty 9, 64 tests, 0.0%)
@@ -92,7 +92,7 @@ tests `\p{Script}`, `\p{Emoji}`, `\p{General_Category}`, etc.
 - **Rust LOC:** 200–400 (regex dispatch layer)
 - **JS LOC:** 200–400 (RegExp built-in)
 - **Risk:** `regex` crate with `unicode-perl` must cover ALL ES2024 syntax.
-  `DEPENDENCIES.md` row in the same diff as the stage.
+  `docs/DEPENDENCIES.md` row in the same diff as the stage.
 - **R18 reference:** `tasks/refactor-plan.md` §R18.
 
 ### Stage 38 — `async-generator` (difficulty 7, 301 tests, 97.0%)
@@ -288,4 +288,4 @@ under the hood. See `docs/architecture.md` §Profiling.
 - QuickJS NG 83.4%: <https://test262.fyi/>
 - Rust Performance Book: <https://nnethercote.github.io/perf-book/>
 - `temporal_rs` ES Stage 4: ECMA-402 / TC39 stage records
-- `DEPENDENCIES.md`: verified crate usage and alternatives
+- `docs/DEPENDENCIES.md`: verified crate usage and alternatives
