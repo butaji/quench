@@ -31,6 +31,8 @@ inspect engine internals.
   independent custom component selection with a unit test.
 - [x] Create `crates/quench-test262` with a host-only runner API and outcome
   mapping test; engine implementation types do not cross the boundary.
+- [x] Add runner-owned frontmatter parsing for module dispatch and negative
+  expectation metadata, with tests.
 - [x] Record a Stage 44 native performance/conformance baseline.
 - [ ] Move metadata, harness loading, stages, isolation, and metrics from the
   transitional runtime module into `crates/quench-test262`.
