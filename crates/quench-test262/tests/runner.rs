@@ -126,3 +126,12 @@ fn runner_composes_includes_and_only_strict_before_dispatch() {
         .unwrap();
     assert_eq!(outcome, TestOutcome::Pass);
 }
+
+#[test]
+fn runner_loads_test_source_from_a_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("case.js");
+    std::fs::write(&path, "pass").unwrap();
+    let mut runner = Test262Runner::new(Probe);
+    assert_eq!(runner.run_file(&path).unwrap(), TestOutcome::Pass);
+}

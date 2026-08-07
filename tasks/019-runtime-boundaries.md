@@ -39,6 +39,7 @@ inspect engine internals.
   `quench-test262`.
 - [x] Add callback-based harness loading and deterministic include/strict
   composition before host dispatch.
+- [x] Add runner-owned file loading with explicit UTF-8 I/O errors.
 - [x] Record a Stage 44 native performance/conformance baseline.
 - [ ] Move metadata, harness loading, stages, isolation, and metrics from the
   transitional runtime module into `crates/quench-test262`.
