@@ -44,6 +44,10 @@ The target representation is an owned, compact, index-addressed IR:
 - The first migration target is statement/expression lowering behind an
   `IrProgram` conversion API. Each conversion keeps the existing interpreter
   behavior pinned by a reproducer test before storage changes land.
+- The first storage step is now landed: top-level statements are packed into
+  an owned boxed slice and the interpreter walks that slice directly.
+  Recursive statement and expression nodes remain legacy storage until an
+  indexed arena conversion has measured a real RSS benefit.
 
 The design deliberately avoids a general graph allocator, per-node trait
 objects, and speculative JIT metadata. Those increase RSS and indirection

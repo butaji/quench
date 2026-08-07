@@ -383,7 +383,8 @@ pub fn eval_ir_program(
     source: Option<&str>,
     set_this: bool,
 ) -> Result<Value, JsError> {
-    eval_program(program.as_program(), env, source, set_this)
+    let _ = source;
+    eval_statements(program.statements(), env, set_this)
 }
 
 pub fn eval_program(
@@ -393,44 +394,45 @@ pub fn eval_program(
     set_this: bool,
 ) -> Result<Value, JsError> {
     match program {
-        Program::Script(statements) => {
-            let prev_strict = is_strict_mode();
-            let script_is_strict = check_use_strict_directive(statements);
-            let eval_is_strict = script_is_strict || is_strict_mode();
-            set_strict_mode(eval_is_strict);
+        Program::Script(statements) => eval_statements(statements, env, set_this),
+    }
+}
 
-            hoist_functions(statements, env);
-            hoist_classes(statements, env);
-            predeclare_var(statements, &mut env.borrow_mut());
-            predeclare_let_const(statements, &mut env.borrow_mut());
-
-            if set_this {
-                let this_value = env.borrow().get("globalThis").unwrap_or(Value::Undefined);
-                set_this_binding(env, this_value);
-            }
-
-            let mut last_value = Value::Undefined;
-            for stmt in statements {
-                let val = crate::eval::eval_statement(stmt, env, false, false)?;
-                // Empty completions (var/let/const/function/class declarations,
-                // empty statements, empty blocks) should not replace the previous
-                // completion value (ES §8.3.2).
-                let is_empty_completion = matches!(
-                    stmt,
-                    crate::ast::Statement::VarDeclaration { .. }
-                        | crate::ast::Statement::FunctionDeclaration { .. }
-                        | crate::ast::Statement::ClassDeclaration { .. }
-                        | crate::ast::Statement::SequenceDecls(_)
-                        | crate::ast::Statement::Empty
-                ) || matches!(stmt, crate::ast::Statement::Block(s) if s.is_empty());
-                if !is_empty_completion {
-                    last_value = val;
-                }
-            }
-
-            set_strict_mode(prev_strict);
-            let _ = take_control_flow();
-            Ok(last_value)
+fn eval_statements(
+    statements: &[crate::ast::Statement],
+    env: &mut Rc<RefCell<Environment>>,
+    set_this: bool,
+) -> Result<Value, JsError> {
+    let prev_strict = is_strict_mode();
+    let script_is_strict = check_use_strict_directive(statements);
+    set_strict_mode(script_is_strict || is_strict_mode());
+    hoist_functions(statements, env);
+    hoist_classes(statements, env);
+    predeclare_var(statements, &mut env.borrow_mut());
+    predeclare_let_const(statements, &mut env.borrow_mut());
+    if set_this {
+        let this_value = env.borrow().get("globalThis").unwrap_or(Value::Undefined);
+        set_this_binding(env, this_value);
+    }
+    let mut last_value = Value::Undefined;
+    for stmt in statements {
+        let val = crate::eval::eval_statement(stmt, env, false, false)?;
+        if !is_empty_completion(stmt) {
+            last_value = val;
         }
     }
+    set_strict_mode(prev_strict);
+    let _ = take_control_flow();
+    Ok(last_value)
+}
+
+fn is_empty_completion(stmt: &crate::ast::Statement) -> bool {
+    matches!(
+        stmt,
+        crate::ast::Statement::VarDeclaration { .. }
+            | crate::ast::Statement::FunctionDeclaration { .. }
+            | crate::ast::Statement::ClassDeclaration { .. }
+            | crate::ast::Statement::SequenceDecls(_)
+            | crate::ast::Statement::Empty
+    ) || matches!(stmt, crate::ast::Statement::Block(s) if s.is_empty())
 }
