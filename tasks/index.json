@@ -103,6 +103,12 @@
       "file": "017-current-compatibility-push.md",
       "title": "Current compatibility push — stream/iter and auditable baselines",
       "status": "in-progress"
+    },
+    {
+      "id": "018",
+      "file": "018-test262-full-run.md",
+      "title": "Restore and run full test262 stage coverage",
+      "status": "in-progress"
     }
   ]
 }

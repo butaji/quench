@@ -23,11 +23,14 @@
 - [x] Record process-isolation fallback count for panic-driven fallback paths.
 - [x] Include `fixture_invalid_syntax_modules` and `isolation_fallbacks` in the digest metrics JSON payload.
 - [x] Reduce failure-grouping allocations by cloning `TestFailure` only when detail mode is requested.
+- [ ] Confirm and connect this workspace's full test262 execution path so measured stage44 throughput work can be validated on demand.
 
 ## Notes
 
 - Progress is implemented in `crates/quench-test262/src/test262/runner/execute.rs` and `crates/quench-test262/src/test262/runner/digest.rs`.
-- Stage-44 performance path is largely implemented end-to-end. Remaining work is to run and compare staged metrics after these changes (`TEST262_METRICS=1`) and keep a before/after snapshot.
+- Stage-44 performance path is implemented in runner logic, and unit tests for available Rust targets pass.
+- Remaining work is to run and compare staged metrics after these changes (`TEST262_METRICS=1`) on a native runner.
+- Status note: a probing run with `test262-harness` shows current harness host path (`target/debug/quench-cli`) is not Node-compatible (`ReferenceError: require is not defined`), so full test262 stage validation is currently blocked until the suite runner/host wiring is restored for this workspace.
 - 2026-08-07: Ran Stage 44 (`test/language/expressions`) in digest mode with `TEST262_DIGEST=1 TEST262_METRICS=1`.
   - Stage: 44
   - Tests: 11,101
