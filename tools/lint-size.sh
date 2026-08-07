@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Enforce the repository-wide 500 physical-line limit for source files.
+# Enforce the repository-wide 500 physical-line limit for tracked source files.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -12,8 +12,6 @@ while IFS= read -r -d '' file; do
     printf 'ERROR: %s has %d lines (maximum is 500)\n' "$file" "$lines" >&2
     status=1
   fi
-done < <(find . -path './.git' -prune -o -path './tests/test262' -prune -o \
-  -path './target' -prune -o -path './node_modules' -prune -o \
-  \( -name '*.js' -o -name '*.mjs' -o -name '*.rs' \) -type f -print0)
+done < <(git ls-files -z -- '*.rs' '*.ts' '*.tsx' '*.js' '*.mjs')
 
 exit "$status"
