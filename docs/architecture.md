@@ -25,6 +25,30 @@ Each parameter is a trait boundary with one production implementation;
 swapping an implementation (e.g. arena `Allocator`, NaN-boxed `Heap`)
 must not touch the others.
 
+## Quench IR storage contract
+
+The current `QuenchIr` name is a compatibility alias over the lowered
+runtime `Program`; it is intentionally not presented as the final layout.
+The target representation is an owned, compact, index-addressed IR:
+
+- OXC owns parse-time nodes only. `parser.rs` lowers while the OXC allocator
+  is live, then drops it before interpretation.
+- The IR owns one contiguous instruction/node arena and refers to children
+  with `u32` indices. No IR node stores an OXC reference or `Rc` edge.
+- Identifiers and property names use interned atom IDs; repeated source text
+  is stored once. Constants use a per-program pool and preserve source spans
+  only when diagnostics require them.
+- Hot interpreter dispatch uses dense tags plus parallel payload arrays;
+  cold metadata (spans, source names, debug information) stays out of the
+  hot node path. This keeps RSS predictable while retaining cache locality.
+- The first migration target is statement/expression lowering behind an
+  `IrProgram` conversion API. Each conversion keeps the existing interpreter
+  behavior pinned by a reproducer test before storage changes land.
+
+The design deliberately avoids a general graph allocator, per-node trait
+objects, and speculative JIT metadata. Those increase RSS and indirection
+before test262 measurements prove they help.
+
 ## Rust core
 
 The workspace boundary is:
