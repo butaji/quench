@@ -47,6 +47,8 @@ inspect engine internals.
 - [x] Keep batch execution progressing across unreadable test files by
   recording file I/O errors as runner failures.
 - [x] Add deterministic recursive JavaScript file discovery for stage input.
+- [x] Remove uncompiled duplicate runner sources from `quench-test262`; its
+  public host-facing runner API is now the single maintained boundary.
 - [x] Specify the compact Quench IR ownership, indexing, interning, and
   cold-metadata contract in `docs/architecture.md`.
 - [x] Add an owned `IrProgram` wrapper and parser entry point as the first
