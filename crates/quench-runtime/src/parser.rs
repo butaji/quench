@@ -81,6 +81,11 @@ pub fn parse_jsx(source: &str) -> Result<crate::ast::Program, JsError> {
     lower_program(&ret.program).map_err(|e| JsError(e.to_string()))
 }
 
+/// Parse JSX through the owned IR boundary.
+pub fn parse_jsx_ir(source: &str) -> Result<IrProgram, JsError> {
+    parse_jsx(source).map(IrProgram::from_program)
+}
+
 /// Parse TypeScript source and strip type annotations
 pub fn parse_typescript(source: &str) -> Result<crate::ast::Program, JsError> {
     // Strip import/export statements as they are not supported in script mode
@@ -131,6 +136,11 @@ pub fn parse_ts(source: &str) -> Result<crate::ast::Program, JsError> {
     let result = lower_program(&ret.program).map_err(|e| JsError(e.to_string()));
     drop(allocator);
     result
+}
+
+/// Parse TypeScript without JSX through the owned IR boundary.
+pub fn parse_ts_ir(source: &str) -> Result<IrProgram, JsError> {
+    parse_ts(source).map(IrProgram::from_program)
 }
 
 #[cfg(test)]
