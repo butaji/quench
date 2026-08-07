@@ -1,8 +1,6 @@
 //! Generic engine façade and replaceable runtime-component boundary.
 
 use crate::{Context, JsError, Value};
-use std::marker::PhantomData;
-
 /// Marker bound for a runtime subsystem implementation.
 pub trait RuntimeComponent: 'static {}
 
@@ -49,15 +47,13 @@ pub struct Runtime<
     Environments: crate::runtime::Environments,
 > {
     context: Context,
-    components: PhantomData<(
-        Heap,
-        Collector,
-        Allocator,
-        Frames,
-        Executor,
-        Exceptions,
-        Environments,
-    )>,
+    heap: Heap,
+    collector: Collector,
+    allocator: Allocator,
+    frames: Frames,
+    executor: Executor,
+    exceptions: Exceptions,
+    environments: Environments,
 }
 
 impl<
@@ -70,12 +66,48 @@ impl<
         Environments: crate::runtime::Environments,
     > Runtime<Heap, Collector, Allocator, Frames, Executor, Exceptions, Environments>
 {
-    /// Construct a runtime with a fresh realm and default builtins.
-    pub fn new() -> Result<Self, JsError> {
+    /// Construct a runtime with explicitly selected subsystem instances.
+    pub fn with_components(
+        heap: Heap,
+        collector: Collector,
+        allocator: Allocator,
+        frames: Frames,
+        executor: Executor,
+        exceptions: Exceptions,
+        environments: Environments,
+    ) -> Result<Self, JsError> {
         Ok(Self {
             context: Context::new()?,
-            components: PhantomData,
+            heap,
+            collector,
+            allocator,
+            frames,
+            executor,
+            exceptions,
+            environments,
         })
+    }
+
+    pub fn heap(&self) -> &Heap {
+        &self.heap
+    }
+    pub fn collector(&self) -> &Collector {
+        &self.collector
+    }
+    pub fn allocator(&self) -> &Allocator {
+        &self.allocator
+    }
+    pub fn frames(&self) -> &Frames {
+        &self.frames
+    }
+    pub fn executor(&self) -> &Executor {
+        &self.executor
+    }
+    pub fn exceptions(&self) -> &Exceptions {
+        &self.exceptions
+    }
+    pub fn environments(&self) -> &Environments {
+        &self.environments
     }
 
     /// Evaluate script source through the AST → Quench IR → interpreter path.
@@ -91,5 +123,30 @@ impl<
     /// Reset the realm while retaining the runtime component selection.
     pub fn reset(&mut self) -> Result<(), JsError> {
         self.context.reset()
+    }
+}
+
+impl
+    Runtime<
+        DefaultHeap,
+        DefaultCollector,
+        DefaultAllocator,
+        DefaultFrames,
+        DefaultExecutor,
+        DefaultExceptions,
+        DefaultEnvironments,
+    >
+{
+    /// Construct a runtime with the production default subsystem set.
+    pub fn new() -> Result<Self, JsError> {
+        Self::with_components(
+            DefaultHeap,
+            DefaultCollector,
+            DefaultAllocator,
+            DefaultFrames,
+            DefaultExecutor,
+            DefaultExceptions,
+            DefaultEnvironments,
+        )
     }
 }

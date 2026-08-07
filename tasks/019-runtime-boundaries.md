@@ -29,6 +29,9 @@ inspect engine internals.
   component set.
 - [x] Give each runtime parameter its own public subsystem trait and prove
   independent custom component selection with a unit test.
+- [x] Make `Runtime` retain the selected subsystem instances, expose typed
+  accessors, and provide `with_components`; defaults use the production
+  component set.
 - [x] Create `crates/quench-test262` with a host-only runner API and outcome
   mapping test; engine implementation types do not cross the boundary.
 - [x] Add runner-owned frontmatter parsing for module dispatch and negative
@@ -67,9 +70,8 @@ inspect engine internals.
 - [ ] Replace the compatibility `QuenchIr` alias throughout the runtime with
   `IrProgram`, then migrate its storage to compact owned representation
   (arena/index-backed where measurements justify it).
-- [ ] Introduce runtime subsystem traits incrementally, each with a failing
-  unit test and a real production callsite; replace marker components with
-  owned subsystem implementations as each migration lands.
+- [ ] Replace marker-only subsystem traits with behavior-bearing interfaces
+  and wire each owned component into the corresponding runtime subsystem.
 - [ ] Re-run staged test262 after each boundary extraction; no skips or
   undocumented compatibility paths.
 
