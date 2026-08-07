@@ -13,7 +13,7 @@ echo "OK: rustfmt"
 
 echo ""
 echo "=== clippy (-D warnings) ==="
-cargo clippy -p quench-node -- -D warnings -W clippy::too_many_lines -W clippy::cognitive_complexity || { echo "FAIL: clippy"; exit 1; }
+cargo clippy -p quench-runtime -p quench-test262 -- -D warnings -W clippy::too_many_lines -W clippy::cognitive_complexity || { echo "FAIL: clippy"; exit 1; }
 echo "OK: clippy"
 
 echo ""

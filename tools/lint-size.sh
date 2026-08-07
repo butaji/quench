@@ -12,7 +12,7 @@ while IFS= read -r -d '' file; do
     printf 'ERROR: %s has %d lines (maximum is 500)\n' "$file" "$lines" >&2
     status=1
   fi
-done < <(find . -path './.git' -prune -o -path './tests/node' -prune -o \
+done < <(find . -path './.git' -prune -o -path './tests/test262' -prune -o \
   -path './target' -prune -o -path './node_modules' -prune -o \
   \( -name '*.js' -o -name '*.mjs' -o -name '*.rs' \) -type f -print0)
 
