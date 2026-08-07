@@ -6,31 +6,47 @@ use std::marker::PhantomData;
 /// Marker bound for a runtime subsystem implementation.
 pub trait RuntimeComponent: 'static {}
 
+/// Object/value storage boundary.
+pub trait Heap: RuntimeComponent {}
+/// Garbage-collection policy boundary.
+pub trait Collector: RuntimeComponent {}
+/// Allocation policy boundary.
+pub trait Allocator: RuntimeComponent {}
+/// Call-frame representation boundary.
+pub trait Frames: RuntimeComponent {}
+/// Evaluation scheduling boundary.
+pub trait Executor: RuntimeComponent {}
+/// Error and abrupt-completion boundary.
+pub trait Exceptions: RuntimeComponent {}
+/// Lexical and variable-environment boundary.
+pub trait Environments: RuntimeComponent {}
+
 macro_rules! default_component {
-    ($name:ident) => {
+    ($name:ident, $trait:ident) => {
         #[derive(Debug, Default)]
         pub struct $name;
         impl RuntimeComponent for $name {}
+        impl $trait for $name {}
     };
 }
 
-default_component!(DefaultHeap);
-default_component!(DefaultCollector);
-default_component!(DefaultAllocator);
-default_component!(DefaultFrames);
-default_component!(DefaultExecutor);
-default_component!(DefaultExceptions);
-default_component!(DefaultEnvironments);
+default_component!(DefaultHeap, Heap);
+default_component!(DefaultCollector, Collector);
+default_component!(DefaultAllocator, Allocator);
+default_component!(DefaultFrames, Frames);
+default_component!(DefaultExecutor, Executor);
+default_component!(DefaultExceptions, Exceptions);
+default_component!(DefaultEnvironments, Environments);
 
 /// JavaScript runtime with replaceable execution subsystems.
 pub struct Runtime<
-    Heap: RuntimeComponent,
-    Collector: RuntimeComponent,
-    Allocator: RuntimeComponent,
-    Frames: RuntimeComponent,
-    Executor: RuntimeComponent,
-    Exceptions: RuntimeComponent,
-    Environments: RuntimeComponent,
+    Heap: crate::runtime::Heap,
+    Collector: crate::runtime::Collector,
+    Allocator: crate::runtime::Allocator,
+    Frames: crate::runtime::Frames,
+    Executor: crate::runtime::Executor,
+    Exceptions: crate::runtime::Exceptions,
+    Environments: crate::runtime::Environments,
 > {
     context: Context,
     components: PhantomData<(
@@ -45,13 +61,13 @@ pub struct Runtime<
 }
 
 impl<
-        Heap: RuntimeComponent,
-        Collector: RuntimeComponent,
-        Allocator: RuntimeComponent,
-        Frames: RuntimeComponent,
-        Executor: RuntimeComponent,
-        Exceptions: RuntimeComponent,
-        Environments: RuntimeComponent,
+        Heap: crate::runtime::Heap,
+        Collector: crate::runtime::Collector,
+        Allocator: crate::runtime::Allocator,
+        Frames: crate::runtime::Frames,
+        Executor: crate::runtime::Executor,
+        Exceptions: crate::runtime::Exceptions,
+        Environments: crate::runtime::Environments,
     > Runtime<Heap, Collector, Allocator, Frames, Executor, Exceptions, Environments>
 {
     /// Construct a runtime with a fresh realm and default builtins.
