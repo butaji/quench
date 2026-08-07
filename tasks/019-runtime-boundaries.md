@@ -55,6 +55,8 @@ inspect engine internals.
   migration step away from the compatibility alias.
 - [x] Route `Context::eval` and `Context::eval_es_module` through the owned
   IR boundary before interpretation.
+- [x] Preserve the `IrProgram` type through the interpreter entry point;
+  legacy `Program` access is now contained behind `eval_ir_program`.
 - [x] Record a Stage 44 native performance/conformance baseline.
 - [ ] Move metadata, harness loading, stages, isolation, and metrics from the
   transitional runtime module into `crates/quench-test262`.
