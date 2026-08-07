@@ -65,6 +65,11 @@ pub fn parse_es_module(source: &str) -> Result<QuenchIr, JsError> {
     lower_program(&ret.program).map_err(|e| JsError(e.to_string()))
 }
 
+/// Parse module source through the owned IR boundary.
+pub fn parse_es_module_ir(source: &str) -> Result<IrProgram, JsError> {
+    parse_es_module(source).map(IrProgram::from_program)
+}
+
 /// Parse JavaScript/JSX source using OXC (script mode)
 pub fn parse_jsx(source: &str) -> Result<QuenchIr, JsError> {
     let source_type = SourceType::default().with_jsx(true);
