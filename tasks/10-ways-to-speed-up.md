@@ -1,4 +1,10 @@
-# Strategy — fastest path to 100% test262 (min LOC)
+# Strategy — pure engine + isolated quench-test262 (min LOC)
+
+Every strategy serves one goal: `quench-runtime` is a pure JavaScript
+engine (`OXC AST -> Quench IR -> interpreter`), while `quench-test262` is a
+separate conformance client responsible for harness, stages, isolation, and
+measurement. No Node adapter or runner-specific behavior belongs in the
+engine.
 
 Goal: 100% of test262 on quench-runtime — all 50K+ tests, no skips,
 unit tests green, full runs at minimum wall-clock **and** mem/RSS,

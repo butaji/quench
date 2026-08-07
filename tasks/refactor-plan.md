@@ -1,4 +1,11 @@
-# Refactor Plan
+# Refactor Plan — Quench Runtime and quench-test262
+
+The end state has two clear boundaries. `quench-runtime` is the pure engine:
+OXC AST → compact Quench IR → interpreter, generic over
+`Runtime<Heap, Collector, Allocator, Frames, Executor, Exceptions,
+Environments>`. `quench-test262` is the conformance runner: metadata,
+harness, staging, isolation, metrics, and reports. Refactors must preserve
+that separation and must not add Node-host assumptions.
 
 Goal: 100% of test262 on quench-runtime — all 50K+ tests, staged, no
 skips, **as soon as possible**, with **minimum LOC** (quench-runtime

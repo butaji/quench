@@ -1,7 +1,7 @@
 {
   "$schema": "quench stages v1",
   "current_stage": 20,
-  "goal": "100% of test262 on quench-runtime — all 50K+ tests, staged, no skips; all unit tests green; full test262 runs as fast as possible with the smallest possible mem/RSS; runtime generic over Runtime<Heap, Collector, Allocator, Frames, Executor, Exceptions, Environments> so implementations stay swappable; quench-runtime Rust codebase under 100k LOC (tests excluded) — small Rust core plus self-hosted JS builtins. Execution order: tasks/10-ways-to-speed-up.md (Phases A–C); work queue: tasks/refactor-plan.md; architecture: docs/architecture.md.",
+  "goal": "Pure JavaScript engine in quench-runtime with OXC AST -> compact Quench IR -> interpreter, generic over Runtime<Heap, Collector, Allocator, Frames, Executor, Exceptions, Environments>; standalone quench-test262 runner owns metadata, harness, stages, isolation, metrics, and reports; 100% ECMA-262 test262 with minimum memory/RSS and no undocumented skips. Execution order: tasks/10-ways-to-speed-up.md (Phases A–C); work queue: tasks/refactor-plan.md; architecture: docs/architecture.md.",
   "scope": {
     "includes": [
       "test/"

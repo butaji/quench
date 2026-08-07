@@ -1,5 +1,9 @@
 # Code Review — Duplications, Unnecessary Complexity, Messy Parts (2026-07-19)
 
+Use this review to reduce the pure engine toward the target pipeline
+`OXC AST → Quench IR → interpreter`. Test262 harness, staging, isolation,
+and metrics belong to `quench-test262`, not to engine implementation code.
+
 > **Sequencing:** follow `tasks/10-ways-to-speed-up.md` Phases A–C.
 > Dedup items that are ops (`same_value_zero`, `to_object`, iterators)
 > land via incremental R1 on touch; do not block stage 16 on a full

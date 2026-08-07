@@ -1,7 +1,12 @@
-# Harness Diagnostics Tools
+# quench-test262 harness diagnostics
 
-**Status:** done
-**Goal:** Add diagnostic tools to speed up test262 implementation loop
+Diagnostics belong to the conformance runner boundary. They may report
+engine outcomes and timings, but must not couple the runner to runtime
+implementation details.
+
+**Status:** implemented in transitional runner; extraction pending
+**Goal:** Keep diagnostics in `quench-test262` while preserving a narrow
+engine host boundary and accelerating the path to 100% test262.
 
 ## Tools Implemented
 
@@ -41,3 +46,11 @@
 - `cargo build -p run-test -p inspect-test` — clean
 - `cargo run --bin inspect-test -- <test.js>` — works
 - `cargo run --bin run-test -- <test.js>` — works
+
+## Boundary follow-up
+
+- [ ] Move runner diagnostics behind the standalone `quench-test262` crate.
+- [ ] Keep engine metrics exposed as stable result data, not runtime-internal
+  types.
+- [ ] Re-run Stage 44 after extraction and record wall time, RSS, and outcome
+  counts in `tasks/stage44-performance-progress.md`.
