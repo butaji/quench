@@ -58,6 +58,19 @@ export default 1;
 }
 
 #[test]
+fn metadata_parses_async_strict_and_includes_flags() {
+    let source = r#"/*---
+flags: [async, onlyStrict]
+includes: [assert.js, sta.js]
+---*/
+"#;
+    let metadata = TestMetadata::parse(source).unwrap();
+    assert!(metadata.is_async);
+    assert!(metadata.only_strict);
+    assert_eq!(metadata.includes, vec!["assert.js", "sta.js"]);
+}
+
+#[test]
 fn runner_uses_frontmatter_to_select_module_dispatch() {
     let source = "/*---\nflags: [module]\n---*/\nexport default 1;";
     let mut runner = Test262Runner::new(Probe);
