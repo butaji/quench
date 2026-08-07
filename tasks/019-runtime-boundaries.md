@@ -24,6 +24,9 @@ inspect engine internals.
   `quench_runtime::host` API while retaining a compatibility re-export.
 - [x] Name the post-OXC lowered representation `QuenchIr` and expose it as
   the parser/interpreter boundary; OXC AST values do not escape `parser.rs`.
+- [x] Add the public generic `Runtime<Heap, Collector, Allocator, Frames,
+  Executor, Exceptions, Environments>` façade with a production default
+  component set.
 - [x] Record a Stage 44 native performance/conformance baseline.
 - [ ] Extract the transitional runner into `crates/quench-test262`.
 - [ ] Define the stable host API used by both the native runner and future
@@ -31,7 +34,8 @@ inspect engine internals.
 - [ ] Replace the compatibility `QuenchIr` alias with compact owned storage
   (arena/index-backed where measurements justify it).
 - [ ] Introduce runtime subsystem traits incrementally, each with a failing
-  unit test and a real production callsite.
+  unit test and a real production callsite; replace marker components with
+  owned subsystem implementations as each migration lands.
 - [ ] Re-run staged test262 after each boundary extraction; no skips or
   undocumented compatibility paths.
 

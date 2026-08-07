@@ -32,6 +32,7 @@ pub mod interpreter;
 pub mod ir;
 pub mod lower;
 pub mod parser;
+pub mod runtime;
 pub mod strict_reserved;
 pub mod test262;
 pub mod value;
@@ -41,12 +42,28 @@ pub use ast::Program;
 pub use context::Context;
 pub use env::Environment;
 pub use host::{register_native, HostFunctions, Test262Host};
+pub use runtime::Runtime;
 pub use value::{JsError, Value};
 pub use value::{NativeFunction, Object, ObjectKind, ValueFunction};
 
 #[cfg(test)]
 mod tests {
     use crate::{Context, Value};
+
+    #[test]
+    fn generic_runtime_facade_evaluates_javascript() {
+        let mut runtime = crate::Runtime::<
+            crate::runtime::DefaultHeap,
+            crate::runtime::DefaultCollector,
+            crate::runtime::DefaultAllocator,
+            crate::runtime::DefaultFrames,
+            crate::runtime::DefaultExecutor,
+            crate::runtime::DefaultExceptions,
+            crate::runtime::DefaultEnvironments,
+        >::new()
+        .unwrap();
+        assert_eq!(runtime.eval("40 + 2").unwrap(), Value::Number(42.0));
+    }
 
     #[test]
     fn test_context_eval_number() {
