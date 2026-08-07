@@ -158,6 +158,17 @@ impl<H: Test262Host> Test262Runner<H> {
         self.run_test(&source)
     }
 
+    /// Read one test262 file and compose its requested harness files.
+    pub fn run_file_with_harness<P, F>(&mut self, path: P, load: F) -> Result<TestOutcome, String>
+    where
+        P: AsRef<Path>,
+        F: FnMut(&str) -> Result<String, String>,
+    {
+        let source = std::fs::read_to_string(path.as_ref())
+            .map_err(|error| format!("test262 read failed: {error}"))?;
+        self.run_test_with_harness(&source, load)
+    }
+
     fn dispatch(&mut self, source: &str, is_module: bool) -> TestOutcome {
         if is_module {
             self.run_module_script(source)
