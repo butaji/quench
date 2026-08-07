@@ -1,7 +1,13 @@
 # Refactor Plan
 
-Goal: 100% of test262, staged, **as soon as possible**, with **minimum
-LOC**. Architecture is a small Rust core + self-hosted JS builtins
+Goal: 100% of test262 on quench-runtime — all 50K+ tests, staged, no
+skips, **as soon as possible**, with **minimum LOC** (quench-runtime
+Rust stays **under 100k LOC**, tests excluded). All unit tests green;
+full test262 runs optimized for wall-clock **and** mem/RSS. The runtime
+stays generic over
+`Runtime<Heap, Collector, Allocator, Frames, Executor, Exceptions, Environments>`
+so subsystem implementations remain swappable behind clean trait
+boundaries. Architecture is a small Rust core + self-hosted JS builtins
 (see `docs/architecture.md`). Execution order is decided by
 `tasks/10-ways-to-speed-up.md` (Phases A → B → C) — this file is the
 work queue behind that path.

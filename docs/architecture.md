@@ -1,10 +1,24 @@
 # Architecture
 
-**Goal:** 100% of test262, staged, minimum implementation LOC.
+**Goal:** 100% of test262 on quench-runtime — all 50K+ tests, staged,
+no skips. All unit tests green. Full test262 runs as fast as possible
+with the smallest possible mem/RSS. Rust codebase (quench-runtime,
+tests excluded) stays under 100k LOC.
 
 **Shape:** small Rust core + self-hosted JS builtins. JS is ~1/3 the
 LOC of equivalent Rust and easier to keep spec-faithful, so anything
 that can be JS is JS.
+
+**Boundaries:** the runtime stays generic over replaceable
+implementations so subsystems evolve independently:
+
+```rust
+Runtime<Heap, Collector, Allocator, Frames, Executor, Exceptions, Environments>
+```
+
+Each parameter is a trait boundary with one production implementation;
+swapping an implementation (e.g. arena `Allocator`, NaN-boxed `Heap`)
+must not touch the others.
 
 ## Rust core
 

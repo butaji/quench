@@ -1,5 +1,10 @@
 # Strategy — fastest path to 100% test262 (min LOC)
 
+Goal: 100% of test262 on quench-runtime — all 50K+ tests, no skips,
+unit tests green, full runs at minimum wall-clock **and** mem/RSS,
+Rust (tests excluded) under 100k LOC, runtime generic over
+`Runtime<Heap, Collector, Allocator, Frames, Executor, Exceptions, Environments>`.
+
 Data-driven (per-stage counts live in `tasks/index.json`):
 
 - **42,892 tests** across 122 stages: language 23,711 · built-ins
