@@ -1,7 +1,7 @@
 {
   "$schema": "quench stages v1",
   "current_stage": 20,
-  "goal": "Pure JavaScript engine in quench-runtime with OXC AST -> compact Quench IR -> interpreter, generic over Runtime<Heap, Collector, Allocator, Frames, Executor, Exceptions, Environments>; standalone quench-test262 runner owns metadata, harness, stages, isolation, metrics, and reports; 100% ECMA-262 test262 with minimum memory/RSS and no undocumented skips. Execution order: tasks/10-ways-to-speed-up.md (Phases A–C); work queue: tasks/refactor-plan.md; architecture: docs/architecture.md.",
+  "goal": "Pure JavaScript engine in quench-runtime with OXC AST -> compact Quench IR -> interpreter, generic over Runtime<Heap, Collector, Allocator, Frames, Executor, Exceptions, Environments>; standalone quench-test262 runner owns metadata, harness, stages, isolation, metrics, and reports; 100% ECMA-262 test262 with minimum memory/RSS and no undocumented skips. Execution order: tasks/10-ways-to-speed-up.md (Phases A\u2013C); work queue: tasks/refactor-plan.md; architecture: docs/architecture.md.",
   "scope": {
     "includes": [
       "test/"
@@ -20,10 +20,8 @@
       "status": "pending",
       "difficulty": 1,
       "impl": "rust",
-      "rust_loc": "0–0",
-      "js_loc": "0–0",
-      "failed": 4,
-      "pass_rate": "96.6%"
+      "rust_loc": "0\u20130",
+      "js_loc": "0\u20130"
     },
     {
       "id": 1,
@@ -32,10 +30,8 @@
       "status": "done",
       "difficulty": 1,
       "impl": "rust",
-      "rust_loc": "0–0",
-      "js_loc": "0–0",
-      "failed": 0,
-      "pass_rate": "100.0%"
+      "rust_loc": "0\u20130",
+      "js_loc": "0\u20130"
     },
     {
       "id": 2,
@@ -44,10 +40,8 @@
       "status": "done",
       "difficulty": 1,
       "impl": "rust",
-      "rust_loc": "0–0",
-      "js_loc": "0–0",
-      "failed": 0,
-      "pass_rate": "100.0%"
+      "rust_loc": "0\u20130",
+      "js_loc": "0\u20130"
     },
     {
       "id": 3,
@@ -56,10 +50,8 @@
       "status": "done",
       "difficulty": 1,
       "impl": "rust",
-      "rust_loc": "0–0",
-      "js_loc": "0–0",
-      "failed": 0,
-      "pass_rate": "100.0%"
+      "rust_loc": "0\u20130",
+      "js_loc": "0\u20130"
     },
     {
       "id": 4,
@@ -68,10 +60,8 @@
       "status": "done",
       "difficulty": 1,
       "impl": "rust",
-      "rust_loc": "0–0",
-      "js_loc": "0–0",
-      "failed": 0,
-      "pass_rate": "100.0%"
+      "rust_loc": "0\u20130",
+      "js_loc": "0\u20130"
     },
     {
       "id": 5,
@@ -80,10 +70,8 @@
       "status": "done",
       "difficulty": 1,
       "impl": "rust",
-      "rust_loc": "0–0",
-      "js_loc": "0–0",
-      "failed": 0,
-      "pass_rate": "100.0%"
+      "rust_loc": "0\u20130",
+      "js_loc": "0\u20130"
     },
     {
       "id": 6,
@@ -92,10 +80,8 @@
       "status": "done",
       "difficulty": 1,
       "impl": "rust",
-      "rust_loc": "0–0",
-      "js_loc": "0–0",
-      "failed": 0,
-      "pass_rate": "100.0%"
+      "rust_loc": "0\u20130",
+      "js_loc": "0\u20130"
     },
     {
       "id": 7,
@@ -104,10 +90,8 @@
       "status": "done",
       "difficulty": 1,
       "impl": "rust",
-      "rust_loc": "0–0",
-      "js_loc": "0–0",
-      "failed": 0,
-      "pass_rate": "100.0%"
+      "rust_loc": "0\u20130",
+      "js_loc": "0\u20130"
     },
     {
       "id": 8,
@@ -116,10 +100,8 @@
       "status": "done",
       "difficulty": 1,
       "impl": "rust",
-      "rust_loc": "0–0",
-      "js_loc": "0–0",
-      "failed": 0,
-      "pass_rate": "100.0%"
+      "rust_loc": "0\u20130",
+      "js_loc": "0\u20130"
     },
     {
       "id": 9,
@@ -128,10 +110,8 @@
       "status": "done",
       "difficulty": 1,
       "impl": "rust",
-      "rust_loc": "0–0",
-      "js_loc": "0–0",
-      "failed": 0,
-      "pass_rate": "100.0%"
+      "rust_loc": "0\u20130",
+      "js_loc": "0\u20130"
     },
     {
       "id": 10,
@@ -140,10 +120,8 @@
       "status": "done",
       "difficulty": 1,
       "impl": "rust",
-      "rust_loc": "0–0",
-      "js_loc": "0–0",
-      "failed": 0,
-      "pass_rate": "100.0%"
+      "rust_loc": "0\u20130",
+      "js_loc": "0\u20130"
     },
     {
       "id": 11,
@@ -152,10 +130,8 @@
       "status": "done",
       "difficulty": 2,
       "impl": "rust",
-      "rust_loc": "0–0",
-      "js_loc": "0–0",
-      "failed": 0,
-      "pass_rate": "100.0%"
+      "rust_loc": "0\u20130",
+      "js_loc": "0\u20130"
     },
     {
       "id": 12,
@@ -164,10 +140,8 @@
       "status": "done",
       "difficulty": 2,
       "impl": "rust",
-      "rust_loc": "0–0",
-      "js_loc": "0–0",
-      "failed": 0,
-      "pass_rate": "100.0%"
+      "rust_loc": "0\u20130",
+      "js_loc": "0\u20130"
     },
     {
       "id": 13,
@@ -176,10 +150,8 @@
       "status": "pending",
       "difficulty": 3,
       "impl": "rust",
-      "rust_loc": "0–0",
-      "js_loc": "0–0",
-      "failed": 1,
-      "pass_rate": "98.6%"
+      "rust_loc": "0\u20130",
+      "js_loc": "0\u20130"
     },
     {
       "id": 14,
@@ -188,10 +160,8 @@
       "status": "done",
       "difficulty": 1,
       "impl": "rust",
-      "rust_loc": "0–0",
-      "js_loc": "0–0",
-      "failed": 0,
-      "pass_rate": "100.0%"
+      "rust_loc": "0\u20130",
+      "js_loc": "0\u20130"
     },
     {
       "id": 15,
@@ -200,10 +170,8 @@
       "status": "done",
       "difficulty": 1,
       "impl": "rust",
-      "rust_loc": "0–0",
-      "js_loc": "0–0",
-      "failed": 0,
-      "pass_rate": "100.0%"
+      "rust_loc": "0\u20130",
+      "js_loc": "0\u20130"
     },
     {
       "id": 16,
@@ -215,17 +183,13 @@
       "id": 17,
       "path": "test/language/statements/const",
       "tests": 136,
-      "status": "done",
-      "failed": 0,
-      "pass_rate": "100.0%"
+      "status": "done"
     },
     {
       "id": 18,
       "path": "test/language/statements/continue",
       "tests": 24,
-      "status": "done",
-      "failed": 0,
-      "pass_rate": "100.0%"
+      "status": "done"
     },
     {
       "id": 19,
@@ -234,10 +198,8 @@
       "status": "done",
       "difficulty": 1,
       "impl": "rust",
-      "rust_loc": "0–0",
-      "js_loc": "0–0",
-      "failed": 0,
-      "pass_rate": "100.0%"
+      "rust_loc": "0\u20130",
+      "js_loc": "0\u20130"
     },
     {
       "id": 20,
@@ -246,10 +208,8 @@
       "status": "in_progress",
       "difficulty": 2,
       "impl": "rust",
-      "rust_loc": "0–0",
-      "js_loc": "0–0",
-      "failed": 7,
-      "pass_rate": "80.6%"
+      "rust_loc": "0\u20130",
+      "js_loc": "0\u20130"
     },
     {
       "id": 21,
@@ -258,10 +218,8 @@
       "status": "done",
       "difficulty": 1,
       "impl": "rust",
-      "rust_loc": "0–0",
-      "js_loc": "0–0",
-      "failed": 0,
-      "pass_rate": "100.0%"
+      "rust_loc": "0\u20130",
+      "js_loc": "0\u20130"
     },
     {
       "id": 22,
@@ -270,10 +228,8 @@
       "status": "done",
       "difficulty": 1,
       "impl": "rust",
-      "rust_loc": "0–0",
-      "js_loc": "0–0",
-      "failed": 0,
-      "pass_rate": "100.0%"
+      "rust_loc": "0\u20130",
+      "js_loc": "0\u20130"
     },
     {
       "id": 23,
@@ -282,10 +238,8 @@
       "status": "pending",
       "difficulty": 3,
       "impl": "rust",
-      "rust_loc": "150–300",
-      "js_loc": "0–0",
-      "failed": 265,
-      "pass_rate": "31.2%"
+      "rust_loc": "150\u2013300",
+      "js_loc": "0\u20130"
     },
     {
       "id": 24,
@@ -294,10 +248,8 @@
       "status": "pending",
       "difficulty": 3,
       "impl": "rust",
-      "rust_loc": "100–200",
-      "js_loc": "0–0",
-      "failed": 28,
-      "pass_rate": "75.7%"
+      "rust_loc": "100\u2013200",
+      "js_loc": "0\u20130"
     },
     {
       "id": 25,
@@ -306,10 +258,8 @@
       "status": "pending",
       "difficulty": 4,
       "impl": "rust",
-      "rust_loc": "300–600",
-      "js_loc": "0–0",
-      "failed": 266,
-      "pass_rate": "64.6%"
+      "rust_loc": "300\u2013600",
+      "js_loc": "0\u20130"
     },
     {
       "id": 26,
@@ -318,10 +268,8 @@
       "status": "pending",
       "difficulty": 3,
       "impl": "rust",
-      "rust_loc": "200–400",
-      "js_loc": "0–0",
-      "failed": 64,
-      "pass_rate": "85.8%"
+      "rust_loc": "200\u2013400",
+      "js_loc": "0\u20130"
     },
     {
       "id": 27,
@@ -330,10 +278,8 @@
       "status": "pending",
       "difficulty": 3,
       "impl": "rust",
-      "rust_loc": "0–0",
-      "js_loc": "0–0",
-      "failed": 14,
-      "pass_rate": "94.7%"
+      "rust_loc": "0\u20130",
+      "js_loc": "0\u20130"
     },
     {
       "id": 28,
@@ -342,10 +288,8 @@
       "status": "pending",
       "difficulty": 2,
       "impl": "rust",
-      "rust_loc": "50–100",
-      "js_loc": "0–0",
-      "failed": 3,
-      "pass_rate": "95.7%"
+      "rust_loc": "50\u2013100",
+      "js_loc": "0\u20130"
     },
     {
       "id": 29,
@@ -354,10 +298,8 @@
       "status": "pending",
       "difficulty": 1,
       "impl": "rust",
-      "rust_loc": "0–0",
-      "js_loc": "0–0",
-      "failed": 1,
-      "pass_rate": "95.8%"
+      "rust_loc": "0\u20130",
+      "js_loc": "0\u20130"
     },
     {
       "id": 30,
@@ -366,10 +308,8 @@
       "status": "pending",
       "difficulty": 3,
       "impl": "rust",
-      "rust_loc": "150–300",
-      "js_loc": "0–0",
-      "failed": 0,
-      "pass_rate": "100.0%"
+      "rust_loc": "150\u2013300",
+      "js_loc": "0\u20130"
     },
     {
       "id": 31,
@@ -378,10 +318,8 @@
       "status": "done",
       "difficulty": 1,
       "impl": "rust",
-      "rust_loc": "0–0",
-      "js_loc": "0–0",
-      "failed": 0,
-      "pass_rate": "100.0%"
+      "rust_loc": "0\u20130",
+      "js_loc": "0\u20130"
     },
     {
       "id": 32,
@@ -390,10 +328,8 @@
       "status": "pending",
       "difficulty": 3,
       "impl": "rust",
-      "rust_loc": "150–300",
-      "js_loc": "0–0",
-      "failed": 34,
-      "pass_rate": "69.4%"
+      "rust_loc": "150\u2013300",
+      "js_loc": "0\u20130"
     },
     {
       "id": 33,
@@ -402,10 +338,8 @@
       "status": "done",
       "difficulty": 1,
       "impl": "rust",
-      "rust_loc": "0–0",
-      "js_loc": "0–0",
-      "failed": 0,
-      "pass_rate": "100.0%"
+      "rust_loc": "0\u20130",
+      "js_loc": "0\u20130"
     },
     {
       "id": 34,
@@ -414,10 +348,8 @@
       "status": "pending",
       "difficulty": 3,
       "impl": "rust",
-      "rust_loc": "200–400",
-      "js_loc": "0–0",
-      "failed": 112,
-      "pass_rate": "44.3%"
+      "rust_loc": "200\u2013400",
+      "js_loc": "0\u20130"
     },
     {
       "id": 35,
@@ -426,10 +358,8 @@
       "status": "pending",
       "difficulty": 3,
       "impl": "rust",
-      "rust_loc": "150–300",
-      "js_loc": "0–0",
-      "failed": 34,
-      "pass_rate": "80.9%"
+      "rust_loc": "150\u2013300",
+      "js_loc": "0\u20130"
     },
     {
       "id": 36,
@@ -438,10 +368,8 @@
       "status": "pending",
       "difficulty": 2,
       "impl": "rust",
-      "rust_loc": "50–100",
-      "js_loc": "0–0",
-      "failed": 11,
-      "pass_rate": "71.1%"
+      "rust_loc": "50\u2013100",
+      "js_loc": "0\u20130"
     },
     {
       "id": 37,
@@ -450,10 +378,8 @@
       "status": "pending",
       "difficulty": 2,
       "impl": "rust",
-      "rust_loc": "100–200",
-      "js_loc": "0–0",
-      "failed": 70,
-      "pass_rate": "61.3%"
+      "rust_loc": "100\u2013200",
+      "js_loc": "0\u20130"
     },
     {
       "id": 38,
@@ -462,10 +388,8 @@
       "status": "pending",
       "difficulty": 7,
       "impl": "rust",
-      "rust_loc": "500–1000",
-      "js_loc": "0–0",
-      "failed": 9,
-      "pass_rate": "97.0%"
+      "rust_loc": "500\u20131000",
+      "js_loc": "0\u20130"
     },
     {
       "id": 39,
@@ -474,10 +398,8 @@
       "status": "pending",
       "difficulty": 6,
       "impl": "hybrid",
-      "rust_loc": "200–400",
-      "js_loc": "0–0",
-      "failed": 2,
-      "pass_rate": "97.9%"
+      "rust_loc": "200\u2013400",
+      "js_loc": "0\u20130"
     },
     {
       "id": 40,
@@ -486,10 +408,8 @@
       "status": "pending",
       "difficulty": 7,
       "impl": "rust",
-      "rust_loc": "400–800",
-      "js_loc": "0–0",
-      "failed": 128,
-      "pass_rate": "89.6%"
+      "rust_loc": "400\u2013800",
+      "js_loc": "0\u20130"
     },
     {
       "id": 41,
@@ -498,10 +418,8 @@
       "status": "pending",
       "difficulty": 6,
       "impl": "js",
-      "rust_loc": "0–0",
-      "js_loc": "200–400",
-      "failed": 34,
-      "pass_rate": "56.4%"
+      "rust_loc": "0\u20130",
+      "js_loc": "200\u2013400"
     },
     {
       "id": 42,
@@ -510,10 +428,8 @@
       "status": "done",
       "difficulty": 2,
       "impl": "rust",
-      "rust_loc": "0–0",
-      "js_loc": "0–0",
-      "failed": 0,
-      "pass_rate": "100.0%"
+      "rust_loc": "0\u20130",
+      "js_loc": "0\u20130"
     },
     {
       "id": 43,
@@ -522,10 +438,8 @@
       "status": "pending",
       "difficulty": 3,
       "impl": "rust",
-      "rust_loc": "150–300",
-      "js_loc": "0–0",
-      "failed": 8,
-      "pass_rate": "94.5%"
+      "rust_loc": "150\u2013300",
+      "js_loc": "0\u20130"
     },
     {
       "id": 44,
@@ -534,10 +448,8 @@
       "status": "pending",
       "difficulty": 8,
       "impl": "rust",
-      "rust_loc": "800–2000",
-      "js_loc": "0–0",
-      "failed": 1336,
-      "pass_rate": "88.0%"
+      "rust_loc": "800\u20132000",
+      "js_loc": "0\u20130"
     },
     {
       "id": 45,
@@ -546,10 +458,8 @@
       "status": "pending",
       "difficulty": 3,
       "impl": "rust",
-      "rust_loc": "100–200",
-      "js_loc": "0–0",
-      "failed": 16,
-      "pass_rate": "66.7%"
+      "rust_loc": "100\u2013200",
+      "js_loc": "0\u20130"
     },
     {
       "id": 46,
@@ -558,10 +468,8 @@
       "status": "pending",
       "difficulty": 4,
       "impl": "rust",
-      "rust_loc": "200–500",
-      "js_loc": "0–0",
-      "failed": 2,
-      "pass_rate": "89.5%"
+      "rust_loc": "200\u2013500",
+      "js_loc": "0\u20130"
     },
     {
       "id": 47,
@@ -570,10 +478,8 @@
       "status": "pending",
       "difficulty": 2,
       "impl": "rust",
-      "rust_loc": "100–200",
-      "js_loc": "0–0",
-      "failed": 2,
-      "pass_rate": "81.8%"
+      "rust_loc": "100\u2013200",
+      "js_loc": "0\u20130"
     },
     {
       "id": 48,
@@ -582,10 +488,8 @@
       "status": "pending",
       "difficulty": 3,
       "impl": "rust",
-      "rust_loc": "100–200",
-      "js_loc": "0–0",
-      "failed": 7,
-      "pass_rate": "96.8%"
+      "rust_loc": "100\u2013200",
+      "js_loc": "0\u20130"
     },
     {
       "id": 49,
@@ -594,10 +498,8 @@
       "status": "pending",
       "difficulty": 4,
       "impl": "rust",
-      "rust_loc": "200–500",
-      "js_loc": "0–0",
-      "failed": 66,
-      "pass_rate": "74.9%"
+      "rust_loc": "200\u2013500",
+      "js_loc": "0\u20130"
     },
     {
       "id": 50,
@@ -606,10 +508,8 @@
       "status": "pending",
       "difficulty": 5,
       "impl": "rust",
-      "rust_loc": "300–800",
-      "js_loc": "0–0",
-      "failed": 234,
-      "pass_rate": "32.6%"
+      "rust_loc": "300\u2013800",
+      "js_loc": "0\u20130"
     },
     {
       "id": 51,
@@ -618,10 +518,8 @@
       "status": "pending",
       "difficulty": 3,
       "impl": "rust",
-      "rust_loc": "100–200",
-      "js_loc": "0–0",
-      "failed": 21,
-      "pass_rate": "50.0%"
+      "rust_loc": "100\u2013200",
+      "js_loc": "0\u20130"
     },
     {
       "id": 52,
@@ -630,10 +528,8 @@
       "status": "pending",
       "difficulty": 3,
       "impl": "rust",
-      "rust_loc": "100–200",
-      "js_loc": "0–0",
-      "failed": 0,
-      "pass_rate": "100.0%"
+      "rust_loc": "100\u2013200",
+      "js_loc": "0\u20130"
     },
     {
       "id": 53,
@@ -642,10 +538,8 @@
       "status": "pending",
       "difficulty": 5,
       "impl": "hybrid",
-      "rust_loc": "200–500",
-      "js_loc": "0–0",
-      "failed": 168,
-      "pass_rate": "72.0%"
+      "rust_loc": "200\u2013500",
+      "js_loc": "0\u20130"
     },
     {
       "id": 54,
@@ -654,10 +548,8 @@
       "status": "pending",
       "difficulty": 3,
       "impl": "rust",
-      "rust_loc": "100–200",
-      "js_loc": "0–0",
-      "failed": 110,
-      "pass_rate": "13.4%"
+      "rust_loc": "100\u2013200",
+      "js_loc": "0\u20130"
     },
     {
       "id": 55,
@@ -666,10 +558,8 @@
       "status": "pending",
       "difficulty": 2,
       "impl": "rust",
-      "rust_loc": "0–0",
-      "js_loc": "0–0",
-      "failed": 0,
-      "pass_rate": "100.0%"
+      "rust_loc": "0\u20130",
+      "js_loc": "0\u20130"
     },
     {
       "id": 56,
@@ -678,10 +568,8 @@
       "status": "pending",
       "difficulty": 3,
       "impl": "rust",
-      "rust_loc": "100–200",
-      "js_loc": "0–0",
-      "failed": 2,
-      "pass_rate": "98.0%"
+      "rust_loc": "100\u2013200",
+      "js_loc": "0\u20130"
     },
     {
       "id": 57,
@@ -690,10 +578,8 @@
       "status": "done",
       "difficulty": 2,
       "impl": "rust",
-      "rust_loc": "0–0",
-      "js_loc": "0–0",
-      "failed": 0,
-      "pass_rate": "100.0%"
+      "rust_loc": "0\u20130",
+      "js_loc": "0\u20130"
     },
     {
       "id": 58,
@@ -702,10 +588,8 @@
       "status": "pending",
       "difficulty": 2,
       "impl": "rust",
-      "rust_loc": "50–100",
-      "js_loc": "0–0",
-      "failed": 4,
-      "pass_rate": "33.3%"
+      "rust_loc": "50\u2013100",
+      "js_loc": "0\u20130"
     },
     {
       "id": 59,
@@ -714,10 +598,8 @@
       "status": "pending",
       "difficulty": 2,
       "impl": "rust",
-      "rust_loc": "50–100",
-      "js_loc": "0–0",
-      "failed": 4,
-      "pass_rate": "33.3%"
+      "rust_loc": "50\u2013100",
+      "js_loc": "0\u20130"
     },
     {
       "id": 60,
@@ -726,10 +608,8 @@
       "status": "pending",
       "difficulty": 2,
       "impl": "rust",
-      "rust_loc": "0–0",
-      "js_loc": "0–0",
-      "failed": 5,
-      "pass_rate": "37.5%"
+      "rust_loc": "0\u20130",
+      "js_loc": "0\u20130"
     },
     {
       "id": 61,
@@ -738,10 +618,8 @@
       "status": "pending",
       "difficulty": 3,
       "impl": "rust",
-      "rust_loc": "0–0",
-      "js_loc": "100–200",
-      "failed": 3,
-      "pass_rate": "94.5%"
+      "rust_loc": "0\u20130",
+      "js_loc": "100\u2013200"
     },
     {
       "id": 62,
@@ -750,10 +628,8 @@
       "status": "pending",
       "difficulty": 3,
       "impl": "rust",
-      "rust_loc": "0–0",
-      "js_loc": "100–200",
-      "failed": 7,
-      "pass_rate": "87.0%"
+      "rust_loc": "0\u20130",
+      "js_loc": "100\u2013200"
     },
     {
       "id": 63,
@@ -762,10 +638,8 @@
       "status": "pending",
       "difficulty": 2,
       "impl": "rust",
-      "rust_loc": "50–100",
-      "js_loc": "0–0",
-      "failed": 7,
-      "pass_rate": "53.3%"
+      "rust_loc": "50\u2013100",
+      "js_loc": "0\u20130"
     },
     {
       "id": 64,
@@ -774,10 +648,8 @@
       "status": "pending",
       "difficulty": 2,
       "impl": "rust",
-      "rust_loc": "50–100",
-      "js_loc": "0–0",
-      "failed": 1,
-      "pass_rate": "93.3%"
+      "rust_loc": "50\u2013100",
+      "js_loc": "0\u20130"
     },
     {
       "id": 65,
@@ -786,10 +658,8 @@
       "status": "pending",
       "difficulty": 3,
       "impl": "rust",
-      "rust_loc": "0–0",
-      "js_loc": "150–300",
-      "failed": 24,
-      "pass_rate": "56.4%"
+      "rust_loc": "0\u20130",
+      "js_loc": "150\u2013300"
     },
     {
       "id": 66,
@@ -798,10 +668,8 @@
       "status": "pending",
       "difficulty": 3,
       "impl": "rust",
-      "rust_loc": "0–0",
-      "js_loc": "150–300",
-      "failed": 14,
-      "pass_rate": "75.0%"
+      "rust_loc": "0\u20130",
+      "js_loc": "150\u2013300"
     },
     {
       "id": 67,
@@ -810,10 +678,8 @@
       "status": "pending",
       "difficulty": 2,
       "impl": "rust",
-      "rust_loc": "0–0",
-      "js_loc": "100–200",
-      "failed": 15,
-      "pass_rate": "51.6%"
+      "rust_loc": "0\u20130",
+      "js_loc": "100\u2013200"
     },
     {
       "id": 68,
@@ -822,10 +688,8 @@
       "status": "pending",
       "difficulty": 2,
       "impl": "rust",
-      "rust_loc": "0–0",
-      "js_loc": "100–200",
-      "failed": 16,
-      "pass_rate": "48.4%"
+      "rust_loc": "0\u20130",
+      "js_loc": "100\u2013200"
     },
     {
       "id": 69,
@@ -834,10 +698,8 @@
       "status": "pending",
       "difficulty": 4,
       "impl": "rust",
-      "rust_loc": "300–600",
-      "js_loc": "0–0",
-      "failed": 3,
-      "pass_rate": "70.0%"
+      "rust_loc": "300\u2013600",
+      "js_loc": "0\u20130"
     },
     {
       "id": 70,
@@ -846,10 +708,8 @@
       "status": "pending",
       "difficulty": 2,
       "impl": "rust",
-      "rust_loc": "50–100",
-      "js_loc": "0–0",
-      "failed": 6,
-      "pass_rate": "57.1%"
+      "rust_loc": "50\u2013100",
+      "js_loc": "0\u20130"
     },
     {
       "id": 71,
@@ -858,10 +718,8 @@
       "status": "pending",
       "difficulty": 6,
       "impl": "js",
-      "rust_loc": "0–0",
-      "js_loc": "600–1200",
-      "failed": 1968,
-      "pass_rate": "42.3%"
+      "rust_loc": "0\u20130",
+      "js_loc": "600\u20131200"
     },
     {
       "id": 72,
@@ -870,10 +728,8 @@
       "status": "pending",
       "difficulty": 5,
       "impl": "js",
-      "rust_loc": "0–0",
-      "js_loc": "400–800",
-      "failed": 199,
-      "pass_rate": "60.9%"
+      "rust_loc": "0\u20130",
+      "js_loc": "400\u2013800"
     },
     {
       "id": 73,
@@ -882,10 +738,8 @@
       "status": "pending",
       "difficulty": 3,
       "impl": "js",
-      "rust_loc": "0–0",
-      "js_loc": "100–200",
-      "failed": 21,
-      "pass_rate": "58.8%"
+      "rust_loc": "0\u20130",
+      "js_loc": "100\u2013200"
     },
     {
       "id": 74,
@@ -894,10 +748,8 @@
       "status": "pending",
       "difficulty": 4,
       "impl": "js",
-      "rust_loc": "0–0",
-      "js_loc": "200–400",
-      "failed": 71,
-      "pass_rate": "23.7%"
+      "rust_loc": "0\u20130",
+      "js_loc": "200\u2013400"
     },
     {
       "id": 75,
@@ -906,10 +758,8 @@
       "status": "pending",
       "difficulty": 4,
       "impl": "js",
-      "rust_loc": "0–0",
-      "js_loc": "200–400",
-      "failed": 46,
-      "pass_rate": "51.1%"
+      "rust_loc": "0\u20130",
+      "js_loc": "200\u2013400"
     },
     {
       "id": 76,
@@ -918,10 +768,8 @@
       "status": "pending",
       "difficulty": 4,
       "impl": "js",
-      "rust_loc": "0–0",
-      "js_loc": "150–300",
-      "failed": 14,
-      "pass_rate": "44.0%"
+      "rust_loc": "0\u20130",
+      "js_loc": "150\u2013300"
     },
     {
       "id": 77,
@@ -930,10 +778,8 @@
       "status": "pending",
       "difficulty": 4,
       "impl": "js",
-      "rust_loc": "0–0",
-      "js_loc": "100–200",
-      "failed": 22,
-      "pass_rate": "0.0%"
+      "rust_loc": "0\u20130",
+      "js_loc": "100\u2013200"
     },
     {
       "id": 78,
@@ -942,10 +788,8 @@
       "status": "pending",
       "difficulty": 4,
       "impl": "js",
-      "rust_loc": "0–0",
-      "js_loc": "200–400",
-      "failed": 137,
-      "pass_rate": "59.7%"
+      "rust_loc": "0\u20130",
+      "js_loc": "200\u2013400"
     },
     {
       "id": 79,
@@ -954,10 +798,8 @@
       "status": "pending",
       "difficulty": 2,
       "impl": "js",
-      "rust_loc": "0–0",
-      "js_loc": "0–0",
-      "failed": 50,
-      "pass_rate": "35.1%"
+      "rust_loc": "0\u20130",
+      "js_loc": "0\u20130"
     },
     {
       "id": 80,
@@ -966,10 +808,8 @@
       "status": "pending",
       "difficulty": 5,
       "impl": "js",
-      "rust_loc": "0–0",
-      "js_loc": "250–500",
-      "failed": 27,
-      "pass_rate": "91.7%"
+      "rust_loc": "0\u20130",
+      "js_loc": "250\u2013500"
     },
     {
       "id": 81,
@@ -978,10 +818,8 @@
       "status": "pending",
       "difficulty": 3,
       "impl": "js",
-      "rust_loc": "0–0",
-      "js_loc": "200–400",
-      "failed": 491,
-      "pass_rate": "17.3%"
+      "rust_loc": "0\u20130",
+      "js_loc": "200\u2013400"
     },
     {
       "id": 82,
@@ -990,10 +828,8 @@
       "status": "pending",
       "difficulty": 6,
       "impl": "js",
-      "rust_loc": "0–0",
-      "js_loc": "600–1200",
-      "failed": 668,
-      "pass_rate": "45.4%"
+      "rust_loc": "0\u20130",
+      "js_loc": "600\u20131200"
     },
     {
       "id": 83,
@@ -1002,10 +838,8 @@
       "status": "pending",
       "difficulty": 5,
       "impl": "js",
-      "rust_loc": "0–0",
-      "js_loc": "200–400",
-      "failed": 46,
-      "pass_rate": "53.1%"
+      "rust_loc": "0\u20130",
+      "js_loc": "200\u2013400"
     },
     {
       "id": 84,
@@ -1014,10 +848,8 @@
       "status": "pending",
       "difficulty": 7,
       "impl": "hybrid",
-      "rust_loc": "200–400",
-      "js_loc": "200–400",
-      "failed": 1086,
-      "pass_rate": "42.2%"
+      "rust_loc": "200\u2013400",
+      "js_loc": "200\u2013400"
     },
     {
       "id": 85,
@@ -1026,10 +858,8 @@
       "status": "pending",
       "difficulty": 6,
       "impl": "js",
-      "rust_loc": "0–0",
-      "js_loc": "800–1600",
-      "failed": 2109,
-      "pass_rate": "31.5%"
+      "rust_loc": "0\u20130",
+      "js_loc": "800\u20131600"
     },
     {
       "id": 86,
@@ -1038,10 +868,8 @@
       "status": "pending",
       "difficulty": 2,
       "impl": "js",
-      "rust_loc": "0–0",
-      "js_loc": "200–400",
-      "failed": 95,
-      "pass_rate": "42.4%"
+      "rust_loc": "0\u20130",
+      "js_loc": "200\u2013400"
     },
     {
       "id": 87,
@@ -1050,10 +878,8 @@
       "status": "pending",
       "difficulty": 4,
       "impl": "js",
-      "rust_loc": "0–0",
-      "js_loc": "200–400",
-      "failed": 507,
-      "pass_rate": "1.4%"
+      "rust_loc": "0\u20130",
+      "js_loc": "200\u2013400"
     },
     {
       "id": 88,
@@ -1062,10 +888,8 @@
       "status": "pending",
       "difficulty": 3,
       "impl": "js",
-      "rust_loc": "0–0",
-      "js_loc": "100–200",
-      "failed": 26,
-      "pass_rate": "3.7%"
+      "rust_loc": "0\u20130",
+      "js_loc": "100\u2013200"
     },
     {
       "id": 89,
@@ -1074,10 +898,8 @@
       "status": "pending",
       "difficulty": 2,
       "impl": "js",
-      "rust_loc": "0–0",
-      "js_loc": "50–100",
-      "failed": 7,
-      "pass_rate": "0.0%"
+      "rust_loc": "0\u20130",
+      "js_loc": "50\u2013100"
     },
     {
       "id": 90,
@@ -1086,10 +908,8 @@
       "status": "pending",
       "difficulty": 2,
       "impl": "js",
-      "rust_loc": "0–0",
-      "js_loc": "50–100",
-      "failed": 17,
-      "pass_rate": "0.0%"
+      "rust_loc": "0\u20130",
+      "js_loc": "50\u2013100"
     },
     {
       "id": 91,
@@ -1098,10 +918,8 @@
       "status": "pending",
       "difficulty": 3,
       "impl": "js",
-      "rust_loc": "0–0",
-      "js_loc": "100–200",
-      "failed": 11,
-      "pass_rate": "0.0%"
+      "rust_loc": "0\u20130",
+      "js_loc": "100\u2013200"
     },
     {
       "id": 92,
@@ -1110,10 +928,8 @@
       "status": "pending",
       "difficulty": 3,
       "impl": "js",
-      "rust_loc": "0–0",
-      "js_loc": "100–200",
-      "failed": 11,
-      "pass_rate": "0.0%"
+      "rust_loc": "0\u20130",
+      "js_loc": "100\u2013200"
     },
     {
       "id": 93,
@@ -1122,10 +938,8 @@
       "status": "pending",
       "difficulty": 4,
       "impl": "js",
-      "rust_loc": "0–0",
-      "js_loc": "150–300",
-      "failed": 9,
-      "pass_rate": "30.8%"
+      "rust_loc": "0\u20130",
+      "js_loc": "150\u2013300"
     },
     {
       "id": 94,
@@ -1134,10 +948,8 @@
       "status": "pending",
       "difficulty": 4,
       "impl": "js",
-      "rust_loc": "0–0",
-      "js_loc": "150–300",
-      "failed": 24,
-      "pass_rate": "36.8%"
+      "rust_loc": "0\u20130",
+      "js_loc": "150\u2013300"
     },
     {
       "id": 95,
@@ -1146,10 +958,8 @@
       "status": "pending",
       "difficulty": 3,
       "impl": "rust",
-      "rust_loc": "0–0",
-      "js_loc": "0–0",
-      "failed": 13,
-      "pass_rate": "43.5%"
+      "rust_loc": "0\u20130",
+      "js_loc": "0\u20130"
     },
     {
       "id": 96,
@@ -1158,10 +968,8 @@
       "status": "pending",
       "difficulty": 3,
       "impl": "rust",
-      "rust_loc": "0–0",
-      "js_loc": "0–0",
-      "failed": 42,
-      "pass_rate": "31.1%"
+      "rust_loc": "0\u20130",
+      "js_loc": "0\u20130"
     },
     {
       "id": 97,
@@ -1170,10 +978,8 @@
       "status": "pending",
       "difficulty": 7,
       "impl": "rust",
-      "rust_loc": "200–500",
-      "js_loc": "0–0",
-      "failed": 13,
-      "pass_rate": "43.5%"
+      "rust_loc": "200\u2013500",
+      "js_loc": "0\u20130"
     },
     {
       "id": 98,
@@ -1182,10 +988,8 @@
       "status": "pending",
       "difficulty": 7,
       "impl": "rust",
-      "rust_loc": "300–600",
-      "js_loc": "0–0",
-      "failed": 20,
-      "pass_rate": "58.3%"
+      "rust_loc": "300\u2013600",
+      "js_loc": "0\u20130"
     },
     {
       "id": 99,
@@ -1194,10 +998,8 @@
       "status": "pending",
       "difficulty": 5,
       "impl": "rust",
-      "rust_loc": "100–200",
-      "js_loc": "0–0",
-      "failed": 12,
-      "pass_rate": "33.3%"
+      "rust_loc": "100\u2013200",
+      "js_loc": "0\u20130"
     },
     {
       "id": 100,
@@ -1206,10 +1008,8 @@
       "status": "pending",
       "difficulty": 5,
       "impl": "hybrid",
-      "rust_loc": "100–200",
-      "js_loc": "100–200",
-      "failed": 187,
-      "pass_rate": "15.4%"
+      "rust_loc": "100\u2013200",
+      "js_loc": "100\u2013200"
     },
     {
       "id": 101,
@@ -1218,10 +1018,8 @@
       "status": "pending",
       "difficulty": 5,
       "impl": "hybrid",
-      "rust_loc": "100–200",
-      "js_loc": "100–200",
-      "failed": 66,
-      "pass_rate": "22.4%"
+      "rust_loc": "100\u2013200",
+      "js_loc": "100\u2013200"
     },
     {
       "id": 102,
@@ -1230,10 +1028,8 @@
       "status": "pending",
       "difficulty": 6,
       "impl": "hybrid",
-      "rust_loc": "200–400",
-      "js_loc": "300–600",
-      "failed": 1363,
-      "pass_rate": "5.7%"
+      "rust_loc": "200\u2013400",
+      "js_loc": "300\u2013600"
     },
     {
       "id": 103,
@@ -1242,10 +1038,8 @@
       "status": "pending",
       "difficulty": 6,
       "impl": "hybrid",
-      "rust_loc": "200–400",
-      "js_loc": "200–400",
-      "failed": 484,
-      "pass_rate": "34.4%"
+      "rust_loc": "200\u2013400",
+      "js_loc": "200\u2013400"
     },
     {
       "id": 104,
@@ -1254,10 +1048,8 @@
       "status": "pending",
       "difficulty": 4,
       "impl": "hybrid",
-      "rust_loc": "0–0",
-      "js_loc": "0–0",
-      "failed": 63,
-      "pass_rate": "10.0%"
+      "rust_loc": "0\u20130",
+      "js_loc": "0\u20130"
     },
     {
       "id": 105,
@@ -1266,10 +1058,8 @@
       "status": "pending",
       "difficulty": 5,
       "impl": "hybrid",
-      "rust_loc": "100–200",
-      "js_loc": "200–400",
-      "failed": 261,
-      "pass_rate": "36.5%"
+      "rust_loc": "100\u2013200",
+      "js_loc": "200\u2013400"
     },
     {
       "id": 106,
@@ -1278,10 +1068,8 @@
       "status": "pending",
       "difficulty": 3,
       "impl": "rust",
-      "rust_loc": "200–400",
-      "js_loc": "0–0",
-      "failed": 389,
-      "pass_rate": "0.0%"
+      "rust_loc": "200\u2013400",
+      "js_loc": "0\u20130"
     },
     {
       "id": 107,
@@ -1290,10 +1078,8 @@
       "status": "pending",
       "difficulty": 3,
       "impl": "js",
-      "rust_loc": "0–0",
-      "js_loc": "200–400",
-      "failed": 113,
-      "pass_rate": "44.6%"
+      "rust_loc": "0\u20130",
+      "js_loc": "200\u2013400"
     },
     {
       "id": 108,
@@ -1302,10 +1088,8 @@
       "status": "pending",
       "difficulty": 3,
       "impl": "js",
-      "rust_loc": "0–0",
-      "js_loc": "200–400",
-      "failed": 231,
-      "pass_rate": "39.7%"
+      "rust_loc": "0\u20130",
+      "js_loc": "200\u2013400"
     },
     {
       "id": 109,
@@ -1314,10 +1098,8 @@
       "status": "pending",
       "difficulty": 3,
       "impl": "js",
-      "rust_loc": "0–0",
-      "js_loc": "150–300",
-      "failed": 86,
-      "pass_rate": "39.0%"
+      "rust_loc": "0\u20130",
+      "js_loc": "150\u2013300"
     },
     {
       "id": 110,
@@ -1326,10 +1108,8 @@
       "status": "pending",
       "difficulty": 3,
       "impl": "js",
-      "rust_loc": "0–0",
-      "js_loc": "150–300",
-      "failed": 51,
-      "pass_rate": "40.0%"
+      "rust_loc": "0\u20130",
+      "js_loc": "150\u2013300"
     },
     {
       "id": 111,
@@ -1338,10 +1118,8 @@
       "status": "pending",
       "difficulty": 6,
       "impl": "hybrid",
-      "rust_loc": "100–200",
-      "js_loc": "100–200",
-      "failed": 10,
-      "pass_rate": "65.5%"
+      "rust_loc": "100\u2013200",
+      "js_loc": "100\u2013200"
     },
     {
       "id": 112,
@@ -1350,10 +1128,8 @@
       "status": "pending",
       "difficulty": 5,
       "impl": "js",
-      "rust_loc": "0–0",
-      "js_loc": "150–300",
-      "failed": 47,
-      "pass_rate": "0.0%"
+      "rust_loc": "0\u20130",
+      "js_loc": "150\u2013300"
     },
     {
       "id": 113,
@@ -1362,10 +1138,8 @@
       "status": "pending",
       "difficulty": 6,
       "impl": "hybrid",
-      "rust_loc": "200–400",
-      "js_loc": "200–400",
-      "failed": 444,
-      "pass_rate": "39.1%"
+      "rust_loc": "200\u2013400",
+      "js_loc": "200\u2013400"
     },
     {
       "id": 114,
@@ -1374,10 +1148,8 @@
       "status": "pending",
       "difficulty": 3,
       "impl": "js",
-      "rust_loc": "0–0",
-      "js_loc": "150–300",
-      "failed": 108,
-      "pass_rate": "29.4%"
+      "rust_loc": "0\u20130",
+      "js_loc": "150\u2013300"
     },
     {
       "id": 115,
@@ -1386,10 +1158,8 @@
       "status": "pending",
       "difficulty": 8,
       "impl": "hybrid",
-      "rust_loc": "500–1000",
-      "js_loc": "300–600",
-      "failed": 265,
-      "pass_rate": "14.8%"
+      "rust_loc": "500\u20131000",
+      "js_loc": "300\u2013600"
     },
     {
       "id": 116,
@@ -1398,10 +1168,8 @@
       "status": "pending",
       "difficulty": 4,
       "impl": "js",
-      "rust_loc": "0–0",
-      "js_loc": "150–300",
-      "failed": 93,
-      "pass_rate": "0.0%"
+      "rust_loc": "0\u20130",
+      "js_loc": "150\u2013300"
     },
     {
       "id": 117,
@@ -1410,10 +1178,8 @@
       "status": "pending",
       "difficulty": 4,
       "impl": "js",
-      "rust_loc": "0–0",
-      "js_loc": "150–300",
-      "failed": 76,
-      "pass_rate": "26.9%"
+      "rust_loc": "0\u20130",
+      "js_loc": "150\u2013300"
     },
     {
       "id": 118,
@@ -1422,10 +1188,8 @@
       "status": "pending",
       "difficulty": 9,
       "impl": "rust",
-      "rust_loc": "500–1000",
-      "js_loc": "0–0",
-      "failed": 64,
-      "pass_rate": "0.0%"
+      "rust_loc": "500\u20131000",
+      "js_loc": "0\u20130"
     },
     {
       "id": 119,
@@ -1434,10 +1198,8 @@
       "status": "pending",
       "difficulty": 3,
       "impl": "js",
-      "rust_loc": "0–0",
-      "js_loc": "100–200",
-      "failed": 8,
-      "pass_rate": "0.0%"
+      "rust_loc": "0\u20130",
+      "js_loc": "100\u2013200"
     },
     {
       "id": 120,
@@ -1446,10 +1208,8 @@
       "status": "pending",
       "difficulty": 9,
       "impl": "rust",
-      "rust_loc": "500–1500",
-      "js_loc": "200–600",
-      "failed": 4603,
-      "pass_rate": "0.0%"
+      "rust_loc": "500\u20131500",
+      "js_loc": "200\u2013600"
     },
     {
       "id": 121,
@@ -1458,10 +1218,8 @@
       "status": "pending",
       "difficulty": 2,
       "impl": "js",
-      "rust_loc": "0–0",
-      "js_loc": "300–600",
-      "failed": 1086,
-      "pass_rate": "0.0%"
+      "rust_loc": "0\u20130",
+      "js_loc": "300\u2013600"
     }
   ]
 }

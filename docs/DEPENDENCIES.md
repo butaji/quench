@@ -58,7 +58,7 @@ run before landing.
 
 | Crate | Stage | Difficulty | Why | Risk |
 |---|---|---|---|---|
-| `swc_ecma_compat_es2017::async_to_generator` | 40, 38, 113, 97-99 | 7 | Unlocks ~2,500 async tests. `docs.rs/swc_ecma_compat_es2017` exposes the transform. | **High.** Full `swc_ecma_*` stack (~10+ crates) alongside existing `oxc` (0.47). Validate: (a) works standalone without swc parser, (b) no version conflict. Fallback: hand-roll ~500 LOC in `lower/`. Boa proof-of-concept confirms hand-rolled works. |
+| `swc_ecma_compat_es2017::async_to_generator` | 40, 38, 113, 97-99 | 7 | Unlocks thousands of async tests. `docs.rs/swc_ecma_compat_es2017` exposes the transform. | **High.** Full `swc_ecma_*` stack (~10+ crates) alongside existing `oxc` (0.47). Validate: (a) works standalone without swc parser, (b) no version conflict. Fallback: hand-roll ~500 LOC in `lower/`. Boa proof-of-concept confirms hand-rolled works. |
 | `smol` | 113 `Promise` | 5 | Single-threaded async executor for microtask queue. Boa uses its own executor (not smol); the hand-rolled job queue in `builtins/promise/` works today. | Medium. Evaluate against integration complexity. |
 | `data-url` | 53 `modules` | 4 | Parses `data:` URLs per Fetch Standard. `import "data:text/javascript,..."` needs this. | Low. Small, focused crate. |
 
