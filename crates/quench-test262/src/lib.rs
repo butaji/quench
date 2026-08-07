@@ -227,6 +227,36 @@ impl<H: Test262Host> Test262Runner<H> {
         Ok(report)
     }
 
+    /// Run files in iterator order with the same harness loader for each file.
+    pub fn run_files_with_harness<I, P, F>(
+        &mut self,
+        paths: I,
+        mut load: F,
+    ) -> Result<StageReport, String>
+    where
+        I: IntoIterator<Item = P>,
+        P: AsRef<Path>,
+        F: FnMut(&str) -> Result<String, String>,
+    {
+        let mut report = StageReport::default();
+        for input in paths {
+            let path = input.as_ref().to_path_buf();
+            report.total += 1;
+            let outcome = match self.run_file_with_harness(&path, &mut load) {
+                Ok(outcome) => outcome,
+                Err(reason) => TestOutcome::Fail { reason },
+            };
+            match outcome {
+                TestOutcome::Pass => report.passed += 1,
+                TestOutcome::Fail { reason } => {
+                    report.failed += 1;
+                    report.failures.push((path, reason));
+                }
+            }
+        }
+        Ok(report)
+    }
+
     fn dispatch(&mut self, source: &str, is_module: bool) -> TestOutcome {
         if is_module {
             self.run_module_script(source)

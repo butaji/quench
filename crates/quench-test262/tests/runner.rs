@@ -184,6 +184,28 @@ fn runner_reports_batch_file_read_failures_without_aborting() {
 }
 
 #[test]
+fn runner_reports_harness_aware_batch_outcomes() {
+    let dir = tempfile::tempdir().unwrap();
+    let passing = dir.path().join("pass.js");
+    let failing = dir.path().join("fail.js");
+    std::fs::write(
+        &passing,
+        "/*---\nflags: [onlyStrict]\nincludes: [assert.js]\n---*/\npass",
+    )
+    .unwrap();
+    std::fs::write(&failing, "fail").unwrap();
+    let mut runner = Test262Runner::new(HarnessProbe);
+
+    let report = runner
+        .run_files_with_harness([passing, failing], |name| Ok(format!("// {name} harness")))
+        .unwrap();
+
+    assert_eq!(report.total, 2);
+    assert_eq!(report.passed, 1);
+    assert_eq!(report.failed, 1);
+}
+
+#[test]
 fn discovers_js_files_recursively_in_sorted_order() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join("nested")).unwrap();
