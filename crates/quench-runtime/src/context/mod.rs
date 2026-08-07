@@ -86,7 +86,7 @@ impl Context {
         });
 
         let result = (|| {
-            let program = self.parse(source)?;
+            let program = parser::parse_script_ir(source)?.into_program();
             // Script code: set `this = globalThis` per ScriptDeclarationInstantiation
             interpreter::eval_program(&program, &mut self.env, Some(source), true)
         })();
@@ -124,7 +124,7 @@ impl Context {
         });
 
         let result = (|| {
-            let program = parser::parse_es_module(source)?;
+            let program = parser::parse_es_module_ir(source)?.into_program();
             // Module code: `this` is undefined (ThisMode::module per ES spec)
             interpreter::set_this_binding(&self.env, Value::Undefined);
             interpreter::eval_program(&program, &mut self.env, Some(source), false)
