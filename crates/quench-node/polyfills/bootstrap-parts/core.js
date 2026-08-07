@@ -1074,6 +1074,48 @@ let __quenchHttpModule;
         }
       };
     }
+    if (typeof globalThis.Request !== "function") {
+      globalThis.Request = class Request {
+        constructor(input, init = {}) {
+          const source = input instanceof Request ? input : null;
+          this.url = String(source?.url || input || "");
+          this.method = String(
+            init.method || source?.method || "GET"
+          ).toUpperCase();
+          this.headers = new globalThis.Headers(
+            init.headers || source?.headers
+          );
+          this.body = init.body ?? source?.body ?? null;
+        }
+        clone() {
+          return new Request(this);
+        }
+      };
+    }
+    if (typeof globalThis.Response !== "function") {
+      globalThis.Response = class Response {
+        constructor(body = null, init = {}) {
+          this.status = init.status ?? 200;
+          this.statusText = init.statusText || "";
+          this.headers = new globalThis.Headers(init.headers);
+          this.body = body == null ? null : String(body);
+          this.ok = this.status >= 200 && this.status < 300;
+        }
+        async text() {
+          return this.body ?? "";
+        }
+        async json() {
+          return JSON.parse(await this.text());
+        }
+        clone() {
+          return new Response(this.body, {
+            status: this.status,
+            statusText: this.statusText,
+            headers: this.headers
+          });
+        }
+      };
+    }
     const servers = new Map();
     globalThis.__nodeHttpConnectionsCheckingInterval ||= Symbol(
       "kConnectionsCheckingInterval"
