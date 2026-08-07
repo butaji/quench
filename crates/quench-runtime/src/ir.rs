@@ -47,4 +47,13 @@ mod tests {
             .expect("typescript should parse");
         assert_eq!(ir.statement_count(), 1);
     }
+
+    #[test]
+    fn jsx_and_ts_parsers_expose_owned_ir_boundaries() {
+        let jsx = crate::parser::parse_jsx_ir("const view = <Box />;").expect("jsx should parse");
+        let ts = crate::parser::parse_ts_ir("const value: number = 42;")
+            .expect("typescript should parse");
+        assert_eq!(jsx.statement_count(), 1);
+        assert_eq!(ts.statement_count(), 1);
+    }
 }
