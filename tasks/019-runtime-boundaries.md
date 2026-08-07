@@ -70,6 +70,8 @@ inspect engine internals.
 - [x] Expose those owned IR parser modes through the public `Context` API.
 - [x] Remove unreferenced Node-era scratch fixtures and the unused local OXC
   parser patch tree from the repository.
+- [x] Remove the remaining tracked files from that unused patch tree and its
+  empty scratch directories; repository-level control files remain at root.
 - [x] Preserve the `IrProgram` type through the interpreter entry point;
   legacy `Program` access is now contained behind `eval_ir_program`.
 - [x] Pack top-level IR statements into an owned boxed slice and execute that
