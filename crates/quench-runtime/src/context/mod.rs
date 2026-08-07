@@ -152,6 +152,26 @@ impl Context {
         parser::parse_script(source)
     }
 
+    pub fn parse_ir(&self, source: &str) -> Result<crate::ir::QuenchIr, JsError> {
+        parser::parse_script_ir(source)
+    }
+
+    pub fn parse_module_ir(&self, source: &str) -> Result<crate::ir::QuenchIr, JsError> {
+        parser::parse_es_module_ir(source)
+    }
+
+    pub fn parse_jsx_ir(&self, source: &str) -> Result<crate::ir::QuenchIr, JsError> {
+        parser::parse_jsx_ir(source)
+    }
+
+    pub fn parse_typescript_ir(&self, source: &str) -> Result<crate::ir::QuenchIr, JsError> {
+        parser::parse_typescript_ir(source)
+    }
+
+    pub fn parse_ts_ir(&self, source: &str) -> Result<crate::ir::QuenchIr, JsError> {
+        parser::parse_ts_ir(source)
+    }
+
     /// Parse TypeScript/TSX source into an AST using OXC (strips type annotations)
     pub fn parse_typescript(&self, source: &str) -> Result<crate::ast::Program, JsError> {
         parser::parse_typescript(source)
