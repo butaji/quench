@@ -495,8 +495,5 @@ fn strict_eq_nan() {
     assert!(!strict_eq(&nan, &nan));
 }
 
-#[test]
-fn strict_eq_positive_zero_negative_zero() {
-    // +0 === -0 per strict equality
-    assert!(strict_eq(&Value::Number(0.0), &Value::Number(-0.0)));
-}
+#[path = "compare_tests_tail.rs"]
+mod compare_tests_tail;
