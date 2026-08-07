@@ -29,6 +29,22 @@ impl Test262Host for NegativeProbe {
     }
 }
 
+struct HarnessProbe;
+
+impl Test262Host for HarnessProbe {
+    fn run_script(&mut self, source: &str) -> Result<(), String> {
+        if source.contains("harness") && source.contains("\"use strict\";") {
+            Ok(())
+        } else {
+            Err("harness composition missing".into())
+        }
+    }
+
+    fn run_module_script(&mut self, _source: &str) -> Result<(), String> {
+        Ok(())
+    }
+}
+
 #[test]
 fn runner_maps_engine_result_to_test_outcome() {
     let mut runner = Test262Runner::new(Probe);
@@ -99,4 +115,14 @@ fn runner_rejects_missing_or_wrong_negative_error() {
         wrong_runner.run_test(wrong).unwrap(),
         TestOutcome::Fail { .. }
     ));
+}
+
+#[test]
+fn runner_composes_includes_and_only_strict_before_dispatch() {
+    let source = "/*---\nflags: [onlyStrict]\nincludes: [assert.js]\n---*/\npass";
+    let mut runner = Test262Runner::new(HarnessProbe);
+    let outcome = runner
+        .run_test_with_harness(source, |name| Ok(format!("// {name} harness")))
+        .unwrap();
+    assert_eq!(outcome, TestOutcome::Pass);
 }

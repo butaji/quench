@@ -37,6 +37,8 @@ inspect engine internals.
   engine host contract as a simple success/error result.
 - [x] Parse async, only-strict, and ordered harness-include metadata in
   `quench-test262`.
+- [x] Add callback-based harness loading and deterministic include/strict
+  composition before host dispatch.
 - [x] Record a Stage 44 native performance/conformance baseline.
 - [ ] Move metadata, harness loading, stages, isolation, and metrics from the
   transitional runtime module into `crates/quench-test262`.
