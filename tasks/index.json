@@ -1,6 +1,6 @@
 {
-  "project": "quench-node",
-  "description": "Node API compatibility and host-boundary improvements grounded in the current rquickjs implementation. Roadmap to 100% Node API surface.",
+  "project": "quench-runtime",
+  "description": "Rust-native JavaScript runtime and Test262 conformance/performance roadmap.",
   "tasks": [
     {
       "id": "001",
