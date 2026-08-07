@@ -29,8 +29,11 @@ inspect engine internals.
   component set.
 - [x] Give each runtime parameter its own public subsystem trait and prove
   independent custom component selection with a unit test.
+- [x] Create `crates/quench-test262` with a host-only runner API and outcome
+  mapping test; engine implementation types do not cross the boundary.
 - [x] Record a Stage 44 native performance/conformance baseline.
-- [ ] Extract the transitional runner into `crates/quench-test262`.
+- [ ] Move metadata, harness loading, stages, isolation, and metrics from the
+  transitional runtime module into `crates/quench-test262`.
 - [ ] Define the stable host API used by both the native runner and future
   embedders.
 - [ ] Replace the compatibility `QuenchIr` alias with compact owned storage

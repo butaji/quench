@@ -27,6 +27,16 @@ must not touch the others.
 
 ## Rust core
 
+The workspace boundary is:
+
+```text
+crates/quench-runtime/   pure engine: parser, Quench IR, interpreter
+crates/quench-test262/   conformance client: host dispatch and runner policy
+```
+
+`quench-test262` may depend on the public runtime host contract, but
+`quench-runtime` does not depend on runner policy.
+
 Smallest set the builtins cannot be written without.
 
 ```
