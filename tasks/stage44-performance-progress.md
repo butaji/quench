@@ -4,7 +4,7 @@
 - Updated: 2026-08-07
 - Scope: Runner throughput and diagnostics only (no conformance rule changes)
 
-## Plan status (10 items)
+## Plan status (17 items)
 
 - [x] Add end-to-end digest timing payload with stage wall/execution timing plus test timing vectors.
 - [x] Add slow-test reporting and output for top-N slowest tests.
@@ -18,12 +18,16 @@
 - [x] Tune fixture module traversal using deduplicating BFS state to avoid redundant loading and enable accurate graph telemetry.
 - [x] Reduce digest memory/allocations by storing compact timing records (`index + enum outcome + elapsed`) and printing slow tests by resolving paths only at render time with lossless UTF-8 conversion.
 - [x] Skip path-to-string conversion for all non-failing digest outcomes; allocate paths only when recording failures.
-- [x] Reduce parallel outcome buffering from index-addressed `Vec<Option<TimedOutcome>>` to collect-and-sort (`Vec<TimedOutcome>`), trimming quick mode after index-sort.
+- [x] Preserve deterministic outcome ordering in parallel runs with an index-addressed `Vec<Option<TimedOutcome>>` and a single forward flatten pass (no final sort).
+- [x] Remove redundant BFS `discovered` set in fixture traversal and reuse `selected_modules` as the dedupe frontier set.
+- [x] Record process-isolation fallback count for panic-driven fallback paths.
+- [x] Include `fixture_invalid_syntax_modules` and `isolation_fallbacks` in the digest metrics JSON payload.
+- [x] Reduce failure-grouping allocations by cloning `TestFailure` only when detail mode is requested.
 
 ## Notes
 
 - Progress is implemented in `crates/quench-test262/src/test262/runner/execute.rs` and `crates/quench-test262/src/test262/runner/digest.rs`.
-- Stage-44 performance path is implemented end-to-end. Next step is validating with a full-stage `TEST262_METRICS=1` run and keeping metrics snapshots for batch/fixture tuning.
+- Stage-44 performance path is largely implemented end-to-end. Remaining work is to run and compare staged metrics after these changes (`TEST262_METRICS=1`) and keep a before/after snapshot.
 - 2026-08-07: Ran Stage 44 (`test/language/expressions`) in digest mode with `TEST262_DIGEST=1 TEST262_METRICS=1`.
   - Stage: 44
   - Tests: 11,101
