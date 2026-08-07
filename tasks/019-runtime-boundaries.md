@@ -47,12 +47,15 @@ inspect engine internals.
 - [x] Add deterministic recursive JavaScript file discovery for stage input.
 - [x] Specify the compact Quench IR ownership, indexing, interning, and
   cold-metadata contract in `docs/architecture.md`.
+- [x] Add an owned `IrProgram` wrapper and parser entry point as the first
+  migration step away from the compatibility alias.
 - [x] Record a Stage 44 native performance/conformance baseline.
 - [ ] Move metadata, harness loading, stages, isolation, and metrics from the
   transitional runtime module into `crates/quench-test262`.
 - [ ] Define the stable host API used by both the native runner and future
   embedders.
-- [ ] Replace the compatibility `QuenchIr` alias with compact owned storage
+- [ ] Replace the compatibility `QuenchIr` alias throughout the runtime with
+  `IrProgram`, then migrate its storage to compact owned representation
   (arena/index-backed where measurements justify it).
 - [ ] Introduce runtime subsystem traits incrementally, each with a failing
   unit test and a real production callsite; replace marker components with
