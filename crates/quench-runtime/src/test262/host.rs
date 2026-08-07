@@ -1,19 +1,8 @@
 //! Trait boundary between the test262 runner and the engine under test.
 
+pub use crate::host::Test262Host;
 use crate::test262::harness::try_inject_harness;
 use crate::Context;
-
-/// Implement this for your engine to plug it into the test262 runner.
-pub trait Test262Host: Send {
-    /// Execute a complete JS script (harness + test source) in script mode.
-    /// `Ok(())` if execution completes without throwing,
-    /// `Err(message)` if it throws or fails to evaluate.
-    fn run_script(&mut self, source: &str) -> Result<(), String>;
-
-    /// Execute a complete ES module (harness + test source) in module mode.
-    /// Used for tests with `flags: [module]`. Return value follows `run_script`.
-    fn run_module_script(&mut self, source: &str) -> Result<(), String>;
-}
 
 /// What happened when we tried to run a test.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
