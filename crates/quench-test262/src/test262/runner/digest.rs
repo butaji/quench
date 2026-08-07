@@ -12,7 +12,8 @@ use std::time::Duration;
 
 use crate::harness::HarnessLoader;
 use crate::runner::execute::{
-    fixture_profile_snapshot_json, note_prepared_cache_hit, note_prepared_cache_miss, note_worker_batch,
+    fixture_profile_snapshot_json, note_isolation_fallback, note_prepared_cache_hit, note_prepared_cache_miss,
+    note_worker_batch,
     note_worker_start,
     prepare_eager_enabled, prepare_stage_cache, reset_run_metrics, run_isolated, run_prepared_test,
     run_single_test, run_timeout_metrics, PreparedTest,
@@ -264,7 +265,9 @@ pub fn run_stage_digest(
             "fixture_graph_edges": metrics.fixture_graph_edges,
             "fixture_graph_max_depth": metrics.fixture_graph_max_depth,
             "fixture_graph_selected_modules": metrics.fixture_graph_selected_modules,
+            "fixture_invalid_syntax_modules": metrics.fixture_invalid_syntax_modules,
             "worker_starts": metrics.worker_starts,
+            "isolation_fallbacks": metrics.isolation_fallbacks,
             "missing_harness": metrics.skipped_due_to_missing_harness,
             "fixture_profile": fixture_profile,
         });
@@ -575,12 +578,19 @@ fn run_parallel(
         handles.push(std::thread::spawn(move || worker.run()));
     }
     drop(tx);
-    let mut ordered: Vec<TimedOutcome> = Vec::with_capacity(tests.len());
-    ordered.extend(rx.into_iter());
+    let mut ordered: Vec<Option<TimedOutcome>> = vec![None; tests.len()];
+    for outcome in rx {
+        if outcome.index < ordered.len() {
+            ordered[outcome.index] = Some(outcome);
+        }
+    }
     for h in handles {
         let _ = h.join();
     }
-    ordered.sort_unstable_by_key(|timed| timed.index);
+    let mut ordered: Vec<TimedOutcome> = ordered
+        .into_iter()
+        .filter_map(std::convert::identity)
+        .collect();
     if flags.quick {
         trim_quick(&mut ordered, flags.quick_limit);
     }
@@ -732,6 +742,7 @@ fn isolate_after_worker_panic(path: &Path, outcome: TestOutcome) -> TestOutcome 
         TestOutcome::Pass | TestOutcome::Skip { .. } => false,
     };
     if should_isolate {
+        note_isolation_fallback();
         run_isolated(path)
     } else {
         outcome
@@ -770,32 +781,34 @@ struct TestFailureSample {
 
 fn group_failures(failures: &[(String, TestFailure)], include_detail: bool) -> Vec<GroupEntry> {
     // Group by normalized reason.
-    let mut by_key: BTreeMap<String, Vec<(String, TestFailure)>> = BTreeMap::new();
-    for (path, failure) in failures {
+    let mut by_key: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    for (index, (_path, failure)) in failures.iter().enumerate() {
         let key = normalize_reason(&failure.message);
-        by_key
-            .entry(key)
-            .or_default()
-            .push((path.clone(), failure.clone()));
+        by_key.entry(key).or_default().push(index);
     }
 
     by_key
         .into_iter()
         .map(|(key, entries)| {
             let count = entries.len();
-            let paths: Vec<String> = entries.iter().map(|(p, _)| p.clone()).collect();
+            let paths: Vec<String> = entries
+                .iter()
+                .filter_map(|&index| failures.get(index))
+                .map(|(path, _)| path.clone())
+                .collect();
             let sample_paths: Vec<String> = paths.iter().take(8).cloned().collect();
             let samples: Vec<TestFailureSample> = if include_detail {
                 entries
                     .iter()
                     .take(8)
-                    .map(|(path, f)| TestFailureSample {
+                    .filter_map(|&index| failures.get(index))
+                    .map(|(path, failure)| TestFailureSample {
                         path: path.clone(),
-                        source_line: f.source_line,
-                        error_type: f.error_type.clone(),
-                        error_message: f.error_message.clone(),
-                        js_stack: f.js_stack.clone(),
-                        source_context: f.source_context.clone(),
+                        source_line: failure.source_line,
+                        error_type: failure.error_type.clone(),
+                        error_message: failure.error_message.clone(),
+                        js_stack: failure.js_stack.clone(),
+                        source_context: failure.source_context.clone(),
                     })
                     .collect()
             } else {
