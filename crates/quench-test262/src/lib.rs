@@ -215,7 +215,11 @@ impl<H: Test262Host> Test262Runner<H> {
         for input in paths {
             let path = input.as_ref().to_path_buf();
             report.total += 1;
-            match self.run_file(&path)? {
+            let outcome = match self.run_file(&path) {
+                Ok(outcome) => outcome,
+                Err(reason) => TestOutcome::Fail { reason },
+            };
+            match outcome {
                 TestOutcome::Pass => report.passed += 1,
                 TestOutcome::Fail { reason } => {
                     report.failed += 1;
