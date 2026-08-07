@@ -39,7 +39,7 @@ pub mod value;
 pub use ast::Program;
 pub use context::Context;
 pub use env::Environment;
-pub use host::{register_native, HostFunctions};
+pub use host::{register_native, HostFunctions, Test262Host};
 pub use value::{JsError, Value};
 pub use value::{NativeFunction, Object, ObjectKind, ValueFunction};
 
