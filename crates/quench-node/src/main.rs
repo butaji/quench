@@ -169,14 +169,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // itself, so experimental feature switches must not be mistaken for it;
     // their compatibility behavior is selected by the JS polyfills.
     raw_args.retain(|arg| {
-        !arg.starts_with("--") ||
-            matches!(
+        !arg.starts_with("--")
+            || matches!(
                 arg.as_str(),
-                "--help"
-                    | "--stage"
-                    | "--test-dir"
-                    | "--reuse-dir"
-                    | "--eval"
+                "--help" | "--stage" | "--test-dir" | "--reuse-dir" | "--eval"
             )
     });
     let mut args = raw_args.into_iter();
@@ -205,9 +201,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("-e") | Some("--eval") => run_source(&args.next().unwrap_or_default()),
         Some(path) => {
             let source = fs::read_to_string(path)?;
-            run_source_with_runtime_at_path(&source, &Runtime::new()?, Some(PathBuf::from(path).as_path()))
+            run_source_with_runtime_at_path(
+                &source,
+                &Runtime::new()?,
+                Some(PathBuf::from(path).as_path()),
+            )
         }
-        None => run_source("")
+        None => run_source(""),
     }
 }
 

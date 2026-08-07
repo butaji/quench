@@ -191,7 +191,15 @@ impl Loader for NodeLoader {
         if name.starts_with("node:")
             || matches!(
                 name,
-                "module" | "assert" | "events" | "fs" | "path" | "test" | "timers/promises" | "url" | "net"
+                "module"
+                    | "assert"
+                    | "events"
+                    | "fs"
+                    | "path"
+                    | "test"
+                    | "timers/promises"
+                    | "url"
+                    | "net"
             )
         {
             return builtin_source(name)
@@ -210,9 +218,7 @@ impl Loader for NodeLoader {
                 "export const hasCrypto = __c.hasCrypto;\nexport const hasDtls = __c.hasDtls;\n",
             );
             let module = Module::declare(ctx.clone(), name, source)?;
-            module
-                .meta()?
-                .set("url", format!("file://{}", path))?;
+            module.meta()?.set("url", format!("file://{}", path))?;
             return Ok(module);
         }
         let path = PathBuf::from(path);

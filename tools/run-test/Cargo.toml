@@ -1,0 +1,7 @@
+[package]
+name = "run-test"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+quench-runtime = { path = "../../crates/quench-runtime" }

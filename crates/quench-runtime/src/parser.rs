@@ -1,0 +1,398 @@
+//! OXC parser integration
+//!
+//! Uses OXC to parse JavaScript/JSX/TypeScript source code into the OXC AST,
+//! then lower to our runtime AST via lower.rs.
+
+use crate::ast::Program;
+use crate::lower::stmt::lower_program;
+use crate::value::JsError;
+use oxc::allocator::Allocator;
+use oxc::parser::Parser;
+use oxc::span::SourceType;
+use std::sync::Arc;
+
+/// Parse JavaScript source using OXC (script mode, not module)
+pub fn parse_script(source: &str) -> Result<Program, JsError> {
+    // Explicitly mark as script so `await` is not reserved (§11.6.2).
+    // SourceType::default() is module-first in OXC 0.47+.
+    let source_type = SourceType::default().with_script(true).with_jsx(true);
+    let allocator = Allocator::default();
+    let ret = Parser::new(&allocator, source, source_type).parse();
+    if !ret.errors.is_empty() {
+        return Err(JsError(format!("Parse error: {:?}", ret.errors)));
+    }
+    check_strict_reserved(&ret.program)?;
+    lower_program(&ret.program).map_err(|e| JsError(e.to_string()))
+}
+
+/// Reject strict-mode future reserved words used as binding identifiers.
+/// Strict mode applies when the program has a "use strict" directive prologue
+/// or when it is inherited from the calling context (e.g. strict eval).
+fn check_strict_reserved(program: &oxc::ast::ast::Program) -> Result<(), JsError> {
+    let strict = crate::strict_reserved::has_use_strict_directive(program)
+        || crate::interpreter::is_strict_mode();
+    if !strict {
+        return Ok(());
+    }
+    if let Some(name) = crate::strict_reserved::find_strict_reserved_binding(program) {
+        return Err(JsError(format!(
+            "SyntaxError: Unexpected strict mode reserved word: {}",
+            name
+        )));
+    }
+    Ok(())
+}
+
+/// Parse ES module source using OXC
+pub fn parse_es_module(source: &str) -> Result<Program, JsError> {
+    let source_type = SourceType::default().with_module(true).with_jsx(true);
+    let allocator = Allocator::default();
+    let ret = Parser::new(&allocator, source, source_type).parse();
+    if !ret.errors.is_empty() {
+        return Err(JsError(format!("Parse error: {:?}", ret.errors)));
+    }
+    if let Some(name) = crate::strict_reserved::find_strict_reserved_binding(&ret.program) {
+        return Err(JsError(format!(
+            "SyntaxError: Unexpected strict mode reserved word: {}",
+            name
+        )));
+    }
+    lower_program(&ret.program).map_err(|e| JsError(e.to_string()))
+}
+
+/// Parse JavaScript/JSX source using OXC (script mode)
+pub fn parse_jsx(source: &str) -> Result<Program, JsError> {
+    let source_type = SourceType::default().with_jsx(true);
+    let allocator = Allocator::default();
+    let ret = Parser::new(&allocator, source, source_type).parse();
+    if !ret.errors.is_empty() {
+        return Err(JsError(format!("Parse error: {:?}", ret.errors)));
+    }
+    lower_program(&ret.program).map_err(|e| JsError(e.to_string()))
+}
+
+/// Parse TypeScript source and strip type annotations
+pub fn parse_typescript(source: &str) -> Result<Program, JsError> {
+    // Strip import/export statements as they are not supported in script mode
+    let stripped = strip_imports_exports(source);
+    let source_type = SourceType::default().with_typescript(true).with_jsx(true);
+    let allocator = Arc::new(Allocator::default());
+    let ret = Parser::new(allocator.as_ref(), &stripped, source_type).parse();
+    if !ret.errors.is_empty() {
+        return Err(JsError(format!("Parse error: {:?}", ret.errors)));
+    }
+    let result = lower_program(&ret.program).map_err(|e| JsError(e.to_string()));
+    drop(allocator);
+    result
+}
+
+/// Strip import/export statements for script-mode parsing
+fn strip_imports_exports(source: &str) -> String {
+    source
+        .lines()
+        .filter(|line| {
+            let trimmed = line.trim();
+            !trimmed.starts_with("import ")
+                && !trimmed.starts_with("export ")
+                && !trimmed.starts_with("import type ")
+                && !trimmed.starts_with("export type ")
+                && !trimmed.starts_with("import =")
+                && !trimmed.starts_with("export =")
+                && !trimmed.starts_with("export {")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Parse TypeScript without JSX support
+#[allow(dead_code)]
+pub fn parse_ts(source: &str) -> Result<Program, JsError> {
+    let source_type = SourceType::default().with_typescript(true);
+    let allocator = Arc::new(Allocator::default());
+    let ret = Parser::new(allocator.as_ref(), source, source_type).parse();
+    if !ret.errors.is_empty() {
+        return Err(JsError(format!("Parse error: {:?}", ret.errors)));
+    }
+    let result = lower_program(&ret.program).map_err(|e| JsError(e.to_string()));
+    drop(allocator);
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_simple() {
+        let result = parse_script("42");
+        assert!(result.is_ok(), "Failed: {:?}", result);
+    }
+
+    #[test]
+    fn test_parse_binary() {
+        let result = parse_script("1 + 2;");
+        assert!(result.is_ok(), "Failed: {:?}", result);
+    }
+
+    #[test]
+    fn test_parse_var() {
+        let result = parse_script("var x = 1 + 2;");
+        assert!(result.is_ok(), "Failed: {:?}", result);
+    }
+
+    #[test]
+    fn test_parse_object() {
+        let result = parse_script(r#"const x = { a: 1, b: 2 };"#);
+        assert!(result.is_ok(), "Failed: {:?}", result);
+    }
+
+    /// { get: fn } must be a data property (key "get", value is function).
+    /// { get() {} } must be a getter accessor (key "get", no value).
+    /// OXC already distinguishes these via prop.kind; our lower must not re-interpret.
+    #[test]
+    fn test_parse_object_getter_vs_data_property() {
+        use crate::ast::{Expression, PropertyValue};
+
+        // { get: fn } → data property (NOT a getter accessor)
+        let r1 = parse_script(r#"var x = { get: function() {} };"#).unwrap();
+        let crate::ast::Program::Script(stmts) = r1;
+        let crate::ast::Statement::VarDeclaration {
+            init: Some(expr), ..
+        } = &stmts[0]
+        else {
+            panic!("expected VarDeclaration with init")
+        };
+        let Expression::Object(props) = expr else {
+            panic!("expected Object expression")
+        };
+        assert_eq!(props.len(), 1, "expected 1 property");
+        let val = &props[0].1;
+        assert!(
+            matches!(
+                val,
+                PropertyValue::Value(Expression::FunctionExpression { .. })
+            ),
+            "{{get: fn}} must be a Value property, got {:?}",
+            val,
+        );
+
+        // { get() {} } → concise method (data property, NOT getter accessor)
+        let r2 = parse_script(r#"var x = { get() {} };"#).unwrap();
+        let crate::ast::Program::Script(stmts) = r2;
+        let crate::ast::Statement::VarDeclaration {
+            init: Some(expr), ..
+        } = &stmts[0]
+        else {
+            panic!("expected VarDeclaration with init")
+        };
+        let Expression::Object(props) = expr else {
+            panic!("expected Object expression")
+        };
+        assert_eq!(props.len(), 1, "expected 1 property");
+        let val = &props[0].1;
+        assert!(
+            matches!(
+                val,
+                PropertyValue::Value(Expression::FunctionExpression { .. })
+            ),
+            "{{get()}} must be a Value property (concise method), got {:?}",
+            val,
+        );
+
+        // Same for 'set'
+        let r3 = parse_script(r#"var x = { set: function(v) {} };"#).unwrap();
+        let crate::ast::Program::Script(stmts) = r3;
+        let crate::ast::Statement::VarDeclaration {
+            init: Some(expr), ..
+        } = &stmts[0]
+        else {
+            panic!("expected VarDeclaration with init")
+        };
+        let Expression::Object(props) = expr else {
+            panic!("expected Object expression")
+        };
+        assert!(
+            matches!(
+                props[0].1,
+                PropertyValue::Value(Expression::FunctionExpression { .. })
+            ),
+            "{{set: fn}} must be a Value property",
+        );
+
+        // { set(v) {} } → concise method (data property, NOT setter accessor)
+        let r4 = parse_script(r#"var x = { set(v) {} };"#).unwrap();
+        let crate::ast::Program::Script(stmts) = r4;
+        let crate::ast::Statement::VarDeclaration {
+            init: Some(expr), ..
+        } = &stmts[0]
+        else {
+            panic!("expected VarDeclaration with init")
+        };
+        let Expression::Object(props) = expr else {
+            panic!("expected Object expression")
+        };
+        assert!(
+            matches!(
+                props[0].1,
+                PropertyValue::Value(Expression::FunctionExpression { .. })
+            ),
+            "{{set(v)}} must be a Value property (concise method), got {:?}",
+            props[0].1,
+        );
+    }
+
+    #[test]
+    fn test_parse_function() {
+        let result = parse_script("function add(a, b) { return a + b; }");
+        assert!(result.is_ok(), "Failed: {:?}", result);
+    }
+
+    #[test]
+    fn test_parse_arrow() {
+        let result = parse_script("const add = (a, b) => a + b;");
+        assert!(result.is_ok(), "Failed: {:?}", result);
+    }
+
+    #[test]
+    fn test_parse_typescript_basic() {
+        // Test TypeScript type annotations are stripped
+        let result = parse_typescript("const x: number = 42; x;");
+        assert!(result.is_ok(), "Failed: {:?}", result);
+    }
+
+    #[test]
+    fn test_parse_typescript_interface() {
+        // Test that TypeScript interface declarations are handled
+        let result =
+            parse_typescript("interface Foo { bar: number; } const x: Foo = { bar: 1 }; x;");
+        assert!(result.is_ok(), "Failed: {:?}", result);
+    }
+
+    #[test]
+    fn test_parse_typescript_jsx() {
+        // Test TypeScript with JSX
+        let result = parse_typescript("const el = <div>hello</div>; el;");
+        assert!(result.is_ok(), "Failed: {:?}", result);
+    }
+
+    #[test]
+    fn test_parse_typescript_with_arrow_params() {
+        // Test TypeScript with type annotations in arrow function parameters
+        let result = parse_typescript("const setCount = (c: number) => c + 1; setCount;");
+        assert!(result.is_ok(), "Failed: {:?}", result);
+    }
+
+    #[test]
+    fn test_parse_typescript_complex() {
+        // Test more complex TypeScript with JSX
+        let result = parse_typescript(
+            r#"
+            function Test(): JSX.Element {
+                const setCount = (c: number) => c + 1;
+                return <Box>test</Box>;
+            }
+        "#,
+        );
+        assert!(result.is_ok(), "Failed: {:?}", result);
+    }
+
+    #[test]
+    fn test_parse_legacy_octal_sloppy() {
+        // Legacy octal literals (e.g. 01, 07) are allowed in sloppy mode
+        let result = parse_script("a = 01;");
+        assert!(
+            result.is_ok(),
+            "OXC should parse legacy octal in sloppy mode: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_directives_in_program() {
+        // Check that OXC captures directives separately from body
+        use oxc::allocator::Allocator;
+        use oxc::parser::Parser;
+        use oxc::span::SourceType;
+
+        let source = r#""use strict"; eval("01;")"#;
+        let source_type = SourceType::default().with_jsx(true);
+        let allocator = Allocator::default();
+        let ret = Parser::new(&allocator, source, source_type).parse();
+        println!("directives.len() = {}", ret.program.directives.len());
+        for d in &ret.program.directives {
+            println!("  directive: {:?}", d.directive);
+            println!("  expression.value: {:?}", d.expression.value);
+        }
+        println!("body.len() = {}", ret.program.body.len());
+        assert!(
+            !ret.program.directives.is_empty(),
+            "Expected directives but got none"
+        );
+    }
+
+    #[test]
+    fn test_lowered_program_has_directive() {
+        // Verify that lower_program correctly preprends directives
+        let result = parse_script(r#""use strict"; eval("01;")"#);
+        match &result {
+            Ok(crate::ast::Program::Script(stmts)) => {
+                println!("lowered statements count: {}", stmts.len());
+                if let Some(crate::ast::Statement::Expression(expr)) = stmts.first() {
+                    println!("first statement expr: {:?}", expr);
+                }
+                // First statement should be "use strict" directive
+                assert!(!stmts.is_empty(), "Expected at least 1 statement");
+                if let Some(crate::ast::Statement::Expression(expr)) = stmts.first() {
+                    if let crate::ast::Expression::String(s) = expr.as_ref() {
+                        assert_eq!(s.trim(), "use strict", "Expected 'use strict' directive");
+                    } else {
+                        panic!("Expected String expression, got {:?}", expr);
+                    }
+                }
+            }
+            #[allow(unreachable_patterns)]
+            Ok(_) => panic!("Expected Script, got something else"),
+            Err(e) => panic!("Parse failed: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn test_oxc_parses_class_getter_with_computed_key() {
+        // What does OXC produce for `class C { get [expr]() {} }`?
+        // Does it produce MethodDefinition with kind=Get, or AccessorProperty?
+        use oxc::allocator::Allocator;
+        use oxc::parser::Parser;
+        use oxc::span::SourceType;
+
+        let source = r#"class C { get [thrower()]() {} }"#;
+        let source_type = SourceType::default().with_script(true).with_jsx(true);
+        let allocator = Allocator::default();
+        let ret = Parser::new(&allocator, source, source_type).parse();
+        assert!(ret.errors.is_empty(), "Parse errors: {:?}", ret.errors);
+
+        let cls = &ret.program.body[0];
+        println!("Statement type: {:?}", cls);
+        // ClassDeclaration has a `class_expr` field
+        let cls_body = match cls {
+            oxc::ast::ast::Statement::ClassDeclaration(cd) => cd.body.body.as_slice(),
+            _ => panic!("Expected ClassDeclaration"),
+        };
+        println!("Number of class elements: {}", cls_body.len());
+        for (i, elem) in cls_body.iter().enumerate() {
+            println!("Element {}: {:?}", i, elem);
+            match elem {
+                oxc::ast::ast::ClassElement::MethodDefinition(m) => {
+                    println!("  -> MethodDefinition kind={:?}", m.kind);
+                    println!("  -> key: {:?}", m.key);
+                    println!("  -> value params: {}", m.value.params.items.len());
+                }
+                oxc::ast::ast::ClassElement::AccessorProperty(a) => {
+                    println!("  -> AccessorProperty type={:?}", a.r#type);
+                    println!("  -> key: {:?}", a.key);
+                    println!("  -> value: {:?}", a.value);
+                }
+                _ => {}
+            }
+        }
+    }
+}

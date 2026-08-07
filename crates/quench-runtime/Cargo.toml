@@ -1,0 +1,47 @@
+[package]
+name = "quench-runtime"
+version = "0.1.0"
+edition = "2021"
+authors = ["Quench Team"]
+description = "Custom JavaScript runtime for Quench - Ink terminal UI framework"
+license = "MIT"
+
+[dependencies]
+# Parsing - OXC (high-performance JS/TS parser)
+oxc = "0.47"
+
+# Compile-time static maps
+phf = { version = "0.14", features = ["macros"] }
+
+# Ordered map for object property insertion-order enumeration
+indexmap = "2"
+
+# Fast hashing for internal slots (FxHashMap)
+rustc-hash = "2"
+
+# JSON serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# URL encoding
+urlencoding = "2"
+
+# Tracing/logging
+tracing = "0.1"
+
+# Regular expressions (ECMAScript regex syntax)
+regress = "0.11"
+
+# Error handling
+anyhow = "1"
+
+# BigInt support
+num-bigint = "0.4"
+
+# Conformance testing
+walkdir = "2"
+chrono = "0.4"
+
+[dev-dependencies]
+tempfile = "3"
+serial_test = "3"
