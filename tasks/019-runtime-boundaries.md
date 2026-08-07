@@ -20,6 +20,8 @@ inspect engine internals.
 - [x] Record the canonical goal in `tasks/index.json`.
 - [x] Identify the current runner as transitional under
   `quench-runtime/src/test262`.
+- [x] Move the engine-facing `Test262Host` execution contract to the public
+  `quench_runtime::host` API while retaining a compatibility re-export.
 - [x] Record a Stage 44 native performance/conformance baseline.
 - [ ] Extract the transitional runner into `crates/quench-test262`.
 - [ ] Define the stable host API used by both the native runner and future

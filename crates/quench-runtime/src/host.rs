@@ -20,6 +20,19 @@ pub trait HostFunctions {
     fn register_functions(ctx: &mut Context);
 }
 
+/// Engine-facing execution contract for an external conformance runner.
+///
+/// The runner supplies a complete script or module and receives only an
+/// execution result. Harness loading, metadata, staging, and reporting stay
+/// outside the runtime.
+pub trait Test262Host: Send {
+    /// Execute a complete script source.
+    fn run_script(&mut self, source: &str) -> Result<(), String>;
+
+    /// Execute a complete ES module source.
+    fn run_module_script(&mut self, source: &str) -> Result<(), String>;
+}
+
 /// Register a native function into the context
 pub fn register_native<F>(ctx: &mut Context, name: &str, f: F)
 where
@@ -47,6 +60,25 @@ pub(crate) fn register_builtin_functions(ctx: &mut Context) {
 #[cfg(test)]
 mod tests {
     use crate::{Context, Value};
+
+    struct Test262Probe;
+
+    impl super::Test262Host for Test262Probe {
+        fn run_script(&mut self, _source: &str) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn run_module_script(&mut self, _source: &str) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test262_execution_contract_is_publicly_owned_by_host_boundary() {
+        fn accepts_runner_host<T: super::Test262Host>(_host: &mut T) {}
+        let mut host = Test262Probe;
+        accepts_runner_host(&mut host);
+    }
 
     #[test]
     fn test_register_native_creates_global() {
