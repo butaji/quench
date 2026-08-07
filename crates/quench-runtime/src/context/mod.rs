@@ -86,9 +86,9 @@ impl Context {
         });
 
         let result = (|| {
-            let program = parser::parse_script_ir(source)?.into_program();
+            let program = parser::parse_script_ir(source)?;
             // Script code: set `this = globalThis` per ScriptDeclarationInstantiation
-            interpreter::eval_program(&program, &mut self.env, Some(source), true)
+            interpreter::eval_ir_program(&program, &mut self.env, Some(source), true)
         })();
 
         // Microtask checkpoint: drain promise reactions queued during script
@@ -124,10 +124,10 @@ impl Context {
         });
 
         let result = (|| {
-            let program = parser::parse_es_module_ir(source)?.into_program();
+            let program = parser::parse_es_module_ir(source)?;
             // Module code: `this` is undefined (ThisMode::module per ES spec)
             interpreter::set_this_binding(&self.env, Value::Undefined);
-            interpreter::eval_program(&program, &mut self.env, Some(source), false)
+            interpreter::eval_ir_program(&program, &mut self.env, Some(source), false)
         })();
 
         // Microtask checkpoint (see Context::eval)
