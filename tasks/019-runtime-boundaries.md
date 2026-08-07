@@ -72,6 +72,8 @@ inspect engine internals.
   parser patch tree from the repository.
 - [x] Remove the remaining tracked files from that unused patch tree and its
   empty scratch directories; repository-level control files remain at root.
+- [x] Consolidate human-facing Markdown under `docs/`; keep only `AGENTS.md`
+  and repository metadata at root, with `tasks/*` reserved for active work.
 - [x] Preserve the `IrProgram` type through the interpreter entry point;
   legacy `Program` access is now contained behind `eval_ir_program`.
 - [x] Pack top-level IR statements into an owned boxed slice and execute that

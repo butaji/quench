@@ -81,7 +81,7 @@ follows cluster frequency.
 A large slice of the 23,711 language tests are static-semantics early
 errors. Hand-rolling in `lower/` is thousands of LOC; OXC already
 implements them. Route parse → `oxc_semantic` → SyntaxError before
-lowering (R17; `DEPENDENCIES.md` row in the same diff).
+lowering (R17; `docs/DEPENDENCIES.md` row in the same diff).
 
 ## S4 — Async-to-generator transform *(medium-high, Phase C)*
 
@@ -130,7 +130,7 @@ test262 is the spec-behavior suite; duplicating it is waste.
 
 ## S7 — Crate-first for every remaining primitive *(ongoing)*
 
-Policy (`DEPENDENCIES.md`): regress, chrono, num-bigint, serde_json,
+Policy (`docs/DEPENDENCIES.md`): regress, chrono, num-bigint, serde_json,
 urlencoding, oxc. **Long pole: `Temporal` (4,603)** — staged last.
 
 `temporal_rs` confirmed production-grade (2026-07-23 research):
@@ -139,7 +139,7 @@ urlencoding, oxc. **Long pole: `Temporal` (4,603)** — staged last.
   `PlainTime`, `Duration`, `Calendar`, `TimeZone`
 - ICU4X for calendar/timezone math; Diplomat for C++/Rust FFI
 - ES Stage 4 (2026-03-11); spec stable
-- `DEPENDENCIES.md` row in the same diff as Temporal stage start.
+- `docs/DEPENDENCIES.md` row in the same diff as Temporal stage start.
 - Evaluate API surface vs. ES spec version before committing.
 
 ## S8 — `url` over `urlencoding` *(low effort, early Phase A/B)*
@@ -237,7 +237,7 @@ No Darwin-specific code needed for any remaining stage:
 - *tokio for async* — overkill for a microtask queue; smol or
   hand-rolled is correct scope.
 - *fancy-regex / re2 for RegExp* — too limited for ES2024 `\p{}`
-  escapes; see R18 and `DEPENDENCIES.md`.
+  escapes; see R18 and `docs/DEPENDENCIES.md`.
 - *wasmtime for ShadowRealm* — ShadowRealm is a JS-level isolated
   global, not a WASM sandbox.
 
@@ -281,7 +281,7 @@ throughput win. Boa v0.21 benchmarks on microbenchmarks show significant
 improvement with NaN boxing alone; arena allocation compounds this.
 
 - [ ] `bumpalo = "3"` or `bump_scope` in `Cargo.toml`.
-- [ ] `DEPENDENCIES.md` row.
+- [ ] `docs/DEPENDENCIES.md` row.
 - [ ] `#[test]`: no Drop impls on freed arena objects.
 - [ ] Migration: eval frames first, then parser, then Value constructors.
 
@@ -359,7 +359,7 @@ Implementation: `string_interner::StringInterner` in `Context`; every
 compare; `Map` with 10k string keys (performance regression test).
 
 - [ ] `string_interner = "0.18"` + `fnv = "2"` in `Cargo.toml`.
-- [ ] `DEPENDENCIES.md` row.
+- [ ] `docs/DEPENDENCIES.md` row.
 - [ ] `value/string_interner.rs` — `Interner` on `Context`, `StringId`
       type wrapping `string_interner::DefaultSymbol`.
 - [ ] `#[test]`: interned string pointer equality.
