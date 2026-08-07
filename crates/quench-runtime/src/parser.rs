@@ -3,7 +3,7 @@
 //! Uses OXC to parse JavaScript/JSX/TypeScript source code into the OXC AST,
 //! then lower to our runtime AST via lower.rs.
 
-use crate::ir::{IrProgram, QuenchIr};
+use crate::ir::IrProgram;
 use crate::lower::stmt::lower_program;
 use crate::value::JsError;
 use oxc::allocator::Allocator;
@@ -12,7 +12,7 @@ use oxc::span::SourceType;
 use std::sync::Arc;
 
 /// Parse JavaScript source using OXC (script mode, not module)
-pub fn parse_script(source: &str) -> Result<QuenchIr, JsError> {
+pub fn parse_script(source: &str) -> Result<crate::ast::Program, JsError> {
     // Explicitly mark as script so `await` is not reserved (§11.6.2).
     // SourceType::default() is module-first in OXC 0.47+.
     let source_type = SourceType::default().with_script(true).with_jsx(true);
@@ -49,7 +49,7 @@ fn check_strict_reserved(program: &oxc::ast::ast::Program) -> Result<(), JsError
 }
 
 /// Parse ES module source using OXC
-pub fn parse_es_module(source: &str) -> Result<QuenchIr, JsError> {
+pub fn parse_es_module(source: &str) -> Result<crate::ast::Program, JsError> {
     let source_type = SourceType::default().with_module(true).with_jsx(true);
     let allocator = Allocator::default();
     let ret = Parser::new(&allocator, source, source_type).parse();
@@ -71,7 +71,7 @@ pub fn parse_es_module_ir(source: &str) -> Result<IrProgram, JsError> {
 }
 
 /// Parse JavaScript/JSX source using OXC (script mode)
-pub fn parse_jsx(source: &str) -> Result<QuenchIr, JsError> {
+pub fn parse_jsx(source: &str) -> Result<crate::ast::Program, JsError> {
     let source_type = SourceType::default().with_jsx(true);
     let allocator = Allocator::default();
     let ret = Parser::new(&allocator, source, source_type).parse();
@@ -82,7 +82,7 @@ pub fn parse_jsx(source: &str) -> Result<QuenchIr, JsError> {
 }
 
 /// Parse TypeScript source and strip type annotations
-pub fn parse_typescript(source: &str) -> Result<QuenchIr, JsError> {
+pub fn parse_typescript(source: &str) -> Result<crate::ast::Program, JsError> {
     // Strip import/export statements as they are not supported in script mode
     let stripped = strip_imports_exports(source);
     let source_type = SourceType::default().with_typescript(true).with_jsx(true);
@@ -116,7 +116,7 @@ fn strip_imports_exports(source: &str) -> String {
 
 /// Parse TypeScript without JSX support
 #[allow(dead_code)]
-pub fn parse_ts(source: &str) -> Result<QuenchIr, JsError> {
+pub fn parse_ts(source: &str) -> Result<crate::ast::Program, JsError> {
     let source_type = SourceType::default().with_typescript(true);
     let allocator = Arc::new(Allocator::default());
     let ret = Parser::new(allocator.as_ref(), source, source_type).parse();
@@ -134,8 +134,8 @@ mod tests {
 
     #[test]
     fn parser_returns_owned_quench_ir_not_frontend_ast() {
-        let ir: crate::ir::QuenchIr = parse_script("1 + 2").unwrap();
-        assert!(matches!(ir, crate::ir::QuenchIr::Script(_)));
+        let ir = parse_script_ir("1 + 2").unwrap();
+        assert_eq!(ir.statement_count(), 1);
     }
 
     #[test]
