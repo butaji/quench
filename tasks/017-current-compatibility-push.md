@@ -66,3 +66,8 @@ The next package-loading slice is stage 2041: the ESM resolver now searches
 ancestor `node_modules` directories and reads package `exports`, `module`, and
 `main` entries. This is the missing resolution layer exposed by the Hono
 example.
+The package loader now also honors the nearest package `type: "module"` for
+`.js` files, allowing ESM package graphs such as Hono’s to load correctly.
+The Hono module itself now loads under `quench-node`; its asynchronous
+`app.fetch()` result still requires the runtime’s pending-Promise/microtask
+drain support before a standalone script can print the response.

@@ -61,6 +61,20 @@ fn package_resolution(base: &str, name: &str) -> Option<PathBuf> {
     None
 }
 
+fn is_package_module(path: &Path) -> bool {
+    let mut directory = path.parent();
+    while let Some(current) = directory {
+        let manifest = current.join("package.json");
+        if let Ok(bytes) = fs::read(manifest) {
+            if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                return value.get("type").and_then(serde_json::Value::as_str) == Some("module");
+            }
+        }
+        directory = current.parent();
+    }
+    false
+}
+
 #[derive(Debug, Default)]
 pub struct NodeResolver;
 
@@ -279,6 +293,13 @@ impl Loader for NodeLoader {
         }
         let path = PathBuf::from(path);
         let extension = path.extension().and_then(|ext| ext.to_str());
+        if extension == Some("js") && is_package_module(&path) {
+            let module = Module::declare(ctx.clone(), name, fs::read(&path)?)?;
+            module
+                .meta()?
+                .set("url", format!("file://{}", path.display()))?;
+            return Ok(module);
+        }
         if extension == Some("js") {
             let absolute = fs::canonicalize(&path).unwrap_or(path);
             let source = format!(
