@@ -1,5 +1,8 @@
 # Stage 44 Performance + Instrumentation Progress
 
+This measures pure `quench-runtime` through the `quench-test262` boundary.
+Node adapters and engine-internal runner coupling are out of scope.
+
 - Stage: `test/language/expressions` (Stage 44)
 - Updated: 2026-08-07
 - Scope: Runner throughput and diagnostics only (no conformance rule changes)
@@ -27,11 +30,14 @@
 
 ## Notes
 
-- Progress is implemented in `crates/quench-test262/src/test262/runner/execute.rs` and `crates/quench-test262/src/test262/runner/digest.rs`.
+- Progress is currently in the transitional
+  `crates/quench-runtime/src/test262/runner/` module; extraction to
+  `quench-test262` is part of the boundary work.
 - Stage-44 performance path is implemented in runner logic, and unit tests for available Rust targets pass.
 - Remaining work is to run and compare staged metrics after these changes (`TEST262_METRICS=1`) on a native runner.
-- Status note: the current Node-only workspace is not the target Test262 host. The performance work must be resumed on the preserved `quench-runtime` native runner.
-- 2026-08-07: User-directed pivot away from `quench-node`; repository history identifies the parent of `909c9363` as the recoverable runtime/Test262 baseline.
+- Status note: the pure `quench-runtime` engine is the only target host.
+- 2026-08-07: User-directed pivot away from Node adapters; the native
+  `quench-runtime` engine is the baseline for the standalone runner.
 - 2026-08-07: Ran Stage 44 (`test/language/expressions`) in digest mode with `TEST262_DIGEST=1 TEST262_METRICS=1`.
   - Stage: 44
   - Tests: 11,101

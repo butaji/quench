@@ -1,6 +1,12 @@
-# test262 harness — speed roadmap
+# quench-test262 — speed roadmap
 
-Goal: minimize wall-clock from “failing stage” → “root cause fixed” → “100%”.
+This roadmap covers the standalone conformance runner only. The runner
+drives the pure `quench-runtime` engine through its host interface; parser,
+Quench IR, interpreter, heap, and builtin work belongs to runtime tasks.
+
+Goal: minimize wall-clock from “failing stage” → “root cause fixed” → “100%”
+while keeping all harness behavior in `quench-test262` and all JavaScript
+behavior in the pure `quench-runtime` engine.
 Strategy context: `tasks/10-ways-to-speed-up.md` (S2 digest, S5 harness).
 
 ## Loop we optimize
@@ -79,6 +85,9 @@ cargo run -p run-test -- tests/test262/test/language/statements/class/…/test.j
 | `ALL_STAGES` | off | Digest/run all stages |
 
 ## Next harness priorities
+
+0. Extract the transitional runner from `quench-runtime/src/test262` into
+   `quench-test262` without changing the host execution contract.
 
 1. **`TEST262_CLUSTER=<substring>`** — filter digest to one normalized group while fixing it.
 2. **`tools/diff-digest.sh`** — `diff failures-16.json.before failures-16.json` → tests unlocked/regressed.

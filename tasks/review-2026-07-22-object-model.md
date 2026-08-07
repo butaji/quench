@@ -1,5 +1,9 @@
 # Review 2026-07-22 — object model
 
+Object-model work is on the `quench-runtime` side of the boundary. The
+result must remain usable through the narrow host interface consumed by
+`quench-test262`; no runner-specific storage or behavior belongs here.
+
 > **Critical path:** R4 then R5 are Phase A **NOW** items in
 > `tasks/refactor-plan.md` / `tasks/10-ways-to-speed-up.md` — do these
 > before full R0. This audit is the detail source for those items.

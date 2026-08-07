@@ -1,4 +1,9 @@
-# Development Tools for test262
+# Development Tools for quench-test262
+
+The runner owns test262 metadata, harness composition, stages, isolation,
+metrics, and diagnostics. The engine owns JavaScript execution only. The
+commands below use the transitional runner in `quench-runtime` until the
+standalone `quench-test262` crate is extracted.
 
 ## Quick Reference
 

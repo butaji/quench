@@ -1,9 +1,14 @@
 # Architecture
 
-**Goal:** 100% of test262 on quench-runtime — all 50K+ tests, staged,
-no skips. All unit tests green. Full test262 runs as fast as possible
-with the smallest possible mem/RSS. Rust codebase (quench-runtime,
-tests excluded) stays under 100k LOC.
+**Goal:** a pure JavaScript engine in `quench-runtime` and an isolated
+`quench-test262` conformance runner, converging on 100% ECMA-262 test262
+with minimum memory/RSS and no undocumented skips. The engine pipeline is
+explicit: `OXC AST -> Quench IR -> interpreter`.
+
+`quench-runtime` owns parsing, compact IR, execution, values, environments,
+and builtins. `quench-test262` owns frontmatter, harness loading, stage
+selection, isolation, metrics, and reporting. The runner communicates with
+the engine only through its host execution interface.
 
 **Shape:** small Rust core + self-hosted JS builtins. JS is ~1/3 the
 LOC of equivalent Rust and easier to keep spec-faithful, so anything

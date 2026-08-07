@@ -1,6 +1,8 @@
 # Stage Difficulty Guide
 
-**Goal:** 100% of test262 (42,892 tests), staged, minimum LOC.
+**Goal:** 100% of ECMA-262 test262 through the pure `quench-runtime`
+engine (`OXC AST → Quench IR → interpreter`) and the isolated
+`quench-test262` runner, staged with minimum LOC, memory, and RSS.
 **Data source:** `tasks/index.json` (2026-07-23 full digest: 27,323/42,892 = 63.7%).
 
 This guide ranks stages by implementation difficulty, estimates LOC per stage
