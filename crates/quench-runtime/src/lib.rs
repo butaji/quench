@@ -29,6 +29,7 @@ pub mod eval;
 pub mod host;
 pub mod interner;
 pub mod interpreter;
+pub mod ir;
 pub mod lower;
 pub mod parser;
 pub mod strict_reserved;
