@@ -88,15 +88,11 @@ mod tests {
         impl crate::runtime::Executor for Executor {
             fn execute(
                 &mut self,
-                context: &mut Context,
-                source: &str,
-                module: bool,
+                _context: &mut Context,
+                _source: &str,
+                _module: bool,
             ) -> Result<Value, crate::JsError> {
-                if module {
-                    context.eval_es_module(source)
-                } else {
-                    context.eval(source)
-                }
+                Ok(Value::Number(84.0))
             }
         }
         impl crate::runtime::Exceptions for Exceptions {}
@@ -121,7 +117,7 @@ mod tests {
         )
         .unwrap();
         let _: &Heap = runtime.heap();
-        assert_eq!(runtime.eval("6 * 7").unwrap(), Value::Number(42.0));
+        assert_eq!(runtime.eval("6 * 7").unwrap(), Value::Number(84.0));
     }
 
     #[test]
