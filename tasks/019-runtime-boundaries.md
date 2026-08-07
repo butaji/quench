@@ -58,6 +58,8 @@ inspect engine internals.
   cold-metadata contract in `docs/architecture.md`.
 - [x] Add an owned `IrProgram` wrapper and parser entry point as the first
   migration step away from the compatibility alias.
+- [x] Make `QuenchIr` name the owned IR type; legacy parser-returning APIs now
+  state their `Program` return type explicitly.
 - [x] Route `Context::eval` and `Context::eval_es_module` through the owned
   IR boundary before interpretation.
 - [x] Preserve the `IrProgram` type through the interpreter entry point;

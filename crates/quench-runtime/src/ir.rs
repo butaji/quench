@@ -5,7 +5,7 @@
 //! The first storage migration keeps the recursive statement nodes but packs
 //! the top-level statement list as an owned slice.
 
-pub use crate::ast::Program as QuenchIr;
+pub use IrProgram as QuenchIr;
 
 /// Owned runtime IR returned by the parser boundary.
 pub struct IrProgram {
