@@ -7,7 +7,8 @@ try {
   error = caught;
 }
 
-if (!error || error.code !== "ERR_INVALID_ARG_TYPE")
+if (!error || error.code !== "ERR_INVALID_ARG_TYPE") {
   throw new Error("readFile callback validation was missing");
+}
 
 console.log("fs readfile callback validation passed");

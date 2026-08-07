@@ -4,7 +4,7 @@ const { types } = require("node:util");
 
 const secret = crypto.createSecretKey(Buffer.alloc(16));
 const { publicKey } = crypto.generateKeyPairSync("rsa", {
-  modulusLength: 1024
+  modulusLength: 1024,
 });
 assert.strictEqual(typeof types.isKeyObject, "function");
 assert.strictEqual(types.isKeyObject(secret), true);

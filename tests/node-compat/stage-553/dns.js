@@ -17,7 +17,7 @@ dns.lookup("localhost", (error, address, family) => {
 (async () => {
   assert.deepStrictEqual(await require("dns/promises").lookup("localhost"), {
     address: "127.0.0.1",
-    family: 4
+    family: 4,
   });
   console.log("dns passed");
 })();

@@ -4,7 +4,7 @@ const events = require("events");
 for (const target of [undefined, null, {}, 1]) {
   assert.throws(
     () => events.getMaxListeners(target),
-    (error) => error.code === "ERR_INVALID_ARG_TYPE"
+    (error) => error.code === "ERR_INVALID_ARG_TYPE",
   );
 }
 

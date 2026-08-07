@@ -6,15 +6,15 @@ const processApi = require("process");
 assert(processApi.allowedNodeEnvironmentFlags instanceof Set);
 assert.strictEqual(
   typeof processApi.allowedNodeEnvironmentFlags.has,
-  "function"
+  "function",
 );
 assert.strictEqual(
   typeof processApi.allowedNodeEnvironmentFlags.size,
-  "number"
+  "number",
 );
 assert.strictEqual(
   processApi.allowedNodeEnvironmentFlags.has("--trace-warnings"),
-  false
+  false,
 );
 
 console.log("process allowed node flags passed");

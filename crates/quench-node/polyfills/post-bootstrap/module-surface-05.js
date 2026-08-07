@@ -1,7 +1,7 @@
 {
   const __quenchEnvError = () => {
     const error = new TypeError(
-      'The "content" argument must be of type string'
+      'The "content" argument must be of type string',
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     return error;
@@ -35,8 +35,9 @@
         while (
           value.trim().indexOf(quote, 1) === -1 &&
           index + 1 < lines.length
-        )
+        ) {
           value += `\n${lines[++index]}`;
+        }
       }
       result[key] = __quenchEnvValue(value);
     }
@@ -53,8 +54,9 @@
         result.machine ||= () => "unknown";
         result.version ||= () => "";
       }
-      if (String(name).replace(/^node:/, "") === "util")
+      if (String(name).replace(/^node:/, "") === "util") {
         result.parseEnv ||= __quenchParseEnv;
+      }
       return result;
     };
   }

@@ -10,5 +10,5 @@ class Foobar extends Array {
 
 assert.strictEqual(
   format("%s", new Foobar(5)),
-  "Foobar(5) [ <5 empty items>, aaa: true ]"
+  "Foobar(5) [ <5 empty items>, aaa: true ]",
 );

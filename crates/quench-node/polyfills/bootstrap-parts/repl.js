@@ -22,11 +22,20 @@ const __quenchReplStart = (options = {}) => {
         done?.(error);
       }
     },
+    write: (data) => {
+      const code = String(data);
+      if (code.trim() === ".exit") {
+        server.close();
+        return server;
+      }
+      server.eval(code, {}, "repl", () => {});
+      return server;
+    },
     close: () => {
       server.closed = true;
       server.emit("exit");
     },
-    displayPrompt: () => server.output?.write?.(server.prompt)
+    displayPrompt: () => server.output?.write?.(server.prompt),
   };
   server.displayPrompt();
   return server;
@@ -37,14 +46,14 @@ const __quenchRepl = {
     this.input = options.input;
     this.output = options.output;
     this.writer = {
-      options: { colors: true }
+      options: { colors: true },
     };
     this.closed = false;
     if (this.input?.on && this.output?.write) {
       this.input.on("data", () => this.output.write("\"'string'\"\n"));
       this.input.resume?.();
     }
-  }
+  },
 };
 globalThis.require = (specifier) => {
   if (String(specifier).replace(/^node:/, "") === "repl") return __quenchRepl;

@@ -6,8 +6,9 @@ globalThis.EventTarget ||= class EventTarget {
     const passive = Boolean(options.passive);
     if (typeof listener !== "function") return undefined;
     const signal = options.signal;
-    if (signal !== undefined && !(signal instanceof AbortSignal))
+    if (signal !== undefined && !(signal instanceof AbortSignal)) {
       throw new TypeError("signal must be an AbortSignal");
+    }
     if (signal?.aborted) return undefined;
     const record = { listener, once: Boolean(options.once), passive, signal };
     (this._listeners[name] ||= []).push(record);
@@ -20,8 +21,9 @@ globalThis.EventTarget ||= class EventTarget {
   removeEventListener(name, listener) {
     this._listeners[name] = (this._listeners[name] || []).filter((record) => {
       if (record.listener !== listener) return true;
-      if (record.abort)
+      if (record.abort) {
         record.signal?.removeEventListener("abort", record.abort);
+      }
       return false;
     });
   }
@@ -56,11 +58,14 @@ globalThis.Event ||= class Event {
 };
 globalThis.CustomEvent ||= class CustomEvent extends Event {
   constructor(type, options = {}) {
-    if (type === undefined || typeof type === "symbol")
+    if (type === undefined || typeof type === "symbol") {
       throw new TypeError("CustomEvent type is invalid");
+    }
     if (options === null || typeof options !== "object") {
       const error = new TypeError(
-        `The "options" argument must be of type object. Received type ${typeof options} (${String(options)})`
+        `The "options" argument must be of type object. Received type ${typeof options} (${
+          String(options)
+        })`,
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
@@ -68,7 +73,7 @@ globalThis.CustomEvent ||= class CustomEvent extends Event {
     super(type, options);
     Object.defineProperty(this, "detail", {
       value: options.detail === undefined ? null : options.detail,
-      enumerable: true
+      enumerable: true,
     });
   }
   get [Symbol.toStringTag]() {
@@ -82,19 +87,18 @@ globalThis.NodeEventTarget ||= class NodeEventTarget extends EventTarget {
   }
   addListener(name, listener, options, nodeStyle = true) {
     const owner = this;
-    const callback =
-      typeof listener === "function"
-        ? function (event) {
-            return listener.call(owner, event);
-          }
-        : function (event) {
-            return listener.handleEvent.call(listener, event);
-          };
+    const callback = typeof listener === "function"
+      ? function (event) {
+        return listener.call(owner, event);
+      }
+      : function (event) {
+        return listener.handleEvent.call(listener, event);
+      };
     (this._nodeListeners[name] ||= []).push({
       listener,
       callback,
       once: Boolean(options?.once),
-      nodeStyle
+      nodeStyle,
     });
     super.addEventListener(name, callback, options);
     return this;
@@ -122,8 +126,9 @@ globalThis.NodeEventTarget ||= class NodeEventTarget extends EventTarget {
   }
   dispatchEvent(event) {
     const result = super.dispatchEvent(event);
-    for (const record of this._nodeListeners[event.type] || [])
+    for (const record of this._nodeListeners[event.type] || []) {
       if (record.once) this.removeListener(event.type, record.listener);
+    }
     return result;
   }
   off(name, listener) {
@@ -139,15 +144,17 @@ globalThis.NodeEventTarget ||= class NodeEventTarget extends EventTarget {
   }
   removeAllListeners(name) {
     for (const event of name === undefined ? this.eventNames() : [name]) {
-      for (const record of this._nodeListeners[event] || [])
+      for (const record of this._nodeListeners[event] || []) {
         super.removeEventListener(event, record.callback);
+      }
       delete this._nodeListeners[event];
     }
     return this;
   }
   emit(name, ...args) {
-    if (!name)
+    if (!name) {
       throw new TypeError("The event name is required [ERR_INVALID_ARG_TYPE]");
+    }
     const event = args[0] instanceof Event ? args[0] : new Event(name);
     let delivered = false;
     for (const record of [...(this._nodeListeners[name] || [])]) {
@@ -159,6 +166,53 @@ globalThis.NodeEventTarget ||= class NodeEventTarget extends EventTarget {
     return delivered;
   }
 };
+globalThis.MessageEvent ||= class MessageEvent extends Event {
+  constructor(type, options = {}) {
+    super(type, options);
+    this.data = options.data === undefined ? null : options.data;
+    this.origin = options.origin === undefined ? "" : String(options.origin);
+    this.lastEventId = options.lastEventId === undefined
+      ? ""
+      : String(options.lastEventId);
+    if (
+      options.source !== undefined && options.source !== null &&
+      !(options.source instanceof MessagePort ||
+        typeof options.source.postMessage === "function" ||
+        typeof options.source.start === "function")
+    ) {
+      throw new TypeError(
+        `MessageEvent constructor: Expected eventInitDict.source ("${
+          String(options.source)
+        }") to be an instance of MessagePort.`,
+      );
+    }
+    this.source = options.source === undefined ? null : options.source;
+    if (options.ports === undefined) this.ports = [];
+    else {
+      if (
+        options.ports === null ||
+        typeof options.ports[Symbol.iterator] !== "function"
+      ) {
+        throw new TypeError(
+          `MessageEvent constructor: eventInitDict.ports (${
+            String(options.ports)
+          }) is not iterable.`,
+        );
+      }
+      this.ports = [...options.ports];
+      if (
+        this.ports.some((port) =>
+          !(port instanceof MessagePort ||
+            typeof port?.postMessage === "function")
+        )
+      ) {
+        throw new TypeError(
+          "MessageEvent constructor: Expected eventInitDict.ports to contain MessagePort instances.",
+        );
+      }
+    }
+  }
+};
 globalThis.MessagePort ||= class MessagePort extends EventTarget {
   constructor() {
     super();
@@ -167,13 +221,15 @@ globalThis.MessagePort ||= class MessagePort extends EventTarget {
     this._started = false;
     this._closed = false;
     this._refed = false;
+    this._nodeListeners = new Map();
   }
   start() {
     this._started = true;
   }
-  close() {
+  close(callback) {
     this._closed = true;
     this.dispatchEvent(new Event("close"));
+    if (typeof callback === "function") queueMicrotask(() => callback());
   }
   ref() {
     this._refed = true;
@@ -188,14 +244,46 @@ globalThis.MessagePort ||= class MessagePort extends EventTarget {
   }
   on(name, listener) {
     if (name === "message") this._refed = true;
-    this.addEventListener(name, listener);
+    const listeners = this._nodeListeners.get(name) || [];
+    listeners.push(listener);
+    this._nodeListeners.set(name, listeners);
     return this;
   }
+  addListener(name, listener) {
+    return this.on(name, listener);
+  }
+  removeListener(name, listener) {
+    const listeners = this._nodeListeners.get(name) || [];
+    const index = listeners.indexOf(listener);
+    if (index >= 0) listeners.splice(index, 1);
+    return this;
+  }
+  emit(name, ...args) {
+    for (const listener of this._nodeListeners.get(name) || []) {
+      listener(...args);
+    }
+    if (name === "message") {
+      const event = new MessageEvent("message", { data: args[0] });
+      return this.dispatchEvent(event);
+    }
+    return this.dispatchEvent(new CustomEvent(name, { detail: args[0] }));
+  }
   postMessage(value, transferList) {
+    if (
+      transferList !== undefined &&
+      (transferList === null ||
+        typeof transferList[Symbol.iterator] !== "function")
+    ) {
+      const error = new TypeError(
+        "Optional transferList argument must be an iterable",
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
     if (transferList?.some((item) => __nodeUntransferableBuffers.has(item))) {
       const error = new DOMException(
         "ArrayBuffer is not transferable",
-        "DataCloneError"
+        "DataCloneError",
       );
       error.code = 25;
       throw error;
@@ -206,8 +294,12 @@ globalThis.MessagePort ||= class MessagePort extends EventTarget {
     queueMicrotask(() => {
       if (this._peer._closed) return;
       this._peer.dispatchEvent(event);
-      if (typeof this._peer.onmessage === "function")
+      for (const listener of this._peer._nodeListeners.get("message") || []) {
+        listener(value);
+      }
+      if (typeof this._peer.onmessage === "function") {
         this._peer.onmessage.call(this._peer, event);
+      }
     });
   }
 };
@@ -225,15 +317,16 @@ const __quenchEventTargetDispatch = EventTarget.prototype.dispatchEvent;
 const __quenchPassiveListeners = new WeakMap();
 EventTarget.prototype.addEventListener = function (name, listener, options) {
   const passive = Boolean(options?.passive);
-  if (!passive || typeof listener !== "function")
+  if (!passive || typeof listener !== "function") {
     return __quenchEventTargetAdd.call(this, name, listener, options);
+  }
   const wrapper = (event) => {
     event._quenchPassive = true;
     listener.call(this, event);
     event._quenchPassive = false;
   };
   let listeners = __quenchPassiveListeners.get(this);
-  if (!listeners) __quenchPassiveListeners.set(this, (listeners = new Map()));
+  if (!listeners) __quenchPassiveListeners.set(this, listeners = new Map());
   listeners.set(listener, wrapper);
   return __quenchEventTargetAdd.call(this, name, wrapper, options);
 };
@@ -248,17 +341,18 @@ EventTarget.prototype.dispatchEvent = function (event) {
   try {
     Object.defineProperty(event, "eventPhase", {
       value: 2,
-      configurable: true
+      configurable: true,
     });
   } catch (_) {}
   event._quenchPath = [this];
   const result = __quenchEventTargetDispatch.call(this, event);
   return result && !event.defaultPrevented;
 };
-if (globalThis.Event && !Event.prototype.stopImmediatePropagation)
+if (globalThis.Event && !Event.prototype.stopImmediatePropagation) {
   Event.prototype.stopImmediatePropagation = function () {
     this._quenchImmediatePropagationStopped = true;
   };
+}
 if (globalThis.Event && !Event.prototype.__quenchPassivePreventDefault) {
   const originalPreventDefault = Event.prototype.preventDefault;
   Event.prototype.preventDefault = function () {
@@ -283,7 +377,7 @@ if (globalThis.Event) {
       set(value) {
         this._quenchCancelBubble = Boolean(value);
       },
-      configurable: true
+      configurable: true,
     });
   } catch (_) {}
   Event.prototype.stopPropagation ||= function () {
@@ -299,14 +393,15 @@ if (globalThis.CustomEvent) {
 if (globalThis.AbortSignal && !AbortSignal.prototype.__quenchEventArgument) {
   const originalAddEventListener = AbortSignal.prototype.addEventListener;
   AbortSignal.prototype.addEventListener = function (type, listener, options) {
-    if (typeof listener !== "function")
+    if (typeof listener !== "function") {
       return originalAddEventListener.call(this, type, listener, options);
+    }
     return originalAddEventListener.call(
       this,
       type,
       (event) =>
         listener.call(this, event || { stopImmediatePropagation() {} }),
-      options
+      options,
     );
   };
   AbortSignal.prototype.__quenchEventArgument = true;
@@ -320,14 +415,14 @@ const __quenchEventsTargetValid = (target) =>
 const __quenchValidateEventLimit = (limit) => {
   if (typeof limit !== "number") {
     const error = new TypeError(
-      "The setMaxListeners argument must be a number [ERR_INVALID_ARG_TYPE]"
+      "The setMaxListeners argument must be a number [ERR_INVALID_ARG_TYPE]",
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
   if (Number.isNaN(limit) || limit < 0) {
     const error = new RangeError(
-      "The value of setMaxListeners is out of range [ERR_OUT_OF_RANGE]"
+      "The value of setMaxListeners is out of range [ERR_OUT_OF_RANGE]",
     );
     error.code = "ERR_OUT_OF_RANGE";
     throw error;
@@ -342,7 +437,7 @@ const __quenchEventsRequire = (value) => {
   __quenchEventsModule.getMaxListeners = (target) => {
     if (!__quenchEventsTargetValid(target)) {
       const error = new TypeError(
-        "The eventTarget argument must be an instance of EventEmitter or EventTarget [ERR_INVALID_ARG_TYPE]"
+        "The eventTarget argument must be an instance of EventEmitter or EventTarget [ERR_INVALID_ARG_TYPE]",
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
@@ -355,7 +450,7 @@ const __quenchEventsRequire = (value) => {
     for (const target of targets) {
       if (!__quenchEventsTargetValid(target)) {
         const error = new TypeError(
-          "The eventTargets argument must be an instance of EventEmitter or EventTarget [ERR_INVALID_ARG_TYPE]"
+          "The eventTargets argument must be an instance of EventEmitter or EventTarget [ERR_INVALID_ARG_TYPE]",
         );
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;

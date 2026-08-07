@@ -12,6 +12,7 @@ const { EventEmitter } = require("events");
   });
   emitter.emit("ready");
   await new Promise((resolve) => queueMicrotask(resolve));
-  if (!received || received.error !== failure || received.event !== "ready")
+  if (!received || received.error !== failure || received.event !== "ready") {
     throw new Error("capture rejection hook should receive error and event");
+  }
 })();

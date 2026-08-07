@@ -9,11 +9,13 @@ stream.push("data");
 stream.push(null);
 
 if (dataEnded !== false) throw new Error("readableEnded changed during data");
-if (stream.readableEnded !== false)
+if (stream.readableEnded !== false) {
   throw new Error("readableEnded changed before end");
+}
 
 setTimeout(() => {
-  if (endEnded !== true || !stream.readableEnded)
+  if (endEnded !== true || !stream.readableEnded) {
     throw new Error("readableEnded was not set at end");
+  }
   console.log("stream readable ended timing passed");
 }, 0);

@@ -8,8 +8,17 @@ const __quenchHttps = {
   request: () => __quenchHttpsUnsupported("https.request"),
   get: () => __quenchHttpsUnsupported("https.get"),
   createServer: () => __quenchHttpsUnsupported("https.createServer"),
-  globalAgent: {}
 };
+const __quenchHttp = __quenchOriginalRequireWithHttps("http");
+class __quenchHttpsAgent extends __quenchHttp.Agent {
+  constructor(options = {}) {
+    super(options);
+    this.defaultPort = 443;
+    this.protocol = "https:";
+  }
+}
+__quenchHttps.Agent = __quenchHttpsAgent;
+__quenchHttps.globalAgent = new __quenchHttpsAgent({ keepAlive: true });
 globalThis.require = (specifier) =>
   String(specifier).replace(/^node:/, "") === "https"
     ? __quenchHttps

@@ -8,9 +8,10 @@ fs.copyFile(
   source,
   destination,
   common.mustSucceed(() => {
-    if (fs.readFileSync(destination, "utf8") !== "copy")
+    if (fs.readFileSync(destination, "utf8") !== "copy") {
       throw new Error("copyFile mismatch");
-  })
+    }
+  }),
 );
 try {
   fs.copyFileSync(false, destination);

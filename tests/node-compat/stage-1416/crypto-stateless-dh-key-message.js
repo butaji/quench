@@ -5,8 +5,8 @@ assert.throws(
   () =>
     crypto.diffieHellman({
       privateKey: { type: "private" },
-      publicKey: { type: "secret" }
+      publicKey: { type: "secret" },
     }),
-  { message: "Invalid key object type secret, expected private or public." }
+  { message: "Invalid key object type secret, expected private or public." },
 );
 console.log("crypto stateless DH key message passed");

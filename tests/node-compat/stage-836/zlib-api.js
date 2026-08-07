@@ -3,20 +3,22 @@
 const assert = require("assert");
 const zlib = require("node:zlib");
 
-for (const name of [
-  "deflate",
-  "deflateSync",
-  "inflate",
-  "inflateSync",
-  "gzip",
-  "gzipSync",
-  "gunzip",
-  "gunzipSync",
-  "createDeflate",
-  "createInflate",
-  "createGzip",
-  "createGunzip"
-]) {
+for (
+  const name of [
+    "deflate",
+    "deflateSync",
+    "inflate",
+    "inflateSync",
+    "gzip",
+    "gzipSync",
+    "gunzip",
+    "gunzipSync",
+    "createDeflate",
+    "createInflate",
+    "createGzip",
+    "createGunzip",
+  ]
+) {
   assert.strictEqual(typeof zlib[name], "function");
 }
 assert.strictEqual(typeof zlib.constants, "object");

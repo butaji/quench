@@ -125,6 +125,28 @@ macro_rules! run_host_context {
             }),
         )?;
         ctx.globals().set(
+            "__quench_pbkdf2_bytes",
+            Func::from(|password: Vec<u8>, salt: Vec<u8>, iterations: u32, keylen: u32| -> Vec<u8> {
+                let mut output = vec![0u8; keylen as usize];
+                for (block, chunk) in output.chunks_mut(32).enumerate() {
+                    let mut input = salt.clone();
+                    input.extend_from_slice(&(block as u32 + 1).to_be_bytes());
+                    let mut mac = Hmac::<Sha256>::new_from_slice(&password).expect("valid HMAC key");
+                    Mac::update(&mut mac, &input);
+                    let mut previous = mac.finalize().into_bytes().to_vec();
+                    let mut derived = previous.clone();
+                    for _ in 1..iterations {
+                        let mut mac = Hmac::<Sha256>::new_from_slice(&password).expect("valid HMAC key");
+                        Mac::update(&mut mac, &previous);
+                        previous = mac.finalize().into_bytes().to_vec();
+                        for (left, right) in derived.iter_mut().zip(&previous) { *left ^= *right; }
+                    }
+                    chunk.copy_from_slice(&derived[..chunk.len()]);
+                }
+                output
+            }),
+        )?;
+        ctx.globals().set(
             "__quench_random_uuid",
             Func::from(|| {
                 let mut bytes = [0u8; 16];
@@ -176,11 +198,12 @@ macro_rules! run_host_context {
         )?;
         ctx.globals().set(
             "__quench_zlib_gzip",
-            Func::from(|value: Vec<u8>| -> rquickjs::Result<Vec<u8>> {
+            Func::from(|value: Vec<u8>, level: rquickjs::function::Opt<u32>| -> rquickjs::Result<Vec<u8>> {
                 use flate2::write::GzEncoder;
                 use flate2::Compression;
                 use std::io::Write;
-                let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+                let compression = level.0.map(Compression::new).unwrap_or_default();
+                let mut encoder = GzEncoder::new(Vec::new(), compression);
                 let write_result = encoder.write_all(&value);
                 if let Err(e) = write_result {
                     return Err(rquickjs::Error::new_from_js_message("zlib", "gzip failed", e.to_string()));
@@ -212,7 +235,7 @@ macro_rules! run_host_context {
                     .unwrap_or_default()
                     .subsec_nanos() as usize;
                 let sequence = MKDTEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-                for attempt in 0..100 {
+                for attempt in 0..10_000 {
                     let suffix = (stamp.wrapping_add(sequence).wrapping_add(attempt)) % 1_000_000;
                     let path = PathBuf::from(format!("{prefix}{suffix:06}"));
                     if fs::create_dir(&path).is_ok() {
@@ -224,6 +247,13 @@ macro_rules! run_host_context {
         )?;
         ctx.globals().set(
             "__quench_fs_read_file",
+            Func::from(|path: String| -> rquickjs::Result<String> {
+                fs::read_to_string(path)
+                    .map_err(|_| rquickjs::Error::new_from_js("fs", "readFileSync failed"))
+            }),
+        )?;
+        ctx.globals().set(
+            "__quench_fs_read_text",
             Func::from(|path: String| -> rquickjs::Result<String> {
                 fs::read_to_string(path)
                     .map_err(|_| rquickjs::Error::new_from_js("fs", "readFileSync failed"))
@@ -297,7 +327,14 @@ macro_rules! run_host_context {
         ctx.globals().set(
             "__quench_fs_remove_dir",
             Func::from(|path: String| -> rquickjs::Result<()> {
-                fs::remove_dir_all(path).map_err(|_| rquickjs::Error::new_from_js("fs", "rmdirSync failed"))
+                fs::remove_dir_all(&path).map_err(|error| {
+                    let detail = if error.kind() == std::io::ErrorKind::PermissionDenied {
+                        format!("EACCES: permission denied, rmdir '{path}'")
+                    } else {
+                        format!("rmdirSync failed: {error}")
+                    };
+                    rquickjs::Error::new_from_js_message("fs", "rmdirSync failed", detail)
+                })
             }),
         )?;
         ctx.globals().set(
@@ -345,6 +382,16 @@ macro_rules! run_host_context {
                 let mut file = fs::OpenOptions::new().create(true).append(true).open(path)
                     .map_err(|_| rquickjs::Error::new_from_js("fs", "appendFileSync failed"))?;
                 file.write_all(&data).map_err(|_| rquickjs::Error::new_from_js("fs", "appendFileSync failed"))
+            }),
+        )?;
+        ctx.globals().set(
+            "__quench_fs_append_typed",
+            Func::from(|path: String, data: rquickjs::TypedArray<'_, u8>| -> rquickjs::Result<()> {
+                use std::io::Write;
+                let bytes = data.as_bytes().ok_or_else(|| rquickjs::Error::new_from_js("fs", "appendFileSync failed"))?;
+                let mut file = fs::OpenOptions::new().create(true).append(true).open(path)
+                    .map_err(|_| rquickjs::Error::new_from_js("fs", "appendFileSync failed"))?;
+                file.write_all(bytes).map_err(|_| rquickjs::Error::new_from_js("fs", "appendFileSync failed"))
             }),
         )?;
         ctx.globals().set(
@@ -466,9 +513,14 @@ macro_rules! run_host_context {
         ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-29.js").as_bytes())?;
         ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-local-loader.js").as_bytes())?;
         ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-final-00.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-final-01.js").as_bytes())?; ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/global-surface.js").as_bytes())?; ctx.globals().set("__nodeOsInitialized", false)?; ctx.globals().set("__quench_script_source", $source)?; let wrapped = format!("try {{\n{}\n}} catch (error) {{ globalThis.__quench_last_error = error && error.stack ? `${{error.name}}: ${{error.message}}\\n${{error.stack}}` : String(error); throw error; }}", $source); ctx.eval::<(), _>(wrapped.as_bytes()).map_err(|error| {
-            let detail = ctx.globals().get::<_, String>("__quench_last_error").unwrap_or_else(|_| format!("{error:?}")); eprintln!("JavaScript exception: {detail} ({error:?})");
-            error })?;
+        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-final-01.js").as_bytes())?; ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/global-surface.js").as_bytes())?; ctx.globals().set("__nodeOsInitialized", false)?; ctx.globals().set("__quench_script_source", $source)?; let filename = ctx.globals().get::<_, String>("__quench_script_filename").unwrap_or_else(|_| "quench-entry.js".into()); let evaluation = if filename.ends_with(".mjs") { let meta_url = format!("file://{}", filename); rquickjs::Module::declare(ctx.clone(), filename, $source.as_bytes()).and_then(|module| { let meta = module.meta()?; meta.set("url", meta_url)?; module.eval().map(|_| ()) }) } else { let wrapped = format!("try {{\n{}\n}} catch (error) {{ globalThis.__quench_last_error = error && error.stack ? `${{error.name}}: ${{error.message}}\\n${{error.stack}}` : String(error); throw error; }}", $source); ctx.eval::<(), _>(wrapped.as_bytes()) }; if let Err(error) = evaluation {
+            let forced_exit = ctx.globals().get::<_, bool>("__quench_force_exit").unwrap_or(false);
+            if !forced_exit {
+                let detail = ctx.globals().get::<_, String>("__quench_last_error").unwrap_or_else(|_| error.to_string());
+                eprintln!("JavaScript exception: {detail} ({error:?})");
+                return Err(error);
+            }
+        }
         ctx.eval::<(), _>(b"if (globalThis.__quench_test_promises?.length) Promise.allSettled(globalThis.__quench_test_promises).then(() => { globalThis.__quench_tests_settled = true; });")?;
         while ctx.execute_pending_job() {}
         if let Ok(detail) = ctx.globals().get::<_, String>("__quench_async_error") {
@@ -479,6 +531,23 @@ macro_rules! run_host_context {
         }
         ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/global-surface.js").as_bytes())
             .map_err(|error| { eprintln!("Final global surface failure: {error:?}"); error })?;
+        if !ctx.globals().get::<_, bool>("__quench_force_exit").unwrap_or(false) {
+            loop {
+                ctx.eval::<(), _>(b"try { if (typeof process?.emit === 'function') process.emit('beforeExit', process.exitCode || 0); } catch (error) { globalThis.__quench_exit_error = error && error.stack ? `${error.name}: ${error.message}\\n${error.stack}` : String(error); throw error; }")
+                    .map_err(|error| {
+                        let detail = ctx.globals().get::<_, String>("__quench_exit_error").unwrap_or_else(|_| format!("{error:?}"));
+                        eprintln!("Process beforeExit handler failure: {detail}");
+                        error
+                    })?;
+                let mut ran_job = false;
+                while ctx.execute_pending_job() {
+                    ran_job = true;
+                }
+                if !ran_job {
+                    break;
+                }
+            }
+        }
         ctx.eval::<(), _>(b"try { if (typeof process?.emit === 'function') process.emit('exit', process.exitCode || 0); } catch (error) { globalThis.__quench_exit_error = error && error.stack ? `${error.name}: ${error.message}\\n${error.stack}` : String(error); throw error; }")
             .map_err(|error| {
                 let detail = ctx.globals().get::<_, String>("__quench_exit_error").unwrap_or_else(|_| format!("{error:?}"));

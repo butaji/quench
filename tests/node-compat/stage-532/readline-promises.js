@@ -10,12 +10,12 @@ const input = {
   },
   pause() {
     input.paused = true;
-  }
+  },
 };
 const output = {
   write(value) {
     output.prompt = value;
-  }
+  },
 };
 const interfaceApi = readline.createInterface({ input, output });
 const answer = interfaceApi.question("name? ");

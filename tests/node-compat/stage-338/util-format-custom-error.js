@@ -6,5 +6,6 @@ function BadCustomError(message) {
 }
 Object.setPrototypeOf(BadCustomError.prototype, Error.prototype);
 Object.setPrototypeOf(BadCustomError, Error);
-if (util.format(new BadCustomError("foo")) !== "[BadCustomError: foo]")
+if (util.format(new BadCustomError("foo")) !== "[BadCustomError: foo]") {
   throw new Error(util.format(new BadCustomError("foo")));
+}

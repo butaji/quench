@@ -11,11 +11,12 @@ const __quenchStyles = {
   blue: [34, 39],
   magenta: [35, 39],
   cyan: [36, 39],
-  white: [37, 39]
+  white: [37, 39],
 };
 const __quenchStyleText = (text, style, options = {}) => {
-  if (options.validateStream === false || options.colors === false)
+  if (options.validateStream === false || options.colors === false) {
     return String(text);
+  }
   const styles = Array.isArray(style) ? style : [style];
   return styles.reduce((value, name) => {
     const codes = __quenchStyles[name];
@@ -23,9 +24,10 @@ const __quenchStyleText = (text, style, options = {}) => {
   }, String(text));
 };
 globalThis.require = (specifier) => {
-  if (String(specifier).replace(/^node:/, "") === "util")
+  if (String(specifier).replace(/^node:/, "") === "util") {
     return Object.assign({}, __quenchOriginalRequireWithStyleText(specifier), {
-      styleText: __quenchStyleText
+      styleText: __quenchStyleText,
     });
+  }
   return __quenchOriginalRequireWithStyleText(specifier);
 };

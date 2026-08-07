@@ -6,14 +6,16 @@ const writable = new Writable({
     if (error !== expected) throw new Error("destroy error mismatch");
     events.push("destroy");
     callback();
-  }
+  },
 });
 writable.on("error", () => events.push("error"));
 writable.on("close", () => {
   events.push("close");
-  if (events.join(",") !== "destroy,close")
+  if (events.join(",") !== "destroy,close") {
     throw new Error(`destroy ordering mismatch: ${events.join(",")}`);
+  }
 });
 writable.destroy(expected);
-if (!writable.destroyed || writable._writableState.errored !== expected)
+if (!writable.destroyed || writable._writableState.errored !== expected) {
   throw new Error("destroy state mismatch");
+}

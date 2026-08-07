@@ -3,11 +3,13 @@
 const assert = require("assert");
 const http2 = require("node:http2");
 
-for (const name of [
-  "getPackedSettings",
-  "getUnpackedSettings",
-  "sensitiveHeaders"
-]) {
+for (
+  const name of [
+    "getPackedSettings",
+    "getUnpackedSettings",
+    "sensitiveHeaders",
+  ]
+) {
   assert.strictEqual(typeof http2[name], "function");
 }
 assert.strictEqual(typeof http2.constants, "object");

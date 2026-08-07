@@ -5,8 +5,9 @@ for (const schedule of [setTimeout, setImmediate, setInterval]) {
   } catch (caught) {
     error = caught;
   }
-  if (!error || error.name !== "TypeError")
+  if (!error || error.name !== "TypeError") {
     throw new Error("timer callback validation was not synchronous");
+  }
 }
 
 console.log("timer callback validation passed");

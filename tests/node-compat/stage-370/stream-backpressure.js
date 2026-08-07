@@ -7,6 +7,6 @@ writable.on("drain", () => {
 });
 assert.strictEqual(
   writable.write("abc", () => {}),
-  false
+  false,
 );
 queueMicrotask(() => assert.strictEqual(drained, true));

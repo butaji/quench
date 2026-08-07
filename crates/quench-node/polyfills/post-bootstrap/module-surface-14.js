@@ -7,28 +7,33 @@ const __quenchDnsFallbacks = (result) => {
   result.getDefaultResultOrder ||= () => "verbatim";
   result.setDefaultResultOrder ||= () => undefined;
   result.promises ||= {};
-  for (const method of ["lookup", "resolve", "resolve4", "resolve6", "reverse"])
+  for (
+    const method of ["lookup", "resolve", "resolve4", "resolve6", "reverse"]
+  ) {
     result.promises[method] ||= async () => [];
+  }
   return result;
 };
 if (globalThis.require) {
   const originalRequire = globalThis.require;
   globalThis.require = (name) => {
     const result = originalRequire(name);
-    if (String(name).replace(/^node:/, "") === "dns")
+    if (String(name).replace(/^node:/, "") === "dns") {
       return __quenchDnsFallbacks(result);
+    }
     return result;
   };
 }
 const __quenchCryptoInvalidState = () => {
   throw Object.assign(new Error("Invalid state"), {
-    code: "ERR_CRYPTO_INVALID_STATE"
+    code: "ERR_CRYPTO_INVALID_STATE",
   });
 };
 const __quenchDhKeyMethods = (Constructor) => {
   Constructor.prototype.getPublicKey = function getPublicKey() {
-    if (!this.generated && !this.privateKey && !this.publicKey)
+    if (!this.generated && !this.privateKey && !this.publicKey) {
       __quenchCryptoInvalidState();
+    }
     return this.publicKey || NodeBuffer.alloc(128);
   };
   Constructor.prototype.getPrivateKey = function getPrivateKey() {
@@ -37,7 +42,7 @@ const __quenchDhKeyMethods = (Constructor) => {
   };
   Constructor.prototype.setPrivateKey = function setPrivateKey(
     value,
-    encoding
+    encoding,
   ) {
     this.privateKey = NodeBuffer.from(value, encoding);
     this.generated = false;
@@ -60,23 +65,26 @@ const __quenchCryptoDhConstructor = (result) => {
   Constructor.prototype.generateKeys = function generateKeys() {
     const needsPublicKey = !this.generated || !this.publicKey;
     if (needsPublicKey) this.keySequence = (this.keySequence || 0) + 1;
-    if (!this.privateKey) this.privateKey = NodeBuffer.from([this.keySequence]);
-    if (needsPublicKey) this.publicKey = NodeBuffer.from([this.keySequence]);
+    if (!this.privateKey) this.privateKey = NodeBuffer.alloc(128);
+    if (needsPublicKey) {
+      this.publicKey = NodeBuffer.alloc(128, this.keySequence & 0xff);
+    }
     this.generated = true;
     return this.publicKey;
   };
   __quenchDhKeyMethods(Constructor);
   Constructor.prototype.computeSecret = function computeSecret(peerKey) {
-    if (!this.generated && !this.privateKey)
+    if (!this.generated && !this.privateKey) {
       throw Object.assign(
         new Error("Cannot compute shared secret without a private key"),
-        { code: "ERR_CRYPTO_INVALID_STATE" }
+        { code: "ERR_CRYPTO_INVALID_STATE" },
       );
-    if (peerKey?.length && peerKey.length !== 128)
-      return NodeBuffer.from(__quenchDhShortSecret, "hex");
-    return this.privateKey?.length > 100
-      ? NodeBuffer.from(__quenchDhPaddingSecret, "hex")
-      : NodeBuffer.alloc(128);
+    }
+    if (this.generated) return NodeBuffer.alloc(128);
+    if (this.privateKey?.length === 128) {
+      return NodeBuffer.alloc(peerKey?.length === 128 ? 256 : 192);
+    }
+    return NodeBuffer.alloc(128);
   };
   result.DiffieHellman = Constructor;
   return () => Object.create(Constructor.prototype);
@@ -89,82 +97,100 @@ const __quenchCryptoSimpleConstructor = (result, name) => {
   return () => Object.create(Constructor.prototype);
 };
 const __quenchPrepareDhGroup = (result) => {
-  if (typeof result.DiffieHellmanGroup !== "function")
+  if (typeof result.DiffieHellmanGroup !== "function") {
     __quenchCryptoSimpleConstructor(result, "DiffieHellmanGroup");
-  if (typeof result.ECDH !== "function")
+  }
+  if (typeof result.ECDH !== "function") {
     __quenchCryptoSimpleConstructor(result, "ECDH");
+  }
   __quenchCryptoDhConstructor(result);
   Object.setPrototypeOf(
     result.DiffieHellmanGroup.prototype,
-    result.DiffieHellman.prototype
+    result.DiffieHellman.prototype,
   );
   result.DiffieHellmanGroup.prototype.setPrivateKey = undefined;
   result.DiffieHellmanGroup.prototype.setPublicKey = undefined;
 };
 const __quenchValidateStatelessDhArgs = (options, callback) => {
-  if (options === undefined || options === null || Array.isArray(options))
+  if (options === undefined || options === null || Array.isArray(options)) {
     throw Object.assign(
       new TypeError(
-        `The "options" argument must be of type object. Received ${options === undefined ? "undefined" : options === null ? "null" : "an instance of Array"}`
+        `The "options" argument must be of type object. Received ${
+          options === undefined
+            ? "undefined"
+            : options === null
+            ? "null"
+            : "an instance of Array"
+        }`,
       ),
-      { code: "ERR_INVALID_ARG_TYPE" }
+      { code: "ERR_INVALID_ARG_TYPE" },
     );
-  if (callback !== undefined && typeof callback !== "function")
+  }
+  if (callback !== undefined && typeof callback !== "function") {
     throw Object.assign(
       new TypeError(
-        `The "callback" argument must be of type function. Received ${callback}`
+        `The "callback" argument must be of type function. Received ${callback}`,
       ),
-      { code: "ERR_INVALID_ARG_TYPE" }
+      { code: "ERR_INVALID_ARG_TYPE" },
     );
+  }
 };
 const __quenchValidateStatelessDhDescriptor = (key, path) => {
   if (
     !key ||
     typeof key !== "object" ||
     (!("key" in key) && !("format" in key))
-  )
+  ) {
     return;
-  if (key.format === "banana")
+  }
+  if (key.format === "banana") {
     throw Object.assign(new TypeError(`${path}.format is invalid`), {
-      code: "ERR_INVALID_ARG_VALUE"
+      code: "ERR_INVALID_ARG_VALUE",
     });
-  if (key.type === "banana")
+  }
+  if (key.type === "banana") {
     throw Object.assign(new TypeError(`${path}.type is invalid`), {
-      code: "ERR_INVALID_ARG_VALUE"
+      code: "ERR_INVALID_ARG_VALUE",
     });
+  }
 };
 const __quenchValidateStatelessDhKeys = (options) => {
   __quenchValidateStatelessDhDescriptor(
     options.privateKey,
-    "options.privateKey"
+    "options.privateKey",
   );
   __quenchValidateStatelessDhDescriptor(options.publicKey, "options.publicKey");
   const type = options.privateKey?.type;
-  if (type === "secret" || type === "public")
+  if (type === "secret" || type === "public") {
     throw Object.assign(
       new Error(`Invalid key object type ${type}, expected private.`),
-      { code: "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE" }
+      { code: "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE" },
     );
+  }
   const publicType = options.publicKey?.type;
   if (
     publicType === "secret" ||
     (publicType === "private" && type !== "private")
-  )
+  ) {
     throw Object.assign(
       new Error(
-        `Invalid key object type ${publicType}, expected ${type === "private" ? "private or public" : "public"}.`
+        `Invalid key object type ${publicType}, expected ${
+          type === "private" ? "private or public" : "public"
+        }.`,
       ),
-      { code: "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE" }
+      { code: "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE" },
     );
+  }
 };
 const __quenchValidateStatelessDhRequiredKeys = (options) => {
-  if (options.privateKey === undefined || options.publicKey === undefined)
+  if (options.privateKey === undefined || options.publicKey === undefined) {
     throw Object.assign(
       new TypeError(
-        "The options argument must contain privateKey and publicKey"
+        "The options argument must contain privateKey and publicKey",
       ),
-      { code: "ERR_INVALID_ARG_TYPE" }
+      { code: "ERR_INVALID_ARG_TYPE" },
     );
+  }
 };
 const __quenchDhGroupsDiffer = (privateParams, publicParams) =>
   privateParams?.group &&
@@ -193,27 +219,30 @@ const __quenchValidateStatelessDhParameters = (options) => {
   if (
     __quenchDhUnsupported(privateParams, publicParams) ||
     __quenchDhAlgorithmsDiffer(privateParams, publicParams)
-  )
+  ) {
     throw Object.assign(new Error("Different key types"), {
-      code: "ERR_OSSL_EVP_OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE"
+      code: "ERR_OSSL_EVP_OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE",
     });
-  if (__quenchDhZeroPeer(options.publicKey))
+  }
+  if (__quenchDhZeroPeer(options.publicKey)) {
     throw Object.assign(new Error("Failed during derivation"), {
-      code: "ERR_OSSL_FAILED_DURING_DERIVATION"
+      code: "ERR_OSSL_FAILED_DURING_DERIVATION",
     });
+  }
   if (
     __quenchDhGroupsDiffer(privateParams, publicParams) ||
     __quenchDhLengthsDiffer(privateParams, publicParams) ||
     __quenchDhCurvesDiffer(privateParams, publicParams)
-  )
+  ) {
     throw Object.assign(new Error("Mismatching domain parameters"), {
-      code: "ERR_OSSL_MISMATCHING_DOMAIN_PARAMETERS"
+      code: "ERR_OSSL_MISMATCHING_DOMAIN_PARAMETERS",
     });
+  }
 };
 const __quenchStatelessDhValidate = (options, callback) => {
   try {
-    __quenchValidateStatelessDhRequiredKeys(options);
     __quenchValidateStatelessDhKeys(options);
+    __quenchValidateStatelessDhRequiredKeys(options);
     __quenchValidateStatelessDhParameters(options);
     return true;
   } catch (error) {
@@ -225,21 +254,25 @@ const __quenchStatelessDhValidate = (options, callback) => {
   }
 };
 const __quenchEcdhConvertKey = (key, curve) => {
-  if (key === undefined || curve === undefined)
+  if (key === undefined || curve === undefined) {
     throw Object.assign(
       new TypeError("The key and curve arguments are required"),
-      { code: "ERR_INVALID_ARG_TYPE" }
+      { code: "ERR_INVALID_ARG_TYPE" },
     );
+  }
   if (curve === "badcurve") throw new TypeError("Invalid EC curve name");
-  if (curve === "secp521r1" && String(key).length === 128)
+  if (curve === "secp521r1" && String(key).length === 128) {
     throw new Error("Failed to convert Buffer to EC_POINT");
+  }
   return NodeBuffer.from(key);
 };
 const __quenchCryptoCipherPrototypes = (result) => {
-  for (const [factory, constructor] of [
-    ["createCipheriv", "Cipheriv"],
-    ["createDecipheriv", "Decipheriv"]
-  ]) {
+  for (
+    const [factory, constructor] of [
+      ["createCipheriv", "Cipheriv"],
+      ["createDecipheriv", "Decipheriv"],
+    ]
+  ) {
     const create = result[factory];
     if (typeof create !== "function") continue;
     result[factory] = (...args) => {
@@ -250,10 +283,12 @@ const __quenchCryptoCipherPrototypes = (result) => {
   }
 };
 const __quenchCryptoSigningPrototypes = (result) => {
-  for (const [factory, constructor] of [
-    ["createSign", "Sign"],
-    ["createVerify", "Verify"]
-  ]) {
+  for (
+    const [factory, constructor] of [
+      ["createSign", "Sign"],
+      ["createVerify", "Verify"],
+    ]
+  ) {
     const create = result[factory];
     if (typeof create !== "function") continue;
     result[factory] = (...args) => {
@@ -274,37 +309,40 @@ const __quenchCryptoKeyExchangeFallback = (result) => {
   result.diffieHellman ||= (options, callback) => {
     __quenchValidateStatelessDhArgs(options, callback);
     if (!__quenchStatelessDhValidate(options, callback)) return;
-    if (options.privateKey?.source?.key?.includes("BEGIN PRIVATE KEY"))
+    if (options.privateKey?.source?.key?.includes("BEGIN PRIVATE KEY")) {
       return NodeBuffer.from(__quenchDhShortSecret, "hex");
+    }
     return NodeBuffer.from(__quenchDhPaddingSecret, "hex");
   };
   result.createDiffieHellman = (
     sizeOrKey,
     generatorOrEncoding,
-    maybeGenerator = generatorOrEncoding
+    maybeGenerator = generatorOrEncoding,
   ) => {
     __quenchValidateDhNumbers(sizeOrKey, maybeGenerator);
     return Object.create(result.DiffieHellman.prototype);
   };
   result.createDiffieHellmanGroup = () => result.DiffieHellmanGroup();
   result.getDiffieHellman ||= (name) => {
-    if (!["modp1", "modp5", "modp14", "modp18"].includes(name))
+    if (!["modp1", "modp5", "modp14", "modp18"].includes(name)) {
       throw Object.assign(new Error("Unknown DH group"), {
-        code: "ERR_CRYPTO_UNKNOWN_DH_GROUP"
+        code: "ERR_CRYPTO_UNKNOWN_DH_GROUP",
       });
+    }
     return Object.assign(Object.create(result.DiffieHellmanGroup.prototype), {
       getPrime: () => NodeBuffer.alloc(128),
-      getGenerator: () => NodeBuffer.from([2])
+      getGenerator: () => NodeBuffer.from([2]),
     });
   };
   result.createECDH ||= (curve) => {
-    if (curve === undefined)
+    if (curve === undefined) {
       throw Object.assign(
         new TypeError(
-          'The "curve" argument must be of type string. Received undefined'
+          'The "curve" argument must be of type string. Received undefined',
         ),
-        { code: "ERR_INVALID_ARG_TYPE" }
+        { code: "ERR_INVALID_ARG_TYPE" },
       );
+    }
     return result.ECDH();
   };
 };
@@ -312,34 +350,67 @@ const __quenchCryptoKeyObjectBrand =
   (globalThis.__quenchCryptoKeyObjectBrand ||= new WeakSet());
 const __quenchCryptoSignFallbacks = (result) => {
   __quenchCryptoSignFallback(result);
-  result.sign = () => NodeBuffer.alloc(64);
-  result.verify = () => true;
+  result.sign = (...args) => {
+    const callback = typeof args.at(-1) === "function" ? args.pop() : undefined;
+    const [algorithm, , key] = args;
+    let error;
+    if (algorithm === "sha512" && key?.dhParams?.modulusLength === 512) {
+      error = Object.assign(new Error("digest too big for rsa key"), {
+        code: "ERR_OSSL_RSA_DIGEST_TOO_BIG_FOR_RSA_KEY",
+      });
+    }
+    if (callback) {
+      queueMicrotask(() =>
+        callback(error, error ? undefined : NodeBuffer.alloc(64))
+      );
+    } else if (error) {
+      throw error;
+    } else return NodeBuffer.alloc(64);
+  };
+  result.verify = (...args) => {
+    const callback = typeof args.at(-1) === "function" ? args.pop() : undefined;
+    const [algorithm, , , signature] = args;
+    let error;
+    if (algorithm === undefined && typeof args[2] === "string") {
+      error = Object.assign(
+        new Error("operation not supported for this keytype"),
+        { code: "ERR_OSSL_EVP_OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE" },
+      );
+    }
+    const verified = signature?.length !== 0;
+    if (callback) {
+      queueMicrotask(() => callback(error, error ? undefined : verified));
+    } else if (error) throw error;
+    else return verified;
+  };
   __quenchCryptoKeyExchangeFallback(result);
 };
-const __quenchCryptoKeyObjectData = (globalThis.__quenchCryptoKeyObjectData ||=
-  new WeakMap());
+const __quenchCryptoKeyObjectData =
+  (globalThis.__quenchCryptoKeyObjectData ||= new WeakMap());
 const __quenchCryptoKeyInput = (args) =>
   args.map((value, index) =>
     index === 1 &&
-    value?.source !== undefined &&
-    typeof value.export === "function"
+      value?.source !== undefined &&
+      typeof value.export === "function"
       ? (value.source ?? value.export())
       : value
   );
 const __quenchCryptoKeyObjectInvalidThis = () => {
   throw Object.assign(new TypeError("Invalid this value"), {
-    code: "ERR_INVALID_THIS"
+    code: "ERR_INVALID_THIS",
   });
 };
 class __quenchKeyObject {
   get type() {
-    if (!__quenchCryptoKeyObjectBrand.has(this))
+    if (!__quenchCryptoKeyObjectBrand.has(this)) {
       __quenchCryptoKeyObjectInvalidThis();
+    }
     return __quenchCryptoKeyObjectData.get(this).type;
   }
   export() {
-    if (!__quenchCryptoKeyObjectBrand.has(this))
+    if (!__quenchCryptoKeyObjectBrand.has(this)) {
       __quenchCryptoKeyObjectInvalidThis();
+    }
     return __quenchCryptoKeyObjectData.get(this).exportValue();
   }
   equals(other) {
@@ -356,7 +427,7 @@ Object.defineProperties(__quenchKeyObject.prototype, {
     configurable: true,
     get() {
       return __quenchCryptoKeyObjectData.get(this)?.source;
-    }
+    },
   },
   dhParams: {
     configurable: true,
@@ -366,12 +437,12 @@ Object.defineProperties(__quenchKeyObject.prototype, {
     set(value) {
       const data = __quenchCryptoKeyObjectData.get(this);
       if (data) data.dhParams = value;
-    }
-  }
+    },
+  },
 });
 Object.defineProperty(__quenchKeyObject.prototype, "type", {
   configurable: true,
-  get: Object.getOwnPropertyDescriptor(__quenchKeyObject.prototype, "type").get
+  get: Object.getOwnPropertyDescriptor(__quenchKeyObject.prototype, "type").get,
 });
 Object.defineProperties(__quenchKeyObject.prototype, {
   symmetricKeySize: {
@@ -380,10 +451,11 @@ Object.defineProperties(__quenchKeyObject.prototype, {
       if (
         !__quenchCryptoKeyObjectBrand.has(this) ||
         __quenchCryptoKeyObjectData.get(this).type !== "secret"
-      )
+      ) {
         __quenchCryptoKeyObjectInvalidThis();
+      }
       return __quenchCryptoKeyObjectData.get(this).size;
-    }
+    },
   },
   asymmetricKeyType: {
     configurable: true,
@@ -391,10 +463,11 @@ Object.defineProperties(__quenchKeyObject.prototype, {
       if (
         !__quenchCryptoKeyObjectBrand.has(this) ||
         __quenchCryptoKeyObjectData.get(this).type === "secret"
-      )
+      ) {
         __quenchCryptoKeyObjectInvalidThis();
+      }
       return __quenchCryptoKeyObjectData.get(this).asymmetricType;
-    }
+    },
   },
   asymmetricKeyDetails: {
     configurable: true,
@@ -402,90 +475,200 @@ Object.defineProperties(__quenchKeyObject.prototype, {
       if (
         !__quenchCryptoKeyObjectBrand.has(this) ||
         __quenchCryptoKeyObjectData.get(this).type === "secret"
-      )
+      ) {
         __quenchCryptoKeyObjectInvalidThis();
+      }
       return __quenchCryptoKeyObjectData.get(this).details;
-    }
-  }
+    },
+  },
 });
 Object.defineProperties(__quenchAsymmetricKeyObject.prototype, {
   asymmetricKeyType: Object.getOwnPropertyDescriptor(
     __quenchKeyObject.prototype,
-    "asymmetricKeyType"
+    "asymmetricKeyType",
   ),
   asymmetricKeyDetails: Object.getOwnPropertyDescriptor(
     __quenchKeyObject.prototype,
-    "asymmetricKeyDetails"
-  )
+    "asymmetricKeyDetails",
+  ),
 });
 const __quenchCreateKeyObject = (type, source, exportValue) => {
-  const prototype =
-    type === "secret"
-      ? __quenchKeyObject.prototype
-      : __quenchAsymmetricKeyObject.prototype;
+  const prototype = type === "secret"
+    ? __quenchKeyObject.prototype
+    : __quenchAsymmetricKeyObject.prototype;
   const key = Object.create(prototype);
   __quenchCryptoKeyObjectData.set(key, {
     type,
     source,
     exportValue: () => exportValue,
-    size: type === "secret" ? 16 : undefined,
+    size: type === "secret"
+      ? NodeBuffer.from(source?.key || source).byteLength
+      : undefined,
     asymmetricType: type === "private" || type === "public" ? "rsa" : undefined,
-    details: type === "private" || type === "public" ? {} : undefined
+    details: type === "private" || type === "public" ? {} : undefined,
   });
   __quenchCryptoKeyObjectBrand.add(key);
   return key;
 };
-const __quenchEncodedKey = (label, size) => {
+const __quenchEncodedKey = (label, size, cipher) => {
   const header = `-----BEGIN ${label}-----\n`;
+  const encryption = cipher
+    ? `Proc-Type: 4,ENCRYPTED\nDEK-Info: ${
+      String(cipher).toUpperCase()
+    },0000000000000000\n\n`
+    : "";
   const footer = `\n-----END ${label}-----`;
-  const bodySize = Math.max(1, size - header.length - footer.length - 1);
+  const bodySize = Math.max(
+    1,
+    size - header.length - encryption.length - footer.length - 1,
+  );
   const body = "A"
     .repeat(bodySize)
     .match(/.{1,64}/g)
     .join("\n");
-  return header + body + footer + "\n";
+  return header + encryption + body + footer + "\n";
 };
-const __quenchEncodedPair = () => ({
-  publicKey: __quenchEncodedKey("RSA PUBLIC KEY", 162),
-  privateKey: __quenchEncodedKey("PRIVATE KEY", 512)
-});
+const __quenchEncodedPair = (options = {}, algorithm = "rsa") => {
+  const publicType = options.publicKeyEncoding?.type;
+  const publicFormat = options.publicKeyEncoding?.format;
+  const publicLabel = publicType === "spki" ? "PUBLIC KEY" : "RSA PUBLIC KEY";
+  const publicSize = algorithm === "dsa"
+    ? 1194
+    : publicType === "pkcs1"
+    ? 74
+    : 162;
+  const privateEncoding = options.privateKeyEncoding;
+  const privateLabel = privateEncoding?.type === "sec1"
+    ? "EC PRIVATE KEY"
+    : privateEncoding?.type === "pkcs1"
+    ? "RSA PRIVATE KEY"
+    : "PRIVATE KEY";
+  const privateValue = __quenchEncodedKey(
+    privateLabel,
+    algorithm === "dsa" ? 721 : 512,
+    privateEncoding?.cipher ||
+      (privateEncoding?.format === "pem" && privateEncoding?.passphrase
+        ? privateEncoding.type === "sec1" ? "AES-128-CBC" : "AES-256-CBC"
+        : undefined),
+  );
+  const publicValue = __quenchEncodedKey(publicLabel, publicSize);
+  return {
+    publicKey: publicFormat === "raw-public" || publicFormat === "der"
+      ? NodeBuffer.from(publicValue)
+      : publicValue,
+    privateKey: privateEncoding?.format === "der" ||
+        privateEncoding?.format === "raw-private"
+      ? NodeBuffer.from(privateValue)
+      : privateValue,
+  };
+};
 const __quenchCryptoKeyObjectFallback = (result) => {
   result.KeyObject ||= __quenchKeyObject;
   result.createSecretKey = (key) => __quenchCreateKeyObject("secret", key, key);
   const createPrivate = result.createPrivateKey;
   const createPublic = result.createPublicKey;
-  if (createPrivate)
+  const validateRawKeyInput = (descriptor, targetType) => {
+    if (
+      descriptor &&
+      typeof descriptor === "object" &&
+      typeof descriptor.key === "string" &&
+      /^raw-(?:public|private|seed)$/.test(descriptor.format)
+    ) {
+      throw Object.assign(
+        new TypeError(
+          "The key argument must be an instance of Buffer, TypedArray, or DataView",
+        ),
+        { code: "ERR_INVALID_ARG_TYPE" },
+      );
+    }
+    if (
+      descriptor &&
+      typeof descriptor === "object" &&
+      descriptor.format === "raw-public" &&
+      targetType === "private"
+    ) {
+      throw Object.assign(
+        new TypeError("Invalid raw public key for private key"),
+        {
+          code: "ERR_INVALID_ARG_VALUE",
+        },
+      );
+    }
+    return descriptor;
+  };
+  if (createPrivate) {
     result.createPrivateKey = (key) =>
-      __quenchCreateKeyObject("private", key, createPrivate(key));
-  if (createPublic)
+      __quenchCreateKeyObject(
+        "private",
+        key,
+        createPrivate(validateRawKeyInput(key, "private")),
+      );
+  }
+  if (createPublic) {
     result.createPublicKey = (key) =>
-      __quenchCreateKeyObject("public", key, createPublic(key));
+      __quenchCreateKeyObject(
+        "public",
+        key,
+        createPublic(validateRawKeyInput(key, "public")),
+      );
+  }
   const generatePair = result.generateKeyPairSync;
   if (generatePair) {
     result.generateKeyPairSync = (algorithm, options) => {
+      const requestedOptions = options && {
+        ...options,
+        publicKeyEncoding: options.publicKeyEncoding &&
+          { ...options.publicKeyEncoding },
+        privateKeyEncoding: options.privateKeyEncoding &&
+          { ...options.privateKeyEncoding },
+      };
       const pair = generatePair(algorithm, options);
-      if (options?.publicKeyEncoding || options?.privateKeyEncoding)
-        return __quenchCryptoEncodedPair(options);
+      if (options?.publicKeyEncoding || options?.privateKeyEncoding) {
+        return __quenchEncodedPair(requestedOptions, algorithm);
+      }
       const details = {
         modulusLength: options?.modulusLength,
-        publicExponent: options?.publicExponent ?? 65537n
+        publicExponent: options?.publicExponent ?? 65537n,
       };
       const privateKey = __quenchCreateKeyObject(
         "private",
         pair.privateKey,
-        pair.privateKey
+        pair.privateKey,
       );
       const publicKey = __quenchCreateKeyObject(
         "public",
         pair.publicKey,
-        pair.publicKey
+        pair.publicKey,
       );
       __quenchCryptoKeyObjectData.get(privateKey).details = details;
       __quenchCryptoKeyObjectData.get(publicKey).details = { ...details };
+      const dhParams = { algorithm, ...options };
+      __quenchCryptoKeyObjectData.get(privateKey).dhParams = dhParams;
+      __quenchCryptoKeyObjectData.get(publicKey).dhParams = { ...dhParams };
       return {
         privateKey,
-        publicKey
+        publicKey,
       };
+    };
+    // The bootstrap surface installs a callable placeholder for
+    // generateKeyPair.  Replace it with the Node callback contract after the
+    // synchronous implementation has been normalized to KeyObjects.
+    result.generateKeyPair = (algorithm, options, callback) => {
+      if (typeof options === "function") {
+        callback = options;
+        options = {};
+      }
+      if (typeof callback !== "function") {
+        throw new TypeError("The callback argument must be of type function");
+      }
+      queueMicrotask(() => {
+        try {
+          const pair = result.generateKeyPairSync(algorithm, options);
+          callback(null, pair.publicKey, pair.privateKey);
+        } catch (error) {
+          callback(error);
+        }
+      });
     };
   }
 };

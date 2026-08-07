@@ -10,13 +10,13 @@ const __quenchV8 = {
     malloced_memory: 0,
     external_memory: 0,
     peak_malloced_memory: 0,
-    does_zap_garbage: 0
+    does_zap_garbage: 0,
   }),
   getHeapCodeStatistics: () => ({
     code_and_metadata_size: 0,
     bytecode_and_metadata_size: 0,
     external_script_source_size: 0,
-    cpu_profiler_metadata_size: 0
+    cpu_profiler_metadata_size: 0,
   }),
   takeCoverage: () => undefined,
   stopCoverage: () => undefined,
@@ -24,14 +24,15 @@ const __quenchV8 = {
     const error = new Error("Heap snapshots are not supported by quench-node");
     error.code = "ERR_V8_NOT_SUPPORTED";
     throw error;
-  }
+  },
 };
 globalThis.require = (specifier) => {
-  if (String(specifier).replace(/^node:/, "") === "v8")
+  if (String(specifier).replace(/^node:/, "") === "v8") {
     return Object.assign(
       {},
       __quenchOriginalRequireWithV8(specifier),
-      __quenchV8
+      __quenchV8,
     );
+  }
   return __quenchOriginalRequireWithV8(specifier);
 };

@@ -8,14 +8,14 @@ assert.throws(
       {
         get ignoreCase() {
           throw new Error("boom");
-        }
-      }
+        },
+      },
     ),
-  { message: "boom" }
+  { message: "boom" },
 );
 
 const result = new URLPattern({ pathname: "/:value" }).exec(
-  "https://example.com/test"
+  "https://example.com/test",
 );
 assert.deepStrictEqual(Object.keys(result).sort(), [
   "hash",
@@ -26,7 +26,7 @@ assert.deepStrictEqual(Object.keys(result).sort(), [
   "port",
   "protocol",
   "search",
-  "username"
+  "username",
 ]);
 assert.strictEqual(result.hostname.input, "example.com");
 assert.strictEqual(result.pathname.input, "/test");

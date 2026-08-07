@@ -11,7 +11,7 @@ const result = helper.spawnSyncAndAssert(
     stderr: (value) => {
       assert.match(value, /message\.mjs was not initialized/);
       return true;
-    }
-  }
+    },
+  },
 );
 assert.strictEqual(result.status, 0);

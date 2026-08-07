@@ -1,7 +1,8 @@
 /* Keep the portable self-PID child-process probe useful without a host spawn API. */
 const __quenchParentPidSpawnRequire = globalThis.require;
-const __quenchParentPidSpawnProcess =
-  __quenchParentPidSpawnRequire("child_process");
+const __quenchParentPidSpawnProcess = __quenchParentPidSpawnRequire(
+  "child_process",
+);
 const __quenchParentPidSpawnOriginal = __quenchParentPidSpawnProcess.spawnSync;
 __quenchParentPidSpawnProcess.spawnSync = (command, args = [], options) => {
   const values = Array.isArray(args) ? args : [];
@@ -15,7 +16,7 @@ __quenchParentPidSpawnProcess.spawnSync = (command, args = [], options) => {
       status: 0,
       signal: null,
       stdout: output,
-      stderr: NodeBuffer.from("")
+      stderr: NodeBuffer.from(""),
     };
   }
   return __quenchParentPidSpawnOriginal(command, args, options);

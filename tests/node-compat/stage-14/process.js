@@ -4,5 +4,5 @@ assert.strictEqual(process.cwd().length > 0, true);
 assert.strictEqual(
   typeof process.env.PATH === "undefined" ||
     typeof process.env.PATH === "string",
-  true
+  true,
 );

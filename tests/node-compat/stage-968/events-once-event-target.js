@@ -5,8 +5,9 @@ async function eventTargetDelivery() {
   const expected = new Event("message");
   queueMicrotask(() => target.dispatchEvent(expected));
   const [actual] = await once(target, "message");
-  if (actual !== expected)
+  if (actual !== expected) {
     throw new Error("EventTarget payload was not preserved");
+  }
 }
 
 async function invalidOptions() {

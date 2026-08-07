@@ -9,7 +9,7 @@ assert.strictEqual(
     assert.ok(output instanceof ArrayBuffer);
     assert.strictEqual(output.byteLength, 16);
   }),
-  undefined
+  undefined,
 );
 
 console.log("crypto HKDF async passed");

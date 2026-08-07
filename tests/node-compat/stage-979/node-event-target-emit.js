@@ -8,9 +8,12 @@ target.on("data", (value) => {
   rawValue = value;
 });
 
-if (!target.emit("data", "payload"))
+if (!target.emit("data", "payload")) {
   throw new Error("emit did not report delivery");
-if (eventType !== "data")
+}
+if (eventType !== "data") {
   throw new Error("EventTarget listener did not receive Event");
-if (rawValue !== "payload")
+}
+if (rawValue !== "payload") {
   throw new Error("Node listener did not receive argument");
+}

@@ -4,8 +4,9 @@ const __quenchDecodeUtf16 = (bytes, final) => {
   let index = 0;
   for (; index < complete; index += 2) {
     const code = bytes[index] | (bytes[index + 1] << 8);
-    if (code >= 0xd800 && code <= 0xdbff && index + 2 === complete && !final)
+    if (code >= 0xd800 && code <= 0xdbff && index + 2 === complete && !final) {
       break;
+    }
     text += String.fromCharCode(code);
   }
   const pending = final ? [] : bytes.slice(index);

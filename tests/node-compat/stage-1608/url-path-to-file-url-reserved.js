@@ -10,8 +10,9 @@ const cases = [
   ["/foo:bar", "file:///foo:bar"],
   ["/foo;bar", "file:///foo;bar"],
   ["/foo%bar", "file:///foo%25bar"],
-  ["/foo\\bar", "file:///foo%5Cbar"]
+  ["/foo\\bar", "file:///foo%5Cbar"],
 ];
-for (const [path, expected] of cases)
+for (const [path, expected] of cases) {
   assert.strictEqual(url.pathToFileURL(path).href, expected, path);
+}
 console.log("reserved file URL matrix passed");

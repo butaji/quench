@@ -3,11 +3,11 @@ const querystring = require("querystring");
 
 assert.deepStrictEqual(querystring.parse("foo&bar", "&", "&"), {
   foo: "",
-  bar: ""
+  bar: "",
 });
 assert.strictEqual(
   querystring.stringify({ foo: "bar", list: ["a", "b"] }),
-  "foo=bar&list=a&list=b"
+  "foo=bar&list=a&list=b",
 );
 
 const previous = querystring.unescape;

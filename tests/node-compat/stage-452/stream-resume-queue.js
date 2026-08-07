@@ -9,7 +9,8 @@ stream.push("two");
 stream.resume();
 
 setTimeout(() => {
-  if (values.join(",") !== "one,two")
+  if (values.join(",") !== "one,two") {
     throw new Error("resume did not drain queued data");
+  }
   console.log("stream resume queue passed");
 }, 0);

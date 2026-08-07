@@ -20,10 +20,11 @@ class __quenchReadStream extends __quenchWriteStream {}
 const __quenchTtyModule = {
   isatty: () => false,
   ReadStream: __quenchReadStream,
-  WriteStream: __quenchWriteStream
+  WriteStream: __quenchWriteStream,
 };
 globalThis.require = (specifier) => {
-  if (String(specifier).replace(/^node:/, "") === "tty")
+  if (String(specifier).replace(/^node:/, "") === "tty") {
     return __quenchTtyModule;
+  }
   return __quenchOriginalRequireWithTty(specifier);
 };

@@ -14,15 +14,16 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase04 {
   }
   _writeBigInt(value, offset, littleEndian, signed) {
     NodeBuffer.prototype._integerOffset.call(this, offset, 8);
-    if (typeof value !== "bigint")
+    if (typeof value !== "bigint") {
       throw new TypeError('The "value" argument must be a bigint');
+    }
     const min = signed ? -(1n << 63n) : 0n;
     const max = signed ? (1n << 63n) - 1n : (1n << 64n) - 1n;
     if (value < min || value > max) {
       const bits = signed ? 63 : 64;
       const received = String(value).replace(/(\d)(?=(\d\d\d)+(?!\d))/g, "$1_");
       const error = new RangeError(
-        `The value of "value" is out of range. It must be >= ${min}n and < 2n ** ${bits}n. Received ${received}n`
+        `The value of "value" is out of range. It must be >= ${min}n and < 2n ** ${bits}n. Received ${received}n`,
       );
       error.code = "ERR_OUT_OF_RANGE";
       throw error;
@@ -74,9 +75,11 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase04 {
     return __nodeBufferAllocate(size, fill, encoding);
   }
   static allocUnsafe(size) {
+    __nodeAllocatorCounts.uninitialized++;
     return new NodeBuffer(NodeBuffer._validateSize(size));
   }
   static allocUnsafeSlow(size) {
+    __nodeAllocatorCounts.uninitialized++;
     return new NodeBuffer(NodeBuffer._validateSize(size));
   }
 };
@@ -85,6 +88,19 @@ NodeBuffer.prototype[Symbol.for("nodejs.util.inspect.custom")] =
 const __nodeBufferFromWithAlignment = NodeBuffer.from;
 NodeBuffer.from = (value, ...args) => {
   const result = __nodeBufferFromWithAlignment.call(NodeBuffer, value, ...args);
+  if (__nodeBufferIsArrayBuffer(value) || value instanceof SharedArrayBuffer) {
+    Object.defineProperties(result, {
+      parent: { value, configurable: true },
+      offset: { value: result.byteOffset, configurable: true },
+    });
+  }
+  if (typeof value === "string") {
+    const pooled = __nodeBufferPoolFrom(result);
+    if (pooled) {
+      Object.setPrototypeOf(pooled, NodeBuffer.prototype);
+      return pooled;
+    }
+  }
   if (typeof value !== "string" || result.byteOffset % 8 === 0) return result;
   const aligned = new Uint8Array(result);
   Object.setPrototypeOf(aligned, NodeBuffer.prototype);

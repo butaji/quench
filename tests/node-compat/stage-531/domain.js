@@ -8,7 +8,7 @@ let value = 0;
 assert.strictEqual(current.add({}), current);
 assert.strictEqual(
   current.run(() => ++value),
-  1
+  1,
 );
 assert.strictEqual(current._active, false);
 const bound = current.bind((left, right) => left + right);
