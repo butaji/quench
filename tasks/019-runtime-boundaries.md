@@ -47,6 +47,8 @@ inspect engine internals.
   include/strict composition path as in-memory tests.
 - [x] Add deterministic batch execution with `StageReport` counts and
   retained failure paths/reasons.
+- [x] Add harness-aware batch execution so every staged file follows the
+  metadata/include composition path before host dispatch.
 - [x] Keep batch execution progressing across unreadable test files by
   recording file I/O errors as runner failures.
 - [x] Add deterministic recursive JavaScript file discovery for stage input.
