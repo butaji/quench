@@ -135,3 +135,19 @@ fn runner_loads_test_source_from_a_path() {
     let mut runner = Test262Runner::new(Probe);
     assert_eq!(runner.run_file(&path).unwrap(), TestOutcome::Pass);
 }
+
+#[test]
+fn runner_loads_file_and_composes_its_harness() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("case.js");
+    std::fs::write(
+        &path,
+        "/*---\nflags: [onlyStrict]\nincludes: [assert.js]\n---*/\npass",
+    )
+    .unwrap();
+    let mut runner = Test262Runner::new(HarnessProbe);
+    let outcome = runner
+        .run_file_with_harness(&path, |name| Ok(format!("// {name} harness")))
+        .unwrap();
+    assert_eq!(outcome, TestOutcome::Pass);
+}
