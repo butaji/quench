@@ -5,6 +5,7 @@
 //! implementation details remain in `quench-runtime`.
 
 use quench_runtime::Test262Host;
+use std::path::Path;
 
 /// Runner metadata needed before dispatching one test.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -148,6 +149,13 @@ impl<H: Test262Host> Test262Runner<H> {
             self.dispatch(&composed, metadata.is_module),
             &metadata,
         ))
+    }
+
+    /// Read and execute one test262 source file.
+    pub fn run_file<P: AsRef<Path>>(&mut self, path: P) -> Result<TestOutcome, String> {
+        let source = std::fs::read_to_string(path.as_ref())
+            .map_err(|error| format!("test262 read failed: {error}"))?;
+        self.run_test(&source)
     }
 
     fn dispatch(&mut self, source: &str, is_module: bool) -> TestOutcome {
