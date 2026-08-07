@@ -167,6 +167,23 @@ fn runner_reports_batch_file_outcomes() {
 }
 
 #[test]
+fn runner_reports_batch_file_read_failures_without_aborting() {
+    let dir = tempfile::tempdir().unwrap();
+    let passing = dir.path().join("pass.js");
+    let missing = dir.path().join("missing.js");
+    std::fs::write(&passing, "pass").unwrap();
+    let mut runner = Test262Runner::new(Probe);
+
+    let report = runner.run_files([passing, missing.clone()]).unwrap();
+
+    assert_eq!(report.total, 2);
+    assert_eq!(report.passed, 1);
+    assert_eq!(report.failed, 1);
+    assert_eq!(report.failures[0].0, missing);
+    assert!(report.failures[0].1.contains("test262 read failed"));
+}
+
+#[test]
 fn discovers_js_files_recursively_in_sorted_order() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join("nested")).unwrap();
