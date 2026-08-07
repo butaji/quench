@@ -97,8 +97,17 @@ mod tests {
             Executor,
             Exceptions,
             Environments,
-        >::new()
+        >::with_components(
+            Heap,
+            Collector,
+            Allocator,
+            Frames,
+            Executor,
+            Exceptions,
+            Environments,
+        )
         .unwrap();
+        let _: &Heap = runtime.heap();
         assert_eq!(runtime.eval("6 * 7").unwrap(), Value::Number(42.0));
     }
 
