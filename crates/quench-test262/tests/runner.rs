@@ -151,3 +151,17 @@ fn runner_loads_file_and_composes_its_harness() {
         .unwrap();
     assert_eq!(outcome, TestOutcome::Pass);
 }
+
+#[test]
+fn runner_reports_batch_file_outcomes() {
+    let dir = tempfile::tempdir().unwrap();
+    let passing = dir.path().join("pass.js");
+    let failing = dir.path().join("fail.js");
+    std::fs::write(&passing, "pass").unwrap();
+    std::fs::write(&failing, "fail").unwrap();
+    let mut runner = Test262Runner::new(Probe);
+    let report = runner.run_files([passing, failing]).unwrap();
+    assert_eq!(report.total, 2);
+    assert_eq!(report.passed, 1);
+    assert_eq!(report.failed, 1);
+}
