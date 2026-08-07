@@ -1,79 +1,47 @@
-# quench-node
+# Quench
 
-Node-compatible JavaScript runtime built in Rust on top of
-[rquickjs](https://github.com/DelSkayn/rquickjs), with readable JavaScript
-polyfills and a staged compatibility harness.
+JavaScript runtime targeting **100% test262 conformance**, staged to
+100% per stage, with the **minimum possible LOC** as a small Rust core
+plus a self-hosted JS builtins layer. Native TS/TSX/JSX via OXC.
 
-## Quick start
+See `AGENTS.md` for the rules, `docs/architecture.md` for the split,
+and `tasks/refactor-plan.md` for the active queue.
 
-````sh
-cargo run -p quench-node -- --stage 284
-tools/run-node-tests.sh tests/node/test/parallel/test-querystring.js
-tools/compat-coverage.sh
-tools/compat-inventory.sh target/compat/inventory.json
-tools/diff-node-quench.sh tests/node/test/parallel/test-url-format.js
-tools/diff-node-quench-parallel.sh tests/node/test/parallel
-tools/compat-queue.sh target/compat/diff-url.json
-tools/check-focused-stages.sh
-tools/check-focused-policy.sh
-tools/check-all-tests.sh
+## Quick Start
 
-Feature-gated `stream/iter` stages are run with:
+```bash
+cargo build -p quench-runtime
+cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
+```
 
-```sh
-cargo run -p quench-node -- --experimental-stream-iter --stage 169
-````
+## test262 Runner — 93 stages, no skips, no checkpoints
 
-The Node test suite is tracked as the `tests/node` submodule. Compatibility
-stages live under `tests/node-compat`; each stage is committed and verified
-before advancing.
+Stages live in `crates/quench-runtime/src/test262/runner.rs::STAGES` and
+mirror `tasks/index.json`. Each stage runs to **100% passing** before
+the next is touched. Only `test/intl402` (ECMA-402, separate suite) and
+`test/staging` (pre-draft) are out of scope.
 
-## Scope
+```bash
+cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture     # current stage
+TEST262_STAGE=N cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture   # specific
+ALL_STAGES=1      cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture   # stop on first fail
+```
 
-The repository contains only the `quench-node` crate, its polyfills, the Node
-test submodule, compatibility stages, and the small harness needed to run them.
-Polyfills are intentionally kept readable and uncompressed.
+On 100% the runner prints `ALL STAGES COMPLETE — Stage N: X/X`. Strict
+mode: every non-`raw` test runs sloppy, then with `"use strict";`.
 
-`tools/compat-coverage.sh` reports the current fixture and upstream-test
-inventory. It deliberately reports Node API coverage as `unmeasured`: a count of
-focused fixtures is not a valid percentage of the full Node API surface.
-`tools/check-focused-stages.sh` runs every focused stage and reports concrete
-pass/fail counts; it does not turn those counts into an API percentage. Both
-focused-stage runners validate their actual failure list against
-`tools/focused-compat-policy.json` through `tools/check-focused-policy.sh`.
-`tools/run-node-fixture.cjs` provides the isolated CommonJS wrapper used by the
-Node side of differential comparisons. `tools/diff-node-quench-parallel.sh` runs
-the same single-fixture comparator in isolated workers and merges a sorted
-complete-corpus report. `tools/check-all-tests.sh` runs Rust tests with
-`cargo-nextest` when installed (or Cargo's standard runner), then runs the Node
-API stages in parallel. Because stages are CLI-driven JavaScript processes,
-their parallel runner is separate from nextest's Rust test process model. For
-the empirical test-file percentage requested during development, run
-`tools/measure-node-tests.sh [directory]`. It builds once and executes each
-JavaScript file individually, reporting passed, failed, skipped, and the
-resulting file pass rate.
+## TypeScript / JSX
 
-## Faster compatibility workflow
+```rust
+let mut ctx = Context::new()?;
+ctx.eval_typescript(include_str!("src/main.ts"))?;
+```
 
-The implementation roadmap for 2–5x faster progress is tracked in
-`tasks/016-compatibility-throughput.md`. The key investment is a local
-Node-vs-quench differential runner that persists normalized results, clusters
-failures, and emits an owned work queue. Related failures should be grouped into
-readable API slices instead of forcing one stage per mismatch.
+See `crates/quench-runtime/tests/native_extensions.rs`.
 
-Work can be partitioned into up to five isolated streams: URL/encoding,
-streams/events, filesystem/modules, crypto/network/OS, and harness/globals. Each
-stream must own distinct files or use an isolated worktree. Local reports should
-show fixture pass/fail/skip/timeout counts, cluster rates, unique failure
-signatures, and regressions. These metrics measure test progress, not the
-percentage of the Node API surface.
+## CI
 
-## Runtime boundary
-
-`quench-node` uses `rquickjs` as its JavaScript engine and Rust host boundary.
-There is no `quench-runtime` crate in this repository, and compatibility work
-must not add or restore one. Keep engine integration in the `quench-node` crate
-and API behavior in the JavaScript polyfills.
+fmt → clippy → build → integration tests → test262 stages in parallel.
 
 ## License
 
