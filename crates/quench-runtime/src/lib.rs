@@ -141,6 +141,19 @@ mod tests {
     }
 
     #[test]
+    fn context_exposes_owned_ir_parsing() {
+        let ctx = Context::new().unwrap();
+        let ir = ctx.parse_ir("1 + 2").unwrap();
+        assert_eq!(ir.statement_count(), 1);
+        assert_eq!(
+            ctx.parse_module_ir("export default 1;")
+                .unwrap()
+                .statement_count(),
+            1
+        );
+    }
+
+    #[test]
     fn test_context_eval_boolean() {
         let mut ctx = Context::new().unwrap();
         assert_eq!(ctx.eval("true").unwrap(), Value::Boolean(true));
