@@ -196,3 +196,9 @@ fn discovers_js_files_recursively_in_sorted_order() {
         vec![dir.path().join("nested/a.js"), dir.path().join("z.js")]
     );
 }
+
+#[test]
+fn standalone_runner_exposes_only_host_facing_execution() {
+    let mut runner = Test262Runner::new(Probe);
+    assert_eq!(runner.run_script("pass"), TestOutcome::Pass);
+}

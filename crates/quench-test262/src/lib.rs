@@ -113,10 +113,7 @@ pub fn discover_js_files<P: AsRef<Path>>(root: P) -> Result<Vec<std::path::PathB
     Ok(files)
 }
 
-fn collect_js_files(
-    directory: &Path,
-    files: &mut Vec<std::path::PathBuf>,
-) -> Result<(), String> {
+fn collect_js_files(directory: &Path, files: &mut Vec<std::path::PathBuf>) -> Result<(), String> {
     for entry in std::fs::read_dir(directory)
         .map_err(|error| format!("test262 directory read failed: {error}"))?
     {
