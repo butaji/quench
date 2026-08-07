@@ -14,10 +14,10 @@ cargo build -p quench-runtime
 cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
 ```
 
-## test262 Runner — 93 stages, no skips, no checkpoints
+## test262 Runner — staged, no skips, no checkpoints
 
 Stages live in `crates/quench-runtime/src/test262/runner.rs::STAGES` and
-mirror `tasks/index.json`. Each stage runs to **100% passing** before
+mirror `tasks/index.json` (the authoritative stage list and status). Each stage runs to **100% passing** before
 the next is touched. Only `test/intl402` (ECMA-402, separate suite) and
 `test/staging` (pre-draft) are out of scope.
 
