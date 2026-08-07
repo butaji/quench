@@ -31,6 +31,7 @@
 - Stage-44 performance path is implemented in runner logic, and unit tests for available Rust targets pass.
 - Remaining work is to run and compare staged metrics after these changes (`TEST262_METRICS=1`) on a native runner.
 - Status note: a probing run with `test262-harness` shows current harness host path (`target/debug/quench-cli`) is not Node-compatible (`ReferenceError: require is not defined`), so full test262 stage validation is currently blocked until the suite runner/host wiring is restored for this workspace.
+- 2026-08-07: Workspace/history audit confirmed there is no configured Test262 package or command to restore: `Cargo.toml` contains only `quench-node`, and commit `909c9363` intentionally removed the former Test262 runtime workspace. `AGENTS.md` prohibits restoring that architecture, so the required follow-up is a new adapter over `quench-node`, not reactivation of the orphaned `crates/quench-test262` fragments.
 - 2026-08-07: Ran Stage 44 (`test/language/expressions`) in digest mode with `TEST262_DIGEST=1 TEST262_METRICS=1`.
   - Stage: 44
   - Tests: 11,101
