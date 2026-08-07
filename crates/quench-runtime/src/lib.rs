@@ -95,7 +95,14 @@ mod tests {
                 Ok(Value::Number(84.0))
             }
         }
-        impl crate::runtime::Exceptions for Exceptions {}
+        impl crate::runtime::Exceptions for Exceptions {
+            fn complete(
+                &mut self,
+                result: Result<Value, crate::JsError>,
+            ) -> Result<Value, crate::JsError> {
+                result
+            }
+        }
         impl crate::runtime::Environments for Environments {}
 
         let mut runtime = crate::Runtime::<
