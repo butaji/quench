@@ -1,204 +1,28 @@
 # AGENTS.md
 
-Do TDD. Dont do debug code. Dont do debug prints. Never guess — write a
-failing unit test first, every time.
-
-Unit tests exist to get us to 100% test262 faster, not to duplicate it.
-test262 (50k+ cases, run per stage) is the conformance gate for all
-JS-observable spec behavior — **never replicate a test262 assertion as
-a unit test**. A unit test is admitted in exactly three categories:
-
-1. **Reproducers** — every bug, failing test262 case, or behavior
-   change enters via one failing `#[test]` asserting the exact
-   behavior, written before any production change and left in after.
-2. **Core invariants test262 cannot observe** — panic-freedom of
-   builtins, realm/`Context::reset` hygiene, `%ops%` semantics,
-   storage/key identity, soundness holes (e.g. `FROZEN_OBJECTS`).
-3. **Refactor pins** — behavior locked with a test before a delete,
-   move, or storage/prototype migration (R0–R16).
-
-No coverage-for-coverage's-sake: if test262 already checks the
-behavior byte-for-byte, the stage run is the test. Test code is LOC
-too — every test must earn its maintenance cost against the
-minimum-LOC goal.
-
-Quench — JavaScript runtime targeting **100% test262 conformance**,
-staged to 100% per stage, with the **minimum possible LOC** as a
-**small Rust core** plus a **self-hosted JS builtins layer**. Single
-crate: `crates/quench-runtime`. Never modify `tests/test262`.
-
-- `docs/architecture.md` — the Rust↔JS split, `%ops%` contract, bootstrap order.
-- `tasks/refactor-plan.md` — active queue (R0 self-hosting pivot → R17).
-- `tasks/10-ways-to-speed-up.md` — speed strategy (S1–S7); the plan above serves it.
-- `tasks/index.json` — 122 test262 stages with per-stage test counts; each runs to 100% before advancing.
+1. **Goal**: 100% test262 conformance, one stage at a time (122 stages, see `tasks/index.json`), with the minimum possible LOC.
+2. **Architecture**: small Rust core (`crates/quench-runtime`) plus self-hosted JS builtins (`builtins/*.js`) that only call `%ops%`; everything that can be implemented in JS **must** be implemented in JS on top of the Rust core; details in `docs/architecture.md`.
+3. **Never modify** `tests/test262/` or `tests/test262.rs`; `test/intl402` and `test/staging` are out of scope.
+4. **TDD for the Rust core**: every core change enters via a failing `#[test]` written before any production code; no debugging, no `println!`, no guessing, no speculative edits.
+5. **Unit tests live only in the Rust core** — regression guards for complicated issues (bug reproducers, core invariants test262 cannot observe, refactor pins); never replicate a test262 assertion as a unit test.
+6. **Fix workflow**: run test262 stages in batch and fix families of related failures, not single cases; a Rust-core fix is reproduce → watch fail → minimal fix → re-run test and stage → leave the test in; JS-builtin fixes are gated by the stage run alone.
+7. **Linter is law**: zero clippy warnings (`-D warnings` is set); every `*.rs`, `*.ts`, `*.js` file in this repo: max 500 lines/file, 40 lines/function, cognitive complexity ≤ 10; no `#[allow]` exceptions.
+8. **One canonical spec-op path**: `ToPrimitive`, `IsCallable`, `SameValueZero`, etc. live only in `src/eval/ops.rs`, exposed to JS as `%ops%`; grep before writing any helper.
+9. **Prefer crates over hand-rolling** (`regress`, `chrono`, `num-bigint`, `serde_json`, `urlencoding`, `oxc`); a new crate needs a `docs/DEPENDENCIES.md` row in the same diff.
+10. **Zero duplication, zero dead code, no speculative generality**: hoist repeated logic to `value/` or `eval/ops.rs`; delete unused symbols, fields, and variants in the same PR.
+11. **Builtins throw, never panic**: use `value::error::throw_type_error(msg)`; `panic!`/`unwrap()`/`expect()` are forbidden in `builtins/` and `eval/`.
+12. **Verify before done**: unit test green, module suite green, test262 stage green, `cargo fmt` + `cargo clippy -p quench-runtime --all-targets` clean.
+13. **Conventions**: symbol payloads are raw `desc\0id` strings used directly as property keys; boxed primitives live in a `_value` property; strictness is captured at definition site; accessors via `Object::define_accessor`; `CURRENT_CONTEXT` is a thread-local raw pointer during eval.
+14. **Progress SSOT is the test262 run**: never record pass/fail counts, pass rates, or test totals in `docs/` or `tasks/*.md`; run the stage to know where you stand. `tasks/index.json` holds only stage identity and workflow status (`status`, `current_stage`), updated by `tools/advance-stage.sh` from actual runs.
 
 ## Commands
 
 ```bash
 cargo build -p quench-runtime
 cargo test -p quench-runtime
-cargo fmt -p quench-runtime
 cargo clippy -p quench-runtime --all-targets
 
-# Diagnostic tools (see docs/tools.md)
-cargo run --bin run-test -- <test.js>        # single-test runner with metadata
-TEST262_DIGEST=1 TEST262_STAGE=N cargo test   # collect ALL failures, grouped by error
-bash tools/run-each.sh                        # process-isolated (survives crashes)
-
-# Run current stage (see tasks/index.json `current_stage`)
+# Run current stage (TEST262_STAGE=N for a specific one, ALL_STAGES=1 for all)
 cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
-# Specific stage
-TEST262_STAGE=N cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
-# All stages in order, stop on first failure
-ALL_STAGES=1 cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
+# Diagnostics: cargo run --bin run-test -- <test.js>; TEST262_DIGEST=1 for grouped failures
 ```
-
-122 stages. No checkpoints. No skips. `src/test262/runner.rs::STAGES` mirrors
-`tasks/index.json`. `test/intl402` (ECMA-402) and `test/staging` are
-out of scope.
-
-## Linter — enforced, no exceptions
-
-`.cargo/config.toml` sets `-D warnings` (warnings fail the build).
-`.clippy.toml` sets the hard limits:
-
-- **500 lines per file** (`too-many-lines-threshold`). Split the file
-  before merging if it crosses 500.
-- **40 lines per function** (`too-many-lines-threshold` on functions).
-  Extract a helper before merging if a function crosses 40.
-- **cognitive complexity ≤ 10** (`cognitive-complexity-threshold`).
-  Simplify or extract before merging if it crosses 10.
-- **≤ 3 boolean params** (`max-fn-params-bools`). Refactor to a flags
-  struct or two functions.
-- **zero clippy warnings**. `cargo clippy -p quench-runtime --all-targets`
-  must print nothing. `-A warnings` anywhere in the repo is a bug.
-
-A diff that lands a file > 500 lines, a function > 40 lines, a function
-with complexity > 10, or any clippy warning is rejected at review — no
-`#[allow(...)]` exceptions, no deferral to "next refactor". The
-refactor-plan splits (e.g. R12 for `eval/object.rs`) exist to bring
-existing offenders under these limits.
-
-## Workflow — unit tests, not guesswork (enforced, no exceptions)
-
-**You do not debug. You do not guess. You write a failing unit test
-first. Every. Single. Time. No exceptions.** A failing test262 case, a
-bug, a new builtin, a parser change — all enter the codebase through
-the same gate: a `#[test]` that asserts the exact behavior, committed
-*before* any production change. If you cannot express it as a unit
-test, you do not understand it yet and are not allowed to touch
-production code.
-
-Forbidden: `println!`/`dbg!` archaeology; reading code until it "looks
-wrong" and patching; speculative "let me try this" edits; opportunistic
-refactors; skipping the failing-test step "just this once"; editing
-`tests/test262.rs` or anything under `tests/test262/`.
-
-Cycle (in order):
-
-1. **Reproduce** — `#[test]` in the relevant module's `mod tests` (or
-   `crates/quench-runtime/tests/`) asserting the exact behavior. Mirror
-   `src/eval/string_methods.rs`, `src/builtins/map.rs`. For JS builtins
-   the test lives in Rust and wraps the JS via `Context::eval`.
-2. **Watch it fail** — `cargo test -p quench-runtime <name>` fails with
-   the same symptom as the test262 case. If not, delete the test; you
-   do not understand the bug yet.
-3. **Fix** — minimal change to `src/` or `builtins/*.js` or
-   `eval/ops.rs`. Nothing else.
-4. **Verify** — re-run unit test, the module's suite, then the relevant
-   test262 stage. `cargo fmt` + `cargo clippy --all-targets` clean.
-   Linter warnings block the fix from being "done".
-5. **Leave the test in.**
-
-test262 output signals *what* to test; the reproduction lives as a
-unit test next to the code. The conformance run in `tests/test262.rs`
-is never edited. Every test written here must fit one of the three
-admitted categories at the top of this file — reproducer,
-core-invariant, or refactor pin.
-
-## Minimum-LOC rules
-
-Total LOC across the Rust core *and* JS builtins is what we minimize —
-not per-PR diffs. Two compounding levers:
-
-1. **Small Rust core.** Parser/lower/eval/value/env/context + a handful
-   of crate-backed primitives in `builtins/core/`. Every pure spec
-   algorithm on top of `%ops%` is authored in JS (`builtins/*.js`). JS
-   is ~1/3 the LOC of equivalent Rust; that is the entire reason the
-   split exists.
-2. **One canonical spec-op path.** `ToPrimitive`, `ToPropertyKey`,
-   `ToObject`, `IteratorNext`, `IteratorClose`,
-   `CreateDataPropertyOrThrow`, `OrdinaryHasProperty`, `IsCallable`,
-   `SameValueZero`, … live in exactly one place: `src/eval/ops.rs`,
-   exposed to JS as a frozen `%ops%` object. Every builtin (Rust or
-   JS) and every eval node routes through them. Before writing any
-   `to_*` / `same_value*` / `is_callable` / `native_fn` / `iterator_*`
-   helper, grep `src/eval/ops.rs`. Use it if it exists; add it there
-   (with a failing test) if it doesn't.
-
-Strategic rules:
-
-- **One iterator protocol.** `%IteratorPrototype%` once; Array / String
-  / RegExp / Map / Set iterators and `%GeneratorPrototype%` inherit via
-  the prototype chain. No eager materialization — stream via
-  `iterator_next` / `iterator_step` / `iterator_close`.
-- **Prefer a crate over hand-rolling.** Confirmed in `docs/DEPENDENCIES.md`:
-  `regress`, `chrono`, `num-bigint`, `serde_json`, `urlencoding`, `oxc`.
-  A hand-rolled copy — including a thinly-disguised `chrono_*` helper
-  that never imports `chrono` — is forbidden. A new crate needs a
-  `docs/DEPENDENCIES.md` row in the same diff.
-- **Share intrinsic prototypes across realms.** `ThrowTypeError`,
-  `%IteratorPrototype%`, intrinsic error constructors — wire once onto a
-  `Realm`, clone per `Context::new`. `Context::reset` clears *every*
-  thread-local proto pointer consistently (ideally zero — they live on
-  `Realm`).
-- **No speculative generality.** No slots, flags, hooks, enum variants,
-  vtables, or storage maps that no current stage exercises. Cost now,
-  drift later. If a refactor scaffolds something with zero call sites,
-  it's deleted in the same PR.
-- **Zero duplication.** `grep -R` before defining any symbol. Two
-  structurally identical `fn`s across files must be hoisted to `value/`
-  or `eval/ops.rs` in the same PR, with a unit test for the hoisted
-  version. "I only need it in one file" is not a reason to private-copy
-  a spec op.
-- **Dead code is a bug.** A `pub fn` with zero callers outside its
-  module is deleted. An `enum` variant constructed nowhere is deleted
-  in the same PR that notices. A struct field written but never read is
-  deleted in the same PR. `#[allow(dead_code)]` is a `TODO(delete)`
-  marker — a diff that adds one without deleting the symbol in the same
-  diff is rejected. Fixture: `cargo test` + `cargo clippy --all-targets`
-  clean; `cargo +nightly udeps` or `grep` across `src/`.
-- **Builtins throw, never panic.** `JsError::from("TypeError: …")` and
-  `panic!`/`unwrap()`/`expect()` in `builtins/` or `eval/` are forbidden
-  (`unreachable!` in spec-impossible pattern arms is allowed; `tests/`
-  can panic). Use `value::error::throw_type_error(msg) -> JsError`
-  (one-line helper performing `create_js_error_with_type` +
-  `set_thrown_value`).
-
-Before landing a builtin, ask: "could this be 3 fewer lines by calling
-an existing spec op?" If yes, do that; if the op doesn't exist yet,
-extract it (with a test) and reuse it. New spec-op extractions go into
-`tasks/refactor-plan.md` if they don't fit an existing Rn.
-
-## Conventions
-
-- **Self-hosted builtins** live as JS in `builtins/*.js`, embedded via
-  `include_str!`, parsed once per realm by `builtins/bootstrap.rs`.
-  They never reach into `Object` storage directly — they call `%ops%`.
-  New op: `eval/ops.rs` + failing test → `%ops%` property → JS callsite.
-- **Crate-backed primitives** (regress / chrono / num-bigint /
-  serde_json / urlencoding) live in `builtins/core/` as small Rust
-  fns; the `.prototype.*` and constructor wiring is JS.
-- **Symbols**: `Value::Symbol` payload is raw `desc\0id` string; used
-  as a property key directly.
-- **Boxed primitives**: stored via `builtins::object::set_boxed_value`
-  as `_value` property.
-- **Function strictness** captured at definition, never inherited from
-  call site. Class bodies are always strict.
-- **Accessor properties**: use `Object::define_accessor`;
-  `GetterStorage.func` takes precedence.
-- **`CURRENT_CONTEXT`** (`context/mod.rs`): `thread_local` raw pointer
-  set for the duration of eval.
-- New Rust primitives in `builtins/mod.rs::register_builtins`; JS
-  builtins in `builtins/bootstrap.rs` in dependency order
-  (see `docs/architecture.md`).

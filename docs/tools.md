@@ -69,14 +69,14 @@ ALL_STAGES=1 TEST262_DIGEST=1 cargo test -p quench-runtime --test test262
 Output shows groups like:
 ```
 ────────────────────────────────────────────
-  JsError("ReferenceError: $DONE is not defined")  (288 tests)
+  JsError("ReferenceError: $DONE is not defined")  (N tests)
 ────────────────────────────────────────────
 ────────────────────────────────────────────
-  JsError("Test262Error: Expected ReferenceError to be thrown...")  (42 tests)
+  JsError("Test262Error: Expected ReferenceError to be thrown...")  (M tests)
 ────────────────────────────────────────────
 ```
 
-Fix the most numerous group first for maximum impact. The `$DONE` fix above unlocked 144 tests.
+Fix the most numerous group first for maximum impact — a single root-cause fix (like the `$DONE` one above) typically unlocks many tests at once.
 
 ### 3. `TEST262_QUICK=1` — Quick Summary Mode
 
@@ -104,7 +104,7 @@ TEST262_STAGE=16 bash tools/run-each.sh
 
 ### 6. `tools/digest-all.sh` — Master Report
 
-Runs digest on ALL 122 stages sequentially and produces a markdown report at `tasks/digest-report.md`. Stages that crash are noted separately.
+Runs digest on ALL stages (see `tasks/index.json`) sequentially and produces a markdown report at `tasks/digest-report.md`. Stages that crash are noted separately.
 
 ```bash
 bash tools/digest-all.sh
@@ -112,7 +112,7 @@ bash tools/digest-all.sh
 
 ### 7. `tools/stage-status.sh` — Stage Overview
 
-Shows all 122 stages with their status, test counts, and overall progress percentage.
+Shows all stages (see `tasks/index.json`) with their status, test counts, and overall progress percentage.
 
 ```bash
 bash tools/stage-status.sh
@@ -141,7 +141,7 @@ Every test has a 10-second timeout. Tests that hang are reported as "Must be opt
    ```bash
    TEST262_STAGE=16 TEST262_DIGEST=1 cargo test
    ```
-2. Identify the largest failure group (e.g., "42 tests: Expected ReferenceError")
+2. Identify the largest failure group (e.g., "N tests: Expected ReferenceError")
 3. Fix the root cause (one fix may unlock 10-100+ tests)
 4. Re-run digest to confirm improvement
 5. When stage reaches 100%, auto-advance:
