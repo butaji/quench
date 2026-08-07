@@ -5,12 +5,14 @@ const moduleApi = require("module");
 
 assert.strictEqual(Array.isArray(moduleApi.builtinModules), true);
 assert.strictEqual(moduleApi.builtinModules.length > 0, true);
-for (const name of [
-  "isBuiltin",
-  "createRequire",
-  "findSourceMap",
-  "syncBuiltinESMExports"
-]) {
+for (
+  const name of [
+    "isBuiltin",
+    "createRequire",
+    "findSourceMap",
+    "syncBuiltinESMExports",
+  ]
+) {
   assert.strictEqual(typeof moduleApi[name], "function");
 }
 assert.strictEqual(moduleApi.isBuiltin("fs"), true);

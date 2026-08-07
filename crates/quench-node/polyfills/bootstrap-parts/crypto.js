@@ -6,14 +6,14 @@ const __nodeCryptoValidatePbkdf2Types = (password, salt) => {
       value instanceof SharedArrayBuffer);
   if (typeof password !== "string" && !isBinary(password)) {
     const error = new TypeError(
-      'The "password" argument must be of type string or an instance of Buffer'
+      'The "password" argument must be of type string or an instance of Buffer',
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
   if (typeof salt !== "string" && !isBinary(salt)) {
     const error = new TypeError(
-      'The "salt" argument must be of type string or an instance of Buffer'
+      'The "salt" argument must be of type string or an instance of Buffer',
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -33,7 +33,9 @@ const __nodeCryptoNumberReceived = (value) => {
 const __nodeCryptoValidatePbkdf2Numbers = (iterations, keylen) => {
   if (typeof iterations !== "number") {
     const error = new TypeError(
-      `The "iterations" argument must be of type number.${__nodeCryptoNumberReceived(iterations)}`
+      `The "iterations" argument must be of type number.${
+        __nodeCryptoNumberReceived(iterations)
+      }`,
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -49,14 +51,16 @@ const __nodeCryptoValidatePbkdf2Numbers = (iterations, keylen) => {
   }
   if (typeof keylen !== "number") {
     const error = new TypeError(
-      `The "keylen" argument must be of type number.${__nodeCryptoKeylenReceived(keylen)}`
+      `The "keylen" argument must be of type number.${
+        __nodeCryptoKeylenReceived(keylen)
+      }`,
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
   if (!Number.isInteger(keylen) || keylen < 0 || keylen > 0x7fffffff) {
     const error = new RangeError(
-      `The value of "keylen" is out of range. It must be an integer. Received ${keylen}`
+      `The value of "keylen" is out of range. It must be an integer. Received ${keylen}`,
     );
     error.code = "ERR_OUT_OF_RANGE";
     throw error;
@@ -64,14 +68,13 @@ const __nodeCryptoValidatePbkdf2Numbers = (iterations, keylen) => {
 };
 const __nodeCryptoValidatePbkdf2Digest = (digest) => {
   if (typeof digest !== "string") {
-    const received =
-      digest === undefined
-        ? "undefined"
-        : digest === null
-          ? "null"
-          : typeof digest;
+    const received = digest === undefined
+      ? "undefined"
+      : digest === null
+      ? "null"
+      : typeof digest;
     const error = new TypeError(
-      `The "digest" argument must be of type string. Received ${received}`
+      `The "digest" argument must be of type string. Received ${received}`,
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -87,7 +90,7 @@ const __nodeCryptoValidatePbkdf2 = (
   salt,
   iterations,
   keylen,
-  digest
+  digest,
 ) => {
   __nodeCryptoValidatePbkdf2Types(password, salt);
   __nodeCryptoValidatePbkdf2Numbers(iterations, keylen);
@@ -99,8 +102,9 @@ const __nodeCryptoPbkdf2Bytes = (value) => {
   if (
     typeof SharedArrayBuffer !== "undefined" &&
     value instanceof SharedArrayBuffer
-  )
+  ) {
     return new Uint8Array(value);
+  }
   return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
 };
 const __nodeCryptoHashCopy = (algorithm, chunks) => {
@@ -109,14 +113,14 @@ const __nodeCryptoHashCopy = (algorithm, chunks) => {
   return clone;
 };
 const __nodeCryptoHmacPads = (algorithm, key) => {
-  let keyBytes =
-    typeof key === "string"
-      ? new NodeTextEncoder().encode(key)
-      : NodeBuffer.from(key);
-  if (keyBytes.length > 64)
+  let keyBytes = typeof key === "string"
+    ? new NodeTextEncoder().encode(key)
+    : NodeBuffer.from(key);
+  if (keyBytes.length > 64) {
     keyBytes = NodeBuffer.from(
-      globalThis.__quench_digest_bytes(algorithm, Array.from(keyBytes))
+      globalThis.__quench_digest_bytes(algorithm, Array.from(keyBytes)),
     );
+  }
   const padded = NodeBuffer.alloc(64);
   padded.set(keyBytes);
   const inner = new NodeBuffer(64);
@@ -127,29 +131,31 @@ const __nodeCryptoHmacPads = (algorithm, key) => {
   }
   return { keyBytes, inner, outer };
 };
+globalThis.__nodeCryptoInitialized = false;
 const __nodeCryptoApi = {
-  getHashes: () => ["RSA-SHA1", "sha1", "sha256"],
+  getHashes: () => ["sha1", "RSA-SHA1", "sha256"],
   getCiphers: () => ["aes-128-cbc"],
   getCipherInfo: __nodeCryptoCipherInfo,
   getCurves: () => ["secp384r1"],
   timingSafeEqual: (left, right) => {
     if (!(left instanceof Uint8Array) || !(right instanceof Uint8Array)) {
       const error = new TypeError(
-        'The "buf1" and "buf2" arguments must be instances of Buffer or Uint8Array'
+        'The "buf1" and "buf2" arguments must be instances of Buffer or Uint8Array',
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
     if (left.length !== right.length) {
       const error = new RangeError(
-        "Input buffers must have the same byte length"
+        "Input buffers must have the same byte length",
       );
       error.code = "ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH";
       throw error;
     }
     let difference = 0;
-    for (let index = 0; index < left.length; index++)
+    for (let index = 0; index < left.length; index++) {
       difference |= left[index] ^ right[index];
+    }
     return difference === 0;
   },
   randomInt: (minimum = 0, maximum, callback) => {
@@ -157,10 +163,11 @@ const __nodeCryptoApi = {
     ({ minimum, maximum, callback } = __nodeCryptoRandomArguments(
       minimum,
       maximum,
-      callback
+      callback,
     ));
-    if (callback !== undefined && typeof callback !== "function")
+    if (callback !== undefined && typeof callback !== "function") {
       throw globalThis.__nodeCryptoRandomCallbackError();
+    }
     if (!Number.isSafeInteger(minimum) || !Number.isSafeInteger(maximum)) {
       const error = globalThis.__nodeCryptoRandomIntegerError(minimum, maximum);
       error.code = "ERR_INVALID_ARG_TYPE";
@@ -169,7 +176,7 @@ const __nodeCryptoApi = {
     const rangeError = globalThis.__nodeCryptoRandomIntegerRangeError(
       minimum,
       maximum,
-      oneArgument
+      oneArgument,
     );
     if (rangeError) throw rangeError;
     const range = maximum - minimum;
@@ -198,21 +205,22 @@ const __nodeCryptoApi = {
     }
     if (callback !== undefined && typeof callback !== "function") {
       const error = new TypeError(
-        'The "callback" argument must be of type function'
+        'The "callback" argument must be of type function',
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
     const output = NodeBuffer.from(globalThis.__quench_random_bytes(size));
-    if (typeof callback === "function")
+    if (typeof callback === "function") {
       queueMicrotask(() => callback(null, output));
+    }
     return output;
   },
   pseudoRandomBytes: (...args) => __nodeCryptoRandomBytes(...args),
   randomFillSync: (buffer, offset = 0, size = buffer.length - offset) => {
     if (!ArrayBuffer.isView(buffer)) {
       const error = new TypeError(
-        'The "buffer" argument must be an instance of ArrayBufferView'
+        'The "buffer" argument must be an instance of ArrayBufferView',
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
@@ -241,13 +249,14 @@ const __nodeCryptoApi = {
       callback = size;
       size = buffer.length - (offset || 0);
     }
-    if (typeof callback !== "function")
+    if (typeof callback !== "function") {
       throw new TypeError('The "callback" argument must be of type function');
+    }
     try {
       const result = globalThis.__nodeCrypto.randomFillSync(
         buffer,
         offset || 0,
-        size === undefined ? buffer.length - (offset || 0) : size
+        size === undefined ? buffer.length - (offset || 0) : size,
       );
       queueMicrotask(() => callback(null, result));
     } catch (error) {
@@ -256,37 +265,14 @@ const __nodeCryptoApi = {
   },
   pbkdf2Sync: (password, salt, iterations, keylen, digest) => {
     __nodeCryptoValidatePbkdf2(password, salt, iterations, keylen, digest);
-    const passwordBytes = __nodeCryptoPbkdf2Bytes(password);
-    const saltBytes = __nodeCryptoPbkdf2Bytes(salt);
-    const output = [];
-    const blocks = Math.ceil(keylen / 32);
-    for (let block = 1; block <= blocks; block++) {
-      const suffix = [
-        (block >>> 24) & 255,
-        (block >>> 16) & 255,
-        (block >>> 8) & 255,
-        block & 255
-      ];
-      let u = NodeBuffer.from(
-        globalThis.__nodeCrypto
-          .createHmac("sha256", passwordBytes)
-          .update(NodeBuffer.from([...saltBytes, ...suffix]))
-          .digest()
-      );
-      const result = Array.from(u);
-      for (let count = 1; count < iterations; count++) {
-        u = NodeBuffer.from(
-          globalThis.__nodeCrypto
-            .createHmac("sha256", passwordBytes)
-            .update(u)
-            .digest()
-        );
-        for (let index = 0; index < result.length; index++)
-          result[index] ^= u[index];
-      }
-      output.push(...result);
-    }
-    return NodeBuffer.from(output.slice(0, keylen));
+    return NodeBuffer.from(
+      __quench_pbkdf2_bytes(
+        Array.from(__nodeCryptoPbkdf2Bytes(password)),
+        Array.from(__nodeCryptoPbkdf2Bytes(salt)),
+        iterations,
+        keylen,
+      ),
+    );
   },
   pbkdf2: (password, salt, iterations, keylen, digest, callback) => {
     if (typeof digest === "function") {
@@ -295,7 +281,7 @@ const __nodeCryptoApi = {
     }
     if (typeof callback !== "function") {
       const error = new TypeError(
-        'The "callback" argument must be of type function'
+        'The "callback" argument must be of type function',
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
@@ -308,7 +294,7 @@ const __nodeCryptoApi = {
         salt,
         iterations,
         keylen,
-        digest
+        digest,
       );
     } catch (error) {
       queueMicrotask(() => callback(error));
@@ -321,18 +307,43 @@ const __nodeCryptoApi = {
     if (typeof algorithm !== "string") {
       throw Object.assign(
         new TypeError(
-          `The "algorithm" argument must be of type string. Received ${algorithm}`
+          `The "algorithm" argument must be of type string. Received ${algorithm}`,
         ),
-        { code: "ERR_INVALID_ARG_TYPE" }
+        { code: "ERR_INVALID_ARG_TYPE" },
       );
     }
     // prettier-ignore
-    const normalized = algorithm.toLowerCase(), isXof = normalized.startsWith("shake");
+    const normalized = algorithm.toLowerCase(),
+      isXof = normalized.startsWith("shake");
     const digestName = normalized === "rsa-sha1" ? "sha1" : normalized;
     // prettier-ignore
-    if (!isXof && options?.outputLength !== undefined && !(normalized === "sha224" && options.outputLength === 28)) { if (typeof options.outputLength !== "number") throw Object.assign(new TypeError("The outputLength option must be a number"), { code: "ERR_INVALID_ARG_TYPE" }); throw Object.assign(options.outputLength === 28 ? new Error("not XOF or invalid length") : new RangeError("outputLength is out of range"), { code: options.outputLength === 28 ? "ERR_OSSL_EVP_NOT_XOF_OR_INVALID_LENGTH" : "ERR_OUT_OF_RANGE" }); }
+    if (
+      !isXof && options?.outputLength !== undefined &&
+      !(normalized === "sha224" && options.outputLength === 28)
+    ) {
+      if (typeof options.outputLength !== "number") {
+        throw Object.assign(
+          new TypeError("The outputLength option must be a number"),
+          { code: "ERR_INVALID_ARG_TYPE" },
+        );
+      }
+      throw Object.assign(
+        options.outputLength === 28
+          ? new Error("not XOF or invalid length")
+          : new RangeError("outputLength is out of range"),
+        {
+          code: options.outputLength === 28
+            ? "ERR_OSSL_EVP_NOT_XOF_OR_INVALID_LENGTH"
+            : "ERR_OUT_OF_RANGE",
+        },
+      );
+    }
     // prettier-ignore
-    if (isXof && (!options || typeof options.outputLength !== "number")) throw Object.assign(new Error("not XOF or invalid length"), { code: "ERR_OSSL_EVP_NOT_XOF_OR_INVALID_LENGTH" });
+    if (isXof && (!options || typeof options.outputLength !== "number")) {
+      throw Object.assign(new Error("not XOF or invalid length"), {
+        code: "ERR_OSSL_EVP_NOT_XOF_OR_INVALID_LENGTH",
+      });
+    }
     if (
       !isXof &&
       !["sha1", "sha224", "sha256", "sha512", "md5"].includes(digestName)
@@ -352,24 +363,30 @@ const __nodeCryptoApi = {
         __nodeCryptoAssertDigestOpen(finalized);
         if (value === undefined) {
           // prettier-ignore
-          throw Object.assign(new TypeError("The data argument must be of type string or an instance of Buffer"), { code: "ERR_INVALID_ARG_TYPE" });
+          throw Object.assign(
+            new TypeError(
+              "The data argument must be of type string or an instance of Buffer",
+            ),
+            { code: "ERR_INVALID_ARG_TYPE" },
+          );
         }
         if (typeof value === "string") {
           __nodeCryptoValidateStringEncoding(value, encoding);
           chunks.push(NodeBuffer.from(value, encoding || "utf8"));
         } else if (value instanceof Uint8Array) chunks.push(value);
-        else
+        else {
           throw Object.assign(
             new TypeError(
-              "The data argument must be of type string or an instance of Buffer"
+              "The data argument must be of type string or an instance of Buffer",
             ),
-            { code: "ERR_INVALID_ARG_TYPE" }
+            { code: "ERR_INVALID_ARG_TYPE" },
           );
+        }
         return hash;
       },
       write: (value, encoding) => (
         hash.update(value, encoding || hash._writableState.defaultEncoding),
-        true
+          true
       ),
       end: (value, encoding) => {
         if (value !== undefined) hash.update(value, encoding);
@@ -387,29 +404,31 @@ const __nodeCryptoApi = {
         const bytes = NodeBuffer.from(
           isXof
             ? globalThis.__quench_shake_bytes(
-                digestName,
-                input,
-                options.outputLength
-              )
-            : globalThis.__quench_digest_bytes(digestName, input)
+              digestName,
+              input,
+              options.outputLength,
+            )
+            : globalThis.__quench_digest_bytes(digestName, input),
         );
         if (
           encoding === undefined ||
           encoding === null ||
           encoding === "buffer"
-        )
+        ) {
           return bytes;
+        }
         if (encoding === "hex") return bytes.toString("hex");
         if (encoding === "base64") return bytes.toString("base64");
         if (encoding === "latin1") return bytes.toString("latin1");
         if (
           ["utf8", "utf-8", "ucs2", "ucs-2", "utf16le", "utf-16le"].includes(
-            encoding
+            encoding,
           )
-        )
+        ) {
           return bytes.toString(encoding);
+        }
         throw Object.assign(new TypeError(`Unknown encoding: ${encoding}`), {
-          code: "ERR_UNKNOWN_ENCODING"
+          code: "ERR_UNKNOWN_ENCODING",
         });
       },
       copy: (copyOptions) => {
@@ -425,7 +444,7 @@ const __nodeCryptoApi = {
           return clone;
         }
         return __nodeCryptoHashCopy(normalized, chunks);
-      }
+      },
     };
     __nodeCryptoSetPrototype(hash, globalThis.__quenchHashConstructor);
     return hash;
@@ -435,8 +454,9 @@ const __nodeCryptoApi = {
   },
   // eslint-disable-next-line max-lines-per-function -- HMAC state methods share one object
   createHmac: (algorithm, key) => {
-    if (!["sha1", "sha256"].includes(algorithm))
+    if (!["sha1", "sha256"].includes(algorithm)) {
       throw new Error(`Unsupported hmac: ${algorithm}`);
+    }
     const { keyBytes, inner, outer } = __nodeCryptoHmacPads(algorithm, key);
     const chunks = [];
     let finalized = false;
@@ -461,7 +481,7 @@ const __nodeCryptoApi = {
           inner,
           outer,
           chunks,
-          encoding
+          encoding,
         );
       },
       copy: () => {
@@ -473,11 +493,11 @@ const __nodeCryptoApi = {
         const clone = globalThis.__nodeCrypto.createHmac(algorithm, keyBytes);
         for (const chunk of chunks) clone.update(chunk);
         return clone;
-      }
+      },
     };
     __nodeCryptoSetPrototype(hmac, globalThis.__quenchHmacConstructor);
     return hmac;
-  }
+  },
 };
 const __createNodeCrypto = () => __nodeCryptoApi;
 let __nodeCryptoInstance;
@@ -487,14 +507,15 @@ globalThis.__nodeCrypto = new Proxy(
     get: (_, key) => {
       __nodeCryptoInstance ||= __createNodeCrypto();
       // prettier-ignore
-      return __nodeCryptoInstance[key] || (key === "pseudoRandomBytes" && globalThis.__nodeCryptoRandomBytes);
+      return __nodeCryptoInstance[key] ||
+        (key === "pseudoRandomBytes" && globalThis.__nodeCryptoRandomBytes);
     },
     ownKeys: () =>
-      Reflect.ownKeys((__nodeCryptoInstance ||= __createNodeCrypto())),
+      Reflect.ownKeys(__nodeCryptoInstance ||= __createNodeCrypto()),
     getOwnPropertyDescriptor: (_, key) => ({
       enumerable: !["pseudoRandomBytes", "prng", "rng"].includes(key),
       configurable: true,
-      value: (__nodeCryptoInstance ||= __createNodeCrypto())[key]
-    })
-  }
+      value: (__nodeCryptoInstance ||= __createNodeCrypto())[key],
+    }),
+  },
 );

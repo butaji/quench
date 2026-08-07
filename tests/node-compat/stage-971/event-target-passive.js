@@ -6,7 +6,7 @@ target.addEventListener(
     event.preventDefault();
     passivePrevented = event.defaultPrevented;
   },
-  { passive: true }
+  { passive: true },
 );
 const passiveEvent = new Event("submit", { cancelable: true });
 if (target.dispatchEvent(passiveEvent) !== true) {
@@ -16,5 +16,6 @@ if (passivePrevented) throw new Error("Passive listener canceled the event");
 
 const activeEvent = new Event("submit", { cancelable: true });
 target.addEventListener("submit", (event) => event.preventDefault());
-if (target.dispatchEvent(activeEvent) !== false)
+if (target.dispatchEvent(activeEvent) !== false) {
   throw new Error("Active listener did not cancel the event");
+}

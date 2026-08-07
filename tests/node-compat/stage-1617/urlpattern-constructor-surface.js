@@ -6,7 +6,7 @@ assert.throws(() => new URLPattern(1), { code: "ERR_INVALID_ARG_TYPE" });
 const pattern = new URLPattern({
   protocol: "https",
   hostname: "example.com",
-  pathname: "/:id"
+  pathname: "/:id",
 });
 assert.strictEqual(pattern.protocol, "https");
 assert.strictEqual(pattern.hostname, "example.com");

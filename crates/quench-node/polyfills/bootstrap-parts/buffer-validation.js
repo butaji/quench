@@ -7,7 +7,7 @@ const __nodeBufferValidateIntegerValue = (value, min, max) => {
     value > max
   ) {
     const error = new RangeError(
-      `The value of "value" is out of range. It must be >= ${min} and <= ${max}. Received ${value}`
+      `The value of "value" is out of range. It must be >= ${min} and <= ${max}. Received ${value}`,
     );
     error.code = "ERR_OUT_OF_RANGE";
     throw error;
@@ -20,10 +20,11 @@ const __nodeBufferValidateDoubleOffset = (length, offset) => {
     throw error;
   }
   if (!Number.isInteger(offset)) {
-    const message =
-      Number.isNaN(offset) || Number.isFinite(offset)
-        ? `The value of "offset" is out of range. It must be an integer. Received ${offset}`
-        : `The value of "offset" is out of range. It must be >= 0 and <= ${length - 8}. Received ${offset}`;
+    const message = Number.isNaN(offset) || Number.isFinite(offset)
+      ? `The value of "offset" is out of range. It must be an integer. Received ${offset}`
+      : `The value of "offset" is out of range. It must be >= 0 and <= ${
+        length - 8
+      }. Received ${offset}`;
     const error = new RangeError(message);
     error.code = "ERR_OUT_OF_RANGE";
     throw error;
@@ -31,13 +32,15 @@ const __nodeBufferValidateDoubleOffset = (length, offset) => {
   if (offset < 0 || offset + 8 > length) {
     if (offset >= 0 && length < 8) {
       const error = new RangeError(
-        "Attempt to access memory outside buffer bounds"
+        "Attempt to access memory outside buffer bounds",
       );
       error.code = "ERR_BUFFER_OUT_OF_BOUNDS";
       throw error;
     }
     const error = new RangeError(
-      `The value of "offset" is out of range. It must be >= 0 and <= ${length - 8}. Received ${offset}`
+      `The value of "offset" is out of range. It must be >= 0 and <= ${
+        length - 8
+      }. Received ${offset}`,
     );
     error.code = "ERR_OUT_OF_RANGE";
     throw error;
@@ -47,8 +50,8 @@ const __nodeBufferSearchNeedle = (value, encoding) =>
   typeof value === "number"
     ? new Uint8Array([value & 0xff])
     : typeof value === "string"
-      ? NodeBuffer.from(value, encoding)
-      : value;
+    ? NodeBuffer.from(value, encoding)
+    : value;
 const __nodeBufferSearchStart = (length, offset) => {
   let start = Number(offset);
   if (Number.isNaN(start) || start === -Infinity) start = 0;
@@ -62,8 +65,9 @@ const __nodeBufferSearchMatch = (buffer, needle, start, step) => {
     index += step
   ) {
     let match = true;
-    for (let offset = 0; offset < needle.length; offset++)
+    for (let offset = 0; offset < needle.length; offset++) {
       if (buffer[index + offset] !== needle[offset]) match = false;
+    }
     if (match) return index;
   }
   return -1;
@@ -75,7 +79,9 @@ const __nodeBufferIncludesValidate = (value) => {
     !(value instanceof Uint8Array)
   ) {
     const error = new TypeError(
-      `The "value" argument must be one of type number or string or an instance of Buffer or Uint8Array.${__nodeBufferFromReceived(value)}`
+      `The "value" argument must be one of type number or string or an instance of Buffer or Uint8Array.${
+        __nodeBufferFromReceived(value)
+      }`,
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -87,15 +93,16 @@ const __nodeBufferWriteArguments = (offset, length, encoding) => {
   if (typeof offset === "string") {
     if (length !== undefined) {
       const error = new TypeError(
-        'The "offset" argument must be of type number'
+        'The "offset" argument must be of type number',
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
     return { offset: 0, length: undefined, encoding: offset };
   }
-  if (typeof length === "string")
+  if (typeof length === "string") {
     return { offset, length: undefined, encoding: length };
+  }
   return { offset, length, encoding };
 };
 const __nodeBufferWriteValidate = (buffer, offset, encoding) => {
@@ -111,7 +118,7 @@ const __nodeBufferWriteValidate = (buffer, offset, encoding) => {
     offset > buffer.length
   ) {
     const error = new RangeError(
-      `The value of "offset" is out of range. It must be >= 0 && <= ${buffer.length}. Received ${offset}`
+      `The value of "offset" is out of range. It must be >= 0 && <= ${buffer.length}. Received ${offset}`,
     );
     error.code = "ERR_OUT_OF_RANGE";
     throw error;
@@ -132,14 +139,14 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase02 {
     __nodeBufferIncludesValidate(value);
     let start = Number(byteOffset);
     if (Number.isNaN(start) || start === -Infinity) start = 0;
-    if (start === Infinity)
+    if (start === Infinity) {
       return (
         value === "" || (value instanceof Uint8Array && value.length === 0)
       );
-    start =
-      start < 0
-        ? Math.max(this.length + Math.trunc(start), 0)
-        : Math.trunc(start);
+    }
+    start = start < 0
+      ? Math.max(this.length + Math.trunc(start), 0)
+      : Math.trunc(start);
     if (__nodeBufferSearchAligned(encoding, start)) return false;
     const needle = __nodeBufferSearchNeedle(value, encoding);
     if (needle.length === 0) return true;
@@ -154,8 +161,9 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase02 {
     const needle = __nodeBufferSearchNeedle(value, encoding);
     const start = __nodeBufferSearchStart(this.length, byteOffset);
     if (__nodeBufferSearchAligned(encoding, start)) return -1;
-    if (start > this.length || start === Infinity)
+    if (start > this.length || start === Infinity) {
       return needle.length === 0 ? this.length : -1;
+    }
     if (needle.length === 0) return start;
     return __nodeBufferSearchMatch(this, needle, start, 1);
   }
@@ -167,15 +175,16 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase02 {
     }
     const needle = __nodeBufferSearchNeedle(value, encoding);
     let end = Number(byteOffset);
-    end =
-      Number.isNaN(end) || end === Infinity ? this.length - 1 : Math.trunc(end);
+    end = Number.isNaN(end) || end === Infinity
+      ? this.length - 1
+      : Math.trunc(end);
     if (end < 0) end = this.length + end;
     if (needle.length === 0) return Math.max(0, Math.min(end, this.length));
     return __nodeBufferSearchMatch(
       this,
       needle,
       Math.min(end, this.length - needle.length),
-      -1
+      -1,
     );
   }
 
@@ -183,14 +192,13 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase02 {
     ({ offset, length, encoding } = __nodeBufferWriteArguments(
       offset,
       length,
-      encoding
+      encoding,
     ));
     __nodeBufferWriteValidate(this, offset, encoding);
     const bytes = NodeBuffer.from(String(value), encoding);
-    const requested =
-      length === undefined
-        ? this.length - offset
-        : Math.max(0, Math.trunc(Number(length)) || 0);
+    const requested = length === undefined
+      ? this.length - offset
+      : Math.max(0, Math.trunc(Number(length)) || 0);
     let count = Math.min(requested, this.length - offset, bytes.length);
     const normalized = String(encoding).toLowerCase();
     count = __nodeBufferWriteUtf8Count(value, normalized, count);
@@ -200,8 +208,9 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase02 {
         normalized === "utf16le" ||
         normalized === "utf-16le") &&
       count % 2
-    )
+    ) {
       count--;
+    }
     this.set(bytes.subarray(0, count), offset);
     return count;
   }
@@ -219,7 +228,7 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase02 {
     new DataView(this.buffer, this.byteOffset, this.byteLength).setFloat64(
       offset,
       Number(value),
-      littleEndian
+      littleEndian,
     );
     return offset + 8;
   }
@@ -235,16 +244,17 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase02 {
   _readDouble(offset, littleEndian) {
     if (typeof offset !== "number") {
       const error = new TypeError(
-        'The "offset" argument must be of type number'
+        'The "offset" argument must be of type number',
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
     if (!Number.isInteger(offset)) {
-      const message =
-        Number.isNaN(offset) || Number.isFinite(offset)
-          ? `The value of "offset" is out of range. It must be an integer. Received ${offset}`
-          : `The value of "offset" is out of range. It must be >= 0 and <= ${this.length - 8}. Received ${offset}`;
+      const message = Number.isNaN(offset) || Number.isFinite(offset)
+        ? `The value of "offset" is out of range. It must be an integer. Received ${offset}`
+        : `The value of "offset" is out of range. It must be >= 0 and <= ${
+          this.length - 8
+        }. Received ${offset}`;
       const error = new RangeError(message);
       error.code = "ERR_OUT_OF_RANGE";
       throw error;
@@ -252,13 +262,15 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase02 {
     if (offset < 0 || offset + 8 > this.length) {
       if (offset >= 0 && this.length < 8) {
         const error = new RangeError(
-          "Attempt to access memory outside buffer bounds"
+          "Attempt to access memory outside buffer bounds",
         );
         error.code = "ERR_BUFFER_OUT_OF_BOUNDS";
         throw error;
       }
       const error = new RangeError(
-        `The value of "offset" is out of range. It must be >= 0 and <= ${this.length - 8}. Received ${offset}`
+        `The value of "offset" is out of range. It must be >= 0 and <= ${
+          this.length - 8
+        }. Received ${offset}`,
       );
       error.code = "ERR_OUT_OF_RANGE";
       throw error;
@@ -266,23 +278,22 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase02 {
     return new DataView(
       this.buffer,
       this.byteOffset,
-      this.byteLength
+      this.byteLength,
     ).getFloat64(offset, littleEndian);
   }
 
   _integerOffset(offset, size) {
     if (typeof offset !== "number") {
       const error = new TypeError(
-        'The "offset" argument must be of type number'
+        'The "offset" argument must be of type number',
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
     if (!Number.isInteger(offset)) {
-      const message =
-        Number.isNaN(offset) || Number.isFinite(offset)
-          ? `The value of "offset" is out of range. It must be an integer. Received ${offset}`
-          : 'The value of "offset" is out of range';
+      const message = Number.isNaN(offset) || Number.isFinite(offset)
+        ? `The value of "offset" is out of range. It must be an integer. Received ${offset}`
+        : 'The value of "offset" is out of range';
       const error = new RangeError(message);
       error.code = "ERR_OUT_OF_RANGE";
       throw error;
@@ -294,7 +305,7 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase02 {
     }
     if (offset + size > this.length) {
       const error = new RangeError(
-        "Attempt to access memory outside buffer bounds"
+        "Attempt to access memory outside buffer bounds",
       );
       error.code = "ERR_BUFFER_OUT_OF_BOUNDS";
       throw error;
@@ -305,35 +316,39 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase02 {
   _floatOffset(offset, size) {
     if (typeof offset !== "number") {
       const error = new TypeError(
-        'The "offset" argument must be of type number'
+        'The "offset" argument must be of type number',
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
     if (offset === Infinity || offset === -Infinity) {
       const error = new RangeError(
-        `The value of "offset" is out of range. It must be >= 0 and <= ${this.length - size}. Received ${offset}`
+        `The value of "offset" is out of range. It must be >= 0 and <= ${
+          this.length - size
+        }. Received ${offset}`,
       );
       error.code = "ERR_OUT_OF_RANGE";
       throw error;
     }
     if (!Number.isInteger(offset)) {
       const error = new RangeError(
-        `The value of "offset" is out of range. It must be an integer. Received ${offset}`
+        `The value of "offset" is out of range. It must be an integer. Received ${offset}`,
       );
       error.code = "ERR_OUT_OF_RANGE";
       throw error;
     }
     if (offset < 0 || (this.length >= size && offset + size > this.length)) {
       const error = new RangeError(
-        `The value of "offset" is out of range. It must be >= 0 and <= ${this.length - size}. Received ${offset}`
+        `The value of "offset" is out of range. It must be >= 0 and <= ${
+          this.length - size
+        }. Received ${offset}`,
       );
       error.code = "ERR_OUT_OF_RANGE";
       throw error;
     }
     if (this.length < size) {
       const error = new RangeError(
-        "Attempt to access memory outside buffer bounds"
+        "Attempt to access memory outside buffer bounds",
       );
       error.code = "ERR_BUFFER_OUT_OF_BOUNDS";
       throw error;
@@ -348,26 +363,29 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase02 {
     __nodeBufferValidateIntegerValue(value, min, max);
     const view = new DataView(this.buffer, this.byteOffset, this.byteLength);
     if (size === 1) view.setInt8(offset, value);
-    else if (size === 2)
+    else if (size === 2) {
       signed
         ? view.setInt16(offset, value, littleEndian)
         : view.setUint16(offset, value, littleEndian);
-    else
+    } else {
       signed
         ? view.setInt32(offset, value, littleEndian)
         : view.setUint32(offset, value, littleEndian);
+    }
     return offset + size;
   }
 
   _readInteger(offset, size, littleEndian, signed) {
     NodeBuffer.prototype._integerOffset.call(this, offset, size);
     const view = new DataView(this.buffer, this.byteOffset, this.byteLength);
-    if (size === 1)
+    if (size === 1) {
       return signed ? view.getInt8(offset) : view.getUint8(offset);
-    if (size === 2)
+    }
+    if (size === 2) {
       return signed
         ? view.getInt16(offset, littleEndian)
         : view.getUint16(offset, littleEndian);
+    }
     return signed
       ? view.getInt32(offset, littleEndian)
       : view.getUint32(offset, littleEndian);
@@ -379,7 +397,7 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase02 {
       offset,
       1,
       false,
-      false
+      false,
     );
   }
 
@@ -393,7 +411,7 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase02 {
       offset,
       2,
       false,
-      false
+      false,
     );
   }
 
@@ -407,7 +425,7 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase02 {
       offset,
       4,
       false,
-      false
+      false,
     );
   }
 
@@ -418,7 +436,7 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase02 {
       offset,
       1,
       false,
-      false
+      false,
     );
   }
 
@@ -429,7 +447,7 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase02 {
       offset,
       2,
       true,
-      false
+      false,
     );
   }
 };

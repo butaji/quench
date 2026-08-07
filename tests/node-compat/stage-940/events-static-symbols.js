@@ -5,5 +5,5 @@ assert.strictEqual(typeof events.errorMonitor, "symbol");
 assert.strictEqual(typeof events.captureRejections, "boolean");
 assert.strictEqual(
   events.EventEmitter.captureRejections,
-  events.captureRejections
+  events.captureRejections,
 );

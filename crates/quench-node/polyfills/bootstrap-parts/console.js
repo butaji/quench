@@ -2,7 +2,7 @@ const __quenchOriginalRequireWithConsole = globalThis.require;
 class __quenchConsole {
   constructor(
     stdout = globalThis.process?.stdout,
-    stderr = globalThis.process?.stderr
+    stderr = globalThis.process?.stderr,
   ) {
     this._stdout = stdout;
     this._stderr = stderr;
@@ -23,7 +23,7 @@ class __quenchConsole {
     this.log(
       Array.isArray(value)
         ? value.map((item) => JSON.stringify(item)).join("\n")
-        : JSON.stringify(value)
+        : JSON.stringify(value),
     );
   }
   trace(...args) {
@@ -43,7 +43,7 @@ const __quenchConsoleModule = {
   log: (...args) => globalThis.console.log(...args),
   info: (...args) => globalThis.console.info(...args),
   warn: (...args) => globalThis.console.warn(...args),
-  error: (...args) => globalThis.console.error(...args)
+  error: (...args) => globalThis.console.error(...args),
 };
 for (const name of ["time", "timeEnd", "timeLog"]) {
   const original = globalThis.console?.[name];
@@ -52,12 +52,13 @@ for (const name of ["time", "timeEnd", "timeLog"]) {
     if (typeof label === "symbol") throw new TypeError("Invalid console label");
     const text = String(label);
     globalThis.console._times ||= new Map();
-    if (name === "time" && !globalThis.console._times.has(text))
+    if (name === "time" && !globalThis.console._times.has(text)) {
       globalThis.console._times.set(text, Date.now());
+    }
     if (name === "timeEnd") globalThis.console._times.delete(text);
     const safeLabel = ["__proto__", "constructor", "hasOwnProperty"].includes(
-      text
-    )
+        text,
+      )
       ? `__quench_${text}`
       : label;
     return original.call(globalThis.console, safeLabel, ...args);
@@ -71,10 +72,11 @@ globalThis.console.assert = (condition, ...args) => {
   let used = 1;
   const text = String(originalDetail);
   const placeholder = text.indexOf("%s");
-  let detail =
-    placeholder >= 0
-      ? `${text.slice(0, placeholder)}${String(args[used++])}${text.slice(placeholder + 2)}`
-      : text;
+  let detail = placeholder >= 0
+    ? `${text.slice(0, placeholder)}${String(args[used++])}${
+      text.slice(placeholder + 2)
+    }`
+    : text;
   if (used < args.length) detail += ` ${args.slice(used).join(" ")}`;
   const message = detail ? `Assertion failed: ${detail}` : "Assertion failed";
   globalThis.process?.stderr?.write?.(`${message}\n`);
@@ -83,7 +85,8 @@ __quenchConsole.prototype.dirxml ||= function (...args) {
   return this.log(...args);
 };
 globalThis.require = (specifier) => {
-  if (String(specifier).replace(/^node:/, "") === "console")
+  if (String(specifier).replace(/^node:/, "") === "console") {
     return __quenchConsoleModule;
+  }
   return __quenchOriginalRequireWithConsole(specifier);
 };

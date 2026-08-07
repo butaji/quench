@@ -9,7 +9,7 @@ const createEmitter = () => {
     },
     emit(event, value) {
       listeners.get(event)?.(value);
-    }
+    },
   };
 };
 

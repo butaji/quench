@@ -10,7 +10,7 @@ fs.open(
   common.mustCall((error, asyncFd) => {
     if (error) throw error;
     fs.closeSync(asyncFd);
-  })
+  }),
 );
 fs.promises
   .open(path)

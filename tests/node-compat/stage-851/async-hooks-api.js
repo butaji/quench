@@ -3,12 +3,14 @@
 const assert = require("assert");
 const asyncHooks = require("node:async_hooks");
 
-for (const name of [
-  "createHook",
-  "executionAsyncId",
-  "triggerAsyncId",
-  "executionAsyncResource"
-]) {
+for (
+  const name of [
+    "createHook",
+    "executionAsyncId",
+    "triggerAsyncId",
+    "executionAsyncResource",
+  ]
+) {
   assert.strictEqual(typeof asyncHooks[name], "function");
 }
 assert.strictEqual(typeof asyncHooks.AsyncResource, "function");

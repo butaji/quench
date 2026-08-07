@@ -5,6 +5,7 @@ test("message channel basic delivery", async () => {
     channel.port2.onmessage = (event) => resolve(event.data);
   });
   channel.port1.postMessage("ready");
-  if ((await received) !== "ready")
+  if ((await received) !== "ready") {
     throw new Error("message was not delivered");
+  }
 });

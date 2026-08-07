@@ -8,7 +8,7 @@ const { ReadableStream, WritableStream } = require("stream/web");
     start(controller) {
       controller.enqueue("web");
       controller.close();
-    }
+    },
   });
   const reader = readable.getReader();
   assert.deepStrictEqual(await reader.read(), { value: "web", done: false });
@@ -17,7 +17,7 @@ const { ReadableStream, WritableStream } = require("stream/web");
   const writer = new WritableStream({
     write(value) {
       values.push(value);
-    }
+    },
   }).getWriter();
   await writer.write("streams");
   await writer.close();

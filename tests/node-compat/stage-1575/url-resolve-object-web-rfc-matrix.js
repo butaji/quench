@@ -11,12 +11,13 @@ const cases = [
   ["g/", "http://a/b/c/g/"],
   ["/g", "http://a/g"],
   ["//g", "http://g/"],
-  ["?y", "http://a/b/c/d;p?y"]
+  ["?y", "http://a/b/c/d;p?y"],
 ];
-for (const [to, expected] of cases)
+for (const [to, expected] of cases) {
   assert.deepStrictEqual(
     url.resolveObject(url.parse(base), to),
     url.parse(expected),
-    `${base} + ${to}`
+    `${base} + ${to}`,
   );
+}
 console.log("parsed web RFC matrix passed");

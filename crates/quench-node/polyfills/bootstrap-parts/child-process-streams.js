@@ -4,8 +4,9 @@ const __quenchOriginalChildStreamSpawn = __quenchChildStreamModule.spawn;
 const __quenchEnsureStream = (stream) => {
   if (typeof stream.on !== "function") stream.on = () => stream;
   if (typeof stream.once !== "function") stream.once = stream.on;
-  if (typeof stream.setEncoding !== "function")
+  if (typeof stream.setEncoding !== "function") {
     stream.setEncoding = () => stream;
+  }
   return stream;
 };
 __quenchChildStreamModule.spawn = (...args) => {

@@ -8,5 +8,5 @@ fs.realpath(
   ".",
   common.mustSucceed((value) => {
     if (value !== path) throw new Error("async realpath mismatch");
-  })
+  }),
 );

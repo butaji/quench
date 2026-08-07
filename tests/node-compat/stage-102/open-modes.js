@@ -4,7 +4,7 @@ const fs = require("fs");
 const cases = [
   [0o640, 0o640],
   ["0640", 0o640],
-  ["640", 0o640]
+  ["640", 0o640],
 ];
 
 for (const [mode, expected] of cases) {

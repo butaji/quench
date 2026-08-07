@@ -6,9 +6,11 @@ function updateCallbackValue() {
 }
 
 vm.runInNewContext("callback()", { callback: updateCallbackValue });
-if (globalThis.callbackValue !== 2)
+if (globalThis.callbackValue !== 2) {
   throw new Error("host callback mutation was not preserved");
-if (globalThis.callback !== undefined)
+}
+if (globalThis.callback !== undefined) {
   throw new Error("temporary callback binding leaked");
+}
 
 delete globalThis.callbackValue;

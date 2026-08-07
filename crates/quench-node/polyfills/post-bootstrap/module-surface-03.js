@@ -9,11 +9,70 @@ const __quenchAddStreamWebCompat = (result) => {
     result[name].fromWeb ||= (value) => value;
   }
 };
+const __quenchComposeStreams = (streams, result) => {
+  if (streams.length === 0) {
+    const error = new TypeError(
+      "The streams argument must contain at least one stream",
+    );
+    error.code = "ERR_INVALID_ARG_VALUE";
+    throw error;
+  }
+  if (!streams.every((stream) => stream && typeof stream.pipe === "function")) {
+    const composed = new result.Transform({
+      objectMode: true,
+      transform(chunk, encoding, callback) {
+        const outputStream = this;
+        (async () => {
+          let values = [chunk];
+          for (const stage of streams) {
+            if (typeof stage !== "function") {
+              throw new TypeError("stream stage is not callable");
+            }
+            const next = [];
+            const source = (async function* () {
+              for (const value of values) yield value;
+            })();
+            const output = stage(source);
+            if (output && typeof output.next === "function") {
+              while (true) {
+                const step = await output.next();
+                if (step.done) break;
+                next.push(step.value);
+              }
+            }
+            values = next;
+          }
+          for (const value of values) outputStream.emit("data", value);
+        })().then(() => callback(), callback);
+      },
+    });
+    return composed;
+  }
+  const first = streams[0];
+  const last = streams[streams.length - 1];
+  for (let index = 0; index < streams.length - 1; index++) {
+    streams[index].pipe(streams[index + 1]);
+  }
+  const composed = new result.Transform({
+    transform(chunk, encoding, callback) {
+      first.write(chunk, encoding, callback);
+    },
+  });
+  last.on("data", (chunk) => composed.push(chunk));
+  last.on("end", () => composed.push(null));
+  composed.end = (chunk, encoding, callback) => {
+    if (chunk !== undefined) composed.write(chunk, encoding);
+    first.end();
+    if (callback) callback();
+    return composed;
+  };
+  return composed;
+};
 const __quenchAddStreamDefaults = (result) => {
   result.pipeline ||= () => undefined;
   result.finished ||= () => undefined;
   result.addAbortSignal ||= () => undefined;
-  result.compose ||= (stream) => stream;
+  result.compose ||= (...streams) => __quenchComposeStreams(streams, result);
   result.setDefaultHighWaterMark ||= () => 16384;
   result.getDefaultHighWaterMark ||= () => 16384;
 };
@@ -31,14 +90,14 @@ const __quenchValidatePipeline = (pipeline, args) => {
   const callback = args[args.length - 1];
   if (args.length === 0) {
     const error = new TypeError(
-      "ERR_INVALID_ARG_TYPE: The last argument must be of type function"
+      "ERR_INVALID_ARG_TYPE: The last argument must be of type function",
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
   if (args.length < 3 || typeof callback !== "function") {
     const error = new TypeError(
-      "ERR_MISSING_ARGS: The pipeline requires at least two streams"
+      "ERR_MISSING_ARGS: The pipeline requires at least two streams",
     );
     error.code = "ERR_MISSING_ARGS";
     throw error;
@@ -51,11 +110,25 @@ const __quenchIsFinishedStream = (stream) =>
   (typeof stream.pipe === "function" ||
     typeof stream.read === "function" ||
     typeof stream.write === "function" ||
+    (typeof stream.once === "function" && typeof stream.emit === "function") ||
     stream._readableState ||
     stream._writableState);
 const __quenchValidateFinishedStream = (stream, options, callback) => {
   if (!__quenchIsFinishedStream(stream)) {
     const error = new TypeError("The stream argument must be a stream");
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  if (
+    stream.readable === true &&
+    stream.readableEnded === true &&
+    typeof stream.read !== "function" &&
+    typeof stream.on === "function" &&
+    typeof stream.once === "function"
+  ) {
+    const error = new TypeError(
+      "The stream argument must be a readable stream",
+    );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
@@ -67,8 +140,9 @@ const __quenchValidateFinishedStream = (stream, options, callback) => {
   if (typeof options !== "object" || options === null) {
     const error = new TypeError("The options argument must be an object");
     error.code = "ERR_INVALID_ARG_TYPE";
-    if (callback === undefined)
+    if (callback === undefined) {
       error.message = "The callback must be a function";
+    }
     throw error;
   }
   if (typeof callback !== "function") {
@@ -82,119 +156,293 @@ const __quenchFinishedStream = (stream, options, callback) => {
     callback = options;
     options = {};
   }
+  if (callback === undefined) {
+    const error = new TypeError("The callback must be a function");
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
   if (options === null) options = {};
   __quenchValidateFinishedStream(stream, options, callback);
   let active = true;
+  let finishSeen = false;
+  let endSeen = false;
+  let abortCleanup;
   const complete = (error) => {
     if (!active) return;
     active = false;
+    abortCleanup?.();
     callback(error);
   };
-  stream.once("end", complete);
-  stream.once("finish", complete);
-  stream.once("error", complete);
-  stream.once("close", () => {
-    const error = new Error("Premature close");
-    error.code = "ERR_STREAM_PREMATURE_CLOSE";
-    complete(error);
+  const listenOnce = (event, listener) => {
+    if (typeof stream.once === "function") {
+      stream.once(event, listener);
+      return;
+    }
+    let called = false;
+    const wrapped = (...args) => {
+      if (called) return;
+      called = true;
+      listener(...args);
+    };
+    stream.on(event, wrapped);
+  };
+  if (stream.destroyed) {
+    queueMicrotask(() =>
+      complete(
+        stream.errored ||
+          Object.assign(new Error("Premature close"), {
+            code: "ERR_STREAM_PREMATURE_CLOSE",
+          }),
+      )
+    );
+    return () => {
+      active = false;
+    };
+  }
+  const signal = options?.signal;
+  if (signal) {
+    const abort = () => {
+      const error = signal.reason ||
+        Object.assign(new Error("The operation was aborted"), {
+          name: "AbortError",
+        });
+      complete(error);
+    };
+    if (signal.aborted) {
+      queueMicrotask(abort);
+      return () => {
+        active = false;
+      };
+    }
+    signal.addEventListener?.("abort", abort, { once: true });
+    abortCleanup = () => signal.removeEventListener?.("abort", abort);
+  }
+  listenOnce("end", () => {
+    endSeen = true;
+    if (
+      !stream.writable || (!stream.socket && finishSeen) || stream.destroyed
+    ) {
+      complete();
+    }
+  });
+  listenOnce("finish", () => {
+    finishSeen = true;
+    if ((!stream.readable && !stream.socket) || endSeen || stream.destroyed) {
+      complete();
+    }
+  });
+  listenOnce("error", complete);
+  listenOnce("close", () => {
+    if (finishSeen || endSeen || stream.complete) complete();
+    else {
+      const error = new Error("Premature close");
+      error.code = "ERR_STREAM_PREMATURE_CLOSE";
+      complete(error);
+    }
   });
   return () => {
     active = false;
+    abortCleanup?.();
   };
 };
 const __quenchAddAbortSignal = (signal, stream) => {
   if (!signal || typeof signal !== "object") {
     const error = new TypeError(
-      "ERR_INVALID_ARG_TYPE: The signal argument must be an AbortSignal"
+      "ERR_INVALID_ARG_TYPE: The signal argument must be an AbortSignal",
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
   if (!stream || typeof stream !== "object") {
     const error = new TypeError(
-      "ERR_INVALID_ARG_TYPE: The stream argument must be a stream"
+      "ERR_INVALID_ARG_TYPE: The stream argument must be a stream",
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
   return stream;
 };
-const __quenchValidateZlibOptions = (options) => {
+const __quenchValidateZlibOptions = (options, allowZeroWindowBits = false) => {
   const value = options?.windowBits;
   if (
     value !== undefined &&
-    (!Number.isInteger(value) || value < 9 || value > 15)
+    (!Number.isInteger(value) ||
+      value > 15 ||
+      (value < 9 && !(allowZeroWindowBits && value === 0)))
   ) {
     const error = new RangeError(
-      `The value of "options.windowBits" is out of range. It must be >= 9 and <= 15. Received ${value}`
+      `The value of "options.windowBits" is out of range. It must be >= 9 and <= 15. Received ${value}`,
     );
     error.code = "ERR_OUT_OF_RANGE";
     throw error;
   }
 };
 const __quenchAddZlibValidation = (result) => {
-  for (const name of [
-    "gzip",
-    "gunzip",
-    "deflate",
-    "inflate",
-    "gzipSync",
-    "gunzipSync",
-    "deflateSync",
-    "inflateSync"
-  ]) {
+  for (
+    const name of [
+      "gzip",
+      "gunzip",
+      "deflate",
+      "inflate",
+      "gzipSync",
+      "gunzipSync",
+      "deflateSync",
+      "inflateSync",
+    ]
+  ) {
     if (typeof result[name] !== "function") continue;
     const original = result[name];
     result[name] = (value, options, callback) => {
-      __quenchValidateZlibOptions(options);
+      __quenchValidateZlibOptions(
+        options,
+        name === "gunzip" ||
+          name === "inflate" ||
+          name === "gunzipSync" ||
+          name === "inflateSync",
+      );
       return original(value, options, callback);
     };
   }
-  return result;
-};
-const __quenchApplyReadableOperations = async (values, operations) => {
-  let result = values.slice(operations.drop, operations.drop + operations.take);
-  for (const operation of operations.operations) {
-    if (operation.type === "map")
-      result = await Promise.all(result.map(operation.callback));
-    if (operation.type === "filter") {
-      const keep = await Promise.all(result.map(operation.callback));
-      result = result.filter((_value, index) => keep[index]);
-    }
-    if (operation.type === "flatMap") {
-      const mapped = await Promise.all(result.map(operation.callback));
-      result = [];
-      for (const value of mapped) {
-        if (Array.isArray(value)) result.push(...value);
-        else if (value?.toArray) result.push(...(await value.toArray()));
-        else result.push(value);
-      }
-    }
+  if (result.codes) {
+    Object.defineProperty(result, "codes", {
+      value: result.codes,
+      enumerable: true,
+      writable: false,
+      configurable: true,
+    });
   }
   return result;
 };
-const __quenchCollectReadable = (stream, operations) =>
-  new Promise((resolve, reject) => {
-    const values = [];
-    let skipped = operations.drop;
-    stream.on("data", (value) => {
+const __quenchReadableAbortError = (signal) =>
+  signal?.reason ||
+  Object.assign(new Error("The operation was aborted"), {
+    name: "AbortError",
+    code: "ABORT_ERR",
+  });
+const __quenchReadableOperatorOptions = (options) => {
+  const value = options === undefined ? {} : options;
+  __quenchSliceOptions(value);
+  const concurrency = value.concurrency === undefined
+    ? 1
+    : Number(value.concurrency);
+  const highWaterMark = value.highWaterMark === undefined
+    ? concurrency - 1
+    : Number(value.highWaterMark);
+  if (!Number.isInteger(concurrency) || concurrency < 1) {
+    const error = new RangeError(
+      "ERR_OUT_OF_RANGE: concurrency must be positive",
+    );
+    error.code = "ERR_OUT_OF_RANGE";
+    throw error;
+  }
+  if (!Number.isInteger(highWaterMark) || highWaterMark < 0) {
+    const error = new RangeError(
+      "ERR_OUT_OF_RANGE: highWaterMark must be non-negative",
+    );
+    error.code = "ERR_OUT_OF_RANGE";
+    throw error;
+  }
+  return { ...value, concurrency, highWaterMark };
+};
+const __quenchReadableConcurrentTransform = async function* (
+  source,
+  callback,
+  options,
+  mode,
+) {
+  const opts = __quenchReadableOperatorOptions(options);
+  const controller = new AbortController();
+  const signal = controller.signal;
+  const externalSignal = opts.signal;
+  const onAbort = () => controller.abort(externalSignal.reason);
+  if (externalSignal?.aborted) onAbort();
+  else externalSignal?.addEventListener?.("abort", onAbort, { once: true });
+  const iterator = source[Symbol.asyncIterator]();
+  const pending = [];
+  let sourceDone = false;
+  const fill = async () => {
+    while (!sourceDone && pending.length < opts.concurrency) {
+      if (signal.aborted) throw __quenchReadableAbortError(signal);
+      const next = await iterator.next();
+      if (next.done) {
+        sourceDone = true;
+        break;
+      }
+      const promise = Promise.resolve().then(() =>
+        callback(next.value, { signal })
+      );
+      pending.push({ value: next.value, promise });
+    }
+  };
+  try {
+    await fill();
+    while (pending.length) {
+      const entry = pending.shift();
+      const result = await entry.promise;
+      if (signal.aborted) throw __quenchReadableAbortError(signal);
+      if (mode === "filter") {
+        if (result) yield entry.value;
+      } else if (mode !== "forEach") {
+        if (mode === "flatMap" && result != null) {
+          if (Array.isArray(result)) yield* result;
+          else if (result?.toArray) yield* await result.toArray();
+          else yield result;
+        } else {
+          yield result;
+        }
+      }
+      await fill();
+    }
+  } finally {
+    controller.abort();
+    externalSignal?.removeEventListener?.("abort", onAbort);
+    await iterator.return?.();
+  }
+};
+const __quenchReadableSliceSource = async function* (stream, operations) {
+  const iterator = stream[Symbol.asyncIterator]();
+  let skipped = operations.drop;
+  let remaining = operations.take;
+  try {
+    while (remaining > 0) {
+      const next = await iterator.next();
+      if (next.done) return;
       if (skipped > 0) {
         skipped--;
-        return;
+        continue;
       }
-      if (values.length < operations.take) values.push(value);
-      if (values.length === operations.take && stream.pause) stream.pause();
-    });
-    stream.once("end", () =>
-      __quenchApplyReadableOperations(values, operations).then(resolve, reject)
+      remaining--;
+      yield next.value;
+    }
+  } finally {
+    await iterator.return?.();
+    if (!stream.readableEnded && !stream.destroyed) stream.destroy?.();
+  }
+};
+const __quenchReadableSliceValues = (stream, operations) => {
+  let current = __quenchReadableSliceSource(stream, operations);
+  for (const operation of operations.operations) {
+    current = __quenchReadableConcurrentTransform(
+      current,
+      operation.callback,
+      operation.options,
+      operation.type,
     );
-    stream.once("error", reject);
-  });
+  }
+  return current;
+};
+const __quenchCollectReadable = async (stream, operations) => {
+  const values = [];
+  for await (const value of __quenchReadableSliceValues(stream, operations)) {
+    values.push(value);
+  }
+  return values;
+};
 const __quenchSliceCount = (count) => {
   const value = Number(count);
   if (!Number.isFinite(value) || value < 0) {
     const error = new RangeError(
-      "ERR_OUT_OF_RANGE: count must be non-negative"
+      "ERR_OUT_OF_RANGE: count must be non-negative",
     );
     error.code = "ERR_OUT_OF_RANGE";
     throw error;
@@ -205,14 +453,14 @@ const __quenchSliceOptions = (options) => {
   if (options === undefined) return;
   if (!options || typeof options !== "object") {
     const error = new TypeError(
-      "ERR_INVALID_ARG_TYPE: options must be an object"
+      "ERR_INVALID_ARG_TYPE: options must be an object",
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
   if (options.signal !== undefined && typeof options.signal !== "object") {
     const error = new TypeError(
-      "ERR_INVALID_ARG_TYPE: signal must be an AbortSignal"
+      "ERR_INVALID_ARG_TYPE: signal must be an AbortSignal",
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -221,7 +469,7 @@ const __quenchSliceOptions = (options) => {
 const __quenchIterableOptions = (callback, options) => {
   if (typeof callback !== "function") {
     const error = new TypeError(
-      "ERR_INVALID_ARG_TYPE: callback must be a function"
+      "ERR_INVALID_ARG_TYPE: callback must be a function",
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -229,7 +477,7 @@ const __quenchIterableOptions = (callback, options) => {
   if (options === undefined) return;
   if (!options || typeof options !== "object") {
     const error = new TypeError(
-      "ERR_INVALID_ARG_TYPE: options must be an object"
+      "ERR_INVALID_ARG_TYPE: options must be an object",
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -239,54 +487,93 @@ const __quenchIterableOptions = (callback, options) => {
     (!Number.isInteger(options.concurrency) || options.concurrency < 1)
   ) {
     const error = new RangeError(
-      "ERR_OUT_OF_RANGE: concurrency must be positive"
+      "ERR_OUT_OF_RANGE: concurrency must be positive",
     );
     error.code = "ERR_OUT_OF_RANGE";
     throw error;
   }
   if (options.signal !== undefined && typeof options.signal !== "object") {
     const error = new TypeError(
-      "ERR_INVALID_ARG_TYPE: signal must be an AbortSignal"
+      "ERR_INVALID_ARG_TYPE: signal must be an AbortSignal",
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
 };
-const __quenchForEachReadable = (slice, callback) =>
-  slice.toArray().then((values) => Promise.all(values.map(callback)));
-const __quenchReadableSliceIterator = (stream, operations) =>
-  (async function* () {
-    yield* await __quenchCollectReadable(stream, operations);
+const __quenchForEachReadable = (slice, callback, options) => {
+  if (typeof callback !== "function") {
+    const error = new TypeError(
+      "ERR_INVALID_ARG_TYPE: callback must be a function",
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    return Promise.reject(error);
+  }
+  return (async () => {
+    const values = __quenchReadableConcurrentTransform(
+      slice[Symbol.asyncIterator](),
+      callback,
+      options,
+      "forEach",
+    );
+    for await (const _value of values);
   })();
+};
+const __quenchReadableSliceIterator = (stream, operations) =>
+  __quenchReadableSliceValues(stream, operations);
 const __quenchSliceMap = (stream, operations, callback, options) => {
   __quenchIterableOptions(callback, options);
   return __quenchReadableSlice(stream, {
     ...operations,
-    operations: operations.operations.concat({ type: "map", callback })
+    operations: operations.operations.concat({
+      type: "map",
+      callback,
+      options,
+    }),
   });
 };
 const __quenchSliceFilter = (stream, operations, callback, options) => {
   __quenchIterableOptions(callback, options);
   return __quenchReadableSlice(stream, {
     ...operations,
-    operations: operations.operations.concat({ type: "filter", callback })
+    operations: operations.operations.concat({
+      type: "filter",
+      callback,
+      options,
+    }),
   });
 };
 const __quenchSliceFlatMap = (stream, operations, callback, options) => {
   __quenchIterableOptions(callback, options);
   return __quenchReadableSlice(stream, {
     ...operations,
-    operations: operations.operations.concat({ type: "flatMap", callback })
+    operations: operations.operations.concat({
+      type: "flatMap",
+      callback,
+      options,
+    }),
   });
 };
 const __quenchReadableSlice = (stream, operations) => ({
   readable: true,
+  emit(event, ...args) {
+    if (event === "error") return stream.emit?.(event, ...args) ?? false;
+    return true;
+  },
+  on(event, listener) {
+    if (event === "error") stream.on?.(event, listener);
+    return this;
+  },
+  once(event, listener) {
+    if (event === "error") stream.once?.(event, listener);
+    return this;
+  },
   drop(count, options) {
     __quenchSliceOptions(options);
     return __quenchReadableSlice(stream, {
       drop: operations.drop + __quenchSliceCount(count),
       take: operations.take,
-      operations: operations.operations
+      operations: operations.operations,
+      signal: options?.signal || operations.signal,
     });
   },
   take(count, options) {
@@ -294,7 +581,8 @@ const __quenchReadableSlice = (stream, operations) => ({
     return __quenchReadableSlice(stream, {
       drop: operations.drop,
       take: Math.min(operations.take, __quenchSliceCount(count)),
-      operations: operations.operations
+      operations: operations.operations,
+      signal: options?.signal || operations.signal,
     });
   },
   map(callback, options) {
@@ -306,31 +594,49 @@ const __quenchReadableSlice = (stream, operations) => ({
   flatMap(callback, options) {
     return __quenchSliceFlatMap(stream, operations, callback, options);
   },
-  forEach(callback) {
-    return __quenchForEachReadable(this, callback);
+  forEach(callback, options) {
+    return __quenchForEachReadable(this, callback, options);
   },
   toArray() {
     return __quenchCollectReadable(stream, operations);
   },
   [Symbol.asyncIterator]() {
     return __quenchReadableSliceIterator(stream, operations);
-  }
+  },
 });
 const __quenchAddSliceMethods = (prototype) => {
-  prototype.map ||= function (callback, options) {
+  prototype.drop ||= function (count, options) {
+    __quenchSliceOptions(options);
+    return __quenchReadableSlice(this, {
+      drop: __quenchSliceCount(count),
+      take: Infinity,
+      operations: [],
+      signal: options?.signal,
+    });
+  };
+  prototype.take ||= function (count, options) {
+    __quenchSliceOptions(options);
+    return __quenchReadableSlice(this, {
+      drop: 0,
+      take: __quenchSliceCount(count),
+      operations: [],
+      signal: options?.signal,
+    });
+  };
+  prototype.map = function (callback, options) {
     __quenchIterableOptions(callback, options);
     return __quenchReadableSlice(this, {
       drop: 0,
       take: Infinity,
-      operations: []
+      operations: [],
     }).map(callback, options);
   };
-  prototype.filter ||= function (callback, options) {
+  prototype.filter = function (callback, options) {
     __quenchIterableOptions(callback, options);
     return __quenchReadableSlice(this, {
       drop: 0,
       take: Infinity,
-      operations: []
+      operations: [],
     }).filter(callback, options);
   };
   prototype.flatMap = function (callback, options) {
@@ -338,26 +644,26 @@ const __quenchAddSliceMethods = (prototype) => {
       this,
       { drop: 0, take: Infinity, operations: [] },
       callback,
-      options
+      options,
     );
   };
-  prototype.toArray ||= function () {
+  prototype.toArray = function () {
     return __quenchReadableSlice(this, {
       drop: 0,
       take: Infinity,
-      operations: []
+      operations: [],
     }).toArray();
   };
-  prototype.forEach ||= function (callback) {
+  prototype.forEach = function (callback) {
     return __quenchReadableSlice(this, {
       drop: 0,
       take: Infinity,
-      operations: []
+      operations: [],
     }).forEach(callback);
   };
 };
 const __quenchAddReadableSlices = (result) => {
-  for (const name of ["Readable", "Transform", "Duplex", "PassThrough"]) {
+  for (const name of ["Readable"]) {
     const prototype = result[name]?.prototype;
     if (!prototype) continue;
     prototype.drop ||= function (count, options) {
@@ -365,7 +671,7 @@ const __quenchAddReadableSlices = (result) => {
       return __quenchReadableSlice(this, {
         drop: __quenchSliceCount(count),
         take: Infinity,
-        operations: []
+        operations: [],
       });
     };
     prototype.take ||= function (count, options) {
@@ -373,7 +679,7 @@ const __quenchAddReadableSlices = (result) => {
       return __quenchReadableSlice(this, {
         drop: 0,
         take: __quenchSliceCount(count),
-        operations: []
+        operations: [],
       });
     };
     __quenchAddSliceMethods(prototype);
@@ -422,9 +728,28 @@ const __quenchAddStreamCompat = (result) => {
     const push = prototype.push;
     prototype.push = function (...args) {
       const result = push?.apply(this, args);
-      return args[0] === null ? true : result;
+      if (args[0] === null) return this.writable === true;
+      return result;
     };
     prototype.setEncoding ||= function () {
+      return this;
+    };
+    prototype.destroy ||= function (error, callback) {
+      if (this.destroyed) return this;
+      this.destroyed = true;
+      if (error) {
+        this.errored = error;
+        queueMicrotask(() => this.emit?.("error", error));
+      } else {
+        const abort = new Error("The operation was aborted");
+        abort.name = "AbortError";
+        this.errored = abort;
+        queueMicrotask(() => this.emit?.("error", abort));
+      }
+      queueMicrotask(() => {
+        this.emit?.("close");
+        callback?.(error);
+      });
       return this;
     };
   }
@@ -437,6 +762,20 @@ const __quenchAddStreamCompat = (result) => {
   result.finished = (stream, options, callback) =>
     __quenchFinishedStream(stream, options, callback, finished);
   result.addAbortSignal = __quenchAddAbortSignal;
+  result.destroy ||= (stream, error, callback) => {
+    if (!stream || typeof stream.destroy !== "function") {
+      const failure = new TypeError("The stream argument must be a stream");
+      if (typeof callback === "function") callback(failure);
+      else throw failure;
+      return stream;
+    }
+    if (error === undefined) {
+      error = new Error("The operation was aborted");
+      error.name = "AbortError";
+      error.code = "ABORT_ERR";
+    }
+    return stream.destroy(error, callback);
+  };
   result.promises ||= globalThis.require("stream/promises");
   const promisifyCustom = Symbol.for("nodejs.util.promisify.custom");
   result.pipeline[promisifyCustom] = result.promises.pipeline;
@@ -447,12 +786,16 @@ if (globalThis.require) {
   const originalRequire = globalThis.require;
   globalThis.require = (name) => {
     const result = originalRequire(name);
-    if (String(name).replace(/^node:/, "") === "http")
+    if (String(name).replace(/^node:/, "") === "http") {
       __quenchAddHttpEvents(result);
-    if (String(name).replace(/^node:/, "") === "zlib")
+      result.maxHeaderSize ||= 16 * 1024;
+    }
+    if (String(name).replace(/^node:/, "") === "zlib") {
       return __quenchAddZlibValidation(result);
-    if (String(name).replace(/^node:/, "") === "stream")
+    }
+    if (String(name).replace(/^node:/, "") === "stream") {
       return __quenchAddStreamCompat(result);
+    }
     return result;
   };
 }

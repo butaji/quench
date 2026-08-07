@@ -6,7 +6,7 @@ const __nodeFsValidateWriteBuffer = (fd, buffer, offset, length) => {
   }
   if (!(buffer instanceof Uint8Array)) {
     const error = new TypeError(
-      'The "buffer" argument must be an instance of Buffer, TypedArray, or DataView'
+      'The "buffer" argument must be an instance of Buffer, TypedArray, or DataView',
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -30,24 +30,23 @@ const __nodeFsWriteDescriptor = (fd, buffer, offset, length, position) => {
     throw error;
   }
   const bytes = buffer.subarray(offset, offset + length);
-  const at =
-    position === null || position === undefined
-      ? globalThis.__nodeFdPositions[fd] || 0
-      : Number(position);
+  const at = position === null || position === undefined
+    ? globalThis.__nodeFdPositions[fd] || 0
+    : Number(position);
   const existing = NodeBuffer.from(globalThis.__quench_fs_read_bytes(path));
   const output = NodeBuffer.alloc(Math.max(existing.length, at + bytes.length));
   output.set(existing);
   output.set(bytes, at);
   globalThis.__quench_fs_write_bytes(path, Array.from(output));
-  if (position === null || position === undefined)
+  if (position === null || position === undefined) {
     globalThis.__nodeFdPositions[fd] = at + bytes.length;
+  }
   return bytes.length;
 };
 const __nodeFsAppendPath = (value) => {
-  const path =
-    typeof value === "number"
-      ? globalThis.__nodeFdPaths[value]
-      : nodeFsPath(value);
+  const path = typeof value === "number"
+    ? globalThis.__nodeFdPaths[value]
+    : nodeFsPath(value);
   if (path) return path;
   const error = new Error("EBADF");
   error.code = "EBADF";
@@ -60,7 +59,7 @@ const __nodeFsAppendData = (data, options) => {
     !(data instanceof Uint8Array)
   ) {
     const error = new TypeError(
-      'The "data" argument must be of type string or an instance of Buffer'
+      'The "data" argument must be of type string or an instance of Buffer',
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -75,10 +74,11 @@ const __nodeFsReadOptionObject = (offset) => {
     offset !== null &&
     (Array.isArray(offset) ||
       (typeof offset !== "number" && typeof offset !== "object"))
-  )
+  ) {
     throw new TypeError('The "options" argument must be an object');
+  }
   return offset === null ||
-    (typeof offset === "object" && !ArrayBuffer.isView(offset))
+      (typeof offset === "object" && !ArrayBuffer.isView(offset))
     ? offset || {}
     : null;
 };
@@ -86,10 +86,9 @@ const __nodeFsReadOptions = (buffer, offset, length, position) => {
   const options = __nodeFsReadOptionObject(offset);
   if (options) {
     offset = Number(options.offset || 0);
-    length =
-      options.length === undefined
-        ? buffer.length - offset
-        : Number(options.length);
+    length = options.length === undefined
+      ? buffer.length - offset
+      : Number(options.length);
     position = options.position === undefined ? null : options.position;
   }
   return { offset, length, position };
@@ -99,75 +98,86 @@ const __nodeFsReadNormalize = (buffer, offset, length, position) => {
     buffer,
     offset,
     length,
-    position
+    position,
   ));
-  if (!Number.isInteger(offset) || offset < 0)
-    throw new RangeError('The value of "offset" is out of range');
-  if (!Number.isInteger(length) || length < 0)
-    throw new RangeError('The value of "length" is out of range');
+  if (!Number.isInteger(offset) || offset < 0) {
+    throw Object.assign(
+      new RangeError('The value of "offset" is out of range'),
+      { code: "ERR_OUT_OF_RANGE" },
+    );
+  }
+  if (!Number.isInteger(length) || length < 0) {
+    throw Object.assign(
+      new RangeError('The value of "length" is out of range'),
+      { code: "ERR_OUT_OF_RANGE" },
+    );
+  }
   if (
     position !== null &&
     position !== undefined &&
     typeof position !== "number" &&
     typeof position !== "bigint"
-  )
+  ) {
     throw new TypeError(
-      'The "position" argument must be of type number or bigint'
+      'The "position" argument must be of type number or bigint',
     );
+  }
   return { offset, length, position };
 };
 const __nodeFsReadArguments = (fd, buffer, offset, length, position) => {
   if (typeof fd !== "number") {
     const error = new TypeError(
-      `The "fd" argument must be of type number. Received ${fd}`
+      `The "fd" argument must be of type number. Received ${fd}`,
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
   if (!(buffer instanceof Uint8Array)) {
     const error = new TypeError(
-      'The "buffer" argument must be an instance of Buffer, TypedArray, or DataView. Received an instance of Object'
+      'The "buffer" argument must be an instance of Buffer, TypedArray, or DataView. Received an instance of Object',
     );
     throw error;
   }
   return {
     fd,
     buffer,
-    ...__nodeFsReadNormalize(buffer, offset, length, position)
+    ...__nodeFsReadNormalize(buffer, offset, length, position),
   };
 };
 const __nodeFsReadDescriptor = ({ fd, buffer, offset, length, position }) => {
-  if (buffer.length === 0 && Number(length) > 0)
+  if (buffer.length === 0 && Number(length) > 0) {
     throw new TypeError(
-      "The argument 'buffer' is empty and cannot be written."
+      "The argument 'buffer' is empty and cannot be written.",
     );
+  }
   const path = globalThis.__nodeFdPaths[fd];
   if (!path) {
     const error = new Error("EBADF");
     error.code = "EBADF";
     throw error;
   }
-  const numericPosition =
-    position === null || Number(position) < 0
-      ? globalThis.__nodeFdPositions[fd] || 0
-      : Number(position);
+  const numericPosition = position === null || Number(position) < 0
+    ? globalThis.__nodeFdPositions[fd] || 0
+    : Number(position);
   const bytes = NodeBuffer.from(
     globalThis.__quench_fs_read_range_bytes(
       path,
       numericPosition,
-      Number(length)
-    )
+      Number(length),
+    ),
   );
   buffer.set(bytes.subarray(0, Number(length)), Number(offset));
-  if (position === null || position === undefined)
+  if (position === null || position === undefined) {
     globalThis.__nodeFdPositions[fd] = numericPosition + bytes.length;
+  }
   return bytes.length;
 };
 const __nodeFsRemoveTree = (path) => {
   const mode = globalThis.__nodeModes[path];
   if (mode !== undefined && (mode & 0o300) !== 0o300) {
-    const code =
-      process.platform === "darwin" && mode & 0o111 ? "ENOTEMPTY" : "EACCES";
+    const code = process.platform === "darwin" && mode & 0o111
+      ? "ENOTEMPTY"
+      : "EACCES";
     const error = new Error(`${code}: permission denied, rm '${path}'`);
     error.code = code;
     error.syscall = "rm";
@@ -187,12 +197,18 @@ const __nodeFsRemoveTree = (path) => {
   return globalThis.__quench_fs_remove_dir(path);
 };
 const __nodeFsRemovePath = (path, kind, options) => {
-  if (globalThis.__nodeFs.lstatSync(path).isSymbolicLink())
+  if (globalThis.__nodeFs.lstatSync(path).isSymbolicLink()) {
     return globalThis.__quench_fs_unlink(path);
+  }
   if (kind === "file") return globalThis.__quench_fs_unlink(path);
-  if (kind === "directory" && !options.recursive) {
+  if (
+    kind === "directory" &&
+    !options.recursive &&
+    (options.__sync ||
+      (!options.__async && globalThis.__nodeFs.readdirSync(path).length > 0))
+  ) {
     const error = new Error(
-      `ERR_FS_EISDIR: illegal operation on a directory, rm '${path}'`
+      `ERR_FS_EISDIR: illegal operation on a directory, rm '${path}'`,
     );
     error.code = "ERR_FS_EISDIR";
     error.path = path;
@@ -215,7 +231,9 @@ Object.assign(globalThis.__nodeFs, {
   ftruncateSync: (fd, length = 0) => {
     if (typeof fd !== "number") {
       const error = new TypeError(
-        `The "fd" argument must be of type number.${__nodeInvalidArgSuffix(fd)}`
+        `The "fd" argument must be of type number.${
+          __nodeInvalidArgSuffix(fd)
+        }`,
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
@@ -237,7 +255,7 @@ Object.assign(globalThis.__nodeFs, {
   fdatasyncSync: (fd) => globalThis.__nodeFs.fsyncSync(fd),
   readSync: (fd, buffer, offset = 0, length = buffer.length, position = null) =>
     __nodeFsReadDescriptor(
-      __nodeFsReadArguments(fd, buffer, offset, length, position)
+      __nodeFsReadArguments(fd, buffer, offset, length, position),
     ),
   readvSync: (fd, buffers, position = null) => {
     if (typeof fd !== "number") {
@@ -250,7 +268,7 @@ Object.assign(globalThis.__nodeFs, {
       buffers.some((buffer) => !(buffer instanceof Uint8Array))
     ) {
       const error = new TypeError(
-        'The "buffers" argument must be an array of Buffer or Uint8Array'
+        'The "buffers" argument must be an array of Buffer or Uint8Array',
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
@@ -264,7 +282,7 @@ Object.assign(globalThis.__nodeFs, {
           buffer,
           0,
           buffer.length,
-          at
+          at,
         );
         total += count;
         at += count;
@@ -278,20 +296,21 @@ Object.assign(globalThis.__nodeFs, {
       position = offset;
       if (length === "hex" && buffer.length % 2 !== 0) {
         const error = new TypeError(
-          `'encoding' is invalid for data of length ${buffer.length}`
+          `'encoding' is invalid for data of length ${buffer.length}`,
         );
         error.code = "ERR_INVALID_ARG_VALUE";
         throw error;
       }
       buffer = NodeBuffer.from(
         buffer,
-        typeof length === "string" ? length : "utf8"
+        typeof length === "string" ? length : "utf8",
       );
       offset = 0;
       length = buffer.length;
     }
-    if (length === undefined && buffer instanceof Uint8Array)
+    if (length === undefined && buffer instanceof Uint8Array) {
       length = buffer.length - offset;
+    }
     __nodeFsValidateWriteBuffer(fd, buffer, offset, length);
     return __nodeFsWriteDescriptor(fd, buffer, offset, length, position);
   },
@@ -301,7 +320,7 @@ Object.assign(globalThis.__nodeFs, {
       buffers.some((buffer) => !(buffer instanceof Uint8Array))
     ) {
       const error = new TypeError(
-        'The "buffers" argument must be an array of Buffer or Uint8Array'
+        'The "buffers" argument must be an array of Buffer or Uint8Array',
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
@@ -321,22 +340,60 @@ Object.assign(globalThis.__nodeFs, {
       error.code = "ERR_OUT_OF_RANGE";
       throw error;
     }
+    const trackedMode = globalThis.__nodeModes?.[destination];
+    if (trackedMode !== undefined && (trackedMode & 0o222) === 0) {
+      const error = new Error(
+        `EACCES: permission denied, copyfile '${source}' -> '${destination}'`,
+      );
+      error.code = "EACCES";
+      error.syscall = "copyfile";
+      error.path = destination;
+      throw error;
+    }
     __nodeFsCopyExclusiveError(destination, source, mode);
+    // Node replaces a destination symlink for copyFileSync().  The host
+    // filesystem primitive follows that symlink, so remove only the link
+    // before copying; real destination directories/files retain the native
+    // overwrite and error behavior.
+    try {
+      if (__nodeFs.lstatSync(destination).isSymbolicLink?.()) {
+        __nodeFs.unlinkSync(destination);
+      }
+    } catch (_) {
+      // Let the host copy operation report the canonical error for missing or
+      // inaccessible destinations.
+    }
     return globalThis.__quench_fs_copy(source, destination);
   },
   appendFileSync: (value, data, options = {}) => {
+    const encoding = typeof options === "string"
+      ? options
+      : options && options.encoding;
+    if (
+      encoding !== undefined && encoding !== "buffer" &&
+      !NodeBuffer.isEncoding(encoding)
+    ) {
+      const error = new TypeError(
+        `The argument 'encoding' is invalid. Received '${encoding}'`,
+      );
+      error.code = "ERR_INVALID_ARG_VALUE";
+      throw error;
+    }
     const path = __nodeFsAppendPath(value);
     const bytes = __nodeFsAppendData(data, options);
-    const result = globalThis.__quench_fs_append_bytes(path, Array.from(bytes));
-    if (options && options.mode !== undefined)
+    const result = bytes instanceof Uint8Array
+      ? globalThis.__quench_fs_append_typed(path, bytes)
+      : globalThis.__quench_fs_append_bytes(path, Array.from(bytes));
+    if (options && options.mode !== undefined) {
       globalThis.__nodeModes[path] = Number(options.mode);
+    }
     return result;
   },
   accessSync: (value, mode) => {
     __nodeFsValidateAccessMode(mode);
     if (typeof value === "number") {
       const error = new TypeError(
-        'The "path" argument must be of type string or an instance of Buffer or URL'
+        'The "path" argument must be of type string or an instance of Buffer or URL',
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
@@ -344,7 +401,7 @@ Object.assign(globalThis.__nodeFs, {
     const path = nodeFsPath(value);
     if (!globalThis.__quench_fs_access(path)) {
       const error = new Error(
-        `ENOENT: no such file or directory, access '${path}'`
+        `ENOENT: no such file or directory, access '${path}'`,
       );
       error.code = "ENOENT";
       error.errno = -2;
@@ -365,25 +422,36 @@ Object.assign(globalThis.__nodeFs, {
   realpathSync: (value, options) => {
     const input = nodePathValue(value);
     const path = input.replace(/^\.\/test\//, "tests/node/test/");
+    const encoding = typeof options === "string"
+      ? options
+      : options && options.encoding;
+    if (
+      encoding !== undefined && encoding !== "buffer" &&
+      !NodeBuffer.isEncoding(encoding)
+    ) {
+      const error = new TypeError(
+        `The argument 'encoding' is invalid. Received '${encoding}'`,
+      );
+      error.code = "ERR_INVALID_ARG_VALUE";
+      throw error;
+    }
     let result;
     try {
       result = globalThis.__quench_fs_realpath(path);
     } catch (_) {
       const error = new Error(
-        `ELOOP: too many symbolic links encountered, realpath '${path}'`
+        `ELOOP: too many symbolic links encountered, realpath '${path}'`,
       );
       error.code = "ELOOP";
       error.syscall = "realpath";
       error.path = path;
       throw error;
     }
-    const encoding =
-      typeof options === "string" ? options : options && options.encoding;
     return encoding === "buffer"
       ? NodeBuffer.from(result)
       : encoding
-        ? NodeBuffer.from(result).toString(encoding)
-        : result;
+      ? NodeBuffer.from(result).toString(encoding)
+      : result;
   },
   rmSync: (value, options = {}) => {
     const path = nodeFsPath(value);
@@ -402,7 +470,7 @@ Object.assign(globalThis.__nodeFs, {
     } catch (_) {
       if (!options.force) {
         const error = new Error(
-          `ENOENT: no such file or directory, lstat '${path}'`
+          `ENOENT: no such file or directory, lstat '${path}'`,
         );
         error.code = "ENOENT";
         error.syscall = "lstat";
@@ -411,16 +479,17 @@ Object.assign(globalThis.__nodeFs, {
       }
       return;
     }
-    return __nodeFsRunRemoval(path, kind, options);
+    return __nodeFsRunRemoval(path, kind, { ...options, __sync: true });
   },
   chmodSync: (value, mode) => {
     const path = __nodeFsPathOnly(value);
     globalThis.__quench_fs_chmod(
       path,
-      typeof mode === "string" ? parseInt(mode, 8) : Number(mode)
+      typeof mode === "string" ? parseInt(mode, 8) : Number(mode),
     );
-    globalThis.__nodeModes[path] =
-      typeof mode === "string" ? parseInt(mode, 8) : Number(mode);
+    globalThis.__nodeModes[path] = typeof mode === "string"
+      ? parseInt(mode, 8)
+      : Number(mode);
   },
   symlinkSync: (target, link, type) => {
     if (
@@ -428,7 +497,7 @@ Object.assign(globalThis.__nodeFs, {
       (typeof link !== "string" && !(link instanceof Uint8Array))
     ) {
       const error = new TypeError(
-        'The "target" and "path" arguments must be strings or Buffer'
+        'The "target" and "path" arguments must be strings or Buffer',
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
@@ -451,7 +520,7 @@ Object.assign(globalThis.__nodeFs, {
       (typeof link !== "string" && !(link instanceof Uint8Array))
     ) {
       const error = new TypeError(
-        'The "path" argument must be of type string or an instance of Buffer or URL'
+        'The "path" argument must be of type string or an instance of Buffer or URL',
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
@@ -459,13 +528,21 @@ Object.assign(globalThis.__nodeFs, {
     return globalThis.__quench_fs_link(nodeFsPath(existing), nodeFsPath(link));
   },
   readlinkSync: (value, options) => {
+    const encoding = typeof options === "string"
+      ? options
+      : options && options.encoding;
+    if (encoding !== undefined && !NodeBuffer.isEncoding(encoding)) {
+      const error = new TypeError(
+        `The argument 'encoding' is invalid. Received '${encoding}'`,
+      );
+      error.code = "ERR_INVALID_ARG_VALUE";
+      throw error;
+    }
     const result = globalThis.__quench_fs_readlink(nodeFsPath(value));
-    const encoding =
-      typeof options === "string" ? options : options && options.encoding;
     return encoding === "buffer"
       ? NodeBuffer.from(result)
       : encoding
-        ? NodeBuffer.from(result).toString(encoding)
-        : result;
-  }
+      ? NodeBuffer.from(result).toString(encoding)
+      : result;
+  },
 });

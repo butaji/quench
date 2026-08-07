@@ -3,14 +3,5 @@ const __quenchChildLifecycle = __quenchChildLifecycleRequire("child_process");
 const __quenchLifecycleSpawn = __quenchChildLifecycle.spawn;
 __quenchChildLifecycle.spawn = (...args) => {
   const child = __quenchLifecycleSpawn(...args);
-  const originalOn = child.on;
-  child.on = (event, listener) => {
-    if (event === "spawn" && typeof listener === "function")
-      queueMicrotask(() => listener.call(child));
-    return originalOn.call(child, event, listener);
-  };
-  child.once("exit", (code, signal) =>
-    queueMicrotask(() => child.emit("close", code, signal))
-  );
   return child;
 };

@@ -4,6 +4,6 @@ const params = new URLSearchParams("a=1&a=2");
 assert.strictEqual(params.size, 2);
 assert.strictEqual(
   Object.getOwnPropertyDescriptor(URLSearchParams.prototype, "size").enumerable,
-  true
+  true,
 );
 console.log("URLSearchParams size passed");

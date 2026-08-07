@@ -11,7 +11,7 @@ fs.mkdirSync(directory);
 
 const check = (entries) => {
   const byName = Object.fromEntries(
-    entries.map((entry) => [entry.name, entry])
+    entries.map((entry) => [entry.name, entry]),
   );
   assert.strictEqual(typeof byName.file.isFile, "function");
   assert.strictEqual(byName.file.isFile(), true);

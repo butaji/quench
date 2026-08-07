@@ -8,8 +8,9 @@ const cases = [
   ["/foo\bbar", "file:///foo%08bar"],
   ["/foo\tbar", "file:///foo%09bar"],
   ["/foo\nbar", "file:///foo%0Abar"],
-  ["/foo\rbar", "file:///foo%0Dbar"]
+  ["/foo\rbar", "file:///foo%0Dbar"],
 ];
-for (const [path, expected] of cases)
+for (const [path, expected] of cases) {
   assert.strictEqual(url.pathToFileURL(path).href, expected, path);
+}
 console.log("Unicode file URL matrix passed");

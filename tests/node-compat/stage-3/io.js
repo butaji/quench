@@ -6,6 +6,6 @@ const file = path.join(folder, "round-trip.txt");
 fs.writeFileSync(file, "hello from Node compatibility");
 assert.strictEqual(
   fs.readFileSync(file, "utf8"),
-  "hello from Node compatibility"
+  "hello from Node compatibility",
 );
 assert.strictEqual(fs.statSync(file).isFile(), true);

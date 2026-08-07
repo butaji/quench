@@ -15,5 +15,5 @@ try {
 fs.rename(
   first,
   second,
-  common.mustSucceed(() => fs.rmdir(second, common.mustSucceed()))
+  common.mustSucceed(() => fs.rmdir(second, common.mustSucceed())),
 );

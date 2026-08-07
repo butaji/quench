@@ -6,7 +6,7 @@ assert.throws(
   {
     name: "Error",
     message: "error:02000070:rsa routines::digest too big for rsa key",
-    library: "rsa routines"
-  }
+    library: "rsa routines",
+  },
 );
 console.log("crypto sign error passed");

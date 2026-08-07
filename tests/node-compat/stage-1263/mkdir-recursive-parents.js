@@ -4,7 +4,7 @@ const path = require("node:path");
 
 const root = path.join(
   process.cwd(),
-  `tests/node/test/.tmp.0/mkdir-parent-${Date.now()}`
+  `tests/node/test/.tmp.0/mkdir-parent-${Date.now()}`,
 );
 const nested = path.join(root, "child");
 const first = fs.mkdirSync(nested, { recursive: true });

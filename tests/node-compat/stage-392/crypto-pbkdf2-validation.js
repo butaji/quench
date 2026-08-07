@@ -7,8 +7,9 @@ for (const iterations of [0, -1]) {
   } catch (caught) {
     error = caught;
   }
-  if (!error || error.code !== "ERR_OUT_OF_RANGE")
+  if (!error || error.code !== "ERR_OUT_OF_RANGE") {
     throw new Error("invalid iterations must throw synchronously");
+  }
 }
 
 let error;
@@ -17,7 +18,8 @@ try {
 } catch (caught) {
   error = caught;
 }
-if (!error || error.code !== "ERR_INVALID_ARG_TYPE")
+if (!error || error.code !== "ERR_INVALID_ARG_TYPE") {
   throw new Error("missing digest must throw synchronously");
+}
 
 console.log("crypto pbkdf2 validation passed");

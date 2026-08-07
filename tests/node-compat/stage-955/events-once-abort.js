@@ -12,8 +12,10 @@ const { EventEmitter, once } = require("events");
   } catch (caught) {
     error = caught;
   }
-  if (!error || error.name !== "AbortError")
+  if (!error || error.name !== "AbortError") {
     throw new Error("once should reject with AbortError");
-  if (emitter.listenerCount("ready") !== 0)
+  }
+  if (emitter.listenerCount("ready") !== 0) {
     throw new Error("abort should remove the once listener");
+  }
 })();

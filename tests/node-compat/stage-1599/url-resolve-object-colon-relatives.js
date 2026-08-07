@@ -8,12 +8,13 @@ const cases = [
   ["http://ex/x/y?pp/qq", "y/z", "http://ex/x/y/z"],
   ["http://ex/x/y?q", "y?q", "http://ex/x/y?q"],
   ["http://ex?p", "/x/y?q", "http://ex/x/y?q"],
-  ["http://ex/x/y", "q/r#s", "http://ex/x/q/r#s"]
+  ["http://ex/x/y", "q/r#s", "http://ex/x/q/r#s"],
 ];
-for (const [from, target, expected] of cases)
+for (const [from, target, expected] of cases) {
   assert.deepStrictEqual(
     url.resolveObject(url.parse(from), target),
     url.parse(expected),
-    `${from} + ${target}`
+    `${from} + ${target}`,
   );
+}
 console.log("colon relative matrix passed");

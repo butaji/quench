@@ -11,11 +11,13 @@ try {
 } catch (caught) {
   error = caught;
 }
-if (!error || error.code !== "ERR_OUT_OF_RANGE")
+if (!error || error.code !== "ERR_OUT_OF_RANGE") {
   throw new Error("randomInt must reject an empty range");
+}
 
 crypto.randomInt(2, 3, (callbackError, value) => {
-  if (callbackError || value !== 2)
+  if (callbackError || value !== 2) {
     throw callbackError || new Error("randomInt callback failed");
+  }
   console.log("crypto random int passed");
 });

@@ -9,7 +9,8 @@ stream.destroy(error, (received) => (callbackError = received));
 
 setTimeout(() => {
   if (!closed) throw new Error("writable close was not emitted");
-  if (callbackError !== error)
+  if (callbackError !== error) {
     throw new Error("writable destroy callback error mismatch");
+  }
   console.log("stream writable destroy callback passed");
 }, 0);

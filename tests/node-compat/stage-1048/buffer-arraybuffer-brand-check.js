@@ -7,7 +7,7 @@ Object.setPrototypeOf(FakeArrayBuffer.prototype, ArrayBuffer.prototype);
 
 assert.throws(() => Buffer.from(new FakeArrayBuffer()), {
   code: "ERR_INVALID_ARG_TYPE",
-  name: "TypeError"
+  name: "TypeError",
 });
 
 const backing = new ArrayBuffer(4);

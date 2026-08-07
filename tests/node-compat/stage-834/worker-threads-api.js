@@ -2,14 +2,16 @@
 
 const assert = require("assert");
 const workersApi = require("node:worker_threads");
-for (const name of [
-  "Worker",
-  "MessageChannel",
-  "MessagePort",
-  "BroadcastChannel",
-  "receiveMessageOnPort",
-  "markAsUncloneable"
-]) {
+for (
+  const name of [
+    "Worker",
+    "MessageChannel",
+    "MessagePort",
+    "BroadcastChannel",
+    "receiveMessageOnPort",
+    "markAsUncloneable",
+  ]
+) {
   assert.strictEqual(typeof workersApi[name], "function");
 }
 assert.strictEqual(typeof workersApi.isMainThread, "boolean");

@@ -5,11 +5,11 @@ Object.defineProperty(Object.prototype, "library", {
   configurable: true,
   set: () => {
     throw new Error("bye, bye, library");
-  }
+  },
 });
 try {
   assert.throws(() => crypto.createSign("sha1").sign("PRIVATE KEY"), {
-    message: "bye, bye, library"
+    message: "bye, bye, library",
   });
 } finally {
   delete Object.prototype.library;

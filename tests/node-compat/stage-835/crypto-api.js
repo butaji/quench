@@ -3,15 +3,17 @@
 const assert = require("assert");
 const crypto = require("node:crypto");
 
-for (const name of [
-  "createHash",
-  "createHmac",
-  "randomBytes",
-  "randomFill",
-  "randomUUID",
-  "getCiphers",
-  "getHashes"
-]) {
+for (
+  const name of [
+    "createHash",
+    "createHmac",
+    "randomBytes",
+    "randomFill",
+    "randomUUID",
+    "getCiphers",
+    "getHashes",
+  ]
+) {
   assert.strictEqual(typeof crypto[name], "function");
 }
 assert.strictEqual(typeof crypto.constants, "object");

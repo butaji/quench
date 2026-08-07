@@ -7,7 +7,7 @@ assert.strictEqual(
     host: "a.com",
     pathname: "a/b/c",
     hash: "h",
-    search: "s"
+    search: "s",
   }),
-  "http://a.com/a/b/c?s#h"
+  "http://a.com/a/b/c?s#h",
 );

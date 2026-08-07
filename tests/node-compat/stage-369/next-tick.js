@@ -4,5 +4,5 @@ process.nextTick(
     assert.strictEqual(first + second, "ab");
   },
   "a",
-  "b"
+  "b",
 );

@@ -6,7 +6,7 @@ fs.chmodSync("access-read-only", 0o444);
 assert.throws(() => fs.accessSync("access-read-only", fs.constants.W_OK), {
   code: "EACCES",
   errno: -13,
-  syscall: "access"
+  syscall: "access",
 });
 
 console.log("access permission check passed");

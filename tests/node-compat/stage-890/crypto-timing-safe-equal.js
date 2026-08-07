@@ -6,13 +6,13 @@ const crypto = require("node:crypto");
 assert.strictEqual(typeof crypto.timingSafeEqual, "function");
 assert.strictEqual(
   crypto.timingSafeEqual(Buffer.from("quench"), Buffer.from("quench")),
-  true
+  true,
 );
 assert.throws(
   () => crypto.timingSafeEqual(Buffer.from("quench"), Buffer.from("quench!")),
   {
-    name: "RangeError"
-  }
+    name: "RangeError",
+  },
 );
 
 console.log("crypto timing safe equal passed");

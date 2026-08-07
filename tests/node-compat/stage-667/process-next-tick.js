@@ -9,7 +9,7 @@ processApi.nextTick(
     received = [first, second];
   },
   "first",
-  2
+  2,
 );
 queueMicrotask(() => assert.deepStrictEqual(received, ["first", 2]));
 

@@ -6,5 +6,5 @@ assert.deepStrictEqual(path.parse("\\\\server\\share\\file_path"), {
   dir: "\\\\server\\share\\",
   base: "file_path",
   ext: "",
-  name: "file_path"
+  name: "file_path",
 });

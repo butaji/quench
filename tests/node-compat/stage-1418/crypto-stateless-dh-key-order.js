@@ -6,8 +6,8 @@ assert.throws(
   () =>
     crypto.diffieHellman({
       privateKey: pair.publicKey,
-      publicKey: pair.publicKey
+      publicKey: pair.publicKey,
     }),
-  { code: "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE" }
+  { code: "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE" },
 );
 console.log("crypto stateless DH key ordering passed");

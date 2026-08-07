@@ -3,7 +3,7 @@ const url = new URL("https://github.com/");
 const value = {
   toString() {
     throw new Error("toString");
-  }
+  },
 };
 assert.throws(() => {
   url.protocol = value;

@@ -7,7 +7,7 @@ const __nodePathFormatParts = (parts) => {
   if (!parts || typeof parts !== "object" || Array.isArray(parts)) {
     const error = new TypeError(
       'The "pathObject" argument must be of type object.' +
-        (globalThis.__nodeCommon?.invalidArgTypeHelper?.(parts) || "")
+        (globalThis.__nodeCommon?.invalidArgTypeHelper?.(parts) || ""),
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -32,13 +32,14 @@ const __nodeWindowsParts = (base, root, dir) => {
     dir,
     base,
     ext,
-    name: ext ? base.slice(0, -ext.length) : base
+    name: ext ? base.slice(0, -ext.length) : base,
   };
 };
 const __nodeWindowsKeepSeparator = (trimmed, root, index, trailing) => {
   if (trailing) return true;
-  if (index > 0 && trimmed[index - 1] === "\\" && trimmed[index - 2] !== "\\")
+  if (index > 0 && trimmed[index - 1] === "\\" && trimmed[index - 2] !== "\\") {
     return true;
+  }
   if (root.length === 3 && index === 2) return true;
   return root.startsWith("\\\\") && index === root.length - 1;
 };
@@ -48,7 +49,7 @@ const __nodeWindowsDir = (trimmed, root, index, trailing) => {
     trimmed,
     root,
     index,
-    trailing
+    trailing,
   );
   return trimmed.slice(0, index + (keepSeparator ? 1 : 0)) || root;
 };
@@ -83,7 +84,7 @@ const __nodeGlobSegment = (value, pattern) => {
 const __nodeGlobMatch = (path, pattern) => {
   if (typeof path !== "string" || typeof pattern !== "string") {
     const error = new TypeError(
-      'The "path" and "pattern" arguments must be of type string'
+      'The "path" and "pattern" arguments must be of type string',
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -97,29 +98,33 @@ const __nodeGlobMatch = (path, pattern) => {
     if (segment === "**") {
       if (patternIndex === patterns.length - 1) return true;
       patternIndex++;
-      for (let index = pathIndex; index <= paths.length; index++)
+      for (let index = pathIndex; index <= paths.length; index++) {
         if (
           __nodeGlobMatch(
             paths.slice(index).join("/"),
-            patterns.slice(patternIndex).join("/")
+            patterns.slice(patternIndex).join("/"),
           )
-        )
+        ) {
           return true;
+        }
+      }
       return false;
     }
     if (
       pathIndex >= paths.length ||
       !__nodeGlobSegment(paths[pathIndex], segment)
-    )
+    ) {
       return false;
+    }
     pathIndex++;
     patternIndex++;
   }
   return pathIndex === paths.length;
 };
 const __nodeWindowsDriveParse = (input) => {
-  if (/^[A-Za-z]:\\$/.test(input) || /^[A-Za-z]:$/.test(input))
+  if (/^[A-Za-z]:\\$/.test(input) || /^[A-Za-z]:$/.test(input)) {
     return { root: input, dir: input, base: "", ext: "", name: "" };
+  }
   if (!/^[A-Za-z]:[^\\]/.test(input)) return null;
   const relative = input.slice(2);
   const dot = relative.lastIndexOf(".");
@@ -130,8 +135,9 @@ const __nodeWindowsNamespacedPath = (value) => {
   if (typeof value !== "string") return value;
   if (value.startsWith("\\\\?\\")) return value.replace(/\//g, "\\");
   const input = value.replace(/\//g, "\\");
-  if (input.startsWith("\\\\"))
+  if (input.startsWith("\\\\")) {
     return `\\\\?\\UNC\\${input.slice(2).replace(/\\+/g, "\\")}\\`;
+  }
   if (/^[A-Za-z]:\\/.test(input)) return `\\\\?\\${input}`;
   return `\\\\?\\${__nodeWinPath.resolve(input)}`;
 };
@@ -158,8 +164,8 @@ globalThis.__nodePath = {
       resolved = resolved
         ? resolved + "/" + part.replace(/^\/+/, "")
         : part.startsWith("/")
-          ? part
-          : globalThis.__quench_cwd_get() + "/" + part;
+        ? part
+        : globalThis.__quench_cwd_get() + "/" + part;
       trailing = part.endsWith("/") && !part.endsWith("\\");
     }
     const out = globalThis.__nodePath.normalize(resolved);
@@ -171,9 +177,11 @@ globalThis.__nodePath = {
     const parts = input.split("/").filter((part) => part && part !== ".");
     const output = [];
     parts.forEach((part) => {
-      if (part === ".." && output.length && output[output.length - 1] !== "..")
+      if (
+        part === ".." && output.length && output[output.length - 1] !== ".."
+      ) {
         output.pop();
-      else if (part !== "..") output.push(part);
+      } else if (part !== "..") output.push(part);
     });
     const result = (absolute ? "/" : "") + output.join("/");
     return result || (absolute ? "/" : ".");
@@ -223,22 +231,21 @@ globalThis.__nodePath = {
       throw error;
     }
     const input = String(value);
-    const trimmed =
-      input.replace(/\/+$/, "") || (input.startsWith("/") ? "/" : "");
+    const trimmed = input.replace(/\/+$/, "") ||
+      (input.startsWith("/") ? "/" : "");
     const base = globalThis.__nodePath.basename(trimmed);
-    const dir =
-      input.endsWith("/") && trimmed === "."
-        ? ""
-        : input.includes("/")
-          ? globalThis.__nodePath.dirname(trimmed)
-          : "";
+    const dir = input.endsWith("/") && trimmed === "."
+      ? "."
+      : input.includes("/")
+      ? globalThis.__nodePath.dirname(trimmed)
+      : "";
     const ext = globalThis.__nodePath.extname(base);
     return {
       root: input.startsWith("/") ? "/" : "",
       dir,
       base,
       ext,
-      name: ext ? base.slice(0, -ext.length) : base
+      name: ext ? base.slice(0, -ext.length) : base,
     };
   },
   format: (parts) => {
@@ -255,7 +262,7 @@ globalThis.__nodePath = {
   },
   toNamespacedPath(value) {
     return value;
-  }
+  },
 };
 globalThis.__nodePath.posix = globalThis.__nodePath;
 const __nodeWinPath = {
@@ -275,9 +282,11 @@ const __nodeWinPath = {
     const parts = input.slice(root.length).split("\\").filter(Boolean);
     const output = [];
     for (const part of parts) {
-      if (part === ".." && output.length && output[output.length - 1] !== "..")
+      if (
+        part === ".." && output.length && output[output.length - 1] !== ".."
+      ) {
         output.pop();
-      else if (part !== ".") output.push(part);
+      } else if (part !== ".") output.push(part);
     }
     return `${root}${output.join("\\")}${output.length ? "" : root ? "" : "."}`;
   },
@@ -294,9 +303,10 @@ const __nodeWinPath = {
     const toPath = __nodeWinPath.normalize(toInput);
     if (
       __nodeWindowsRelativeRoot(fromInput) !==
-      __nodeWindowsRelativeRoot(toInput)
-    )
+        __nodeWindowsRelativeRoot(toInput)
+    ) {
       return toInput;
+    }
     const a = fromPath.split("\\").filter(Boolean);
     const b = toPath.split("\\").filter(Boolean);
     while (a.length && b.length && a[0].toLowerCase() === b[0].toLowerCase()) {
@@ -314,8 +324,9 @@ const __nodeWinPath = {
     const trimmed = input.replace(/[\\]+$/, "") || root;
     const drive = __nodeWindowsDriveParse(input);
     if (drive) return drive;
-    if (root.startsWith("\\\\") && trimmed === root.slice(0, -1))
+    if (root.startsWith("\\\\") && trimmed === root.slice(0, -1)) {
       return { root, dir: root, base: "", ext: "", name: "" };
+    }
     const index = trimmed.lastIndexOf("\\");
     const dir = __nodeWindowsDir(trimmed, root, index, hadTrailingSeparator);
     const base = index >= 0 ? trimmed.slice(index + 1) : trimmed;
@@ -335,11 +346,10 @@ const __nodeWinPath = {
     const input = __nodePathArg(value);
     if (/^[A-Za-z]:$/.test(input) || /^[A-Za-z]:[\\/]+$/.test(input)) return "";
     if (/^[A-Za-z]:[^\\]/.test(input)) return input.slice(2);
-    const base =
-      input
-        .replace(/[\\/]+$/, "")
-        .split(/[\\/]/)
-        .pop() || "";
+    const base = input
+      .replace(/[\\/]+$/, "")
+      .split(/[\\/]/)
+      .pop() || "";
     if (suffix !== undefined) {
       const end = __nodePathArg(suffix);
       return end && base.endsWith(end) ? base.slice(0, -end.length) : base;
@@ -349,8 +359,9 @@ const __nodeWinPath = {
   dirname: (value) => {
     const original = __nodePathArg(value);
     if (/^[A-Za-z]:[\\]+$/.test(original)) return original;
-    if (/^[A-Za-z]:$/.test(original) || /^[A-Za-z]:[^\\]/.test(original))
+    if (/^[A-Za-z]:$/.test(original) || /^[A-Za-z]:[^\\]/.test(original)) {
       return original.slice(0, 2);
+    }
     const input = original.replace(/[\\/]+$/, "");
     if (!input) return original ? "\\" : ".";
     const index = input.lastIndexOf("\\");
@@ -369,12 +380,12 @@ const __nodeWinPath = {
   matchesGlob(path, pattern) {
     return __nodeGlobMatch(
       __nodePathArg(path).replace(/[\\/]/g, "/"),
-      __nodePathArg(pattern).replace(/[\\/]/g, "/")
+      __nodePathArg(pattern).replace(/[\\/]/g, "/"),
     );
   },
   toNamespacedPath(value) {
     return __nodeWindowsNamespacedPath(value);
-  }
+  },
 };
 __nodeWinPath.posix = globalThis.__nodePath;
 __nodeWinPath.win32 = __nodeWinPath;

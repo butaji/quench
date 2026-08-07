@@ -25,7 +25,7 @@ const __nodeFsSetFdTimes = (fd, atime, mtime) => {
   }
   if (!Number.isInteger(fd) || fd < 0) {
     const error = new RangeError(
-      'The value of "fd" is out of range. It must be >= 0 && <= 2147483647. Received -1'
+      'The value of "fd" is out of range. It must be >= 0 && <= 2147483647. Received -1',
     );
     error.code = "ERR_OUT_OF_RANGE";
     throw error;
@@ -36,8 +36,9 @@ globalThis.__nodeFs.utimesSync = __nodeFsSetTimes;
 globalThis.__nodeFs.lutimesSync = __nodeFsSetLinkTimes;
 globalThis.__nodeFs.futimesSync = __nodeFsSetFdTimes;
 const __nodeFsAsyncTimes = (method, value, atime, mtime, callback) => {
-  if (typeof callback !== "function")
+  if (typeof callback !== "function") {
     throw new TypeError('The "callback" argument must be of type function');
+  }
   try {
     globalThis.__nodeFs[method](value, atime, mtime);
   } catch (error) {

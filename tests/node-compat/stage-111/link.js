@@ -4,11 +4,11 @@ const fs = require("fs");
 for (const value of [false, 1, {}, [], null, undefined]) {
   assert.throws(() => fs.linkSync(value, "/tmp/unused"), {
     code: "ERR_INVALID_ARG_TYPE",
-    name: "TypeError"
+    name: "TypeError",
   });
   assert.throws(() => fs.linkSync("/tmp/unused", value), {
     code: "ERR_INVALID_ARG_TYPE",
-    name: "TypeError"
+    name: "TypeError",
   });
 }
 

@@ -9,7 +9,7 @@ const digest = crypto
   .digest("hex");
 assert.strictEqual(
   digest,
-  "b0442d3dde155df3b9c85aa381513c903b03bdbe9c7d57dd0da0ad6df5c81d8a"
+  "b0442d3dde155df3b9c85aa381513c903b03bdbe9c7d57dd0da0ad6df5c81d8a",
 );
 
 console.log("crypto HMAC digest passed");

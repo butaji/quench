@@ -3,7 +3,7 @@ const { parse } = require("url");
 
 assert.throws(() => parse(null), {
   code: "ERR_INVALID_ARG_TYPE",
-  name: "TypeError"
+  name: "TypeError",
 });
 
 const parsed = parse("https://example.com:8443/path?query=value#hash");

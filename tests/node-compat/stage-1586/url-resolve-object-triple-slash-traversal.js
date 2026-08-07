@@ -10,12 +10,13 @@ const cases = [
   ["fred:///s//a/b/c", "../../../g", "fred:///s/g"],
   ["fred:///s//a/b/c", "../../../../g", "fred:///g"],
   ["http:///s//a/b/c", "./", "http:///s//a/b/"],
-  ["http:///s//a/b/c", "../g", "http:///s//a/g"]
+  ["http:///s//a/b/c", "../g", "http:///s//a/g"],
 ];
-for (const [from, target, expected] of cases)
+for (const [from, target, expected] of cases) {
   assert.deepStrictEqual(
     url.resolveObject(url.parse(from), target),
     url.parse(expected),
-    `${from} + ${target}`
+    `${from} + ${target}`,
   );
+}
 console.log("triple-slash traversal matrix passed");

@@ -12,8 +12,9 @@ const cases = [
   [new RegExp(), undefined],
   ["test", null],
   ["http://nodejs.org", null],
-  [() => {}, undefined]
+  [() => {}, undefined],
 ];
-for (const [input, base] of cases)
+for (const [input, base] of cases) {
   assert.throws(() => new URL(input, base), { name: "TypeError" });
+}
 console.log("URL invalid input matrix passed");

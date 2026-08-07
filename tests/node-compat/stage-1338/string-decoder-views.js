@@ -8,7 +8,7 @@ for (const [index, view] of common.getArrayBufferViews(input).entries()) {
   assert.strictEqual(
     decoder.write(view),
     input.toString("utf8"),
-    `view ${index}`
+    `view ${index}`,
   );
   assert.strictEqual(decoder.end(), "", `end ${index}`);
 }

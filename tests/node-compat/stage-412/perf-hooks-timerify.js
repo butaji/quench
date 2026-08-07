@@ -13,8 +13,9 @@ try {
 } catch (caught) {
   error = caught;
 }
-if (!error || error.message !== "timerified failure")
+if (!error || error.message !== "timerified failure") {
   throw new Error("timerify did not preserve thrown errors");
+}
 observer.disconnect();
 
 console.log("perf hooks timerify passed");

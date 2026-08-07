@@ -3,15 +3,17 @@
 const assert = require("assert");
 const test = require("node:test");
 
-for (const name of [
-  "test",
-  "describe",
-  "it",
-  "before",
-  "after",
-  "beforeEach",
-  "afterEach"
-]) {
+for (
+  const name of [
+    "test",
+    "describe",
+    "it",
+    "before",
+    "after",
+    "beforeEach",
+    "afterEach",
+  ]
+) {
   assert.strictEqual(typeof test[name], "function");
 }
 assert.strictEqual(typeof test.run, "function");

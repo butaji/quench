@@ -8,12 +8,13 @@ const cases = [
   ["zz:abc", "/foo/../bar", "zz:/bar"],
   ["zz:abc", "foo/../../../bar", "zz:bar"],
   ["zz:abc", "foo/../bar", "zz:bar"],
-  ["zz:abc", "zz:.", "zz:"]
+  ["zz:abc", "zz:.", "zz:"],
 ];
-for (const [from, target, expected] of cases)
+for (const [from, target, expected] of cases) {
   assert.deepStrictEqual(
     url.resolveObject(url.parse(from), target),
     url.parse(expected),
-    `${from} + ${target}`
+    `${from} + ${target}`,
   );
+}
 console.log("legacy opaque matrix passed");

@@ -14,11 +14,14 @@ const { EventEmitter, on } = require("events");
   await events.return();
   const done = await events.next();
 
-  if (first.value.join(",") !== "first")
+  if (first.value.join(",") !== "first") {
     throw new Error("first event mismatch");
-  if (second.value.join(",") !== "second,2")
+  }
+  if (second.value.join(",") !== "second,2") {
     throw new Error("second event mismatch");
+  }
   if (!done.done) throw new Error("iterator should finish after return");
-  if (emitter.listenerCount("data") !== 0)
+  if (emitter.listenerCount("data") !== 0) {
     throw new Error("iterator should remove its listener");
+  }
 })();

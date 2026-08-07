@@ -3,10 +3,10 @@ const crypto = require("node:crypto");
 
 assert.strictEqual(
   crypto.Certificate.prototype.verifySpkac(Buffer.alloc(801)),
-  true
+  true,
 );
 assert.strictEqual(
   crypto.Certificate.prototype.verifySpkac(Buffer.alloc(797)),
-  false
+  false,
 );
 console.log("crypto SPKAC verification passed");

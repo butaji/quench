@@ -4,5 +4,5 @@ assert.throws(
     assert.throws(() => {
       throw Symbol("foo");
     }, /abc/),
-  { code: "ERR_ASSERTION", operator: "throws" }
+  { code: "ERR_ASSERTION", operator: "throws" },
 );

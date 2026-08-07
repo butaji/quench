@@ -6,7 +6,7 @@ fs.closeSync(fs.openSync(path, "w"));
 fs.open(
   path,
   "r",
-  common.mustSucceed((fd) => fs.closeSync(fd))
+  common.mustSucceed((fd) => fs.closeSync(fd)),
 );
 if (!fs.openSync(path, "r")) throw new Error("openSync failed");
 try {

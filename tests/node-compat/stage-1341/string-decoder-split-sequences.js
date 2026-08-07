@@ -4,18 +4,20 @@ const { StringDecoder } = require("node:string_decoder");
 const writeSequences = (length, start = 0, sequence = []) => {
   if (start === length) return [sequence];
   const result = [];
-  for (let end = length; end > start; end--)
+  for (let end = length; end > start; end--) {
     result.push(
-      ...writeSequences(length, end, sequence.concat([[start, end]]))
+      ...writeSequences(length, end, sequence.concat([[start, end]])),
     );
+  }
   return result;
 };
 const check = (encoding, input, expected) => {
   for (const sequence of writeSequences(input.length)) {
     const decoder = new StringDecoder(encoding);
     let output = "";
-    for (const [start, end] of sequence)
+    for (const [start, end] of sequence) {
       output += decoder.write(input.slice(start, end));
+    }
     output += decoder.end();
     assert.strictEqual(output, expected, JSON.stringify(sequence));
   }

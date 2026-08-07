@@ -9,9 +9,9 @@ for (const length of [0, 1, 15, 17]) {
       crypto.createCipheriv(
         "aes-128-cbc",
         Buffer.alloc(16),
-        Buffer.alloc(length)
+        Buffer.alloc(length),
       ),
-    /Invalid initialization vector/
+    /Invalid initialization vector/,
   );
 }
 console.log("crypto CBC IV validation passed");

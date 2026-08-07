@@ -13,8 +13,10 @@ const { EventEmitter, on } = require("events");
     error = caught;
   }
 
-  if (!error || error.name !== "AbortError")
+  if (!error || error.name !== "AbortError") {
     throw new Error("events.on should reject with AbortError");
-  if (emitter.listenerCount("data") !== 0)
+  }
+  if (emitter.listenerCount("data") !== 0) {
     throw new Error("abort should remove the event listener");
+  }
 })();

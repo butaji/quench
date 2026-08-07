@@ -1,7 +1,8 @@
 const { constants, getPriority, setPriority } = require("os");
 const { PRIORITY_NORMAL, PRIORITY_HIGHEST } = constants.priority;
-if (typeof PRIORITY_HIGHEST !== "number")
+if (typeof PRIORITY_HIGHEST !== "number") {
   throw new Error("missing priority constant");
+}
 for (const pid of [null, true, "foo", {}, []]) {
   try {
     getPriority(pid);
@@ -11,5 +12,6 @@ for (const pid of [null, true, "foo", {}, []]) {
   }
 }
 setPriority(0, PRIORITY_NORMAL);
-if (getPriority(0) !== PRIORITY_NORMAL)
+if (getPriority(0) !== PRIORITY_NORMAL) {
   throw new Error("priority was not stored");
+}

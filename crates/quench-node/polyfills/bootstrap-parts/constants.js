@@ -22,10 +22,11 @@ const __quenchConstants = Object.freeze({
   UV_FS_O_FILEMAP: 0,
   COPYFILE_EXCL: 1,
   COPYFILE_FICLONE: 2,
-  COPYFILE_FICLONE_FORCE: 4
+  COPYFILE_FICLONE_FORCE: 4,
 });
 globalThis.require = (specifier) => {
-  if (String(specifier).replace(/^node:/, "") === "constants")
+  if (String(specifier).replace(/^node:/, "") === "constants") {
     return __quenchConstants;
+  }
   return __quenchOriginalRequireWithConstants(specifier);
 };

@@ -3,16 +3,18 @@
 const assert = require("assert");
 const sys = require("node:sys");
 
-for (const name of [
-  "format",
-  "debug",
-  "inspect",
-  "log",
-  "inherits",
-  "isArray",
-  "isBoolean",
-  "isNull"
-]) {
+for (
+  const name of [
+    "format",
+    "debug",
+    "inspect",
+    "log",
+    "inherits",
+    "isArray",
+    "isBoolean",
+    "isNull",
+  ]
+) {
   assert.strictEqual(typeof sys[name], "function");
 }
 assert.strictEqual(sys.isArray([]), true);

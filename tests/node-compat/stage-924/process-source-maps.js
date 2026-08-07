@@ -3,7 +3,7 @@ const assert = require("assert");
 for (const value of [undefined, null, 1, {}, () => {}]) {
   assert.throws(
     () => process.setSourceMapsEnabled(value),
-    (error) => error.code === "ERR_INVALID_ARG_TYPE"
+    (error) => error.code === "ERR_INVALID_ARG_TYPE",
   );
 }
 

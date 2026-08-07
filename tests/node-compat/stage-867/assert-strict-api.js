@@ -3,15 +3,17 @@
 const assert = require("node:assert");
 const strict = require("node:assert/strict");
 
-for (const name of [
-  "strictEqual",
-  "notStrictEqual",
-  "deepStrictEqual",
-  "notDeepStrictEqual",
-  "throws",
-  "rejects",
-  "doesNotThrow"
-]) {
+for (
+  const name of [
+    "strictEqual",
+    "notStrictEqual",
+    "deepStrictEqual",
+    "notDeepStrictEqual",
+    "throws",
+    "rejects",
+    "doesNotThrow",
+  ]
+) {
   assert.strictEqual(typeof strict[name], "function");
 }
 assert.strictEqual(strict.strict, strict);

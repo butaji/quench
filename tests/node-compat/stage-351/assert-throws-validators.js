@@ -6,5 +6,5 @@ assert.throws(
   () => {
     throw new TypeError({});
   },
-  (error) => error instanceof TypeError
+  (error) => error instanceof TypeError,
 );

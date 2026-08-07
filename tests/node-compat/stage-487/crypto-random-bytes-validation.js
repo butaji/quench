@@ -1,10 +1,12 @@
 const { randomBytes } = require("crypto");
 
-for (const call of [
-  () => randomBytes(-1),
-  () => randomBytes(1.5),
-  () => randomBytes(1, 123)
-]) {
+for (
+  const call of [
+    () => randomBytes(-1),
+    () => randomBytes(1.5),
+    () => randomBytes(1, 123),
+  ]
+) {
   let error;
   try {
     call();

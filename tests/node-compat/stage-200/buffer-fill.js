@@ -5,5 +5,6 @@ if (buffer.toString("hex") !== "0000616261620000") {
   throw new Error("string fill failed");
 }
 buffer.fill(0xff, 0, 2);
-if (buffer[0] !== 255 || buffer[1] !== 255)
+if (buffer[0] !== 255 || buffer[1] !== 255) {
   throw new Error("numeric fill failed");
+}

@@ -13,14 +13,24 @@ const __quenchFsConstants = Object.freeze({
   O_APPEND: 1024,
   COPYFILE_EXCL: 1,
   COPYFILE_FICLONE: 2,
-  COPYFILE_FICLONE_FORCE: 4
+  COPYFILE_FICLONE_FORCE: 4,
+  S_IRUSR: 0o400,
+  S_IWUSR: 0o200,
+  S_IXUSR: 0o100,
+  S_IFDIR: 0o40000,
 });
 globalThis.require = (specifier) => {
   if (String(specifier).replace(/^node:/, "") === "fs") {
     const module = __quenchOriginalRequireWithFsConstants(specifier);
-    module.constants = new Proxy(
-      Object.assign({}, module.constants, __quenchFsConstants),
-      { getPrototypeOf: () => null }
+    module.constants = Object.freeze(
+      new Proxy(
+        Object.assign(
+          Object.create(null),
+          module.constants,
+          __quenchFsConstants,
+        ),
+        { getPrototypeOf: () => null },
+      ),
     );
     return module;
   }

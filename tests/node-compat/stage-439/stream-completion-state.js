@@ -7,10 +7,12 @@ readable.on("end", () => {
 });
 
 const writable = new Writable();
-if (writable.writableEnded || writable.writableFinished)
+if (writable.writableEnded || writable.writableFinished) {
   throw new Error("writable started finished");
+}
 writable.end(() => {
-  if (!writable.writableEnded || !writable.writableFinished)
+  if (!writable.writableEnded || !writable.writableFinished) {
     throw new Error("writable completion flags were not set");
+  }
   console.log("stream completion state passed");
 });

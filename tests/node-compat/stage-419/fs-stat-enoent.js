@@ -6,7 +6,8 @@ try {
 } catch (caught) {
   error = caught;
 }
-if (!error || error.code !== "ENOENT" || error.syscall !== "stat")
+if (!error || error.code !== "ENOENT" || error.syscall !== "stat") {
   throw new Error("statSync must preserve ENOENT metadata");
+}
 
 console.log("fs stat enoent passed");

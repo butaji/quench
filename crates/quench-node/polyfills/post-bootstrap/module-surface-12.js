@@ -15,10 +15,14 @@ const __quenchWorkerThreadFallbacks = (result) => {
       "getEnvironmentData",
       "markAsUntransferable",
       "isMarkedAsUncloneable",
-      "moveMessagePortToContext"
+      "moveMessagePortToContext",
     ],
-    () => undefined
+    () => undefined,
   );
+  if (globalThis.MessageChannel) {
+    result.MessageChannel = globalThis.MessageChannel;
+  }
+  if (globalThis.MessagePort) result.MessagePort = globalThis.MessagePort;
   result.parentPort ??= null;
   result.workerData ??= undefined;
   result.threadId ??= 0;
@@ -26,8 +30,8 @@ const __quenchWorkerThreadFallbacks = (result) => {
 const __quenchFsModuleFallbacks = (result) => {
   __quenchSetFallbacks(
     result,
-    ["glob", "cp", "cpSync", "watch", "watchFile", "unwatchFile"],
-    () => undefined
+    ["glob", "watch", "watchFile", "unwatchFile"],
+    () => undefined,
   );
   __quenchSetFallbacks(
     result,
@@ -39,9 +43,9 @@ const __quenchFsModuleFallbacks = (result) => {
       "Dir",
       "Dirent",
       "ReadStream",
-      "WriteStream"
+      "WriteStream",
     ],
-    function Constructor() {}
+    function Constructor() {},
   );
   result.promises ||= {};
   result.promises.glob ||= async function* () {};
@@ -61,9 +65,9 @@ const __quenchZlibFallbacks = (result) =>
       "brotliDecompress",
       "brotliDecompressSync",
       "unzip",
-      "unzipSync"
+      "unzipSync",
     ],
-    () => undefined
+    () => undefined,
   );
 const __quenchApplyModuleSurface12 = (name, result) => {
   const normalized = String(name).replace(/^node:/, "");
@@ -128,21 +132,24 @@ globalThis.__quenchUrlPath = (input, authority) => {
     .replace(/#/g, "%23")
     .replace(/\?/g, "%3F")
     .replace(/ /g, "%20");
-  if (authority && pathname && !pathname.startsWith("/"))
+  if (authority && pathname && !pathname.startsWith("/")) {
     pathname = `/${pathname}`;
+  }
   if (
     authority &&
     input.protocol !== "mailto:" &&
     !pathname &&
     (input.search != null || input.query != null)
-  )
+  ) {
     pathname = "/";
+  }
   return pathname;
 };
 globalThis.__quenchResolveEmptyAuthority = (from, to) => {
   if (/^[a-z][a-z0-9+.-]*:/i.test(to)) return to;
-  if (to.startsWith("/"))
+  if (to.startsWith("/")) {
     return globalThis.__quenchResolveEmptyNetworkPath(from, to);
+  }
   let base = from.replace(/[^/]*$/, "");
   let target = to;
   let parentTraversal = 0;
@@ -152,25 +159,28 @@ globalThis.__quenchResolveEmptyAuthority = (from, to) => {
     target = target.slice(3);
   }
   if (parentTraversal > 3) base = base.replace(/[^/]+\/$/, "");
-  if (parentTraversal > 2)
+  if (parentTraversal > 2) {
     base = base.replace(
       /^(.*?:\/\/)(.*)$/,
-      (_, prefix, path) => prefix + path.replace(/\/{2,}/g, "/")
+      (_, prefix, path) => prefix + path.replace(/\/{2,}/g, "/"),
     );
+  }
   if (parentTraversal > 3) base = base.replace(/[^/]+\/$/, "");
   return base.replace(/^http:\/\/\//, "http:/") + target.replace(/^\.\//, "");
 };
 globalThis.__quenchResolveEmptyNetworkPath = (from, to) =>
-  `${from.match(/^[a-z][a-z0-9+.-]*:\/\//i)?.[0] || ""}${to.startsWith("//") ? to.slice(2) : to}${/^\/\/[^/]+$/.test(to) && /^https?:/i.test(from) ? "/" : ""}`.replace(
+  `${from.match(/^[a-z][a-z0-9+.-]*:\/\//i)?.[0] || ""}${
+    to.startsWith("//") ? to.slice(2) : to
+  }${/^\/\/[^/]+$/.test(to) && /^https?:/i.test(from) ? "/" : ""}`.replace(
     /^http:\/\/\//,
-    "http:/"
+    "http:/",
   );
 globalThis.__quenchResolveFileFragment = (from, to) =>
   /^file:\/[^/]/i.test(from) && /^#/.test(to)
     ? from.replace(/^file:\//i, "file:///") + to
     : /^file:\/[^/]/i.test(to) && /^#/.test(from)
-      ? to.replace(/^file:\//i, "file:///") + from
-      : null;
+    ? to.replace(/^file:\//i, "file:///") + from
+    : null;
 globalThis.__quenchResolveReversedFileRelative = (from, to) =>
   /^file:\/[^/]/i.test(to) && !/^[a-z][a-z0-9+.-]*:/i.test(from)
     ? globalThis.__quenchResolveFileRelative(to, from)
@@ -179,19 +189,21 @@ globalThis.__quenchResolveFileAuthority = (from, to) =>
   /^file:\/\/[^/]+\//i.test(from) && /^file:\/[^/]/i.test(to)
     ? from.replace(/^file:\/\/[^/]+/i, "file://")
     : /^file:\/[^/]/i.test(from) && /^file:\/\/[^/]+\//i.test(to)
-      ? to.replace(/^file:\/\/[^/]+/i, "file://")
-      : null;
+    ? to.replace(/^file:\/\/[^/]+/i, "file://")
+    : null;
 const __quenchResolveFileRelativeBase = (from, to) => {
   const reversed = globalThis.__quenchResolveReversedFileRelative(from, to);
   if (reversed) return reversed;
-  if (/^file:\/[^/]/i.test(to) && from.startsWith("/"))
+  if (/^file:\/[^/]/i.test(to) && from.startsWith("/")) {
     return to.replace(/^file:\//i, "file:///") + from;
+  }
   if (
     !/^file:\/[^/]/i.test(from) ||
     /^[a-z][a-z0-9+.-]*:/i.test(to) ||
     to.startsWith("#")
-  )
+  ) {
     return null;
+  }
   if (to === "") return from.replace(/^file:\//i, "file:///");
   if (to.startsWith("/")) return `file://${to}`;
   let base = from.replace(/^file:\//i, "file:///").replace(/[^/]*$/, "");
@@ -212,18 +224,18 @@ globalThis.__nodeLegacyResolve = (from, to) =>
   new globalThis.__nodeURL(to, from).href;
 globalThis.__quenchResolveQueryAbsolute = (from, to) =>
   typeof from === "string" &&
-  from.startsWith("/") &&
-  /^https?:\/\/[^/?#]+(?:[?#].*)?$/i.test(to)
+    from.startsWith("/") &&
+    /^https?:\/\/[^/?#]+(?:[?#].*)?$/i.test(to)
     ? to.split(/[?#]/)[0] + from
     : null;
 globalThis.__quenchResolveMailtoRelative = (from, to) =>
   /^mailto:/i.test(from) && /^[?#]/.test(to)
     ? `mailto:${from.slice(7).split(/[?#]/)[0]}${to}`
     : /^mailto:/i.test(from) && !/^[a-z][a-z0-9+.-]*:/i.test(to)
-      ? `mailto:${from.slice(7, from.lastIndexOf("/") + 1)}${to}`
-      : /^mailto:/i.test(to) && !/^[a-z][a-z0-9+.-]*:/i.test(from)
-        ? `mailto:${to.slice(7, to.lastIndexOf("/") + 1)}${from}`
-        : null;
+    ? `mailto:${from.slice(7, from.lastIndexOf("/") + 1)}${to}`
+    : /^mailto:/i.test(to) && !/^[a-z][a-z0-9+.-]*:/i.test(from)
+    ? `mailto:${to.slice(7, to.lastIndexOf("/") + 1)}${from}`
+    : null;
 globalThis.__quenchOpaqueTargetRelative = (from, to) => {
   const target = to.match(/^([a-z][a-z0-9+.-]*):(.*)$/i);
   if (!target || /^[a-z][a-z0-9+.-]*:/i.test(from)) return null;
@@ -232,7 +244,7 @@ globalThis.__quenchOpaqueTargetRelative = (from, to) => {
   return globalThis.__quenchNormalizeOpaqueRelative(
     target[1],
     target[2].slice(0, target[2].lastIndexOf("/") + 1),
-    from
+    from,
   );
 };
 globalThis.__quenchOpaqueTargetResolve = (from, to, target) =>
@@ -267,7 +279,7 @@ globalThis.__quenchPreserveWebDoubleSlash = (base, target) =>
 globalThis.__quenchNormalizeAuthorityTarget = (value) => {
   const normalized = value.replace(
     /^([A-Za-z][A-Za-z0-9+.-]*:\/\/[^/]+)\/{2,}$/,
-    "$1/"
+    "$1/",
   );
   return /^(https?):\/\/[^/?#]+$/i.test(normalized)
     ? `${normalized}/`
@@ -282,12 +294,12 @@ globalThis.__quenchResolveAuthorityRelative = (from, target) => {
 globalThis.__quenchResolveSameWebAuthority = (from, to, target) =>
   globalThis.__quenchIsAuthorityOnly(to)
     ? globalThis.__quenchResolveAuthorityRelative(
-        from,
-        `${target[1]}:${target[2]}`
-      )
+      from,
+      `${target[1]}:${target[2]}`,
+    )
     : target[2].startsWith("//")
-      ? `${target[1]}:${target[2]}`
-      : null;
+    ? `${target[1]}:${target[2]}`
+    : null;
 globalThis.__quenchResolveSameWebScheme = (from, to, relative) => {
   const target = to.match(/^([A-Za-z][A-Za-z0-9+.-]*):(.*)$/);
   if (!target || !from.startsWith(`${target[1]}://`)) return null;
@@ -308,8 +320,9 @@ globalThis.__quenchResolveAbsoluteTarget = (from, to) => {
     !/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(to) ||
     /^file:/i.test(to) ||
     globalThis.__quenchIsAuthorityOnly(to)
-  )
+  ) {
     return null;
+  }
   return (
     globalThis.__quenchResolveAuthenticatedTarget(from, to) ||
     globalThis.__quenchNormalizeAuthorityTarget(to)
@@ -319,13 +332,53 @@ globalThis.__quenchResolveFragmentOnly = (from, to) =>
   typeof from === "string" && from.startsWith("#") && to.startsWith("#")
     ? `/${to}`
     : null;
-globalThis.__quenchWrapResolve = (result, from, to) =>
-  globalThis.__quenchNormalizeAuthorityTarget(result.resolveObject(from, to));
+globalThis.__quenchWrapResolve = (result, from, to) => {
+  if (/^[a-z][a-z0-9+.-]*:\/\/\//i.test(from) && /^[^/]/.test(to)) {
+    if (/^(?:\.\.\/)+/.test(to)) {
+      const prefix = from.slice(0, from.indexOf(":") + 4);
+      const path = from.slice(from.indexOf("://") + 3).split(/[?#]/)[0];
+      const parts = `${path.slice(0, path.lastIndexOf("/") + 1)}${to}`.split(
+        "/",
+      );
+      const normalized = [];
+      for (const part of parts) {
+        if (!part || part === ".") continue;
+        if (part === "..") {
+          if (normalized.length > 1) normalized.pop();
+        } else normalized.push(part);
+      }
+      return `${prefix}${normalized.join("/")}`;
+    }
+    const prefix = from.slice(0, from.indexOf(":") + 3);
+    const path = from.slice(from.indexOf("://") + 3);
+    const base = path.slice(0, path.lastIndexOf("/") + 1);
+    return `${prefix}/${base.replace(/^\/+/, "")}${to}`;
+  }
+  if (
+    typeof from === "string" &&
+    from.startsWith("/") &&
+    /^https?:\/\/[^/?#]+(?:\?.*)?$/i.test(to)
+  ) {
+    const authority = to.match(/^[^?]+/)[0];
+    const query = to.slice(authority.length).replace(/^\?/, "");
+    const path = from.split("?")[0];
+    const fromQuery = from.includes("?")
+      ? from.slice(from.indexOf("?") + 1)
+      : "";
+    return `${authority}${path}${
+      fromQuery ? `?${fromQuery}` : query ? `?${query}` : ""
+    }`;
+  }
+  const resolved = result.resolveObject(from, to);
+  return globalThis.__quenchNormalizeAuthorityTarget(
+    typeof resolved === "string" ? resolved : resolved.href,
+  );
+};
 globalThis.__quenchResolveLegacyFileRelative = (from, to) =>
   globalThis.__quenchIsOpaqueTarget(from) ||
-  globalThis.__quenchIsOpaqueTarget(to) ||
-  (/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(to) && !/^file:/i.test(to)) ||
-  (typeof from === "string" && from.includes("://") && to.startsWith("//"))
+    globalThis.__quenchIsOpaqueTarget(to) ||
+    (/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(to) && !/^file:/i.test(to)) ||
+    (typeof from === "string" && from.includes("://") && to.startsWith("//"))
     ? null
     : globalThis.__quenchResolveFileRelative(from, to);
 globalThis.__quenchResolveParsedAbsolute = (result, from, to) => {
@@ -339,15 +392,13 @@ globalThis.__quenchResolveParsedAbsolute = (result, from, to) => {
     protocol: from.protocol,
     pathname: resolvedPath,
     path: resolvedPath,
-    href: resolved
+    href: resolved,
   });
 };
 globalThis.__quenchResolveScopedObject = (r, f, t) =>
-  typeof f === "string" || !t.startsWith("@") || !f.href
-    ? null
-    : r.parse(
-        `${f.href.match(/^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/]*/)?.[0]}/${t}`
-      );
+  typeof f === "string" || !t.startsWith("@") || !f.href ? null : r.parse(
+    `${f.href.match(/^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/]*/)?.[0]}/${t}`,
+  );
 globalThis.__quenchResolveParsedSpecial = (r, f, t) =>
   globalThis.__quenchResolveScopedObject(r, f, t) ||
   globalThis.__quenchResolveParsedFile(r, f, t) ||
@@ -361,23 +412,28 @@ globalThis.__quenchResolveParsedSpecial = (r, f, t) =>
   globalThis.__quenchResolveParsedOpaque(r, f, t);
 globalThis.__quenchResolveParsedObject = (result, from, to) => {
   if (typeof from === "string") return null;
+  const protocolHash = to.match(/^([A-Za-z][A-Za-z0-9+.-]*):(#.*)$/);
+  if (protocolHash && from.protocol === `${protocolHash[1]}:`) {
+    return result.parse(`${from.href.split("#")[0]}${protocolHash[2]}`);
+  }
+  if (protocolHash) {
+    return result.parse(`${protocolHash[1]}:///${protocolHash[2]}`);
+  }
+  const singleSlash = globalThis.__quenchResolveSingleSlashProtocol(
+    from.href || from.pathname || "",
+    to,
+  );
+  if (singleSlash) return result.parse(singleSlash);
   const absoluteTarget = globalThis.__quenchResolveParsedAbsoluteTarget(
     result,
     from,
-    to
+    to,
   );
   if (absoluteTarget) return absoluteTarget;
   const fragment = globalThis.__quenchResolveParsedSpecial(result, from, to);
   if (fragment) return fragment;
-  if (/^([A-Za-z][A-Za-z0-9+.-]*):(#.*)$/.test(to))
-    return result.parse(to.replace(/^([A-Za-z][A-Za-z0-9+.-]*):/, "$1:///"));
-  const singleSlash = globalThis.__quenchResolveSingleSlashProtocol(
-    from.href || from.pathname || "",
-    to
-  );
-  if (singleSlash) return result.parse(singleSlash);
   return result.parse(
-    globalThis.__quenchResolveParsedPath(from.pathname || from.href || "", to)
+    globalThis.__quenchResolveParsedPath(from.pathname || from.href || "", to),
   );
 };
 globalThis.__quenchResolveParsedPath = (base, to) => {
@@ -396,8 +452,9 @@ globalThis.__quenchResolveParsedPath = (base, to) => {
 globalThis.__quenchResolveObjectEarly = (result, from, to, originalResolve) => {
   const fragmentOnly = globalThis.__quenchResolveStringFragmentOnly(from, to);
   if (fragmentOnly) return fragmentOnly;
-  if (to === "." && globalThis.__quenchIsOpaqueTarget(from))
+  if (to === "." && globalThis.__quenchIsOpaqueTarget(from)) {
     return `${from.match(/^([A-Za-z][A-Za-z0-9+.-]*):/)[1]}:`;
+  }
   const parsedObject = globalThis.__quenchResolveParsedObject(result, from, to);
   if (parsedObject) return parsedObject;
   const absoluteTarget = globalThis.__quenchResolveAbsoluteTarget(from, to);
@@ -416,11 +473,21 @@ globalThis.__quenchAddLegacyParseMethods = (result) => {
   const originalParse = result.parse;
   result.parse = (input, ...args) => {
     const parsed = originalParse(input, ...args);
-    const resolveObject = (target) =>
-      /^javascript:/i.test(target) ? originalParse(target) : parsed;
+    const resolveObject = (target) => {
+      if (/^javascript:/i.test(target)) return originalParse(target);
+      const schemeTarget = String(target).match(
+        /^([a-z][a-z0-9+.-]*):(\/\/)?(.*)$/i,
+      );
+      if (schemeTarget && !schemeTarget[2]) {
+        const [, scheme, , rest] = schemeTarget;
+        if (rest.startsWith("#")) return originalParse(`${scheme}:///${rest}`);
+        return originalParse(`${scheme}://${rest}`);
+      }
+      return result.parse(globalThis.__nodeLegacyResolve(parsed.href, target));
+    };
     Object.defineProperties(parsed, {
       resolveObject: { value: resolveObject },
-      resolve: { value: resolveObject }
+      resolve: { value: resolveObject },
     });
     return parsed;
   };
@@ -442,15 +509,16 @@ globalThis.__nodeLegacyMailtoParts = (input) => {
     path: query ? `?${query}` : null,
     slashes: null,
     port: null,
-    hash: null
+    hash: null,
   };
 };
 globalThis.__nodeLegacySchemeAddressParts = (input) => {
   const match = input.match(
-    /^([a-z][a-z0-9+.-]*:)([^/?#]*@[^/?#]*)(?:\?([^#]*))?/i
+    /^([a-z][a-z0-9+.-]*:)([^/?#]*@[^/?#]*)(?:\?([^#]*))?/i,
   );
-  if (!match || ["mailto:", "javascript:"].includes(match[1].toLowerCase()))
+  if (!match || ["mailto:", "javascript:"].includes(match[1].toLowerCase())) {
     return null;
+  }
   const at = match[2].lastIndexOf("@");
   const auth = match[2].slice(0, at);
   const host = match[2].slice(at + 1);
@@ -466,12 +534,12 @@ globalThis.__nodeLegacySchemeAddressParts = (input) => {
     hash: null,
     search,
     query: match[3] || null,
-    path: search
+    path: search,
   };
 };
 globalThis.__nodeLegacyOpaquePathParts = (input) => {
   const match = input.match(
-    /^([a-z][a-z0-9+.-]*:)([^/?#]+)\/([^?#]*)(?:\?([^#]*))?(?:#(.*))?$/i
+    /^([a-z][a-z0-9+.-]*:)([^/?#]+)\/([^?#]*)(?:\?([^#]*))?(?:#(.*))?$/i,
   );
   if (!match || match[1].toLowerCase() === "mailto:") return null;
   const search = match[4] ? `?${match[4]}` : null;
@@ -488,7 +556,7 @@ globalThis.__nodeLegacyOpaquePathParts = (input) => {
     port: null,
     hash,
     search,
-    query: match[4] || null
+    query: match[4] || null,
   };
 };
 globalThis.__nodeLegacyHostASCII = (host) => {

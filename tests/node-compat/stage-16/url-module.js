@@ -5,5 +5,5 @@ assert.strictEqual(fileURLToPath(file), "/tmp/quench node.txt");
 assert.strictEqual(file instanceof URL, true);
 assert.strictEqual(
   new URL("/child", "https://example.test/base").href,
-  "https://example.test/child"
+  "https://example.test/child",
 );

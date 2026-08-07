@@ -3,15 +3,17 @@
 const assert = require("assert");
 const urlApi = require("node:url");
 
-for (const name of [
-  "URL",
-  "URLSearchParams",
-  "fileURLToPath",
-  "pathToFileURL",
-  "format",
-  "parse",
-  "resolve"
-]) {
+for (
+  const name of [
+    "URL",
+    "URLSearchParams",
+    "fileURLToPath",
+    "pathToFileURL",
+    "format",
+    "parse",
+    "resolve",
+  ]
+) {
   assert.strictEqual(typeof urlApi[name], "function");
 }
 const parsed = new urlApi.URL("https://example.com/path?value=1");

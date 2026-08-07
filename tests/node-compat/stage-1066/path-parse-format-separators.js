@@ -11,28 +11,30 @@ assert.deepStrictEqual(path.win32.parse("t"), {
   name: "t",
   root: "",
   dir: "",
-  ext: ""
+  ext: "",
 });
 assert.deepStrictEqual(path.win32.parse("/foo/bar"), {
   root: "/",
   dir: "/foo",
   base: "bar",
   ext: "",
-  name: "bar"
+  name: "bar",
 });
 const unc = "\\\\server\\share\\file_path";
 assert.strictEqual(path.win32.format(path.win32.parse(unc)), unc);
-for (const value of [
-  "C:\\path\\dir\\index.html",
-  "C:\\another_path\\DIR\\1\\2\\33\\\\index",
-  "\\",
-  "\\foo\\C:",
-  "C:",
-  "C:.",
-  "C:\\",
-  "\\\\server\\share\\file_path",
-  ""
-]) {
+for (
+  const value of [
+    "C:\\path\\dir\\index.html",
+    "C:\\another_path\\DIR\\1\\2\\33\\\\index",
+    "\\",
+    "\\foo\\C:",
+    "C:",
+    "C:.",
+    "C:\\",
+    "\\\\server\\share\\file_path",
+    "",
+  ]
+) {
   assert.strictEqual(path.win32.format(path.win32.parse(value)), value);
 }
 assert.deepStrictEqual(path.win32.parse("C:\\"), {
@@ -40,7 +42,7 @@ assert.deepStrictEqual(path.win32.parse("C:\\"), {
   dir: "C:\\",
   base: "",
   ext: "",
-  name: ""
+  name: "",
 });
 assert.strictEqual(path.win32.dirname("C:\\"), "C:\\");
 assert.strictEqual(parsed.dir, "C:\\another_path\\DIR\\1\\2\\33\\\\");

@@ -6,7 +6,8 @@ try {
 } catch (caught) {
   error = caught;
 }
-if (!error || error.code !== "ERR_INVALID_ARG_TYPE")
+if (!error || error.code !== "ERR_INVALID_ARG_TYPE") {
   throw new Error("appendFile must validate data synchronously");
+}
 
 console.log("fs append validation passed");

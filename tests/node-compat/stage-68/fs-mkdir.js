@@ -10,8 +10,9 @@ fs.mkdir(
   { recursive: true },
   common.mustCall((error) => {
     if (error) throw error;
-    if (!fs.existsSync(nested))
+    if (!fs.existsSync(nested)) {
       throw new Error("recursive mkdir did not create directory");
-  })
+    }
+  }),
 );
 fs.mkdirSync(path.join(root, "sync"), { recursive: true });

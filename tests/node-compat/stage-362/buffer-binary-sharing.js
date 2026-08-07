@@ -19,5 +19,5 @@ shared[1] = 6;
 assert.strictEqual(copied[0], 7);
 assert.deepStrictEqual(
   Buffer.concat([Buffer.from([1]), Buffer.from([2, 3])]),
-  Buffer.from([1, 2, 3])
+  Buffer.from([1, 2, 3]),
 );

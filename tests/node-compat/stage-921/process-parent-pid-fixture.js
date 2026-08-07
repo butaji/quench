@@ -3,7 +3,7 @@ const childProcess = require("child_process");
 
 const child = childProcess.spawnSync(process.execPath, [
   `${process.cwd()}/tests/node/test/parallel/test-process-ppid.js`,
-  "child"
+  "child",
 ]);
 
 assert.strictEqual(child.status, 0);

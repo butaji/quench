@@ -9,7 +9,7 @@ const assert = require("assert");
     fs.write(
       fd,
       { buffer, offset: 1, length: 2, position: 0 },
-      (error, count) => (error ? reject(error) : resolve(count))
+      (error, count) => (error ? reject(error) : resolve(count)),
     )
   );
   fs.closeSync(fd);

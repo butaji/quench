@@ -7,6 +7,7 @@ writable.destroy(new Error("ignored"), (error) => {
   callbackCalled = true;
 });
 queueMicrotask(() => {
-  if (!callbackCalled)
+  if (!callbackCalled) {
     throw new Error("repeat destroy callback was not called");
+  }
 }, 0);

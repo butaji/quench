@@ -7,7 +7,8 @@ try {
   error = caught;
 }
 
-if (!error || error.code !== "ERR_INVALID_ARG_TYPE")
+if (!error || error.code !== "ERR_INVALID_ARG_TYPE") {
   throw new Error("async mkdtemp prefix validation was missing");
+}
 
 console.log("fs async mkdtemp prefix passed");

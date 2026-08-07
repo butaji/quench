@@ -17,22 +17,20 @@ const __quenchOutputStream = (stream) => {
     return stream.on(event, once);
   };
   stream.emit = (event, ...values) => {
-    for (const listener of [...(stream._quenchListeners[event] || [])])
+    for (const listener of [...(stream._quenchListeners[event] || [])]) {
       listener(...values);
+    }
     return true;
   };
   return stream;
 };
 const __quenchWriteChildOutput = (args, stdout, stderr) => {
   const options = Array.isArray(args[1]) ? args[2] || {} : args[1] || {};
-  const env =
-    String(args[0]).endsWith("/env") || String(args[0]) === "env"
-      ? options.env === undefined
-        ? process.env
-        : options.env
-      : {};
+  const env = String(args[0]).endsWith("/env") || String(args[0]) === "env"
+    ? options.env === undefined ? process.env : options.env
+    : {};
   const outputEntries = Object.entries(env).filter(
-    ([, value]) => value !== undefined
+    ([, value]) => value !== undefined,
   );
   const output =
     outputEntries.map(([key, value]) => `${key}=${String(value)}`).join("\n") +
@@ -50,7 +48,7 @@ const __quenchEmitChildOutput = (
   stdout,
   stderr,
   event,
-  values
+  values,
 ) => {
   if (event === "exit" && !child.__quenchOutputSent) {
     child.__quenchOutputSent = true;

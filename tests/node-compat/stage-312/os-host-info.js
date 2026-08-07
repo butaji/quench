@@ -13,6 +13,6 @@ assert.deepStrictEqual(os.networkInterfaces().lo, [
     family: "IPv4",
     mac: "00:00:00:00:00:00",
     internal: true,
-    cidr: "127.0.0.1/8"
-  }
+    cidr: "127.0.0.1/8",
+  },
 ]);

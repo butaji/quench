@@ -8,8 +8,9 @@ if (
   buffer.readUInt16BE(0) !== 0x2343 ||
   buffer.readUInt16LE(2) !== 0x2343 ||
   buffer.readUInt32BE(4) !== 0x12345678
-)
+) {
   throw new Error("uint roundtrip mismatch");
+}
 try {
   buffer.readUInt32BE(6);
   throw new Error("accepted out-of-bounds read");

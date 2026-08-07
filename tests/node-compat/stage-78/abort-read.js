@@ -6,9 +6,10 @@ fs.readFile(
   __filename,
   { signal },
   common.mustCall((error) => {
-    if (!error || error.name !== "AbortError")
+    if (!error || error.name !== "AbortError") {
       throw new Error("expected AbortError");
-  })
+    }
+  }),
 );
 try {
   fs.readFile(__filename, { signal: "invalid" }, common.mustNotCall());

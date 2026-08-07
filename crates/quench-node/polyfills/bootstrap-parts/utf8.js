@@ -18,21 +18,24 @@ const __quenchUtf8ValidCode = (code, width) =>
   );
 const __quenchUtf8CodePoint = (bytes, index, width) => {
   const code = __quenchUtf8ContinuationCode(bytes, index, width);
-  if (code === undefined || !__quenchUtf8ValidCode(code, width))
+  if (code === undefined || !__quenchUtf8ValidCode(code, width)) {
     return undefined;
+  }
   return code;
 };
 const __quenchUtf8InvalidAdvance = (bytes, index, width) => {
   if (__quenchUtf8ContinuationCode(bytes, index, width) !== undefined) return 1;
   let next = index + 1;
-  while (next < index + width && bytes[next] >= 0x80 && bytes[next] <= 0xbf)
+  while (next < index + width && bytes[next] >= 0x80 && bytes[next] <= 0xbf) {
     next++;
+  }
   return next - index;
 };
 const __quenchUtf8IncompleteAdvance = (bytes, index) => {
   let next = index + 1;
-  while (next < bytes.length && bytes[next] >= 0x80 && bytes[next] <= 0xbf)
+  while (next < bytes.length && bytes[next] >= 0x80 && bytes[next] <= 0xbf) {
     next++;
+  }
   return next < bytes.length ? next : undefined;
 };
 const __quenchDecodeUtf8 = (bytes, final) => {
@@ -52,8 +55,9 @@ const __quenchDecodeUtf8 = (bytes, final) => {
       break;
     }
     if (width === 1) {
-      output +=
-        bytes[index] < 0x80 ? String.fromCharCode(bytes[index]) : "\ufffd";
+      output += bytes[index] < 0x80
+        ? String.fromCharCode(bytes[index])
+        : "\ufffd";
       index++;
       continue;
     }

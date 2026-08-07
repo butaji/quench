@@ -3,13 +3,15 @@
 const assert = require("assert");
 const tls = require("node:tls");
 
-for (const name of [
-  "connect",
-  "createServer",
-  "createSecureContext",
-  "getCiphers",
-  "checkServerIdentity"
-]) {
+for (
+  const name of [
+    "connect",
+    "createServer",
+    "createSecureContext",
+    "getCiphers",
+    "checkServerIdentity",
+  ]
+) {
   assert.strictEqual(typeof tls[name], "function");
 }
 for (const name of ["Server", "TLSSocket", "SecureContext"]) {

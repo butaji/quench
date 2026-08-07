@@ -4,8 +4,9 @@ const fs = require("fs");
   const path = `/tmp/quench-node-stage-176-${process.pid}`;
   fs.writeFileSync(path, "read me");
   const handle = await fs.promises.open(path, "r");
-  if ((await handle.readFile({ encoding: "utf8" })) !== "read me")
+  if ((await handle.readFile({ encoding: "utf8" })) !== "read me") {
     throw new Error("filehandle readFile mismatch");
+  }
   const controller = new AbortController();
   controller.abort();
   try {

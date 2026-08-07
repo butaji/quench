@@ -6,7 +6,7 @@ for (const encoding of [0, null]) {
   assert.throws(() => buffer.toString(encoding, 1, 2), {
     code: "ERR_UNKNOWN_ENCODING",
     name: "TypeError",
-    message: `Unknown encoding: ${encoding}`
+    message: `Unknown encoding: ${encoding}`,
   });
 }
 

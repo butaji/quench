@@ -8,7 +8,7 @@ const listener = (value) => (warning = value);
 processApi.once("warning", listener);
 processApi.emitWarning("stage warning", {
   name: "StageWarning",
-  code: "STAGE_642"
+  code: "STAGE_642",
 });
 
 assert(warning && typeof warning === "object");

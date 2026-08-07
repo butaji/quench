@@ -4,6 +4,8 @@ const __quenchSpawnWithError = __quenchChildSpawnError.spawn;
 __quenchChildSpawnError.spawn = (...args) => {
   const child = __quenchSpawnWithError(...args);
   const command = String(args[0] || "");
+  const options = Array.isArray(args[1]) ? args[2] : args[1];
+  if (options?.shell) return child;
   if (/does-not-exist|foo123|hopefully_you_dont_have_this/.test(command)) {
     const emit = child.emit;
     let reported = false;
@@ -18,7 +20,7 @@ __quenchChildSpawnError.spawn = (...args) => {
           errno: -2,
           syscall: `spawn ${command}`,
           path: command,
-          spawnargs: args[1] || []
+          spawnargs: args[1] || [],
         });
         emit.call(child, "error", error);
       }
