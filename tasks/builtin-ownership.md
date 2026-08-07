@@ -9,6 +9,12 @@ performance-sensitive or crate-backed primitives, engine integration, and
 explicit lower-LOC direct bindings listed in
 `tasks/builtin-direct-bindings.txt`.
 
+Ownership moves and guardrail-driven cleanups are refactors. Defer them until
+the complete configured Test262 corpus is at 100% (zero failures and zero
+skips), unless a minimal ownership correction directly fixes an observed
+conformance failure. Any allowed broad ownership change must begin and end
+with a complete Test262 run at 100%.
+
 Rust-owned public builtin methods must carry an adjacent `@builtin-rust Name`
 marker. A JS prototype assignment with the same name then fails the ownership
 check unless it is listed as an intentional one-line proxy. This marker is

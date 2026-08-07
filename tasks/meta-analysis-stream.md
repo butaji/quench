@@ -3,6 +3,12 @@
 The test262 digest output is the sole conformance SSOT. Do not copy stage counts,
 failure counts, completion claims, or active-work notes into documentation.
 
+Until the complete configured corpus is 100% (zero failures and zero skips),
+this workflow authorizes only minimal targeted fixes for observed conformance
+failures. It does not authorize refactors, migrations, architecture work,
+performance projects, or other complexity-increasing changes. After 100%,
+those changes require complete passing runs both before and after the change.
+
 For a failing stage:
 
 1. Run the stage with `TEST262_DIGEST=1` and group failures by cause.

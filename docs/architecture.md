@@ -4,6 +4,13 @@
 skips, across script, module, async, and negative tests, using the smallest
 practical Rust core. Test262 runs are the sole authority for conformance.
 
+**Conformance-first gate:** Until a complete configured Test262 run reaches
+zero failures and zero skips, only minimal targeted fixes for observed
+conformance failures may change the runtime. Refactors, migrations, new
+architecture, new abstractions, and performance or execution-model work are
+deferred. Once 100% is reached, each such change must preserve it with a fresh
+complete passing run before it can advance.
+
 **Shape:** OXC parser + type-fact sidecar + lowering + interpreter-first IR +
 an optional self-hosted JS builtins layer. The existing tree walker remains the
 semantic reference while the IR is introduced incrementally:
@@ -62,9 +69,10 @@ This is the fastest path to 100% conformance with minimum LOC because:
 
 ## Phased delivery
 
-Complexity is added only after the preceding implementation is demonstrated
-correct and measured. Phase 0 is the current evaluator and canonical operations
-with the pinned test262 zero-failure, zero-skip gate. Phase 1 adds measurement,
+Complexity is added only after the complete configured Test262 corpus is at
+100%, and each later change must preserve that result with a complete rerun.
+Phase 0 is the current evaluator and canonical operations with the pinned
+test262 zero-failure, zero-skip gate. Phase 1 adds measurement,
 rooted-handle, and isolate boundaries. Phase 2 adds the type-fact sidecar and
 IR interpreter with differential parity. Phase 3 introduces shapes/slots and
 array layouts only when profiles justify them. Phase 4 is the bounded

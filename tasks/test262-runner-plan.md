@@ -5,6 +5,13 @@ ECMA-262 `test/` corpus with zero failures and zero skips, without rewriting
 fixtures or hiding failures. Unit tests cover runner invariants and regressions;
 they do not duplicate Test262 assertions.
 
+Runner refactors, throughput work, caches, worker-pool changes, and other
+complexity-increasing work are deferred until the complete configured corpus
+is at 100% (zero failures and zero skips). Before then, make only minimal
+runner fixes required to execute the unmodified corpus or correct an observed
+conformance result. Every broad runner change requires complete 100% runs both
+before and after it.
+
 ## Invariants
 
 - Load upstream harness files verbatim, apart from the documented

@@ -6,6 +6,15 @@ crate-backed primitives, and documented lower-LOC direct bindings. Observable
 ECMAScript algorithms belong in the self-hosted JavaScript layer whenever they
 can be expressed over `__ops__`.
 
+## Conformance-first gate
+
+This migration plan is deferred until the complete configured Test262 corpus
+is at 100% (zero failures and zero skips). Until then, only a minimal change
+that directly fixes an observed conformance failure is allowed; do not migrate
+a family or add complexity incidentally. Each migration begins from a complete
+100% baseline and is accepted only after a second complete run proves that
+100% is preserved.
+
 ## Rules
 
 - Start each migration with a failing Rust refactor-pin or behavior test.

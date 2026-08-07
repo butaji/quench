@@ -1,8 +1,13 @@
 # Refactor Plan — active queue
 
-Refactor queue, in priority order. Every item starts with a failing unit test per
-`AGENTS.md` (reproducer or refactor pin), then the minimal change, then the
-relevant test262 stage.
+Refactor queue, in priority order. This queue is deferred until the complete
+configured Test262 corpus is at 100% (zero failures and zero skips). Until
+then, perform only minimal targeted conformance fixes; do not treat a failing
+stage as permission for an opportunistic refactor or broad change. Every item
+starts from a complete 100% baseline, uses a failing unit test per `AGENTS.md`
+(reproducer or refactor pin), and finishes only after a complete Test262 rerun
+proves that 100% was preserved. The relevant stage is diagnostic evidence, not
+the acceptance gate for a refactor.
 
 ## Phase order
 

@@ -1,4 +1,7 @@
 # Rust direct bindings intentionally wrapped by a one-line self-hosted method.
+# Do not add, remove, or reorganize these bindings until the complete configured
+# Test262 corpus is at 100%; any broad ownership change must preserve that
+# result in a complete rerun.
 bind|one-line JS receiver/proxy wrapper
 toString|one-line JS receiver/proxy wrapper
 add|one-line JS receiver/proxy wrapper

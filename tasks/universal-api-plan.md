@@ -9,6 +9,12 @@ compete with semantic foundations, runner throughput, or failure triage.
 Each implementation milestone requires focused Rust unit tests first, then
 the affected Test262 stage, with no changes under `tests/test262`.
 
+This API plan is deferred until the complete configured Test262 corpus is at
+100% (zero failures and zero skips). It is a complexity-increasing expansion,
+not conformance work. Once eligible, every milestone must start from a
+complete 100% baseline and finish with a complete Test262 rerun that preserves
+100%; the affected-stage run remains useful but is not sufficient evidence.
+
 ## API boundary
 
 The public boundary is a Rust crate API. It exposes isolate/realm lifecycle,

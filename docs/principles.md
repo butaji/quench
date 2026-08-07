@@ -4,6 +4,15 @@ These govern every change to the Rust core and JS builtins. They
 exist to serve the minimum-LOC goal; when a choice
 isn't covered here, prefer the option with less *total* code.
 
+## Conformance before complexity
+
+Until a complete configured Test262 run has zero failures and zero skips, do
+only the smallest targeted conformance fixes. Do not use an observed failure as
+an opening for a refactor, migration, new abstraction, architecture change, or
+performance project. After the corpus reaches 100%, those broader changes must
+preserve it: establish a complete passing baseline before the change and run
+the complete corpus again after it.
+
 ## Effects live in return types, not in ambient state
 
 Any information that flows between caller and callee — completions,

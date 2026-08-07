@@ -16,6 +16,11 @@ The test262 submodule advances only through explicit revision bumps. A bump is
 accepted only when Quench again reaches the complete zero-failure, zero-skip
 conformance gate.
 
+Until that complete gate is met, this ADR is deferred except for minimal fixes
+that directly eliminate observed Test262 failures. Refactors, VM-boundary work,
+type-directed specialization, and every other complexity-increasing change may
+start only from a 100% baseline and must preserve it in a complete rerun.
+
 The current TypeScript entry point parses TypeScript and lowers it to the
 runtime AST after erasing TypeScript-only syntax. This cannot support using
 TypeScript source annotations or declarations as compiler inputs.
@@ -46,8 +51,9 @@ TypeScript source annotations or declarations as compiler inputs.
    failure. Mid-function deoptimization and OSR are later phases, not part of
    the initial tier.
 
-No later phase is required to finish an earlier one, and no phase may weaken
-the pinned test262 gate.
+No later phase is required to finish an earlier one. Every phase is blocked
+until the complete corpus is at 100%, and no phase may weaken that gate: it
+must finish with the complete corpus still at 100%.
 
 - The VM owns ECMAScript execution, compilation, heap management, and the
   runtime/compiler interfaces needed by an embedding host. Node-compatible

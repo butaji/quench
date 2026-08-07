@@ -4,6 +4,14 @@ Test262 runs are the sole source of conformance results.
 `tasks/index.json` is descriptive configuration only. This document contains
 commands, not copied status or milestones.
 
+## Conformance-first change gate
+
+Use focused and affected-stage runs to diagnose a minimal conformance fix.
+Do not use them to authorize a refactor, migration, architectural expansion,
+or other complexity-increasing work while the complete configured corpus is
+below 100%. Those changes require a complete zero-failure, zero-skip baseline
+and a second complete run proving that they preserved it.
+
 ## Normal workflow
 
 There is one canonical conformance command: the filtered nextest invocation
