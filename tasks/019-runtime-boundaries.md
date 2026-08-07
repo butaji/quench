@@ -44,6 +44,8 @@ inspect engine internals.
   include/strict composition path as in-memory tests.
 - [x] Add deterministic batch execution with `StageReport` counts and
   retained failure paths/reasons.
+- [x] Keep batch execution progressing across unreadable test files by
+  recording file I/O errors as runner failures.
 - [x] Add deterministic recursive JavaScript file discovery for stage input.
 - [x] Specify the compact Quench IR ownership, indexing, interning, and
   cold-metadata contract in `docs/architecture.md`.
