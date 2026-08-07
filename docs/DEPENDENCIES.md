@@ -41,7 +41,7 @@ implements the URL Standard and covers `data:` URLs natively.
 
 ## Candidate — not yet added
 
-Each row needs a failing test, a `DEPENDENCIES.md` diff, and a verification
+Each row needs a failing test, a `docs/DEPENDENCIES.md` diff, and a verification
 run before landing.
 
 ### High confidence (research-verified, spec-aligned)

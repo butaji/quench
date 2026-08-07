@@ -142,11 +142,11 @@ Strategic rules:
   / RegExp / Map / Set iterators and `%GeneratorPrototype%` inherit via
   the prototype chain. No eager materialization — stream via
   `iterator_next` / `iterator_step` / `iterator_close`.
-- **Prefer a crate over hand-rolling.** Confirmed in `DEPENDENCIES.md`:
+- **Prefer a crate over hand-rolling.** Confirmed in `docs/DEPENDENCIES.md`:
   `regress`, `chrono`, `num-bigint`, `serde_json`, `urlencoding`, `oxc`.
   A hand-rolled copy — including a thinly-disguised `chrono_*` helper
   that never imports `chrono` — is forbidden. A new crate needs a
-  `DEPENDENCIES.md` row in the same diff.
+  `docs/DEPENDENCIES.md` row in the same diff.
 - **Share intrinsic prototypes across realms.** `ThrowTypeError`,
   `%IteratorPrototype%`, intrinsic error constructors — wire once onto a
   `Realm`, clone per `Context::new`. `Context::reset` clears *every*
