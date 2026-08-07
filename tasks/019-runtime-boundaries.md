@@ -65,6 +65,8 @@ inspect engine internals.
 - [x] Route `Context::eval` and `Context::eval_es_module` through the owned
   IR boundary before interpretation.
 - [x] Route TypeScript/TSX evaluation through the same owned IR boundary.
+- [x] Add owned IR parser entry points for JSX and non-TSX TypeScript modes;
+  all parser modes now have explicit legacy and IR APIs.
 - [x] Preserve the `IrProgram` type through the interpreter entry point;
   legacy `Program` access is now contained behind `eval_ir_program`.
 - [x] Pack top-level IR statements into an owned boxed slice and execute that
