@@ -15,6 +15,7 @@ pub mod metadata;
 pub mod runner;
 pub mod skip;
 
+pub use crate::host::Test262Host;
 pub use harness::HarnessLoader;
-pub use host::{QuenchHost, Test262Host, TestOutcome};
+pub use host::{QuenchHost, TestOutcome};
 pub use runner::{Test262Runner, STAGES};
