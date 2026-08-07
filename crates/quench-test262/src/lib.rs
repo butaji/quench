@@ -97,7 +97,22 @@ impl<H: Test262Host> Test262Runner<H> {
         } else {
             self.run_script(source)
         };
-        Ok(outcome)
+        Ok(apply_negative_expectation(outcome, &metadata))
+    }
+}
+
+fn apply_negative_expectation(outcome: TestOutcome, metadata: &TestMetadata) -> TestOutcome {
+    let Some(expected_type) = metadata.negative_type.as_deref() else {
+        return outcome;
+    };
+    match outcome {
+        TestOutcome::Pass => TestOutcome::Fail {
+            reason: format!("expected {expected_type} but execution completed"),
+        },
+        TestOutcome::Fail { reason } if reason.contains(expected_type) => TestOutcome::Pass,
+        TestOutcome::Fail { reason } => TestOutcome::Fail {
+            reason: format!("expected {expected_type}, got {reason}"),
+        },
     }
 }
 
