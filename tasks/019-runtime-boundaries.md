@@ -74,6 +74,10 @@ inspect engine internals.
   empty scratch directories; repository-level control files remain at root.
 - [x] Consolidate human-facing Markdown under `docs/`; keep only `AGENTS.md`
   and repository metadata at root, with `tasks/*` reserved for active work.
+- [x] Make the repository size gate cover tracked `.rs`, `.ts`, and `.tsx`
+  files and run Rust clippy over all targets.
+- [ ] Reduce the existing 41 Rust files over 500 lines; every split must also
+  satisfy the 40-line function and complexity-10 gates.
 - [x] Preserve the `IrProgram` type through the interpreter entry point;
   legacy `Program` access is now contained behind `eval_ir_program`.
 - [x] Pack top-level IR statements into an owned boxed slice and execute that

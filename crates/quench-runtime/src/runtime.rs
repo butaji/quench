@@ -22,7 +22,9 @@ pub trait Executor: RuntimeComponent {
     ) -> Result<Value, JsError>;
 }
 /// Error and abrupt-completion boundary.
-pub trait Exceptions: RuntimeComponent {}
+pub trait Exceptions: RuntimeComponent {
+    fn complete(&mut self, result: Result<Value, JsError>) -> Result<Value, JsError>;
+}
 /// Lexical and variable-environment boundary.
 pub trait Environments: RuntimeComponent {}
 
@@ -39,7 +41,6 @@ default_component!(DefaultHeap, Heap);
 default_component!(DefaultCollector, Collector);
 default_component!(DefaultAllocator, Allocator);
 default_component!(DefaultFrames, Frames);
-default_component!(DefaultExceptions, Exceptions);
 default_component!(DefaultEnvironments, Environments);
 
 #[derive(Debug, Default)]
@@ -57,6 +58,15 @@ impl Executor for DefaultExecutor {
         } else {
             context.eval(source)
         }
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct DefaultExceptions;
+impl RuntimeComponent for DefaultExceptions {}
+impl Exceptions for DefaultExceptions {
+    fn complete(&mut self, result: Result<Value, JsError>) -> Result<Value, JsError> {
+        result
     }
 }
 
@@ -136,12 +146,14 @@ impl<
 
     /// Evaluate script source through the AST → Quench IR → interpreter path.
     pub fn eval(&mut self, source: &str) -> Result<Value, JsError> {
-        self.executor.execute(&mut self.context, source, false)
+        let result = self.executor.execute(&mut self.context, source, false);
+        self.exceptions.complete(result)
     }
 
     /// Evaluate module source through the same pipeline in module mode.
     pub fn eval_es_module(&mut self, source: &str) -> Result<Value, JsError> {
-        self.executor.execute(&mut self.context, source, true)
+        let result = self.executor.execute(&mut self.context, source, true);
+        self.exceptions.complete(result)
     }
 
     /// Reset the realm while retaining the runtime component selection.
