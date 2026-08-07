@@ -1,6 +1,6 @@
 const { parse } = require("querystring");
 const input = Array.from({ length: 10000 }, (_, index) => `${index}=x`).join(
-  "&"
+  "&",
 );
 if (
   Object.keys(parse(input, undefined, undefined, { maxKeys: Infinity }))
@@ -10,7 +10,7 @@ if (
 }
 if (
   Object.keys(parse(input, undefined, undefined, { maxKeys: NaN })).length !==
-  10000
+    10000
 ) {
   throw new Error("numeric NaN was limited");
 }

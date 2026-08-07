@@ -14,7 +14,7 @@ assert.deepStrictEqual(Object.keys(parsed).sort(), [
   "protocol",
   "query",
   "search",
-  "slashes"
+  "slashes",
 ]);
 assert.strictEqual(parsed.query.baz, "quux");
 console.log("URL parse query shape passed");

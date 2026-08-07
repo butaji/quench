@@ -11,12 +11,13 @@ const cases = [
   ["../g", "http://a/b/g"],
   ["../../g", "http://a/g"],
   ["/./g", "http://a/g"],
-  ["/../g", "http://a/g"]
+  ["/../g", "http://a/g"],
 ];
-for (const [to, expected] of cases)
+for (const [to, expected] of cases) {
   assert.deepStrictEqual(
     url.resolveObject(url.parse(base), to),
     url.parse(expected),
-    `${base} + ${to}`
+    `${base} + ${to}`,
   );
+}
 console.log("parsed web directories passed");

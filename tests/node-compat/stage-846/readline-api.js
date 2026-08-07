@@ -4,13 +4,15 @@ const assert = require("assert");
 const readline = require("node:readline");
 const promises = require("node:readline/promises");
 
-for (const name of [
-  "createInterface",
-  "emitKeypressEvents",
-  "cursorTo",
-  "moveCursor",
-  "clearLine"
-]) {
+for (
+  const name of [
+    "createInterface",
+    "emitKeypressEvents",
+    "cursorTo",
+    "moveCursor",
+    "clearLine",
+  ]
+) {
   assert.strictEqual(typeof readline[name], "function");
 }
 for (const name of ["Interface", "ReadStream", "WriteStream"]) {

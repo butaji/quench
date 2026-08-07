@@ -28,10 +28,11 @@ class __quenchReadlinePromisesInterface {
 }
 const __quenchReadlinePromises = {
   Interface: __quenchReadlinePromisesInterface,
-  createInterface: (options) => new __quenchReadlinePromisesInterface(options)
+  createInterface: (options) => new __quenchReadlinePromisesInterface(options),
 };
 globalThis.require = (specifier) => {
-  if (String(specifier).replace(/^node:/, "") === "readline/promises")
+  if (String(specifier).replace(/^node:/, "") === "readline/promises") {
     return __quenchReadlinePromises;
+  }
   return __quenchOriginalRequireWithReadlinePromises(specifier);
 };

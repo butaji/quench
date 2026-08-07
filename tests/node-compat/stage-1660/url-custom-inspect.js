@@ -1,7 +1,7 @@
 const assert = require("node:assert");
 
 const url = new URL(
-  "https://username:password@host.name:8080/path/name/?que=ry#hash"
+  "https://username:password@host.name:8080/path/name/?que=ry#hash",
 );
 assert.strictEqual(
   require("util").inspect(url),
@@ -18,6 +18,6 @@ assert.strictEqual(
     "  search: '?que=ry',\n" +
     "  searchParams: URLSearchParams { 'que' => 'ry' },\n" +
     "  hash: '#hash'\n" +
-    "}"
+    "}",
 );
 console.log("URL custom inspect passed");

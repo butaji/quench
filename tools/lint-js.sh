@@ -6,18 +6,18 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
 
-tools/lint-size.sh
-
-echo "=== prettier --check ==="
-npx --yes prettier --check 'crates/**/*.js' 'tests/node-compat/**/*.js' || {
-  echo "FAIL: prettier — run 'npx prettier --write ..." >&2
+echo "=== deno fmt --check ==="
+deno fmt --check crates tests/node-compat tools AGENTS.md README.md package.json eslint.config.js || {
+  echo "FAIL: deno fmt — run 'deno fmt crates tests/node-compat tools AGENTS.md README.md package.json eslint.config.js'" >&2
   exit 1
 }
-echo "OK: prettier"
+echo "OK: deno fmt"
+
+tools/lint-size.sh
 
 echo ""
 echo "=== eslint (size + complexity) ==="
-npx --yes eslint 'crates/**/*.js' 'tests/node-compat/**/*.js' 'eslint.config.js'
+npx --yes eslint 'crates/**/*.js' 'tests/node-compat/**/*.{js,mjs}' 'eslint.config.js'
 echo "OK: eslint"
 
 echo ""

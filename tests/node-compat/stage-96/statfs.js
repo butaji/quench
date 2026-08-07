@@ -7,5 +7,5 @@ fs.statfs(
   ".",
   common.mustSucceed((value) => {
     if (typeof value.blocks !== "number") throw new Error("statfs mismatch");
-  })
+  }),
 );

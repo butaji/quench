@@ -7,7 +7,7 @@ const error = util._exceptionWithHostPort(
   "connect",
   "127.0.0.1",
   8080,
-  "0.0.0.0:12345"
+  "0.0.0.0:12345",
 );
 assert.strictEqual(error.code, "ENOENT");
 assert.strictEqual(error.errno, -2);

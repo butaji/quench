@@ -5,11 +5,11 @@ assert.throws(
   () =>
     fs.readFile(
       () => {},
-      () => {}
+      () => {},
     ),
   {
-    code: "ERR_INVALID_ARG_TYPE"
-  }
+    code: "ERR_INVALID_ARG_TYPE",
+  },
 );
 
 console.log("readFile path validation passed");

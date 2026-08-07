@@ -8,14 +8,14 @@ const parsed = parseArgs({
   options: {
     name: { type: "string" },
     verbose: { type: "boolean" },
-    color: { type: "boolean" }
+    color: { type: "boolean" },
   },
-  tokens: true
+  tokens: true,
 });
 assert.deepStrictEqual(parsed.values, {
   name: "quench",
   verbose: true,
-  color: false
+  color: false,
 });
 assert.deepStrictEqual(parsed.positionals, ["file.js"]);
 assert.strictEqual(parsed.tokens.length, 4);

@@ -8,7 +8,7 @@ globalThis.require = (specifier) => {
     const zlib = __quenchOriginalRequireWithZlibIter("zlib");
     return {
       compressGzip: () => __quenchZlibIterTransform(zlib.gzipSync),
-      decompressGzip: () => __quenchZlibIterTransform(zlib.gunzipSync)
+      decompressGzip: () => __quenchZlibIterTransform(zlib.gunzipSync),
     };
   }
   return __quenchOriginalRequireWithZlibIter(specifier);

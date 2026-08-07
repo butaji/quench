@@ -12,6 +12,6 @@ assert.strictEqual(hash._writableState.defaultEncoding, "latin1");
 assert.strictEqual(ended, true);
 assert.strictEqual(
   output,
-  crypto.createHash("sha256").update("compatibility").digest("hex")
+  crypto.createHash("sha256").update("compatibility").digest("hex"),
 );
 console.log("crypto hash stream passed");

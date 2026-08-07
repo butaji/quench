@@ -8,6 +8,7 @@ try {
     error.code !== "ERR_OUT_OF_RANGE" ||
     error.message !==
       'The value of "keylen" is out of range. It must be an integer. Received Infinity'
-  )
+  ) {
     throw error;
+  }
 }

@@ -3,13 +3,13 @@
 const assert = require("assert");
 const {
   transferableAbortSignal,
-  transferableAbortController
+  transferableAbortController,
 } = require("util");
 
 const controller = new AbortController();
 assert.strictEqual(
   transferableAbortSignal(controller.signal),
-  controller.signal
+  controller.signal,
 );
 assert.throws(() => transferableAbortSignal({}), TypeError);
 const transferable = transferableAbortController();

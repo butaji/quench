@@ -21,5 +21,5 @@ Promise.all([
   ),
   json(createStream('{"ok":true}')).then((value) =>
     assert.deepStrictEqual(value, { ok: true })
-  )
+  ),
 ]);

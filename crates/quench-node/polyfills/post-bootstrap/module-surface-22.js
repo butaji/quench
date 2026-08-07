@@ -5,7 +5,7 @@ const __quenchReadlineInterface = (options = {}) => {
     cursor: 0,
     on(event, listener) {
       (listeners.get(event) || listeners.set(event, []).get(event)).push(
-        listener
+        listener,
       );
       return interfaceObject;
     },
@@ -20,14 +20,15 @@ const __quenchReadlineInterface = (options = {}) => {
     write(data) {
       interfaceObject.cursor += String(data).length;
       return interfaceObject;
-    }
+    },
   };
   const emitLines = (final) => {
     const parts = buffer.split(/\r?\n/);
     buffer = final ? "" : parts.pop();
     for (const line of parts) interfaceObject.emit("line", line);
-    if (final && parts.length === 0 && buffer)
+    if (final && parts.length === 0 && buffer) {
       interfaceObject.emit("line", buffer);
+    }
   };
   options.input?.on?.("data", (chunk) => {
     buffer += String(chunk);
@@ -44,8 +45,9 @@ const __quenchReadlineInterface = (options = {}) => {
       if (normalized === "readline" || normalized === "readline/promises") {
         const Interface = function Interface() {};
         const createInterface = (options) => {
-          if (normalized === "readline")
+          if (normalized === "readline") {
             return __quenchReadlineInterface(options);
+          }
           const listeners = options?.input;
           options?.output?.write?.("");
           return {
@@ -55,21 +57,21 @@ const __quenchReadlineInterface = (options = {}) => {
                 listeners?.once?.("line", resolve)
               );
             },
-            close: () => options?.input?.pause?.()
+            close: () => options?.input?.pause?.(),
           };
         };
         return normalized === "readline/promises"
           ? { Interface, createInterface }
           : {
-              createInterface,
-              emitKeypressEvents: () => undefined,
-              cursorTo: () => undefined,
-              moveCursor: () => undefined,
-              clearLine: () => undefined,
-              Interface,
-              ReadStream: function ReadStream() {},
-              WriteStream: function WriteStream() {}
-            };
+            createInterface,
+            emitKeypressEvents: () => undefined,
+            cursorTo: () => undefined,
+            moveCursor: () => undefined,
+            clearLine: () => undefined,
+            Interface,
+            ReadStream: function ReadStream() {},
+            WriteStream: function WriteStream() {},
+          };
       }
       return originalRequire(name);
     };

@@ -15,7 +15,7 @@ const expected = [
   "isSet",
   "isSetIterator",
   "isTypedArray",
-  "isUint8Array"
+  "isUint8Array",
 ];
 if (
   JSON.stringify(Object.keys(utilBinding).sort()) !== JSON.stringify(expected)

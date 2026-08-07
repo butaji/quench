@@ -14,5 +14,6 @@ emitter.on("error", (error) => {
 });
 emitter.emit("error", failure);
 
-if (order.join(",") !== "monitor,error")
+if (order.join(",") !== "monitor,error") {
   throw new Error("errorMonitor should run before error listeners");
+}

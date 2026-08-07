@@ -15,14 +15,15 @@ const expected = {
   ax: 1217,
   "a+": 1090,
   "ax+": 1218,
-  as: 1051713,
-  "as+": 1051714
+  as: 1053761,
+  "as+": 1053762,
 };
 
-for (const [flags, value] of Object.entries(expected))
+for (const [flags, value] of Object.entries(expected)) {
   assert.strictEqual(stringToFlags(flags), value, flags);
+}
 
 assert.throws(() => stringToFlags("invalid"), {
-  code: "ERR_INVALID_ARG_VALUE"
+  code: "ERR_INVALID_ARG_VALUE",
 });
 console.log("stringToFlags passed");

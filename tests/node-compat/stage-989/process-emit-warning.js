@@ -5,6 +5,7 @@ test("process emitWarning emits a warning event", async () => {
     process.emitWarning("compatibility warning", "CustomWarning");
   });
   if (!(warning instanceof Error)) throw new Error("warning was not an Error");
-  if (warning.name !== "CustomWarning")
+  if (warning.name !== "CustomWarning") {
     throw new Error("warning name was lost");
+  }
 });

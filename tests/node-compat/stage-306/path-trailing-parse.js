@@ -6,12 +6,12 @@ assert.deepStrictEqual(path.parse("./"), {
   dir: ".",
   base: ".",
   ext: "",
-  name: "."
+  name: ".",
 });
 assert.deepStrictEqual(path.parse("/foo///"), {
   root: "/",
   dir: "/",
   base: "foo",
   ext: "",
-  name: "foo"
+  name: "foo",
 });

@@ -9,8 +9,9 @@ const timers = require("timers/promises");
   } catch (caught) {
     error = caught;
   }
-  if (!error || error.name !== "AbortError" || error.code !== "ABORT_ERR")
+  if (!error || error.name !== "AbortError" || error.code !== "ABORT_ERR") {
     throw new Error("aborted timers promise had the wrong error");
+  }
 
   console.log("timers promises abort passed");
 })();

@@ -3,7 +3,7 @@ const vm = require("vm");
 const context = vm.createContext({});
 vm.runInContext(
   "Object.defineProperty(this, 'foo', { value: 1, configurable: false });",
-  context
+  context,
 );
 try {
   vm.runInContext("let foo = 2;", context);

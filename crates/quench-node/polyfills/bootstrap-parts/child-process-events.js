@@ -5,8 +5,7 @@ __quenchChildEventOrder.spawn = (...args) => {
   const child = __quenchEventOrderSpawn(...args);
   child.on = globalThis.__nodeEventEmitter.prototype.on;
   child.emit = (
-    (emit) =>
-    (event, ...values) => {
+    (emit) => (event, ...values) => {
       if (event === "exit" && !child.__spawnEmitted) {
         child.__spawnEmitted = true;
         emit.call(child, "spawn");

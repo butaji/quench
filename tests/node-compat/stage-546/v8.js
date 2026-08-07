@@ -7,7 +7,7 @@ const stats = v8.getHeapStatistics();
 assert.strictEqual(typeof stats.used_heap_size, "number");
 assert.strictEqual(
   typeof v8.getHeapCodeStatistics().code_and_metadata_size,
-  "number"
+  "number",
 );
 assert.strictEqual(v8.takeCoverage(), undefined);
 assert.strictEqual(v8.stopCoverage(), undefined);

@@ -21,8 +21,9 @@ if (globalThis.require) {
   const originalRequire = globalThis.require;
   globalThis.require = (name) => {
     const result = originalRequire(name);
-    if (String(name).replace(/^node:/, "") === "cluster")
+    if (String(name).replace(/^node:/, "") === "cluster") {
       return __quenchClusterFallbacks(result);
+    }
     return result;
   };
 }

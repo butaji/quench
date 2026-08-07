@@ -6,6 +6,6 @@ assert.strictEqual(descriptor.enumerable, true);
 assert.strictEqual(descriptor.value.name, "toJSON");
 assert.strictEqual(
   new URL("https://example.com").toJSON(),
-  "https://example.com/"
+  "https://example.com/",
 );
 console.log("URL toJSON method passed");

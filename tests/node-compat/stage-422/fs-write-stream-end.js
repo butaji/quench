@@ -7,8 +7,9 @@ stream.on("open", () => {
 });
 stream.on("close", () => {
   if (!opened) throw new Error("write stream closed before open");
-  if (fs.readFileSync(path, "utf8") !== "stream data")
+  if (fs.readFileSync(path, "utf8") !== "stream data") {
     throw new Error("write stream content was incorrect");
+  }
   fs.unlinkSync(path);
   console.log("fs write stream end passed");
 });

@@ -1,8 +1,9 @@
 const { Buffer } = require("buffer");
 
 const actual = Buffer.from("hérité").toString("ascii");
-if (actual !== "hC)ritC)")
+if (actual !== "hC)ritC)") {
   throw new Error(`ascii result ${JSON.stringify(actual)}`);
+}
 
 const input =
   "C’est, graphiquement, la réunion d’un accent aigu et d’un accent grave.";

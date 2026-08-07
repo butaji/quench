@@ -11,7 +11,7 @@ processApi.nextTick(
     assert.strictEqual(second, 2);
   },
   "first",
-  2
+  2,
 );
 order.push("sync");
 

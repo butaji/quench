@@ -10,5 +10,5 @@ const target = new Uint16Array(4);
 assert.strictEqual(buffer.copy(target), 4);
 assert.deepStrictEqual(
   Array.from(new Uint8Array(target.buffer, target.byteOffset, 4)),
-  [1, 2, 3, 4]
+  [1, 2, 3, 4],
 );

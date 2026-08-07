@@ -6,5 +6,5 @@ assert.deepStrictEqual(path.parse("/foo/bar"), {
   dir: "/foo",
   base: "bar",
   ext: "",
-  name: "bar"
+  name: "bar",
 });

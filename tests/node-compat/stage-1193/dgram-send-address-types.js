@@ -10,9 +10,11 @@ for (const address of [[], 0, 1, true, false, 0n, 1n, {}, Symbol()]) {
       Array.isArray(address)
         ? " Received an instance of Array"
         : typeof address === "object"
-          ? " Received an instance of Object"
-          : ` Received type ${typeof address} (${String(address)}${typeof address === "bigint" ? "n" : ""})`
-    }`
+        ? " Received an instance of Object"
+        : ` Received type ${typeof address} (${String(address)}${
+          typeof address === "bigint" ? "n" : ""
+        })`
+    }`,
   });
 }
 socket.close();

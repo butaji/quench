@@ -7,7 +7,7 @@ assert.strictEqual(typeof processApi.stderr.prependListener, "function");
 const listener = () => {};
 assert.strictEqual(
   processApi.stderr.prependListener("drain", listener),
-  processApi.stderr
+  processApi.stderr,
 );
 processApi.stderr.removeListener("drain", listener);
 

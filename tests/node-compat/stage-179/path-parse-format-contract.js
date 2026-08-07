@@ -1,12 +1,15 @@
 const path = require("path");
 
-if (path.posix !== path || path.win32 === path)
+if (path.posix !== path || path.win32 === path) {
   throw new Error("path namespace mismatch");
+}
 if (typeof path.win32 !== "object") throw new Error("win32 namespace missing");
-if (path.parse("/foo/bar.txt").name !== "bar")
+if (path.parse("/foo/bar.txt").name !== "bar") {
   throw new Error("path parse mismatch");
-if (path.format({ name: "x", ext: "txt" }) !== "x.txt")
+}
+if (path.format({ name: "x", ext: "txt" }) !== "x.txt") {
   throw new Error("path format mismatch");
+}
 for (const value of [null, {}, true, 1]) {
   try {
     path.parse(value);

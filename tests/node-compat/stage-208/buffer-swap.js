@@ -9,9 +9,11 @@ if (
 }
 buffer.swap16();
 buffer.swap32();
-if (buffer.toString("hex") !== "0403020108070605")
+if (buffer.toString("hex") !== "0403020108070605") {
   throw new Error("swap32 failed");
+}
 buffer.swap32();
 buffer.swap64();
-if (buffer.toString("hex") !== "0807060504030201")
+if (buffer.toString("hex") !== "0807060504030201") {
   throw new Error("swap64 failed");
+}

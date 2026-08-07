@@ -140,3 +140,47 @@ The unused ESLint suppression in the dgram membership polyfill was removed, so
 the repository lint gate is warning-free for owned source.
 The Node harness now prints the underlying error message instead of only the
 QuickJS error category when an upstream fixture fails.
+
+The parallel differential runner now builds `quench-node` once before
+fan-out, passes that verified binary explicitly to every worker, and refuses
+to publish a report when any worker fails. Worker reports are discovered from
+a deterministic sorted directory rather than a concurrently appended list;
+the persisted report also records the worker count and timeout. This prevents
+partial corpus runs from being mistaken for complete evidence and removes
+Cargo lock contention from parallel triage.
+
+Focused failures now retain one log per stage under
+`target/compat/focused-logs/latest` (override with
+`QUENCH_FOCUSED_LOG_DIR`). The serial gate remains authoritative for fixtures
+that share repository-relative paths, while failed-stage diagnostics are
+available without reproducing the run.
+
+`tools/audit-platform-coverage.sh` audits platform ownership claims without
+changing runtime behavior. It checks that every platform prefix and fixture
+pattern names real fixtures, stream ownership has no overlapping prefix,
+differential-report prefixes agree with the runner, and every exemption has a
+quench-side non-match. It first requires a fresh schema-2 report, so stale or
+partial differential data cannot justify a platform classification. Set
+`QUENCH_COMPAT_ALLOW_STALE=1` only for static ownership checks while a report is
+being regenerated; that does not make the report authoritative.
+
+`tools/compat-decision-report.sh` converts a differential report into a small
+JSON decision snapshot. It ranks owned and unclassified signature clusters by
+category and observed fixture cost, compares an optional previous report for
+resolved/regressed fixtures, checks report freshness, and lists missing data
+that blocks cache or persistent-worker decisions. It is intentionally
+read-only and remains useful while a report is stale:
+
+```sh
+tools/compat-decision-report.sh \
+  target/compat/differential-current-post-crypto.json \
+  target/compat/differential-current.json \
+  target/compat/focused-stage-metrics.jsonl \
+  target/compat/compat-decision.json
+```
+
+The current decision snapshot explicitly reports four evidence gaps that limit
+throughput decisions: no previous report for trend/regression comparison, no
+retry/flake history, no structured capability-probe frames, and no worker-level
+startup/cache timing. These are measurement gaps, not compatibility claims;
+the current canonical parallel report is nevertheless fresh and auditable.

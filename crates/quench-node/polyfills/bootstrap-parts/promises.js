@@ -9,8 +9,9 @@ globalThis.__nodeTimersPromises = {
           reject(error);
           return;
         }
-        if (Number(_delay) > 0)
+        if (Number(_delay) > 0) {
           globalThis.__quench_sleep_ms(Math.max(0, Number(_delay)));
+        }
         resolve(value);
       })
     ),
@@ -35,12 +36,12 @@ globalThis.__nodeTimersPromises = {
         error.code = "ABORT_ERR";
         throw error;
       }
-      if (Number(_delay) > 0)
+      if (Number(_delay) > 0) {
         globalThis.__quench_sleep_ms(Math.max(0, Number(_delay)));
-      else await new Promise((resolve) => queueMicrotask(resolve));
+      } else await new Promise((resolve) => queueMicrotask(resolve));
       yield value;
     }
-  }
+  },
 };
 
 const processListeners = {};
@@ -59,16 +60,17 @@ process.once = (event, listener) => {
 };
 process.removeListener = (event, listener) => {
   processListeners[event] = (processListeners[event] || []).filter(
-    (item) => item !== listener
+    (item) => item !== listener,
   );
   return process;
 };
 process.removeAllListeners = (event) => {
   if (event) delete processListeners[event];
-  else
+  else {
     Object.keys(processListeners).forEach(
-      (key) => delete processListeners[key]
+      (key) => delete processListeners[key],
     );
+  }
 };
 process.emit = (event, ...args) => {
   const listeners = processListeners[event] || [];
@@ -80,6 +82,7 @@ process.emitWarning = (warning, options = {}) => {
   process.emit("warning", {
     name: options.name || "Warning",
     message,
-    code: options.code
+    code: options.code,
   });
+  return undefined;
 };

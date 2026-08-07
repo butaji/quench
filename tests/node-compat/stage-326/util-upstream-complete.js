@@ -6,6 +6,6 @@ assert.deepStrictEqual(util._extend({ a: 1 }, { b: 2 }), { a: 1, b: 2 });
 assert.strictEqual(util.toUSVString("bad\ud801"), "bad\ufffd");
 assert.strictEqual(
   util.stripVTControlCharacters("\u001b[31mready\u001b[0m"),
-  "ready"
+  "ready",
 );
 assert.strictEqual(util.types.isNativeError(new Error()), true);

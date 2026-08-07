@@ -1,8 +1,9 @@
 const { Buffer } = require("buffer");
 
 const value = Buffer.from("abc");
-if (!value.equals(new Uint8Array([97, 98, 99])))
+if (!value.equals(new Uint8Array([97, 98, 99]))) {
   throw new Error("equals failed");
+}
 if (value.equals(Buffer.from("abd"))) throw new Error("equals mismatch failed");
 let threw = false;
 try {

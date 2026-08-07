@@ -7,7 +7,8 @@ try {
   error = caught;
 }
 
-if (!error || error.code !== "ERR_UNKNOWN_ENCODING")
+if (!error || error.code !== "ERR_UNKNOWN_ENCODING") {
   throw new Error("hash digest encoding validation was missing");
+}
 
 console.log("crypto hash encoding validation passed");

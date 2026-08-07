@@ -39,6 +39,5 @@ fourth.on("readable", () => {
 fourth.on("end", () =>
   record(
     "fourth-values",
-    JSON.stringify(values) === JSON.stringify(["x", "y", "z"])
-  )
-);
+    JSON.stringify(values) === JSON.stringify(["x", "y", "z"]),
+  ));

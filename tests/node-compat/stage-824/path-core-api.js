@@ -3,19 +3,21 @@
 const assert = require("assert");
 const pathApi = require("node:path");
 
-for (const name of [
-  "resolve",
-  "normalize",
-  "isAbsolute",
-  "join",
-  "relative",
-  "toNamespacedPath",
-  "dirname",
-  "basename",
-  "extname",
-  "format",
-  "parse"
-]) {
+for (
+  const name of [
+    "resolve",
+    "normalize",
+    "isAbsolute",
+    "join",
+    "relative",
+    "toNamespacedPath",
+    "dirname",
+    "basename",
+    "extname",
+    "format",
+    "parse",
+  ]
+) {
   assert.strictEqual(typeof pathApi[name], "function");
 }
 assert.strictEqual(typeof pathApi.sep, "string");

@@ -6,7 +6,7 @@ const assert = require("assert");
   const handle = await fs.promises.open(path, "w+");
   const written = await handle.writev(
     [Buffer.from("ab"), Buffer.from("cd")],
-    0
+    0,
   );
   assert.strictEqual(written.bytesWritten, 4);
   const buffers = [Buffer.alloc(2), Buffer.alloc(2)];

@@ -8,7 +8,7 @@ const legacy = {
   },
   unref() {
     this.unrefCalled += 1;
-  }
+  },
 };
 const symbolic = {
   refCalled: 0,
@@ -18,7 +18,7 @@ const symbolic = {
   },
   [Symbol.for("nodejs.unref")]() {
     this.unrefCalled += 1;
-  }
+  },
 };
 
 process.ref(legacy);

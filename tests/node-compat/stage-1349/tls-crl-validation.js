@@ -6,6 +6,6 @@ assert.throws(
   (error) =>
     error instanceof Error &&
     error.message === "Failed to parse CRL" &&
-    !("opensslErrorStack" in error)
+    !("opensslErrorStack" in error),
 );
 console.log("TLS CRL validation passed");

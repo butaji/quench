@@ -8,7 +8,7 @@ assert.throws(() => fs.copyFileSync("copy-source", "copy-destination", 1), {
   errno: -17,
   syscall: "copyfile",
   path: "copy-source",
-  dest: "copy-destination"
+  dest: "copy-destination",
 });
 
 console.log("copyFile exclusive passed");

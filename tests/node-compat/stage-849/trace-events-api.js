@@ -7,7 +7,7 @@ assert.strictEqual(typeof traceEvents.createTracing, "function");
 assert.strictEqual(typeof traceEvents.getEnabledCategories, "function");
 const tracing = traceEvents.createTracing({
   categories: ["node"],
-  enabled: false
+  enabled: false,
 });
 assert.strictEqual(typeof tracing.enable, "function");
 assert.strictEqual(typeof tracing.disable, "function");

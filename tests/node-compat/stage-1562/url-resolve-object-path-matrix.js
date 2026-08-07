@@ -7,12 +7,13 @@ const cases = [
   ["/foo/bar/baz", "/bar", "/bar"],
   ["/foo/bar/baz/", "quux", "/foo/bar/baz/quux"],
   ["/foo", ".", "/"],
-  ["/foo/bar", "..", "/"]
+  ["/foo/bar", "..", "/"],
 ];
-for (const [from, to, expected] of cases)
+for (const [from, to, expected] of cases) {
   assert.deepStrictEqual(
     url.resolveObject(url.parse(from), to),
     url.parse(expected),
-    `${from} + ${to}`
+    `${from} + ${to}`,
   );
+}
 console.log("parsed path matrix passed");

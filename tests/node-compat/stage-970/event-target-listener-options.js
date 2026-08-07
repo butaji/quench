@@ -5,7 +5,7 @@ const listener = () => calls++;
 
 target.addEventListener("message", listener, {
   once: true,
-  signal: controller.signal
+  signal: controller.signal,
 });
 target.dispatchEvent(new Event("message"));
 target.dispatchEvent(new Event("message"));

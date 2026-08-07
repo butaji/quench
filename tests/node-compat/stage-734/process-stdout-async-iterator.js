@@ -8,7 +8,7 @@ const processApi = require("process");
   assert.strictEqual(typeof iterator.next, "function");
   assert.deepStrictEqual(await iterator.next(), {
     done: true,
-    value: undefined
+    value: undefined,
   });
 })();
 

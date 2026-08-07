@@ -3,5 +3,5 @@ const dns = require("dns");
 
 assert.throws(() => dns.setServers(["invalid"]), {
   name: "TypeError",
-  code: "ERR_INVALID_IP_ADDRESS"
+  code: "ERR_INVALID_IP_ADDRESS",
 });

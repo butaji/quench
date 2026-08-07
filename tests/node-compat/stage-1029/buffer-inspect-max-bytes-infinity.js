@@ -11,8 +11,8 @@ assert.throws(
     buffer.INSPECT_MAX_BYTES = -1;
   },
   {
-    code: undefined,
+    code: "ERR_OUT_OF_RANGE",
     name: "RangeError",
-    message: "INSPECT_MAX_BYTES is out of range"
-  }
+    message: "INSPECT_MAX_BYTES is out of range",
+  },
 );

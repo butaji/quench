@@ -2,7 +2,7 @@ const assert = require("node:assert");
 const crypto = require("node:crypto");
 
 const { publicKey, privateKey } = crypto.generateKeyPairSync("rsa", {
-  modulusLength: 1024
+  modulusLength: 1024,
 });
 for (const key of [publicKey, privateKey]) {
   assert(key instanceof crypto.KeyObject);

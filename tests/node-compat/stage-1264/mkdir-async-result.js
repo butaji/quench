@@ -4,7 +4,7 @@ const path = require("node:path");
 
 const root = path.join(
   process.cwd(),
-  `tests/node/test/.tmp.0/mkdir-async-${Date.now()}`
+  `tests/node/test/.tmp.0/mkdir-async-${Date.now()}`,
 );
 fs.mkdir(path.join(root, "child"), { recursive: true }, (error, created) => {
   assert.ifError(error);

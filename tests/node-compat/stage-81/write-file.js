@@ -9,7 +9,8 @@ fs.writeFile(
   data,
   common.mustSucceed(() => {
     const result = fs.readFileSync(path);
-    if (!Buffer.isBuffer(result) || result.length !== data.length)
+    if (!Buffer.isBuffer(result) || result.length !== data.length) {
       throw new Error("writeFile Buffer mismatch");
-  })
+    }
+  }),
 );

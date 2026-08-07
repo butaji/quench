@@ -4,8 +4,9 @@ const fs = require("fs");
   const path = `/tmp/quench-node-stage-177-${process.pid}`;
   const handle = await fs.promises.open(path, "w+");
   await handle.write("abc", 0, 3);
-  if (fs.readFileSync(path, "utf8") !== "abc")
+  if (fs.readFileSync(path, "utf8") !== "abc") {
     throw new Error("filehandle string write mismatch");
+  }
   for (const value of [123, {}, null, undefined, true]) {
     try {
       await handle.write(value, 0, 1);

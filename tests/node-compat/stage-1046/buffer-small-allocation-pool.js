@@ -12,7 +12,7 @@ assert.deepStrictEqual([...second], [119, 111, 114, 108, 100]);
 const { port1 } = new MessageChannel();
 assert.throws(() => port1.postMessage(first, [first.buffer]), {
   code: 25,
-  name: "DataCloneError"
+  name: "DataCloneError",
 });
 assert.throws(() => first.buffer.transfer(), TypeError);
 assert.strictEqual(first.buffer, second.buffer);

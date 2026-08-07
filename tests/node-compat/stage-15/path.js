@@ -6,5 +6,5 @@ assert.strictEqual(path.relative("/a/b", "/a/c/d"), "../c/d");
 assert.strictEqual(path.parse("/tmp/file.txt").name, "file");
 assert.strictEqual(
   path.format({ dir: "/tmp", base: "file.txt" }),
-  "/tmp/file.txt"
+  "/tmp/file.txt",
 );

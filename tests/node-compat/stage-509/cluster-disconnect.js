@@ -9,11 +9,14 @@ if (cluster.isWorker) {
   const events = [];
   const worker = cluster.fork();
   cluster.on("disconnect", (w) => events.push({ source: "cluster", id: w.id }));
-  worker.on("disconnect", () =>
-    events.push({ source: "worker", id: worker.id })
+  worker.on(
+    "disconnect",
+    () => events.push({ source: "worker", id: worker.id }),
   );
-  worker.on("exit", (code, signal) =>
-    events.push({ source: "exit", id: worker.id, code, signal })
+  worker.on(
+    "exit",
+    (code, signal) =>
+      events.push({ source: "exit", id: worker.id, code, signal }),
   );
   worker.on("listening", () => worker.disconnect());
   worker.on("exit", () => {
@@ -23,15 +26,15 @@ if (cluster.isWorker) {
     assert.strictEqual(worker.process.signalCode, null);
     assert.deepStrictEqual(
       events.filter((e) => e.source === "cluster"),
-      [{ source: "cluster", id: 1 }]
+      [{ source: "cluster", id: 1 }],
     );
     assert.deepStrictEqual(
       events.filter((e) => e.source === "worker"),
-      [{ source: "worker", id: 1 }]
+      [{ source: "worker", id: 1 }],
     );
     assert.deepStrictEqual(
       events.filter((e) => e.source === "exit"),
-      [{ source: "exit", id: 1, code: 0, signal: null }]
+      [{ source: "exit", id: 1, code: 0, signal: null }],
     );
     console.log("cluster disconnect passed");
   });

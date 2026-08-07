@@ -7,6 +7,6 @@ fs.accessSync(path, fs.constants.R_OK);
 fs.access(
   path,
   fs.constants.R_OK,
-  common.mustSucceed(() => {})
+  common.mustSucceed(() => {}),
 );
 fs.promises.access(path).then(common.mustCall());

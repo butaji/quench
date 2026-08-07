@@ -3,15 +3,17 @@
 const assert = require("assert");
 const web = require("node:stream/web");
 
-for (const name of [
-  "ReadableStream",
-  "WritableStream",
-  "TransformStream",
-  "ReadableStreamDefaultReader",
-  "WritableStreamDefaultWriter",
-  "ByteLengthQueuingStrategy",
-  "CountQueuingStrategy"
-]) {
+for (
+  const name of [
+    "ReadableStream",
+    "WritableStream",
+    "TransformStream",
+    "ReadableStreamDefaultReader",
+    "WritableStreamDefaultWriter",
+    "ByteLengthQueuingStrategy",
+    "CountQueuingStrategy",
+  ]
+) {
   assert.strictEqual(typeof web[name], "function");
 }
 assert.strictEqual(typeof web.ReadableStream.from, "function");

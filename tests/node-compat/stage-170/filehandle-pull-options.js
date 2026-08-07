@@ -8,7 +8,7 @@ const { text } = require("stream/iter");
   const handle = await fs.promises.open(path, "r");
   assert.strictEqual(
     await text(handle.pull({ start: 3, limit: 3, chunkSize: 1 })),
-    "BBB"
+    "BBB",
   );
   await handle.close();
   fs.rmSync(path);

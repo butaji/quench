@@ -10,6 +10,7 @@ rquickjs = { version = "0.9", features = ["array-buffer", "classes", "futures", 
 walkdir = "2"
 sha2 = "0.10"
 sha1 = "0.10"
+hmac = "0.12"
 md-5 = "0.10"
 sha3 = "0.10"
 rand = "0.8"

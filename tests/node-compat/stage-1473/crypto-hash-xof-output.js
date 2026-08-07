@@ -3,7 +3,7 @@ const crypto = require("node:crypto");
 
 const value = crypto.hash("shake256", "test", {
   outputLength: 16,
-  outputEncoding: "hex"
+  outputEncoding: "hex",
 });
 assert.strictEqual(typeof value, "string");
 assert.strictEqual(value.length, 32);

@@ -11,7 +11,7 @@ const output = `/tmp/quench-node-stage-116-output-${process.pid}`;
 const outputFd = fs.openSync(output, "w");
 assert.strictEqual(
   fs.writevSync(outputFd, [Buffer.from("ab"), Buffer.from("cd")], 0),
-  4
+  4,
 );
 fs.closeSync(outputFd);
 assert.strictEqual(fs.readFileSync(output, "utf8"), "abcd");

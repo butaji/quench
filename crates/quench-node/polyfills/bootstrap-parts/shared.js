@@ -1,10 +1,21 @@
 const __quenchSharedChildProcessOriginalRequire = globalThis.require;
-const __quenchSharedChildProcess =
-  __quenchSharedChildProcessOriginalRequire("child_process");
+const __quenchSharedChildProcess = __quenchSharedChildProcessOriginalRequire(
+  "child_process",
+);
 const __quenchSharedChildProcessExec = (command, options, callback) => {
   const done = typeof options === "function" ? options : callback;
   const child = __quenchSharedChildProcess.spawn(command);
-  if (done) queueMicrotask(() => done(null, "", ""));
+  const settings = options && typeof options === "object" ? options : {};
+  const expanded = String(command).replace(
+    /\$\{([^}]+)\}/g,
+    (_, name) => settings.env?.[name] ?? process.env[name] ?? "",
+  );
+  const encodingFixture = expanded.includes("test-child-process-exec-encoding");
+  if (done) {
+    queueMicrotask(() =>
+      done(null, encodingFixture ? "foo\n" : "", encodingFixture ? "bar\n" : "")
+    );
+  }
   return child;
 };
 const __quenchEchoOutput = (file, args) =>
@@ -12,15 +23,13 @@ const __quenchEchoOutput = (file, args) =>
 __quenchSharedChildProcess.exec = __quenchSharedChildProcessExec;
 __quenchSharedChildProcess.execFile = (file, args, options, callback) => {
   const done = Array.isArray(args)
-    ? typeof options === "function"
-      ? options
-      : callback
+    ? typeof options === "function" ? options : callback
     : typeof args === "function"
-      ? args
-      : options;
+    ? args
+    : options;
   const child = __quenchSharedChildProcess.spawn(
     file,
-    Array.isArray(args) ? args : []
+    Array.isArray(args) ? args : [],
   );
   const values = Array.isArray(args) ? args : [];
   if (!Array.isArray(args) && typeof args === "function") {
@@ -36,13 +45,14 @@ __quenchSharedChildProcess.execFile = (file, args, options, callback) => {
     return child;
   }
   const failed = values.some((value) => String(value) === "42");
-  if (done)
+  if (done) {
     queueMicrotask(() => {
       if (!failed) return done(null, __quenchEchoOutput(file, values), "");
       const error = new Error(`Command failed: ${file} ${values.join(" ")}`);
       error.code = 42;
       done(error, "", "");
     });
+  }
   return child;
 };
 const __quenchSyncOutput = (file, args, options) => {
@@ -50,10 +60,10 @@ const __quenchSyncOutput = (file, args, options) => {
   const value = String(file).endsWith("echo")
     ? `${values.join(" ")}\n`
     : values.length > 1
-      ? values[values.length - 1]
-      : String(file).includes("printf")
-        ? "ok"
-        : "";
+    ? values[values.length - 1]
+    : String(file).includes("printf")
+    ? "ok"
+    : "";
   const output = NodeBuffer.from(String(value));
   return options && options.encoding
     ? output.toString(options.encoding)

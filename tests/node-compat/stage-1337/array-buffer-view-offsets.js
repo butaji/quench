@@ -6,7 +6,7 @@ for (const view of common.getArrayBufferViews(input)) {
   assert.strictEqual(view.byteLength, input.byteLength);
   assert.deepStrictEqual(
     Array.from(new Uint8Array(view.buffer, view.byteOffset, view.byteLength)),
-    Array.from(input)
+    Array.from(input),
   );
 }
 console.log("array buffer view offsets passed");

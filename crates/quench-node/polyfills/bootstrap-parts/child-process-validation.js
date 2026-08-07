@@ -1,6 +1,7 @@
 const __quenchSpawnValidationRequire = globalThis.require;
-const __quenchSpawnValidationChildProcess =
-  __quenchSpawnValidationRequire("child_process");
+const __quenchSpawnValidationChildProcess = __quenchSpawnValidationRequire(
+  "child_process",
+);
 const __quenchSpawnValidated = __quenchSpawnValidationChildProcess.spawn;
 __quenchSpawnValidationChildProcess.spawn = (...args) => {
   const command = args[0];
@@ -26,10 +27,28 @@ __quenchSpawnValidationChildProcess.spawn = (...args) => {
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
-  if (third !== undefined && third !== null && typeof third !== "object") {
+  if (
+    third !== undefined &&
+    (third === null || typeof third !== "object" || Array.isArray(third))
+  ) {
     const error = new TypeError("The options argument must be an object");
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
+  }
+  const childOptions = third && typeof third === "object"
+    ? third
+    : options && typeof options === "object" && !Array.isArray(options)
+    ? options
+    : undefined;
+  for (const field of ["uid", "gid"]) {
+    if (
+      childOptions?.[field] !== undefined &&
+      (!Number.isSafeInteger(childOptions[field]) || childOptions[field] < 0)
+    ) {
+      const error = new RangeError(`The ${field} option is out of range`);
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
   }
   return __quenchSpawnValidated(...args);
 };

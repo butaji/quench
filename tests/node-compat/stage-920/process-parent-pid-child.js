@@ -3,7 +3,7 @@ const childProcess = require("child_process");
 
 const child = childProcess.spawnSync(process.execPath, [
   "-e",
-  "process.stdout.write(String(process.ppid));"
+  "process.stdout.write(String(process.ppid));",
 ]);
 
 assert.strictEqual(child.status, 0);

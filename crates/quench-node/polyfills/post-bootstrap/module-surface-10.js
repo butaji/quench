@@ -16,20 +16,23 @@
           iterations,
           length,
           digest,
-          callback
+          callback,
         ) => {
           Promise.resolve().then(() =>
             callback(
               null,
-              result.pbkdf2Sync(digest, password, salt, iterations, length)
+              result.pbkdf2Sync(digest, password, salt, iterations, length),
             )
           );
         };
-        result.hkdf ||= (digest, ikm, salt, info, length, callback) => {
-          Promise.resolve().then(() => {
-            const crypto = globalThis.require("crypto");
-            callback(null, crypto.hkdfSync(digest, ikm, salt, info, length));
-          });
+        const originalHkdf = result.hkdf;
+        result.hkdf = (digest, ikm, salt, info, length, callback) => {
+          const crypto = globalThis.require("crypto");
+          const derived = crypto.hkdfSync(digest, ikm, salt, info, length);
+          if (typeof originalHkdf === "function") {
+            return originalHkdf(digest, ikm, salt, info, length, callback);
+          }
+          Promise.resolve().then(() => callback(null, derived));
         };
       }
       return result;

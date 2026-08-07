@@ -4,7 +4,7 @@ assert.throws(
   () => {
     url.href = "";
   },
-  { name: "TypeError" }
+  { name: "TypeError" },
 );
 assert.strictEqual(url.href, "http://example.com/path");
 console.log("Empty URL href rejected");

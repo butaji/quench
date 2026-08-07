@@ -5,6 +5,6 @@ const socket = dgram.createSocket("udp4");
 socket.bind();
 assert.throws(() => socket.bind(), {
   code: "ERR_SOCKET_ALREADY_BOUND",
-  message: "Socket is already bound"
+  message: "Socket is already bound",
 });
 socket.close();

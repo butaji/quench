@@ -7,7 +7,7 @@ setTimeout(
   },
   1,
   2,
-  3
+  3,
 );
 const cancelled = setImmediate(() => {
   throw new Error("cancelled immediate ran");

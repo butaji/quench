@@ -1,6 +1,7 @@
 const event = new CustomEvent("data", { detail: 42 });
-if (event.detail !== 42)
+if (event.detail !== 42) {
   throw new Error("CustomEvent detail was not preserved");
+}
 try {
   event.detail = 99;
 } catch (_) {}

@@ -6,12 +6,14 @@ test("readable state activates lazily", async () => {
     read() {
       called = true;
       this.push(null);
-    }
+    },
   });
-  if (readable._readableState.reading)
+  if (readable._readableState.reading) {
     throw new Error("stream started reading early");
+  }
   readable.on("data", () => {});
   await Promise.resolve();
-  if (!called || !readable._readableState.reading)
+  if (!called || !readable._readableState.reading) {
     throw new Error("read state was not updated");
+  }
 });

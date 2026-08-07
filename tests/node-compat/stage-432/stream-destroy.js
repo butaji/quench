@@ -8,8 +8,9 @@ for (const stream of [Readable.from(["value"]), new Writable()]) {
   });
   stream.on("close", () => {
     if (!stream.destroyed) throw new Error("destroy did not set destroyed");
-    if (!error || error.message !== "cancelled")
+    if (!error || error.message !== "cancelled") {
       throw new Error("destroy did not emit its error");
+    }
     console.log("stream destroy passed");
   });
   stream.destroy(new Error("cancelled"));

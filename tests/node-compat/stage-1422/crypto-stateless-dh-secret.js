@@ -5,7 +5,7 @@ const alice = crypto.generateKeyPairSync("dh", { group: "modp5" });
 const bob = crypto.generateKeyPairSync("dh", { group: "modp5" });
 const oneShot = crypto.diffieHellman({
   privateKey: alice.privateKey,
-  publicKey: bob.publicKey
+  publicKey: bob.publicKey,
 });
 assert.strictEqual(oneShot.byteLength, 256);
 console.log("crypto stateless DH secret passed");

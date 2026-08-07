@@ -10,5 +10,5 @@ console.assert(false, "%s should", "console.assert", "not throw");
 process.stderr.write = originalWrite;
 assert.strictEqual(
   output,
-  "Assertion failed: console.assert should not throw\n"
+  "Assertion failed: console.assert should not throw\n",
 );

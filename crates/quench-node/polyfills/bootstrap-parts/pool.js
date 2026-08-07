@@ -9,14 +9,30 @@ ArrayBuffer.prototype.transfer = function (...args) {
   if (__nodeUntransferableBuffers.has(this)) {
     throw new TypeError("Cannot transfer an untransferable ArrayBuffer");
   }
-  if (typeof __nodeArrayBufferTransfer === "function")
+  if (typeof __nodeArrayBufferTransfer === "function") {
     return __nodeArrayBufferTransfer.apply(this, args);
-  throw new TypeError("ArrayBuffer.prototype.transfer is not supported");
+  }
+  if (!(this instanceof ArrayBuffer)) {
+    throw new TypeError(
+      "Method ArrayBuffer.prototype.transfer called on incompatible receiver",
+    );
+  }
+  const maxByteLength = args[0];
+  if (
+    maxByteLength !== undefined &&
+    (!Number.isSafeInteger(maxByteLength) || maxByteLength < this.byteLength)
+  ) {
+    throw new RangeError("Invalid array buffer length");
+  }
+  const result = new ArrayBuffer(maxByteLength ?? this.byteLength);
+  new Uint8Array(result).set(new Uint8Array(this));
+  return result;
 };
 
 const __nodeBufferPoolFrom = (source) => {
-  if (source.length === 0 || source.length >= __nodeBufferPoolSize >>> 1)
+  if (source.length === 0 || source.length >= __nodeBufferPoolSize >>> 1) {
     return undefined;
+  }
   if (__nodeBufferPoolOffset + source.length > __nodeBufferPool.byteLength) {
     __nodeBufferPool = new ArrayBuffer(__nodeBufferPoolSize);
     __nodeUntransferableBuffers.add(__nodeBufferPool);
@@ -25,7 +41,7 @@ const __nodeBufferPoolFrom = (source) => {
   const result = new __NodeBufferBase01(
     __nodeBufferPool,
     __nodeBufferPoolOffset,
-    source.length
+    source.length,
   );
   result.set(source);
   __nodeBufferPoolOffset += source.length;

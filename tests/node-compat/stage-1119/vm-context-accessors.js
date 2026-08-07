@@ -6,11 +6,12 @@ Object.defineProperty(context, "setter", {
   get: () => `ok=${value}`,
   set: (next) => {
     value = next;
-  }
+  },
 });
 const result = vm.runInContext(
   'setter = "test"; [getter, setter]',
-  vm.createContext(context)
+  vm.createContext(context),
 );
-if (result[0] !== "ok" || result[1] !== "ok=test")
+if (result[0] !== "ok" || result[1] !== "ok=test") {
   throw new Error("VM accessors were not preserved");
+}

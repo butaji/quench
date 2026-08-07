@@ -5,7 +5,7 @@ process.once("warning", (warning) => {
 });
 process.emitWarning("stage warning", {
   name: "ExperimentalWarning",
-  code: "STAGE"
+  code: "STAGE",
 });
 assert.strictEqual(received.name, "ExperimentalWarning");
 assert.strictEqual(received.code, "STAGE");

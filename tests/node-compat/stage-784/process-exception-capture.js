@@ -5,11 +5,11 @@ const processApi = require("process");
 
 assert.strictEqual(
   typeof processApi.setUncaughtExceptionCaptureCallback,
-  "function"
+  "function",
 );
 assert.strictEqual(
   typeof processApi.hasUncaughtExceptionCaptureCallback,
-  "function"
+  "function",
 );
 assert.strictEqual(processApi.hasUncaughtExceptionCaptureCallback(), false);
 processApi.setUncaughtExceptionCaptureCallback(() => {});

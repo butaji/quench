@@ -8,8 +8,8 @@ assert.throws(
       "secp521r1",
       "hex",
       "hex",
-      "compressed"
+      "compressed",
     ),
-  /Failed to convert Buffer to EC_POINT/
+  /Failed to convert Buffer to EC_POINT/,
 );
 console.log("crypto ECDH invalid point passed");

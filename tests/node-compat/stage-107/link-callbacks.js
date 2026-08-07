@@ -19,7 +19,7 @@ fs.symlink(
         assert.strictEqual(value, target);
         fs.unlinkSync(link);
         fs.rmSync(target);
-      })
+      }),
     );
-  })
+  }),
 );

@@ -4,5 +4,5 @@ assert.throws(
   () => {
     throw new Error("boom");
   },
-  (error) => error.message === "boom"
+  (error) => error.message === "boom",
 );

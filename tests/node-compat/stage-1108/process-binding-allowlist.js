@@ -19,7 +19,7 @@ const allowedBindings = [
   "udp_wrap",
   "util",
   "uv",
-  "zlib"
+  "zlib",
 ];
 for (const name of allowedBindings) {
   if (!process.binding(name)) throw new Error(`missing binding: ${name}`);

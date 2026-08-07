@@ -8,11 +8,12 @@ const cases = [
   ["\u0080", "%C2%80"],
   ["\u07ff", "%DF%BF"],
   ["\u0800", "%E0%A0%80"],
-  ["\uffff", "%EF%BF%BF"]
+  ["\uffff", "%EF%BF%BF"],
 ];
-for (const [character, encoded] of cases)
+for (const [character, encoded] of cases) {
   assert.strictEqual(
     url.pathToFileURL(`/${character}`).href,
-    `file:///${encoded}`
+    `file:///${encoded}`,
   );
+}
 console.log("UTF-16 boundary matrix passed");

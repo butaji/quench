@@ -6,18 +6,18 @@ const prototype = Object.getPrototypeOf(secret);
 const original = Object.getOwnPropertyDescriptor(prototype, "symmetricKeySize");
 Object.defineProperty(prototype, "symmetricKeySize", {
   configurable: true,
-  get: () => 1
+  get: () => 1,
 });
 try {
   const cipher = crypto.createCipheriv("aes-128-ecb", secret, null);
   const ciphertext = Buffer.concat([
     cipher.update(Buffer.alloc(16)),
-    cipher.final()
+    cipher.final(),
   ]);
   const decipher = crypto.createDecipheriv("aes-128-ecb", secret, null);
   const plaintext = Buffer.concat([
     decipher.update(ciphertext),
-    decipher.final()
+    decipher.final(),
   ]);
   assert.deepStrictEqual(plaintext, Buffer.alloc(16));
 } finally {

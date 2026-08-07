@@ -7,12 +7,13 @@ const cases = [
   ["#hash2", "foo", "foo"],
   ["http://example/x/y", "#hash1", "http://example/x/y#hash1"],
   ["http://example/x/y#old", "#hash1", "http://example/x/y#hash1"],
-  ["http://example/x/y#old", "", "http://example/x/y#old"]
+  ["http://example/x/y#old", "", "http://example/x/y#old"],
 ];
-for (const [from, target, expected] of cases)
+for (const [from, target, expected] of cases) {
   assert.deepStrictEqual(
     url.resolveObject(url.parse(from), target),
     url.parse(expected),
-    `${from} + ${target}`
+    `${from} + ${target}`,
   );
+}
 console.log("fragment base matrix passed");

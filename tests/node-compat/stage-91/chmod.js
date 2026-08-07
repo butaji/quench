@@ -7,7 +7,8 @@ fs.chmod(
   path,
   "644",
   common.mustSucceed(() => {
-    if ((fs.statSync(path).mode & 0o777) !== 0o644)
+    if ((fs.statSync(path).mode & 0o777) !== 0o644) {
       throw new Error("chmod mode mismatch");
-  })
+    }
+  }),
 );

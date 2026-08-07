@@ -6,8 +6,9 @@ fs.appendFile(callbackFile, "after", (error) => {
   if (error) throw error;
   const content = fs.readFileSync(callbackFile, "utf8");
   fs.unlinkSync(callbackFile);
-  if (content !== "beforeafter")
+  if (content !== "beforeafter") {
     throw new Error(`unexpected callback content: ${content}`);
+  }
 });
 
 const promiseFile = `append-promise-${Date.now()}.txt`;
@@ -17,6 +18,7 @@ fs.promises
   .then(() => fs.promises.readFile(promiseFile, "utf8"))
   .then((content) => {
     fs.unlinkSync(promiseFile);
-    if (content !== "beforeafter")
+    if (content !== "beforeafter") {
       throw new Error(`unexpected promise content: ${content}`);
+    }
   });

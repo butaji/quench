@@ -1,11 +1,13 @@
 const assert = require("assert");
 const { Buffer } = require("buffer");
 
-for (const allocate of [
-  () => Buffer.alloc(2, 1),
-  () => Buffer.allocUnsafe(2),
-  () => Buffer.allocUnsafeSlow(2)
-]) {
+for (
+  const allocate of [
+    () => Buffer.alloc(2, 1),
+    () => Buffer.allocUnsafe(2),
+    () => Buffer.allocUnsafeSlow(2),
+  ]
+) {
   const buffer = allocate();
   assert.strictEqual(typeof buffer.copy, "function");
   assert.strictEqual(typeof buffer.compare, "function");

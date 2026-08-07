@@ -4,7 +4,7 @@ const cluster = require("cluster");
 if (cluster.isWorker) {
   const result = cluster.worker.send({
     prop: process.env.cluster_test_prop,
-    overwrite: process.env.cluster_test_overwrite
+    overwrite: process.env.cluster_test_overwrite,
   });
   assert.strictEqual(result, true);
 } else if (cluster.isPrimary) {
@@ -12,7 +12,7 @@ if (cluster.isWorker) {
   process.env.cluster_test_overwrite = "old";
   const worker = cluster.fork({
     cluster_test_prop: "custom",
-    cluster_test_overwrite: "new"
+    cluster_test_overwrite: "new",
   });
   worker.on("message", (data) => {
     checks.using = data.prop === "custom";
@@ -23,7 +23,7 @@ if (cluster.isWorker) {
     assert.ok(checks.using, "worker did not receive the correct env");
     assert.ok(
       checks.overwrite,
-      "custom env did not overwrite the existing env"
+      "custom env did not overwrite the existing env",
     );
     console.log("cluster fork env passed");
   });

@@ -1,8 +1,8 @@
 # quench-node development guide
 
-This repository implements Node-compatible APIs on rquickjs. Keep the Rust
-host minimal and put compatibility behavior in readable JavaScript polyfills.
-Do not add or restore a separate runtime crate.
+This repository implements Node-compatible APIs on rquickjs. Keep the Rust host
+minimal and put compatibility behavior in readable JavaScript polyfills. Do not
+add or restore a separate runtime crate.
 
 The only runtime integration in this repository is the `rquickjs` dependency
 inside `crates/quench-node`. Do not introduce references, workspace members, or
@@ -33,3 +33,7 @@ do not modify unrelated external projects.
 
 Do not add or restore GitHub Actions or other GitHub CI configuration. Keep
 verification local through the repository tooling.
+
+When behavior is uncertain, first check the actual local Node.js CLI behavior;
+then consult the corresponding Node.js source code on GitHub before choosing an
+implementation or documenting a compatibility difference.

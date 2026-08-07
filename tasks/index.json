@@ -97,6 +97,12 @@
       "file": "016-compatibility-throughput.md",
       "title": "Compatibility throughput and differential triage",
       "status": "planned"
+    },
+    {
+      "id": "017",
+      "file": "017-current-compatibility-push.md",
+      "title": "Current compatibility push — stream/iter and auditable baselines",
+      "status": "in-progress"
     }
   ]
 }

@@ -8,7 +8,7 @@ const cases = [
     (function () {
       return arguments;
     })(),
-    "isArgumentsObject"
+    "isArgumentsObject",
   ],
   [new Boolean(), "isBooleanObject"],
   [new Number(), "isNumberObject"],
@@ -32,9 +32,9 @@ const cases = [
   [new Uint8Array(), "isUint8Array"],
   [
     Object.defineProperty(new Uint8Array(), Symbol.toStringTag, {
-      value: "foo"
+      value: "foo",
     }),
-    "isUint8Array"
+    "isUint8Array",
   ],
   [new Uint8ClampedArray(), "isUint8ClampedArray"],
   [new Uint16Array(), "isUint16Array"],
@@ -48,7 +48,7 @@ const cases = [
   [new BigInt64Array(), "isBigInt64Array"],
   [new BigUint64Array(), "isBigUint64Array"],
   [new DataView(new ArrayBuffer()), "isDataView"],
-  [new Proxy({}, {}), "isProxy"]
+  [new Proxy({}, {}), "isProxy"],
 ];
 
 for (const [value, method] of cases) {
@@ -58,8 +58,9 @@ for (const [value, method] of cases) {
       ((types.isArrayBufferView(value) || types.isAnyArrayBuffer(value)) &&
         key.includes("Array")) ||
       key === "isBoxedPrimitive"
-    )
+    ) {
       continue;
+    }
     if (types[key](value) !== (key === method)) {
       throw new Error(`${method}: ${key}=${types[key](value)}`);
     }
