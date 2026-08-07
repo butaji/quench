@@ -2127,13 +2127,11 @@ let __quenchHttpModule;
           : `${host}:${port}:${localAddress}${familySuffix}`;
       }
       addRequest(request, options) {
-        request?.emit?.(
-          "error",
-          Object.assign(
-            new Error("HTTP transport is not supported by quench-node"),
-            { code: "ENOTSUP" },
-          ),
-        );
+        // ClientRequest performs the in-memory connection during construction.
+        // Keep this public Agent API harmless for callers (and for tests that
+        // deliberately seed freeSockets with an uninitialized Socket). Node's
+        // native implementation either reuses a valid socket or creates one;
+        // emitting ENOTSUP here incorrectly aborts an otherwise usable request.
         return request;
       }
       destroy() {
