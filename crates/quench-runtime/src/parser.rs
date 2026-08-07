@@ -3,7 +3,7 @@
 //! Uses OXC to parse JavaScript/JSX/TypeScript source code into the OXC AST,
 //! then lower to our runtime AST via lower.rs.
 
-use crate::ir::QuenchIr;
+use crate::ir::{IrProgram, QuenchIr};
 use crate::lower::stmt::lower_program;
 use crate::value::JsError;
 use oxc::allocator::Allocator;
@@ -23,6 +23,11 @@ pub fn parse_script(source: &str) -> Result<QuenchIr, JsError> {
     }
     check_strict_reserved(&ret.program)?;
     lower_program(&ret.program).map_err(|e| JsError(e.to_string()))
+}
+
+/// Parse script source through the owned IR boundary.
+pub fn parse_script_ir(source: &str) -> Result<IrProgram, JsError> {
+    parse_script(source).map(IrProgram::from_program)
 }
 
 /// Reject strict-mode future reserved words used as binding identifiers.
