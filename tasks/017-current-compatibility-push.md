@@ -71,3 +71,5 @@ The package loader now also honors the nearest package `type: "module"` for
 The Hono module itself now loads under `quench-node`; its asynchronous
 `app.fetch()` result still requires the runtime’s pending-Promise/microtask
 drain support before a standalone script can print the response.
+Stage 2042 verifies that basic top-level `await` itself already passes; the
+remaining Hono behavior is an untracked application Promise at process exit.
