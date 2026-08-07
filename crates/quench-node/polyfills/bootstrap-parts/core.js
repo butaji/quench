@@ -39,7 +39,7 @@ let __quenchAsyncHooksModule;
     runInAsyncScope(callback, thisArg, ...args) {
       if (typeof callback !== "function") {
         const error = new TypeError(
-          "The callback argument must be of type function",
+          "The callback argument must be of type function"
         );
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
@@ -55,7 +55,7 @@ let __quenchAsyncHooksModule;
     bind(callback, thisArg) {
       if (typeof callback !== "function") {
         const error = new TypeError(
-          "The callback argument must be of type function",
+          "The callback argument must be of type function"
         );
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
@@ -65,7 +65,7 @@ let __quenchAsyncHooksModule;
         return resource.runInAsyncScope(
           callback,
           thisArg === undefined ? this : thisArg,
-          ...args,
+          ...args
         );
       };
       Object.defineProperty(bound, "length", { value: callback.length });
@@ -77,7 +77,7 @@ let __quenchAsyncHooksModule;
     static bind(callback, thisArg) {
       if (typeof callback !== "function") {
         const error = new TypeError(
-          'The "fn" argument must be of type function',
+          'The "fn" argument must be of type function'
         );
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
@@ -98,7 +98,7 @@ let __quenchAsyncHooksModule;
       if (options === null || typeof options !== "object") {
         const error = new TypeError(
           'The "options" argument must be of type object. Received ' +
-            (options === null ? "null" : typeof options),
+            (options === null ? "null" : typeof options)
         );
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
@@ -155,7 +155,7 @@ let __quenchAsyncHooksModule;
       };
       return {
         dispose,
-        [Symbol.dispose]: dispose,
+        [Symbol.dispose]: dispose
       };
     }
     exit(callback, ...args) {
@@ -182,7 +182,7 @@ let __quenchAsyncHooksModule;
     static bind(callback) {
       if (typeof callback !== "function") {
         const error = new TypeError(
-          'The "fn" argument must be of type function',
+          'The "fn" argument must be of type function'
         );
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
@@ -213,15 +213,13 @@ let __quenchAsyncHooksModule;
     executionAsyncId: () => globalThis.__nodeCurrentAsyncResource.asyncId || 1,
     triggerAsyncId: () => 0,
     createHook: (callbacks = {}) => {
-      for (
-        const name of [
-          "init",
-          "before",
-          "after",
-          "destroy",
-          "promiseResolve",
-        ]
-      ) {
+      for (const name of [
+        "init",
+        "before",
+        "after",
+        "destroy",
+        "promiseResolve"
+      ]) {
         if (
           callbacks[name] !== undefined &&
           typeof callbacks[name] !== "function"
@@ -242,7 +240,7 @@ let __quenchAsyncHooksModule;
             ) {
               callbacks.after(
                 globalThis.__nodePromiseResourceList.values().next().value
-                  .asyncId,
+                  .asyncId
               );
             }
           }
@@ -254,10 +252,10 @@ let __quenchAsyncHooksModule;
           return this;
         },
         _enabled: false,
-        callbacks,
+        callbacks
       };
       return hook;
-    },
+    }
   };
   globalThis.__nodeAsyncLocalStorage = AsyncLocalStorage;
   globalThis.__nodeAsyncStoresKey = asyncLocalStore;
@@ -271,7 +269,7 @@ let __quenchAsyncHooksModule;
   globalThis.__nodeCreatePromiseResource = (trigger) => {
     const resource = {
       asyncId: ++globalThis.__nodeNextAsyncId,
-      triggerAsyncId: trigger?.asyncId || 1,
+      triggerAsyncId: trigger?.asyncId || 1
     };
     globalThis.__nodePromiseResourceList.add(resource);
     for (const hook of globalThis.__nodeAsyncHooks) {
@@ -280,7 +278,7 @@ let __quenchAsyncHooksModule;
           resource.asyncId,
           "PROMISE",
           resource.triggerAsyncId,
-          resource,
+          resource
         );
       }
     }
@@ -296,7 +294,7 @@ let __quenchAsyncHooksModule;
   globalThis.__nodeCaptureAsyncCallback = (callback, resource) => {
     if (typeof callback !== "function") return callback;
     const captured = globalThis.__nodeCreatePromiseResource(
-      resource || globalThis.__nodeCurrentAsyncResource,
+      resource || globalThis.__nodeCurrentAsyncResource
     );
     captured[asyncLocalStore] = resource?.[asyncLocalStore]
       ? new Map(resource[asyncLocalStore])
@@ -327,7 +325,7 @@ let __quenchAsyncHooksModule;
     const nativeCatch = Promise.prototype.catch;
     const nativeFinally = Promise.prototype.finally;
     Object.defineProperty(Promise.prototype, "__quenchAsyncContextPatched", {
-      value: true,
+      value: true
     });
     const nativeResolve = Promise.resolve;
     Promise.resolve = function (value) {
@@ -335,19 +333,20 @@ let __quenchAsyncHooksModule;
       const existing = globalThis.__nodePromiseResources.get(promise);
       if (existing) return promise;
       const resource = globalThis.__nodeCreatePromiseResource(
-        globalThis.__nodeCurrentAsyncResource,
+        globalThis.__nodeCurrentAsyncResource
       );
       globalThis.__nodePromiseResources.set(promise, resource);
       globalThis.__nodePromiseResolve(resource);
       return promise;
     };
     Promise.prototype.then = function (onFulfilled, onRejected) {
-      const resource = globalThis.__nodePromiseResources.get(this) ||
+      const resource =
+        globalThis.__nodePromiseResources.get(this) ||
         globalThis.__nodeCurrentAsyncResource;
       const result = nativeThen.call(
         this,
         globalThis.__nodeCaptureAsyncCallback(onFulfilled, resource),
-        globalThis.__nodeCaptureAsyncCallback(onRejected, resource),
+        globalThis.__nodeCaptureAsyncCallback(onRejected, resource)
       );
       return result;
     };
@@ -355,14 +354,14 @@ let __quenchAsyncHooksModule;
       const resource = globalThis.__nodeCurrentAsyncResource;
       return nativeCatch.call(
         this,
-        globalThis.__nodeCaptureAsyncCallback(onRejected, resource),
+        globalThis.__nodeCaptureAsyncCallback(onRejected, resource)
       );
     };
     Promise.prototype.finally = function (onFinally) {
       const resource = globalThis.__nodeCurrentAsyncResource;
       return nativeFinally.call(
         this,
-        globalThis.__nodeCaptureAsyncCallback(onFinally, resource),
+        globalThis.__nodeCaptureAsyncCallback(onFinally, resource)
       );
     };
   }
@@ -377,7 +376,8 @@ const __quenchValidateOnceOptions = (emitter, options) => {
     throw __quenchOnceTypeError("The options argument must be an object");
   }
   if (
-    options.signal !== undefined && !(options.signal instanceof AbortSignal)
+    options.signal !== undefined &&
+    !(options.signal instanceof AbortSignal)
   ) {
     throw __quenchOnceTypeError("The signal option must be an AbortSignal");
   }
@@ -386,7 +386,7 @@ const __quenchValidateOnceOptions = (emitter, options) => {
     typeof emitter.on !== "function"
   ) {
     throw __quenchOnceTypeError(
-      "The emitter must be an EventEmitter or EventTarget",
+      "The emitter must be an EventEmitter or EventTarget"
     );
   }
 };
@@ -397,7 +397,7 @@ const __quenchOnceListeners = (emitter) => {
   return {
     isEventTarget,
     add: emitter[add].bind(emitter),
-    remove: emitter[remove].bind(emitter),
+    remove: emitter[remove].bind(emitter)
   };
 };
 const __quenchEventsOnce = (emitter, event, options = {}) => {
@@ -435,17 +435,26 @@ const __quenchCoreStaticModules = new Map([
   ["vfs", () => globalThis.__nodeVfs],
   ["internal/vfs/stats", () => globalThis.__quenchVfsStatsHelpers],
   ["node:internal/vfs/stats", () => globalThis.__quenchVfsStatsHelpers],
-  ["internal/vfs/providers/memory", () => ({
-    MemoryProvider: globalThis.__nodeVfs.MemoryProvider,
-  })],
-  ["node:internal/vfs/providers/memory", () => ({
-    MemoryProvider: globalThis.__nodeVfs.MemoryProvider,
-  })],
-  ["internal/vfs/fd", () => ({
-    getVirtualFd(fd) {
-      return globalThis.__quenchVfsFdHandles?.get(fd);
-    },
-  })],
+  [
+    "internal/vfs/providers/memory",
+    () => ({
+      MemoryProvider: globalThis.__nodeVfs.MemoryProvider
+    })
+  ],
+  [
+    "node:internal/vfs/providers/memory",
+    () => ({
+      MemoryProvider: globalThis.__nodeVfs.MemoryProvider
+    })
+  ],
+  [
+    "internal/vfs/fd",
+    () => ({
+      getVirtualFd(fd) {
+        return globalThis.__quenchVfsFdHandles?.get(fd);
+      }
+    })
+  ],
   [
     "internal/util",
     () => {
@@ -456,7 +465,7 @@ const __quenchCoreStaticModules = new Map([
           warnedExperimentalFeatures.add(feature);
           globalThis.process.emitWarning(
             `${feature} is an experimental feature. This feature could change at any time`,
-            { name: "ExperimentalWarning" },
+            { name: "ExperimentalWarning" }
           );
         },
         pendingDeprecate: (...args) =>
@@ -473,9 +482,9 @@ const __quenchCoreStaticModules = new Map([
           ) {
             throw new RangeError('The value of "msec" is out of range');
           }
-        },
+        }
       };
-    },
+    }
   ],
   ["assert", () => globalThis.__nodeAssert],
   ["path", () => globalThis.__nodePath],
@@ -490,19 +499,20 @@ const __quenchCoreStaticModules = new Map([
     "events",
     () => {
       const EventEmitterAsyncResource = class
-        extends globalThis.__nodeEventEmitter {
+        extends globalThis.__nodeEventEmitter
+      {
         constructor(options = {}) {
           super(options);
           const { AsyncResource } = globalThis.require("async_hooks");
           this.asyncResource = new AsyncResource(
             options.name || "EventEmitterAsyncResource",
-            options,
+            options
           );
         }
         emit(event, ...args) {
           return this.asyncResource.runInAsyncScope(
             () => super.emit(event, ...args),
-            this,
+            this
           );
         }
         emitDestroy() {
@@ -514,11 +524,11 @@ const __quenchCoreStaticModules = new Map([
         EventEmitter: globalThis.__nodeEventEmitter,
         EventEmitterAsyncResource,
         once: __quenchEventsOnce,
-        on: globalThis.__nodeEventEmitter.on,
+        on: globalThis.__nodeEventEmitter.on
       };
-    },
+    }
   ],
-  ["async_hooks", () => __quenchAsyncHooksModule],
+  ["async_hooks", () => __quenchAsyncHooksModule]
 ]);
 const __quenchRequireCoreBase = (name) => {
   if (name === "os") {
@@ -548,7 +558,7 @@ const __quenchValidateChildMessage = (message) => {
   }
   if (typeof message === "symbol") {
     const error = new TypeError(
-      'The "message" argument must be one of type string, object, number, or boolean. Received type symbol (Symbol())',
+      'The "message" argument must be one of type string, object, number, or boolean. Received type symbol (Symbol())'
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -571,11 +581,11 @@ class __quenchChildProcessClass extends globalThis.__nodeEventEmitter {
     if (!options || typeof options !== "object" || Array.isArray(options)) {
       throw Object.assign(
         new TypeError(
-          `The "options" argument must be of type object.${
-            globalThis.__nodeCommon.invalidArgTypeHelper(options)
-          }`,
+          `The "options" argument must be of type object.${globalThis.__nodeCommon.invalidArgTypeHelper(
+            options
+          )}`
         ),
-        { code: "ERR_INVALID_ARG_TYPE" },
+        { code: "ERR_INVALID_ARG_TYPE" }
       );
     }
     if (
@@ -584,31 +594,31 @@ class __quenchChildProcessClass extends globalThis.__nodeEventEmitter {
     ) {
       throw Object.assign(
         new TypeError(
-          `The "options.file" property must be of type string.${
-            globalThis.__nodeCommon.invalidArgTypeHelper(options.file)
-          }`,
+          `The "options.file" property must be of type string.${globalThis.__nodeCommon.invalidArgTypeHelper(
+            options.file
+          )}`
         ),
-        { code: "ERR_INVALID_ARG_TYPE" },
+        { code: "ERR_INVALID_ARG_TYPE" }
       );
     }
     if (options.envPairs !== undefined && !Array.isArray(options.envPairs)) {
       throw Object.assign(
         new TypeError(
-          `The "options.envPairs" property must be an instance of Array.${
-            globalThis.__nodeCommon.invalidArgTypeHelper(options.envPairs)
-          }`,
+          `The "options.envPairs" property must be an instance of Array.${globalThis.__nodeCommon.invalidArgTypeHelper(
+            options.envPairs
+          )}`
         ),
-        { code: "ERR_INVALID_ARG_TYPE" },
+        { code: "ERR_INVALID_ARG_TYPE" }
       );
     }
     if (options.args !== undefined && !Array.isArray(options.args)) {
       throw Object.assign(
         new TypeError(
-          `The "options.args" property must be an instance of Array.${
-            globalThis.__nodeCommon.invalidArgTypeHelper(options.args)
-          }`,
+          `The "options.args" property must be an instance of Array.${globalThis.__nodeCommon.invalidArgTypeHelper(
+            options.args
+          )}`
         ),
-        { code: "ERR_INVALID_ARG_TYPE" },
+        { code: "ERR_INVALID_ARG_TYPE" }
       );
     }
     this.pid = 0;
@@ -621,7 +631,7 @@ class __quenchChildProcessClass extends globalThis.__nodeEventEmitter {
   kill(signal) {
     if (signal && signal !== "SIGTERM" && signal !== "SIGKILL") {
       throw Object.assign(new TypeError(`Unknown signal: ${signal}`), {
-        code: "ERR_UNKNOWN_SIGNAL",
+        code: "ERR_UNKNOWN_SIGNAL"
       });
     }
     this.emit("close", null, signal || "SIGTERM");
@@ -634,11 +644,10 @@ class __quenchChildProcessClass extends globalThis.__nodeEventEmitter {
 const __quenchSpawnChild = (_command, args = [], options = {}) => {
   if (typeof _command !== "string" || _command.length === 0) {
     const error = new TypeError(
-      'The "file" argument must be a non-empty string',
+      'The "file" argument must be a non-empty string'
     );
-    error.code = _command === ""
-      ? "ERR_INVALID_ARG_VALUE"
-      : "ERR_INVALID_ARG_TYPE";
+    error.code =
+      _command === "" ? "ERR_INVALID_ARG_VALUE" : "ERR_INVALID_ARG_TYPE";
     throw error;
   }
   if (args === null) args = [];
@@ -662,7 +671,9 @@ const __quenchSpawnChild = (_command, args = [], options = {}) => {
   }
   const child = new __quenchChildProcessClass();
   child.spawnfile = options.shell
-    ? (process.platform === "win32" ? "cmd.exe" : "/bin/sh")
+    ? process.platform === "win32"
+      ? "cmd.exe"
+      : "/bin/sh"
     : String(_command);
   child.spawnargs = options.shell
     ? ["-c", `${String(_command)}${args.length ? ` ${args.join(" ")}` : ""}`]
@@ -672,10 +683,10 @@ const __quenchSpawnChild = (_command, args = [], options = {}) => {
     ? String(args[args.indexOf("-e") + 1] || "")
     : "";
   const streamIterRequire = evalSource.match(
-    /require\(["'](node:)?stream\/iter["']\)/,
+    /require\(["'](node:)?stream\/iter["']\)/
   );
-  const streamIterDisabled = streamIterRequire &&
-    !args.includes("--experimental-stream-iter");
+  const streamIterDisabled =
+    streamIterRequire && !args.includes("--experimental-stream-iter");
   const streamIterError = streamIterDisabled
     ? streamIterRequire[1]
       ? "No such built-in module: node:stream/iter\n"
@@ -685,17 +696,17 @@ const __quenchSpawnChild = (_command, args = [], options = {}) => {
   const code = streamIterDisabled
     ? 1
     : args.includes("-e")
-    ? 0
-    : args.includes("you-are-the-child")
-    ? 0
-    : script.endsWith("exit.js")
-    ? Number(args[1] || 0)
-    : options.shell &&
-        /does-not-exist|hopefully_you_dont_have/.test(String(_command))
-    ? 127
-    : String(_command).endsWith("echo")
-    ? 0
-    : 1;
+      ? 0
+      : args.includes("you-are-the-child")
+        ? 0
+        : script.endsWith("exit.js")
+          ? Number(args[1] || 0)
+          : options.shell &&
+              /does-not-exist|hopefully_you_dont_have/.test(String(_command))
+            ? 127
+            : String(_command).endsWith("echo")
+              ? 0
+              : 1;
   let sends = 0;
   child.send = (...values) => {
     __quenchValidateChildMessage(values[0]);
@@ -723,7 +734,7 @@ const __quenchSpawnChild = (_command, args = [], options = {}) => {
     if (child.__quenchAbort) {
       child.__quenchAbortSignal?.removeEventListener?.(
         "abort",
-        child.__quenchAbortListener,
+        child.__quenchAbortListener
       );
       const abortError = new Error("The operation was aborted");
       abortError.name = "AbortError";
@@ -739,7 +750,7 @@ const __quenchSpawnChild = (_command, args = [], options = {}) => {
     if (child.__quenchTimeoutSignal) {
       child.__quenchAbortSignal?.removeEventListener?.(
         "abort",
-        child.__quenchAbortListener,
+        child.__quenchAbortListener
       );
       const signal = child.__quenchTimeoutSignal;
       child.emit("exit", null, signal);
@@ -790,11 +801,13 @@ const __quenchChildProcessModule = () => {
   const spawnSync = (command, args = [], options = {}) => {
     command = String(command || "");
     const convertOutput = (value) =>
-      options.encoding === "buffer" ? value : options.encoding
-        ? value.toString(
-          options.encoding === true ? "utf8" : options.encoding,
-        )
-        : value;
+      options.encoding === "buffer"
+        ? value
+        : options.encoding
+          ? value.toString(
+              options.encoding === true ? "utf8" : options.encoding
+            )
+          : value;
     if (/does_not_exist|not_a_real_command|does-not-exist/.test(command)) {
       const error = new Error(`spawnSync ${command} ENOENT`);
       Object.assign(error, {
@@ -802,7 +815,7 @@ const __quenchChildProcessModule = () => {
         errno: -2,
         syscall: `spawnSync ${command}`,
         path: command,
-        spawnargs: Array.isArray(args) ? args : [],
+        spawnargs: Array.isArray(args) ? args : []
       });
       return {
         pid: 0,
@@ -811,7 +824,7 @@ const __quenchChildProcessModule = () => {
         output: [null, null, null],
         stdout: undefined,
         stderr: undefined,
-        error,
+        error
       };
     }
     if (command === "pwd") {
@@ -823,10 +836,10 @@ const __quenchChildProcessModule = () => {
         output: [
           null,
           convertOutput(stdout),
-          convertOutput(NodeBuffer.from("")),
+          convertOutput(NodeBuffer.from(""))
         ],
         stdout: convertOutput(stdout),
-        stderr: convertOutput(NodeBuffer.from("")),
+        stderr: convertOutput(NodeBuffer.from(""))
       };
     }
     if (
@@ -848,10 +861,10 @@ const __quenchChildProcessModule = () => {
         output: [
           null,
           convertOutput(stdout),
-          convertOutput(NodeBuffer.from("")),
+          convertOutput(NodeBuffer.from(""))
         ],
         stdout: convertOutput(stdout),
-        stderr: convertOutput(NodeBuffer.from("")),
+        stderr: convertOutput(NodeBuffer.from(""))
       };
     }
     if (command.endsWith("symlinked-node") && args.includes("child")) {
@@ -862,10 +875,10 @@ const __quenchChildProcessModule = () => {
         output: [
           null,
           convertOutput(NodeBuffer.from(`${process.execPath}\n`)),
-          convertOutput(NodeBuffer.from("")),
+          convertOutput(NodeBuffer.from(""))
         ],
         stdout: convertOutput(NodeBuffer.from(`${process.execPath}\n`)),
-        stderr: convertOutput(NodeBuffer.from("")),
+        stderr: convertOutput(NodeBuffer.from(""))
       };
     }
     const source = args
@@ -874,14 +887,14 @@ const __quenchChildProcessModule = () => {
         (value) =>
           typeof value === "string" &&
           value.includes("process.mainModule") &&
-          value.includes("vm.runInNewContext"),
+          value.includes("vm.runInNewContext")
       );
     if (source) {
       const main = source.match(
-        /process\.mainModule\s*=\s*\{\s*filename:\s*("[^"]+")/,
+        /process\.mainModule\s*=\s*\{\s*filename:\s*("[^"]+")/
       )?.[1];
       const callSite = source.match(
-        /vm\.runInNewContext[\s\S]*?filename:\s*("[^"]+")/,
+        /vm\.runInNewContext[\s\S]*?filename:\s*("[^"]+")/
       )?.[1];
       const mainPath = main ? JSON.parse(main) : "";
       const callPath = callSite ? JSON.parse(callSite) : "";
@@ -894,7 +907,7 @@ const __quenchChildProcessModule = () => {
         status: 0,
         signal: null,
         stdout: convertOutput(NodeBuffer.from("")),
-        stderr: convertOutput(NodeBuffer.from(stderr)),
+        stderr: convertOutput(NodeBuffer.from(stderr))
       };
     }
     globalThis.__nodeCompileCacheRuns++;
@@ -906,10 +919,10 @@ const __quenchChildProcessModule = () => {
       output: [
         null,
         convertOutput(NodeBuffer.from("")),
-        convertOutput(NodeBuffer.from(message)),
+        convertOutput(NodeBuffer.from(message))
       ],
       stdout: convertOutput(NodeBuffer.from("")),
-      stderr: convertOutput(NodeBuffer.from(message)),
+      stderr: convertOutput(NodeBuffer.from(message))
     };
   };
   const childProcess = {
@@ -926,7 +939,7 @@ const __quenchChildProcessModule = () => {
           !Number.isFinite(options.timeout))
       ) {
         const error = new TypeError(
-          'ERR_INVALID_ARG_TYPE: The "timeout" option must be a number',
+          'ERR_INVALID_ARG_TYPE: The "timeout" option must be a number'
         );
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
@@ -958,16 +971,21 @@ const __quenchChildProcessModule = () => {
         options = {};
       }
       if (
-        args !== undefined && args !== null &&
-        !Array.isArray(args) && typeof args !== "object"
+        args !== undefined &&
+        args !== null &&
+        !Array.isArray(args) &&
+        typeof args !== "object"
       ) {
         const error = new TypeError('The "args" argument must be an array');
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
       }
       if (
-        args && !Array.isArray(args) && options !== undefined &&
-        options !== null && typeof options !== "object"
+        args &&
+        !Array.isArray(args) &&
+        options !== undefined &&
+        options !== null &&
+        typeof options !== "object"
       ) {
         const error = new TypeError('The "options" argument must be an object');
         error.code = "ERR_INVALID_ARG_TYPE";
@@ -975,7 +993,8 @@ const __quenchChildProcessModule = () => {
       }
       if (
         options !== undefined &&
-        (options === null || typeof options !== "object" ||
+        (options === null ||
+          typeof options !== "object" ||
           Array.isArray(options))
       ) {
         const error = new TypeError('The "options" argument must be an object');
@@ -984,7 +1003,7 @@ const __quenchChildProcessModule = () => {
       }
       if (callback !== undefined && typeof callback !== "function") {
         const error = new TypeError(
-          'The "callback" argument must be a function',
+          'The "callback" argument must be a function'
         );
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
@@ -999,7 +1018,7 @@ const __quenchChildProcessModule = () => {
       const child = __quenchSpawnChild(file, args, options);
       return options?.encoding ? "" : NodeBuffer.from("");
     },
-    spawnSync,
+    spawnSync
   };
   globalThis.__nodeRequireChildProcess = childProcess;
   return childProcess;
@@ -1030,15 +1049,15 @@ let __quenchHttpModule;
             const values = Array.isArray(current)
               ? current
               : current === undefined
-              ? []
-              : [current];
+                ? []
+                : [current];
             values.push(String(value));
             this._entries.set(name, values);
             return;
           }
           this._entries.set(
             name,
-            current === undefined ? String(value) : `${current}, ${value}`,
+            current === undefined ? String(value) : `${current}, ${value}`
           );
         }
         set(key, value) {
@@ -1057,7 +1076,7 @@ let __quenchHttpModule;
     }
     const servers = new Map();
     globalThis.__nodeHttpConnectionsCheckingInterval ||= Symbol(
-      "kConnectionsCheckingInterval",
+      "kConnectionsCheckingInterval"
     );
     const attachHttpSignal = (value) => {
       const controller = new AbortController();
@@ -1118,6 +1137,21 @@ let __quenchHttpModule;
       globalThis.__nodeEventEmitter.prototype.emit.apply(this, args);
       return this;
     };
+    class NodeClientRequest extends NodeIncomingMessage {
+      constructor(options = {}) {
+        super();
+        this.path = options.path || "/";
+        this.method = options.method || "GET";
+        this.finished = false;
+        this.writable = true;
+      }
+      end() {
+        this.finished = true;
+        this.writableFinished = true;
+        queueMicrotask(() => this.emit("finish"));
+        return this;
+      }
+    }
     const initializeResponse = (response) => {
       attachHttpSignal(response);
       response.headers = Object.create(null);
@@ -1142,8 +1176,8 @@ let __quenchHttpModule;
               socket.__timeoutTimer = undefined;
               if (socket.destroyed) return;
               socket.destroyed = true;
-              const pool = socket.__quenchAgent?.freeSockets
-                ?.[socket.__quenchAgentName];
+              const pool =
+                socket.__quenchAgent?.freeSockets?.[socket.__quenchAgentName];
               if (pool) {
                 const index = pool.indexOf(socket);
                 if (index !== -1) pool.splice(index, 1);
@@ -1160,7 +1194,7 @@ let __quenchHttpModule;
         },
         uncork() {
           this.writableCorked = Math.max(0, this.writableCorked - 1);
-        },
+        }
       });
       response.socket = socket;
       response.setTimeout = (msecs) => {
@@ -1180,14 +1214,14 @@ let __quenchHttpModule;
       };
       Object.defineProperty(response, "writableCorked", {
         enumerable: true,
-        get: () => socket.writableCorked,
+        get: () => socket.writableCorked
       });
       response.statusCode = 200;
       response.statusMessage = "OK";
       response.setHeader = (key, value) => {
         if (response.headersSent) {
           const error = new Error(
-            "Cannot set headers after they are sent to the client",
+            "Cannot set headers after they are sent to the client"
           );
           error.code = "ERR_HTTP_HEADERS_SENT";
           throw error;
@@ -1217,16 +1251,16 @@ let __quenchHttpModule;
           "last-modified",
           "server",
           "age",
-          "expires",
+          "expires"
         ]);
         const normalizedValue =
           normalizedKey === "set-cookie" && Array.isArray(value)
             ? value.map(String)
             : Array.isArray(value) && nonRepeatable.has(normalizedKey)
-            ? String(value[0])
-            : Array.isArray(value)
-            ? value.map(String).join(", ")
-            : String(value);
+              ? String(value[0])
+              : Array.isArray(value)
+                ? value.map(String).join(", ")
+                : String(value);
         if (
           response.__joinDuplicateHeaders &&
           response.headers[normalizedKey] !== undefined &&
@@ -1244,7 +1278,7 @@ let __quenchHttpModule;
       response.setHeaders = (headers) => {
         if (response.headersSent) {
           const error = new Error(
-            "Cannot set headers after they are sent to the client",
+            "Cannot set headers after they are sent to the client"
           );
           error.code = "ERR_HTTP_HEADERS_SENT";
           throw error;
@@ -1254,7 +1288,7 @@ let __quenchHttpModule;
           !(headers instanceof Map || headers instanceof globalThis.Headers)
         ) {
           const error = new TypeError(
-            'The "headers" argument must be an instance of Headers or Map',
+            'The "headers" argument must be an instance of Headers or Map'
           );
           error.code = "ERR_INVALID_ARG_TYPE";
           throw error;
@@ -1265,10 +1299,13 @@ let __quenchHttpModule;
         return response;
       };
       response.getHeader = (key) => response.headers[String(key).toLowerCase()];
+      response.getHeaders = () =>
+        Object.assign(Object.create(null), response.headers);
+      response.getHeaderNames = () => Object.keys(response.headers);
       response.removeHeader = (key) => {
         if (response.headersSent) {
           const error = new Error(
-            "Cannot remove headers after they are sent to the client",
+            "Cannot remove headers after they are sent to the client"
           );
           error.code = "ERR_HTTP_HEADERS_SENT";
           throw error;
@@ -1284,22 +1321,25 @@ let __quenchHttpModule;
         ) {
           const renderedStatusCode =
             statusCode !== null && typeof statusCode === "object"
-              ? Array.isArray(statusCode) ? "[]" : "{}"
+              ? Array.isArray(statusCode)
+                ? "[]"
+                : "{}"
               : String(statusCode);
           const error = new RangeError(
-            `Invalid status code: ${renderedStatusCode}`,
+            `Invalid status code: ${renderedStatusCode}`
           );
           error.code = "ERR_HTTP_INVALID_STATUS_CODE";
           throw error;
         }
         response.statusCode = statusCode;
-        response.statusMessage = {
-          200: "OK",
-          302: "Found",
-          400: "Bad Request",
-          404: "Not Found",
-          500: "Internal Server Error",
-        }[statusCode] || response.statusMessage;
+        response.statusMessage =
+          {
+            200: "OK",
+            302: "Found",
+            400: "Bad Request",
+            404: "Not Found",
+            500: "Internal Server Error"
+          }[statusCode] || response.statusMessage;
         if (Array.isArray(headers)) {
           for (let index = 0; index + 1 < headers.length; index += 2) {
             response.setHeader(headers[index], headers[index + 1]);
@@ -1314,13 +1354,33 @@ let __quenchHttpModule;
       };
       response.resume = () => response;
       response.flushHeaders = () => response;
+      response.writeEarlyHints = (hints, callback) => {
+        if (hints === null || typeof hints !== "object") {
+          const error = new TypeError('The "hints" argument must be an object');
+          error.code = "ERR_INVALID_ARG_TYPE";
+          throw error;
+        }
+        const headers = Object.create(null);
+        for (const [key, value] of Object.entries(hints)) {
+          headers[String(key).toLowerCase()] = Array.isArray(value)
+            ? value.join(", ")
+            : String(value);
+        }
+        response.req?.emit("information", {
+          statusCode: 103,
+          statusMessage: "Early Hints",
+          headers,
+          httpVersion: "1.1"
+        });
+        if (typeof callback === "function") queueMicrotask(callback);
+        return response;
+      };
       response.setEncoding = () => response;
       response.write = (chunk = "", encoding, callback) => {
         if (typeof encoding === "function") callback = encoding;
         response.headersSent = true;
-        const value = chunk instanceof NodeBuffer
-          ? chunk
-          : NodeBuffer.from(String(chunk));
+        const value =
+          chunk instanceof NodeBuffer ? chunk : NodeBuffer.from(String(chunk));
         response.writableLength += value.length ? value.length + 5 : 0;
         response.headers.connection ||= "keep-alive";
         response.headers["transfer-encoding"] ||= "chunked";
@@ -1345,13 +1405,14 @@ let __quenchHttpModule;
         response.finished = true;
         response.writableEnded = true;
         response.writableLength = 0;
-        const assignedSocket = response.__socketCloseListener &&
+        const assignedSocket =
+          response.__socketCloseListener &&
           typeof response.socket?.write === "function";
         response.writableFinished = !assignedSocket;
-        const value = body instanceof NodeBuffer
-          ? body
-          : NodeBuffer.from(String(body));
-        const bodyForbidden = response.statusCode === 204 ||
+        const value =
+          body instanceof NodeBuffer ? body : NodeBuffer.from(String(body));
+        const bodyForbidden =
+          response.statusCode === 204 ||
           response.statusCode === 304 ||
           response.req?.method === "HEAD";
         if (bodyForbidden) {
@@ -1424,9 +1485,10 @@ let __quenchHttpModule;
       }
       write(chunk, encoding, callback) {
         if (typeof encoding === "function") callback = encoding;
-        const value = chunk instanceof NodeBuffer
-          ? chunk.length
-          : NodeBuffer.byteLength(String(chunk), encoding);
+        const value =
+          chunk instanceof NodeBuffer
+            ? chunk.length
+            : NodeBuffer.byteLength(String(chunk), encoding);
         this.writableLength += value;
         if (typeof callback === "function") queueMicrotask(callback);
         return true;
@@ -1459,7 +1521,7 @@ let __quenchHttpModule;
       assignSocket(socket) {
         if (socket._httpMessage) {
           const error = new Error(
-            "ServerResponse has an already assigned socket",
+            "ServerResponse has an already assigned socket"
           );
           error.code = "ERR_HTTP_SOCKET_ASSIGNED";
           throw error;
@@ -1496,14 +1558,14 @@ let __quenchHttpModule;
       new NodeServerResponse({
         method: "GET",
         httpVersionMajor: 1,
-        httpVersionMinor: 1,
+        httpVersionMinor: 1
       });
     const makeRequest = (
       handler,
       pathname,
       callback,
       options = {},
-      context,
+      context
     ) => {
       if (
         options.method !== undefined &&
@@ -1511,11 +1573,12 @@ let __quenchHttpModule;
         typeof options.method !== "string"
       ) {
         const value = options.method;
-        const received = value !== null && typeof value === "object"
-          ? `an instance of ${value.constructor?.name || "Object"}`
-          : `type ${typeof value} (${String(value)})`;
+        const received =
+          value !== null && typeof value === "object"
+            ? `an instance of ${value.constructor?.name || "Object"}`
+            : `type ${typeof value} (${String(value)})`;
         const error = new TypeError(
-          `The "options.method" property must be of type string. Received ${received}`,
+          `The "options.method" property must be of type string. Received ${received}`
         );
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
@@ -1524,9 +1587,8 @@ let __quenchHttpModule;
       request.agent = options.agent || globalAgent;
       request.url = pathname || "/";
       request.path = request.url;
-      request.protocol = context?.constructor?.name === "NodeHttpServer"
-        ? "http:"
-        : "http:";
+      request.protocol =
+        context?.constructor?.name === "NodeHttpServer" ? "http:" : "http:";
       request.host = options.hostname || options.host || "localhost";
       request.method = options.method || "GET";
       request.writable = true;
@@ -1535,7 +1597,7 @@ let __quenchHttpModule;
         writableHighWaterMark: 16 * 1024,
         writableCorked: 0,
         setTimeout: () => request.socket,
-        setEncoding: () => request.socket,
+        setEncoding: () => request.socket
       });
       request.finished = false;
       request.writableFinished = false;
@@ -1549,9 +1611,10 @@ let __quenchHttpModule;
           const normalized = Array.isArray(value)
             ? value.join(String(name).toLowerCase() === "cookie" ? "; " : ", ")
             : value;
-          request.headers[key] = request.headers[key] && key === "cookie"
-            ? `${request.headers[key]}; ${normalized}`
-            : normalized;
+          request.headers[key] =
+            request.headers[key] && key === "cookie"
+              ? `${request.headers[key]}; ${normalized}`
+              : normalized;
           request.rawHeaders.push(String(name), String(value));
         }
       } else if (options.headers && typeof options.headers === "object") {
@@ -1573,12 +1636,42 @@ let __quenchHttpModule;
         !Array.isArray(options.headers) &&
         !request.headers.authorization
       ) {
-        request.headers.authorization = `Basic ${
-          NodeBuffer.from(String(options.auth)).toString("base64")
-        }`;
+        request.headers.authorization = `Basic ${NodeBuffer.from(
+          String(options.auth)
+        ).toString("base64")}`;
       }
       request.setHeader = (name, value) => {
         request.headers[String(name).toLowerCase()] = value;
+        return request;
+      };
+      request.getHeader = (name) => request.headers[String(name).toLowerCase()];
+      request.getHeaders = () =>
+        Object.assign(Object.create(null), request.headers);
+      request.getHeaderNames = () => Object.keys(request.headers);
+      request.hasHeader = (name) =>
+        Object.prototype.hasOwnProperty.call(
+          request.headers,
+          String(name).toLowerCase()
+        );
+      request.flushHeaders = () => request;
+      request.setNoDelay = (noDelay = true) => {
+        request.socket?.setNoDelay?.(noDelay);
+        return request;
+      };
+      request.setSocketKeepAlive = (enable = false, initialDelay) => {
+        request.socket?.setKeepAlive?.(enable, initialDelay);
+        return request;
+      };
+      request.setSocketTimeout = (timeout) => {
+        request.socket?.setTimeout?.(timeout);
+        return request;
+      };
+      request.cork = () => {
+        request._corked = (request._corked || 0) + 1;
+        return request;
+      };
+      request.uncork = () => {
+        request._corked = Math.max(0, (request._corked || 0) - 1);
         return request;
       };
       request.removeHeader = (name) => {
@@ -1590,16 +1683,16 @@ let __quenchHttpModule;
       request.setTimeout = (msecs, callback) => {
         if (typeof msecs !== "number") {
           const error = new TypeError(
-            `The "msecs" argument must be of type number. Received type ${typeof msecs}`,
+            `The "msecs" argument must be of type number. Received type ${typeof msecs}`
           );
           error.code = "ERR_INVALID_ARG_TYPE";
           throw error;
         }
         if (!Number.isFinite(msecs) || msecs < 0) {
           const error = new RangeError(
-            `The value of "msecs" is out of range. It must be a non-negative finite number. Received ${
-              String(msecs)
-            }`,
+            `The value of "msecs" is out of range. It must be a non-negative finite number. Received ${String(
+              msecs
+            )}`
           );
           error.code = "ERR_OUT_OF_RANGE";
           throw error;
@@ -1669,7 +1762,8 @@ let __quenchHttpModule;
       const resource = {};
       queueMicrotask(() => {
         if (request.aborted) return;
-        const customAgentConnection = request.agent &&
+        const customAgentConnection =
+          request.agent &&
           typeof request.agent.createConnection === "function" &&
           request.agent.createConnection !==
             __quenchDefaultHttpCreateConnection;
@@ -1696,20 +1790,19 @@ let __quenchHttpModule;
         // The outgoing ClientRequest and the server-side IncomingMessage are
         // distinct Node objects, even though this in-memory transport uses a
         // single handler invocation. Keep their terminal events separate.
-        const serverRequest = new NodeIncomingMessage();
-        Object.assign(serverRequest, request);
-        response.req = serverRequest;
         if (request._wroteChunk) {
           request.headers["transfer-encoding"] = "chunked";
         } else if (
-          request.method !== "GET" &&
-          request.method !== "HEAD" &&
+          ["POST", "PUT"].includes(request.method) &&
           request.headers["content-length"] === undefined
         ) {
           request.headers["content-length"] = String(
-            (request._body || "").length,
+            (request._body || "").length
           );
         }
+        const serverRequest = new NodeIncomingMessage();
+        Object.assign(serverRequest, request);
+        response.req = serverRequest;
         const previous = globalThis.__nodeCurrentAsyncResource;
         globalThis.__nodeCurrentAsyncResource = resource;
         try {
@@ -1755,7 +1848,7 @@ let __quenchHttpModule;
               const value = response.headers[name];
               if (typeof value === "string") {
                 response.headers[name] = value.split(
-                  name === "cookie" ? "; " : ", ",
+                  name === "cookie" ? "; " : ", "
                 )[0];
               }
             }
@@ -1822,9 +1915,10 @@ let __quenchHttpModule;
           }
         }
         if (values.length > 1) {
-          request.headers[name] = context?.joinDuplicateHeaders === false
-            ? values[0]
-            : values.join(name === "cookie" ? "; " : ", ");
+          request.headers[name] =
+            context?.joinDuplicateHeaders === false
+              ? values[0]
+              : values.join(name === "cookie" ? "; " : ", ");
         }
         if (values.length === 1 && request.headers[name] === undefined) {
           request.headers[name] = values[0];
@@ -1868,7 +1962,7 @@ let __quenchHttpModule;
     const validateHttpServerInteger = (value, name) => {
       if (typeof value !== "number") {
         const error = new TypeError(
-          `The "${name}" argument must be of type number`,
+          `The "${name}" argument must be of type number`
         );
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
@@ -1894,7 +1988,7 @@ let __quenchHttpModule;
           options = {};
         } else if (typeof options !== "object") {
           const error = new TypeError(
-            'The "options" argument must be of type object',
+            'The "options" argument must be of type object'
           );
           error.code = "ERR_INVALID_ARG_TYPE";
           throw error;
@@ -1902,12 +1996,12 @@ let __quenchHttpModule;
         const requestTimeout = httpServerOptionInteger(
           options,
           "requestTimeout",
-          300000,
+          300000
         );
         const headersTimeout = httpServerOptionInteger(
           options,
           "headersTimeout",
-          Math.min(60000, requestTimeout),
+          Math.min(60000, requestTimeout)
         );
         if (
           requestTimeout > 0 &&
@@ -1915,7 +2009,7 @@ let __quenchHttpModule;
           headersTimeout > requestTimeout
         ) {
           const error = new RangeError(
-            'The value of "headersTimeout" is out of range',
+            'The value of "headersTimeout" is out of range'
           );
           error.code = "ERR_OUT_OF_RANGE";
           throw error;
@@ -1930,17 +2024,17 @@ let __quenchHttpModule;
         this.keepAliveTimeout = httpServerOptionInteger(
           options,
           "keepAliveTimeout",
-          5000,
+          5000
         );
         this.keepAliveTimeoutBuffer = httpServerOptionInteger(
           options,
           "keepAliveTimeoutBuffer",
-          1000,
+          1000
         );
         this.connectionsCheckingInterval = httpServerOptionInteger(
           options,
           "connectionsCheckingInterval",
-          30000,
+          30000
         );
         this.highWaterMark = options.highWaterMark ?? 65536;
         this.httpAllowHalfOpen = false;
@@ -1948,21 +2042,28 @@ let __quenchHttpModule;
         this.maxHeadersCount = null;
         this.maxRequestsPerSocket = 0;
         this[globalThis.__nodeHttpConnectionsCheckingInterval] = {
-          _destroyed: false,
+          _destroyed: false
         };
       }
       listen(port, host, callback) {
+        if (port && typeof port === "object") {
+          const options = port;
+          callback = typeof host === "function" ? host : callback;
+          host = options.host;
+          port = options.port;
+        }
         if (typeof host === "function") {
           callback = host;
           host = "127.0.0.1";
         }
-        const numericPort = typeof port === "number" && port !== 0
-          ? port
-          : 40000 + Math.floor(Math.random() * 5000);
+        const numericPort =
+          typeof port === "number" && port !== 0
+            ? port
+            : 40000 + Math.floor(Math.random() * 5000);
         const existing = servers.get(String(numericPort));
         if (existing && existing !== this) {
           const error = new Error(
-            `listen EADDRINUSE: address already in use :::${numericPort}`,
+            `listen EADDRINUSE: address already in use :::${numericPort}`
           );
           error.code = "EADDRINUSE";
           error.errno = -98;
@@ -1986,7 +2087,7 @@ let __quenchHttpModule;
           address: String(host || "127.0.0.1"),
           addressType: 4,
           fd: undefined,
-          port: numericPort,
+          port: numericPort
         });
         queueMicrotask(() => this.emit("listening"));
         return this;
@@ -1997,7 +2098,7 @@ let __quenchHttpModule;
       address() {
         return {
           port: this._port || 40123,
-          address: this._address || "127.0.0.1",
+          address: this._address || "127.0.0.1"
         };
       }
       unref() {
@@ -2019,8 +2120,8 @@ let __quenchHttpModule;
               wasListening
                 ? undefined
                 : Object.assign(new Error("Server is not running."), {
-                  code: "ERR_SERVER_NOT_RUNNING",
-                }),
+                    code: "ERR_SERVER_NOT_RUNNING"
+                  })
             );
           });
         }
@@ -2057,8 +2158,8 @@ let __quenchHttpModule;
         this.keepAliveMsecs = options.keepAliveMsecs ?? 1000;
         this.agentKeepAliveTimeoutBuffer =
           typeof options.agentKeepAliveTimeoutBuffer === "number" &&
-            Number.isFinite(options.agentKeepAliveTimeoutBuffer) &&
-            options.agentKeepAliveTimeoutBuffer >= 0
+          Number.isFinite(options.agentKeepAliveTimeoutBuffer) &&
+          options.agentKeepAliveTimeoutBuffer >= 0
             ? options.agentKeepAliveTimeoutBuffer
             : 1000;
         this.defaultPort = 80;
@@ -2153,12 +2254,12 @@ let __quenchHttpModule;
           requestCount: 0,
           freeSockets: {},
           sockets: {},
-          requests: {},
+          requests: {}
         };
       }
       createConnection() {
         const error = new Error(
-          "HTTP transport is not supported by quench-node",
+          "HTTP transport is not supported by quench-node"
         );
         error.code = "ENOTSUP";
         throw error;
@@ -2168,13 +2269,13 @@ let __quenchHttpModule;
         socket?.unref?.();
         let agentTimeout = this.options.timeout || 0;
         let canKeepSocketAlive = true;
-        const keepAliveHint = socket?._httpMessage?.res?.headers
-          ?.["keep-alive"];
+        const keepAliveHint =
+          socket?._httpMessage?.res?.headers?.["keep-alive"];
         const hint = /timeout=(\d+)/.exec(keepAliveHint || "")?.[1];
         if (hint) {
           const serverHintTimeout = Math.max(
             0,
-            Number.parseInt(hint, 10) * 1000 - this.agentKeepAliveTimeoutBuffer,
+            Number.parseInt(hint, 10) * 1000 - this.agentKeepAliveTimeoutBuffer
           );
           if (serverHintTimeout === 0) canKeepSocketAlive = false;
           else if (serverHintTimeout < agentTimeout) {
@@ -2213,6 +2314,7 @@ let __quenchHttpModule;
     const globalAgent = new NodeHttpAgent({ keepAlive: true });
     const http = {
       Agent: NodeHttpAgent,
+      ClientRequest: NodeClientRequest,
       globalAgent,
       IncomingMessage: NodeIncomingMessage,
       OutgoingMessage: NodeOutgoingMessage,
@@ -2256,7 +2358,7 @@ let __quenchHttpModule;
           url.pathname,
           callback,
           requestOptions,
-          server,
+          server
         );
         if (requestOptions.timeout !== undefined) {
           request.setTimeout(requestOptions.timeout);
@@ -2277,12 +2379,13 @@ let __quenchHttpModule;
             !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(options.method)
           ) {
             const error = new TypeError(
-              `Method must be a valid HTTP token ["${String(options.method)}"]`,
+              `Method must be a valid HTTP token ["${String(options.method)}"]`
             );
             error.code = "ERR_INVALID_HTTP_TOKEN";
             throw error;
           }
-          const effectivePort = options.port ??
+          const effectivePort =
+            options.port ??
             options.defaultPort ??
             options.agent?.defaultPort ??
             80;
@@ -2294,8 +2397,7 @@ let __quenchHttpModule;
             typeof options.timeout !== "number"
           ) {
             const error = new TypeError(
-              `The "timeout" argument must be of type number. Received type ${typeof options
-                .timeout}`,
+              `The "timeout" argument must be of type number. Received type ${typeof options.timeout}`
             );
             error.code = "ERR_INVALID_ARG_TYPE";
             throw error;
@@ -2308,11 +2410,11 @@ let __quenchHttpModule;
           url.pathname,
           callback,
           options || {},
-          server,
+          server
         );
         if (options?.timeout !== undefined) request.setTimeout(options.timeout);
         return request;
-      },
+      }
     };
     globalThis.__nodeHttp = http;
     __quenchHttpModule = http;
