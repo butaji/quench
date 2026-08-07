@@ -7,7 +7,7 @@ const crypto = process.getBuiltinModule("crypto");
 assert.strictEqual(typeof crypto.createHash, "function");
 assert.strictEqual(
   process.getBuiltinModule("definitely-not-a-module"),
-  undefined
+  undefined,
 );
 
 console.log("process builtin module passed");

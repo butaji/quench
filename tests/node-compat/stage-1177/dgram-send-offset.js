@@ -16,6 +16,6 @@ socket.bind(0, () => {
       assert.strictEqual(error, null);
       assert.strictEqual(bytes, length);
       socket.close();
-    }
+    },
   );
 });

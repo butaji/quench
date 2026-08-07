@@ -8,7 +8,7 @@ const assert = require("assert");
   fs.mkdirSync(`${path}/directory`);
   const entries = await fs.promises.readdir(path, { withFileTypes: true });
   const byName = Object.fromEntries(
-    entries.map((entry) => [entry.name, entry])
+    entries.map((entry) => [entry.name, entry]),
   );
   assert.strictEqual(byName.file.isFile(), true);
   assert.strictEqual(byName.file.isDirectory(), false);

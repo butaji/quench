@@ -6,8 +6,9 @@ const chunks = [];
 const stream = fs.createReadStream(path);
 stream.on("data", (chunk) => chunks.push(chunk));
 stream.on("close", () => {
-  if (Buffer.concat(chunks).toString() !== "read stream data")
+  if (Buffer.concat(chunks).toString() !== "read stream data") {
     throw new Error("read stream content was incorrect");
+  }
   fs.unlinkSync(path);
   console.log("fs read stream passed");
 });

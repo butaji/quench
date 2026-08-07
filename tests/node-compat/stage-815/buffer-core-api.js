@@ -11,7 +11,7 @@ assert.strictEqual(typeof bufferApi.isUtf8, "function");
 assert.strictEqual(typeof bufferApi.isAscii, "function");
 assert.strictEqual(
   bufferApi.Buffer.isBuffer(bufferApi.Buffer.from("ok")),
-  true
+  true,
 );
 
 console.log("buffer core api passed");

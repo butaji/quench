@@ -5,7 +5,8 @@ EventEmitter.captureRejections = true;
 const emitter = new EventEmitter({ captureRejections: false });
 EventEmitter.captureRejections = previous;
 
-if (emitter.captureRejections !== false)
+if (emitter.captureRejections !== false) {
   throw new Error(
-    "explicit instance option should override the static default"
+    "explicit instance option should override the static default",
   );
+}

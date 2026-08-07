@@ -7,6 +7,7 @@ fs.promises
   .then(() => fs.promises.readFile(filename, "utf8"))
   .then((content) => {
     fs.unlinkSync(filename);
-    if (content !== "beforeafter")
+    if (content !== "beforeafter") {
       throw new Error(`unexpected content: ${content}`);
+    }
   });

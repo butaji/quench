@@ -8,11 +8,11 @@ assert.strictEqual(typeof processApi.finalization.register, "function");
 assert.strictEqual(typeof processApi.finalization.unregister, "function");
 assert.strictEqual(
   typeof processApi.finalization.registerBeforeExit,
-  "function"
+  "function",
 );
 assert.strictEqual(
   processApi.finalization.register({}, () => {}),
-  undefined
+  undefined,
 );
 
 console.log("process finalization passed");

@@ -18,7 +18,7 @@ decorated.inspect = undefined;
 decorated.prop = new Uint8Array(0);
 if (
   util.inspect(decorated) !==
-  "<Buffer 00 00, inspect: undefined, prop: Uint8Array(0) []>"
+    "<Buffer 00 00, inspect: undefined, prop: Uint8Array(0) []>"
 ) {
   throw new Error("named property inspect mismatch");
 }

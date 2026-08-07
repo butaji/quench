@@ -4,9 +4,9 @@ const util = require("util");
 assert.strictEqual(util.types.isNativeError(new Error()), true);
 assert.strictEqual(
   util.types.isNativeError({ __proto__: Error.prototype }),
-  false
+  false,
 );
 assert.throws(() => util.stripVTControlCharacters({}), {
   code: "ERR_INVALID_ARG_TYPE",
-  name: "TypeError"
+  name: "TypeError",
 });

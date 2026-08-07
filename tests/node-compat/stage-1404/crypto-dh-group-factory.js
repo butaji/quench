@@ -7,6 +7,6 @@ alice.generateKeys();
 bob.generateKeys();
 assert.strictEqual(
   alice.computeSecret(bob.getPublicKey()).toString("hex"),
-  bob.computeSecret(alice.getPublicKey()).toString("hex")
+  bob.computeSecret(alice.getPublicKey()).toString("hex"),
 );
 console.log("crypto DH group factory passed");

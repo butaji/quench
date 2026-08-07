@@ -9,12 +9,13 @@ const cases = [
   ["http://example/", "", "http://example/"],
   ["https://example.com", "foo", "https://example.com/foo"],
   ["http://example/a", "//other", "http://other/"],
-  ["http://example/a", "//other/path", "http://other/path"]
+  ["http://example/a", "//other/path", "http://other/path"],
 ];
-for (const [from, target, expected] of cases)
+for (const [from, target, expected] of cases) {
   assert.deepStrictEqual(
     url.resolveObject(url.parse(from), target),
     url.parse(expected),
-    `${from} + ${target}`
+    `${from} + ${target}`,
   );
+}
 console.log("authority-only matrix passed");

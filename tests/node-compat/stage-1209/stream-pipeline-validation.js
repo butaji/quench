@@ -8,5 +8,5 @@ assert.throws(() => pipeline({}, () => {}), { code: "ERR_MISSING_ARGS" });
 const destination = {};
 assert.strictEqual(
   pipeline({}, destination, () => {}),
-  destination
+  destination,
 );

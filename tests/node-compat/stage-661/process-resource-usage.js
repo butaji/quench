@@ -13,7 +13,7 @@ const fields = [
   "fsRead",
   "fsWrite",
   "involuntaryContextSwitches",
-  "voluntaryContextSwitches"
+  "voluntaryContextSwitches",
 ];
 for (const field of fields) {
   assert.strictEqual(typeof usage[field], "number");

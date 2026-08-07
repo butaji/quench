@@ -4,10 +4,10 @@ const crypto = require("node:crypto");
 const group = crypto.getDiffieHellman("modp14");
 const alice = crypto.createDiffieHellman(
   group.getPrime(),
-  group.getGenerator()
+  group.getGenerator(),
 );
 assert.throws(() => alice.computeSecret(Buffer.alloc(128)), {
-  code: "ERR_CRYPTO_INVALID_STATE"
+  code: "ERR_CRYPTO_INVALID_STATE",
 });
 assert.strictEqual(alice.generateKeys().byteLength, 128);
 assert.strictEqual(alice.getPublicKey().byteLength, 128);

@@ -5,7 +5,7 @@ const pair = crypto.generateKeyPairSync("rsa", {
   publicExponent: 3,
   modulusLength: 512,
   publicKeyEncoding: { type: "pkcs1", format: "pem" },
-  privateKeyEncoding: { type: "pkcs8", format: "pem" }
+  privateKeyEncoding: { type: "pkcs8", format: "pem" },
 });
 assert.strictEqual(typeof pair.publicKey, "string");
 assert.strictEqual(typeof pair.privateKey, "string");

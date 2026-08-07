@@ -11,7 +11,7 @@ const { ReadableStream } = require("stream/web");
         controller.enqueue(Buffer.from('{"ok":'));
         controller.enqueue(Buffer.from("true}"));
         controller.close();
-      }
+      },
     });
   assert.strictEqual(await text(makeStream()), '{"ok":true}');
   assert.deepStrictEqual(await json(makeStream()), { ok: true });

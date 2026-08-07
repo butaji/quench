@@ -4,5 +4,5 @@ assert.throws(
     assert.throws(() => {
       throw new TypeError("wrong");
     }, assert.AssertionError),
-  assert.AssertionError
+  assert.AssertionError,
 );

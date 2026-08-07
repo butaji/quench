@@ -9,7 +9,7 @@ assert.strictEqual(
     assert.ok(Buffer.isBuffer(output));
     assert.strictEqual(output.length, 32);
   }),
-  undefined
+  undefined,
 );
 
 console.log("crypto PBKDF2 async passed");

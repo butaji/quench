@@ -3,8 +3,8 @@
   "type": "module",
   "scripts": {
     "lint:js": "eslint .",
-    "format:check": "prettier --check 'crates/**/*.js' 'tests/node-compat/**/*.js'",
-    "format:write": "prettier --write 'crates/**/*.js' 'tests/node-compat/**/*.js'"
+    "format:check": "deno fmt --check crates tests/node-compat tools AGENTS.md README.md package.json eslint.config.js",
+    "format:write": "deno fmt crates tests/node-compat tools AGENTS.md README.md package.json eslint.config.js"
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",

@@ -16,6 +16,6 @@ assert.deepStrictEqual(properties, [
   "search",
   "searchParams",
   "hash",
-  "toJSON"
+  "toJSON",
 ]);
 console.log("URL enumerable properties inspected");

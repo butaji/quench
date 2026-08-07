@@ -1,7 +1,7 @@
 const vm = require("vm");
 
 const compiled = vm.compileFunction("return value;", [], {
-  contextExtensions: [{ value: 7 }]
+  contextExtensions: [{ value: 7 }],
 });
 if (compiled() !== 7) throw new Error("context extension was not visible");
 

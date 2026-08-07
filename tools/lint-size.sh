@@ -14,6 +14,6 @@ while IFS= read -r -d '' file; do
   fi
 done < <(find . -path './.git' -prune -o -path './tests/node' -prune -o \
   -path './target' -prune -o -path './node_modules' -prune -o \
-  \( -name '*.js' -o -name '*.rs' \) -type f -print0)
+  \( -name '*.js' -o -name '*.mjs' -o -name '*.rs' \) -type f -print0)
 
 exit "$status"

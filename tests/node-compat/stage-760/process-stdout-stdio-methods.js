@@ -9,7 +9,7 @@ assert.strictEqual(processApi.stdout.ref(), processApi.stdout);
 assert.strictEqual(processApi.stdout.unref(), processApi.stdout);
 assert.strictEqual(
   processApi.stdout.setDefaultEncoding("utf8"),
-  processApi.stdout
+  processApi.stdout,
 );
 
 console.log("process stdout stdio methods passed");

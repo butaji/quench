@@ -6,7 +6,7 @@ const eventsApi = require("node:events");
 const emitter = new eventsApi.EventEmitter();
 assert.strictEqual(
   Array.isArray(eventsApi.getEventListeners(emitter, "event")),
-  true
+  true,
 );
 assert.strictEqual(typeof eventsApi.listenerCount(emitter, "event"), "number");
 eventsApi.setMaxListeners(20, emitter);

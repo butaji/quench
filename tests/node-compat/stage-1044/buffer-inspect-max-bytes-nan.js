@@ -8,8 +8,8 @@ for (const value of [NaN, -1]) {
     },
     {
       code: "ERR_OUT_OF_RANGE",
-      name: "RangeError"
-    }
+      name: "RangeError",
+    },
   );
 }
 
@@ -19,6 +19,6 @@ assert.throws(
   },
   {
     code: "ERR_INVALID_ARG_TYPE",
-    name: "TypeError"
-  }
+    name: "TypeError",
+  },
 );

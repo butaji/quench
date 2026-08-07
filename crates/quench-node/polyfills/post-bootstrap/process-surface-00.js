@@ -3,14 +3,16 @@
     globalThis.process[Symbol.toStringTag] ||= "process";
     globalThis.gc ||= () => undefined;
     globalThis.process.emitWarning = (message, options = {}) => {
-      const warning =
-        message instanceof Error ? message : new Error(String(message));
-      const settings =
-        typeof options === "string" ? { name: options } : options || {};
+      const warning = message instanceof Error
+        ? message
+        : new Error(String(message));
+      const settings = typeof options === "string"
+        ? { name: options }
+        : options || {};
       warning.name = String(settings.name || "Warning");
       if (settings.code !== undefined) warning.code = settings.code;
       globalThis.process.emit("warning", warning);
-      return warning;
+      return undefined;
     };
     const activeTimers = new Map();
     const originalSetTimeout = globalThis.setTimeout;
@@ -21,6 +23,11 @@
     const originalClearImmediate = globalThis.clearImmediate;
     if (typeof originalSetTimeout === "function") {
       globalThis.setTimeout = (callback, delay, ...args) => {
+        if (typeof callback !== "function") {
+          throw new TypeError(
+            'The "callback" argument must be of type function',
+          );
+        }
         let timer;
         const wrappedCallback = (...callbackArgs) => {
           try {
@@ -40,6 +47,11 @@
     }
     if (typeof originalSetInterval === "function") {
       globalThis.setInterval = (callback, delay, ...args) => {
+        if (typeof callback !== "function") {
+          throw new TypeError(
+            'The "callback" argument must be of type function',
+          );
+        }
         const timer = originalSetInterval(callback, delay, ...args);
         activeTimers.set(timer, "Timeout");
         return timer;
@@ -51,6 +63,11 @@
     }
     if (typeof originalSetImmediate === "function") {
       globalThis.setImmediate = (callback, ...args) => {
+        if (typeof callback !== "function") {
+          throw new TypeError(
+            'The "callback" argument must be of type function',
+          );
+        }
         let timer;
         const wrappedCallback = (...callbackArgs) => {
           activeTimers.delete(timer);
@@ -66,7 +83,7 @@
       };
     }
     globalThis.process.getActiveResourcesInfo = () => [
-      ...activeTimers.values()
+      ...activeTimers.values(),
     ];
     globalThis.process.availableMemory = () => Number.MAX_SAFE_INTEGER;
     globalThis.process.setSourceMapsEnabled = () => undefined;
@@ -75,7 +92,7 @@
     globalThis.process.release = {
       name: "node",
       sourceUrl: "",
-      headersUrl: ""
+      headersUrl: "",
     };
     const allowedFlags = new Set([
       "--perf_basic_prof",
@@ -83,7 +100,7 @@
       "--perf_basic-prof",
       "-r",
       "--stack-trace-limit",
-      "--inspect-brk"
+      "--inspect-brk",
     ]);
     const allowedFlagsHas = allowedFlags.has.bind(allowedFlags);
     allowedFlags.has = (flag) => {
@@ -114,8 +131,9 @@
       };
       globalThis.__quenchProtectedSetMethods = true;
     }
-    globalThis.process.allowedNodeEnvironmentFlags =
-      Object.freeze(allowedFlags);
+    globalThis.process.allowedNodeEnvironmentFlags = Object.freeze(
+      allowedFlags,
+    );
     globalThis.process.execArgv = [];
     globalThis.process.argv0 = "node";
     globalThis.process.features ||= {};
@@ -147,15 +165,15 @@
     globalThis.process.versions.unicode ??= "15.1";
     globalThis.process.versions.undici ??= "6.19.8";
     globalThis.process.versions.cjs_module_lexer ??= "1.2.2";
-    globalThis.process.title =
-      globalThis.__quench_cli_title || globalThis.process.title || "node";
+    globalThis.process.title = globalThis.__quench_cli_title ||
+      globalThis.process.title || "node";
     globalThis.process.getBuiltinModule ||= (name) =>
       globalThis.require(String(name).replace(/^node:/, ""));
     globalThis.process.loadEnvFile ||= () => undefined;
     globalThis.process.finalization ||= {
       register: () => undefined,
       unregister: () => undefined,
-      registerBeforeExit: () => undefined
+      registerBeforeExit: () => undefined,
     };
     globalThis.process.permission ||= { has: () => false };
     globalThis.process.resourceUsage ||= () => ({
@@ -167,13 +185,15 @@
       fsRead: 0,
       fsWrite: 0,
       involuntaryContextSwitches: 0,
-      voluntaryContextSwitches: 0
+      voluntaryContextSwitches: 0,
     });
     globalThis.process.cpuUsage = (previous) => {
       if (previous === undefined) return { user: 0, system: 0 };
       if (!previous || typeof previous !== "object") {
         const error = new TypeError(
-          `The "prevValue" argument must be of type object. Received type ${typeof previous} (${String(previous)})`
+          `The "prevValue" argument must be of type object. Received type ${typeof previous} (${
+            String(previous)
+          })`,
         );
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
@@ -181,20 +201,19 @@
       for (const field of ["user", "system"]) {
         const value = previous[field];
         if (typeof value !== "number") {
-          const received =
-            value == null
-              ? ` Received ${value}`
-              : ` Received type ${typeof value} (${String(value)})`;
+          const received = value == null
+            ? ` Received ${value}`
+            : ` Received type ${typeof value} (${String(value)})`;
           const error = new TypeError(
             `The "prevValue.${field}" property must be of type number.` +
-              received
+              received,
           );
           error.code = "ERR_INVALID_ARG_TYPE";
           throw error;
         }
         if (!Number.isFinite(value) || value < 0) {
           const error = new RangeError(
-            `The property 'prevValue.${field}' is invalid. Received ${value}`
+            `The property 'prevValue.${field}' is invalid. Received ${value}`,
           );
           error.code = "ERR_INVALID_ARG_VALUE";
           throw error;

@@ -7,7 +7,9 @@ emitter.on("ready", () => {
 });
 emitter.emit("ready");
 
-if (!Number.isInteger(observed) || observed < 1)
+if (!Number.isInteger(observed) || observed < 1) {
   throw new Error("event emission should run with a valid async resource id");
-if (emitter.asyncResource.asyncId() !== observed)
+}
+if (emitter.asyncResource.asyncId() !== observed) {
   throw new Error("async resource id should remain stable");
+}

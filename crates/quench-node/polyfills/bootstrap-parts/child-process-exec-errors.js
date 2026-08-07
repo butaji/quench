@@ -14,7 +14,7 @@ const __quenchExecWithAbort = (file, args, settings, done) => {
   if (!settings?.signal || !done) return undefined;
   const child = __quenchExecErrorChildProcess.spawn(
     String(file),
-    Array.isArray(args) ? args : []
+    Array.isArray(args) ? args : [],
   );
   const abort = () => done(__quenchAbortError(), "", "");
   if (settings.signal.aborted) queueMicrotask(abort);
@@ -52,14 +52,14 @@ __quenchExecErrorChildProcess.execFile = (file, args, options, callback) => {
   if (/does-not-exist/.test(String(file)) && done) {
     const child = __quenchExecErrorChildProcess.spawn(
       String(file),
-      Array.isArray(args) ? args : []
+      Array.isArray(args) ? args : [],
     );
     queueMicrotask(() => {
       const error = new Error("spawn " + String(file) + " ENOENT");
       Object.assign(error, {
         code: "ENOENT",
         path: String(file),
-        spawnargs: Array.isArray(args) ? args : []
+        spawnargs: Array.isArray(args) ? args : [],
       });
       done(error, "", "");
     });

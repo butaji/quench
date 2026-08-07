@@ -8,23 +8,24 @@ const cases = [
   [
     "http://example/x/y",
     "mailto:another@example.org",
-    "mailto:another@example.org"
+    "mailto:another@example.org",
   ],
   [
     "https://example.com/",
     "http://another.host.com/",
-    "http://another.host.com/"
+    "http://another.host.com/",
   ],
   [
     "http://example.com/",
     "https://another.host.com/",
-    "https://another.host.com/"
-  ]
+    "https://another.host.com/",
+  ],
 ];
-for (const [from, target, expected] of cases)
+for (const [from, target, expected] of cases) {
   assert.deepStrictEqual(
     url.resolveObject(url.parse(from), target),
     url.parse(expected),
-    `${from} + ${target}`
+    `${from} + ${target}`,
   );
+}
 console.log("mixed scheme matrix passed");

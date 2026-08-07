@@ -8,6 +8,6 @@ assert.deepStrictEqual(crypto.getCipherInfo("aes-128-cbc"), {
   blockSize: 16,
   ivLength: 16,
   keyLength: 16,
-  mode: "cbc"
+  mode: "cbc",
 });
 console.log("crypto cipher catalog passed");

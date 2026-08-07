@@ -1,9 +1,9 @@
 # Node compatibility stages
 
-Each stage is a closed, runnable gate. A stage may be marked complete only
-when every JavaScript file in its directory passes; the harness never silently
-skips a file. The Node submodule is the upstream compatibility corpus, while
-these small fixtures isolate the currently implemented contract.
+Each stage is a closed, runnable gate. A stage may be marked complete only when
+every JavaScript file in its directory passes; the harness never silently skips
+a file. The Node submodule is the upstream compatibility corpus, while these
+small fixtures isolate the currently implemented contract.
 
 | Stage | Scope                                                                    | Gate                                  |
 | ----: | ------------------------------------------------------------------------ | ------------------------------------- |

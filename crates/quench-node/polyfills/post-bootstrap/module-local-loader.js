@@ -5,12 +5,14 @@ const __quenchLocalModulePath = (specifier, parent) => {
   const base = specifier.startsWith("/")
     ? specifier
     : path.resolve(path.dirname(parent), specifier);
-  for (const candidate of [
-    base,
-    `${base}.js`,
-    `${base}.json`,
-    path.join(base, "index.js")
-  ]) {
+  for (
+    const candidate of [
+      base,
+      `${base}.js`,
+      `${base}.json`,
+      path.join(base, "index.js"),
+    ]
+  ) {
     try {
       __nodeFs.readFileSync(candidate, "utf8");
       return candidate;
@@ -20,8 +22,9 @@ const __quenchLocalModulePath = (specifier, parent) => {
 };
 const __quenchLoadLocalModule = (specifier, parent) => {
   const filename = __quenchLocalModulePath(specifier, parent);
-  if (__quenchLocalModuleCache.has(filename))
+  if (__quenchLocalModuleCache.has(filename)) {
     return __quenchLocalModuleCache.get(filename).exports;
+  }
   const source = __nodeFs.readFileSync(filename, "utf8");
   const module = { exports: {} };
   __quenchLocalModuleCache.set(filename, module);
@@ -40,23 +43,29 @@ const __quenchLoadLocalModule = (specifier, parent) => {
     "require",
     "__filename",
     "__dirname",
-    source
+    source,
   );
   execute(
     module.exports,
     module,
     localRequire,
     filename,
-    path.dirname(filename)
+    path.dirname(filename),
   );
   return module.exports;
 };
+globalThis.__quenchLoadLocalModule = (specifier, parent) =>
+  __quenchLoadLocalModule(specifier, parent);
 globalThis.require = (specifier) => {
   const name = String(specifier);
-  if (!name.startsWith(".") && !name.startsWith("/"))
+  if (!name.startsWith(".") && !name.startsWith("/")) {
     return __quenchOriginalRequireWithLocalModules(specifier);
+  }
+  try {
+    return __quenchOriginalRequireWithLocalModules(specifier);
+  } catch (_) {}
   return __quenchLoadLocalModule(
     name,
-    globalThis.__quench_script_filename || globalThis.__filename
+    globalThis.__quench_script_filename || globalThis.__filename,
   );
 };

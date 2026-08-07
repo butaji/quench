@@ -8,7 +8,8 @@ fs.appendFile(
   path,
   Buffer.from("b"),
   common.mustSucceed(() => {
-    if (fs.readFileSync(path, "utf8") !== "ab")
+    if (fs.readFileSync(path, "utf8") !== "ab") {
       throw new Error("appendFile mismatch");
-  })
+    }
+  }),
 );

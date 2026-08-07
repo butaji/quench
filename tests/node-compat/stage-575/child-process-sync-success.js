@@ -6,13 +6,13 @@ const childProcess = require("child_process");
 assert.strictEqual(childProcess.execSync("printf ok").toString(), "ok");
 assert.strictEqual(
   childProcess.execFileSync("printf", ["%s", "file-ok"], {
-    encoding: "utf8"
+    encoding: "utf8",
   }),
-  "file-ok"
+  "file-ok",
 );
 assert.strictEqual(
   childProcess.execFileSync("printf", ["%s", "buffer-ok"]) instanceof Buffer,
-  true
+  true,
 );
 
 console.log("child process sync success passed");

@@ -8,8 +8,9 @@ try {
 } catch (caught) {
   error = caught;
 }
-if (!error || error.code !== "ERR_OUT_OF_RANGE")
+if (!error || error.code !== "ERR_OUT_OF_RANGE") {
   throw new Error("read stream must reject an inverted range");
+}
 
 fs.unlinkSync(path);
 console.log("fs read stream range passed");

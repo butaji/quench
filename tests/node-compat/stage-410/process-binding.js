@@ -4,7 +4,8 @@ try {
 } catch (caught) {
   error = caught;
 }
-if (!error || !/No such module: test/.test(error.message))
+if (!error || !/No such module: test/.test(error.message)) {
   throw new Error("process.binding must reject unknown modules");
+}
 
 console.log("process binding passed");

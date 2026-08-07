@@ -7,6 +7,6 @@ const result = util.formatWithOptions(
   1,
   5n,
   null,
-  "foobar"
+  "foobar",
 );
 if (!result.includes("\u001b[33mtrue\u001b[39m")) throw new Error(result);

@@ -7,7 +7,7 @@ const listener = () => {};
 processApi.stderr.on("drain", listener);
 assert.strictEqual(
   processApi.stderr.removeListener("drain", listener),
-  processApi.stderr
+  processApi.stderr,
 );
 
 console.log("process stderr removeListener passed");

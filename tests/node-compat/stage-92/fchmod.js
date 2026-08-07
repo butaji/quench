@@ -7,7 +7,8 @@ fs.fchmod(
   fd,
   0o600,
   common.mustSucceed(() => {
-    if ((fs.statSync(path).mode & 0o777) !== 0o600)
+    if ((fs.statSync(path).mode & 0o777) !== 0o600) {
       throw new Error("fchmod mismatch");
-  })
+    }
+  }),
 );

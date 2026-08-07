@@ -6,6 +6,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use hmac::{Hmac, Mac};
 use md5::Md5;
 use rand::RngCore;
 use rquickjs::{function::Func, Context, Runtime};
@@ -14,6 +15,7 @@ use sha2::{Digest, Sha224, Sha256, Sha512};
 use sha3::{digest::ExtendableOutput, digest::Update, Shake128, Shake256};
 use walkdir::WalkDir;
 
+mod esm;
 mod host_context;
 
 const BOOTSTRAP_PARTS: &[&str] = &[
@@ -157,12 +159,26 @@ const BOOTSTRAP_PARTS: &[&str] = &[
     include_str!("../polyfills/bootstrap-parts/target.js"),
     include_str!("../polyfills/bootstrap-parts/listeners.js"),
     include_str!("../polyfills/bootstrap-parts/introspection.js"),
+    include_str!("../polyfills/bootstrap-parts/vfs.js"),
 ];
 static MKDTEMP_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut raw_args: Vec<String> = env::args().skip(1).collect();
-    raw_args.retain(|arg| arg != "--experimental-stream-iter");
+    // Fixture flags are Node CLI flags.  Quench consumes the fixture path
+    // itself, so experimental feature switches must not be mistaken for it;
+    // their compatibility behavior is selected by the JS polyfills.
+    raw_args.retain(|arg| {
+        !arg.starts_with("--") ||
+            matches!(
+                arg.as_str(),
+                "--help"
+                    | "--stage"
+                    | "--test-dir"
+                    | "--reuse-dir"
+                    | "--eval"
+            )
+    });
     let mut args = raw_args.into_iter();
     let mode = args.next();
     if mode.as_deref() == Some("--help") || mode.as_deref() == Some("-h") {
@@ -185,12 +201,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let dir = PathBuf::from(args.next().unwrap_or_else(|| "tests/node-compat".into()));
         return run_directory_reuse(&dir);
     }
-    let source = match mode.as_deref() {
-        Some("-e") | Some("--eval") => args.next().unwrap_or_default(),
-        Some(path) => fs::read_to_string(path)?,
-        None => String::new(),
-    };
-    run_source(&source)
+    match mode.as_deref() {
+        Some("-e") | Some("--eval") => run_source(&args.next().unwrap_or_default()),
+        Some(path) => {
+            let source = fs::read_to_string(path)?;
+            run_source_with_runtime_at_path(&source, &Runtime::new()?, Some(PathBuf::from(path).as_path()))
+        }
+        None => run_source("")
+    }
 }
 
 fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -210,6 +228,7 @@ fn run_source_with_runtime_at_path(
     runtime: &Runtime,
     path: Option<&std::path::Path>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    runtime.set_loader(esm::NodeResolver, esm::NodeLoader);
     let context = Context::full(runtime)?;
     if let Some(path) = path {
         let filename = if path.is_absolute() {

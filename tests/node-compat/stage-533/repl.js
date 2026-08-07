@@ -7,7 +7,7 @@ const output = {
   text: "",
   write(value) {
     output.text += value;
-  }
+  },
 };
 const server = repl.start({ prompt: "quench> ", output });
 assert.strictEqual(output.text, "quench> ");

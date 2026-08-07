@@ -6,7 +6,7 @@ const processApi = require("process");
 const listener = () => {};
 assert.strictEqual(
   processApi.stdout.once("drain", listener),
-  processApi.stdout
+  processApi.stdout,
 );
 processApi.stdout.removeListener("drain", listener);
 

@@ -6,7 +6,7 @@ const bob = crypto.generateKeyPairSync("dh", { group: "modp5" });
 assert.doesNotThrow(() =>
   crypto.diffieHellman({
     privateKey: alice.privateKey,
-    publicKey: bob.publicKey
+    publicKey: bob.publicKey,
   })
 );
 console.log("crypto DH key-pair exchange passed");

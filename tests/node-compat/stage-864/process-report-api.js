@@ -3,16 +3,18 @@
 const assert = require("assert");
 const report = require("node:process").report;
 
-for (const name of [
-  "writeReport",
-  "getReport",
-  "directory",
-  "filename",
-  "compact",
-  "signal",
-  "reportOnFatalError",
-  "reportOnSignal"
-]) {
+for (
+  const name of [
+    "writeReport",
+    "getReport",
+    "directory",
+    "filename",
+    "compact",
+    "signal",
+    "reportOnFatalError",
+    "reportOnSignal",
+  ]
+) {
   assert.ok(name in report);
 }
 assert.strictEqual(typeof report.writeReport, "function");

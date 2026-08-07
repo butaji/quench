@@ -8,8 +8,8 @@ assert.throws(
     crypto.createCipheriv(
       "aes-128-ecb",
       crypto.randomBytes(16),
-      Buffer.alloc(1)
+      Buffer.alloc(1),
     ),
-  /Invalid initialization vector/
+  /Invalid initialization vector/,
 );
 console.log("crypto ECB IV validation passed");

@@ -15,6 +15,7 @@ const { EventEmitter } = require("events");
   emitter.emit("ready");
   await new Promise((resolve) => queueMicrotask(resolve));
   EventEmitter.captureRejections = previous;
-  if (received !== failure)
+  if (received !== failure) {
     throw new Error("instances should inherit static captureRejections");
+  }
 })();

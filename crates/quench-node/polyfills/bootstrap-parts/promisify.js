@@ -5,24 +5,30 @@ const __nodeUtilPromisifyTypeError = (message) => {
   throw error;
 };
 const __nodeUtilPromisify = (fn) => {
-  if (typeof fn !== "function")
+  if (typeof fn !== "function") {
     __nodeUtilPromisifyTypeError(
       'The "original" argument must be of type function.' +
-        (globalThis.__nodeCommon?.invalidArgTypeHelper?.(fn) || "")
+        (globalThis.__nodeCommon?.invalidArgTypeHelper?.(fn) || ""),
     );
+  }
   const custom = fn[__nodeUtilPromisifyCustom];
   if (custom !== undefined) {
-    if (typeof custom !== "function")
+    if (typeof custom !== "function") {
       __nodeUtilPromisifyTypeError(
-        'The "util.promisify.custom" property must be of type function'
+        'The "util.promisify.custom" property must be of type function',
       );
+    }
     custom[__nodeUtilPromisifyCustom] = custom;
     return custom;
   }
   const promisified = (...args) =>
     new Promise((resolve, reject) =>
-      fn(...args, (error, ...values) =>
-        error ? reject(error) : resolve(values.length > 1 ? values : values[0])
+      fn(
+        ...args,
+        (error, ...values) =>
+          error
+            ? reject(error)
+            : resolve(values.length > 1 ? values : values[0]),
       )
     );
   Object.setPrototypeOf(promisified, Object.getPrototypeOf(fn));
