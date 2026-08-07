@@ -35,6 +35,8 @@ inspect engine internals.
   expectation metadata, with tests.
 - [x] Classify expected negative errors in the runner while preserving the
   engine host contract as a simple success/error result.
+- [x] Parse async, only-strict, and ordered harness-include metadata in
+  `quench-test262`.
 - [x] Record a Stage 44 native performance/conformance baseline.
 - [ ] Move metadata, harness loading, stages, isolation, and metrics from the
   transitional runtime module into `crates/quench-test262`.

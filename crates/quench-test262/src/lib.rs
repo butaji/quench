@@ -11,6 +11,12 @@ use quench_runtime::Test262Host;
 pub struct TestMetadata {
     /// Whether the test must execute as an ES module.
     pub is_module: bool,
+    /// Whether the test uses the asynchronous `$DONE` completion protocol.
+    pub is_async: bool,
+    /// Whether the runner must prepend a strict directive.
+    pub only_strict: bool,
+    /// Harness files requested by the test, in declaration order.
+    pub includes: Vec<String>,
     /// Expected early/runtime error phase, when the test is negative.
     pub negative_phase: Option<String>,
     /// Expected error constructor name, when the test is negative.
@@ -26,7 +32,13 @@ impl TestMetadata {
         for line in frontmatter.lines() {
             let trimmed = line.trim();
             if trimmed.starts_with("flags:") {
-                metadata.is_module = trimmed.contains("module");
+                let flags = list_after_colon(trimmed);
+                metadata.is_module = flags.iter().any(|flag| flag == "module");
+                metadata.is_async = flags.iter().any(|flag| flag == "async");
+                metadata.only_strict = flags.iter().any(|flag| flag == "onlyStrict");
+                in_negative = false;
+            } else if trimmed.starts_with("includes:") {
+                metadata.includes = list_after_colon(trimmed);
                 in_negative = false;
             } else if trimmed == "negative:" {
                 in_negative = true;
@@ -57,6 +69,21 @@ fn value_after_colon(line: &str) -> Option<String> {
     line.split_once(':')
         .map(|(_, value)| value.trim().to_string())
         .filter(|value| !value.is_empty())
+}
+
+fn list_after_colon(line: &str) -> Vec<String> {
+    let Some((_, raw)) = line.split_once(':') else {
+        return Vec::new();
+    };
+    raw.trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .split(',')
+        .map(str::trim)
+        .map(|item| item.trim_matches(['\'', '"']))
+        .filter(|item| !item.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 /// Result of dispatching one test source to the engine.
