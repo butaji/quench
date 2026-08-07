@@ -1,4 +1,4 @@
-# Strict clippy configuration for quench-node
+# Strict clippy configuration for the complete Rust workspace.
 msrv = "1.80"
 cognitive-complexity-threshold = 10
 max-fn-params-bools = 3
