@@ -57,7 +57,7 @@ Stages 2034–2040 all pass together. The upstream listener-leak fixture remains
 host-transport-specific: it requires native socket creation and keep-alive
 reuse, while this runtime intentionally uses the in-memory HTTP transport.
 
-The authoritative serial focused gate now passes **1,954/1,954** stages with
+The authoritative serial focused gate now passes **1,955/1,955** stages with
 zero failures. The gate generated repository-root fixture artifacts during its
 run; those artifacts were removed after verification, leaving the worktree
 clean.
@@ -77,3 +77,5 @@ The ESM entry boundary now finishes the module evaluation Promise. Re-running
 the Hono smoke app reaches its awaited `app.fetch()` and reports a real
 QuickJS exception instead of exiting after `loaded`; Hono’s async fetch path
 remains an open live-application compatibility gap.
+The concrete first gap was the missing global `Request`; stage 2043 adds
+minimal Web `Request`/`Response` behavior used by Hono-style handlers.
