@@ -66,6 +66,43 @@ mod tests {
     }
 
     #[test]
+    fn runtime_accepts_independent_subsystem_components() {
+        struct Heap;
+        struct Collector;
+        struct Allocator;
+        struct Frames;
+        struct Executor;
+        struct Exceptions;
+        struct Environments;
+        impl crate::runtime::RuntimeComponent for Heap {}
+        impl crate::runtime::RuntimeComponent for Collector {}
+        impl crate::runtime::RuntimeComponent for Allocator {}
+        impl crate::runtime::RuntimeComponent for Frames {}
+        impl crate::runtime::RuntimeComponent for Executor {}
+        impl crate::runtime::RuntimeComponent for Exceptions {}
+        impl crate::runtime::RuntimeComponent for Environments {}
+        impl crate::runtime::Heap for Heap {}
+        impl crate::runtime::Collector for Collector {}
+        impl crate::runtime::Allocator for Allocator {}
+        impl crate::runtime::Frames for Frames {}
+        impl crate::runtime::Executor for Executor {}
+        impl crate::runtime::Exceptions for Exceptions {}
+        impl crate::runtime::Environments for Environments {}
+
+        let mut runtime = crate::Runtime::<
+            Heap,
+            Collector,
+            Allocator,
+            Frames,
+            Executor,
+            Exceptions,
+            Environments,
+        >::new()
+        .unwrap();
+        assert_eq!(runtime.eval("6 * 7").unwrap(), Value::Number(42.0));
+    }
+
+    #[test]
     fn test_context_eval_number() {
         let mut ctx = Context::new().unwrap();
         let result = ctx.eval("42");

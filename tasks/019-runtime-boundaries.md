@@ -27,6 +27,8 @@ inspect engine internals.
 - [x] Add the public generic `Runtime<Heap, Collector, Allocator, Frames,
   Executor, Exceptions, Environments>` façade with a production default
   component set.
+- [x] Give each runtime parameter its own public subsystem trait and prove
+  independent custom component selection with a unit test.
 - [x] Record a Stage 44 native performance/conformance baseline.
 - [ ] Extract the transitional runner into `crates/quench-test262`.
 - [ ] Define the stable host API used by both the native runner and future
