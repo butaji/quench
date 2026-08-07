@@ -119,12 +119,43 @@ impl<H: Test262Host> Test262Runner<H> {
     /// Parse dispatch metadata and run one complete test source.
     pub fn run_test(&mut self, source: &str) -> Result<TestOutcome, String> {
         let metadata = TestMetadata::parse(source)?;
-        let outcome = if metadata.is_module {
+        Ok(apply_negative_expectation(
+            self.dispatch(source, metadata.is_module),
+            &metadata,
+        ))
+    }
+
+    /// Load requested harness files, compose them with the test, and dispatch.
+    pub fn run_test_with_harness<F>(
+        &mut self,
+        source: &str,
+        mut load: F,
+    ) -> Result<TestOutcome, String>
+    where
+        F: FnMut(&str) -> Result<String, String>,
+    {
+        let metadata = TestMetadata::parse(source)?;
+        let mut composed = String::new();
+        for include in &metadata.includes {
+            composed.push_str(&load(include)?);
+            composed.push('\n');
+        }
+        if metadata.only_strict {
+            composed.push_str("\"use strict\";\n");
+        }
+        composed.push_str(source);
+        Ok(apply_negative_expectation(
+            self.dispatch(&composed, metadata.is_module),
+            &metadata,
+        ))
+    }
+
+    fn dispatch(&mut self, source: &str, is_module: bool) -> TestOutcome {
+        if is_module {
             self.run_module_script(source)
         } else {
             self.run_script(source)
-        };
-        Ok(apply_negative_expectation(outcome, &metadata))
+        }
     }
 }
 
