@@ -105,6 +105,33 @@ pub struct StageReport {
     pub failures: Vec<(std::path::PathBuf, String)>,
 }
 
+/// Discover JavaScript test files recursively in deterministic path order.
+pub fn discover_js_files<P: AsRef<Path>>(root: P) -> Result<Vec<std::path::PathBuf>, String> {
+    let mut files = Vec::new();
+    collect_js_files(root.as_ref(), &mut files)?;
+    files.sort();
+    Ok(files)
+}
+
+fn collect_js_files(
+    directory: &Path,
+    files: &mut Vec<std::path::PathBuf>,
+) -> Result<(), String> {
+    for entry in std::fs::read_dir(directory)
+        .map_err(|error| format!("test262 directory read failed: {error}"))?
+    {
+        let path = entry
+            .map_err(|error| format!("test262 directory entry failed: {error}"))?
+            .path();
+        if path.is_dir() {
+            collect_js_files(&path, files)?;
+        } else if path.extension().is_some_and(|extension| extension == "js") {
+            files.push(path);
+        }
+    }
+    Ok(())
+}
+
 /// Runner parameterized over the engine host implementation.
 pub struct Test262Runner<H: Test262Host> {
     host: H,
