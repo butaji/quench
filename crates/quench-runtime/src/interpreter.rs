@@ -377,6 +377,15 @@ pub fn reset_depth() {
 }
 
 /// Evaluate a complete program with hoisting.
+pub fn eval_ir_program(
+    program: &crate::ir::IrProgram,
+    env: &mut Rc<RefCell<Environment>>,
+    source: Option<&str>,
+    set_this: bool,
+) -> Result<Value, JsError> {
+    eval_program(program.as_program(), env, source, set_this)
+}
+
 pub fn eval_program(
     program: &Program,
     env: &mut Rc<RefCell<Environment>>,
