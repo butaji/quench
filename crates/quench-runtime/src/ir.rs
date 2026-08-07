@@ -40,4 +40,11 @@ mod tests {
         let ir = crate::parser::parse_script_ir("1 + 2").expect("script should parse");
         assert_eq!(ir.statement_count(), 1);
     }
+
+    #[test]
+    fn typescript_parser_exposes_the_same_owned_ir_boundary() {
+        let ir = crate::parser::parse_typescript_ir("const value: number = 42;")
+            .expect("typescript should parse");
+        assert_eq!(ir.statement_count(), 1);
+    }
 }

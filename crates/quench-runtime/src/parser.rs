@@ -96,6 +96,11 @@ pub fn parse_typescript(source: &str) -> Result<crate::ast::Program, JsError> {
     result
 }
 
+/// Parse TypeScript through the owned IR boundary.
+pub fn parse_typescript_ir(source: &str) -> Result<IrProgram, JsError> {
+    parse_typescript(source).map(IrProgram::from_program)
+}
+
 /// Strip import/export statements for script-mode parsing
 fn strip_imports_exports(source: &str) -> String {
     source

@@ -165,9 +165,9 @@ impl Context {
             *cell.borrow_mut() = Some(ctx_ptr);
         });
         let result = (|| {
-            let program = self.parse_typescript(source)?;
+            let program = parser::parse_typescript_ir(source)?;
             // Script code: set `this = globalThis`
-            interpreter::eval_program(&program, &mut self.env, Some(source), true)
+            interpreter::eval_ir_program(&program, &mut self.env, Some(source), true)
         })();
         // Microtask checkpoint (see Context::eval)
         let microtask_result = crate::builtins::execute_pending_microtasks();
