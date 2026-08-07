@@ -1087,6 +1087,12 @@ let __quenchHttpModule;
           );
           this.body = init.body ?? source?.body ?? null;
         }
+        async text() {
+          return this.body == null ? "" : String(this.body);
+        }
+        async json() {
+          return JSON.parse(await this.text());
+        }
         clone() {
           return new Request(this);
         }
