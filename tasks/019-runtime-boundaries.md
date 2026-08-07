@@ -57,6 +57,8 @@ inspect engine internals.
   IR boundary before interpretation.
 - [x] Preserve the `IrProgram` type through the interpreter entry point;
   legacy `Program` access is now contained behind `eval_ir_program`.
+- [x] Pack top-level IR statements into an owned boxed slice and execute that
+  slice directly, beginning the low-RSS storage migration.
 - [x] Record a Stage 44 native performance/conformance baseline.
 - [ ] Move metadata, harness loading, stages, isolation, and metrics from the
   transitional runtime module into `crates/quench-test262`.
