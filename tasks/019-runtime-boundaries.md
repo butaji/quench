@@ -44,6 +44,8 @@ inspect engine internals.
   include/strict composition path as in-memory tests.
 - [x] Add deterministic batch execution with `StageReport` counts and
   retained failure paths/reasons.
+- [x] Specify the compact Quench IR ownership, indexing, interning, and
+  cold-metadata contract in `docs/architecture.md`.
 - [x] Record a Stage 44 native performance/conformance baseline.
 - [ ] Move metadata, harness loading, stages, isolation, and metrics from the
   transitional runtime module into `crates/quench-test262`.
