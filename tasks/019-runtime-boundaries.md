@@ -44,6 +44,7 @@ inspect engine internals.
   include/strict composition path as in-memory tests.
 - [x] Add deterministic batch execution with `StageReport` counts and
   retained failure paths/reasons.
+- [x] Add deterministic recursive JavaScript file discovery for stage input.
 - [x] Specify the compact Quench IR ownership, indexing, interning, and
   cold-metadata contract in `docs/architecture.md`.
 - [x] Record a Stage 44 native performance/conformance baseline.
