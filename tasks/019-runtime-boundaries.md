@@ -64,6 +64,7 @@ inspect engine internals.
   state their `Program` return type explicitly.
 - [x] Route `Context::eval` and `Context::eval_es_module` through the owned
   IR boundary before interpretation.
+- [x] Route TypeScript/TSX evaluation through the same owned IR boundary.
 - [x] Preserve the `IrProgram` type through the interpreter entry point;
   legacy `Program` access is now contained behind `eval_ir_program`.
 - [x] Pack top-level IR statements into an owned boxed slice and execute that
