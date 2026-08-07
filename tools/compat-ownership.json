@@ -111,6 +111,7 @@
     "test-http-response-no-headers.js": "Fixture sends HTTP/0.9 and HTTP/1.0 frames through net.Server; native TCP transport is unavailable in the current host",
     "test-http-response-cork.js": "Fixture asserts native socket write batching and cork state; host socket transport is unavailable",
     "test-http-response-drain-cork.js": "Fixture requires native connection events, socket highWaterMark backpressure, and drain timing unavailable in the host",
-    "test-http-response-splitting.js": "Fixture drives pipelined raw HTTP requests through net.Socket and native parser decoding unavailable in the host"
+    "test-http-response-splitting.js": "Fixture drives pipelined raw HTTP requests through net.Socket and native parser decoding unavailable in the host",
+    "test-http-chunked-304.js": "Fixture drives raw HTTP/1.x framing through net.Socket; native TCP transport and parser delivery are unavailable in the current host"
   }
 }
