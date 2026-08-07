@@ -13,7 +13,14 @@ pub trait Allocator: RuntimeComponent {}
 /// Call-frame representation boundary.
 pub trait Frames: RuntimeComponent {}
 /// Evaluation scheduling boundary.
-pub trait Executor: RuntimeComponent {}
+pub trait Executor: RuntimeComponent {
+    fn execute(
+        &mut self,
+        context: &mut Context,
+        source: &str,
+        module: bool,
+    ) -> Result<Value, JsError>;
+}
 /// Error and abrupt-completion boundary.
 pub trait Exceptions: RuntimeComponent {}
 /// Lexical and variable-environment boundary.
@@ -32,9 +39,26 @@ default_component!(DefaultHeap, Heap);
 default_component!(DefaultCollector, Collector);
 default_component!(DefaultAllocator, Allocator);
 default_component!(DefaultFrames, Frames);
-default_component!(DefaultExecutor, Executor);
 default_component!(DefaultExceptions, Exceptions);
 default_component!(DefaultEnvironments, Environments);
+
+#[derive(Debug, Default)]
+pub struct DefaultExecutor;
+impl RuntimeComponent for DefaultExecutor {}
+impl Executor for DefaultExecutor {
+    fn execute(
+        &mut self,
+        context: &mut Context,
+        source: &str,
+        module: bool,
+    ) -> Result<Value, JsError> {
+        if module {
+            context.eval_es_module(source)
+        } else {
+            context.eval(source)
+        }
+    }
+}
 
 /// JavaScript runtime with replaceable execution subsystems.
 pub struct Runtime<
@@ -112,12 +136,12 @@ impl<
 
     /// Evaluate script source through the AST → Quench IR → interpreter path.
     pub fn eval(&mut self, source: &str) -> Result<Value, JsError> {
-        self.context.eval(source)
+        self.executor.execute(&mut self.context, source, false)
     }
 
     /// Evaluate module source through the same pipeline in module mode.
     pub fn eval_es_module(&mut self, source: &str) -> Result<Value, JsError> {
-        self.context.eval_es_module(source)
+        self.executor.execute(&mut self.context, source, true)
     }
 
     /// Reset the realm while retaining the runtime component selection.

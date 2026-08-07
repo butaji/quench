@@ -32,6 +32,8 @@ inspect engine internals.
 - [x] Make `Runtime` retain the selected subsystem instances, expose typed
   accessors, and provide `with_components`; defaults use the production
   component set.
+- [x] Give `Executor` a behavior-bearing contract and route `Runtime::eval`
+  and `Runtime::eval_es_module` through the selected executor instance.
 - [x] Create `crates/quench-test262` with a host-only runner API and outcome
   mapping test; engine implementation types do not cross the boundary.
 - [x] Add runner-owned frontmatter parsing for module dispatch and negative
@@ -74,8 +76,8 @@ inspect engine internals.
 - [ ] Replace the compatibility `QuenchIr` alias throughout the runtime with
   `IrProgram`, then migrate its storage to compact owned representation
   (arena/index-backed where measurements justify it).
-- [ ] Replace marker-only subsystem traits with behavior-bearing interfaces
-  and wire each owned component into the corresponding runtime subsystem.
+- [ ] Replace the remaining marker-only subsystem traits with behavior-bearing
+  interfaces and wire each owned component into its runtime subsystem.
 - [ ] Re-run staged test262 after each boundary extraction; no skips or
   undocumented compatibility paths.
 
