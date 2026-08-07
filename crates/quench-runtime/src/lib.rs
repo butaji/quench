@@ -85,7 +85,20 @@ mod tests {
         impl crate::runtime::Collector for Collector {}
         impl crate::runtime::Allocator for Allocator {}
         impl crate::runtime::Frames for Frames {}
-        impl crate::runtime::Executor for Executor {}
+        impl crate::runtime::Executor for Executor {
+            fn execute(
+                &mut self,
+                context: &mut Context,
+                source: &str,
+                module: bool,
+            ) -> Result<Value, crate::JsError> {
+                if module {
+                    context.eval_es_module(source)
+                } else {
+                    context.eval(source)
+                }
+            }
+        }
         impl crate::runtime::Exceptions for Exceptions {}
         impl crate::runtime::Environments for Environments {}
 
