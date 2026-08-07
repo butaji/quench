@@ -17,6 +17,18 @@ impl Test262Host for Probe {
     }
 }
 
+struct NegativeProbe;
+
+impl Test262Host for NegativeProbe {
+    fn run_script(&mut self, _source: &str) -> Result<(), String> {
+        Err("SyntaxError: invalid token".into())
+    }
+
+    fn run_module_script(&mut self, _source: &str) -> Result<(), String> {
+        Err("TypeError: wrong error".into())
+    }
+}
+
 #[test]
 fn runner_maps_engine_result_to_test_outcome() {
     let mut runner = Test262Runner::new(Probe);
@@ -50,4 +62,28 @@ fn runner_uses_frontmatter_to_select_module_dispatch() {
     let source = "/*---\nflags: [module]\n---*/\nexport default 1;";
     let mut runner = Test262Runner::new(Probe);
     assert_eq!(runner.run_test(source).unwrap(), TestOutcome::Pass);
+}
+
+#[test]
+fn runner_accepts_expected_negative_error() {
+    let source = "/*---\nnegative:\n  phase: parse\n  type: SyntaxError\n---*/\ninvalid";
+    let mut runner = Test262Runner::new(NegativeProbe);
+    assert_eq!(runner.run_test(source).unwrap(), TestOutcome::Pass);
+}
+
+#[test]
+fn runner_rejects_missing_or_wrong_negative_error() {
+    let missing = "/*---\nnegative:\n  phase: parse\n  type: SyntaxError\n---*/\nvalid";
+    let mut passing_runner = Test262Runner::new(Probe);
+    assert!(matches!(
+        passing_runner.run_test(missing).unwrap(),
+        TestOutcome::Fail { .. }
+    ));
+
+    let wrong = "/*---\nflags: [module]\nnegative:\n  phase: parse\n  type: SyntaxError\n---*/\nexport default 1;";
+    let mut wrong_runner = Test262Runner::new(NegativeProbe);
+    assert!(matches!(
+        wrong_runner.run_test(wrong).unwrap(),
+        TestOutcome::Fail { .. }
+    ));
 }
