@@ -72,10 +72,12 @@ pub struct RunMetrics {
     pub fixture_graph_selected_modules: u64,
     pub fixture_module_load_tests: u64,
     pub fixture_module_load_millis: u64,
+    pub fixture_invalid_syntax_modules: u64,
     pub fixture_no_dependency_skips: u64,
     pub fixture_no_fixture_request_skips: u64,
     pub worker_starts: u64,
     pub worker_batches: u64,
+    pub isolation_fallbacks: u64,
 }
 
 static METRIC_PARSE_NEGATIVE_SHORT_CIRCUIT: AtomicUsize = AtomicUsize::new(0);
@@ -121,10 +123,12 @@ static METRIC_FIXTURE_GRAPH_MAX_DEPTH: AtomicUsize = AtomicUsize::new(0);
 static METRIC_FIXTURE_GRAPH_SELECTED_MODULES: AtomicUsize = AtomicUsize::new(0);
 static METRIC_FIXTURE_MODULE_LOAD_TESTS: AtomicUsize = AtomicUsize::new(0);
 static METRIC_FIXTURE_MODULE_LOAD_MILLIS: AtomicUsize = AtomicUsize::new(0);
+static METRIC_FIXTURE_INVALID_SYNTAX_MODULES: AtomicUsize = AtomicUsize::new(0);
 static METRIC_FIXTURE_NO_DEPENDENCY_SKIPS: AtomicUsize = AtomicUsize::new(0);
 static METRIC_FIXTURE_NO_FIXTURE_REQUEST_SKIPS: AtomicUsize = AtomicUsize::new(0);
 static METRIC_WORKER_STARTS: AtomicUsize = AtomicUsize::new(0);
 static METRIC_WORKER_BATCHES: AtomicUsize = AtomicUsize::new(0);
+static METRIC_ISOLATION_FALLBACKS: AtomicUsize = AtomicUsize::new(0);
 
 fn test_timeout_secs() -> u64 {
     static TIMEOUT_SECS: OnceLock<u64> = OnceLock::new();
@@ -491,12 +495,14 @@ pub(crate) fn reset_run_metrics() {
     METRIC_FIXTURE_GRAPH_EDGES.store(0, Ordering::Relaxed);
     METRIC_FIXTURE_GRAPH_MAX_DEPTH.store(0, Ordering::Relaxed);
     METRIC_FIXTURE_GRAPH_SELECTED_MODULES.store(0, Ordering::Relaxed);
-        METRIC_FIXTURE_MODULE_LOAD_TESTS.store(0, Ordering::Relaxed);
-        METRIC_FIXTURE_MODULE_LOAD_MILLIS.store(0, Ordering::Relaxed);
-        METRIC_FIXTURE_NO_DEPENDENCY_SKIPS.store(0, Ordering::Relaxed);
-        METRIC_FIXTURE_NO_FIXTURE_REQUEST_SKIPS.store(0, Ordering::Relaxed);
-        METRIC_WORKER_STARTS.store(0, Ordering::Relaxed);
-        METRIC_WORKER_BATCHES.store(0, Ordering::Relaxed);
+    METRIC_FIXTURE_MODULE_LOAD_TESTS.store(0, Ordering::Relaxed);
+    METRIC_FIXTURE_MODULE_LOAD_MILLIS.store(0, Ordering::Relaxed);
+    METRIC_FIXTURE_INVALID_SYNTAX_MODULES.store(0, Ordering::Relaxed);
+    METRIC_FIXTURE_NO_DEPENDENCY_SKIPS.store(0, Ordering::Relaxed);
+    METRIC_FIXTURE_NO_FIXTURE_REQUEST_SKIPS.store(0, Ordering::Relaxed);
+    METRIC_WORKER_STARTS.store(0, Ordering::Relaxed);
+    METRIC_WORKER_BATCHES.store(0, Ordering::Relaxed);
+    METRIC_ISOLATION_FALLBACKS.store(0, Ordering::Relaxed);
 }
 
 pub(crate) fn run_timeout_metrics() -> RunMetrics {
@@ -676,6 +682,10 @@ pub(crate) fn run_timeout_metrics() -> RunMetrics {
             .load(Ordering::Relaxed)
             .try_into()
             .unwrap_or(u64::MAX),
+        fixture_invalid_syntax_modules: METRIC_FIXTURE_INVALID_SYNTAX_MODULES
+            .load(Ordering::Relaxed)
+            .try_into()
+            .unwrap_or(u64::MAX),
         fixture_no_dependency_skips: METRIC_FIXTURE_NO_DEPENDENCY_SKIPS
             .load(Ordering::Relaxed)
             .try_into()
@@ -689,6 +699,10 @@ pub(crate) fn run_timeout_metrics() -> RunMetrics {
             .try_into()
             .unwrap_or(u64::MAX),
         worker_batches: METRIC_WORKER_BATCHES
+            .load(Ordering::Relaxed)
+            .try_into()
+            .unwrap_or(u64::MAX),
+        isolation_fallbacks: METRIC_ISOLATION_FALLBACKS
             .load(Ordering::Relaxed)
             .try_into()
             .unwrap_or(u64::MAX),
@@ -782,6 +796,10 @@ fn note_fixture_module_load_millis(elapsed_ms: u64) {
     );
 }
 
+fn note_fixture_invalid_syntax_module() {
+    METRIC_FIXTURE_INVALID_SYNTAX_MODULES.fetch_add(1, Ordering::Relaxed);
+}
+
 fn note_fixture_no_fixture_request_skip() {
     METRIC_FIXTURE_NO_FIXTURE_REQUEST_SKIPS.fetch_add(1, Ordering::Relaxed);
 }
@@ -856,6 +874,10 @@ fn note_isolated_retry_skipped() {
 
 pub(crate) fn note_fixture_no_dependency_skip() {
     METRIC_FIXTURE_NO_DEPENDENCY_SKIPS.fetch_add(1, Ordering::Relaxed);
+}
+
+pub(crate) fn note_isolation_fallback() {
+    METRIC_ISOLATION_FALLBACKS.fetch_add(1, Ordering::Relaxed);
 }
 
 fn note_fixture_dependency_skip() {
@@ -2828,17 +2850,12 @@ fn load_fixture_modules_with_source(
     let mut selected_modules = HashSet::<String>::with_capacity(
         fixture_module_requests.len().saturating_add(16),
     );
-    let mut discovered = HashSet::with_capacity(
-        fixture_module_requests.len().saturating_add(16),
-    );
     let mut selected_graph = VecDeque::<(String, usize)>::with_capacity(selected_modules.len() + 1);
     let mut seed_module = |module: String,
                            depth: usize,
                            selected_modules: &mut HashSet<String>,
-                           discovered: &mut HashSet<String>,
                            selected_graph: &mut VecDeque<(String, usize)>| {
-        if discovered.insert(module.clone()) {
-            selected_modules.insert(module.clone());
+        if selected_modules.insert(module.clone()) {
             selected_graph.push_back((module, depth));
             true
         } else {
@@ -2854,7 +2871,6 @@ fn load_fixture_modules_with_source(
             module.clone(),
             0,
             &mut selected_modules,
-            &mut discovered,
             &mut selected_graph,
         );
     }
@@ -2867,7 +2883,6 @@ fn load_fixture_modules_with_source(
             module,
             0,
             &mut selected_modules,
-            &mut discovered,
             &mut selected_graph,
         );
     }
@@ -2877,7 +2892,6 @@ fn load_fixture_modules_with_source(
                 module.to_string(),
                 0,
                 &mut selected_modules,
-                &mut discovered,
                 &mut selected_graph,
             );
         }
@@ -2903,7 +2917,6 @@ fn load_fixture_modules_with_source(
                 dependency.clone(),
                 depth.saturating_add(1),
                 &mut selected_modules,
-                &mut discovered,
                 &mut selected_graph,
             );
         }
@@ -3233,6 +3246,7 @@ fn load_fixture_modules_with_source(
                     .borrow_mut()
                     .set(&module_name, Value::String("Invalid module syntax".into()));
             }
+            note_fixture_invalid_syntax_module();
             ctx.register_module(
                 &module_name,
                 quench_runtime::value::Object::new(
