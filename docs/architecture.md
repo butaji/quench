@@ -27,8 +27,9 @@ must not touch the others.
 
 ## Quench IR storage contract
 
-The current `QuenchIr` name is a compatibility alias over the lowered
-runtime `Program`; it is intentionally not presented as the final layout.
+`QuenchIr` is the owned post-frontend representation. Legacy parser helpers
+may still return the lowered runtime `Program` while callers migrate to the
+`*_ir` entry points.
 The target representation is an owned, compact, index-addressed IR:
 
 - OXC owns parse-time nodes only. `parser.rs` lowers while the OXC allocator
