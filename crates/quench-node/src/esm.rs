@@ -8,6 +8,59 @@ use rquickjs::{
     Ctx, Error, Module, Result,
 };
 
+fn package_entry(package_root: &Path, subpath: &str) -> Option<PathBuf> {
+    if !subpath.is_empty() {
+        return Some(package_root.join(subpath));
+    }
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(package_root.join("package.json")).ok()?).ok()?;
+    let entry = manifest
+        .get("exports")
+        .and_then(|exports| match exports {
+            serde_json::Value::String(value) => Some(value.as_str()),
+            serde_json::Value::Object(exports) => exports
+                .get("import")
+                .or_else(|| exports.get("default"))
+                .and_then(serde_json::Value::as_str),
+            _ => None,
+        })
+        .or_else(|| manifest.get("module").and_then(serde_json::Value::as_str))
+        .or_else(|| manifest.get("main").and_then(serde_json::Value::as_str))
+        .unwrap_or("index.js");
+    Some(package_root.join(entry))
+}
+
+fn package_resolution(base: &str, name: &str) -> Option<PathBuf> {
+    let (package_name, subpath) = if let Some(rest) = name.strip_prefix('@') {
+        let (scope, rest) = rest.split_once('/')?;
+        let (package, subpath) = rest.split_once('/').unwrap_or((rest, ""));
+        (format!("@{scope}/{package}"), subpath)
+    } else {
+        let (package, subpath) = name.split_once('/').unwrap_or((name, ""));
+        (package.to_owned(), subpath)
+    };
+    let mut directory = Path::new(base).parent()?.to_path_buf();
+    loop {
+        let root = directory.join("node_modules").join(&package_name);
+        if root.is_dir() {
+            let entry = package_entry(&root, subpath)?;
+            if entry.is_file() {
+                return Some(entry);
+            }
+            for extension in ["mjs", "js"] {
+                let candidate = entry.with_extension(extension);
+                if candidate.is_file() {
+                    return Some(candidate);
+                }
+            }
+        }
+        if !directory.pop() {
+            break;
+        }
+    }
+    None
+}
+
 #[derive(Debug, Default)]
 pub struct NodeResolver;
 
@@ -27,6 +80,9 @@ impl Resolver for NodeResolver {
                     path.set_extension("js");
                 }
             }
+            return Ok(path.to_string_lossy().into_owned());
+        }
+        if let Some(path) = package_resolution(base, name) {
             return Ok(path.to_string_lossy().into_owned());
         }
         Ok(name.to_owned())
@@ -191,7 +247,15 @@ impl Loader for NodeLoader {
         if name.starts_with("node:")
             || matches!(
                 name,
-                "module" | "assert" | "events" | "fs" | "path" | "test" | "timers/promises" | "url" | "net"
+                "module"
+                    | "assert"
+                    | "events"
+                    | "fs"
+                    | "path"
+                    | "test"
+                    | "timers/promises"
+                    | "url"
+                    | "net"
             )
         {
             return builtin_source(name)
@@ -210,9 +274,7 @@ impl Loader for NodeLoader {
                 "export const hasCrypto = __c.hasCrypto;\nexport const hasDtls = __c.hasDtls;\n",
             );
             let module = Module::declare(ctx.clone(), name, source)?;
-            module
-                .meta()?
-                .set("url", format!("file://{}", path))?;
+            module.meta()?.set("url", format!("file://{}", path))?;
             return Ok(module);
         }
         let path = PathBuf::from(path);

@@ -61,3 +61,8 @@ The authoritative serial focused gate now passes **1,952/1,952** stages with
 zero failures. The gate generated repository-root fixture artifacts during its
 run; those artifacts were removed after verification, leaving the worktree
 clean.
+
+The next package-loading slice is stage 2041: the ESM resolver now searches
+ancestor `node_modules` directories and reads package `exports`, `module`, and
+`main` entries. This is the missing resolution layer exposed by the Hono
+example.
