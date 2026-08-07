@@ -30,3 +30,29 @@
   actual cause.
 - Preserve explicit platform classifications for native TLS, HTTPS, HTTP/2,
   inspector, QUIC, and other host-integrated APIs.
+
+## Latest slice
+
+- Stage 2034 locks the currently implemented HTTP response header surface:
+  `getHeaders()`, `getHeaderNames()`, `flushHeaders()`, and
+  `writeEarlyHints()`, plus request `flushHeaders()`.
+- The stage passes locally; it is a focused regression guard while the broader
+  HTTP callback and agent queue remains open.
+- Stage 2035 adds the `http.Server.listen({ port, host }, callback)` contract,
+  which was previously accepted but ignored its options object.
+- Stage 2036 fixes automatic client `content-length` headers for empty POST and
+  PUT requests by normalizing headers before constructing the server request.
+  The focused contract now passes for GET, HEAD, DELETE, OPTIONS, POST, PUT,
+  and TRACE.
+- Stage 2037 adds the public `http.ClientRequest` constructor defaults for
+  empty `method` and `path` options.
+- Stage 2038 adds `ClientRequest` header introspection via `getHeader`,
+  `getHeaders`, `getHeaderNames`, and `hasHeader`.
+- Stage 2039 adds chainable `ClientRequest` socket-control methods:
+  `setNoDelay`, `setSocketKeepAlive`, and `setSocketTimeout`.
+- Stage 2040 adds chainable `ClientRequest.cork()` and `uncork()` buffering
+  controls with balanced nesting behavior.
+
+Stages 2034–2040 all pass together. The upstream listener-leak fixture remains
+host-transport-specific: it requires native socket creation and keep-alive
+reuse, while this runtime intentionally uses the in-memory HTTP transport.
