@@ -73,3 +73,7 @@ The Hono module itself now loads under `quench-node`; its asynchronous
 drain support before a standalone script can print the response.
 Stage 2042 verifies that basic top-level `await` itself already passes; the
 remaining Hono behavior is an untracked application Promise at process exit.
+The ESM entry boundary now finishes the module evaluation Promise. Re-running
+the Hono smoke app reaches its awaited `app.fetch()` and reports a real
+QuickJS exception instead of exiting after `loaded`; Hono’s async fetch path
+remains an open live-application compatibility gap.
