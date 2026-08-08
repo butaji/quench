@@ -481,3 +481,9 @@ Focused stage 2100 adds `http.Agent` validation for `maxTotalSockets`: invalid
 types raise `ERR_INVALID_ARG_TYPE`, non-positive and `NaN` values raise
 `ERR_OUT_OF_RANGE`, and `Infinity` remains accepted. The focused contract and
 upstream `test-http-agent-maxtotalsockets.js` both pass.
+
+Focused stage 2101 covers the stream destruction invariant that `Readable`
+`resume()` and `pause()` are no-ops after `destroy()`. The focused contract
+passes. The broader upstream `test-stream-destroy.js` advances but still has
+unresolved error-delivery assertions in its combined destroy matrix; those are
+not being represented as fixed by this narrower contract.
