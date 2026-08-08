@@ -129,6 +129,13 @@ errors=0`); a direct finish-guard change was reverted pending an
   invocation is normalized. The runner probe found that positional fixture
   execution exits silently, while `--test-dir <fixture>` reports the result;
   `tools/run-node-tests.sh` now uses the explicit mode for single files.
+  A fresh stream differential run now passes
+  `test-stream-err-multiple-callback-construction.js` and
+  `test-stream-catch-rejections.js`. It still fails
+  `test-stream-drop-take.js` (`Callback 4` is never observed) and
+  `test-stream-backpressure.js` (`_read()` expected 11 calls, got 1), proving
+  that iterator cancellation and byte-buffer demand are separate remaining
+  contracts.
 
 ## New fs evidence
 
