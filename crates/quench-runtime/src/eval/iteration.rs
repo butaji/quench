@@ -269,6 +269,12 @@ fn run_for_of_iteration(
             }
         }
         assign_to(variable, item, env)?;
+        // A generator `yield` during LHS destructuring evaluated a yield and
+        // set the yield signal; suspend before running the body so the body
+        // isn't executed now and again on resume.
+        if crate::interpreter::peek_generator_yield() {
+            return Ok(Value::Undefined);
+        }
         eval_statement(body, env, false, in_arrow_function)
     })();
     let body_val = match &result {
