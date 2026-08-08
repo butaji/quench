@@ -840,8 +840,11 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
       if (typeof address !== "string") {
         throw new TypeError("interfaceAddress must be a string");
       }
+      const firstOctet = Number(address.split(".", 1)[0]);
       if (
-        address === "224.0.0.2" ||
+        (Number.isInteger(firstOctet) &&
+          firstOctet >= 224 &&
+          firstOctet <= 239) ||
         address === "::" ||
         address === "" ||
         address === "undefined"

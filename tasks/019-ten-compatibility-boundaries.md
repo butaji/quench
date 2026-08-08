@@ -41,4 +41,11 @@ own commit.
 - Item 6: partially improved. Stage 2339 verifies two concurrent HTTP requests
   with independent response bodies and clean shutdown; upstream multi-request
   failures remain specific to harness/agent interactions.
-- Items 7–10: queued.
+- Item 7: partially improved. Stage 2340 verifies default-address bind,
+  implicit sender bind, packet delivery, remote metadata, and close callback
+  ordering. Stage 2341 generalizes multicast-interface rejection to the full
+  IPv4 multicast range while preserving `0.0.0.0` as the default-interface
+  selection. The remaining exclusive implicit-bind fixture still depends on
+  unsupported cluster worker behavior; the IPv6 multicast cases need a
+  platform-backed validation seam.
+- Items 8–10: queued.
