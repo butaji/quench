@@ -983,6 +983,7 @@ class __QuenchVirtualFileSystem {
   readSync(fd, buffer, offset, length, position) {
     const key = this.__fds.get(fd);
     if (!key) throw __quenchVfsError("EBADF", "read", fd);
+    if (typeof position === "bigint") position = Number(position);
     const at =
       position == null || position < 0
         ? this.__fdPositions.get(fd) || 0
@@ -999,6 +1000,7 @@ class __QuenchVirtualFileSystem {
   writeSync(fd, buffer, offset, length, position) {
     const key = this.__fds.get(fd);
     if (!key) throw __quenchVfsError("EBADF", "write", fd);
+    if (typeof position === "bigint") position = Number(position);
     if (typeof buffer === "string") {
       position = offset;
       buffer = globalThis.Buffer.from(
