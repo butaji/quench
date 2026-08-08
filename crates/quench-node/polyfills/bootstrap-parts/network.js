@@ -6,6 +6,7 @@ const isIPv4Part = (part) => {
   return part.length <= 3;
 };
 const __quenchNetServers = new Set();
+const __quenchNativeSockets = new Set();
 const isIPv4 = (input) => {
   if (input == null) return false;
   if (typeof input !== "string") {
@@ -312,6 +313,9 @@ const __quenchNetModule = {
       this.bytesRead = 0;
       this.bytesWritten = 0;
       this._handle = {};
+      this._nativeId = 0;
+      this._nativeConnected = false;
+      this._nativeEnded = false;
     }
     get bufferSize() {
       return this._bufferSize;
@@ -348,6 +352,10 @@ const __quenchNetModule = {
     }
     destroy() {
       this.destroyed = true;
+      if (this._nativeId) {
+        __quench_tcp_close(this._nativeId);
+        this._nativeId = 0;
+      }
       queueMicrotask(() => this.emit("close"));
       return this;
     }
@@ -357,6 +365,14 @@ const __quenchNetModule = {
     connect(_options, callback) {
       globalThis.__quenchValidateConnectionOptions(_options);
       if (typeof callback === "function") this.once("connect", callback);
+      if (_options?.__quenchNativeTransport) {
+        this._nativeId = __quench_tcp_connect(
+          _options.host || "127.0.0.1",
+          Number(_options.port)
+        );
+        this._nativeConnected = true;
+        __quenchNativeSockets.add(this);
+      }
       queueMicrotask(() => this.emit("connect"));
       return this;
     }
@@ -366,6 +382,13 @@ const __quenchNetModule = {
           ? NodeBuffer.byteLength(_data)
           : _data?.byteLength || _data?.length || 0;
       if (!this.destroyed) {
+        if (this._nativeId) {
+          const bytes =
+            typeof _data === "string"
+              ? Array.from(new TextEncoder().encode(_data))
+              : Array.from(new Uint8Array(_data.buffer || _data));
+          __quench_tcp_write(this._nativeId, bytes);
+        }
         this._bufferSize += length;
         this.bytesWritten += length;
       }
@@ -400,6 +423,7 @@ const __quenchNetModule = {
     globalThis.__quenchValidateConnectionOptions(options);
     const socket = new __quenchNetModule.Socket();
     socket.connect(options, callback);
+    if (options?.__quenchNativeTransport) return socket;
     queueMicrotask(() => {
       const server = [...__quenchNetServers].find(
         (candidate) => candidate.listening
@@ -545,13 +569,30 @@ const __quenchNetModule = {
     }
     const server = new globalThis.__nodeEventEmitter();
     server.listening = false;
+    server._nativeId = 0;
+    server._nativeTransport = false;
     server._handle = { close: () => {} };
     server._allowHalfOpen = options?.allowHalfOpen !== false;
-    server.address = () =>
-      server.listening
-        ? { address: "127.0.0.1", family: "IPv4", port: 0 }
-        : null;
+    server.address = () => {
+      if (!server.listening) return null;
+      return {
+        address: "127.0.0.1",
+        family: "IPv4",
+        port: server._nativeTransport
+          ? __quench_tcp_bound_port(server._nativeId)
+          : 0
+      };
+    };
     server.listen = (_port, callback) => {
+      const listenOptions =
+        _port && typeof _port === "object" ? _port : { port: _port };
+      if (listenOptions.__quenchNativeTransport) {
+        server._nativeId = __quench_tcp_bind(
+          listenOptions.host || "127.0.0.1",
+          Number(listenOptions.port || 0)
+        );
+        server._nativeTransport = true;
+      }
       server.listening = true;
       __quenchNetServers.add(server);
       if (typeof callback === "function") {
@@ -562,12 +603,43 @@ const __quenchNetModule = {
     server.close = (callback) => {
       server.listening = false;
       __quenchNetServers.delete(server);
+      if (server._nativeId) {
+        __quench_tcp_close(server._nativeId);
+        server._nativeId = 0;
+      }
       if (typeof callback === "function") queueMicrotask(callback);
       return server;
     };
     server.unref = () => server;
     server._handler = handler;
     return server;
+  }
+};
+globalThis.__quench_io_poll = () => {
+  for (const server of __quenchNetServers) {
+    if (!server._nativeTransport || !server._nativeId) continue;
+    const nativeId = __quench_tcp_accept(server._nativeId);
+    if (!nativeId) continue;
+    const socket = new __quenchNetModule.Socket();
+    socket._nativeId = nativeId;
+    socket._nativeConnected = true;
+    __quenchNativeSockets.add(socket);
+    server._handler?.(socket);
+    server.emit("connection", socket);
+  }
+  for (const socket of __quenchNativeSockets) {
+    if (socket.destroyed || !socket._nativeId) continue;
+    const state = __quench_tcp_readable(socket._nativeId);
+    if (state === 1) {
+      const bytes = __quench_tcp_read(socket._nativeId);
+      if (bytes.length) {
+        socket.bytesRead += bytes.length;
+        socket.emit("data", NodeBuffer.from(bytes));
+      }
+    } else if (state === 2 && !socket._nativeEnded) {
+      socket._nativeEnded = true;
+      socket.emit("end");
+    }
   }
 };
 globalThis.__quench_require_part_01 = (name, specifier) =>
