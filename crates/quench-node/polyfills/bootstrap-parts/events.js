@@ -93,6 +93,8 @@ const __nodeReadableEmitClose = (stream) => {
   stream.closed = true;
   stream.emit("close");
 };
+const __nodeHasUserErrorListener = (stream) =>
+  stream.listeners("error").some((listener) => !listener.__quenchInternal);
 const __nodeReadableValidateChunk = (stream, chunk) => {
   if (
     stream.readableObjectMode ||
@@ -280,9 +282,11 @@ class NodeReadable extends NodeEventEmitter {
     this.readableHighWaterMark =
       options.readableHighWaterMark ?? options.highWaterMark ?? 16 * 1024;
     if (this._autoDestroy && !options.__quenchCompatConstruct) {
-      this.on("error", () => {
+      const autoDestroyErrorListener = () => {
         if (!this.destroyed) this.destroy();
-      });
+      };
+      autoDestroyErrorListener.__quenchInternal = true;
+      this.on("error", autoDestroyErrorListener);
     }
   }
   once(event, listener) {
@@ -494,7 +498,14 @@ class NodeReadable extends NodeEventEmitter {
     );
   }
   push(chunk, encoding) {
-    if (this.destroyed) return false;
+    if (this.destroyed && !this._ended && chunk !== null) {
+      const error = new Error("Cannot call push after a stream was destroyed");
+      error.code = "ERR_STREAM_DESTROYED";
+      if (__nodeHasUserErrorListener(this))
+        queueMicrotask(() => this.emit("error", error));
+      else throw error;
+      return false;
+    }
     if (this.__nodeDuplex && this.readable === false && chunk !== null) {
       const error = new Error("stream.push() after EOF");
       error.code = "ERR_STREAM_PUSH_AFTER_EOF";
@@ -504,10 +515,16 @@ class NodeReadable extends NodeEventEmitter {
     if (this._ended && chunk !== null) {
       const error = new Error("stream.push() after EOF");
       error.code = "ERR_STREAM_PUSH_AFTER_EOF";
-      if (this.listenerCount("error")) {
+      if (__nodeHasUserErrorListener(this)) {
+        this._readableState.errored = error;
+        this._readableState.errorEmitted = false;
+        this.errored = error;
         if (!this.__pushAfterEofErrorScheduled) {
           this.__pushAfterEofErrorScheduled = true;
-          queueMicrotask(() => this.emit("error", error));
+          queueMicrotask(() => {
+            this._readableState.errorEmitted = true;
+            this.emit("error", error);
+          });
         }
         return false;
       }
@@ -900,9 +917,11 @@ const NodeWritableCompat = function Writable(options = {}) {
   if (this instanceof NodeWritableCompat && this !== instance) {
     Object.assign(this, instance);
     if (this._autoDestroy) {
-      this.on("error", () => {
+      const autoDestroyErrorListener = () => {
         if (!this.destroyed) this.destroy();
-      });
+      };
+      autoDestroyErrorListener.__quenchInternal = true;
+      this.on("error", autoDestroyErrorListener);
     }
     if (options.signal?.addEventListener) {
       const abort = () => {
@@ -1298,9 +1317,11 @@ const NodeReadableCompat = function Readable(options = {}) {
   if (this instanceof NodeReadableCompat && this !== instance) {
     Object.assign(this, instance);
     if (this._autoDestroy) {
-      this.on("error", () => {
+      const autoDestroyErrorListener = () => {
         if (!this.destroyed) this.destroy();
-      });
+      };
+      autoDestroyErrorListener.__quenchInternal = true;
+      this.on("error", autoDestroyErrorListener);
     }
     return this;
   }
