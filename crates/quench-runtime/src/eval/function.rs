@@ -232,7 +232,7 @@ pub(crate) fn call_js_function_impl_with_strict(
         let call_env_rc = Rc::new(RefCell::new(call_env));
 
         if !f.is_arrow {
-            let args_obj = create_arguments_object(&f, args.clone(), in_strict);
+            let args_obj = create_arguments_object(&f, args.clone(), in_strict, &call_env_rc, &params);
             call_env_rc
                 .borrow_mut()
                 .define("arguments".to_string(), args_obj);
@@ -454,10 +454,41 @@ fn box_sloppy_this(this_val: Value) -> Value {
 }
 
 /// Create the JavaScript arguments object for a function call
-fn create_arguments_object(f: &ValueFunction, args: Vec<Value>, strict_mode: bool) -> Value {
+fn create_arguments_object(
+    f: &ValueFunction,
+    args: Vec<Value>,
+    strict_mode: bool,
+    call_env: &Rc<RefCell<crate::env::Environment>>,
+    params: &[crate::ast::Param],
+) -> Value {
     let mut obj = Object::new(ObjectKind::Ordinary);
-    // Set indexed arguments (arguments[0], arguments[1], etc.)
+    // Mapped arguments (ES §9.4.4): in sloppy mode with ALL simple params (no
+    // default/rest/destructuring), the indexed properties alias the
+    // corresponding parameter bindings, so a mutation of the formal parameter
+    // is reflected in `arguments[i]` and vice versa. The accessors lazily
+    // read/write the call-env binding, so the arguments object can be created
+    // before bind_params runs.
+    let mapped =
+        !strict_mode && params.iter().all(|p| p.pattern.is_none() && p.default.is_none() && !p.rest);
     for (i, arg) in args.iter().enumerate() {
+        if mapped {
+            if let Some(name) = params.get(i).map(|p| p.name.clone()) {
+                let env_rc = Rc::clone(call_env);
+                let getter_name = name.clone();
+                let getter = NativeFunction::new(move |_| {
+                    Ok(env_rc.borrow().get(&getter_name).unwrap_or(Value::Undefined))
+                });
+                obj.set_getter_func(&i.to_string(), Value::NativeFunction(Rc::new(getter)));
+                let setter_env = Rc::clone(call_env);
+                let setter = NativeFunction::new(move |set_args| {
+                    let v = set_args.first().cloned().unwrap_or(Value::Undefined);
+                    setter_env.borrow_mut().set(&name, v);
+                    Ok(Value::Undefined)
+                });
+                obj.set_setter_func(&i.to_string(), Value::NativeFunction(Rc::new(setter)));
+                continue;
+            }
+        }
         obj.set(&i.to_string(), arg.clone());
     }
     // Set length property
