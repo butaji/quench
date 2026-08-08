@@ -512,6 +512,12 @@ const __quenchNetModule = {
           if (!server?._handler) return;
           const serverSocket = new __quenchNetModule.Socket();
           serverSocket._handle = { setKeepAlive: () => {} };
+          if (server.keepAlive !== undefined) {
+            serverSocket.setKeepAlive(
+              server.keepAlive,
+              server.keepAliveInitialDelay
+            );
+          }
           this._peer = serverSocket;
           serverSocket._peer = this;
           server._handler(serverSocket);
@@ -720,6 +726,8 @@ const __quenchNetModule = {
     server._nativeId = 0;
     server._nativeTransport = false;
     server._handle = { close: () => {} };
+    server.keepAlive = options?.keepAlive;
+    server.keepAliveInitialDelay = options?.keepAliveInitialDelay;
     server._allowHalfOpen = options?.allowHalfOpen !== false;
     server.address = () => {
       if (!server.listening) return null;

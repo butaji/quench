@@ -33,7 +33,7 @@ own commit.
 - Item 3: improved. Stage 2335 and upstream
   `test-net-socket-timeout-unref.js` pass with socket `ref`, `unref`, and
   `hasRef` state.
-- Item 4: partially improved. Stage 2336 applies `keepAlive` and
-  `keepAliveInitialDelay` connection options to the socket handle; the larger
+- Item 4: partially improved. Stages 2336–2337 apply connection and server
+  `keepAlive`/`keepAliveInitialDelay` options to socket handles; the larger
   client/server keep-alive fixtures still have callback/lifecycle gaps.
 - Items 5–10: queued.
