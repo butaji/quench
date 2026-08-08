@@ -1166,6 +1166,7 @@ let __quenchHttpModule;
         this._readableState = { ended: false };
       }
       resume() {
+        this._paused = false;
         if (this.complete) return this;
         queueMicrotask(() => {
           if (this.complete) return;
@@ -1174,6 +1175,10 @@ let __quenchHttpModule;
           this.emit("end");
           this.emit("close");
         });
+        return this;
+      }
+      pause() {
+        this._paused = true;
         return this;
       }
     }
@@ -1468,6 +1473,7 @@ let __quenchHttpModule;
         return response;
       };
       response.resume = () => response;
+      response.pause = () => response;
       response.pipe = (destination, options = {}) => {
         response.on("data", (chunk) => {
           if (!destination.destroyed) destination.write(chunk);

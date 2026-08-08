@@ -377,3 +377,8 @@ Node-environment-limited cases). The current actionable owned queue is HTTP
 (87), net (55), streams (42), and fs (35). The differential is complete and
 authoritative; its focused-evidence freshness marker remains stale until the
 next focused gate.
+
+The next HTTP slice exposed missing `pause()` methods on incoming requests and
+responses. Both now preserve the Node chainable surface; focused stage 2084
+passes, as do upstream `test-http-pause-no-dump.js` and
+`test-http-pause-resume-one-end.js`.
