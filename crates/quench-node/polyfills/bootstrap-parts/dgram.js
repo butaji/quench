@@ -285,6 +285,22 @@ const __quenchDgramSend = (socket, message, ...args) => {
   const deliveredPayload = hasOffset
     ? bytePayload.subarray(offset, offset + length)
     : bytePayload;
+  if (deliveredPayload.byteLength > 65507) {
+    const error = Object.assign(
+      new Error(`send EMSGSIZE ${address || "127.0.0.1"}:${destinationPort}`),
+      {
+        code: "EMSGSIZE",
+        syscall: "send",
+        address: address || "127.0.0.1",
+        port: destinationPort
+      }
+    );
+    queueMicrotask(() => {
+      if (typeof callback === "function") callback(error);
+      else socket.emit("error", error);
+    });
+    return socket;
+  }
   const sendResult = socket[__quenchDgramStateSymbol].handle.send?.();
   if (sendResult) {
     const error = Object.assign(
