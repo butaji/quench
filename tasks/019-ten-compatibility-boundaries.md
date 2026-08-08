@@ -412,6 +412,10 @@ Stage 2418 verifies the public `MemoryProvider` surface and append-to-new-file
 behavior. The separate dynamic-provider fixture remains an internal-model
 gap: it expects Node's `kRoot` symbol and lazy entry objects, which are not yet
 implemented by the public in-memory provider.
+Stage 2419 verifies all four mounted promise `{ encoding: "buffer" }` cases
+(`readdir`, `realpath`, `readlink`, and `mkdtemp`) together; all pass. The
+authoritative buffer-encoding fixture's remaining failure is therefore also a
+larger-sequence interaction, not an individual conversion path.
 
 Stage 2378 passes the four basic stream `destroy()` contracts for readable and
 writable streams, including implicit `AbortError`, explicit error messages,
