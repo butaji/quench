@@ -784,3 +784,4 @@ pass.
 - Stage 2179: verify a custom writable `_destroy()` callback can replace the error and that `error`/`close` remain deferred with updated error state.
 - Stage 2180: verify repeated writable `destroy()` calls preserve the first error and emit one deferred error before `close`.
 - Stage 2181: verify an asynchronous custom writable `_destroy()` error remains deferred, preserves the pending state across a second destroy call, and emits only once.
+- Application gate verification: the installed Chalk, `ms`, Ajv, debug, and Prettier npm probes all pass under the current runtime binary on 2026-08-08. This confirms the existing representative npm application gates remain green while stream lifecycle work continues.
