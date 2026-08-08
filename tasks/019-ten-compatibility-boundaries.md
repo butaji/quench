@@ -342,6 +342,11 @@ Pull option validation now also emits Node-compatible `ERR_INVALID_ARG_TYPE`
 and `ERR_OUT_OF_RANGE` codes. The focused validation stage passes, but the full
 aggregate still hangs, leaving zlib composition as the next interaction to
 isolate.
+The zlib iterator path now normalizes pull batches to contiguous buffers, and
+both `FileHandle.pull()` and `stream/iter.pull()` flatten async-iterable
+transform results. Existing transform and zlib stages still pass; the complete
+upstream aggregate remains unresolved, so this behavior is retained as a
+focused compatibility improvement rather than counted as a full-fixture fix.
 
 Stage 2378 passes the four basic stream `destroy()` contracts for readable and
 writable streams, including implicit `AbortError`, explicit error messages,
