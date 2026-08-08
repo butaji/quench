@@ -530,3 +530,8 @@ Focused stage 2108 implements POSIX `module._nodeModulePaths()`, including
 ancestor lookup directories and the root/node_modules boundary behavior used
 by CommonJS package resolution. The focused contract and upstream
 `test-module-nodemodulepaths.js` both pass.
+
+Stage 2109 keeps `.node` files on the native-addon path: the CommonJS loader
+now reports `ERR_DLOPEN_FAILED` instead of evaluating a binary addon as
+JavaScript. The focused native-addon error contract and upstream
+`test-module-loading-error.js` pass.
