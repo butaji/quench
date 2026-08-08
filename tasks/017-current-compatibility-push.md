@@ -687,3 +687,8 @@ Focused stage 2150 implements `Duplex.fromWeb()` using Web Stream readers and
 writers, including asynchronous read, write, close, and cancellation/error
 propagation. The focused bridge contract passes, and upstream Duplex testing
 advances to the separate `Duplex.toWeb()` bridge gap.
+
+Focused stage 2151 implements the basic `Duplex.toWeb()` conversion, exposing
+Web readable and writable streams backed by the Node duplex. The focused
+contract passes, and upstream Duplex testing advances through the basic bridge
+to a later multi-case/BYOB callback-count mismatch.
