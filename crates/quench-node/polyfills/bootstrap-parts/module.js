@@ -44,6 +44,23 @@ const formatValue = (value) => {
   }
   return String(value);
 };
+const nodeModulePaths = (from) => {
+  const pathApi = __quenchOriginalRequireWithModule("path");
+  const value = String(from);
+  const result = [];
+  let current = pathApi.resolve(value);
+  while (true) {
+    const candidate =
+      pathApi.basename(current) === "node_modules"
+        ? current
+        : pathApi.join(current, "node_modules");
+    if (result[result.length - 1] !== candidate) result.push(candidate);
+    const parent = pathApi.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return result;
+};
 const __quenchModule = {
   builtinModules: __quenchBuiltinModules,
   _cache: Object.create(null),
@@ -91,7 +108,8 @@ const __quenchModule = {
     const value = String(request);
     if (/^\.\.?\//.test(value) || value.startsWith("/")) return ["."];
     return ["node_modules"];
-  }
+  },
+  _nodeModulePaths: nodeModulePaths
 };
 globalThis.require = (specifier) => {
   if (String(specifier).replace(/^node:/, "") === "module") {

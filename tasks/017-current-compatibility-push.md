@@ -525,3 +525,8 @@ local modules now maintain `module.children` and child `parent` links, and
 `process.config.variables.node_module_version` is exposed as a positive
 integer. Upstream `test-module-children.js` and `test-module-version.js` both
 pass.
+
+Focused stage 2108 implements POSIX `module._nodeModulePaths()`, including
+ancestor lookup directories and the root/node_modules boundary behavior used
+by CommonJS package resolution. The focused contract and upstream
+`test-module-nodemodulepaths.js` both pass.
