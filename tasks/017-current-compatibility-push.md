@@ -353,3 +353,8 @@ Focused stage 2079 verifies the counter shape and accounting. The grouped
 focused run for stages 2076–2079 passes 4/4 with zero failures and zero
 retries. Full upstream byte-counter fixtures still require the runtime's
 missing duplex socket/data-delivery model and remain explicitly unresolved.
+
+Real-application coverage now includes the installed `chalk` package: focused
+stage 2080 loads its CommonJS entry point and exercises chained styling. The
+probe passes under quench-node and the equivalent host-Node smoke check passes;
+the assertion avoids terminal-color output so it remains deterministic in CI.
