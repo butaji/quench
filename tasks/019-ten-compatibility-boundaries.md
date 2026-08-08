@@ -659,6 +659,13 @@ the internal `timers.getLibuvNow()` binding through the host monotonic clock.
 This verifies 30 successive one-millisecond callbacks preserve both order and
 monotonic timestamp behavior.
 
+The net end-before-connect boundary is now fixed. `server.listen(callback)`
+supports the callback-only overload; pending client `end()` waits for peer
+creation; servers without a connection handler still create lifecycle peers;
+and peer close propagation completes the client `close` event. The focused
+reproduction and authoritative `test-net-socket-end-before-connect.js` both
+pass.
+
 The expanded parallel sweep confirms `vm.SourceTextModule` remains a missing
 subsystem: the current implementation is a no-op stub, while Node requires
 link/evaluate state transitions, namespace handling, linker validation, and

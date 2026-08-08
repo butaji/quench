@@ -319,6 +319,7 @@ const __quenchNetModule = {
       this._nativeConnected = false;
       this.connecting = false;
       this._nativeEnded = false;
+      this._endPending = false;
       this._corked = 0;
       this._timeoutTimer = null;
       this._peer = null;
@@ -503,6 +504,12 @@ const __quenchNetModule = {
       queueMicrotask(() => {
         this.connecting = false;
         this.emit("connect");
+        queueMicrotask(() => {
+          if (this._endPending && !this.destroyed) {
+            this._endPending = false;
+            this.end();
+          }
+        });
       });
       if (!_options?.__quenchNativeTransport) {
         queueMicrotask(() => {
@@ -520,7 +527,7 @@ const __quenchNetModule = {
             httpServer.__quenchRawConnection?.(serverSocket);
             return;
           }
-          if (!server?._handler) return;
+          if (!server) return;
           const serverSocket = new __quenchNetModule.Socket();
           serverSocket._handle = { setKeepAlive: () => {} };
           if (server.keepAlive !== undefined) {
@@ -531,7 +538,8 @@ const __quenchNetModule = {
           }
           this._peer = serverSocket;
           serverSocket._peer = this;
-          server._handler(serverSocket);
+          server._handler?.(serverSocket);
+          server.emit("connection", serverSocket);
         });
       }
       return this;
@@ -566,6 +574,12 @@ const __quenchNetModule = {
       return true;
     }
     end(_data, callback) {
+      if (this.connecting) {
+        this._endPending = true;
+        if (typeof callback === "function") queueMicrotask(callback);
+        return this;
+      }
+      const peer = this._peer;
       if (_data !== undefined && _data !== null && _data !== "") {
         this.write(_data);
       }
@@ -582,10 +596,11 @@ const __quenchNetModule = {
       queueMicrotask(() => {
         this._bufferSize = 0;
         this.emit("finish");
-        if (this._peer && !this._peer.destroyed) {
+        if (peer && !peer.destroyed) {
           queueMicrotask(() => {
-            if (!this._peer.allowHalfOpen) this._peer.destroy();
-            this._peer.emit("end");
+            if (!peer.allowHalfOpen) peer.destroy();
+            peer.emit("end");
+            if (!this.destroyed) this.destroy();
           });
         }
       });
@@ -754,6 +769,10 @@ const __quenchNetModule = {
       };
     };
     server.listen = (_port, callback) => {
+      if (typeof _port === "function") {
+        callback = _port;
+        _port = 0;
+      }
       const listenOptions =
         _port && typeof _port === "object" ? _port : { port: _port };
       if (listenOptions.__quenchNativeTransport) {
