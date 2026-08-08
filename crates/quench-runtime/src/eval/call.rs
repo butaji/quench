@@ -12,9 +12,12 @@ use crate::eval::literal::{eval_property_key, get_super_value};
 use crate::eval::member::eval_member_access;
 use crate::interpreter::get_this_binding;
 use crate::value::error::create_js_error_with_type;
-use crate::value::{to_js_string, JsError, Object, ObjectKind, Value};
+use crate::value::{JsError, Object, ObjectKind, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
+
+mod property;
+pub use property::extract_property_name;
 
 /// Evaluate a call expression
 pub fn eval_call(
@@ -31,8 +34,6 @@ pub fn eval_call(
     }
     let (func, this_val, is_direct_eval) = crate::eval::object::eval_callee_with_this(callee, env)?;
     let args = eval_call_arguments(arguments, env, in_arrow_function)?;
-    // Save the previous DIRECT_EVAL flag, then set for this call.
-    // This ensures nested eval calls don't clobber the outer eval's flag.
     let prev_direct = crate::interpreter::is_direct_eval();
     crate::interpreter::set_direct_eval(is_direct_eval);
     let prev_eval_env = crate::interpreter::get_current_eval_env();
@@ -91,10 +92,6 @@ fn eval_super_call(
         _ => None,
     };
 
-    // Per ES §13.2.6.1 SuperCall: invoke the super constructor FIRST (this
-    // may run user code that increments counters etc.), THEN check whether
-    // `this` was already initialized. The check throws ReferenceError after
-    // super() side-effects have already happened.
     crate::interpreter::push_inside_super_call();
     let result = match super_val {
         Value::Class(super_class) => {
@@ -129,8 +126,6 @@ fn eval_super_call(
     };
     crate::interpreter::pop_inside_super_call();
 
-    // After super() ran, check the lexical this-binding status. Per ES
-    // §8.1.1.3.1 BindThisValue, if `this` was already initialized, throw.
     if crate::interpreter::is_this_binding_initialized(env) {
         let (thrown_val, _) = crate::value::error::create_js_error_with_type(
             "super() called after `this` was already initialized",
@@ -142,12 +137,8 @@ fn eval_super_call(
         ));
     }
 
-    // Mark `this` as initialized on the lexical binding now that super()
-    // succeeded, per ES §13.2.6.1 SuperCall step 7.
     crate::interpreter::mark_this_binding_initialized(env);
 
-    // Per ES §13.2.6.1: if the super constructor returns an Object,
-    // it replaces the `this` value for the derived constructor.
     if let Ok(ref super_result) = result {
         match super_result {
             Value::Object(obj) if this_obj.as_ref().map_or(true, |o| !Rc::ptr_eq(o, obj)) => {
@@ -415,7 +406,6 @@ pub fn eval_new(
         return r;
     }
 
-    // Handle class instantiation
     if let Value::Class(class) = &constructor_val {
         let r = instantiate_class_from_ast_with_env(class.as_ref().clone(), args, env);
         crate::interpreter::set_new_target(prev_new_target);
@@ -503,41 +493,6 @@ pub fn eval_new(
     // Restore outer new.target before returning.
     crate::interpreter::set_new_target(prev_new_target);
     final_result
-}
-
-/// Extract a property name from a PropertyKey, evaluating computed keys
-pub fn extract_property_name(
-    key: PropertyKey,
-    computed: bool,
-    env: &Rc<RefCell<Environment>>,
-    in_arrow_function: bool,
-) -> Result<String, JsError> {
-    match key {
-        PropertyKey::Ident(name) => {
-            if computed {
-                let val = crate::eval::expression::eval_expression(
-                    &Expression::Identifier(name),
-                    env,
-                    in_arrow_function,
-                )?;
-                match &val {
-                    Value::Symbol(s) => Ok(s.property_key()),
-                    _ => Ok(to_js_string(&val)),
-                }
-            } else {
-                Ok(name)
-            }
-        }
-        PropertyKey::String(s) => Ok(s),
-        PropertyKey::Number(n) => Ok(n.to_string()),
-        PropertyKey::Computed(expr) => {
-            let val = crate::eval::expression::eval_expression(&expr, env, in_arrow_function)?;
-            match &val {
-                Value::Symbol(s) => Ok(s.property_key()),
-                _ => Ok(to_js_string(&val)),
-            }
-        }
-    }
 }
 
 #[cfg(test)]
