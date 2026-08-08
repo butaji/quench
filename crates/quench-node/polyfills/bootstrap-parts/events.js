@@ -989,12 +989,21 @@ const __nodeDuplexFrom = (body) => {
     }
     return __nodeDuplexFrom(result);
   }
+  if (body?.getReader || body?.getWriter) {
+    return __nodeDuplexFromWeb({
+      readable: body.getReader ? body : undefined,
+      writable: body.getWriter ? body : undefined
+    });
+  }
   if (
     body &&
     typeof body === "object" &&
     (body.readable !== undefined || body.writable !== undefined) &&
     (typeof body.readable === "object" || typeof body.writable === "object")
   ) {
+    if (body.readable?.getReader || body.writable?.getWriter) {
+      return __nodeDuplexFromWeb(body);
+    }
     return __nodeDuplexPair(body.readable, body.writable);
   }
   const readable = body?.readable === true || typeof body?.read === "function";
@@ -1035,6 +1044,8 @@ const __nodeDuplexFromWeb = (pair = {}, options = {}) => {
   const writable = pair.writable;
   const duplex = new NodeDuplex({
     ...options,
+    readable: Boolean(readable),
+    writable: Boolean(writable),
     read() {
       if (!this.__webReader || this.__webReading) return;
       this.__webReading = true;
