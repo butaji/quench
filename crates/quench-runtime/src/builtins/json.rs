@@ -367,9 +367,9 @@ mod tests {
     use super::*;
 
     fn create_test_context() -> crate::Context {
-        let mut ctx = crate::Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
-        ctx
+        // Context::new registers the Rust core, the `__ops__` bridge, and
+        // bootstraps the self-hosted JS builtins (ADR 0001).
+        crate::Context::new().unwrap()
     }
 
     #[test]
