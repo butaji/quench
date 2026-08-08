@@ -505,7 +505,8 @@ still unresolved.
 
 Real-application verification reran the installed `ajv`, `debug`, `chalk`, and
 `ms` probes; all four pass under quench-node. A new host-Node Prettier smoke
-probe formats Babel syntax successfully, but quench-node fails while loading
-the package through the current ESM application path. The exploratory stage
-was removed, and Prettier ESM loading is retained as an explicit next app-level
-compatibility target rather than counted as passing.
+probe now imports through the `.cjs` ESM loader path with named exports under
+quench-node; focused stage 2104 passes for the public package surface. The
+actual formatting call reaches a later filesystem/plugin-loading failure
+(`IO Error: No such file or directory`), so full Prettier execution remains an
+explicit app-level target rather than counted as passing.
