@@ -298,6 +298,7 @@ class NodeReadable extends NodeEventEmitter {
       this._readableState.resumeScheduled = true;
       queueMicrotask(() => {
         this._readableState.resumeScheduled = false;
+        if (this.destroyed) return;
         if (!this._chunks.length && !this._ended) {
           __nodeReadableStart(this);
           if (this._read && !this._readableState.reading) {
