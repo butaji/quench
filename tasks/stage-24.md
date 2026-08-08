@@ -1,6 +1,6 @@
 # Stage 24 — test/language/statements/for-in
 
-**Status:** in_progress · **Path:** `test/language/statements/for-in`.
+**Status:** done · **Path:** `test/language/statements/for-in`.
 
 ```bash
 TEST262_STAGE=24 TEST262_DIGEST=1 TEST262_JSON=1 cargo test -p quench-runtime \
@@ -28,9 +28,7 @@ TEST262_STAGE=24 TEST262_DIGEST=1 TEST262_JSON=1 cargo test -p quench-runtime \
   instances no longer carry an own enumerable constructor; eval_new native
   constructor prototype for Class. (3 → 2)
 - Live enumeration: skip keys deleted mid-iteration. (2 → 1)
+- `head-var-bound-names-in-stmt`: `var x;` in a for-in body block refers to the
+  enclosing function-scoped var, not a shadowing block binding. (1 → 0)
 
-## Remaining
-
-| Test | Fix direction |
-|------|---------------|
-| `head-var-bound-names-in-stmt` | `var x;` in a for-in body block should refer to the enclosing function-scoped var, not create a shadowing block binding and reset it |
+**Complete — 115/115.**
