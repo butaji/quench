@@ -1081,9 +1081,23 @@ const __nodeDuplexPairFactory = (options = {}) => {
   connect(right, left);
   return [left, right];
 };
+const NodeReadableCompat = function Readable(options = {}) {
+  const instance = Reflect.construct(NodeReadable, [options]);
+  if (this instanceof NodeReadableCompat && this !== instance) {
+    Object.assign(this, instance);
+    return this;
+  }
+  return instance;
+};
+NodeReadableCompat.prototype = NodeReadable.prototype;
+Object.defineProperty(NodeReadableCompat, "from", {
+  value: NodeReadable.from,
+  configurable: true,
+  writable: true
+});
 const __nodeStreamExports = {
   Stream: NodeStream,
-  Readable: NodeReadable,
+  Readable: NodeReadableCompat,
   Writable: NodeWritable,
   Duplex: NodeDuplex,
   duplexPair: __nodeDuplexPairFactory,

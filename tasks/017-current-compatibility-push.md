@@ -607,6 +607,12 @@ The upstream fixture now advances through custom-destroy assertions and stops
 at its legacy `Readable.call(this)` subclass pattern, which requires converting
 the compatibility constructor from an ES class to a callable constructor.
 
+Focused stage 2122 adds a callable public `Readable` façade while preserving
+the internal class implementation. Legacy `Readable.call(this)` subclasses
+now initialize successfully; the focused callable-constructor contract passes.
+The upstream readable-destroy fixture now advances past that legacy
+constructor case and stops at a later `push()`-after-destroy error semantic.
+
 Focused stage 2116 uses `module.globalPaths` when resolving bare packages, so
 packages provided through `NODE_PATH` load without a local `node_modules`
 entry. The focused global-package contract passes.
