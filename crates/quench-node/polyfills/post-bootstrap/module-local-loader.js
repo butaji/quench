@@ -48,6 +48,14 @@ const __quenchPackagePath = (specifier, parent) => {
     if (next === directory) break;
     directory = next;
   }
+  const moduleApi = __quenchOriginalRequireWithLocalModules("module");
+  for (const directory of moduleApi.globalPaths || []) {
+    const root = path.join(directory, packageName);
+    try {
+      const entry = __quenchPackageEntry(root, subpath);
+      return __quenchLocalModulePath(entry, root);
+    } catch (_) {}
+  }
   const error = new Error(`Cannot find module '${specifier}'`);
   error.code = "MODULE_NOT_FOUND";
   throw error;
