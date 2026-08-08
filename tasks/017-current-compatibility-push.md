@@ -741,3 +741,8 @@ Focused stage 2166 updates the public `readable` state to `false` when EOF is
 emitted, matching Node's post-`end` Duplex state. The focused contract passes;
 upstream `test-stream-duplex-from.js` advances to a later callback-count
 failure.
+
+Focused stage 2167 covers `Duplex.from()` with a shared object-mode
+PassThrough, including pause/resume backpressure and end/close delivery. The
+focused pipeline contract passes; the full upstream fixture's remaining
+callback-count discrepancy is not reproduced in isolation.
