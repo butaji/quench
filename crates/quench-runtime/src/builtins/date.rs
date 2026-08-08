@@ -8,7 +8,7 @@ use std::rc::Rc;
 pub use helpers::{spec_parse_float, spec_parse_int};
 
 use crate::value::{
-    to_bool, to_js_string, to_number, try_to_number, NativeConstructor, NativeFunction, Object,
+    to_bool, to_js_string, to_number, NativeConstructor, NativeFunction, Object,
     ObjectKind, Value,
 };
 use crate::Context;
@@ -55,14 +55,7 @@ fn register_parse_functions(ctx: &mut Context) {
         let n = spec_parse_float(&s);
         Ok(Value::Number(n))
     });
-    ctx.register_native("isNaN", |args| {
-        let n = args.first().map(to_number).unwrap_or(f64::NAN);
-        Ok(Value::Boolean(n.is_nan()))
-    });
-    ctx.register_native("isFinite", |args| {
-        let n = args.first().map(try_to_number).unwrap_or(Ok(f64::NAN))?;
-        Ok(Value::Boolean(n.is_finite()))
-    });
+    // isNaN / isFinite are self-hosted in JS (builtins/core/global_functions.js).
 }
 
 fn register_uri_functions(ctx: &mut Context) {
