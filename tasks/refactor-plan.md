@@ -7,9 +7,21 @@ Environments>`. `quench-test262` is the conformance runner: metadata,
 harness, staging, isolation, metrics, and reports. Refactors must preserve
 that separation and must not add Node-host assumptions.
 
+**North star (ADR 0003, 2026-08-08):** two planes — the ECMAScript
+execution plane (this plan's daily work) and a persistent TypeScript
+semantic plane (TypeGraph, reflection, opt-in validation), meeting only
+through guards. The ADR-0002 instruction IR + pc interpreter is the
+near-term Tier-0 step; compact accumulator+register bytecode is the
+canonical execution format long-term. TypeId/ShapeId/Rep are never merged.
+R19/R20/R21 below are steps toward ADR 0003's heap (tagged `Value`,
+`HeapRef(u32)`, shapes, interning); sequencing is unchanged.
+
 Goal: 100% of test262 on quench-runtime — staged, no
 skips, **as soon as possible**, with **minimum LOC** (quench-runtime
-Rust stays **under 100k LOC**, tests excluded). All unit tests green;
+Rust stays **under 100k LOC**, tests excluded — scope budget and
+postponed features: ADR 0003 "Scope budget"; no JIT, baseline compiler,
+debugger, profiler, source maps, optimizer passes, or TS language
+services in the core). All unit tests green;
 full test262 runs optimized for wall-clock **and** mem/RSS. The runtime
 stays generic over
 `Runtime<Heap, Collector, Allocator, Frames, Executor, Exceptions, Environments>`
