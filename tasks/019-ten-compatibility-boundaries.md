@@ -163,6 +163,12 @@ shape (`at async Object.access`) and the non-root read-only `W_OK` `EACCES`
 behavior. Both pass, so neither the promise stack contract nor the basic
 permission decision explains the remaining aggregate-fixture mismatch.
 
+Current application-gate refresh: stages 2047, 2069, 2080, 2081, 2104, and
+the repository smoke app all pass. The current upstream
+`test-http-agent-maxsockets-respected.js` baseline remains `Callback 1:
+expected 1 calls, got 0`, confirming that the unresolved agent issue persists
+after the reverted cancellation experiments.
+
 The same stale report's representative dgram entries
 (`test-dgram-bind-sync.js`, `test-dgram-bytes-length.js`, and
 `test-dgram-bind-error-repeat.js`) also pass individually on the current
