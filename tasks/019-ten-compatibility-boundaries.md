@@ -667,6 +667,12 @@ and context APIs. The same sweep still reports unsupported HTTP/2 and PQC
 surfaces, plus open fs-pull, net-socket, readable-emittedReadable, and
 awaitDrainWriters fixtures.
 
+The current application regression gate is green: stages 2047 (Ajv), 2069
+(debug), 2081 (ms), and 2104 (Prettier) all pass. Focused VFS watcher stage
+2440 and stream backpressure stage 2445 also pass after the timer and stream
+changes. These are real application/compatibility signals, not evidence that
+the remaining upstream clusters are complete.
+
 Host timer polling now excludes unrefed timers when no refed timer keeps the
 event loop alive, while still processing them during a live refed turn. The
 authoritative `test-timers-immediate-unref-simple.js` fixture now passes, and
