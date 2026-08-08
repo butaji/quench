@@ -2,6 +2,7 @@
 
 use crate::env::Environment;
 use crate::interpreter;
+use crate::ir::IrProgram;
 use crate::parser;
 use crate::value::{JsError, Object, Value};
 use std::cell::RefCell;
@@ -192,6 +193,38 @@ impl Context {
         // Microtask checkpoint (see Context::eval)
         let microtask_result = crate::builtins::execute_pending_microtasks();
         CURRENT_CONTEXT.with(|cell| {
+            *cell.borrow_mut() = None;
+        });
+        match result {
+            Ok(value) => {
+                microtask_result?;
+                Ok(value)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Evaluate a pre-parsed IR program against this context, skipping the
+    /// parse + lower step. Semantics mirror `eval` (thread-locals, `this =
+    /// globalThis`, microtask checkpoint); only parsing is skipped. Used by the
+    /// test262 harness loader to reuse one parse of each harness file across
+    /// many per-test contexts. The program is read-only during execution, so it
+    /// may be evaluated against any number of fresh contexts.
+    pub fn eval_program(&mut self, program: &IrProgram, source: &str) -> Result<Value, JsError> {
+        interpreter::reset_depth();
+        let ctx_ptr: *mut Context = self;
+        CURRENT_CONTEXT.with(|cell| {
+            *cell.borrow_mut() = Some(ctx_ptr);
+        });
+        CURRENT_SOURCE.with(|cell| {
+            *cell.borrow_mut() = Some(unsafe { std::mem::transmute::<&str, &str>(source) });
+        });
+        let result = interpreter::eval_ir_program(program, &mut self.env, Some(source), true);
+        let microtask_result = crate::builtins::execute_pending_microtasks();
+        CURRENT_CONTEXT.with(|cell| {
+            *cell.borrow_mut() = None;
+        });
+        CURRENT_SOURCE.with(|cell| {
             *cell.borrow_mut() = None;
         });
         match result {

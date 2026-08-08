@@ -89,6 +89,19 @@ thread_local! {
         const { RefCell::new(None) };
 }
 
+/// Reset the thread-local Test262Error state. The threaded runner normally
+/// gets this for free (each test runs on a fresh thread with empty thread-locals),
+/// but the in-thread runner runs sloppy and strict modes on one thread, so it
+/// must clear the state between the two so the strict run's harness injection
+/// installs its own main-realm Test262Error instead of inheriting the sloppy
+/// run's (whose `set_main_realm_test262_error` `if None` guard would otherwise
+/// block it).
+pub fn reset_test262_error_state() {
+    TEST262_ERROR.with(|cell| *cell.borrow_mut() = None);
+    TEST262_ERROR_PROTO.with(|cell| *cell.borrow_mut() = None);
+    MAIN_REALM_TEST262_ERROR.with(|cell| *cell.borrow_mut() = None);
+}
+
 /// Set the native Test262Error constructor (called by harness injection)
 pub fn set_test262_error(val: Value) {
     TEST262_ERROR.with(|cell| *cell.borrow_mut() = Some(val));

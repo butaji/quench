@@ -283,3 +283,37 @@ fn test_async_test_scenario() {
     assert!(result.is_ok(), "eval failed: {:?}", result);
     println!("Result: {:?}", result);
 }
+
+#[cfg(test)]
+#[test]
+fn test_eval_program_skips_parse_and_matches_eval() {
+    // eval_program must execute a pre-parsed IR program against a fresh
+    // context and produce the same value as parsing+eval. This is the hook the
+    // harness loader uses to reuse one parse of each harness file across many
+    // test contexts.
+    let source = "var a = 1; a + 1;";
+    let program = crate::parser::parse_script_ir(source).expect("parse ok");
+
+    let mut ctx = Context::new().unwrap();
+    crate::builtins::register_builtins(&mut ctx);
+    let result = ctx.eval_program(&program, source);
+    assert_eq!(
+        result,
+        Ok(Value::Number(2.0)),
+        "eval_program eval: {:?}",
+        result
+    );
+
+    // The cached program must be re-evaluable against a second fresh context
+    // without re-parsing (harness reuse across test contexts).
+    let mut ctx2 = Context::new().unwrap();
+    crate::builtins::register_builtins(&mut ctx2);
+    ctx2.set_global("x".to_string(), Value::Number(10.0));
+    let result2 = ctx2.eval_program(&program, source);
+    assert_eq!(
+        result2,
+        Ok(Value::Number(2.0)),
+        "re-eval on fresh ctx: {:?}",
+        result2
+    );
+}

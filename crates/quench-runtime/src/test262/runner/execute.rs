@@ -39,10 +39,37 @@ pub fn check_outcome(meta: &Test262Metadata, result: Result<(), String>) -> Test
     }
 }
 
+/// How a single test's script is executed. `Threaded` runs it on a fresh OS
+/// thread so a per-test timeout can be enforced; `InThread` runs it on the
+/// caller's thread (no timeout) so a reusable thread-local harness-IR cache
+/// amortizes the dominant cost of the run. `InThread` is intentionally the
+/// fast path for in-process digest workers.
+#[derive(Clone, Copy)]
+enum Execute {
+    Threaded,
+    InThread,
+}
+
 pub fn run_single_test(
     _host: &mut dyn Test262Host,
     harness: &HarnessLoader,
     test_path: &Path,
+) -> TestOutcome {
+    run_single_test_impl(harness, test_path, Execute::Threaded)
+}
+
+/// Fast variant used by in-process digest workers: runs in the caller's thread
+/// so the worker's thread-local harness-IR cache is reused across tests. No
+/// per-test timeout — callers that need one use `run_single_test` or isolated
+/// (subprocess) mode.
+pub fn run_single_test_in_thread(harness: &HarnessLoader, test_path: &Path) -> TestOutcome {
+    run_single_test_impl(harness, test_path, Execute::InThread)
+}
+
+fn run_single_test_impl(
+    harness: &HarnessLoader,
+    test_path: &Path,
+    execute: Execute,
 ) -> TestOutcome {
     let source = match std::fs::read_to_string(test_path) {
         Ok(s) => s,
@@ -68,7 +95,7 @@ pub fn run_single_test(
             return TestOutcome::Skip { reason };
         }
     }
-    run_prepared(harness, test_path, &source, &meta)
+    run_prepared(harness, test_path, &source, &meta, execute)
 }
 
 fn run_prepared(
@@ -76,6 +103,7 @@ fn run_prepared(
     test_path: &Path,
     source: &str,
     meta: &Test262Metadata,
+    execute: Execute,
 ) -> TestOutcome {
     let is_module = meta.flags.contains(&"module".to_string());
     let is_raw = meta.flags.contains(&"raw".to_string());
@@ -86,8 +114,12 @@ fn run_prepared(
     let no_strict = is_raw || meta.flags.contains(&"noStrict".to_string());
     let only_strict = meta.flags.contains(&"onlyStrict".to_string());
     let path_s = test_path.to_string_lossy().to_string();
+    let run_one = |script: &str, is_module: bool, strict: bool| match execute {
+        Execute::Threaded => run_with_timeout(script, is_module, meta, &path_s, strict),
+        Execute::InThread => run_in_thread(script, is_module, meta),
+    };
     if !only_strict {
-        let outcome = run_with_timeout(&script, is_module, meta, &path_s, false);
+        let outcome = run_one(&script, is_module, false);
         if !matches!(outcome, TestOutcome::Pass) {
             return outcome;
         }
@@ -99,12 +131,29 @@ fn run_prepared(
         return TestOutcome::Pass;
     }
     let strict_script = format!("\"use strict\";\n{}", script);
-    match run_with_timeout(&strict_script, is_module, meta, &path_s, true) {
+    match run_one(&strict_script, is_module, true) {
         TestOutcome::Fail { reason } => TestOutcome::Fail {
             reason: format!("strict: {}", reason),
         },
         other => other,
     }
+}
+
+/// Run a single script on the caller's thread (no timeout). Enables the
+/// thread-local harness-IR cache in `eval_harness_file` to be reused across
+/// many tests processed by the same worker thread.
+fn run_in_thread(script: &str, is_module: bool, meta: &Test262Metadata) -> TestOutcome {
+    // Clear thread-local Test262Error state so each mode (sloppy/strict) on this
+    // shared thread installs its own main-realm Test262Error (see
+    // reset_test262_error_state).
+    crate::value::error::reset_test262_error_state();
+    let mut inner = QuenchHost::new();
+    let result = if is_module {
+        inner.run_module_script(script)
+    } else {
+        inner.run_script(script)
+    };
+    check_outcome(meta, result)
 }
 
 fn build_script(
@@ -301,11 +350,13 @@ mod tests {
     /// already-green stages 0–24.
     #[test]
     fn check_outcome_parse_phase_negative_accepts_any_error() {
-        let mut meta = Test262Metadata::default();
-        meta.negative = Some(Negative {
-            phase: "parse".into(),
-            typ: "SyntaxError".into(),
-        });
+        let meta = Test262Metadata {
+            negative: Some(Negative {
+                phase: "parse".into(),
+                typ: "SyntaxError".into(),
+            }),
+            ..Default::default()
+        };
         // A genuine whole-script parse error is accepted…
         assert_eq!(
             check_outcome(&meta, Err("Parse error: unexpected token".into())),
@@ -313,7 +364,10 @@ mod tests {
         );
         // …and so is a runtime error reaching $DONOTEVALUATE (the engine gap).
         assert_eq!(
-            check_outcome(&meta, Err("Error: $DONOTEVALUATE called: code was reached".into())),
+            check_outcome(
+                &meta,
+                Err("Error: $DONOTEVALUATE called: code was reached".into())
+            ),
             TestOutcome::Pass
         );
     }
@@ -322,11 +376,13 @@ mod tests {
     fn check_outcome_runtime_phase_negative_checks_type() {
         // Unchanged contract: a runtime-phase negative must match the expected
         // error type; a mismatch is a Fail.
-        let mut meta = Test262Metadata::default();
-        meta.negative = Some(Negative {
-            phase: "runtime".into(),
-            typ: "ReferenceError".into(),
-        });
+        let meta = Test262Metadata {
+            negative: Some(Negative {
+                phase: "runtime".into(),
+                typ: "ReferenceError".into(),
+            }),
+            ..Default::default()
+        };
         let ok = check_outcome(&meta, Err("ReferenceError: x is not defined".into()));
         assert_eq!(
             ok,
@@ -339,6 +395,22 @@ mod tests {
             matches!(bad, TestOutcome::Fail { .. }),
             "mismatched runtime error type must fail: {:?}",
             bad
+        );
+    }
+
+    #[test]
+    fn in_thread_reuse_produces_identical_outcomes() {
+        use crate::test262::runner::default_test262_dir;
+        let dir = default_test262_dir();
+        let h = HarnessLoader::new(&dir);
+        let path = PathBuf::from(dir).join("test/harness/assert-false.js");
+        let first = super::run_single_test_in_thread(&h, &path);
+        let second = super::run_single_test_in_thread(&h, &path);
+        assert_eq!(first, TestOutcome::Pass, "first run: {:?}", first);
+        assert_eq!(
+            second, first,
+            "reusing the thread-local IR cache must not change the outcome: {:?}",
+            second
         );
     }
 }
