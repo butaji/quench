@@ -4,10 +4,15 @@ const __quenchAddStreamAliases = (result) => {
   result.Duplex ||= result.Transform;
 };
 const __quenchAddStreamWebCompat = (result) => {
-  for (const name of ["Readable", "Writable", "Duplex"]) {
-    result[name].toWeb ||= () => ({});
-    result[name].fromWeb ||= (value) => value;
-  }
+  const duplex = result.Duplex;
+  result.Readable.toWeb = (value) => duplex.toWeb(value).readable;
+  result.Readable.fromWeb = (value, options) =>
+    duplex.fromWeb({ readable: value }, options);
+  result.Writable.toWeb = (value) => duplex.toWeb(value).writable;
+  result.Writable.fromWeb = (value, options) =>
+    duplex.fromWeb({ writable: value }, options);
+  result.Duplex.toWeb ||= () => ({});
+  result.Duplex.fromWeb ||= (value) => value;
 };
 const __quenchComposeStreams = (streams, result) => {
   if (streams.length === 0) {

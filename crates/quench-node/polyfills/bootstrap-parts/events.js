@@ -1127,7 +1127,7 @@ const __nodeDuplexFromWeb = (pair = {}, options = {}) => {
       );
     },
     destroy(error, callback) {
-      Promise.resolve(error ? this.__webReader?.cancel(error) : undefined).then(
+      Promise.resolve(this.__webReader?.cancel(error)).then(
         () => callback(),
         (destroyError) => callback(destroyError)
       );

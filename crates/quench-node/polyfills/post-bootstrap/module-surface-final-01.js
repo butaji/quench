@@ -53,6 +53,17 @@ const __quenchUtilTypesFallbacks = (result) => {
 };
 const __quenchInternalStreamFallback = (normalized) => {
   if (normalized === "internal/url") return { isURL: globalThis.__nodeIsURL };
+  if (normalized === "internal/webstreams/adapters") {
+    const stream = globalThis.require("stream");
+    return {
+      newStreamReadableFromReadableStream: (readable, options) =>
+        stream.Readable.fromWeb(readable, options),
+      newStreamWritableFromWritableStream: (writable, options) =>
+        stream.Writable.fromWeb(writable, options),
+      newStreamDuplexFromReadableWritablePair: (pair, options) =>
+        stream.Duplex.fromWeb(pair, options)
+    };
+  }
   if (normalized === "internal/streams/end-of-stream") {
     return {
       kEosNodeSynchronousCallback: Symbol("kEosNodeSynchronousCallback")
