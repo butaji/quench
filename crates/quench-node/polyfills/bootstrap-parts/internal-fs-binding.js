@@ -10,6 +10,7 @@ globalThis.__quenchDgramUdpFds = new Set();
 globalThis.__quenchDgramUdpHandleInfo = new Map();
 globalThis.__quenchDgramActiveFds = new Set();
 let __quenchDgramNextHandleFd = 60000;
+let __quenchDgramNextHandlePort = 45000;
 globalThis.__quenchDgramUDPClass = class UDP {
   constructor() {
     this.fd = -1;
@@ -19,7 +20,7 @@ globalThis.__quenchDgramUDPClass = class UDP {
     this.fd = __quenchDgramNextHandleFd++;
     this._address = {
       address,
-      port: port || 40000,
+      port: port || __quenchDgramNextHandlePort++,
       family: address.includes(":") ? "IPv6" : "IPv4"
     };
     globalThis.__quenchDgramUdpFds.add(this.fd);
