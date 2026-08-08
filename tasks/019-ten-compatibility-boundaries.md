@@ -283,6 +283,9 @@ Stage 2389 adds native `readlinkSync()` support for real providers and verifies
 relative targets plus absolute in-root target translation. The synchronous
 symlink path is now covered; the authoritative symlink fixture still reports
 an async callback failure after these operations.
+Stage 2390 adds real-provider `watch()`, `watchFile()`/`unwatchFile()`, and
+`promises.watch()` iterator surfaces. The focused watch-surface stage and
+authoritative `test-vfs-real-provider-watch.js` now pass.
 
 Stage 2378 passes the four basic stream `destroy()` contracts for readable and
 writable streams, including implicit `AbortError`, explicit error messages,
