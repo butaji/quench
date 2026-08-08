@@ -643,3 +643,9 @@ focused timing contract passes; the full upstream fixture remains open.
 Focused stage 2116 uses `module.globalPaths` when resolving bare packages, so
 packages provided through `NODE_PATH` load without a local `node_modules`
 entry. The focused global-package contract passes.
+
+Focused stage 2131 adds a callable public `Writable` façade for legacy
+`Writable.call(this)` subclasses, matching the corresponding `Readable`
+compatibility behavior. The focused constructor contract passes. The upstream
+writable-destroy fixture advances through its legacy constructor case; later
+combined lifecycle failures remain separately classified.
