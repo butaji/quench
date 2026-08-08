@@ -1775,9 +1775,13 @@ let __quenchHttpModule;
         }
         const failure =
           error ||
-          Object.assign(new Error("socket hang up"), { code: "ECONNRESET" });
+          (request.__responseEmitted
+            ? undefined
+            : Object.assign(new Error("socket hang up"), {
+                code: "ECONNRESET"
+              }));
         queueMicrotask(() => {
-          request.emit("error", failure);
+          if (failure) request.emit("error", failure);
           request.emit("close");
         });
         return request;
@@ -2147,6 +2151,7 @@ let __quenchHttpModule;
             error.code = "ECONNRESET";
             request.emit("error", error);
           } else {
+            request.__responseEmitted = true;
             request.emit("response", response);
             if (typeof callback === "function") callback(response);
             queueMicrotask(() => {
@@ -2189,6 +2194,7 @@ let __quenchHttpModule;
       request.abort = () => {
         if (request.aborted) return request;
         request.aborted = true;
+        request.__abortErrorEmitted = true;
         request.destroyed = true;
         request.emit("abort");
         return request;
@@ -2587,6 +2593,7 @@ let __quenchHttpModule;
               response.req = serverRequest;
               server._handler(serverRequest, response);
             }
+            request.__responseEmitted = true;
             request.emit("response", response);
           });
         }

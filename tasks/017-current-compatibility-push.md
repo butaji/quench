@@ -805,3 +805,5 @@ pass.
 - Stage 2195 preserves Node's distinction between client-request `.destroy()` and `.abort()`: direct destroy reports `ECONNRESET` without setting `aborted`.
 - Stage 2196 wires `http.request()`'s external `AbortSignal` to a deferred `AbortError`/`ABORT_ERR` destroy while preserving Node's `aborted` state.
 - Stage 2197 makes `ClientRequest.abort()` mark the request destroyed without changing its no-error abort event behavior.
+- Stage 2198 suppresses the later synthetic connection-reset error after an explicit `ClientRequest.abort()`, matching Node's no-error abort path.
+- Stage 2199 suppresses the implicit reset error when a client request is destroyed after its response has already been delivered.
