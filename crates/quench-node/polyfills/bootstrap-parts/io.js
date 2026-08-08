@@ -412,7 +412,8 @@ Object.assign(globalThis.__nodeFs, {
       throw error;
     }
     const permissions = globalThis.__nodeModes[path] || 0o666;
-    if (mode && mode & 2 && !(permissions & 0o222)) {
+    const runningAsRoot = process.getuid?.() === 0;
+    if (mode && mode & 2 && !runningAsRoot && !(permissions & 0o222)) {
       const error = new Error(`EACCES: permission denied, access '${path}'`);
       error.code = "EACCES";
       error.errno = -13;
