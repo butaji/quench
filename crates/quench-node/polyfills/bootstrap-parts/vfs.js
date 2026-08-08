@@ -313,8 +313,6 @@ class __QuenchVirtualFileSystem {
           : globalThis.Buffer.from(bytes);
       const readFileSync = (options) => {
         check();
-        const observedFs = globalThis.require?.("fs") || globalThis.__nodeFs;
-        observedFs.fstatSync(fd);
         return decodeReadFile(
           globalThis.__quench_fs_native_read_all(fd),
           options
@@ -374,18 +372,7 @@ class __QuenchVirtualFileSystem {
         truncateSync,
         truncate: async (length) => truncateSync(length),
         readFileSync,
-        readFile: async (options) => {
-          const observedFs = globalThis.require?.("fs") || globalThis.__nodeFs;
-          await new Promise((resolve, reject) => {
-            observedFs.fstat(fd, (error) =>
-              error ? reject(error) : resolve()
-            );
-          });
-          return decodeReadFile(
-            globalThis.__quench_fs_native_read_all(fd),
-            options
-          );
-        },
+        readFile: async (options) => readFileSync(options),
         closeSync: () => {
           if (!closed) {
             closed = true;

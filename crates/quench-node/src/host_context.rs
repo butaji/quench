@@ -519,14 +519,14 @@ macro_rules! run_host_context {
         ctx.globals().set("__quench_fs_native_read_all", Func::from(|fd: i32| -> rquickjs::Result<Vec<u8>> {
             #[cfg(unix)]
             {
-                let mut output = Vec::new();
-                let mut buffer = [0u8; 8192];
-                loop {
-                    let count = unsafe { libc::read(fd, buffer.as_mut_ptr().cast(), buffer.len()) };
-                    if count < 0 { return Err(rquickjs::Error::new_from_js("fs", "readFileSync failed")); }
-                    if count == 0 { break; }
-                    output.extend_from_slice(&buffer[..count as usize]);
+                let mut stat = unsafe { std::mem::zeroed::<libc::stat>() };
+                if unsafe { libc::fstat(fd, &mut stat) } < 0 {
+                    return Err(rquickjs::Error::new_from_js("fs", "readFileSync failed"));
                 }
+                let mut output = vec![0u8; stat.st_size.max(0) as usize];
+                let count = unsafe { libc::pread(fd, output.as_mut_ptr().cast(), output.len(), 0) };
+                if count < 0 { return Err(rquickjs::Error::new_from_js("fs", "readFileSync failed")); }
+                output.truncate(count as usize);
                 return Ok(output);
             }
             #[cfg(not(unix))]
