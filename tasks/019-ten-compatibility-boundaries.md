@@ -359,6 +359,10 @@ VFS writable streams now implement Node's default finish-time auto-close for
 path-opened streams while preserving explicit-fd ownership. The focused
 pipeline stages remain green, but the authoritative callback 23 failure is
 unchanged and still requires the full event-mix probe.
+Verification after this change: the `quench-node` crate tests pass 2/2; stages
+2406–2408 pass; and the maintained Ajv, debug, Chalk, ms, and Prettier real-app
+stages all pass. These checks do not mask the unresolved upstream VFS stream,
+pull, symlink, and real-provider promise fixtures.
 
 Stage 2378 passes the four basic stream `destroy()` contracts for readable and
 writable streams, including implicit `AbortError`, explicit error messages,
