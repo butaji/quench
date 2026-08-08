@@ -479,6 +479,11 @@ and rename events, buffer filenames, close handling, and abort-aware promise
 iterators. The three authoritative watch fixtures now pass, including deleted
 watched directories and abort rejection behavior.
 
+The explicit-fd stream failure was further narrowed: stage 2427's isolated
+`r+` descriptor with `start: 5` passes and writes `AAAAAXXAAA`. The upstream
+`test-vfs-stream-explicit-fd.js` callback-3 failure therefore remains a larger
+combined stream lifecycle interaction, not a missing start-offset operation.
+
 Stage 2423 makes `RealFSProvider` access dispatch to the host filesystem before
 the virtual-entry lookup. Existing and missing-path promise access now pass in
 the focused regression; this removes the first concrete unresolved await from
