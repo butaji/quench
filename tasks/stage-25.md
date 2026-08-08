@@ -46,14 +46,22 @@ TEST262_STAGE=25 TEST262_DIGEST=1 TEST262_JSON=1 cargo test -p quench-runtime \
 - Destructuring: don't double-evaluate a computed key containing `yield` in the
   reference-touch phase (it must be evaluated once, during assignment).
 
-## Remaining
+## Remaining (32)
+
+**Dominant blocker — resume-re-execution (~25 tests):** the eval-walker generator
+resumes by re-running the top-level statement from `pending_stmt`, re-executing
+side effects before the yield. So a `yield` in a loop body (`i++; yield; j++;`)
+re-runs `i++` and skips `j++`, and a generator suspended mid-destructuring
+(`[{} = yield]`) re-steps the nested iterator on resume. This blocks the
+`yield`/`yield*`-in-loop body, `yield-star`, and dstr `…rtrn-close` families.
+It needs position-preserving resume (a continuation/coroutine model) — a major
+architecture change, not a localized patch.
 
 | Count | Family | Fix direction |
 |-------|--------|---------------|
-| ~10 | `yield` / `yield*` in loop body | resume re-runs from loop start, losing body position & iterator step — needs position-preserving resume |
-| ~15 | dstr `…rtrn-close` | rest target reference must be evaluated before collecting; a return/throw completion during destructuring must close the iterator |
+| ~25 | `yield`/`yield*` in loop body · dstr `…rtrn-close` | position-preserving resume (major) |
 | 4 | `using` / `await using` in for-of head | explicit-resource-management not implemented |
 | 4 | typedarray backed by resizable buffer | resizable ArrayBuffer not implemented |
-| 2 | `iterator-as-proxy` / `iterator-next-reference` | iterator-record `next` caching (read once via getter/proxy) |
+| 2 | `iterator-as-proxy` / `iterator-next-reference` | iterator-record `next` caching (blocked by `yield*` eager materialization) |
 | 1 | `string-astral-truncated` | WTF-8 string storage (lone surrogates) |
 | 1 | `arguments-mapped-aliasing` | mapped arguments object |
