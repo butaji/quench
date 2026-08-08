@@ -8,22 +8,21 @@ in `docs/authoritative-test-sources.md`.
 
 ## Verified progress
 
-- Focused contracts: **1,945/1,945 passing**.
+- Focused contracts: **2,071/2,071 passing** after the post-audit fixes.
 - Live inventory: 58 canonical modules, 57 statically registered, one
   platform-limited runtime omission (`node:sea`), and 186 observed Node globals.
-- Latest completed differential: 4,682 fixtures with 922 exact matches, 2,461
-  Quench-only failures, 537 output mismatches, 87 timeouts, and 190 fixtures
-  explicitly classified as environment-limited.
+- Latest complete differential remains the previously recorded 4,682-fixture
+  report; the refresh after the latest fixes reached 3,368/4,682 before its
+  600-second wrapper timeout and is not counted as a complete baseline.
 - `stream/iter` now covers broadcast cancellation/abort propagation,
   `fromWritable()`, and preservation of typed-array chunks in `array()` and
   `arraySync()`.
 
 ## Current verification
 
-- The fresh full differential completed against canonical `main`: 4,682
-  fixtures, 922 exact matches, 1,399 both-failed, 2,461 Quench-only failures,
-  537 output mismatches, 180 Node-only failures, 87 timeouts, and 190 explicitly
-  environment-limited fixtures. No worker failed.
+- The latest full focused audit discovered 2,071 stage directories; after
+  resolving stages 456, 466, 475, 1866, 2135, and 2150, all discovered stages
+  pass. The post-fix targeted audit and application probes are recorded below.
 - Deno formatting, `cargo build -p quench-node`, and `git diff --check` pass.
 
 ## Next queue
