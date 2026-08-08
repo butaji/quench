@@ -155,6 +155,7 @@ impl HarnessFileCache {
         stripped
     }
 
+    #[cfg(test)]
     fn reads(&self) -> usize {
         self.reads.get()
     }
@@ -297,6 +298,16 @@ fn inject_test262_error(ctx: &mut Context) {
     crate::value::error::set_test262_error_proto(Rc::clone(&proto));
 }
 
+// Per-thread cache of parsed harness programs. Each digest worker thread runs
+// many tests in-thread, so it parses each harness file once and reuses the IR
+// for every test context it builds. `IrProgram` holds `Rc`s so it is not
+// `Send`; a thread-local (not process-wide) cache is the only reuse that fits.
+thread_local! {
+    static HARNESS_IR_CACHE: std::cell::RefCell<
+        std::collections::HashMap<String, Rc<crate::ir::IrProgram>>,
+    > = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
 /// Load and evaluate a JS harness file (strips frontmatter).
 /// Returns Err when the file cannot be read or fails to evaluate.
 /// Harness files always run in sloppy mode (legacy octal literals are allowed).
@@ -318,10 +329,24 @@ fn eval_harness_file(ctx: &mut Context, filename: &str) -> Result<(), String> {
     } else {
         content
     };
+    // Reuse one parse per file per thread; the program is read-only during
+    // execution, so it can be evaluated against each fresh test context.
+    let program = HARNESS_IR_CACHE.with(|cache| -> Result<Rc<crate::ir::IrProgram>, String> {
+        let mut cache = cache.borrow_mut();
+        if let Some(p) = cache.get(&code) {
+            return Ok(Rc::clone(p));
+        }
+        let p = Rc::new(
+            crate::parser::parse_script_ir(&code)
+                .map_err(|e| format!("harness file {} failed to parse: {:?}", filename, e))?,
+        );
+        cache.insert(code.clone(), Rc::clone(&p));
+        Ok(p)
+    })?;
     // Harness files must run in sloppy mode (legacy octal literals are permitted).
     let was_strict = crate::interpreter::is_strict_mode();
     crate::interpreter::set_strict_mode(false);
-    let result = ctx.eval(&code);
+    let result = ctx.eval_program(&program, &code);
     crate::interpreter::set_strict_mode(was_strict);
     if let Err(e) = result {
         return Err(format!(
