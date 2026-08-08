@@ -426,6 +426,10 @@ errors, and reports requested directory modes. The authoritative
 Mounted promise `realpath()` now restores the host mount prefix for string and
 Buffer results. The authoritative `test-vfs-fs-promises-buffer-encoding.js`
 fixture now passes completely.
+Mounted promise two-path `rename`/`copyFile` now translates both source and
+destination paths. Stage 2420 verifies the full preceding mutation sequence
+followed by chmod/lstat successfully; the broad mounted promises fixture still
+has a remaining later-sequence discrepancy.
 Stage 2418 verifies the public `MemoryProvider` surface and append-to-new-file
 behavior. The separate dynamic-provider fixture remains an internal-model
 gap: it expects Node's `kRoot` symbol and lazy entry objects, which are not yet
