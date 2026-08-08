@@ -377,13 +377,10 @@ fn handle_tail_call_in_stmt(
             {
                 return Ok(Some(()));
             }
-            // Non-tail return inside block: evaluate it and propagate via control flow.
-            let val = match expr.as_ref() {
-                Some(e) => eval_expression(e, env, in_arrow_function)?,
-                None => Value::Undefined,
-            };
-            set_control_flow(ControlFlow::Return(val));
-            Ok(Some(()))
+            // Non-tail return: not a tail call. Return None so the caller
+            // evaluates the statement normally, running any preceding
+            // statements (side effects) before the return propagates.
+            Ok(None)
         }
         Statement::Block(inner) => handle_tail_call_in_block(inner, env, in_arrow_function),
         Statement::DoWhile { body, .. }
@@ -927,7 +924,12 @@ fn eval_for(
         match take_control_flow() {
             Some(cf @ ControlFlow::Break(_)) => {
                 if loop_handles_break(&cf, &loop_labels) {
-                    break;
+                    if loop_scope {
+                        env.borrow_mut().pop_scope();
+                    }
+                    // A handled break returns the body's completion value
+                    // (UpdateEmpty), like do-while.
+                    return Ok(body_val);
                 }
                 if loop_scope {
                     env.borrow_mut().pop_scope();
