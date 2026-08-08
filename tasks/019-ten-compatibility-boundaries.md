@@ -419,6 +419,10 @@ The authoritative `test-vfs-hardlink-nlink.js` fixture passes.
 VFS entries now retain uid/gid ownership metadata; `chown` follows links while
 `lchown` updates the link itself. The authoritative
 `test-vfs-lchown-symlink.js` fixture passes.
+Recursive VFS mkdir now follows intermediate symlinks, preserves the first
+created path in its return value, rejects dangling/file blockers with Node
+errors, and reports requested directory modes. The authoritative
+`test-vfs-mkdir.js` fixture passes.
 Stage 2418 verifies the public `MemoryProvider` surface and append-to-new-file
 behavior. The separate dynamic-provider fixture remains an internal-model
 gap: it expects Node's `kRoot` symbol and lazy entry objects, which are not yet

@@ -710,13 +710,13 @@ class __QuenchVirtualFileSystem {
       mode: options?.bigint
         ? BigInt(
             entry.type === "dir"
-              ? 0o40755
+              ? 0o40000 | (entry.mode ?? 0o755)
               : entry.type === "symlink"
                 ? 0o120777
                 : 0o100000 | (entry.mode ?? 0o666)
           )
         : entry.type === "dir"
-          ? 0o40755
+          ? 0o40000 | (entry.mode ?? 0o755)
           : entry.type === "symlink"
             ? 0o120777
             : 0o100000 | (entry.mode ?? 0o666),
@@ -756,13 +756,13 @@ class __QuenchVirtualFileSystem {
       mode: options?.bigint
         ? BigInt(
             entry.type === "dir"
-              ? 0o40755
+              ? 0o40000 | (entry.mode ?? 0o755)
               : entry.type === "symlink"
                 ? 0o120777
                 : 0o100644
           )
         : entry.type === "dir"
-          ? 0o40755
+          ? 0o40000 | (entry.mode ?? 0o755)
           : entry.type === "symlink"
             ? 0o120777
             : 0o100644,
@@ -792,18 +792,38 @@ class __QuenchVirtualFileSystem {
     if (this.__isReal()) {
       return globalThis.__nodeFs.mkdirSync(this.__realPath(path), options);
     }
-    const key = __quenchVfsPath(path);
+    const requestedKey = __quenchVfsPath(path);
+    const key = __quenchVfsResolveParentPath(this.__entries, path);
     if (this.__entries.has(key)) {
       if (options.recursive) return undefined;
       throw __quenchVfsError("EEXIST", "mkdir", path);
     }
     const parent = key.slice(0, key.lastIndexOf("/")) || "/";
+    const requestedParent =
+      requestedKey.slice(0, requestedKey.lastIndexOf("/")) || "/";
+    if (
+      this.__entries.get(requestedParent)?.type === "symlink" &&
+      !this.__entry(requestedParent)
+    ) {
+      throw __quenchVfsError("ENOENT", "mkdir", path);
+    }
+    if (this.__entry(requestedParent)?.type === "file") {
+      throw __quenchVfsError("ENOTDIR", "mkdir", path);
+    }
+    let firstCreated;
     if (!this.__entries.has(parent)) {
       if (!options.recursive) throw __quenchVfsError("ENOENT", "mkdir", path);
-      this.mkdirSync(parent, { recursive: true });
+      firstCreated = this.mkdirSync(requestedParent, {
+        recursive: true,
+        mode: options.mode
+      });
     }
-    this.__entries.set(key, { type: "dir", children: new Set() });
-    return options.recursive ? path : undefined;
+    this.__entries.set(key, {
+      type: "dir",
+      children: new Set(),
+      mode: options.mode === undefined ? 0o755 : Number(options.mode) & 0o777
+    });
+    return options.recursive ? firstCreated || requestedKey : undefined;
   }
   mkdtempSync(prefix, options = {}) {
     const base = __quenchVfsPath(prefix);
