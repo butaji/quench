@@ -937,3 +937,4 @@ pass.
 - Stage 2284 adds lightweight UDP/TCP fd identity and UDP fd adoption/rejection behavior for internal dgram handles. The focused fd contract and upstream `test-dgram-create-socket-handle-fd.js` pass.
 - Stage 2285 rejects repeated dgram `bind()` calls synchronously with `ERR_SOCKET_ALREADY_BOUND`, including while an earlier bind lookup is pending. The focused contract and upstream `test-dgram-bind.js` pass.
 - Stage 2286 supports dgram `bind({ fd })` validation, reporting `EEXIST` for occupied UDP descriptors and `ERR_INVALID_FD_TYPE` for TCP descriptors. The focused contract and upstream `test-dgram-bind-fd-error.js` pass.
+- Stage 2287 extends raw UDP handle identity, address metadata, `bind6()`, `getsockname()`, and fd adoption. Focused stages 2284 and 2286 remain passing; upstream `test-dgram-bind-fd.js` advances but still stalls at a later callback lifecycle assertion, so full fd-bind compatibility is not claimed.
