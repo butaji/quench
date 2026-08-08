@@ -668,9 +668,7 @@ fn symbol_keyed_get_own_property_descriptor_getter() {
 fn symbol_keyed_verify_property_scenario() {
     // Exact scenario from verifyProperty-restore-accessor-symbol.js
     let mut ctx = Context::new().unwrap();
-    crate::builtins::register_builtins(&mut ctx);
-
-    let result = ctx.eval(
+        let result = ctx.eval(
         r#"
 var obj;
 var prop = Symbol(1);
@@ -702,9 +700,7 @@ if (val !== 42) throw new Error('obj[prop] should return 42, got ' + val + ' (ty
 fn symbol_keyed_accessor_exact_test262_scenario() {
     // Exact reproduction of verifyProperty-restore-accessor-symbol.js
     let mut ctx = Context::new().unwrap();
-    crate::builtins::register_builtins(&mut ctx);
-
-    let result = ctx.eval(
+        let result = ctx.eval(
         r#"
 var obj;
 var prop = Symbol(1);
@@ -748,9 +744,7 @@ if (getterResult !== 42) throw new Error('Step6: origDesc.get() should be 42, go
 fn symbol_keyed_verify_property_restore_no_crash() {
     // Test that verifyProperty with restore doesn't crash for Symbol-keyed accessor
     let mut ctx = Context::new().unwrap();
-    crate::builtins::register_builtins(&mut ctx);
-
-    // Test: __defineProperty(obj, prop, desc) with Symbol key and accessor
+        // Test: __defineProperty(obj, prop, desc) with Symbol key and accessor
     let result = ctx.eval(
         r#"
 var obj = {};
@@ -783,9 +777,7 @@ fn symbol_keyed_define_property_preserves_getter_identity() {
     // Critical test: Object.defineProperty must preserve the getter function identity.
     // desc.get === getOwnPropertyDescriptor(obj, prop).get
     let mut ctx = Context::new().unwrap();
-    crate::builtins::register_builtins(&mut ctx);
-
-    let result = ctx.eval(
+        let result = ctx.eval(
         r#"
 var prop = Symbol(1);
 var getterFn = function() { return 42; };

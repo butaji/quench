@@ -781,8 +781,7 @@ mod tests {
 
     fn eval(src: &str) -> Result<Value, crate::value::JsError> {
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
-        ctx.eval(src)
+                ctx.eval(src)
     }
 
     // ─── box_primitive_for_set: Number ────────────────────────────────────────
@@ -1006,8 +1005,7 @@ mod tests {
         use crate::value::ValueFunction;
 
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
-        ctx.eval(
+                ctx.eval(
             "var first = 0, second = 0; \
              function* g() { first += 1; yield; second += 1; }",
         )
