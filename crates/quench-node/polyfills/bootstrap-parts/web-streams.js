@@ -252,7 +252,10 @@ class __quenchTransformStream {
       }
     };
     this.writable = new __quenchWritableStream({
-      write: (value) => transform.transform?.(value, this._controller),
+      write: (value) =>
+        transform.transform
+          ? transform.transform(value, this._controller)
+          : this._controller.enqueue(value),
       close: async () => {
         await transform.flush?.(this._controller);
         this.readable._close();

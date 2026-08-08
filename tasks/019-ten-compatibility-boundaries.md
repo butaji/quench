@@ -784,3 +784,11 @@ and `stream/consumers.text()` contract passes, along with the maintained Buffer
 UTF-8 stages. The authoritative `test-stream-consumers.js` fixture advances to
 `Callback 7`, its first Web `TransformStream` blob-consumer block, which remains
 a separate lifecycle boundary.
+
+Stage 2455 fixes stream-consumers callback 7 by making the default Web
+`TransformStream` an identity transform. With no custom `transform()` method,
+each write is now enqueued on the readable side instead of silently discarded.
+The focused two-write Blob consumer passes, the maintained Web Streams stages
+remain green, and `test-stream-consumers.js` advances through all four Web
+TransformStream consumer/locked-reader pairs to `Callback 15`, the first
+object-mode PassThrough conversion block.
