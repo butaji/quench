@@ -676,3 +676,9 @@ remaining abort/read lifecycle mismatch.
 Stages 2144–2147 add focused coverage for automatic stream destruction across
 readable, writable, transform, and pipe-error paths. All four contracts pass,
 and the upstream `test-stream-auto-destroy.js` fixture passes as well.
+
+Focused stage 2149 makes the public `Duplex` constructor callable without
+`new`, and adds the expected `objectMode` state fields for readable and
+writable sides. The focused contract passes. Upstream `test-stream-duplex.js`
+advances past the callable-constructor assertions and now reaches the separate
+`Duplex.fromWeb()` bridge gap.
