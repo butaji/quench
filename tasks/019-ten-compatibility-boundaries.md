@@ -893,3 +893,16 @@ focused two-map rejection contract passes with the maintained helper stages
 and authoritative `test-stream-filter.js`. Authoritative `test-stream-map.js`
 advances from `Callback 7` to `Callback 13`, its later concurrency-order case
 using promise timers; no full map-fixture pass is claimed yet.
+
+Stage 2466 separates active mapper work from the ordered result queue. A
+callback that settles behind a blocked earlier result now frees a concurrency
+slot immediately, allowing later input to start and unblock the head while
+results remain source-ordered. Queue growth observes `concurrency +
+highWaterMark`, and the same scheduler retains its two-call AbortSignal bound.
+The focused dependent-promise and abort contracts pass, as do the maintained
+helper stages and authoritative `test-stream-filter.js`. The dependency block
+previously reported as map `Callback 13` passes in isolation, along with both
+subsequent 20-item high-water-mark matrices and the chained-map delay block.
+The complete `test-stream-map.js` fixture now exits with status 139 only when
+those blocks share one realm, so an aggregate QuickJS/GC interaction remains
+and no full map-fixture pass is claimed.

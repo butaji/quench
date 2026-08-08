@@ -431,31 +431,76 @@ const __quenchReadableConcurrentTransform = async function* (
   else externalSignal?.addEventListener?.("abort", onAbort, { once: true });
   const iterator = source[Symbol.asyncIterator]();
   const pending = [];
+  const queueLimit = opts.concurrency + opts.highWaterMark;
+  let active = 0;
+  let resumeProgress;
   let sourceDone = false;
+  const notifyProgress = () => {
+    if (!resumeProgress) return;
+    const resume = resumeProgress;
+    resumeProgress = undefined;
+    resume();
+  };
   const fill = async () => {
-    while (!sourceDone && pending.length < opts.concurrency) {
+    while (
+      !sourceDone &&
+      active < opts.concurrency &&
+      pending.length < queueLimit
+    ) {
       if (signal.aborted) throw __quenchReadableAbortError(signal);
       const next = await iterator.next();
       if (next.done) {
         sourceDone = true;
         break;
       }
-      const promise = Promise.resolve().then(() =>
-        callback(next.value, { signal })
-      );
-      pending.push({ value: next.value, promise });
+      const entry = {
+        error: undefined,
+        failed: false,
+        result: undefined,
+        settled: false,
+        value: next.value
+      };
+      active++;
+      entry.promise = Promise.resolve()
+        .then(() => callback(next.value, { signal }))
+        .then(
+          (result) => {
+            entry.result = result;
+            entry.settled = true;
+            active--;
+            notifyProgress();
+            return entry;
+          },
+          (error) => {
+            entry.error = error;
+            entry.failed = true;
+            entry.settled = true;
+            active--;
+            notifyProgress();
+            return entry;
+          }
+        );
+      pending.push(entry);
     }
   };
+  const waitForProgress = () =>
+    new Promise((resolve) => {
+      resumeProgress = resolve;
+    });
   try {
     await fill();
     while (pending.length) {
-      const entry = pending.shift();
-      const result = await __quenchReadableOperatorResult(
-        entry.promise,
-        errorState
-      );
+      const entry = pending[0];
+      while (!entry.settled) {
+        await __quenchReadableOperatorResult(waitForProgress(), errorState);
+        await fill();
+      }
+      await __quenchReadableOperatorResult(entry.promise, errorState);
+      pending.shift();
+      if (entry.failed) throw entry.error;
       if (signal.aborted) throw __quenchReadableAbortError(signal);
       await fill();
+      const result = entry.result;
       if (mode === "filter") {
         if (result) yield entry.value;
       } else if (mode !== "forEach") {
