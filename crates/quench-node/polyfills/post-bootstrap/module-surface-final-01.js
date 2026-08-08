@@ -56,12 +56,31 @@ const __quenchInternalStreamFallback = (normalized) => {
   if (normalized === "internal/webstreams/adapters") {
     const stream = globalThis.require("stream");
     return {
-      newStreamReadableFromReadableStream: (readable, options) =>
-        stream.Readable.fromWeb(readable, options),
-      newStreamWritableFromWritableStream: (writable, options) =>
-        stream.Writable.fromWeb(writable, options),
-      newStreamDuplexFromReadableWritablePair: (pair, options) =>
-        stream.Duplex.fromWeb(pair, options)
+      newStreamReadableFromReadableStream: function (readable, options) {
+        return stream.Readable.fromWeb(readable, options);
+      },
+      newStreamWritableFromWritableStream: function (writable, options) {
+        if (typeof writable?.getWriter !== "function") {
+          const error = new TypeError("The writable must be a stream");
+          error.code = "ERR_INVALID_ARG_TYPE";
+          throw error;
+        }
+        return stream.Writable.fromWeb(writable, options);
+      },
+      newStreamDuplexFromReadableWritablePair: function (pair, options) {
+        if (
+          !pair ||
+          typeof pair.readable?.getReader !== "function" ||
+          typeof pair.writable?.getWriter !== "function"
+        ) {
+          const error = new TypeError(
+            "The readable and writable must be streams"
+          );
+          error.code = "ERR_INVALID_ARG_TYPE";
+          throw error;
+        }
+        return stream.Duplex.fromWeb(pair, options);
+      }
     };
   }
   if (normalized === "internal/streams/end-of-stream") {

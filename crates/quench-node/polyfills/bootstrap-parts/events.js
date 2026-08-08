@@ -1127,7 +1127,17 @@ const __nodeDuplexFromWeb = (pair = {}, options = {}) => {
       );
     },
     destroy(error, callback) {
-      Promise.resolve(this.__webReader?.cancel(error)).then(
+      const reason =
+        error ||
+        Object.assign(new Error("The operation was aborted"), {
+          name: "AbortError"
+        });
+      Promise.all([
+        this.__webReader?.cancel(error),
+        !error && (this.writableFinished || this.writableEnded)
+          ? this.__webWriter?.close?.()
+          : this.__webWriter?.abort?.(reason)
+      ]).then(
         () => callback(),
         (destroyError) => callback(destroyError)
       );
