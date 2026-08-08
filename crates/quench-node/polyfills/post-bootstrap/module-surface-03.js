@@ -113,10 +113,13 @@ const __quenchValidatePipeline = (pipeline, args) => {
     const writable = typeof stream.getWriter === "function";
     if (!readable && !writable) return stream;
     const duplex = globalThis.require("stream").Duplex;
-    return duplex.fromWeb({
-      readable: readable ? stream : undefined,
-      writable: writable ? stream : undefined
-    });
+    return duplex.fromWeb(
+      {
+        readable: readable ? stream : undefined,
+        writable: writable ? stream : undefined
+      },
+      { objectMode: true }
+    );
   });
   const result = pipeline(...streams, args[args.length - 1]);
   return result === undefined ? args[args.length - 2] : result;
