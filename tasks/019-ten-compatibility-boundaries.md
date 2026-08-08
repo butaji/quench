@@ -855,3 +855,13 @@ and empty-iterable stages pass, as does authoritative
 `test-stream-pipeline-with-empty-string.js`. The broader upstream readable/
 writable-pair adapter fixture still fails earlier on a separate missing method
 surface and is not claimed fixed.
+
+Stage 2462 fixes the `Readable.take()` coercion boundary in the aggregate
+drop/take fixture. A count coercing to `NaN` now follows integer conversion to
+zero, while negative values and infinities remain `ERR_OUT_OF_RANGE` errors.
+The focused `"cat"`, numeric-string, and boolean matrix passes with the
+maintained slice/cancellation stages. Authoritative `test-stream-drop-take.js`
+advances from `Callback 4` to `Callback 5`, its first live AbortSignal
+rejection; the same abort matrix passes in focused stage 2372, so the remaining
+aggregate failure is tracked as a scheduling interaction rather than basic
+slice coercion or cancellation output.

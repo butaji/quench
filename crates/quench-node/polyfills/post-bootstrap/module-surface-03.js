@@ -488,7 +488,8 @@ const __quenchCollectReadable = async (stream, operations) => {
   return values;
 };
 const __quenchSliceCount = (count) => {
-  const value = Number(count);
+  let value = Number(count);
+  if (Number.isNaN(value)) value = 0;
   if (!Number.isFinite(value) || value < 0) {
     const error = new RangeError(
       "ERR_OUT_OF_RANGE: count must be non-negative"
