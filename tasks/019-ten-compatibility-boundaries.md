@@ -368,6 +368,10 @@ readlink/realpath translation, root-link handling, and outside-root rejection
 both individually and as one sequence. The authoritative symlink fixture's
 `Callback 0` therefore remains an interaction-specific failure rather than a
 missing async symlink operation.
+Stage 2411 verifies the authoritative promises fixture's first write/read
+await pair against a real provider. Both promise operations complete and return
+the expected content; the remaining full promises failure is later in its
+combined operation sequence.
 
 Stage 2378 passes the four basic stream `destroy()` contracts for readable and
 writable streams, including implicit `AbortError`, explicit error messages,
