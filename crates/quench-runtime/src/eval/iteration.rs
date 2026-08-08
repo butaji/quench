@@ -141,12 +141,13 @@ fn eval_for_of_iterator(
 ) -> Result<Value, JsError> {
     let per_iteration = loop_binding.is_some_and(|k| matches!(k, VarKind::Let | VarKind::Const));
     let mut index = 0usize;
+    let mut v = Value::Undefined;
     loop {
         let (item, done) = take_iterator_step(&iterator, &mut index, env)?;
         if done {
             break;
         }
-        let (flow, _body_val) = match run_for_of_iteration(
+        let (flow, body_val) = match run_for_of_iteration(
             variable,
             &item,
             body,
@@ -162,17 +163,18 @@ fn eval_for_of_iterator(
             match flow {
                 ControlFlow::Break(_) => {
                     if loop_handles_break(&flow, &[]) {
-                        return abrupt_close(&iterator, Ok(Value::Undefined));
+                        return abrupt_close(&iterator, Ok(body_val));
                     }
                     set_control_flow(flow);
-                    return abrupt_close(&iterator, Ok(Value::Undefined));
+                    return abrupt_close(&iterator, Ok(body_val));
                 }
                 ControlFlow::Continue(_) => {
                     if loop_handles_continue(&flow, &[]) {
+                        v = body_val;
                         continue;
                     }
                     set_control_flow(flow);
-                    return abrupt_close(&iterator, Ok(Value::Undefined));
+                    return abrupt_close(&iterator, Ok(body_val));
                 }
                 ControlFlow::Return(val)
                 | ControlFlow::Yield(val)
@@ -182,6 +184,7 @@ fn eval_for_of_iterator(
                 }
             }
         }
+        v = body_val;
     }
     if let Some(ControlFlow::Return(val))
     | Some(ControlFlow::Yield(val))
@@ -189,7 +192,7 @@ fn eval_for_of_iterator(
     {
         Ok(val)
     } else {
-        Ok(Value::Undefined)
+        Ok(v)
     }
 }
 
