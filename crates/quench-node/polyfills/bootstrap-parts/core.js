@@ -1763,6 +1763,19 @@ let __quenchHttpModule;
         throw error;
       }
       const request = attachHttpSignal(new NodeIncomingMessage());
+      request.destroy = (error) => {
+        if (request.destroyed) return request;
+        request.destroyed = true;
+        request.aborted = true;
+        const failure =
+          error ||
+          Object.assign(new Error("socket hang up"), { code: "ECONNRESET" });
+        queueMicrotask(() => {
+          request.emit("error", failure);
+          request.emit("close");
+        });
+        return request;
+      };
       request.agent = options.agent || globalAgent;
       request.url = pathname || "/";
       request.path = request.url;
