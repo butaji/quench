@@ -4,7 +4,10 @@ class __quenchReadableStream {
   constructor(source = {}) {
     this._queue = [];
     this._closed = false;
+    this.locked = false;
     this._readWaiters = [];
+    this._cancel = source.cancel?.bind(source);
+    this[__quenchWebStreamsState] = { state: "readable" };
     const controller = {
       desiredSize: 0,
       enqueue: (value) => {
@@ -14,6 +17,7 @@ class __quenchReadableStream {
       },
       close: () => {
         this._closed = true;
+        this[__quenchWebStreamsState].state = "closed";
         while (this._readWaiters.length) {
           this._readWaiters.shift()({ value: undefined, done: true });
         }
@@ -21,6 +25,8 @@ class __quenchReadableStream {
       error: (error) => {
         this._error = error;
         this._closed = true;
+        this[__quenchWebStreamsState].state = "errored";
+        this[__quenchWebStreamsState].storedError = error;
         while (this._readWaiters.length) {
           this._readWaiters.shift()(Promise.reject(error));
         }
@@ -29,10 +35,16 @@ class __quenchReadableStream {
     this._enqueue = controller.enqueue;
     this._close = controller.close;
     this._errorStream = controller.error;
-    this[__quenchWebStreamsState] = { controller };
+    this[__quenchWebStreamsState].controller = controller;
     source.start?.(controller);
   }
   getReader() {
+    if (this.locked) {
+      const error = new TypeError("Invalid state: stream is locked");
+      error.code = "ERR_INVALID_STATE";
+      throw error;
+    }
+    this.locked = true;
     const stream = this;
     return {
       read: async () => {
@@ -43,14 +55,35 @@ class __quenchReadableStream {
         if (stream._closed) return { value: undefined, done: true };
         return new Promise((resolve) => stream._readWaiters.push(resolve));
       },
-      releaseLock() {}
+      cancel: async (reason) => {
+        stream._closed = true;
+        stream[__quenchWebStreamsState].state = "closed";
+        await stream._cancel?.(reason);
+        stream._cancelReason = reason;
+        while (stream._readWaiters.length) {
+          stream._readWaiters.shift()({ value: undefined, done: true });
+        }
+      },
+      releaseLock() {
+        stream.locked = false;
+      }
     };
   }
   cancel() {
+    if (this.locked) {
+      const error = new TypeError("Invalid state: stream is locked");
+      error.code = "ERR_INVALID_STATE";
+      return Promise.reject(error);
+    }
     this._closed = true;
     return Promise.resolve();
   }
   pipeThrough(transform) {
+    if (this.locked) {
+      const error = new TypeError("Invalid state: stream is locked");
+      error.code = "ERR_INVALID_STATE";
+      throw error;
+    }
     const writer = transform.writable.getWriter();
     const reader = this.getReader();
     (async () => {
@@ -62,6 +95,31 @@ class __quenchReadableStream {
       await writer.close();
     })();
     return transform.readable;
+  }
+  pipeTo(destination) {
+    if (this.locked) {
+      const error = new TypeError("Invalid state: stream is locked");
+      error.code = "ERR_INVALID_STATE";
+      return Promise.reject(error);
+    }
+    const reader = this.getReader();
+    const writer = destination.getWriter();
+    return (async () => {
+      for (;;) {
+        const item = await reader.read();
+        if (item.done) break;
+        await writer.write(item.value);
+      }
+      await writer.close();
+    })();
+  }
+  tee() {
+    if (this.locked) {
+      const error = new TypeError("Invalid state: stream is locked");
+      error.code = "ERR_INVALID_STATE";
+      throw error;
+    }
+    throw new Error("ReadableStream tee is not implemented");
   }
   async *[Symbol.asyncIterator]() {
     const reader = this.getReader();
@@ -75,13 +133,27 @@ class __quenchReadableStream {
 class __quenchWritableStream {
   constructor(sink = {}) {
     this._sink = sink;
+    this.locked = false;
+    this[__quenchWebStreamsState] = { state: "writable" };
   }
   getWriter() {
+    if (this.locked) {
+      const error = new TypeError("Invalid state: stream is locked");
+      error.code = "ERR_INVALID_STATE";
+      throw error;
+    }
+    this.locked = true;
     const sink = this._sink;
+    const stream = this;
     return {
       write: (value) => Promise.resolve(sink.write?.(value)),
-      close: () => Promise.resolve(sink.close?.()),
-      releaseLock() {}
+      close: async () => {
+        await sink.close?.();
+        stream[__quenchWebStreamsState].state = "closed";
+      },
+      releaseLock() {
+        stream.locked = false;
+      }
     };
   }
 }
@@ -92,6 +164,10 @@ class __quenchTransformStream {
       enqueue: (item) => this.readable._enqueue(item),
       close: () => this.readable._close(),
       error: (error) => {
+        this.readable[__quenchWebStreamsState].state = "errored";
+        this.readable[__quenchWebStreamsState].storedError = error;
+        this.writable[__quenchWebStreamsState].state = "errored";
+        this.writable[__quenchWebStreamsState].storedError = error;
         this.readable._errorStream(error);
       }
     };
