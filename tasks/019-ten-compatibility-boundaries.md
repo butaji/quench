@@ -499,6 +499,10 @@ The plain-iterable probe isolated `stream/iter` synchronous decoding from VFS:
 adds an explicit bounded synchronous chunk path for `bytesSync()` and
 `textSync()`; the focused adapter regression is included for verification.
 
+Stage 2435 confirms `textSync(handle.pullSync())` now passes through the fixed
+adapter. The authoritative pull-sync fixture still exceeds the timeout later
+in its transform/auto-close matrix, so the aggregate remains open.
+
 Stage 2431 fixes absolute symlink targets inside a `RealFSProvider` root by
 preserving the host absolute target instead of incorrectly joining it twice.
 The focused absolute-link/realpath regression passes.
