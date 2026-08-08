@@ -215,6 +215,16 @@ fn make_array_iterator(
     let next_fn = NativeFunction::new(move |_| {
         let mut res = Object::new(ObjectKind::Ordinary);
         let mut i = index.borrow_mut();
+        let idx_str = i.to_string();
+        if arr_rc.borrow().has_getter(&idx_str) || arr_rc.borrow().has_setter(&idx_str) {
+            // Accessor element: read through the property path so the getter
+            // runs (and can throw).
+            let v = crate::eval::member::eval_object_member(&arr_rc, &idx_str, None)?;
+            res.set("value", v);
+            res.set("done", Value::Boolean(false));
+            *i += 1;
+            return Ok(Value::Object(Rc::new(RefCell::new(res))));
+        }
         let arr = arr_rc.borrow();
         if *i < arr.elements.len() {
             res.set("value", per_step(&arr, *i));
@@ -273,6 +283,16 @@ fn array_values_iterator(_args: Vec<Value>) -> Result<Value, JsError> {
     let next_fn = NativeFunction::new(move |_| {
         let mut res = Object::new(ObjectKind::Ordinary);
         let mut i = index.borrow_mut();
+        let idx_str = i.to_string();
+        if arr_rc.borrow().has_getter(&idx_str) || arr_rc.borrow().has_setter(&idx_str) {
+            // Accessor element: read through the property path so the getter
+            // runs (and can throw).
+            let v = crate::eval::member::eval_object_member(&arr_rc, &idx_str, None)?;
+            res.set("value", v);
+            res.set("done", Value::Boolean(false));
+            *i += 1;
+            return Ok(Value::Object(Rc::new(RefCell::new(res))));
+        }
         let arr = arr_rc.borrow();
         if *i < arr.elements.len() {
             let v = arr
