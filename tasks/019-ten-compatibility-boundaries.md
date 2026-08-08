@@ -38,4 +38,7 @@ own commit.
   client/server keep-alive fixtures still have callback/lifecycle gaps.
 - Item 5: partially improved. Stage 2338 verifies terminal write errors after
   a non-half-open peer EOF; raw HTTP framing over native `net` remains queued.
-- Items 6–10: queued.
+- Item 6: partially improved. Stage 2339 verifies two concurrent HTTP requests
+  with independent response bodies and clean shutdown; upstream multi-request
+  failures remain specific to harness/agent interactions.
+- Items 7–10: queued.
