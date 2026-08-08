@@ -288,7 +288,7 @@ globalThis.process = {
       }
     }
   ),
-  argv: [globalThis.__quench_exec_path, ...globalThis.__quench_argv.slice(1)],
+  argv: ["quench-node", ...globalThis.__quench_argv.slice(1)],
   execPath: globalThis.__quench_exec_path,
   pid: globalThis.__quench_pid,
   ppid: globalThis.__quench_ppid,
