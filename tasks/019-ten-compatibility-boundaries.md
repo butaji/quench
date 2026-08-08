@@ -126,7 +126,9 @@ errors=0`); a direct finish-guard change was reverted pending an
   now uses `Reflect.construct(Constructor, args, new.target || Constructor)`;
   the focused subclass regression passes. The upstream duplicate-callback
   fixture remains to be rerun through the harness after its path/runner
-  invocation is normalized.
+  invocation is normalized. The runner probe found that positional fixture
+  execution exits silently, while `--test-dir <fixture>` reports the result;
+  `tools/run-node-tests.sh` now uses the explicit mode for single files.
 
 ## New fs evidence
 
