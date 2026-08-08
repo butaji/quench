@@ -126,6 +126,16 @@ const __quenchDgramSend = (socket, message, ...args) => {
       { code: "ERR_INVALID_ARG_TYPE" }
     );
   }
+  const implicitlyBound = !socket._bound && !socket._connected;
+  if (implicitlyBound) {
+    socket._implicitSend = true;
+    __quenchDgramBind(
+      socket,
+      socket.type,
+      0,
+      socket.type === "udp6" ? "::" : "0.0.0.0"
+    );
+  }
   const hasOffset =
     (!socket._connected &&
       args.length >= 2 &&
@@ -176,8 +186,8 @@ const __quenchDgramSend = (socket, message, ...args) => {
   if (address === "localhost" && !socket._skipDgramLookup) {
     socket._skipDgramLookup = true;
     socket[__quenchDgramStateSymbol].handle.lookup(address, (error) => {
-      socket._skipDgramLookup = false;
       if (error) {
+        socket._skipDgramLookup = false;
         queueMicrotask(() => {
           if (typeof callback === "function") callback(error);
           else socket.emit("error", error);
@@ -185,6 +195,7 @@ const __quenchDgramSend = (socket, message, ...args) => {
         return;
       }
       __quenchDgramSend(socket, message, ...args);
+      socket._skipDgramLookup = false;
     });
     return socket;
   }
@@ -355,7 +366,10 @@ const __quenchDgramSend = (socket, message, ...args) => {
         size: deliveredPayload.byteLength
       });
     }
-    if (target && typeof callback === "function") callback(null, length);
+    if ((target || socket._implicitSend) && typeof callback === "function") {
+      callback(null, length);
+      socket._implicitSend = false;
+    }
   });
   return socket;
 };
@@ -853,9 +867,9 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
           typeof familyOrCallback === "function"
             ? familyOrCallback
             : maybeCallback;
-        setImmediate(() =>
-          callback(null, address === "localhost" ? "127.0.0.1" : address)
-        );
+        setImmediate(() => {
+          callback(null, address === "localhost" ? "127.0.0.1" : address);
+        });
       },
       onmessage(status) {
         if (status >= 0) return;
