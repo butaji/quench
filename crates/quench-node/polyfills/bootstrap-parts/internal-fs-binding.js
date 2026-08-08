@@ -6,6 +6,19 @@ globalThis.__quenchInternalFsBinding = {
   }
 };
 globalThis.__quenchInternalFallbackBinding = { fstat: () => undefined };
+globalThis.__quenchDgramUDPClass = class UDP {
+  constructor() {
+    this.fd = -1;
+  }
+  bind(address, _port, _flags) {
+    if (address === "localhost") return -99;
+    this.fd = 1;
+    return 0;
+  }
+  close() {
+    this.fd = -1;
+  }
+};
 globalThis.__quenchInternalBindingCore = (binding) => {
   if (binding === "buffer") {
     return {
@@ -31,6 +44,7 @@ globalThis.__quenchInternalBindingCore = (binding) => {
       fstat: (fd) => globalThis.__nodeFs.fstatSync(fd)
     });
   }
+  if (binding === "udp_wrap") return { UDP: globalThis.__quenchDgramUDPClass };
   if (binding === "os") return globalThis.__quenchInternalOsBinding;
   if (binding === "debug") {
     return {
