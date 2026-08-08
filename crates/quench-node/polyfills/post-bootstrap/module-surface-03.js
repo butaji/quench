@@ -14,6 +14,21 @@ const __quenchAddStreamWebCompat = (result) => {
   result.Duplex.toWeb ||= () => ({});
   result.Duplex.fromWeb ||= (value) => value;
 };
+const __quenchComposeWritable = (stage) => {
+  if (stage && typeof stage.pipe === "function") {
+    return stage.writable !== false;
+  }
+  return typeof stage === "function" && stage.length > 0;
+};
+const __quenchComposeReadable = (stage) => {
+  if (stage && typeof stage.pipe === "function") {
+    return stage.readable !== false;
+  }
+  if (typeof stage !== "function") {
+    return Boolean(stage?.[Symbol.iterator] || stage?.[Symbol.asyncIterator]);
+  }
+  return String(stage.constructor?.name).includes("GeneratorFunction");
+};
 const __quenchComposeStreams = (streams, result) => {
   if (streams.length === 0) {
     const error = new TypeError(
@@ -51,6 +66,8 @@ const __quenchComposeStreams = (streams, result) => {
         })().then(() => callback(), callback);
       }
     });
+    composed.writable = __quenchComposeWritable(streams[0]);
+    composed.readable = __quenchComposeReadable(streams[streams.length - 1]);
     return composed;
   }
   const first = streams[0];

@@ -948,3 +948,13 @@ import and top-level-await stage passes, as does the complete authoritative
 `test-stream-some-find-every.mjs` fixture. Existing ESM builtin-import and
 top-level-await stages, all five upstream readable-helper fixtures, both Rust
 tests, and the representative application stages remain green.
+
+Stage 2471 derives the readable and writable sides of a composed Duplex from
+its endpoint stages. An iterable source disables the writable side, a terminal
+async consumer disables the readable side, and generator transforms retain
+both sides. The focused readable/writable/transform/source-to-sink shape matrix
+passes with the maintained compose, combinator, Duplex, and pipeline stages.
+Authoritative `test-stream-compose.js` advances beyond its `readable === false`
+assertion to the later zero-argument error-code check, which remains a separate
+validation boundary. Rust tests and all representative application stages stay
+green.
