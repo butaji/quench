@@ -725,3 +725,9 @@ Stream, and stage 2161 invokes callable sources and handles async-function
 rejections plus `ERR_INVALID_RETURN_VALUE`. Both focused contracts pass;
 upstream `test-stream-duplex-from.js` advances to an object-wrapped readable
 adapter case.
+
+Focused stage 2162 verifies Node readable objects nested in `Duplex.from()`;
+stage 2163 routes nested and direct Web Streams through the Web adapter and
+preserves disabled sides. Both focused contracts pass, and upstream
+`test-stream-duplex-from.js` advances through the Web input cases to a later
+side-state assertion.
