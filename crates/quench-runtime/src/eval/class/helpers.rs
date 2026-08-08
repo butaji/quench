@@ -105,11 +105,7 @@ fn new_instance(class: &ClassValue, env: &Rc<RefCell<Environment>>) -> Result<Va
     let mut instance = Object::new(ObjectKind::Ordinary);
     instance.prototype = Some(Rc::clone(&proto_rc));
     let instance_rc = Rc::new(RefCell::new(instance));
-    let this_val = Value::Object(Rc::clone(&instance_rc));
-    instance_rc
-        .borrow_mut()
-        .set("constructor", Value::Class(Box::new(class.clone())));
-    Ok(this_val)
+    Ok(Value::Object(Rc::clone(&instance_rc)))
 }
 
 fn run_ctor_body(
