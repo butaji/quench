@@ -120,12 +120,27 @@ const __quenchResolve = (specifier, parent, options) => {
   ) {
     return specifier;
   }
+  const suppliedPath = options?.paths?.find(
+    (value, index, values) =>
+      !values.some(
+        (other, otherIndex) =>
+          otherIndex !== index &&
+          value.startsWith(`${path.resolve(other)}${path.sep}`)
+      )
+  );
   const lookupParent =
-    (options?.paths?.[0] && path.resolve(options.paths[0], "index.js")) ||
-    parent;
+    (suppliedPath && path.resolve(suppliedPath, "index.js")) || parent;
   let filename;
   if (specifier.startsWith(".") || specifier.startsWith("/")) {
     filename = __quenchLocalModulePath(specifier, lookupParent);
+  } else if (
+    suppliedPath &&
+    path.basename(path.resolve(suppliedPath)) === "node_modules"
+  ) {
+    filename = __quenchLocalModulePath(
+      specifier,
+      path.join(suppliedPath, "index.js")
+    );
   } else {
     filename = __quenchPackagePath(specifier, lookupParent);
   }

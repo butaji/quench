@@ -576,6 +576,13 @@ returns `null` from `require.resolve.paths()` for those names, matching Node’s
 non-filesystem resolution contract. The broader `test-require-resolve.js`
 fixture remains open around custom `options.paths` ordering.
 
+Focused stage 2118 removes descendant duplicates from explicit
+`require.resolve(..., { paths })` lookup lists, matching Node’s handling of
+nested `node_modules` entries. The focused path-order contract passes.
+The broader `test-require-resolve.js` fixture now advances past its path-order
+assertions and remains open at trailing-slash package entry resolution
+(`no_index/`).
+
 Focused stage 2116 uses `module.globalPaths` when resolving bare packages, so
 packages provided through `NODE_PATH` load without a local `node_modules`
 entry. The focused global-package contract passes.
