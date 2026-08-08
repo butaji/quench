@@ -355,6 +355,7 @@ const __quenchNetModule = {
       if (this._nativeId) {
         __quench_tcp_close(this._nativeId);
         this._nativeId = 0;
+        __quenchNativeSockets.delete(this);
       }
       queueMicrotask(() => this.emit("close"));
       return this;
@@ -623,14 +624,16 @@ const __quenchNetModule = {
 globalThis.__quench_io_poll = () => {
   for (const server of __quenchNetServers) {
     if (!server._nativeTransport || !server._nativeId) continue;
-    const nativeId = __quench_tcp_accept(server._nativeId);
-    if (!nativeId) continue;
-    const socket = new __quenchNetModule.Socket();
-    socket._nativeId = nativeId;
-    socket._nativeConnected = true;
-    __quenchNativeSockets.add(socket);
-    server._handler?.(socket);
-    server.emit("connection", socket);
+    for (;;) {
+      const nativeId = __quench_tcp_accept(server._nativeId);
+      if (!nativeId) break;
+      const socket = new __quenchNetModule.Socket();
+      socket._nativeId = nativeId;
+      socket._nativeConnected = true;
+      __quenchNativeSockets.add(socket);
+      server._handler?.(socket);
+      server.emit("connection", socket);
+    }
   }
   for (const socket of __quenchNativeSockets) {
     if (socket.destroyed || !socket._nativeId) continue;
