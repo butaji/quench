@@ -372,6 +372,7 @@ const __quenchDgramRemoteAddress = (socket) => {
   };
 };
 const __quenchDgramClose = (socket, callback) => {
+  socket._closed = true;
   socket._bound = false;
   __quenchDgramSockets.delete(socket);
   if (socket._address) __quenchDgramBoundPorts.delete(socket._address.port);
@@ -412,8 +413,26 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
     type,
     _sendBlockList: options?.sendBlockList,
     _receiveBlockList: options?.receiveBlockList,
-    bind: (port, address, callback) =>
-      __quenchDgramBind(socket, type, port, address, callback),
+    bind: (port, address, callback) => {
+      if (typeof address === "function") {
+        callback = address;
+        address = type === "udp6" ? "::" : "0.0.0.0";
+      }
+      const lookupAddress = address || (type === "udp6" ? "::" : "0.0.0.0");
+      socket[__quenchDgramStateSymbol].handle.lookup(
+        lookupAddress,
+        (error, resolvedAddress) => {
+          if (error) {
+            socket.emit("error", error);
+            return;
+          }
+          if (!socket._bound && !socket._closed) {
+            __quenchDgramBind(socket, type, port, resolvedAddress, callback);
+          }
+        }
+      );
+      return socket;
+    },
     bindSync: (options = {}) => {
       if (socket._bound) {
         throw Object.assign(new Error("Socket is already bound"), {
@@ -648,7 +667,14 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
     unref: () => socket
   };
   Object.assign(socket, __quenchDgramMembershipMethods(socket));
-  socket[__quenchDgramStateSymbol] = { handle: { fd: 0 } };
+  socket[__quenchDgramStateSymbol] = {
+    handle: {
+      fd: 0,
+      lookup(address, callback) {
+        queueMicrotask(() => callback(null, address));
+      }
+    }
+  };
   return socket;
 };
 const __quenchDgramValidateType = (type) => {
