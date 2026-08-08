@@ -216,6 +216,24 @@ const __quenchWebCryptoKeyBrand = (globalThis.__quenchWebCryptoKeyBrand ||=
   new WeakSet());
 const __quenchWebCryptoKeyData = (globalThis.__quenchWebCryptoKeyData ||=
   new WeakMap());
+const __quenchWebCryptoUsageOrder = [
+  "sign",
+  "verify",
+  "encrypt",
+  "decrypt",
+  "wrapKey",
+  "unwrapKey",
+  "encapsulateBits",
+  "encapsulateKey",
+  "decapsulateBits",
+  "decapsulateKey",
+  "deriveKey",
+  "deriveBits"
+];
+const __quenchWebCryptoUsages = (usages) => {
+  const unique = new Set(Array.isArray(usages) ? usages : []);
+  return __quenchWebCryptoUsageOrder.filter((usage) => unique.has(usage));
+};
 class __quenchWebCryptoKey {
   get type() {
     if (!__quenchWebCryptoKeyBrand.has(this)) {
@@ -261,7 +279,7 @@ globalThis.__quenchCloneWebCryptoKey = (source) => {
   __quenchWebCryptoKeyData.set(key, {
     ...data,
     algorithm: { ...data.algorithm },
-    usages: [...data.usages]
+    usages: __quenchWebCryptoUsages(data.usages)
   });
   return key;
 };
@@ -285,7 +303,7 @@ if (typeof globalThis.crypto.subtle.generateKey !== "function") {
         name: algorithm?.name || String(algorithm),
         hash: algorithm?.hash
       },
-      usages: Array.isArray(usages) ? [...usages] : []
+      usages: __quenchWebCryptoUsages(usages)
     });
     return key;
   };
@@ -323,7 +341,7 @@ if (typeof globalThis.crypto.subtle.importKey !== "function") {
     type: format === "raw-secret" ? "secret" : format,
     extractable: Boolean(extractable),
     algorithm: algorithm || {},
-    usages: Array.isArray(keyUsages) ? [...keyUsages] : []
+    usages: __quenchWebCryptoUsages(keyUsages)
   });
 }
 if (typeof globalThis.crypto.subtle.decrypt !== "function") {

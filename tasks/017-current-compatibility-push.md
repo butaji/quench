@@ -461,3 +461,10 @@ Focused verification for stages 2090–2097 completed at 2026-08-08T03:04:23Z:
 8/8 stages passed serially with zero failures, zero retries, and zero
 policy-covered failures. This includes the complete four-algorithm WebCrypto
 matrix and the fs.cp callback/promise option-pair contracts.
+
+Focused stage 2098 adds canonical WebCrypto usage handling to the fallback
+CryptoKey path: duplicate usages are removed and the returned list follows
+Node's order for generated, imported, and cloned keys. The focused stage
+passes. The upstream `test-webcrypto-deduplicate-usages.js` still ends with
+`Callback 0: expected 1 calls, got 0`, so its combined lifecycle mismatch is
+recorded separately from the now-covered usage-list contract.
