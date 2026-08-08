@@ -160,6 +160,7 @@ const __nodeWritableComplete = (state, stream, size, callback, error) => {
     const next = stream._writeQueue.shift();
     stream.__nodeProcessWrite(next);
   }
+  stream.__nodeMaybeFinish?.();
 };
 const __nodeReadablePushChunk = (stream, chunk) => {
   stream._readableState.reading = false;
@@ -923,8 +924,22 @@ class NodeWritable extends NodeEventEmitter {
         if (callback) callback();
       });
     };
-    if (typeof this._final === "function") this._final(finish);
-    else finish();
+    this.__nodeFinishRequest = finish;
+    this.__nodeMaybeFinish = () => {
+      if (
+        this.__nodeFinishRequest &&
+        !this._writableState.writing &&
+        !this._writeQueue.length &&
+        this.writableLength === 0
+      ) {
+        const request = this.__nodeFinishRequest;
+        this.__nodeFinishRequest = null;
+        request();
+      }
+    };
+    if (typeof this._final === "function") {
+      this._final(() => this.__nodeMaybeFinish());
+    } else this.__nodeMaybeFinish();
     return this;
   }
 }

@@ -631,3 +631,8 @@ The readable-demand guard now prevents `_read()` from being scheduled while
 the buffered length is already at `highWaterMark`. This advances the official
 backpressure fixture from 3/11 reads to 11/11 reads; its remaining assertion is
 396/410 write callbacks, isolating the next gap to final buffered-chunk drain.
+
+Writable finalization now waits for the active write and queued writes to drain
+before emitting `finish` or auto-destroying. The authoritative
+`test-stream-backpressure.js` fixture now passes at 11/11 reads and 410/410
+writes, and stage 2445 remains green.
