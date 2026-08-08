@@ -159,6 +159,13 @@ pub fn eval_statements(
         if !is_empty_completion {
             last_val = val;
         }
+        // A generator `yield` inside this statement sets the generator-yield
+        // signal. Stop here so no following statements run before the
+        // generator's next() suspends; the signal is left in place (peek, not
+        // take) so it propagates up to the generator loop.
+        if crate::interpreter::peek_generator_yield() {
+            return Ok(last_val);
+        }
         // For the last statement, DON'T check ControlFlow::Return here.
         // The caller (eval_function_body) handles the final statement specially
         // so that `return g()` (non-tail call) evaluates the expression `g()`
@@ -1086,6 +1093,13 @@ fn eval_try(
     // Handle the result
     match try_result {
         Ok(try_val) => {
+            // If the try body suspended at a generator `yield`, do NOT run the
+            // catch/finally yet — the generator suspends now and unwinds the
+            // finally only on a later resume/return. The yield signal is left
+            // in place (peek) so it propagates up to the generator loop.
+            if crate::interpreter::peek_generator_yield() {
+                return Ok(try_val);
+            }
             // Try succeeded - run finally if present, propagate control flow if needed
             if let Some(fin) = finalizer {
                 // Suspend pending control flow while finally runs.
