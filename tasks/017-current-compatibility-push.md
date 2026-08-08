@@ -833,6 +833,8 @@ pass.
 - Upstream `test-http-client-response-timeout.js` now passes after keeping response socket timeout timers active.
 - Stage 2219 propagates client-request aborts to the server-side `IncomingMessage` as Node's `aborted` event.
 - The upstream abort stress fixture still has a separate multi-request callback-count discrepancy after abort propagation.
+- Stage 2220 guarantees client-request destruction emits `close` only once under repeated/error races.
+- Upstream `test-http-client-abort-destroy.js` now passes after the close-once guard; combined timeout still reports duplicate `timeout` delivery.
 - Stage 2216 preserves `http.request()` results as `instanceof http.ClientRequest`, matching Node's public type contract.
 - The upstream timeout fixture now advances past the request-instance assertion to a later duplicate destroy/timeout callback discrepancy.
 - Upstream `test-http-hostname-typechecking.js` now passes with synchronous host-option validation.
