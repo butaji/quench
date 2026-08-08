@@ -456,3 +456,8 @@ for every key pass under quench-node. The original upstream fixture still
 reports a missing completion callback, so the remaining discrepancy is now
 isolated to its harness/lifecycle integration rather than algorithm support or
 CryptoKey own-property shape.
+
+Focused verification for stages 2090–2097 completed at 2026-08-08T03:04:23Z:
+8/8 stages passed serially with zero failures, zero retries, and zero
+policy-covered failures. This includes the complete four-algorithm WebCrypto
+matrix and the fs.cp callback/promise option-pair contracts.
