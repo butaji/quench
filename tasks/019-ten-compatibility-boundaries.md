@@ -465,3 +465,8 @@ now exposes a `kRoot` symbol with numeric entry types, lazy directory
 population, and synchronous/asynchronous content providers. The focused
 dynamic-provider stage passes, including the expected `ERR_INVALID_STATE` for
 reading async-only content synchronously and successful promise reads.
+
+Stage 2423 makes `RealFSProvider` access dispatch to the host filesystem before
+the virtual-entry lookup. Existing and missing-path promise access now pass in
+the focused regression; this removes the first concrete unresolved await from
+the real-provider promise sequence.

@@ -712,6 +712,9 @@ class __QuenchVirtualFileSystem {
     }
   }
   accessSync(path, mode = 0) {
+    if (this.__isReal()) {
+      return globalThis.__nodeFs.accessSync(this.__realPath(path), mode);
+    }
     const entry = this.__entry(path);
     if (!entry) {
       throw __quenchVfsError("ENOENT", "access", path);
