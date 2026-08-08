@@ -1,6 +1,6 @@
 # Stage 23 — test/language/statements/for
 
-**Status:** in_progress · **Path:** `test/language/statements/for`.
+**Status:** done · **Path:** `test/language/statements/for`.
 
 ```bash
 TEST262_STAGE=23 TEST262_DIGEST=1 TEST262_JSON=1 cargo test -p quench-runtime \
@@ -12,6 +12,7 @@ TEST262_STAGE=23 TEST262_DIGEST=1 TEST262_JSON=1 cargo test -p quench-runtime \
 | Date | Notes |
 |------|-------|
 | 2026-08-08 | Baseline: 259/385 failing. |
+| 2026-08-08 | 385/385. Fixed TCO loop-recursion, for-headers destructuring/multi-decl, per-iteration lexical scope, completion value. |
 
 ## Top remaining clusters
 
