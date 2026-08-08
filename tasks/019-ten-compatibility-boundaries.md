@@ -528,6 +528,12 @@ changes: Ajv (stage 2047), debug (2069), `ms` (2081), and Prettier (2104) all
 pass, as does the missing-package loader contract (2070). These gates remain
 green; ESLint is still a separate unresolved application boundary.
 
+Stage 2439's checkpoint probe runs the complete real-provider promise sequence
+from write/read through metadata, access, mkdir/readdir/rmdir, rename/unlink,
+copy, and missing-file open; every await completes in isolation. The
+authoritative fixture's callback-0 failure is therefore an aggregate harness
+interaction rather than a missing individual promise operation.
+
 Stage 2438 registers the previously missing `node:sea` module surface. It
 reports `isSea: false` in ordinary executions and exposes Node-shaped asset,
 code-cache, and snapshot methods that fail explicitly with `ERR_NOT_SUPPORTED`.
