@@ -172,22 +172,6 @@ pub fn object_prevent_extensions(args: Vec<Value>) -> Result<Value, JsError> {
 }
 
 /// Object.isExtensible(obj) - checks if object is extensible
-pub fn object_is_extensible(args: Vec<Value>) -> Result<Value, JsError> {
-    match args.first() {
-        Some(Value::Object(o)) => Ok(Value::Boolean(o.borrow().extensible)),
-        // Per ES spec, all ordinary objects (including function instances) are
-        // extensible by default. Functions are objects even though our Value
-        // variant is named `Function`.
-        Some(Value::Function(_)) => Ok(Value::Boolean(true)),
-        Some(Value::NativeFunction(_)) => Ok(Value::Boolean(true)),
-        Some(Value::NativeConstructor(_)) => Ok(Value::Boolean(true)),
-        Some(Value::Class(class)) => Ok(Value::Boolean(class.is_extensible())),
-        // Primitives are always non-extensible
-        Some(_) => Ok(Value::Boolean(false)),
-        None => Ok(Value::Boolean(false)),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::value::Value;
