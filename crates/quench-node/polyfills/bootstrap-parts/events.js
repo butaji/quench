@@ -1289,6 +1289,18 @@ const __nodeStreamExports = {
   Stream: NodeStream,
   Readable: NodeReadableCompat,
   Writable: NodeWritableCompat,
+  destroy: (stream, error, callback) => {
+    if (typeof error === "function") {
+      callback = error;
+      error = undefined;
+    }
+    if (error === undefined && stream && !stream.destroyed) {
+      error = new Error("The operation was aborted");
+      error.name = "AbortError";
+    }
+    stream?.destroy?.(error, callback);
+    return stream;
+  },
   Duplex: NodeDuplexCompat,
   duplexPair: __nodeDuplexPairFactory,
   Transform: NodeTransform,
