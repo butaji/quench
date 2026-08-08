@@ -1251,6 +1251,12 @@ const __nodeDuplexFromWeb = (pair = {}, options = {}) => {
         (error) => callback(error)
       );
     },
+    final(callback) {
+      Promise.resolve(this.__webWriter?.close?.()).then(
+        () => callback(),
+        (error) => callback(error)
+      );
+    },
     destroy(error, callback) {
       const reason =
         error ||
