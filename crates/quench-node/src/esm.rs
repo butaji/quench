@@ -169,6 +169,26 @@ fn builtin_source(name: &str) -> Option<String> {
             "setMaxListeners",
             "usingAsyncResource",
         ],
+        "stream" => &[
+            "Duplex",
+            "PassThrough",
+            "Readable",
+            "Stream",
+            "Transform",
+            "Writable",
+            "addAbortSignal",
+            "compose",
+            "destroy",
+            "duplexPair",
+            "finished",
+            "getDefaultHighWaterMark",
+            "isDisturbed",
+            "isErrored",
+            "isReadable",
+            "pipeline",
+            "promises",
+            "setDefaultHighWaterMark",
+        ],
         "fs" | "fs/promises" => &[
             "access",
             "appendFile",
@@ -277,6 +297,7 @@ impl Loader for NodeLoader {
                 "module"
                     | "assert"
                     | "events"
+                    | "stream"
                     | "fs"
                     | "fs/promises"
                     | "path"

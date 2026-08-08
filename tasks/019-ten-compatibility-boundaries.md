@@ -939,3 +939,12 @@ upstream map/filter/reduce fixtures, Rust tests, and application stages. The
 authoritative `test-stream-some-find-every.mjs` fixture still fails before
 evaluation because `stream` is not registered in the ESM builtin loader; that
 loader surface is tracked separately for the next stage.
+
+Stage 2470 registers the existing JavaScript `stream` namespace with the ESM
+builtin loader and exposes its supported classes and helper functions as named
+exports. No stream semantics move into Rust; the loader only declares bindings
+to the same CommonJS-compatible polyfill object. The focused default/named
+import and top-level-await stage passes, as does the complete authoritative
+`test-stream-some-find-every.mjs` fixture. Existing ESM builtin-import and
+top-level-await stages, all five upstream readable-helper fixtures, both Rust
+tests, and the representative application stages remain green.
