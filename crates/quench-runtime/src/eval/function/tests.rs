@@ -1090,8 +1090,7 @@ fn bind_params_arrow_no_this() {
 #[test]
 fn class_method_default_param_self_reference_throws_reference_error() {
     let mut ctx = Context::new().unwrap();
-    crate::builtins::register_builtins(&mut ctx);
-    let err = ctx
+        let err = ctx
         .eval(
             "var x = 0; \
              var callCount = 0; \

@@ -1040,8 +1040,7 @@ mod tests {
     #[test]
     fn symbol_toprimitive_computed_field_is_own_property() {
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
-        let r = ctx
+                let r = ctx
             .eval(
                 "var s = Symbol(); var obj = { [Symbol.toPrimitive]: function(){ return s; } }; \
                  class C { [obj] = 42; } var c = new C(); \
@@ -1054,8 +1053,7 @@ mod tests {
     #[test]
     fn symbol_computed_instance_field_is_own_property() {
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
-        let r = ctx
+                let r = ctx
             .eval(
                 "var s = Symbol(); class C { [s] = 42; } var c = new C(); \
                  Object.prototype.hasOwnProperty.call(c, s)",
@@ -1067,8 +1065,7 @@ mod tests {
     #[test]
     fn class_extends_null_prototype_has_null_proto_with_builtins() {
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
-        let r = ctx
+                let r = ctx
             .eval("class Foo extends null {} Object.getPrototypeOf(Foo.prototype)")
             .unwrap();
         assert_eq!(r, Value::Null);
@@ -1077,8 +1074,7 @@ mod tests {
     #[test]
     fn class_extends_null() {
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
-        let r = ctx
+                let r = ctx
             .eval("class C extends null {} Object.getPrototypeOf(C) === Function.prototype")
             .unwrap();
         assert_eq!(r, Value::Boolean(true));
@@ -1207,8 +1203,7 @@ mod tests {
     #[test]
     fn prod_private_method_with_builtins_and_hasprop() {
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
-        let r = ctx
+                let r = ctx
             .eval(
                 "function hasProp(obj, name, expected, msg) { \
                    var hasOwnProperty = Object.prototype.hasOwnProperty.call(obj, name); \
@@ -1237,8 +1232,7 @@ mod tests {
     #[test]
     fn prod_private_method_function_name_is_hash_m() {
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
-        let r = ctx
+                let r = ctx
             .eval("class C { #m() { return 42; } get n() { return this.#m.name; } } new C().n")
             .unwrap();
         assert_eq!(r, Value::String("#m".into()));
@@ -1247,8 +1241,7 @@ mod tests {
     #[test]
     fn class_ctor_expression_statement_promise_does_not_replace_this() {
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
-        let r = ctx
+                let r = ctx
             .eval(
                 "class C { \
                    async #m() { return 42; } \
@@ -1263,8 +1256,7 @@ mod tests {
     #[test]
     fn prod_private_async_method_ref_lost_after_ctor_promise() {
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
-        let r = ctx
+                let r = ctx
             .eval(
                 "class C { \
                    async #m() { return 42; } \
@@ -1300,8 +1292,7 @@ mod tests {
     #[test]
     fn reflect_has_does_not_break_private_method_getter() {
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
-        let without =
+                let without =
             ctx.eval("class C { #m() { return 42; } get ref() { return this.#m; } } new C().ref()");
         let with = ctx.eval(
             "class C { \
@@ -3131,8 +3122,7 @@ mod tests {
 
     fn eval_with_builtins(src: &str) -> Result<Value, crate::value::JsError> {
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
-        ctx.eval(src)
+                ctx.eval(src)
     }
 
     #[test]

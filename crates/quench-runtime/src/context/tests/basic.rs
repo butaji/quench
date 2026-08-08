@@ -295,8 +295,7 @@ fn test_eval_program_skips_parse_and_matches_eval() {
     let program = crate::parser::parse_script_ir(source).expect("parse ok");
 
     let mut ctx = Context::new().unwrap();
-    crate::builtins::register_builtins(&mut ctx);
-    let result = ctx.eval_program(&program, source);
+        let result = ctx.eval_program(&program, source);
     assert_eq!(
         result,
         Ok(Value::Number(2.0)),

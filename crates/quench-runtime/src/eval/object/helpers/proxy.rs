@@ -230,8 +230,7 @@ mod tests {
     #[test]
     fn public_class_field_define_property_observable_by_proxy() {
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
-        let r = ctx.eval(
+                let r = ctx.eval(
             "let arr = []; \
              function ProxyBase() { \
                return new Proxy(this, { \
@@ -251,8 +250,7 @@ mod tests {
     #[test]
     fn public_class_field_proxy_define_property_throws() {
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
-        let err = ctx.eval(
+                let err = ctx.eval(
             "function ProxyBase() { \
                return new Proxy(this, { defineProperty() { throw new Error('proxy'); } }); \
              } \
