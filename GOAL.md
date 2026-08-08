@@ -3,7 +3,7 @@
 ## Goal
 
 - 100% ECMA-262 test262 on quench-runtime — staged, pinned to the
-  submodule commit in `tasks/index.json`, no undocumented skips.
+  submodule commit in `tasks/index.json`, no undocumented skips. All unit tests green (no skips).
 - SSOT -- test run. After you reached 100% on a stage, you have to run all stages 0-current and make sure its all on 100% before moving next.
 - North star (ADR 0003): two planes — ECMAScript execution (always
   correct) + persistent TypeScript semantic plane, meeting only through

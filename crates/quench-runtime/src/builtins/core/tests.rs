@@ -49,7 +49,6 @@ mod tests {
         let obj = ctx.eval("({ valueOf() { return 99n } })").unwrap();
         let prim = to_primitive(&obj, Some("number")).unwrap();
         // valueOf returns BigInt; toPrimitive for BigInt returns it as-is
-        use std::rc::Rc;
         use num_bigint::BigInt;
         assert!(matches!(prim, Value::BigInt(_)));
         let Value::BigInt(bi) = prim else { unreachable!() };
