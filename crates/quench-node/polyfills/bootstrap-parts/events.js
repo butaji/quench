@@ -19,14 +19,21 @@ const __nodeWritableWriteError = (stream, callback, error) => {
   return false;
 };
 const __nodeWritableDestroyComplete = (stream, callback, error) => {
+  if (stream.__destroyCompleteScheduled) return;
+  stream.__destroyCompleteScheduled = true;
   if (error) {
     stream._writableState.errored = error;
-    stream._writableState.errorEmitted = true;
-    if (!callback) stream.emit("error", error);
+    stream.errored = error;
   }
-  stream.closed = true;
-  stream.emit("close");
-  if (callback) callback(error);
+  queueMicrotask(() => {
+    if (error) {
+      stream._writableState.errorEmitted = true;
+      if (!callback) stream.emit("error", error);
+    }
+    stream.closed = true;
+    stream.emit("close");
+    if (callback) callback(error);
+  });
 };
 globalThis.__nodeEventEmitter.once = (emitter, event) =>
   new Promise((resolve) => {
