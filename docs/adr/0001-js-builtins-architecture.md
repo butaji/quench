@@ -13,9 +13,13 @@
   consequence of that rule, not a target in itself — Rust is expected to
   shrink as builtins migrate (existing Rust builtins get deleted per-stage).
 - Enforcement rule (confirmed 2026-08-08, applies unconditionally):
-  no new Rust builtins — anything implementable in JS lands in JS first;
-  the 21 stages already done in Rust are migration debt to be repaid under
-  R0, not final state.
+  **aggressive JS-first** — default every new builtin/spec-op to JS. Only two
+  exceptions keep a piece in Rust: (a) the JS implementation would take the
+  same or more LOC than the Rust equivalent (Rust wins on size), or (b) it is a
+  very sensitive core feature (property/value store, GC, the interpreter,
+  `__ops__` itself, the parser). When in doubt, write it in JS. The 21 stages
+  already done in Rust are migration debt to be repaid under R0, not final
+  state.
 - Mechanism: `__ops__` bridge (`eval/ops.rs` + `builtins/core/ops_wrapper.rs`,
   currently a scaffold) and `builtins/bootstrap.rs` (planned), per
   `tasks/refactor-plan.md` items R1 (PHASE-B) and R0 (PHASE-B).
