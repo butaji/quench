@@ -166,7 +166,10 @@ const __nodeWritableComplete = (state, stream, size, callback, error) => {
 const __nodeReadablePushChunk = (stream, chunk) => {
   stream._readableState.reading = false;
   stream._readableState.readingMore = true;
-  if (stream._paused || stream.listenerCount("data") === 0) {
+  if (
+    stream._paused ||
+    (stream.listenerCount("data") === 0 && stream.readableFlowing !== true)
+  ) {
     stream._chunks.push(chunk);
     if (stream.listenerCount("readable")) {
       __nodeReadableScheduleReadable(stream);
@@ -174,7 +177,8 @@ const __nodeReadablePushChunk = (stream, chunk) => {
   } else {
     stream._readableState.dataEmitted = true;
     stream._readableState.needReadable = false;
-    stream.emit("data", stream._decode(chunk));
+    if (stream.listenerCount("data"))
+      stream.emit("data", stream._decode(chunk));
   }
   const length = chunk?.byteLength ?? chunk?.length ?? 0;
   if (length < stream.readableHighWaterMark) {
@@ -1335,6 +1339,10 @@ class NodePassThrough extends NodeTransform {
     };
   }
   push(chunk) {
+    if (chunk === null && this._readableChunks.length) {
+      this.__passThroughEndPending = true;
+      return false;
+    }
     const acceptedBySurface = super.push(chunk);
     if (chunk === null || chunk === undefined) return acceptedBySurface;
     return (
@@ -1344,6 +1352,18 @@ class NodePassThrough extends NodeTransform {
   }
   read() {
     const chunk = super.read();
+    if (
+      this.__passThroughEndPending &&
+      !this._readableChunks.length &&
+      !this.__passThroughEndScheduled
+    ) {
+      this.__passThroughEndScheduled = true;
+      queueMicrotask(() => {
+        this.__passThroughEndPending = false;
+        this.__passThroughEndScheduled = false;
+        super.push(null);
+      });
+    }
     if (
       this.__passThroughPendingCallback &&
       this.readableLength < this.readableHighWaterMark
