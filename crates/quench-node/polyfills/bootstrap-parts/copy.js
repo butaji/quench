@@ -270,7 +270,50 @@ const __nodeBufferEncodedString = (buffer, encoding) => {
     }
     return result;
   }
-  return new NodeTextDecoder().decode(buffer);
+  let result = "";
+  for (let index = 0; index < buffer.length; index++) {
+    const first = Number(buffer[index]);
+    if (first < 0x80) {
+      result += String.fromCharCode(first);
+      continue;
+    }
+    let length;
+    let codePoint;
+    if (first >= 0xc2 && first <= 0xdf) {
+      length = 2;
+      codePoint = first & 0x1f;
+    } else if (first >= 0xe0 && first <= 0xef) {
+      length = 3;
+      codePoint = first & 0x0f;
+    } else if (first >= 0xf0 && first <= 0xf4) {
+      length = 4;
+      codePoint = first & 0x07;
+    } else {
+      result += "\ufffd";
+      continue;
+    }
+    if (index + length > buffer.length) {
+      result += "\ufffd";
+      continue;
+    }
+    let valid = true;
+    for (let offset = 1; offset < length; offset++) {
+      const next = Number(buffer[index + offset]);
+      if ((next & 0xc0) !== 0x80) {
+        valid = false;
+        break;
+      }
+      codePoint = (codePoint << 6) | (next & 0x3f);
+    }
+    const minimum = length === 2 ? 0x80 : length === 3 ? 0x800 : 0x10000;
+    if (!valid || codePoint < minimum || codePoint > 0x10ffff) {
+      result += "\ufffd";
+      continue;
+    }
+    result += String.fromCodePoint(codePoint);
+    index += length - 1;
+  }
+  return result;
 };
 NodeBuffer = class NodeBuffer extends __NodeBufferBase01 {
   copy(target, targetStart = 0, sourceStart = 0, sourceEnd = this.length) {
