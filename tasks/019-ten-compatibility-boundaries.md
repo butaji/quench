@@ -36,4 +36,6 @@ own commit.
 - Item 4: partially improved. Stages 2336–2337 apply connection and server
   `keepAlive`/`keepAliveInitialDelay` options to socket handles; the larger
   client/server keep-alive fixtures still have callback/lifecycle gaps.
-- Items 5–10: queued.
+- Item 5: partially improved. Stage 2338 verifies terminal write errors after
+  a non-half-open peer EOF; raw HTTP framing over native `net` remains queued.
+- Items 6–10: queued.
