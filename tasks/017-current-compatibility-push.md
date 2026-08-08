@@ -790,3 +790,4 @@ pass.
 - Full focused-stage audit on 2026-08-08 covered 2,071 stage directories: 2,065 passed and 6 failed (456, 466, 475, 1866, 2135, 2150). After Stage 2182, 456, 475, and 2135 pass; 466 remains a no-custom-destroy event-ordering issue, 1866 a Duplex data issue, and 2150 a liveness timeout after assertions pass.
 - Stage 2183: preserve `new.target` through the `Duplex` compatibility wrapper so subclass `_read()`/`_write()` methods remain on the constructed prototype. Upstream-derived stage 1866 now passes.
 - Stage 2184: flatten the no-custom-destroy completion path so writable `close` and destroy callbacks remain deferred but run before a zero-delay timer, matching stage 466 and preserving stages 2175–2181.
+- Stage 2185: replace the Web Streams reader's infinite microtask polling with resolver-based pending reads. Stage 2150 now exits cleanly after delivering its data, and related Web/Duplex stages 2151–2153, 2160, 2163, and 2164 remain green.
