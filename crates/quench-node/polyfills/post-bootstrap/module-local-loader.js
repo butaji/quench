@@ -296,7 +296,14 @@ const __quenchLoadLocalModule = (specifier, parent) => {
       return childExports;
     }
     try {
-      return __quenchOriginalRequireWithLocalModules(name);
+      const result = __quenchOriginalRequireWithLocalModules(name);
+      return globalThis.__quenchFinalizeModule
+        ? globalThis.__quenchFinalizeModule(
+            name,
+            (specifier) => __quenchOriginalRequireWithLocalModules(specifier),
+            result
+          )
+        : result;
     } catch (_) {
       return __quenchLoadLocalModule(name.replace(/\/+$/, ""), filename);
     }
@@ -328,7 +335,14 @@ globalThis.require = (specifier) => {
   const name = specifier;
   if (!name.startsWith(".") && !name.startsWith("/")) {
     try {
-      return __quenchOriginalRequireWithLocalModules(specifier);
+      const result = __quenchOriginalRequireWithLocalModules(specifier);
+      return globalThis.__quenchFinalizeModule
+        ? globalThis.__quenchFinalizeModule(
+            specifier,
+            (name) => __quenchOriginalRequireWithLocalModules(name),
+            result
+          )
+        : result;
     } catch (_) {
       return __quenchLoadLocalModule(
         name.replace(/\/+$/, ""),
