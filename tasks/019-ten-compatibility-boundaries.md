@@ -653,3 +653,8 @@ The readable-demand guard was corrected for `highWaterMark: 0`, which must
 still permit an initial `_read()` call. The authoritative
 `test-stream-readable-hwm-0.js` now passes, and the backpressure stage remains
 green.
+
+The authoritative `test-timers-ordering.js` fixture now passes after exposing
+the internal `timers.getLibuvNow()` binding through the host monotonic clock.
+This verifies 30 successive one-millisecond callbacks preserve both order and
+monotonic timestamp behavior.

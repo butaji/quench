@@ -1161,6 +1161,12 @@ const __quenchInternalBindingModule = {
     if (binding === "udp_wrap") {
       return { UDP: globalThis.__quenchDgramUDPClass };
     }
+    if (binding === "timers") {
+      return {
+        getLibuvNow: () =>
+          Number(BigInt(globalThis.__quench_now_ns()) / 1000000n)
+      };
+    }
     if (binding === "js_stream") {
       return {
         JSStream: class JSStream {
