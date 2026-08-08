@@ -563,6 +563,9 @@ const __quenchApplyFinalModule01 = (name, originalRequire) => {
     result.setImmediate[promisifyCustom] = result.promises.setImmediate;
   }
   result = __quenchApplyFinalSurface(normalized, result);
+  if (normalized === "buffer" && globalThis.Blob) {
+    result.Blob = globalThis.Blob;
+  }
   if (normalized === "fs") {
     globalThis.__quenchFsConstantsModule ||= result.constants;
     result.constants = globalThis.__quenchFsConstantsModule;
