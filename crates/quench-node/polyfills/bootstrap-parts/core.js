@@ -2824,6 +2824,16 @@ let __quenchHttpModule;
           !(target instanceof URL)
         ) {
           requestOptions = { ...target, method: "GET" };
+          if (
+            typeof requestOptions.path === "string" &&
+            /[^\u0021-\u00ff]/.test(requestOptions.path)
+          ) {
+            const error = new TypeError(
+              "Request path contains unescaped characters"
+            );
+            error.code = "ERR_UNESCAPED_CHARACTERS";
+            throw error;
+          }
           target = `http://${target.hostname || target.host || "localhost"}:${
             target.port || 80
           }${target.path || `${target.pathname || "/"}${target.search || ""}`}`;
