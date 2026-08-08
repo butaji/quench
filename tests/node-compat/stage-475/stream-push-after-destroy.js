@@ -1,16 +1,9 @@
 const { Readable } = require("stream");
 
-const stream = new Readable();
+const stream = new Readable({ read() {} });
 stream.destroy();
-let error;
-try {
-  stream.push("late");
-} catch (caught) {
-  error = caught;
-}
-
-if (!error || error.code !== "ERR_STREAM_DESTROYED") {
-  throw new Error("push-after-destroy error code was missing");
+if (stream.push("late") !== false || !stream.destroyed) {
+  throw new Error("push-after-destroy result was incorrect");
 }
 
 console.log("stream push after destroy passed");

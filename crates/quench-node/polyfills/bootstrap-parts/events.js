@@ -499,11 +499,6 @@ class NodeReadable extends NodeEventEmitter {
   }
   push(chunk, encoding) {
     if (this.destroyed && !this._ended && chunk !== null) {
-      const error = new Error("Cannot call push after a stream was destroyed");
-      error.code = "ERR_STREAM_DESTROYED";
-      if (__nodeHasUserErrorListener(this))
-        queueMicrotask(() => this.emit("error", error));
-      else throw error;
       return false;
     }
     if (this.__nodeDuplex && this.readable === false && chunk !== null) {
