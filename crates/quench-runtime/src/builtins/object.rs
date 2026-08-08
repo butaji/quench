@@ -13,7 +13,7 @@ use crate::builtins::object_static::{
     object_assign, object_create, object_define_property, object_entries, object_freeze,
     object_from_entries, object_get_own_property_descriptor, object_get_own_property_names,
     object_has_own, object_is_frozen,
-    object_keys, object_prevent_extensions, object_set_prototype_of, object_values,
+    object_keys, object_prevent_extensions, object_values,
 };
 use crate::value::{NativeConstructor, NativeFunction, Object, ObjectKind, Value};
 use crate::Context;
@@ -102,10 +102,7 @@ pub fn register_object(ctx: &mut Context) {
         Value::NativeFunction(Rc::new(NativeFunction::new(object_from_entries))),
     );
     // Object.getPrototypeOf is self-hosted in JS (builtins/core/object_statics.js).
-    constructor.set_static_method(
-        "setPrototypeOf",
-        Value::NativeFunction(Rc::new(NativeFunction::new(object_set_prototype_of))),
-    );
+    // Object.setPrototypeOf is self-hosted in JS (builtins/core/object_statics.js).
     constructor.set_static_method(
         "preventExtensions",
         Value::NativeFunction(Rc::new(NativeFunction::new(object_prevent_extensions))),

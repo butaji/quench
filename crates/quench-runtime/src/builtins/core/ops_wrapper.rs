@@ -237,6 +237,20 @@ pub fn register_ops_object(ctx: &mut Context) {
         },
     );
 
+    // setPrototypeOf(obj, proto)
+    let set_prototype_of_fn =
+        NativeFunction::new(crate::builtins::object_static::object_set_prototype_of);
+    ops.define(
+        "setPrototypeOf",
+        Value::NativeFunction(Rc::new(set_prototype_of_fn)),
+        PropertyFlags {
+            value: None,
+            writable: false,
+            enumerable: false,
+            configurable: false,
+        },
+    );
+
     // throwTypeError(message)
     let throw_type_error_fn = NativeFunction::new(|args: Vec<Value>| {
         let msg = args
