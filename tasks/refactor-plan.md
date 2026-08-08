@@ -19,7 +19,8 @@ boundaries. Architecture is a small Rust core + self-hosted JS builtins
 `tasks/10-ways-to-speed-up.md` (Phases A → B → C) — this file is the
 work queue behind that path.
 
-Everything below follows the `AGENTS.md` failing-test-first cycle and
+Everything below follows the `AGENTS.md` rules (no TDD — unit tests only
+as regression guards or refactor pins; test262 stage run is the gate) and
 the linter gate (`-D warnings`; files ≤ 500 lines, functions ≤ 40
 lines, complexity ≤ 10, ≤ 3 bool params, no `#[allow]` and no
 deferrals). Lint limits apply to every touched file; do not queue
@@ -135,7 +136,8 @@ private copies remain in `builtins/*.rs` and `eval/`.
       `get_iterator`, `iterator_next`, `iterator_step`,
       `iterator_close`, `create_iter_result_object`, `native_fn`,
       `throw_type_error`.
-- [ ] One `#[test]` per op when it becomes owned here.
+- [ ] Correctness gated by the stage run; add a unit test only when an op
+      causes an actual bug (regression guard).
 - [ ] Rename the bridge global `%ops%` → `__ops__` (decided 2026-08-08;
       `__ops__` is the documented name in `AGENTS.md`/`docs/architecture.md`).
 - [ ] `%ops%` stays frozen; parser resolves `%ops%` at parse time
@@ -153,8 +155,8 @@ failing stage is a built-in you would otherwise enlarge in Rust).
 
 - [ ] `builtins/*.js` tree, `include_str!`-embedded.
 - [ ] `builtins/bootstrap.rs`: parse + eval each file in dependency order.
-- [ ] Per builtin: failing `#[test]` → JS shell → delete the Rust
-      `register_*`. Full `cargo test -p quench-runtime` green before next.
+- [ ] Per builtin: JS shell → delete the Rust `register_*`; gated by the
+      stage run and full `cargo test -p quench-runtime` green before next.
 - [ ] Order: `Object` → `Function` → `Error` → `Symbol` → `Number` →
       `Boolean` → `String` → `Array` → `Iterator` → `Map`/`Set`/`Weak*`
       → `Promise` → `JSON` → `Reflect`/`Proxy` → `Math` → `RegExp`

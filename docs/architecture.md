@@ -135,8 +135,10 @@ Array.prototype.map = function (callback, thisArg) {
 };
 ```
 
-New op → add to `eval/ops.rs` with a failing test → expose on `__ops__` →
-JS callsite. No second copy anywhere.
+New op → add to `eval/ops.rs` → expose on `__ops__` →
+JS callsite. No second copy anywhere. Correctness is gated by the test262
+stage run; a unit test is added only if a bug is later found here
+(regression guard).
 
 ## Object model — one canonical store
 
@@ -304,10 +306,10 @@ dependency order: `_intrinsics` → `Object` → `Function` → `Error` →
 
 ## Workflow
 
-Same `AGENTS.md` cycle for both languages: failing `#[test]` first (in
-Rust, wrapping the JS via `Context::eval` if needed), watch it fail,
-minimal fix in Rust core *or* `builtins/*.js` *or* `eval/ops.rs`,
-verify, leave the test in.
+Same `AGENTS.md` cycle for both languages: minimal fix in Rust core *or*
+`builtins/*.js` *or* `eval/ops.rs`, gated by the test262 stage run. No
+TDD — unit tests are written only as regression guards when fixing a bug,
+or as refactor pins.
 
 ## File / function limits — enforced
 
