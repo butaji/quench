@@ -1237,19 +1237,15 @@ class __QuenchVirtualFileSystem {
   }
   readlinkSync(path, options) {
     if (this.__isReal()) {
-      const target = globalThis.__nodeFs.readlinkSync(
-        this.__realPath(path),
-        options
+      const target = globalThis.__quench_fs_native_readlink(
+        this.__realPath(path)
       );
       if (globalThis.__nodePath.isAbsolute(target)) {
         const resolved = globalThis.__nodePath.resolve(target);
-        if (resolved === this.provider.root) return "/";
-        if (
-          resolved.startsWith(
-            `${this.provider.root}${globalThis.__nodePath.sep}`
-          )
-        ) {
-          const relative = resolved.slice(this.provider.root.length);
+        const root = globalThis.__quench_fs_native_realpath(this.provider.root);
+        if (resolved === root) return "/";
+        if (resolved.startsWith(`${root}${globalThis.__nodePath.sep}`)) {
+          const relative = resolved.slice(root.length);
           return options?.encoding === "buffer"
             ? globalThis.Buffer.from(relative)
             : relative;
