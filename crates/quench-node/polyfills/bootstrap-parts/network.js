@@ -358,11 +358,30 @@ const __quenchNetModule = {
       return this;
     }
     setTimeout(timeout, callback) {
+      if (typeof timeout !== "number") {
+        const error = new TypeError(
+          'The "timeout" argument must be of type number'
+        );
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      if (!Number.isFinite(timeout) || timeout < 0) {
+        const error = new RangeError('The value of "timeout" is out of range');
+        error.code = "ERR_OUT_OF_RANGE";
+        throw error;
+      }
+      if (callback !== undefined && typeof callback !== "function") {
+        const error = new TypeError(
+          'The "callback" argument must be of type function'
+        );
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
       if (this._timeoutTimer) {
         globalThis.clearTimeout(this._timeoutTimer);
         this._timeoutTimer = null;
       }
-      const delay = Number(timeout) || 0;
+      const delay = timeout;
       this.timeout = delay;
       if (delay > 0) {
         if (typeof callback === "function") this.once("timeout", callback);
@@ -665,6 +684,9 @@ const __quenchNetModule = {
     server.unref = () => server;
     server._handler = handler;
     return server;
+  },
+  Server: function Server(options, handler) {
+    return __quenchNetModule.createServer(options, handler);
   }
 };
 globalThis.__quench_io_poll = () => {
