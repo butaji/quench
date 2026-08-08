@@ -9,3 +9,8 @@ Object.is = function is(a, b) {
 Object.isExtensible = function isExtensible(o) {
   return __ops__.isExtensible(o);
 };
+
+// Object.getPrototypeOf(o) — §19.1.2.9: ToObject(o) then [[GetPrototypeOf]].
+Object.getPrototypeOf = function getPrototypeOf(o) {
+  return __ops__.getPrototypeOf(__ops__.toObject(o));
+};
