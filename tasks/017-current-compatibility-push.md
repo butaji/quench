@@ -943,3 +943,4 @@ pass.
 - Stage 2290 assigns unique synthetic ephemeral ports to raw UDP handles, eliminating concurrent fd-adoption cross-delivery. Upstream `test-dgram-bind-fd.js` now passes.
 - Stage 2291 rejects UDP payloads larger than 65,507 bytes with Node-compatible `EMSGSIZE` callback/error metadata. The focused size contract and upstream `test-dgram-msgsize.js` pass.
 - Stage 2292 allows same-port dgram binds when `reusePort: true`. The focused reuse-port contract and upstream `test-dgram-reuseport.js` pass.
+- Stage 2293 validates and invokes dgram custom lookup callbacks for hostname binds. The focused custom-lookup contract passes; upstream `test-dgram-custom-lookup.js` reaches a remaining diagnostic-format mismatch in its invalid-lookup matrix.
