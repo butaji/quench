@@ -1041,6 +1041,34 @@ const __nodeDuplexFromWeb = (pair = {}, options = {}) => {
 NodeDuplex.fromWeb = __nodeDuplexFromWeb;
 NodeDuplexCompat.from = NodeDuplex.from;
 NodeDuplexCompat.fromWeb = NodeDuplex.fromWeb;
+const __nodeDuplexToWeb = (duplex) => {
+  const readable = new ReadableStream({
+    start(controller) {
+      duplex.on("data", (chunk) => controller.enqueue(chunk));
+      duplex.once("end", () => controller.close());
+      duplex.once("error", (error) => controller.error?.(error));
+      duplex.resume();
+    }
+  });
+  const writable = new WritableStream({
+    write(chunk) {
+      return new Promise((resolve, reject) => {
+        duplex.write(chunk, (error) => (error ? reject(error) : resolve()));
+      });
+    },
+    close() {
+      return new Promise((resolve, reject) => {
+        duplex.end((error) => (error ? reject(error) : resolve()));
+      });
+    },
+    abort(error) {
+      duplex.destroy(error);
+    }
+  });
+  return { readable, writable };
+};
+NodeDuplex.toWeb = __nodeDuplexToWeb;
+NodeDuplexCompat.toWeb = NodeDuplex.toWeb;
 class NodeTransform extends NodeWritable {
   constructor(options = {}) {
     super(options);
