@@ -800,3 +800,4 @@ pass.
 - Stage 2190 aligns HTTP 304 responses: preserve an explicitly supplied `Content-Length` header while still suppressing the response body.
 - Stage 2191 adds tolerant replacement-character handling for invalid UTF-8 in `Buffer.toString()`, fixing the decoder exception exposed by `test-http-buffer-sanity.js`.
 - Stage 2192 emits `readable` before in-memory HTTP response data, allowing `stream.finished()`/destroy lifecycle consumers to observe and cancel responses like Node.
+- Stage 2193 preserves query strings for string, legacy `url.parse()`, and `URL` targets passed to `http.get()`.
