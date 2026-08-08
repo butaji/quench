@@ -817,6 +817,16 @@ class NodeWritable extends NodeEventEmitter {
     return this;
   }
 }
+NodeWritable.prototype.destroyed = false;
+const NodeWritableCompat = function Writable(options = {}) {
+  const instance = Reflect.construct(NodeWritable, [options]);
+  if (this instanceof NodeWritableCompat && this !== instance) {
+    Object.assign(this, instance);
+    return this;
+  }
+  return instance;
+};
+NodeWritableCompat.prototype = NodeWritable.prototype;
 class NodeDuplex extends NodeReadable {
   constructor(options = {}) {
     super(options);
@@ -1101,7 +1111,7 @@ Object.defineProperty(NodeReadableCompat, "from", {
 const __nodeStreamExports = {
   Stream: NodeStream,
   Readable: NodeReadableCompat,
-  Writable: NodeWritable,
+  Writable: NodeWritableCompat,
   Duplex: NodeDuplex,
   duplexPair: __nodeDuplexPairFactory,
   Transform: NodeTransform,
