@@ -63,15 +63,17 @@ pub fn lower_for_stmt(for_stmt: &ast::ForStatement) -> Option<Statement> {
         .map(Box::new);
     let body = Box::new(lower_stmt(&for_stmt.body).unwrap_or(Statement::Empty));
 
-    // A destructuring pattern in the for-header (`for (let [x, y] = e; ...)`)
-    // desugars to `{ let [x, y] = e; for (; cond; update) body }`. The pattern
-    // binding is initialized once, so wrapping it in a block is sufficient.
+    // A destructuring pattern or multiple declarations in the for-header
+    // (`for (let [x, y] = e; ...)` or `for (let a = 1, b = 2; ...)`) desugar
+    // to `{ <decls>; for (; cond; update) body }`. The bindings are initialized
+    // once in the wrapper block. Single simple declarations keep the normal
+    // path so `eval_for` can manage per-iteration lexical scope.
     if let Some(ast::ForStatementInit::VariableDeclaration(decl)) = &for_stmt.init {
         let has_pattern = decl
             .declarations
             .iter()
             .any(|d| !matches!(d.id.kind, ast::BindingPatternKind::BindingIdentifier(_)));
-        if has_pattern {
+        if has_pattern || decl.declarations.len() > 1 {
             let mut stmts = Vec::new();
             stmts.extend(crate::lower::stmt::lower_var_decl_impl(decl, None));
             stmts.push(Statement::For {
