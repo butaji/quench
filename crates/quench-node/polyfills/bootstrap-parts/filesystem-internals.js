@@ -25,6 +25,7 @@ const __quenchRmValidateRange = (options, key) => {
   throw error;
 };
 const __quenchInternalFsUtilsModule = {
+  vfsState: (globalThis.__quenchVfsState ||= { handlers: null }),
   validateRmOptionsSync: function (_path, options) {
     if (
       arguments.length > 1 &&
