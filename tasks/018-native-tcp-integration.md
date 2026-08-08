@@ -38,9 +38,10 @@ Stage 2318 also fixes the general `net.Server.close()` lifecycle: the server
 now emits its asynchronous `close` event after closing, including when no
 callback is supplied. The authoritative `test-net-server-close.js` passes.
 
-Stage 2331 exposes native client `localAddress`, `localPort`, `remoteAddress`,
-and `remotePort` metadata, backed by the actual TCP handles. The focused native
-address stage passes; in-memory address metadata remains intentionally separate.
+Stage 2331 exposes native client and accepted-server `localAddress`,
+`localPort`, `remoteAddress`, and `remotePort` metadata, backed by the actual
+TCP handles. The focused native address stage passes; in-memory address
+metadata remains intentionally separate.
 
 ## Required integration contract
 

@@ -736,6 +736,7 @@ globalThis.__quench_io_poll = () => {
       socket.localAddress = "127.0.0.1";
       socket.localPort = __quench_tcp_bound_port(server._nativeId);
       socket.remoteAddress = "127.0.0.1";
+      socket.remotePort = __quench_tcp_peer_port(nativeId);
       __quenchNativeSockets.add(socket);
       server._handler?.(socket);
       server.emit("connection", socket);
