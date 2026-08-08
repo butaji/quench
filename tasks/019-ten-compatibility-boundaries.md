@@ -293,6 +293,10 @@ readlink/realpath ordering remain separate work.
 Stage 2393 adds the missing `internal/vfs/router` module and verifies mount
 containment, relative-path conversion, and absolute-path detection. The
 authoritative `test-vfs-router.js` now passes completely.
+Stage 2394 adds the missing `internal/vfs/file_handle` `VirtualFileHandle`
+base class, including stub error contracts, metadata no-ops, close state, and
+async disposal. The focused stage and authoritative
+`test-vfs-virtual-file-handle.js` now pass completely.
 
 Stage 2378 passes the four basic stream `destroy()` contracts for readable and
 writable streams, including implicit `AbortError`, explicit error messages,
