@@ -78,6 +78,8 @@ const __quenchDgramBind = (socket, type, port, address, callback) => {
   __quenchDgramSockets.add(socket);
   socket._bindPending = true;
   __quenchDgramBoundPorts.add(resolvedPort);
+  socket[__quenchDgramStateSymbol].handle.fd = resolvedPort;
+  globalThis.__quenchDgramUdpFds.add(resolvedPort);
   socket._address = {
     address:
       typeof address === "string"
@@ -485,6 +487,16 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
       if (socket._bound || socket._bindPending) {
         throw Object.assign(new Error("Socket is already bound"), {
           code: "ERR_SOCKET_ALREADY_BOUND"
+        });
+      }
+      if (port && typeof port === "object" && port.fd !== undefined) {
+        if (globalThis.__quenchDgramUdpFds.has(port.fd)) {
+          throw Object.assign(new Error("open EEXIST"), {
+            code: "EEXIST"
+          });
+        }
+        throw Object.assign(new TypeError("Unsupported fd type: TCP"), {
+          code: "ERR_INVALID_FD_TYPE"
         });
       }
       if (typeof address === "function") {
