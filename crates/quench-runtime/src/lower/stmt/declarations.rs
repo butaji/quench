@@ -5,6 +5,9 @@ use oxc::ast::ast;
 
 use super::lower_stmt;
 use crate::lower::expr::lower_expr;
+use crate::lower::pattern::{
+    collect_pattern_identifiers, lower_array_binding, lower_object_binding,
+};
 
 /// Lower a declaration (function, var, const, let, class)
 pub fn lower_decl(decl: &ast::Declaration) -> Option<Statement> {
@@ -78,15 +81,44 @@ pub fn lower_var_decl_impl(
                 });
             }
             ast::BindingPatternKind::ArrayPattern(arr) => {
-                decls.extend(lower_array_destructuring(kind, arr, init_expr, decls.len()));
+                if iterable_override.is_some() {
+                    // for-of/for-in `var` head: the pattern is destructured per
+                    // iteration by the loop; only hoist the binding names here.
+                    let pattern = lower_array_binding(arr).ok()?;
+                    for name in collect_pattern_identifiers(&pattern) {
+                        decls.push(Statement::VarDeclaration {
+                            kind,
+                            name,
+                            init: None,
+                        });
+                    }
+                } else {
+                    decls.extend(lower_array_destructuring(
+                        kind,
+                        arr,
+                        init_expr.clone(),
+                        decls.len(),
+                    ));
+                }
             }
             ast::BindingPatternKind::ObjectPattern(obj) => {
-                decls.extend(lower_object_destructuring(
-                    kind,
-                    obj,
-                    init_expr,
-                    decls.len(),
-                ));
+                if iterable_override.is_some() {
+                    let pattern = lower_object_binding(obj).ok()?;
+                    for name in collect_pattern_identifiers(&pattern) {
+                        decls.push(Statement::VarDeclaration {
+                            kind,
+                            name,
+                            init: None,
+                        });
+                    }
+                } else {
+                    decls.extend(lower_object_destructuring(
+                        kind,
+                        obj,
+                        init_expr.clone(),
+                        decls.len(),
+                    ));
+                }
             }
             ast::BindingPatternKind::AssignmentPattern(assign) => {
                 // `[a = default] = init` → `let a = init["0"] ?? default`
