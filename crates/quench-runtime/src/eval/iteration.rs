@@ -297,27 +297,36 @@ pub fn eval_for_of(
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
 ) -> Result<Value, JsError> {
-    let iter_value = eval_expression(iterable, env, in_arrow_function)?;
-    let iterator = match &iter_value {
-        Value::String(s) => {
-            let items: Vec<Value> = s.chars().map(|c| Value::String(c.to_string())).collect();
-            let arr = Object::new_array_from(items);
-            Rc::new(RefCell::new(arr))
-        }
-        Value::Generator(gen) => {
-            crate::value::generator::generator_as_iterator_object(Rc::clone(gen))
-        }
-        Value::Object(o) => obtain_iterator(o)?,
-        _ => return Err(JsError("TypeError: Value is not iterable".to_string())),
-    };
-    eval_for_of_iterator(
-        iterator,
-        variable,
-        body,
-        loop_binding,
-        env,
-        in_arrow_function,
-    )
+    // Declare the let/const binding in TDZ before evaluating the iterable, so
+    // the iterable expression observes the TDZ (reference → ReferenceError).
+    let tdz_scope = loop_binding.is_some_and(|k| matches!(k, VarKind::Let | VarKind::Const));
+    if tdz_scope {
+        env.borrow_mut().push_scope();
+        let _ = declare_for_in_binding_tdz(variable, env);
+    }
+    let result = (|| {
+        let iter_value = eval_expression(iterable, env, in_arrow_function)?;
+        let iterator = match &iter_value {
+            Value::String(s) => {
+                let items: Vec<Value> = s
+                    .chars()
+                    .map(|c| Value::String(c.to_string()))
+                    .collect();
+                let arr = Object::new_array_from(items);
+                Rc::new(RefCell::new(arr))
+            }
+            Value::Generator(gen) => {
+                crate::value::generator::generator_as_iterator_object(Rc::clone(gen))
+            }
+            Value::Object(o) => obtain_iterator(o)?,
+            _ => return Err(JsError("TypeError: Value is not iterable".to_string())),
+        };
+        eval_for_of_iterator(iterator, variable, body, loop_binding, env, in_arrow_function)
+    })();
+    if tdz_scope {
+        env.borrow_mut().pop_scope();
+    }
+    result
 }
 
 /// Evaluate a for-in loop
