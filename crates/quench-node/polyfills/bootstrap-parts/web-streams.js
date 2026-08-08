@@ -10,6 +10,11 @@ class __quenchReadableStream {
     this._closed = false;
     this.locked = false;
     this._readWaiters = [];
+    this._finishWaiters = [];
+    this._closedPromise = new Promise((resolve, reject) => {
+      this._resolveClosed = resolve;
+      this._rejectClosed = reject;
+    });
     this._cancel = source.cancel?.bind(source);
     this._pull = source.pull?.bind(source);
     this._pulling = false;
@@ -30,8 +35,12 @@ class __quenchReadableStream {
       close: () => {
         this._closed = true;
         this[__quenchWebStreamsState].state = "closed";
+        this._resolveClosed();
         while (this._readWaiters.length) {
           this._readWaiters.shift()({ value: undefined, done: true });
+        }
+        if (!this._queue.length) {
+          while (this._finishWaiters.length) this._finishWaiters.shift()();
         }
       },
       error: (error) => {
@@ -39,9 +48,11 @@ class __quenchReadableStream {
         this._closed = true;
         this[__quenchWebStreamsState].state = "errored";
         this[__quenchWebStreamsState].storedError = error;
+        this._rejectClosed(error);
         while (this._readWaiters.length) {
           this._readWaiters.shift()(Promise.reject(error));
         }
+        while (this._finishWaiters.length) this._finishWaiters.shift()(error);
       }
     };
     this._enqueue = controller.enqueue;
@@ -70,6 +81,10 @@ class __quenchReadableStream {
         if (stream._queue.length) {
           const item = stream._queue.shift();
           stream._queueSize -= item.size;
+          if (stream._closed && !stream._queue.length) {
+            while (stream._finishWaiters.length)
+              stream._finishWaiters.shift()();
+          }
           return { value: item.value, done: false };
         }
         if (stream._closed) return { value: undefined, done: true };
@@ -90,6 +105,7 @@ class __quenchReadableStream {
           stream._readWaiters.shift()({ value: undefined, done: true });
         }
       },
+      closed: stream._closedPromise,
       releaseLock() {
         stream.locked = false;
       }
