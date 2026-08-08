@@ -256,6 +256,10 @@ Stage 2383 passes with the full focused sequence. The authoritative handle
 fixture still reports `Callback 0`; its instrumented `fs.fstatSync`/`fs.fstat`
 calls do not observe the internal filesystem object used by this bootstrap,
 so public-observer identity remains the next compatibility boundary.
+Stage 2383 also confirms a public `fs.fstatSync` monkey-patch observes the
+descriptor-backed `readFileSync()` call. The remaining upstream callback
+failure is therefore narrowed to its combined async metadata instrumentation
+and later handle lifecycle sequence.
 
 Stage 2378 passes the four basic stream `destroy()` contracts for readable and
 writable streams, including implicit `AbortError`, explicit error messages,

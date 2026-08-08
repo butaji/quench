@@ -42,3 +42,18 @@ provider.closeSync(fd);
   await asyncHandle.truncate(2);
   await asyncHandle.close();
 })();
+
+{
+  const fsModule = require("fs");
+  let observed = 0;
+  const originalFstatSync = fsModule.fstatSync;
+  fsModule.fstatSync = (...args) => {
+    observed++;
+    return originalFstatSync(...args);
+  };
+  const observedFd = provider.openSync("/file.txt", "r");
+  getVirtualFd(observedFd).entry.readFileSync("utf8");
+  assert.strictEqual(observed, 1);
+  provider.closeSync(observedFd);
+  fsModule.fstatSync = originalFstatSync;
+}
