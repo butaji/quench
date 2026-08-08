@@ -43,8 +43,9 @@ own commit.
   serialized response headers/body. Stage 2349 adds two pipelined keep-alive
   requests on one socket. Stage 2350 verifies Content-Length request-body
   buffering and data/end delivery; stage 2351 verifies client half-close
-  behavior. Stage 2352 adds chunked request-body decoding. More complete HTTP
-  parsing and lifecycle semantics remain queued.
+  behavior. Stage 2352 adds chunked request-body decoding, and stage 2353 adds
+  standards-compliant chunked response framing. More complete HTTP parsing and
+  lifecycle semantics remain queued.
 - Item 6: partially improved. Stage 2339 verifies two concurrent HTTP requests
   with independent response bodies and clean shutdown; upstream multi-request
   failures remain specific to harness/agent interactions.
