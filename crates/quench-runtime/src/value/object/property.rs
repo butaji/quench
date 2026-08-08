@@ -40,6 +40,16 @@ impl Object {
     /// Set a property value (own only, respects writable flag).
     /// Per ES §10.1.6 [[Set]]: new properties are only added if the object is extensible.
     pub fn set(&mut self, key: &str, value: Value) {
+        self.set_with_enumerable(key, value, true);
+    }
+
+    /// Set a property as non-enumerable (used for built-in prototype/static
+    /// methods, which are non-enumerable per spec).
+    pub fn set_nonenumerable(&mut self, key: &str, value: Value) {
+        self.set_with_enumerable(key, value, false);
+    }
+
+    fn set_with_enumerable(&mut self, key: &str, value: Value, enumerable: bool) {
         if let Some(flags) = self.descriptors.get_mut(key) {
             if !flags.writable {
                 return;
@@ -54,7 +64,7 @@ impl Object {
                 PropertyFlags {
                     value: Some(value.clone()),
                     writable: true,
-                    enumerable: true,
+                    enumerable,
                     configurable: true,
                 },
             );
