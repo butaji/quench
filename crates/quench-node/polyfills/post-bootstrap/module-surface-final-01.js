@@ -568,6 +568,28 @@ const __quenchApplyFinalModule01 = (name, originalRequire) => {
       }
     };
   }
+  if (normalized === "internal/vfs/router") {
+    const path = globalThis.__nodePath;
+    return {
+      isUnderMountPoint(value, mountPoint) {
+        const valuePath = path.resolve(value);
+        const mountPath = path.resolve(mountPoint);
+        return (
+          mountPath === path.parse(mountPath).root ||
+          valuePath === mountPath ||
+          valuePath.startsWith(`${mountPath}${path.sep}`)
+        );
+      },
+      getRelativePath(value, mountPoint) {
+        const relative = path.relative(
+          path.resolve(mountPoint),
+          path.resolve(value)
+        );
+        return relative ? `/${relative.split(path.sep).join("/")}` : "/";
+      },
+      isAbsolutePath: path.isAbsolute
+    };
+  }
   if (normalized === "sqlite") {
     return {
       DatabaseSync: function DatabaseSync() {},
