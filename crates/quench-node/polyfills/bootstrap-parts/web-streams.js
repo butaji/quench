@@ -3,10 +3,18 @@ class __quenchReadableStream {
   constructor(source = {}) {
     this._queue = [];
     this._closed = false;
+    this._readWaiters = [];
     const controller = {
-      enqueue: (value) => this._queue.push(value),
+      enqueue: (value) => {
+        const waiter = this._readWaiters.shift();
+        if (waiter) waiter({ value, done: false });
+        else this._queue.push(value);
+      },
       close: () => {
         this._closed = true;
+        while (this._readWaiters.length) {
+          this._readWaiters.shift()({ value: undefined, done: true });
+        }
       }
     };
     source.start?.(controller);
@@ -15,13 +23,12 @@ class __quenchReadableStream {
     const stream = this;
     return {
       read: async () => {
-        while (!stream._error && !stream._queue.length && !stream._closed) {
-          await new Promise((resolve) => queueMicrotask(resolve));
-        }
         if (stream._error) throw stream._error;
-        return stream._queue.length
-          ? { value: stream._queue.shift(), done: false }
-          : { value: undefined, done: stream._closed };
+        if (stream._queue.length) {
+          return { value: stream._queue.shift(), done: false };
+        }
+        if (stream._closed) return { value: undefined, done: true };
+        return new Promise((resolve) => stream._readWaiters.push(resolve));
       },
       releaseLock() {}
     };
