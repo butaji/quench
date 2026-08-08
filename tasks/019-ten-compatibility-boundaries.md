@@ -423,6 +423,9 @@ Recursive VFS mkdir now follows intermediate symlinks, preserves the first
 created path in its return value, rejects dangling/file blockers with Node
 errors, and reports requested directory modes. The authoritative
 `test-vfs-mkdir.js` fixture passes.
+Mounted promise `realpath()` now restores the host mount prefix for string and
+Buffer results. The authoritative `test-vfs-fs-promises-buffer-encoding.js`
+fixture now passes completely.
 Stage 2418 verifies the public `MemoryProvider` surface and append-to-new-file
 behavior. The separate dynamic-provider fixture remains an internal-model
 gap: it expects Node's `kRoot` symbol and lazy entry objects, which are not yet
