@@ -150,6 +150,23 @@ const __quenchDgramSend = (socket, message, ...args) => {
     queueMicrotask(() => callback?.(error));
     return socket;
   }
+  const isNumericAddress =
+    !address ||
+    address === "localhost" ||
+    /^\d{1,3}(?:\.\d{1,3}){3}$/.test(address) ||
+    address.includes(":");
+  if (!isNumericAddress) {
+    const error = Object.assign(new Error(`getaddrinfo ENOTFOUND ${address}`), {
+      code: "ENOTFOUND",
+      syscall: "getaddrinfo",
+      hostname: address
+    });
+    queueMicrotask(() => {
+      if (typeof callback === "function") callback(error);
+      else socket.emit("error", error);
+    });
+    return socket;
+  }
   if (
     Array.isArray(message) &&
     message.some(
@@ -401,6 +418,7 @@ const __quenchDgramOnce = (socket, listeners, event, callback) => {
     );
     callback.apply(socket, args);
   };
+  wrapper.__quenchOriginalListener = callback;
   return __quenchDgramOn(socket, listeners, event, wrapper);
 };
 const __quenchDgramEmit = (socket, listeners, event, args) => {
@@ -660,6 +678,14 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
     address: () => __quenchDgramAddress(socket, type),
     on: (event, callback) =>
       __quenchDgramOn(socket, listeners, event, callback),
+    removeListener: (event, callback) => {
+      listeners[event] = (listeners[event] || []).filter(
+        (listener) =>
+          listener !== callback &&
+          listener.__quenchOriginalListener !== callback
+      );
+      return socket;
+    },
     once: (event, callback) =>
       __quenchDgramOnce(socket, listeners, event, callback),
     emit: (event, ...args) => __quenchDgramEmit(socket, listeners, event, args),
