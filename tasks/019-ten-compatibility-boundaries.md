@@ -60,7 +60,10 @@ reusable socket (and reports `ECONNRESET` only for `destroy`, not `abort`).
 This is now classified as the remaining agent/transport integration boundary;
 a prototype custom socket path reached the queued-request scheduler but sent
 a response to the request marked `mustNotCall`, so it was reverted. No
-error-code-only shim was added.
+error-code-only shim was added. A first attempt to cancel queued requests by
+releasing their waiter and active slot reduced the max-sockets fixture from
+its baseline to four of six callbacks, so it was also reverted; cancellation
+ownership still needs a separate state model.
 
 - Item 7: partially improved. Stage 2340 verifies default-address bind,
   implicit sender bind, packet delivery, remote metadata, and close callback
