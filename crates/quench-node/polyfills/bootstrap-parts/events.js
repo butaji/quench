@@ -779,7 +779,7 @@ class NodeWritable extends NodeEventEmitter {
     const complete = (destroyError) =>
       __nodeWritableDestroyComplete(this, callback, destroyError);
     if (this._destroy) this._destroy.call(this, error || null, complete);
-    else queueMicrotask(() => complete(error));
+    else complete(error);
     return this;
   }
   _undestroy() {
