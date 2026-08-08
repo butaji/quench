@@ -104,3 +104,10 @@ Stage 2346 now verifies callback-before-promise ordering for successful
 `fs.access()` calls. `fs.promises.access()` uses a direct async sync-check so
 its reaction is not delayed behind the callback wrapper. The full upstream
 fixture still has a separate invalid/error callback-count mismatch.
+
+The stale differential report's top `fs.cp` cluster was rechecked against the
+current runtime: `test-fs-cp-async-skip-validation-when-filtered.mjs`,
+`test-fs-cp-promises-async-error.mjs`, and
+`test-fs-cp-sync-async-filter-error.mjs` all pass individually. They should be
+removed from the next differential queue refresh; this is evidence correction,
+not a new filesystem implementation claim.
