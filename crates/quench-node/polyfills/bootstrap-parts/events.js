@@ -1338,6 +1338,34 @@ class NodePassThrough extends NodeTransform {
       else this.__passThroughPendingCallback = callback;
     };
   }
+  on(event, listener) {
+    const result = super.on(event, listener);
+    if (event === "data" && this.readableFlowing !== false) {
+      queueMicrotask(() => this.resume());
+    }
+    return result;
+  }
+  pause() {
+    this._paused = true;
+    this.readableFlowing = false;
+    return this;
+  }
+  resume() {
+    this._paused = false;
+    this.readableFlowing = true;
+    while (
+      !this._paused &&
+      this.listenerCount("data") > 0 &&
+      this._readableChunks.length
+    ) {
+      const chunk = this.read();
+      this.emit("data", chunk);
+    }
+    return this;
+  }
+  isPaused() {
+    return this._paused === true;
+  }
   push(chunk) {
     if (chunk === null && this._readableChunks.length) {
       this.__passThroughEndPending = true;

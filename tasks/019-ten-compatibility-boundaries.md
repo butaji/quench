@@ -764,3 +764,14 @@ read, then becomes true on the following turn. The separate upstream
 `test-stream-readable-pause-and-resume.js` fixture still reports `Callback 2`,
 while `test-stream-readable-no-unneeded-readable.js` passes; no broader
 pause/resume claim is made.
+
+Stage 2453 resolves that separate pause/resume boundary. Adding the first
+PassThrough `data` listener now enters flowing mode and consumes already
+buffered readable chunks. PassThrough also tracks `pause()`, `resume()`, and
+`isPaused()` state, so releasing a held transform write can emit writable
+`drain` and resume its piped source. The focused prefilled-buffer contract and
+the complete authoritative `test-stream-readable-pause-and-resume.js` fixture
+pass. The related `test-stream-readable-no-unneeded-readable.js` fixture and
+the maintained PassThrough/readable/backpressure stage cluster remain green.
+`test-stream-consumers.js` still independently reports its existing missing
+`Callback 5`; no consumers-fixture pass is claimed.
