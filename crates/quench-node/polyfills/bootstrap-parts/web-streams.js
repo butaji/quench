@@ -39,7 +39,12 @@ class __quenchReadableStream {
     this._errorStream = controller.error;
     this[__quenchWebStreamsState].controller = controller;
     this._controller = controller;
-    source.start?.(controller);
+    try {
+      const started = source.start?.(controller);
+      if (started?.then) started.catch((error) => controller.error(error));
+    } catch (error) {
+      controller.error(error);
+    }
   }
   getReader() {
     if (this.locked) {
@@ -128,7 +133,37 @@ class __quenchReadableStream {
       error.code = "ERR_INVALID_STATE";
       throw error;
     }
-    throw new Error("ReadableStream tee is not implemented");
+    const reader = this.getReader();
+    let controllers = [];
+    let pumping = false;
+    const pump = async () => {
+      if (pumping) return;
+      pumping = true;
+      try {
+        const item = await reader.read();
+        if (item.done) {
+          controllers.forEach((controller) => controller.close());
+        } else {
+          controllers.forEach((controller) => controller.enqueue(item.value));
+        }
+      } catch (error) {
+        controllers.forEach((controller) => controller.error(error));
+      } finally {
+        pumping = false;
+      }
+    };
+    const branches = [0, 1].map(
+      () =>
+        new __quenchReadableStream({
+          start(controller) {
+            controllers.push(controller);
+          },
+          pull() {
+            return pump();
+          }
+        })
+    );
+    return branches;
   }
   async *[Symbol.asyncIterator]() {
     const reader = this.getReader();
@@ -144,6 +179,7 @@ class __quenchWritableStream {
     this._sink = sink;
     this.locked = false;
     this[__quenchWebStreamsState] = { state: "writable" };
+    this._finishWaiters = [];
   }
   getWriter() {
     if (this.locked) {
@@ -158,7 +194,9 @@ class __quenchWritableStream {
       write: (value) => Promise.resolve(sink.write?.(value)),
       close: async () => {
         await sink.close?.();
+        stream._closed = true;
         stream[__quenchWebStreamsState].state = "closed";
+        while (stream._finishWaiters.length) stream._finishWaiters.shift()();
       },
       abort: async (error) => {
         await sink.abort?.(error);
