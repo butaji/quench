@@ -503,6 +503,11 @@ Stage 2435 confirms `textSync(handle.pullSync())` now passes through the fixed
 adapter. The authoritative pull-sync fixture still exceeds the timeout later
 in its transform/auto-close matrix, so the aggregate remains open.
 
+Stage 2436 verifies the first pull-sync cluster together: basic text, binary
+bytes, gzip compression through `pipeToSync`, and gzip decompression. All pass,
+so the remaining upstream timeout is in later mixed-transform or lifecycle
+cases rather than basic pull or zlib operation.
+
 Stage 2431 fixes absolute symlink targets inside a `RealFSProvider` root by
 preserving the host absolute target instead of incorrectly joining it twice.
 The focused absolute-link/realpath regression passes.
