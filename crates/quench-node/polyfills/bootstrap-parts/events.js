@@ -738,9 +738,9 @@ class NodeWritable extends NodeEventEmitter {
     this.writableCorked = 0;
     this._autoDestroy = options.autoDestroy !== false;
     this._corkedChunks = [];
-    this._write = options.write;
-    this._final = options.final;
-    this._destroy = options.destroy;
+    if (options.write !== undefined) this._write = options.write;
+    if (options.final !== undefined) this._final = options.final;
+    if (options.destroy !== undefined) this._destroy = options.destroy;
     this.writableDefaultEncoding = options.defaultEncoding || "utf8";
     if (this._autoDestroy && !options.__quenchCompatConstruct) {
       this.on("error", () => {
@@ -887,7 +887,15 @@ class NodeWritable extends NodeEventEmitter {
     this._writableState.ended = true;
     this.writableEnded = true;
     this.writable = false;
-    const finish = () =>
+    let finalCompleted = false;
+    const finish = () => {
+      if (finalCompleted) {
+        const duplicate = new Error("Callback called multiple times");
+        duplicate.code = "ERR_MULTIPLE_CALLBACK";
+        this.emit("error", duplicate);
+        return;
+      }
+      finalCompleted = true;
       queueMicrotask(() => {
         this._writableState.finished = true;
         this.writableFinished = true;
@@ -895,6 +903,7 @@ class NodeWritable extends NodeEventEmitter {
         if (this._autoDestroy) this.destroy();
         if (callback) callback();
       });
+    };
     if (typeof this._final === "function") this._final(finish);
     else finish();
     return this;
@@ -903,10 +912,12 @@ class NodeWritable extends NodeEventEmitter {
 NodeWritable.prototype.destroyed = false;
 NodeWritable.prototype.writableFinished = false;
 const NodeWritableCompat = function Writable(options = {}) {
-  const instance = Reflect.construct(NodeWritable, [
-    { ...options, __quenchCompatConstruct: true }
-  ]);
-  if (this instanceof NodeWritableCompat && this !== instance) {
+  const instance = Reflect.construct(
+    NodeWritable,
+    [{ ...options, __quenchCompatConstruct: true }],
+    new.target || NodeWritable
+  );
+  if (this !== instance) {
     Object.assign(this, instance);
     if (this._autoDestroy) {
       const autoDestroyErrorListener = () => {
