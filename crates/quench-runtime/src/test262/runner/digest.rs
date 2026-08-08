@@ -123,14 +123,16 @@ fn run_parallel(
         .max(1);
     let (tx, rx) = mpsc::channel();
     let next = Arc::new(Mutex::new(0usize));
-    let tests = tests.to_vec();
+    // Share the test list across workers via Arc instead of cloning the whole
+    // Vec (and every PathBuf) into each worker thread.
+    let tests = Arc::new(tests.to_vec());
     let harness_root = harness.root_dir().to_string();
     let isolated = use_isolated;
     let mut handles = Vec::new();
     for _ in 0..workers {
         let tx = tx.clone();
         let next = Arc::clone(&next);
-        let tests = tests.clone();
+        let tests = Arc::clone(&tests);
         let root = harness_root.clone();
         handles.push(std::thread::spawn(move || {
             let harness = HarnessLoader::new(&root);
