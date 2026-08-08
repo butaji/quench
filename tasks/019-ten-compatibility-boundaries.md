@@ -37,7 +37,9 @@ own commit.
   `keepAlive`/`keepAliveInitialDelay` options to socket handles; the larger
   client/server keep-alive fixtures still have callback/lifecycle gaps.
 - Item 5: partially improved. Stage 2338 verifies terminal write errors after
-  a non-half-open peer EOF; raw HTTP framing over native `net` remains queued.
+  a non-half-open peer EOF; stage 2347 bridges raw in-memory `net` connections
+  to listening HTTP servers and verifies the server-side connection event. Raw
+  HTTP framing, keep-alive sequencing, and half-close parsing remain queued.
 - Item 6: partially improved. Stage 2339 verifies two concurrent HTTP requests
   with independent response bodies and clean shutdown; upstream multi-request
   failures remain specific to harness/agent interactions.

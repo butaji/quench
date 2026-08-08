@@ -1150,6 +1150,7 @@ let __quenchHttpModule;
       };
     }
     const servers = new Map();
+    globalThis.__quenchHttpServers = servers;
     globalThis.__nodeHttpConnectionsCheckingInterval ||= Symbol(
       "kConnectionsCheckingInterval"
     );
