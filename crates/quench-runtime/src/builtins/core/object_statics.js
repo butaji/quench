@@ -4,3 +4,8 @@
 Object.is = function is(a, b) {
   return __ops__.sameValue(a, b);
 };
+
+// Object.isExtensible(o) — §19.1.2.11: IsExtensible.
+Object.isExtensible = function isExtensible(o) {
+  return __ops__.isExtensible(o);
+};
