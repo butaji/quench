@@ -179,6 +179,9 @@ pub fn collect_var_names_recursive(stmts: &[Statement], names: &mut Vec<String>)
                 names.extend(crate::lower::pattern::collect_pattern_identifiers(pattern));
             }
             Statement::Block(inner_stmts) => collect_var_names_recursive(inner_stmts, names),
+            Statement::Labeled { body, .. } => {
+                collect_var_names_recursive(std::slice::from_ref(body.as_ref()), names)
+            }
             Statement::If {
                 consequent,
                 alternate,
@@ -192,8 +195,19 @@ pub fn collect_var_names_recursive(stmts: &[Statement], names: &mut Vec<String>)
             Statement::While { body, .. } => {
                 collect_var_names_recursive(std::slice::from_ref(body.as_ref()), names)
             }
-            Statement::For { body, .. } => {
+            Statement::DoWhile { body, .. } => {
                 collect_var_names_recursive(std::slice::from_ref(body.as_ref()), names)
+            }
+            Statement::For { init, body, .. } => {
+                if let Some(ForInit::VarDeclaration {
+                    kind: VarKind::Var,
+                    name,
+                    ..
+                }) = init
+                {
+                    names.push(name.clone());
+                }
+                collect_var_names_recursive(std::slice::from_ref(body.as_ref()), names);
             }
             Statement::Try {
                 body,
