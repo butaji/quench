@@ -1105,13 +1105,25 @@ let __quenchHttpModule;
           this.statusText = init.statusText || "";
           this.headers = new globalThis.Headers(init.headers);
           this.body = body == null ? null : String(body);
+          this.bodyUsed = false;
           this.ok = this.status >= 200 && this.status < 300;
         }
         async text() {
+          this.bodyUsed = true;
           return this.body ?? "";
         }
         async json() {
           return JSON.parse(await this.text());
+        }
+        async arrayBuffer() {
+          return (await this.bytes()).buffer;
+        }
+        async bytes() {
+          this.bodyUsed = true;
+          return new TextEncoder().encode(this.body ?? "");
+        }
+        async blob() {
+          return new Blob([await this.bytes()]);
         }
         clone() {
           return new Response(this.body, {
