@@ -5,6 +5,7 @@ pub mod array;
 pub mod array_buffer;
 pub mod bigint;
 pub mod console;
+pub mod core;
 pub mod data_view;
 pub mod date;
 pub mod error;
@@ -127,6 +128,8 @@ impl Object {
 
 /// Register all built-in globals into the context
 pub fn register_builtins(ctx: &mut Context) {
+    // The `__ops__` bridge must exist before any self-hosted JS builtin runs.
+    core::ops_wrapper::register_ops_object(ctx);
     console::register_console(ctx);
     json::register_json(ctx);
     math::register_math(ctx);

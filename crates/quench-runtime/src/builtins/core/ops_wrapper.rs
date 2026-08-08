@@ -1,16 +1,13 @@
-//! %ops% — canonical spec operations exposed to JavaScript.
+//! __ops__ — canonical spec operations exposed to JavaScript.
 //!
 //! This module exposes the canonical spec operations from `crate::eval::ops`
-//! as a frozen `%ops%` object on the realm. JS builtins call these instead
+//! as a frozen `__ops__` object on the realm. JS builtins call these instead
 //! of duplicating the logic in Rust.
 //!
 //! The ops exposed here are:
 //! - `toPrimitive(value, hint)` — ES §7.1.1
 //! - `toNumber(value)` — ES §7.1.3
 //! - `toPropertyKey(value)` — ES §7.1.14
-
-#[cfg(test)]
-mod tests;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -19,7 +16,7 @@ use crate::value::object::Object;
 use crate::value::{JsError, NativeFunction, ObjectKind, PropertyFlags, Value};
 use crate::Context;
 
-/// Register the frozen `%ops%` object on the context's global scope.
+/// Register the frozen `__ops__` object on the context's global scope.
 pub fn register_ops_object(ctx: &mut Context) {
     let mut ops = Object::new(ObjectKind::Ordinary);
 
@@ -78,7 +75,7 @@ pub fn register_ops_object(ctx: &mut Context) {
     // Prevent extensions (no new properties can be added)
     ops.extensible = false;
 
-    ctx.set_global("%ops%".to_string(), Value::Object(Rc::new(RefCell::new(ops))));
+    ctx.set_global("__ops__".to_string(), Value::Object(Rc::new(RefCell::new(ops))));
 }
 
 #[cfg(test)]
@@ -89,8 +86,8 @@ mod tests {
     fn test_ops_object_exists() {
         let mut ctx = crate::Context::new().unwrap();
         register_ops_object(&mut ctx);
-        let ops = ctx.get_global("%ops%");
-        assert!(ops.is_some(), "%ops% should be registered");
+        let ops = ctx.get_global("__ops__");
+        assert!(ops.is_some(), "__ops__ should be registered");
     }
 
     #[test]
@@ -99,17 +96,17 @@ mod tests {
         register_ops_object(&mut ctx);
 
         // Undefined stays undefined
-        let result = ctx.eval("%ops%.toPrimitive(undefined)");
+        let result = ctx.eval("__ops__.toPrimitive(undefined)");
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), crate::Value::Undefined);
 
         // Numbers stay numbers
-        let result = ctx.eval("%ops%.toPrimitive(42)");
+        let result = ctx.eval("__ops__.toPrimitive(42)");
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), crate::Value::Number(42.0));
 
         // Strings stay strings
-        let result = ctx.eval("%ops%.toPrimitive('hello')");
+        let result = ctx.eval("__ops__.toPrimitive('hello')");
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), crate::Value::String("hello".into()));
     }
@@ -122,7 +119,7 @@ mod tests {
         let result = ctx.eval(
             r#"
             var o = { valueOf() { return 99 } };
-            %ops%.toPrimitive(o, "number")
+            __ops__.toPrimitive(o, "number")
             "#,
         );
         assert!(result.is_ok());
@@ -138,7 +135,7 @@ mod tests {
         let result = ctx.eval(
             r#"
             var o = { valueOf() { return 1 }, toString() { return 'a' } };
-            %ops%.toPrimitive(o, "number")
+            __ops__.toPrimitive(o, "number")
             "#,
         );
         assert!(result.is_ok());
@@ -148,7 +145,7 @@ mod tests {
         let result = ctx.eval(
             r#"
             var o = { valueOf() { return 1 }, toString() { return 'a' } };
-            %ops%.toPrimitive(o, "string")
+            __ops__.toPrimitive(o, "string")
             "#,
         );
         assert!(result.is_ok());
@@ -160,9 +157,12 @@ mod tests {
         let mut ctx = crate::Context::new().unwrap();
         register_ops_object(&mut ctx);
 
-        assert_eq!(ctx.eval("%ops%.toNumber(42)").unwrap(), crate::Value::Number(42.0));
-        assert_eq!(ctx.eval("%ops%.toNumber('123')").unwrap(), crate::Value::Number(123.0));
-        assert!(ctx.eval("%ops%.toNumber('x')").unwrap().is_nan());
+        assert_eq!(ctx.eval("__ops__.toNumber(42)").unwrap(), crate::Value::Number(42.0));
+        assert_eq!(ctx.eval("__ops__.toNumber('123')").unwrap(), crate::Value::Number(123.0));
+        assert!(matches!(
+            ctx.eval("__ops__.toNumber('x')").unwrap(),
+            crate::Value::Number(n) if n.is_nan()
+        ));
     }
 
     #[test]
@@ -171,11 +171,11 @@ mod tests {
         register_ops_object(&mut ctx);
 
         assert_eq!(
-            ctx.eval(r#"%ops%.toPropertyKey("foo")"#).unwrap(),
+            ctx.eval(r#"__ops__.toPropertyKey("foo")"#).unwrap(),
             crate::Value::String("foo".into())
         );
         assert_eq!(
-            ctx.eval(r#"%ops%.toPropertyKey(42)"#).unwrap(),
+            ctx.eval(r#"__ops__.toPropertyKey(42)"#).unwrap(),
             crate::Value::String("42".into())
         );
     }
@@ -186,7 +186,7 @@ mod tests {
         register_ops_object(&mut ctx);
 
         // Object.isExtensible returns false for non-extensible objects
-        let result = ctx.eval("Object.isExtensible(%ops%)");
+        let result = ctx.eval("Object.isExtensible(__ops__)");
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), crate::Value::Boolean(false));
     }
