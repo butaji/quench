@@ -127,6 +127,11 @@ Stage 2362 independently verifies that callback-style and promise-style
 callback-count failure to its combined credential, invalid-argument, and
 promise sequencing rather than the basic missing-path error path.
 
+Stages 2363 and 2364 additionally verify the upstream promise rejection stack
+shape (`at async Object.access`) and the non-root read-only `W_OK` `EACCES`
+behavior. Both pass, so neither the promise stack contract nor the basic
+permission decision explains the remaining aggregate-fixture mismatch.
+
 The same stale report's representative dgram entries
 (`test-dgram-bind-sync.js`, `test-dgram-bytes-length.js`, and
 `test-dgram-bind-error-repeat.js`) also pass individually on the current
