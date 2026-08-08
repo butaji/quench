@@ -806,7 +806,7 @@ class NodeWritable extends NodeEventEmitter {
         : chunk?.byteLength || 1;
     this.writableLength += size;
     if (this.writableCorked > 0) this._corkedChunks.push(chunk);
-    else this.emit("data", chunk);
+    else if (!this.__nodeDuplex) this.emit("data", chunk);
     const state = { completed: false };
     const complete = (error) =>
       __nodeWritableComplete(state, this, size, callback, error);
@@ -1044,6 +1044,10 @@ NodeDuplexCompat.fromWeb = NodeDuplex.fromWeb;
 const __nodeDuplexToWeb = (duplex) => {
   const readable = new ReadableStream({
     start(controller) {
+      if (duplex.readableEnded || duplex.destroyed) {
+        controller.close();
+        return;
+      }
       duplex.on("data", (chunk) => controller.enqueue(chunk));
       duplex.once("end", () => controller.close());
       duplex.once("error", (error) => controller.error?.(error));
