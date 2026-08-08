@@ -250,6 +250,33 @@ fn declare_for_of_binding(
     }
 }
 
+/// Declare a for-in let/const binding in TDZ (before the object expression is
+/// evaluated), so referencing it throws ReferenceError.
+fn declare_for_in_binding_tdz(
+    variable: &Expression,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<(), JsError> {
+    let names: Vec<String> = match variable {
+        Expression::Identifier(name) => vec![name.clone()],
+        Expression::ArrayPattern(bindings) => bindings
+            .iter()
+            .flat_map(crate::lower::pattern::collect_pattern_identifiers)
+            .collect(),
+        Expression::ObjectPattern(props) => props
+            .iter()
+            .flat_map(|(_, b)| crate::lower::pattern::collect_pattern_identifiers(b))
+            .collect(),
+        _ => Vec::new(),
+    };
+    for name in names {
+        if !env.borrow().current_scope().borrow().has(&name) {
+            env.borrow_mut().declare_var(name.clone(), VarKind::Let);
+        }
+        env.borrow_mut().current_scope().borrow_mut().mark_tdz(name);
+    }
+    Ok(())
+}
+
 /// Evaluate a for-of loop
 pub fn eval_for_of(
     variable: &Expression,
@@ -291,48 +318,62 @@ pub fn eval_for_in(
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
 ) -> Result<Value, JsError> {
-    let obj_value = eval_expression(object, env, in_arrow_function)?;
-    let keys = get_enumerable_keys(&obj_value)?;
-    let per_iteration = loop_binding.is_some_and(|k| matches!(k, VarKind::Let | VarKind::Const));
-    // Per ES §14.7.5.5, the loop returns V, the last non-empty body value.
-    let mut v = Value::Undefined;
-    for key in keys {
-        let (flow, body_val) = run_for_in_iteration(
-            variable,
-            &Value::String(key),
-            body,
-            loop_binding,
-            per_iteration,
-            env,
-            in_arrow_function,
-        )?;
-        if let Some(flow) = flow {
-            match flow {
-                ControlFlow::Break(_) => {
-                    // A handled break returns the current body value.
-                    return Ok(body_val);
-                }
-                ControlFlow::Continue(_) => {
-                    v = body_val;
-                    continue;
-                }
-                ControlFlow::Return(val)
-                | ControlFlow::Yield(val)
-                | ControlFlow::YieldDelegate(val) => {
-                    return Ok(val);
+    // Declare the let/const binding in TDZ before evaluating the object, so
+    // the object expression can observe the TDZ (reference → ReferenceError).
+    // The binding lives in a scope confined to the for-in statement.
+    let tdz_scope = loop_binding.is_some();
+    if tdz_scope {
+        env.borrow_mut().push_scope();
+        let _ = declare_for_in_binding_tdz(variable, env);
+    }
+    let result = (|| -> Result<Value, JsError> {
+        let obj_value = eval_expression(object, env, in_arrow_function)?;
+        let keys = get_enumerable_keys(&obj_value)?;
+        let per_iteration =
+            loop_binding.is_some_and(|k| matches!(k, VarKind::Let | VarKind::Const));
+        let mut v = Value::Undefined;
+        for key in keys {
+            let (flow, body_val) = run_for_in_iteration(
+                variable,
+                &Value::String(key),
+                body,
+                loop_binding,
+                per_iteration,
+                env,
+                in_arrow_function,
+            )?;
+            if let Some(flow) = flow {
+                match flow {
+                    ControlFlow::Break(_) => {
+                        // A handled break returns the current body value.
+                        return Ok(body_val);
+                    }
+                    ControlFlow::Continue(_) => {
+                        v = body_val;
+                        continue;
+                    }
+                    ControlFlow::Return(val)
+                    | ControlFlow::Yield(val)
+                    | ControlFlow::YieldDelegate(val) => {
+                        return Ok(val);
+                    }
                 }
             }
+            v = body_val;
         }
-        v = body_val;
+        if let Some(ControlFlow::Return(val))
+        | Some(ControlFlow::Yield(val))
+        | Some(ControlFlow::YieldDelegate(val)) = take_control_flow()
+        {
+            Ok(val)
+        } else {
+            Ok(v)
+        }
+    })();
+    if tdz_scope {
+        env.borrow_mut().pop_scope();
     }
-    if let Some(ControlFlow::Return(val))
-    | Some(ControlFlow::Yield(val))
-    | Some(ControlFlow::YieldDelegate(val)) = take_control_flow()
-    {
-        Ok(val)
-    } else {
-        Ok(v)
-    }
+    result
 }
 
 /// Run one for-in iteration: declare the per-iteration binding (if any) and
