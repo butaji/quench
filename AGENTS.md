@@ -14,6 +14,7 @@
 12. **Verify before done**: unit test green, module suite green, test262 stage green, `cargo fmt` + `cargo clippy -p quench-runtime --all-targets` clean.
 13. **Conventions**: symbol payloads are raw `desc\0id` strings used directly as property keys; boxed primitives live in a `_value` property; strictness is captured at definition site; accessors via `Object::define_accessor`; `CURRENT_CONTEXT` is a thread-local raw pointer during eval.
 14. **Progress SSOT is the test262 run**: never record pass/fail counts, pass rates, or test totals in `docs/` or `tasks/*.md`; run the stage to know where you stand. `tasks/index.json` holds only stage identity and workflow status (`status`, `current_stage`), updated by `tools/advance-stage.sh` from actual runs.
+15. **Commit and push as you progress** (`GOAL.md`): small commits as work lands; never leave a finished, verified step uncommitted.
 
 ## Commands
 

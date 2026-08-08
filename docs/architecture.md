@@ -2,7 +2,8 @@
 
 **Goal:** a pure JavaScript engine in `quench-runtime` and an isolated
 `quench-test262` conformance runner, converging on 100% ECMA-262 test262
-with minimum memory/RSS and no undocumented skips. The engine pipeline is
+with minimum memory/RSS, V8-grade performance, and no undocumented skips
+(`GOAL.md`). The engine pipeline is
 explicit: `OXC AST -> Quench IR -> interpreter`.
 
 `quench-runtime` owns parsing, compact IR, execution, values, environments,
