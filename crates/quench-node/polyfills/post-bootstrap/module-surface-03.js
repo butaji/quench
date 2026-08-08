@@ -429,6 +429,7 @@ const __quenchReadableConcurrentTransform = async function* (
       const entry = pending.shift();
       const result = await entry.promise;
       if (signal.aborted) throw __quenchReadableAbortError(signal);
+      await fill();
       if (mode === "filter") {
         if (result) yield entry.value;
       } else if (mode !== "forEach") {
@@ -440,7 +441,6 @@ const __quenchReadableConcurrentTransform = async function* (
           yield result;
         }
       }
-      await fill();
     }
   } finally {
     controller.abort();

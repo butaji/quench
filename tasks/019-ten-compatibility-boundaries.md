@@ -875,3 +875,12 @@ signal in their slice operation state. The focused live/pre-aborted contract,
 the maintained slice and cancellation stages, and the complete authoritative
 `test-stream-drop-take.js` fixture pass. Both Rust tests and the Ajv, debug,
 Chalk, ms, Prettier, and process-entry application stages remain green.
+
+Stage 2464 aligns readable-operator prefetch ordering. After a mapper or
+predicate settles, its vacated concurrency slot is refilled before the result
+is exposed to the consumer, matching Node's one-item lookahead at the default
+concurrency. The focused infinite-source map/filter contract and the complete
+authoritative `test-stream-filter.js` fixture pass with the maintained helper
+and combinator stages. Authoritative `test-stream-map.js` advances from its
+infinite-map `Callback 3` mismatch to `Callback 7`, the separate case where an
+error emitted on the derived helper stream must reject active iteration.
