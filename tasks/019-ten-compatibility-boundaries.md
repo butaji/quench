@@ -916,3 +916,14 @@ passes, and the complete authoritative `test-stream-map.js` fixture now passes
 alongside `test-stream-filter.js` and the maintained helper cluster. Both Rust
 tests and the Ajv, debug, Chalk, ms, Prettier, and process-entry application
 stages remain green.
+
+Stage 2468 implements readable reduction on both source streams and derived
+helper chains. Reduction distinguishes an omitted initial value by argument
+count, awaits asynchronous reducers lazily, supplies the internal abort signal
+to each callback, races a non-settling reducer against an external signal, and
+destroys a directly reduced source for a pre-aborted signal. Method and option
+validation reject through the returned Promise, including the empty/no-initial
+`ERR_MISSING_ARGS` case. The focused value/validation/abort matrix and complete
+authoritative `test-stream-reduce.js` fixture pass. The upstream map, filter,
+and drop/take fixtures, maintained helper stages, both Rust tests, and the six
+representative application stages remain green.
