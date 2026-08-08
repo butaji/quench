@@ -827,6 +827,8 @@ pass.
 - Upstream `test-http-client-set-timeout-after-end.js` now passes with the socket event and zero-timeout listener behavior.
 - Stage 2214 tracks socket timeout values across request creation, connect, and `setTimeout()` rescheduling.
 - The upstream timeout fixture now reaches a duplicate-timeout callback-count discrepancy after socket timeout scheduling is aligned.
+- Stage 2216 preserves `http.request()` results as `instanceof http.ClientRequest`, matching Node's public type contract.
+- The upstream timeout fixture now advances past the request-instance assertion to a later duplicate destroy/timeout callback discrepancy.
 - Upstream `test-http-hostname-typechecking.js` now passes with synchronous host-option validation.
 - Stage 2207 supports `new http.ClientRequest(serverAddress, callback)` by routing it through the same in-memory request path as `http.request()`.
 - Upstream `test-http-client-input-function.js` now passes with the `ClientRequest` constructor path.
