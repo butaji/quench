@@ -17,6 +17,13 @@ class __quenchReadableStream {
         while (this._readWaiters.length) {
           this._readWaiters.shift()({ value: undefined, done: true });
         }
+      },
+      error: (error) => {
+        this._error = error;
+        this._closed = true;
+        while (this._readWaiters.length) {
+          this._readWaiters.shift()(Promise.reject(error));
+        }
       }
     };
     this[__quenchWebStreamsState] = { controller };
