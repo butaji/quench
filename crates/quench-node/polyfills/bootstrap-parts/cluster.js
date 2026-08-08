@@ -692,10 +692,17 @@ const __quenchRequireStreamIter = () => {
         return publish(value);
       },
       writeSync(value) {
-        return this.write(value);
+        if (ended) throw new Error("write after end");
+        const bytes = (Array.isArray(value) ? value : [value]).reduce(
+          (sum, item) =>
+            sum + (item?.byteLength ?? NodeBuffer.byteLength(String(item))),
+          0
+        );
+        if (totalBytes + bytes > budget) return false;
+        return publish(value);
       },
       writevSync(values) {
-        return this.write(values);
+        return this.writeSync(values);
       },
       writev(values, options) {
         return this.write(values, options);
