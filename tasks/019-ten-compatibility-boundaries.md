@@ -386,6 +386,11 @@ That dispatch work first uncovered and fixed two adjacent callback gaps:
 `rename` was missing from the async mount wrapper, and async two-path
 `rename`/`copyFile` left the destination untransformed. The authoritative
 `test-vfs-fs-rename-callback.js` now passes completely.
+The mounted promise dispatch table also lacked `lchmod`, `lutimes`, and
+`link`; those routes are now registered. Focused mounted promise path,
+mutation, and handle stages pass, while an isolated copy of the full fixture
+still reports a later assertion failure, so the complete mounted promise
+fixture remains open.
 
 Stage 2378 passes the four basic stream `destroy()` contracts for readable and
 writable streams, including implicit `AbortError`, explicit error messages,
