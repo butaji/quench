@@ -18,7 +18,7 @@ pub use crate::value::primitive::PrimitiveHint;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::value::{Object, Value};
+use crate::value::{Object, ObjectKind, Value};
 
 /// PreferredType for ToPrimitive hint (ES spec §7.1.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,6 +72,11 @@ pub fn is_extensible(v: &Value) -> bool {
         Value::Class(c) => c.is_extensible(),
         _ => false,
     }
+}
+
+/// IsArray (§7.2.2): whether `v` is an Array exotic object.
+pub fn is_array(v: &Value) -> bool {
+    matches!(v, Value::Object(o) if o.borrow().kind == ObjectKind::Array)
 }
 
 /// Throw a TypeError from a JS builtin.
