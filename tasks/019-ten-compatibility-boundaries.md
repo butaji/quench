@@ -523,6 +523,11 @@ differential coverage report is stale until the full measurement command is
 rerun; its previous metadata predates the current commit and is not used as
 current pass-rate evidence.
 
+The representative npm application gates were re-run after the latest runtime
+changes: Ajv (stage 2047), debug (2069), `ms` (2081), and Prettier (2104) all
+pass, as does the missing-package loader contract (2070). These gates remain
+green; ESLint is still a separate unresolved application boundary.
+
 Stage 2423 makes `RealFSProvider` access dispatch to the host filesystem before
 the virtual-entry lookup. Existing and missing-path promise access now pass in
 the focused regression; this removes the first concrete unresolved await from
