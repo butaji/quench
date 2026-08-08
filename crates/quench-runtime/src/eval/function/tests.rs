@@ -856,6 +856,23 @@ fn tco_tail_call_in_block() {
     assert_eq!(v, Value::String("done".to_string()));
 }
 
+/// TCO: a tail-call return inside a do-while body is in tail position.
+#[test]
+fn tco_tail_call_in_do_while_body() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx
+        .eval(
+            r#""use strict";
+            function f(n) {
+              if (n === 0) return 'done';
+              do { return f(n - 1); } while (false);
+            }
+            f(100000)"#,
+        )
+        .unwrap();
+    assert_eq!(v, Value::String("done".to_string()));
+}
+
 /// TCO: named function expression calling itself in tail position.
 #[test]
 fn tco_named_function_expression() {
