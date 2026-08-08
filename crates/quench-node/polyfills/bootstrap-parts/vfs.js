@@ -248,6 +248,7 @@ class __QuenchVirtualFileSystem {
     this.__entries = new Map([["/", { type: "dir", children: new Set() }]]);
     this.__fds = new Map();
     this.__closedFds = new Set();
+    this.__realFds = new Set();
     this.__fdPositions = new Map();
     this.provider.open = async (path, flags = "r") =>
       this.__makeHandle(path, flags);
@@ -685,6 +686,14 @@ class __QuenchVirtualFileSystem {
   writeFileSync(path, data) {
     if (
       this.provider instanceof __QuenchRealFSProvider &&
+      typeof path === "number"
+    ) {
+      const bytes =
+        typeof data === "string" ? globalThis.Buffer.from(data) : data;
+      return globalThis.__quench_fs_native_write(path, Array.from(bytes));
+    }
+    if (
+      this.provider instanceof __QuenchRealFSProvider &&
       typeof path !== "number"
     )
       return globalThis.__nodeFs.writeFileSync(this.__realPath(path), data);
@@ -747,6 +756,17 @@ class __QuenchVirtualFileSystem {
   readFileSync(path, options) {
     if (
       this.provider instanceof __QuenchRealFSProvider &&
+      typeof path === "number"
+    ) {
+      const bytes = globalThis.__quench_fs_native_read_all(path);
+      return options === "utf8" || options?.encoding
+        ? globalThis.Buffer.from(bytes).toString(
+            options === "utf8" ? "utf8" : options.encoding
+          )
+        : globalThis.Buffer.from(bytes);
+    }
+    if (
+      this.provider instanceof __QuenchRealFSProvider &&
       typeof path !== "number"
     )
       return globalThis.__nodeFs.readFileSync(this.__realPath(path), options);
@@ -795,6 +815,15 @@ class __QuenchVirtualFileSystem {
   }
   openSync(path, flags = "r") {
     flags = __quenchVfsNormalizeFlags(flags);
+    if (this.provider instanceof __QuenchRealFSProvider) {
+      const fd = globalThis.__quench_fs_native_open(
+        this.__realPath(path),
+        String(flags)
+      );
+      this.__realFds.add(fd);
+      this.__fds.set(fd, this.__realPath(path));
+      return fd;
+    }
     const key = __quenchVfsPath(path);
     if (this.__entry(key) && String(flags).includes("x")) {
       throw __quenchVfsError("EEXIST", "open", path);
@@ -920,6 +949,10 @@ class __QuenchVirtualFileSystem {
     return this.fsyncSync(fd);
   }
   closeSync(fd) {
+    if (this.__realFds.delete(fd)) {
+      this.__fds.delete(fd);
+      return globalThis.__quench_fs_native_close(fd);
+    }
     if (!this.__fds.delete(fd)) throw __quenchVfsError("EBADF", "close", fd);
     this.__closedFds.add(fd);
     this.__fdPositions.delete(fd);
