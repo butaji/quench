@@ -16,10 +16,11 @@
   no new Rust builtins — anything implementable in JS lands in JS first;
   the 21 stages already done in Rust are migration debt to be repaid under
   R0, not final state.
-- Mechanism: `%ops%` bridge (`eval/ops.rs` + `builtins/core/ops_wrapper.rs`,
+- Mechanism: `__ops__` bridge (`eval/ops.rs` + `builtins/core/ops_wrapper.rs`,
   currently a scaffold) and `builtins/bootstrap.rs` (planned), per
   `tasks/refactor-plan.md` items R1 (PHASE-B) and R0 (PHASE-B).
-  Note: `AGENTS.md` says `__ops__`; the actual name in code is `%ops%`.
+  Note: docs/tasks use `__ops__`; the code bridge is still registered under the
+  pre-rename name (R1 renames it to `__ops__`).
 - Consequences:
   - `AGENTS.md` and `docs/architecture.md` must label this as the *target*
     architecture until the first builtin actually moves to JS.
