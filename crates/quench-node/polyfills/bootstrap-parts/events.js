@@ -414,12 +414,14 @@ class NodeReadable extends NodeEventEmitter {
     return destination;
   }
   pause() {
+    if (this.destroyed) return this;
     this._paused = true;
     this.readableFlowing = false;
     this._readableState.readingMore = false;
     return this;
   }
   resume() {
+    if (this.destroyed) return this;
     this._paused = false;
     this.readableFlowing = true;
     this._readableState.resumeScheduled = true;
