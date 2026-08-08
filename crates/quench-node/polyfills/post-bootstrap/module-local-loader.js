@@ -76,6 +76,30 @@ const __quenchValidateRequireId = (specifier) => {
     throw error;
   }
 };
+const __quenchResolve = (specifier, parent, options) => {
+  __quenchValidateRequireId(specifier);
+  const lookupParent =
+    (options?.paths?.[0] && path.resolve(options.paths[0], "index.js")) ||
+    parent;
+  let filename;
+  if (specifier.startsWith(".") || specifier.startsWith("/")) {
+    filename = __quenchLocalModulePath(specifier, lookupParent);
+  } else {
+    filename = __quenchPackagePath(specifier, lookupParent);
+  }
+  try {
+    return __nodeFs.realpathSync(filename);
+  } catch (_) {
+    return filename;
+  }
+};
+const __quenchResolvePaths = (specifier, parent) => {
+  __quenchValidateRequireId(specifier);
+  if (specifier.startsWith(".") || specifier.startsWith("/")) return null;
+  return __quenchOriginalRequireWithLocalModules("module")._nodeModulePaths(
+    path.dirname(parent)
+  );
+};
 const __quenchLocalModulePath = (specifier, parent) => {
   const path = __quenchOriginalRequireWithLocalModules("path");
   const base = specifier.startsWith("/")
@@ -181,6 +205,9 @@ const __quenchLoadLocalModule = (specifier, parent) => {
       return __quenchLoadLocalModule(name, filename);
     }
   };
+  localRequire.resolve = (name, options) =>
+    __quenchResolve(name, filename, options);
+  localRequire.resolve.paths = (name) => __quenchResolvePaths(name, filename);
   const execute = Function(
     "exports",
     "module",
@@ -221,6 +248,19 @@ globalThis.require = (specifier) => {
     globalThis.__quench_script_filename || globalThis.__filename
   );
 };
+globalThis.require.resolve = (name, options) =>
+  __quenchResolve(
+    name,
+    globalThis.__quench_script_filename || globalThis.__filename,
+    options
+  );
+globalThis.require.resolve.paths = (name) =>
+  __quenchResolvePaths(
+    name,
+    globalThis.__quench_script_filename || globalThis.__filename
+  );
+globalThis.__quenchRequireResolve = globalThis.require.resolve;
+globalThis.__quenchRequireResolvePaths = globalThis.require.resolve.paths;
 globalThis.module ||= {
   exports: {},
   children: [],
