@@ -226,10 +226,10 @@ pub fn collect_var_names_recursive(stmts: &[Statement], names: &mut Vec<String>)
                 }
             }
             Statement::SequenceDecls(inner) => collect_var_names_recursive(inner, names),
-            Statement::ForIn { variable, body, .. } => {
-                if let Expression::Identifier(name) = variable.as_ref() {
-                    names.push(name.clone());
-                }
+            Statement::ForIn { body, .. } => {
+                // A `for (var k in obj)` declaration is emitted by the lowering
+                // as a wrapper-block declaration; a bare LHS is an assignment
+                // target, not a var declaration.
                 collect_var_names_recursive(std::slice::from_ref(body.as_ref()), names);
             }
             Statement::Expression(expr) => {
@@ -242,16 +242,15 @@ pub fn collect_var_names_recursive(stmts: &[Statement], names: &mut Vec<String>)
 
 fn collect_var_names_from_expr(expr: &Expression, names: &mut Vec<String>) {
     match expr {
-        Expression::ForIn { variable, body, .. } => {
-            if let Expression::Identifier(name) = variable.as_ref() {
-                names.push(name.clone());
-            }
+        Expression::ForIn { body, .. } => {
+            // A `for (var k in obj)` var declaration is emitted by the lowering
+            // as a declaration statement in a wrapper block, so it is already
+            // collected there. Collecting the LHS name here would treat a bare
+            // assignment-target LHS (`for (k in obj)`) as a var declaration,
+            // shadowing an outer binding in strict eval.
             collect_var_names_recursive(std::slice::from_ref(body.as_ref()), names);
         }
-        Expression::ForOf { variable, body, .. } => {
-            if let Expression::Identifier(name) = variable.as_ref() {
-                names.push(name.clone());
-            }
+        Expression::ForOf { body, .. } => {
             collect_var_names_recursive(std::slice::from_ref(body.as_ref()), names);
         }
         _ => {}
