@@ -18,7 +18,7 @@ pub use crate::value::primitive::PrimitiveHint;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::value::{Object, ObjectKind, Value};
+use crate::value::{Object, Value};
 
 /// PreferredType for ToPrimitive hint (ES spec §7.1.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,22 +61,6 @@ pub fn is_constructor(v: &Value) -> bool {
 /// OrdinaryHasOwnProperty (§7.3.2): whether `o` has an own property `key`.
 pub fn has_own(o: &Rc<RefCell<Object>>, key: &str) -> bool {
     o.borrow().has_own(key)
-}
-
-/// IsExtensible (§9.1.3): whether `v` is extensible. Functions/classes are
-/// always extensible; primitives are never extensible.
-pub fn is_extensible(v: &Value) -> bool {
-    match v {
-        Value::Object(o) => o.borrow().extensible,
-        Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_) => true,
-        Value::Class(c) => c.is_extensible(),
-        _ => false,
-    }
-}
-
-/// IsArray (§7.2.2): whether `v` is an Array exotic object.
-pub fn is_array(v: &Value) -> bool {
-    matches!(v, Value::Object(o) if o.borrow().kind == ObjectKind::Array)
 }
 
 /// Throw a TypeError from a JS builtin.

@@ -12,8 +12,8 @@ mod tests;
 use crate::builtins::object_static::{
     object_assign, object_create, object_define_property, object_entries, object_freeze,
     object_from_entries, object_get_own_property_descriptor, object_get_own_property_names,
-    object_has_own, object_is_frozen,
-    object_keys, object_values,
+    object_get_prototype_of, object_has_own, object_is, object_is_extensible, object_is_frozen,
+    object_keys, object_prevent_extensions, object_set_prototype_of, object_values,
 };
 use crate::value::{NativeConstructor, NativeFunction, Object, ObjectKind, Value};
 use crate::Context;
@@ -96,15 +96,31 @@ pub fn register_object(ctx: &mut Context) {
         "hasOwn",
         Value::NativeFunction(Rc::new(NativeFunction::new(object_has_own))),
     );
-    // Object.is is self-hosted in JS (builtins/core/object_statics.js).
+    constructor.set_static_method(
+        "is",
+        Value::NativeFunction(Rc::new(NativeFunction::new(object_is))),
+    );
     constructor.set_static_method(
         "fromEntries",
         Value::NativeFunction(Rc::new(NativeFunction::new(object_from_entries))),
     );
-    // Object.getPrototypeOf is self-hosted in JS (builtins/core/object_statics.js).
-    // Object.setPrototypeOf / preventExtensions are self-hosted in JS
-    // (builtins/core/object_statics.js).
-    // Object.isExtensible is self-hosted in JS (builtins/core/object_statics.js).
+    constructor.set_static_method(
+        "getPrototypeOf",
+        Value::NativeFunction(Rc::new(NativeFunction::new(object_get_prototype_of))),
+    );
+    constructor.set_static_method(
+        "setPrototypeOf",
+        Value::NativeFunction(Rc::new(NativeFunction::new(object_set_prototype_of))),
+    );
+    constructor.set_static_method(
+        "preventExtensions",
+        Value::NativeFunction(Rc::new(NativeFunction::new(object_prevent_extensions))),
+    );
+    constructor.set_static_method(
+        "isExtensible",
+        Value::NativeFunction(Rc::new(NativeFunction::new(object_is_extensible))),
+    );
+
     constructor.set_name("Object");
     let object_ctor = Value::NativeConstructor(Rc::new(constructor));
     // Set Object.prototype.constructor = Object
