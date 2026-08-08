@@ -931,3 +931,4 @@ pass.
 - Stage 2278 resolves asynchronous dgram `localhost` binds to `127.0.0.1` through the handle lookup path. The focused localhost-bind contract and upstream `test-dgram-close.js` pass.
 - Stage 2279 invokes the internal dgram send hook and maps nonzero results to callback/error-event metadata. The focused handle-send contract passes; upstream `test-dgram-send-error.js` still has a later interaction-specific unexpected-message discrepancy.
 - Stage 2280 schedules default dgram lookup completion on the next turn, makes close idempotent, and prevents `listening` from firing before listeners attach. The focused lifecycle contract and upstream `test-dgram-listen-after-bind.js` and `test-dgram-close-during-bind.js` pass.
+- Follow-up Stage 2281 exposes `UV_UNKNOWN` and maps its system error name to `UNKNOWN`, completing internal dgram send-hook error metadata. Upstream `test-dgram-send-error.js` now passes; the focused handle-send contract remains passing.

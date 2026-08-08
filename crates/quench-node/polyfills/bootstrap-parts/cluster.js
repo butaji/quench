@@ -1129,6 +1129,7 @@ const __quenchInternalBindingModule = {
       return {
         UV_ENOENT: -2,
         UV_EEXIST: -17,
+        UV_UNKNOWN: -4094,
         errname: (errorNumber) =>
           globalThis.__nodeUtil.getSystemErrorName(errorNumber),
         getErrorMessage: (errorNumber) =>
