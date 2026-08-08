@@ -451,7 +451,10 @@ pub fn make_arguments_iterable(obj: Rc<RefCell<Object>>, count: usize) {
             let mut res = Object::new(ObjectKind::Ordinary);
             let mut i = index.borrow_mut();
             if *i < count {
-                let v = obj.borrow().get(&i.to_string()).unwrap_or(Value::Undefined);
+                // Read through the full property access path so mapped-arguments
+                // accessors (which proxy to the param bindings) are invoked.
+                let v = crate::eval::member::eval_object_member(&obj, &i.to_string(), None)
+                    .unwrap_or(Value::Undefined);
                 res.set("value", v);
                 res.set("done", Value::Boolean(false));
                 *i += 1;
