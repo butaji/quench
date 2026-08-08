@@ -572,7 +572,10 @@ const __quenchNetModule = {
         this._bufferSize = 0;
         this.emit("finish");
         if (this._peer && !this._peer.destroyed) {
-          queueMicrotask(() => this._peer.emit("end"));
+          queueMicrotask(() => {
+            if (!this._peer.allowHalfOpen) this._peer.destroy();
+            this._peer.emit("end");
+          });
         }
       });
       return this;
