@@ -1982,6 +1982,13 @@ let __quenchHttpModule;
         }
         const serverRequest = new NodeIncomingMessage();
         Object.assign(serverRequest, request);
+        // Node's HTTP parser owns a data listener on the request socket while
+        // a request is being dispatched. User code can observe this listener
+        // through req.socket.listenerCount("data"), even before it attaches a
+        // request-body handler.
+        if (serverRequest.socket?.listenerCount?.("data") === 0) {
+          serverRequest.socket.on("data", () => {});
+        }
         response.req = serverRequest;
         const previous = globalThis.__nodeCurrentAsyncResource;
         globalThis.__nodeCurrentAsyncResource = resource;
@@ -2003,6 +2010,7 @@ let __quenchHttpModule;
               const body = request._encoding
                 ? String(chunk)
                 : NodeBuffer.from(String(chunk));
+              serverRequest.socket?.emit("data", body);
               serverRequest.emit("data", body);
             }
           }
