@@ -341,3 +341,8 @@ compression, dotted tails, and scoped-address zones while retaining valid
 IPv4, IPv6, and zone forms. Focused stage 2076 and upstream
 `test-net-isip.js` pass. Stages 2071–2076 pass as a grouped focused run: 6/6,
 zero failures and zero retries.
+
+The IPv6 follow-up now validates the complete upstream `test-net-isipv6.js`
+corpus. Stages 2077 and 2078 cover every invalid and valid address in that
+fixture; both pass, as does the upstream fixture itself. The grouped focused
+run for stages 2076–2078 passes 3/3 with zero failures and zero retries.
