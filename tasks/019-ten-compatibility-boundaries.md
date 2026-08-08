@@ -73,3 +73,11 @@ own commit.
   quench reaches all writable callbacks but invokes the batched `_read()` hook
   three times where Node invokes it eleven times, so readable buffer-demand
   accounting remains the next stream implementation target.
+
+## New fs evidence
+
+The temporary stage-2345 callback-label probe showed that callback-style
+`fs.access()` completes, while `fs.promises.access()` reactions are not
+observed before the following timer turn. This explains the full fixture's
+missing callback and moves the next fs fix into promise-job/event-loop
+integration; no filesystem permission behavior was changed.
