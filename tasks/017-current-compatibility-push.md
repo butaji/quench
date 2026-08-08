@@ -401,6 +401,13 @@ The exact upstream `test-http-client-abort-keep-alive-destroy-res.js` still
 misses one harness callback, so the broader agent lifecycle remains unresolved
 pending a closer callback-order comparison.
 
+The stream drop/take public contract is covered by focused stage 2088:
+sync-source drop/take, numeric-string and boolean coercion, zero-count behavior,
+and negative-count validation all pass. The full upstream
+`test-stream-drop-take.js` fixture still exposes an async/infinite-iterator
+completion mismatch; no superficial method shim is being used to classify it
+as fixed.
+
 The portable fs-access contract is covered by focused stage 2087: valid read
 access, invalid and out-of-range mode validation, missing-path `ENOENT`, and
 callback/promise completion all pass. The full upstream `test-fs-access.js`
