@@ -279,6 +279,10 @@ Stage 2388 adds host-native canonicalization for real-provider `realpathSync()`
 and verifies string and buffer results. The authoritative
 `test-vfs-real-provider.js` now passes completely; real-provider symlink and
 watch fixtures remain separate failures.
+Stage 2389 adds native `readlinkSync()` support for real providers and verifies
+relative targets plus absolute in-root target translation. The synchronous
+symlink path is now covered; the authoritative symlink fixture still reports
+an async callback failure after these operations.
 
 Stage 2378 passes the four basic stream `destroy()` contracts for readable and
 writable streams, including implicit `AbortError`, explicit error messages,

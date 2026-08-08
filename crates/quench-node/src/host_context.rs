@@ -521,6 +521,11 @@ macro_rules! run_host_context {
                 .map(|value| value.to_string_lossy().into_owned())
                 .map_err(|_| rquickjs::Error::new_from_js("fs", "realpath failed"))
         }))?;
+        ctx.globals().set("__quench_fs_native_readlink", Func::from(|path: String| -> rquickjs::Result<String> {
+            std::fs::read_link(&path)
+                .map(|value| value.to_string_lossy().into_owned())
+                .map_err(|_| rquickjs::Error::new_from_js("fs", "readlink failed"))
+        }))?;
         ctx.globals().set("__quench_fs_native_read_all", Func::from(|fd: i32| -> rquickjs::Result<Vec<u8>> {
             #[cfg(unix)]
             {
