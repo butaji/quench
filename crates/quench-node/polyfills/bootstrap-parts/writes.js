@@ -370,13 +370,19 @@ const __nodeFsValidatePullOptions = (options) => {
     options.autoClose !== undefined &&
     typeof options.autoClose !== "boolean"
   ) {
-    throw new TypeError('The "autoClose" option must be of type boolean');
+    const error = new TypeError(
+      'The "autoClose" option must be of type boolean'
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
   }
   if (
     options.signal !== undefined &&
     (!options.signal || typeof options.signal.aborted !== "boolean")
   ) {
-    throw new TypeError('The "signal" option must be an AbortSignal');
+    const error = new TypeError('The "signal" option must be an AbortSignal');
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
   }
   for (const [name, value] of [
     ["start", options.start],
@@ -389,10 +395,14 @@ const __nodeFsValidatePullOptions = (options) => {
 };
 const __nodeFsValidatePullNumber = (name, value) => {
   if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new TypeError(`The "${name}" option must be of type number`);
+    const error = new TypeError(`The "${name}" option must be of type number`);
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
   }
   if (!Number.isInteger(value) || value < 0) {
-    throw new RangeError(`The value of "${name}" is out of range`);
+    const error = new RangeError(`The value of "${name}" is out of range`);
+    error.code = "ERR_OUT_OF_RANGE";
+    throw error;
   }
 };
 const __nodeFsPullBatches = (handle, options) => {
