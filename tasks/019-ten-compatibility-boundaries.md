@@ -59,5 +59,9 @@ own commit.
   `startsWith()`/`slice()` removes the previous native
   `RegExp.prototype.flags`/`Symbol.replace` recursion while loading ESLint.
   ESLint now advances to a separate package-resolution failure for
-  `prelude-ls`, so the full application gate remains unresolved.
+  `prelude-ls`, so the full application gate remains unresolved. Direct loads
+  of `prelude-ls`, `type-check`, `optionator`, and the individual ESLint
+  dependencies pass; loading the complete `eslint` graph first is the
+  differentiating sequence, indicating a nested loader-cache transition rather
+  than a missing installed package.
 - Item 10: queued.
