@@ -221,3 +221,8 @@ Stage 2377 verifies in-memory VFS descriptor writes now honor the current file
 offset and preserve prior content. The upstream write fixture reaches a later
 real-provider `/a.txt` open failure after this virtual-descriptor behavior,
 which remains a separate provider boundary.
+
+Stage 2378 passes the four basic stream `destroy()` contracts for readable and
+writable streams, including implicit `AbortError`, explicit error messages,
+and `error` before `close`. The upstream `test-stream-destroy.js` failure is
+therefore narrowed to its HTTP request/response destroy paths.
