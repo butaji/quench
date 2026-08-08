@@ -125,12 +125,8 @@ pub fn lower_for_in_stmt(for_in_stmt: &ast::ForInStatement) -> Option<Statement>
                     // destructures each key in eval_for_in.
                     let mut decls = Vec::new();
                     for binding in &decl.declarations {
-                        if let Ok(elem) =
-                            crate::lower::pattern::lower_binding_elem(&binding.id)
-                        {
-                            for name in
-                                crate::lower::pattern::collect_pattern_identifiers(&elem)
-                            {
+                        if let Ok(elem) = crate::lower::pattern::lower_binding_elem(&binding.id) {
+                            for name in crate::lower::pattern::collect_pattern_identifiers(&elem) {
                                 decls.push(Statement::VarDeclaration {
                                     kind: VarKind::Var,
                                     name,
