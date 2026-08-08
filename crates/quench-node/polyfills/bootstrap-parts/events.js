@@ -12,6 +12,8 @@ for (const method of [
   globalThis.process[method] = NodeEventEmitter.prototype[method];
 }
 const __nodeWritableWriteError = (stream, callback, error) => {
+  if (!callback && stream.__writeErrorEmitted) return false;
+  if (!callback) stream.__writeErrorEmitted = true;
   queueMicrotask(() => {
     if (callback) callback(error);
     else stream.emit("error", error);
@@ -500,10 +502,16 @@ class NodeReadable extends NodeEventEmitter {
       return false;
     }
     if (this._ended && chunk !== null) {
-      return __nodeReadablePushError(
-        "stream.push() after EOF",
-        "ERR_STREAM_PUSH_AFTER_EOF"
-      );
+      const error = new Error("stream.push() after EOF");
+      error.code = "ERR_STREAM_PUSH_AFTER_EOF";
+      if (this.listenerCount("error")) {
+        if (!this.__pushAfterEofErrorScheduled) {
+          this.__pushAfterEofErrorScheduled = true;
+          queueMicrotask(() => this.emit("error", error));
+        }
+        return false;
+      }
+      throw error;
     }
     if (chunk === null) {
       if (

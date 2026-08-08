@@ -768,3 +768,9 @@ Focused stage 2171 aligns stream `eventNames()` ordering for Node’s priority
 events and hides the stream’s internal auto-destroy error listener when no
 user error listener is present. The focused contract and upstream
 `test-stream-event-names.js` both pass.
+
+Focused stage 2172 aligns stream error-once behavior: `Readable.push()` after
+EOF emits one asynchronous error when observed, while still throwing without
+an error listener, and repeated invalid `Writable.write()` calls emit only one
+error. The focused contract and upstream `test-stream-error-once.js` both
+pass.
