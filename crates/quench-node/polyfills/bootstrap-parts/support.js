@@ -89,6 +89,9 @@ globalThis.__nodeCommon = {
     process.exit(0);
   },
   hasCrypto: true,
+  localhostIPv4: "127.0.0.1",
+  localhostIPv6: "::1",
+  hasIPv6: true,
   expectsError: (_expected) => (error) => {
     if (!error) throw new Error("Expected filesystem error");
   },
