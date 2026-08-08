@@ -835,7 +835,11 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
   socket[__quenchDgramStateSymbol] = {
     handle: {
       fd: 0,
-      lookup(address, callback) {
+      lookup(address, familyOrCallback, maybeCallback) {
+        const callback =
+          typeof familyOrCallback === "function"
+            ? familyOrCallback
+            : maybeCallback;
         setImmediate(() =>
           callback(null, address === "localhost" ? "127.0.0.1" : address)
         );
