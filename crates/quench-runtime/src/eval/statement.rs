@@ -1094,10 +1094,12 @@ fn eval_try(
                 let fin_result = eval_statement(fin, env, false, in_arrow_function);
                 match fin_result {
                     Ok(_) => {
-                        if take_control_flow().is_none() {
-                            if let Some(cf) = pending_cf {
-                                set_control_flow(cf);
-                            }
+                        // The finally's abrupt completion (break/continue/return)
+                        // takes precedence over the try body's pending flow.
+                        if let Some(fin_cf) = take_control_flow() {
+                            set_control_flow(fin_cf);
+                        } else if let Some(cf) = pending_cf {
+                            set_control_flow(cf);
                         }
                         Ok(try_val)
                     }
@@ -1126,10 +1128,10 @@ fn eval_try(
                     let fin_result = eval_statement(fin, env, false, in_arrow_function);
                     match fin_result {
                         Ok(_) => {
-                            if take_control_flow().is_none() {
-                                if let Some(cf) = pending_cf {
-                                    set_control_flow(cf);
-                                }
+                            if let Some(fin_cf) = take_control_flow() {
+                                set_control_flow(fin_cf);
+                            } else if let Some(cf) = pending_cf {
+                                set_control_flow(cf);
                             }
                             catch_result
                         }
