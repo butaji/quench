@@ -387,7 +387,7 @@ class __QuenchVirtualFileSystem {
         watcher.on("change", (eventType, filename) => {
           const value = { eventType, filename };
           if (pending) {
-            pending.resolve({ value: [value], done: false });
+            pending.resolve({ value, done: false });
             pending = undefined;
           } else queue.push(value);
         });
@@ -398,7 +398,7 @@ class __QuenchVirtualFileSystem {
         return {
           next: () => {
             if (queue.length)
-              return Promise.resolve({ value: [queue.shift()], done: false });
+              return Promise.resolve({ value: queue.shift(), done: false });
             if (closed)
               return Promise.resolve({ done: true, value: undefined });
             return new Promise((resolve, reject) => {
@@ -408,6 +408,19 @@ class __QuenchVirtualFileSystem {
           return: async () => {
             closed = true;
             watcher.close();
+            if (pending) {
+              pending.resolve({ done: true, value: undefined });
+              pending = undefined;
+            }
+            return { done: true, value: undefined };
+          },
+          throw: async () => {
+            closed = true;
+            watcher.close();
+            if (pending) {
+              pending.resolve({ done: true, value: undefined });
+              pending = undefined;
+            }
             return { done: true, value: undefined };
           },
           [Symbol.asyncIterator]() {
@@ -926,8 +939,21 @@ class __QuenchVirtualFileSystem {
         const key = __quenchVfsResolveParentPath(this.__entries, requested);
         const existing = this.__entries.get(key);
         if (existing) {
+          if (existing.type === "symlink") {
+            const target = this.__entry(requested);
+            if (target?.type === "dir") continue;
+            throw __quenchVfsError(
+              target ? "ENOTDIR" : "ENOENT",
+              "mkdir",
+              path
+            );
+          }
           if (existing.type !== "dir") {
-            throw __quenchVfsError("EEXIST", "mkdir", path);
+            throw __quenchVfsError(
+              index < parts.length - 1 ? "ENOTDIR" : "EEXIST",
+              "mkdir",
+              path
+            );
           }
           continue;
         }

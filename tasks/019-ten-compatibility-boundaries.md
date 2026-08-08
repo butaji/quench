@@ -488,6 +488,12 @@ Stage 2428 adds the missing `FileHandle.pullSync()` surface alongside the
 existing pull batch validation and locking logic. The focused synchronous
 file-handle stage passes for batch reading, position advancement, and reuse.
 
+Stage 2429 restores recursive `mkdir` traversal through intermediate directory
+symlinks and aligns `promises.watch()` with Node's event-object result shape,
+including iterator `throw()`. The focused regression covers both contracts;
+the authoritative mkdir fixture now passes. A focused pending-`return()` probe
+also passes; the full watch-promises fixture still has a later interaction.
+
 Stage 2423 makes `RealFSProvider` access dispatch to the host filesystem before
 the virtual-entry lookup. Existing and missing-path promise access now pass in
 the focused regression; this removes the first concrete unresolved await from
