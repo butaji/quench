@@ -213,3 +213,7 @@ Stage 2375 fixes and verifies VFS permission semantics: virtual entries retain
 `chmodSync()` mode bits, `accessSync()` enforces `R_OK`/`W_OK`/`X_OK`, and the
 promise path reports `EACCES`. The authoritative
 `test-vfs-access-modes.js` and `test-vfs-fs-accessSync.js` fixtures now pass.
+Stage 2376 fixes path-based VFS `Buffer`/`Uint8Array` writes; the focused
+regression passes and the upstream `test-vfs-fs-writeFileSync.js` now advances
+past its direct buffer assertion. Its remaining failure is descriptor offset
+semantics (`" world"` instead of `"hello world"`), which is tracked separately.

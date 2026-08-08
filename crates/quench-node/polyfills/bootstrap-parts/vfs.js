@@ -701,7 +701,12 @@ class __QuenchVirtualFileSystem {
     }
     this.__entries.set(key, {
       type: "file",
-      data: typeof data === "string" ? data : String(data),
+      data:
+        typeof data === "string"
+          ? data
+          : data instanceof Uint8Array
+            ? globalThis.Buffer.from(data).toString()
+            : String(data),
       mode: 0o666
     });
   }
