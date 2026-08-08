@@ -1869,6 +1869,17 @@ let __quenchHttpModule;
       request.writableFinished = false;
       request.headers = Object.create(null);
       request.rawHeaders = [];
+      if (
+        options.headers &&
+        !Array.isArray(options.headers) &&
+        Array.isArray(options.headers.host)
+      ) {
+        const error = new TypeError(
+          'The "host" header must be a string [ERR_INVALID_ARG_TYPE]'
+        );
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
       if (Array.isArray(options.headers)) {
         for (let index = 0; index + 1 < options.headers.length; index += 2) {
           const name = options.headers[index];
