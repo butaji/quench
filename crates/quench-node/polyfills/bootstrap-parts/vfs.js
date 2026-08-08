@@ -290,6 +290,19 @@ class __QuenchVirtualFileSystem {
     );
     this.promises.access = async (path, mode = 0) =>
       this.accessSync(path, mode);
+    this.promises.watch = (path, options = {}) => {
+      const iterator = {
+        next: async () => ({ done: true, value: undefined }),
+        return: async () => ({ done: true, value: undefined }),
+        [Symbol.asyncIterator]() {
+          return this;
+        }
+      };
+      if (this.__isReal()) {
+        iterator.close = () => {};
+      }
+      return iterator;
+    };
     this.promises.open = async (path, flags = "r") =>
       this.openSync(path, flags);
   }
@@ -1064,6 +1077,34 @@ class __QuenchVirtualFileSystem {
     this.__closedFds.add(fd);
     this.__fdPositions.delete(fd);
     globalThis.__quenchVfsFdHandles?.delete(fd);
+  }
+  watch(path, options, listener) {
+    if (typeof options === "function") {
+      listener = options;
+      options = {};
+    }
+    if (!this.__isReal()) throw __quenchVfsError("ENOTSUP", "watch", path);
+    return globalThis.__nodeFs.watch(
+      this.__realPath(path),
+      options || {},
+      listener
+    );
+  }
+  watchFile(path, options, listener) {
+    if (typeof options === "function") {
+      listener = options;
+      options = {};
+    }
+    if (!this.__isReal()) throw __quenchVfsError("ENOTSUP", "watchFile", path);
+    return globalThis.__nodeFs.watchFile(
+      this.__realPath(path),
+      options || {},
+      listener
+    );
+  }
+  unwatchFile(path, listener) {
+    if (!this.__isReal()) return;
+    return globalThis.__nodeFs.unwatchFile(this.__realPath(path), listener);
   }
   readdirSync(path, options = {}) {
     if (this.__isReal()) {
