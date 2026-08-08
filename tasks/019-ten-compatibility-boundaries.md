@@ -563,9 +563,7 @@ watch boundary is now specifically the interaction between prior watcher
 cleanup, promise jobs, and pending `return()`, rather than event shape or
 `throw()` behavior.
 
-Stage 2440 fixes one concrete part of that boundary: virtual VFS polling now
-uses a one-shot timer that reschedules after each poll instead of a repeating
-timer. A pending promise watcher closed through a microtask with
-`interval: 1000` now resolves and the focused stage passes. The aggregate
-upstream watch-promises fixture remains open in the harness, so this is counted
-as a timer/close improvement only.
+The attempted timer rewrite for this boundary was reverted: the isolated
+`interval: 1000` pending-close case still hung, so no timer behavior is being
+claimed as fixed. The remaining issue requires tracing the runtime's timer and
+promise-job interaction directly.
