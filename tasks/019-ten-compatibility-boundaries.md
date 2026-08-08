@@ -800,3 +800,13 @@ two 15-byte `[object Object]` chunks required by `blob`, `arrayBuffer`,
 `ERR_INVALID_ARG_TYPE` rejection for the same chunks; `Buffer.from({})` itself
 is not relaxed. The focused object-mode contract, maintained consumer stages,
 and the complete authoritative `test-stream-consumers.js` fixture all pass.
+
+Stage 2457 fixes the documented `emittedReadable` boundary. EOF no longer
+queues a redundant `readable` event when prior data was already emitted and the
+buffer was drained; an entirely empty readable still retains its EOF
+notification. The focused three-chunk state transition and the complete
+authoritative `test-stream-readable-emittedReadable.js` fixture pass, including
+the `read(0)` and flowing-mode assertions. The related upstream
+`test-stream-readable-no-unneeded-readable.js` fixture remains green. Focused
+stage 1005 retains a separate pre-existing async readable-state failure and is
+not claimed fixed by this change.

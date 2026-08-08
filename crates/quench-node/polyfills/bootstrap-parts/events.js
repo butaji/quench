@@ -116,7 +116,9 @@ const __nodeReadablePushEnd = (stream) => {
   stream._ended = true;
   if (!stream._chunks.length) {
     if (stream.listenerCount("readable")) {
-      __nodeReadableScheduleReadable(stream);
+      if (!stream._readableState.dataEmitted) {
+        __nodeReadableScheduleReadable(stream);
+      }
       queueMicrotask(() => stream._emitEnd());
     } else if (stream.listenerCount("data")) {
       queueMicrotask(() => stream._emitEnd());
