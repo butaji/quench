@@ -583,7 +583,7 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
         (error, resolvedAddress) => {
           if (error) {
             socket._bindPending = false;
-            socket.emit("error", error);
+            if (!socket._closed) socket.emit("error", error);
             return;
           }
           socket._bindPending = false;
