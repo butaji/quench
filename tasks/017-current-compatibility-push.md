@@ -418,3 +418,8 @@ The fs copy validation slice now rejects the incompatible option pair
 `dereference: true` plus `verbatimSymlinks: true` with
 `ERR_INCOMPATIBLE_OPTION_PAIR`. Focused stage 2090 and upstream
 `test-fs-cp-sync-incompatible-options-error.mjs` pass.
+
+The same shared validator is confirmed across callback, sync, and promise
+copy APIs: existing upstream option-validation fixtures pass, and focused
+stage 2091 verifies the incompatible pair through both `fs.cp()` and
+`fs.promises.cp()`.
