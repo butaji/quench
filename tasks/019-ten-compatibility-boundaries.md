@@ -147,6 +147,11 @@ the focused trace plus existing backpressure/drop stages pass. The authoritative
 backpressure fixture still reports one `_read()` call instead of eleven, so
 downstream drain/read-demand scheduling remains unresolved.
 
+Post-`42edaf10e` regression checkpoint: the Ajv, debug, `ms`, and Prettier
+application stages pass, along with stream stages 2343, 2370, 2372, 2440, and 2442. This confirms the `pipe()` auto-resume change did not regress the
+maintained application or focused stream coverage; the upstream backpressure
+fixture remains the authoritative failure.
+
 ## New fs evidence
 
 The temporary stage-2345 callback-label probe showed that callback-style
