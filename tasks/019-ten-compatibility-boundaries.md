@@ -134,7 +134,10 @@ before the client `connect` event causes the same regression, so that approach
 was also reverted; the next implementation needs an explicit parser-ready
 queue boundary. The raw response path also lacked `_httpMessage` cleanup;
 clearing that field after a response completes is safe across stages, but it
-does not by itself resolve the pre-peer write race.
+does not by itself resolve the pre-peer write race. Allowing reuse of a
+completed response in `assignSocket()` and reordering peer attachment were
+tested together; they still failed during response property initialization,
+so both experiments were reverted.
 
 Stage 2362 independently verifies that callback-style and promise-style
 `fs.access()` each deliver exactly once for a missing path, including the
