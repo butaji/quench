@@ -810,3 +810,4 @@ pass.
 - Stage 2200 adds `OutgoingMessage` destroy state (`destroyed`, `closed`, `errored`) and deferred `close` delivery.
 - Stage 2201 adds server-response destroy state and suppresses the synthetic abort error for `ServerResponse.destroy()`.
 - Stage 2202 preserves the server-response `errored` identity while deferring `close` without emitting a duplicate error.
+- Stage 2203 preserves client response delivery when a server calls `end()` before `destroy()`.
