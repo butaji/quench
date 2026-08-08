@@ -329,6 +329,7 @@ const __quenchNetModule = {
       this._keepAlive = false;
       this._keepAliveDelay = 0;
       this._typeOfService = 0;
+      this._refed = true;
     }
     get bufferSize() {
       return this._bufferSize;
@@ -430,6 +431,19 @@ const __quenchNetModule = {
         }, delay);
       }
       return this;
+    }
+    ref() {
+      this._refed = true;
+      this._timeoutTimer?.ref?.();
+      return this;
+    }
+    unref() {
+      this._refed = false;
+      this._timeoutTimer?.unref?.();
+      return this;
+    }
+    hasRef() {
+      return this._refed;
     }
     cork() {
       this._corked++;
