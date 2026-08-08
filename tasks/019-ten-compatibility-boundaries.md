@@ -242,6 +242,13 @@ Stage 2383 registers native descriptors with `internal/vfs/fd` and verifies
 positioned `readSync()` and `writeSync()` on a real-provider handle. The
 focused stage passes. Stat and the upstream fixture's remaining `read()`,
 `write()`, `writeFile*()`, `truncate*()`, and async edge cases remain queued.
+Stage 2384 reduces `test-vfs-real-provider-promises.js` to its complete
+operation sequence and verifies real-provider promise write/read, stat/lstat,
+access success and `ENOENT`, recursive mkdir/readdir/rmdir, rename/unlink,
+copyFile, and missing-file provider open. The focused probe passes, while the
+authoritative fixture still reports an opaque `Callback 0` exception; this is
+now tracked as a harness/fixture interaction rather than an unverified broad
+promises claim.
 
 Stage 2378 passes the four basic stream `destroy()` contracts for readable and
 writable streams, including implicit `AbortError`, explicit error messages,
