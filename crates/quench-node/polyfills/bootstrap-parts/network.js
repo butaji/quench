@@ -327,6 +327,7 @@ const __quenchNetModule = {
       this.remotePort = 0;
       this._keepAlive = false;
       this._keepAliveDelay = 0;
+      this._typeOfService = 0;
     }
     get bufferSize() {
       return this._bufferSize;
@@ -374,6 +375,25 @@ const __quenchNetModule = {
         this._handle.setKeepAlive(value, delay);
       }
       return this;
+    }
+    setTypeOfService(value) {
+      if (typeof value !== "number" || Number.isNaN(value)) {
+        const error = new TypeError(
+          'The "tos" argument must be of type number'
+        );
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      if (!Number.isInteger(value) || value < 0 || value > 255) {
+        const error = new RangeError('The value of "tos" is out of range');
+        error.code = "ERR_OUT_OF_RANGE";
+        throw error;
+      }
+      this._typeOfService = value;
+      return this;
+    }
+    getTypeOfService() {
+      return this._typeOfService;
     }
     setTimeout(timeout, callback) {
       if (typeof timeout !== "number") {
