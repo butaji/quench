@@ -30,6 +30,7 @@ const __quenchPackageEntry = (root, subpath) => {
     entry || manifest.main || manifest.module || "index.js"
   );
 };
+const __quenchResolvedExtensions = new Map();
 const __quenchPackagePath = (specifier, parent) => {
   const parts = specifier.startsWith("@")
     ? specifier.split("/").slice(0, 2)
@@ -73,7 +74,7 @@ const __quenchLocalModulePath = (specifier, parent) => {
   const base = specifier.startsWith("/")
     ? specifier
     : path.resolve(path.dirname(parent), specifier);
-  for (const candidate of [
+  const candidates = [
     base,
     `${base}.js`,
     `${base}.cjs`,
@@ -82,9 +83,23 @@ const __quenchLocalModulePath = (specifier, parent) => {
     path.join(base, "index.js"),
     path.join(base, "index.cjs"),
     path.join(base, "index.mjs")
-  ]) {
+  ];
+  for (const extension of Object.keys(globalThis.require.extensions || {}).sort(
+    (left, right) => right.length - left.length
+  )) {
+    if (extension !== ".js" && extension !== ".json" && extension !== ".node") {
+      candidates.push(`${base}${extension}`);
+    }
+  }
+  for (const candidate of candidates) {
     try {
       __nodeFs.readFileSync(candidate, "utf8");
+      if (candidate !== base) {
+        const extension = Object.keys(globalThis.require.extensions || {})
+          .sort((left, right) => right.length - left.length)
+          .find((value) => candidate.endsWith(value));
+        if (extension) __quenchResolvedExtensions.set(candidate, extension);
+      }
       return candidate;
     } catch (_) {}
   }
@@ -97,6 +112,13 @@ const __quenchLoadLocalModule = (specifier, parent) => {
     specifier.startsWith(".") || specifier.startsWith("/")
       ? __quenchLocalModulePath(specifier, parent)
       : __quenchPackagePath(specifier, parent);
+  if (
+    __quenchLocalModuleCache.has(filename) &&
+    globalThis.require.cache &&
+    !globalThis.require.cache[filename]
+  ) {
+    __quenchLocalModuleCache.delete(filename);
+  }
   if (__quenchLocalModuleCache.has(filename)) {
     return __quenchLocalModuleCache.get(filename).exports;
   }
@@ -106,8 +128,21 @@ const __quenchLoadLocalModule = (specifier, parent) => {
     throw error;
   }
   const source = __nodeFs.readFileSync(filename, "utf8");
+  const path = __quenchOriginalRequireWithLocalModules("path");
   const module = { exports: {}, children: [], parent: null, filename };
   __quenchLocalModuleCache.set(filename, module);
+  if (globalThis.require.cache) globalThis.require.cache[filename] = module;
+  const basename = path.basename(filename);
+  const extension =
+    __quenchResolvedExtensions.get(filename) ||
+    (basename.startsWith(".") && basename.indexOf(".", 1) === -1
+      ? undefined
+      : path.extname(filename));
+  const extensionHandler = globalThis.require.extensions?.[extension];
+  if (typeof extensionHandler === "function") {
+    extensionHandler(module, filename);
+    return module.exports;
+  }
   if (filename.endsWith(".json")) {
     try {
       module.exports = JSON.parse(source);
@@ -118,7 +153,6 @@ const __quenchLoadLocalModule = (specifier, parent) => {
     }
     return module.exports;
   }
-  const path = __quenchOriginalRequireWithLocalModules("path");
   const localRequire = (name) => {
     __quenchValidateRequireId(name);
     if (name.startsWith(".") || name.startsWith("/")) {
@@ -184,4 +218,5 @@ globalThis.module ||= {
   filename: globalThis.__quench_script_filename || globalThis.__filename
 };
 globalThis.require.cache ||= Object.create(null);
-globalThis.require.extensions ||= Object.create(null);
+globalThis.require.extensions =
+  __quenchOriginalRequireWithLocalModules("module")._extensions;

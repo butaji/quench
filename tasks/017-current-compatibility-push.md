@@ -544,3 +544,9 @@ Focused stage 2111 exposes the top-level CommonJS `module` object plus
 `require.cache` and `require.extensions`. The main module has a null parent and
 the expected filename, matching Node’s entrypoint surface. The focused
 contract and upstream `test-module-parent-deprecation.js` both pass.
+
+Focused stage 2112 dispatches registered `require.extensions` handlers while
+loading local CommonJS files and shares the table with `module._extensions`.
+Registered compound suffixes are considered during extensionless resolution,
+and `require.cache` invalidation reloads local modules. The focused contract
+and upstream `test-module-multi-extensions.js` both pass.
