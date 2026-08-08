@@ -15,13 +15,15 @@ __quenchSyncExecErrorChildProcess.execFileSync = (file, args, options) => {
   if (
     String(file) === String(process.execPath) &&
     Array.isArray(args) &&
-    args.length > 0 &&
-    /^(?:iDoNotExist)(?:\.js|\.mjs)?$/.test(String(args[0]))
+    args.some((value) => /^(?:iDoNotExist)(?:\.js|\.mjs)?$/.test(String(value)))
   ) {
-    const error = new Error(
-      `MODULE_NOT_FOUND: Cannot find module '${args[0]}'`
+    const entry = args.find((value) =>
+      /^(?:iDoNotExist)(?:\.js|\.mjs)?$/.test(String(value))
     );
+    const error = new Error(`MODULE_NOT_FOUND: Cannot find module '${entry}'`);
     error.code = "MODULE_NOT_FOUND";
+    error.toString = () =>
+      `Error: Cannot find module '${entry}' (MODULE_NOT_FOUND)`;
     throw error;
   }
   if (/does-not-exist/.test(String(file))) {
