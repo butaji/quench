@@ -305,16 +305,20 @@ class __QuenchVirtualFileSystem {
       const check = () => {
         if (closed) throw __quenchVfsError("EBADF", "read", path);
       };
-      const readFileSync = (options) => {
-        check();
-        const observedFs = globalThis.require?.("fs") || globalThis.__nodeFs;
-        observedFs.fstatSync(fd);
-        const bytes = globalThis.__quench_fs_native_read_all(fd);
-        return options === "utf8" || options?.encoding
+      const decodeReadFile = (bytes, options) =>
+        options === "utf8" || options?.encoding
           ? globalThis.Buffer.from(bytes).toString(
               options === "utf8" ? "utf8" : options.encoding
             )
           : globalThis.Buffer.from(bytes);
+      const readFileSync = (options) => {
+        check();
+        const observedFs = globalThis.require?.("fs") || globalThis.__nodeFs;
+        observedFs.fstatSync(fd);
+        return decodeReadFile(
+          globalThis.__quench_fs_native_read_all(fd),
+          options
+        );
       };
       const readSync = (buffer, offset, length, position) => {
         check();
@@ -377,7 +381,10 @@ class __QuenchVirtualFileSystem {
               error ? reject(error) : resolve()
             );
           });
-          return readFileSync(options);
+          return decodeReadFile(
+            globalThis.__quench_fs_native_read_all(fd),
+            options
+          );
         },
         closeSync: () => {
           if (!closed) {

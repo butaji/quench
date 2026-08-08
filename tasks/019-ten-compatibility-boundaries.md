@@ -260,6 +260,12 @@ Stage 2383 also confirms a public `fs.fstatSync` monkey-patch observes the
 descriptor-backed `readFileSync()` call. The remaining upstream callback
 failure is therefore narrowed to its combined async metadata instrumentation
 and later handle lifecycle sequence.
+Stage 2385 reproduces the upstream zero-stat read section. Both sync and async
+public `fstat` hooks are reached while the descriptor-backed read still returns
+the complete file. The runtime's public async `fstat` implementation performs
+an additional internal invocation, so its function-entry count differs from
+Node's single `common.mustCall` callback contract; this remains an event-loop
+callback identity issue rather than a missing read-data path.
 
 Stage 2378 passes the four basic stream `destroy()` contracts for readable and
 writable streams, including implicit `AbortError`, explicit error messages,
