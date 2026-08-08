@@ -226,3 +226,8 @@ Stage 2378 passes the four basic stream `destroy()` contracts for readable and
 writable streams, including implicit `AbortError`, explicit error messages,
 and `error` before `close`. The upstream `test-stream-destroy.js` failure is
 therefore narrowed to its HTTP request/response destroy paths.
+An isolated HTTP probe confirms the first request-side destroy/response case
+passes, while destroying an incoming request from its resumed `end` handler
+never reaches the server `close` response callback before timeout. The next
+HTTP fix must preserve the `end` → `destroy` → `close` ordering for
+`IncomingMessage`; no event reorder is retained yet.
