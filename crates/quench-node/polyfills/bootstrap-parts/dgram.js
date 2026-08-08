@@ -166,6 +166,21 @@ const __quenchDgramSend = (socket, message, ...args) => {
     queueMicrotask(() => callback?.(error));
     return socket;
   }
+  if (address === "localhost" && !socket._skipDgramLookup) {
+    socket._skipDgramLookup = true;
+    socket[__quenchDgramStateSymbol].handle.lookup(address, (error) => {
+      socket._skipDgramLookup = false;
+      if (error) {
+        queueMicrotask(() => {
+          if (typeof callback === "function") callback(error);
+          else socket.emit("error", error);
+        });
+        return;
+      }
+      __quenchDgramSend(socket, message, ...args);
+    });
+    return socket;
+  }
   const isNumericAddress =
     !address ||
     address === "localhost" ||
@@ -267,6 +282,24 @@ const __quenchDgramSend = (socket, message, ...args) => {
   const deliveredPayload = hasOffset
     ? bytePayload.subarray(offset, offset + length)
     : bytePayload;
+  const sendResult = socket[__quenchDgramStateSymbol].handle.send?.();
+  if (sendResult) {
+    const error = Object.assign(
+      new Error(`send UNKNOWN ${address || "127.0.0.1"}:${destinationPort}`),
+      {
+        code: "UNKNOWN",
+        errno: sendResult,
+        syscall: "send",
+        address: address || "127.0.0.1",
+        port: destinationPort
+      }
+    );
+    queueMicrotask(() => {
+      if (typeof callback === "function") callback(error);
+      else socket.emit("error", error);
+    });
+    return socket;
+  }
   if (socket._connected) {
     socket._sendQueueSize = (socket._sendQueueSize || 0) + length;
     socket._sendQueueCount = (socket._sendQueueCount || 0) + 1;
