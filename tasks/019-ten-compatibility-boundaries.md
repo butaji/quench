@@ -401,6 +401,8 @@ operation family passing independently.
 The VFS sweep's `test-vfs-memory-provider.js` now passes completely after
 adding `MemoryProvider.setReadOnly()` and centralized `EROFS` guards for
 mutating operations. Reads and metadata remain available in read-only mode.
+The bigint-position fixture also now passes: virtual `readSync` and `writeSync`
+normalize BigInt positions before applying descriptor offsets.
 
 Stage 2378 passes the four basic stream `destroy()` contracts for readable and
 writable streams, including implicit `AbortError`, explicit error messages,
