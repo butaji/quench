@@ -556,6 +556,11 @@ Focused stage 2113 adds Node-compatible validation for
 and `generatedCode`. The focused contract and upstream
 `test-module-setsourcemapssupport.js` both pass.
 
+Focused stage 2115 implements `module._initPaths()` and `module.globalPaths`,
+including `NODE_PATH` delimiter parsing and shared `Module.globalPaths` state.
+The focused contract and upstream `test-module-globalpaths-nodepath.js` both
+pass.
+
 Focused stage 2114 restores legacy bare-package resolution: a package
 directory without `package.json` now falls back to `index.js` and related
 extensions. The focused contract and upstream
