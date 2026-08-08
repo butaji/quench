@@ -63,17 +63,17 @@ pub fn lower_for_stmt(for_stmt: &ast::ForStatement) -> Option<Statement> {
         .map(Box::new);
     let body = Box::new(lower_stmt(&for_stmt.body).unwrap_or(Statement::Empty));
 
-    // A destructuring pattern or multiple declarations in the for-header
-    // (`for (let [x, y] = e; ...)` or `for (let a = 1, b = 2; ...)`) desugar
-    // to `{ <decls>; for (; cond; update) body }`. The bindings are initialized
-    // once in the wrapper block. Single simple declarations keep the normal
-    // path so `eval_for` can manage per-iteration lexical scope.
+    // A destructuring pattern in the for-header (`for (let [x, y] = e; ...)`)
+    // desugars to `{ <pattern decl>; for (; cond; update) body }`. Patterns can't
+    // be represented in ForInit, so they're lowered as a declaration statement
+    // in a wrapper block. Multiple simple declarations stay in ForInit so
+    // eval_for can manage per-iteration lexical scope.
     if let Some(ast::ForStatementInit::VariableDeclaration(decl)) = &for_stmt.init {
         let has_pattern = decl
             .declarations
             .iter()
             .any(|d| !matches!(d.id.kind, ast::BindingPatternKind::BindingIdentifier(_)));
-        if has_pattern || decl.declarations.len() > 1 {
+        if has_pattern {
             let mut stmts = Vec::new();
             stmts.extend(crate::lower::stmt::lower_var_decl_impl(decl, None));
             stmts.push(Statement::For {
@@ -264,8 +264,10 @@ pub fn lower_switch(switch: &ast::SwitchStatement) -> Option<Statement> {
     Some(Statement::For {
         init: Some(ForInit::VarDeclaration {
             kind: VarKind::Var,
-            name: "__quench_switch__".to_string(),
-            init: Some(Expression::Number(0.0)),
+            declarations: vec![(
+                "__quench_switch__".to_string(),
+                Some(Expression::Number(0.0)),
+            )],
         }),
         condition: Some(Box::new(Expression::Binary {
             op: BinaryOp::Lt,
@@ -286,7 +288,6 @@ pub fn lower_switch(switch: &ast::SwitchStatement) -> Option<Statement> {
 pub fn lower_for_init(init: &ast::ForStatementInit) -> Option<ForInit> {
     match init {
         ast::ForStatementInit::VariableDeclaration(decl) => {
-            let first = decl.declarations.first()?;
             let kind = match decl.kind {
                 ast::VariableDeclarationKind::Var => VarKind::Var,
                 ast::VariableDeclarationKind::Let => VarKind::Let,
@@ -296,14 +297,17 @@ pub fn lower_for_init(init: &ast::ForStatementInit) -> Option<ForInit> {
                     return None;
                 }
             };
-            let name = match &first.id.kind {
-                ast::BindingPatternKind::BindingIdentifier(ident) => {
-                    ident.name.as_str().to_string()
-                }
-                _ => return None,
-            };
-            let init = first.init.as_ref().and_then(|e| lower_expr(e).ok());
-            Some(ForInit::VarDeclaration { kind, name, init })
+            // Only simple identifier bindings are handled here; destructuring
+            // patterns are desugared separately in lower_for_stmt.
+            let mut declarations = Vec::new();
+            for binding in &decl.declarations {
+                let ast::BindingPatternKind::BindingIdentifier(ident) = &binding.id.kind else {
+                    return None;
+                };
+                let init = binding.init.as_ref().and_then(|e| lower_expr(e).ok());
+                declarations.push((ident.name.as_str().to_string(), init));
+            }
+            Some(ForInit::VarDeclaration { kind, declarations })
         }
         // ForStatementInit inherits Expression variants via macro
         _ => {
@@ -488,8 +492,7 @@ mod tests {
     fn test_for_init_variants() {
         let var_init = ForInit::VarDeclaration {
             kind: VarKind::Let,
-            name: "x".to_string(),
-            init: Some(Expression::Number(1.0)),
+            declarations: vec![("x".to_string(), Some(Expression::Number(1.0)))],
         };
         let expr_init = ForInit::Expression(Box::new(Expression::Number(0.0)));
         assert!(matches!(var_init, ForInit::VarDeclaration { .. }));

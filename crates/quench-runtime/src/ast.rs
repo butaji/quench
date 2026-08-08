@@ -166,8 +166,7 @@ pub enum ForInit {
     Expression(Box<Expression>),
     VarDeclaration {
         kind: VarKind,
-        name: String,
-        init: Option<Expression>,
+        declarations: Vec<(String, Option<Expression>)>,
     },
 }
 

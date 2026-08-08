@@ -515,16 +515,20 @@ fn generate_source_text(f: &ValueFunction) -> String {
             } => {
                 let init_str = match init {
                     Some(crate::ast::ForInit::Expression(e)) => expr_to_string(e),
-                    Some(crate::ast::ForInit::VarDeclaration { kind, name, init }) => {
+                    Some(crate::ast::ForInit::VarDeclaration { kind, declarations }) => {
                         let k = match kind {
                             crate::ast::VarKind::Var => "var",
                             crate::ast::VarKind::Let => "let",
                             crate::ast::VarKind::Const => "const",
                         };
-                        match init {
-                            Some(i) => format!("{} {} = {}", k, name, expr_to_string(i)),
-                            None => format!("{} {}", k, name),
-                        }
+                        let parts: Vec<String> = declarations
+                            .iter()
+                            .map(|(name, init)| match init {
+                                Some(i) => format!("{} {} = {}", k, name, expr_to_string(i)),
+                                None => format!("{} {}", k, name),
+                            })
+                            .collect();
+                        parts.join(", ")
                     }
                     None => String::new(),
                 };
