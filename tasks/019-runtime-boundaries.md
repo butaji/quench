@@ -2,117 +2,49 @@
 
 ## Goal
 
-Implement a pure JavaScript engine in `quench-runtime` with the pipeline
-`OXC AST → compact Quench IR → interpreter`, generic over:
+`quench-runtime` is a pure JavaScript engine
+(`OXC AST → compact Quench IR → interpreter`), generic over
+`Runtime<Heap, Collector, Allocator, Frames, Executor, Exceptions, Environments>`.
+`quench-test262` is a separate conformance runner owning metadata, harness
+loading, staging, process isolation, metrics, and reports. The only
+connection is a host execution interface; the runner never inspects engine
+internals.
 
-```text
-Runtime<Heap, Collector, Allocator, Frames, Executor, Exceptions, Environments>
-```
+## Status (2026-08-08)
 
-Implement `quench-test262` as a separate conformance runner that owns
-metadata, harness loading, staging, process isolation, metrics, and reports.
-The only connection is a host execution interface; the runner does not
-inspect engine internals.
+Done: public `Test262Host` contract; generic `Runtime` façade with typed
+subsystem accessors and `with_components`; `QuenchIr`/`IrProgram` owned-IR
+parser entry points for all modes (script, module, TS, JSX) routed through
+`Context::eval*`; `crates/quench-test262` created with runner-owned
+frontmatter, harness composition, file I/O, batch execution with
+`StageReport`, and recursive stage discovery; first IR storage step landed
+(top-level statements packed into an owned boxed slice); Stage 44 baseline
+recorded; repository-wide size gate enforced.
 
-## Progress — 2026-08-07
+## Open
 
-- [x] Document the target boundaries in `docs/architecture.md`.
-- [x] Record the canonical goal in `tasks/index.json`.
-- [x] Identify the current runner as transitional under
-  `quench-runtime/src/test262`.
-- [x] Move the engine-facing `Test262Host` execution contract to the public
-  `quench_runtime::host` API while retaining a compatibility re-export.
-- [x] Name the post-OXC lowered representation `QuenchIr` and expose it as
-  the parser/interpreter boundary; OXC AST values do not escape `parser.rs`.
-- [x] Add the public generic `Runtime<Heap, Collector, Allocator, Frames,
-  Executor, Exceptions, Environments>` façade with a production default
-  component set.
-- [x] Give each runtime parameter its own public subsystem trait and prove
-  independent custom component selection with a unit test.
-- [x] Make `Runtime` retain the selected subsystem instances, expose typed
-  accessors, and provide `with_components`; defaults use the production
-  component set.
-- [x] Give `Executor` a behavior-bearing contract and route `Runtime::eval`
-  and `Runtime::eval_es_module` through the selected executor instance.
-- [x] Create `crates/quench-test262` with a host-only runner API and outcome
-  mapping test; engine implementation types do not cross the boundary.
-- [x] Add runner-owned frontmatter parsing for module dispatch and negative
-  expectation metadata, with tests.
-- [x] Classify expected negative errors in the runner while preserving the
-  engine host contract as a simple success/error result.
-- [x] Parse async, only-strict, and ordered harness-include metadata in
-  `quench-test262`.
-- [x] Add callback-based harness loading and deterministic include/strict
-  composition before host dispatch.
-- [x] Add runner-owned file loading with explicit UTF-8 I/O errors.
-- [x] Add harness-aware file execution so disk-loaded tests use the same
-  include/strict composition path as in-memory tests.
-- [x] Add deterministic batch execution with `StageReport` counts and
-  retained failure paths/reasons.
-- [x] Add harness-aware batch execution so every staged file follows the
-  metadata/include composition path before host dispatch.
-- [x] Keep batch execution progressing across unreadable test files by
-  recording file I/O errors as runner failures.
-- [x] Add deterministic recursive JavaScript file discovery for stage input.
-- [x] Remove uncompiled duplicate runner sources from `quench-test262`; its
-  public host-facing runner API is now the single maintained boundary.
-- [x] Specify the compact Quench IR ownership, indexing, interning, and
-  cold-metadata contract in `docs/architecture.md`.
-- [x] Add an owned `IrProgram` wrapper and parser entry point as the first
-  migration step away from the compatibility alias.
-- [x] Make `QuenchIr` name the owned IR type; legacy parser-returning APIs now
-  state their `Program` return type explicitly.
-- [x] Route `Context::eval` and `Context::eval_es_module` through the owned
-  IR boundary before interpretation.
-- [x] Route TypeScript/TSX evaluation through the same owned IR boundary.
-- [x] Add owned IR parser entry points for JSX and non-TSX TypeScript modes;
-  all parser modes now have explicit legacy and IR APIs.
-- [x] Expose those owned IR parser modes through the public `Context` API.
-- [x] Remove unreferenced Node-era scratch fixtures and the unused local OXC
-  parser patch tree from the repository.
-- [x] Remove the remaining tracked files from that unused patch tree and its
-  empty scratch directories; repository-level control files remain at root.
-- [x] Consolidate human-facing Markdown under `docs/`; keep only `AGENTS.md`
-  and repository metadata at root, with `tasks/*` reserved for active work.
-- [x] Make the repository size gate cover tracked `.rs`, `.ts`, and `.tsx`
-  files and run Rust clippy over all targets.
-- [ ] Reduce the existing 32 Rust files over 500 lines; every split must also
-  satisfy the 40-line function and complexity-10 gates.
-- [x] Split the date builtin's test module into `date_tests.rs`, reducing the
-  production file below 500 lines without changing its behavior.
-- [x] Split the primitive coercion test tail into `primitive_tests_tail.rs`,
-  reducing its test module below 500 lines without changing behavior.
-- [x] Split the function builtin tests into `function_tests.rs`, reducing the
-  production builtin below 500 lines without changing behavior.
-- [x] Split generator edge-case integration tests into
-  `generator_tests_tail.rs`, reducing the primary test file below 500 lines.
-- [x] Move call property-key extraction into `eval/call/property.rs` and
-  reduce `eval/call.rs` below 500 lines.
-- [x] Move private-element syntax and conformance tests into
-  `private_elements_tests.rs`, reducing the implementation file below 500
-  lines without changing behavior.
-- [x] Move AST operator types into `ast/operators.rs` and AST tests into
-  `ast_tests.rs`, reducing the central AST file below 500 lines.
-- [x] Move error-value tests into `value/error_tests.rs`, reducing the error
-  implementation file below 500 lines.
-- [x] Move context helper tests into `context/helpers_tests.rs`, reducing the
-  helper implementation file below 500 lines.
-- [x] Preserve the `IrProgram` type through the interpreter entry point;
-  legacy `Program` access is now contained behind `eval_ir_program`.
-- [x] Pack top-level IR statements into an owned boxed slice and execute that
-  slice directly, beginning the low-RSS storage migration.
-- [x] Record a Stage 44 native performance/conformance baseline.
-- [ ] Move metadata, harness loading, stages, isolation, and metrics from the
-  transitional runtime module into `crates/quench-test262`.
+- [ ] Reduce the remaining Rust files over 500 lines (each split must also
+  satisfy the 40-line function and complexity-10 gates).
+- [ ] Move metadata, harness loading, stages, isolation, and metrics from
+  the transitional `quench-runtime/src/test262` into `crates/quench-test262`.
 - [ ] Define the stable host API used by both the native runner and future
   embedders.
-- [ ] Replace the compatibility `QuenchIr` alias throughout the runtime with
-  `IrProgram`, then migrate its storage to compact owned representation
+- [ ] Replace the compatibility `QuenchIr` alias with `IrProgram`
+  throughout, then migrate storage to the compact owned representation
   (arena/index-backed where measurements justify it).
-- [ ] Replace the remaining marker-only subsystem traits with behavior-bearing
-  interfaces and wire each owned component into its runtime subsystem.
+- [ ] Replace the remaining marker-only subsystem traits with
+  behavior-bearing interfaces, wired into their runtime subsystems.
 - [ ] Re-run staged test262 after each boundary extraction; no skips or
   undocumented compatibility paths.
+
+### Runner tooling (absorbed from harness-roadmap)
+
+- [ ] `TEST262_CLUSTER=<substring>` — filter digest to one failure group.
+- [ ] `tools/diff-digest.sh` — before/after diff of `failures-N.json`.
+- [ ] Per-stage progress fields in `tasks/index.json` for `stage-status.sh`.
+- [ ] Eliminate crash-file skips (larger test-thread stack or fix
+  recursion in class/prototype paths); skip count → 0.
+- [ ] Persistent worker pool for isolated runs.
 
 ## Evidence and gates
 
@@ -121,8 +53,7 @@ inspect engine internals.
 - Runner: runner unit tests plus the same stage through the host interface.
 - Architecture: no runner dependency on parser, IR, heap, builtin, or
   interpreter implementation types.
-- Conformance: `tasks/index.json` remains the authoritative stage order and
-  count source.
+- Conformance: `tasks/index.json` remains the authoritative stage order.
 
 ## Non-goals
 
@@ -130,3 +61,5 @@ inspect engine internals.
 - No edits under `tests/test262`.
 - No speculative runtime abstraction without a production callsite and a
   test admitted by `AGENTS.md`.
+- No parallel *stage* execution (hides regressions), no feature skip
+  lists, no hand-maintained failure markdown (JSON is the source of truth).

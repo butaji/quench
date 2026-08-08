@@ -48,17 +48,17 @@ run before landing.
 
 | Crate | Stage | Difficulty | Why | Risk |
 |---|---|---|---|---|
-| `bumpalo` | R0 | HIGH | Arena allocator for self-hosted builtins. 244.6M+ downloads, stable API. Eliminates per-allocation overhead; bulk dealloc via arena reset. 2–4× speedup on allocation-heavy code (serde, JS builtins). Fits `builtins/core/` pattern perfectly. MSRV 1.71.1; `allocator-api2` feature enables stable use with std collections. | Low. Add to `Cargo.toml` in same diff as first R0 builtin. |
+| `bumpalo` | R0 | HIGH | Arena allocator for self-hosted builtins. Stable API. Eliminates per-allocation overhead; bulk dealloc via arena reset. Speedup on allocation-heavy code (serde, JS builtins). Fits `builtins/core/` pattern perfectly. MSRV 1.71.1; `allocator-api2` feature enables stable use with std collections. | Low. Add to `Cargo.toml` in same diff as first R0 builtin. |
 | `url` | 53 `modules` | 5 | Supersedes `urlencoding` for URL Standard compliance. Covers `import "https://..."`, bare specifier resolution, and `data:` URLs. | Low. Drop-in upgrade. |
 | `oxc_semantic` | R17 | 4 | Language early errors (duplicate `let`, TDZ violations, redeclaration) via `oxc_semantic::SemanticAnalysis`. Replaces thousands of LOC of hand-rolled checks in `lower/`. | Low. Already using oxc. Add `oxc_semantic` feature if available, or use existing `oxc` re-exports. Verify `ctx.semantic()` hook in `parser.rs`. |
-| `temporal_rs` | 120 `Temporal` | 9 | Stage 4 ECMAScript spec. Powers Boa (94.12% test262), Kiesel, and **V8/Chrome 144**. 8 types via ICU4X + Diplomat. | Low-medium. Evaluate API surface vs. ES spec version. Spec was stable as of 2025-09. Evaluate before committing. |
+| `temporal_rs` | 120 `Temporal` | 9 | Stage 4 ECMAScript spec. Powers Boa, Kiesel, and V8/Chrome. 8 types via ICU4X + Diplomat. | Low-medium. Evaluate API surface vs. ES spec version. Spec was stable as of 2025-09. Evaluate before committing. |
 | `regex` + `unicode-perl` | 84 `RegExp` | 7 | `regress` (ES2018) does NOT support Unicode property escapes `\p{}`. `regex` with `unicode-perl` covers `\p{Script}`, `\p{Emoji}`, etc. | Low. Evaluate replacing `regress` if `regex` covers ES2018 backreferences + lookbehind too. |
 
 ### Medium confidence (research-verified, needs validation)
 
 | Crate | Stage | Difficulty | Why | Risk |
 |---|---|---|---|---|
-| `swc_ecma_compat_es2017::async_to_generator` | 40, 38, 113, 97-99 | 7 | Unlocks thousands of async tests. `docs.rs/swc_ecma_compat_es2017` exposes the transform. | **High.** Full `swc_ecma_*` stack (~10+ crates) alongside existing `oxc` (0.47). Validate: (a) works standalone without swc parser, (b) no version conflict. Fallback: hand-roll ~500 LOC in `lower/`. Boa proof-of-concept confirms hand-rolled works. |
+| `swc_ecma_compat_es2017::async_to_generator` | 40, 38, 113, 97-99 | 7 | Unlocks thousands of async tests. `docs.rs/swc_ecma_compat_es2017` exposes the transform. | **High.** Pulls in the full `swc_ecma_*` stack alongside existing `oxc` (0.47). Validate: (a) works standalone without swc parser, (b) no version conflict. Fallback: hand-roll in `lower/`. Boa proof-of-concept confirms hand-rolled works. |
 | `smol` | 113 `Promise` | 5 | Single-threaded async executor for microtask queue. Boa uses its own executor (not smol); the hand-rolled job queue in `builtins/promise/` works today. | Medium. Evaluate against integration complexity. |
 | `data-url` | 53 `modules` | 4 | Parses `data:` URLs per Fetch Standard. `import "data:text/javascript,..."` needs this. | Low. Small, focused crate. |
 
@@ -81,6 +81,23 @@ run before landing.
 | `re2` | RegExp | No backreferences, lookahead, or Unicode property escapes — too limited for ES spec. |
 | `time` crate | Date / Temporal | Covers basic Date math but not the full Temporal API. `temporal_rs` + `chrono` covers this. |
 | `wasmtime` | 118 `ShadowRealm` | ShadowRealm is a JS-level isolated global per spec, not a WASM sandbox. |
+| `swc` (as parser) | — | Too complex: many sub-crates of crate-graph glue before any parsing work. `oxc` is the minimal parser. |
+| `regex-lite` | RegExp | Lacks the Unicode properties JS `RegExp` requires. |
+| `gc-arena` | — | Requires `MutationContext` branding and boilerplate vs. plain `oxc_allocator`; revisit only if incremental collection timing becomes necessary. |
+| hand-rolled BigInt | BigInt | Spec-correct bignum (mod, bitwise, signed truncation, `asIntN` wrap) is large and error-prone; `num-bigint` covers it. |
+
+## Reserved — do not add speculatively
+
+Wire each in only alongside the built-in that needs it:
+
+| Crate | Triggers when |
+|-------|---------------|
+| `gc` | Object identity GC becomes necessary |
+| `lasso` | String interning across realms |
+| `slotmap` | Stable `JsObjectId` handles |
+| `lexical` | Hot-path number parsing |
+| `rand` | `Math.random` |
+| `icu` | ECMA-402 `Intl` object |
 
 ---
 

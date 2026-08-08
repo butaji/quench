@@ -10,9 +10,12 @@ and builtins. `quench-test262` owns frontmatter, harness loading, stage
 selection, isolation, metrics, and reporting. The runner communicates with
 the engine only through its host execution interface.
 
-**Shape:** small Rust core + self-hosted JS builtins. JS is ~1/3 the
-LOC of equivalent Rust and easier to keep spec-faithful, so anything
-that can be JS is JS.
+**Shape (target, R0/R1 — not yet landed):** small Rust core + self-hosted
+JS builtins. Today **all builtins are Rust**
+(`crates/quench-runtime/src/builtins/*.rs`); there are no JS builtins yet.
+The governing rule (ADR 0001): everything that can be done in JS must be
+done in JS, keeping the Rust core at the minimum possible size. JS is ~1/3
+the LOC of equivalent Rust and easier to keep spec-faithful.
 
 **Boundaries:** the runtime stays generic over replaceable
 implementations so subsystems evolve independently:
@@ -69,33 +72,30 @@ crates/quench-test262/   conformance client: host dispatch and runner policy
 Smallest set the builtins cannot be written without.
 
 ```
-src/
+src/  (current layout — see the repo tree)
 ├── parser.rs        # oxc → internal AST
 ├── lower/           # AST lowering
 ├── ast.rs           # internal AST
 ├── interpreter.rs   # eval entry points
 ├── eval/
-│   └── ops.rs       # canonical spec abstract ops, exposed as %ops%
-├── env.rs           # lexical environments
+│   └── ops.rs       # canonical spec abstract ops, to be exposed as `__ops__`
+├── env/             # lexical environments
 ├── value/           # Value, Object (one canonical property store), JsError
 ├── context/         # Context, Realm
-└── builtins/
-    ├── core/        # crate-backed primitives only
-    │   ├── regex.rs     # regress
-    │   ├── date.rs      # chrono
-    │   ├── bigint.rs    # num-bigint
-    │   ├── json.rs       # serde_json
-    │   └── uri.rs        # urlencoding
-    └── bootstrap.rs # parses + evaluates builtins/*.js at realm init
+└── builtins/        # all builtins, currently pure Rust
 ```
+
+Target additions under R0/R1 (do not exist yet): `builtins/core/` reduced
+to crate-backed primitives only, plus `builtins/bootstrap.rs` parsing and
+evaluating `builtins/*.js` at realm init.
 
 Remainder of `eval/` is eval nodes only — no spec-op re-implementations.
 
-## JS builtins
+## JS builtins *(target — R0, none exist yet)*
 
 ```
 crates/quench-runtime/builtins/
-├── _intrinsics.js   # %ops% destructure (resolved at parse time)
+├── _intrinsics.js   # __ops__ destructure (resolved at parse time)
 ├── Object.js, Function.js, Error.js, Symbol.js,
 ├── Number.js, Boolean.js, String.js, Math.js,
 ├── Array.js, Iterator.js,
@@ -108,10 +108,13 @@ crates/quench-runtime/builtins/
 
 All `*.prototype.*`, intrinsic iterator prototypes, `Object.*`,
 `Reflect.*`, `Promise.prototype.*`, etc. are authored here. Pure spec
-algorithms on top of `%ops%`. Embedded via `include_str!`; parsed once
+algorithms on top of `__ops__`. Embedded via `include_str!`; parsed once
 per `Realm` by `builtins/bootstrap.rs`.
 
-## `%ops%` — the only Rust↔JS bridge for spec ops
+## `__ops__` — the only Rust↔JS bridge for spec ops
+
+(The current Rust scaffold is registered as `%ops%`; it will be renamed
+to `__ops__` when R1 lands.)
 
 Frozen object exposed at realm init. Each property is a canonical spec
 abstract op, implemented once in `eval/ops.rs` and bound as a
@@ -119,7 +122,7 @@ abstract op, implemented once in `eval/ops.rs` and bound as a
 
 ```js
 // builtins/Array.js (excerpt)
-const { IsCallable, ToObject, ThrowTypeError } = %ops%;
+const { IsCallable, ToObject, ThrowTypeError } = __ops__;
 
 Array.prototype.map = function (callback, thisArg) {
   const O = ToObject(this);
@@ -132,14 +135,14 @@ Array.prototype.map = function (callback, thisArg) {
 };
 ```
 
-New op → add to `eval/ops.rs` with a failing test → expose on `%ops%` →
+New op → add to `eval/ops.rs` with a failing test → expose on `__ops__` →
 JS callsite. No second copy anywhere.
 
 ## Object model — one canonical store
 
 `Object` has a single own-property store (R5 target:
 `IndexMap<Key, Prop>`, `Key::Sym` carrying unique symbol identity).
-eval nodes, builtins, and `%ops%` all route through it — no parallel
+eval nodes, builtins, and `__ops__` all route through it — no parallel
 lookup paths, no per-callsite prototype walks, no shadow stores (the
 dead `props`/`VTable` layer was removed in R4). Descriptor semantics
 follow the spec: `defineProperty` defaults absent attributes to `false`,
@@ -164,7 +167,7 @@ Hand-rolled copies — including `chrono_*` helpers that never import
 ## Value representation — NaN boxing *(R11 target)*
 
 JS values (`JsValue`) fit in a single `u64` via NaN boxing — the same
-technique used by QuickJS (C), JSC, V8, and Boa v0.21+.
+technique used by QuickJS, JSC, V8, and Boa.
 
 ```
 u64 bits:
@@ -180,10 +183,6 @@ NaN payload (all exp=1, mantissa≠0 for quiet NaN):
 Special doubles pass through untouched (infinity, -0.0).
 ```
 
-Boa v0.21 (October 2025) switched to NaN boxing and reports measurable
-runtime and memory improvements over their older enum approach. Reference:
-<https://boajs.dev/blog/2025/10/22/boa-release-21>.
-
 **Do NOT start this until R0 is complete.** The Value representation
 change touches every call site; R0 gives us a clean JS-layer boundary to
 verify correctness afterward. Boa did the same: NaN boxing was added as a
@@ -194,7 +193,7 @@ Rust `unsafe` is confined to the `value/` module. No unsafe leaks into
 
 ## Memory — bumpalo arena allocation *(R10 target)*
 
-`bumpalo` (244M+ crate downloads) is the standard arena allocator for Rust
+`bumpalo` is the standard arena allocator for Rust
 JS engines. It provides fast short-lived allocations without per-object
 overhead:
 

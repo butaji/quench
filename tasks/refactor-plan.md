@@ -7,7 +7,7 @@ Environments>`. `quench-test262` is the conformance runner: metadata,
 harness, staging, isolation, metrics, and reports. Refactors must preserve
 that separation and must not add Node-host assumptions.
 
-Goal: 100% of test262 on quench-runtime — all 50K+ tests, staged, no
+Goal: 100% of test262 on quench-runtime — staged, no
 skips, **as soon as possible**, with **minimum LOC** (quench-runtime
 Rust stays **under 100k LOC**, tests excluded). All unit tests green;
 full test262 runs optimized for wall-clock **and** mem/RSS. The runtime
@@ -25,30 +25,22 @@ lines, complexity ≤ 10, ≤ 3 bool params, no `#[allow]` and no
 deferrals). Lint limits apply to every touched file; do not queue
 repo-wide split sweeps ahead of failing test262 clusters.
 
-## Status (2026-07-23)
+## Status (2026-08-08)
 
 | Metric | Value |
 |--------|-------|
-| Production Rust LOC | ~57k (`src/`; tests excluded) |
-| Builtins Rust LOC | ~14k |
 | JS builtins | **0** — R0 not started |
-| `%ops%` / `eval/ops.rs` | **scaffold** — re-exports + thin `%ops%` wrapper; not yet the single owner |
-| Target (realistic) | **~20–28k Rust** + **~8–12k JS** for 95%+ |
-| Target (aspirational) | **~8–12k Rust** + **~19k JS** (100%) |
-| Benchmarks | Boa ~25k Rust → 94%; Kiesel ~50k Zig → 94%; QuickJS ~80k C → 83% |
-| Current stage | 16 `class` (4,367 tests) · full digest 27,323/42,892 = 63.7% (2026-07-23) |
-| Crate candidates | `docs/DEPENDENCIES.md` — verified 2026-07-23; new: `bumpalo`, `string_interner`, `fnv`, `regex` (for Unicode) |
+| `%ops%` / `eval/ops.rs` | **scaffold** — re-exports + frozen `%ops%` wrapper; not yet the single owner |
+| Current stage | per `tasks/index.json` (`current_stage`) — run the stage to know where you stand |
 
-File:line references in this plan and in `tasks/review-2026-07-19*.md`
-are snapshots; re-locate by symbol name before editing. Object-model
-audit: `tasks/review-2026-07-22-object-model.md`. Crate candidates:
-`docs/DEPENDENCIES.md`.
+File:line references in this plan are snapshots; re-locate by symbol name
+before editing. Crate candidates: `docs/DEPENDENCIES.md`.
 
 ## Critical path (ASAP × min LOC)
 
 ```
 Phase A — language (now)
-  R4 ✓ → R5 ✓ → stage-16 S2 digest → R17 → remaining language stages
+  R5 remainder → current-stage S2 digest → R17 → remaining language stages
   S5 harness active · R1 grows only for ops touched by fixes
 
 Phase B — immediately before built-ins stages
@@ -60,18 +52,17 @@ Phase C — built-ins / async / Temporal
 
 Priority legend used below:
 
-- **NOW** — unblocks stage 16 / language
+- **NOW** — unblocks the current stage / language
 - **PHASE-B** — required before grinding Object/Array/…
 - **LATER** — hygiene, LOC, or stage-specific; never ahead of NOW
 
 ---
 
-## R4 — Delete speculative `TComp` infra  *(DONE 2026-07-23, diff=1)*
+## R4 — Delete speculative `TComp` infra  *(DONE 2026-07-23)*
 
-Re-audit 2026-07-22 (`tasks/review-2026-07-22-object-model.md`): the
-layer lived in `value/object/vtable.rs` (274 LOC),
-`value/object/array.rs` (91), `Key`/`Desc`/`VTable`/`Slots`/`ThisMode`
-in `value/object/helpers.rs` (~80), plus `props`/`slots`/`vtable` on
+Re-audit 2026-07-22: the layer lived in `value/object/vtable.rs`,
+`value/object/array.rs`, `Key`/`Desc`/`VTable`/`Slots`/`ThisMode`
+in `value/object/helpers.rs`, plus `props`/`slots`/`vtable` on
 `Object`. Grep-verified: zero callers outside `src/value/object/` —
 `.vtable` written 3×, read 0×; `.props` write-only; `slots` never read.
 Dead copy disagrees with live store on attribute defaults.
@@ -80,9 +71,9 @@ Dead copy disagrees with live store on attribute defaults.
 - [x] Delete the lot, including re-exports and `props` sync writes in
       `new_array`.
 
-~470 LOC saved. Commit `9822e375`.
+Commit `9822e375`.
 
-## R5 — Collapse `Object` property storage + fix spec semantics  *(partial DONE 2026-07-23, diff=7)*
+## R5 — Collapse `Object` property storage + fix spec semantics  *(partial DONE 2026-07-23)*
 
 Highest language-stage lever. Parallel maps in
 `value/object/helpers.rs` plus hand-rolled walk in
@@ -116,7 +107,7 @@ reproducer `#[test]` first):
 Spec-bug fixes landed (commit `28bc28b7`); full IndexMap collapse deferred.
 Do **not** wait for R0 — language stages need this now.
 
-## R17 — OXC early errors via `oxc_semantic`  *(NOW / Phase A, diff=4)*
+## R17 — OXC early errors via `oxc_semantic`  *(NOW / Phase A)*
 
 High tests-per-LOC for the language half. Hand-rolling early errors in
 `lower/` is thousands of LOC. `oxc_semantic` confirmed in `docs.rs/oxc`
@@ -130,7 +121,7 @@ under the main oxc crate — verify if a feature flag is needed or if
 - [ ] Parse → semantic check → SyntaxError before lowering; delete
       redundant hand-rolled checks.
 
-## R1 — `eval/ops.rs` + `%ops%` bridge  *(incremental NOW; finish PHASE-B, diff=3)*
+## R1 — `eval/ops.rs` + `%ops%` bridge  *(incremental NOW; finish PHASE-B)*
 
 **Status:** `src/eval/ops.rs` and `builtins/core/ops_wrapper.rs` exist
 as a scaffold (re-exports + frozen `%ops%`). Not yet the single owner —
@@ -145,13 +136,15 @@ private copies remain in `builtins/*.rs` and `eval/`.
       `iterator_close`, `create_iter_result_object`, `native_fn`,
       `throw_type_error`.
 - [ ] One `#[test]` per op when it becomes owned here.
+- [ ] Rename the bridge global `%ops%` → `__ops__` (decided 2026-08-08;
+      `__ops__` is the documented name in `AGENTS.md`/`docs/architecture.md`).
 - [ ] `%ops%` stays frozen; parser resolves `%ops%` at parse time
       (never user-visible).
 - [ ] On touch: replace the local duplicate; do not leave two owners.
 - [ ] **Phase B gate:** before R0 / Object stage, zero private copies of
       the ops list above remain outside `eval/ops.rs`.
 
-## R0 — Self-host builtins in JS  *(PHASE-B — before built-ins stages, diff=5)*
+## R0 — Self-host builtins in JS  *(PHASE-B — before built-ins stages)*
 
 Move every pure-spec builtin from `builtins/*.rs` to `builtins/*.js`.
 Do **not** start a full migration during stage 16; it does not unblock
@@ -172,7 +165,7 @@ failing stage is a built-in you would otherwise enlarge in Rust).
 Unblocks R2 / R7 / R8 / R13 cleanup. Never grind `Object`/`Array`/
 `String` stages by growing Rust builtins first.
 
-## R2 — One iterator protocol  *(PHASE-B, with R0 Iterator.js, diff=3)*
+## R2 — One iterator protocol  *(PHASE-B, with R0 Iterator.js)*
 
 Four impls today: `eval/iteration.rs` (eager `Vec<Value>`, breaks
 generators), `builtins/weak.rs` `for_each_on_iterable`,
@@ -183,11 +176,11 @@ generators), `builtins/weak.rs` `for_each_on_iterable`,
       Array/String/RegExp/Map/Set iterators inherit via prototype chain.
 - [ ] Delete all four Rust duplicates.
 
-~400 LOC saved. If `for-of` / destructuring fails earlier on the eager
+If `for-of` / destructuring fails earlier on the eager
 materializer, land the streaming `ops` path (and delete that one
 duplicate) in Phase A without waiting for full R0.
 
-## R3 — `chrono`-backed Date core  *(PHASE-B / with Date.js, diff=2)*
+## R3 — `chrono`-backed Date core  *(PHASE-B / with Date.js)*
 
 `builtins/date.rs` hand-rolls leap-year math under `chrono_*` names but
 never imports `chrono` (confirmed via grep: zero `use chrono` hits). R3
@@ -199,9 +192,7 @@ implements the fix documented in `docs/DEPENDENCIES.md`.
 - [ ] `#[test]` for `Date.UTC` covering leap years + pre-1970.
 - [ ] `docs/DEPENDENCIES.md` row for the upgrade (if any).
 
-~50 LOC saved.
-
-## R6 — `Realm` owns intrinsic prototypes; `%ThrowTypeError%`  *(LATER / stage-gated, diff=5)*
+## R6 — `Realm` owns intrinsic prototypes; `%ThrowTypeError%`  *(LATER / stage-gated)*
 
 `Context::reset` clears only 2 of ~14 thread_local proto pointers.
 `%ThrowTypeError%` missing (skip-listed in runner).
@@ -215,12 +206,12 @@ implements the fix documented in `docs/DEPENDENCIES.md`.
 
 Do when the `ThrowTypeError` stage (or a digest cluster) demands it.
 
-## R7 — One `to_object`  *(absorbed by R1, diff=1)*
+## R7 — One `to_object`  *(absorbed by R1)*
 
 Three divergent boxers (one boxes `undefined`/`null`). Delete on touch
 as R1 owns `to_object`.
 
-## R8 — `panic!` → `throw_type_error`  *(LATER; most vanish under R0, diff=2)*
+## R8 — `panic!` → `throw_type_error`  *(LATER; most vanish under R0)*
 
 - [ ] `value::error::throw_type_error(msg) -> JsError`.
 - [ ] `#[test]` per panic site that must remain in Rust (`core/`).
@@ -229,38 +220,38 @@ as R1 owns `to_object`.
 Prefer fixing a panic when a stage digest hits it; otherwise sweep with
 R0.
 
-## R9 — Dead code sweep  *(LATER, after R4 / with R0, diff=2)*
+## R9 — Dead code sweep  *(LATER, after R4 / with R0)*
 
 After R4/R1/R0 reduce the surface: dead convert helpers, unused
 `Getter`/`Setter*` types, `ObjData` variants never constructed,
 `intl.rs` (out of scope — delete), one-line wrappers, etc.
 
-~620 LOC saved. Opportunistic on touch; no dedicated queue jump.
+Opportunistic on touch; no dedicated queue jump.
 
-## R10 — RAII `CURRENT_CONTEXT`; collapse thread-locals  *(LATER, diff=4)*
+## R10 — RAII `CURRENT_CONTEXT`; collapse thread-locals  *(LATER)*
 
 Open-coded save/restore skips restore on some `Err` paths.
 
 - [ ] `CtxGuard` + `Drop`; `RefCell` peek instead of take+set.
 - [ ] Pairs with R6.
 
-## R11 — `Context::call_js_function` → `eval::function::call_value`  *(LATER, diff=1)*
+## R11 — `Context::call_js_function` → `eval::function::call_value`  *(LATER)*
 
-~55 LOC. Delete when touching call paths.
+Delete when touching call paths.
 
-## R12 — Split `eval/object.rs`  *(DONE, diff=1)*
+## R12 — Split `eval/object.rs`  *(DONE)*
 
 Remaining over-500 offenders tracked in R15.
 
-## R13 — `object_static.rs` cleanup  *(absorbed by R0 + R5, diff=1)*
+## R13 — `object_static.rs` cleanup  *(absorbed by R0 + R5)*
 
 Including `FROZEN_OBJECTS` → see R16.
 
-## R14 — `lower_expr` fail-loud on unknown  *(LATER, diff=1)*
+## R14 — `lower_expr` fail-loud on unknown  *(LATER)*
 
 Catch-all → `Err` so new OXC variants surface at lower time.
 
-## R15 — Linter-gate sweep  *(continuous on touch; final sweep LATER, diff=2)*
+## R15 — Linter-gate sweep  *(continuous on touch; final sweep LATER)*
 
 **Not a test262 unlock.** Enforced on every PR for files you edit.
 Wholesale split of untouched >500-line files waits until after R0/R5
@@ -270,7 +261,7 @@ shrink the surface — do not prioritize ahead of Phase A/B.
 - [ ] Final sweep: `rg '#\[allow\(' crates/quench-runtime/src` zero hits;
       no production file > 500 lines; clippy clean.
 
-## R16 — Drop `FROZEN_OBJECTS` thread_local  *(LATER / with R5 freeze path, diff=2)*
+## R16 — Drop `FROZEN_OBJECTS` thread_local  *(LATER / with R5 freeze path)*
 
 Use `Object.extensible` (and proper descriptors from R5); delete
 `FROZEN_OBJECTS` + `is_frozen_object`. Details: T14 in
@@ -278,7 +269,7 @@ Use `Object.extensible` (and proper descriptors from R5); delete
 
 ---
 
-## R18 — RegExp Unicode property escapes  *(LATER / stage 84, diff=2)*
+## R18 — RegExp Unicode property escapes  *(LATER / stage 84)*
 
 `regress` (ES2018, confirmed in `docs/DEPENDENCIES.md`) does NOT support
 Unicode property escapes `\p{}` (docs.rs regress: "features which have
@@ -294,9 +285,9 @@ tests `\p{Script}`, `\p{Emoji}`, `\p{General_Category}`, etc.
 - [ ] `#[test]` for `\p{Emoji}` matching, `\p{Script=Latin}`,
       `\p{General_Category=Number}`.
 
-## R19 — `bumpalo` arena allocation  *(LATER / Phase B, diff=3)*
+## R19 — `bumpalo` arena allocation  *(LATER / Phase B)*
 
-`bumpalo` (244M+ downloads) provides arena allocation — a single bump
+`bumpalo` provides arena allocation — a single bump
 pointer, no per-allocation bookkeeping. `bump_scope` benches ~2x faster
 but less proven. Most `JsValue` objects and eval frames are short-lived
 and freed in LIFO order: the exact use case for arena.
@@ -318,7 +309,7 @@ Usage in Quench:
 - [ ] `#[test]`: no Drop impls on freed arena objects.
 - [ ] Migration order: eval frames first, then parser, then Value constructors.
 
-## R20 — NaN-boxed `JsValue`  *(LATER / Phase B, diff=3)*
+## R20 — NaN-boxed `JsValue`  *(LATER / Phase B)*
 
 Rust's `enum JsValue` with inline/`Box`/`Rc` variants costs 2 words per
 Value plus heap traffic for every object. NaN boxing stores everything in
@@ -326,8 +317,7 @@ a single `u64` — integers in the top 33 bits, pointers in the low 49
 bits of a quiet NaN, with tag bits distinguishing the slot type.
 
 **Confirmed (2026-07-23):**
-- Boa v0.21 switched from enum to NaN-boxed `JsValue` (October 2025).
-- Boa v0.21 achieves 94.12% test262 conformance.
+- Boa switched from enum to NaN-boxed `JsValue` in v0.21 (October 2025).
 - SpiderMonkey and JSC use NaN boxing; V8 uses tagged pointers.
 - No dedicated Rust crate — implement with `unsafe` in `value/` module.
 - Quiet NaN (qNaN) only — signaling NaN never appears in IEEE754 JS values.
@@ -356,7 +346,7 @@ pair with the correct property store, not the current buggy one.
 - [ ] `#[test]`: NaN-boxed value survives a bumpalo round-trip.
 - [ ] `#[test]`: `Object.is` / `SameValue` on NaN-boxed values.
 
-## R21 — String interning / atom table  *(LATER / Phase B, diff=2)*
+## R21 — String interning / atom table  *(LATER / Phase B)*
 
 JavaScript string comparisons are pervasive: property key lookup, `===`,
 `Map`/`Set` hashing. Un-interned strings do O(n) byte-by-byte comparison
@@ -364,7 +354,7 @@ on every `==`; an atom table makes pointer comparison O(1).
 
 **Confirmed (2026-07-23):**
 - `string_interner` crate: widely used, thread-safe variant, O(1) get/create.
-- `fnv = "2"`: Fast HashMap; fine for atom table scale (~50k entries).
+- `fnv = "2"`: Fast HashMap; fine for atom table scale.
 - QuickJS uses a global atom table in `JSRuntime`.
 - `string_cache` (Servo): unmaintained since ~2020.
 - `rustc-hash`: fastest overall but lower-quality; fine for atom table.
@@ -382,7 +372,7 @@ Usage:
 - [ ] `#[test]`: interned string pointer equality; `"abc" == "abc"` pointer compare.
 - [ ] `#[test]`: `Map` with 10k distinct string keys — baseline benchmark.
 
-## R22 — Profiling tools on macOS  *(LATER / when needed, diff=1)*
+## R22 — Profiling tools on macOS  *(LATER / when needed)*
 
 When the test262 iteration loop is the bottleneck, profile before tuning:
 

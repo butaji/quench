@@ -1,13 +1,13 @@
 # AGENTS.md
 
 1. **Goal**: 100% test262 conformance, one stage at a time (122 stages, see `tasks/index.json`), with the minimum possible LOC.
-2. **Architecture**: small Rust core (`crates/quench-runtime`) plus self-hosted JS builtins (`builtins/*.js`) that only call `%ops%`; everything that can be implemented in JS **must** be implemented in JS on top of the Rust core; details in `docs/architecture.md`.
-3. **Never modify** `tests/test262/` or `tests/test262.rs`; `test/intl402` and `test/staging` are out of scope.
-4. **TDD for the Rust core**: every core change enters via a failing `#[test]` written before any production code; no debugging, no `println!`, no guessing, no speculative edits.
+2. **Architecture (target — R0/R1, not yet landed)**: small Rust core (`crates/quench-runtime`) plus self-hosted JS builtins (`builtins/*.js`) that only call `__ops__`; everything that can be implemented in JS **must** be implemented in JS on top of the Rust core (ADR `docs/adr/0001-js-builtins-architecture.md`). Today all builtins are Rust (`crates/quench-runtime/src/builtins/*.rs`); details in `docs/architecture.md`.
+3. **Never modify** `tests/test262/` or `crates/quench-runtime/tests/test262.rs`; `test/intl402` and `test/staging` are out of scope.
+4. **TDD for the Rust core important features**: every important core change enters via a failing `#[test]` written before any production code; no debugging, no `println!`, no guessing, no speculative edits. Important==potential regression in the future.
 5. **Unit tests live only in the Rust core** — regression guards for complicated issues (bug reproducers, core invariants test262 cannot observe, refactor pins); never replicate a test262 assertion as a unit test.
 6. **Fix workflow**: run test262 stages in batch and fix families of related failures, not single cases; a Rust-core fix is reproduce → watch fail → minimal fix → re-run test and stage → leave the test in; JS-builtin fixes are gated by the stage run alone.
 7. **Linter is law**: zero clippy warnings (`-D warnings` is set); every `*.rs`, `*.ts`, `*.js` file in this repo: max 500 lines/file, 40 lines/function, cognitive complexity ≤ 10; no `#[allow]` exceptions.
-8. **One canonical spec-op path**: `ToPrimitive`, `IsCallable`, `SameValueZero`, etc. live only in `src/eval/ops.rs`, exposed to JS as `%ops%`; grep before writing any helper.
+8. **One canonical spec-op path**: `ToPrimitive`, `IsCallable`, `SameValueZero`, etc. live only in `src/eval/ops.rs`, exposed to JS as `__ops__`; grep before writing any helper.
 9. **Prefer crates over hand-rolling** (`regress`, `chrono`, `num-bigint`, `serde_json`, `urlencoding`, `oxc`); a new crate needs a `docs/DEPENDENCIES.md` row in the same diff.
 10. **Zero duplication, zero dead code, no speculative generality**: hoist repeated logic to `value/` or `eval/ops.rs`; delete unused symbols, fields, and variants in the same PR.
 11. **Builtins throw, never panic**: use `value::error::throw_type_error(msg)`; `panic!`/`unwrap()`/`expect()` are forbidden in `builtins/` and `eval/`.
