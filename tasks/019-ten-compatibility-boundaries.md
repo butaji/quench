@@ -238,6 +238,10 @@ Stage 2382 adds and verifies the first async handle slice: real-provider
 and idempotent close behavior. The upstream handle fixture still fails before
 this slice in its synchronous `getVirtualFd()` path; positioned read/write,
 stat, and truncate methods remain queued.
+Stage 2383 registers native descriptors with `internal/vfs/fd` and verifies
+positioned `readSync()` and `writeSync()` on a real-provider handle. The
+focused stage passes. Stat and the upstream fixture's remaining `read()`,
+`write()`, `writeFile*()`, `truncate*()`, and async edge cases remain queued.
 
 Stage 2378 passes the four basic stream `destroy()` contracts for readable and
 writable streams, including implicit `AbortError`, explicit error messages,
