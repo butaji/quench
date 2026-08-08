@@ -182,7 +182,12 @@ const __quenchFinishedStream = (stream, options, callback) => {
   if (options === null) options = {};
   __quenchValidateFinishedStream(stream, options, callback);
   if (typeof stream.getReader === "function") {
-    queueMicrotask(() => callback(stream._error));
+    if ((stream._closed && !stream._queue?.length) || stream._error) {
+      queueMicrotask(() => callback(stream._error));
+    } else {
+      stream._finishWaiters ||= [];
+      stream._finishWaiters.push((error) => callback(error));
+    }
     return () => undefined;
   }
   if (typeof stream.getWriter === "function") {
@@ -298,7 +303,8 @@ const __quenchAddAbortSignal = (signal, stream) => {
     const error = new Error("The operation was aborted");
     error.name = "AbortError";
     error.code = "ABORT_ERR";
-    stream.destroy?.(error);
+    if (typeof stream._errorStream === "function") stream._errorStream(error);
+    else stream.destroy?.(error);
   };
   if (signal.aborted) abort();
   else signal.addEventListener?.("abort", abort, { once: true });
