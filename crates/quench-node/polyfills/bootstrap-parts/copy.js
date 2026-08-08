@@ -306,7 +306,12 @@ const __nodeBufferEncodedString = (buffer, encoding) => {
       codePoint = (codePoint << 6) | (next & 0x3f);
     }
     const minimum = length === 2 ? 0x80 : length === 3 ? 0x800 : 0x10000;
-    if (!valid || codePoint < minimum || codePoint > 0x10ffff) {
+    if (
+      !valid ||
+      codePoint < minimum ||
+      codePoint > 0x10ffff ||
+      (codePoint >= 0xd800 && codePoint <= 0xdfff)
+    ) {
       result += "\ufffd";
       continue;
     }
