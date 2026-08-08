@@ -831,7 +831,9 @@ macro_rules! run_host_context {
         }
         ctx.eval::<(), _>(b"if (globalThis.__quench_test_promises?.length) Promise.allSettled(globalThis.__quench_test_promises).then(() => { globalThis.__quench_tests_settled = true; });")?;
         ctx.eval::<(), _>(b"if (typeof globalThis.__quench_io_poll === 'function') globalThis.__quench_io_poll(); if (typeof globalThis.__quench_timer_poll === 'function') globalThis.__quench_timer_poll();")?;
-        while ctx.execute_pending_job() {}
+        while ctx.execute_pending_job() {
+            ctx.eval::<(), _>(b"if (typeof globalThis.__quench_timer_poll === 'function') globalThis.__quench_timer_poll();")?;
+        }
         if let Ok(detail) = ctx.globals().get::<_, String>("__quench_async_error") {
             if !detail.is_empty() {
                 eprintln!("Asynchronous JavaScript exception: {detail}");
@@ -857,6 +859,7 @@ macro_rules! run_host_context {
                 let mut ran_job = false;
                 while ctx.execute_pending_job() {
                     ran_job = true;
+                    ctx.eval::<(), _>(b"if (typeof globalThis.__quench_timer_poll === 'function') globalThis.__quench_timer_poll();")?;
                 }
                 if !ran_job {
                     let wait_ms = ctx.eval::<i64, _>(b"typeof globalThis.__quench_timer_next_delay === 'function' ? globalThis.__quench_timer_next_delay() : -1")?;
