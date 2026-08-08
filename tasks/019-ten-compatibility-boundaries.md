@@ -430,6 +430,9 @@ Mounted promise two-path `rename`/`copyFile` now translates both source and
 destination paths. Stage 2420 verifies the full preceding mutation sequence
 followed by chmod/lstat successfully; the broad mounted promises fixture still
 has a remaining later-sequence discrepancy.
+The internal VFS file-handle module now exports `MemoryFileHandle` with its
+expected no-stat `ERR_INVALID_STATE` contract. The authoritative
+`test-vfs-memory-file-handle.js` fixture passes.
 Stage 2418 verifies the public `MemoryProvider` surface and append-to-new-file
 behavior. The separate dynamic-provider fixture remains an internal-model
 gap: it expects Node's `kRoot` symbol and lazy entry objects, which are not yet

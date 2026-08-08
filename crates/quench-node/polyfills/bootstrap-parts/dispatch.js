@@ -133,7 +133,22 @@ globalThis.require = (specifier) => {
     Symbol.asyncDispose ||= Symbol("Symbol.asyncDispose");
     VirtualFileHandle.prototype[Symbol.asyncDispose] =
       VirtualFileHandle.prototype.close;
-    return { VirtualFileHandle };
+    class MemoryFileHandle extends VirtualFileHandle {
+      constructor(path, flags = "r", mode = 0o666, content, getStats) {
+        super(path, flags, mode);
+        this.content = content;
+        this.getStats = getStats;
+      }
+      statSync() {
+        if (typeof this.getStats !== "function") {
+          const error = new Error("File statistics are not available");
+          error.code = "ERR_INVALID_STATE";
+          throw error;
+        }
+        return this.getStats();
+      }
+    }
+    return { MemoryFileHandle, VirtualFileHandle };
   }
   if (name === "worker_threads") {
     return { isMainThread: true, MessageChannel, MessagePort };
