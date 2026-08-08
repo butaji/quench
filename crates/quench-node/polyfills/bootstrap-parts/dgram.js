@@ -5,6 +5,10 @@ const __quenchDgramBoundPorts = new Set();
 const __quenchDgramSockets = new Set();
 let __quenchDgramNextPort = 40000;
 const __quenchDgramTypeDetail = (value) => {
+  if (value === null) return " Received null";
+  if (value === undefined) return " Received undefined";
+  if (typeof value === "string") return ` Received type string ('${value}')`;
+  if (typeof value === "boolean") return ` Received type boolean (${value})`;
   if (typeof value === "number") return ` Received type number (${value})`;
   if (typeof value === "boolean") return ` Received type boolean (${value})`;
   if (typeof value === "bigint") return ` Received type bigint (${value})`;
