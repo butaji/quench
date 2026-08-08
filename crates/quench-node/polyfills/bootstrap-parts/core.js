@@ -1905,6 +1905,21 @@ let __quenchHttpModule;
         response.socket.__quenchServerPort = context.address().port;
       }
       const agentName = request.agent?.getName?.(options);
+      let agentSlotTracked = false;
+      if (agentName && request.agent) {
+        const active =
+          request.agent.__quenchActiveRequests ||
+          (request.agent.__quenchActiveRequests = Object.create(null));
+        const activeCount = active[agentName] || 0;
+        if (
+          Number.isFinite(request.agent.maxSockets) &&
+          activeCount >= request.agent.maxSockets
+        ) {
+          (request.agent.requests[agentName] ||= []).push(request);
+        }
+        active[agentName] = activeCount + 1;
+        agentSlotTracked = true;
+      }
       let reusableSocket;
       if (agentName) {
         const pool = request.agent.freeSockets?.[agentName];
@@ -1922,6 +1937,15 @@ let __quenchHttpModule;
         }
       };
       response.once("end", clearRequestTimeout);
+      if (agentSlotTracked) {
+        response.once("end", () => {
+          const active = request.agent.__quenchActiveRequests;
+          active[agentName] = Math.max(0, (active[agentName] || 1) - 1);
+          const queued = request.agent.requests[agentName];
+          if (queued?.length) queued.shift();
+          if (!queued?.length) delete request.agent.requests[agentName];
+        });
+      }
       const destroyRequest = request.destroy;
       const destroyResponse = response.destroy;
       request.destroy = () => {
