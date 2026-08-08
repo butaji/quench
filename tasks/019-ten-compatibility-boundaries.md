@@ -286,6 +286,10 @@ an async callback failure after these operations.
 Stage 2390 adds real-provider `watch()`, `watchFile()`/`unwatchFile()`, and
 `promises.watch()` iterator surfaces. The focused watch-surface stage and
 authoritative `test-vfs-real-provider-watch.js` now pass.
+Stage 2392 verifies that real-provider `symlinkSync()` rejects an absolute
+target outside the provider root with `EACCES`. The upstream symlink fixture
+still fails in its async assertion sequence, so async rejection and promise
+readlink/realpath ordering remain separate work.
 
 Stage 2378 passes the four basic stream `destroy()` contracts for readable and
 writable streams, including implicit `AbortError`, explicit error messages,
