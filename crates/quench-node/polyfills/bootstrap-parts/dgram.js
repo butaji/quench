@@ -132,7 +132,10 @@ const __quenchDgramSend = (socket, message, ...args) => {
     : args.length >= 2
       ? 1
       : -1;
-  const address = addressIndex < 0 ? undefined : args[addressIndex];
+  const address =
+    addressIndex < 0 || typeof args[addressIndex] === "function"
+      ? undefined
+      : args[addressIndex];
   const callback = args.at(-1);
   if (
     address !== undefined &&
