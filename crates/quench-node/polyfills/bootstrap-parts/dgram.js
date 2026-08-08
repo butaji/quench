@@ -51,6 +51,19 @@ const __quenchDgramBind = (socket, type, port, address, callback) => {
     port = 0;
   }
   if (typeof address === "function") callback = address;
+  const localAddress =
+    type === "udp6"
+      ? address === "::" || address === "::1"
+      : address === "0.0.0.0" || address === "127.0.0.1";
+  if (typeof address === "string" && !localAddress) {
+    const error = Object.assign(new Error(`bind EADDRNOTAVAIL ${address}`), {
+      code: "EADDRNOTAVAIL",
+      address,
+      syscall: "bind"
+    });
+    queueMicrotask(() => socket.emit("error", error));
+    return socket;
+  }
   const resolvedPort =
     typeof port === "number" && port > 0 ? port : __quenchDgramNextPort++;
   if (__quenchDgramBoundPorts.has(resolvedPort)) {
