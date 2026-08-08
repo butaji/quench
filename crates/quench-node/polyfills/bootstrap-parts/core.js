@@ -1362,6 +1362,10 @@ let __quenchHttpModule;
       };
       response.setTimeout = (msecs) => {
         response.timeout = msecs;
+        if (!response.__timeoutListener) {
+          response.__timeoutListener = () => response.emit("timeout");
+          response.socket?.on("timeout", response.__timeoutListener);
+        }
         if (response.socket?.setTimeout) response.socket.setTimeout(msecs);
         else response.once("socket", (value) => value?.setTimeout?.(msecs));
         return response;
@@ -2516,6 +2520,11 @@ let __quenchHttpModule;
         };
       }
       listen(port, host, callback) {
+        if (typeof port === "function") {
+          callback = port;
+          port = 0;
+          host = "127.0.0.1";
+        }
         if (port && typeof port === "object") {
           const options = port;
           callback = typeof host === "function" ? host : callback;
