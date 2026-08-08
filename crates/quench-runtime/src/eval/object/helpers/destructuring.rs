@@ -151,7 +151,7 @@ pub fn assign_array_with_iterator(
         if let BindingElement::Rest(inner) = binding {
             let rest_array = collect_remaining_array(iterator, &mut index, env)?;
             if let Err(error) = assign_binding_elem(inner, &rest_array, env) {
-                call_iterator_return(iterator);
+                call_iterator_return(iterator, true);
                 return Err(error);
             }
             return Ok(());
@@ -160,7 +160,7 @@ pub fn assign_array_with_iterator(
         iterator_done = done;
         if let Err(error) = assign_binding_elem(binding, &elem_value, env) {
             let original = crate::value::take_thrown_value();
-            let close_throw = call_iterator_return(iterator);
+            let close_throw = call_iterator_return(iterator, true);
             if original.is_some() {
                 if let Some(thrown) = original {
                     crate::value::set_thrown_value(thrown);
@@ -172,7 +172,7 @@ pub fn assign_array_with_iterator(
         }
     }
     if !iterator_done {
-        if let Some(err) = call_iterator_return(iterator) {
+        if let Some(err) = call_iterator_return(iterator, true) {
             return Err(err);
         }
     }
@@ -270,7 +270,13 @@ pub fn take_iterator_step(
 }
 
 /// Call iterator.return, returning an error if it throws.
-pub fn call_iterator_return(iterator: &Rc<RefCell<Object>>) -> Option<JsError> {
+///
+/// `is_error` indicates the close is happening because the iteration completed
+/// abruptly with an error. Per ES IteratorClose, when the original completion
+/// is a throw, that error takes precedence over the `return` method's result or
+/// a non-Object return value; only the `return` method's own throw is surfaced
+/// on a normal close.
+pub fn call_iterator_return(iterator: &Rc<RefCell<Object>>, is_error: bool) -> Option<JsError> {
     let iter_this = Value::Object(Rc::clone(iterator));
     let binding = iterator.borrow();
     if let Some(getter) = binding.get_getter("return") {
@@ -288,7 +294,9 @@ pub fn call_iterator_return(iterator: &Rc<RefCell<Object>>) -> Option<JsError> {
             iter_this,
         );
         if let Some(thrown) = crate::value::take_thrown_value() {
-            return Some(JsError(crate::value::to_js_string(&thrown)));
+            if !is_error {
+                return Some(JsError(crate::value::to_js_string(&thrown)));
+            }
         }
         return None;
     }
@@ -322,12 +330,20 @@ pub fn call_iterator_return(iterator: &Rc<RefCell<Object>>) -> Option<JsError> {
         (Some(body), Some(closure)) => (body, closure),
         (_, _) => {
             // Per ES IteratorClose, the `return` method's result must be an
-            // Object; otherwise a TypeError is thrown.
-            return match crate::eval::function::call_value_with_this(
-                return_value,
-                vec![],
-                iter_this,
-            ) {
+            // Object; otherwise a TypeError is thrown. Save any pending thrown
+            // value (the error that triggered the close) so it can be restored:
+            // when closing due to an error, the original error takes precedence
+            // over the `return` method's result or a throw it produces.
+            let saved_thrown = crate::value::take_thrown_value();
+            let result =
+                crate::eval::function::call_value_with_this(return_value, vec![], iter_this);
+            if is_error {
+                if let Some(orig) = saved_thrown {
+                    crate::value::set_thrown_value(orig);
+                }
+                return None;
+            }
+            return match result {
                 Ok(Value::Object(_)) | Ok(Value::Generator(_)) => None,
                 Ok(_) => {
                     let (_, js_err) = crate::value::error::create_js_error_with_type(
@@ -351,7 +367,9 @@ pub fn call_iterator_return(iterator: &Rc<RefCell<Object>>) -> Option<JsError> {
         iter_this,
     );
     if let Some(thrown) = crate::value::take_thrown_value() {
-        return Some(JsError(crate::value::to_js_string(&thrown)));
+        if !is_error {
+            return Some(JsError(crate::value::to_js_string(&thrown)));
+        }
     }
     None
 }

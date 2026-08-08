@@ -125,7 +125,7 @@ fn abrupt_close(
     iterator: &Rc<RefCell<Object>>,
     completion: Result<Value, JsError>,
 ) -> Result<Value, JsError> {
-    if let Some(close_err) = call_iterator_return(iterator) {
+    if let Some(close_err) = call_iterator_return(iterator, completion.is_err()) {
         return Err(close_err);
     }
     completion
