@@ -509,6 +509,17 @@ const __quenchNetModule = {
           const server = [...__quenchNetServers].find(
             (candidate) => candidate.listening
           );
+          const httpServer = [
+            ...(globalThis.__quenchHttpServers?.values() || [])
+          ].find((candidate) => candidate.listening);
+          if (!server && httpServer) {
+            const serverSocket = new __quenchNetModule.Socket();
+            serverSocket._handle = { setKeepAlive: () => {} };
+            this._peer = serverSocket;
+            serverSocket._peer = this;
+            httpServer.emit("connection", serverSocket);
+            return;
+          }
           if (!server?._handler) return;
           const serverSocket = new __quenchNetModule.Socket();
           serverSocket._handle = { setKeepAlive: () => {} };
