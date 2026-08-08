@@ -159,7 +159,7 @@
       "id": 23,
       "path": "test/language/statements/for",
       "tests": 385,
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 24,
