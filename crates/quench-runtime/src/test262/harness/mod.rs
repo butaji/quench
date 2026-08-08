@@ -11,7 +11,11 @@ pub mod test_deep_equal;
 use crate::value::function::NativeConstructor;
 use crate::value::{Object, ObjectKind};
 use crate::{Context, JsError, NativeFunction, Value};
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::{Mutex, OnceLock};
 
 /// Make a native function value from a Rust closure.
 pub fn make_native<F>(f: F) -> Value
@@ -54,17 +58,7 @@ impl HarnessLoader {
         let path = format!("{}/{}", self.harness_dir, name);
         let content = std::fs::read_to_string(&path).ok()?;
         // Strip /*--- ... ---*/ frontmatter
-        let js_code = if let Some(s) = content.find("/*---") {
-            if let Some(e) = content[s..].find("---*/") {
-                let end = s + e + 5;
-                format!("{}{}", &content[..s], &content[end..])
-            } else {
-                content.clone()
-            }
-        } else {
-            content
-        };
-        let trimmed = js_code.trim().to_string();
+        let trimmed = strip_frontmatter(&content).trim().to_string();
         if trimmed.is_empty() {
             return None;
         }
@@ -124,6 +118,51 @@ impl HarnessLoader {
         out.push_str(source);
         Ok(out)
     }
+}
+
+/// Strip the test262 `/*--- ... ---*/` frontmatter block from harness/test
+/// file content. Returns the original content when no block is present.
+fn strip_frontmatter(content: &str) -> String {
+    if let Some(s) = content.find("/*---") {
+        if let Some(e) = content[s..].find("---*/") {
+            let end = s + e + 5;
+            return format!("{}{}", &content[..s], &content[end..]);
+        }
+    }
+    content.to_string()
+}
+
+/// Process-wide cache of harness file contents (frontmatter stripped). Keyed by
+/// absolute path and shared across test threads, so the ~25 harness files that
+/// `try_inject_harness` evals per test are read from disk only once per process.
+#[derive(Default)]
+struct HarnessFileCache {
+    map: RefCell<HashMap<PathBuf, Option<String>>>,
+    reads: Cell<usize>,
+}
+
+impl HarnessFileCache {
+    fn get(&self, path: &Path) -> Option<String> {
+        if let Some(v) = self.map.borrow().get(path) {
+            return v.clone();
+        }
+        self.reads.set(self.reads.get() + 1);
+        let content = std::fs::read_to_string(path).ok();
+        let stripped = content.as_deref().map(strip_frontmatter);
+        self.map
+            .borrow_mut()
+            .insert(path.to_path_buf(), stripped.clone());
+        stripped
+    }
+
+    fn reads(&self) -> usize {
+        self.reads.get()
+    }
+}
+
+fn harness_file_cache() -> &'static Mutex<HarnessFileCache> {
+    static CACHE: OnceLock<Mutex<HarnessFileCache>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HarnessFileCache::default()))
 }
 
 /// Path to the test262 harness directory
@@ -263,29 +302,21 @@ fn inject_test262_error(ctx: &mut Context) {
 /// Harness files always run in sloppy mode (legacy octal literals are allowed).
 fn eval_harness_file(ctx: &mut Context, filename: &str) -> Result<(), String> {
     let path = harness_dir().join(filename);
-    let content = std::fs::read_to_string(&path)
-        .map_err(|e| format!("failed to read harness file {}: {}", path.display(), e))?;
-    // Strip /*--- ... ---*/ frontmatter
-    let js_code = if let Some(s) = content.find("/*---") {
-        if let Some(e) = content[s..].find("---*/") {
-            let end = s + e + 5;
-            format!("{}{}", &content[..s], &content[end..])
-        } else {
-            content.clone()
-        }
-    } else {
-        content
-    };
-    if js_code.trim().is_empty() {
+    let content = harness_file_cache()
+        .lock()
+        .unwrap()
+        .get(&path)
+        .ok_or_else(|| format!("failed to read harness file {}", path.display()))?;
+    if content.trim().is_empty() {
         return Ok(());
     }
     let code = if filename == "sta.js" {
         format!(
             "{}\nTest262Error.prototype.constructor = Test262Error;",
-            js_code.trim_end()
+            content.trim_end()
         )
     } else {
-        js_code
+        content
     };
     // Harness files must run in sloppy mode (legacy octal literals are permitted).
     let was_strict = crate::interpreter::is_strict_mode();
@@ -1453,5 +1484,43 @@ if (opd.configurable !== true) throw new Error('FAIL: configurable should be tru
             "allowProxyTraps should preserve overridden trap identities: {:?}",
             result
         );
+    }
+
+    /// The harness file cache must read a file from disk only once and strip
+    /// the `/*--- ... ---*/` frontmatter. try_inject_harness evals ~25 harness
+    /// files per test (twice for dual-mode tests); caching the file contents
+    /// removes a disk read per file per test.
+    #[test]
+    fn harness_file_cache_reads_each_file_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("demo.js");
+        std::fs::write(&f, "/*---\ndescription: x\n---*/\nvar a = 1;\n").unwrap();
+
+        let cache = HarnessFileCache::default();
+        let first = cache.get(&f);
+        let second = cache.get(&f);
+
+        // Frontmatter is stripped; the trailing newline after `---*/` remains,
+        // matching the original loader (callers `.trim()` as needed).
+        assert_eq!(first.as_deref(), Some("\nvar a = 1;\n"));
+        assert_eq!(second, first, "second read must come from cache");
+        assert_eq!(cache.reads(), 1, "file must be read from disk only once");
+    }
+
+    #[test]
+    fn harness_file_cache_missing_file_is_none() {
+        let cache = HarnessFileCache::default();
+        let missing = std::path::Path::new("/definitely/does/not/exist/harness.js");
+        assert_eq!(cache.get(missing), None);
+        assert_eq!(cache.reads(), 1);
+    }
+
+    #[test]
+    fn strip_frontmatter_removes_block_and_keeps_rest() {
+        assert_eq!(
+            strip_frontmatter("/*---\ndescription: d\n---*/\ncode();\n"),
+            "\ncode();\n"
+        );
+        assert_eq!(strip_frontmatter("no frontmatter"), "no frontmatter");
     }
 }
