@@ -363,6 +363,11 @@ Verification after this change: the `quench-node` crate tests pass 2/2; stages
 2406–2408 pass; and the maintained Ajv, debug, Chalk, ms, and Prettier real-app
 stages all pass. These checks do not mask the unresolved upstream VFS stream,
 pull, symlink, and real-provider promise fixtures.
+Stages 2409 and 2410 verify the async real-provider symlink rejection,
+readlink/realpath translation, root-link handling, and outside-root rejection
+both individually and as one sequence. The authoritative symlink fixture's
+`Callback 0` therefore remains an interaction-specific failure rather than a
+missing async symlink operation.
 
 Stage 2378 passes the four basic stream `destroy()` contracts for readable and
 writable streams, including implicit `AbortError`, explicit error messages,
