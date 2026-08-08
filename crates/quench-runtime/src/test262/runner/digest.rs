@@ -30,13 +30,19 @@ pub fn run_stage_digest(
         );
     }
 
-    // Default to the fast in-process path (thread-local harness-IR cache; ~12x
-    // faster, validated crash-free on the class stage). Known crash files are
-    // still routed to a subprocess inside `one_test`. Set `TEST262_ISOLATED=1`
-    // to run every test in a subprocess (full crash isolation, slower).
+    // Default to the fast in-process SERIAL path (thread-local harness-IR cache;
+    // ~12x faster, validated on the class + symbol + generators stages). Known
+    // crash files are still routed to a subprocess inside `one_test`. Set
+    // `TEST262_ISOLATED=1` to run every test in a subprocess (full crash
+    // isolation, slower).
+    //
+    // Parallel is used only for isolated (subprocess) mode: in-process parallel
+    // shares one engine thread across worker threads and can amplify
+    // pre-existing promise/async races (e.g. a RefCell borrow panic in promise
+    // callbacks), so in-process stays serial by default.
     let use_isolated = flags.isolated;
 
-    let outcomes = if flags.parallel {
+    let outcomes = if use_isolated && flags.parallel {
         run_parallel(harness, tests, flags, use_isolated)
     } else {
         run_serial(harness, tests, flags, use_isolated)
