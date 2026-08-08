@@ -317,3 +317,24 @@ fn test_eval_program_skips_parse_and_matches_eval() {
         result2
     );
 }
+
+#[cfg(test)]
+#[test]
+fn fresh_context_gets_fresh_symbol_registry_on_same_thread() {
+    // Symbol.for uses a thread-local registry. The threaded test262 runner got
+    // a fresh registry per test because each test ran on a new thread; the
+    // in-thread runner reuses one thread, so a fresh Context must reset the
+    // registry or Symbol.for would leak "x" from one test into the next.
+    let mut ctx1 = Context::new().unwrap();
+    crate::builtins::register_builtins(&mut ctx1);
+    let s1 = ctx1.eval("Symbol.for('leakcheck')").unwrap();
+
+    let mut ctx2 = Context::new().unwrap();
+    crate::builtins::register_builtins(&mut ctx2);
+    let s2 = ctx2.eval("Symbol.for('leakcheck')").unwrap();
+
+    assert_ne!(
+        s1, s2,
+        "fresh realms must not share the global symbol registry on one thread"
+    );
+}

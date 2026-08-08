@@ -61,10 +61,14 @@ fn collect_into(dir: &Path, out: &mut Vec<PathBuf>) {
         return;
     };
     for entry in entries.flatten() {
+        // Use the DirEntry's file_type (no extra stat syscall per entry).
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
         let p = entry.path();
-        if p.is_dir() {
+        if file_type.is_dir() {
             collect_into(&p, out);
-        } else if is_test_file(&p) {
+        } else if file_type.is_file() && is_test_file(&p) {
             out.push(p);
         }
     }
