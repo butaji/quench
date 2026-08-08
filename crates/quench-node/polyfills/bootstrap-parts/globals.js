@@ -468,7 +468,7 @@ globalThis.setImmediate = (callback, ...args) => {
       );
     }
   }
-  const id = { active: true, refed: true, generation: 0 };
+  const id = { active: true, refed: true, generation: 0, __immediate: true };
   const activeDomain = globalThis.__quench_active_domain;
   id.ref = () => {
     if (!id.refed && id.active && !id.counted) {
@@ -490,9 +490,11 @@ globalThis.setImmediate = (callback, ...args) => {
   return id;
 };
 globalThis.clearImmediate = (id) => {
-  if (id) id.active = false;
+  if (id?.__immediate) id.active = false;
 };
 globalThis.__quenchRefedHandles ||= 0;
+globalThis.__quenchTimerHandleIds ||= new Map();
+globalThis.__quenchNextTimerHandleId ||= 1;
 globalThis.setTimeout = (callback, _delay = 0, ...args) => {
   if (typeof callback !== "function") {
     throw new TypeError('The "callback" argument must be of type function');
@@ -504,8 +506,18 @@ globalThis.setTimeout = (callback, _delay = 0, ...args) => {
     counted: true,
     unrefChecks: 0
   };
+  const handleId = globalThis.__quenchNextTimerHandleId++;
+  globalThis.__quenchTimerHandleIds.set(handleId, id);
+  id[Symbol.toPrimitive] = () => handleId;
   globalThis.__quenchRefedHandles++;
-  id.ref = () => ((id.refed = true), id);
+  id.ref = () => {
+    if (!id.refed && id.active && !id.counted) {
+      id.refed = true;
+      id.counted = true;
+      globalThis.__quenchRefedHandles++;
+    }
+    return id;
+  };
   id.unref = () => {
     if (id.refed && id.counted) {
       id.refed = false;
@@ -565,6 +577,12 @@ globalThis.setTimeout = (callback, _delay = 0, ...args) => {
   return id;
 };
 globalThis.clearTimeout = (id) => {
+  if (typeof id === "number" || typeof id === "string") {
+    const numericId = Number(id);
+    if (Number.isInteger(numericId)) {
+      id = globalThis.__quenchTimerHandleIds.get(numericId);
+    }
+  }
   if (id) {
     if (id.active && id.counted) {
       id.counted = false;
@@ -581,6 +599,9 @@ globalThis.setInterval = (callback, _delay = 0, ...args) => {
     throw new TypeError('The "callback" argument must be of type function');
   }
   const id = { active: true, refed: true, generation: 0 };
+  const handleId = globalThis.__quenchNextTimerHandleId++;
+  globalThis.__quenchTimerHandleIds.set(handleId, id);
+  id[Symbol.toPrimitive] = () => handleId;
   id.ref = () => ((id.refed = true), id);
   id.unref = () => ((id.refed = false), id);
   id.hasRef = () => id.active && id.refed;
