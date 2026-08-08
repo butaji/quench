@@ -578,20 +578,19 @@ pub fn eval_statement(
             {
                 let obj_borrowed = obj_rc.borrow();
                 // Check Symbol.unscopables (§13.11.7): properties blocked by
-                // unscopables are not added to the with-scope.
+                // unscopables are not added to the with-scope. The symbol key is
+                // stored as "Symbol.unscopables<id>", so match by substring.
                 let unscopables_val = obj_borrowed
                     .symbol_properties
                     .iter()
+                    .chain(obj_borrowed.properties.iter())
                     .find_map(|(k, v)| {
-                        if k.starts_with("Symbol(") && k.contains("unscopables") {
+                        if k.contains("unscopables") {
                             Some(v.clone())
                         } else {
                             None
                         }
-                    })
-                    // Also check regular properties (the key might be the
-                    // Symbol description string like "Symbol.unscopables")
-                    .or_else(|| obj_borrowed.properties.get("Symbol.unscopables").cloned());
+                    });
                 let blocked: std::collections::HashSet<String> =
                     if let Some(Value::Object(u_obj)) = unscopables_val {
                         let u = u_obj.borrow();
@@ -603,12 +602,39 @@ pub fn eval_statement(
                     } else {
                         std::collections::HashSet::new()
                     };
-                for (key, value) in &obj_borrowed.properties {
-                    if !blocked.contains(key) {
+                // Snapshot the object's own property names (properties,
+                // descriptors, accessors, and array elements) into the
+                // with-scope so identifier lookup can see them.
+                let mut keys = crate::value::object::own_property_names(&obj_borrowed);
+                for key in obj_borrowed.descriptors.keys() {
+                    if !keys.iter().any(|k| k == key) {
+                        keys.push(key.clone());
+                    }
+                }
+                for key in keys {
+                    if blocked.contains(&key) {
+                        continue;
+                    }
+                    let value = obj_borrowed
+                        .properties
+                        .get(&key)
+                        .cloned()
+                        .or_else(|| {
+                            obj_borrowed
+                                .descriptors
+                                .get(&key)
+                                .and_then(|f| f.value.clone())
+                        })
+                        .or_else(|| {
+                            crate::value::object::as_array_index(&key)
+                                .filter(|&i| i < obj_borrowed.elements.len())
+                                .and_then(|i| obj_borrowed.elements.get(i).cloned())
+                        });
+                    if let Some(value) = value {
                         env.borrow_mut()
                             .current_scope()
                             .borrow_mut()
-                            .define(key.clone(), value.clone());
+                            .define(key.clone(), value);
                     }
                 }
             }
