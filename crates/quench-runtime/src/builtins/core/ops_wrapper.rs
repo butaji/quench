@@ -207,6 +207,22 @@ pub fn register_ops_object(ctx: &mut Context) {
         },
     );
 
+    // isArray(value)
+    let is_array_fn = NativeFunction::new(|args: Vec<Value>| {
+        let v = args.first().cloned().unwrap_or(Value::Undefined);
+        Ok(Value::Boolean(crate::eval::ops::is_array(&v)))
+    });
+    ops.define(
+        "isArray",
+        Value::NativeFunction(Rc::new(is_array_fn)),
+        PropertyFlags {
+            value: None,
+            writable: false,
+            enumerable: false,
+            configurable: false,
+        },
+    );
+
     // throwTypeError(message)
     let throw_type_error_fn = NativeFunction::new(|args: Vec<Value>| {
         let msg = args
