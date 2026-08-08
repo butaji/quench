@@ -746,3 +746,8 @@ Focused stage 2167 covers `Duplex.from()` with a shared object-mode
 PassThrough, including pause/resume backpressure and end/close delivery. The
 focused pipeline contract passes; the full upstream fixture's remaining
 callback-count discrepancy is not reproduced in isolation.
+
+Focused stage 2168 propagates a readable-side error to both the derived Duplex
+and its writable source, preserving error identity. The focused contract
+passes; the upstream fixture still reports the separate PassThrough callback
+11 mismatch.

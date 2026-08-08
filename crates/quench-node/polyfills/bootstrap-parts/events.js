@@ -958,7 +958,10 @@ const __nodeDuplexPair = (readable, writable) => {
   if (readable) {
     readable.on("data", (chunk) => duplex.push(chunk));
     readable.once("end", () => duplex.push(null));
-    readable.once("error", (error) => duplex.destroy(error));
+    readable.once("error", (error) => {
+      writable?.destroy?.(error);
+      duplex.destroy(error);
+    });
     duplex._read = () => readable.resume?.();
   }
   if (writable) {
