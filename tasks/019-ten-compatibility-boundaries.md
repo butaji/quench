@@ -52,6 +52,14 @@ own commit.
 - Item 6: partially improved. Stage 2339 verifies two concurrent HTTP requests
   with independent response bodies and clean shutdown; upstream multi-request
   failures remain specific to harness/agent interactions.
+
+The current `test-http-client-abort-keep-alive-queued-tcp-socket.js` probe
+reaches the public custom-agent path but receives quench's intentional
+`ENOTSUP` from `NodeHttpAgent.createConnection()` where Node requires a live
+reusable socket (and reports `ECONNRESET` only for `destroy`, not `abort`).
+This is now classified as the remaining agent/transport integration boundary;
+no error-code-only shim was added.
+
 - Item 7: partially improved. Stage 2340 verifies default-address bind,
   implicit sender bind, packet delivery, remote metadata, and close callback
   ordering. Stage 2341 generalizes multicast-interface rejection to the full
