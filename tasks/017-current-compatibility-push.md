@@ -807,3 +807,4 @@ pass.
 - Stage 2197 makes `ClientRequest.abort()` mark the request destroyed without changing its no-error abort event behavior.
 - Stage 2198 suppresses the later synthetic connection-reset error after an explicit `ClientRequest.abort()`, matching Node's no-error abort path.
 - Stage 2199 suppresses the implicit reset error when a client request is destroyed after its response has already been delivered.
+- Stage 2200 adds `OutgoingMessage` destroy state (`destroyed`, `closed`, `errored`) and deferred `close` delivery.

@@ -1654,7 +1654,20 @@ let __quenchHttpModule;
         this.writableEnded = false;
         this.writableFinished = false;
         this.finished = false;
+        this.destroyed = false;
+        this.closed = false;
+        this.errored = undefined;
         this.socket = null;
+      }
+      destroy(error) {
+        if (this.destroyed) return this;
+        this.destroyed = true;
+        if (error !== undefined) this.errored = error;
+        queueMicrotask(() => {
+          this.closed = true;
+          this.emit("close");
+        });
+        return this;
       }
       setTimeout(msecs) {
         this.timeout = msecs;
