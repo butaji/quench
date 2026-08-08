@@ -839,6 +839,7 @@ pass.
 - Stage 2220 guarantees client-request destruction emits `close` only once under repeated/error races.
 - Upstream `test-http-client-abort-destroy.js` now passes after the close-once guard; combined timeout still reports duplicate `timeout` delivery.
 - Representative npm application recheck on 2026-08-08: Ajv, debug, Chalk, `ms`, and Prettier probes all exit successfully under the current runtime binary.
+- Complete focused audit on 2026-08-08 after the listener-count fix: **2,105/2,105** stages passed serially with zero retries and zero failures; policy verification reported zero unclassified failures and only the eight historical conflict records.
 - Stage 2216 preserves `http.request()` results as `instanceof http.ClientRequest`, matching Node's public type contract.
 - The upstream timeout fixture now advances past the request-instance assertion to a later duplicate destroy/timeout callback discrepancy.
 - Upstream `test-http-hostname-typechecking.js` now passes with synchronous host-option validation.
