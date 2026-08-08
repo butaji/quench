@@ -707,6 +707,24 @@ if (typeof globalThis.Blob !== "function") {
     }
   };
 }
+if (globalThis.Blob && !globalThis.Blob.__quenchTypeNormalized) {
+  const __quenchNativeBlob = globalThis.Blob;
+  const __quenchBlob = function Blob(parts = [], options = {}) {
+    const value = new __quenchNativeBlob(parts, options);
+    if (options && options.type !== undefined) {
+      Object.defineProperty(value, "type", {
+        configurable: true,
+        value: String(options.type).toLowerCase()
+      });
+    }
+    return value;
+  };
+  __quenchBlob.prototype = __quenchNativeBlob.prototype;
+  Object.defineProperty(__quenchBlob, "__quenchTypeNormalized", {
+    value: true
+  });
+  globalThis.Blob = __quenchBlob;
+}
 if (globalThis.process && typeof globalThis.process.emit !== "function") {
   globalThis.process.emit = () => globalThis.process;
 }
