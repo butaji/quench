@@ -51,7 +51,6 @@ pub fn lower_do_while_stmt(do_while: &ast::DoWhileStatement) -> Option<Statement
 
 /// Lower a for statement
 pub fn lower_for_stmt(for_stmt: &ast::ForStatement) -> Option<Statement> {
-    let init = for_stmt.init.as_ref().and_then(lower_for_init);
     let condition = for_stmt
         .test
         .as_ref()
@@ -63,6 +62,29 @@ pub fn lower_for_stmt(for_stmt: &ast::ForStatement) -> Option<Statement> {
         .and_then(|e| lower_expr(e).ok())
         .map(Box::new);
     let body = Box::new(lower_stmt(&for_stmt.body).unwrap_or(Statement::Empty));
+
+    // A destructuring pattern in the for-header (`for (let [x, y] = e; ...)`)
+    // desugars to `{ let [x, y] = e; for (; cond; update) body }`. The pattern
+    // binding is initialized once, so wrapping it in a block is sufficient.
+    if let Some(ast::ForStatementInit::VariableDeclaration(decl)) = &for_stmt.init {
+        let has_pattern = decl
+            .declarations
+            .iter()
+            .any(|d| !matches!(d.id.kind, ast::BindingPatternKind::BindingIdentifier(_)));
+        if has_pattern {
+            let mut stmts = Vec::new();
+            stmts.extend(crate::lower::stmt::lower_var_decl_impl(decl, None));
+            stmts.push(Statement::For {
+                init: None,
+                condition,
+                update,
+                body,
+            });
+            return Some(Statement::Block(stmts));
+        }
+    }
+
+    let init = for_stmt.init.as_ref().and_then(lower_for_init);
     Some(Statement::For {
         init,
         condition,
