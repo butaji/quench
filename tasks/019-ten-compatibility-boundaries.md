@@ -85,7 +85,12 @@ own commit.
   need verification. Stage 2344 traces the remaining upstream difference:
   quench reaches all writable callbacks but invokes the batched `_read()` hook
   three times where Node invokes it eleven times, so readable buffer-demand
-  accounting remains the next stream implementation target.
+  accounting remains the next stream implementation target. A fresh
+  authoritative rerun of `test-stream-backpressure.js` still fails at the
+  shared `mustCall` contract (`expected 11 calls, got 1`); an attempted
+  read-ahead correction was reverted after it overfilled the buffer before
+  the pipe's first write callback, so no unverified scheduling behavior was
+  retained.
 
 ## New fs evidence
 
