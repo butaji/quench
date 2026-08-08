@@ -165,10 +165,19 @@ const __nodeWritableComplete = (state, stream, size, callback, error) => {
   }
   stream.__nodeMaybeFinish?.();
 };
+const __nodeReadableClearAwaitDrain = (stream) => {
+  if (stream._readableState.awaitDrainWriters instanceof Set) {
+    stream._readableState.awaitDrainWriters.clear();
+  } else {
+    stream._readableState.awaitDrainWriters = null;
+  }
+};
 const __nodeReadablePushChunk = (stream, chunk) => {
   stream._readableState.reading = false;
   stream._readableState.readingMore = true;
   if (
+    stream._readableState.sync ||
+    stream._chunks.length > 0 ||
     stream._paused ||
     (stream.listenerCount("data") === 0 && stream.readableFlowing !== true)
   ) {
@@ -177,6 +186,7 @@ const __nodeReadablePushChunk = (stream, chunk) => {
       __nodeReadableScheduleReadable(stream);
     }
   } else {
+    __nodeReadableClearAwaitDrain(stream);
     stream._readableState.dataEmitted = true;
     stream._readableState.needReadable = false;
     if (stream.listenerCount("data"))
@@ -201,9 +211,12 @@ const __nodeReadableStart = (stream) => {
     return;
   }
   stream._readableState.reading = true;
+  stream._readableState.sync = true;
   try {
     stream._read?.call(stream);
+    stream._readableState.sync = false;
   } catch (error) {
+    stream._readableState.sync = false;
     stream._readableState.reading = false;
     stream._readableState.errored = error;
     stream.errored = error;
@@ -289,7 +302,9 @@ class NodeReadable extends NodeEventEmitter {
       resumeScheduled: false,
       readingMore: false,
       dataEmitted: false,
+      sync: false,
       awaitDrainWriters: null,
+      pipes: [],
       errorEmitted: false,
       errored: null
     };
@@ -468,10 +483,29 @@ class NodeReadable extends NodeEventEmitter {
   }
   pipe(destination, options = {}) {
     destination.emit?.("pipe", this);
+    const pipes = this._readableState.pipes;
+    if (!pipes.includes(destination)) pipes.push(destination);
+    if (
+      pipes.length > 1 &&
+      !(this._readableState.awaitDrainWriters instanceof Set)
+    ) {
+      this._readableState.awaitDrainWriters = new Set(
+        this._readableState.awaitDrainWriters
+          ? [this._readableState.awaitDrainWriters]
+          : []
+      );
+    }
     this.on("data", (chunk) => {
       if (destination.write(chunk) === false) {
         const waiting = this._readableState.awaitDrainWriters;
-        if (waiting === null) {
+        if (this._readableState.pipes.length > 1) {
+          if (!(waiting instanceof Set)) {
+            this._readableState.awaitDrainWriters = new Set(
+              waiting ? [waiting] : []
+            );
+          }
+          this._readableState.awaitDrainWriters.add(destination);
+        } else if (waiting === null) {
           this._readableState.awaitDrainWriters = destination;
         } else if (waiting !== destination && !waiting.has?.(destination)) {
           this._readableState.awaitDrainWriters = new Set([
@@ -484,12 +518,13 @@ class NodeReadable extends NodeEventEmitter {
           const pending = this._readableState.awaitDrainWriters;
           if (pending instanceof Set) {
             pending.delete(destination);
-            if (pending.size === 0)
+            if (pending.size === 0 && this._readableState.pipes.length <= 1)
               this._readableState.awaitDrainWriters = null;
           } else if (pending === destination) {
             this._readableState.awaitDrainWriters = null;
           }
-          if (this._readableState.awaitDrainWriters === null) this.resume();
+          const remaining = this._readableState.awaitDrainWriters;
+          if (remaining === null || remaining?.size === 0) this.resume();
         });
       }
     });
@@ -514,17 +549,23 @@ class NodeReadable extends NodeEventEmitter {
     queueMicrotask(() => {
       this._readableState.resumeScheduled = false;
       this.emit("resume");
-      if (!this._chunks.length && !this._ended) __nodeReadableStart(this);
-      while (!this._paused && this._chunks.length) {
-        const chunk = this._chunks.shift();
-        if (this.listenerCount("data")) {
-          this._readableState.dataEmitted = true;
-          this.emit("data", chunk);
+      while (!this._paused && !this.destroyed) {
+        while (!this._paused && this._chunks.length) {
+          const chunk = this._chunks.shift();
+          if (this.listenerCount("data")) {
+            __nodeReadableClearAwaitDrain(this);
+            this._readableState.dataEmitted = true;
+            this.emit("data", chunk);
+          }
         }
-      }
-      if (!this._ended) {
+        if (this._paused) return;
+        if (this._ended) {
+          if (!this._chunks.length) this._emitEnd();
+          return;
+        }
         __nodeReadableStart(this);
-      } else if (!this._chunks.length) this._emitEnd();
+        if (!this._chunks.length) return;
+      }
     });
     return this;
   }
