@@ -13,6 +13,7 @@ use crate::value::JsError;
 pub const JS_BUILTINS: &[(&str, &str)] = &[
     ("core/global_functions", include_str!("global_functions.js")),
     ("core/number_statics", include_str!("number_statics.js")),
+    ("core/object_statics", include_str!("object_statics.js")),
 ];
 
 /// Parse and eval every self-hosted builtin in order.

@@ -63,13 +63,6 @@ pub fn object_has_own(args: Vec<Value>) -> Result<Value, JsError> {
     }
 }
 
-/// Object.is(a, b) - SameValue comparison (NaN equals NaN, +0 !== -0)
-pub fn object_is(args: Vec<Value>) -> Result<Value, JsError> {
-    let a = args.first().cloned().unwrap_or(Value::Undefined);
-    let b = args.get(1).cloned().unwrap_or(Value::Undefined);
-    Ok(Value::Boolean(crate::value::same_value(&a, &b)))
-}
-
 /// Object.fromEntries(iterable) - creates object from key-value pairs
 pub fn object_from_entries(args: Vec<Value>) -> Result<Value, JsError> {
     let iterable = args
