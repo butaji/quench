@@ -180,6 +180,11 @@ const __quenchVfsError = (code, syscall, path) => {
   error.path = path;
   return error;
 };
+const __quenchVfsTouch = (entry) => {
+  const timestamp = Date.now();
+  entry.mtimeMs = timestamp;
+  entry.ctimeMs = timestamp;
+};
 const __quenchVfsPath = (value) => {
   const path = globalThis.__nodePath.resolve(String(value));
   return path === "." ? "/" : path;
@@ -716,6 +721,12 @@ class __QuenchVirtualFileSystem {
       nlink: options?.bigint ? 1n : 1,
       uid: options?.bigint ? 0n : 0,
       gid: options?.bigint ? 0n : 0,
+      mtimeMs: options?.bigint
+        ? BigInt(Math.trunc(entry.mtimeMs ?? 0))
+        : (entry.mtimeMs ?? 0),
+      ctimeMs: options?.bigint
+        ? BigInt(Math.trunc(entry.ctimeMs ?? 0))
+        : (entry.ctimeMs ?? 0),
       isFile: () => entry.type === "file",
       isDirectory: () => entry.type === "dir",
       isSymbolicLink: () => false
@@ -754,6 +765,12 @@ class __QuenchVirtualFileSystem {
         : __quenchVfsNextIno++,
       dev: options?.bigint ? 4085n : 4085,
       nlink: options?.bigint ? 1n : 1,
+      mtimeMs: options?.bigint
+        ? BigInt(Math.trunc(entry.mtimeMs ?? 0))
+        : (entry.mtimeMs ?? 0),
+      ctimeMs: options?.bigint
+        ? BigInt(Math.trunc(entry.ctimeMs ?? 0))
+        : (entry.ctimeMs ?? 0),
       isFile: () => entry.type === "file",
       isDirectory: () => entry.type === "dir",
       isSymbolicLink: () => entry.type === "symlink"
@@ -837,6 +854,7 @@ class __QuenchVirtualFileSystem {
       entry.data = `${entry.data.slice(0, offset)}${text}${entry.data.slice(
         offset + text.length
       )}`;
+      __quenchVfsTouch(entry);
       this.__fdPositions.set(path, offset + text.length);
       return;
     }
@@ -851,7 +869,7 @@ class __QuenchVirtualFileSystem {
     if (parentEntry.type !== "dir") {
       throw __quenchVfsError("ENOTDIR", "open", path);
     }
-    this.__entries.set(key, {
+    const entry = {
       type: "file",
       data:
         typeof data === "string"
@@ -859,8 +877,11 @@ class __QuenchVirtualFileSystem {
           : data instanceof Uint8Array
             ? globalThis.Buffer.from(data).toString()
             : String(data),
-      mode: 0o666
-    });
+      mode: 0o666,
+      mtimeMs: Date.now(),
+      ctimeMs: Date.now()
+    };
+    this.__entries.set(key, entry);
   }
   appendFileSync(path, data) {
     if (
