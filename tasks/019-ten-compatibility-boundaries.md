@@ -132,7 +132,9 @@ The remaining fix must coordinate pending writes with HTTP response socket
 assignment before claiming the upstream fixture. Reordering peer attachment
 before the client `connect` event causes the same regression, so that approach
 was also reverted; the next implementation needs an explicit parser-ready
-queue boundary.
+queue boundary. The raw response path also lacked `_httpMessage` cleanup;
+clearing that field after a response completes is safe across stages, but it
+does not by itself resolve the pre-peer write race.
 
 Stage 2362 independently verifies that callback-style and promise-style
 `fs.access()` each deliver exactly once for a missing path, including the
