@@ -311,6 +311,14 @@ Stage 2398 adds synchronous VFS stream range validation and exposes
 inputs. The focused validation stage passes; the main stream fixture advances
 to `Callback 23`, with explicit-fd and property callback timing still queued.
 
+The full upstream `test-fs-promises-file-handle-pull.js` remains at its opaque
+`Callback 0` aggregate failure, but the maintained pull stages 169, 170, and
+175 pass. This narrows the missing data to one of the additional concurrent
+cases (transform, abort, auto-close, locking, or range validation), rather than
+the basic iterator or batch-reading contract. The crate's Rust unit tests pass
+(2/2); the upstream aggregate must be split into focused probes before changing
+the implementation.
+
 Stage 2378 passes the four basic stream `destroy()` contracts for readable and
 writable streams, including implicit `AbortError`, explicit error messages,
 and `error` before `close`. The upstream `test-stream-destroy.js` failure is
