@@ -429,3 +429,8 @@ The same shared validator is confirmed across callback, sync, and promise
 copy APIs: existing upstream option-validation fixtures pass, and focused
 stage 2091 verifies the incompatible pair through both `fs.cp()` and
 `fs.promises.cp()`.
+
+Focused stage 2093 isolates ECDSA P-256 generation, key metadata, signing,
+and verification; the complete contract passes under quench-node. This
+narrows the remaining upstream CryptoKey discrepancy to its combined
+multi-algorithm/lifecycle path rather than basic ECDSA support.
