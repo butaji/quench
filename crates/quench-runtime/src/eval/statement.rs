@@ -887,9 +887,12 @@ fn eval_for(
             Ok(true)
         }
     };
+    // Per ES spec §14.7.5.4, the loop returns V, the last non-empty body
+    // completion value, when the condition becomes false.
+    let mut v = Value::Undefined;
     while check_condition()? {
         take_control_flow();
-        let _ = eval_statement(body, env, false, in_arrow_function)?;
+        let body_val = eval_statement(body, env, false, in_arrow_function)?;
         match take_control_flow() {
             Some(cf @ ControlFlow::Break(_)) => {
                 if loop_handles_break(&cf, &loop_labels) {
@@ -925,7 +928,9 @@ fn eval_for(
                 set_control_flow(ControlFlow::Return(val.clone()));
                 return Ok(val);
             }
-            None => {}
+            None => {
+                v = body_val;
+            }
         }
         if let Some(update) = update {
             let _ = eval_expression(update, env, in_arrow_function)?;
@@ -934,7 +939,7 @@ fn eval_for(
     if loop_scope {
         env.borrow_mut().pop_scope();
     }
-    Ok(Value::Undefined)
+    Ok(v)
 }
 
 fn eval_block(
