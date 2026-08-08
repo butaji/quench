@@ -1300,7 +1300,6 @@ let __quenchHttpModule;
               }
               socket.emit("timeout");
             }, msecs);
-            socket.__timeoutTimer?.unref?.();
           }
           return socket;
         },
