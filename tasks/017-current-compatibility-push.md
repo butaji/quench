@@ -783,3 +783,4 @@ pass.
 - Stage 2178: verify custom writable `_destroy()` callbacks can swallow the original destroy error while still emitting `close`, matching the upstream writable-destroy matrix.
 - Stage 2179: verify a custom writable `_destroy()` callback can replace the error and that `error`/`close` remain deferred with updated error state.
 - Stage 2180: verify repeated writable `destroy()` calls preserve the first error and emit one deferred error before `close`.
+- Stage 2181: verify an asynchronous custom writable `_destroy()` error remains deferred, preserves the pending state across a second destroy call, and emits only once.
