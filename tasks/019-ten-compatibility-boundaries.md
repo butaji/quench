@@ -810,3 +810,16 @@ the `read(0)` and flowing-mode assertions. The related upstream
 `test-stream-readable-no-unneeded-readable.js` fixture remains green. Focused
 stage 1005 retains a separate pre-existing async readable-state failure and is
 not claimed fixed by this change.
+
+Stage 2458 adds Node's readable-side await-drain bookkeeping. A destination
+whose `write()` returns false is retained in
+`_readableState.awaitDrainWriters`; manual `resume()` does not discard that
+state, `pause` is emitted on each flowing-to-paused transition, and the state
+is cleared only when the corresponding destination drains. The implementation
+also represents multiple distinct destinations as a Set. The focused
+three-write contract, authoritative
+`test-stream-pipe-await-drain-manual-resume.js`, and synchronous-recursion
+awaitDrain fixture pass. `test-stream-pipe-await-drain-push-while-write.js`
+still requires earlier in-flight state clearing, and the broader
+multi-destination awaitDrain fixture still exposes a separate Set lifecycle
+shape; neither is claimed fixed.
