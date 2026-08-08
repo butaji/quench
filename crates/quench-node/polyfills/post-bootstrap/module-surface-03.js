@@ -602,6 +602,112 @@ const __quenchCollectReadable = async (stream, operations) => {
   }
   return values;
 };
+const __quenchReadableAbortableResult = (promise, signal) => {
+  if (!signal) return promise;
+  if (signal.aborted) {
+    return Promise.reject(__quenchReadableAbortError(signal));
+  }
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => signal.removeEventListener?.("abort", onAbort);
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(__quenchReadableAbortError(signal));
+    };
+    signal.addEventListener?.("abort", onAbort, { once: true });
+    Promise.resolve(promise).then(
+      (value) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(value);
+      },
+      (error) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(error);
+      }
+    );
+  });
+};
+const __quenchReduceReadable = async (
+  readable,
+  reducer,
+  initialValue,
+  options,
+  hasInitialValue
+) => {
+  if (typeof reducer !== "function") {
+    const error = new TypeError(
+      "ERR_INVALID_ARG_TYPE: reducer must be a function"
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  if (options !== undefined && options !== null) {
+    if (typeof options !== "object") {
+      const error = new TypeError(
+        "ERR_INVALID_ARG_TYPE: options must be an object"
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (
+      options.signal !== undefined &&
+      (typeof options.signal !== "object" ||
+        typeof options.signal.aborted !== "boolean" ||
+        typeof options.signal.addEventListener !== "function")
+    ) {
+      const error = new TypeError(
+        "ERR_INVALID_ARG_TYPE: signal must be an AbortSignal"
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+  }
+  const externalSignal = options?.signal;
+  if (externalSignal?.aborted) {
+    const error = __quenchReadableAbortError(externalSignal);
+    readable.once?.("error", () => {});
+    readable.destroy?.(error);
+    throw error;
+  }
+  const controller = new AbortController();
+  const onAbort = () => controller.abort(externalSignal.reason);
+  externalSignal?.addEventListener?.("abort", onAbort, { once: true });
+  let gotValue = false;
+  try {
+    for await (const value of readable) {
+      gotValue = true;
+      if (externalSignal?.aborted) {
+        throw __quenchReadableAbortError(externalSignal);
+      }
+      if (!hasInitialValue) {
+        initialValue = value;
+        hasInitialValue = true;
+      } else {
+        initialValue = await __quenchReadableAbortableResult(
+          reducer(initialValue, value, { signal: controller.signal }),
+          externalSignal
+        );
+      }
+    }
+    if (!gotValue && !hasInitialValue) {
+      const error = new TypeError(
+        "Reduce of an empty stream requires an initial value"
+      );
+      error.code = "ERR_MISSING_ARGS";
+      throw error;
+    }
+    return initialValue;
+  } finally {
+    controller.abort();
+    externalSignal?.removeEventListener?.("abort", onAbort);
+  }
+};
 const __quenchSliceCount = (count) => {
   let value = Number(count);
   if (Number.isNaN(value)) value = 0;
@@ -779,6 +885,15 @@ const __quenchReadableSlice = (stream, operations) => {
     forEach(callback, options) {
       return __quenchForEachReadable(this, callback, options);
     },
+    reduce(reducer, initialValue, options) {
+      return __quenchReduceReadable(
+        this,
+        reducer,
+        initialValue,
+        options,
+        arguments.length > 1
+      );
+    },
     toArray() {
       return __quenchCollectReadable(stream, operations);
     },
@@ -843,6 +958,15 @@ const __quenchAddSliceMethods = (prototype) => {
       take: Infinity,
       operations: []
     }).forEach(callback);
+  };
+  prototype.reduce = function (reducer, initialValue, options) {
+    return __quenchReduceReadable(
+      this,
+      reducer,
+      initialValue,
+      options,
+      arguments.length > 1
+    );
   };
 };
 const __quenchAddReadableSlices = (result) => {
