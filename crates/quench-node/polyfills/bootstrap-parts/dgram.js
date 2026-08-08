@@ -138,7 +138,11 @@ const __quenchDgramSend = (socket, message, ...args) => {
             )
           )
         : message;
+  const offset = hasOffset ? args[0] : 0;
   const length = hasOffset ? args[1] : payload.byteLength;
+  const deliveredPayload = hasOffset
+    ? payload.subarray(offset, offset + length)
+    : payload;
   if (socket._connected) {
     socket._sendQueueSize = (socket._sendQueueSize || 0) + length;
     socket._sendQueueCount = (socket._sendQueueCount || 0) + 1;
@@ -153,7 +157,7 @@ const __quenchDgramSend = (socket, message, ...args) => {
       family: socket.type === "udp6" ? "IPv6" : "IPv4",
       port: 0
     };
-    target?.emit("message", payload, sourceAddress);
+    target?.emit("message", deliveredPayload, sourceAddress);
     if (typeof callback === "function") callback(null, length);
   });
   return socket;
