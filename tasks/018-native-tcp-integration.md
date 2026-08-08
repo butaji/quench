@@ -34,6 +34,10 @@ turn and removes destroyed sockets from its native registration set. Three
 concurrent native clients complete independent ping/pong writes in the
 focused stage.
 
+Stage 2318 also fixes the general `net.Server.close()` lifecycle: the server
+now emits its asynchronous `close` event after closing, including when no
+callback is supplied. The authoritative `test-net-server-close.js` passes.
+
 ## Required integration contract
 
 1. The host must extend the Stage 2313 hook into a bounded native poll step that can report readable,
@@ -55,6 +59,7 @@ focused stage.
 - Stage 2315: gated public `net` TCP ping/pong loopback (passing).
 - Stage 2316: gated native half-close and EOF delivery (passing).
 - Stage 2317: gated concurrent native client acceptance (passing).
+- Stage 2318: `Server.close` event lifecycle (passing; upstream verified).
 - Next: one accepted socket with one write/read round trip and explicit close.
 - Then: half-close exchange from Node's
   `test-net-allow-half-open-async-iter.js`.

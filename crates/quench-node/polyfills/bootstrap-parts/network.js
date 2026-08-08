@@ -613,7 +613,10 @@ const __quenchNetModule = {
         __quench_tcp_close(server._nativeId);
         server._nativeId = 0;
       }
-      if (typeof callback === "function") queueMicrotask(callback);
+      queueMicrotask(() => {
+        if (typeof callback === "function") callback.call(server);
+        server.emit("close");
+      });
       return server;
     };
     server.unref = () => server;
