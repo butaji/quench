@@ -461,12 +461,7 @@ class NodeReadable extends NodeEventEmitter {
     );
   }
   push(chunk, encoding) {
-    if (this.destroyed && chunk !== null) {
-      return __nodeReadablePushError(
-        "Cannot call push after a stream was destroyed",
-        "ERR_STREAM_DESTROYED"
-      );
-    }
+    if (this.destroyed) return false;
     if (this._ended && chunk !== null) {
       return __nodeReadablePushError(
         "stream.push() after EOF",
@@ -492,6 +487,7 @@ class NodeReadable extends NodeEventEmitter {
     return __nodeReadablePushChunk(this, chunk);
   }
   unshift(chunk, encoding) {
+    if (this.destroyed && chunk !== null) return false;
     if (this.readableEnded && chunk !== null) {
       const error = new Error("stream.unshift() after end event");
       error.code = "ERR_STREAM_UNSHIFT_AFTER_END_EVENT";

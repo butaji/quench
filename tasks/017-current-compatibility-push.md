@@ -613,6 +613,19 @@ now initialize successfully; the focused callable-constructor contract passes.
 The upstream readable-destroy fixture now advances past that legacy
 constructor case and stops at a later `push()`-after-destroy error semantic.
 
+Focused stage 2123 aligns `Readable.push()` after destruction with Node: it is
+a no-op returning `false`, rather than throwing. The focused contract targets
+the next assertion in the upstream readable-destroy fixture.
+
+Focused stage 2124 makes `Readable.unshift()` after destruction a no-op
+returning `false`, matching Node and preventing data delivery to destroyed
+streams.
+
+Focused stage 2125 makes `Readable.push(null)` after destruction a no-op,
+preventing delayed custom-destroy callbacks from emitting a spurious `end`.
+The upstream fixture now advances to a later custom-destroy callback error
+identity assertion.
+
 Focused stage 2116 uses `module.globalPaths` when resolving bare packages, so
 packages provided through `NODE_PATH` load without a local `node_modules`
 entry. The focused global-package contract passes.
