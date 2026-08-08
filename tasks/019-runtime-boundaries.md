@@ -76,7 +76,7 @@ inspect engine internals.
   and repository metadata at root, with `tasks/*` reserved for active work.
 - [x] Make the repository size gate cover tracked `.rs`, `.ts`, and `.tsx`
   files and run Rust clippy over all targets.
-- [ ] Reduce the existing 35 Rust files over 500 lines; every split must also
+- [ ] Reduce the existing 34 Rust files over 500 lines; every split must also
   satisfy the 40-line function and complexity-10 gates.
 - [x] Split the date builtin's test module into `date_tests.rs`, reducing the
   production file below 500 lines without changing its behavior.
@@ -91,6 +91,8 @@ inspect engine internals.
 - [x] Move private-element syntax and conformance tests into
   `private_elements_tests.rs`, reducing the implementation file below 500
   lines without changing behavior.
+- [x] Move AST operator types into `ast/operators.rs` and AST tests into
+  `ast_tests.rs`, reducing the central AST file below 500 lines.
 - [x] Preserve the `IrProgram` type through the interpreter entry point;
   legacy `Program` access is now contained behind `eval_ir_program`.
 - [x] Pack top-level IR statements into an owned boxed slice and execute that
