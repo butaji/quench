@@ -47,7 +47,8 @@
     for (const extension of [".js", ".json", ".node"]) {
       moduleApi.Module._extensions[extension] ||= () => undefined;
     }
-    moduleApi.Module.globalPaths ||= [];
+    moduleApi.Module.globalPaths =
+      moduleApi.globalPaths || moduleApi.Module.globalPaths || [];
     moduleApi.Module._pathCache ||= {};
     moduleApi.Module._nodeModulePaths ||= () => [];
     moduleApi.Module._findPath ||= () => false;
