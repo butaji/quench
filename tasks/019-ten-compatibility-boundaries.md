@@ -792,3 +792,11 @@ The focused two-write Blob consumer passes, the maintained Web Streams stages
 remain green, and `test-stream-consumers.js` advances through all four Web
 TransformStream consumer/locked-reader pairs to `Callback 15`, the first
 object-mode PassThrough conversion block.
+
+Stage 2456 completes the object-mode consumer matrix. Binary consumers now
+stringify non-binary chunks at the `stream/consumers` boundary, producing the
+two 15-byte `[object Object]` chunks required by `blob`, `arrayBuffer`,
+`buffer`, and `bytes`. `text` and `json` retain Node's distinct
+`ERR_INVALID_ARG_TYPE` rejection for the same chunks; `Buffer.from({})` itself
+is not relaxed. The focused object-mode contract, maintained consumer stages,
+and the complete authoritative `test-stream-consumers.js` fixture all pass.
