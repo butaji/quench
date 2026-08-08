@@ -478,7 +478,9 @@ fn create_arguments_object(f: &ValueFunction, args: Vec<Value>, strict_mode: boo
         obj.set("callee", Value::Function(f.clone()));
     }
 
-    Value::Object(Rc::new(RefCell::new(obj)))
+    let rc = Rc::new(RefCell::new(obj));
+    crate::eval::class::helpers::make_arguments_iterable(Rc::clone(&rc), args.len());
+    Value::Object(rc)
 }
 
 fn call_arrow_body(

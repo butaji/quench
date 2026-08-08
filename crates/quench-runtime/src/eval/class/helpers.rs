@@ -8,7 +8,9 @@ use crate::eval::expression::{capture_env_for_closure, eval_expression};
 use crate::interpreter::{
     check_depth_guard, is_strict_mode, predeclare_let_const, set_strict_mode,
 };
-use crate::value::{ClassValue, JsError, Object, ObjectKind, PropertyFlags, Value, ValueFunction};
+use crate::value::{
+    ClassValue, JsError, NativeFunction, Object, ObjectKind, PropertyFlags, Value, ValueFunction,
+};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -432,7 +434,43 @@ pub fn create_arguments_object_simple(args: Vec<Value>) -> Value {
         obj.set(&i.to_string(), arg.clone());
     }
     obj.set("length", Value::Number(args.len() as f64));
-    Value::Object(Rc::new(RefCell::new(obj)))
+    let rc = Rc::new(RefCell::new(obj));
+    make_arguments_iterable(Rc::clone(&rc), args.len());
+    Value::Object(rc)
+}
+
+/// Make an arguments object iterable per ES §9.4.4: `Symbol.iterator` yields
+/// the argument values in order. The iterator reads the object's current
+/// indexed values lazily, so live mutations to `arguments[i]` are reflected.
+pub fn make_arguments_iterable(obj: Rc<RefCell<Object>>, count: usize) {
+    let obj_for_iter = Rc::clone(&obj);
+    let iter_fn = NativeFunction::new(move |_| {
+        let index = Rc::new(RefCell::new(0usize));
+        let obj = Rc::clone(&obj_for_iter);
+        let next_fn = NativeFunction::new(move |_| {
+            let mut res = Object::new(ObjectKind::Ordinary);
+            let mut i = index.borrow_mut();
+            if *i < count {
+                let v = obj.borrow().get(&i.to_string()).unwrap_or(Value::Undefined);
+                res.set("value", v);
+                res.set("done", Value::Boolean(false));
+                *i += 1;
+            } else {
+                res.set("value", Value::Undefined);
+                res.set("done", Value::Boolean(true));
+            }
+            Ok(Value::Object(Rc::new(RefCell::new(res))))
+        });
+        let mut iter = Object::new(ObjectKind::Ordinary);
+        iter.set("next", Value::NativeFunction(Rc::new(next_fn)));
+        Ok(Value::Object(Rc::new(RefCell::new(iter))))
+    });
+    if let Some(Value::Symbol(sym)) =
+        crate::builtins::symbol::get_well_known_symbol_no_ctx("iterator")
+    {
+        obj.borrow_mut()
+            .set_nonenumerable(&sym.property_key(), Value::NativeFunction(Rc::new(iter_fn)));
+    }
 }
 
 /// Per ES §7.2.4 IsConstructor: check if a value is a constructor
