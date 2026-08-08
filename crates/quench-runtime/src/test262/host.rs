@@ -46,9 +46,11 @@ impl Test262Host for QuenchHost {
     fn run_script(&mut self, source: &str) -> Result<(), String> {
         let mut ctx = Context::new().map_err(|e| format!("{:?}", e))?;
         crate::builtins::register_builtins(&mut ctx);
-        let prev_strict = crate::interpreter::is_strict_mode();
+        // Harness eval forces sloppy mode internally and restores it. The test
+        // body itself must start sloppy (strictness is applied by prepending
+        // `"use strict";` in run_prepared), so force sloppy before eval. The
+        // previous save/restore of strict mode was dead (the final set wins).
         try_inject_harness(&mut ctx).map_err(|e| format!("harness load failure: {}", e))?;
-        crate::interpreter::set_strict_mode(prev_strict);
         crate::interpreter::set_strict_mode(false);
         ctx.eval(source).map(|_| ()).map_err(|e| format!("{:?}", e))
     }
@@ -56,9 +58,7 @@ impl Test262Host for QuenchHost {
     fn run_module_script(&mut self, source: &str) -> Result<(), String> {
         let mut ctx = Context::new().map_err(|e| format!("{:?}", e))?;
         crate::builtins::register_builtins(&mut ctx);
-        let prev_strict = crate::interpreter::is_strict_mode();
         try_inject_harness(&mut ctx).map_err(|e| format!("harness load failure: {}", e))?;
-        crate::interpreter::set_strict_mode(prev_strict);
         crate::interpreter::set_strict_mode(false);
         ctx.eval_es_module(source)
             .map(|_| ())
