@@ -716,7 +716,9 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
     handle: {
       fd: 0,
       lookup(address, callback) {
-        queueMicrotask(() => callback(null, address));
+        queueMicrotask(() =>
+          callback(null, address === "localhost" ? "127.0.0.1" : address)
+        );
       }
     }
   };
