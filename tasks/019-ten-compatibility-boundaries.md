@@ -194,7 +194,8 @@ remaining callback is separate from the root permission decision.
 Stage 2374 reproduces the upstream `assert.rejects()` predicate plus chained
 `.then()` and passes, including the async-access stack assertion. The full
 fixture's `Callback 7` therefore depends on its larger callback/credential
-sequence, not the isolated promise assertion chain.
+sequence, not the isolated promise assertion chain; adding the preceding
+missing-path rejection observer to the stage also passes.
 
 Current application-gate refresh: stages 2047, 2069, 2080, 2081, 2104, and
 the repository smoke app all pass. The current upstream
