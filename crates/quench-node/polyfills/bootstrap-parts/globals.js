@@ -820,8 +820,16 @@ if (globalThis.__quench_host_timer_scheduler) {
   };
   globalThis.__quench_timer_poll = () => {
     const now = __quenchHostNow();
+    const hasRefedTimer = [...__quenchHostTimers.values()].some(
+      (entry) => entry.handle.refed && entry.handle.active
+    );
     const due = [...__quenchHostTimers.values()]
-      .filter((entry) => entry.due <= now && entry.handle.active)
+      .filter(
+        (entry) =>
+          entry.due <= now &&
+          entry.handle.active &&
+          (entry.handle.refed || hasRefedTimer)
+      )
       .sort((a, b) => a.id - b.id);
     for (const entry of due) {
       if (!entry.handle.active) continue;
