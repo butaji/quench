@@ -718,7 +718,7 @@ class __QuenchVirtualFileSystem {
         ? BigInt(__quenchVfsNextIno++)
         : __quenchVfsNextIno++,
       dev: options?.bigint ? 4085n : 4085,
-      nlink: options?.bigint ? 1n : 1,
+      nlink: options?.bigint ? BigInt(entry.nlink ?? 1) : (entry.nlink ?? 1),
       uid: options?.bigint ? 0n : 0,
       gid: options?.bigint ? 0n : 0,
       mtimeMs: options?.bigint
@@ -764,7 +764,7 @@ class __QuenchVirtualFileSystem {
         ? BigInt(__quenchVfsNextIno++)
         : __quenchVfsNextIno++,
       dev: options?.bigint ? 4085n : 4085,
-      nlink: options?.bigint ? 1n : 1,
+      nlink: options?.bigint ? BigInt(entry.nlink ?? 1) : (entry.nlink ?? 1),
       mtimeMs: options?.bigint
         ? BigInt(Math.trunc(entry.mtimeMs ?? 0))
         : (entry.mtimeMs ?? 0),
@@ -1401,6 +1401,7 @@ class __QuenchVirtualFileSystem {
     const entry = this.__entries.get(key);
     if (!entry) throw __quenchVfsError("ENOENT", "unlink", path);
     if (entry.type === "dir") throw __quenchVfsError("EISDIR", "unlink", path);
+    if (entry.nlink > 1) entry.nlink -= 1;
     this.__entries.delete(key);
   }
   symlinkSync(target, path) {
@@ -1481,6 +1482,7 @@ class __QuenchVirtualFileSystem {
     if (this.__entries.has(target)) {
       throw __quenchVfsError("EEXIST", "link", newPath);
     }
+    source.nlink = (source.nlink ?? 1) + 1;
     this.__entries.set(target, source);
   }
   renameSync(oldPath, newPath) {
