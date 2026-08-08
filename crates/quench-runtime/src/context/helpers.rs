@@ -188,13 +188,14 @@ pub fn reject_eval_var_lexical_conflict(
 /// Initialize built-in globals and functions
 pub fn init_builtins(ctx: &mut Context) -> Result<(), JsError> {
     host::register_builtin_functions(ctx);
-    // Self-hosted JS builtins run after the Rust core establishes the
-    // foundational intrinsics and the `__ops__` bridge (ADR 0001).
-    crate::builtins::core::bootstrap::bootstrap_js_builtins(ctx)?;
     init_commonjs(ctx)?;
     init_es_module_cache(ctx)?;
     init_js_globals(ctx)?;
     sync_globals_to_global_this(ctx);
+    // Self-hosted JS builtins run after the Rust core establishes the
+    // foundational intrinsics, the `__ops__` bridge, and the realm globals
+    // (globalThis) so they can attach to the constructors (ADR 0001).
+    crate::builtins::core::bootstrap::bootstrap_js_builtins(ctx)?;
     register_eval_function(ctx)?;
     Ok(())
 }
