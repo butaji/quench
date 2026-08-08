@@ -731,3 +731,8 @@ stage 2163 routes nested and direct Web Streams through the Web adapter and
 preserves disabled sides. Both focused contracts pass, and upstream
 `test-stream-duplex-from.js` advances through the Web input cases to a later
 side-state assertion.
+
+Focused stage 2164 verifies readable-only and writable-only direct Web Stream
+inputs preserve the correct Duplex side flags. The focused contract passes;
+the remaining upstream failure is now in later mixed object/error propagation
+cases.
