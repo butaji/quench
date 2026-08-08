@@ -41,22 +41,22 @@ pub fn register_typed_arrays(ctx: &mut Context) {
     // Set up prototype properties
     typed_array_proto_rc
         .borrow_mut()
-        .set("constructor", Value::Undefined);
-    typed_array_proto_rc.borrow_mut().set(
+        .set_nonenumerable("constructor", Value::Undefined);
+    typed_array_proto_rc.borrow_mut().set_nonenumerable(
         "Symbol.toStringTag",
         Value::String("TypedArray".to_string()),
     );
     typed_array_proto_rc
         .borrow_mut()
-        .set("byteLength", Value::Number(0.0));
+        .set_nonenumerable("byteLength", Value::Number(0.0));
     typed_array_proto_rc
         .borrow_mut()
-        .set("byteOffset", Value::Number(0.0));
+        .set_nonenumerable("byteOffset", Value::Number(0.0));
     typed_array_proto_rc
         .borrow_mut()
-        .set("length", Value::Number(0.0));
+        .set_nonenumerable("length", Value::Number(0.0));
     // Register fill method
-    typed_array_proto_rc.borrow_mut().set(
+    typed_array_proto_rc.borrow_mut().set_nonenumerable(
         "fill",
         Value::NativeFunction(Rc::new(NativeFunction::new(proto_fill))),
     );
@@ -121,12 +121,12 @@ fn make_typed_array_constructor(
 ) -> Value {
     // Create prototype object for this specific TypedArray type
     let mut proto = Object::new(ObjectKind::Ordinary);
-    proto.set("constructor", Value::Undefined);
-    proto.set("Symbol.toStringTag", Value::String(name.to_string()));
-    proto.set("BYTES_PER_ELEMENT", Value::Number(bytes as f64));
-    proto.set("length", Value::Number(0.0));
-    proto.set("byteLength", Value::Number(0.0));
-    proto.set("byteOffset", Value::Number(0.0));
+    proto.set_nonenumerable("constructor", Value::Undefined);
+    proto.set_nonenumerable("Symbol.toStringTag", Value::String(name.to_string()));
+    proto.set_nonenumerable("BYTES_PER_ELEMENT", Value::Number(bytes as f64));
+    proto.set_nonenumerable("length", Value::Number(0.0));
+    proto.set_nonenumerable("byteLength", Value::Number(0.0));
+    proto.set_nonenumerable("byteOffset", Value::Number(0.0));
     // Per-type prototype's [[Prototype]] = typed_array_proto
     proto.prototype = Some(typed_array_proto);
 
@@ -255,11 +255,11 @@ fn construct_typed_array(
     // Populate elements from source array if provided
     object.elements = src_elements;
 
-    // Set standard TypedArray properties
-    object.set("length", Value::Number(length as f64));
-    object.set("byteLength", Value::Number(byte_length as f64));
-    object.set("byteOffset", Value::Number(byte_offset as f64));
-    object.set(
+    // Set standard TypedArray properties (non-enumerable per spec)
+    object.set_nonenumerable("length", Value::Number(length as f64));
+    object.set_nonenumerable("byteLength", Value::Number(byte_length as f64));
+    object.set_nonenumerable("byteOffset", Value::Number(byte_offset as f64));
+    object.set_nonenumerable(
         "buffer",
         Value::Object(Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)))),
     );
