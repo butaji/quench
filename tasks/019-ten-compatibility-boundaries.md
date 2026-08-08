@@ -233,6 +233,11 @@ fd operations. `test-vfs-fs-writeFileSync.js`,
 `test-vfs-fs-readFileSync.js`, and `test-vfs-fs-openSync.js` pass, including
 write-after-rename inode behavior. Real-provider handle/promises fixtures still
 need their async handle methods wired to the same native descriptor state.
+Stage 2382 adds and verifies the first async handle slice: real-provider
+`provider.open()` now exposes native-fd-backed `readFileSync()`, `readFile()`,
+and idempotent close behavior. The upstream handle fixture still fails before
+this slice in its synchronous `getVirtualFd()` path; positioned read/write,
+stat, and truncate methods remain queued.
 
 Stage 2378 passes the four basic stream `destroy()` contracts for readable and
 writable streams, including implicit `AbortError`, explicit error messages,
