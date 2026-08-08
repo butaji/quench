@@ -346,3 +346,10 @@ The IPv6 follow-up now validates the complete upstream `test-net-isipv6.js`
 corpus. Stages 2077 and 2078 cover every invalid and valid address in that
 fixture; both pass, as does the upstream fixture itself. The grouped focused
 run for stages 2076–2078 passes 3/3 with zero failures and zero retries.
+
+The net socket surface now exposes Node-compatible `bytesRead` and
+`bytesWritten` counters and accounts for local string and Buffer writes.
+Focused stage 2079 verifies the counter shape and accounting. The grouped
+focused run for stages 2076–2079 passes 4/4 with zero failures and zero
+retries. Full upstream byte-counter fixtures still require the runtime's
+missing duplex socket/data-delivery model and remain explicitly unresolved.
