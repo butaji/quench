@@ -88,32 +88,18 @@ pub fn assign_array_destructuring(
     assign_array_with_iterator(bindings, &iter, env)
 }
 
-/// Evaluate all assignment-target references in a binding pattern before any
-/// iterator consumption, so a throwing reference aborts early (per the LHS
-/// reference-evaluation phase of destructuring).
+/// Evaluate a direct assignment-target reference before iterator consumption,
+/// so a throwing reference aborts early (per the LHS reference-evaluation
+/// phase of destructuring). Nested sub-patterns (ArrayPattern/ObjectPattern)
+/// and defaults are evaluated during their own destructuring, not upfront.
 fn touch_binding_references(
     binding: &BindingElement,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<(), JsError> {
-    match binding {
-        BindingElement::AssignmentTarget(target) => {
-            crate::eval::object::touch_assignment_target(target, env)
-        }
-        BindingElement::ArrayPattern(elements) => {
-            for element in elements {
-                touch_binding_references(element, env)?;
-            }
-            Ok(())
-        }
-        BindingElement::ObjectPattern(props) => {
-            for (_, b) in props {
-                touch_binding_references(b, env)?;
-            }
-            Ok(())
-        }
-        BindingElement::Default(b, _) => touch_binding_references(b, env),
-        BindingElement::Rest(b) => touch_binding_references(b, env),
-        _ => Ok(()),
+    if let BindingElement::AssignmentTarget(target) = binding {
+        crate::eval::object::touch_assignment_target(target, env)
+    } else {
+        Ok(())
     }
 }
 
@@ -178,16 +164,16 @@ pub fn assign_array_with_iterator(
     let mut iterator_done = false;
     for binding in bindings {
         if let BindingElement::Rest(inner) = binding {
-            // Evaluate the rest LHS reference before consuming the iterator.
+            // Evaluate the rest LHS reference before consuming the iterator;
+            // a reference-phase error closes the iterator.
             if let Err(e) = touch_binding_references(inner, env) {
                 call_iterator_return(iterator, true);
                 return Err(e);
             }
             let rest_array = collect_remaining_array(iterator, &mut index, env)?;
-            if let Err(error) = assign_binding_elem(inner, &rest_array, env) {
-                call_iterator_return(iterator, true);
-                return Err(error);
-            }
+            // An error while binding the collected rest (e.g. a nested
+            // sub-destructuring throw) skips the iterator close per spec.
+            assign_binding_elem(inner, &rest_array, env)?;
             return Ok(());
         }
         // Per IteratorDestructuringAssignmentEvaluation, the LHS references are
