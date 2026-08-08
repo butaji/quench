@@ -309,6 +309,8 @@ const __quenchNetModule = {
       this.allowHalfOpen = false;
       this.destroyed = false;
       this._bufferSize = 0;
+      this.bytesRead = 0;
+      this.bytesWritten = 0;
       this._handle = {};
     }
     get bufferSize() {
@@ -348,11 +350,13 @@ const __quenchNetModule = {
       return this;
     }
     write(_data, callback) {
+      const length =
+        typeof _data === "string"
+          ? NodeBuffer.byteLength(_data)
+          : _data?.byteLength || _data?.length || 0;
       if (!this.destroyed) {
-        this._bufferSize +=
-          typeof _data === "string"
-            ? NodeBuffer.byteLength(_data)
-            : _data?.byteLength || _data?.length || 0;
+        this._bufferSize += length;
+        this.bytesWritten += length;
       }
       if (this.destroyed && typeof callback === "function") {
         const error = new Error(
@@ -366,6 +370,9 @@ const __quenchNetModule = {
       return true;
     }
     end(_data, callback) {
+      if (_data !== undefined && _data !== null && _data !== "") {
+        this.write(_data);
+      }
       if (typeof callback === "function") queueMicrotask(callback);
       queueMicrotask(() => {
         this._bufferSize = 0;
