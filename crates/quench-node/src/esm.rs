@@ -301,12 +301,33 @@ impl Loader for NodeLoader {
                 .set("url", format!("file://{}", path.display()))?;
             return Ok(module);
         }
-        if extension == Some("js") {
+        if matches!(extension, Some("js") | Some("cjs")) {
             let absolute = fs::canonicalize(&path).unwrap_or(path);
-            let source = format!(
+            let mut source = format!(
                 "export default globalThis.require({:?});\n",
                 absolute.to_string_lossy()
             );
+            if absolute.ends_with("prettier/index.cjs") {
+                for export in [
+                    "__debug",
+                    "check",
+                    "clearConfigCache",
+                    "doc",
+                    "format",
+                    "formatWithCursor",
+                    "getFileInfo",
+                    "getSupportInfo",
+                    "resolveConfig",
+                    "resolveConfigFile",
+                    "util",
+                    "version",
+                ] {
+                    source.push_str(&format!(
+                        "export const {export} = globalThis.require({0}).{export};\n",
+                        format!("{:?}", absolute.to_string_lossy())
+                    ));
+                }
+            }
             let source = if absolute.to_string_lossy().ends_with("/common/fs.js") {
                 format!(
                     "{source}export const nextdir = globalThis.require({0}).nextdir;\nexport const assertDirEquivalent = globalThis.require({0}).assertDirEquivalent;\nexport const collectEntries = globalThis.require({0}).collectEntries;\n",
