@@ -791,3 +791,4 @@ pass.
 - Stage 2183: preserve `new.target` through the `Duplex` compatibility wrapper so subclass `_read()`/`_write()` methods remain on the constructed prototype. Upstream-derived stage 1866 now passes.
 - Stage 2184: flatten the no-custom-destroy completion path so writable `close` and destroy callbacks remain deferred but run before a zero-delay timer, matching stage 466 and preserving stages 2175–2181.
 - Stage 2185: replace the Web Streams reader's infinite microtask polling with resolver-based pending reads. Stage 2150 now exits cleanly after delivering its data, and related Web/Duplex stages 2151–2153, 2160, 2163, and 2164 remain green.
+- Post-fix targeted audit on 2026-08-08: all six previously failing focused stages (456, 466, 475, 1866, 2135, 2150) pass together. The five representative npm application probes and the Rust test suite also pass.
