@@ -588,6 +588,11 @@ preserves filesystem paths while using realpaths only for cache identity, and
 matches Node’s `require.resolve()` argument errors and relative lookup paths.
 The focused contract and upstream `test-require-resolve.js` both pass.
 
+The post-2119 module sweep found and corrected a cache invalidation regression
+for custom `require.extensions`: deleting `require.cache[file]` now reloads
+the module exactly once. Upstream `test-module-multi-extensions.js` passes;
+symlinked circular exports remain a separate open lifecycle issue.
+
 Focused stage 2116 uses `module.globalPaths` when resolving bare packages, so
 packages provided through `NODE_PATH` load without a local `node_modules`
 entry. The focused global-package contract passes.
