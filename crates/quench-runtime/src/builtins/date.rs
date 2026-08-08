@@ -13,6 +13,17 @@ use crate::value::{
 };
 use crate::Context;
 
+thread_local! {
+    /// The realm's Boolean.prototype, so boxed Boolean objects (ToObject) can
+    /// inherit it.
+    static BOOLEAN_PROTOTYPE: RefCell<Option<Rc<RefCell<Object>>>> = const { RefCell::new(None) };
+}
+
+/// The realm's Boolean.prototype, if registered.
+pub fn get_boolean_prototype() -> Option<Rc<RefCell<Object>>> {
+    BOOLEAN_PROTOTYPE.with(|bp| bp.borrow().clone())
+}
+
 // ============================================================================
 // Global utility functions
 // ============================================================================
@@ -184,6 +195,10 @@ fn register_boolean_converter(ctx: &mut Context) {
     if let Some(object_proto) = crate::builtins::get_object_prototype() {
         boolean_proto_rc.borrow_mut().prototype = Some(object_proto);
     }
+
+    BOOLEAN_PROTOTYPE.with(|bp| {
+        *bp.borrow_mut() = Some(Rc::clone(&boolean_proto_rc));
+    });
 
     boolean_proto_rc.borrow_mut().set(
         "valueOf",

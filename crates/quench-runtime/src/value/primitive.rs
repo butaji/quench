@@ -244,16 +244,24 @@ pub fn to_object(value: &Value) -> Value {
         Value::Undefined | Value::Null => Value::Object(Rc::new(RefCell::new(
             crate::value::object::Object::new(crate::value::kind::ObjectKind::Ordinary),
         ))),
-        Value::Boolean(_b) => {
+        Value::Boolean(b) => {
             let mut obj =
                 crate::value::object::Object::new(crate::value::kind::ObjectKind::Ordinary);
             obj.exotic_kind = Some(crate::value::kind::ExoticKind::Boolean);
+            if let Some(bp) = crate::builtins::date::get_boolean_prototype() {
+                obj.prototype = Some(bp);
+            }
+            obj.set("_value", Value::Boolean(*b));
             Value::Object(Rc::new(RefCell::new(obj)))
         }
-        Value::Number(_n) => {
+        Value::Number(n) => {
             let mut obj =
                 crate::value::object::Object::new(crate::value::kind::ObjectKind::Ordinary);
             obj.exotic_kind = Some(crate::value::kind::ExoticKind::Number);
+            if let Some(np) = crate::builtins::number::get_number_prototype() {
+                obj.prototype = Some(np);
+            }
+            obj.set("_value", Value::Number(*n));
             Value::Object(Rc::new(RefCell::new(obj)))
         }
         Value::String(s) => {
