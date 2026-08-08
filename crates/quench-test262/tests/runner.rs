@@ -206,6 +206,19 @@ fn runner_reports_harness_aware_batch_outcomes() {
 }
 
 #[test]
+fn discovers_skips_fixture_files() {
+    // *_FIXTURE.js files are harness fixtures, not standalone tests; they must
+    // not be collected as runnable cases (the quench-runtime runner excludes
+    // them too).
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.js"), "pass").unwrap();
+    std::fs::write(dir.path().join("b_FIXTURE.js"), "not a test").unwrap();
+    std::fs::write(dir.path().join("c_FIXTURE.js"), "not a test").unwrap();
+    let files = quench_test262::discover_js_files(dir.path()).unwrap();
+    assert_eq!(files, vec![dir.path().join("a.js")]);
+}
+
+#[test]
 fn discovers_js_files_recursively_in_sorted_order() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join("nested")).unwrap();
