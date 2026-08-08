@@ -847,6 +847,14 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
         setImmediate(() =>
           callback(null, address === "localhost" ? "127.0.0.1" : address)
         );
+      },
+      onmessage(status) {
+        if (status >= 0) return;
+        const error = Object.assign(new Error("recvmsg"), {
+          syscall: "recvmsg",
+          errno: status
+        });
+        socket.emit("error", error);
       }
     }
   };
