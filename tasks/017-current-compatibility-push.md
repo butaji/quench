@@ -649,3 +649,10 @@ Focused stage 2131 adds a callable public `Writable` façade for legacy
 compatibility behavior. The focused constructor contract passes. The upstream
 writable-destroy fixture advances through its legacy constructor case; later
 combined lifecycle failures remain separately classified.
+
+Focused stage 2134 fixes auto-destroy ownership for the callable `Readable` and
+`Writable` façades. Their hidden implementation instances no longer retain
+error listeners that can reset the public stream's shared state. The focused
+readable error-state contract passes, and upstream
+`test-stream-readable-destroy.js` advances past the lost `errored` identity to
+the next `push()`-after-EOF behavior.

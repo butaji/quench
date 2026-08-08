@@ -254,7 +254,7 @@ class NodeReadable extends NodeEventEmitter {
     this.errored = null;
     if (typeof options.read === "function") this._read = options.read;
     this.readableHighWaterMark = options.highWaterMark ?? 16 * 1024;
-    if (this._autoDestroy) {
+    if (this._autoDestroy && !options.__quenchCompatConstruct) {
       this.on("error", () => {
         if (!this.destroyed) this.destroy();
       });
@@ -685,7 +685,7 @@ class NodeWritable extends NodeEventEmitter {
     this._write = options.write;
     this._destroy = options.destroy;
     this.writableDefaultEncoding = options.defaultEncoding || "utf8";
-    if (this._autoDestroy) {
+    if (this._autoDestroy && !options.__quenchCompatConstruct) {
       this.on("error", () => {
         if (!this.destroyed) this.destroy();
       });
@@ -819,9 +819,16 @@ class NodeWritable extends NodeEventEmitter {
 }
 NodeWritable.prototype.destroyed = false;
 const NodeWritableCompat = function Writable(options = {}) {
-  const instance = Reflect.construct(NodeWritable, [options]);
+  const instance = Reflect.construct(NodeWritable, [
+    { ...options, __quenchCompatConstruct: true }
+  ]);
   if (this instanceof NodeWritableCompat && this !== instance) {
     Object.assign(this, instance);
+    if (this._autoDestroy) {
+      this.on("error", () => {
+        if (!this.destroyed) this.destroy();
+      });
+    }
     return this;
   }
   return instance;
@@ -1095,9 +1102,16 @@ const __nodeDuplexPairFactory = (options = {}) => {
   return [left, right];
 };
 const NodeReadableCompat = function Readable(options = {}) {
-  const instance = Reflect.construct(NodeReadable, [options]);
+  const instance = Reflect.construct(NodeReadable, [
+    { ...options, __quenchCompatConstruct: true }
+  ]);
   if (this instanceof NodeReadableCompat && this !== instance) {
     Object.assign(this, instance);
+    if (this._autoDestroy) {
+      this.on("error", () => {
+        if (!this.destroyed) this.destroy();
+      });
+    }
     return this;
   }
   return instance;
