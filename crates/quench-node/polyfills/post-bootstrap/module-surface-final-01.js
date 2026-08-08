@@ -558,6 +558,9 @@ const __quenchApplyFinalModule01 = (name, originalRequire) => {
   let result = originalRequire(name);
   if (normalized === "timers") {
     result.promises = originalRequire("timers/promises");
+    const promisifyCustom = Symbol.for("nodejs.util.promisify.custom");
+    result.setTimeout[promisifyCustom] = result.promises.setTimeout;
+    result.setImmediate[promisifyCustom] = result.promises.setImmediate;
   }
   result = __quenchApplyFinalSurface(normalized, result);
   if (normalized === "fs") {
