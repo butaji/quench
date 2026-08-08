@@ -577,21 +577,22 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
         (isHostname
           ? globalThis.require("dns").lookup
           : socket[__quenchDgramStateSymbol].handle.lookup);
-      lookup(
-        lookupAddress,
-        type === "udp6" ? 6 : 4,
-        (error, resolvedAddress) => {
-          if (error) {
-            socket._bindPending = false;
-            if (!socket._closed) socket.emit("error", error);
-            return;
-          }
+      const lookupCallback = (error, resolvedAddress) => {
+        if (error) {
           socket._bindPending = false;
-          if (!socket._bound && !socket._closed) {
-            __quenchDgramBind(socket, type, port, resolvedAddress, callback);
-          }
+          if (!socket._closed) socket.emit("error", error);
+          return;
         }
-      );
+        socket._bindPending = false;
+        if (!socket._bound && !socket._closed) {
+          __quenchDgramBind(socket, type, port, resolvedAddress, callback);
+        }
+      };
+      if (socket._lookup || isHostname) {
+        lookup(lookupAddress, type === "udp6" ? 6 : 4, lookupCallback);
+      } else {
+        lookup(lookupAddress, lookupCallback);
+      }
       return socket;
     },
     bindSync: (options = {}) => {

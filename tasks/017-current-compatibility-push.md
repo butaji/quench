@@ -950,3 +950,4 @@ pass.
 - Stage 2297 makes dgram literal detection family-aware, routing IPv6 literals through lookup for `udp4` (and IPv4 literals through lookup for `udp6`) as Node does. The focused mismatched-family contract and upstream `test-dgram-default-lookup-ip.js` pass.
 - Stage 2298 suppresses dgram lookup errors that arrive after the socket has been closed. The focused lifecycle contract and upstream `test-dgram-bind-socket-close-before-lookup.js` pass.
 - Stage 2300 exposes the internal dgram handle `onmessage()` receive-error hook and emits Node-compatible `recvmsg` errors for negative statuses. The focused handle contract and upstream `test-dgram-recv-error.js` pass.
+- Stage 2301 keeps internal dgram handle lookup calls at `(address, callback)` while public/custom lookup calls receive `(address, family, callback)`. The focused overload contract and upstream `test-dgram-close-during-bind.js` pass; custom and default lookup fixtures remain green.
