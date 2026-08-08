@@ -474,6 +474,11 @@ Stage 2425 adds iterative recursive VFS readdir traversal through directory
 symlinks while preventing symlink cycles. The authoritative recursive-symlink
 fixture and focused regression now pass for nested entries and cycle safety.
 
+Stage 2426 adds polling-based virtual VFS watchers with file/directory change
+and rename events, buffer filenames, close handling, and abort-aware promise
+iterators. The three authoritative watch fixtures now pass, including deleted
+watched directories and abort rejection behavior.
+
 Stage 2423 makes `RealFSProvider` access dispatch to the host filesystem before
 the virtual-entry lookup. Existing and missing-path promise access now pass in
 the focused regression; this removes the first concrete unresolved await from
