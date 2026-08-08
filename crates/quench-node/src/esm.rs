@@ -14,16 +14,18 @@ fn package_entry(package_root: &Path, subpath: &str) -> Option<PathBuf> {
     }
     let manifest: serde_json::Value =
         serde_json::from_slice(&fs::read(package_root.join("package.json")).ok()?).ok()?;
+    fn export_target(value: &serde_json::Value) -> Option<&str> {
+        match value {
+            serde_json::Value::String(value) => Some(value.as_str()),
+            serde_json::Value::Object(exports) => [".", "import", "default"]
+                .iter()
+                .find_map(|key| exports.get(*key).and_then(export_target)),
+            _ => None,
+        }
+    }
     let entry = manifest
         .get("exports")
-        .and_then(|exports| match exports {
-            serde_json::Value::String(value) => Some(value.as_str()),
-            serde_json::Value::Object(exports) => exports
-                .get("import")
-                .or_else(|| exports.get("default"))
-                .and_then(serde_json::Value::as_str),
-            _ => None,
-        })
+        .and_then(export_target)
         .or_else(|| manifest.get("module").and_then(serde_json::Value::as_str))
         .or_else(|| manifest.get("main").and_then(serde_json::Value::as_str))
         .unwrap_or("index.js");
@@ -108,6 +110,9 @@ pub struct NodeLoader;
 
 fn builtin_source(name: &str) -> Option<String> {
     let builtin = name.strip_prefix("node:").unwrap_or(name);
+    if builtin == "process" {
+        return Some("export default globalThis.process;\n".to_owned());
+    }
     // ESM's default export is the existing CommonJS-compatible namespace. The
     // named exports cover the common surface used by upstream smoke fixtures;
     // unsupported named interop remains an ordinary module error.
@@ -186,6 +191,7 @@ fn builtin_source(name: &str) -> Option<String> {
             "mkdirSync",
             "readlinkSync",
             "readdirSync",
+            "realpathSync",
             "rmSync",
             "statSync",
             "symlinkSync",
@@ -219,6 +225,13 @@ fn builtin_source(name: &str) -> Option<String> {
             "runMain",
         ],
         "timers/promises" => &["setTimeout", "setImmediate", "setInterval", "scheduler"],
+        "util" => &["format", "inspect", "promisify", "types"],
+        "v8" => &[
+            "deserialize",
+            "serialize",
+            "getHeapStatistics",
+            "setFlagsFromString",
+        ],
         "url" => &[
             "URL",
             "URLSearchParams",
@@ -271,6 +284,9 @@ impl Loader for NodeLoader {
                     | "timers/promises"
                     | "url"
                     | "net"
+                    | "process"
+                    | "util"
+                    | "v8"
             )
         {
             return builtin_source(name)
@@ -289,16 +305,21 @@ impl Loader for NodeLoader {
                 "export const hasCrypto = __c.hasCrypto;\nexport const hasDtls = __c.hasDtls;\n",
             );
             let module = Module::declare(ctx.clone(), name, source)?;
-            module.meta()?.set("url", format!("file://{}", path))?;
+            let absolute = fs::canonicalize(path).unwrap_or_else(|_| PathBuf::from(path));
+            module
+                .meta()?
+                .set("url", format!("file://{}", absolute.display()))?;
             return Ok(module);
         }
         let path = PathBuf::from(path);
         let extension = path.extension().and_then(|ext| ext.to_str());
         if extension == Some("js") && is_package_module(&path) {
-            let module = Module::declare(ctx.clone(), name, fs::read(&path)?)?;
+            let bytes = fs::read(&path)?;
+            let module = Module::declare(ctx.clone(), name, bytes)?;
+            let absolute = fs::canonicalize(&path).unwrap_or(path.clone());
             module
                 .meta()?
-                .set("url", format!("file://{}", path.display()))?;
+                .set("url", format!("file://{}", absolute.display()))?;
             return Ok(module);
         }
         if matches!(extension, Some("js") | Some("cjs")) {
@@ -341,10 +362,12 @@ impl Loader for NodeLoader {
         if extension != Some("mjs") {
             return Err(Error::new_loading(name));
         }
-        let module = Module::declare(ctx.clone(), name, fs::read(&path)?)?;
+        let bytes = fs::read(&path)?;
+        let module = Module::declare(ctx.clone(), name, bytes)?;
+        let absolute = fs::canonicalize(&path).unwrap_or(path.clone());
         module
             .meta()?
-            .set("url", format!("file://{}", path.display()))?;
+            .set("url", format!("file://{}", absolute.display()))?;
         Ok(module)
     }
 }
