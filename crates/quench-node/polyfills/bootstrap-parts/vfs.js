@@ -1900,6 +1900,17 @@ const __quenchVfsWrapAsyncFs = (name, syncName = `${name}Sync`) => {
       const target =
         typeof path === "number" ? path : __quenchVfsRelative(vfs, path);
       return Promise.resolve().then(() => {
+        if (
+          (name === "rename" || name === "copyFile") &&
+          typeof args[0] === "string" &&
+          vfs.shouldHandle(args[0])
+        ) {
+          return vfs[syncName](
+            __quenchVfsRelative(vfs, path),
+            __quenchVfsRelative(vfs, args[0]),
+            ...args.slice(1)
+          );
+        }
         const result = vfs[syncName](target, ...args);
         if (name === "mkdtemp" && typeof result === "string") {
           return `${vfs.mountPoint}${result}`;
@@ -1916,6 +1927,19 @@ const __quenchVfsWrapAsyncFs = (name, syncName = `${name}Sync`) => {
     args.pop();
     queueMicrotask(() => {
       try {
+        if (
+          (name === "rename" || name === "copyFile") &&
+          typeof args[0] === "string" &&
+          vfs.shouldHandle(args[0])
+        ) {
+          vfs[syncName](
+            __quenchVfsRelative(vfs, path),
+            __quenchVfsRelative(vfs, args[0]),
+            ...args.slice(1)
+          );
+          callback(null);
+          return;
+        }
         const target =
           typeof path === "number" ? path : __quenchVfsRelative(vfs, path);
         const result = vfs[syncName](target, ...args);
@@ -1944,6 +1968,7 @@ for (const __quenchVfsAsyncMethod of [
   "rm",
   "unlink",
   "copyFile",
+  "rename",
   "readFile",
   "writeFile",
   "appendFile",
