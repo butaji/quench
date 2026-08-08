@@ -64,6 +64,11 @@ own commit.
   dependencies pass; loading the complete `eslint` graph first is the
   differentiating sequence, indicating a nested loader-cache transition rather
   than a missing installed package.
+  Additional tracing confirms the package root is discovered; a `RangeError`
+  occurs while resolving or executing `prelude-ls/lib/index.js` from nested
+  `levn`/`type-check` loads, then gets reported as `MODULE_NOT_FOUND`. Direct
+  loading succeeds, narrowing this to nested local-module cache/execution
+  re-entry.
 - Item 10: partially improved. Stage 2343 reproduces the upstream
   `common.mustCall` readable backpressure shape and now verifies all four
   `_read()` demands and three writable callbacks. The fix removes a stale
