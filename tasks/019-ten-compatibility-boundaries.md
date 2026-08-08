@@ -413,6 +413,9 @@ operations report `EXDEV`, and `internal/fs/utils.vfsState.handlers` tracks
 mount registration and last-unmount cleanup.
 `fs.openAsBlob()` is now implemented and mount-aware; the authoritative
 `test-vfs-fs-openAsBlob.js` fixture passes with correct Blob size and text.
+Hard-link metadata is now shared correctly: `linkSync` increments the aliased
+entry's `nlink`, `unlinkSync` decrements it, and stat/lstat report the count.
+The authoritative `test-vfs-hardlink-nlink.js` fixture passes.
 Stage 2418 verifies the public `MemoryProvider` surface and append-to-new-file
 behavior. The separate dynamic-provider fixture remains an internal-model
 gap: it expects Node's `kRoot` symbol and lazy entry objects, which are not yet
