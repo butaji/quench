@@ -208,6 +208,29 @@ fn array_values_iterator(_args: Vec<Value>) -> Result<Value, JsError> {
         );
         return Err(js_err);
     };
-    let elements = arr_rc.borrow().elements.clone();
-    Ok(crate::builtins::map::helpers::make_iterator(elements))
+    // Live iterator: read the current element at each index so mutations made
+    // during iteration are reflected (per ES ArrayIterator).
+    let index = Rc::new(RefCell::new(0usize));
+    let next_fn = NativeFunction::new(move |_| {
+        let mut res = Object::new(ObjectKind::Ordinary);
+        let mut i = index.borrow_mut();
+        let arr = arr_rc.borrow();
+        if *i < arr.elements.len() {
+            let v = arr
+                .elements
+                .get(*i)
+                .cloned()
+                .unwrap_or(Value::Undefined);
+            res.set("value", v);
+            res.set("done", Value::Boolean(false));
+            *i += 1;
+        } else {
+            res.set("value", Value::Undefined);
+            res.set("done", Value::Boolean(true));
+        }
+        Ok(Value::Object(Rc::new(RefCell::new(res))))
+    });
+    let mut iter = Object::new(ObjectKind::Ordinary);
+    iter.set("next", Value::NativeFunction(Rc::new(next_fn)));
+    Ok(Value::Object(Rc::new(RefCell::new(iter))))
 }
