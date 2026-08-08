@@ -54,4 +54,10 @@ own commit.
   harness because its root-user guard and `process.setuid('nobody')` branch
   terminate with an opaque QuickJS exception; credential-switch behavior must
   be fixed before claiming the full fixture.
-- Items 9–10: queued.
+- Item 9: partially improved. Stage 2342 covers `node:` builtin normalization
+  through the central dispatcher. Replacing loader-time regex stripping with
+  `startsWith()`/`slice()` removes the previous native
+  `RegExp.prototype.flags`/`Symbol.replace` recursion while loading ESLint.
+  ESLint now advances to a separate package-resolution failure for
+  `prelude-ls`, so the full application gate remains unresolved.
+- Item 10: queued.
