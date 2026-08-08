@@ -118,7 +118,6 @@ thread_local! {
     static GENERATOR_RETURN_VALUE: RefCell<Option<Value>> = const { RefCell::new(None) };
 }
 
-#[allow(dead_code)]
 pub(crate) fn set_generator_return(val: Value) {
     GENERATOR_RETURN_VALUE.with(|cell| *cell.borrow_mut() = Some(val));
 }
