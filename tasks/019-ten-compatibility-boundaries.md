@@ -563,7 +563,11 @@ watch boundary is now specifically the interaction between prior watcher
 cleanup, promise jobs, and pending `return()`, rather than event shape or
 `throw()` behavior.
 
-The attempted timer rewrite for this boundary was reverted: the isolated
-`interval: 1000` pending-close case still hung, so no timer behavior is being
-claimed as fixed. The remaining issue requires tracing the runtime's timer and
-promise-job interaction directly.
+Stage 2440 now fixes the underlying VFS-specific timer ordering without
+changing the requested polling interval: the first snapshot poll runs through
+an immediate timeout, then the normal repeating interval starts. This prevents
+the shim's synchronous long-interval sleep from blocking a pending watcher
+`return()` or abort microtask. The focused `interval: 1000` close stage passes,
+as do the authoritative directory, encoding, and abort watcher fixtures. The
+full `test-vfs-watch-promises.js` sequence still times out, so its aggregate
+interaction remains open.
