@@ -81,3 +81,8 @@ The temporary stage-2345 callback-label probe showed that callback-style
 observed before the following timer turn. This explains the full fixture's
 missing callback and moves the next fs fix into promise-job/event-loop
 integration; no filesystem permission behavior was changed.
+
+Stage 2346 now verifies callback-before-promise ordering for successful
+`fs.access()` calls. `fs.promises.access()` uses a direct async sync-check so
+its reaction is not delayed behind the callback wrapper. The full upstream
+fixture still has a separate invalid/error callback-count mismatch.
