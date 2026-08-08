@@ -186,6 +186,12 @@ shape (`at async Object.access`) and the non-root read-only `W_OK` `EACCES`
 behavior. Both pass, so neither the promise stack contract nor the basic
 permission decision explains the remaining aggregate-fixture mismatch.
 
+Stage 2373 adds the missing root-permission contract: `fs.accessSync()` and
+callback-style `fs.access()` now allow `W_OK` on a mode-0444 file when
+`process.getuid() === 0`, matching Node's superuser behavior. The aggregate
+`test-fs-access.js` fixture still reports `Callback 7` missing, so its
+remaining callback is separate from the root permission decision.
+
 Current application-gate refresh: stages 2047, 2069, 2080, 2081, 2104, and
 the repository smoke app all pass. The current upstream
 `test-http-agent-maxsockets-respected.js` baseline remains `Callback 1:
