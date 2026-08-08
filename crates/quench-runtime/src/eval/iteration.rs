@@ -250,37 +250,43 @@ pub fn eval_for_in(
     variable: &Expression,
     object: &Expression,
     body: &Statement,
+    loop_binding: Option<VarKind>,
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
 ) -> Result<Value, JsError> {
     let obj_value = eval_expression(object, env, in_arrow_function)?;
     let keys = get_enumerable_keys(&obj_value)?;
+    let per_iteration = loop_binding.is_some_and(|k| matches!(k, VarKind::Let | VarKind::Const));
+    // Per ES §14.7.5.5, the loop returns V, the last non-empty body value.
+    let mut v = Value::Undefined;
     for key in keys {
-        assign_to(variable, &Value::String(key), env)?;
-        let _ = eval_statement(body, env, false, in_arrow_function)?;
-        match take_control_flow() {
-            Some(cf @ ControlFlow::Break(_)) => {
-                if loop_handles_break(&cf, &[]) {
-                    break;
+        let (flow, body_val) = run_for_in_iteration(
+            variable,
+            &Value::String(key),
+            body,
+            loop_binding,
+            per_iteration,
+            env,
+            in_arrow_function,
+        )?;
+        if let Some(flow) = flow {
+            match flow {
+                ControlFlow::Break(_) => {
+                    // A handled break returns the current body value.
+                    return Ok(body_val);
                 }
-                set_control_flow(cf);
-                break;
-            }
-            Some(cf @ ControlFlow::Continue(_)) => {
-                if loop_handles_continue(&cf, &[]) {
+                ControlFlow::Continue(_) => {
+                    v = body_val;
                     continue;
                 }
-                set_control_flow(cf);
-                break;
+                ControlFlow::Return(val)
+                | ControlFlow::Yield(val)
+                | ControlFlow::YieldDelegate(val) => {
+                    return Ok(val);
+                }
             }
-            Some(ControlFlow::Return(val))
-            | Some(ControlFlow::Yield(val))
-            | Some(ControlFlow::YieldDelegate(val)) => {
-                set_control_flow(ControlFlow::Return(val.clone()));
-                return Ok(val);
-            }
-            None => {}
         }
+        v = body_val;
     }
     if let Some(ControlFlow::Return(val))
     | Some(ControlFlow::Yield(val))
@@ -288,7 +294,51 @@ pub fn eval_for_in(
     {
         Ok(val)
     } else {
-        Ok(Value::Undefined)
+        Ok(v)
+    }
+}
+
+/// Run one for-in iteration: declare the per-iteration binding (if any) and
+/// assign the key to the LHS pattern/identifier.
+fn run_for_in_iteration(
+    variable: &Expression,
+    key: &Value,
+    body: &Statement,
+    loop_binding: Option<VarKind>,
+    per_iteration: bool,
+    env: &Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
+) -> Result<(Option<ControlFlow>, Value), JsError> {
+    if per_iteration {
+        env.borrow_mut().push_scope();
+    }
+    let result = (|| {
+        if let Some(kind) = loop_binding {
+            declare_for_of_binding(variable, kind, env)?;
+        }
+        assign_to(variable, key, env)?;
+        eval_statement(body, env, false, in_arrow_function)
+    })();
+    let body_val = match &result {
+        Ok(val) => val.clone(),
+        Err(_) => Value::Undefined,
+    };
+    if per_iteration {
+        env.borrow_mut().pop_scope();
+    }
+    match result {
+        Ok(_) => match take_control_flow() {
+            Some(cf @ ControlFlow::Break(_)) => Ok((Some(cf), body_val)),
+            Some(cf @ ControlFlow::Continue(_)) => Ok((Some(cf), body_val)),
+            Some(ControlFlow::Return(val))
+            | Some(ControlFlow::Yield(val))
+            | Some(ControlFlow::YieldDelegate(val)) => {
+                set_control_flow(ControlFlow::Return(val.clone()));
+                Ok((Some(ControlFlow::Return(val)), body_val))
+            }
+            None => Ok((None, body_val)),
+        },
+        Err(e) => Err(e),
     }
 }
 

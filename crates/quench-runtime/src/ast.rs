@@ -289,6 +289,7 @@ pub enum Expression {
         variable: Box<Expression>,
         object: Box<Expression>,
         body: Box<Statement>,
+        loop_binding: Option<VarKind>,
     },
     /// JSX element: <tag {...props}>{children}</tag>
     JsxElement {

@@ -380,7 +380,15 @@ pub fn eval_expression(
             variable,
             object,
             body,
-        } => eval_for_in(variable, object, body, env, in_arrow_function),
+            loop_binding,
+        } => eval_for_in(
+            variable,
+            object,
+            body,
+            *loop_binding,
+            env,
+            in_arrow_function,
+        ),
         Expression::JsxElement {
             tag,
             props,
