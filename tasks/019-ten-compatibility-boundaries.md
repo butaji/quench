@@ -330,6 +330,10 @@ failure probe before further implementation changes.
 Stage 2403 covers concurrent `zlib/iter` compression/decompression over pulls
 and passes. The upstream hang therefore requires the full 19-operation mix;
 the next probe will add per-operation timeouts to identify the stalled await.
+Stages 2404 and 2405 verify the two remaining scale boundaries independently:
+a 300 KB ranged pull and 19 concurrent pull handles both pass. The upstream
+fixture's stall is therefore an interaction between specific operation types,
+not file size or descriptor count alone.
 
 Stage 2378 passes the four basic stream `destroy()` contracts for readable and
 writable streams, including implicit `AbortError`, explicit error messages,
