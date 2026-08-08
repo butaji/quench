@@ -338,6 +338,10 @@ The grouped interaction probe then isolated the remaining cases to
 `testPullStartLimitWithTransforms()` (zlib iterator composition) and
 `testPullSyncArgumentValidation()` under the full mix. Locking and closed-handle
 cases are now verified with an explicit `ERR_INVALID_STATE` error contract.
+Pull option validation now also emits Node-compatible `ERR_INVALID_ARG_TYPE`
+and `ERR_OUT_OF_RANGE` codes. The focused validation stage passes, but the full
+aggregate still hangs, leaving zlib composition as the next interaction to
+isolate.
 
 Stage 2378 passes the four basic stream `destroy()` contracts for readable and
 writable streams, including implicit `AbortError`, explicit error messages,
