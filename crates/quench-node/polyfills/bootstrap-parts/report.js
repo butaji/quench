@@ -12,14 +12,14 @@ if (globalThis.process && !globalThis.process.report) {
       header: {
         event: "JavaScript API",
         pid: globalThis.process.pid,
-        commandLine: globalThis.process.argv,
+        commandLine: globalThis.process.argv
       },
       javascriptStack: { message: "" },
       resourceUsage: {},
       libuv: [],
-      sharedObjects: [],
+      sharedObjects: []
     }),
-    writeReport: () => undefined,
+    writeReport: () => undefined
   };
 }
 globalThis.require = (specifier) =>

@@ -24,13 +24,14 @@ const __quenchGlobPattern = (pattern) => {
       source += "[^/]";
       index++;
     } else if (
-      pattern.startsWith("!(", index) && pattern.indexOf(")", index) > index
+      pattern.startsWith("!(", index) &&
+      pattern.indexOf(")", index) > index
     ) {
       const end = pattern.indexOf(")", index);
       const alternatives = pattern.slice(index + 2, end).split("|");
-      source += `(?!${
-        alternatives.map(__quenchGlobPattern).join("|")
-      }(?:/|$))[^/]*`;
+      source += `(?!${alternatives
+        .map(__quenchGlobPattern)
+        .join("|")}(?:/|$))[^/]*`;
       index = end + 1;
     } else if (pattern[index] === "[" && pattern.indexOf("]", index) > index) {
       const end = pattern.indexOf("]", index);
@@ -42,7 +43,8 @@ const __quenchGlobPattern = (pattern) => {
       source += `(?:${alternatives.map(__quenchGlobPattern).join("|")})`;
       index = end + 1;
     } else if (
-      pattern[index] === "+" && pattern[index + 1] === "(" &&
+      pattern[index] === "+" &&
+      pattern[index + 1] === "(" &&
       pattern.indexOf(")", index) > index
     ) {
       const end = pattern.indexOf(")", index);
@@ -57,17 +59,25 @@ const __quenchGlobPattern = (pattern) => {
 };
 const __quenchGlobHiddenAllowed = (pattern, path) => {
   const patternParts = pattern.split("/");
-  return path.split("/").every((part, index) =>
-    !part.startsWith(".") || patternParts[index]?.startsWith(".") ||
-    patternParts[index] === "**"
-  );
+  return path
+    .split("/")
+    .every(
+      (part, index) =>
+        !part.startsWith(".") ||
+        patternParts[index]?.startsWith(".") ||
+        patternParts[index] === "**"
+    );
 };
 const __quenchGlobMatches = (pattern, path) => {
   const normalized = String(pattern).replace(/^\.\//, "").replace(/\/$/, "");
   const expression = new RegExp(`^${__quenchGlobPattern(normalized)}$`);
-  return expression.test(path) || (normalized.endsWith("/**") &&
-    new RegExp(`^${__quenchGlobPattern(normalized.slice(0, -3))}(?:/.*)?$`)
-      .test(path));
+  return (
+    expression.test(path) ||
+    (normalized.endsWith("/**") &&
+      new RegExp(
+        `^${__quenchGlobPattern(normalized.slice(0, -3))}(?:/.*)?$`
+      ).test(path))
+  );
 };
 const __quenchGlobEntries = (pattern, options = {}) => {
   const cwdOption = options.cwd;
@@ -97,7 +107,7 @@ const __quenchGlobEntries = (pattern, options = {}) => {
     let entries;
     try {
       entries = globalThis.__nodeFs.readdirSync(directory, {
-        withFileTypes: true,
+        withFileTypes: true
       });
     } catch {
       return;
@@ -105,16 +115,19 @@ const __quenchGlobEntries = (pattern, options = {}) => {
     for (const entry of entries) {
       const childRelative = relative ? `${relative}/${entry.name}` : entry.name;
       const childPath = `${directory}/${entry.name}`;
-      const excluded = typeof options.exclude === "function"
-        ? options.exclude(entry)
-        : Array.isArray(options.exclude) &&
-          options.exclude.some((item) =>
-            __quenchGlobMatches(item, childRelative) ||
-            (String(item).startsWith("/") &&
-              __quenchGlobMatches(item, childPath))
-          );
+      const excluded =
+        typeof options.exclude === "function"
+          ? options.exclude(entry)
+          : Array.isArray(options.exclude) &&
+            options.exclude.some(
+              (item) =>
+                __quenchGlobMatches(item, childRelative) ||
+                (String(item).startsWith("/") &&
+                  __quenchGlobMatches(item, childPath))
+            );
       if (
-        !excluded && expression.test(childRelative) &&
+        !excluded &&
+        expression.test(childRelative) &&
         __quenchGlobHiddenAllowed(normalized, childRelative)
       ) {
         result.push({ entry, relative: childRelative, path: childPath });
@@ -122,8 +135,8 @@ const __quenchGlobEntries = (pattern, options = {}) => {
       if (
         recurse &&
         (entry.isDirectory?.() ||
-          (options.follow || options.followSymbolicLinks) &&
-            entry.isSymbolicLink?.())
+          ((options.follow || options.followSymbolicLinks) &&
+            entry.isSymbolicLink?.()))
       ) {
         visit(childPath, childRelative);
       }
@@ -133,7 +146,7 @@ const __quenchGlobEntries = (pattern, options = {}) => {
   result.sort((left, right) => left.relative.localeCompare(right.relative));
   return result.map(({ entry, relative, path }) => ({
     entry,
-    value: options.withFileTypes === true ? entry : absolute ? path : relative,
+    value: options.withFileTypes === true ? entry : absolute ? path : relative
   }));
 };
 const __quenchGlob = async function* (pattern, options = {}) {
@@ -152,7 +165,7 @@ globalThis.require = (specifier) => {
   if (name === "fs/promises") {
     return Object.assign({}, __quenchOriginalRequireWithGlob(specifier), {
       glob: __quenchGlob,
-      globSync: __quenchGlobSync,
+      globSync: __quenchGlobSync
     });
   }
   if (name === "fs") {

@@ -4,5 +4,5 @@ const __quenchOriginalSetupPrimary = __quenchClusterSetup.setupPrimary;
 __quenchClusterSetup.setupPrimary = (options = {}) =>
   __quenchOriginalSetupPrimary({
     ...__quenchClusterSetup.settings,
-    ...options,
+    ...options
   });

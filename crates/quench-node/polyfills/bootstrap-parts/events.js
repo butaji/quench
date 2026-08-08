@@ -1,16 +1,14 @@
-for (
-  const method of [
-    "on",
-    "addListener",
-    "once",
-    "emit",
-    "removeListener",
-    "off",
-    "removeAllListeners",
-    "listeners",
-    "listenerCount",
-  ]
-) {
+for (const method of [
+  "on",
+  "addListener",
+  "once",
+  "emit",
+  "removeListener",
+  "off",
+  "removeAllListeners",
+  "listeners",
+  "listenerCount"
+]) {
   globalThis.process[method] = NodeEventEmitter.prototype[method];
 }
 const __nodeWritableWriteError = (stream, callback, error) => {
@@ -244,7 +242,7 @@ class NodeReadable extends NodeEventEmitter {
       readingMore: false,
       dataEmitted: false,
       errorEmitted: false,
-      errored: null,
+      errored: null
     };
     this.errored = null;
     if (typeof options.read === "function") this._read = options.read;
@@ -306,8 +304,8 @@ class NodeReadable extends NodeEventEmitter {
       return this;
     }
     this.destroyed = true;
-    this.readableAborted = !this.readableEnded ||
-      (this._ended && !this.listenerCount("end"));
+    this.readableAborted =
+      !this.readableEnded || (this._ended && !this.listenerCount("end"));
     this.readable = false;
     const hasError = error !== undefined && error !== null;
     if (!hasError && this._destroy) {
@@ -448,27 +446,30 @@ class NodeReadable extends NodeEventEmitter {
   get readableLength() {
     return this._chunks.reduce(
       (length, chunk) => length + (chunk?.byteLength ?? chunk?.length ?? 1),
-      0,
+      0
     );
   }
   push(chunk, encoding) {
     if (this.destroyed && chunk !== null) {
       return __nodeReadablePushError(
         "Cannot call push after a stream was destroyed",
-        "ERR_STREAM_DESTROYED",
+        "ERR_STREAM_DESTROYED"
       );
     }
     if (this._ended && chunk !== null) {
       return __nodeReadablePushError(
         "stream.push() after EOF",
-        "ERR_STREAM_PUSH_AFTER_EOF",
+        "ERR_STREAM_PUSH_AFTER_EOF"
       );
     }
     if (chunk === null) {
       if (
-        this.__nodeDuplex && !this.allowHalfOpen &&
-        !this._writableState.ended && !this.destroyed
-      ) this.end();
+        this.__nodeDuplex &&
+        !this.allowHalfOpen &&
+        !this._writableState.ended &&
+        !this.destroyed
+      )
+        this.end();
       this._readableState.reading = false;
       return __nodeReadablePushEnd(this);
     }
@@ -568,9 +569,9 @@ class NodeReadable extends NodeEventEmitter {
   iterator(options = {}) {
     if (!options || typeof options !== "object") {
       const error = new TypeError(
-        `The "options" argument must be of type object. Received type ${typeof options} (${
-          String(options)
-        })`,
+        `The "options" argument must be of type object. Received type ${typeof options} (${String(
+          options
+        )})`
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
@@ -583,7 +584,7 @@ class NodeReadable extends NodeEventEmitter {
         if (options.destroyOnReturn !== false) this.destroy();
         return result || { value, done: true };
       },
-      throw: (...args) => iterator.throw?.(...args),
+      throw: (...args) => iterator.throw?.(...args)
     };
   }
   async *[Symbol.asyncIterator]() {
@@ -637,7 +638,7 @@ Object.defineProperty(NodeReadable.prototype, "readableDidRead", {
   configurable: true,
   get() {
     return this._readableState?.dataEmitted === true;
-  },
+  }
 });
 class NodeWritable extends NodeEventEmitter {
   constructor(options = {}) {
@@ -659,7 +660,7 @@ class NodeWritable extends NodeEventEmitter {
       writable: undefined,
       writing: false,
       errored: null,
-      errorEmitted: false,
+      errorEmitted: false
     };
     this.writableEnded = false;
     this.writableFinished = false;
@@ -717,9 +718,12 @@ class NodeWritable extends NodeEventEmitter {
   push(chunk) {
     if (chunk === null) {
       if (
-        this.__nodeDuplex && !this.allowHalfOpen &&
-        !this._writableState.ended && !this.destroyed
-      ) this.end();
+        this.__nodeDuplex &&
+        !this.allowHalfOpen &&
+        !this._writableState.ended &&
+        !this.destroyed
+      )
+        this.end();
       this.readableEnded = true;
       this.emit("end");
       return false;
@@ -758,9 +762,10 @@ class NodeWritable extends NodeEventEmitter {
       error.code = "ERR_STREAM_WRITE_AFTER_END";
       return __nodeWritableWriteError(this, callback, error);
     }
-    const size = typeof chunk === "string"
-      ? NodeBuffer.byteLength(chunk, encoding || "utf8")
-      : chunk?.byteLength || 1;
+    const size =
+      typeof chunk === "string"
+        ? NodeBuffer.byteLength(chunk, encoding || "utf8")
+        : chunk?.byteLength || 1;
     this.writableLength += size;
     if (this.writableCorked > 0) this._corkedChunks.push(chunk);
     else this.emit("data", chunk);
@@ -802,27 +807,25 @@ class NodeDuplex extends NodeReadable {
     super(options);
     this.__nodeDuplex = true;
     const writable = new NodeWritable(options);
-    for (
-      const name of [
-        "closed",
-        "readableAborted",
-        "writableAborted",
-        "writable",
-        "writableObjectMode",
-        "writableHighWaterMark",
-        "writableLength",
-        "writableNeedDrain",
-        "_writableState",
-        "writableEnded",
-        "writableFinished",
-        "writableCorked",
-        "_autoDestroy",
-        "_corkedChunks",
-        "_write",
-        "_destroy",
-        "writableDefaultEncoding",
-      ]
-    ) {
+    for (const name of [
+      "closed",
+      "readableAborted",
+      "writableAborted",
+      "writable",
+      "writableObjectMode",
+      "writableHighWaterMark",
+      "writableLength",
+      "writableNeedDrain",
+      "_writableState",
+      "writableEnded",
+      "writableFinished",
+      "writableCorked",
+      "_autoDestroy",
+      "_corkedChunks",
+      "_write",
+      "_destroy",
+      "writableDefaultEncoding"
+    ]) {
       this[name] = writable[name];
     }
     this.allowHalfOpen = options.allowHalfOpen !== false;
@@ -846,15 +849,7 @@ class NodeDuplex extends NodeReadable {
     return NodeReadable.prototype.destroy.call(this, error, callback);
   }
 }
-for (
-  const method of [
-    "write",
-    "end",
-    "cork",
-    "uncork",
-    "setDefaultEncoding",
-  ]
-) {
+for (const method of ["write", "end", "cork", "uncork", "setDefaultEncoding"]) {
   NodeDuplex.prototype[method] = NodeWritable.prototype[method];
 }
 const __nodeDuplexPair = (readable, writable) => {
@@ -865,18 +860,15 @@ const __nodeDuplexPair = (readable, writable) => {
     readable: Boolean(readable),
     writable: Boolean(writable),
     objectMode: Boolean(
-      readable?.readableObjectMode ||
-        readable?._readableState?.objectMode,
-    ),
+      readable?.readableObjectMode || readable?._readableState?.objectMode
+    )
   });
   duplex.readableObjectMode = Boolean(
-    readable?.readableObjectMode ||
-      readable?._readableState?.objectMode,
+    readable?.readableObjectMode || readable?._readableState?.objectMode
   );
   duplex._readableState.objectMode = duplex.readableObjectMode;
   duplex.writableObjectMode = Boolean(
-    writable?.writableObjectMode ||
-      writable?._writableState?.objectMode,
+    writable?.writableObjectMode || writable?._writableState?.objectMode
   );
   if (readable) {
     readable.on("data", (chunk) => duplex.push(chunk));
@@ -903,7 +895,8 @@ const __nodeDuplexPair = (readable, writable) => {
 const __nodeDuplexFrom = (body) => {
   if (body instanceof NodeDuplex) return body;
   if (
-    body && typeof body === "object" &&
+    body &&
+    typeof body === "object" &&
     (body.readable !== undefined || body.writable !== undefined) &&
     (typeof body.readable === "object" || typeof body.writable === "object")
   ) {
@@ -925,14 +918,14 @@ const __nodeDuplexFrom = (body) => {
     const duplex = new NodeDuplex({
       readable: true,
       writable: false,
-      objectMode: true,
+      objectMode: true
     });
     Promise.resolve(body).then(
       (value) => {
         if (value !== undefined && value !== null) duplex.push(value);
         duplex.push(null);
       },
-      (error) => duplex.destroy(error),
+      (error) => duplex.destroy(error)
     );
     return duplex;
   }
@@ -984,9 +977,10 @@ class NodeTransform extends NodeWritable {
       encoding = "utf8";
     }
     if (this._transform) {
-      const size = typeof chunk === "string"
-        ? NodeBuffer.byteLength(chunk)
-        : chunk?.byteLength || 1;
+      const size =
+        typeof chunk === "string"
+          ? NodeBuffer.byteLength(chunk)
+          : chunk?.byteLength || 1;
       this._writableState.needDrain = size >= this.writableHighWaterMark;
       this._transform.call(this, chunk, encoding, (error, output) => {
         if (error) {
@@ -1085,12 +1079,12 @@ const __nodeStreamExports = {
   PassThrough: NodeTransform,
   isDisturbed: (stream) => Boolean(stream?._readableState?.dataEmitted),
   isErrored: (stream) =>
-    Boolean(stream?.errored || stream?._readableState?.errored),
+    Boolean(stream?.errored || stream?._readableState?.errored)
 };
 globalThis.__nodeStreamInitialized = false;
 globalThis.__nodeStream = new Proxy(__nodeStreamExports, {
   get: (target, key) => {
     globalThis.__nodeStreamInitialized = true;
     return target[key];
-  },
+  }
 });

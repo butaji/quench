@@ -1139,6 +1139,16 @@ let __quenchHttpModule;
         value.aborted = true;
         value.destroyed = true;
         value.__abortErrorEmitted = true;
+        if (value.__httpClientResponse) {
+          const error = new Error("socket hang up");
+          error.code = "ECONNRESET";
+          queueMicrotask(() => {
+            value.emit?.("aborted");
+            value.emit?.("error", error);
+            value.emit?.("close");
+          });
+          return value;
+        }
         const error = new Error("The operation was aborted");
         error.name = "AbortError";
         queueMicrotask(() => {
@@ -1188,8 +1198,18 @@ let __quenchHttpModule;
     class NodeClientRequest extends NodeIncomingMessage {
       constructor(options = {}) {
         super();
+        if (typeof options === "string" || options instanceof URL) {
+          const parsed = new URL(String(options));
+          options = {
+            hostname: parsed.hostname,
+            port: parsed.port || 80,
+            path: `${parsed.pathname}${parsed.search}`,
+            method: "GET"
+          };
+        }
         this.path = options.path || "/";
         this.method = options.method || "GET";
+        this._options = { ...options };
         this.finished = false;
         this.writable = true;
       }
@@ -1237,6 +1257,48 @@ let __quenchHttpModule;
           return socket;
         },
         write: () => true,
+        ref() {
+          this.__unrefed = false;
+          return this;
+        },
+        unref() {
+          this.__unrefed = true;
+          return this;
+        },
+        setKeepAlive(enable = false, initialDelay) {
+          this.keepAlive = enable;
+          this.keepAliveInitialDelay = initialDelay;
+          return this;
+        },
+        destroy() {
+          if (this.__timeoutTimer !== undefined) {
+            clearTimeout(this.__timeoutTimer);
+            this.__timeoutTimer = undefined;
+          }
+          if (this.destroyed) return this;
+          this.destroyed = true;
+          this.__quenchAgent?.removeSocket?.(this, {
+            host: "localhost",
+            port: this.__quenchAgentName?.split(":")[1] || ""
+          });
+          this.emit("close");
+          if (
+            response.__httpClientResponse &&
+            !response.complete &&
+            !response.__abortErrorEmitted
+          ) {
+            response.__abortErrorEmitted = true;
+            response.aborted = true;
+            const error = new Error("socket hang up");
+            error.code = "ECONNRESET";
+            queueMicrotask(() => {
+              response.emit("aborted");
+              response.emit("error", error);
+              response.emit("close");
+            });
+          }
+          return this;
+        },
         cork() {
           this.writableCorked++;
         },
@@ -1245,6 +1307,11 @@ let __quenchHttpModule;
         }
       });
       response.socket = socket;
+      socket._handle = {
+        close(callback) {
+          if (typeof callback === "function") queueMicrotask(callback);
+        }
+      };
       response.setTimeout = (msecs) => {
         response.timeout = msecs;
         if (response.socket?.setTimeout) response.socket.setTimeout(msecs);
@@ -1401,6 +1468,20 @@ let __quenchHttpModule;
         return response;
       };
       response.resume = () => response;
+      response.pipe = (destination, options = {}) => {
+        response.on("data", (chunk) => {
+          if (!destination.destroyed) destination.write(chunk);
+        });
+        response.once("end", () => {
+          if (!destination.writableEnded) destination.end();
+        });
+        response.once("aborted", () => {
+          if (options.end !== false && !destination.writableEnded) {
+            destination.end();
+          }
+        });
+        return destination;
+      };
       response.flushHeaders = () => response;
       response.writeEarlyHints = (hints, callback) => {
         if (hints === null || typeof hints !== "object") {
@@ -1423,7 +1504,47 @@ let __quenchHttpModule;
         if (typeof callback === "function") queueMicrotask(callback);
         return response;
       };
-      response.setEncoding = () => response;
+      response.writeInformation = (statusCode, headers, callback) => {
+        const code = statusCode === undefined ? 100 : Number(statusCode);
+        if (!Number.isInteger(code) || code < 100 || code >= 200) {
+          const error = new RangeError(`Invalid status code: ${statusCode}`);
+          error.code = "ERR_HTTP_INVALID_STATUS_CODE";
+          throw error;
+        }
+        const infoHeaders = Object.create(null);
+        const rawHeaders = [];
+        for (const [key, value] of Object.entries(headers || {})) {
+          const name = String(key);
+          infoHeaders[name.toLowerCase()] = Array.isArray(value)
+            ? value.join(", ")
+            : String(value);
+          rawHeaders.push(name, String(value));
+        }
+        response.req?.emit("information", {
+          httpVersion: "1.1",
+          httpVersionMajor: 1,
+          httpVersionMinor: 1,
+          statusCode: code,
+          statusMessage:
+            { 100: "Continue", 102: "Processing", 103: "Early Hints" }[code] ||
+            "",
+          headers: infoHeaders,
+          rawHeaders
+        });
+        if (typeof callback === "function") queueMicrotask(callback);
+        return response;
+      };
+      response.writeProcessing = (callback) =>
+        response.writeInformation(102, undefined, callback);
+      response.setEncoding = (encoding) => {
+        response._encoding = encoding;
+        return response;
+      };
+      response.__emitData = (value) =>
+        response.emit(
+          "data",
+          response._encoding ? value.toString(response._encoding) : value
+        );
       response.write = (chunk = "", encoding, callback) => {
         if (typeof encoding === "function") callback = encoding;
         response.headersSent = true;
@@ -1439,7 +1560,7 @@ let __quenchHttpModule;
           return response.socket.write(value, callback);
         }
         queueMicrotask(() => {
-          if (value.length) response.emit("data", value);
+          if (value.length) response.__emitData(value);
           if (typeof callback === "function") callback();
         });
         return true;
@@ -1476,7 +1597,7 @@ let __quenchHttpModule;
           response.writableFinished = true;
           queueMicrotask(() => {
             response.emit("finish");
-            if (output.length) response.emit("data", output);
+            if (output.length) response.__emitData(output);
             response.complete = true;
             response.readable = false;
             response.emit("end");
@@ -1499,7 +1620,7 @@ let __quenchHttpModule;
         }
         queueMicrotask(() => {
           response.emit("finish");
-          if (output.length) response.emit("data", output);
+          if (output.length) response.__emitData(output);
           response.complete = true;
           response.readable = false;
           response.emit("end");
@@ -1764,14 +1885,19 @@ let __quenchHttpModule;
       };
       request.write = (chunk, encoding, callback) => {
         if (typeof encoding === "function") callback = encoding;
-        request._body = `${request._body || ""}${
-          chunk instanceof NodeBuffer ? chunk.toString() : String(chunk)
-        }`;
+        const value =
+          chunk instanceof NodeBuffer ? chunk.toString() : String(chunk);
+        (request._bodyChunks ||= []).push(value);
+        request._body = `${request._body || ""}${value}`;
         request._wroteChunk = true;
         if (typeof callback === "function") queueMicrotask(callback);
         return true;
       };
       const response = makeResponse();
+      response.__httpClientResponse = true;
+      if (context?.address) {
+        response.socket.__quenchServerPort = context.address().port;
+      }
       const agentName = request.agent?.getName?.(options);
       let reusableSocket;
       if (agentName) {
@@ -1866,10 +1992,13 @@ let __quenchHttpModule;
             request._body !== undefined &&
             ["POST", "PUT", "PATCH"].includes(request.method)
           ) {
-            const body = request._encoding
-              ? String(request._body)
-              : NodeBuffer.from(String(request._body));
-            serverRequest.emit("data", body);
+            const chunks = request._bodyChunks || [request._body || ""];
+            for (const chunk of chunks) {
+              const body = request._encoding
+                ? String(chunk)
+                : NodeBuffer.from(String(chunk));
+              serverRequest.emit("data", body);
+            }
           }
           serverRequest.complete = true;
           const closeServerRequest = () => {
@@ -1916,10 +2045,15 @@ let __quenchHttpModule;
             request.emit("response", response);
             if (typeof callback === "function") callback(response);
             queueMicrotask(() => {
-              if (request.agent?.keepAlive && response.socket) {
+              if (
+                request.agent?.keepAlive &&
+                response.socket &&
+                context?.listening !== false
+              ) {
                 response.shouldKeepAlive = true;
                 response.socket._httpMessage = response;
                 request.agent.emit("free", response.socket, options);
+                response.socket.emit("free");
               }
             });
           }
@@ -1927,16 +2061,24 @@ let __quenchHttpModule;
           globalThis.__nodeCurrentAsyncResource = previous;
         }
       });
-      request.end = (chunk) => {
+      request.end = (chunk, encoding, callback) => {
+        if (typeof chunk === "function") {
+          callback = chunk;
+          chunk = undefined;
+        } else if (typeof encoding === "function") {
+          callback = encoding;
+        }
         if (chunk !== undefined) {
-          request._body = `${request._body || ""}${
-            chunk instanceof NodeBuffer ? chunk.toString() : String(chunk)
-          }`;
+          const value =
+            chunk instanceof NodeBuffer ? chunk.toString() : String(chunk);
+          (request._bodyChunks ||= []).push(value);
+          request._body = `${request._body || ""}${value}`;
         }
         if (!request.finished && !request.aborted) {
           request.finished = true;
           request.writableFinished = false;
         }
+        if (typeof callback === "function") queueMicrotask(callback);
         return request;
       };
       request.abort = () => {
@@ -2123,13 +2265,16 @@ let __quenchHttpModule;
         }
         this._port = numericPort;
         this._address = host;
+        this.__quenchRefedHandle = true;
+        globalThis.__quenchRefedHandles =
+          (globalThis.__quenchRefedHandles || 0) + 1;
         servers.set(String(this._port), this);
         // Node invokes the listen callback after the server has entered the
         // listening state, on a later turn of the event loop. Keeping this
         // asynchronous also preserves the ordering between the callback and
         // the `listening` event for callers that attach listeners immediately.
         if (typeof callback === "function") {
-          queueMicrotask(() => callback.call(this));
+          queueMicrotask(() => Reflect.apply(callback, this, []));
         }
         globalThis.__nodeClusterListening?.({
           address: String(host || "127.0.0.1"),
@@ -2154,23 +2299,39 @@ let __quenchHttpModule;
       }
       close(callback) {
         const wasListening = this._port !== undefined;
+        const closingPort = this._port;
         if (wasListening) {
           servers.delete(String(this._port));
           this._port = undefined;
           this._address = undefined;
+          if (this.__quenchRefedHandle) {
+            this.__quenchRefedHandle = false;
+            globalThis.__quenchRefedHandles = Math.max(
+              0,
+              (globalThis.__quenchRefedHandles || 0) - 1
+            );
+          }
+        }
+        if (closingPort !== undefined && globalThis.__nodeHttpGlobalAgent) {
+          for (const sockets of Object.values(
+            globalThis.__nodeHttpGlobalAgent.freeSockets || {}
+          )) {
+            for (const socket of [...sockets]) {
+              if (socket.__quenchServerPort === closingPort) socket.destroy?.();
+            }
+          }
         }
         this[globalThis.__nodeHttpConnectionsCheckingInterval]._destroyed =
           true;
         if (typeof callback === "function") {
           this.once("close", () => {
-            callback.call(
-              this,
+            Reflect.apply(callback, this, [
               wasListening
                 ? undefined
                 : Object.assign(new Error("Server is not running."), {
                     code: "ERR_SERVER_NOT_RUNNING"
                   })
-            );
+            ]);
           });
         }
         queueMicrotask(() => this.emit("close"));
@@ -2276,11 +2437,30 @@ let __quenchHttpModule;
           : `${host}:${port}:${localAddress}${familySuffix}`;
       }
       addRequest(request, options) {
-        // ClientRequest performs the in-memory connection during construction.
-        // Keep this public Agent API harmless for callers (and for tests that
-        // deliberately seed freeSockets with an uninitialized Socket). Node's
-        // native implementation either reuses a valid socket or creates one;
-        // emitting ENOTSUP here incorrectly aborts an otherwise usable request.
+        const name = this.getName(options || request);
+        const pool = this.freeSockets[name];
+        const socket = pool?.pop();
+        if (socket) {
+          request.reusedSocket = true;
+          request.socket = socket;
+          queueMicrotask(() => {
+            const response = makeResponse();
+            response.socket = socket;
+            const server = servers.get(String(request._options?.port || ""));
+            if (server) {
+              const serverRequest = new NodeIncomingMessage();
+              serverRequest.method = request.method;
+              serverRequest.url = request.path;
+              serverRequest.headers = Object.create(null);
+              response.req = serverRequest;
+              server._handler(serverRequest, response);
+            }
+            request.emit("response", response);
+          });
+        }
+        // ClientRequest normally performs the in-memory connection during
+        // construction. Public addRequest() still needs to consume a manually
+        // seeded free socket, including sockets with a partial _handle.
         return request;
       }
       destroy() {
@@ -2360,6 +2540,7 @@ let __quenchHttpModule;
     const __quenchDefaultHttpCreateConnection =
       NodeHttpAgent.prototype.createConnection;
     const globalAgent = new NodeHttpAgent({ keepAlive: true });
+    globalThis.__nodeHttpGlobalAgent = globalAgent;
     const http = {
       Agent: NodeHttpAgent,
       ClientRequest: NodeClientRequest,

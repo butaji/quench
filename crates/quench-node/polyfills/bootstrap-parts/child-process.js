@@ -8,17 +8,17 @@ const __quenchExec = (command, options, callback) => {
   const settings = options && typeof options === "object" ? options : {};
   const expandedCommand = String(command).replace(
     /\$\{([^}]+)\}/g,
-    (_, name) => settings.env?.[name] ?? process.env[name] ?? "",
+    (_, name) => settings.env?.[name] ?? process.env[name] ?? ""
   );
   const isEncodingFixture = expandedCommand.includes(
-    "test-child-process-exec-encoding",
+    "test-child-process-exec-encoding"
   );
   if (done) {
     queueMicrotask(() =>
       done(
         null,
         isEncodingFixture ? "foo\n" : "",
-        isEncodingFixture ? "bar\n" : "",
+        isEncodingFixture ? "bar\n" : ""
       )
     );
   }
@@ -52,9 +52,8 @@ __quenchChildProcess.execSync = (command, options = {}) => {
   if (literal) output = `${literal[1]}\n`;
   else if (repeated) output = `${repeated[1].repeat(Number(repeated[2]))}\n`;
   const buffer = NodeBuffer.from(output);
-  const maxBuffer = options.maxBuffer === undefined
-    ? 1024 * 1024
-    : options.maxBuffer;
+  const maxBuffer =
+    options.maxBuffer === undefined ? 1024 * 1024 : options.maxBuffer;
   if (Number.isFinite(maxBuffer) && buffer.length > maxBuffer) {
     const error = new Error("spawnSync ENOBUFS");
     error.code = "ENOBUFS";

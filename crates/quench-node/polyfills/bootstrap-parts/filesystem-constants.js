@@ -17,7 +17,7 @@ const __quenchFsConstants = Object.freeze({
   S_IRUSR: 0o400,
   S_IWUSR: 0o200,
   S_IXUSR: 0o100,
-  S_IFDIR: 0o40000,
+  S_IFDIR: 0o40000
 });
 globalThis.require = (specifier) => {
   if (String(specifier).replace(/^node:/, "") === "fs") {
@@ -27,10 +27,10 @@ globalThis.require = (specifier) => {
         Object.assign(
           Object.create(null),
           module.constants,
-          __quenchFsConstants,
+          __quenchFsConstants
         ),
-        { getPrototypeOf: () => null },
-      ),
+        { getPrototypeOf: () => null }
+      )
     );
     return module;
   }

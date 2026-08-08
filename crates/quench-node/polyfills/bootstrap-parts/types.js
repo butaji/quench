@@ -21,7 +21,7 @@ const __quenchUtilTypes = {
   isUint16Array: (value) => value instanceof Uint16Array,
   isUint32Array: (value) => value instanceof Uint32Array,
   isFloat32Array: (value) => value instanceof Float32Array,
-  isFloat64Array: (value) => value instanceof Float64Array,
+  isFloat64Array: (value) => value instanceof Float64Array
 };
 globalThis.require = (specifier) => {
   if (String(specifier).replace(/^node:/, "") === "util/types") {

@@ -5,7 +5,7 @@
     if (stderr.constructor.name !== "Socket") {
       Object.defineProperty(stderr, "constructor", {
         value: function Socket() {},
-        configurable: true,
+        configurable: true
       });
     }
   }

@@ -1,7 +1,6 @@
 const __quenchSpawnValidationRequire = globalThis.require;
-const __quenchSpawnValidationChildProcess = __quenchSpawnValidationRequire(
-  "child_process",
-);
+const __quenchSpawnValidationChildProcess =
+  __quenchSpawnValidationRequire("child_process");
 const __quenchSpawnValidated = __quenchSpawnValidationChildProcess.spawn;
 __quenchSpawnValidationChildProcess.spawn = (...args) => {
   const command = args[0];
@@ -35,11 +34,12 @@ __quenchSpawnValidationChildProcess.spawn = (...args) => {
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
-  const childOptions = third && typeof third === "object"
-    ? third
-    : options && typeof options === "object" && !Array.isArray(options)
-    ? options
-    : undefined;
+  const childOptions =
+    third && typeof third === "object"
+      ? third
+      : options && typeof options === "object" && !Array.isArray(options)
+        ? options
+        : undefined;
   for (const field of ["uid", "gid"]) {
     if (
       childOptions?.[field] !== undefined &&

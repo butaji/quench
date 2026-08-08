@@ -14,7 +14,9 @@ const __quenchZlibToBytes = (input, encoding) => {
   }
   if (input instanceof NodeBuffer) return input;
   if (
-    input && typeof input === "object" && typeof input.toJSON === "function"
+    input &&
+    typeof input === "object" &&
+    typeof input.toJSON === "function"
   ) {
     return __quenchZlibToBytes(input.toJSON(), encoding);
   }
@@ -26,16 +28,17 @@ const __quenchZlibToBytes = (input, encoding) => {
       !(input instanceof ArrayBuffer) &&
       !ArrayBuffer.isView(input))
   ) {
-    const received = input === undefined
-      ? "Received undefined"
-      : input === null
-      ? "Received null"
-      : typeof input === "boolean" || typeof input === "number"
-      ? `Received type ${typeof input} (${String(input)})`
-      : `Received an instance of ${input?.constructor?.name || "Object"}`;
+    const received =
+      input === undefined
+        ? "Received undefined"
+        : input === null
+          ? "Received null"
+          : typeof input === "boolean" || typeof input === "number"
+            ? `Received type ${typeof input} (${String(input)})`
+            : `Received an instance of ${input?.constructor?.name || "Object"}`;
     const error = new TypeError(
       'The "buffer" argument must be of type string or an instance of Buffer, TypedArray, DataView, or ArrayBuffer.' +
-        ` ${received}`,
+        ` ${received}`
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -48,7 +51,7 @@ const __quenchZlibToBytes = (input, encoding) => {
     input.byteLength > input.buffer.byteLength
   ) {
     const error = new RangeError(
-      "Offset is outside the bounds of the DataView",
+      "Offset is outside the bounds of the DataView"
     );
     error.code = "ERR_OUT_OF_RANGE";
     throw error;
@@ -76,12 +79,14 @@ const __quenchZlibAsync = (method, Engine) => (input, options, callback) => {
         null,
         options?.info
           ? {
-            buffer,
-            engine: Engine
-              ? Engine.prototype ? new Engine(options) : new (Engine())(options)
-              : {},
-          }
-          : buffer,
+              buffer,
+              engine: Engine
+                ? Engine.prototype
+                  ? new Engine(options)
+                  : new (Engine())(options)
+                : {}
+            }
+          : buffer
       );
     } catch (error) {
       callback(error);
@@ -92,12 +97,12 @@ const __quenchZlibOptions = (options) =>
   options === undefined
     ? {}
     : typeof options === "object"
-    ? options
-    : { level: options };
+      ? options
+      : { level: options };
 const __quenchValidateZlibConstructorOptions = (
   options,
   allowZeroWindow,
-  compression,
+  compression
 ) => {
   if (options === undefined || options === null) return;
   const checkNumber = (name, value, minimum, maximum) => {
@@ -106,7 +111,7 @@ const __quenchValidateZlibConstructorOptions = (
       const error = new TypeError(
         `The "options.${name}" property must be of type number. Received type ${typeof value} (${
           typeof value === "string" ? `'${value}'` : String(value)
-        })`,
+        })`
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
@@ -115,16 +120,16 @@ const __quenchValidateZlibConstructorOptions = (
       const requirement = !Number.isFinite(value)
         ? "be a finite number"
         : minimum === -1
-        ? "be >= -1 and <= 9"
-        : minimum === 8
-        ? "be >= 8 and <= 15"
-        : minimum === 64
-        ? "be >= 64"
-        : `be >= ${minimum} and <= ${maximum}`;
+          ? "be >= -1 and <= 9"
+          : minimum === 8
+            ? "be >= 8 and <= 15"
+            : minimum === 64
+              ? "be >= 64"
+              : `be >= ${minimum} and <= ${maximum}`;
       const error = new RangeError(
-        `The value of "options.${name}" is out of range. It must ${requirement}. Received ${
-          String(value)
-        }`,
+        `The value of "options.${name}" is out of range. It must ${requirement}. Received ${String(
+          value
+        )}`
       );
       error.code = "ERR_OUT_OF_RANGE";
       throw error;
@@ -144,8 +149,7 @@ const __quenchValidateZlibConstructorOptions = (
         !(options.dictionary instanceof ArrayBuffer)))
   ) {
     const error = new TypeError(
-      `The "options.dictionary" property must be an instance of Buffer, TypedArray, DataView, or ArrayBuffer. Received type ${typeof options
-        .dictionary} ('${String(options.dictionary)}')`,
+      `The "options.dictionary" property must be an instance of Buffer, TypedArray, DataView, or ArrayBuffer. Received type ${typeof options.dictionary} ('${String(options.dictionary)}')`
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -157,7 +161,7 @@ const __quenchZlibStream = (transform, validateOnWrite = false) => {
   const stream = {
     on(event, listener) {
       (listeners.get(event) || listeners.set(event, []).get(event)).push(
-        listener,
+        listener
       );
       return stream;
     },
@@ -188,7 +192,7 @@ const __quenchZlibStream = (transform, validateOnWrite = false) => {
         kind = undefined;
       } else if (kind !== undefined && typeof kind !== "number") {
         const error = new TypeError(
-          'The "kind" argument must be of type number',
+          'The "kind" argument must be of type number'
         );
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
@@ -199,7 +203,8 @@ const __quenchZlibStream = (transform, validateOnWrite = false) => {
         error.code = "ERR_OUT_OF_RANGE";
         throw error;
       } else if (
-        kind !== undefined && stream.__flushKinds &&
+        kind !== undefined &&
+        stream.__flushKinds &&
         !stream.__flushKinds.includes(kind)
       ) {
         const error = new RangeError('The value of "kind" is out of range');
@@ -250,7 +255,7 @@ const __quenchZlibStream = (transform, validateOnWrite = false) => {
         const error = new TypeError(
           `The "level" argument must be of type number. Received type ${typeof level} (${
             typeof level === "string" ? `'${level}'` : String(level)
-          })`,
+          })`
         );
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
@@ -259,7 +264,7 @@ const __quenchZlibStream = (transform, validateOnWrite = false) => {
         const error = new RangeError(
           `The value of "level" is out of range. It must ${
             Number.isFinite(level) ? "be >= -1 and <= 9" : "be a finite number"
-          }. Received ${String(level)}`,
+          }. Received ${String(level)}`
         );
         error.code = "ERR_OUT_OF_RANGE";
         throw error;
@@ -269,7 +274,7 @@ const __quenchZlibStream = (transform, validateOnWrite = false) => {
           const error = new TypeError(
             `The "strategy" argument must be of type number. Received type ${typeof strategy} (${
               typeof strategy === "string" ? `'${strategy}'` : String(strategy)
-            })`,
+            })`
           );
           error.code = "ERR_INVALID_ARG_TYPE";
           throw error;
@@ -280,7 +285,7 @@ const __quenchZlibStream = (transform, validateOnWrite = false) => {
               Number.isFinite(strategy)
                 ? "be >= 0 and <= 4"
                 : "be a finite number"
-            }. Received ${String(strategy)}`,
+            }. Received ${String(strategy)}`
           );
           error.code = "ERR_OUT_OF_RANGE";
           throw error;
@@ -290,20 +295,20 @@ const __quenchZlibStream = (transform, validateOnWrite = false) => {
     },
     readable: true,
     writable: true,
-    _closed: false,
+    _closed: false
   };
   return stream;
 };
 const __quenchZlibConstructor = (
   factory,
   allowZeroWindow = false,
-  compression = false,
+  compression = false
 ) => {
   function ZlibStream(options) {
     __quenchValidateZlibConstructorOptions(
       options,
       allowZeroWindow,
-      compression,
+      compression
     );
     const stream = factory();
     Object.setPrototypeOf(stream, ZlibStream.prototype);
@@ -316,7 +321,7 @@ const __quenchValidateBrotliOptions = (options) => {
     const value = options?.[name];
     if (value !== undefined && (value < 0 || value > 3)) {
       const error = new RangeError(
-        `The value of "options.${name}" is out of range. It must be >= 0 and <= 3. Received ${value}`,
+        `The value of "options.${name}" is out of range. It must be >= 0 and <= 3. Received ${value}`
       );
       error.code = "ERR_OUT_OF_RANGE";
       throw error;
@@ -328,7 +333,8 @@ const __quenchValidateBrotliOptions = (options) => {
   for (const key of Object.keys(params)) {
     const numeric = Number(key);
     if (
-      !Number.isInteger(numeric) || !valid.has(numeric) ||
+      !Number.isInteger(numeric) ||
+      !valid.has(numeric) ||
       String(numeric) !== key
     ) {
       const error = new RangeError(`${key} is not a valid Brotli parameter`);
@@ -361,7 +367,8 @@ const __quenchZlibInflateSync = (input, options) => {
 const __quenchZlibUnzipSync = (input) => {
   const bytes = __quenchZlibToArray(input);
   const gzip = bytes.length > 1 && bytes[0] === 0x1f && bytes[1] === 0x8b;
-  const zlibHeader = bytes.length > 1 &&
+  const zlibHeader =
+    bytes.length > 1 &&
     (bytes[0] & 0x0f) === 8 &&
     ((bytes[0] << 8) + bytes[1]) % 31 === 0;
   const inflate = gzip
@@ -381,8 +388,8 @@ const __quenchZlibUnzipSync = (input) => {
           const end = starts[index + 1] ?? bytes.length;
           output.push(
             NodeBuffer.from(
-              globalThis.__quench_zlib_gunzip(bytes.slice(starts[index], end)),
-            ),
+              globalThis.__quench_zlib_gunzip(bytes.slice(starts[index], end))
+            )
           );
         }
         return __quenchZlibFromArray(NodeBuffer.concat(output));
@@ -405,39 +412,39 @@ const __quenchZlibModule = {
   Deflate: __quenchZlibConstructor(
     () => __quenchZlibStream(__quenchZlibDeflateSync),
     false,
-    true,
+    true
   ),
   Inflate: __quenchZlibConstructor(
     () => __quenchZlibStream(__quenchZlibInflateSync, true),
-    true,
+    true
   ),
   Gzip: __quenchZlibConstructor(
     () => __quenchZlibStream((input) => __quenchZlibModule.gzipSync(input)),
     false,
-    true,
+    true
   ),
   Gunzip: __quenchZlibConstructor(
     () =>
       __quenchZlibStream((input) => __quenchZlibModule.gunzipSync(input), true),
-    true,
+    true
   ),
   DeflateRaw: __quenchZlibConstructor(
     () =>
       __quenchZlibStream((input) => __quenchZlibModule.deflateRawSync(input)),
     false,
-    true,
+    true
   ),
   InflateRaw: __quenchZlibConstructor(
     () =>
       __quenchZlibStream(
         (input) => __quenchZlibModule.inflateRawSync(input),
-        true,
+        true
       ),
-    true,
+    true
   ),
   Unzip: __quenchZlibConstructor(
     () => __quenchZlibStream(__quenchZlibUnzipSync, true),
-    true,
+    true
   ),
   BrotliCompress: __quenchZlibConstructor(() =>
     __quenchZlibStream((input) => __quenchZlibModule.gzipSync(input))
@@ -456,7 +463,7 @@ const __quenchZlibModule = {
     __quenchZlibRawSync(
       input,
       globalThis.__quench_zlib_deflate,
-      options?.encoding,
+      options?.encoding
     ),
   inflateSync: __quenchZlibInflateSync,
   inflateRawSync: (input) =>
@@ -465,7 +472,7 @@ const __quenchZlibModule = {
     __quenchZlibRawSync(
       input,
       globalThis.__quench_zlib_gzip,
-      options?.encoding,
+      options?.encoding
     ),
   gunzipSync: (input, options) => {
     const bytes = __quenchZlibToArray(input);
@@ -498,27 +505,26 @@ const __quenchZlibModule = {
       for (let index = 0; index < starts.length - 1; index++) {
         output.push(
           globalThis.__quench_zlib_gunzip(
-            bytes.slice(starts[index], starts[index + 1]),
-          ),
+            bytes.slice(starts[index], starts[index + 1])
+          )
         );
       }
       return __quenchZlibFromArray(output.flat());
     }
-    return __quenchZlibFromArray(
-      globalThis.__quench_zlib_gunzip(bytes),
-    );
+    return __quenchZlibFromArray(globalThis.__quench_zlib_gunzip(bytes));
   },
   brotliCompressSync: (input, options) => {
     __quenchValidateBrotliOptions(options);
     const quality = options?.params?.[1];
-    const level = quality === undefined
-      ? 9
-      : Math.max(1, Math.min(9, Math.round(9 - Number(quality) * 8 / 11)));
+    const level =
+      quality === undefined
+        ? 9
+        : Math.max(1, Math.min(9, Math.round(9 - (Number(quality) * 8) / 11)));
     return __quenchZlibFromArray(
       globalThis.__quench_zlib_gzip(
         __quenchZlibToArray(input, options?.encoding),
-        level,
-      ),
+        level
+      )
     );
   },
   brotliDecompressSync: (input, options) => {
@@ -526,9 +532,9 @@ const __quenchZlibModule = {
     if (
       options?.rejectGarbageAfterEnd &&
       bytes.length % 2 === 0 &&
-      bytes.slice(0, bytes.length / 2).every((value, index) =>
-        value === bytes[index + bytes.length / 2]
-      )
+      bytes
+        .slice(0, bytes.length / 2)
+        .every((value, index) => value === bytes[index + bytes.length / 2])
     ) {
       const error = new TypeError("Trailing garbage after stream end");
       error.code = "ERR_TRAILING_JUNK_AFTER_STREAM_END";
@@ -538,47 +544,47 @@ const __quenchZlibModule = {
   },
   brotliCompress: __quenchZlibAsync(
     (input, options) => __quenchZlibModule.brotliCompressSync(input, options),
-    () => __quenchZlibModule.BrotliCompress,
+    () => __quenchZlibModule.BrotliCompress
   ),
   brotliDecompress: __quenchZlibAsync(
     (input, options) => __quenchZlibModule.brotliDecompressSync(input, options),
-    () => __quenchZlibModule.BrotliDecompress,
+    () => __quenchZlibModule.BrotliDecompress
   ),
   zstdCompressSync: (input) =>
     __quenchZlibRawSync(input, globalThis.__quench_zlib_gzip),
   zstdDecompressSync: (input) =>
     __quenchZlibRawSync(input, globalThis.__quench_zlib_gunzip),
-  createBrotliCompress: (
-    options,
-  ) => (__quenchValidateBrotliOptions(options),
+  createBrotliCompress: (options) => (
+    __quenchValidateBrotliOptions(options),
     Object.assign(
       __quenchZlibStream((input) =>
         __quenchZlibModule.brotliCompressSync(input, options)
       ),
-      { __flushKinds: [0, 1, 2, 3] },
-    )),
+      { __flushKinds: [0, 1, 2, 3] }
+    )
+  ),
   createBrotliDecompress: (options) =>
     Object.assign(
       __quenchZlibStream(
         (input) => __quenchZlibModule.brotliDecompressSync(input, options),
-        true,
+        true
       ),
-      { __flushKinds: [0, 1, 2, 3] },
+      { __flushKinds: [0, 1, 2, 3] }
     ),
   createZstdCompress: (options) =>
     Object.assign(
       __quenchZlibStream((input) =>
         __quenchZlibModule.zstdCompressSync(input, options)
       ),
-      { __flushKinds: [0, 1, 2] },
+      { __flushKinds: [0, 1, 2] }
     ),
   createZstdDecompress: (options) =>
     Object.assign(
       __quenchZlibStream(
         (input) => __quenchZlibModule.zstdDecompressSync(input, options),
-        true,
+        true
       ),
-      { __flushKinds: [0, 1, 2] },
+      { __flushKinds: [0, 1, 2] }
     ),
   createDeflate: () => __quenchZlibStream(__quenchZlibDeflateSync),
   createInflate: () => __quenchZlibStream(__quenchZlibInflateSync),
@@ -587,7 +593,7 @@ const __quenchZlibModule = {
   createGzip: (options) => {
     if (options?.windowBits === 0) {
       const error = new RangeError(
-        'The value of "options.windowBits" is out of range. It must be >= 9 and <= 15. Received 0',
+        'The value of "options.windowBits" is out of range. It must be >= 9 and <= 15. Received 0'
       );
       error.code = "ERR_OUT_OF_RANGE";
       throw error;
@@ -595,7 +601,7 @@ const __quenchZlibModule = {
     __quenchValidateZlibConstructorOptions(options);
     return Object.assign(
       __quenchZlibStream((input) => __quenchZlibModule.gzipSync(input)),
-      { __flushKinds: [0, 2, 3] },
+      { __flushKinds: [0, 2, 3] }
     );
   },
   createGunzip: () =>
@@ -624,7 +630,7 @@ const __quenchZlibModule = {
     BROTLI_OPERATION_EMIT_METADATA: 3,
     ZSTD_e_continue: 0,
     ZSTD_e_flush: 1,
-    ZSTD_e_end: 2,
+    ZSTD_e_end: 2
   }),
   codes: Object.freeze({
     Z_OK: 0,
@@ -635,12 +641,11 @@ const __quenchZlibModule = {
     Z_DATA_ERROR: -3,
     Z_MEM_ERROR: -4,
     Z_BUF_ERROR: -5,
-    Z_VERSION_ERROR: -6,
+    Z_VERSION_ERROR: -6
   }),
   crc32: (input, seed = 0) => {
-    const bytes = typeof input === "string"
-      ? new TextEncoder().encode(input)
-      : input;
+    const bytes =
+      typeof input === "string" ? new TextEncoder().encode(input) : input;
     if (!bytes || typeof bytes[Symbol.iterator] !== "function") {
       throw new TypeError('The "data" argument must be a string or Buffer');
     }
@@ -695,7 +700,7 @@ const __quenchZlibModule = {
   BROTLI_PARAM_SIZE_HINT: 5,
   BROTLI_PARAM_LARGE_WINDOW: 6,
   BROTLI_PARAM_NPOSTFIX: 7,
-  BROTLI_PARAM_NDIRECT: 8,
+  BROTLI_PARAM_NDIRECT: 8
 };
 const __quenchBufferModule = () => {
   globalThis.__nodeBlobUrls ||= new Map();
@@ -713,7 +718,7 @@ const __quenchBufferModule = () => {
     resolveObjectURL: (value) =>
       typeof value === "string"
         ? globalThis.__nodeBlobUrls.get(value)
-        : undefined,
+        : undefined
   };
   Object.defineProperty(module, "INSPECT_MAX_BYTES", {
     get: () => __nodeInspectMaxBytes,
@@ -729,7 +734,7 @@ const __quenchBufferModule = () => {
         throw error;
       }
       __nodeInspectMaxBytes = value;
-    },
+    }
   });
   return module;
 };
@@ -742,14 +747,14 @@ const __quenchCommonChildProcess = {
         (value) =>
           typeof value === "string" &&
           value.includes("process.mainModule") &&
-          value.includes("vm.runInNewContext"),
+          value.includes("vm.runInNewContext")
       );
     if (source) {
       const main = source.match(
-        /process\.mainModule\s*=\s*\{\s*filename:\s*("[^"]+")/,
+        /process\.mainModule\s*=\s*\{\s*filename:\s*("[^"]+")/
       )?.[1];
       const callSite = source.match(
-        /vm\.runInNewContext[\s\S]*?filename:\s*("[^"]+")/,
+        /vm\.runInNewContext[\s\S]*?filename:\s*("[^"]+")/
       )?.[1];
       const mainPath = main ? JSON.parse(main) : "";
       const callPath = callSite ? JSON.parse(callSite) : "";
@@ -761,7 +766,7 @@ const __quenchCommonChildProcess = {
         status: 0,
         signal: null,
         stdout: NodeBuffer.from(""),
-        stderr: NodeBuffer.from(stderr),
+        stderr: NodeBuffer.from(stderr)
       };
     }
     globalThis.__nodeCompileCacheRuns =
@@ -772,60 +777,58 @@ const __quenchCommonChildProcess = {
       status: 0,
       signal: null,
       stdout: NodeBuffer.from(""),
-      stderr: NodeBuffer.from(message),
+      stderr: NodeBuffer.from(message)
     };
     if (typeof expectations?.stderr === "string") {
       result.stderr = NodeBuffer.from(expectations.stderr);
     }
     return result;
-  },
+  }
 };
 const __quenchCommonFixtures = {
   fixturesDir: `${globalThis.__quench_cwd}/tests/node/test/fixtures`,
   path: (...parts) =>
     globalThis.__nodePath.join(
       `${globalThis.__quench_cwd}/tests/node/test/fixtures`,
-      ...parts,
+      ...parts
     ),
   fileURL: (...parts) =>
     globalThis.__nodeUrlModule.pathToFileURL(
       globalThis.__nodePath.join(
         `${globalThis.__quench_cwd}/tests/node/test/fixtures`,
-        ...parts,
-      ),
+        ...parts
+      )
     ),
   readSync: (file, encoding) =>
     globalThis.__nodeFs.readFileSync(
       globalThis.__nodePath.join(
         `${globalThis.__quench_cwd}/tests/node/test/fixtures`,
-        file,
+        file
       ),
-      encoding,
+      encoding
     ),
   readKey: (file = "key.pem", encoding) =>
     globalThis.__nodeFs.readFileSync(
       globalThis.__nodePath.join(
         `${globalThis.__quench_cwd}/tests/node/test/fixtures`,
         "keys",
-        file,
+        file
       ),
-      encoding,
+      encoding
     ),
-  utf8TestText: "The quick brown fox jumps over the lazy dog.\n",
+  utf8TestText: "The quick brown fox jumps over the lazy dog.\n"
 };
 let __quenchCommonFsDirectory = 0;
 const __quenchCommonFs = {
   nextdir: (dirname) =>
     globalThis.__nodeTmpdir.resolve(
-      dirname || `copy_%${++__quenchCommonFsDirectory}`,
+      dirname || `copy_%${++__quenchCommonFsDirectory}`
     ),
   assertDirEquivalent: (left, right) => {
     const collect = (directory, entries) => {
-      for (
-        const entry of globalThis.__nodeFs.readdirSync(directory, {
-          withFileTypes: true,
-        })
-      ) {
+      for (const entry of globalThis.__nodeFs.readdirSync(directory, {
+        withFileTypes: true
+      })) {
         if (entry.isDirectory()) {
           collect(globalThis.__nodePath.join(directory, entry.name), entries);
         }
@@ -840,8 +843,8 @@ const __quenchCommonFs = {
       throw new Error("directory entries differ");
     }
     for (const entry of leftEntries) {
-      const match = rightEntries.find((candidate) =>
-        candidate.name === entry.name
+      const match = rightEntries.find(
+        (candidate) => candidate.name === entry.name
       );
       if (!match) throw new Error(`entry ${entry.name} not copied`);
       if (
@@ -854,28 +857,26 @@ const __quenchCommonFs = {
     }
   },
   collectEntries: (directory, entries = []) => {
-    for (
-      const entry of globalThis.__nodeFs.readdirSync(directory, {
-        withFileTypes: true,
-      })
-    ) {
+    for (const entry of globalThis.__nodeFs.readdirSync(directory, {
+      withFileTypes: true
+    })) {
       if (entry.isDirectory()) {
         __quenchCommonFs.collectEntries(
           globalThis.__nodePath.join(directory, entry.name),
-          entries,
+          entries
         );
       }
       entries.push(entry);
     }
     return entries;
-  },
+  }
 };
 const __quenchCommonCryptoPem = (label, cipher) => {
   const header = cipher
     ? `\\nProc-Type: 4,ENCRYPTED\\nDEK-Info: ${cipher},[^\\n]+\\n`
     : "";
   return new RegExp(
-    `^\\-\\-\\-\\-\\-BEGIN ${label}\\-\\-\\-\\-\\-${header}\\n([a-zA-Z0-9\\+/=]{64}\\n)*[a-zA-Z0-9\\+/=]{1,64}\\n\\-\\-\\-\\-\\-END ${label}\\-\\-\\-\\-\\-\\n$`,
+    `^\\-\\-\\-\\-\\-BEGIN ${label}\\-\\-\\-\\-\\-${header}\\n([a-zA-Z0-9\\+/=]{64}\\n)*[a-zA-Z0-9\\+/=]{1,64}\\n\\-\\-\\-\\-\\-END ${label}\\-\\-\\-\\-\\-\\n$`
   );
 };
 const __quenchCommonCrypto = {
@@ -885,11 +886,12 @@ const __quenchCommonCrypto = {
   assertApproximateSize: (key, expected) => {
     const length = key?.length;
     if (
-      typeof length !== "number" || length < Math.floor(expected * 0.9) ||
+      typeof length !== "number" ||
+      length < Math.floor(expected * 0.9) ||
       length > Math.ceil(expected * 1.1)
     ) {
       throw new Error(
-        `Key length ${length} is outside expected size ${expected}`,
+        `Key length ${length} is outside expected size ${expected}`
       );
     }
   },
@@ -897,15 +899,16 @@ const __quenchCommonCrypto = {
     if (
       privateKey &&
       privateKey.passphrase === undefined &&
-      ((privateKey.key instanceof NodeBuffer) ||
+      (privateKey.key instanceof NodeBuffer ||
         (typeof privateKey === "string" &&
           privateKey.includes("Proc-Type: 4,ENCRYPTED")))
     ) {
-      const error = typeof privateKey === "string"
-        ? new Error(
-          "error:07880109:common libcrypto routines::interrupted or cancelled",
-        )
-        : new TypeError("Passphrase required for encrypted key");
+      const error =
+        typeof privateKey === "string"
+          ? new Error(
+              "error:07880109:common libcrypto routines::interrupted or cancelled"
+            )
+          : new TypeError("Passphrase required for encrypted key");
       if (error instanceof TypeError) error.code = "ERR_MISSING_PASSPHRASE";
       throw error;
     }
@@ -919,7 +922,7 @@ const __quenchCommonCrypto = {
   pkcs8Exp: __quenchCommonCryptoPem("PRIVATE KEY"),
   pkcs8EncExp: __quenchCommonCryptoPem("ENCRYPTED PRIVATE KEY"),
   sec1Exp: __quenchCommonCryptoPem("EC PRIVATE KEY"),
-  sec1EncExp: (cipher) => __quenchCommonCryptoPem("EC PRIVATE KEY", cipher),
+  sec1EncExp: (cipher) => __quenchCommonCryptoPem("EC PRIVATE KEY", cipher)
 };
 class __quenchCountdown {
   constructor(limit, callback) {

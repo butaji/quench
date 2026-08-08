@@ -9,8 +9,8 @@ const __quenchHttp2 = {
   connect: () => __quenchHttp2Unsupported("http2.connect"),
   constants: Object.freeze({
     NGHTTP2_SESSION_SERVER: 0x01,
-    NGHTTP2_SESSION_CLIENT: 0x02,
-  }),
+    NGHTTP2_SESSION_CLIENT: 0x02
+  })
 };
 globalThis.require = (specifier) =>
   String(specifier).replace(/^node:/, "") === "http2"
