@@ -127,6 +127,8 @@ const __quenchIsFinishedStream = (stream) =>
     typeof stream.read === "function" ||
     typeof stream.write === "function" ||
     (typeof stream.once === "function" && typeof stream.emit === "function") ||
+    typeof stream.getReader === "function" ||
+    typeof stream.getWriter === "function" ||
     stream._readableState ||
     stream._writableState);
 const __quenchValidateFinishedStream = (stream, options, callback) => {
@@ -179,6 +181,19 @@ const __quenchFinishedStream = (stream, options, callback) => {
   }
   if (options === null) options = {};
   __quenchValidateFinishedStream(stream, options, callback);
+  if (typeof stream.getReader === "function") {
+    queueMicrotask(() => callback(stream._error));
+    return () => undefined;
+  }
+  if (typeof stream.getWriter === "function") {
+    if (stream._closed || stream._error) {
+      queueMicrotask(() => callback(stream._error));
+    } else {
+      stream._finishWaiters ||= [];
+      stream._finishWaiters.push(() => callback(stream._error));
+    }
+    return () => undefined;
+  }
   let active = true;
   let finishSeen = false;
   let endSeen = false;
