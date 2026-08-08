@@ -15,17 +15,20 @@ TEST262_STAGE=24 TEST262_DIGEST=1 TEST262_JSON=1 cargo test -p quench-runtime \
 
 ## Landed fixes
 
-- Destructuring LHS (`for (let [x] in obj)`): for-in now supports destructuring
-  via per-iteration binding (mirrors for-of). let/const get a fresh per-iteration
-  env; var patterns declare identifiers without destructuring the object; each
-  key is destructured per iteration. (28 → 21)
-- Completion value: `eval_for_in` returns the body value V on normal end and on
-  break (UpdateEmpty). (21 → 13)
+- Destructuring LHS (`for (let [x] in obj)`): per-iteration binding (mirrors
+  for-of). (28 → 21)
+- Completion value: returns body value V on end/break. (21 → 13)
+- Correct key enumeration: prototype-chain walk, integer indices ascending
+  then string keys in creation order, non-enumerable own props shadow
+  prototype props. Object/Array.prototype methods installed non-enumerable;
+  Object.defineProperty preserves absent-field attributes;
+  Object.create applies descriptors. (13 → 10)
 
 ## Top remaining clusters
 
 | Cluster | Count | Fix direction |
 |---------|-------|---------------|
-| Built-in property enumerability | 5 (`order-*`, Sputnik `A6`) | built-in prototype/static methods are installed enumerable (spec: non-enumerable); blocks enabling the correct for-in prototype-chain walk |
-| `Expected ReferenceError to be thrown` (TDZ) | 5 | for-in `let` binding must be in TDZ when the object expression is evaluated |
-| Sputnik `A7`, `resizable-buffer`, `head-var-bound-names-in-stmt` | 3 | for-in edge cases |
+| `Expected ReferenceError` (TDZ) | 5 | for-in `let` binding must be in TDZ when the object expression is evaluated |
+| Sputnik `A3` | 1 | strict-eval scoping of the for-in iterable assignment |
+| Sputnik `A7_T2` | 1 | live enumeration (deletion during iteration must be reflected) |
+| `resizable-buffer`, `head-var-bound-names-in-stmt` | 2 | for-in edge cases |
