@@ -555,3 +555,8 @@ Focused stage 2113 adds Node-compatible validation for
 `Module.setSourceMapsSupport()`, including the boolean options `nodeModules`
 and `generatedCode`. The focused contract and upstream
 `test-module-setsourcemapssupport.js` both pass.
+
+Focused stage 2114 restores legacy bare-package resolution: a package
+directory without `package.json` now falls back to `index.js` and related
+extensions. The focused contract and upstream
+`test-module-circular-symlinks.js` both pass through the package lookup path.
