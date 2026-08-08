@@ -12,6 +12,12 @@ TEST262_STAGE=25 TEST262_DIGEST=1 TEST262_JSON=1 cargo test -p quench-runtime \
 > accurate 0-current coverage check, run the digest with
 > `TEST262_TIMEOUT_SECS=60` (stages 1 and 9 then read 100%).
 
+> Sequencing: `tasks/index.json` is monotonic — stages 0–24 `done`, stage 25
+> `pending` (current), stages 26+ `pending`. Stages 31 (return), 33 (throw), 42
+> (statementList), and 57 (global) were completed early and already pass 100%;
+> they are marked `pending` to keep the frontier sequential and are re-confirmed
+> `done` when the run reaches them in order.
+
 ## Progress log
 
 | Date | Notes |

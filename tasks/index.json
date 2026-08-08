@@ -207,7 +207,7 @@
       "id": 31,
       "path": "test/language/statements/return",
       "tests": 16,
-      "status": "done"
+      "status": "pending"
     },
     {
       "id": 32,
@@ -219,7 +219,7 @@
       "id": 33,
       "path": "test/language/statements/throw",
       "tests": 14,
-      "status": "done"
+      "status": "pending"
     },
     {
       "id": 34,
@@ -273,7 +273,7 @@
       "id": 42,
       "path": "test/language/statementList",
       "tests": 80,
-      "status": "done"
+      "status": "pending"
     },
     {
       "id": 43,
@@ -363,7 +363,7 @@
       "id": 57,
       "path": "test/built-ins/global",
       "tests": 29,
-      "status": "done"
+      "status": "pending"
     },
     {
       "id": 58,
