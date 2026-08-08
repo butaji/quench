@@ -823,6 +823,8 @@ pass.
 - Stage 2211 avoids inherited `hostname` access when `http.request()` receives null-prototype options, matching Node's own-property handling.
 - The null-prototype upstream fixture now advances past inherited-option access to a later response callback-count discrepancy.
 - Stage 2212 reproduces two sequential requests, including a null-prototype options object, to isolate the remaining response callback gap.
+- Stage 2213 emits the client request's `socket` event with its in-memory socket so timeout/listener consumers can observe it.
+- Upstream `test-http-client-set-timeout-after-end.js` now passes with the socket event and zero-timeout listener behavior.
 - Upstream `test-http-hostname-typechecking.js` now passes with synchronous host-option validation.
 - Stage 2207 supports `new http.ClientRequest(serverAddress, callback)` by routing it through the same in-memory request path as `http.request()`.
 - Upstream `test-http-client-input-function.js` now passes with the `ClientRequest` constructor path.
