@@ -2,6 +2,7 @@
 const __quenchOriginalRequireWithDgram = globalThis.require;
 const __quenchDgramStateSymbol = Symbol.for("quench.dgram.state");
 const __quenchDgramBoundPorts = new Set();
+const __quenchDgramClosedPorts = new Set();
 const __quenchDgramSockets = new Set();
 let __quenchDgramNextPort = 40000;
 const __quenchDgramTypeDetail = (value) => {
@@ -82,6 +83,7 @@ const __quenchDgramBind = (socket, type, port, address, callback) => {
   __quenchDgramSockets.add(socket);
   socket._bindPending = true;
   __quenchDgramBoundPorts.add(resolvedPort);
+  __quenchDgramClosedPorts.delete(resolvedPort);
   globalThis.__quenchDgramActiveFds.add(resolvedPort);
   socket[__quenchDgramStateSymbol].handle.fd = resolvedPort;
   globalThis.__quenchDgramUdpFds.add(resolvedPort);
@@ -375,7 +377,12 @@ const __quenchDgramSend = (socket, message, ...args) => {
         size: deliveredPayload.byteLength
       });
     }
-    if ((target || socket._implicitSend) && typeof callback === "function") {
+    if (
+      (target ||
+        (socket._implicitSend &&
+          !__quenchDgramClosedPorts.has(destinationPort))) &&
+      typeof callback === "function"
+    ) {
       callback(null, length);
       socket._implicitSend = false;
     }
@@ -501,7 +508,10 @@ const __quenchDgramClose = (socket, callback) => {
       socket[__quenchDgramStateSymbol].handle.fd
     );
   }
-  if (socket._address) __quenchDgramBoundPorts.delete(socket._address.port);
+  if (socket._address) {
+    __quenchDgramBoundPorts.delete(socket._address.port);
+    __quenchDgramClosedPorts.add(socket._address.port);
+  }
   if (typeof callback === "function") callback();
   queueMicrotask(() => socket.emit("close"));
   return socket;
@@ -582,6 +592,7 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
             __quenchDgramNextPort++
         };
         __quenchDgramBoundPorts.add(socket._address.port);
+        __quenchDgramClosedPorts.delete(socket._address.port);
         setImmediate(() => {
           callback?.call(socket);
           socket.emit("listening");
@@ -684,6 +695,7 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
       socket._bound = true;
       __quenchDgramSockets.add(socket);
       __quenchDgramBoundPorts.add(resolvedPort);
+      __quenchDgramClosedPorts.delete(resolvedPort);
       socket._address = {
         address,
         family: type === "udp6" ? "IPv6" : "IPv4",
@@ -740,6 +752,7 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
         __quenchDgramSockets.add(socket);
         const localPort = __quenchDgramNextPort++;
         __quenchDgramBoundPorts.add(localPort);
+        __quenchDgramClosedPorts.delete(localPort);
         socket._address = {
           address: type === "udp6" ? "::" : "0.0.0.0",
           family: type === "udp6" ? "IPv6" : "IPv4",
