@@ -102,7 +102,18 @@ const __quenchValidatePipeline = (pipeline, args) => {
     error.code = "ERR_MISSING_ARGS";
     throw error;
   }
-  const result = pipeline(...args);
+  const streams = args.slice(0, -1).map((stream) => {
+    if (!stream || typeof stream !== "object") return stream;
+    const readable = typeof stream.getReader === "function";
+    const writable = typeof stream.getWriter === "function";
+    if (!readable && !writable) return stream;
+    const duplex = globalThis.require("stream").Duplex;
+    return duplex.fromWeb({
+      readable: readable ? stream : undefined,
+      writable: writable ? stream : undefined
+    });
+  });
+  const result = pipeline(...streams, args[args.length - 1]);
   return result === undefined ? args[args.length - 2] : result;
 };
 const __quenchIsFinishedStream = (stream) =>
