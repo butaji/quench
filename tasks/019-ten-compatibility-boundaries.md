@@ -266,6 +266,10 @@ the complete file. The runtime's public async `fstat` implementation performs
 an additional internal invocation, so its function-entry count differs from
 Node's single `common.mustCall` callback contract; this remains an event-loop
 callback identity issue rather than a missing read-data path.
+The native whole-file read was then changed from an unbounded `read()` loop to
+size-bounded `fstat`/`pread`, eliminating a real-provider hang after writes.
+The authoritative handle fixture now advances from `Callback 0` to
+`Callback 1`; the remaining callback is still the zero-stat metadata contract.
 
 Stage 2378 passes the four basic stream `destroy()` contracts for readable and
 writable streams, including implicit `AbortError`, explicit error messages,
