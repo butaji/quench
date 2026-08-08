@@ -901,6 +901,8 @@ const __quenchApplyFinalModule01 = (name, originalRequire) => {
   }
   return result;
 };
+globalThis.__quenchFinalizeModule = (name, originalRequire, result) =>
+  __quenchApplyFinalModule01(name, originalRequire, result);
 if (globalThis.require) {
   const originalRequire = globalThis.require;
   const wrappedRequire = (name) =>
