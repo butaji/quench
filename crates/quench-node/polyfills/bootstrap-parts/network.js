@@ -303,7 +303,7 @@ const __quenchNetModule = {
   setDefaultAutoSelectFamily: () => undefined,
   getDefaultAutoSelectFamilyAttemptTimeout: () => 250,
   Socket: class Socket extends globalThis.__nodeEventEmitter {
-    constructor() {
+    constructor(options = {}) {
       super();
       this.readable = true;
       this.writable = true;
@@ -312,7 +312,8 @@ const __quenchNetModule = {
       this._bufferSize = 0;
       this.bytesRead = 0;
       this.bytesWritten = 0;
-      this._handle = {};
+      this._handle = options?.handle || {};
+      this._noDelay = false;
       this._nativeId = 0;
       this._nativeConnected = false;
       this._nativeEnded = false;
@@ -342,7 +343,14 @@ const __quenchNetModule = {
       });
       return destination;
     }
-    setNoDelay() {
+    setNoDelay(enable = true) {
+      const value = Boolean(enable);
+      if (value !== this._noDelay) {
+        this._noDelay = value;
+        if (typeof this._handle?.setNoDelay === "function") {
+          this._handle.setNoDelay(value);
+        }
+      }
       return this;
     }
     setKeepAlive() {
