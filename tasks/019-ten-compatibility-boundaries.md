@@ -751,3 +751,16 @@ and advances to `Callback 2`, the separate wrapper/PassThrough readable-end
 sequence in its second block. Backpressure stages 442, 1213, 1859, 2253, 2343,
 2442, 2445, and 2449–2451 pass, as do Rust tests and the Ajv, debug, Chalk,
 `ms`, Prettier, and process-entry application gates.
+
+Stage 2452 completes the three-block `test-stream-pipe-flow.js` boundary.
+PassThrough now defers readable `end` while output remains buffered and emits it
+after the final `read()` returns. Explicit `Readable.resume()` also consumes
+chunks when no `data` listener is installed, matching Node's flowing/discarding
+mode instead of leaving an unread buffer that suppresses `end`. The focused
+eight-chunk wrapper contract and the complete authoritative upstream fixture
+both pass. Stage 1873 was updated to the local Node CLI's matching state
+transition: `readableEnded` remains false until its buffered final chunk is
+read, then becomes true on the following turn. The separate upstream
+`test-stream-readable-pause-and-resume.js` fixture still reports `Callback 2`,
+while `test-stream-readable-no-unneeded-readable.js` passes; no broader
+pause/resume claim is made.
