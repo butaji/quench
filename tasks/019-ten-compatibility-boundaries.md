@@ -978,3 +978,12 @@ The maintained compose and Duplex lifecycle cluster passes. Authoritative
 to the final Web `TransformStream` composition case, whose Web endpoint shape
 is tracked separately. Rust and representative application stages remain
 green.
+
+Stage 2474 normalizes a Web `TransformStream` stage through the existing
+`Duplex.fromWeb()` adapter and completes that adapter's writable `_final` by
+closing its Web writer. A Node readable can now pipe through the Web transform,
+deliver all chunks, and observe `done` as Node EOF. The focused Web-tail compose
+stage and maintained Web pipeline/fromWeb/identity cluster pass. Authoritative
+`test-stream-compose.js` now reaches deferred lifecycle assertions and reports
+the earlier two-Transform output as empty; that general composed-flow boundary
+remains separate. Rust and representative application stages remain green.

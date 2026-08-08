@@ -54,6 +54,12 @@ const __quenchComposeStreams = (streams, result) => {
       "ERR_MISSING_ARGS"
     );
   }
+  streams = streams.map((stage) => {
+    if (stage?.readable?.getReader && stage?.writable?.getWriter) {
+      return result.Duplex.fromWeb(stage, { objectMode: true });
+    }
+    return stage;
+  });
   for (let index = 0; index < streams.length; index++) {
     const stage = streams[index];
     if (typeof stage === "function") continue;
