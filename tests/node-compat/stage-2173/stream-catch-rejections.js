@@ -9,11 +9,13 @@ const writable = new Writable({
   }
 });
 
+let drains = 0;
 writable.write("hello", () => writable.write("world"));
 writable.on("error", (actual) => {
   if (actual !== error) throw new Error("wrong rejection error");
   if (!writable.destroyed) throw new Error("writable was not destroyed");
 });
 writable.on("drain", async () => {
+  drains++;
   throw error;
 });
