@@ -780,3 +780,4 @@ pass.
 - Stage 2175: add the exported `stream.destroy()` helper's default `AbortError` behavior while preserving direct stream `.destroy()` semantics.
 - Stage 2176: verify the initial writable destroy lifecycle cases: close-only destruction and destruction from inside `_write()` with error propagation. The complete upstream writable-destroy matrix still has later lifecycle failures.
 - Stage 2177: implement `Writable.prototype._undestroy()` state restoration so an auto-destroyed writable can run `final` and finish again, matching the upstream regression.
+- Stage 2178: verify custom writable `_destroy()` callbacks can swallow the original destroy error while still emitting `close`, matching the upstream writable-destroy matrix.
