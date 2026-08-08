@@ -228,16 +228,18 @@ pub fn take_iterator_step(
     env: &Rc<RefCell<Environment>>,
 ) -> Result<(Value, bool), JsError> {
     if iterator.borrow().kind == ObjectKind::Array {
-        let result = {
+        let (result, exhausted) = {
             let borrowed = iterator.borrow();
             if *index < borrowed.elements.len() {
-                Some(borrowed.elements[*index].clone())
+                (Some(borrowed.elements[*index].clone()), false)
             } else {
-                borrowed.properties.get(&index.to_string()).cloned()
+                (
+                    borrowed.properties.get(&index.to_string()).cloned(),
+                    *index >= borrowed.elements.len(),
+                )
             }
         };
         *index += 1;
-        let exhausted = *index >= iterator.borrow().elements.len();
         return Ok((result.unwrap_or(Value::Undefined), exhausted));
     }
     let next_value = iterator.borrow().get("next");
