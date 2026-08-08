@@ -697,3 +697,9 @@ Focused stage 2152 verifies `Duplex.toWeb(..., { readableType: "bytes" })`
 with a BYOB reader and writable-side callback. The contract passes, isolating
 the remaining upstream mismatch to repeated conversion/deprecation sequencing
 rather than byte reads themselves.
+
+Focused stage 2153 verifies repeated `Duplex.toWeb()` conversion after the
+duplex has ended, including immediate readable closure. Focused stage 2154
+fixes Duplex readable/writable side isolation so writable chunks are not
+emitted as readable `data`. Both contracts pass; upstream Duplex testing now
+advances beyond its initial exit-state assertion to a later missing callback.
