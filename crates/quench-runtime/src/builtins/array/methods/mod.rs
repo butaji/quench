@@ -20,9 +20,7 @@ pub use mutation::{get_this_array_obj, set_elements};
 pub use accessors::{proto_at, proto_concat, proto_join, proto_slice, proto_to_string};
 pub use mutation::{proto_pop, proto_push, proto_shift, proto_splice, proto_unshift};
 pub use rearrange::{proto_reverse, proto_sort};
-pub use search::{
-    proto_find, proto_find_last, proto_find_last_index, proto_includes,
-};
+pub use search::{proto_find, proto_find_last, proto_find_last_index};
 pub use transformation::{
     proto_every, proto_filter, proto_flat, proto_flat_map, proto_for_each, proto_map, proto_reduce,
     proto_some,
@@ -82,8 +80,8 @@ fn setup_accessor_methods(m: &impl Fn(&str, fn(Vec<Value>) -> Result<Value, crat
 }
 
 fn setup_search_methods(m: &impl Fn(&str, fn(Vec<Value>) -> Result<Value, crate::JsError>)) {
-    // Array.prototype.indexOf is self-hosted in JS (builtins/core/array_statics.js).
-    m("includes", proto_includes);
+    // Array.prototype.indexOf/includes are self-hosted in JS
+    // (builtins/core/array_statics.js).
     m("find", proto_find);
     m("findLast", proto_find_last);
     m("findLastIndex", proto_find_last_index);
