@@ -1563,6 +1563,22 @@ let __quenchHttpModule;
         return destination;
       };
       response.flushHeaders = () => response;
+      response.addTrailers = (trailers) => {
+        if (trailers === null || typeof trailers !== "object") {
+          const error = new TypeError(
+            "The trailers argument must be an object"
+          );
+          error.code = "ERR_INVALID_ARG_TYPE";
+          throw error;
+        }
+        response._trailers ||= Object.create(null);
+        for (const [key, value] of Object.entries(trailers)) {
+          response._trailers[String(key).toLowerCase()] = Array.isArray(value)
+            ? value.join(", ")
+            : String(value);
+        }
+        return response;
+      };
       response.writeEarlyHints = (hints, callback) => {
         if (hints === null || typeof hints !== "object") {
           const error = new TypeError('The "hints" argument must be an object');
@@ -1735,10 +1751,15 @@ let __quenchHttpModule;
                 : output;
             response.socket.write(payload, written);
           }
-          const terminator =
-            response.headers["transfer-encoding"] === "chunked"
-              ? NodeBuffer.from("0\r\n\r\n")
-              : NodeBuffer.alloc(0);
+          let terminator = NodeBuffer.alloc(0);
+          if (response.headers["transfer-encoding"] === "chunked") {
+            const trailerLines = Object.entries(response._trailers || {})
+              .map(([key, value]) => `${key}: ${value}`)
+              .join("\r\n");
+            terminator = NodeBuffer.from(
+              trailerLines ? `0\r\n${trailerLines}\r\n\r\n` : "0\r\n\r\n"
+            );
+          }
           response.socket.write(terminator, written);
           return response;
         }
