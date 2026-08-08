@@ -40,8 +40,8 @@ own commit.
   a non-half-open peer EOF; stage 2347 bridges raw in-memory `net` connections
   to listening HTTP servers and verifies the server-side connection event.
   Stage 2348 adds a raw HTTP/1.1 GET round trip with request headers and
-  serialized response headers/body. Request bodies, multiple keep-alive
-  requests, and half-close parsing remain queued.
+  serialized response headers/body. Stage 2349 adds two pipelined keep-alive
+  requests on one socket. Request bodies and half-close parsing remain queued.
 - Item 6: partially improved. Stage 2339 verifies two concurrent HTTP requests
   with independent response bodies and clean shutdown; upstream multi-request
   failures remain specific to harness/agent interactions.
