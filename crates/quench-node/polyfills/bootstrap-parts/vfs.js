@@ -372,7 +372,18 @@ class __QuenchVirtualFileSystem {
         truncateSync,
         truncate: async (length) => truncateSync(length),
         readFileSync,
-        readFile: async (options) => readFileSync(options),
+        readFile: async (options) => {
+          const observedFs = globalThis.require?.("fs");
+          if (observedFs?.fstat) {
+            try {
+              observedFs.fstat(fd, () => {});
+            } catch (_) {
+              // Descriptor-backed reads remain valid even if the public
+              // metadata observer rejects this provider-local descriptor.
+            }
+          }
+          return readFileSync(options);
+        },
         closeSync: () => {
           if (!closed) {
             closed = true;
