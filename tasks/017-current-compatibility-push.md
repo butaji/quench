@@ -827,6 +827,7 @@ pass.
 - Upstream `test-http-client-set-timeout-after-end.js` now passes with the socket event and zero-timeout listener behavior.
 - Stage 2214 tracks socket timeout values across request creation, connect, and `setTimeout()` rescheduling.
 - The upstream timeout fixture now reaches a duplicate-timeout callback-count discrepancy after socket timeout scheduling is aligned.
+- Upstream `test-http-client-set-timeout.js` now passes after `ClientRequest.destroy()` cancels its socket timer.
 - Stage 2217 emits response-level `timeout` events when `IncomingMessage.setTimeout()` configures its socket timer.
 - Stage 2218 supports the `server.listen(callback)` overload with an ephemeral port.
 - Upstream response-timeout testing now advances past the listen overload to a later response-timeout callback discrepancy.
