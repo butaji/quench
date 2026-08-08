@@ -531,6 +531,8 @@ green; ESLint is still a separate unresolved application boundary.
 Stage 2438 registers the previously missing `node:sea` module surface. It
 reports `isSea: false` in ordinary executions and exposes Node-shaped asset,
 code-cache, and snapshot methods that fail explicitly with `ERR_NOT_SUPPORTED`.
+The compatibility inventory now normalizes `node:` aliases when matching
+registered modules, so the `node:sea` registration is represented accurately.
 
 Stage 2423 makes `RealFSProvider` access dispatch to the host filesystem before
 the virtual-entry lookup. Existing and missing-path promise access now pass in

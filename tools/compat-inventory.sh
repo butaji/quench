@@ -50,7 +50,9 @@ for (const name of canonicalModules) {
     moduleCandidates.add(name);
   }
 }
-const registeredModules = canonicalModules.filter((name) => moduleCandidates.has(name));
+const registeredModules = canonicalModules.filter((name) =>
+  moduleCandidates.has(name) || moduleCandidates.has(normalizeModule(name))
+);
 const runtimeMissingModules = canonicalModules.filter((name) => quenchProbe[name]?.status !== "available");
 const moduleStatus = Object.fromEntries(canonicalModules.map((name) => [name, registeredModules.includes(name) ? "registered" : "missing"]));
 const experimentalStatus = Object.fromEntries(experimentalModules.map((name) => [name, {
