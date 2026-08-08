@@ -1569,6 +1569,38 @@ Object.defineProperty(NodeReadableCompat, "from", {
   configurable: true,
   writable: true
 });
+const __nodePipeline = (...args) => {
+  const callback = args.pop();
+  const streams = args.map((stream, index) => {
+    if (
+      index === 0 &&
+      !stream?.pipe &&
+      (typeof stream === "string" ||
+        stream?.[Symbol.iterator] ||
+        stream?.[Symbol.asyncIterator])
+    ) {
+      return NodeReadable.from(stream);
+    }
+    return stream;
+  });
+  let settled = false;
+  const complete = (error) => {
+    if (settled) return;
+    settled = true;
+    callback(error);
+  };
+  for (const stream of streams) stream.once?.("error", complete);
+  for (let index = 0; index + 1 < streams.length; index++) {
+    streams[index].pipe?.(streams[index + 1]);
+  }
+  const destination = streams[streams.length - 1];
+  if (destination.writable !== false) {
+    destination.once?.("finish", () => complete());
+  } else {
+    destination.once?.("end", () => complete());
+  }
+  return destination;
+};
 const __nodeStreamExports = {
   Stream: NodeStream,
   Readable: NodeReadableCompat,
@@ -1587,6 +1619,7 @@ const __nodeStreamExports = {
   },
   Duplex: NodeDuplexCompat,
   duplexPair: __nodeDuplexPairFactory,
+  pipeline: __nodePipeline,
   Transform: NodeTransform,
   PassThrough: NodePassThrough,
   isDisturbed: (stream) => Boolean(stream?._readableState?.dataEmitted),
