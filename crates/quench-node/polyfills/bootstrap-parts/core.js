@@ -1648,7 +1648,15 @@ let __quenchHttpModule;
               `HTTP/1.1 ${response.statusCode} ${response.statusMessage}\r\n${headers}\r\n\r\n`
             );
           }
-          return response.socket.write(value, callback);
+          const payload =
+            response.headers["transfer-encoding"] === "chunked"
+              ? NodeBuffer.concat([
+                  NodeBuffer.from(`${value.length.toString(16)}\r\n`),
+                  value,
+                  NodeBuffer.from("\r\n")
+                ])
+              : value;
+          return response.socket.write(payload, callback);
         }
         queueMicrotask(() => {
           if (value.length) response.__emitData(value);
@@ -1716,8 +1724,22 @@ let __quenchHttpModule;
             writes--;
             if (writes === 0) finish();
           };
-          if (output.length) response.socket.write(output, written);
-          response.socket.write(NodeBuffer.alloc(0), written);
+          if (output.length) {
+            const payload =
+              response.headers["transfer-encoding"] === "chunked"
+                ? NodeBuffer.concat([
+                    NodeBuffer.from(`${output.length.toString(16)}\r\n`),
+                    output,
+                    NodeBuffer.from("\r\n")
+                  ])
+                : output;
+            response.socket.write(payload, written);
+          }
+          const terminator =
+            response.headers["transfer-encoding"] === "chunked"
+              ? NodeBuffer.from("0\r\n\r\n")
+              : NodeBuffer.alloc(0);
+          response.socket.write(terminator, written);
           return response;
         }
         queueMicrotask(() => {
