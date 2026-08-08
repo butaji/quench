@@ -565,3 +565,7 @@ Focused stage 2114 restores legacy bare-package resolution: a package
 directory without `package.json` now falls back to `index.js` and related
 extensions. The focused contract and upstream
 `test-module-circular-symlinks.js` both pass through the package lookup path.
+
+Focused stage 2116 uses `module.globalPaths` when resolving bare packages, so
+packages provided through `NODE_PATH` load without a local `node_modules`
+entry. The focused global-package contract passes.
