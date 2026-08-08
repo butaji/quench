@@ -454,6 +454,7 @@ class NodeReadable extends NodeEventEmitter {
       }
     });
     if (options.end !== false) this.on("end", () => destination.end());
+    this.resume();
     return destination;
   }
   pause() {
