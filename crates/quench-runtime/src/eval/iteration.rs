@@ -146,7 +146,7 @@ fn eval_for_of_iterator(
         if done {
             break;
         }
-        let iteration = run_for_of_iteration(
+        let (flow, _body_val) = match run_for_of_iteration(
             variable,
             &item,
             body,
@@ -154,12 +154,33 @@ fn eval_for_of_iterator(
             per_iteration,
             env,
             in_arrow_function,
-        );
-        if let Err(e) = iteration {
-            return abrupt_close(&iterator, Err(e));
-        }
-        if let Some(flow) = iteration.unwrap() {
-            return abrupt_close(&iterator, Ok(flow));
+        ) {
+            Ok(pair) => pair,
+            Err(e) => return abrupt_close(&iterator, Err(e)),
+        };
+        if let Some(flow) = flow {
+            match flow {
+                ControlFlow::Break(_) => {
+                    if loop_handles_break(&flow, &[]) {
+                        return abrupt_close(&iterator, Ok(Value::Undefined));
+                    }
+                    set_control_flow(flow);
+                    return abrupt_close(&iterator, Ok(Value::Undefined));
+                }
+                ControlFlow::Continue(_) => {
+                    if loop_handles_continue(&flow, &[]) {
+                        continue;
+                    }
+                    set_control_flow(flow);
+                    return abrupt_close(&iterator, Ok(Value::Undefined));
+                }
+                ControlFlow::Return(val)
+                | ControlFlow::Yield(val)
+                | ControlFlow::YieldDelegate(val) => {
+                    let val = val.clone();
+                    return abrupt_close(&iterator, Ok(val));
+                }
+            }
         }
     }
     if let Some(ControlFlow::Return(val))
@@ -180,7 +201,7 @@ fn run_for_of_iteration(
     per_iteration: bool,
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
-) -> Result<Option<Value>, JsError> {
+) -> Result<(Option<ControlFlow>, Value), JsError> {
     if per_iteration {
         env.borrow_mut().push_scope();
     }
@@ -191,34 +212,24 @@ fn run_for_of_iteration(
         assign_to(variable, item, env)?;
         eval_statement(body, env, false, in_arrow_function)
     })();
+    let body_val = match &result {
+        Ok(val) => val.clone(),
+        Err(_) => Value::Undefined,
+    };
     if per_iteration {
         env.borrow_mut().pop_scope();
     }
     match result {
         Ok(_) => match take_control_flow() {
-            Some(cf @ ControlFlow::Break(_)) => {
-                if loop_handles_break(&cf, &[]) {
-                    Ok(None)
-                } else {
-                    set_control_flow(cf);
-                    Ok(None)
-                }
-            }
-            Some(cf @ ControlFlow::Continue(_)) => {
-                if loop_handles_continue(&cf, &[]) {
-                    Ok(None)
-                } else {
-                    set_control_flow(cf);
-                    Ok(None)
-                }
-            }
+            Some(cf @ ControlFlow::Break(_)) => Ok((Some(cf), body_val)),
+            Some(cf @ ControlFlow::Continue(_)) => Ok((Some(cf), body_val)),
             Some(ControlFlow::Return(val))
             | Some(ControlFlow::Yield(val))
             | Some(ControlFlow::YieldDelegate(val)) => {
                 set_control_flow(ControlFlow::Return(val.clone()));
-                Ok(Some(val))
+                Ok((Some(ControlFlow::Return(val)), body_val))
             }
-            None => Ok(None),
+            None => Ok((None, body_val)),
         },
         Err(e) => Err(e),
     }

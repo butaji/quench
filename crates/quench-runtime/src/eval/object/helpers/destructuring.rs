@@ -319,11 +319,23 @@ pub fn call_iterator_return(iterator: &Rc<RefCell<Object>>) -> Option<JsError> {
     let (body, closure) = match (body, closure) {
         (Some(body), Some(closure)) => (body, closure),
         (_, _) => {
-            let _ = crate::eval::function::call_value_with_this(return_value, vec![], iter_this);
-            if let Some(thrown) = crate::value::take_thrown_value() {
-                return Some(JsError(crate::value::to_js_string(&thrown)));
-            }
-            return None;
+            // Per ES IteratorClose, the `return` method's result must be an
+            // Object; otherwise a TypeError is thrown.
+            return match crate::eval::function::call_value_with_this(
+                return_value,
+                vec![],
+                iter_this,
+            ) {
+                Ok(Value::Object(_)) | Ok(Value::Generator(_)) => None,
+                Ok(_) => {
+                    let (_, js_err) = crate::value::error::create_js_error_with_type(
+                        "iterator.return must return an object",
+                        "TypeError",
+                    );
+                    Some(js_err)
+                }
+                Err(e) => Some(e),
+            };
         }
     };
     let params: Vec<crate::ast::Param> = Vec::new();
