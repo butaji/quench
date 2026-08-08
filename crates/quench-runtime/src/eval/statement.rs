@@ -876,7 +876,12 @@ fn eval_for(
                     .as_ref()
                     .map(|e| eval_expression(e, env, in_arrow_function))
                     .unwrap_or(Ok(Value::Undefined))?;
-                env.borrow_mut().initialize_declared(name, value);
+                env.borrow_mut().initialize_declared(name, value.clone());
+                // Top-level `var` in a for-header must also create the globalThis
+                // property so strict-mode assignment resolution succeeds.
+                if *kind == VarKind::Var && env.borrow().get_parent().is_none() {
+                    set_on_global_this(env, name, value);
+                }
             }
         }
     }
