@@ -814,3 +814,5 @@ pass.
 - Stage 2204 consumes a custom Agent connection's returned Duplex and delivers its chunked HTTP response to the client.
 - Upstream `test-http-client-readable.js` now passes after accepting a complete first chunk before a custom socket is ended, matching the fixture's `readable = false` ordering.
 - Stage 2205 validates Node's rejection of an array-valued `host` request header with `ERR_INVALID_ARG_TYPE`.
+- Stage 2206 rejects request paths containing unescaped characters outside Node's Latin-1 path range with `ERR_UNESCAPED_CHARACTERS`.
+- Upstream `test-http-client-invalid-path.js` now passes after validating `options.path` before URL normalization.
