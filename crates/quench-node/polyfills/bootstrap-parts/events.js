@@ -874,8 +874,9 @@ class NodeWritable extends NodeEventEmitter {
       error.code = "ERR_STREAM_WRITE_AFTER_END";
       return __nodeWritableWriteError(this, callback, error);
     }
-    const size =
-      typeof chunk === "string"
+    const size = this.writableObjectMode
+      ? 1
+      : typeof chunk === "string"
         ? NodeBuffer.byteLength(chunk, encoding || "utf8")
         : chunk?.byteLength || 1;
     this.writableLength += size;
