@@ -958,3 +958,13 @@ Authoritative `test-stream-compose.js` advances beyond its `readable === false`
 assertion to the later zero-argument error-code check, which remains a separate
 validation boundary. Rust tests and all representative application stages stay
 green.
+
+Stage 2472 validates compose arguments synchronously. An empty call now reports
+`ERR_MISSING_ARGS`; every non-final object stage must expose a readable side,
+and every non-first object stage must expose a writable side, while iterable
+sources and callable stages retain their valid positions. The focused missing,
+invalid Writable/Readable placement, and valid source/sink matrix passes with
+the maintained compose cluster. Authoritative `test-stream-compose.js`
+advances through validation to its later composed-destroy propagation
+assertion, which remains separate. Rust and representative application stages
+remain green.

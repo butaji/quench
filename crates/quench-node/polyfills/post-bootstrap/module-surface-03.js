@@ -15,8 +15,8 @@ const __quenchAddStreamWebCompat = (result) => {
   result.Duplex.fromWeb ||= (value) => value;
 };
 const __quenchComposeWritable = (stage) => {
-  if (stage && typeof stage.pipe === "function") {
-    return stage.writable !== false;
+  if (stage && typeof stage === "object") {
+    return stage.writable !== false && typeof stage.write === "function";
   }
   return typeof stage === "function" && stage.length > 0;
 };
@@ -29,13 +29,29 @@ const __quenchComposeReadable = (stage) => {
   }
   return String(stage.constructor?.name).includes("GeneratorFunction");
 };
+const __quenchComposeArgumentError = (message, code) => {
+  const error = new TypeError(`${code}: ${message}`);
+  error.code = code;
+  return error;
+};
 const __quenchComposeStreams = (streams, result) => {
   if (streams.length === 0) {
-    const error = new TypeError(
-      "The streams argument must contain at least one stream"
+    throw __quenchComposeArgumentError(
+      "The streams argument must contain at least one stream",
+      "ERR_MISSING_ARGS"
     );
-    error.code = "ERR_INVALID_ARG_VALUE";
-    throw error;
+  }
+  for (let index = 0; index < streams.length; index++) {
+    const stage = streams[index];
+    if (typeof stage === "function") continue;
+    const readable = __quenchComposeReadable(stage);
+    const writable = __quenchComposeWritable(stage);
+    if ((index < streams.length - 1 && !readable) || (index > 0 && !writable)) {
+      throw __quenchComposeArgumentError(
+        `stream at index ${index} cannot be composed at this position`,
+        "ERR_INVALID_ARG_VALUE"
+      );
+    }
   }
   if (!streams.every((stream) => stream && typeof stream.pipe === "function")) {
     const composed = new result.Transform({
