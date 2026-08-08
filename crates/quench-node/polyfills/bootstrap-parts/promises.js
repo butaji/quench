@@ -41,6 +41,12 @@ globalThis.__nodeTimersPromises = {
       } else await new Promise((resolve) => queueMicrotask(resolve));
       yield value;
     }
+  },
+  scheduler: {
+    wait: (_delay = 0, options = {}) =>
+      globalThis.__nodeTimersPromises.setTimeout(_delay, undefined, options),
+    yield: (options = {}) =>
+      globalThis.__nodeTimersPromises.setImmediate(undefined, options)
   }
 };
 
