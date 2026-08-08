@@ -317,3 +317,10 @@ The fs cp cluster is now verified through stages 2071–2073: grouped focused
 verification passes 3/3 with zero failures and zero retries. The upstream
 fixtures for existing-directory `errorOnExist`, async-filter rejection, and
 filtered invalid-destination validation all pass.
+
+Focused stage 2074 adds symlink copy coverage for `dereference: true` and
+`dereference: false`, async copy completion, and existing-directory
+`errorOnExist`. The grouped fs-copy run for stages 2071–2074 passes 4/4 with
+zero failures and zero retries. The corresponding upstream symlink,
+destination-symlink, directory-exists, async-filter, and force/dereference
+fixtures all pass.
