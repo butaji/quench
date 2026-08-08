@@ -494,6 +494,11 @@ including iterator `throw()`. The focused regression covers both contracts;
 the authoritative mkdir fixture now passes. A focused pending-`return()` probe
 also passes; the full watch-promises fixture still has a later interaction.
 
+The plain-iterable probe isolated `stream/iter` synchronous decoding from VFS:
+`textSync()` hung before consuming a normal synchronous iterable. Stage 2434
+adds an explicit bounded synchronous chunk path for `bytesSync()` and
+`textSync()`; the focused adapter regression is included for verification.
+
 Stage 2431 fixes absolute symlink targets inside a `RealFSProvider` root by
 preserving the host absolute target instead of incorrectly joining it twice.
 The focused absolute-link/realpath regression passes.

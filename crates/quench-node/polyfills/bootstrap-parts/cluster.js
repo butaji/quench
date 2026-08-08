@@ -236,10 +236,27 @@ const __quenchRequireStreamIter = () => {
     return values;
   };
   const concat = (chunks) => NodeBuffer.concat(chunks);
+  const syncChunks = (source, options = {}) => {
+    if (options.signal?.aborted) throw abortError(options.signal);
+    const chunks = [];
+    let total = 0;
+    for (const value of source) {
+      for (const chunk of normalizeChunk(value)) {
+        total += chunk.byteLength;
+        if (options.limit !== undefined && total > options.limit) {
+          const error = new RangeError("stream exceeded the configured limit");
+          error.code = "ERR_OUT_OF_RANGE";
+          throw error;
+        }
+        chunks.push(chunk);
+      }
+    }
+    return chunks;
+  };
   const asyncBytes = async (source, options) =>
     new Uint8Array(concat(await readAsync(source, normalizeOptions(options))));
   const syncBytes = (source, options) =>
-    new Uint8Array(concat(readSync(source, normalizeOptions(options))));
+    new Uint8Array(concat(syncChunks(source, normalizeOptions(options))));
   const decoderEncoding = (options) => {
     const encoding = options.encoding || "utf-8";
     if (typeof encoding !== "string") {
