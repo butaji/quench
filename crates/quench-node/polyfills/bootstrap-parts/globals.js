@@ -667,8 +667,27 @@ if (typeof Object.hasOwn !== "function") {
 if (typeof globalThis.Blob !== "function") {
   globalThis.Blob = class Blob {
     constructor(parts = [], options = {}) {
+      if (!Array.isArray(parts)) {
+        const error = new TypeError(
+          'The "sources" argument must be an instance of Array'
+        );
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
       const chunks = parts.map((part) =>
-        typeof part === "string" ? NodeBuffer.from(part) : NodeBuffer.from(part)
+        typeof part === "string" ||
+        ArrayBuffer.isView(part) ||
+        part instanceof ArrayBuffer
+          ? NodeBuffer.from(part)
+          : part instanceof Blob
+            ? NodeBuffer.from(part._data)
+            : (() => {
+                const error = new TypeError(
+                  "The sources argument contains an invalid part"
+                );
+                error.code = "ERR_INVALID_ARG_TYPE";
+                throw error;
+              })()
       );
       this._data = NodeBuffer.concat(chunks);
       this.size = this._data.length;
