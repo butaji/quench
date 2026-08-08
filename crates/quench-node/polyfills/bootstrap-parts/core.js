@@ -1772,7 +1772,14 @@ let __quenchHttpModule;
         writableHighWaterMark: 16 * 1024,
         writableCorked: 0,
         setTimeout: () => request.socket,
-        setEncoding: () => request.socket
+        setEncoding: () => request.socket,
+        destroy() {
+          if (this.destroyed) return this;
+          this.destroyed = true;
+          this.writable = false;
+          queueMicrotask(() => this.emit("close"));
+          return this;
+        }
       });
       request.finished = false;
       request.writableFinished = false;
@@ -1906,6 +1913,7 @@ let __quenchHttpModule;
       }
       const agentName = request.agent?.getName?.(options);
       let agentSlotTracked = false;
+      let agentWaiter;
       if (agentName && request.agent) {
         const active =
           request.agent.__quenchActiveRequests ||
@@ -1916,6 +1924,13 @@ let __quenchHttpModule;
           activeCount >= request.agent.maxSockets
         ) {
           (request.agent.requests[agentName] ||= []).push(request);
+          const waiters =
+            request.agent.__quenchAgentWaiters ||
+            (request.agent.__quenchAgentWaiters = Object.create(null));
+          const wait = new Promise((resolve) => {
+            (waiters[agentName] ||= []).push(resolve);
+          });
+          agentWaiter = wait;
         }
         active[agentName] = activeCount + 1;
         agentSlotTracked = true;
@@ -1944,7 +1959,19 @@ let __quenchHttpModule;
           const queued = request.agent.requests[agentName];
           if (queued?.length) queued.shift();
           if (!queued?.length) delete request.agent.requests[agentName];
+          const waiters = request.agent.__quenchAgentWaiters;
+          const resolve = waiters?.[agentName]?.shift();
+          resolve?.();
+          if (waiters && !waiters[agentName]?.length) delete waiters[agentName];
+          if (!request.agent.keepAlive) {
+            request.agent.emit("free", response.socket, options);
+          }
         });
+        if (!request.agent.keepAlive) {
+          request.socket.once("close", () => {
+            request.agent.emit("free", response.socket, options);
+          });
+        }
       }
       const destroyRequest = request.destroy;
       const destroyResponse = response.destroy;
@@ -1964,7 +1991,8 @@ let __quenchHttpModule;
         return response;
       };
       const resource = {};
-      queueMicrotask(() => {
+      queueMicrotask(async () => {
+        if (agentWaiter) await agentWaiter;
         if (request.aborted) return;
         const customAgentConnection =
           request.agent &&
