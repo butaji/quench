@@ -119,6 +119,23 @@ impl GeneratorObject {
         Ok(call_env)
     }
 
+    /// Resume the generator with a return completion (Generator.prototype.return).
+    /// Per ES GeneratorResume(gen, return completion): a suspended generator
+    /// resumes at its yield point with a return, unwinding through any enclosing
+    /// finally blocks, then completes with `{value, done: true}`. A not-yet-started
+    /// or already-completed generator just completes immediately.
+    pub fn return_generator(&mut self, value: Value) -> Result<IteratorResult, JsError> {
+        if self.state == GeneratorState::Completed
+            || (self.state == GeneratorState::Suspended && self.pending_stmt.is_none())
+        {
+            self.state = GeneratorState::Completed;
+            return Ok(IteratorResult { value, done: true });
+        }
+        // SuspendedYield: signal the yield handler to inject a return completion.
+        crate::interpreter::set_generator_return(value.clone());
+        self.next(value)
+    }
+
     /// Advance the generator by one step.
     pub fn next(&mut self, value: Value) -> Result<IteratorResult, JsError> {
         if self.state == GeneratorState::Completed {
@@ -244,13 +261,8 @@ pub fn generator_return_fn(gen: Rc<RefCell<GeneratorObject>>) -> Value {
     Value::NativeFunction(std::rc::Rc::new(crate::value::NativeFunction::new(
         move |args| {
             let arg = args.first().cloned().unwrap_or(Value::Undefined);
-            let mut g = gen.borrow_mut();
-            g.state = GeneratorState::Completed;
-            Ok(IteratorResult {
-                value: arg,
-                done: true,
-            }
-            .to_object())
+            let result = gen.borrow_mut().return_generator(arg)?;
+            Ok(result.to_object())
         },
     )))
 }

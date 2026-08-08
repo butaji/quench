@@ -55,6 +55,15 @@ pub fn eval_expression(
             Ok(Value::BigInt(std::rc::Rc::new(bi)))
         }
         Expression::Yield(expr) => {
+            // Generator.prototype.return injects a return completion at the
+            // suspended yield. Propagate a ControlFlow::Return (which unwinds
+            // through enclosing finally blocks) instead of suspending again.
+            if let Some(ret_val) = crate::interpreter::take_generator_return() {
+                crate::interpreter::set_control_flow(crate::interpreter::ControlFlow::Return(
+                    ret_val.clone(),
+                ));
+                return Ok(ret_val);
+            }
             let value = match expr {
                 Some(e) => crate::eval::expression::eval_expression(e, env, in_arrow_function)?,
                 None => {
