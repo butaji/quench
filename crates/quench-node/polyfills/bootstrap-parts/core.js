@@ -1086,14 +1086,20 @@ let __quenchHttpModule;
             init.headers || source?.headers
           );
           this.body = init.body ?? source?.body ?? null;
+          this.signal =
+            init.signal || source?.signal || new AbortController().signal;
+          this.bodyUsed = false;
         }
         async text() {
+          this.bodyUsed = true;
           return this.body == null ? "" : String(this.body);
         }
         async json() {
           return JSON.parse(await this.text());
         }
         clone() {
+          if (this.bodyUsed)
+            throw new TypeError("Body has already been consumed.");
           return new Request(this);
         }
       };
