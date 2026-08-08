@@ -460,3 +460,8 @@ HTTP fix must preserve the `end` → `destroy` → `close` ordering for
 `IncomingMessage`. Stage 2380 now verifies that ordering by treating a flowing
 incoming request as consumed even without an explicit `data` listener. The
 full `test-stream-destroy.js` fixture still has another HTTP mismatch.
+Stage 2421 closes the internal dynamic `MemoryProvider` model gap. The provider
+now exposes a `kRoot` symbol with numeric entry types, lazy directory
+population, and synchronous/asynchronous content providers. The focused
+dynamic-provider stage passes, including the expected `ERR_INVALID_STATE` for
+reading async-only content synchronously and successful promise reads.
