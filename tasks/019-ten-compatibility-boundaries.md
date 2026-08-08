@@ -658,3 +658,8 @@ The authoritative `test-timers-ordering.js` fixture now passes after exposing
 the internal `timers.getLibuvNow()` binding through the host monotonic clock.
 This verifies 30 successive one-millisecond callbacks preserve both order and
 monotonic timestamp behavior.
+
+Host timer polling now excludes unrefed timers when no refed timer keeps the
+event loop alive, while still processing them during a live refed turn. The
+authoritative `test-timers-immediate-unref-simple.js` fixture now passes, and
+the stream backpressure stage remains green.
