@@ -1232,8 +1232,7 @@ mod acc_stack {
     fn acc_stack_empty_after_proxy_class_construct() {
         drain();
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
-        ctx.eval(
+                ctx.eval(
             "class P { constructor() { return new Proxy(this, { get(o,k){ 1; return o[k]; } }); } } \
              class T extends P { method() { return 1; } } \
              new T()",
