@@ -35,13 +35,17 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
         .get(2)
         .ok_or_else(|| JsError::from("Object.defineProperty: descriptor required"))?;
 
-    // Per spec, absent descriptor flags default to false
+    // Per spec, absent descriptor flags default to false for new properties but
+    // preserve the existing attribute for already-defined properties.
     let mut flags = PropertyFlags {
         value: None,
         writable: false,
         enumerable: false,
         configurable: false,
     };
+    let mut has_writable = false;
+    let mut has_enumerable = false;
+    let mut has_configurable = false;
     let mut getter: Option<Value> = None;
     let mut setter: Option<Value> = None;
 
@@ -52,12 +56,15 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
         }
         if let Some(writable) = desc_borrowed.properties.get("writable") {
             flags.writable = to_bool(writable);
+            has_writable = true;
         }
         if let Some(enumerable) = desc_borrowed.properties.get("enumerable") {
             flags.enumerable = to_bool(enumerable);
+            has_enumerable = true;
         }
         if let Some(configurable) = desc_borrowed.properties.get("configurable") {
             flags.configurable = to_bool(configurable);
+            has_configurable = true;
         }
         // Per ES §10.1.6.1 ToPropertyDescriptor: "get" in desc → accessor descriptor.
         // Check regular property map for "get"/"set" keys from descriptor objects like
@@ -124,7 +131,16 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
         // Accessor descriptor: store the get/set functions themselves so
         // invocation and getOwnPropertyDescriptor see the same values.
         if let Value::Object(o) = &obj {
-            o.borrow_mut().define_accessor(&prop, getter, setter, flags);
+            let merged = merge_attributes(
+                o,
+                &prop,
+                flags,
+                has_writable,
+                has_enumerable,
+                has_configurable,
+            );
+            o.borrow_mut()
+                .define_accessor(&prop, getter, setter, merged);
         } else if let Value::NativeConstructor(nc) = &obj {
             // Object.defineProperty on a native constructor (e.g., Promise)
             nc.define_accessor(&prop, getter, setter);
@@ -138,9 +154,54 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
     let value = flags.value.clone().unwrap_or(Value::Undefined);
 
     if let Value::Object(o) = &obj {
-        o.borrow_mut().define(&prop, value, flags);
+        // ValidateAndApplyPropertyDescriptor: preserve existing attributes for
+        // fields absent from the descriptor.
+        let merged = merge_attributes(
+            o,
+            &prop,
+            flags,
+            has_writable,
+            has_enumerable,
+            has_configurable,
+        );
+        o.borrow_mut().define(&prop, value, merged);
     }
     Ok(obj)
+}
+
+/// Merge descriptor flags with the existing property's attributes: fields not
+/// present in the descriptor keep the existing value (or default false for a
+/// new property).
+fn merge_attributes(
+    o: &Rc<RefCell<Object>>,
+    prop: &str,
+    flags: PropertyFlags,
+    has_writable: bool,
+    has_enumerable: bool,
+    has_configurable: bool,
+) -> PropertyFlags {
+    let existing = o.borrow().get_descriptor(prop);
+    match existing {
+        Some(prev) => PropertyFlags {
+            value: flags.value,
+            writable: if has_writable {
+                flags.writable
+            } else {
+                prev.writable
+            },
+            enumerable: if has_enumerable {
+                flags.enumerable
+            } else {
+                prev.enumerable
+            },
+            configurable: if has_configurable {
+                flags.configurable
+            } else {
+                prev.configurable
+            },
+        },
+        None => flags,
+    }
 }
 
 /// Object.getOwnPropertyDescriptor(obj, prop) - gets property descriptor
