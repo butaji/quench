@@ -675,6 +675,20 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
       }
     }
   };
+  if (
+    options?.signal !== undefined &&
+    (!options.signal || typeof options.signal.addEventListener !== "function")
+  ) {
+    throw Object.assign(
+      new TypeError('The "signal" option must be an AbortSignal'),
+      { code: "ERR_INVALID_ARG_TYPE" }
+    );
+  }
+  if (options?.signal) {
+    const closeOnAbort = () => socket.close();
+    if (options.signal.aborted) queueMicrotask(closeOnAbort);
+    else options.signal.addEventListener("abort", closeOnAbort, { once: true });
+  }
   return socket;
 };
 const __quenchDgramValidateType = (type) => {
