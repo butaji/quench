@@ -461,7 +461,7 @@ const __quenchReadableConcurrentTransform = async function* (
         value: next.value
       };
       active++;
-      entry.promise = Promise.resolve()
+      Promise.resolve()
         .then(() => callback(next.value, { signal }))
         .then(
           (result) => {
@@ -495,7 +495,7 @@ const __quenchReadableConcurrentTransform = async function* (
         await __quenchReadableOperatorResult(waitForProgress(), errorState);
         await fill();
       }
-      await __quenchReadableOperatorResult(entry.promise, errorState);
+      if (errorState?.hasError) throw errorState.error;
       pending.shift();
       if (entry.failed) throw entry.error;
       if (signal.aborted) throw __quenchReadableAbortError(signal);
