@@ -177,3 +177,11 @@ globalThis.require = (specifier) => {
     globalThis.__quench_script_filename || globalThis.__filename
   );
 };
+globalThis.module ||= {
+  exports: {},
+  children: [],
+  parent: null,
+  filename: globalThis.__quench_script_filename || globalThis.__filename
+};
+globalThis.require.cache ||= Object.create(null);
+globalThis.require.extensions ||= Object.create(null);
