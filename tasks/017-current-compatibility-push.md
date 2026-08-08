@@ -509,3 +509,8 @@ probe now imports through nested conditional exports, resolves its absolute
 ESM metadata, loads the Babel plugin, and formats source successfully under
 quench-node. Focused stage 2104 and the equivalent host-Node formatting probe
 both pass.
+
+Focused stage 2105 adds Node-compatible `module.createRequire()` filename
+validation for file URLs, absolute paths, relative paths, HTTPS URLs, and
+invalid objects. The focused contract and upstream
+`test-module-create-require.js` both pass.
