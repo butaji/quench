@@ -128,7 +128,8 @@ const __quenchDgramSend = (socket, message, ...args) => {
       { code: "ERR_INVALID_ARG_TYPE" }
     );
   }
-  const implicitlyBound = !socket._bound && !socket._connected;
+  const wasUnbound = !socket._bound && !socket._connected;
+  const implicitlyBound = wasUnbound;
   if (implicitlyBound) {
     socket._implicitSend = true;
     __quenchDgramBind(
@@ -139,7 +140,7 @@ const __quenchDgramSend = (socket, message, ...args) => {
     );
   }
   const hasOffset =
-    (!socket._connected &&
+    ((wasUnbound || socket._implicitSend) &&
       args.length >= 2 &&
       typeof args[0] === "number" &&
       typeof args[1] === "number") ||
