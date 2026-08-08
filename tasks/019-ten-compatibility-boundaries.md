@@ -554,3 +554,11 @@ pull-sync transform cluster, early `autoClose`, and the `node:sea` module
 surface. This confirms the focused behavior remains intact while the aggregate
 Node fixtures listed above remain open; it is not a claim of full Node
 compatibility.
+
+A temporary sequence probe for `test-vfs-watch-promises.js` completed its first
+four blocks (change delivery, queued events, pending `next()`, and `throw()`)
+but stalled at block five, where a pending `next()` is closed from a queued
+microtask. The diagnostic stage was removed after the probe; the remaining
+watch boundary is now specifically the interaction between prior watcher
+cleanup, promise jobs, and pending `return()`, rather than event shape or
+`throw()` behavior.
