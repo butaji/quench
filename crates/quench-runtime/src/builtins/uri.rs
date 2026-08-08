@@ -8,7 +8,7 @@
 
 use std::rc::Rc;
 
-use crate::value::{to_js_string, to_number, try_to_number, Value};
+use crate::value::{to_js_string, to_number, Value};
 use crate::Context;
 
 /// RFC 3986 "unreserved" characters plus a few reserved characters that
@@ -237,20 +237,7 @@ pub fn register_uri(ctx: &mut Context) {
         Ok(Value::Number(crate::builtins::date::spec_parse_float(&s)))
     });
 
-    // isNaN(value) — coerces to Number, then checks.
-    ctx.register_native("isNaN", |args| {
-        let v = args.first().cloned().unwrap_or(Value::Undefined);
-        let n = to_number(&v);
-        Ok(Value::Boolean(n.is_nan()))
-    });
-
-    // isFinite(value) — coerces to Number, returns false for NaN / ±Infinity.
-    ctx.register_native("isFinite", |args| {
-        let v = args.first().cloned().unwrap_or(Value::Undefined);
-        let n = try_to_number(&v)?;
-        Ok(Value::Boolean(n.is_finite()))
-    });
-
+    // isNaN / isFinite are self-hosted in JS (builtins/core/global_functions.js).
     // encodeURI(uri) — leaves reserved characters alone.
     ctx.register_native("encodeURI", |args| {
         let s = args.first().map(to_js_string).unwrap_or_default();

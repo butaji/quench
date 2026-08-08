@@ -12,6 +12,7 @@ pub mod jsx;
 pub mod literal;
 pub mod member;
 pub mod object;
+pub mod ops;
 pub mod operators;
 pub mod statement;
 pub mod string_methods;
