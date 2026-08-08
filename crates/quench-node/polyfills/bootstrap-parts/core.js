@@ -1546,11 +1546,13 @@ let __quenchHttpModule;
         response._encoding = encoding;
         return response;
       };
-      response.__emitData = (value) =>
+      response.__emitData = (value) => {
+        if (response.listenerCount("readable")) response.emit("readable");
         response.emit(
           "data",
           response._encoding ? value.toString(response._encoding) : value
         );
+      };
       response.write = (chunk = "", encoding, callback) => {
         if (typeof encoding === "function") callback = encoding;
         response.headersSent = true;
