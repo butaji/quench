@@ -433,6 +433,8 @@ has a remaining later-sequence discrepancy.
 The internal VFS file-handle module now exports `MemoryFileHandle` with its
 expected no-stat `ERR_INVALID_STATE` contract. The authoritative
 `test-vfs-memory-file-handle.js` fixture passes.
+Post-change regression verification is green: crate tests 2/2 and the complete
+maintained stage matrix (pull stages 169–176, VFS stages 2406–2420) pass.
 Stage 2418 verifies the public `MemoryProvider` surface and append-to-new-file
 behavior. The separate dynamic-provider fixture remains an internal-model
 gap: it expects Node's `kRoot` symbol and lazy entry objects, which are not yet
