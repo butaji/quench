@@ -831,6 +831,8 @@ pass.
 - Stage 2218 supports the `server.listen(callback)` overload with an ephemeral port.
 - Upstream response-timeout testing now advances past the listen overload to a later response-timeout callback discrepancy.
 - Upstream `test-http-client-response-timeout.js` now passes after keeping response socket timeout timers active.
+- Stage 2219 propagates client-request aborts to the server-side `IncomingMessage` as Node's `aborted` event.
+- The upstream abort stress fixture still has a separate multi-request callback-count discrepancy after abort propagation.
 - Stage 2216 preserves `http.request()` results as `instanceof http.ClientRequest`, matching Node's public type contract.
 - The upstream timeout fixture now advances past the request-instance assertion to a later duplicate destroy/timeout callback discrepancy.
 - Upstream `test-http-hostname-typechecking.js` now passes with synchronous host-option validation.
