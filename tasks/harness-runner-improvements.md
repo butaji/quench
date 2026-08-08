@@ -55,6 +55,9 @@ Focused work on the test262 harness runner
   killed in-process; use `TEST262_ISOLATED=1` for a time-bounded scan).
 - [ ] Pre-existing engine unit-test failures (Symbol subclassing, class
   helpers, etc.) — engine work, outside the harness runner.
+- [ ] Stage 25 (for-of) is blocked on `arguments-mapped-aliasing.js`
+  (arguments-object aliasing in for-of) — confirmed via the threaded `run-test`
+  path as an engine conformance gap, not a runner issue.
 
 ## Notes
 
