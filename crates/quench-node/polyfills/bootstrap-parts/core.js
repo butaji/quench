@@ -1787,6 +1787,13 @@ let __quenchHttpModule;
       options = {},
       context
     ) => {
+      if (typeof pathname === "string" && /[^\u0021-\u00ff]/.test(pathname)) {
+        const error = new TypeError(
+          "Request path contains unescaped characters"
+        );
+        error.code = "ERR_UNESCAPED_CHARACTERS";
+        throw error;
+      }
       if (
         options.method !== undefined &&
         options.method !== null &&
@@ -2828,6 +2835,16 @@ let __quenchHttpModule;
         ) {
           callback = typeof options === "function" ? options : callback;
           options = target;
+          if (
+            typeof options.path === "string" &&
+            /[^\u0021-\u00ff]/.test(options.path)
+          ) {
+            const error = new TypeError(
+              "Request path contains unescaped characters"
+            );
+            error.code = "ERR_UNESCAPED_CHARACTERS";
+            throw error;
+          }
           if (
             options.method !== undefined &&
             typeof options.method === "string" &&
