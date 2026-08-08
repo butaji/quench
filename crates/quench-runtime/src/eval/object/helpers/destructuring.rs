@@ -228,15 +228,20 @@ pub fn take_iterator_step(
     env: &Rc<RefCell<Environment>>,
 ) -> Result<(Value, bool), JsError> {
     if iterator.borrow().kind == ObjectKind::Array {
+        let idx_str = index.to_string();
+        if iterator.borrow().has_getter(&idx_str) || iterator.borrow().has_setter(&idx_str) {
+            // Accessor element: read through the property path so the getter
+            // runs (and can throw).
+            let value = crate::eval::member::eval_object_member(iterator, &idx_str, Some(env))?;
+            *index += 1;
+            return Ok((value, *index >= iterator.borrow().elements.len()));
+        }
         let (result, exhausted) = {
             let borrowed = iterator.borrow();
             if *index < borrowed.elements.len() {
                 (Some(borrowed.elements[*index].clone()), false)
             } else {
-                (
-                    borrowed.properties.get(&index.to_string()).cloned(),
-                    *index >= borrowed.elements.len(),
-                )
+                (borrowed.properties.get(&idx_str).cloned(), true)
             }
         };
         *index += 1;
