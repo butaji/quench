@@ -138,7 +138,12 @@ impl Scope {
         self.var_kinds.insert(name.clone(), kind);
         match kind {
             VarKind::Var => {
-                self.declarations.insert(name, VarState::DeclaredOnly);
+                // A `var` re-declaration must not reset an already-initialized
+                // binding: DeclaredOnly shadows the live value in `get`, so only
+                // mark it when the binding isn't already live.
+                if !self.bindings.contains_key(&name) {
+                    self.declarations.insert(name, VarState::DeclaredOnly);
+                }
             }
             VarKind::Let | VarKind::Const => {
                 self.declarations.insert(name, VarState::TDZ);
@@ -220,6 +225,11 @@ impl Scope {
 
     pub fn has(&self, name: &str) -> bool {
         self.bindings.contains_key(name) || self.declarations.contains_key(name)
+    }
+
+    /// Whether a binding has an initialized value (present in bindings).
+    pub fn has_value(&self, name: &str) -> bool {
+        self.bindings.contains_key(name)
     }
 
     /// Remove a binding from this scope. Returns true if the binding existed.
