@@ -865,3 +865,13 @@ advances from `Callback 4` to `Callback 5`, its first live AbortSignal
 rejection; the same abort matrix passes in focused stage 2372, so the remaining
 aggregate failure is tracked as a scheduling interaction rather than basic
 slice coercion or cancellation output.
+
+Stage 2463 fixes that live AbortSignal interaction. Readable slice iteration
+now races each pending source read against the selected signal, rejects with
+Node's AbortError shape for both already-aborted and subsequently aborted
+signals, and removes its abort listener after either side settles. The active
+`Readable.drop()` and `Readable.take()` installers also retain the option's
+signal in their slice operation state. The focused live/pre-aborted contract,
+the maintained slice and cancellation stages, and the complete authoritative
+`test-stream-drop-take.js` fixture pass. Both Rust tests and the Ajv, debug,
+Chalk, ms, Prettier, and process-entry application stages remain green.

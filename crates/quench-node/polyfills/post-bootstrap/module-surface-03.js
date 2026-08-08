@@ -450,18 +450,61 @@ const __quenchReadableConcurrentTransform = async function* (
 };
 const __quenchReadableSliceSource = async function* (stream, operations) {
   const iterator = stream[Symbol.asyncIterator]();
+  const signal = operations.signal;
   let skipped = operations.drop;
   let remaining = operations.take;
+  const next = () => {
+    if (!signal) return iterator.next();
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const cleanup = () => signal.removeEventListener?.("abort", onAbort);
+      const onAbort = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(__quenchReadableAbortError(signal));
+      };
+      signal.addEventListener?.("abort", onAbort, { once: true });
+      if (signal.aborted) {
+        onAbort();
+        return;
+      }
+      let pending;
+      try {
+        pending = iterator.next();
+      } catch (error) {
+        settled = true;
+        cleanup();
+        reject(error);
+        return;
+      }
+      Promise.resolve(pending).then(
+        (value) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          resolve(value);
+        },
+        (error) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          reject(error);
+        }
+      );
+    });
+  };
   try {
+    if (signal?.aborted) throw __quenchReadableAbortError(signal);
     while (remaining > 0) {
-      const next = await iterator.next();
-      if (next.done) return;
+      const item = await next();
+      if (item.done) return;
       if (skipped > 0) {
         skipped--;
         continue;
       }
       remaining--;
-      yield next.value;
+      yield item.value;
     }
   } finally {
     iterator.return?.();
@@ -721,7 +764,8 @@ const __quenchAddReadableSlices = (result) => {
       return __quenchReadableSlice(this, {
         drop: __quenchSliceCount(count),
         take: Infinity,
-        operations: []
+        operations: [],
+        signal: options?.signal
       });
     };
     prototype.take ||= function (count, options) {
@@ -729,7 +773,8 @@ const __quenchAddReadableSlices = (result) => {
       return __quenchReadableSlice(this, {
         drop: 0,
         take: __quenchSliceCount(count),
-        operations: []
+        operations: [],
+        signal: options?.signal
       });
     };
     __quenchAddSliceMethods(prototype);
