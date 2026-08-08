@@ -82,11 +82,22 @@ fn get_object_keys(o: &Rc<RefCell<Object>>) -> Result<Vec<String>, JsError> {
     let mut current: Option<Rc<RefCell<Object>>> = Some(Rc::clone(o));
     while let Some(obj_rc) = current {
         let obj = obj_rc.borrow();
-        for i in 0..obj.elements.len() {
-            if obj.holes.contains(&i) {
-                continue;
+        // Integer indices ascending (from both the elements vector for arrays
+        // and numeric string keys in properties for ordinary objects).
+        let mut numeric: Vec<(usize, String)> = Vec::new();
+        for (k, _) in obj.properties.iter() {
+            if let Some(i) = crate::value::object::as_array_index(k) {
+                numeric.push((i, k.clone()));
             }
-            let key = i.to_string();
+        }
+        for i in 0..obj.elements.len() {
+            if !obj.holes.contains(&i) {
+                numeric.push((i, i.to_string()));
+            }
+        }
+        numeric.sort_by_key(|(i, _)| *i);
+        numeric.dedup_by_key(|(i, _)| *i);
+        for (_, key) in numeric {
             if !seen.contains(&key) {
                 seen.insert(key.clone());
                 if obj.is_enumerable(&key) {
