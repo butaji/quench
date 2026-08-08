@@ -124,6 +124,13 @@ current runtime: `test-fs-cp-async-skip-validation-when-filtered.mjs`,
 removed from the next differential queue refresh; this is evidence correction,
 not a new filesystem implementation claim.
 
+The current upstream `test-http-server.js` still exits with zero dispatched
+requests. A transport probe showed that its client writes from the `connect`
+callback before the in-memory peer is attached; naïve pending-write flushing
+regressed the verified raw HTTP keep-alive/response lifecycle and was reverted.
+The remaining fix must coordinate pending writes with HTTP response socket
+assignment before claiming the upstream fixture.
+
 Stage 2362 independently verifies that callback-style and promise-style
 `fs.access()` each deliver exactly once for a missing path, including the
 `ENOENT` error code. This narrows the unresolved upstream `test-fs-access.js`
