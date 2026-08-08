@@ -29,6 +29,25 @@ The loader and bridge that let JS builtins run at scale are landed:
 - [x] **Proof-of-scale** — `isNaN`/`isFinite` moved to JS over
       `__ops__.toNumber`; their Rust `register_native` bodies deleted. Full
       `cargo test` + stage 0/25 green.
+- [x] **`__ops__` surface** — exposed for all-JS: `toPrimitive`, `toNumber`,
+      `toPropertyKey`, `toObject`, `toString`, `sameValue`, `sameValueZero`,
+      `isCallable`, `isConstructor`, `hasOwn`, `throwTypeError`. Canonical
+      impls in `eval/ops.rs` (R1); unit tests pin +0/-0, NaN, callable/
+      constructor invariants.
+- [x] **Bootstrap ordering** — `bootstrap_js_builtins` runs after realm globals
+      (`globalThis`) are set up, so JS builtins can attach to constructors.
+
+## Open core gap — constructor-global identity during bootstrap
+
+A JS builtin that attaches a property to a **constructor global** (e.g.
+`Number.isNaN = …`) does not persist: the constructor object seen at bootstrap
+is replaced by a different object by the time user code runs, even though
+`globalThis` itself is stable. Top-level function declarations (`isNaN`,
+`isFinite`) work because they go into the global scope directly. This blocks
+migrating builtins that add methods to `Number`/`Object`/`String`/… until the
+global-scope/object-binding lifecycle is fixed (trace: `set_global` vs
+`sync_globals_to_global_this` vs the eval-time object binding). `Number`
+statics migration was reverted pending this fix.
 
 ## Next: migrate the R0 order
 
