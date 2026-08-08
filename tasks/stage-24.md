@@ -15,20 +15,19 @@ TEST262_STAGE=24 TEST262_DIGEST=1 TEST262_JSON=1 cargo test -p quench-runtime \
 
 ## Landed fixes
 
-- Destructuring LHS (`for (let [x] in obj)`): per-iteration binding (mirrors
-  for-of). (28 → 21)
+- Destructuring LHS: per-iteration binding (mirrors for-of). (28 → 21)
 - Completion value: returns body value V on end/break. (21 → 13)
-- Correct key enumeration: prototype-chain walk, integer indices ascending
-  then string keys in creation order, non-enumerable own props shadow
-  prototype props. Object/Array.prototype methods installed non-enumerable;
-  Object.defineProperty preserves absent-field attributes;
-  Object.create applies descriptors. (13 → 10)
+- Correct key enumeration: prototype-chain walk, indices ascending then string
+  keys in creation order; Object/Array.prototype methods non-enumerable;
+  defineProperty preserves absent-field attributes; Object.create applies
+  descriptors. (13 → 10)
+- TDZ for lexical bindings: declare in TDZ (scope confined to the for-in)
+  before object eval; eval_identifier/typeof set thrown value. (10 → 5)
 
 ## Top remaining clusters
 
 | Cluster | Count | Fix direction |
 |---------|-------|---------------|
-| `Expected ReferenceError` (TDZ) | 5 | for-in `let` binding must be in TDZ when the object expression is evaluated |
-| Sputnik `A3` | 1 | strict-eval scoping of the for-in iterable assignment |
-| Sputnik `A7_T2` | 1 | live enumeration (deletion during iteration must be reflected) |
+| Sputnik `A3`/`A4` | 2 | strict-eval: for-in iterable assignment to an outer var |
+| Sputnik `A7_T2` | 1 | live enumeration (deletion during iteration reflected) |
 | `resizable-buffer`, `head-var-bound-names-in-stmt` | 2 | for-in edge cases |
