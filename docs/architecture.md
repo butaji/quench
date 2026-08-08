@@ -144,8 +144,8 @@ per `Realm` by `builtins/bootstrap.rs`.
 
 ## `__ops__` — the only Rust↔JS bridge for spec ops
 
-(The current Rust scaffold is registered as `%ops%`; it will be renamed
-to `__ops__` when R1 lands.)
+(The current Rust scaffold is registered under the pre-rename name; R1
+renames it to `__ops__`.)
 
 Frozen object exposed at realm init. Each property is a canonical spec
 abstract op, implemented once in `eval/ops.rs` and bound as a

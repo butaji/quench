@@ -22,7 +22,7 @@ Phase A — clear language stages
   A5. Grow R1 only for ops you actually touch
 
 Phase B — before grinding built-ins (stage 71 Object)
-  B1. Finish R1 (%ops% owns impls, not re-exports)
+  B1. Finish R1 (__ops__ owns impls, not re-exports)
   B2. R0 self-host builtins in JS (Object first, dependency order)
   B3. R2 one iterator protocol (with R0 Iterator.js)
   B4. R3 chrono for Date core
