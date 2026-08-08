@@ -509,7 +509,6 @@ fn binary_instanceof_custom_ctor() {
 #[test]
 fn binary_instanceof_subclass_extends_array() {
     let mut ctx = crate::Context::new().unwrap();
-    crate::builtins::register_builtins(&mut ctx);
     let sub_is_sub = ctx
         .eval("class Subclass extends Array {} var sub = new Subclass(); sub instanceof Subclass")
         .unwrap();
@@ -525,7 +524,6 @@ fn binary_instanceof_subclass_extends_array() {
 #[test]
 fn binary_instanceof_subclass_extends_function() {
     let mut ctx = crate::Context::new().unwrap();
-    crate::builtins::register_builtins(&mut ctx);
     let result = ctx
         .eval(
             "class Subclass extends Function {} \

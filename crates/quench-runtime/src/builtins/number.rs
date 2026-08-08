@@ -571,7 +571,6 @@ mod tests {
         // even after test262 harness injection (a realistic scenario for
         // test262 runs). Uses only methods that are guaranteed to exist.
         let mut ctx = crate::Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
         crate::test262::harness::try_inject_harness(&mut ctx).unwrap();
         let r = ctx.eval(
             "class N extends Number {} \
