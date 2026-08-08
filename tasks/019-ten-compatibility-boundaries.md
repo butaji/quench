@@ -382,6 +382,10 @@ The broader `test-vfs-*.js` sweep also exposes a central mounted-dispatch gap in
 attribute fixtures. These are now part of the remaining Node-suite verification
 surface; the next implementation target is the mounted `fs/promises` dispatch
 path rather than another isolated real-provider operation.
+That dispatch work first uncovered and fixed two adjacent callback gaps:
+`rename` was missing from the async mount wrapper, and async two-path
+`rename`/`copyFile` left the destination untransformed. The authoritative
+`test-vfs-fs-rename-callback.js` now passes completely.
 
 Stage 2378 passes the four basic stream `destroy()` contracts for readable and
 writable streams, including implicit `AbortError`, explicit error messages,
