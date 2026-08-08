@@ -141,6 +141,20 @@ class NodeTextEncoder {
   encode(value) {
     const output = [];
     const input = String(value);
+    let ascii = true;
+    for (let index = 0; index < input.length; index++) {
+      if (input.charCodeAt(index) > 0x7f) {
+        ascii = false;
+        break;
+      }
+    }
+    if (ascii) {
+      const encoded = new Uint8Array(input.length);
+      for (let index = 0; index < input.length; index++) {
+        encoded[index] = input.charCodeAt(index);
+      }
+      return encoded;
+    }
     for (let index = 0; index < input.length; index++) {
       const [code, nextIndex] = __nodeReadCodePoint(input, index);
       index = nextIndex;
