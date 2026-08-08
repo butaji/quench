@@ -776,3 +776,4 @@ error. The focused contract and upstream `test-stream-error-once.js` both
 pass.
 
 - Stage 2173: pass `captureRejections` options into writable event emitters so rejected async `drain` listeners surface as stream errors and destroy the writable, matching Node's `test-stream-catch-rejections.js`.
+- Stage 2174: align writable completion ordering so length is reduced and `drain` is emitted before the write callback, allowing nested writes to produce the same two-drain sequence as Node.

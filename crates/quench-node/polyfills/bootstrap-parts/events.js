@@ -145,7 +145,6 @@ const __nodeWritableComplete = (state, stream, size, callback, error) => {
   stream._writableState.writing = false;
   if (error) stream.emit("error", error);
   stream.writableLength = Math.max(0, stream.writableLength - size);
-  if (callback) callback(error);
   if (
     stream.writableNeedDrain &&
     stream.writableLength < stream.writableHighWaterMark
@@ -154,6 +153,7 @@ const __nodeWritableComplete = (state, stream, size, callback, error) => {
     stream._writableState.needDrain = false;
     stream.emit("drain");
   }
+  if (callback) callback(error);
 };
 const __nodeReadablePushChunk = (stream, chunk) => {
   stream._readableState.reading = false;

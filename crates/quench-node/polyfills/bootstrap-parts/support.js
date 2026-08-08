@@ -237,7 +237,7 @@ class NodeEventEmitter {
         const result = Reflect.apply(listener, this, args);
         if (this.captureRejections && result?.then) {
           result.catch((error) =>
-            queueMicrotask(() => {
+            setImmediate(() => {
               if (this._captureRejectionHandled) return;
               this._captureRejectionHandled = true;
               const rejection = this[Symbol.for("nodejs.rejection")];
