@@ -25,11 +25,11 @@ globalThis.__nodeCommon = {
     wrapped.__quench_at_least = true;
     return wrapped;
   },
-  mustSucceed: (fn = () => {}) =>
+  mustSucceed: (fn = () => {}, exact = 1) =>
     globalThis.__nodeCommon.mustCall((error, ...args) => {
       if (error) throw error;
       return fn(...args);
-    }),
+    }, exact),
   mustNotCall:
     (message = "Unexpected call") =>
     () => {
