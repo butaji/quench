@@ -484,6 +484,9 @@ const __quenchNetModule = {
     connect(_options, callback) {
       globalThis.__quenchValidateConnectionOptions(_options);
       if (!this._handle) this._handle = { setKeepAlive: () => {} };
+      if (_options.keepAlive !== undefined) {
+        this.setKeepAlive(_options.keepAlive, _options.keepAliveInitialDelay);
+      }
       this.connecting = true;
       if (typeof callback === "function") this.once("connect", callback);
       if (_options?.__quenchNativeTransport) {
