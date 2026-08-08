@@ -419,6 +419,12 @@ The fs copy validation slice now rejects the incompatible option pair
 `ERR_INCOMPATIBLE_OPTION_PAIR`. Focused stage 2090 and upstream
 `test-fs-cp-sync-incompatible-options-error.mjs` pass.
 
+WebCrypto reflection coverage now includes focused stage 2092 for an HMAC
+`CryptoKey`: public getters remain usable while `Object.getOwnPropertyNames`,
+`Object.getOwnPropertySymbols`, and `Reflect.ownKeys` stay empty. The broader
+upstream CryptoKey fixture still has an unresolved callback/lifecycle mismatch
+across its ECDSA, RSA-PSS, and AES cases.
+
 The same shared validator is confirmed across callback, sync, and promise
 copy APIs: existing upstream option-validation fixtures pass, and focused
 stage 2091 verifies the incompatible pair through both `fs.cp()` and
