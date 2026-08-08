@@ -30,4 +30,7 @@ own commit.
 - Item 2: partially improved. Stage 2334 verifies `connecting` true before
   the connect turn and false during the connect event; remote-address fixture
   lifecycle callbacks remain unresolved.
-- Items 3–10: queued.
+- Item 3: improved. Stage 2335 and upstream
+  `test-net-socket-timeout-unref.js` pass with socket `ref`, `unref`, and
+  `hasRef` state.
+- Items 4–10: queued.
