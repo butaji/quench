@@ -619,3 +619,10 @@ The current binary recheck preserves the same VFS promise boundary: stage
 `test-vfs-fs-promises.js` fixture still exits with `Callback 0`. This confirms
 the aggregate failure has not regressed into the independently verified
 operation sequence.
+
+The stream backpressure boundary now has two additional probes: `_write`
+callbacks are serialized through a queue, and the host exit loop services refed
+timers before emitting `beforeExit`. Crate tests and stage 2445 remain green;
+the authoritative `test-stream-backpressure.js` fixture still reports only
+3/11 `read` calls, so the remaining gap is explicitly tracked as event-loop
+tracing work rather than claimed as complete.
