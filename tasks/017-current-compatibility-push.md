@@ -198,6 +198,7 @@ destroyed-socket replacement. The in-memory socket now exposes Node-compatible
 `destroy`, `ref`, `unref`, and `setKeepAlive` methods. Both focused contracts
 pass; the combined upstream timeout fixture still hangs in its four-block
 lifecycle and remains unresolved.
+
 ### 2026-08-08 HTTP information/header follow-up
 
 - Added `response.writeInformation()` to the shared HTTP response surface. It
@@ -366,8 +367,7 @@ host Node.
 
 An ESLint Linter application probe remains unresolved: package loading reaches
 the public API, but the first lint operation overflows the QuickJS stack inside
-ESLint's parser/configuration path. A focused RegExp-flags surface probe (stage
-2083) passes, so this is not being misclassified as a missing primitive.
+ESLint's parser/configuration path. A focused RegExp-flags surface probe (stage 2083) passes, so this is not being misclassified as a missing primitive.
 
 Fresh full differential rebaseline completed at 2026-08-08T02:42:45Z against
 all 4,682 parallel fixtures with zero worker failures: 924 exact matches and
@@ -774,3 +774,5 @@ EOF emits one asynchronous error when observed, while still throwing without
 an error listener, and repeated invalid `Writable.write()` calls emit only one
 error. The focused contract and upstream `test-stream-error-once.js` both
 pass.
+
+- Stage 2173: pass `captureRejections` options into writable event emitters so rejected async `drain` listeners surface as stream errors and destroy the writable, matching Node's `test-stream-catch-rejections.js`.
