@@ -41,7 +41,6 @@ const __quenchPackagePath = (specifier, parent) => {
   while (true) {
     const root = path.join(directory, "node_modules", packageName);
     try {
-      __nodeFs.readFileSync(path.join(root, "package.json"), "utf8");
       const entry = __quenchPackageEntry(root, subpath);
       return __quenchLocalModulePath(entry, root);
     } catch (_) {}
@@ -108,10 +107,13 @@ const __quenchLocalModulePath = (specifier, parent) => {
   throw error;
 };
 const __quenchLoadLocalModule = (specifier, parent) => {
-  const filename =
+  let filename =
     specifier.startsWith(".") || specifier.startsWith("/")
       ? __quenchLocalModulePath(specifier, parent)
       : __quenchPackagePath(specifier, parent);
+  try {
+    filename = __nodeFs.realpathSync(filename);
+  } catch (_) {}
   if (
     __quenchLocalModuleCache.has(filename) &&
     globalThis.require.cache &&
