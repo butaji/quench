@@ -377,7 +377,6 @@ mod tests {
     #[test]
     fn test_quench_host_style_assert_false() {
         let mut ctx = crate::Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
         let prev_strict = crate::interpreter::is_strict_mode();
         crate::interpreter::set_strict_mode(false);
         try_inject_harness(&mut ctx).expect("harness should load");
@@ -426,7 +425,6 @@ mod tests {
 
         // Test WITH frontmatter (built script)
         let mut ctx = crate::Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
         crate::interpreter::set_strict_mode(false);
         try_inject_harness(&mut ctx).expect("harness");
         let _r1 = ctx.eval(&script);
@@ -443,14 +441,12 @@ mod tests {
             source.clone()
         };
         let mut ctx2 = crate::Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx2);
         crate::interpreter::set_strict_mode(false);
         try_inject_harness(&mut ctx2).expect("harness");
         let _r2 = ctx2.eval(&source_no_fm);
 
         // Also test: inline with $debug
         let mut ctx3 = crate::Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx3);
         crate::interpreter::set_strict_mode(false);
         try_inject_harness(&mut ctx3).expect("harness");
         let r3 = ctx3.eval(
@@ -510,7 +506,6 @@ threw + ',' + errType
     #[test]
     fn test_assert_false_throws_and_catch_sees_error() {
         let mut ctx = crate::Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
         crate::interpreter::set_strict_mode(false);
         try_inject_harness(&mut ctx).expect("harness");
 
@@ -626,15 +621,13 @@ threw + ',' + errType
             .build_script(&source, &includes)
             .expect("build_script should succeed");
 
-        // Step 1: fresh context
+        // Step 1: fresh context (Context::new registers builtins + bootstraps JS)
         let mut ctx = crate::Context::new().expect("Context::new");
-        // Step 2: register_builtins
-        crate::builtins::register_builtins(&mut ctx);
-        // Step 3: try_inject_harness
+        // Step 2: try_inject_harness
         crate::test262::harness::try_inject_harness(&mut ctx).expect("harness");
-        // Step 4: set_strict_mode(false)
+        // Step 3: set_strict_mode(false)
         crate::interpreter::set_strict_mode(false);
-        // Step 5: eval
+        // Step 4: eval
         let r = ctx.eval(&script);
         assert!(r.is_ok(), "step-by-step should pass, got {:?}", r);
 
@@ -681,7 +674,6 @@ if (threw === false) {
 }
 "#;
         let mut ctx = crate::Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
         crate::interpreter::set_strict_mode(false);
         try_inject_harness(&mut ctx).expect("harness loads");
         crate::interpreter::set_strict_mode(false);
@@ -697,7 +689,6 @@ if (threw === false) {
     #[test]
     fn test_thrown_value_consumed_by_js_catch() {
         let mut ctx = crate::Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
         crate::interpreter::set_strict_mode(false);
         try_inject_harness(&mut ctx).expect("harness loads");
 

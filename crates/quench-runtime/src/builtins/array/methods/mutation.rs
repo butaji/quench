@@ -121,9 +121,7 @@ pub fn proto_splice(args: Vec<Value>) -> Result<Value, JsError> {
 mod tests {
 
     fn create_test_context() -> crate::Context {
-        let mut ctx = crate::Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
-        ctx
+        crate::Context::new().unwrap()
     }
 
     #[test]
