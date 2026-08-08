@@ -682,3 +682,8 @@ Focused stage 2149 makes the public `Duplex` constructor callable without
 writable sides. The focused contract passes. Upstream `test-stream-duplex.js`
 advances past the callable-constructor assertions and now reaches the separate
 `Duplex.fromWeb()` bridge gap.
+
+Focused stage 2150 implements `Duplex.fromWeb()` using Web Stream readers and
+writers, including asynchronous read, write, close, and cancellation/error
+propagation. The focused bridge contract passes, and upstream Duplex testing
+advances to the separate `Duplex.toWeb()` bridge gap.

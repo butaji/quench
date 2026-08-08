@@ -1001,6 +1001,46 @@ const __nodeDuplexFrom = (body) => {
   throw new TypeError('The "body" argument must be a stream or iterable');
 };
 NodeDuplex.from = __nodeDuplexFrom;
+const __nodeDuplexFromWeb = (pair = {}, options = {}) => {
+  const readable = pair.readable;
+  const writable = pair.writable;
+  const duplex = new NodeDuplex({
+    ...options,
+    read() {
+      if (!this.__webReader || this.__webReading) return;
+      this.__webReading = true;
+      this.__webReader.read().then(
+        ({ value, done }) => {
+          this.__webReading = false;
+          if (done) this.push(null);
+          else this.push(value);
+        },
+        (error) => {
+          this.__webReading = false;
+          this.destroy(error);
+        }
+      );
+    },
+    write(chunk, _encoding, callback) {
+      Promise.resolve(this.__webWriter?.write(chunk)).then(
+        () => callback(),
+        (error) => callback(error)
+      );
+    },
+    destroy(error, callback) {
+      Promise.resolve(error ? this.__webReader?.cancel(error) : undefined).then(
+        () => callback(),
+        (destroyError) => callback(destroyError)
+      );
+    }
+  });
+  if (readable?.getReader) duplex.__webReader = readable.getReader();
+  if (writable?.getWriter) duplex.__webWriter = writable.getWriter();
+  return duplex;
+};
+NodeDuplex.fromWeb = __nodeDuplexFromWeb;
+NodeDuplexCompat.from = NodeDuplex.from;
+NodeDuplexCompat.fromWeb = NodeDuplex.fromWeb;
 class NodeTransform extends NodeWritable {
   constructor(options = {}) {
     super(options);
