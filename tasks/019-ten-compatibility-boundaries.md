@@ -508,6 +508,10 @@ bytes, gzip compression through `pipeToSync`, and gzip decompression. All pass,
 so the remaining upstream timeout is in later mixed-transform or lifecycle
 cases rather than basic pull or zlib operation.
 
+Stage 2437 fixes `pullSync({ autoClose: true })` on early iterator termination:
+the generator's `finally` path now closes the descriptor as Node requires. The
+focused early-break auto-close regression passes.
+
 Stage 2431 fixes absolute symlink targets inside a `RealFSProvider` root by
 preserving the host absolute target instead of incorrectly joining it twice.
 The focused absolute-link/realpath regression passes.

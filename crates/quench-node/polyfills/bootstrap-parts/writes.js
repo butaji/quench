@@ -496,6 +496,11 @@ const __nodeFsAttachPull = (handle) => {
           globalThis.__nodeFdPositions[handle.fd] = end;
           if (options.autoClose) globalThis.__nodeFs.closeSync(handle.fd);
         } finally {
+          if (options.autoClose && globalThis.__nodeFdPaths[handle.fd]) {
+            try {
+              globalThis.__nodeFs.closeSync(handle.fd);
+            } catch (_) {}
+          }
           handle._pullLocked = false;
         }
       }
