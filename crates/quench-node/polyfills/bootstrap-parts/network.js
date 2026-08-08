@@ -316,6 +316,7 @@ const __quenchNetModule = {
       this._nativeId = 0;
       this._nativeConnected = false;
       this._nativeEnded = false;
+      this._corked = 0;
     }
     get bufferSize() {
       return this._bufferSize;
@@ -345,6 +346,14 @@ const __quenchNetModule = {
       return this;
     }
     setKeepAlive() {
+      return this;
+    }
+    cork() {
+      this._corked++;
+      return this;
+    }
+    uncork() {
+      this._corked = Math.max(0, this._corked - 1);
       return this;
     }
     address() {
