@@ -187,7 +187,7 @@ diff <(jq --sort-keys . before.json) <(jq --sort-keys . after.json)
 - `TEST262_QUICK=1` — minimal output, just counts
 - `TEST262_JSON=1` — machine-readable JSON output
 - `TEST262_FAILED_JSON=tasks/failures-N.json` — rerun only prior failures
-- `TEST262_ISOLATED=1` — subprocess per test (default: fast in-process with a thread-local harness-IR cache; build `run-test` first for isolated crash isolation)
+- `TEST262_ISOLATED=1` — subprocess per test (default: fast in-process *serial* with a thread-local harness-IR cache; use isolated for full crash isolation / parallel scan, build `run-test` first)
 - `TEST262_PARALLEL=1` — parallel in-stage (default on)
 - `TEST262_SERIAL=1` — force serial execution
 - `TEST262_NOSKIP=1` — run crash-list files
