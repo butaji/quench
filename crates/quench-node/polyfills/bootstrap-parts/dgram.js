@@ -2,6 +2,7 @@
 const __quenchOriginalRequireWithDgram = globalThis.require;
 const __quenchDgramStateSymbol = Symbol.for("quench.dgram.state");
 const __quenchDgramBoundPorts = new Set();
+const __quenchDgramSockets = new Set();
 let __quenchDgramNextPort = 40000;
 const __quenchDgramTypeDetail = (value) => {
   if (typeof value === "number") return ` Received type number (${value})`;
@@ -45,16 +46,23 @@ const __quenchDgramBind = (socket, type, port, address, callback) => {
       code: "ERR_SOCKET_ALREADY_BOUND"
     });
   }
+  if (typeof port === "function") {
+    callback = port;
+    port = 0;
+  }
   if (typeof address === "function") callback = address;
   const resolvedPort =
     typeof port === "number" && port > 0 ? port : __quenchDgramNextPort++;
   if (__quenchDgramBoundPorts.has(resolvedPort)) {
-    throw Object.assign(new Error("bind EADDRINUSE"), {
+    const error = Object.assign(new Error("bind EADDRINUSE"), {
       code: "EADDRINUSE",
       syscall: "bind"
     });
+    queueMicrotask(() => socket.emit("error", error));
+    return socket;
   }
   socket._bound = true;
+  __quenchDgramSockets.add(socket);
   socket._bindPending = true;
   __quenchDgramBoundPorts.add(resolvedPort);
   socket._address = {
@@ -119,6 +127,7 @@ const __quenchDgramSend = (socket, message, ...args) => {
     );
   }
   const callback = args.at(-1);
+  const destinationPort = socket._connected ? socket._remote?.port : args[0];
   const payload =
     typeof message === "string"
       ? NodeBuffer.from(message)
@@ -131,8 +140,16 @@ const __quenchDgramSend = (socket, message, ...args) => {
     socket._sendQueueCount = (socket._sendQueueCount || 0) + 1;
   }
   queueMicrotask(() => {
-    if (!socket._bound) return;
-    socket.emit("message", payload, socket.address());
+    const target = [...__quenchDgramSockets].find(
+      (candidate) =>
+        candidate._bound && candidate._address?.port === destinationPort
+    );
+    const sourceAddress = socket._address || {
+      address: socket.type === "udp6" ? "::" : "0.0.0.0",
+      family: socket.type === "udp6" ? "IPv6" : "IPv4",
+      port: 0
+    };
+    target?.emit("message", payload, sourceAddress);
     if (typeof callback === "function") callback(null, length);
   });
   return socket;
@@ -233,6 +250,7 @@ const __quenchDgramRemoteAddress = (socket) => {
 };
 const __quenchDgramClose = (socket, callback) => {
   socket._bound = false;
+  __quenchDgramSockets.delete(socket);
   if (socket._address) __quenchDgramBoundPorts.delete(socket._address.port);
   if (typeof callback === "function") callback();
   queueMicrotask(() => socket.emit("close"));
@@ -327,13 +345,14 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
         });
       }
       socket._bound = true;
+      __quenchDgramSockets.add(socket);
       __quenchDgramBoundPorts.add(resolvedPort);
       socket._address = {
         address,
         family: type === "udp6" ? "IPv6" : "IPv4",
         port: resolvedPort
       };
-      queueMicrotask(() => socket._bound && socket.emit("listening"));
+      setImmediate(() => socket._bound && socket.emit("listening"));
       return socket._address;
     },
     send: (message, ...args) => __quenchDgramSend(socket, message, ...args),
