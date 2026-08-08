@@ -580,8 +580,10 @@ mod var_without_init {
     }
 
     #[test]
-    fn var_redeclaration_without_init_resets_to_undefined() {
-        assert_eq!(eval("var x = 5; var x; x").unwrap(), Value::Undefined);
+    fn var_redeclaration_without_init_preserves_value() {
+        // `var x;` with no initializer is a no-op re-declaration: it must not
+        // reset an already-initialized binding (per the var-hoisting semantics).
+        assert_eq!(eval("var x = 5; var x; x").unwrap(), Value::Number(5.0));
     }
 }
 
