@@ -1,8 +1,8 @@
 import {
   assertDirEquivalent,
   nextdir,
-} from "../../tests/node/test/common/fs.js";
-import fixtures from "../../tests/node/test/common/fixtures.js";
+} from "../../../tests/node/test/common/fs.js";
+import fixtures from "../../../tests/node/test/common/fixtures.js";
 import { constants, lstatSync } from "node:fs";
 
 if (typeof nextdir !== "function") throw new Error("nextdir missing");

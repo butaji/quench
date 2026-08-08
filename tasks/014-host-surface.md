@@ -1,5 +1,13 @@
 # Host (Rust) surface — the unsafe / OS-bound primitives
 
+## Contract alignment
+
+This task supports the Node 24 application-runtime contract on Linux x86_64;
+observable Node behavior remains the compatibility target. Rust remains limited
+to engine integration and unsafe or OS-bound primitives.
+See `docs/authoritative-test-sources.md` for the Node, LLRT, Deno, WPT, and
+Test262 reference roles.
+
 ## Goal
 
 `crates/quench-node/src/main.rs` (currently 466 lines) provides host

@@ -8,14 +8,15 @@ globalThis.__nodeEventEmitter.prototype.off =
   globalThis.__nodeEventEmitter.prototype.removeListener;
 globalThis.__nodeEventEmitter.prototype.prependListener = function (
   event,
-  listener,
+  listener
 ) {
   const current = this._events[event];
-  this._events[event] = current === undefined
-    ? listener
-    : Array.isArray(current)
-    ? [listener, ...current]
-    : [listener, current];
+  this._events[event] =
+    current === undefined
+      ? listener
+      : Array.isArray(current)
+        ? [listener, ...current]
+        : [listener, current];
   return this;
 };
 globalThis.__nodeEventEmitter.prototype.once = function (event, listener) {
@@ -31,7 +32,7 @@ globalThis.__nodeEventEmitter.prototype.once = function (event, listener) {
 };
 globalThis.__nodeEventEmitter.prototype.prependOnceListener = function (
   event,
-  listener,
+  listener
 ) {
   let called = false;
   const once = (...args) => {

@@ -30,9 +30,11 @@ globalThis.__nodeCommon = {
       if (error) throw error;
       return fn(...args);
     }),
-  mustNotCall: (message = "Unexpected call") => () => {
-    throw new Error(message);
-  },
+  mustNotCall:
+    (message = "Unexpected call") =>
+    () => {
+      throw new Error(message);
+    },
   noop: () => {},
   spawnPromisified: (...args) => {
     const child = globalThis.require("child_process").spawn(...args);
@@ -40,23 +42,25 @@ globalThis.__nodeCommon = {
     let stderr = "";
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (data) => stdout += data);
-    child.stderr.on("data", (data) => stderr += data);
+    child.stdout.on("data", (data) => (stdout += data));
+    child.stderr.on("data", (data) => (stderr += data));
     return new Promise((resolve, reject) => {
       child.on("close", (code, signal) =>
         resolve({
           code,
           signal,
           stdout,
-          stderr,
-        }));
+          stderr
+        })
+      );
       child.on("error", (error) =>
         reject({
           code: error,
           signal: undefined,
           stdout,
-          stderr,
-        }));
+          stderr
+        })
+      );
     });
   },
   platformTimeout: (milliseconds) => milliseconds,
@@ -116,12 +120,13 @@ globalThis.__nodeCommon = {
   getArrayBufferViews: (buffer) => [
     buffer,
     new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength),
-    new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength),
+    new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength)
   ],
   getBufferSources: (buffer) => {
-    const bytes = buffer instanceof ArrayBuffer
-      ? new Uint8Array(buffer)
-      : new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+    const bytes =
+      buffer instanceof ArrayBuffer
+        ? new Uint8Array(buffer)
+        : new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
     const start = bytes.byteOffset;
     const length = bytes.byteLength;
     const source = bytes.buffer;
@@ -130,9 +135,9 @@ globalThis.__nodeCommon = {
       new Uint8Array(source, start, length),
       new Uint8ClampedArray(source, start, length),
       new DataView(source, start, length),
-      source.slice(start, start + length),
+      source.slice(start, start + length)
     ];
-  },
+  }
 };
 globalThis.__quench_verify_calls = () => {
   for (const callback of globalThis.__nodeCallChecks || []) {
@@ -142,7 +147,7 @@ globalThis.__quench_verify_calls = () => {
         : callback.calls !== callback.expected
     ) {
       throw new Error(
-        `Callback ${callback.__quench_index}: expected ${callback.expected} calls, got ${callback.calls}`,
+        `Callback ${callback.__quench_index}: expected ${callback.expected} calls, got ${callback.calls}`
       );
     }
   }
@@ -159,10 +164,11 @@ globalThis.__nodeTmpdir = {
     globalThis.__nodePath.join(globalThis.__nodeTmpdir.path, String(name)),
   fileURL: (name = "") =>
     new globalThis.__nodeURL(
-      `file://${
-        globalThis.__nodePath.join(globalThis.__nodeTmpdir.path, String(name))
-      }`,
-    ),
+      `file://${globalThis.__nodePath.join(
+        globalThis.__nodeTmpdir.path,
+        String(name)
+      )}`
+    )
 };
 class NodeEventEmitter {
   constructor(options = {}) {
@@ -172,18 +178,19 @@ class NodeEventEmitter {
       this.domain = activeDomain;
       activeDomain.add(this);
     }
-    this.captureRejections = options.captureRejections ??
-      NodeEventEmitter.captureRejections ?? false;
+    this.captureRejections =
+      options.captureRejections ?? NodeEventEmitter.captureRejections ?? false;
     this._captureRejectionHandled = false;
   }
   on(event, listener) {
     this._events ||= Object.create(null);
     const current = this._events[event];
-    this._events[event] = current === undefined
-      ? listener
-      : Array.isArray(current)
-      ? [...current, listener]
-      : [current, listener];
+    this._events[event] =
+      current === undefined
+        ? listener
+        : Array.isArray(current)
+          ? [...current, listener]
+          : [current, listener];
     return this;
   }
   addListener(event, listener) {
@@ -199,16 +206,20 @@ class NodeEventEmitter {
   emit(event, ...args) {
     this._events ||= Object.create(null);
     if (event === "error") {
-      const monitorSymbol = globalThis.__nodeErrorMonitorSymbol ||
+      const monitorSymbol =
+        globalThis.__nodeErrorMonitorSymbol ||
         Symbol.for("events.errorMonitor");
-      this.listeners(monitorSymbol).forEach((listener) => listener(...args));
+      this.listeners(monitorSymbol).forEach((listener) =>
+        Reflect.apply(listener, this, args)
+      );
     }
     const listeners = this._events[event];
-    const values = listeners === undefined
-      ? []
-      : Array.isArray(listeners)
-      ? listeners
-      : [listeners];
+    const values =
+      listeners === undefined
+        ? []
+        : Array.isArray(listeners)
+          ? listeners
+          : [listeners];
     if (event === "error" && values.length === 0 && this.domain) {
       const error = args[0];
       if (error && typeof error === "object") {
@@ -219,27 +230,30 @@ class NodeEventEmitter {
       this.domain.emit("error", error);
       return true;
     }
-    values.slice().forEach((listener) => {
-      const result = listener.call(this, ...args);
-      if (this.captureRejections && result?.then) {
-        result.catch((error) =>
-          queueMicrotask(() => {
-            if (this._captureRejectionHandled) return;
-            this._captureRejectionHandled = true;
-            const rejection = this[Symbol.for("nodejs.rejection")];
-            if (typeof rejection === "function") {
-              rejection.call(this, error, event, ...args);
-            } else this.emit("error", error);
-          })
-        );
-      }
-    });
+    values
+      .slice()
+      .filter((listener) => typeof listener === "function")
+      .forEach((listener) => {
+        const result = Reflect.apply(listener, this, args);
+        if (this.captureRejections && result?.then) {
+          result.catch((error) =>
+            queueMicrotask(() => {
+              if (this._captureRejectionHandled) return;
+              this._captureRejectionHandled = true;
+              const rejection = this[Symbol.for("nodejs.rejection")];
+              if (typeof rejection === "function") {
+                rejection.call(this, error, event, ...args);
+              } else this.emit("error", error);
+            })
+          );
+        }
+      });
     return values.length > 0;
   }
   removeListener(event, listener) {
     const current = this.listeners(event);
     const removed = current.find(
-      (item) => item === listener || item.listener === listener,
+      (item) => item === listener || item.listener === listener
     );
     if (!removed) return this;
     const values = current.filter((item) => item !== removed);
@@ -276,8 +290,8 @@ class NodeEventEmitter {
     return value === undefined
       ? []
       : Array.isArray(value)
-      ? value.slice()
-      : [value];
+        ? value.slice()
+        : [value];
   }
   listenerCount(event) {
     return this.listeners(event).length;

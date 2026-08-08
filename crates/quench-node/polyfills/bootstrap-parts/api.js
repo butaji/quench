@@ -11,7 +11,7 @@ globalThis.Buffer = new Proxy(NodeBuffer, {
         const error = new TypeError(
           `The "string" argument must be of type string. Received type number (${
             args[0]
-          })`,
+          })`
         );
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
@@ -19,29 +19,27 @@ globalThis.Buffer = new Proxy(NodeBuffer, {
       const buffer = new NodeBuffer(NodeBuffer._validateSize(args[0]));
       Object.defineProperties(buffer, {
         parent: { value: buffer.buffer, configurable: true },
-        offset: { value: buffer.byteOffset, configurable: true },
+        offset: { value: buffer.byteOffset, configurable: true }
       });
       return buffer;
     }
     return NodeBuffer.from(...args);
-  },
+  }
 });
 Object.defineProperties(NodeBuffer.prototype, {
   parent: { value: undefined, configurable: true },
-  offset: { value: undefined, configurable: true },
+  offset: { value: undefined, configurable: true }
 });
 NodeBuffer.poolSize = 8192;
-for (
-  const name of [
-    "ascii",
-    "base64",
-    "base64url",
-    "latin1",
-    "hex",
-    "ucs2",
-    "utf8",
-  ]
-) {
+for (const name of [
+  "ascii",
+  "base64",
+  "base64url",
+  "latin1",
+  "hex",
+  "ucs2",
+  "utf8"
+]) {
   NodeBuffer.prototype[`${name}Slice`] = NodeBuffer.prototype.slice;
   NodeBuffer.prototype[`${name}Write`] = NodeBuffer.prototype.write;
 }
@@ -86,7 +84,7 @@ Object.getOwnPropertyNames = (value) => {
 const __nodeInvalidCharacter = () => {
   const error = new DOMException(
     "The string contains invalid characters.",
-    "InvalidCharacterError",
+    "InvalidCharacterError"
   );
   error.code = 5;
   return error;
@@ -120,14 +118,14 @@ const __nodeEncodeCodePoint = (output, code) => {
     return output.push(
       0xe0 | (code >> 12),
       0x80 | ((code >> 6) & 0x3f),
-      0x80 | (code & 0x3f),
+      0x80 | (code & 0x3f)
     );
   }
   return output.push(
     0xf0 | (code >> 18),
     0x80 | ((code >> 12) & 0x3f),
     0x80 | ((code >> 6) & 0x3f),
-    0x80 | (code & 0x3f),
+    0x80 | (code & 0x3f)
   );
 };
 const __nodeReadCodePoint = (input, index) => {
@@ -179,7 +177,7 @@ const __nodeWindows1252 = {
   155: "›",
   156: "œ",
   158: "ž",
-  159: "Ÿ",
+  159: "Ÿ"
 };
 class NodeTextDecoder {
   constructor(encoding = "utf-8") {
@@ -194,20 +192,20 @@ class NodeTextDecoder {
       } else if (first < 0x80) result += String.fromCodePoint(first);
       else if (first < 0xe0) {
         result += String.fromCodePoint(
-          ((first & 0x1f) << 6) | (bytes[i++] & 0x3f),
+          ((first & 0x1f) << 6) | (bytes[i++] & 0x3f)
         );
       } else if (first < 0xf0) {
         result += String.fromCodePoint(
           ((first & 0x0f) << 12) |
             ((bytes[i++] & 0x3f) << 6) |
-            (bytes[i++] & 0x3f),
+            (bytes[i++] & 0x3f)
         );
       } else {
         result += String.fromCodePoint(
           ((first & 7) << 18) |
             ((bytes[i++] & 0x3f) << 12) |
             ((bytes[i++] & 0x3f) << 6) |
-            (bytes[i++] & 0x3f),
+            (bytes[i++] & 0x3f)
         );
       }
     }
@@ -227,10 +225,10 @@ const nodePathValue = (value) =>
   value instanceof NodeBuffer
     ? value.toString()
     : value instanceof Uint8Array
-    ? new NodeTextDecoder().decode(value)
-    : value instanceof globalThis.__nodeURL
-    ? nodePathFromURL(value)
-    : String(value);
+      ? new NodeTextDecoder().decode(value)
+      : value instanceof globalThis.__nodeURL
+        ? nodePathFromURL(value)
+        : String(value);
 const nodeFsPath = (value) => {
   if (
     typeof value === "string" ||
@@ -241,7 +239,7 @@ const nodeFsPath = (value) => {
     return nodePathValue(value);
   }
   const error = new TypeError(
-    'The "path" argument must be of type string or an instance of Buffer or URL.',
+    'The "path" argument must be of type string or an instance of Buffer or URL.'
   );
   error.message += globalThis.__nodeCommon.invalidArgTypeHelper(value);
   error.code = "ERR_INVALID_ARG_TYPE";
@@ -261,7 +259,7 @@ globalThis.__nodeAssert.AssertionError = class AssertionError extends Error {
 const __nodeAssertionFailure = (message) => {
   if (message instanceof Error) throw message;
   const error = new globalThis.__nodeAssert.AssertionError(
-    message || "Assertion failed",
+    message || "Assertion failed"
   );
   error.code = "ERR_ASSERTION";
   error.diff = "simple";
@@ -269,7 +267,7 @@ const __nodeAssertionFailure = (message) => {
 };
 const __nodeAssertMissingArgs = () => {
   const error = new TypeError(
-    'The "actual" and "expected" arguments must be specified',
+    'The "actual" and "expected" arguments must be specified'
   );
   error.code = "ERR_MISSING_ARGS";
   throw error;
@@ -290,24 +288,25 @@ const __nodeAssertStringDiff = (actual, expected) => {
       "+ actual - expected",
       "",
       ...render(actual, "+"),
-      ...render(expected, "-"),
+      ...render(expected, "-")
     ].join("\n") + "\n"
   );
 };
 globalThis.__nodeAssert.strictEqual = (actual, expected, message) => {
   if (!Object.is(actual, expected)) {
-    const detail = actual instanceof Error && expected instanceof Error
-      ? `Expected "actual" to be reference-equal to "expected":\n+ actual - expected\n\n+ [${actual.name}: ${actual.message}]\n- [${expected.name}: ${expected.message}]\n`
-      : actual &&
-          expected &&
-          typeof actual === "object" &&
-          typeof expected === "object"
-      ? `Expected "actual" to be reference-equal to "expected":\n+ actual\n- expected\n`
-      : typeof actual === "string" && typeof expected === "string"
-      ? actual.includes("\n") || expected.includes("\n")
-        ? __nodeAssertStringDiff(actual, expected)
-        : `Expected values to be strictly equal:\n+ actual - expected\n\n+ '${actual}'\n- '${expected}'\n`
-      : `${actual} !== ${expected}`;
+    const detail =
+      actual instanceof Error && expected instanceof Error
+        ? `Expected "actual" to be reference-equal to "expected":\n+ actual - expected\n\n+ [${actual.name}: ${actual.message}]\n- [${expected.name}: ${expected.message}]\n`
+        : actual &&
+            expected &&
+            typeof actual === "object" &&
+            typeof expected === "object"
+          ? `Expected "actual" to be reference-equal to "expected":\n+ actual\n- expected\n`
+          : typeof actual === "string" && typeof expected === "string"
+            ? actual.includes("\n") || expected.includes("\n")
+              ? __nodeAssertStringDiff(actual, expected)
+              : `Expected values to be strictly equal:\n+ actual - expected\n\n+ '${actual}'\n- '${expected}'\n`
+            : `${actual} !== ${expected}`;
     const error = new globalThis.__nodeAssert.AssertionError(message || detail);
     error.code = "ERR_ASSERTION";
     error.operator = "strictEqual";
@@ -324,11 +323,12 @@ globalThis.__nodeAssert.equal = (actual, expected, message) => {
 };
 globalThis.__nodeAssert.notStrictEqual = (actual, expected, message) => {
   if (Object.is(actual, expected)) {
-    const rendered = typeof actual === "string" && actual.length > 20
-      ? `\n\n'${actual}'`
-      : ` ${actual}`;
+    const rendered =
+      typeof actual === "string" && actual.length > 20
+        ? `\n\n'${actual}'`
+        : ` ${actual}`;
     const error = new globalThis.__nodeAssert.AssertionError(
-      message || `Expected "actual" to be strictly unequal to:${rendered}`,
+      message || `Expected "actual" to be strictly unequal to:${rendered}`
     );
     error.code = "ERR_ASSERTION";
     error.operator = "notStrictEqual";
@@ -341,7 +341,7 @@ globalThis.__nodeAssert.notStrictEqual = (actual, expected, message) => {
 globalThis.__nodeAssert.notEqual = (actual, expected, message) => {
   if (actual == expected) {
     const error = new globalThis.__nodeAssert.AssertionError(
-      message || `${actual} != ${expected}`,
+      message || `${actual} != ${expected}`
     );
     error.operator = "!=";
     throw error;
@@ -352,7 +352,7 @@ globalThis.__nodeAssert.fail = (message) => {
   if (message instanceof Error) throw message;
   const generatedMessage = message === undefined;
   const error = new globalThis.__nodeAssert.AssertionError(
-    generatedMessage ? "Failed" : String(message),
+    generatedMessage ? "Failed" : String(message)
   );
   error.code = "ERR_ASSERTION";
   error.operator = "fail";
@@ -408,7 +408,7 @@ const __nodeAssertNormalize = (value, seen = new WeakSet(), loose = false) => {
     try {
       return {
         constructor: "Date",
-        value: new Date(Date.prototype.getTime.call(value)).toISOString(),
+        value: new Date(Date.prototype.getTime.call(value)).toISOString()
       };
     } catch (_) {
       // Objects with Date.prototype are intentionally not real Dates.
@@ -430,7 +430,7 @@ const __nodeAssertNormalize = (value, seen = new WeakSet(), loose = false) => {
     const normalized = {
       constructor: value.constructor.name,
       name: value.name,
-      message: value.message,
+      message: value.message
     };
     if ("cause" in value) {
       normalized.cause = __nodeAssertNormalize(value.cause, seen, loose);
@@ -467,7 +467,7 @@ const __nodeAssertCauseLines = (cause, prefix) => {
     !(cause instanceof Error)
   ) {
     const entries = Object.keys(cause).map(
-      (key) => `${prefix}    ${key}: ${__nodeAssertInspect(cause[key])}`,
+      (key) => `${prefix}    ${key}: ${__nodeAssertInspect(cause[key])}`
     );
     return [`${prefix}  [cause]: {`, ...entries, `${prefix}  }`];
   }
@@ -479,7 +479,7 @@ const __nodeAssertErrorLines = (error, prefix) => {
   return [
     `${prefix}${label} {`,
     ...__nodeAssertCauseLines(error.cause, prefix),
-    `${prefix}}`,
+    `${prefix}}`
   ];
 };
 const __nodeAssertErrorDiff = (actual, expected) => {
@@ -494,7 +494,7 @@ const __nodeAssertErrorDiff = (actual, expected) => {
       `  ${__nodeAssertErrorLabel(actual)} {`,
       ...__nodeAssertCauseLines(actual.cause, "+ "),
       ...__nodeAssertCauseLines(expected.cause, "- "),
-      "  }",
+      "  }"
     ].join("\n");
   }
   const lines = [];
@@ -513,7 +513,7 @@ const __nodeAssertDateLabel = (value) => {
 };
 const __nodeAssertObjectDiff = (actual, expected) => {
   const keys = [
-    ...new Set([...Object.keys(actual), ...Object.keys(expected)]),
+    ...new Set([...Object.keys(actual), ...Object.keys(expected)])
   ].sort();
   const lines = ["  {"];
   for (const key of keys) {
@@ -524,7 +524,7 @@ const __nodeAssertObjectDiff = (actual, expected) => {
     }
     if (
       JSON.stringify(__nodeAssertNormalize(actual[key])) !==
-        JSON.stringify(__nodeAssertNormalize(expected[key]))
+      JSON.stringify(__nodeAssertNormalize(expected[key]))
     ) {
       lines.push(`+   ${key}: ${__nodeAssertInspect(actual[key])}`);
     }
@@ -535,7 +535,7 @@ const __nodeAssertObjectDiff = (actual, expected) => {
       lines.push(`-   ${key}: ${__nodeAssertInspect(expected[key])}`);
     } else if (
       JSON.stringify(__nodeAssertNormalize(actual[key])) !==
-        JSON.stringify(__nodeAssertNormalize(expected[key]))
+      JSON.stringify(__nodeAssertNormalize(expected[key]))
     ) {
       lines.push(`-   ${key}: ${__nodeAssertInspect(expected[key])}`);
     }
@@ -546,25 +546,24 @@ const __nodeAssertObjectDiff = (actual, expected) => {
 globalThis.__nodeAssert.deepStrictEqual = (actual, expected, message) => {
   if (
     JSON.stringify(__nodeAssertNormalize(actual)) !==
-      JSON.stringify(__nodeAssertNormalize(expected))
+    JSON.stringify(__nodeAssertNormalize(expected))
   ) {
     let detail = "values differ";
     if (actual instanceof Error && expected instanceof Error) {
-      detail =
-        `Expected values to be strictly deep-equal:\n+ actual - expected\n\n${
-          __nodeAssertErrorDiff(actual, expected)
-        }`;
+      detail = `Expected values to be strictly deep-equal:\n+ actual - expected\n\n${__nodeAssertErrorDiff(
+        actual,
+        expected
+      )}`;
     } else if (actual instanceof Date || expected instanceof Date) {
-      detail =
-        `Expected values to be strictly deep-equal:\n+ actual - expected\n\n+ ${
-          __nodeAssertDateLabel(actual)
-        }\n- ${__nodeAssertDateLabel(expected)}\n`;
+      detail = `Expected values to be strictly deep-equal:\n+ actual - expected\n\n+ ${__nodeAssertDateLabel(
+        actual
+      )}\n- ${__nodeAssertDateLabel(expected)}\n`;
     } else if (Array.isArray(actual) && Array.isArray(expected)) {
       const lines = [
         "Expected values to be strictly deep-equal:",
         "+ actual - expected",
         "",
-        "  [",
+        "  ["
       ];
       const length = Math.max(actual.length, expected.length);
       for (let index = 0; index < length; index++) {
@@ -588,18 +587,20 @@ globalThis.__nodeAssert.deepStrictEqual = (actual, expected, message) => {
       lines.push("  ]", "");
       detail = lines.join("\n");
     }
-    const customDetail = message &&
-        actual &&
-        expected &&
-        typeof actual === "object" &&
-        typeof expected === "object"
-      ? `${message}\n+ actual - expected\n\n${
-        __nodeAssertObjectDiff(actual, expected)
-      }\n`
-      : message;
+    const customDetail =
+      message &&
+      actual &&
+      expected &&
+      typeof actual === "object" &&
+      typeof expected === "object"
+        ? `${message}\n+ actual - expected\n\n${__nodeAssertObjectDiff(
+            actual,
+            expected
+          )}\n`
+        : message;
     const renderedDetail = detail.endsWith("\n") ? detail : `${detail}\n`;
     const error = new globalThis.__nodeAssert.AssertionError(
-      customDetail || renderedDetail,
+      customDetail || renderedDetail
     );
     error.code = "ERR_ASSERTION";
     error.operator = "deepStrictEqual";
@@ -612,17 +613,18 @@ globalThis.__nodeAssert.deepStrictEqual = (actual, expected, message) => {
 globalThis.__nodeAssert.deepEqual = (actual, expected, message) => {
   if (
     JSON.stringify(__nodeAssertNormalize(actual, new WeakSet(), true)) ===
-      JSON.stringify(__nodeAssertNormalize(expected, new WeakSet(), true))
+    JSON.stringify(__nodeAssertNormalize(expected, new WeakSet(), true))
   ) {
     return;
   }
-  const detail = typeof actual === "string" && typeof expected === "string"
-    ? `Expected values to be loosely deep-equal:\n\n'${
-      actual.endsWith("\n") ? actual.slice(0, -1) : actual
-    }'\n\nshould loosely deep-equal\n\n'${
-      expected.endsWith("\n") ? expected.slice(0, -1) : expected
-    }'`
-    : message || "values differ";
+  const detail =
+    typeof actual === "string" && typeof expected === "string"
+      ? `Expected values to be loosely deep-equal:\n\n'${
+          actual.endsWith("\n") ? actual.slice(0, -1) : actual
+        }'\n\nshould loosely deep-equal\n\n'${
+          expected.endsWith("\n") ? expected.slice(0, -1) : expected
+        }'`
+      : message || "values differ";
   const error = new globalThis.__nodeAssert.AssertionError(detail);
   error.code = "ERR_ASSERTION";
   error.operator = "deepEqual";
@@ -638,18 +640,16 @@ const __nodeAssertPartialEqual = (actual, expected) => {
     if (actual.length === expected.length) {
       return (
         JSON.stringify(__nodeAssertNormalize(actual)) ===
-          JSON.stringify(__nodeAssertNormalize(expected))
+        JSON.stringify(__nodeAssertNormalize(expected))
       );
     }
     for (let index = 0; index < (expected.length || 0); index++) {
       const left = actual[index];
       const right = expected[index];
-      if (
-        !(
-          Object.is(left, right) ||
-          (Number.isNaN(left) && Number.isNaN(right))
-        )
-      ) {
+      if (!(
+        Object.is(left, right) ||
+        (Number.isNaN(left) && Number.isNaN(right))
+      )) {
         return false;
       }
     }
@@ -668,13 +668,13 @@ const __nodeAssertPartialEqual = (actual, expected) => {
   }
   return (
     JSON.stringify(__nodeAssertNormalize(actual)) ===
-      JSON.stringify(__nodeAssertNormalize(expected))
+    JSON.stringify(__nodeAssertNormalize(expected))
   );
 };
 globalThis.__nodeAssert.partialDeepStrictEqual = (
   actual,
   expected,
-  message,
+  message
 ) => {
   if (__nodeAssertPartialEqual(actual, expected)) return;
   if (
@@ -693,7 +693,7 @@ globalThis.__nodeAssert.partialDeepStrictEqual = (
 globalThis.__nodeAssert.notDeepStrictEqual = (actual, expected, message) => {
   if (
     JSON.stringify(__nodeAssertNormalize(actual)) ===
-      JSON.stringify(__nodeAssertNormalize(expected))
+    JSON.stringify(__nodeAssertNormalize(expected))
   ) {
     __nodeAssertionFailure(message || "values are deeply equal");
   }
@@ -701,12 +701,13 @@ globalThis.__nodeAssert.notDeepStrictEqual = (actual, expected, message) => {
 globalThis.__nodeAssert.notDeepEqual =
   globalThis.__nodeAssert.notDeepStrictEqual;
 const __nodeAssertMatchExpectedFunction = (error, expected) => {
-  const isConstructor = expected === Array ||
+  const isConstructor =
+    expected === Array ||
     expected === Error ||
     expected.prototype instanceof Error;
   if (isConstructor && !(error instanceof expected)) {
     const assertion = new globalThis.__nodeAssert.AssertionError(
-      `The error is expected to be an instance of "${expected.name}". Received "${error.constructor.name}"\n\nError message:\n\n${error.message}`,
+      `The error is expected to be an instance of "${expected.name}". Received "${error.constructor.name}"\n\nError message:\n\n${error.message}`
     );
     assertion.generatedMessage = true;
     assertion.code = "ERR_ASSERTION";
@@ -730,9 +731,9 @@ const __nodeAssertMatchExpectedFunction = (error, expected) => {
 const __nodeAssertMatchExpectedRegExp = (error, expected) => {
   if (expected instanceof RegExp && !expected.test(String(error))) {
     const assertion = new globalThis.__nodeAssert.AssertionError(
-      `The input did not match the regular expression ${expected}. Input:\n\n'${
-        String(error)
-      }'\n`,
+      `The input did not match the regular expression ${expected}. Input:\n\n'${String(
+        error
+      )}'\n`
     );
     assertion.code = "ERR_ASSERTION";
     assertion.operator = "throws";
@@ -743,17 +744,15 @@ const __nodeAssertMatchExpectedRegExp = (error, expected) => {
 };
 const __nodeAssertMatchExpectedObject = (error, expected) => {
   if (!expected || typeof expected !== "object") return;
-  for (
-    const key of [
-      "name",
-      "message",
-      "code",
-      "operator",
-      "actual",
-      "expected",
-      "generatedMessage",
-    ]
-  ) {
+  for (const key of [
+    "name",
+    "message",
+    "code",
+    "operator",
+    "actual",
+    "expected",
+    "generatedMessage"
+  ]) {
     if (!(key in expected)) continue;
     if (
       expected[key] instanceof RegExp
@@ -782,13 +781,14 @@ globalThis.__nodeAssert.throws = (fn, expected, message) => {
     __nodeAssertMatchExpected(error, expected);
   }
   if (!thrown) {
-    const label = typeof expected === "function"
-      ? ` (${expected.name})`
-      : typeof expected === "string"
-      ? `: ${expected}`
-      : ".";
+    const label =
+      typeof expected === "function"
+        ? ` (${expected.name})`
+        : typeof expected === "string"
+          ? `: ${expected}`
+          : ".";
     const assertion = new globalThis.__nodeAssert.AssertionError(
-      `Missing expected exception${label}${message ? `: ${message}` : ""}`,
+      `Missing expected exception${label}${message ? `: ${message}` : ""}`
     );
     assertion.code = "ERR_ASSERTION";
     assertion.operator = "throws";
@@ -812,14 +812,12 @@ globalThis.__nodeAssert.ifError = (error) => {
     } else if (error instanceof Error && error.name) rendered = error.name;
     else if (error && error.message !== undefined) rendered = error.message;
     else if (error && typeof error === "object") {
-      rendered = `{ ${
-        Object.keys(error)
-          .map((key) => `${key}: ${String(error[key])}`)
-          .join(", ")
-      } }`;
+      rendered = `{ ${Object.keys(error)
+        .map((key) => `${key}: ${String(error[key])}`)
+        .join(", ")} }`;
     } else rendered = String(error);
     const assertion = new globalThis.__nodeAssert.AssertionError(
-      `ifError got unwanted exception: ${rendered}`,
+      `ifError got unwanted exception: ${rendered}`
     );
     assertion.actual = error;
     assertion.expected = null;
@@ -839,7 +837,7 @@ globalThis.__nodeAssert.doesNotThrow = (fn, expected, message) => {
     const assertion = new globalThis.__nodeAssert.AssertionError(
       `Got unwanted exception${
         text ? `: ${text}` : "."
-      }\nActual message: "${error.message}"`,
+      }\nActual message: "${error.message}"`
     );
     assertion.code = "ERR_ASSERTION";
     assertion.operator = "doesNotThrow";
@@ -860,14 +858,14 @@ globalThis.__nodeAssert.rejects = (promiseOrFn, expected, message) => {
           input === undefined
             ? "undefined"
             : `an instance of ${input?.constructor?.name || typeof input}`
-        }.`,
+        }.`
       );
       error.code = "ERR_INVALID_RETURN_VALUE";
       return Promise.reject(error);
     }
     if (typeof input === "function") {
       const error = new TypeError(
-        'Expected instance of Promise to be returned from the "promiseFn" function but got a function.',
+        'Expected instance of Promise to be returned from the "promiseFn" function but got a function.'
       );
       error.code = "ERR_INVALID_RETURN_VALUE";
       return Promise.reject(error);
@@ -880,14 +878,14 @@ globalThis.__nodeAssert.rejects = (promiseOrFn, expected, message) => {
           typeof input === "string"
             ? `type string ('${input}')`
             : `an instance of ${input?.constructor?.name || typeof input}`
-        }`,
+        }`
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       return Promise.reject(error);
     }
     if (typeof input.catch !== "function") {
       const error = new TypeError(
-        'The "promiseFn" argument must be a function or an instance of Promise',
+        'The "promiseFn" argument must be a function or an instance of Promise'
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       return Promise.reject(error);
@@ -900,7 +898,7 @@ globalThis.__nodeAssert.rejects = (promiseOrFn, expected, message) => {
           typeof expected === "function"
             ? ` (${expected.name || "mustNotCall"})`
             : ""
-        }.`,
+        }.`
       );
       assertion.code = "ERR_ASSERTION";
       assertion.operator = "rejects";
@@ -916,7 +914,7 @@ globalThis.__nodeAssert.rejects = (promiseOrFn, expected, message) => {
         }
         if (valid !== true) {
           const assertion = new globalThis.__nodeAssert.AssertionError(
-            `The "validate" validation function is expected to return "true". Received '${valid}'\n\nCaught error:\n\n${error}`,
+            `The "validate" validation function is expected to return "true". Received '${valid}'\n\nCaught error:\n\n${error}`
           );
           assertion.code = "ERR_ASSERTION";
           assertion.operator = "rejects";
@@ -940,7 +938,7 @@ globalThis.__nodeAssert.rejects = (promiseOrFn, expected, message) => {
             message ||
               expected.message ||
               error?.message ||
-              "The input did not match",
+              "The input did not match"
           );
           assertion.code = "ERR_ASSERTION";
           assertion.operator = "rejects";
@@ -952,7 +950,7 @@ globalThis.__nodeAssert.rejects = (promiseOrFn, expected, message) => {
         }
       }
       return error;
-    },
+    }
   );
 };
 globalThis.__nodeAssert.doesNotReject = (promiseOrFn, message) =>
@@ -971,27 +969,28 @@ globalThis.__nodeAssert.doesNotReject = (promiseOrFn, message) =>
         const error = new TypeError(
           typeof promiseOrFn === "function"
             ? `Expected instance of Promise to be returned from the "promiseFn" function but got ${
-              input === undefined
-                ? "undefined"
-                : `an instance of ${input?.constructor?.name || typeof input}`
-            }.`
-            : `The "promiseFn" argument must be of type function or an instance of Promise. Received type ${typeof input} (${input})`,
+                input === undefined
+                  ? "undefined"
+                  : `an instance of ${input?.constructor?.name || typeof input}`
+              }.`
+            : `The "promiseFn" argument must be of type function or an instance of Promise. Received type ${typeof input} (${input})`
         );
-        error.code = typeof promiseOrFn === "function"
-          ? "ERR_INVALID_RETURN_VALUE"
-          : "ERR_INVALID_ARG_TYPE";
+        error.code =
+          typeof promiseOrFn === "function"
+            ? "ERR_INVALID_RETURN_VALUE"
+            : "ERR_INVALID_ARG_TYPE";
         throw error;
       }
       if (typeof input === "function") {
         const error = new TypeError(
-          'Expected instance of Promise to be returned from the "promiseFn" function but got a function.',
+          'Expected instance of Promise to be returned from the "promiseFn" function but got a function.'
         );
         error.code = "ERR_INVALID_RETURN_VALUE";
         throw error;
       }
       if (typeof input.catch !== "function") {
         const error = new TypeError(
-          'The "promiseFn" argument must be a function or an instance of Promise',
+          'The "promiseFn" argument must be a function or an instance of Promise'
         );
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
@@ -1010,8 +1009,8 @@ globalThis.__nodeAssert.doesNotReject = (promiseOrFn, message) =>
         message && typeof message !== "function"
           ? message
           : `Got unwanted rejection.\nActual message: "${
-            error.message || error
-          }"`,
+              error.message || error
+            }"`
       );
       assertion.code = "ERR_ASSERTION";
       assertion.operator = "doesNotReject";
@@ -1023,11 +1022,12 @@ globalThis.__nodeAssert.doesNotReject = (promiseOrFn, message) =>
     });
 globalThis.__nodeAssert.match = (value, expression) => {
   if (!(expression instanceof RegExp)) {
-    const received = typeof expression === "string"
-      ? ` Received type string ('${expression}')`
-      : ` Received ${expression}`;
+    const received =
+      typeof expression === "string"
+        ? ` Received type string ('${expression}')`
+        : ` Received ${expression}`;
     const error = new TypeError(
-      `The "regexp" argument must be an instance of RegExp.${received}`,
+      `The "regexp" argument must be an instance of RegExp.${received}`
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -1038,11 +1038,12 @@ globalThis.__nodeAssert.match = (value, expression) => {
 };
 globalThis.__nodeAssert.doesNotMatch = (value, expression) => {
   if (!(expression instanceof RegExp)) {
-    const received = typeof expression === "string"
-      ? ` Received type string ('${expression}')`
-      : ` Received ${expression}`;
+    const received =
+      typeof expression === "string"
+        ? ` Received type string ('${expression}')`
+        : ` Received ${expression}`;
     const error = new TypeError(
-      `The "regexp" argument must be an instance of RegExp.${received}`,
+      `The "regexp" argument must be an instance of RegExp.${received}`
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -1061,7 +1062,7 @@ globalThis.__nodeAssert.Assert = class Assert {
       !["simple", "full"].includes(options.diff)
     ) {
       const error = new TypeError(
-        `The property 'options.diff' must be one of: 'simple', 'full'. Received '${options.diff}'`,
+        `The property 'options.diff' must be one of: 'simple', 'full'. Received '${options.diff}'`
       );
       error.code = "ERR_INVALID_ARG_VALUE";
       throw error;
@@ -1086,21 +1087,20 @@ globalThis.__nodeAssert.Assert = class Assert {
       "doesNotReject",
       "ifError",
       "match",
-      "doesNotMatch",
+      "doesNotMatch"
     ];
     const owner = this;
     for (const name of methods) {
       this[name] = function (...args) {
-        const context = this === owner
-          ? owner
-          : { strict: owner.strict, diff: "simple" };
+        const context =
+          this === owner ? owner : { strict: owner.strict, diff: "simple" };
         if (
           [
             "deepEqual",
             "notDeepEqual",
             "deepStrictEqual",
             "notDeepStrictEqual",
-            "partialDeepStrictEqual",
+            "partialDeepStrictEqual"
           ].includes(name) &&
           args.length < 2
         ) {
@@ -1134,12 +1134,9 @@ globalThis.__nodeAssert.Assert = class Assert {
                     ? `${value.slice(0, 508)}...`
                     : value;
                 };
-                error.message =
-                  `Expected values to be loosely deep-equal:\n\n'${
-                    shorten(error.actual)
-                  }\n\nshould loosely deep-equal\n\n'${
-                    shorten(error.expected)
-                  }`;
+                error.message = `Expected values to be loosely deep-equal:\n\n'${shorten(
+                  error.actual
+                )}\n\nshould loosely deep-equal\n\n'${shorten(error.expected)}`;
               }
               if (
                 name === "notStrictEqual" &&
@@ -1189,7 +1186,7 @@ const __nodeAssertClass = globalThis.__nodeAssert.Assert;
 globalThis.__nodeAssert.Assert = function Assert(options) {
   if (!new.target) {
     const error = new TypeError(
-      "Class constructor Assert cannot be invoked without 'new'",
+      "Class constructor Assert cannot be invoked without 'new'"
     );
     error.code = "ERR_CONSTRUCT_CALL_REQUIRED";
     throw error;

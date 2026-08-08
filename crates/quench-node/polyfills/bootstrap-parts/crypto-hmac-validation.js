@@ -2,9 +2,9 @@ const __quenchOriginalCreateHmac = __nodeCryptoApi.createHmac;
 const __quenchHmacEncodingError = (encoding) =>
   Object.assign(
     new TypeError(
-      `The argument 'encoding' is invalid for data of length 1. Received '${encoding}'`,
+      `The argument 'encoding' is invalid for data of length 1. Received '${encoding}'`
     ),
-    { code: "ERR_INVALID_ARG_VALUE" },
+    { code: "ERR_INVALID_ARG_VALUE" }
   );
 __nodeCryptoApi.createHmac = (...args) => {
   const hmac = __quenchOriginalCreateHmac(...args);

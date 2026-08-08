@@ -14,7 +14,7 @@ ArrayBuffer.prototype.transfer = function (...args) {
   }
   if (!(this instanceof ArrayBuffer)) {
     throw new TypeError(
-      "Method ArrayBuffer.prototype.transfer called on incompatible receiver",
+      "Method ArrayBuffer.prototype.transfer called on incompatible receiver"
     );
   }
   const maxByteLength = args[0];
@@ -41,7 +41,7 @@ const __nodeBufferPoolFrom = (source) => {
   const result = new __NodeBufferBase01(
     __nodeBufferPool,
     __nodeBufferPoolOffset,
-    source.length,
+    source.length
   );
   result.set(source);
   __nodeBufferPoolOffset += source.length;

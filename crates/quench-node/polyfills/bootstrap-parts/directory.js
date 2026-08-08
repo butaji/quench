@@ -32,11 +32,11 @@ Object.defineProperty(globalThis.__nodeFs.Dir.prototype, "path", {
       !(this instanceof globalThis.__nodeFs.Dir)
     ) {
       const error = new TypeError(
-        "Method get path called on incompatible receiver",
+        "Method get path called on incompatible receiver"
       );
       error.code = "ERR_INVALID_THIS";
       throw error;
     }
     return this._path;
-  },
+  }
 });

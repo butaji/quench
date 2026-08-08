@@ -4,21 +4,21 @@ const __nodeSystemErrorNames = new Map([
   [-13, "EACCES"],
   [-17, "EEXIST"],
   [-32, "EPIPE"],
-  [-105, "ENOBUFS"],
+  [-105, "ENOBUFS"]
 ]);
 const __nodeUtilGetSystemErrorName = (errorNumber) => {
   if (typeof errorNumber !== "number") {
     const error = new TypeError(
-      `The "err" argument must be of type number. Received type ${typeof errorNumber} (${
-        String(errorNumber)
-      })`,
+      `The "err" argument must be of type number. Received type ${typeof errorNumber} (${String(
+        errorNumber
+      )})`
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
   if (!Number.isInteger(errorNumber) || errorNumber >= 0) {
     const error = new RangeError(
-      `The value of "err" is out of range. It must be a negative integer. Received ${errorNumber}`,
+      `The value of "err" is out of range. It must be a negative integer. Received ${errorNumber}`
     );
     error.code = "ERR_OUT_OF_RANGE";
     throw error;
@@ -35,7 +35,7 @@ const __nodeUtilExceptionWithHostPort = (
   syscall,
   address,
   port,
-  additional,
+  additional
 ) => {
   const code = __nodeUtilGetSystemErrorName(errorNumber);
   const error = new Error(`${syscall} ${code}`);
@@ -52,7 +52,7 @@ const __nodeUtilExceptionWithHostPort = (
 };
 const __nodeUtilErrnoException = (errorNumber, syscall) => {
   const error = new Error(
-    `${syscall || ""} ${__nodeUtilGetSystemErrorName(errorNumber)}`.trim(),
+    `${syscall || ""} ${__nodeUtilGetSystemErrorName(errorNumber)}`.trim()
   );
   error.errno = errorNumber;
   error.code = __nodeUtilGetSystemErrorName(errorNumber);
@@ -65,5 +65,5 @@ globalThis.__nodeUtil._errnoException = __nodeUtilErrnoException;
 globalThis.__nodeUtil.getSystemErrorMessage = __nodeUtilGetSystemErrorMessage;
 globalThis.__nodeUtil.getSystemErrorMap = () =>
   new Map(
-    [...__nodeSystemErrorNames].map(([number, name]) => [number, [name, name]]),
+    [...__nodeSystemErrorNames].map(([number, name]) => [number, [name, name]])
   );

@@ -11,7 +11,7 @@ const __quenchStyles = {
   blue: [34, 39],
   magenta: [35, 39],
   cyan: [36, 39],
-  white: [37, 39],
+  white: [37, 39]
 };
 const __quenchStyleText = (text, style, options = {}) => {
   if (options.validateStream === false || options.colors === false) {
@@ -26,7 +26,7 @@ const __quenchStyleText = (text, style, options = {}) => {
 globalThis.require = (specifier) => {
   if (String(specifier).replace(/^node:/, "") === "util") {
     return Object.assign({}, __quenchOriginalRequireWithStyleText(specifier), {
-      styleText: __quenchStyleText,
+      styleText: __quenchStyleText
     });
   }
   return __quenchOriginalRequireWithStyleText(specifier);

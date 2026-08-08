@@ -265,6 +265,7 @@ impl Loader for NodeLoader {
                     | "assert"
                     | "events"
                     | "fs"
+                    | "fs/promises"
                     | "path"
                     | "test"
                     | "timers/promises"

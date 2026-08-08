@@ -1,4 +1,15 @@
-# Upstream fixtures — pass every `tests/node/test/parallel/*.js`
+# Upstream fixtures — Node 24 application compatibility manifest
+
+Node's upstream suite is the primary behavioral oracle. The first manifest
+covers `test/parallel/` and `test/es-module/`, with required `test/common/` and
+`test/fixtures/` support files. It is versioned as JSONC under
+`tests/node-compat/` and records `pass`, `fail`, `skip`, `platform-limited`,
+`unsupported`, and `known-conflict`. Upstream counts measure progress, not an
+API percentage; Hono and a representative npm CLI are also release gates.
+The source relationships and implementation order are documented in
+`docs/authoritative-test-sources.md`: Node is the oracle, LLRT is the
+QuickJS/Rust reference, Deno is the foreign-runtime runner reference, WPT
+covers web APIs, and Test262 covers the engine baseline.
 
 ## Stage 1160: crypto random size validation
 
@@ -472,11 +483,9 @@ Node. The work is to:
    stage and the original fixtures pass.
 5. Commit one stage per slice.
 
-The project stops being "complete" when
-`tools/measure-node-tests.sh tests/node/test/parallel` reports the highest
-feasible pass rate (target ≥ 95%; the rest are expected skips for
-network/threading/addons/permissions fixtures that the host does not
-support).
+The project stops treating a fixture as unresolved only when it passes or has
+an explicit manifest classification. Platform, unsupported, and fixture
+version limitations must not be hidden in aggregate pass rates.
 
 ## Cluster backlog (priority order)
 
@@ -578,9 +587,13 @@ For each row in the table above:
 
 ## Done when
 
-- `tools/measure-node-tests.sh tests/node/test/parallel` reports ≥ 95%.
-- `tools/check-focused-stages.sh` reports 100% of registered stages
-  pass.
+- The Node 24 compatibility manifest has no unclassified regressions.
+- `tools/check-focused-stages.sh` reports 100% of registered stages pass.
+- Hono and the representative npm CLI application gates have zero failures.
+- The npm package smoke gate includes an `ajv` application probe for
+  CommonJS package resolution and nested dependency loading.
+- The package-loader slice is regression-checked by
+  `test-module-relative-lookup.js` and `test-require-json.js`.
 - Every row in the table above is either Done or Skipped with a
   documented reason (host limitation, intentional API omission).
 

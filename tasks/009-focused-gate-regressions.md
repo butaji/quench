@@ -1,5 +1,12 @@
 # Fix focused stage gate regressions
 
+## Contract alignment
+
+This task supports the Node 24 application-runtime contract on Linux x86_64;
+observable Node behavior remains the compatibility target.
+See `docs/authoritative-test-sources.md` for the Node, LLRT, Deno, WPT, and
+Test262 reference roles.
+
 ## Goal
 
 Restore a green focused-stage suite (`tools/check-focused-stages.sh`). Baseline at

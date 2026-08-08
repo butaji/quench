@@ -5,7 +5,7 @@
     if (stdout.constructor.name !== "Socket") {
       Object.defineProperty(stdout, "constructor", {
         value: function Socket() {},
-        configurable: true,
+        configurable: true
       });
     }
   }

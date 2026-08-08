@@ -25,7 +25,7 @@ const __quenchBuiltinModules = [
   "util",
   "vm",
   "worker_threads",
-  "zlib",
+  "zlib"
 ];
 const __quenchModule = {
   builtinModules: __quenchBuiltinModules,
@@ -40,7 +40,7 @@ const __quenchModule = {
       const value = String(specifier);
       if (value.startsWith(".")) {
         return __quenchOriginalRequireWithModule(
-          pathApi.resolve(directory, value),
+          pathApi.resolve(directory, value)
         );
       }
       return __quenchOriginalRequireWithModule(specifier);
@@ -48,6 +48,11 @@ const __quenchModule = {
   },
   isBuiltin: (name) =>
     __quenchBuiltinModules.includes(String(name).replace(/^node:/, "")),
+  _resolveLookupPaths: (request) => {
+    const value = String(request);
+    if (/^\.\.?\//.test(value) || value.startsWith("/")) return ["."];
+    return ["node_modules"];
+  }
 };
 globalThis.require = (specifier) => {
   if (String(specifier).replace(/^node:/, "") === "module") {

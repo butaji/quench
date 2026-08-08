@@ -23,7 +23,7 @@ const __pcAdapt = (delta, num, first) => {
 };
 const __pcEncodeValue = (delta, h, b, out, bias) => {
   let q = delta;
-  for (let k = __pcBase;; k += __pcBase) {
+  for (let k = __pcBase; ; k += __pcBase) {
     const t = k <= bias ? __pcTMin : k >= bias + __pcTMax ? __pcTMax : k - bias;
     if (q < t) break;
     out.push(__pcDigit(t + ((q - t) % (__pcBase - t))));
@@ -70,7 +70,7 @@ const __pcDecode = (input) => {
   while (index < input.length) {
     let old = i,
       w = 1;
-    for (let k = 36;; k += 36) {
+    for (let k = 36; ; k += 36) {
       const digit = __pcValue(input.charCodeAt(index++));
       i += digit * w;
       const t = k <= bias ? 1 : k >= bias + 26 ? 26 : k - bias;
@@ -105,10 +105,10 @@ const __quenchPunycode = {
       .join("."),
   ucs2: {
     decode: (value) => Array.from(value, (c) => c.codePointAt(0)),
-    encode: (value) => String.fromCodePoint(...value),
+    encode: (value) => String.fromCodePoint(...value)
   },
   encode: __pcEncode,
-  decode: __pcDecode,
+  decode: __pcDecode
 };
 globalThis.require = (specifier) =>
   String(specifier).replace(/^node:/, "") === "punycode"

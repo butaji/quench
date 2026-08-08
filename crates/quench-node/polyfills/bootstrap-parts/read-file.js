@@ -30,24 +30,23 @@ globalThis.__nodeFs.readFile = (value, options, callback) => {
   }
   if (typeof callback !== "function") {
     const error = new TypeError(
-      'The "callback" argument must be of type function',
+      'The "callback" argument must be of type function'
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
-  const encoding = typeof options === "string"
-    ? options
-    : options && options.encoding;
+  const encoding =
+    typeof options === "string" ? options : options && options.encoding;
   if (encoding !== undefined && !NodeBuffer.isEncoding(encoding)) {
     const error = new TypeError(
-      `The argument 'encoding' is invalid. Received '${encoding}'`,
+      `The argument 'encoding' is invalid. Received '${encoding}'`
     );
     error.code = "ERR_INVALID_ARG_VALUE";
     throw error;
   }
   if (typeof value === "function") {
     const error = new TypeError(
-      'The "path" argument must be of type string or an instance of Buffer or URL',
+      'The "path" argument must be of type string or an instance of Buffer or URL'
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;

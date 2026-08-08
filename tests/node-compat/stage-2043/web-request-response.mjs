@@ -2,7 +2,7 @@ import assert from "node:assert";
 
 const request = new Request("http://example.test/", {
   method: "post",
-  headers: { "x-test": "yes" }
+  headers: { "x-test": "yes" },
 });
 assert.strictEqual(request.method, "POST");
 assert.strictEqual(request.headers.get("X-Test"), "yes");

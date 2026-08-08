@@ -34,7 +34,7 @@ const __quenchZlibTransform = (options, method) => {
         kind = undefined;
       } else if (kind !== undefined && typeof kind !== "number") {
         const error = new TypeError(
-          'The "kind" argument must be of type number',
+          'The "kind" argument must be of type number'
         );
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
@@ -81,7 +81,7 @@ const __quenchZlibTransform = (options, method) => {
         const error = new TypeError(
           `The "level" argument must be of type number. Received type ${typeof level} (${
             typeof level === "string" ? `'${level}'` : String(level)
-          })`,
+          })`
         );
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
@@ -90,7 +90,7 @@ const __quenchZlibTransform = (options, method) => {
         const error = new RangeError(
           `The value of "level" is out of range. It must ${
             Number.isFinite(level) ? "be >= -1 and <= 9" : "be a finite number"
-          }. Received ${String(level)}`,
+          }. Received ${String(level)}`
         );
         error.code = "ERR_OUT_OF_RANGE";
         throw error;
@@ -100,7 +100,7 @@ const __quenchZlibTransform = (options, method) => {
           const error = new TypeError(
             `The "strategy" argument must be of type number. Received type ${typeof strategy} (${
               typeof strategy === "string" ? `'${strategy}'` : String(strategy)
-            })`,
+            })`
           );
           error.code = "ERR_INVALID_ARG_TYPE";
           throw error;
@@ -111,7 +111,7 @@ const __quenchZlibTransform = (options, method) => {
               Number.isFinite(strategy)
                 ? "be >= 0 and <= 4"
                 : "be a finite number"
-            }. Received ${String(strategy)}`,
+            }. Received ${String(strategy)}`
           );
           error.code = "ERR_OUT_OF_RANGE";
           throw error;
@@ -121,7 +121,7 @@ const __quenchZlibTransform = (options, method) => {
     },
     readable: true,
     writable: true,
-    _closed: false,
+    _closed: false
   };
   return stream;
 };
@@ -133,7 +133,7 @@ const __quenchValidateFlushOptions = (options) => {
       const error = new TypeError(
         `The "options.${name}" property must be of type number. Received type ${typeof value} (${
           typeof value === "string" ? `'${value}'` : String(value)
-        })`,
+        })`
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
@@ -142,7 +142,7 @@ const __quenchValidateFlushOptions = (options) => {
       const error = new RangeError(
         `The value of "options.${name}" is out of range. It must ${
           Number.isFinite(value) ? "be >= 0 and <= 5" : "be a finite number"
-        }. Received ${String(value)}`,
+        }. Received ${String(value)}`
       );
       error.code = "ERR_OUT_OF_RANGE";
       throw error;
@@ -152,7 +152,7 @@ const __quenchValidateFlushOptions = (options) => {
 const __quenchValidateCompressionWindowBits = (options) => {
   if (options?.windowBits === 0) {
     const error = new RangeError(
-      'The value of "options.windowBits" is out of range. It must be >= 9 and <= 15. Received 0',
+      'The value of "options.windowBits" is out of range. It must be >= 9 and <= 15. Received 0'
     );
     error.code = "ERR_OUT_OF_RANGE";
     throw error;
@@ -172,36 +172,36 @@ globalThis.require = (specifier) => {
     },
     createGunzip: (options) => (
       __quenchValidateFlushOptions(options),
-        (() => {
-          const stream = __quenchZlibTransform(options, module.gunzipSync);
-          Object.setPrototypeOf(stream, module.Gunzip.prototype);
-          return stream;
-        })()
+      (() => {
+        const stream = __quenchZlibTransform(options, module.gunzipSync);
+        Object.setPrototypeOf(stream, module.Gunzip.prototype);
+        return stream;
+      })()
     ),
     createDeflate: (options) => (
       __quenchValidateFlushOptions(options),
-        __quenchValidateCompressionWindowBits(options),
-        (() => {
-          const stream = __quenchZlibTransform(options, module.deflateSync);
-          Object.setPrototypeOf(stream, module.Deflate.prototype);
-          return stream;
-        })()
+      __quenchValidateCompressionWindowBits(options),
+      (() => {
+        const stream = __quenchZlibTransform(options, module.deflateSync);
+        Object.setPrototypeOf(stream, module.Deflate.prototype);
+        return stream;
+      })()
     ),
     createInflate: (options) => (
       __quenchValidateFlushOptions(options),
-        (() => {
-          const stream = __quenchZlibTransform(options, module.inflateSync);
-          Object.setPrototypeOf(stream, module.Inflate.prototype);
-          return stream;
-        })()
+      (() => {
+        const stream = __quenchZlibTransform(options, module.inflateSync);
+        Object.setPrototypeOf(stream, module.Inflate.prototype);
+        return stream;
+      })()
     ),
     createUnzip: (options) => (
       __quenchValidateFlushOptions(options),
-        (() => {
-          const stream = __quenchZlibTransform(options, module.unzipSync);
-          Object.setPrototypeOf(stream, module.Unzip.prototype);
-          return stream;
-        })()
-    ),
+      (() => {
+        const stream = __quenchZlibTransform(options, module.unzipSync);
+        Object.setPrototypeOf(stream, module.Unzip.prototype);
+        return stream;
+      })()
+    )
   });
 };

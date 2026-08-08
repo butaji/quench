@@ -37,7 +37,7 @@ const __nodeDetachedBuffers = new WeakSet();
 const __nodeImmutableBuffers = new WeakSet();
 const __nodeAllocatorCounts = {
   uninitialized: 0,
-  zeroFilled: 0,
+  zeroFilled: 0
 };
 const __nodeNativeStructuredClone = globalThis.structuredClone;
 globalThis.structuredClone = (value, options) => {
@@ -78,22 +78,20 @@ globalThis.DataView = function (...args) {
 };
 globalThis.DataView.prototype = __nodeNativeDataView.prototype;
 const __nodeTypedArraySets = {};
-for (
-  const name of [
-    "Uint8Array",
-    "Uint8ClampedArray",
-    "Int8Array",
-    "Uint16Array",
-    "Int16Array",
-    "Uint32Array",
-    "Int32Array",
-    "Float16Array",
-    "Float32Array",
-    "Float64Array",
-    "BigInt64Array",
-    "BigUint64Array",
-  ]
-) {
+for (const name of [
+  "Uint8Array",
+  "Uint8ClampedArray",
+  "Int8Array",
+  "Uint16Array",
+  "Int16Array",
+  "Uint32Array",
+  "Int32Array",
+  "Float16Array",
+  "Float32Array",
+  "Float64Array",
+  "BigInt64Array",
+  "BigUint64Array"
+]) {
   const Native = globalThis[name];
   const set = new WeakSet();
   __nodeTypedArraySets[name] = set;
@@ -114,9 +112,10 @@ globalThis.queueMicrotask = (callback) =>
       callback();
     } catch (error) {
       if (!globalThis.__quench_async_error) {
-        globalThis.__quench_async_error = error && error.stack
-          ? `${error.name}: ${error.message}\n${error.stack}`
-          : String(error);
+        globalThis.__quench_async_error =
+          error && error.stack
+            ? `${error.name}: ${error.message}\n${error.stack}`
+            : String(error);
       }
     }
   });
@@ -186,7 +185,7 @@ globalThis.console.timeLog = (label = "default", ...args) => {
   globalThis.__quench_console_write(
     `${label}: ${
       Number(BigInt(globalThis.__quench_now_ns()) - consoleTimers[label]) / 1e6
-    } ms ${globalThis.__nodeFormat(args)}`,
+    } ms ${globalThis.__nodeFormat(args)}`
   );
 };
 globalThis.console.timeEnd = (label = "default") => {
@@ -194,7 +193,7 @@ globalThis.console.timeEnd = (label = "default") => {
   globalThis.__quench_console_write(
     `${label}: ${
       Number(BigInt(globalThis.__quench_now_ns()) - consoleTimers[label]) / 1e6
-    } ms`,
+    } ms`
   );
   delete consoleTimers[label];
 };
@@ -243,14 +242,14 @@ globalThis.process = {
         if (String(key) === "") return true;
         globalThis.__quench_env_set(String(key), String(value));
         globalThis.__quench_env_keys = [
-          ...new Set([...globalThis.__quench_env_keys, String(key)]),
+          ...new Set([...globalThis.__quench_env_keys, String(key)])
         ];
         return true;
       },
       deleteProperty: (_, key) => {
         globalThis.__quench_env_delete(String(key));
         globalThis.__quench_env_keys = globalThis.__quench_env_keys.filter(
-          (item) => item !== String(key),
+          (item) => item !== String(key)
         );
         return true;
       },
@@ -258,7 +257,7 @@ globalThis.process = {
         if (typeof key === "symbol") return true;
         if (descriptor.get || descriptor.set) {
           const error = new TypeError(
-            "'process.env' does not accept an accessor(getter/setter) descriptor",
+            "'process.env' does not accept an accessor(getter/setter) descriptor"
           );
           error.code = "ERR_INVALID_OBJECT_DEFINE_PROPERTY";
           throw error;
@@ -269,7 +268,7 @@ globalThis.process = {
           descriptor.enumerable !== true
         ) {
           const error = new TypeError(
-            "'process.env' only accepts a configurable, writable, and enumerable data descriptor",
+            "'process.env' only accepts a configurable, writable, and enumerable data descriptor"
           );
           error.code = "ERR_INVALID_OBJECT_DEFINE_PROPERTY";
           throw error;
@@ -286,8 +285,8 @@ globalThis.process = {
         return value === undefined
           ? undefined
           : { enumerable: true, configurable: true, value };
-      },
-    },
+      }
+    }
   ),
   argv: [globalThis.__quench_exec_path, ...globalThis.__quench_argv.slice(1)],
   execPath: globalThis.__quench_exec_path,
@@ -297,12 +296,12 @@ globalThis.process = {
   geteuid: () => globalThis.__quench_geteuid,
   getgid: () => globalThis.__quench_getgid,
   getegid: () => globalThis.__quench_getegid,
-  platform: globalThis.__quench_platform === "macos"
-    ? "darwin"
-    : globalThis.__quench_platform,
-  arch: globalThis.__quench_arch === "aarch64"
-    ? "arm64"
-    : globalThis.__quench_arch,
+  platform:
+    globalThis.__quench_platform === "macos"
+      ? "darwin"
+      : globalThis.__quench_platform,
+  arch:
+    globalThis.__quench_arch === "aarch64" ? "arm64" : globalThis.__quench_arch,
   version: "v20.0.0",
   versions: { node: "20.0.0", v8: "0.0.0-quench", uv: "0.0.0" },
   release: { name: "node", lts: "Quench" },
@@ -311,15 +310,15 @@ globalThis.process = {
       v8_enable_i18n_support: false,
       v8_enable_temporal_support: false,
       node_shared: false,
-      node_use_ffi: false,
-    },
+      node_use_ffi: false
+    }
   },
   features: { inspector: false, tls: false, quic: false, dtls: false },
   cwd: __quenchDisplayCwd,
   chdir: (value) => {
     if (typeof value !== "string") {
       const error = new TypeError(
-        `The "directory" argument must be of type string. Received ${typeof value}`,
+        `The "directory" argument must be of type string. Received ${typeof value}`
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
@@ -327,13 +326,13 @@ globalThis.process = {
     const path = String(value);
     if (!globalThis.__quench_fs_exists(path)) {
       const error = new Error(
-        `ENOENT: no such file or directory, chdir '${process.cwd()}' -> '${path}'`,
+        `ENOENT: no such file or directory, chdir '${process.cwd()}' -> '${path}'`
       );
       Object.assign(error, {
         code: "ENOENT",
         path: process.cwd(),
         syscall: "chdir",
-        dest: path,
+        dest: path
       });
       throw error;
     }
@@ -347,19 +346,19 @@ globalThis.process = {
     throw { __quench_process_exit: true };
   },
   kill: __nodeProcessKill,
-  platform: globalThis.__quench_platform === "macos"
-    ? "darwin"
-    : globalThis.__quench_platform,
-  arch: globalThis.__quench_arch === "aarch64"
-    ? "arm64"
-    : globalThis.__quench_arch,
+  platform:
+    globalThis.__quench_platform === "macos"
+      ? "darwin"
+      : globalThis.__quench_platform,
+  arch:
+    globalThis.__quench_arch === "aarch64" ? "arm64" : globalThis.__quench_arch,
   uptime: () => Math.max(0, (Date.now() - __nodeStartedAt) / 1000),
   memoryUsage: () => ({
     rss: 0,
     heapTotal: 0,
     heapUsed: 0,
     external: 0,
-    arrayBuffers: 0,
+    arrayBuffers: 0
   }),
   resourceUsage: () => ({
     userCPUTime: 0,
@@ -377,7 +376,7 @@ globalThis.process = {
     ipcReceived: 0,
     signalsCount: 0,
     voluntaryContextSwitches: 0,
-    involuntaryContextSwitches: 0,
+    involuntaryContextSwitches: 0
   }),
   binding: (name) => {
     const error = new Error(`No such module: ${String(name)}`);
@@ -396,7 +395,7 @@ globalThis.process = {
   nextTick: (callback, ...args) => {
     if (typeof callback !== "function") {
       const error = new TypeError(
-        'The "callback" argument must be of type function',
+        'The "callback" argument must be of type function'
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
@@ -426,16 +425,16 @@ globalThis.process = {
     if (previous === undefined) return current;
     if (!Array.isArray(previous)) {
       const error = new TypeError(
-        `The "time" argument must be an instance of Array. Received type ${typeof previous} (${
-          String(previous)
-        })`,
+        `The "time" argument must be an instance of Array. Received type ${typeof previous} (${String(
+          previous
+        )})`
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
     if (previous.length !== 2) {
       const error = new RangeError(
-        `The value of "time" is out of range. It must be 2. Received ${previous.length}`,
+        `The value of "time" is out of range. It must be 2. Received ${previous.length}`
       );
       error.code = "ERR_OUT_OF_RANGE";
       throw error;
@@ -447,7 +446,7 @@ globalThis.process = {
       nanos += 1000000000;
     }
     return [seconds, nanos];
-  },
+  }
 };
 process.hrtime.bigint = () => BigInt(globalThis.__quench_now_ns());
 globalThis.setImmediate = (callback, ...args) => {
@@ -456,7 +455,7 @@ globalThis.setImmediate = (callback, ...args) => {
   }
   const resource = {
     asyncId: ++globalThis.__nodeNextAsyncId,
-    triggerAsyncId: globalThis.__nodeCurrentAsyncResource?.asyncId || 1,
+    triggerAsyncId: globalThis.__nodeCurrentAsyncResource?.asyncId || 1
   };
   for (const hook of globalThis.__nodeAsyncHooks || []) {
     if (typeof hook.callbacks?.init === "function") {
@@ -464,13 +463,20 @@ globalThis.setImmediate = (callback, ...args) => {
         resource.asyncId,
         "Immediate",
         resource.triggerAsyncId,
-        resource,
+        resource
       );
     }
   }
   const id = { active: true, refed: true, generation: 0 };
   const activeDomain = globalThis.__quench_active_domain;
-  id.ref = () => ((id.refed = true), id);
+  id.ref = () => {
+    if (!id.refed && id.active && !id.counted) {
+      id.refed = true;
+      id.counted = true;
+      globalThis.__quenchRefedHandles++;
+    }
+    return id;
+  };
   id.unref = () => ((id.refed = false), id);
   id.hasRef = () => id.active && id.refed;
   id.refresh = () => ((id.active = true), id);
@@ -485,13 +491,31 @@ globalThis.setImmediate = (callback, ...args) => {
 globalThis.clearImmediate = (id) => {
   if (id) id.active = false;
 };
+globalThis.__quenchRefedHandles ||= 0;
 globalThis.setTimeout = (callback, _delay = 0, ...args) => {
   if (typeof callback !== "function") {
     throw new TypeError('The "callback" argument must be of type function');
   }
-  const id = { active: true, refed: true, generation: 0 };
+  const id = {
+    active: true,
+    refed: true,
+    generation: 0,
+    counted: true,
+    unrefChecks: 0
+  };
+  globalThis.__quenchRefedHandles++;
   id.ref = () => ((id.refed = true), id);
-  id.unref = () => ((id.refed = false), id);
+  id.unref = () => {
+    if (id.refed && id.counted) {
+      id.refed = false;
+      id.counted = false;
+      globalThis.__quenchRefedHandles = Math.max(
+        0,
+        globalThis.__quenchRefedHandles - 1
+      );
+    }
+    return id;
+  };
   id.hasRef = () => id.active && id.refed;
   const resource = globalThis.__nodeCurrentAsyncResource;
   const activeDomain = globalThis.__quench_active_domain;
@@ -499,6 +523,25 @@ globalThis.setTimeout = (callback, _delay = 0, ...args) => {
     const generation = ++id.generation;
     queueMicrotask(() => {
       if (id.active && generation === id.generation) {
+        if (
+          !id.refed &&
+          globalThis.__quenchRefedHandles > 0 &&
+          id.unrefChecks++ < 1000
+        ) {
+          queueMicrotask(schedule);
+          return;
+        }
+        if (!id.refed && globalThis.__quenchRefedHandles === 0) {
+          id.active = false;
+          return;
+        }
+        if (id.counted) {
+          id.counted = false;
+          globalThis.__quenchRefedHandles = Math.max(
+            0,
+            globalThis.__quenchRefedHandles - 1
+          );
+        }
         const delay = __nodeTimerDelay(_delay);
         if (delay) globalThis.__quench_sleep_ms(delay);
         const previous = globalThis.__nodeCurrentAsyncResource;
@@ -521,7 +564,16 @@ globalThis.setTimeout = (callback, _delay = 0, ...args) => {
   return id;
 };
 globalThis.clearTimeout = (id) => {
-  if (id) id.active = false;
+  if (id) {
+    if (id.active && id.counted) {
+      id.counted = false;
+      globalThis.__quenchRefedHandles = Math.max(
+        0,
+        globalThis.__quenchRefedHandles - 1
+      );
+    }
+    id.active = false;
+  }
 };
 globalThis.setInterval = (callback, _delay = 0, ...args) => {
   if (typeof callback !== "function") {
@@ -558,14 +610,14 @@ globalThis.__nodeTimers = {
   setInterval,
   clearInterval,
   setImmediate,
-  clearImmediate,
+  clearImmediate
 };
 if (typeof Object.hasOwn !== "function") {
   Object.defineProperty(Object, "hasOwn", {
     value: (object, property) =>
       Object.prototype.hasOwnProperty.call(object, property),
     configurable: true,
-    writable: true,
+    writable: true
   });
 }
 if (typeof globalThis.Blob !== "function") {
@@ -581,7 +633,7 @@ if (typeof globalThis.Blob !== "function") {
     async arrayBuffer() {
       return this._data.buffer.slice(
         this._data.byteOffset,
-        this._data.byteOffset + this._data.byteLength,
+        this._data.byteOffset + this._data.byteLength
       );
     }
     async text() {

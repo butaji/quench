@@ -20,7 +20,7 @@ const __quenchConsume = async (stream) => {
 const __quenchStreamConsumers = {
   buffer: async (stream) =>
     Buffer.concat(
-      (await __quenchConsume(stream)).map((chunk) => Buffer.from(chunk)),
+      (await __quenchConsume(stream)).map((chunk) => Buffer.from(chunk))
     ),
   arrayBuffer: async (stream) =>
     (await __quenchStreamConsumers.buffer(stream)).buffer,
@@ -31,7 +31,7 @@ const __quenchStreamConsumers = {
   bytes: async (stream) =>
     new Uint8Array(await __quenchStreamConsumers.buffer(stream)),
   blob: async (stream) =>
-    new Blob([await __quenchStreamConsumers.buffer(stream)]),
+    new Blob([await __quenchStreamConsumers.buffer(stream)])
 };
 globalThis.require = (specifier) => {
   if (String(specifier).replace(/^node:/, "") === "stream/consumers") {

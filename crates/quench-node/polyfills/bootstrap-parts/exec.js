@@ -1,7 +1,6 @@
 const __quenchSyncExecErrorRequire = globalThis.require;
-const __quenchSyncExecErrorChildProcess = __quenchSyncExecErrorRequire(
-  "child_process",
-);
+const __quenchSyncExecErrorChildProcess =
+  __quenchSyncExecErrorRequire("child_process");
 const __quenchSyncExec = __quenchSyncExecErrorChildProcess.execSync;
 const __quenchSyncExecFile = __quenchSyncExecErrorChildProcess.execFileSync;
 __quenchSyncExecErrorChildProcess.execSync = (command, options) => {
@@ -19,7 +18,7 @@ __quenchSyncExecErrorChildProcess.execFileSync = (file, args, options) => {
       code: "ENOENT",
       errno: -2,
       path: String(file),
-      spawnargs: Array.isArray(args) ? args : [],
+      spawnargs: Array.isArray(args) ? args : []
     });
     throw error;
   }

@@ -8,22 +8,22 @@ const batches = [...fromSync(byteChunks)];
 assert.strictEqual(batches.length, 1);
 assert.deepStrictEqual(batches[0].map(bytes), [[1], [2]]);
 
-const nested = [...fromSync((function* () {
-  yield ["hello", " ", "world"];
-})())];
+const nested = [
+  ...fromSync(
+    (function* () {
+      yield ["hello", " ", "world"];
+    })()
+  )
+];
 assert.deepStrictEqual(
   nested[0].map((value) => new TextDecoder().decode(value)),
-  [
-    "hello",
-    " ",
-    "world",
-  ],
+  ["hello", " ", "world"]
 );
 
 const protocol = {
   [Symbol.for("nodejs.stream.iter.toStreamable")]() {
     return "protocol-data";
-  },
+  }
 };
 assert.strictEqual(textSync(fromSync(protocol)), "protocol-data");
 

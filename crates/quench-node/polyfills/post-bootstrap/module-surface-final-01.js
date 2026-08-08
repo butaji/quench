@@ -5,17 +5,15 @@ const __quenchTestModuleFallbacks = (result, originalRequire, name) => {
   } catch (_) {
     runner = function test() {};
   }
-  for (
-    const exportName of [
-      "test",
-      "describe",
-      "it",
-      "before",
-      "after",
-      "beforeEach",
-      "afterEach",
-    ]
-  ) {
+  for (const exportName of [
+    "test",
+    "describe",
+    "it",
+    "before",
+    "after",
+    "beforeEach",
+    "afterEach"
+  ]) {
     runner[exportName] ||= () => undefined;
   }
   runner.run ||= () => ({});
@@ -57,7 +55,7 @@ const __quenchInternalStreamFallback = (normalized) => {
   if (normalized === "internal/url") return { isURL: globalThis.__nodeIsURL };
   if (normalized === "internal/streams/end-of-stream") {
     return {
-      kEosNodeSynchronousCallback: Symbol("kEosNodeSynchronousCallback"),
+      kEosNodeSynchronousCallback: Symbol("kEosNodeSynchronousCallback")
     };
   }
   if (normalized === "internal/streams/add-abort-signal") {
@@ -95,7 +93,7 @@ const __quenchApplyFinalSurface = (normalized, result) => {
           this.listeners.get("exit")?.(0);
           return Promise.resolve(0);
         }
-      },
+      }
     };
   }
   return result;
@@ -115,12 +113,12 @@ const __quenchUrlAuth = (input) =>
   input.auth
     ? `${encodeURIComponent(input.auth).replace(/%3A/gi, ":")}@`
     : input.username || input.password
-    ? `${encodeURIComponent(input.username || "")}:${
-      encodeURIComponent(input.password || "")
-    }@`
-    : input.host?.includes("@")
-    ? `${input.host.split("@")[0]}@`
-    : "";
+      ? `${encodeURIComponent(input.username || "")}:${encodeURIComponent(
+          input.password || ""
+        )}@`
+      : input.host?.includes("@")
+        ? `${input.host.split("@")[0]}@`
+        : "";
 const __quenchUrlPrefix = (input, protocol, authority) => {
   if (protocol === "mailto:") {
     return `${protocol}${__quenchUrlAuth(input)}${authority}`;
@@ -133,9 +131,10 @@ const __quenchUrlPrefix = (input, protocol, authority) => {
 const __quenchUrlSearch = (input) => {
   let search = input.search || "";
   if (!search && input.query != null) {
-    search = typeof input.query === "string"
-      ? input.query
-      : new URLSearchParams(input.query).toString();
+    search =
+      typeof input.query === "string"
+        ? input.query
+        : new URLSearchParams(input.query).toString();
   }
   if (search && !search.startsWith("?")) search = `?${search}`;
   return search.replace(/#/g, "%23");
@@ -146,9 +145,9 @@ const __quenchFormatUrlObject = (input) => {
   const authority = __quenchUrlAuthority(input);
   const pathname = globalThis.__quenchUrlPath(input, authority);
   const hash = input.hash ? `#${input.hash.replace(/^#/, "")}` : "";
-  return `${__quenchUrlPrefix(input, protocol, authority)}${pathname}${
-    __quenchUrlSearch(input)
-  }${hash}`;
+  return `${__quenchUrlPrefix(input, protocol, authority)}${pathname}${__quenchUrlSearch(
+    input
+  )}${hash}`;
 };
 const __quenchParseQueryObject = (value) => {
   const query = Object.create(null);
@@ -173,7 +172,7 @@ const __quenchUrlUnicodeHost = (host, enabled) => {
   return (
     {
       "xn--lck1c3crb1723bpq4a.com": "理容ナカムラ.com",
-      "xn--0zwm56d.com": "测试.com",
+      "xn--0zwm56d.com": "测试.com"
     }[host] || host
   );
 };
@@ -182,7 +181,7 @@ const __quenchUrlOptionValue = (
   options,
   name,
   disabled,
-  source = name,
+  source = name
 ) =>
   Object.prototype.hasOwnProperty.call(options, name)
     ? disabled
@@ -205,7 +204,7 @@ const __quenchUrlFormatInput = (input, options) => {
     "path",
     "search",
     "query",
-    "hash",
+    "hash"
   ];
   const base = { ...input };
   for (const field of fields) {
@@ -216,7 +215,7 @@ const __quenchUrlFormatInput = (input, options) => {
   const hasSearch = Object.prototype.hasOwnProperty.call(options, "search");
   const unicodeHost = __quenchUrlUnicodeHost(
     input.hostname || input.host,
-    options.unicode,
+    options.unicode
   );
   return {
     ...base,
@@ -229,7 +228,7 @@ const __quenchUrlFormatInput = (input, options) => {
     host: __quenchUrlFormattedHost(input, unicodeHost, hasAuth),
     hostname: unicodeHost,
     hash: __quenchUrlOptionValue(input, options, "fragment", "", "hash"),
-    search: __quenchUrlOptionValue(input, options, "search", "", "search"),
+    search: __quenchUrlOptionValue(input, options, "search", "", "search")
   };
 };
 const __quenchFormatUrlString = (input, originalFormat, args, result) => {
@@ -237,15 +236,16 @@ const __quenchFormatUrlString = (input, originalFormat, args, result) => {
   const standardProtocol = ["http:", "https:", "ftp:", "gopher:", "file:"];
   if (protocol && !standardProtocol.includes(protocol)) return input;
   const oversizedHost = input.match(
-    /^[A-Za-z][A-Za-z0-9+.-]*:\/\/([^/]*)(\/.*)$/,
+    /^[A-Za-z][A-Za-z0-9+.-]*:\/\/([^/]*)(\/.*)$/
   );
   if (oversizedHost && oversizedHost[1].length > 255) {
     return `${protocol}//${oversizedHost[2]}`;
   }
   const formatted = originalFormat.call(result, input, ...args);
-  const withProtocol = protocol && !formatted.startsWith(protocol)
-    ? `${protocol}${formatted}`
-    : formatted.replace(/^null(?=\/)/, "");
+  const withProtocol =
+    protocol && !formatted.startsWith(protocol)
+      ? `${protocol}${formatted}`
+      : formatted.replace(/^null(?=\/)/, "");
   const quotedHost = input.match(/^([A-Za-z][A-Za-z0-9+.-]*:\/\/[^\"]*)\"/);
   return quotedHost
     ? withProtocol.replace(quotedHost[1], `${quotedHost[1]}/`)
@@ -356,7 +356,7 @@ const __quenchResolveWebRelativePath = (from, to) => {
     rawOrigin,
     base,
     targetPath,
-    suffix,
+    suffix
   );
   if (duplicateParent) return duplicateParent;
   const cleanTarget = targetPath.replace(/^\.\//, "");
@@ -370,7 +370,7 @@ const __quenchResolveSameWebScheme = (from, to) =>
   globalThis.__quenchResolveSameWebScheme(
     from,
     to,
-    __quenchResolveWebRelativePath,
+    __quenchResolveWebRelativePath
   );
 const __quenchResolveRelativePath = (from, to, resolve) => {
   const webPath = __quenchResolveWebRelativePath(from, to);
@@ -452,7 +452,8 @@ const __quenchAddUrlFormatting = (result) => {
   result.resolveObject ||= (from, to) => {
     const early = resolveObjectEarly(result, from, to, originalResolve);
     if (early) return early;
-    const protocolTarget = globalThis.__quenchResolveFileFragment(from, to) ||
+    const protocolTarget =
+      globalThis.__quenchResolveFileFragment(from, to) ||
       __quenchResolveSameWebScheme(from, to) ||
       __quenchResolveProtocolTargetBase(from, to);
     if (protocolTarget) {
@@ -463,7 +464,7 @@ const __quenchAddUrlFormatting = (result) => {
     }
     const singleSlashProtocol = globalThis.__quenchResolveSingleSlashProtocol(
       from,
-      to,
+      to
     );
     if (singleSlashProtocol) return singleSlashProtocol;
     if (to === ".") return from.slice(0, from.lastIndexOf("/") + 1);
@@ -505,7 +506,7 @@ const __quenchAddUrlDomainFallbacks = (result) => {
     "افغانستا.icom.museum": "xn--mgbaal8b0b9b2b.icom.museum",
     "الجزائر.icom.fake": "xn--lgbbat1ad8j.icom.fake",
     "भारत.org": "xn--h2brj9c.org",
-    "名がドメイン.com": "xn--v8jxj3d1dzdz08w.com",
+    "名がドメイン.com": "xn--v8jxj3d1dzdz08w.com"
   };
   result.domainToASCII ||= (domain) => {
     if (domains[domain]) return domains[domain];
@@ -521,28 +522,27 @@ const __quenchAddUrlDomainFallbacks = (result) => {
 const __quenchApplyFinalModule01 = (name, originalRequire) => {
   const normalized = String(name).replace(/^node:/, "");
   if (
-    normalized === "diagnostics_channel" && globalThis.__nodeDiagnosticsChannel
+    normalized === "diagnostics_channel" &&
+    globalThis.__nodeDiagnosticsChannel
   ) {
     return globalThis.__nodeDiagnosticsChannel;
   }
   const internalFallback = __quenchInternalStreamFallback(normalized);
   if (internalFallback) return internalFallback;
-  if (
-    normalized === "internal/vfs/stats" &&
-    globalThis.__quenchVfsStatsHelpers
-  ) return globalThis.__quenchVfsStatsHelpers;
+  if (normalized === "internal/vfs/stats" && globalThis.__quenchVfsStatsHelpers)
+    return globalThis.__quenchVfsStatsHelpers;
   if (normalized === "internal/vfs/fd") {
     return {
       getVirtualFd(fd) {
         return globalThis.__quenchVfsFdHandles?.get(fd);
-      },
+      }
     };
   }
   if (normalized === "sqlite") {
     return {
       DatabaseSync: function DatabaseSync() {},
       StatementSync: function StatementSync() {},
-      constants: {},
+      constants: {}
     };
   }
   if (normalized === "inspector") {
@@ -552,7 +552,7 @@ const __quenchApplyFinalModule01 = (name, originalRequire) => {
       url: () => undefined,
       waitForDebugger: () => undefined,
       Session: function Session() {},
-      console: {},
+      console: {}
     };
   }
   let result = originalRequire(name);
@@ -574,10 +574,31 @@ const __quenchApplyFinalModule01 = (name, originalRequire) => {
         (options === null || typeof options !== "object")
       ) {
         const error = new TypeError(
-          "The options argument must be of type object",
+          "The options argument must be of type object"
         );
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
+      }
+      if (options?.mode !== undefined) {
+        const mode = options.mode;
+        if (typeof mode !== "number") {
+          const error = new TypeError(
+            `The "mode" argument must be of type number. Received type ${typeof mode} ('${String(
+              mode
+            )}')`
+          );
+          error.code = "ERR_INVALID_ARG_TYPE";
+          throw error;
+        }
+        if (!Number.isInteger(mode) || mode < 0 || mode > 7) {
+          const error = new RangeError(
+            `The value of "mode" is out of range. It must be ${
+              Number.isInteger(mode) ? ">= 0 && <= 7" : "an integer"
+            }. Received ${String(mode)}`
+          );
+          error.code = "ERR_OUT_OF_RANGE";
+          throw error;
+        }
       }
     };
     const copyPath = (source, destination, options = {}) => {
@@ -593,6 +614,17 @@ const __quenchApplyFinalModule01 = (name, originalRequire) => {
       };
       const sourcePath = copyValue(source);
       const destinationPath = copyValue(destination);
+      if (typeof options.filter === "function") {
+        const decision = options.filter(sourcePath, destinationPath);
+        if (decision && typeof decision.then === "function") {
+          const error = new TypeError(
+            "The filter function must return a boolean synchronously"
+          );
+          error.code = "ERR_INVALID_RETURN_VALUE";
+          throw error;
+        }
+        if (!decision) return;
+      }
       let sourceStat = result.lstatSync(sourcePath);
       if (options.dereference && sourceStat.isSymbolicLink?.()) {
         sourceStat = result.statSync(sourcePath);
@@ -602,7 +634,7 @@ const __quenchApplyFinalModule01 = (name, originalRequire) => {
           result.dirname?.(destinationPath) ||
             destinationPath.replace(/\/[^/]*$/, "") ||
             ".",
-          { recursive: true },
+          { recursive: true }
         );
         try {
           if (result.lstatSync(destinationPath).isSymbolicLink?.()) {
@@ -615,22 +647,42 @@ const __quenchApplyFinalModule01 = (name, originalRequire) => {
       if (sourceStat.isDirectory?.()) {
         if (!options.recursive) {
           const error = new TypeError(
-            "Cannot copy a directory without recursive option",
+            "Cannot copy a directory without recursive option"
           );
           error.code = "ERR_FS_EISDIR";
           throw error;
         }
+        if (options.errorOnExist) {
+          try {
+            result.lstatSync(destinationPath);
+            const error = new Error(
+              `Target already exists: ${destinationPath}`
+            );
+            error.code = "ERR_FS_CP_EEXIST";
+            throw error;
+          } catch (error) {
+            if (error.code === "ERR_FS_CP_EEXIST") throw error;
+          }
+        }
         result.mkdirSync(destinationPath, { recursive: true });
-        for (
-          const entry of result.readdirSync(sourcePath, {
-            withFileTypes: true,
-          })
-        ) {
+        for (const entry of result.readdirSync(sourcePath, {
+          withFileTypes: true
+        })) {
           const childSource = `${sourcePath}/${entry.name}`;
           const childDestination = `${destinationPath}/${entry.name}`;
           if (
             typeof options.filter === "function" &&
-            !options.filter(childSource, childDestination)
+            (() => {
+              const decision = options.filter(childSource, childDestination);
+              if (decision && typeof decision.then === "function") {
+                const error = new TypeError(
+                  "The filter function must return a boolean synchronously"
+                );
+                error.code = "ERR_INVALID_RETURN_VALUE";
+                throw error;
+              }
+              return !decision;
+            })()
           ) {
             continue;
           }
@@ -643,7 +695,7 @@ const __quenchApplyFinalModule01 = (name, originalRequire) => {
         if (options.force === false) return;
         if (destinationStat.isDirectory?.()) {
           const error = new Error(
-            `Cannot overwrite directory with non-directory: ${destinationPath}`,
+            `Cannot overwrite directory with non-directory: ${destinationPath}`
           );
           error.code = "ERR_FS_CP_NON_DIR_TO_DIR";
           throw error;
@@ -652,7 +704,7 @@ const __quenchApplyFinalModule01 = (name, originalRequire) => {
         if (error.code === "ERR_FS_CP_NON_DIR_TO_DIR") throw error;
       }
       result.mkdirSync(destinationPath.replace(/\/[^/]*$/, "") || ".", {
-        recursive: true,
+        recursive: true
       });
       result.copyFileSync(sourcePath, destinationPath);
       const setTimes = result.utimesSync || globalThis.__nodeFs?.utimesSync;
@@ -661,6 +713,10 @@ const __quenchApplyFinalModule01 = (name, originalRequire) => {
       }
     };
     const copyPathAsync = async (sourcePath, destinationPath, options) => {
+      if (typeof options.filter === "function") {
+        const allowed = await options.filter(sourcePath, destinationPath);
+        if (!allowed) return;
+      }
       let sourceStat = result.lstatSync(sourcePath);
       if (options.dereference && sourceStat.isSymbolicLink?.()) {
         sourceStat = result.statSync(sourcePath);
@@ -672,25 +728,37 @@ const __quenchApplyFinalModule01 = (name, originalRequire) => {
       if (sourceStat.isDirectory?.()) {
         if (!options.recursive) {
           const error = new TypeError(
-            "Cannot copy a directory without recursive option",
+            "Cannot copy a directory without recursive option"
           );
           error.code = "ERR_FS_EISDIR";
           throw error;
         }
+        if (options.errorOnExist) {
+          try {
+            result.lstatSync(destinationPath);
+            const error = new Error(
+              `Target already exists: ${destinationPath}`
+            );
+            error.code = "ERR_FS_CP_EEXIST";
+            throw error;
+          } catch (error) {
+            if (error.code === "ERR_FS_CP_EEXIST") throw error;
+          }
+        }
         result.mkdirSync(destinationPath, { recursive: true });
-        for (
-          const entry of result.readdirSync(sourcePath, { withFileTypes: true })
-        ) {
+        for (const entry of result.readdirSync(sourcePath, {
+          withFileTypes: true
+        })) {
           await copyPathAsync(
             `${sourcePath}/${entry.name}`,
             `${destinationPath}/${entry.name}`,
-            options,
+            options
           );
         }
         return;
       }
       result.mkdirSync(destinationPath.replace(/\/[^/]*$/, "") || ".", {
-        recursive: true,
+        recursive: true
       });
       result.copyFileSync(sourcePath, destinationPath);
     };
@@ -703,7 +771,7 @@ const __quenchApplyFinalModule01 = (name, originalRequire) => {
         validateCpOptions(options);
         if (typeof callback !== "function") {
           const error = new TypeError(
-            "The callback argument must be of type function",
+            "The callback argument must be of type function"
           );
           error.code = "ERR_INVALID_ARG_TYPE";
           throw error;
@@ -732,6 +800,13 @@ const __quenchApplyFinalModule01 = (name, originalRequire) => {
         copyPath(source, destination, options);
       };
     }
+    globalThis.__quenchFsCopy = result.promises.cp;
+  }
+  if (normalized === "fs/promises") {
+    if (!globalThis.__quenchFsCopy) {
+      __quenchApplyFinalModule01("fs", originalRequire);
+    }
+    result.cp ||= globalThis.__quenchFsCopy;
   }
   if (normalized === "test") {
     return __quenchTestModuleFallbacks(result, originalRequire, name);

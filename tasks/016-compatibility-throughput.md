@@ -2,7 +2,7 @@
 
 ## Goal
 
-Increase compatibility implementation throughput by 2–5x without weakening
+Increase Node 24 application-compatibility implementation throughput by 2–5x without weakening
 the readable-polyfill, local-verification, or no-GitHub-CI requirements.
 
 The current one-mismatch-at-a-time workflow is useful for minimizing
@@ -88,8 +88,11 @@ Extend local reports to show:
 - completed and unassigned work items.
 
 Do not call this an API percentage. Node tests are not one-to-one with Node
-APIs; the API percentage remains `unmeasured` until an explicit API inventory
-and mapping exist.
+APIs; API coverage remains `unmeasured`. The initial manifest targets Node 24
+parallel/ESM/support trees, and release readiness also requires zero failures
+in the Hono and representative npm CLI application gates.
+The authoritative source roles and implementation order are maintained in
+`docs/authoritative-test-sources.md`.
 
 ## Execution order
 
@@ -121,6 +124,49 @@ parallel. Together these changes target roughly 2–5x throughput; this is a
 working hypothesis to validate with before/after corpus and cycle-time data.
 
 ## Status
+
+The HTTP queue recently verified stage 2045 against the upstream
+`test-http-client-upload.js` fixture. Request chunk boundaries and response
+encoding are now covered by a focused regression and match the Node oracle in
+the in-memory transport.
+
+Stage 2046 also verifies Node-style console `%s` and `%j` formatting. The
+upstream HEAD-request fixture now has matching formatted content, but still
+exposes separate output-spacing and duplicate-response-end differences in the
+foreign-runtime harness; these remain queued rather than classified as fixed.
+
+The fresh focused baseline passes 1,959/1,959 registered stages with zero
+failures after the package-loader and ESM `fs/promises` fixes. This supersedes
+the earlier 1,953/1,956 snapshot produced while those changes were still being
+compiled.
+
+The fresh full differential completed all 4,682 parallel fixtures with zero
+worker failures: 898 matches, 2,492 quench-only failures, 529 output
+mismatches, 502 both-failed, 174 Node-only, 87 timeouts, and 190
+environment-limited fixtures. The report is
+`target/compat/differential-current.json`.
+
+The first HTTP queue slice after that report is now covered by stage 2048 and
+upstream `test-http-abort-client.js`; server-response destruction matches the
+client abort/error/close contract. Agent timeout and uninitialized-handle
+behavior remain in the HTTP queue.
+
+Stage 2049 verifies the missing keep-alive socket `free` event. This fixes the
+agent's first reuse contract while leaving the broader timeout/reuse ordering
+matrix for a subsequent slice.
+
+Stage 2050 then verifies the public Agent path for manually seeded sockets with
+partial handles; the corresponding upstream uninitialized-handle fixture now
+passes.
+
+Stage 2051 verifies that the agent pool is populated before the socket `free`
+event reaches user listeners, allowing the next request to reuse the same
+socket. The broader timeout fixture still has a custom timer branch queued.
+
+Stages 2052–2053 verify custom timeout configuration and replacement after
+socket destruction. These isolate the public socket subcontracts; the full
+upstream four-block timeout/reuse lifecycle still requires further ordering
+work.
 
 In progress. `tools/diff-node-quench.sh` now executes a deterministic fixture
 selection under both Node and quench-node, persists normalized stdout/stderr,

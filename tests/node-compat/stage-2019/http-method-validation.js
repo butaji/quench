@@ -8,7 +8,7 @@ assert(outgoing.writableHighWaterMark > 0);
 for (const method of [-1, {}, true, false, [], Symbol("method")]) {
   assert.throws(() => http.request({ method }), {
     code: "ERR_INVALID_ARG_TYPE",
-    name: "TypeError",
+    name: "TypeError"
   });
 }
 
