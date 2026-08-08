@@ -2367,6 +2367,10 @@ let __quenchHttpModule;
         request.aborted = true;
         request.__abortErrorEmitted = true;
         request.destroyed = true;
+        if (request.__serverRequest && !request.__serverRequest.aborted) {
+          request.__serverRequest.aborted = true;
+          request.__serverRequest.emit("aborted");
+        }
         request.emit("abort");
         return request;
       };
@@ -2767,6 +2771,7 @@ let __quenchHttpModule;
               serverRequest.url = request.path;
               serverRequest.headers = Object.create(null);
               response.req = serverRequest;
+              request.__serverRequest = serverRequest;
               server._handler(serverRequest, response);
             }
             request.__responseEmitted = true;
