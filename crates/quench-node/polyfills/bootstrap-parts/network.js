@@ -321,6 +321,8 @@ const __quenchNetModule = {
       this._corked = 0;
       this._timeoutTimer = null;
       this._peer = null;
+      this._keepAlive = false;
+      this._keepAliveDelay = 0;
     }
     get bufferSize() {
       return this._bufferSize;
@@ -357,12 +359,15 @@ const __quenchNetModule = {
       return this;
     }
     setKeepAlive(enable = false, initialDelay = 0) {
+      const value = Boolean(enable);
+      const delay = Math.max(0, Math.floor((Number(initialDelay) || 0) / 1000));
+      if (value === this._keepAlive && delay === this._keepAliveDelay) {
+        return this;
+      }
+      this._keepAlive = value;
+      this._keepAliveDelay = delay;
       if (typeof this._handle?.setKeepAlive === "function") {
-        const delay = Math.max(
-          0,
-          Math.floor((Number(initialDelay) || 0) / 1000)
-        );
-        this._handle.setKeepAlive(Boolean(enable), delay);
+        this._handle.setKeepAlive(value, delay);
       }
       return this;
     }
