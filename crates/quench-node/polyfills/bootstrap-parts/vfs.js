@@ -368,6 +368,53 @@ class __QuenchVirtualFileSystem {
     this.promises.access = async (path, mode = 0) =>
       this.accessSync(path, mode);
     this.promises.watch = (path, options = {}) => {
+      if (!this.__isReal()) {
+        const watcher = this.watch(path, options);
+        const queue = [];
+        let pending;
+        let closed = false;
+        const fail = () => {
+          const error = new Error("The operation was aborted");
+          error.name = "AbortError";
+          error.code = "ABORT_ERR";
+          if (pending) {
+            pending.reject(error);
+            pending = undefined;
+          }
+          closed = true;
+          watcher.close();
+        };
+        watcher.on("change", (eventType, filename) => {
+          const value = { eventType, filename };
+          if (pending) {
+            pending.resolve({ value: [value], done: false });
+            pending = undefined;
+          } else queue.push(value);
+        });
+        if (options.signal) {
+          if (options.signal.aborted) fail();
+          else options.signal.addEventListener("abort", fail, { once: true });
+        }
+        return {
+          next: () => {
+            if (queue.length)
+              return Promise.resolve({ value: [queue.shift()], done: false });
+            if (closed)
+              return Promise.resolve({ done: true, value: undefined });
+            return new Promise((resolve, reject) => {
+              pending = { resolve, reject };
+            });
+          },
+          return: async () => {
+            closed = true;
+            watcher.close();
+            return { done: true, value: undefined };
+          },
+          [Symbol.asyncIterator]() {
+            return this;
+          }
+        };
+      }
       const iterator = {
         next: async () => ({ done: true, value: undefined }),
         return: async () => ({ done: true, value: undefined }),
@@ -1284,7 +1331,90 @@ class __QuenchVirtualFileSystem {
       listener = options;
       options = {};
     }
-    if (!this.__isReal()) throw __quenchVfsError("ENOTSUP", "watch", path);
+    if (!this.__isReal()) {
+      const emitter = new globalThis.__nodeEventEmitter();
+      const key = __quenchVfsPath(path);
+      const entry = this.__entries.get(key);
+      if (!entry) throw __quenchVfsError("ENOENT", "watch", path);
+      const interval = Math.max(1, Number(options?.interval ?? 5007));
+      const snapshot = () => {
+        const current = this.__entries.get(key);
+        if (!current) return null;
+        if (current.type !== "dir") {
+          return `${current.type}:${current.data ?? ""}:${current.mtimeMs ?? 0}`;
+        }
+        const names = [...this.__entries.keys()]
+          .filter((item) => item.startsWith(`${key === "/" ? "" : key}/`))
+          .filter(
+            (item) =>
+              !item.slice((key === "/" ? "" : key).length + 1).includes("/")
+          )
+          .map((item) => {
+            const child = this.__entries.get(item);
+            return `${item.slice((key === "/" ? "" : key).length + 1)}:${child?.data ?? ""}:${child?.mtimeMs ?? 0}`;
+          });
+        return names.sort();
+      };
+      let previous = snapshot();
+      const timer = setInterval(() => {
+        const next = snapshot();
+        const unchanged =
+          Array.isArray(next) &&
+          Array.isArray(previous) &&
+          next.length === previous.length &&
+          next.every((value, index) => value === previous[index]);
+        if (next === previous || unchanged) return;
+        const nextName = Array.isArray(next)
+          ? next.find((name) => !previous.includes(name))
+          : undefined;
+        const previousName = Array.isArray(previous)
+          ? previous.find((name) => !next.includes(name))
+          : undefined;
+        const changedChild =
+          Array.isArray(next) && Array.isArray(previous)
+            ? next.find((name) =>
+                previous.some(
+                  (oldName) =>
+                    oldName.split(":")[0] === name.split(":")[0] &&
+                    oldName !== name
+                )
+              )
+            : undefined;
+        const filename =
+          entry.type === "dir"
+            ? (
+                changedChild ??
+                nextName ??
+                previousName ??
+                (Array.isArray(next) ? next[0] : undefined) ??
+                (Array.isArray(previous) ? previous[0] : undefined)
+              )?.split(":")[0]
+            : globalThis.__nodePath.basename(key);
+        const eventType =
+          entry.type === "dir" && (nextName || previousName) && !changedChild
+            ? "rename"
+            : "change";
+        previous = next;
+        emitter.emit(
+          "change",
+          eventType,
+          options?.encoding === "buffer" && filename !== undefined
+            ? globalThis.Buffer.from(filename)
+            : filename
+        );
+      }, interval);
+      const close = () => {
+        clearInterval(timer);
+        emitter.emit("close");
+      };
+      emitter.close = close;
+      if (listener) emitter.on("change", listener);
+      if (options?.signal) {
+        if (options.signal.aborted) close();
+        else options.signal.addEventListener("abort", close, { once: true });
+      }
+      return emitter;
+    }
     return globalThis.__nodeFs.watch(
       this.__realPath(path),
       options || {},
