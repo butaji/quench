@@ -506,6 +506,7 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
     _sendBlockList: options?.sendBlockList,
     _receiveBlockList: options?.receiveBlockList,
     _reusePort: options?.reusePort === true,
+    _lookup: options?.lookup,
     bind: (port, address, callback) => {
       if (socket._bound || socket._bindPending) {
         throw Object.assign(new Error("Socket is already bound"), {
@@ -558,8 +559,17 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
       }
       const lookupAddress = address || (type === "udp6" ? "::" : "0.0.0.0");
       socket._bindPending = true;
-      socket[__quenchDgramStateSymbol].handle.lookup(
+      const isHostname =
+        typeof lookupAddress === "string" &&
+        lookupAddress !== "localhost" &&
+        !/^\d{1,3}(?:\.\d{1,3}){3}$/.test(lookupAddress) &&
+        !lookupAddress.includes(":");
+      const lookup = isHostname
+        ? socket._lookup || globalThis.require("dns").lookup
+        : socket[__quenchDgramStateSymbol].handle.lookup;
+      lookup(
         lookupAddress,
+        type === "udp6" ? 6 : 4,
         (error, resolvedAddress) => {
           if (error) {
             socket._bindPending = false;
@@ -863,6 +873,16 @@ const __quenchDgram = {
     const requested =
       typeof type === "string" ? type : type?.type || options?.type;
     const config = typeof type === "object" ? type : options;
+    if (config?.lookup !== undefined && typeof config.lookup !== "function") {
+      throw Object.assign(
+        new TypeError(
+          `The "lookup" argument must be of type function.${__quenchDgramTypeDetail(
+            config.lookup
+          )}`
+        ),
+        { code: "ERR_INVALID_ARG_TYPE" }
+      );
+    }
     for (const name of ["recvBufferSize", "sendBufferSize"]) {
       if (config?.[name] !== undefined && typeof config[name] !== "number") {
         throw Object.assign(
