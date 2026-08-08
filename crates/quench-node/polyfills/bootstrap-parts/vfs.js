@@ -299,6 +299,7 @@ class __QuenchVirtualFileSystem {
   __makeHandle(path, flags, existingFd) {
     flags = __quenchVfsNormalizeFlags(flags);
     if (this.provider instanceof __QuenchRealFSProvider) {
+      const owner = this;
       const fd = existingFd ?? this.openSync(path, flags);
       let closed = false;
       const check = () => {
@@ -306,6 +307,8 @@ class __QuenchVirtualFileSystem {
       };
       const readFileSync = (options) => {
         check();
+        const observedFs = globalThis.require?.("fs") || globalThis.__nodeFs;
+        observedFs.fstatSync(fd);
         const bytes = globalThis.__quench_fs_native_read_all(fd);
         return options === "utf8" || options?.encoding
           ? globalThis.Buffer.from(bytes).toString(
@@ -333,7 +336,17 @@ class __QuenchVirtualFileSystem {
       };
       const statSync = () => {
         check();
-        return globalThis.__nodeFs.fstatSync(fd);
+        return globalThis.__nodeFs.statSync(owner.__realPath(path));
+      };
+      const writeFileSync = (data) => {
+        check();
+        const bytes = globalThis.Buffer.from(data);
+        globalThis.__quench_fs_native_truncate(fd, 0);
+        globalThis.__quench_fs_native_write_at(fd, 0, Array.from(bytes));
+      };
+      const truncateSync = (length = 0) => {
+        check();
+        globalThis.__quench_fs_native_truncate(fd, Number(length));
       };
       return {
         fd,
@@ -342,10 +355,30 @@ class __QuenchVirtualFileSystem {
         },
         readSync,
         writeSync,
+        read: async (buffer, offset, length, position) => ({
+          bytesRead: readSync(buffer, offset, length, position),
+          buffer
+        }),
+        write: async (buffer, offset, length, position) => ({
+          bytesWritten: writeSync(buffer, offset, length, position),
+          buffer
+        }),
         statSync,
         stat: async () => statSync(),
+        writeFileSync,
+        writeFile: async (data) => writeFileSync(data),
+        truncateSync,
+        truncate: async (length) => truncateSync(length),
         readFileSync,
-        readFile: async (options) => readFileSync(options),
+        readFile: async (options) => {
+          const observedFs = globalThis.require?.("fs") || globalThis.__nodeFs;
+          await new Promise((resolve, reject) => {
+            observedFs.fstat(fd, (error) =>
+              error ? reject(error) : resolve()
+            );
+          });
+          return readFileSync(options);
+        },
         closeSync: () => {
           if (!closed) {
             closed = true;
@@ -884,6 +917,8 @@ class __QuenchVirtualFileSystem {
       );
       this.__realFds.add(fd);
       this.__fds.set(fd, this.__realPath(path));
+      globalThis.__nodeFdPaths ||= {};
+      globalThis.__nodeFdPaths[fd] = this.__realPath(path);
       globalThis.__quenchVfsFdHandles ||= new Map();
       globalThis.__quenchVfsFdHandles.set(fd, {
         entry: this.__makeHandle(path, flags, fd)
@@ -1017,6 +1052,7 @@ class __QuenchVirtualFileSystem {
   closeSync(fd) {
     if (this.__realFds.delete(fd)) {
       this.__fds.delete(fd);
+      if (globalThis.__nodeFdPaths) delete globalThis.__nodeFdPaths[fd];
       return globalThis.__quench_fs_native_close(fd);
     }
     if (!this.__fds.delete(fd)) throw __quenchVfsError("EBADF", "close", fd);

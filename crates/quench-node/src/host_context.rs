@@ -572,6 +572,18 @@ macro_rules! run_host_context {
             #[cfg(not(unix))]
             Err(rquickjs::Error::new_from_js("fs", "write failed"))
         }))?;
+        ctx.globals().set("__quench_fs_native_truncate", Func::from(|fd: i32, length: u64| -> rquickjs::Result<()> {
+            #[cfg(unix)]
+            {
+                let result = unsafe { libc::ftruncate(fd, length as libc::off_t) };
+                if result < 0 { return Err(rquickjs::Error::new_from_js("fs", "truncate failed")); }
+                return Ok(());
+            }
+            #[cfg(not(unix))]
+            let _ = (fd, length);
+            #[cfg(not(unix))]
+            Err(rquickjs::Error::new_from_js("fs", "truncate failed"))
+        }))?;
         ctx.globals().set("__quench_fs_native_close", Func::from(|fd: i32| -> rquickjs::Result<()> {
             #[cfg(unix)]
             {

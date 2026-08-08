@@ -249,6 +249,13 @@ copyFile, and missing-file provider open. The focused probe passes, while the
 authoritative fixture still reports an opaque `Callback 0` exception; this is
 now tracked as a harness/fixture interaction rather than an unverified broad
 promises claim.
+The real-provider handle implementation now also supports positioned async
+`read()`/`write()`, descriptor-backed `writeFileSync()`/`writeFile()`, and
+`truncateSync()`/`truncate()` through native `pread`/`pwrite`/`ftruncate`.
+Stage 2383 passes with the full focused sequence. The authoritative handle
+fixture still reports `Callback 0`; its instrumented `fs.fstatSync`/`fs.fstat`
+calls do not observe the internal filesystem object used by this bootstrap,
+so public-observer identity remains the next compatibility boundary.
 
 Stage 2378 passes the four basic stream `destroy()` contracts for readable and
 writable streams, including implicit `AbortError`, explicit error messages,
