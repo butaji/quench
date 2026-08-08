@@ -777,3 +777,4 @@ pass.
 
 - Stage 2173: pass `captureRejections` options into writable event emitters so rejected async `drain` listeners surface as stream errors and destroy the writable, matching Node's `test-stream-catch-rejections.js`.
 - Stage 2174: align writable completion ordering so length is reduced and `drain` is emitted before the write callback, allowing nested writes to produce the same two-drain sequence as Node.
+- Stage 2175: add the exported `stream.destroy()` helper's default `AbortError` behavior while preserving direct stream `.destroy()` semantics.
