@@ -321,6 +321,10 @@ const __quenchNetModule = {
       this._corked = 0;
       this._timeoutTimer = null;
       this._peer = null;
+      this.localAddress = undefined;
+      this.localPort = 0;
+      this.remoteAddress = undefined;
+      this.remotePort = 0;
       this._keepAlive = false;
       this._keepAliveDelay = 0;
     }
@@ -439,11 +443,14 @@ const __quenchNetModule = {
       globalThis.__quenchValidateConnectionOptions(_options);
       if (typeof callback === "function") this.once("connect", callback);
       if (_options?.__quenchNativeTransport) {
-        this._nativeId = __quench_tcp_connect(
-          _options.host || "127.0.0.1",
-          Number(_options.port)
-        );
+        const nativeHost = _options.host || "127.0.0.1";
+        const nativePort = Number(_options.port);
+        this._nativeId = __quench_tcp_connect(nativeHost, nativePort);
         this._nativeConnected = true;
+        this.localAddress = "127.0.0.1";
+        this.localPort = __quench_tcp_local_port(this._nativeId);
+        this.remoteAddress = nativeHost;
+        this.remotePort = nativePort;
         __quenchNativeSockets.add(this);
       }
       queueMicrotask(() => this.emit("connect"));
@@ -726,6 +733,9 @@ globalThis.__quench_io_poll = () => {
       const socket = new __quenchNetModule.Socket();
       socket._nativeId = nativeId;
       socket._nativeConnected = true;
+      socket.localAddress = "127.0.0.1";
+      socket.localPort = __quench_tcp_bound_port(server._nativeId);
+      socket.remoteAddress = "127.0.0.1";
       __quenchNativeSockets.add(socket);
       server._handler?.(socket);
       server.emit("connection", socket);

@@ -58,6 +58,19 @@ pub(crate) fn quench_tcp_bound_port(id: u32) -> rquickjs::Result<u16> {
     }
 }
 
+pub(crate) fn quench_tcp_local_port(id: u32) -> rquickjs::Result<u16> {
+    let resources = quench_tcp_resources()
+        .lock()
+        .expect("tcp resource mutex poisoned");
+    match resources.get(&id) {
+        Some(QuenchTcpResource::Stream(stream)) => stream
+            .local_addr()
+            .map(|address| address.port())
+            .map_err(|_| rquickjs::Error::new_from_js("tcp", "address failed")),
+        _ => Err(rquickjs::Error::new_from_js("tcp", "not a stream")),
+    }
+}
+
 pub(crate) fn quench_tcp_accept(id: u32) -> rquickjs::Result<u32> {
     let resources = quench_tcp_resources()
         .lock()
@@ -164,6 +177,7 @@ macro_rules! run_host_context {
     $context.with(|ctx| -> rquickjs::Result<()> {
         ctx.globals().set("__quench_tcp_bind", Func::from($crate::host_context::quench_tcp_bind))?;
         ctx.globals().set("__quench_tcp_bound_port", Func::from($crate::host_context::quench_tcp_bound_port))?;
+        ctx.globals().set("__quench_tcp_local_port", Func::from($crate::host_context::quench_tcp_local_port))?;
         ctx.globals().set("__quench_tcp_accept", Func::from($crate::host_context::quench_tcp_accept))?;
         ctx.globals().set("__quench_tcp_connect", Func::from($crate::host_context::quench_tcp_connect))?;
         ctx.globals().set("__quench_tcp_read", Func::from($crate::host_context::quench_tcp_read))?;
