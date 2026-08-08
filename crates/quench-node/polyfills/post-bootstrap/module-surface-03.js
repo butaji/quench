@@ -263,6 +263,14 @@ const __quenchAddAbortSignal = (signal, stream) => {
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
+  const abort = () => {
+    const error = new Error("The operation was aborted");
+    error.name = "AbortError";
+    error.code = "ABORT_ERR";
+    stream.destroy?.(error);
+  };
+  if (signal.aborted) abort();
+  else signal.addEventListener?.("abort", abort, { once: true });
   return stream;
 };
 const __quenchValidateZlibOptions = (options, allowZeroWindowBits = false) => {
