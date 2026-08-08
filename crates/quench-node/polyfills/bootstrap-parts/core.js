@@ -2070,6 +2070,13 @@ let __quenchHttpModule;
         }
       };
       response.once("end", clearRequestTimeout);
+      const emitRequestClose = () => {
+        if (request.__closeEmitted) return;
+        request.__closeEmitted = true;
+        queueMicrotask(() => request.emit("close"));
+      };
+      response.once("end", emitRequestClose);
+      response.once("close", emitRequestClose);
       if (agentSlotTracked) {
         response.once("end", () => {
           const active = request.agent.__quenchActiveRequests;
@@ -2853,6 +2860,18 @@ let __quenchHttpModule;
         return request;
       },
       request: (target, options, callback) => {
+        if (target instanceof URL) {
+          callback = typeof options === "function" ? options : callback;
+          const extra = options && typeof options === "object" ? options : {};
+          options = {
+            ...extra,
+            hostname: target.hostname,
+            port: target.port || (target.protocol === "https:" ? 443 : 80),
+            path: `${target.pathname}${target.search}`,
+            headers: target.headers || extra.headers
+          };
+          target = `http://${options.hostname}:${options.port}${options.path}`;
+        }
         if (
           typeof target === "object" &&
           target !== null &&

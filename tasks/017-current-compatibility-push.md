@@ -818,6 +818,8 @@ pass.
 - Upstream `test-http-client-invalid-path.js` now passes after validating `options.path` before URL normalization.
 - Stage 2208 applies the same unescaped-path validation before `http.get()` normalizes object options through a URL.
 - Stage 2209 validates non-string `http.request()` `hostname` and `host` options with Node-compatible `ERR_INVALID_ARG_TYPE` messages.
+- Stage 2210 preserves custom URL properties such as `url.headers` when `http.request()` receives a WHATWG URL object.
+- Stage 2210 also verifies normal client-request completion emits `close` after the response ends.
 - Upstream `test-http-hostname-typechecking.js` now passes with synchronous host-option validation.
 - Stage 2207 supports `new http.ClientRequest(serverAddress, callback)` by routing it through the same in-memory request path as `http.request()`.
 - Upstream `test-http-client-input-function.js` now passes with the `ClientRequest` constructor path.
