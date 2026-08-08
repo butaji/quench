@@ -751,3 +751,7 @@ Focused stage 2168 propagates a readable-side error to both the derived Duplex
 and its writable source, preserving error identity. The focused contract
 passes; the upstream fixture still reports the separate PassThrough callback
 11 mismatch.
+
+Focused stage 2169 adds the own `Duplex.prototype.writableFinished` property
+and verifies its transition through `finish`. The focused contract and
+upstream `test-stream-duplex-writable-finished.js` both pass.

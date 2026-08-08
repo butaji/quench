@@ -857,6 +857,7 @@ class NodeWritable extends NodeEventEmitter {
   }
 }
 NodeWritable.prototype.destroyed = false;
+NodeWritable.prototype.writableFinished = false;
 const NodeWritableCompat = function Writable(options = {}) {
   const instance = Reflect.construct(NodeWritable, [
     { ...options, __quenchCompatConstruct: true }
@@ -930,6 +931,7 @@ class NodeDuplex extends NodeReadable {
     return NodeReadable.prototype.destroy.call(this, error, callback);
   }
 }
+NodeDuplex.prototype.writableFinished = false;
 const NodeDuplexCompat = function Duplex(options = {}) {
   return Reflect.construct(NodeDuplex, [options]);
 };
