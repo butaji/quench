@@ -147,6 +147,12 @@ the focused trace plus existing backpressure/drop stages pass. The authoritative
 backpressure fixture still reports one `_read()` call instead of eleven, so
 downstream drain/read-demand scheduling remains unresolved.
 
+The host-backed timer prototype is now active for verification: stage 2444
+passes the delayed timer ordering contract, and stages 2047, 2069, 2081, 2104,
+2440, and 2442 remain green. The authoritative backpressure fixture still
+reports callback 1/11, and the full watch-promises fixture still times out;
+these are retained as the next scheduler/stream interactions.
+
 Stage 2443 independently verifies `Readable.from(asyncGenerator).take(1)`
 resolves `toArray()` without waiting for the generator's next promise, and the
 upstream generator remains unadvanced until explicitly released. The full
