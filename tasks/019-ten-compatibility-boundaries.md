@@ -884,3 +884,12 @@ authoritative `test-stream-filter.js` fixture pass with the maintained helper
 and combinator stages. Authoritative `test-stream-map.js` advances from its
 infinite-map `Callback 3` mismatch to `Callback 7`, the separate case where an
 error emitted on the derived helper stream must reject active iteration.
+
+Stage 2465 propagates that derived-stream error through an active operator
+chain. Readable helper wrappers now share emitted-error state, and a mapper or
+predicate awaiting its current result rejects immediately when the wrapper
+emits `error`, even if the underlying source already has buffered chunks. The
+focused two-map rejection contract passes with the maintained helper stages
+and authoritative `test-stream-filter.js`. Authoritative `test-stream-map.js`
+advances from `Callback 7` to `Callback 13`, its later concurrency-order case
+using promise timers; no full map-fixture pass is claimed yet.
