@@ -866,3 +866,5 @@ pass.
 - Focused audit after the fetch bridge on 2026-08-08: **2,112/2,112** stages passed serially with zero retries or failures; policy verification reported zero unclassified failures and only the eight historical conflict records. Rust tests remained 2/2 green.
 - Stage 2231 expands the fetch `Response` surface with `bodyUsed`, `arrayBuffer()`, `bytes()`, and `blob()` while preserving JSON/text/clone behavior. The focused response-body contract passes.
 - Focused audit after fetch response-body expansion on 2026-08-08: **2,113/2,113** stages passed serially with zero retries or failures; policy verification reported zero unclassified failures and only the eight historical conflict records. Rust tests remained 2/2 green.
+- Stage 2232 expands `Request` with signal propagation, `bodyUsed`, body consumption, and clone-after-consume rejection. The focused request-body contract passes.
+- Focused audit after fetch request-body alignment on 2026-08-08: **2,114/2,114** stages passed serially with zero retries or failures; policy verification reported zero unclassified failures and only the eight historical conflict records. Rust tests remained 2/2 green.
