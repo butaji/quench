@@ -563,11 +563,15 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
       }
       const lookupAddress = address || (type === "udp6" ? "::" : "0.0.0.0");
       socket._bindPending = true;
+      const isIpv4Literal =
+        typeof lookupAddress === "string" &&
+        /^\d{1,3}(?:\.\d{1,3}){3}$/.test(lookupAddress);
+      const isIpv6Literal =
+        typeof lookupAddress === "string" && lookupAddress.includes(":");
       const isHostname =
         typeof lookupAddress === "string" &&
         lookupAddress !== "localhost" &&
-        !/^\d{1,3}(?:\.\d{1,3}){3}$/.test(lookupAddress) &&
-        !lookupAddress.includes(":");
+        (type === "udp4" ? !isIpv4Literal : !isIpv6Literal);
       const lookup =
         socket._lookup ||
         (isHostname
