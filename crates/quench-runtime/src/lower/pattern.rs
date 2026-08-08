@@ -123,8 +123,17 @@ pub fn lower_assignment_target_prop(
 ) -> Option<(PropertyKey, BindingElement)> {
     match prop {
         ast::AssignmentTargetProperty::AssignmentTargetPropertyIdentifier(id) => {
-            let key = PropertyKey::Ident(id.binding.name.as_str().to_string());
-            let value = BindingElement::Identifier(id.binding.name.as_str().to_string());
+            let name = id.binding.name.as_str().to_string();
+            let key = PropertyKey::Ident(name.clone());
+            let value = if let Some(init) = &id.init {
+                let init_expr = crate::lower::expr::lower_expr(init).ok()?;
+                BindingElement::Default(
+                    Box::new(BindingElement::Identifier(name)),
+                    Box::new(init_expr),
+                )
+            } else {
+                BindingElement::Identifier(name)
+            };
             Some((key, value))
         }
         ast::AssignmentTargetProperty::AssignmentTargetPropertyProperty(prop) => {
