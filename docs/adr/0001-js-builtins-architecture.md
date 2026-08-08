@@ -19,8 +19,8 @@
 - Mechanism: `__ops__` bridge (`eval/ops.rs` + `builtins/core/ops_wrapper.rs`,
   currently a scaffold) and `builtins/bootstrap.rs` (planned), per
   `tasks/refactor-plan.md` items R1 (PHASE-B) and R0 (PHASE-B).
-  Note: docs/tasks use `__ops__`; the code bridge is still registered under the
-  pre-rename name (R1 renames it to `__ops__`).
+  Note: the bridge is registered as `__ops__` (renamed from `%ops%` in R1);
+  docs/tasks use `__ops__`.
 - Consequences:
   - `AGENTS.md` and `docs/architecture.md` must label this as the *target*
     architecture until the first builtin actually moves to JS.
