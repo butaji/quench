@@ -58,6 +58,7 @@ const __quenchDnsLookup = (hostname, options, callback) => {
     callback = options;
     options = {};
   }
+  if (typeof options === "number") options = { family: options };
   if (typeof callback !== "function") {
     throw Object.assign(
       new TypeError('The "callback" argument must be of type function'),
