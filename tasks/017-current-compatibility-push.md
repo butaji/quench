@@ -799,3 +799,4 @@ pass.
 - Complete parallel differential baseline on 2026-08-08: all 4,682 parallel fixtures produced results with no worker failures. Results were 1,004 exact matches, 461 both-failed, 2,448 Quench-only failures, 526 output mismatches, 172 Node-only failures, 71 timeouts, and 192 Node-environment-limited fixtures. The report is `target/compat/differential-parallel.json` and was generated at commit `a3eb3bac`.
 - Stage 2190 aligns HTTP 304 responses: preserve an explicitly supplied `Content-Length` header while still suppressing the response body.
 - Stage 2191 adds tolerant replacement-character handling for invalid UTF-8 in `Buffer.toString()`, fixing the decoder exception exposed by `test-http-buffer-sanity.js`.
+- Stage 2192 emits `readable` before in-memory HTTP response data, allowing `stream.finished()`/destroy lifecycle consumers to observe and cancel responses like Node.
