@@ -1028,9 +1028,7 @@ fn build_per_iteration_env(
     iter_env.borrow_mut().push_scope();
     for (name, kind) in vars {
         let val = env.borrow().get(name).unwrap_or(Value::Undefined);
-        iter_env
-            .borrow_mut()
-            .declare_var(name.clone(), *kind);
+        iter_env.borrow_mut().declare_var(name.clone(), *kind);
         iter_env.borrow_mut().initialize_declared(name, val);
     }
     Ok(iter_env)
