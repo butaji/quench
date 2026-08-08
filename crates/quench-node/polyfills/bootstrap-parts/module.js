@@ -94,6 +94,15 @@ const setSourceMapsSupport = (enabled, options) => {
     }
   }
 };
+const globalPaths = [];
+const initPaths = () => {
+  globalPaths.length = 0;
+  const delimiter = process.platform === "win32" ? ";" : ":";
+  for (const entry of String(process.env.NODE_PATH || "").split(delimiter)) {
+    if (entry) globalPaths.push(entry);
+  }
+  return globalPaths;
+};
 const __quenchModule = {
   builtinModules: __quenchBuiltinModules,
   _cache: Object.create(null),
@@ -144,7 +153,9 @@ const __quenchModule = {
   },
   _nodeModulePaths: nodeModulePaths,
   _stat: moduleStat,
-  setSourceMapsSupport
+  setSourceMapsSupport,
+  globalPaths,
+  _initPaths: initPaths
 };
 globalThis.require = (specifier) => {
   if (String(specifier).replace(/^node:/, "") === "module") {
