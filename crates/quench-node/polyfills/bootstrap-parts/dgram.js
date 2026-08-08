@@ -105,10 +105,18 @@ const __quenchDgramSend = (socket, message, ...args) => {
     );
   }
   const hasOffset =
-    args.length >= 5 ||
-    (args.length === 4 && typeof args[3] === "function") ||
+    (!socket._connected &&
+      args.length >= 3 &&
+      typeof args[0] === "number" &&
+      typeof args[1] === "number") ||
     (socket._connected && args.length >= 2);
-  const addressIndex = args.length >= 4 ? 3 : hasOffset ? -1 : 1;
+  const addressIndex = hasOffset
+    ? args.length >= 4
+      ? 3
+      : -1
+    : args.length >= 2
+      ? 1
+      : -1;
   const address = addressIndex < 0 ? undefined : args[addressIndex];
   if (
     address !== undefined &&
@@ -127,7 +135,11 @@ const __quenchDgramSend = (socket, message, ...args) => {
     );
   }
   const callback = args.at(-1);
-  const destinationPort = socket._connected ? socket._remote?.port : args[0];
+  const destinationPort = socket._connected
+    ? socket._remote?.port
+    : hasOffset
+      ? args[2]
+      : args[0];
   const payload =
     typeof message === "string"
       ? NodeBuffer.from(message)
@@ -138,11 +150,23 @@ const __quenchDgramSend = (socket, message, ...args) => {
             )
           )
         : message;
+  const bytePayload =
+    payload instanceof NodeBuffer
+      ? payload
+      : ArrayBuffer.isView(payload)
+        ? NodeBuffer.from(
+            payload.buffer,
+            payload.byteOffset,
+            payload.byteLength
+          )
+        : payload instanceof ArrayBuffer
+          ? NodeBuffer.from(payload)
+          : NodeBuffer.from(payload);
   const offset = hasOffset ? args[0] : 0;
   const length = hasOffset ? args[1] : payload.byteLength;
   const deliveredPayload = hasOffset
-    ? payload.subarray(offset, offset + length)
-    : payload;
+    ? bytePayload.subarray(offset, offset + length)
+    : bytePayload;
   if (socket._connected) {
     socket._sendQueueSize = (socket._sendQueueSize || 0) + length;
     socket._sendQueueCount = (socket._sendQueueCount || 0) + 1;
