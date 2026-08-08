@@ -217,3 +217,7 @@ Stage 2376 fixes path-based VFS `Buffer`/`Uint8Array` writes; the focused
 regression passes and the upstream `test-vfs-fs-writeFileSync.js` now advances
 past its direct buffer assertion. Its remaining failure is descriptor offset
 semantics (`" world"` instead of `"hello world"`), which is tracked separately.
+Stage 2377 verifies in-memory VFS descriptor writes now honor the current file
+offset and preserve prior content. The upstream write fixture reaches a later
+real-provider `/a.txt` open failure after this virtual-descriptor behavior,
+which remains a separate provider boundary.

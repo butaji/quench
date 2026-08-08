@@ -688,6 +688,26 @@ class __QuenchVirtualFileSystem {
       typeof path !== "number"
     )
       return globalThis.__nodeFs.writeFileSync(this.__realPath(path), data);
+    if (
+      typeof path === "number" &&
+      !(this.provider instanceof __QuenchRealFSProvider)
+    ) {
+      const key = this.__fds.get(path);
+      const entry = key && this.__entries.get(key);
+      if (!entry) throw __quenchVfsError("EBADF", "write", path);
+      const text =
+        typeof data === "string"
+          ? data
+          : data instanceof Uint8Array
+            ? globalThis.Buffer.from(data).toString()
+            : String(data);
+      const offset = this.__fdPositions.get(path) || 0;
+      entry.data = `${entry.data.slice(0, offset)}${text}${entry.data.slice(
+        offset + text.length
+      )}`;
+      this.__fdPositions.set(path, offset + text.length);
+      return;
+    }
     const key =
       typeof path === "number"
         ? this.__fds.get(path)
