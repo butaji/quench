@@ -128,7 +128,7 @@ const __quenchDgramSend = (socket, message, ...args) => {
   }
   const hasOffset =
     (!socket._connected &&
-      args.length >= 3 &&
+      args.length >= 2 &&
       typeof args[0] === "number" &&
       typeof args[1] === "number") ||
     (socket._connected && args.length >= 2);
@@ -225,10 +225,13 @@ const __quenchDgramSend = (socket, message, ...args) => {
   const destinationPort = socket._connected
     ? socket._remote?.port
     : hasOffset
-      ? args[2]
+      ? args.length >= 3
+        ? args[2]
+        : undefined
       : args[0];
   if (
     !socket._connected &&
+    destinationPort !== undefined &&
     (!Number.isInteger(destinationPort) ||
       destinationPort <= 0 ||
       destinationPort >= 65536)
