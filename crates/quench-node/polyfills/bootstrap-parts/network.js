@@ -538,6 +538,11 @@ const __quenchNetModule = {
           }
           this._peer = serverSocket;
           serverSocket._peer = this;
+          server._connections.add(serverSocket);
+          serverSocket.once("close", () => {
+            server._connections.delete(serverSocket);
+            server._finishClose?.();
+          });
           server._handler?.(serverSocket);
           server.emit("connection", serverSocket);
         });
@@ -752,6 +757,8 @@ const __quenchNetModule = {
     }
     const server = new globalThis.__nodeEventEmitter();
     server.listening = false;
+    server._connections = new Set();
+    server._closeRequested = false;
     server._nativeId = 0;
     server._nativeTransport = false;
     server._handle = { close: () => {} };
@@ -792,19 +799,24 @@ const __quenchNetModule = {
     server.close = (callback) => {
       if (!server.listening) return server;
       server.listening = false;
+      server._closeRequested = true;
       __quenchNetServers.delete(server);
       if (server._nativeId) {
         __quench_tcp_close(server._nativeId);
         server._nativeId = 0;
       }
       let callbackCalled = false;
-      queueMicrotask(() => {
+      const finish = () => {
+        if (!server._closeRequested || server._connections.size) return;
+        server._closeRequested = false;
         if (typeof callback === "function" && !callbackCalled) {
           callbackCalled = true;
           callback.call(server);
         }
         server.emit("close");
-      });
+      };
+      server._finishClose = finish;
+      finish();
       return server;
     };
     server.unref = () => server;
@@ -829,6 +841,11 @@ globalThis.__quench_io_poll = () => {
       socket.remoteAddress = "127.0.0.1";
       socket.remotePort = __quench_tcp_peer_port(nativeId);
       __quenchNativeSockets.add(socket);
+      server._connections.add(socket);
+      socket.once("close", () => {
+        server._connections.delete(socket);
+        server._finishClose?.();
+      });
       server._handler?.(socket);
       server.emit("connection", socket);
     }
