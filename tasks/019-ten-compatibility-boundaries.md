@@ -659,6 +659,14 @@ the internal `timers.getLibuvNow()` binding through the host monotonic clock.
 This verifies 30 successive one-millisecond callbacks preserve both order and
 monotonic timestamp behavior.
 
+The expanded parallel sweep confirms `vm.SourceTextModule` remains a missing
+subsystem: the current implementation is a no-op stub, while Node requires
+link/evaluate state transitions, namespace handling, linker validation, and
+module error propagation. This is tracked separately from the passing Script
+and context APIs. The same sweep still reports unsupported HTTP/2 and PQC
+surfaces, plus open fs-pull, net-socket, readable-emittedReadable, and
+awaitDrainWriters fixtures.
+
 Host timer polling now excludes unrefed timers when no refed timer keeps the
 event loop alive, while still processing them during a live refed turn. The
 authoritative `test-timers-immediate-unref-simple.js` fixture now passes, and
