@@ -437,7 +437,14 @@ const __nodeFsPullIterator = async function* (
       error.name = "AbortError";
       throw error;
     }
-    for (const batch of batches) yield transform ? transform(batch) : batch;
+    for (const batch of batches) {
+      const result = transform ? transform(batch) : batch;
+      if (result && typeof result[Symbol.asyncIterator] === "function") {
+        for await (const value of result) yield value;
+      } else {
+        yield result;
+      }
+    }
     globalThis.__nodeFdPositions[handle.fd] = end;
     if (options.autoClose) await handle.close();
   } finally {
