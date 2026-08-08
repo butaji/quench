@@ -333,6 +333,11 @@ pub fn eval_for_in(
             loop_binding.is_some_and(|k| matches!(k, VarKind::Let | VarKind::Const));
         let mut v = Value::Undefined;
         for key in keys {
+            // Live enumeration: skip keys deleted (or made non-enumerable)
+            // during a previous iteration.
+            if !is_key_enumerable(&obj_value, &key) {
+                continue;
+            }
             let (flow, body_val) = run_for_in_iteration(
                 variable,
                 &Value::String(key),
@@ -374,6 +379,23 @@ pub fn eval_for_in(
         env.borrow_mut().pop_scope();
     }
     result
+}
+
+/// Whether `key` is still an enumerable own property (own object or a
+/// prototype), i.e. it was not deleted or made non-enumerable during for-in.
+fn is_key_enumerable(obj_value: &Value, key: &str) -> bool {
+    let Value::Object(rc) = obj_value else {
+        return false;
+    };
+    let mut current: Option<Rc<RefCell<Object>>> = Some(Rc::clone(rc));
+    while let Some(obj_rc) = current {
+        let obj = obj_rc.borrow();
+        if obj.has_own(key) {
+            return obj.is_enumerable(key);
+        }
+        current = obj.prototype.clone();
+    }
+    false
 }
 
 /// Run one for-in iteration: declare the per-iteration binding (if any) and
