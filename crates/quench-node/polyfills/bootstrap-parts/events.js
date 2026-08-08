@@ -259,6 +259,7 @@ class NodeReadable extends NodeEventEmitter {
     }
     this._chunks = [];
     this._readableState = {
+      objectMode: this.readableObjectMode,
       reading: false,
       ended: false,
       endEmitted: false,
@@ -689,6 +690,7 @@ class NodeWritable extends NodeEventEmitter {
     this.writableLength = 0;
     this.writableNeedDrain = false;
     this._writableState = {
+      objectMode: this.writableObjectMode,
       needDrain: false,
       ending: false,
       ended: false,
@@ -912,6 +914,10 @@ class NodeDuplex extends NodeReadable {
     return NodeReadable.prototype.destroy.call(this, error, callback);
   }
 }
+const NodeDuplexCompat = function Duplex(options = {}) {
+  return Reflect.construct(NodeDuplex, [options]);
+};
+NodeDuplexCompat.prototype = NodeDuplex.prototype;
 for (const method of ["write", "end", "cork", "uncork", "setDefaultEncoding"]) {
   NodeDuplex.prototype[method] = NodeWritable.prototype[method];
 }
@@ -1157,7 +1163,7 @@ const __nodeStreamExports = {
   Stream: NodeStream,
   Readable: NodeReadableCompat,
   Writable: NodeWritableCompat,
-  Duplex: NodeDuplex,
+  Duplex: NodeDuplexCompat,
   duplexPair: __nodeDuplexPairFactory,
   Transform: NodeTransform,
   PassThrough: NodeTransform,
