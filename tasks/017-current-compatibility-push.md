@@ -967,6 +967,11 @@ pass.
 - Stage 2308 reproduces the upstream HTTP `maxSockets` fixture shape, including `common.mustCall`, `Countdown`, six requests, aborts, and server shutdown; the focused stage passes. The authoritative `test-http-agent-maxsockets-respected.js` still fails before its wrapped `server.listen()` callback is observed (`Callback 1`), so the remaining difference is isolated to the upstream harness/module-loading interaction and is not claimed fixed.
 - Stage 2309 isolates filesystem permission tracking with `chmodSync(0444)` followed by synchronous and asynchronous `access(W_OK)`; both focused checks pass, including after `process.setuid("nobody")`. The authoritative `test-fs-access.js` still reports its later wrapped callback missing, so the broader fixture remains unresolved and no permission fix is claimed.
 - ESLint application differential on 2026-08-08: a minimal `require("eslint")` plus `new Linter().verify()` reproduces `RangeError: Maximum call stack size exceeded` in native `RegExp.prototype.flags`/`Symbol.replace` recursion. The failure occurs before lint results are produced; no RegExp polyfill or resolver change was retained because basic regex and replacement contracts remain green.
+
+- Current application-gate recheck: stages 2047, 2069, 2080, 2081, and 2104
+  all pass under the current binary, covering installed Ajv, debug, Chalk, ms,
+  and Prettier applications. ESLint remains the unresolved larger application
+  gate described above.
 - Stage 2310 implements virtual `process.setuid()`/`setgid()` credential state with numeric, `root`, and `nobody` identifiers while keeping the embedded host process unchanged. The focused credential contract and Rust tests pass; the upstream `test-fs-access.js` callback discrepancy remains unchanged, so this is not claimed as its fix.
 - Stage 2311 reproduces the upstream read-only `fs.access(W_OK)` callback and rejected `fs.promises.access()` sequence with `common.mustCall`; both callbacks pass after the virtual `setuid("nobody")` transition. The remaining `test-fs-access.js` mismatch therefore requires its larger fixture sequencing, not the basic permission callback path.
 - Stage 2318 fixes the general `net.Server.close()` lifecycle by emitting the asynchronous `close` event after shutdown. The focused stage and upstream `test-net-server-close.js` both pass.
