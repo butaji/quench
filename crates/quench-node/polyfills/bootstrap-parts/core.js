@@ -529,6 +529,32 @@ const __quenchCoreStaticModules = new Map([
       };
     }
   ],
+  [
+    "sea",
+    () => ({
+      isSea: false,
+      getAsset() {
+        const error = new Error("SEA assets are unavailable");
+        error.code = "ERR_NOT_SUPPORTED";
+        throw error;
+      },
+      getRawAsset() {
+        const error = new Error("SEA assets are unavailable");
+        error.code = "ERR_NOT_SUPPORTED";
+        throw error;
+      },
+      getCodeCache() {
+        const error = new Error("SEA assets are unavailable");
+        error.code = "ERR_NOT_SUPPORTED";
+        throw error;
+      },
+      getSnapshot() {
+        const error = new Error("SEA snapshots are unavailable");
+        error.code = "ERR_NOT_SUPPORTED";
+        throw error;
+      }
+    })
+  ],
   ["async_hooks", () => __quenchAsyncHooksModule]
 ]);
 const __quenchRequireCoreBase = (name) => {
