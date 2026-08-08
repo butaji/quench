@@ -833,3 +833,14 @@ The focused recursive/multi-destination contract and all four authoritative
 awaitDrain fixtures now pass. The broader verified stream cluster—pipe flow,
 pause/resume, emittedReadable, consumers, and backpressure—also passes after
 the synchronous read/drain loop change.
+
+Stage 2460 repairs the writable half of canonical Duplex instances. Duplex now
+owns the writable request queue and `_final` hook, mixes in the internal write
+processor used by `write()`, and delays auto-destroy until both readable and
+writable halves complete. The focused write/final/end lifecycle passes.
+Previously failing focused Duplex stages 1912, 2016, 2025, 2150, 2153–2155,
+2167, and 2169 now pass together with the maintained writable/stream cluster.
+The authoritative `test-stream-finished.js` advances beyond its prior missing
+queue TypeError but aborts later in QuickJS GC (`gc_decref_child` ref-count
+assertion), so the full finished fixture remains unclaimed and requires an
+interaction-level reduction before further lifecycle changes.
