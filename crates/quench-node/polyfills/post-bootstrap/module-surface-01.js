@@ -7,7 +7,12 @@
       eventsApi.getEventListeners ||= () => [];
       eventsApi.getMaxListeners ||= () => 10;
       eventsApi.setMaxListeners ||= () => undefined;
-      eventsApi.listenerCount ||= () => 0;
+      const listenerCount = eventsApi.listenerCount;
+      eventsApi.listenerCount = (target, event) => {
+        if (target instanceof AbortSignal)
+          return target.listenerCount?.(event) || 0;
+        return listenerCount(target, event);
+      };
     }
   }
 }

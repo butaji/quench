@@ -1766,7 +1766,13 @@ let __quenchHttpModule;
       request.destroy = (error) => {
         if (request.destroyed) return request;
         request.destroyed = true;
-        request.aborted = true;
+        if (request.__signalAbortListener) {
+          options.signal?.removeEventListener(
+            "abort",
+            request.__signalAbortListener
+          );
+          request.__signalAbortListener = undefined;
+        }
         const failure =
           error ||
           Object.assign(new Error("socket hang up"), { code: "ECONNRESET" });
@@ -1776,6 +1782,22 @@ let __quenchHttpModule;
         });
         return request;
       };
+      if (options.signal instanceof AbortSignal) {
+        const abortError = Object.assign(
+          new Error("The operation was aborted"),
+          { code: "ABORT_ERR", name: "AbortError" }
+        );
+        if (options.signal.aborted) {
+          request.destroy(abortError);
+        } else {
+          request.__signalAbortListener = () => request.destroy(abortError);
+          options.signal.addEventListener(
+            "abort",
+            request.__signalAbortListener,
+            { once: true }
+          );
+        }
+      }
       request.agent = options.agent || globalAgent;
       request.url = pathname || "/";
       request.path = request.url;
@@ -1992,12 +2014,12 @@ let __quenchHttpModule;
       }
       const destroyRequest = request.destroy;
       const destroyResponse = response.destroy;
-      request.destroy = () => {
+      request.destroy = (error) => {
         if (request._timeoutTimer !== undefined) {
           clearTimeout(request._timeoutTimer);
           request._timeoutTimer = undefined;
         }
-        destroyRequest();
+        destroyRequest(error);
         response.__abort();
         response.emit("close");
         return request;
@@ -2167,6 +2189,7 @@ let __quenchHttpModule;
       request.abort = () => {
         if (request.aborted) return request;
         request.aborted = true;
+        request.destroyed = true;
         request.emit("abort");
         return request;
       };

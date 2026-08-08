@@ -465,6 +465,13 @@ const __quenchEventsRequire = (value) => {
     }
     return targets[0];
   };
+  const originalListenerCount = __quenchEventsModule.listenerCount;
+  __quenchEventsModule.listenerCount = (target, event) => {
+    if (target instanceof AbortSignal) {
+      return event === "abort" ? target._listeners?.length || 0 : 0;
+    }
+    return originalListenerCount.call(__quenchEventsModule, target, event);
+  };
   return __quenchEventsModule;
 };
 globalThis.require = (name) => {

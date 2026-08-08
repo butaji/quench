@@ -802,3 +802,6 @@ pass.
 - Stage 2192 emits `readable` before in-memory HTTP response data, allowing `stream.finished()`/destroy lifecycle consumers to observe and cancel responses like Node.
 - Stage 2193 preserves query strings for string, legacy `url.parse()`, and `URL` targets passed to `http.get()`.
 - Stage 2194 aligns client-request `.destroy()` with Node's `socket hang up`/`ECONNRESET` error before `close`.
+- Stage 2195 preserves Node's distinction between client-request `.destroy()` and `.abort()`: direct destroy reports `ECONNRESET` without setting `aborted`.
+- Stage 2196 wires `http.request()`'s external `AbortSignal` to a deferred `AbortError`/`ABORT_ERR` destroy while preserving Node's `aborted` state.
+- Stage 2197 makes `ClientRequest.abort()` mark the request destroyed without changing its no-error abort event behavior.
