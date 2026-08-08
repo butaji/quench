@@ -7,6 +7,7 @@ globalThis.__quenchInternalFsBinding = {
 };
 globalThis.__quenchInternalFallbackBinding = { fstat: () => undefined };
 globalThis.__quenchDgramUdpFds = new Set();
+globalThis.__quenchDgramUdpHandleInfo = new Map();
 globalThis.__quenchDgramActiveFds = new Set();
 let __quenchDgramNextHandleFd = 60000;
 globalThis.__quenchDgramUDPClass = class UDP {
@@ -22,6 +23,7 @@ globalThis.__quenchDgramUDPClass = class UDP {
       family: address.includes(":") ? "IPv6" : "IPv4"
     };
     globalThis.__quenchDgramUdpFds.add(this.fd);
+    globalThis.__quenchDgramUdpHandleInfo.set(this.fd, this._address);
     return 0;
   }
   bind6(address, port, flags) {
