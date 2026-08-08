@@ -607,6 +607,7 @@ class NodeReadable extends NodeEventEmitter {
     if (!this.listenerCount("end") || this._endEmitted) return;
     this._endEmitted = true;
     this._readableState.endEmitted = true;
+    this.readable = false;
     this.emit("end");
     if (this._autoDestroy) {
       queueMicrotask(() => {
