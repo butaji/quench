@@ -7,9 +7,10 @@ TEST262_STAGE=25 TEST262_DIGEST=1 TEST262_JSON=1 cargo test -p quench-runtime \
   --test test262 test262_staged -- --ignored --nocapture
 ```
 
-> Note: the digest's 10s isolated-subprocess timeout flags a few heavy
-> (65k-iteration) tests as timeouts even though they pass when run directly;
-> treat those as timeouts, not logic failures.
+> Note: the digest's default 10s isolated-subprocess timeout flags a few heavy
+> (65k-iteration) tests as timeouts even though they pass with more time. For an
+> accurate 0-current coverage check, run the digest with
+> `TEST262_TIMEOUT_SECS=60` (stages 1 and 9 then read 100%).
 
 ## Progress log
 
