@@ -987,7 +987,11 @@ class NodeDuplex extends NodeReadable {
 }
 NodeDuplex.prototype.writableFinished = false;
 const NodeDuplexCompat = function Duplex(options = {}) {
-  return Reflect.construct(NodeDuplex, [options]);
+  return Reflect.construct(
+    NodeDuplex,
+    [options],
+    new.target || NodeDuplexCompat
+  );
 };
 NodeDuplexCompat.prototype = NodeDuplex.prototype;
 for (const method of ["write", "end", "cork", "uncork", "setDefaultEncoding"]) {
