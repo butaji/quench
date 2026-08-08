@@ -19,6 +19,11 @@ server.listen(
         assert.ok(client.localPort > 0);
         assert.strictEqual(client.remoteAddress, "127.0.0.1");
         assert.strictEqual(client.remotePort, server.address().port);
+        assert.deepStrictEqual(client.address(), {
+          address: "127.0.0.1",
+          family: "IPv4",
+          port: client.localPort
+        });
         client.destroy();
         server.close(() => console.log("native socket address passed"));
       }
