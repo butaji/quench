@@ -220,7 +220,14 @@ pub(crate) fn touch_assignment_target(
             touch_assignment_target(object, env)?;
             if *computed {
                 if let PropertyKey::Computed(e) = property {
-                    let _ = eval_expression(e, env, false)?;
+                    // Skip keys containing a `yield`: the key is evaluated once
+                    // during the actual assignment, and evaluating it here too
+                    // would double-evaluate the yield (breaking its resume
+                    // replay). Non-yield keys are still touched so a throwing
+                    // reference aborts before the iterator is consumed.
+                    if crate::value::generator_replay::count_yields_in_expr(e) == 0 {
+                        let _ = eval_expression(e, env, false)?;
+                    }
                 }
             }
             Ok(())
