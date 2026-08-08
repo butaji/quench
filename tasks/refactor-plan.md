@@ -43,7 +43,7 @@ repo-wide split sweeps ahead of failing test262 clusters.
 | Metric | Value |
 |--------|-------|
 | JS builtins | **0** — R0 not started |
-| `%ops%` / `eval/ops.rs` | **scaffold** — re-exports + frozen `%ops%` wrapper; not yet the single owner |
+| `__ops__` / `eval/ops.rs` | **scaffold** — re-exports + frozen `__ops__` wrapper; not yet the single owner |
 | Current stage | per `tasks/index.json` (`current_stage`) — run the stage to know where you stand |
 
 File:line references in this plan are snapshots; re-locate by symbol name
@@ -134,10 +134,10 @@ under the main oxc crate — verify if a feature flag is needed or if
 - [ ] Parse → semantic check → SyntaxError before lowering; delete
       redundant hand-rolled checks.
 
-## R1 — `eval/ops.rs` + `%ops%` bridge  *(incremental NOW; finish PHASE-B)*
+## R1 — `eval/ops.rs` + `__ops__` bridge  *(incremental NOW; finish PHASE-B)*
 
 **Status:** `src/eval/ops.rs` and `builtins/core/ops_wrapper.rs` exist
-as a scaffold (re-exports + frozen `%ops%`). Not yet the single owner —
+as a scaffold (re-exports + frozen `__ops__`). Not yet the single owner —
 private copies remain in `builtins/*.rs` and `eval/`.
 
 - [ ] Own the implementations in `eval/ops.rs` (or thin wrappers that
@@ -150,9 +150,10 @@ private copies remain in `builtins/*.rs` and `eval/`.
       `throw_type_error`.
 - [ ] Correctness gated by the stage run; add a unit test only when an op
       causes an actual bug (regression guard).
-- [ ] Rename the bridge global `%ops%` → `__ops__` (decided 2026-08-08;
-      `__ops__` is the documented name in `AGENTS.md`/`docs/architecture.md`).
-- [ ] `%ops%` stays frozen; parser resolves `%ops%` at parse time
+- [ ] Rename the bridge global in code to `__ops__` (docs/tasks already
+      use `__ops__`; decided 2026-08-08; `__ops__` is the documented name in
+      `AGENTS.md`/`docs/architecture.md`).
+- [ ] `__ops__` stays frozen; parser resolves `__ops__` at parse time
       (never user-visible).
 - [ ] On touch: replace the local duplicate; do not leave two owners.
 - [ ] **Phase B gate:** before R0 / Object stage, zero private copies of
