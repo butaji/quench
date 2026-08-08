@@ -208,3 +208,8 @@ The same stale report's representative dgram entries
 `test-dgram-bind-error-repeat.js`) also pass individually on the current
 runtime. A fresh differential run is required before treating those clusters
 as remaining failures.
+
+Stage 2375 fixes and verifies VFS permission semantics: virtual entries retain
+`chmodSync()` mode bits, `accessSync()` enforces `R_OK`/`W_OK`/`X_OK`, and the
+promise path reports `EACCES`. The authoritative
+`test-vfs-access-modes.js` and `test-vfs-fs-accessSync.js` fixtures now pass.
