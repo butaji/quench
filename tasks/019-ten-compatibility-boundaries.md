@@ -347,6 +347,9 @@ both `FileHandle.pull()` and `stream/iter.pull()` flatten async-iterable
 transform results. Existing transform and zlib stages still pass; the complete
 upstream aggregate remains unresolved, so this behavior is retained as a
 focused compatibility improvement rather than counted as a full-fixture fix.
+Stage 2406 verifies the VFS `createReadStream({ autoClose: false })` end,
+manual-destroy, and close lifecycle. The remaining stream callback 23 is not
+this isolated lifecycle path and needs the next stream interaction probe.
 
 Stage 2378 passes the four basic stream `destroy()` contracts for readable and
 writable streams, including implicit `AbortError`, explicit error messages,
