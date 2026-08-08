@@ -642,3 +642,9 @@ implementation. A focused object-mode pipe stage now confirms that string
 chunks count as one unit, avoiding premature `drain` registration. The full
 pipe-flow fixture advanced past its earlier drain assertion; it still has a
 separate asynchronous stream-surface failure under investigation.
+
+The canonical PassThrough/Transform surface now buffers chunks when no `data`
+listener is present and exposes `.read()` plus `readable` notification. The
+focused backpressure stage remains green after this change. The upstream
+pipe-flow fixture now reaches a remaining `finish` timing mismatch in a
+no-consumer path.
