@@ -487,3 +487,11 @@ Focused stage 2101 covers the stream destruction invariant that `Readable`
 passes. The broader upstream `test-stream-destroy.js` advances but still has
 unresolved error-delivery assertions in its combined destroy matrix; those are
 not being represented as fixed by this narrower contract.
+
+Focused stage 2102 adds observable HTTP Agent request-slot bookkeeping:
+requests beyond `maxSockets` now appear in `agent.requests[name]` while an
+active slot is occupied and are removed as responses finish. The focused
+queue contract passes, as do the existing `test-http-agent.js`,
+`test-http-agent-maxtotalsockets.js`, and `test-http-abort-client.js` fixtures.
+`test-http-agent-destroyed-socket.js` advances to a later socket lifecycle
+assertion, so the complete destroyed-socket contract remains open.
