@@ -719,3 +719,9 @@ Focused stage 2158 aligns `Duplex({ readable: false }).push()` with Node's
 asynchronous `ERR_STREAM_PUSH_AFTER_EOF` error event. Focused stage 2159
 suppresses `end` emission for disabled readable sides. Both contracts pass,
 and upstream `test-stream-duplex-readable-writable.js` passes.
+
+Focused stage 2160 adds Blob support to `Duplex.from()` through the Blob Web
+Stream, and stage 2161 invokes callable sources and handles async-function
+rejections plus `ERR_INVALID_RETURN_VALUE`. Both focused contracts pass;
+upstream `test-stream-duplex-from.js` advances to an object-wrapped readable
+adapter case.
