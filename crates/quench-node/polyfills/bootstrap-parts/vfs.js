@@ -1107,12 +1107,32 @@ class __QuenchVirtualFileSystem {
     return globalThis.__nodeFs.unwatchFile(this.__realPath(path), listener);
   }
   createReadStream(path, options = {}) {
+    if (options.start !== undefined && Number(options.start) < 0) {
+      const error = new RangeError("start out of range");
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    if (options.end !== undefined && Number(options.end) < 0) {
+      const error = new RangeError("end out of range");
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    if (
+      options.start !== undefined &&
+      options.end !== undefined &&
+      Number(options.start) > Number(options.end)
+    ) {
+      const error = new RangeError("start out of range");
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
     const stream = new globalThis.__nodeStream.Readable({
       highWaterMark: options.highWaterMark,
       read() {}
     });
     stream.path = path;
-    stream.fd = null;
+    stream.fd = typeof options.fd === "number" ? options.fd : null;
+    stream.pending = true;
     stream.bytesRead = 0;
     stream.close = (callback) => {
       if (stream.fd !== null) {
@@ -1126,11 +1146,12 @@ class __QuenchVirtualFileSystem {
     };
     setTimeout(() => {
       try {
-        const fd = this.openSync(path, "r");
+        const fd = stream.fd === null ? this.openSync(path, "r") : stream.fd;
         stream.fd = fd;
+        stream.pending = false;
         stream.emit("open", fd);
         stream.emit("ready");
-        const bytes = globalThis.Buffer.from(this.readFileSync(path));
+        const bytes = globalThis.Buffer.from(this.readFileSync(fd));
         const start = options.start ?? 0;
         const end = options.end === undefined ? bytes.length : options.end + 1;
         const chunk = bytes.subarray(start, Math.min(end, bytes.length));
@@ -1142,7 +1163,7 @@ class __QuenchVirtualFileSystem {
           stream.bytesRead = chunk.length;
         }
         stream.push(null);
-        if (options.autoClose !== false)
+        if (options.autoClose !== false && options.fd === undefined)
           stream.once("end", () => stream.close());
       } catch (error) {
         stream.emit("error", error);
@@ -1169,6 +1190,8 @@ class __QuenchVirtualFileSystem {
           } else {
             this.writeSync(stream.fd, data, 0, data.length, null);
           }
+          stream.bytesWritten += data.length;
+          stream.pending = false;
           callback();
         } catch (error) {
           callback(error);
@@ -1176,10 +1199,16 @@ class __QuenchVirtualFileSystem {
       }
     });
     stream.path = path;
-    stream.fd = null;
+    stream.fd = typeof options.fd === "number" ? options.fd : null;
+    stream.pending = true;
+    stream.bytesWritten = 0;
     setTimeout(() => {
       try {
         if (stream.fd === null) stream.fd = this.openSync(path, flags);
+        if (options.start !== undefined && !flags.includes("a")) {
+          this.__fdPositions.set(stream.fd, Number(options.start));
+        }
+        stream.pending = false;
         stream.emit("open", stream.fd);
         stream.emit("ready");
       } catch (error) {

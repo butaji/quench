@@ -306,6 +306,10 @@ rewriting the pathname for every chunk, and honors `start` for `r+` streams.
 The focused writable surface passes. The authoritative stream fixture
 advances from `Callback 20` to `Callback 22`; the remaining mismatch is later
 in pipeline-read/close sequencing.
+Stage 2398 adds synchronous VFS stream range validation and exposes
+`pending`, `bytesRead`, and `bytesWritten` state while supporting explicit fd
+inputs. The focused validation stage passes; the main stream fixture advances
+to `Callback 23`, with explicit-fd and property callback timing still queued.
 
 Stage 2378 passes the four basic stream `destroy()` contracts for readable and
 writable streams, including implicit `AbortError`, explicit error messages,
