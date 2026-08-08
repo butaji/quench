@@ -82,6 +82,10 @@ own commit.
   `new Linter()`, where native `RegExp.prototype.flags`/`Symbol.replace`
   recursion occurs; standalone equivalent regex flag cases pass. The next
   fix must target that runtime interaction rather than package resolution.
+  Temporarily bypassing quench's `Object.setPrototypeOf` wrapper changes the
+  symptom back to a masked `prelude-ls` resolution error but still does not
+  construct `Linter`, so that probe was reverted and no prototype behavior was
+  changed.
 - Item 10: partially improved. Stage 2343 reproduces the upstream
   `common.mustCall` readable backpressure shape and now verifies all four
   `_read()` demands and three writable callbacks. The fix removes a stale
