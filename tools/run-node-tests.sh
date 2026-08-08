@@ -24,7 +24,7 @@ else
     fixture_flags=$(sed -nE 's/^[[:space:]]*\/\/[[:space:]]*Flags:[[:space:]]*(.*)$/\1/p' "$fixture" | head -n 1)
   fi
   if [ -f "$fixture" ]; then
-    mode_args="${fixture_flags} ${fixture}"
+    mode_args="${fixture_flags} --test-dir ${fixture}"
   else
     mode_args="${fixture_flags} --test-dir ${fixture}"
   fi
