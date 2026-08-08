@@ -14,3 +14,8 @@ Object.isExtensible = function isExtensible(o) {
 Object.getPrototypeOf = function getPrototypeOf(o) {
   return __ops__.getPrototypeOf(__ops__.toObject(o));
 };
+
+// Object.setPrototypeOf(o, proto) — §19.1.2.18: [[SetPrototypeOf]].
+Object.setPrototypeOf = function setPrototypeOf(o, proto) {
+  return __ops__.setPrototypeOf(o, proto);
+};
