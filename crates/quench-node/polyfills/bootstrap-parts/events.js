@@ -188,6 +188,7 @@ const __nodeReadableStart = (stream) => {
     stream._readableState.errored ||
     stream._readableState.reading ||
     (!stream.readableObjectMode &&
+      stream.readableHighWaterMark > 0 &&
       stream.readableLength >= stream.readableHighWaterMark)
   ) {
     return;
