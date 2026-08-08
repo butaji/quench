@@ -449,3 +449,10 @@ Focused stage 2094 independently verifies RSA-PSS 2048-bit generation,
 signing, and verification with SHA-256 and a 32-byte salt. It passes under
 quench-node, further narrowing the upstream CryptoKey mismatch to combined
 fixture sequencing or the remaining AES/lifecycle path.
+
+Focused stages 2096–2097 complete the four-algorithm matrix (HMAC, ECDSA,
+RSA-PSS, and AES-GCM): generation for all keys and getter/reflection checks
+for every key pass under quench-node. The original upstream fixture still
+reports a missing completion callback, so the remaining discrepancy is now
+isolated to its harness/lifecycle integration rather than algorithm support or
+CryptoKey own-property shape.
