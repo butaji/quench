@@ -11,7 +11,7 @@ pub mod search;
 pub mod transformation;
 
 // Re-export helpers from transformation (they are used by other modules)
-pub use transformation::{call_callback, flatten_array, get_this_array, make_array};
+pub use transformation::{flatten_array, get_this_array, make_array};
 
 // Re-export from mutation
 pub use mutation::{get_this_array_obj, set_elements};
@@ -20,11 +20,7 @@ pub use mutation::{get_this_array_obj, set_elements};
 pub use accessors::{proto_at, proto_concat, proto_join, proto_slice, proto_to_string};
 pub use mutation::{proto_pop, proto_push, proto_shift, proto_splice, proto_unshift};
 pub use rearrange::{proto_reverse, proto_sort};
-pub use search::{proto_find, proto_find_last, proto_find_last_index};
-pub use transformation::{
-    proto_every, proto_filter, proto_flat, proto_flat_map, proto_for_each, proto_map, proto_reduce,
-    proto_some,
-};
+pub use transformation::{proto_flat, proto_flat_map};
 
 /// Setup all prototype methods on an array prototype object
 pub fn setup_prototype_methods(proto: &std::cell::RefCell<crate::value::Object>) {
@@ -48,12 +44,8 @@ pub fn setup_prototype_methods(proto: &std::cell::RefCell<crate::value::Object>)
 fn setup_transformation_methods(
     m: &impl Fn(&str, fn(Vec<Value>) -> Result<Value, crate::JsError>),
 ) {
-    m("map", proto_map);
-    m("filter", proto_filter);
-    m("forEach", proto_for_each);
-    m("reduce", proto_reduce);
-    m("some", proto_some);
-    m("every", proto_every);
+    // map/filter/forEach/reduce/some/every are self-hosted in JS
+    // (builtins/core/array_statics.js).
     m("flat", proto_flat);
     m("flatMap", proto_flat_map);
 }
@@ -80,9 +72,7 @@ fn setup_accessor_methods(m: &impl Fn(&str, fn(Vec<Value>) -> Result<Value, crat
 }
 
 fn setup_search_methods(m: &impl Fn(&str, fn(Vec<Value>) -> Result<Value, crate::JsError>)) {
-    // Array.prototype.indexOf/includes are self-hosted in JS
+    // indexOf/includes/find/findLast/findLastIndex are self-hosted in JS
     // (builtins/core/array_statics.js).
-    m("find", proto_find);
-    m("findLast", proto_find_last);
-    m("findLastIndex", proto_find_last_index);
+    let _ = m;
 }

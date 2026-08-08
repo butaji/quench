@@ -7,7 +7,6 @@ mod tests {
 
     fn eval_builtins(src: &str) -> Result<Value, crate::value::JsError> {
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
         ctx.eval(src)
     }
 

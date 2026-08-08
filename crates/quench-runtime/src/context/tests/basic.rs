@@ -106,10 +106,8 @@ fn test_duplicate_function_declaration_last_wins() {
 #[cfg(test)]
 #[test]
 fn test_error_throw_catch() {
-    use crate::builtins::register_builtins;
     use crate::test262::harness::inject_harness;
     let mut ctx = Context::new().unwrap();
-    register_builtins(&mut ctx);
     inject_harness(&mut ctx);
 
     // Test that throw/catch preserves error object
@@ -133,10 +131,8 @@ fn test_error_throw_catch() {
 #[cfg(test)]
 #[test]
 fn test_error_properties_directly() {
-    use crate::builtins::register_builtins;
     use crate::test262::harness::inject_harness;
     let mut ctx = Context::new().unwrap();
-    register_builtins(&mut ctx);
     inject_harness(&mut ctx);
 
     // Test that Test262Error has message property
@@ -155,10 +151,8 @@ fn test_error_properties_directly() {
 #[cfg(test)]
 #[test]
 fn test_error_return_value() {
-    use crate::builtins::register_builtins;
     use crate::test262::harness::inject_harness;
     let mut ctx = Context::new().unwrap();
-    register_builtins(&mut ctx);
     inject_harness(&mut ctx);
 
     // Test what new Test262Error returns
@@ -188,10 +182,8 @@ fn test_error_return_value() {
 #[cfg(test)]
 #[test]
 fn test_error_catch_bindings() {
-    use crate::builtins::register_builtins;
     use crate::test262::harness::inject_harness;
     let mut ctx = Context::new().unwrap();
-    register_builtins(&mut ctx);
     inject_harness(&mut ctx);
 
     // Test that catch parameter receives the thrown value
@@ -252,10 +244,8 @@ fn test_null_property_access_throws() {
 #[cfg(test)]
 #[test]
 fn test_async_test_scenario() {
-    use crate::builtins::register_builtins;
     use crate::test262::harness::inject_harness;
     let mut ctx = Context::new().unwrap();
-    register_builtins(&mut ctx);
     inject_harness(&mut ctx);
 
     // Simulate the asyncTest scenario
@@ -306,7 +296,6 @@ fn test_eval_program_skips_parse_and_matches_eval() {
     // The cached program must be re-evaluable against a second fresh context
     // without re-parsing (harness reuse across test contexts).
     let mut ctx2 = Context::new().unwrap();
-    crate::builtins::register_builtins(&mut ctx2);
     ctx2.set_global("x".to_string(), Value::Number(10.0));
     let result2 = ctx2.eval_program(&program, source);
     assert_eq!(
@@ -325,11 +314,9 @@ fn fresh_context_gets_fresh_symbol_registry_on_same_thread() {
     // in-thread runner reuses one thread, so a fresh Context must reset the
     // registry or Symbol.for would leak "x" from one test into the next.
     let mut ctx1 = Context::new().unwrap();
-    crate::builtins::register_builtins(&mut ctx1);
     let s1 = ctx1.eval("Symbol.for('leakcheck')").unwrap();
 
     let mut ctx2 = Context::new().unwrap();
-    crate::builtins::register_builtins(&mut ctx2);
     let s2 = ctx2.eval("Symbol.for('leakcheck')").unwrap();
 
     assert_ne!(
