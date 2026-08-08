@@ -740,3 +740,14 @@ span already-open timer, URL, dgram, stream/Duplex, filesystem, and dirty
 real-provider boundaries; policy validation classifies them as unrecorded, so
 this checkpoint is explicitly not a green full-suite claim. Exact per-stage
 results are retained in `target/compat/focused-stage-metrics.jsonl`.
+
+Stage 2451 fixes the next `test-stream-pipe-flow.js` boundary. Writable
+completion now emits `drain` when buffered length reaches zero even when
+`highWaterMark` itself is zero; the previous strict `length < highWaterMark`
+test could never succeed at that boundary. The focused 18-read/18-write
+asynchronous pipe contract passes with both source `end` and destination
+`finish`. The upstream fixture now observes its first two `mustCall` contracts
+and advances to `Callback 2`, the separate wrapper/PassThrough readable-end
+sequence in its second block. Backpressure stages 442, 1213, 1859, 2253, 2343,
+2442, 2445, and 2449–2451 pass, as do Rust tests and the Ajv, debug, Chalk,
+`ms`, Prettier, and process-entry application gates.

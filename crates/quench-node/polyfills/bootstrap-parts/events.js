@@ -149,7 +149,8 @@ const __nodeWritableComplete = (state, stream, size, callback, error) => {
   stream.writableLength = Math.max(0, stream.writableLength - size);
   if (
     stream.writableNeedDrain &&
-    stream.writableLength < stream.writableHighWaterMark
+    (stream.writableLength === 0 ||
+      stream.writableLength < stream.writableHighWaterMark)
   ) {
     stream.writableNeedDrain = false;
     stream._writableState.needDrain = false;
