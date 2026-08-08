@@ -182,21 +182,80 @@ fn setup_array_prototype_global(array_proto: &Rc<RefCell<Object>>) {
     });
 }
 
-/// Wire `Array.prototype[Symbol.iterator]` after `Symbol` is registered.
+/// Wire `Array.prototype[Symbol.iterator]` and the `values`/`entries`/`keys`
+/// iterator methods after `Symbol` is registered.
 pub fn register_array_iterator() {
     let Some(array_proto) = get_array_prototype() else {
         return;
     };
-    let Some(Value::Symbol(sym)) =
-        crate::builtins::symbol::get_well_known_symbol_no_ctx("iterator")
-    else {
-        return;
+    let sym_key = crate::builtins::symbol::get_well_known_symbol_no_ctx("iterator")
+        .and_then(|v| match v {
+            Value::Symbol(s) => Some(s.property_key()),
+            _ => None,
+        });
+    let mut proto = array_proto.borrow_mut();
+    proto.set_nonenumerable("values", Value::NativeFunction(Rc::new(NativeFunction::new(array_values_iterator))));
+    proto.set_nonenumerable("entries", Value::NativeFunction(Rc::new(NativeFunction::new(array_entries_iterator))));
+    proto.set_nonenumerable("keys", Value::NativeFunction(Rc::new(NativeFunction::new(array_keys_iterator))));
+    if let Some(key) = sym_key {
+        proto.set_nonenumerable(
+            &key,
+            Value::NativeFunction(Rc::new(NativeFunction::new(array_values_iterator))),
+        );
+    }
+}
+
+/// Build an array iterator object whose `next` reads the current element at
+/// each index (live per ES ArrayIterator).
+fn make_array_iterator(
+    arr_rc: Rc<RefCell<Object>>,
+    per_step: impl Fn(&Object, usize) -> Value + 'static,
+) -> Value {
+    let index = Rc::new(RefCell::new(0usize));
+    let next_fn = NativeFunction::new(move |_| {
+        let mut res = Object::new(ObjectKind::Ordinary);
+        let mut i = index.borrow_mut();
+        let arr = arr_rc.borrow();
+        if *i < arr.elements.len() {
+            res.set("value", per_step(&arr, *i));
+            res.set("done", Value::Boolean(false));
+            *i += 1;
+        } else {
+            res.set("value", Value::Undefined);
+            res.set("done", Value::Boolean(true));
+        }
+        Ok(Value::Object(Rc::new(RefCell::new(res))))
+    });
+    let mut iter = Object::new(ObjectKind::Ordinary);
+    iter.set("next", Value::NativeFunction(Rc::new(next_fn)));
+    Value::Object(Rc::new(RefCell::new(iter)))
+}
+
+fn array_entries_iterator(_args: Vec<Value>) -> Result<Value, JsError> {
+    let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+    let Value::Object(arr_rc) = this_val else {
+        let (_, js_err) = crate::value::error::create_js_error_with_type(
+            "Array.prototype.entries called on incompatible receiver",
+            "TypeError",
+        );
+        return Err(js_err);
     };
-    let key = sym.property_key();
-    let iter_fn = NativeFunction::new(array_values_iterator);
-    array_proto
-        .borrow_mut()
-        .set_nonenumerable(&key, Value::NativeFunction(Rc::new(iter_fn)));
+    Ok(make_array_iterator(arr_rc, |arr, i| {
+        let pair = Object::new_array_from(vec![Value::Number(i as f64), arr.elements[i].clone()]);
+        Value::Object(Rc::new(RefCell::new(pair)))
+    }))
+}
+
+fn array_keys_iterator(_args: Vec<Value>) -> Result<Value, JsError> {
+    let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+    let Value::Object(arr_rc) = this_val else {
+        let (_, js_err) = crate::value::error::create_js_error_with_type(
+            "Array.prototype.keys called on incompatible receiver",
+            "TypeError",
+        );
+        return Err(js_err);
+    };
+    Ok(make_array_iterator(arr_rc, |_, i| Value::Number(i as f64)))
 }
 
 fn array_values_iterator(_args: Vec<Value>) -> Result<Value, JsError> {
