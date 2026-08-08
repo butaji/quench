@@ -544,3 +544,13 @@ Stage 2423 makes `RealFSProvider` access dispatch to the host filesystem before
 the virtual-entry lookup. Existing and missing-path promise access now pass in
 the focused regression; this removes the first concrete unresolved await from
 the real-provider promise sequence.
+
+## Verification checkpoint — 2026-08-08
+
+The current implementation checkpoint is reproducible: `cargo test -p
+quench-node` passes 2/2, and stages 2434–2438 each pass. These stages cover the
+sync `stream/iter` adapter, `FileHandle.pullSync()` decoding, the first
+pull-sync transform cluster, early `autoClose`, and the `node:sea` module
+surface. This confirms the focused behavior remains intact while the aggregate
+Node fixtures listed above remain open; it is not a claim of full Node
+compatibility.
