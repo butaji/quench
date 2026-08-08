@@ -8,9 +8,9 @@ mod flags;
 use std::path::PathBuf;
 
 use crate::test262::harness::HarnessLoader;
-use crate::test262::host::{Test262Host, TestOutcome};
+use crate::test262::host::TestOutcome;
 
-pub use execute::run_single_test;
+pub use execute::{run_single_test, run_single_test_in_thread};
 use flags::RunnerFlags;
 
 /// Absolute test262 root (`tests/test262`), for subprocess runners whose cwd may differ.
@@ -176,7 +176,7 @@ impl Test262Runner {
         }
     }
 
-    pub fn run(&self, host: &mut dyn Test262Host) -> RunSummary {
+    pub fn run(&self) -> RunSummary {
         let flags = RunnerFlags::from_env();
         let mut total = RunSummary::default();
         let mut stage = flags.stage;
@@ -184,7 +184,7 @@ impl Test262Runner {
             let s = if flags.digest {
                 self.digest_stage(stage, stage_dir, &flags)
             } else {
-                self.run_stage(host, stage, stage_dir, &flags)
+                self.run_stage(stage, stage_dir, &flags)
             };
             total.passed += s.passed;
             total.failed += s.failed;
@@ -235,7 +235,6 @@ impl Test262Runner {
 
     fn run_stage(
         &self,
-        host: &mut dyn Test262Host,
         stage: usize,
         stage_dir: &str,
         flags: &RunnerFlags,
@@ -252,7 +251,11 @@ impl Test262Runner {
         }
         let mut summary = RunSummary::default();
         for (i, path) in tests.iter().enumerate() {
-            match run_single_test(host, &self.harness, path) {
+            // Run in-thread so the thread-local harness-IR cache is reused
+            // (same ~12x speedup as the digest). No per-test timeout here — use
+            // TEST262_DIGEST=1 (or TEST262_ISOLATED=1) when a timeout / crash
+            // isolation is needed.
+            match run_single_test_in_thread(&self.harness, path) {
                 TestOutcome::Pass => {
                     summary.passed += 1;
                     if !flags.quick && summary.passed % 100 == 0 {
