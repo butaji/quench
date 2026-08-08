@@ -26,6 +26,9 @@ class __quenchReadableStream {
         }
       }
     };
+    this._enqueue = controller.enqueue;
+    this._close = controller.close;
+    this._errorStream = controller.error;
     this[__quenchWebStreamsState] = { controller };
     source.start?.(controller);
   }
@@ -86,23 +89,28 @@ class __quenchTransformStream {
   constructor(transform = {}) {
     this.readable = new __quenchReadableStream();
     this._controller = {
-      enqueue: (item) => this.readable._queue.push(item),
-      close: () => {
-        this.readable._closed = true;
-      },
+      enqueue: (item) => this.readable._enqueue(item),
+      close: () => this.readable._close(),
       error: (error) => {
-        this.readable._error = error;
-        this.readable._closed = true;
+        this.readable._errorStream(error);
       }
     };
     this.writable = new __quenchWritableStream({
       write: (value) => transform.transform?.(value, this._controller),
-      close: () => transform.flush?.(this._controller)
+      close: async () => {
+        await transform.flush?.(this._controller);
+        this.readable._close();
+      }
     });
   }
 }
 class __quenchDecompressionStream extends __quenchTransformStream {
   constructor(format) {
+    if (!["gzip", "deflate", "deflate-raw", "brotli"].includes(format)) {
+      const error = new TypeError("The compression format is invalid");
+      error.code = "ERR_INVALID_ARG_VALUE";
+      throw error;
+    }
     const chunks = [];
     super({
       transform(value) {
@@ -121,6 +129,8 @@ class __quenchDecompressionStream extends __quenchTransformStream {
             output = zlib.brotliDecompressSync(input, {
               rejectGarbageAfterEnd: true
             });
+          } else if (format === "deflate-raw") {
+            output = zlib.inflateRawSync(input);
           } else {
             output = zlib.inflateSync(input);
             const canonical = zlib.deflateSync(output);
@@ -140,11 +150,114 @@ class __quenchDecompressionStream extends __quenchTransformStream {
     });
   }
 }
+class __quenchCompressionStream extends __quenchTransformStream {
+  constructor(format) {
+    if (!["gzip", "deflate", "deflate-raw", "brotli"].includes(format)) {
+      const error = new TypeError("The compression format is invalid");
+      error.code = "ERR_INVALID_ARG_VALUE";
+      throw error;
+    }
+    const chunks = [];
+    super({
+      transform(value) {
+        chunks.push(NodeBuffer.from(value));
+      },
+      flush: (controller) => {
+        const zlib = globalThis.require("zlib");
+        const input = NodeBuffer.concat(chunks);
+        let output;
+        if (format === "gzip") output = zlib.gzipSync(input);
+        else if (format === "deflate") output = zlib.deflateSync(input);
+        else if (format === "deflate-raw") output = zlib.deflateRawSync(input);
+        else output = zlib.brotliCompressSync(input);
+        controller.enqueue(output);
+      }
+    });
+  }
+}
+class __quenchTextEncoderStream extends __quenchTransformStream {
+  constructor() {
+    super({
+      transform(value, controller) {
+        controller.enqueue(new TextEncoder().encode(String(value)));
+      }
+    });
+    this.encoding = "utf-8";
+  }
+}
+class __quenchTextDecoderStream extends __quenchTransformStream {
+  constructor(encoding = "utf-8", options = {}) {
+    const normalized = String(encoding).toLowerCase();
+    if (normalized !== "utf-8" && normalized !== "utf8") {
+      const error = new TypeError(`The "encoding" argument is invalid`);
+      error.code = "ERR_ENCODING_NOT_SUPPORTED";
+      throw error;
+    }
+    if (
+      options !== undefined &&
+      (options === null || typeof options !== "object")
+    ) {
+      const error = new TypeError("The options argument must be an object");
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    const decoder = new TextDecoder("utf-8", options);
+    super({
+      transform(value, controller) {
+        controller.enqueue(decoder.decode(value, { stream: true }));
+      },
+      flush(controller) {
+        const tail = decoder.decode(new Uint8Array());
+        if (tail) controller.enqueue(tail);
+      }
+    });
+    this.encoding = "utf-8";
+    this.fatal = Boolean(options?.fatal);
+    this.ignoreBOM = Boolean(options?.ignoreBOM);
+  }
+}
+const __quenchPrivateGetter = (Constructor, property, storage) =>
+  Object.defineProperty(Constructor.prototype, property, {
+    configurable: true,
+    get() {
+      if (!(this instanceof Constructor)) {
+        throw new TypeError("Cannot read private member");
+      }
+      return this[storage];
+    },
+    set(value) {
+      this[storage] = value;
+    }
+  });
+for (const [Constructor, properties] of [
+  [__quenchTextEncoderStream, ["encoding", "readable", "writable"]],
+  [
+    __quenchTextDecoderStream,
+    ["encoding", "fatal", "ignoreBOM", "readable", "writable"]
+  ],
+  [__quenchCompressionStream, ["readable", "writable"]],
+  [__quenchDecompressionStream, ["readable", "writable"]]
+]) {
+  for (const property of properties) {
+    __quenchPrivateGetter(Constructor, property, Symbol(property));
+  }
+}
+Object.defineProperty(__quenchCompressionStream.prototype, Symbol.toStringTag, {
+  value: "CompressionStream"
+});
+Object.defineProperty(
+  __quenchDecompressionStream.prototype,
+  Symbol.toStringTag,
+  { value: "DecompressionStream" }
+);
 const __quenchWebStreams = {
   ReadableStream: __quenchReadableStream,
   WritableStream: __quenchWritableStream,
   TransformStream: __quenchTransformStream,
-  DecompressionStream: __quenchDecompressionStream
+  CompressionStream: __quenchCompressionStream,
+  DecompressionStream: __quenchDecompressionStream,
+  TextEncoderStream: __quenchTextEncoderStream,
+  TextDecoderStream: __quenchTextDecoderStream
 };
 globalThis.ReadableStream ||= __quenchReadableStream;
 globalThis.WritableStream ||= __quenchWritableStream;
@@ -160,13 +273,13 @@ for (const constructor of [
   "WritableStreamDefaultWriter",
   "WritableStreamDefaultController",
   "ByteLengthQueuingStrategy",
-  "CountQueuingStrategy",
-  "TextEncoderStream",
-  "TextDecoderStream",
-  "CompressionStream"
+  "CountQueuingStrategy"
 ]) {
   globalThis[constructor] ||= class {};
 }
+globalThis.CompressionStream ||= __quenchCompressionStream;
+globalThis.TextEncoderStream ||= __quenchTextEncoderStream;
+globalThis.TextDecoderStream ||= __quenchTextDecoderStream;
 if (globalThis.Blob?.prototype) {
   globalThis.Blob.prototype.stream = function () {
     const blob = this;
