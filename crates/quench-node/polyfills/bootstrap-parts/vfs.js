@@ -298,6 +298,42 @@ class __QuenchVirtualFileSystem {
   }
   __makeHandle(path, flags) {
     flags = __quenchVfsNormalizeFlags(flags);
+    if (this.provider instanceof __QuenchRealFSProvider) {
+      const fd = this.openSync(path, flags);
+      let closed = false;
+      const check = () => {
+        if (closed) throw __quenchVfsError("EBADF", "read", path);
+      };
+      const readFileSync = (options) => {
+        check();
+        const bytes = globalThis.__quench_fs_native_read_all(fd);
+        return options === "utf8" || options?.encoding
+          ? globalThis.Buffer.from(bytes).toString(
+              options === "utf8" ? "utf8" : options.encoding
+            )
+          : globalThis.Buffer.from(bytes);
+      };
+      return {
+        fd,
+        get closed() {
+          return closed;
+        },
+        readFileSync,
+        readFile: async (options) => readFileSync(options),
+        closeSync: () => {
+          if (!closed) {
+            closed = true;
+            this.closeSync(fd);
+          }
+        },
+        close: async () => {
+          if (!closed) {
+            closed = true;
+            this.closeSync(fd);
+          }
+        }
+      };
+    }
     const key = __quenchVfsPath(path);
     const writable = /[wa+]/.test(String(flags));
     if (!this.__entry(key) && !writable) {
