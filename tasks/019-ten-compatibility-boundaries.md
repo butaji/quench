@@ -64,4 +64,9 @@ own commit.
   dependencies pass; loading the complete `eslint` graph first is the
   differentiating sequence, indicating a nested loader-cache transition rather
   than a missing installed package.
-- Item 10: queued.
+- Item 10: partially improved. Stage 2343 reproduces the upstream
+  `common.mustCall` readable backpressure shape and now verifies all four
+  `_read()` demands and three writable callbacks. The fix removes a stale
+  `reading = true` assignment that suppressed demand after `push()` had
+  already completed. Broader concurrent/infinite-stream cadence fixtures still
+  need verification.

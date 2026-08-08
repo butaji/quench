@@ -310,9 +310,6 @@ class NodeReadable extends NodeEventEmitter {
         if (this.destroyed) return;
         if (!this._chunks.length && !this._ended) {
           __nodeReadableStart(this);
-          if (this._read && !this._readableState.reading) {
-            this._readableState.reading = true;
-          }
         }
         while (
           !this._paused &&
