@@ -69,6 +69,31 @@ const moduleStat = (filename) => {
     return -1;
   }
 };
+const setSourceMapsSupport = (enabled, options) => {
+  if (typeof enabled !== "boolean") {
+    const error = new TypeError(
+      "enabled must be a boolean (ERR_INVALID_ARG_TYPE)"
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  if (options !== undefined && (!options || typeof options !== "object")) {
+    const error = new TypeError(
+      "options must be an object (ERR_INVALID_ARG_TYPE)"
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  for (const name of ["nodeModules", "generatedCode"]) {
+    if (options?.[name] !== undefined && typeof options[name] !== "boolean") {
+      const error = new TypeError(
+        `${name} must be a boolean (ERR_INVALID_ARG_TYPE)`
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+  }
+};
 const __quenchModule = {
   builtinModules: __quenchBuiltinModules,
   _cache: Object.create(null),
@@ -118,7 +143,8 @@ const __quenchModule = {
     return ["node_modules"];
   },
   _nodeModulePaths: nodeModulePaths,
-  _stat: moduleStat
+  _stat: moduleStat,
+  setSourceMapsSupport
 };
 globalThis.require = (specifier) => {
   if (String(specifier).replace(/^node:/, "") === "module") {

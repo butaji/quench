@@ -550,3 +550,8 @@ loading local CommonJS files and shares the table with `module._extensions`.
 Registered compound suffixes are considered during extensionless resolution,
 and `require.cache` invalidation reloads local modules. The focused contract
 and upstream `test-module-multi-extensions.js` both pass.
+
+Focused stage 2113 adds Node-compatible validation for
+`Module.setSourceMapsSupport()`, including the boolean options `nodeModules`
+and `generatedCode`. The focused contract and upstream
+`test-module-setsourcemapssupport.js` both pass.
