@@ -635,6 +635,11 @@ Focused stage 2127 isolates the basic `Writable.destroy()` close and error
 contracts; both pass. The full upstream writable-destroy failure is therefore
 in a later combined/custom lifecycle case and remains separately classified.
 
+Focused stage 2128 isolates custom writable `_destroy` error identity and
+passes. Focused stage 2129 defers custom writable destroy completion to a
+microtask, matching Node’s asynchronous close/error/callback boundary. The
+focused timing contract passes; the full upstream fixture remains open.
+
 Focused stage 2116 uses `module.globalPaths` when resolving bare packages, so
 packages provided through `NODE_PATH` load without a local `node_modules`
 entry. The focused global-package contract passes.
