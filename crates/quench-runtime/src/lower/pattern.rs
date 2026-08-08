@@ -255,9 +255,17 @@ fn lower_assignment_target_maybe_default(
                     let init = lower_expr(&d.init).ok()?;
                     Some(BindingElement::Default(Box::new(binding), Box::new(init)))
                 }
-                None => lower_assignment_target(&d.binding)
-                    .ok()
-                    .map(BindingElement::AssignmentTarget),
+                None => {
+                    let init = lower_expr(&d.init).ok()?;
+                    lower_assignment_target(&d.binding)
+                        .ok()
+                        .map(|expr| {
+                            BindingElement::Default(
+                                Box::new(BindingElement::AssignmentTarget(expr)),
+                                Box::new(init),
+                            )
+                        })
+                }
             }
         }
         // Regular assignment target
