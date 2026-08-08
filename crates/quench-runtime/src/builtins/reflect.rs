@@ -187,7 +187,6 @@ mod tests {
 
     fn eval_ok_with_builtins(src: &str) -> Value {
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
         ctx.eval(src).unwrap()
     }
 
@@ -214,7 +213,6 @@ mod tests {
     #[test]
     fn reflect_has_non_object_throws() {
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
         assert!(ctx.eval("Reflect.has(null, 'x')").is_err());
     }
 

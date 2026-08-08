@@ -840,7 +840,6 @@ mod tests {
     #[test]
     fn diagnostic_step_by_step_verify_property_symbol() {
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
         crate::interpreter::set_strict_mode(false);
 
         // Load the exact JS files that the test includes (via HarnessLoader)
@@ -889,7 +888,6 @@ if (hasOwn !== false) throw new Error('FAIL: hasOwn should be false, got ' + has
     #[test]
     fn diagnostic_assert_same_value_with_disk_assert_js() {
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
         crate::interpreter::set_strict_mode(false);
 
         let test262_root = harness_dir().parent().unwrap().to_path_buf();
@@ -934,7 +932,6 @@ assert.sameValue(
     #[test]
     fn diagnostic_assert_tostring_function_in_disk_js_context() {
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
         crate::interpreter::set_strict_mode(false);
 
         let test262_root = harness_dir().parent().unwrap().to_path_buf();
@@ -969,7 +966,6 @@ typeof getterFn === 'function' && typeof assert._toString(getterFn) === 'string'
     #[test]
     fn diagnostic_verify_property_with_try_inject_harness() {
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
         try_inject_harness(&mut ctx).expect("harness ok");
         crate::interpreter::set_strict_mode(false);
 
@@ -1065,7 +1061,6 @@ JSON.stringify({step:'C', hasOwn_after_restore:hasOwn3, vpError2:vpError2, gette
     #[test]
     fn diagnostic_js_propertyhelper_verify_property_symbol() {
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
         crate::interpreter::set_strict_mode(false);
 
         let test262_root = harness_dir().parent().unwrap().to_path_buf();
@@ -1120,7 +1115,6 @@ if (hasOwn !== false) throw new Error('FAIL: hasOwn should be false after JS ver
     #[test]
     fn diagnostic_js_has_own_property_with_symbol_key() {
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
         crate::interpreter::set_strict_mode(false);
 
         let test262_root = harness_dir().parent().unwrap().to_path_buf();
@@ -1174,7 +1168,6 @@ if (opd.configurable !== true) throw new Error('FAIL: configurable should be tru
     #[test]
     fn resizable_array_buffer_utils_loads_without_tolerance() {
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
         eval_harness_file(&mut ctx, "resizableArrayBufferUtils.js")
             .expect("resizable array buffer harness should load");
     }
@@ -1195,7 +1188,6 @@ if (opd.configurable !== true) throw new Error('FAIL: configurable should be tru
         crate::value::set_thrown_value(stale);
 
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
         // Must not propagate the stale thrown_value; harness load succeeds.
         try_inject_harness(&mut ctx).expect("harness load should succeed");
 
@@ -1213,7 +1205,6 @@ if (opd.configurable !== true) throw new Error('FAIL: configurable should be tru
     #[test]
     fn harness_loader_clears_thrown_value_left_by_internal_eval() {
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
         try_inject_harness(&mut ctx).expect("first harness load ok");
 
         // Plant a thrown_value as if a subsequent test's body had thrown and
@@ -1223,7 +1214,6 @@ if (opd.configurable !== true) throw new Error('FAIL: configurable should be tru
         crate::value::set_thrown_value(stale);
 
         let mut ctx2 = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx2);
         try_inject_harness(&mut ctx2).expect("second harness load ok");
         assert!(
             crate::value::take_thrown_value().is_none(),
@@ -1255,7 +1245,6 @@ if (opd.configurable !== true) throw new Error('FAIL: configurable should be tru
     #[test]
     fn is_constructor_via_native_function_with_function_expression() {
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
         try_inject_harness(&mut ctx).expect("harness ok");
 
         // isConstructor should be the native function (not a JS wrapper)
@@ -1368,7 +1357,6 @@ if (opd.configurable !== true) throw new Error('FAIL: configurable should be tru
     #[test]
     fn object_define_property_setter_works() {
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
         try_inject_harness(&mut ctx).expect("harness ok");
 
         // Test Object.defineProperty with accessor descriptor
@@ -1396,7 +1384,6 @@ if (opd.configurable !== true) throw new Error('FAIL: configurable should be tru
     #[test]
     fn object_literal_function_property_identity() {
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
         try_inject_harness(&mut ctx).expect("harness ok");
 
         let js = r#"
@@ -1419,7 +1406,6 @@ if (opd.configurable !== true) throw new Error('FAIL: configurable should be tru
     #[test]
     fn allow_proxy_traps_returns_object() {
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
         try_inject_harness(&mut ctx).expect("harness ok");
 
         let js = r#"
@@ -1440,7 +1426,6 @@ if (opd.configurable !== true) throw new Error('FAIL: configurable should be tru
     #[test]
     fn allow_proxy_traps_get_trap_identity() {
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
         try_inject_harness(&mut ctx).expect("harness ok");
 
         let js = r#"
@@ -1464,7 +1449,6 @@ if (opd.configurable !== true) throw new Error('FAIL: configurable should be tru
     #[test]
     fn allow_proxy_traps_preserves_overrides_by_identity() {
         let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
         try_inject_harness(&mut ctx).expect("harness ok");
 
         // Evaluate the exact JS from proxytrapshelper-overrides.js that fails

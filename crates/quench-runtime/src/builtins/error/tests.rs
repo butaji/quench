@@ -209,7 +209,6 @@ fn test_error_instanceof_object() {
 #[test]
 fn test_error_subclass_instanceof_error() {
     let mut ctx = crate::Context::new().unwrap();
-    crate::builtins::register_builtins(&mut ctx);
     let result = ctx
         .eval(
             "class Subclass extends Error {} \

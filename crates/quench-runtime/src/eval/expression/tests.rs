@@ -321,7 +321,6 @@ fn test_assignment_to_computed_static_class_member_returns_rhs() {
 fn test_assignment_to_computed_static_class_member_with_harness() {
     // Same as above but with harness (like the failing test262 host test)
     let mut ctx = crate::Context::new().unwrap();
-    crate::builtins::register_builtins(&mut ctx);
     let prev = crate::interpreter::is_strict_mode();
     crate::interpreter::set_strict_mode(false);
     crate::test262::harness::try_inject_harness(&mut ctx).expect("harness");

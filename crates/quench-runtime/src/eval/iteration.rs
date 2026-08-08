@@ -530,14 +530,11 @@ fn run_for_in_iteration(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::builtins;
     use crate::context::Context;
     use crate::value::Value;
 
     fn new_ctx() -> Context {
-        let mut ctx = Context::new().unwrap();
-        builtins::register_builtins(&mut ctx);
-        ctx
+        Context::new().unwrap()
     }
 
     #[test]
