@@ -327,6 +327,9 @@ Stage 2402 covers those lifecycle cases concurrently and passes. It also fixes
 The authoritative fixture still reports `Callback 0`, so its remaining issue
 is not reproduced by the focused pull contracts and needs a harness-level
 failure probe before further implementation changes.
+Stage 2403 covers concurrent `zlib/iter` compression/decompression over pulls
+and passes. The upstream hang therefore requires the full 19-operation mix;
+the next probe will add per-operation timeouts to identify the stalled await.
 
 Stage 2378 passes the four basic stream `destroy()` contracts for readable and
 writable streams, including implicit `AbortError`, explicit error messages,
