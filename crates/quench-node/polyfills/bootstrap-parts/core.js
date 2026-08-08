@@ -2581,29 +2581,39 @@ let __quenchHttpModule;
           let pending = "";
           socket.on("data", (chunk) => {
             pending += chunk.toString();
-            const boundary = pending.indexOf("\r\n\r\n");
-            if (boundary < 0) return;
-            const lines = pending.slice(0, boundary).split("\r\n");
-            pending = pending.slice(boundary + 4);
-            const [method, url, version] = lines.shift().split(" ");
-            const request = new NodeIncomingMessage();
-            request.method = method;
-            request.url = url;
-            request.httpVersion = (version || "HTTP/1.1").slice(5);
-            request.headers = Object.create(null);
-            request.rawHeaders = [];
-            for (const line of lines) {
-              const separator = line.indexOf(":");
-              if (separator < 1) continue;
-              const name = line.slice(0, separator);
-              const value = line.slice(separator + 1).trim();
-              request.headers[name.toLowerCase()] = value;
-              request.rawHeaders.push(name, value);
+            for (;;) {
+              const boundary = pending.indexOf("\r\n\r\n");
+              if (boundary < 0) return;
+              const lines = pending.slice(0, boundary).split("\r\n");
+              const headers = Object.create(null);
+              const rawHeaders = [];
+              for (const line of lines.slice(1)) {
+                const separator = line.indexOf(":");
+                if (separator < 1) continue;
+                const name = line.slice(0, separator);
+                const value = line.slice(separator + 1).trim();
+                headers[name.toLowerCase()] = value;
+                rawHeaders.push(name, value);
+              }
+              const bodyLength = Number(headers["content-length"] || 0);
+              if (pending.length < boundary + 4 + bodyLength) return;
+              pending = pending.slice(boundary + 4);
+              const [method, url, version] = lines[0].split(" ");
+              const request = new NodeIncomingMessage();
+              request.method = method;
+              request.url = url;
+              request.httpVersion = (version || "HTTP/1.1").slice(5);
+              request.headers = headers;
+              request.rawHeaders = rawHeaders;
+              request.socket = socket;
+              const body = pending.slice(0, bodyLength);
+              pending = pending.slice(bodyLength);
+              const response = new NodeServerResponse(request);
+              response.assignSocket(socket);
+              this._handler?.(request, response);
+              if (bodyLength) request.emit("data", NodeBuffer.from(body));
+              request.emit("end");
             }
-            request.socket = socket;
-            const response = new NodeServerResponse(request);
-            response.assignSocket(socket);
-            this._handler?.(request, response);
           });
           this.emit("connection", socket);
         };
