@@ -469,6 +469,38 @@ const __nodeFsAttachPull = (handle) => {
         __nodeFsPullIterator(handle, batches, end, options, transform)
     };
   };
+  handle.pullSync = (transformOrOptions, maybeOptions) => {
+    if (!globalThis.__nodeFdPaths[handle.fd] || handle._pullLocked) {
+      const error = new Error("The file handle is not in a valid state");
+      error.code = "ERR_INVALID_STATE";
+      throw error;
+    }
+    const transform =
+      typeof transformOrOptions === "function" ? transformOrOptions : undefined;
+    const options = transform ? maybeOptions || {} : transformOrOptions || {};
+    __nodeFsValidatePullOptions(options);
+    handle._pullLocked = true;
+    const { batches, end } = __nodeFsPullBatches(handle, options);
+    return {
+      *[Symbol.iterator]() {
+        try {
+          if (options.signal?.aborted) {
+            const error = new Error("The operation was aborted");
+            error.name = "AbortError";
+            throw error;
+          }
+          for (const batch of batches) {
+            const result = transform ? transform(batch) : batch;
+            if (result !== null && result !== undefined) yield result;
+          }
+          globalThis.__nodeFdPositions[handle.fd] = end;
+          if (options.autoClose) globalThis.__nodeFs.closeSync(handle.fd);
+        } finally {
+          handle._pullLocked = false;
+        }
+      }
+    };
+  };
 };
 const __nodeFsAttachPositionedWrites = (handle, previousWriteFile) => {
   handle.writeFile = async (data, options) => {

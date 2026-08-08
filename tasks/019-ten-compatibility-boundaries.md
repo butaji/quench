@@ -484,6 +484,10 @@ The explicit-fd stream failure was further narrowed: stage 2427's isolated
 `test-vfs-stream-explicit-fd.js` callback-3 failure therefore remains a larger
 combined stream lifecycle interaction, not a missing start-offset operation.
 
+Stage 2428 adds the missing `FileHandle.pullSync()` surface alongside the
+existing pull batch validation and locking logic. The focused synchronous
+file-handle stage passes for batch reading, position advancement, and reuse.
+
 Stage 2423 makes `RealFSProvider` access dispatch to the host filesystem before
 the virtual-entry lookup. Existing and missing-path promise access now pass in
 the focused regression; this removes the first concrete unresolved await from
