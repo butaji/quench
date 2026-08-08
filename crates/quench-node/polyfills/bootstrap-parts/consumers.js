@@ -17,15 +17,43 @@ const __quenchConsume = async (stream) => {
   }
   return chunks;
 };
+const __quenchConsumerBinaryChunk = (chunk) => {
+  if (
+    typeof chunk === "string" ||
+    ArrayBuffer.isView(chunk) ||
+    chunk instanceof ArrayBuffer ||
+    chunk instanceof SharedArrayBuffer
+  ) {
+    return Buffer.from(chunk);
+  }
+  return Buffer.from(String(chunk));
+};
+const __quenchConsumerTextChunk = (chunk) => {
+  if (
+    typeof chunk === "string" ||
+    ArrayBuffer.isView(chunk) ||
+    chunk instanceof ArrayBuffer ||
+    chunk instanceof SharedArrayBuffer
+  ) {
+    return Buffer.from(chunk);
+  }
+  const error = new TypeError(
+    'The "chunk" argument must be of type string or an instance of Buffer or Uint8Array'
+  );
+  error.code = "ERR_INVALID_ARG_TYPE";
+  throw error;
+};
 const __quenchStreamConsumers = {
   buffer: async (stream) =>
     Buffer.concat(
-      (await __quenchConsume(stream)).map((chunk) => Buffer.from(chunk))
+      (await __quenchConsume(stream)).map(__quenchConsumerBinaryChunk)
     ),
   arrayBuffer: async (stream) =>
     (await __quenchStreamConsumers.buffer(stream)).buffer,
   text: async (stream) =>
-    (await __quenchStreamConsumers.buffer(stream)).toString(),
+    Buffer.concat(
+      (await __quenchConsume(stream)).map(__quenchConsumerTextChunk)
+    ).toString(),
   json: async (stream) =>
     JSON.parse(await __quenchStreamConsumers.text(stream)),
   bytes: async (stream) =>
