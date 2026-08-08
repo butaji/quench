@@ -2086,12 +2086,46 @@ let __quenchHttpModule;
             __quenchDefaultHttpCreateConnection;
         if (customAgentConnection) {
           try {
-            request.agent.createConnection(options, (error) => {
-              if (!error) return;
-              request.destroyed = true;
-              request.emit("error", error);
-              request.emit("close");
-            });
+            const connection = request.agent.createConnection(
+              options,
+              (error) => {
+                if (!error) return;
+                request.destroyed = true;
+                request.emit("error", error);
+                request.emit("close");
+              }
+            );
+            if (connection && typeof connection.on === "function") {
+              request.socket = connection;
+              response.socket = connection;
+              let raw = "";
+              let delivered = false;
+              connection.on("data", (chunk) => {
+                raw +=
+                  chunk instanceof NodeBuffer
+                    ? chunk.toString()
+                    : String(chunk);
+                if (delivered || !raw.includes("\r\n\r\n")) return;
+                const body = raw.slice(raw.indexOf("\r\n\r\n") + 4);
+                const match = body.match(
+                  /(?:^|\r\n)([0-9a-f]+)\r\n([\s\S]*?)\r\n0\r\n\r\n/i
+                );
+                if (!match) return;
+                delivered = true;
+                response.statusCode = 200;
+                request.__responseEmitted = true;
+                request.emit("response", response);
+                if (typeof callback === "function") callback(response);
+                response.__emitData(NodeBuffer.from(match[2]));
+                response.complete = true;
+                response.readable = false;
+                response.emit("end");
+                response.destroyed = true;
+                response.closed = true;
+                response.emit("close");
+              });
+              connection.resume?.();
+            }
           } catch (error) {
             request.destroyed = true;
             request.emit("error", error);

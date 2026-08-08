@@ -811,3 +811,4 @@ pass.
 - Stage 2201 adds server-response destroy state and suppresses the synthetic abort error for `ServerResponse.destroy()`.
 - Stage 2202 preserves the server-response `errored` identity while deferring `close` without emitting a duplicate error.
 - Stage 2203 preserves client response delivery when a server calls `end()` before `destroy()`.
+- Stage 2204 consumes a custom Agent connection's returned Duplex and delivers its chunked HTTP response to the client.
