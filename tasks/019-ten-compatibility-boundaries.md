@@ -290,6 +290,9 @@ Stage 2392 verifies that real-provider `symlinkSync()` rejects an absolute
 target outside the provider root with `EACCES`. The upstream symlink fixture
 still fails in its async assertion sequence, so async rejection and promise
 readlink/realpath ordering remain separate work.
+Stage 2393 adds the missing `internal/vfs/router` module and verifies mount
+containment, relative-path conversion, and absolute-path detection. The
+authoritative `test-vfs-router.js` now passes completely.
 
 Stage 2378 passes the four basic stream `destroy()` contracts for readable and
 writable streams, including implicit `AbortError`, explicit error messages,
