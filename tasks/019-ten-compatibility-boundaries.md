@@ -703,3 +703,8 @@ The latest aggregate parallel sweep confirms
 Remaining aggregate failures are crypto PQC, runner watch mode, fs-promises
 file-handle pull, VM modules, HTTP/2, inspector overwrite, and server-close
 lifecycle; these remain separate compatibility boundaries.
+
+The documented timer stages 367–369, 401, and 405–408 all pass: interval
+scheduling, handles, next-tick forwarding, timer promises, and abort behavior
+are green. Stage 366 remains the sole focused timer anomaly and is tracked
+separately from the passing timer contract.
