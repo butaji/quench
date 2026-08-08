@@ -350,6 +350,11 @@ focused compatibility improvement rather than counted as a full-fixture fix.
 Stage 2406 verifies the VFS `createReadStream({ autoClose: false })` end,
 manual-destroy, and close lifecycle. The remaining stream callback 23 is not
 this isolated lifecycle path and needs the next stream interaction probe.
+Callback 23 maps to the pipeline write with `{ start: 3, flags: "r+" }`.
+Stages 2407 and 2408 verify that case standalone and alongside the other VFS
+pipeline cases; both pass. The authoritative stream failure therefore requires
+the broader fixture's earlier stream event mix, not the start-offset write
+implementation alone.
 
 Stage 2378 passes the four basic stream `destroy()` contracts for readable and
 writable streams, including implicit `AbortError`, explicit error messages,
