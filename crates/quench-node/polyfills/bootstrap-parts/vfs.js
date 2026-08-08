@@ -670,13 +670,19 @@ class __QuenchVirtualFileSystem {
     if (!entry) throw __quenchVfsError("ENOENT", "chmod", path);
     entry.mode = Number(mode) & 0o777;
   }
-  chownSync(path) {
-    if (!this.__entry(path)) throw __quenchVfsError("ENOENT", "chown", path);
+  chownSync(path, uid = 0, gid = 0) {
+    const entry = this.__entry(path);
+    if (!entry) throw __quenchVfsError("ENOENT", "chown", path);
+    entry.uid = Number(uid);
+    entry.gid = Number(gid);
   }
-  lchownSync(path) {
-    if (!this.__entries.get(__quenchVfsPath(path))) {
+  lchownSync(path, uid = 0, gid = 0) {
+    const entry = this.__entries.get(__quenchVfsPath(path));
+    if (!entry) {
       throw __quenchVfsError("ENOENT", "lchown", path);
     }
+    entry.uid = Number(uid);
+    entry.gid = Number(gid);
   }
   utimesSync(path) {
     if (!this.__entry(path)) throw __quenchVfsError("ENOENT", "utimes", path);
@@ -719,8 +725,8 @@ class __QuenchVirtualFileSystem {
         : __quenchVfsNextIno++,
       dev: options?.bigint ? 4085n : 4085,
       nlink: options?.bigint ? BigInt(entry.nlink ?? 1) : (entry.nlink ?? 1),
-      uid: options?.bigint ? 0n : 0,
-      gid: options?.bigint ? 0n : 0,
+      uid: options?.bigint ? BigInt(entry.uid ?? 0) : (entry.uid ?? 0),
+      gid: options?.bigint ? BigInt(entry.gid ?? 0) : (entry.gid ?? 0),
       mtimeMs: options?.bigint
         ? BigInt(Math.trunc(entry.mtimeMs ?? 0))
         : (entry.mtimeMs ?? 0),
@@ -765,6 +771,8 @@ class __QuenchVirtualFileSystem {
         : __quenchVfsNextIno++,
       dev: options?.bigint ? 4085n : 4085,
       nlink: options?.bigint ? BigInt(entry.nlink ?? 1) : (entry.nlink ?? 1),
+      uid: options?.bigint ? BigInt(entry.uid ?? 0) : (entry.uid ?? 0),
+      gid: options?.bigint ? BigInt(entry.gid ?? 0) : (entry.gid ?? 0),
       mtimeMs: options?.bigint
         ? BigInt(Math.trunc(entry.mtimeMs ?? 0))
         : (entry.mtimeMs ?? 0),
