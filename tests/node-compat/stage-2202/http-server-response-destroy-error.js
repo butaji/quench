@@ -1,5 +1,6 @@
 const assert = require("assert");
 const http = require("http");
+let clientError = false;
 
 const server = http.createServer((request, response) => {
   assert.strictEqual(response.closed, false);
@@ -9,6 +10,7 @@ const server = http.createServer((request, response) => {
   );
   response.on("close", () => {
     assert.strictEqual(response.closed, true);
+    assert.strictEqual(clientError, true);
     server.close();
   });
   const error = new Error("destroy");
@@ -19,6 +21,8 @@ const server = http.createServer((request, response) => {
 server.listen(0, () => {
   http
     .request({ port: server.address().port, method: "PUT" })
-    .on("error", () => {})
-    .end("input");
+    .on("error", () => {
+      clientError = true;
+    })
+    .write("input");
 });

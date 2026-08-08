@@ -1253,6 +1253,9 @@ let __quenchHttpModule;
         }
         if (response.__httpClientResponse) return signalDestroy(error);
         if (response.destroyed) return response;
+        if (response.writableEnded || response.complete) {
+          response.__destroyAfterEnd = true;
+        }
         response.destroyed = true;
         if (error !== undefined) response.errored = error;
         queueMicrotask(() => {
@@ -2183,7 +2186,7 @@ let __quenchHttpModule;
             error.code = "HPE_UNEXPECTED_CONTENT_LENGTH";
             request.emit("error", error);
           } else if (
-            response.destroyed ||
+            (response.destroyed && !response.__destroyAfterEnd) ||
             (request.aborted && !request.__abortErrorEmitted)
           ) {
             const error = new Error("socket hang up");
