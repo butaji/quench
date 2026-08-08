@@ -810,5 +810,13 @@ globalThis.require = (specifier) =>
   String(specifier).replace(/^node:/, "") === "dgram"
     ? __quenchDgram
     : specifier === "internal/dgram"
-      ? { kStateSymbol: __quenchDgramStateSymbol }
+      ? {
+          kStateSymbol: __quenchDgramStateSymbol,
+          _createSocketHandle(address, port, type) {
+            const handle = new globalThis.__quenchDgramUDPClass();
+            if (address === null) return handle;
+            const result = handle.bind(address, port, 0);
+            return result < 0 ? result : handle;
+          }
+        }
       : __quenchOriginalRequireWithDgram(specifier);

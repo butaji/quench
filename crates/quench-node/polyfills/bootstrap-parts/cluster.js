@@ -1136,6 +1136,9 @@ const __quenchInternalBindingModule = {
           globalThis.__nodeUtil.getSystemErrorMessage(errorNumber)
       };
     }
+    if (binding === "udp_wrap") {
+      return { UDP: globalThis.__quenchDgramUDPClass };
+    }
     if (binding === "js_stream") {
       return {
         JSStream: class JSStream {
