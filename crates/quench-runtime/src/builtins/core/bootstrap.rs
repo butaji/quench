@@ -10,10 +10,10 @@ use crate::value::JsError;
 
 /// Embedded self-hosted builtin sources, evaluated in dependency order.
 /// Each tuple is (module name, source). Later files may depend on earlier ones.
-pub const JS_BUILTINS: &[(&str, &str)] = &[(
-    "core/global_functions",
-    include_str!("global_functions.js"),
-)];
+pub const JS_BUILTINS: &[(&str, &str)] = &[
+    ("core/global_functions", include_str!("global_functions.js")),
+    ("core/number_statics", include_str!("number_statics.js")),
+];
 
 /// Parse and eval every self-hosted builtin in order.
 pub fn bootstrap_js_builtins(ctx: &mut Context) -> Result<(), JsError> {
