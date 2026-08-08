@@ -736,3 +736,8 @@ Focused stage 2164 verifies readable-only and writable-only direct Web Stream
 inputs preserve the correct Duplex side flags. The focused contract passes;
 the remaining upstream failure is now in later mixed object/error propagation
 cases.
+
+Focused stage 2166 updates the public `readable` state to `false` when EOF is
+emitted, matching Node's post-`end` Duplex state. The focused contract passes;
+upstream `test-stream-duplex-from.js` advances to a later callback-count
+failure.
