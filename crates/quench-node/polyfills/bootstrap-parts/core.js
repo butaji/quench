@@ -1896,6 +1896,7 @@ let __quenchHttpModule;
           return this;
         }
       });
+      queueMicrotask(() => request.emit("socket", request.socket));
       request.finished = false;
       request.writableFinished = false;
       request.headers = Object.create(null);
@@ -2006,6 +2007,10 @@ let __quenchHttpModule;
           throw error;
         }
         request.timeout = msecs;
+        if (msecs === 0 && !request.__socketTimeoutListener) {
+          request.__socketTimeoutListener = () => request.emit("timeout");
+          request.socket.once("timeout", request.__socketTimeoutListener);
+        }
         if (request._timeoutTimer !== undefined) {
           clearTimeout(request._timeoutTimer);
         }
