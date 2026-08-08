@@ -119,6 +119,14 @@ ownership still needs a separate state model.
   fires once while the duplicate error remains suppressed (`finish=1,
 errors=0`); a direct finish-guard change was reverted pending an
   event-loop/auto-destroy trace.
+  Stage 2370 isolates the remaining constructor boundary: the post-bootstrap
+  callable-constructor adapter discarded `new.target`, so
+  `class TestWritable extends stream.Writable` instances lost `_write()` and
+  `_final()` methods and had the base `NodeWritable` prototype. The adapter
+  now uses `Reflect.construct(Constructor, args, new.target || Constructor)`;
+  the focused subclass regression passes. The upstream duplicate-callback
+  fixture remains to be rerun through the harness after its path/runner
+  invocation is normalized.
 
 ## New fs evidence
 
