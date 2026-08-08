@@ -19,8 +19,8 @@ pub use descriptors::{
     to_property_key,
 };
 pub use freezing::{
-    is_frozen_object, object_freeze, object_get_prototype_of, object_is_frozen,
-    object_prevent_extensions, object_set_prototype_of,
+    is_frozen_object, object_freeze, object_get_prototype_of, object_is_extensible,
+    object_is_frozen, object_prevent_extensions, object_set_prototype_of,
 };
 
 use crate::value::{JsError, Value};
@@ -61,6 +61,13 @@ pub fn object_has_own(args: Vec<Value>) -> Result<Value, JsError> {
     } else {
         Ok(Value::Boolean(false))
     }
+}
+
+/// Object.is(a, b) - SameValue comparison (NaN equals NaN, +0 !== -0)
+pub fn object_is(args: Vec<Value>) -> Result<Value, JsError> {
+    let a = args.first().cloned().unwrap_or(Value::Undefined);
+    let b = args.get(1).cloned().unwrap_or(Value::Undefined);
+    Ok(Value::Boolean(crate::value::same_value(&a, &b)))
 }
 
 /// Object.fromEntries(iterable) - creates object from key-value pairs
