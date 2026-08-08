@@ -201,11 +201,13 @@ pub fn collect_var_names_recursive(stmts: &[Statement], names: &mut Vec<String>)
             Statement::For { init, body, .. } => {
                 if let Some(ForInit::VarDeclaration {
                     kind: VarKind::Var,
-                    name,
+                    declarations,
                     ..
                 }) = init
                 {
-                    names.push(name.clone());
+                    for (name, _) in declarations {
+                        names.push(name.clone());
+                    }
                 }
                 collect_var_names_recursive(std::slice::from_ref(body.as_ref()), names);
             }

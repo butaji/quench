@@ -146,9 +146,10 @@ fn stmt_references_undeclared_private(stmt: &Statement, declared: &HashSet<Strin
 fn for_init_references_undeclared_private(init: &ForInit, declared: &HashSet<String>) -> bool {
     match init {
         ForInit::Expression(expr) => expr_references_undeclared_private(expr, declared),
-        ForInit::VarDeclaration { init, .. } => init
-            .as_ref()
-            .is_some_and(|e| expr_references_undeclared_private(e, declared)),
+        ForInit::VarDeclaration { declarations, .. } => declarations.iter().any(|(_, init)| {
+            init.as_ref()
+                .is_some_and(|e| expr_references_undeclared_private(e, declared))
+        }),
     }
 }
 
@@ -372,9 +373,11 @@ fn scope_statement(stmt: &mut Statement, class_id: usize) {
 fn scope_for_init(init: &mut ForInit, class_id: usize) {
     match init {
         ForInit::Expression(expr) => scope_expression(expr, class_id),
-        ForInit::VarDeclaration { init, .. } => {
-            if let Some(expr) = init {
-                scope_expression(expr, class_id);
+        ForInit::VarDeclaration { declarations, .. } => {
+            for (_, init) in declarations {
+                if let Some(expr) = init {
+                    scope_expression(expr, class_id);
+                }
             }
         }
     }

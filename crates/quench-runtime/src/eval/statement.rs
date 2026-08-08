@@ -885,6 +885,20 @@ fn eval_for(
         Some(ForInit::VarDeclaration { kind, .. })
             if matches!(kind, VarKind::Let | VarKind::Const)
     );
+    // Names bound by a let/const for-header; each iteration gets a fresh
+    // binding (preserving the declaration kind so const assignment throws)
+    // and closures capture distinct per-iteration values.
+    let iter_vars: Vec<(String, VarKind)> = match init {
+        Some(ForInit::VarDeclaration {
+            kind: kind @ (VarKind::Let | VarKind::Const),
+            declarations,
+            ..
+        }) => declarations
+            .iter()
+            .map(|(n, _)| (n.clone(), *kind))
+            .collect(),
+        _ => Vec::new(),
+    };
     if loop_scope {
         env.borrow_mut().push_scope();
     }
@@ -893,49 +907,67 @@ fn eval_for(
             ForInit::Expression(expr) => {
                 let _ = eval_expression(expr, env, in_arrow_function)?;
             }
-            ForInit::VarDeclaration { kind, name, init } => {
-                env.borrow_mut().declare_var(name.to_string(), *kind);
-                let value = init
-                    .as_ref()
-                    .map(|e| eval_expression(e, env, in_arrow_function))
-                    .unwrap_or(Ok(Value::Undefined))?;
-                env.borrow_mut().initialize_declared(name, value.clone());
-                // Top-level `var` in a for-header must also create the globalThis
-                // property so strict-mode assignment resolution succeeds.
-                if *kind == VarKind::Var && env.borrow().get_parent().is_none() {
-                    set_on_global_this(env, name, value);
+            ForInit::VarDeclaration { kind, declarations } => {
+                for (name, init) in declarations {
+                    env.borrow_mut().declare_var(name.to_string(), *kind);
+                    let value = init
+                        .as_ref()
+                        .map(|e| eval_expression(e, env, in_arrow_function))
+                        .unwrap_or(Ok(Value::Undefined))?;
+                    env.borrow_mut().initialize_declared(name, value.clone());
+                    // Top-level `var` in a for-header must also create the
+                    // globalThis property so strict-mode assignment works.
+                    if *kind == VarKind::Var && env.borrow().get_parent().is_none() {
+                        set_on_global_this(env, name, value);
+                    }
                 }
             }
         }
     }
-    let check_condition = || -> Result<bool, JsError> {
-        if let Some(c) = condition.as_ref() {
-            Ok(to_bool(&eval_expression(c, env, in_arrow_function)?))
-        } else {
-            Ok(true)
-        }
-    };
     // Per ES spec §14.7.5.4, the loop returns V, the last non-empty body
     // completion value, when the condition becomes false.
     let mut v = Value::Undefined;
-    while check_condition()? {
+    // Source environment for the next per-iteration env: the loop env for the
+    // first iteration, then the previous per-iteration env (which holds the
+    // updated values).
+    let mut source_env: Option<Rc<RefCell<Environment>>> = None;
+    loop {
+        // For let/const headers, each iteration gets a fresh binding so that
+        // closures created in the condition/body/increment capture distinct
+        // per-iteration values (CreatePerIterationEnvironment).
+        let iter_env: Option<Rc<RefCell<Environment>>> = if loop_scope {
+            let src = source_env.clone().unwrap_or_else(|| Rc::clone(env));
+            let e = build_per_iteration_env(&src, &iter_vars)?;
+            source_env = Some(Rc::clone(&e));
+            Some(e)
+        } else {
+            None
+        };
+        let loop_env: &Rc<RefCell<Environment>> = iter_env.as_ref().unwrap_or(env);
+
+        let cond_true = if let Some(c) = condition.as_ref() {
+            to_bool(&eval_expression(c, loop_env, in_arrow_function)?)
+        } else {
+            true
+        };
+        if !cond_true {
+            break;
+        }
+
         take_control_flow();
-        let body_val = eval_statement(body, env, false, in_arrow_function)?;
+        let body_val = eval_statement(body, loop_env, false, in_arrow_function)?;
         match take_control_flow() {
             Some(cf @ ControlFlow::Break(_)) => {
-                if loop_handles_break(&cf, &loop_labels) {
-                    if loop_scope {
-                        env.borrow_mut().pop_scope();
-                    }
-                    // A handled break returns the body's completion value
-                    // (UpdateEmpty), like do-while.
-                    return Ok(body_val);
-                }
+                let result = if loop_handles_break(&cf, &loop_labels) {
+                    Some(body_val)
+                } else {
+                    set_control_flow(cf);
+                    Some(Value::Undefined)
+                };
                 if loop_scope {
                     env.borrow_mut().pop_scope();
                 }
-                set_control_flow(cf);
-                return Ok(Value::Undefined);
+                return Ok(result.unwrap());
             }
             Some(cf @ ControlFlow::Continue(_)) => {
                 if !loop_handles_continue(&cf, &loop_labels) {
@@ -965,14 +997,43 @@ fn eval_for(
                 v = body_val;
             }
         }
+        // The increment runs in a fresh env seeded from this iteration, so its
+        // writes seed the next iteration without mutating the bindings that
+        // this iteration's closures captured.
         if let Some(update) = update {
-            let _ = eval_expression(update, env, in_arrow_function)?;
+            if loop_scope {
+                let upd_env = build_per_iteration_env(loop_env, &iter_vars)?;
+                let _ = eval_expression(update, &upd_env, in_arrow_function)?;
+                source_env = Some(upd_env);
+            } else {
+                let _ = eval_expression(update, loop_env, in_arrow_function)?;
+            }
+        } else if loop_scope {
+            source_env = Some(Rc::clone(loop_env));
         }
     }
     if loop_scope {
         env.borrow_mut().pop_scope();
     }
     Ok(v)
+}
+
+/// Create a per-iteration environment that copies the loop's let/const
+/// bindings, so closures capture distinct per-iteration values.
+fn build_per_iteration_env(
+    env: &Rc<RefCell<Environment>>,
+    vars: &[(String, VarKind)],
+) -> Result<Rc<RefCell<Environment>>, JsError> {
+    let iter_env = Rc::new(RefCell::new(Environment::with_parent(Rc::clone(env))));
+    iter_env.borrow_mut().push_scope();
+    for (name, kind) in vars {
+        let val = env.borrow().get(name).unwrap_or(Value::Undefined);
+        iter_env
+            .borrow_mut()
+            .declare_var(name.clone(), *kind);
+        iter_env.borrow_mut().initialize_declared(name, val);
+    }
+    Ok(iter_env)
 }
 
 fn eval_block(
