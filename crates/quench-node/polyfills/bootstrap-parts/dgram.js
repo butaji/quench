@@ -568,9 +568,11 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
         lookupAddress !== "localhost" &&
         !/^\d{1,3}(?:\.\d{1,3}){3}$/.test(lookupAddress) &&
         !lookupAddress.includes(":");
-      const lookup = isHostname
-        ? socket._lookup || globalThis.require("dns").lookup
-        : socket[__quenchDgramStateSymbol].handle.lookup;
+      const lookup =
+        socket._lookup ||
+        (isHostname
+          ? globalThis.require("dns").lookup
+          : socket[__quenchDgramStateSymbol].handle.lookup);
       lookup(
         lookupAddress,
         type === "udp6" ? 6 : 4,
