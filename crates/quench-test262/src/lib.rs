@@ -122,7 +122,12 @@ fn collect_js_files(directory: &Path, files: &mut Vec<std::path::PathBuf>) -> Re
             .path();
         if path.is_dir() {
             collect_js_files(&path, files)?;
-        } else if path.extension().is_some_and(|extension| extension == "js") {
+        } else if path.extension().is_some_and(|extension| extension == "js")
+            && !path
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().ends_with("_FIXTURE.js"))
+        {
+            // `*_FIXTURE.js` files are harness fixtures, not runnable tests.
             files.push(path);
         }
     }
