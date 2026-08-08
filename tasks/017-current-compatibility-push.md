@@ -656,3 +656,9 @@ error listeners that can reset the public stream's shared state. The focused
 readable error-state contract passes, and upstream
 `test-stream-readable-destroy.js` advances past the lost `errored` identity to
 the next `push()`-after-EOF behavior.
+
+Focused stage 2135 catches exceptions thrown from an internally invoked
+`Readable._read()` and emits them as stream errors, matching Node's behavior
+when a read implementation calls `push()` after EOF. The focused contract
+passes, and upstream readable-destroy testing advances to AbortSignal error
+name compatibility.

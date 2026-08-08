@@ -182,7 +182,17 @@ const __nodeReadableStart = (stream) => {
     return;
   }
   stream._readableState.reading = true;
-  stream._read?.call(stream);
+  try {
+    stream._read?.call(stream);
+  } catch (error) {
+    stream._readableState.reading = false;
+    stream._readableState.errored = error;
+    stream.errored = error;
+    queueMicrotask(() => {
+      stream._readableState.errorEmitted = true;
+      stream.emit("error", error);
+    });
+  }
 };
 const __nodeReadableReadSized = (stream, chunk, size) => {
   if (size === undefined || stream.readableObjectMode || !chunk) {
