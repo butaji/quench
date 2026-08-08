@@ -74,3 +74,14 @@ metadata remains intentionally separate.
 The Node suite remains the oracle; LLRT and Deno references remain documented
 in `docs/authoritative-test-sources.md`. Until the host poll phase exists, raw
 TCP fixtures and applications requiring real network sockets remain unresolved.
+
+## Additional scheduler boundary
+
+The stream and VFS probes expose a second host-loop requirement: the current
+`setTimeout`/`setInterval` shim performs delayed sleep synchronously inside a
+JavaScript microtask. Consequently, a long-delay timer can run before queued
+`setImmediate` or promise work. This is observable in the full stream
+backpressure and watch-promises fixtures, while ordinary timer fixtures and
+focused stream contracts pass. A future host scheduler step must provide
+non-blocking delayed callbacks with Node ordering; changing callback behavior
+in JavaScript alone would misrepresent timer semantics.
