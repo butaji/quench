@@ -394,3 +394,9 @@ passes, including the upstream sequence of calling `req.end()` after
 The exact upstream `test-http-client-abort-keep-alive-destroy-res.js` still
 misses one harness callback, so the broader agent lifecycle remains unresolved
 pending a closer callback-order comparison.
+
+The portable fs-access contract is covered by focused stage 2087: valid read
+access, invalid and out-of-range mode validation, missing-path `ENOENT`, and
+callback/promise completion all pass. The full upstream `test-fs-access.js`
+fixture remains platform-limited because it changes UID and branches on root
+permissions; its callback mismatch is not treated as portable API evidence.
