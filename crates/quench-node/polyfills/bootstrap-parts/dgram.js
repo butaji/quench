@@ -351,10 +351,19 @@ const __quenchDgramSend = (socket, message, ...args) => {
       (candidate) =>
         candidate._bound && candidate._address?.port === destinationPort
     );
-    const sourceAddress = socket._address || {
-      address: socket.type === "udp6" ? "::1" : "127.0.0.1",
-      family: socket.type === "udp6" ? "IPv6" : "IPv4",
-      port: 0
+    const sourceAddress = {
+      ...(socket._address || {
+        address: socket.type === "udp6" ? "::1" : "127.0.0.1",
+        family: socket.type === "udp6" ? "IPv6" : "IPv4",
+        port: 0
+      }),
+      address:
+        socket._address?.address === "0.0.0.0"
+          ? "127.0.0.1"
+          : socket._address?.address === "::"
+            ? "::1"
+            : socket._address?.address ||
+              (socket.type === "udp6" ? "::1" : "127.0.0.1")
     };
     const blocked = target?._receiveBlockList?.check?.(
       sourceAddress.address,
