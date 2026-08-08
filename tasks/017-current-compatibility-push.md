@@ -476,3 +476,8 @@ server-side socket before request dispatch completes. The focused contract
 passes, and `test-http-dump-req-when-res-ends.js` advances beyond its original
 listener assertion. Its remaining callback is the raw `net.createConnection()`
 data path, which still requires a real duplex net-to-HTTP transport model.
+
+Focused stage 2100 adds `http.Agent` validation for `maxTotalSockets`: invalid
+types raise `ERR_INVALID_ARG_TYPE`, non-positive and `NaN` values raise
+`ERR_OUT_OF_RANGE`, and `Infinity` remains accepted. The focused contract and
+upstream `test-http-agent-maxtotalsockets.js` both pass.

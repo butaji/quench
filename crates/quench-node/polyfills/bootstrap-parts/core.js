@@ -2373,6 +2373,32 @@ let __quenchHttpModule;
     class NodeHttpAgent extends globalThis.__nodeEventEmitter {
       constructor(options = {}) {
         super();
+        const maxTotalSockets = options.maxTotalSockets;
+        if (
+          maxTotalSockets !== undefined &&
+          typeof maxTotalSockets !== "number"
+        ) {
+          const received =
+            typeof maxTotalSockets === "string"
+              ? `string ('${maxTotalSockets}')`
+              : `${typeof maxTotalSockets} (${String(maxTotalSockets)})`;
+          const error = new TypeError(
+            `The "maxTotalSockets" argument must be of type number. Received type ${received}`
+          );
+          error.code = "ERR_INVALID_ARG_TYPE";
+          throw error;
+        }
+        if (
+          maxTotalSockets !== undefined &&
+          maxTotalSockets !== Infinity &&
+          (Number.isNaN(maxTotalSockets) || maxTotalSockets <= 0)
+        ) {
+          const error = new RangeError(
+            'The "maxTotalSockets" argument must be greater than 0'
+          );
+          error.code = "ERR_OUT_OF_RANGE";
+          throw error;
+        }
         this.options = { ...options };
         this.requests = Object.create(null);
         this.sockets = Object.create(null);
@@ -2389,7 +2415,7 @@ let __quenchHttpModule;
         this.protocol = "http:";
         this.maxSockets = options.maxSockets ?? Infinity;
         this.maxFreeSockets = options.maxFreeSockets ?? 256;
-        this.maxTotalSockets = options.maxTotalSockets ?? Infinity;
+        this.maxTotalSockets = maxTotalSockets ?? Infinity;
         this.maxCachedSessions = options.maxCachedSessions ?? 100;
         this.scheduling = options.scheduling || "lifo";
         this.totalSocketCount = 0;
