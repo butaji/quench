@@ -234,7 +234,8 @@ class NodeReadable extends NodeEventEmitter {
     this.closed = false;
     this.readable = true;
     this.readableAborted = false;
-    this.readableObjectMode = options.objectMode === true;
+    this.readableObjectMode =
+      options.readableObjectMode ?? options.objectMode === true;
     this._paused = false;
     this.readableFlowing = null;
     this.readableEnded = false;
@@ -274,7 +275,8 @@ class NodeReadable extends NodeEventEmitter {
     };
     this.errored = null;
     if (typeof options.read === "function") this._read = options.read;
-    this.readableHighWaterMark = options.highWaterMark ?? 16 * 1024;
+    this.readableHighWaterMark =
+      options.readableHighWaterMark ?? options.highWaterMark ?? 16 * 1024;
     if (this._autoDestroy && !options.__quenchCompatConstruct) {
       this.on("error", () => {
         if (!this.destroyed) this.destroy();
@@ -689,8 +691,10 @@ class NodeWritable extends NodeEventEmitter {
     this.readableAborted = false;
     this.writableAborted = false;
     this.writable = true;
-    this.writableObjectMode = options.objectMode === true;
-    this.writableHighWaterMark = options.highWaterMark ?? 16 * 1024;
+    this.writableObjectMode =
+      options.writableObjectMode ?? options.objectMode === true;
+    this.writableHighWaterMark =
+      options.writableHighWaterMark ?? options.highWaterMark ?? 16 * 1024;
     this.writableLength = 0;
     this.writableNeedDrain = false;
     this._writableState = {
