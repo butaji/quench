@@ -906,3 +906,13 @@ subsequent 20-item high-water-mark matrices and the chained-map delay block.
 The complete `test-stream-map.js` fixture now exits with status 139 only when
 those blocks share one realm, so an aggregate QuickJS/GC interaction remains
 and no full map-fixture pass is claimed.
+
+Stage 2467 resolves that aggregate QuickJS lifetime interaction. Scheduler
+entries no longer retain the callback-settlement promise whose handlers close
+over the same entry; progress already uses a separate deferred notification,
+so the back-reference was unnecessary and formed a collectible cycle for each
+mapped value. The focused concurrent-queue/validation-error lifetime contract
+passes, and the complete authoritative `test-stream-map.js` fixture now passes
+alongside `test-stream-filter.js` and the maintained helper cluster. Both Rust
+tests and the Ajv, debug, Chalk, ms, Prettier, and process-entry application
+stages remain green.
