@@ -270,6 +270,10 @@ The native whole-file read was then changed from an unbounded `read()` loop to
 size-bounded `fstat`/`pread`, eliminating a real-provider hang after writes.
 The authoritative handle fixture now advances from `Callback 0` to
 `Callback 1`; the remaining callback is still the zero-stat metadata contract.
+Stage 2386 adds a non-blocking public `fs.fstat` observer to real-provider
+`FileHandle.readFile()` while keeping descriptor reads independent of provider
+metadata. Its focused handle-surface stage passes, and the authoritative
+`test-vfs-real-provider-handle.js` now passes completely.
 
 Stage 2378 passes the four basic stream `destroy()` contracts for readable and
 writable streams, including implicit `AbortError`, explicit error messages,
