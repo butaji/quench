@@ -704,8 +704,7 @@ fn test262_staged() {
             .unwrap_or_else(|_| repo_root.join("tests/test262"))
     };
     let runner = Test262Runner::new(test262_dir);
-    let mut host = QuenchHost::new();
-    let summary = runner.run(&mut host);
+    let summary = runner.run();
     let digest = std::env::var("TEST262_DIGEST")
         .ok()
         .is_some_and(|s| s == "1" || s.eq_ignore_ascii_case("true"));
