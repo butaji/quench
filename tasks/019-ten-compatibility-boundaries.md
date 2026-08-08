@@ -275,6 +275,10 @@ Stage 2386 adds a non-blocking public `fs.fstat` observer to real-provider
 `FileHandle.readFile()` while keeping descriptor reads independent of provider
 metadata. Its focused handle-surface stage passes, and the authoritative
 `test-vfs-real-provider-handle.js` now passes completely.
+Stage 2388 adds host-native canonicalization for real-provider `realpathSync()`
+and verifies string and buffer results. The authoritative
+`test-vfs-real-provider.js` now passes completely; real-provider symlink and
+watch fixtures remain separate failures.
 
 Stage 2378 passes the four basic stream `destroy()` contracts for readable and
 writable streams, including implicit `AbortError`, explicit error messages,

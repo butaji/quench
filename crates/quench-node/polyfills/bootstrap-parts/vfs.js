@@ -1351,15 +1351,16 @@ class __QuenchVirtualFileSystem {
   }
   realpathSync(path) {
     if (this.provider instanceof __QuenchRealFSProvider) {
-      const resolved = globalThis.__nodeFs.realpathSync(this.__realPath(path));
+      const resolved = globalThis.__quench_fs_native_realpath(
+        this.__realPath(path)
+      );
+      const root = globalThis.__quench_fs_native_realpath(this.provider.root);
       if (
-        resolved !== this.provider.root &&
-        !resolved.startsWith(
-          `${this.provider.root}${globalThis.__nodePath.sep}`
-        )
+        resolved !== root &&
+        !resolved.startsWith(`${root}${globalThis.__nodePath.sep}`)
       )
         throw __quenchVfsError("EACCES", "realpath", path);
-      const result = resolved.slice(this.provider.root.length) || "/";
+      const result = resolved.slice(root.length) || "/";
       return arguments[1]?.encoding === "buffer"
         ? globalThis.Buffer.from(result)
         : result;
