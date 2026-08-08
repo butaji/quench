@@ -37,17 +37,20 @@ The loader and bridge that let JS builtins run at scale are landed:
 - [x] **Bootstrap ordering** — `bootstrap_js_builtins` runs after realm globals
       (`globalThis`) are set up, so JS builtins can attach to constructors.
 
-## Open core gap — constructor-global identity during bootstrap
+## Open core gap — constructor-static write aliases a same-named global
 
-A JS builtin that attaches a property to a **constructor global** (e.g.
-`Number.isNaN = …`) does not persist: the constructor object seen at bootstrap
-is replaced by a different object by the time user code runs, even though
-`globalThis` itself is stable. Top-level function declarations (`isNaN`,
-`isFinite`) work because they go into the global scope directly. This blocks
-migrating builtins that add methods to `Number`/`Object`/`String`/… until the
-global-scope/object-binding lifecycle is fixed (trace: `set_global` vs
-`sync_globals_to_global_this` vs the eval-time object binding). `Number`
-statics migration was reverted pending this fix.
+`register_builtins` was called twice per realm (`Context::new()` + the explicit
+call in `test262/host.rs`), so constructor globals were replaced after
+bootstrap — fixed by removing the redundant re-registration in `host.rs`.
+
+Remaining gap: a JS `Number.isNaN = …` assignment also overwrites the global
+`isNaN` function (the bare `isNaN` becomes identical to `Number.isNaN`), so the
+no-coercion `Number.isNaN` clobbers the coercing global `isNaN`. `Number` is
+correctly the constructor (`Number !== globalThis`), and `set_static_method`
+only writes the constructor's map, yet the global binding changes. This blocks
+migrating constructor statics whose names collide with global functions.
+`Number` statics migration was reverted pending this fix; global `isNaN`/
+`isFinite` (top-level functions) migrate cleanly.
 
 ## Next: migrate the R0 order
 
