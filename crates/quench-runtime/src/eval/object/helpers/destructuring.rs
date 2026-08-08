@@ -459,6 +459,7 @@ fn copy_enumerable_own_properties(
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
     let mut rest = Object::new(ObjectKind::Ordinary);
+    rest.prototype = crate::builtins::get_object_prototype();
     let src = obj.borrow();
     for i in 0..src.elements.len() {
         if src.holes.contains(&i) {
