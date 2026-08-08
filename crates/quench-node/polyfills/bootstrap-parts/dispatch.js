@@ -5,7 +5,8 @@ const __quenchRequireParts = [
   globalThis.__quench_require_part_03
 ];
 globalThis.require = (specifier) => {
-  const name = String(specifier).replace(/^node:/, "");
+  const rawName = String(specifier);
+  const name = rawName.startsWith("node:") ? rawName.slice(5) : rawName;
   if (name === "internal/vfs/stats" && globalThis.__quenchVfsStatsHelpers) {
     return globalThis.__quenchVfsStatsHelpers;
   }
@@ -15,6 +16,9 @@ globalThis.require = (specifier) => {
         return globalThis.__quenchVfsFdHandles?.get(fd);
       }
     };
+  }
+  if (name === "worker_threads") {
+    return { isMainThread: true, MessageChannel, MessagePort };
   }
   for (const handler of __quenchRequireParts) {
     const result = handler(name, specifier);
