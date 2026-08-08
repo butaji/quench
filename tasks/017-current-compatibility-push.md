@@ -812,3 +812,4 @@ pass.
 - Stage 2202 preserves the server-response `errored` identity while deferring `close` without emitting a duplicate error.
 - Stage 2203 preserves client response delivery when a server calls `end()` before `destroy()`.
 - Stage 2204 consumes a custom Agent connection's returned Duplex and delivers its chunked HTTP response to the client.
+- Upstream `test-http-client-readable.js` now passes after accepting a complete first chunk before a custom socket is ended, matching the fixture's `readable = false` ordering.

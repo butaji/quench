@@ -2107,16 +2107,16 @@ let __quenchHttpModule;
                     : String(chunk);
                 if (delivered || !raw.includes("\r\n\r\n")) return;
                 const body = raw.slice(raw.indexOf("\r\n\r\n") + 4);
-                const match = body.match(
-                  /(?:^|\r\n)([0-9a-f]+)\r\n([\s\S]*?)\r\n0\r\n\r\n/i
-                );
+                const match = body.match(/^([0-9a-f]+)\r\n([\s\S]*)/i);
                 if (!match) return;
+                const length = Number.parseInt(match[1], 16);
+                if (match[2].length < length + 2) return;
                 delivered = true;
                 response.statusCode = 200;
                 request.__responseEmitted = true;
                 request.emit("response", response);
                 if (typeof callback === "function") callback(response);
-                response.__emitData(NodeBuffer.from(match[2]));
+                response.__emitData(NodeBuffer.from(match[2].slice(0, length)));
                 response.complete = true;
                 response.readable = false;
                 response.emit("end");
