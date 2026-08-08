@@ -470,6 +470,10 @@ Stage 2424 fixes VFS read-file option contracts: `w+` truncates, `a+` creates
 missing files, invalid encodings raise `ERR_UNKNOWN_ENCODING`, and removing a
 directory without `recursive` raises `EISDIR`. The focused read/rm stage passes.
 
+Stage 2425 adds iterative recursive VFS readdir traversal through directory
+symlinks while preventing symlink cycles. The authoritative recursive-symlink
+fixture and focused regression now pass for nested entries and cycle safety.
+
 Stage 2423 makes `RealFSProvider` access dispatch to the host filesystem before
 the virtual-entry lookup. Existing and missing-path promise access now pass in
 the focused regression; this removes the first concrete unresolved await from

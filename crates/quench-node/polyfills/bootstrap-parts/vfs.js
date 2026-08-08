@@ -871,6 +871,33 @@ class __QuenchVirtualFileSystem {
       return globalThis.__nodeFs.mkdirSync(this.__realPath(path), options);
     }
     const requestedKey = __quenchVfsPath(path);
+    if (options.recursive) {
+      const parts = requestedKey.split("/").filter(Boolean);
+      let firstCreated;
+      for (let index = 0; index < parts.length; index++) {
+        const requested = `/${parts.slice(0, index + 1).join("/")}`;
+        const key = __quenchVfsResolveParentPath(this.__entries, requested);
+        const existing = this.__entries.get(key);
+        if (existing) {
+          if (existing.type !== "dir") {
+            throw __quenchVfsError("EEXIST", "mkdir", path);
+          }
+          continue;
+        }
+        const parent = key.slice(0, key.lastIndexOf("/")) || "/";
+        if (this.__entries.get(parent)?.type !== "dir") {
+          throw __quenchVfsError("ENOENT", "mkdir", path);
+        }
+        this.__entries.set(key, {
+          type: "dir",
+          children: new Set(),
+          mode:
+            options.mode === undefined ? 0o755 : Number(options.mode) & 0o777
+        });
+        firstCreated ||= requested;
+      }
+      return firstCreated;
+    }
     const key = __quenchVfsResolveParentPath(this.__entries, path);
     if (this.__entries.has(key)) {
       if (options.recursive) return undefined;
@@ -1414,6 +1441,62 @@ class __QuenchVirtualFileSystem {
     if (entry.type !== "dir") {
       throw __quenchVfsError("ENOTDIR", "scandir", path);
     }
+    if (options.recursive) {
+      const result = [];
+      const pending = [{ key, relative: "", ancestors: new Set([key]) }];
+      while (pending.length > 0) {
+        const current = pending.pop();
+        const currentPrefix = current.key === "/" ? "/" : `${current.key}/`;
+        const children = [...this.__entries.keys()]
+          .filter(
+            (item) =>
+              item !== current.key &&
+              item.startsWith(currentPrefix) &&
+              !item.slice(currentPrefix.length).includes("/")
+          )
+          .sort();
+        for (const childKey of children) {
+          const child = this.__entries.get(childKey);
+          const name = childKey.slice(currentPrefix.length);
+          const relative = current.relative
+            ? `${current.relative}/${name}`
+            : name;
+          const dirent = {
+            name: options.withFileTypes ? name : undefined,
+            parentPath: current.key,
+            isFile: () => child.type === "file",
+            isDirectory: () => child.type === "dir",
+            isSymbolicLink: () => child.type === "symlink"
+          };
+          result.push(options.withFileTypes ? dirent : relative);
+          if (child.type === "dir" || child.type === "symlink") {
+            let resolved;
+            try {
+              resolved = __quenchVfsResolvePath(this.__entries, childKey);
+            } catch (_) {
+              resolved = undefined;
+            }
+            if (
+              resolved &&
+              this.__entries.get(resolved)?.type === "dir" &&
+              !current.ancestors.has(resolved)
+            ) {
+              pending.push({
+                key: resolved,
+                relative,
+                ancestors: new Set([...current.ancestors, resolved])
+              });
+            }
+          }
+        }
+      }
+      if (options.encoding === "buffer") {
+        return result.map((item) =>
+          globalThis.Buffer.from(options.withFileTypes ? item.name : item)
+        );
+      }
+      return result;
+    }
     if (typeof entry.populate === "function" && !entry.populated) {
       const add = (name, value) => {
         const childKey = `${key === "/" ? "" : key}/${name}`;
@@ -1468,7 +1551,9 @@ class __QuenchVirtualFileSystem {
       return names.map((name) => ({
         name,
         isFile: () => this.__entry(`${key}/${name}`).type === "file",
-        isDirectory: () => this.__entry(`${key}/${name}`).type === "dir"
+        isDirectory: () => this.__entry(`${key}/${name}`).type === "dir",
+        isSymbolicLink: () =>
+          this.__entries.get(`${key}/${name}`).type === "symlink"
       }));
     }
     if (options.encoding === "buffer") {
