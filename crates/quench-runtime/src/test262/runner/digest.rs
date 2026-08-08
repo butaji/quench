@@ -6,7 +6,7 @@ use std::sync::{mpsc, Arc, Mutex};
 
 use crate::test262::harness::HarnessLoader;
 use crate::test262::host::TestOutcome;
-use crate::test262::runner::execute::{run_isolated, run_single_test};
+use crate::test262::runner::execute::{run_isolated, run_single_test_in_thread};
 use crate::test262::runner::flags::RunnerFlags;
 use crate::test262::runner::RunSummary;
 
@@ -191,8 +191,12 @@ fn one_test(harness: &HarnessLoader, path: &Path, isolated: bool) -> TestOutcome
     {
         return run_isolated(path);
     }
-    let mut host = crate::test262::host::QuenchHost::new();
-    run_single_test(&mut host, harness, path)
+    // In-thread (no per-test OS thread): the worker's thread-local harness-IR
+    // cache is reused across tests, which is where the in-process digest's
+    // speedup comes from. The caller opts into losing the per-test timeout by
+    // choosing in-process mode; crash-prone files are still routed to a
+    // subprocess above.
+    run_single_test_in_thread(harness, path)
 }
 
 fn group_failures(failures: &[(String, String)]) -> BTreeMap<String, Vec<String>> {
