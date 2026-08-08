@@ -1849,7 +1849,10 @@ let __quenchHttpModule;
               }));
         queueMicrotask(() => {
           if (failure) request.emit("error", failure);
-          request.emit("close");
+          if (!request.__closeEmitted) {
+            request.__closeEmitted = true;
+            request.emit("close");
+          }
         });
         return request;
       };
