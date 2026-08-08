@@ -571,3 +571,9 @@ the shim's synchronous long-interval sleep from blocking a pending watcher
 as do the authoritative directory, encoding, and abort watcher fixtures. The
 full `test-vfs-watch-promises.js` sequence still times out, so its aggregate
 interaction remains open.
+
+A reduced five-block lifecycle sequence matching the watcher order now passes
+through the direct runtime binary, including block five with `interval: 1000`.
+The remaining upstream timeout is therefore in an assertion or harness detail
+not represented by that reduced sequence; no broader watcher claim is made
+from this probe.
