@@ -626,6 +626,11 @@ preventing delayed custom-destroy callbacks from emitting a spurious `end`.
 The upstream fixture now advances to a later custom-destroy callback error
 identity assertion.
 
+Focused stage 2126 isolates custom `_destroy` callbacks that return an error;
+the error identity is preserved in `readable.errored` and the emitted error.
+The focused contract passes, while the full upstream fixture still has a
+separate combined lifecycle mismatch.
+
 Focused stage 2116 uses `module.globalPaths` when resolving bare packages, so
 packages provided through `NODE_PATH` load without a local `node_modules`
 entry. The focused global-package contract passes.
