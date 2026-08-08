@@ -109,3 +109,10 @@ The focused microtask/`setImmediate`/delayed-timeout ordering stage passes, as
 do the representative application stages and ordinary upstream timers. Full
 backpressure and watch-promises fixtures remain unresolved, so this is a
 partial scheduler integration rather than a completed Node timer claim.
+
+Stage 2445 exposed a second scheduler interaction: draining every pending
+QuickJS job before polling timers starved `setImmediate` callbacks behind
+stream-demand microtasks. Polling the host timer registry between jobs raises
+the large backpressure trace from 1 to 18 writes, but readable demand still
+stops at 3/11 reads. The timer interleave is retained as partial evidence; the
+remaining read-demand contract belongs to the stream implementation.

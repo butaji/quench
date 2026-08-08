@@ -153,6 +153,11 @@ passes the delayed timer ordering contract, and stages 2047, 2069, 2081, 2104,
 reports callback 1/11, and the full watch-promises fixture still times out;
 these are retained as the next scheduler/stream interactions.
 
+Stage 2445 confirms the host timer interleave is effective but incomplete: the
+large backpressure trace reaches 18 writes and 3 reads, up from 1 write before
+interleaving. The remaining 3/11 readable-demand mismatch is now isolated from
+timer starvation and is the next stream-state target.
+
 Stage 2443 independently verifies `Readable.from(asyncGenerator).take(1)`
 resolves `toArray()` without waiting for the generator's next promise, and the
 upstream generator remains unadvanced until explicitly released. The full
