@@ -823,3 +823,13 @@ awaitDrain fixture pass. `test-stream-pipe-await-drain-push-while-write.js`
 still requires earlier in-flight state clearing, and the broader
 multi-destination awaitDrain fixture still exposes a separate Set lifecycle
 shape; neither is claimed fixed.
+
+Stage 2459 completes those adjacent awaitDrain boundaries. Readables now buffer
+chunks pushed synchronously from `_read()`, preserve source order for reentrant
+pushes, and clear prior await-drain state immediately before each flowing data
+emission. Registering a second pipe promotes `awaitDrainWriters` to an empty
+Set, allowing destinations to observe and add themselves in listener order.
+The focused recursive/multi-destination contract and all four authoritative
+awaitDrain fixtures now pass. The broader verified stream cluster—pipe flow,
+pause/resume, emittedReadable, consumers, and backpressure—also passes after
+the synchronous read/drain loop change.
