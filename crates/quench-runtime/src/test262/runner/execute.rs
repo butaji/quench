@@ -11,6 +11,15 @@ use crate::test262::metadata::Test262Metadata;
 /// Per-test timeout in seconds.
 pub const TEST_TIMEOUT_SECS: u64 = 10;
 
+/// A parse-phase negative passes only when the whole script failed to parse.
+/// The engine marks whole-script parse failures with `Parse error:` (OXC) or a
+/// `SyntaxError:` for the parser-time strict-reserved-word rejection. Any other
+/// (typed runtime) error means the script parsed and executed — not a parse
+/// failure, so it must not satisfy a `phase: parse` negative.
+fn is_parse_error(msg: &str) -> bool {
+    msg.contains("Parse error:") || msg.contains("SyntaxError")
+}
+
 pub fn check_outcome(meta: &Test262Metadata, result: Result<(), String>) -> TestOutcome {
     match (&meta.negative, result) {
         (None, Ok(())) => TestOutcome::Pass,
@@ -18,7 +27,21 @@ pub fn check_outcome(meta: &Test262Metadata, result: Result<(), String>) -> Test
         (Some(_), Ok(())) => TestOutcome::Fail {
             reason: "expected error but passed".into(),
         },
-        (Some(neg), Err(_)) if neg.phase == "parse" => TestOutcome::Pass,
+        (Some(neg), Err(msg)) if neg.phase == "parse" => {
+            // A parse-phase negative must be rejected while parsing the whole
+            // script. If the script parses and then throws a typed runtime
+            // error, the expected parse failure did not happen — report Fail.
+            if is_parse_error(&msg) {
+                TestOutcome::Pass
+            } else {
+                TestOutcome::Fail {
+                    reason: format!(
+                        "expected parse error ({}) but got runtime error: {}",
+                        neg.typ, msg
+                    ),
+                }
+            }
+        }
         (Some(neg), Err(msg)) => {
             if !neg.typ.is_empty() && !msg.contains(&neg.typ) {
                 TestOutcome::Fail {
@@ -248,6 +271,7 @@ fn run_test_binary() -> std::path::PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test262::metadata::Negative;
     use std::path::PathBuf;
 
     #[test]
@@ -282,5 +306,65 @@ mod tests {
             check_outcome(&meta, Err("x".into())),
             TestOutcome::Fail { .. }
         ));
+    }
+
+    #[test]
+    fn check_outcome_parse_phase_negative_passes_only_on_parse_error() {
+        // A `negative: { phase: parse }` test must be rejected AT PARSE time.
+        // If the script parses fine but then throws a runtime error (a typed
+        // non-parse failure), that is NOT the expected parse-phase failure and
+        // must be reported as a Fail — otherwise the harness silently masks
+        // conformance gaps where a test that should fail to parse actually runs.
+        let mut meta = Test262Metadata::default();
+        meta.negative = Some(Negative {
+            phase: "parse".into(),
+            typ: "SyntaxError".into(),
+        });
+
+        // Runtime error (not a parse error) → must FAIL.
+        let runtime = check_outcome(&meta, Err("TypeError: boom".into()));
+        assert!(
+            matches!(runtime, TestOutcome::Fail { .. }),
+            "runtime error on a parse-phase negative must fail, got {:?}",
+            runtime
+        );
+
+        // Genuine whole-script parse error → PASS.
+        let parse = check_outcome(&meta, Err("Parse error: unexpected token".into()));
+        assert_eq!(parse, TestOutcome::Pass, "parse error must pass: {:?}", parse);
+
+        // Strict-reserved-word parse rejection → PASS.
+        let strict_reserved =
+            check_outcome(&meta, Err("SyntaxError: Unexpected strict mode reserved word".into()));
+        assert_eq!(
+            strict_reserved,
+            TestOutcome::Pass,
+            "parse-time SyntaxError must pass: {:?}",
+            strict_reserved
+        );
+    }
+
+    #[test]
+    fn check_outcome_runtime_phase_negative_checks_type() {
+        // Unchanged contract: a runtime-phase negative must match the expected
+        // error type; a mismatch is a Fail.
+        let mut meta = Test262Metadata::default();
+        meta.negative = Some(Negative {
+            phase: "runtime".into(),
+            typ: "ReferenceError".into(),
+        });
+        let ok = check_outcome(&meta, Err("ReferenceError: x is not defined".into()));
+        assert_eq!(
+            ok,
+            TestOutcome::Pass,
+            "matching runtime error type must pass: {:?}",
+            ok
+        );
+        let bad = check_outcome(&meta, Err("TypeError: boom".into()));
+        assert!(
+            matches!(bad, TestOutcome::Fail { .. }),
+            "mismatched runtime error type must fail: {:?}",
+            bad
+        );
     }
 }
