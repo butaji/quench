@@ -438,6 +438,7 @@ const __quenchDgramRemoteAddress = (socket) => {
   };
 };
 const __quenchDgramClose = (socket, callback) => {
+  if (socket._closed) return socket;
   socket._closed = true;
   socket._bound = false;
   __quenchDgramSockets.delete(socket);
@@ -749,7 +750,7 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
     handle: {
       fd: 0,
       lookup(address, callback) {
-        queueMicrotask(() =>
+        setImmediate(() =>
           callback(null, address === "localhost" ? "127.0.0.1" : address)
         );
       }
