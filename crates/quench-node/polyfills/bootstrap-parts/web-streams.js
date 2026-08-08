@@ -1,8 +1,12 @@
 const __quenchOriginalRequireWithWebStreams = globalThis.require;
 const __quenchWebStreamsState = Symbol("kState");
 class __quenchReadableStream {
-  constructor(source = {}) {
+  constructor(source = {}, options = {}) {
     this._queue = [];
+    this._queueSize = 0;
+    this._highWaterMark =
+      options.highWaterMark === undefined ? 1 : Number(options.highWaterMark);
+    this._size = typeof options.size === "function" ? options.size : () => 1;
     this._closed = false;
     this.locked = false;
     this._readWaiters = [];
@@ -10,12 +14,18 @@ class __quenchReadableStream {
     this._pull = source.pull?.bind(source);
     this._pulling = false;
     this[__quenchWebStreamsState] = { state: "readable" };
+    const stream = this;
     const controller = {
-      desiredSize: 0,
+      get desiredSize() {
+        return stream._highWaterMark - stream._queueSize;
+      },
       enqueue: (value) => {
         const waiter = this._readWaiters.shift();
         if (waiter) waiter({ value, done: false });
-        else this._queue.push(value);
+        else {
+          this._queue.push({ value, size: this._size(value) });
+          this._queueSize += this._queue[this._queue.length - 1].size;
+        }
       },
       close: () => {
         this._closed = true;
@@ -58,7 +68,9 @@ class __quenchReadableStream {
       read: async () => {
         if (stream._error) throw stream._error;
         if (stream._queue.length) {
-          return { value: stream._queue.shift(), done: false };
+          const item = stream._queue.shift();
+          stream._queueSize -= item.size;
+          return { value: item.value, done: false };
         }
         if (stream._closed) return { value: undefined, done: true };
         if (stream._pull && !stream._pulling) {
