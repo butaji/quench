@@ -165,6 +165,8 @@ pub fn register_builtins(ctx: &mut Context) {
     uri::register_uri(ctx);
     // Array.prototype[Symbol.iterator] requires Symbol to be registered first.
     array::register_array_iterator();
+    // %TypedArray%.prototype[Symbol.iterator] mirrors Array.prototype.values.
+    typed_array::register_typed_array_iterator();
 }
 
 use crate::value::{Object, ObjectKind, Value};

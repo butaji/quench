@@ -33,6 +33,30 @@ pub fn get_typed_array_prototype() -> Option<Rc<RefCell<Object>>> {
     TYPED_ARRAY_PROTOTYPE.with(|tp| tp.borrow().clone())
 }
 
+/// Wire `%TypedArray%.prototype[Symbol.iterator]` to `Array.prototype.values`
+/// (per ES, typed arrays iterate like arrays). Run after the array iterator is
+/// registered so `Array.prototype[Symbol.iterator]` is available to copy.
+pub fn register_typed_array_iterator() {
+    let Some(typed_array_proto) = get_typed_array_prototype() else {
+        return;
+    };
+    let Some(array_proto) = crate::builtins::array::get_array_prototype() else {
+        return;
+    };
+    let Some(Value::Symbol(sym)) =
+        crate::builtins::symbol::get_well_known_symbol_no_ctx("iterator")
+    else {
+        return;
+    };
+    let key = sym.property_key();
+    let iter_fn = array_proto.borrow().get(&key);
+    if let Some(iter_fn) = iter_fn {
+        typed_array_proto
+            .borrow_mut()
+            .set_nonenumerable(&key, iter_fn);
+    }
+}
+
 pub fn register_typed_arrays(ctx: &mut Context) {
     // Create shared TypedArray prototype once (shared by all TypedArray instances)
     let typed_array_proto = Object::new(ObjectKind::Ordinary);
