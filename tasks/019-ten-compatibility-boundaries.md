@@ -528,6 +528,10 @@ changes: Ajv (stage 2047), debug (2069), `ms` (2081), and Prettier (2104) all
 pass, as does the missing-package loader contract (2070). These gates remain
 green; ESLint is still a separate unresolved application boundary.
 
+Stage 2438 registers the previously missing `node:sea` module surface. It
+reports `isSea: false` in ordinary executions and exposes Node-shaped asset,
+code-cache, and snapshot methods that fail explicitly with `ERR_NOT_SUPPORTED`.
+
 Stage 2423 makes `RealFSProvider` access dispatch to the host filesystem before
 the virtual-entry lookup. Existing and missing-path promise access now pass in
 the focused regression; this removes the first concrete unresolved await from
