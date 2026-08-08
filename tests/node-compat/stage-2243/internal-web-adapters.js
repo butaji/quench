@@ -21,4 +21,13 @@ assert.strictEqual(
 assert(adapters.newStreamReadableFromReadableStream(new ReadableStream()));
 assert(adapters.newStreamWritableFromWritableStream(new WritableStream()));
 assert(adapters.newStreamDuplexFromReadableWritablePair(new TransformStream()));
+assert(
+  new adapters.newStreamDuplexFromReadableWritablePair(new TransformStream())
+);
+assert.throws(() => adapters.newStreamWritableFromWritableStream(1), {
+  code: "ERR_INVALID_ARG_TYPE"
+});
+assert.throws(() => adapters.newStreamDuplexFromReadableWritablePair({}), {
+  code: "ERR_INVALID_ARG_TYPE"
+});
 console.log("internal Web Streams adapters passed");

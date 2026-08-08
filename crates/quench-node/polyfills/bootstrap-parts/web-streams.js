@@ -151,6 +151,11 @@ class __quenchWritableStream {
         await sink.close?.();
         stream[__quenchWebStreamsState].state = "closed";
       },
+      abort: async (error) => {
+        await sink.abort?.(error);
+        stream[__quenchWebStreamsState].state = "errored";
+        stream[__quenchWebStreamsState].storedError = error;
+      },
       releaseLock() {
         stream.locked = false;
       }
