@@ -2055,6 +2055,14 @@ const __quenchVfsWrapAsyncFs = (name, syncName = `${name}Sync`) => {
         if (name === "mkdtemp" && typeof result === "string") {
           return `${vfs.mountPoint}${result}`;
         }
+        if (name === "realpath" && typeof result === "string") {
+          return `${vfs.mountPoint}${result}`;
+        }
+        if (name === "realpath" && globalThis.Buffer.isBuffer(result)) {
+          return globalThis.Buffer.from(
+            `${vfs.mountPoint}${result.toString()}`
+          );
+        }
         if (name === "readdir" && args[0]?.encoding === "buffer") {
           return result.map((item) => globalThis.Buffer.from(item));
         }
@@ -2267,6 +2275,14 @@ if (globalThis.__nodeFs?.promises) {
         const result = vfs[method](__quenchVfsRelative(vfs, path), ...args);
         if (name === "mkdtemp" && typeof result === "string") {
           return `${vfs.mountPoint}${result}`;
+        }
+        if (name === "realpath" && typeof result === "string") {
+          return `${vfs.mountPoint}${result}`;
+        }
+        if (name === "realpath" && globalThis.Buffer.isBuffer(result)) {
+          return globalThis.Buffer.from(
+            `${vfs.mountPoint}${result.toString()}`
+          );
         }
         if (name === "readdir" && args[0]?.encoding === "buffer") {
           return result.map((item) => globalThis.Buffer.from(item));
