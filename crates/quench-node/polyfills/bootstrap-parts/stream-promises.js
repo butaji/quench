@@ -41,6 +41,22 @@ const __quenchStreamPromises = {
     });
   },
   finished: (stream, options = {}) => {
+    if (typeof stream?.getReader === "function") {
+      return new Promise((resolve, reject) => {
+        queueMicrotask(() =>
+          stream._error ? reject(stream._error) : resolve()
+        );
+      });
+    }
+    if (typeof stream?.getWriter === "function") {
+      if (stream._closed) return Promise.resolve();
+      return new Promise((resolve, reject) => {
+        stream._finishWaiters ||= [];
+        stream._finishWaiters.push(() =>
+          stream._error ? reject(stream._error) : resolve()
+        );
+      });
+    }
     if (options.cleanup !== undefined && typeof options.cleanup !== "boolean") {
       throw Object.assign(
         new TypeError('The "cleanup" option must be of type boolean'),
