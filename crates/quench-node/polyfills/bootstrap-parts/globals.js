@@ -468,7 +468,13 @@ globalThis.setImmediate = (callback, ...args) => {
       );
     }
   }
-  const id = { active: true, refed: true, generation: 0, __immediate: true };
+  const id = {
+    active: true,
+    refed: true,
+    generation: 0,
+    __immediate: true,
+    _destroyed: false
+  };
   const activeDomain = globalThis.__quench_active_domain;
   id.ref = () => {
     if (!id.refed && id.active && !id.counted) {
@@ -481,6 +487,11 @@ globalThis.setImmediate = (callback, ...args) => {
   id.unref = () => ((id.refed = false), id);
   id.hasRef = () => id.active && id.refed;
   id.refresh = () => ((id.active = true), id);
+  Symbol.dispose ||= Symbol("dispose");
+  id[Symbol.dispose] = () => {
+    id.active = false;
+    id._destroyed = true;
+  };
   queueMicrotask(() => {
     if (id.active) {
       if (activeDomain) activeDomain.run(callback, ...args);
@@ -490,7 +501,10 @@ globalThis.setImmediate = (callback, ...args) => {
   return id;
 };
 globalThis.clearImmediate = (id) => {
-  if (id?.__immediate) id.active = false;
+  if (id?.__immediate) {
+    id.active = false;
+    id._destroyed = true;
+  }
 };
 globalThis.__quenchRefedHandles ||= 0;
 globalThis.__quenchTimerHandleIds ||= new Map();
@@ -504,11 +518,14 @@ globalThis.setTimeout = (callback, _delay = 0, ...args) => {
     refed: true,
     generation: 0,
     counted: true,
-    unrefChecks: 0
+    unrefChecks: 0,
+    _destroyed: false
   };
   const handleId = globalThis.__quenchNextTimerHandleId++;
   globalThis.__quenchTimerHandleIds.set(handleId, id);
   id[Symbol.toPrimitive] = () => handleId;
+  Symbol.dispose ||= Symbol("dispose");
+  id[Symbol.dispose] = () => globalThis.clearTimeout(id);
   globalThis.__quenchRefedHandles++;
   id.ref = () => {
     if (!id.refed && id.active && !id.counted) {
@@ -592,16 +609,19 @@ globalThis.clearTimeout = (id) => {
       );
     }
     id.active = false;
+    id._destroyed = true;
   }
 };
 globalThis.setInterval = (callback, _delay = 0, ...args) => {
   if (typeof callback !== "function") {
     throw new TypeError('The "callback" argument must be of type function');
   }
-  const id = { active: true, refed: true, generation: 0 };
+  const id = { active: true, refed: true, generation: 0, _destroyed: false };
   const handleId = globalThis.__quenchNextTimerHandleId++;
   globalThis.__quenchTimerHandleIds.set(handleId, id);
   id[Symbol.toPrimitive] = () => handleId;
+  Symbol.dispose ||= Symbol("dispose");
+  id[Symbol.dispose] = () => globalThis.clearInterval(id);
   id.ref = () => ((id.refed = true), id);
   id.unref = () => ((id.refed = false), id);
   id.hasRef = () => id.active && id.refed;
@@ -622,6 +642,8 @@ globalThis.setInterval = (callback, _delay = 0, ...args) => {
     schedule();
     return id;
   };
+  Symbol.dispose ||= Symbol("dispose");
+  id[Symbol.dispose] = () => globalThis.clearInterval(id);
   schedule();
   return id;
 };
