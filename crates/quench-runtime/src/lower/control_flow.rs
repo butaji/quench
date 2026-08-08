@@ -432,11 +432,16 @@ fn lower_array_lhs(arr: &ast::ArrayPattern) -> Option<Expression> {
 }
 
 fn lower_object_lhs(obj: &ast::ObjectPattern) -> Option<Expression> {
-    let props: Vec<(PropertyKey, BindingElement)> = obj
+    let mut props: Vec<(PropertyKey, BindingElement)> = obj
         .properties
         .iter()
         .filter_map(lower_object_pat_prop)
         .collect();
+    // Handle the trailing rest element (key "..."), mirroring lower_object_pattern.
+    if let Some(rest) = &obj.rest {
+        let rest_elem = lower_elem_pat(&rest.argument)?;
+        props.push((PropertyKey::Ident("...".to_string()), rest_elem));
+    }
     Some(Expression::ObjectPattern(props))
 }
 
