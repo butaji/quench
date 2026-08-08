@@ -437,7 +437,9 @@ const __nodeFsPullIterator = async function* (
 const __nodeFsAttachPull = (handle) => {
   handle.pull = (transformOrOptions, maybeOptions) => {
     if (!globalThis.__nodeFdPaths[handle.fd] || handle._pullLocked) {
-      throw new Error("The file handle is not in a valid state");
+      const error = new Error("The file handle is not in a valid state");
+      error.code = "ERR_INVALID_STATE";
+      throw error;
     }
     const transform =
       typeof transformOrOptions === "function" ? transformOrOptions : undefined;
