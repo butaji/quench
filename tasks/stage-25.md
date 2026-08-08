@@ -41,13 +41,17 @@ TEST262_STAGE=25 TEST262_DIGEST=1 TEST262_JSON=1 cargo test -p quench-runtime \
   close-via-* family)
 - For-of: a `yield` in the loop body now suspends the loop (iterator left
   open) instead of continuing to the next iteration.
+- For-of: suspend before the body when LHS destructuring hits a `yield` (a
+  yield in a destructuring default otherwise ran the body now and on resume).
+- Destructuring: don't double-evaluate a computed key containing `yield` in the
+  reference-touch phase (it must be evaluated once, during assignment).
 
 ## Remaining
 
 | Count | Family | Fix direction |
 |-------|--------|---------------|
-| ~15 | `yield` / `yield*` in loop body | resume re-runs from loop start, losing body position & iterator step — needs position-preserving resume |
-| ~10 | dstr `…rtrn-close` | `yield` in destructuring LHS computed key; iterator close on return still wrong |
+| ~10 | `yield` / `yield*` in loop body | resume re-runs from loop start, losing body position & iterator step — needs position-preserving resume |
+| ~15 | dstr `…rtrn-close` | rest target reference must be evaluated before collecting; a return/throw completion during destructuring must close the iterator |
 | 4 | `using` / `await using` in for-of head | explicit-resource-management not implemented |
 | 4 | typedarray backed by resizable buffer | resizable ArrayBuffer not implemented |
 | 2 | `iterator-as-proxy` / `iterator-next-reference` | iterator-record `next` caching (read once via getter/proxy) |
