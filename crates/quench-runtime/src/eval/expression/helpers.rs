@@ -471,10 +471,13 @@ mod tests {
 
     // ─── eval_block_expr: block as expression (arrow function body) ───────────
 
+    // ES §14.2: a block-body arrow has function-body semantics and returns
+    // undefined without an explicit `return`; only the expression form `() => 3`
+    // implicitly returns its expression.
     #[test]
-    fn block_expr_returns_last() {
+    fn block_expr_returns_undefined_without_return() {
         let r = eval("var f = () => { 1; 2; 3 }; f()").unwrap();
-        assert_eq!(r, Value::Number(3.0));
+        assert_eq!(r, Value::Undefined);
     }
 
     #[test]
