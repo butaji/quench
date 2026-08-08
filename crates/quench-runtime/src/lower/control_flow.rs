@@ -414,12 +414,20 @@ pub fn lower_for_lhs(left: &ast::ForStatementLeft) -> Option<Expression> {
 }
 
 fn lower_array_lhs(arr: &ast::ArrayPattern) -> Option<Expression> {
-    let elements: Vec<BindingElement> = arr
-        .elements
-        .iter()
-        .filter_map(|e| e.as_ref().and_then(lower_elem_pat))
-        .chain(arr.rest.as_ref().and_then(|r| lower_elem_pat(&r.argument)))
-        .collect();
+    let mut elements: Vec<BindingElement> = Vec::new();
+    for elem in &arr.elements {
+        match elem.as_ref() {
+            Some(pat) => elements.push(lower_elem_pat(pat)?),
+            None => elements.push(BindingElement::Identifier("__hole".to_string())),
+        }
+    }
+    // Wrap the trailing rest argument in BindingElement::Rest so the runtime
+    // destructuring collects the remaining elements into an array.
+    if let Some(rest) = &arr.rest {
+        elements.push(BindingElement::Rest(Box::new(lower_elem_pat(
+            &rest.argument,
+        )?)));
+    }
     Some(Expression::ArrayPattern(elements))
 }
 
