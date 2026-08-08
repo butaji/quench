@@ -181,6 +181,15 @@ fn build_script(
 /// Default stack for per-test worker threads (avoids overflow on deep class tests).
 const TEST_THREAD_STACK: usize = 16 * 1024 * 1024;
 
+/// Per-test timeout, overridable via `TEST262_TIMEOUT_SECS`.
+fn test_timeout() -> Duration {
+    let secs = std::env::var("TEST262_TIMEOUT_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(TEST_TIMEOUT_SECS);
+    Duration::from_secs(secs)
+}
+
 fn run_with_timeout(
     script: &str,
     is_module: bool,
@@ -188,7 +197,7 @@ fn run_with_timeout(
     test_path: &str,
     _strict: bool,
 ) -> TestOutcome {
-    let timeout = Duration::from_secs(TEST_TIMEOUT_SECS);
+    let timeout = test_timeout();
     let meta = meta.clone();
     let script = script.to_owned();
     let tp = test_path.to_owned();
@@ -214,7 +223,7 @@ fn run_with_timeout(
     match rx.recv_timeout(timeout) {
         Ok(outcome) => outcome,
         Err(mpsc::RecvTimeoutError::Timeout) => TestOutcome::Fail {
-            reason: format!("timed out after {}s", TEST_TIMEOUT_SECS),
+            reason: format!("timed out after {}s", timeout.as_secs()),
         },
         Err(mpsc::RecvTimeoutError::Disconnected) => TestOutcome::Fail {
             reason: "panicked".into(),
@@ -222,34 +231,83 @@ fn run_with_timeout(
     }
 }
 
+/// Run a spawned command with a deadline, killing the child if it does not
+/// finish in time so no stale process lingers. Returns the exit code and the
+/// captured stdout/stderr on success, or an error string (spawn / timeout /
+/// wait failure) on failure. The child's stdout/stderr are drained on reader
+/// threads so a chatty child cannot block on a full pipe while we poll.
+fn run_command_with_timeout(
+    cmd: &mut std::process::Command,
+    timeout: std::time::Duration,
+) -> Result<(i32, Vec<u8>, Vec<u8>), String> {
+    let mut child = cmd.spawn().map_err(|e| format!("spawn: {}", e))?;
+    let out_reader = child
+        .stdout
+        .take()
+        .map(|mut s| {
+            std::thread::spawn(move || {
+                let mut buf = Vec::new();
+                let _ = std::io::Read::read_to_end(&mut s, &mut buf);
+                buf
+            })
+        });
+    let err_reader = child
+        .stderr
+        .take()
+        .map(|mut s| {
+            std::thread::spawn(move || {
+                let mut buf = Vec::new();
+                let _ = std::io::Read::read_to_end(&mut s, &mut buf);
+                buf
+            })
+        });
+    let deadline = std::time::Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(st)) => break st,
+            Ok(None) => {}
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("wait: {}", e));
+            }
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!("timed out after {}s", timeout.as_secs()));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    };
+    let out = out_reader.map(|h| h.join().unwrap_or_default()).unwrap_or_default();
+    let err = err_reader.map(|h| h.join().unwrap_or_default()).unwrap_or_default();
+    Ok((status.code().unwrap_or(-1), out, err))
+}
+
 /// Process-isolated run via prebuilt `run-test` binary (survives stack overflows).
+/// Kills the subprocess on timeout so a hung test does not leave a stale process.
 pub fn run_isolated(test_path: &Path) -> TestOutcome {
     let path = test_path.display().to_string();
     let bin = run_test_binary();
-    let output = std::process::Command::new(&bin)
-        .arg(&path)
+    let mut cmd = std::process::Command::new(&bin);
+    cmd.arg(&path)
         .env("TEST262_NOSKIP", "1")
         .env("TEST262_DIR", crate::test262::runner::default_test262_dir())
         .env("RUST_MIN_STACK", "33554432")
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .output();
-    match output {
-        Ok(out) => match out.status.code().unwrap_or(-1) {
+        .stderr(std::process::Stdio::piped());
+    match run_command_with_timeout(&mut cmd, test_timeout()) {
+        Ok((code, out, err)) => match code {
             0 => TestOutcome::Pass,
             2 => TestOutcome::Skip {
-                reason: isolated_message(&out.stderr, &out.stdout),
+                reason: isolated_message(&err, &out),
             },
             code => TestOutcome::Fail {
-                reason: format!(
-                    "isolated exit {}: {}",
-                    code,
-                    isolated_message(&out.stderr, &out.stdout)
-                ),
+                reason: format!("isolated exit {}: {}", code, isolated_message(&err, &out)),
             },
         },
         Err(e) => TestOutcome::Fail {
-            reason: format!("isolated spawn ({}): {}", bin.display(), e),
+            reason: format!("isolated ({}): {}", bin.display(), e),
         },
     }
 }
@@ -424,6 +482,33 @@ mod tests {
             TestOutcome::Pass,
             "second in-thread run must not leak NEW_TARGET: {:?}",
             second
+        );
+    }
+
+    #[test]
+    fn command_timeout_kills_stale_subprocess() {
+        use std::process::Stdio;
+        use std::time::{Duration, Instant};
+        // A long-running subprocess must be killed once the deadline passes,
+        // so a hung test's process does not linger as a stale process.
+        let mut cmd = std::process::Command::new("sleep");
+        cmd.arg("60")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let start = Instant::now();
+        let r = run_command_with_timeout(&mut cmd, Duration::from_millis(400));
+        assert!(
+            r.is_err(),
+            "long-running command must be killed on timeout, got: {:?}",
+            r
+        );
+        assert!(
+            r.unwrap_err().contains("timed out"),
+            "error should mention timeout"
+        );
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "subprocess must be killed promptly, not waited on"
         );
     }
 
