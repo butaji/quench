@@ -378,6 +378,12 @@ Node-environment-limited cases). The current actionable owned queue is HTTP
 authoritative; its focused-evidence freshness marker remains stale until the
 next focused gate.
 
+The complete focused gate then ran all 1,992 compatibility stages serially at
+2026-08-08T02:49:07Z and finished at 02:54:53Z: 1,992 passed, zero failed,
+zero retries, and zero policy-covered failures. This refreshes the focused
+contract evidence for the current stage inventory; the broad differential
+report still needs a post-gate rerun to carry the latest commit fingerprint.
+
 The next HTTP slice exposed missing `pause()` methods on incoming requests and
 responses. Both now preserve the Node chainable surface; focused stage 2084
 passes, as do upstream `test-http-pause-no-dump.js` and
