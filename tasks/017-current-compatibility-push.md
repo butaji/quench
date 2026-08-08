@@ -672,3 +672,7 @@ Focused stage 2139 prevents deferred `Readable` data delivery after
 destruction, including listeners added after the stream is destroyed. The
 focused no-data-flush contract passes; this closes one component of the
 remaining abort/read lifecycle mismatch.
+
+Stages 2144–2147 add focused coverage for automatic stream destruction across
+readable, writable, transform, and pipe-error paths. All four contracts pass,
+and the upstream `test-stream-auto-destroy.js` fixture passes as well.
