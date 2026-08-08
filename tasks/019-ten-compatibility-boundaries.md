@@ -659,6 +659,13 @@ the internal `timers.getLibuvNow()` binding through the host monotonic clock.
 This verifies 30 successive one-millisecond callbacks preserve both order and
 monotonic timestamp behavior.
 
+The net server-close sweep now has a precise boundary: two connection events,
+two socket close events, and the `server.close()` callback are observed, but
+the server `close` listener is not observed through the close method. Direct
+`server.emit("close")` works in isolation, so the remaining issue is the close
+method's lifecycle state/dispatch interaction. The end-before-connect fixture
+remains fully passing.
+
 The net end-before-connect boundary is now fixed. `server.listen(callback)`
 supports the callback-only overload; pending client `end()` waits for peer
 creation; servers without a connection handler still create lifecycle peers;
