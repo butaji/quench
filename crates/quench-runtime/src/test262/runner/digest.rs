@@ -30,8 +30,11 @@ pub fn run_stage_digest(
         );
     }
 
-    // In-process stack overflow aborts the entire digest; default digest to subprocess.
-    let use_isolated = flags.isolated || (flags.digest && !inprocess_digest());
+    // Default to the fast in-process path (thread-local harness-IR cache; ~12x
+    // faster, validated crash-free on the class stage). Known crash files are
+    // still routed to a subprocess inside `one_test`. Set `TEST262_ISOLATED=1`
+    // to run every test in a subprocess (full crash isolation, slower).
+    let use_isolated = flags.isolated;
 
     let outcomes = if flags.parallel {
         run_parallel(harness, tests, flags, use_isolated)
@@ -78,13 +81,6 @@ pub fn run_stage_digest(
             first_failure: failures.first().cloned(),
         },
     }
-}
-
-fn inprocess_digest() -> bool {
-    std::env::var("TEST262_INPROCESS")
-        .ok()
-        .map(|s| s == "1" || s.eq_ignore_ascii_case("true"))
-        .unwrap_or(false)
 }
 
 fn run_serial(
