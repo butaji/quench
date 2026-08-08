@@ -10,6 +10,11 @@ loading, staging, process isolation, metrics, and reports. The only
 connection is a host execution interface; the runner never inspects engine
 internals.
 
+Long-term the runtime boundary grows into ADR 0003's crate split
+(`frontend_oxc / compiler / bytecode / vm / runtime / heap / host`, with
+`runtime`, `vm`, `heap` never depending on OXC or a TS checker); the host
+execution interface defined here is the seed of the `host` crate boundary.
+
 ## Status (2026-08-08)
 
 Done: public `Test262Host` contract; generic `Runtime` façade with typed

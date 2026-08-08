@@ -1,5 +1,19 @@
 # Architecture
 
+**North star (ADR 0003):** two parallel planes — an **ECMAScript
+execution plane** (always correct, dynamic, test262-compatible; the only
+plane that runs code) and a **TypeScript semantic plane** (persistent,
+reflectable `TypeGraph` metadata used for optimization and opt-in runtime
+validation). The planes meet only through **guards**, never by trusting
+annotations. `TypeId` (semantic type), `ShapeId` (runtime layout), and
+`Rep` (machine representation) are never merged. Long-term pipeline:
+`OXC → binder/module graph → typed HIR (temporary) → {TypeGraph
+(persistent, mmap-able), compact bytecode (canonical exec format)} →
+interpreter + guards → typed specialization → baseline/JIT`. Crate
+boundaries, heap design (tagged `Value`, `HeapRef(u32)`, shapes), frozen
+module images, runtime type modes, and JSX backends:
+`docs/adr/0003-two-plane-architecture.md`.
+
 **Goal:** a pure JavaScript engine in `quench-runtime` and an isolated
 `quench-test262` conformance runner, converging on 100% ECMA-262 test262
 with minimum memory/RSS, V8-grade performance, and no undocumented skips
@@ -35,9 +49,11 @@ must not touch the others.
 may still return the lowered runtime `Program` while callers migrate to the
 `*_ir` entry points.
 
-**Decision (ADR 0002):** the IR is a compact, index-addressed **instruction
-IR** executed by a pc-based IR interpreter — not an AST walker, and not a
-bytecode VM yet (no opcode encoding, no register allocation). `IrProgram`
+**Decision (ADR 0002, scoped by ADR 0003):** the IR is a compact,
+index-addressed **instruction IR** executed by a pc-based IR interpreter —
+not an AST walker, and not a bytecode VM *yet* (no opcode encoding, no
+register allocation at this milestone; compact accumulator+register
+bytecode is the north-star encoding per ADR 0003). `IrProgram`
 owns arenas (`funcs`, `consts`, `atoms`, legacy AST side tables); each
 `IrFunction` holds a `Box<[Instr]>` of high-level ops with `u32` operands
 plus a try-handler table. An `src/ir/compile/` pass lowers `crate::ast` →
@@ -182,6 +198,10 @@ Hand-rolled copies — including `chrono_*` helpers that never import
 `chrono` — are forbidden.
 
 ## Value representation — NaN boxing *(R11 target)*
+
+*(Subsumed long-term by ADR 0003's heap design: 64-bit tagged `Value`,
+`HeapRef(u32)` instead of raw pointers, shape-based objects, generational
+GC. NaN boxing is the near-term step toward the tagged `Value`.)*
 
 JS values (`JsValue`) fit in a single `u64` via NaN boxing — the same
 technique used by QuickJS, JSC, V8, and Boa.
