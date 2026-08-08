@@ -1158,8 +1158,17 @@ class __QuenchVirtualFileSystem {
         try {
           const data =
             typeof chunk === "string" ? chunk : globalThis.Buffer.from(chunk);
-          if (flags.includes("a")) this.appendFileSync(path, data);
-          else this.writeFileSync(path, data);
+          if (stream.fd === null) {
+            stream.fd = this.openSync(path, flags);
+            if (options.start !== undefined && !flags.includes("a")) {
+              this.__fdPositions.set(stream.fd, Number(options.start));
+            }
+          }
+          if (flags.includes("a")) {
+            this.writeSync(stream.fd, data, 0, data.length, null);
+          } else {
+            this.writeSync(stream.fd, data, 0, data.length, null);
+          }
           callback();
         } catch (error) {
           callback(error);
@@ -1170,7 +1179,7 @@ class __QuenchVirtualFileSystem {
     stream.fd = null;
     setTimeout(() => {
       try {
-        stream.fd = this.openSync(path, flags);
+        if (stream.fd === null) stream.fd = this.openSync(path, flags);
         stream.emit("open", stream.fd);
         stream.emit("ready");
       } catch (error) {
