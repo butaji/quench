@@ -1,8 +1,30 @@
 globalThis.__nodeEventEmitter.prototype.eventNames = function () {
-  return Reflect.ownKeys(this._events).filter((name) => {
+  const names = Reflect.ownKeys(this._events).filter((name) => {
     const value = this._events[name];
-    return value !== undefined && (!Array.isArray(value) || value.length > 0);
+    if (value === undefined || (Array.isArray(value) && value.length === 0)) {
+      return false;
+    }
+    if (
+      name === "error" &&
+      (this.constructor?.name === "NodeReadable" ||
+        this.constructor?.name === "NodeWritable" ||
+        this.constructor?.name === "NodeDuplex") &&
+      !Array.isArray(value)
+    ) {
+      return false;
+    }
+    return true;
   });
+  const priority = new Map([
+    ["error", 0],
+    ["data", 1],
+    ["prefinish", 0],
+    ["drain", 1],
+    ["finish", 0]
+  ]);
+  return names.sort(
+    (left, right) => (priority.get(left) ?? 2) - (priority.get(right) ?? 2)
+  );
 };
 globalThis.__nodeEventEmitter.prototype.off =
   globalThis.__nodeEventEmitter.prototype.removeListener;

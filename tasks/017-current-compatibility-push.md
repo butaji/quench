@@ -763,3 +763,8 @@ Node-only failures, and 77 timeouts. The largest Quench-only prefixes are
 `http2` (265), `http` (239), `tls` (160), `fs` (154), and `stream` (140).
 The first `fs-access` candidate is environment-sensitive under the local
 root/user setup and is not being treated as a portable compatibility fix.
+
+Focused stage 2171 aligns stream `eventNames()` ordering for Node’s priority
+events and hides the stream’s internal auto-destroy error listener when no
+user error listener is present. The focused contract and upstream
+`test-stream-event-names.js` both pass.
