@@ -69,20 +69,6 @@ fn same_value_zero(a: &Value, b: &Value) -> bool {
 }
 
 /// Array.prototype.indexOf(searchElement, fromIndex?)
-pub fn proto_index_of(args: Vec<Value>) -> Result<Value, JsError> {
-    let elements = get_this_array()?;
-    let search = args.first().cloned().unwrap_or(Value::Undefined);
-    let from_idx = resolve_from_index(args.get(1), elements.len());
-
-    #[allow(clippy::needless_range_loop)]
-    for i in from_idx..elements.len() {
-        if crate::value::strict_eq(&elements[i], &search) {
-            return Ok(Value::Number(i as f64));
-        }
-    }
-    Ok(Value::Number(-1.0))
-}
-
 /// Array.prototype.includes(searchElement, fromIndex?)
 pub fn proto_includes(args: Vec<Value>) -> Result<Value, JsError> {
     let elements = get_this_array()?;
@@ -149,9 +135,7 @@ pub fn proto_find_last_index(args: Vec<Value>) -> Result<Value, JsError> {
 #[cfg(test)]
 mod tests {
     fn create_test_context() -> crate::Context {
-        let mut ctx = crate::Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
-        ctx
+        crate::Context::new().unwrap()
     }
 
     #[test]
