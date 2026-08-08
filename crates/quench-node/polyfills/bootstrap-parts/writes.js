@@ -439,11 +439,11 @@ const __nodeFsAttachPull = (handle) => {
     if (!globalThis.__nodeFdPaths[handle.fd] || handle._pullLocked) {
       throw new Error("The file handle is not in a valid state");
     }
-    handle._pullLocked = true;
     const transform =
       typeof transformOrOptions === "function" ? transformOrOptions : undefined;
     const options = transform ? maybeOptions || {} : transformOrOptions || {};
     __nodeFsValidatePullOptions(options);
+    handle._pullLocked = true;
     const { batches, end } = __nodeFsPullBatches(handle, options);
     return {
       [Symbol.asyncIterator]: () =>

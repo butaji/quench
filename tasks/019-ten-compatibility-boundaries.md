@@ -322,6 +322,11 @@ Stage 2401 adds that missing concurrency evidence: basic, binary, ranged,
 chunked, and already-aborted pulls pass concurrently. The remaining upstream
 failure is therefore narrowed further to the unrepresented auto-close,
 transform, or end-of-suite validation/lifecycle cases.
+Stage 2402 covers those lifecycle cases concurrently and passes. It also fixes
+`pull()` validation ordering so rejected options do not leave a handle locked.
+The authoritative fixture still reports `Callback 0`, so its remaining issue
+is not reproduced by the focused pull contracts and needs a harness-level
+failure probe before further implementation changes.
 
 Stage 2378 passes the four basic stream `destroy()` contracts for readable and
 writable streams, including implicit `AbortError`, explicit error messages,
