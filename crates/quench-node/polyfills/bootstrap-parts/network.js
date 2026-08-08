@@ -616,14 +616,19 @@ const __quenchNetModule = {
       return server;
     };
     server.close = (callback) => {
+      if (!server.listening) return server;
       server.listening = false;
       __quenchNetServers.delete(server);
       if (server._nativeId) {
         __quench_tcp_close(server._nativeId);
         server._nativeId = 0;
       }
+      let callbackCalled = false;
       queueMicrotask(() => {
-        if (typeof callback === "function") callback.call(server);
+        if (typeof callback === "function" && !callbackCalled) {
+          callbackCalled = true;
+          callback.call(server);
+        }
         server.emit("close");
       });
       return server;
