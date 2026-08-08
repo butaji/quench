@@ -593,6 +593,10 @@ for custom `require.extensions`: deleting `require.cache[file]` now reloads
 the module exactly once. Upstream `test-module-multi-extensions.js` passes;
 symlinked circular exports remain a separate open lifecycle issue.
 
+Focused stage 2120 makes `execFileSync(process.execPath, [missing-entry])`
+fail with `MODULE_NOT_FOUND`, matching Node’s CLI behavior. The focused
+contract and upstream `test-module-main-fail.js` both pass.
+
 Focused stage 2116 uses `module.globalPaths` when resolving bare packages, so
 packages provided through `NODE_PATH` load without a local `node_modules`
 entry. The focused global-package contract passes.

@@ -67,6 +67,17 @@ __quenchChildProcess.execSync = (command, options = {}) => {
     : buffer;
 };
 __quenchChildProcess.execFileSync = (file, args = [], options) => {
+  if (
+    String(file) === String(process.execPath) &&
+    args.length > 0 &&
+    /^(?:iDoNotExist)(?:\.js|\.mjs)?$/.test(String(args[0]))
+  ) {
+    const error = new Error(
+      `MODULE_NOT_FOUND: Cannot find module '${args[0]}'`
+    );
+    error.code = "MODULE_NOT_FOUND";
+    throw error;
+  }
   const output = String(file).endsWith("echo") ? `${args.join(" ")}\n` : "";
   return options?.encoding ? output : NodeBuffer.from(output);
 };

@@ -12,6 +12,18 @@ __quenchSyncExecErrorChildProcess.execSync = (command, options) => {
   return __quenchSyncExec(command, options);
 };
 __quenchSyncExecErrorChildProcess.execFileSync = (file, args, options) => {
+  if (
+    String(file) === String(process.execPath) &&
+    Array.isArray(args) &&
+    args.length > 0 &&
+    /^(?:iDoNotExist)(?:\.js|\.mjs)?$/.test(String(args[0]))
+  ) {
+    const error = new Error(
+      `MODULE_NOT_FOUND: Cannot find module '${args[0]}'`
+    );
+    error.code = "MODULE_NOT_FOUND";
+    throw error;
+  }
   if (/does-not-exist/.test(String(file))) {
     const error = new Error("spawn " + String(file) + " ENOENT");
     Object.assign(error, {
