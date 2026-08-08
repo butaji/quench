@@ -324,7 +324,7 @@ const __quenchDgramSend = (socket, message, ...args) => {
         size: deliveredPayload.byteLength
       });
     }
-    if (typeof callback === "function") callback(null, length);
+    if (target && typeof callback === "function") callback(null, length);
   });
   return socket;
 };
