@@ -166,6 +166,9 @@ class NodeAbortSignal {
       if (combined.aborted) return;
       combined.aborted = true;
       combined.reason = signal.reason;
+      for (const value of values) {
+        if (value !== signal) clearTimeout(value.__timeoutTimer);
+      }
       const event = { type: "abort", target: combined };
       combined._listeners
         .slice()
@@ -190,7 +193,7 @@ class NodeAbortSignal {
   }
   static timeout(milliseconds) {
     const signal = new NodeAbortSignal();
-    setTimeout(() => {
+    signal.__timeoutTimer = setTimeout(() => {
       const reason = new Error("The operation was aborted due to timeout");
       reason.name = "TimeoutError";
       signal.aborted = true;
