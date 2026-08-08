@@ -7,7 +7,7 @@ let __quenchDgramNextPort = 40000;
 const __quenchDgramTypeDetail = (value) => {
   if (typeof value === "number") return ` Received type number (${value})`;
   if (typeof value === "boolean") return ` Received type boolean (${value})`;
-  if (typeof value === "bigint") return ` Received type bigint (${value}n)`;
+  if (typeof value === "bigint") return ` Received type bigint (${value})`;
   if (typeof value === "symbol") {
     return ` Received type symbol (${String(value)})`;
   }
