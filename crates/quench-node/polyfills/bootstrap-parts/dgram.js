@@ -132,7 +132,11 @@ const __quenchDgramSend = (socket, message, ...args) => {
     typeof message === "string"
       ? NodeBuffer.from(message)
       : Array.isArray(message)
-        ? NodeBuffer.concat(message)
+        ? NodeBuffer.concat(
+            message.map((chunk) =>
+              typeof chunk === "string" ? NodeBuffer.from(chunk) : chunk
+            )
+          )
         : message;
   const length = hasOffset ? args[1] : payload.byteLength;
   if (socket._connected) {
@@ -246,7 +250,10 @@ const __quenchDgramRemoteAddress = (socket) => {
       code: "ERR_SOCKET_DGRAM_NOT_CONNECTED"
     });
   }
-  return { ...socket._remote, family: "IPv4" };
+  return {
+    ...socket._remote,
+    family: socket.type === "udp6" ? "IPv6" : "IPv4"
+  };
 };
 const __quenchDgramClose = (socket, callback) => {
   socket._bound = false;
@@ -359,7 +366,7 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
     sendto: (message, ...args) => __quenchDgramSendTo(socket, message, ...args),
     connect: (port, address, callback) =>
       __quenchDgramConnect(socket, port, address, callback),
-    connectSync: (port, address = "127.0.0.1") => {
+    connectSync: (port, address = type === "udp6" ? "::1" : "127.0.0.1") => {
       if (socket._bindPending) {
         throw Object.assign(new Error("Socket is already bound"), {
           code: "ERR_SOCKET_ALREADY_BOUND"
@@ -400,6 +407,7 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
       }
       if (!socket._bound) {
         socket._bound = true;
+        __quenchDgramSockets.add(socket);
         const localPort = __quenchDgramNextPort++;
         __quenchDgramBoundPorts.add(localPort);
         socket._address = {
@@ -410,7 +418,7 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
       }
       socket._connected = true;
       socket._remote = { address, port };
-      queueMicrotask(() => socket._bound && socket.emit("connect"));
+      setImmediate(() => socket._bound && socket.emit("connect"));
     },
     disconnect: () => __quenchDgramDisconnect(socket),
     remoteAddress: () => __quenchDgramRemoteAddress(socket),
