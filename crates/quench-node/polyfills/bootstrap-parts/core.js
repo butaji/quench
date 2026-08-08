@@ -1023,8 +1023,17 @@ const __quenchChildProcessModule = () => {
   globalThis.__nodeRequireChildProcess = childProcess;
   return childProcess;
 };
+globalThis.__quenchRequireCorePart00Base = (name) =>
+  __quenchRequireCoreBase(name);
+globalThis.__quench_require_part_00_base =
+  globalThis.__quenchRequireCorePart00Base;
 globalThis.__quench_require_part_00 = (name, specifier) => {
-  const base = __quenchRequireCoreBase(String(name).replace(/^node:/, ""));
+  const normalizedName = String(name);
+  const base = __quenchRequireCoreBase(
+    normalizedName.startsWith("node:")
+      ? normalizedName.slice(5)
+      : normalizedName
+  );
   if (base !== undefined) return base;
 };
 let __quenchHttpModule;
@@ -3058,7 +3067,12 @@ let __quenchHttpModule;
   }
 }
 globalThis.__quench_require_part_00 = (name, specifier) => {
-  const base = __quenchRequireCoreBase(String(name).replace(/^node:/, ""));
+  const normalizedName = String(name);
+  const base = globalThis.__quench_require_part_00_base(
+    normalizedName.startsWith("node:")
+      ? normalizedName.slice(5)
+      : normalizedName
+  );
   if (base !== undefined) return base;
   if (name === "http") return globalThis.__nodeHttp || __quenchHttpModule;
   if (name === "child_process") {
