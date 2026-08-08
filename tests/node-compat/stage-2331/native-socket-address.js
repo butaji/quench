@@ -1,7 +1,10 @@
 const assert = require("assert");
 const net = require("net");
 
-const server = net.createServer(() => {});
+const server = net.createServer((socket) => {
+  assert.strictEqual(socket.remoteAddress, "127.0.0.1");
+  assert.ok(socket.remotePort > 0);
+});
 server.listen(
   { port: 0, host: "127.0.0.1", __quenchNativeTransport: true },
   () => {
