@@ -7,14 +7,28 @@ globalThis.__quenchInternalFsBinding = {
 };
 globalThis.__quenchInternalFallbackBinding = { fstat: () => undefined };
 globalThis.__quenchDgramUdpFds = new Set();
+globalThis.__quenchDgramActiveFds = new Set();
+let __quenchDgramNextHandleFd = 60000;
 globalThis.__quenchDgramUDPClass = class UDP {
   constructor() {
     this.fd = -1;
   }
-  bind(address, _port, _flags) {
+  bind(address, port, _flags) {
     if (address === "localhost") return -99;
-    this.fd = 1;
+    this.fd = __quenchDgramNextHandleFd++;
+    this._address = {
+      address,
+      port: port || 40000,
+      family: address.includes(":") ? "IPv6" : "IPv4"
+    };
     globalThis.__quenchDgramUdpFds.add(this.fd);
+    return 0;
+  }
+  bind6(address, port, flags) {
+    return this.bind(address, port, flags);
+  }
+  getsockname(result) {
+    Object.assign(result, this._address || {});
     return 0;
   }
   close() {

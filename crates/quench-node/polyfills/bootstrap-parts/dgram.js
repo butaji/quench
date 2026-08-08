@@ -78,6 +78,7 @@ const __quenchDgramBind = (socket, type, port, address, callback) => {
   __quenchDgramSockets.add(socket);
   socket._bindPending = true;
   __quenchDgramBoundPorts.add(resolvedPort);
+  globalThis.__quenchDgramActiveFds.add(resolvedPort);
   socket[__quenchDgramStateSymbol].handle.fd = resolvedPort;
   globalThis.__quenchDgramUdpFds.add(resolvedPort);
   socket._address = {
@@ -444,6 +445,11 @@ const __quenchDgramClose = (socket, callback) => {
   socket._closed = true;
   socket._bound = false;
   __quenchDgramSockets.delete(socket);
+  if (socket[__quenchDgramStateSymbol]?.handle?.fd !== undefined) {
+    globalThis.__quenchDgramActiveFds.delete(
+      socket[__quenchDgramStateSymbol].handle.fd
+    );
+  }
   if (socket._address) __quenchDgramBoundPorts.delete(socket._address.port);
   if (typeof callback === "function") callback();
   queueMicrotask(() => socket.emit("close"));
@@ -490,14 +496,29 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
         });
       }
       if (port && typeof port === "object" && port.fd !== undefined) {
-        if (globalThis.__quenchDgramUdpFds.has(port.fd)) {
+        if (globalThis.__quenchDgramActiveFds.has(port.fd)) {
           throw Object.assign(new Error("open EEXIST"), {
             code: "EEXIST"
           });
         }
-        throw Object.assign(new TypeError("Unsupported fd type: TCP"), {
-          code: "ERR_INVALID_FD_TYPE"
+        if (!globalThis.__quenchDgramUdpFds.has(port.fd)) {
+          throw Object.assign(new TypeError("Unsupported fd type: TCP"), {
+            code: "ERR_INVALID_FD_TYPE"
+          });
+        }
+        socket._bound = true;
+        socket[__quenchDgramStateSymbol].handle.fd = port.fd;
+        globalThis.__quenchDgramActiveFds.add(port.fd);
+        socket._address = {
+          address: port.address || (type === "udp6" ? "::" : "0.0.0.0"),
+          family: type === "udp6" ? "IPv6" : "IPv4",
+          port: port.port || __quenchDgramNextPort++
+        };
+        setImmediate(() => {
+          callback?.call(socket);
+          socket.emit("listening");
         });
+        return socket;
       }
       if (typeof address === "function") {
         callback = address;
