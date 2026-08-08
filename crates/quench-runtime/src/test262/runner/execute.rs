@@ -143,10 +143,12 @@ fn run_prepared(
 /// thread-local harness-IR cache in `eval_harness_file` to be reused across
 /// many tests processed by the same worker thread.
 fn run_in_thread(script: &str, is_module: bool, meta: &Test262Metadata) -> TestOutcome {
-    // Clear thread-local Test262Error state so each mode (sloppy/strict) on this
-    // shared thread installs its own main-realm Test262Error (see
-    // reset_test262_error_state).
+    // The threaded runner got a clean interpreter + harness state per test from
+    // a fresh thread; the in-thread runner reuses one thread, so reset the
+    // thread-local state each top-level run (sloppy/strict) to match it.
+    crate::interpreter::reset_interpreter_state();
     crate::value::error::reset_test262_error_state();
+    crate::builtins::symbol::reset_global_symbol_registry();
     let mut inner = QuenchHost::new();
     let result = if is_module {
         inner.run_module_script(script)
@@ -395,6 +397,33 @@ mod tests {
             matches!(bad, TestOutcome::Fail { .. }),
             "mismatched runtime error type must fail: {:?}",
             bad
+        );
+    }
+
+    #[test]
+    fn in_thread_symbol_test_does_not_leak_new_target() {
+        use crate::test262::runner::default_test262_dir;
+        let dir = default_test262_dir();
+        // A minimal test262 test that calls Symbol as a function. A stale
+        // NEW_TARGET leaked from a prior test in the same thread would make
+        // even `Symbol('x')` throw "not a constructor".
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("symbol-call.js");
+        std::fs::write(
+            &file,
+            "/*---\ndescription: symbol call\n---*/\n\
+             if (typeof Symbol('x') !== 'symbol') throw new Error('bad');\n",
+        )
+        .unwrap();
+        let h = HarnessLoader::new(&dir);
+        let first = super::run_single_test_in_thread(&h, &file);
+        let second = super::run_single_test_in_thread(&h, &file);
+        assert_eq!(first, TestOutcome::Pass, "first run: {:?}", first);
+        assert_eq!(
+            second,
+            TestOutcome::Pass,
+            "second in-thread run must not leak NEW_TARGET: {:?}",
+            second
         );
     }
 
