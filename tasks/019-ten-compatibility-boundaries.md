@@ -408,6 +408,9 @@ The ctime fixture now passes as well. In-memory entries expose `mtimeMs` and
 The fd fixture now passes completely after enforcing `EISDIR` for directory
 opens and matching Node's async `read`/`write` callback result shapes,
 including the returned buffer argument.
+The mount-error fixture now passes completely: cross-VFS and VFS/real-fs
+operations report `EXDEV`, and `internal/fs/utils.vfsState.handlers` tracks
+mount registration and last-unmount cleanup.
 Stage 2418 verifies the public `MemoryProvider` surface and append-to-new-file
 behavior. The separate dynamic-provider fixture remains an internal-model
 gap: it expects Node's `kRoot` symbol and lazy entry objects, which are not yet

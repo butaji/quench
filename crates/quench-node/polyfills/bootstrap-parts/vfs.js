@@ -1595,11 +1595,17 @@ class __QuenchVirtualFileSystem {
     }
     this.mountPoint = mountPoint;
     __quenchVfsMounts.add(this);
+    if (globalThis.__quenchVfsState) {
+      globalThis.__quenchVfsState.handlers ||= {};
+    }
     return this;
   }
   unmount() {
     __quenchVfsMounts.delete(this);
     this.mountPoint = null;
+    if (globalThis.__quenchVfsState && __quenchVfsMounts.size === 0) {
+      globalThis.__quenchVfsState.handlers = null;
+    }
   }
   get mounted() {
     return this.mountPoint !== null;
@@ -1855,6 +1861,22 @@ const __quenchVfsWrapFs = (name, fallback) => {
     if (typeof path === "number") {
       for (const vfs of __quenchVfsMounts) {
         if (vfs.__fds.has(path)) return vfs[name](path, ...args);
+      }
+    }
+    if (
+      (name === "renameSync" ||
+        name === "copyFileSync" ||
+        name === "linkSync") &&
+      typeof args[0] === "string"
+    ) {
+      const sourceVfs = [...__quenchVfsMounts]
+        .reverse()
+        .find((item) => item.shouldHandle(path));
+      const destinationVfs = [...__quenchVfsMounts]
+        .reverse()
+        .find((item) => item.shouldHandle(args[0]));
+      if (sourceVfs && sourceVfs !== destinationVfs) {
+        throw __quenchVfsError("EXDEV", name.replace(/Sync$/, ""), path);
       }
     }
     for (const vfs of [...__quenchVfsMounts].reverse()) {
