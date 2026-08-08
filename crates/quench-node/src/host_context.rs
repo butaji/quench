@@ -495,6 +495,68 @@ macro_rules! run_host_context {
         ctx.globals().set("__quench_fs_write_bytes", Func::from(|path: String, bytes: Vec<u8>| -> rquickjs::Result<()> {
             fs::write(path, bytes).map_err(|_| rquickjs::Error::new_from_js("fs", "writeFileSync failed"))
         }))?;
+        ctx.globals().set("__quench_fs_native_open", Func::from(|path: String, flags: String| -> rquickjs::Result<i32> {
+            #[cfg(unix)]
+            {
+                let bits = match flags.as_str() {
+                    "r" => libc::O_RDONLY,
+                    "r+" => libc::O_RDWR,
+                    "w" => libc::O_WRONLY | libc::O_CREAT | libc::O_TRUNC,
+                    "w+" => libc::O_RDWR | libc::O_CREAT | libc::O_TRUNC,
+                    "a" => libc::O_WRONLY | libc::O_CREAT | libc::O_APPEND,
+                    "a+" => libc::O_RDWR | libc::O_CREAT | libc::O_APPEND,
+                    _ => return Err(rquickjs::Error::new_from_js("fs", "openSync failed")),
+                };
+                let path = std::ffi::CString::new(path).map_err(|_| rquickjs::Error::new_from_js("fs", "openSync failed"))?;
+                let fd = unsafe { libc::open(path.as_ptr(), bits, 0o666) };
+                if fd < 0 { Err(rquickjs::Error::new_from_js("fs", "openSync failed")) } else { Ok(fd) }
+            }
+            #[cfg(not(unix))]
+            let _ = (path, flags);
+            #[cfg(not(unix))]
+            Err(rquickjs::Error::new_from_js("fs", "openSync failed"))
+        }))?;
+        ctx.globals().set("__quench_fs_native_read_all", Func::from(|fd: i32| -> rquickjs::Result<Vec<u8>> {
+            #[cfg(unix)]
+            {
+                let mut output = Vec::new();
+                let mut buffer = [0u8; 8192];
+                loop {
+                    let count = unsafe { libc::read(fd, buffer.as_mut_ptr().cast(), buffer.len()) };
+                    if count < 0 { return Err(rquickjs::Error::new_from_js("fs", "readFileSync failed")); }
+                    if count == 0 { break; }
+                    output.extend_from_slice(&buffer[..count as usize]);
+                }
+                return Ok(output);
+            }
+            #[cfg(not(unix))]
+            let _ = fd;
+            #[cfg(not(unix))]
+            Err(rquickjs::Error::new_from_js("fs", "readFileSync failed"))
+        }))?;
+        ctx.globals().set("__quench_fs_native_write", Func::from(|fd: i32, bytes: Vec<u8>| -> rquickjs::Result<()> {
+            #[cfg(unix)]
+            {
+                let count = unsafe { libc::write(fd, bytes.as_ptr().cast(), bytes.len()) };
+                if count < 0 || count as usize != bytes.len() { return Err(rquickjs::Error::new_from_js("fs", "writeFileSync failed")); }
+                return Ok(());
+            }
+            #[cfg(not(unix))]
+            let _ = (fd, bytes);
+            #[cfg(not(unix))]
+            Err(rquickjs::Error::new_from_js("fs", "writeFileSync failed"))
+        }))?;
+        ctx.globals().set("__quench_fs_native_close", Func::from(|fd: i32| -> rquickjs::Result<()> {
+            #[cfg(unix)]
+            {
+                if unsafe { libc::close(fd) } != 0 { return Err(rquickjs::Error::new_from_js("fs", "closeSync failed")); }
+                return Ok(());
+            }
+            #[cfg(not(unix))]
+            let _ = fd;
+            #[cfg(not(unix))]
+            Err(rquickjs::Error::new_from_js("fs", "closeSync failed"))
+        }))?;
         ctx.globals().set(
             "__quench_fs_open",
             Func::from(|path: String, flags: String| -> rquickjs::Result<u32> {

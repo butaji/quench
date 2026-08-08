@@ -227,6 +227,12 @@ write assertion: `test-vfs-fs-openSync.js` passes, while
 the mounted portions of `test-vfs-fs-readFileSync.js`/
 `test-vfs-fs-writeFileSync.js` still fail because wrapped JS descriptors do not
 reach a native fd-backed read/write/close seam.
+That native seam is now implemented for real-provider synchronous descriptors:
+open, read-from-current-offset, write-at-current-offset, and close use host
+fd operations. `test-vfs-fs-writeFileSync.js`,
+`test-vfs-fs-readFileSync.js`, and `test-vfs-fs-openSync.js` pass, including
+write-after-rename inode behavior. Real-provider handle/promises fixtures still
+need their async handle methods wired to the same native descriptor state.
 
 Stage 2378 passes the four basic stream `destroy()` contracts for readable and
 writable streams, including implicit `AbortError`, explicit error messages,
