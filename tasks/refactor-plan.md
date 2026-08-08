@@ -27,7 +27,11 @@ stays generic over
 `Runtime<Heap, Collector, Allocator, Frames, Executor, Exceptions, Environments>`
 so subsystem implementations remain swappable behind clean trait
 boundaries. Architecture is a small Rust core + self-hosted JS builtins
-(see `docs/architecture.md`). Execution order is decided by
+(see `docs/architecture.md`). **Aggressive JS-first (ADR 0001):** default every
+builtin/spec-op to JS; keep a piece in Rust only when (a) the JS implementation
+would be the same or larger in LOC, or (b) it is a very sensitive core feature
+(property/value store, GC, the interpreter, `__ops__`, the parser). When in
+doubt, write it in JS. Execution order is decided by
 `tasks/10-ways-to-speed-up.md` (Phases A → B → C) — this file is the
 work queue behind that path.
 
@@ -42,8 +46,8 @@ repo-wide split sweeps ahead of failing test262 clusters.
 
 | Metric | Value |
 |--------|-------|
-| JS builtins | **0** — R0 not started |
-| `__ops__` / `eval/ops.rs` | **scaffold** — re-exports + frozen `__ops__` wrapper; not yet the single owner |
+| JS builtins | **started** — bootstrap + `isNaN`/`isFinite` landed (see `tasks/js-builtins-migration.md`) |
+| `__ops__` / `eval/ops.rs` | **partial** — `__ops__` registered at init; still needs the full op surface owned in `eval/ops.rs` |
 | Current stage | per `tasks/index.json` (`current_stage`) — run the stage to know where you stand |
 
 File:line references in this plan are snapshots; re-locate by symbol name

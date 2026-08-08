@@ -1,12 +1,20 @@
 # JS Builtins Migration — Rust Core gap
 
-**Status:** in_progress · **Goal:** ADR 0001 — everything that can be done in JS
-must be done in JS; the Rust core stays at the minimum possible size. Today all
+**Status:** in_progress · **Goal:** ADR 0001 — **aggressive JS-first**: default
+everything to JS; the Rust core stays at the minimum possible size. Today most
 builtins are Rust (`crates/quench-runtime/src/builtins/*.rs`); the target is a
 self-hosted `builtins/*.js` tree calling only the `__ops__` bridge.
 
-**Pause:** stage-25 conformance pursuit is paused while this Rust Core gap lands;
-resume the stage sequence after.
+**Aggressive JS rule — JS unless exactly one of two exceptions holds:**
+1. A JS implementation would take the **same or more LOC** than the Rust
+   equivalent (Rust wins on size), or
+2. It is a **very sensitive core feature** (property/value store, GC, the
+   interpreter, `__ops__` itself, the parser).
+
+When in doubt, write it in JS.
+
+**Pause:** stage-25 conformance pursuit is paused while this Rust Core gap
+lands; resume the stage sequence after.
 
 ## Rust Core gap (R0 + R1 infrastructure) — DONE
 

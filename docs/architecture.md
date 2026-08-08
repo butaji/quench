@@ -31,9 +31,12 @@ The core gap is landed: `builtins/core/bootstrap.rs` evals embedded
 bridge. Proof-of-scale: `isNaN`/`isFinite` are self-hosted over
 `__ops__.toNumber`. Most builtins are still Rust
 (`crates/quench-runtime/src/builtins/*.rs`) — migration debt repaid per-stage
-under R0/R1. The governing rule (ADR 0001): everything that can be done in
-JS must be done in JS, keeping the Rust core at the minimum possible size. JS
-is ~1/3 the LOC of equivalent Rust and easier to keep spec-faithful.
+under R0/R1. The governing rule (ADR 0001) is **aggressive JS-first**: default
+every builtin/spec-op to JS, keeping the Rust core at the minimum possible
+size. Only two exceptions keep a piece in Rust: (a) the JS implementation
+would be the same or larger in LOC, or (b) it is a very sensitive core feature
+(property/value store, GC, the interpreter, `__ops__`, the parser). JS is ~1/3
+the LOC of equivalent Rust and easier to keep spec-faithful.
 
 **Boundaries:** the runtime stays generic over replaceable
 implementations so subsystems evolve independently:
