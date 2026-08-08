@@ -448,7 +448,9 @@ fn test_to_object_string_boxed() {
         Value::Object(o) => {
             let obj = o.borrow();
             assert_eq!(obj.exotic_kind, Some(ExoticKind::String));
-            assert_eq!(obj.get("0"), Some(Value::String("abc".to_string())));
+            assert_eq!(obj.get("0"), Some(Value::String("a".to_string())));
+            assert_eq!(obj.get("1"), Some(Value::String("b".to_string())));
+            assert_eq!(obj.get("2"), Some(Value::String("c".to_string())));
             assert_eq!(obj.get("length"), Some(Value::Number(3.0)));
         }
         _ => panic!("expected Object"),
