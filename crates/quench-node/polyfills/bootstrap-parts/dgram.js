@@ -482,6 +482,11 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
     _sendBlockList: options?.sendBlockList,
     _receiveBlockList: options?.receiveBlockList,
     bind: (port, address, callback) => {
+      if (socket._bound || socket._bindPending) {
+        throw Object.assign(new Error("Socket is already bound"), {
+          code: "ERR_SOCKET_ALREADY_BOUND"
+        });
+      }
       if (typeof address === "function") {
         callback = address;
         address = type === "udp6" ? "::" : "0.0.0.0";
