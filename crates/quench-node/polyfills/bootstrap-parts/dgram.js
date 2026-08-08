@@ -495,6 +495,10 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
           code: "ERR_SOCKET_ALREADY_BOUND"
         });
       }
+      if (typeof address === "function") {
+        callback = address;
+        address = undefined;
+      }
       if (port && typeof port === "object" && port.fd !== undefined) {
         if (globalThis.__quenchDgramActiveFds.has(port.fd)) {
           throw Object.assign(new Error("open EEXIST"), {
@@ -507,6 +511,7 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
           });
         }
         socket._bound = true;
+        __quenchDgramSockets.add(socket);
         socket[__quenchDgramStateSymbol].handle.fd = port.fd;
         globalThis.__quenchDgramActiveFds.add(port.fd);
         socket._address = {
@@ -523,6 +528,7 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
             globalThis.__quenchDgramUdpHandleInfo.get(port.fd)?.port ||
             __quenchDgramNextPort++
         };
+        __quenchDgramBoundPorts.add(socket._address.port);
         setImmediate(() => {
           callback?.call(socket);
           socket.emit("listening");
