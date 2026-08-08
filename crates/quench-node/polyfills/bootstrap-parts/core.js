@@ -1593,7 +1593,9 @@ let __quenchHttpModule;
         if (bodyForbidden) {
           response.headers.connection = "close";
           delete response.headers["transfer-encoding"];
-          delete response.headers["content-length"];
+          if (response.statusCode !== 304) {
+            delete response.headers["content-length"];
+          }
         } else response.headers.connection ||= "keep-alive";
         if (!bodyForbidden && !response.headers["transfer-encoding"]) {
           response.headers["content-length"] = String(value.length);
