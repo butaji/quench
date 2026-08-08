@@ -84,7 +84,7 @@ const __quenchAddStreamDefaults = (result) => {
 const __quenchMakeCallableConstructor = (Constructor) => {
   if (Constructor.__quenchCallable) return Constructor;
   const callable = function (...args) {
-    return new Constructor(...args);
+    return Reflect.construct(Constructor, args, new.target || Constructor);
   };
   callable.prototype = Constructor.prototype;
   Object.setPrototypeOf(callable, Constructor);
