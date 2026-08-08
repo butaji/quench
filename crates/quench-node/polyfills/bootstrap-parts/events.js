@@ -701,7 +701,7 @@ Object.defineProperty(NodeReadable.prototype, "readableDidRead", {
 NodeReadable.prototype.destroyed = false;
 class NodeWritable extends NodeEventEmitter {
   constructor(options = {}) {
-    super();
+    super(options);
     this.destroyed = false;
     this.closed = false;
     this.readableAborted = false;
