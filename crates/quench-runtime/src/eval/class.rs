@@ -351,6 +351,9 @@ pub fn get_constructor_prototype(val: &Value) -> Result<Option<Rc<RefCell<Object
             }
         }
         Value::Function(f) => Ok(Some(f.get_prototype())),
+        Value::Class(class) => Ok(crate::eval::class::helpers::get_prototype_from_class_val(
+            &Value::Class(class.clone()),
+        )),
         Value::NativeConstructor(nc) => Ok(Some(Rc::clone(&nc.prototype))),
         Value::NativeFunction(nf) => {
             // Prototype is set by JS harness via Test262Error.prototype = ... (set_property).
