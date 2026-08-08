@@ -193,6 +193,44 @@ fn eval_for_of_iterator(
     }
 }
 
+/// Collect the identifier names assigned by a for-of LHS expression, including
+/// identifiers wrapped in `AssignmentTarget` (as produced for assignment LHS).
+fn collect_lhs_identifiers(variable: &Expression) -> Vec<String> {
+    fn collect_binding(binding: &crate::ast::BindingElement) -> Vec<String> {
+        match binding {
+            crate::ast::BindingElement::Identifier(name) => {
+                if name != "__hole" {
+                    vec![name.clone()]
+                } else {
+                    vec![]
+                }
+            }
+            crate::ast::BindingElement::ArrayPattern(elements) => {
+                elements.iter().flat_map(collect_binding).collect()
+            }
+            crate::ast::BindingElement::ObjectPattern(props) => props
+                .iter()
+                .flat_map(|(_, b)| collect_binding(b))
+                .collect(),
+            crate::ast::BindingElement::Default(b, _) => collect_binding(b),
+            crate::ast::BindingElement::Rest(b) => collect_binding(b),
+            crate::ast::BindingElement::AssignmentTarget(e) => match e {
+                Expression::Identifier(name) => vec![name.clone()],
+                _ => vec![],
+            },
+        }
+    }
+    match variable {
+        Expression::Identifier(name) => vec![name.clone()],
+        Expression::ArrayPattern(bindings) => bindings.iter().flat_map(collect_binding).collect(),
+        Expression::ObjectPattern(props) => props
+            .iter()
+            .flat_map(|(_, b)| collect_binding(b))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
 fn run_for_of_iteration(
     variable: &Expression,
     item: &Value,
@@ -208,6 +246,18 @@ fn run_for_of_iteration(
     let result = (|| {
         if let Some(kind) = loop_binding {
             declare_for_of_binding(variable, kind, env)?;
+        } else {
+            // Assignment LHS: assigning to a binding in its TDZ must throw
+            // ReferenceError (e.g. a `let` declared later in the same scope).
+            for name in collect_lhs_identifiers(variable) {
+                if env.borrow().is_tdz(&name) {
+                    let (_, js_err) = crate::value::error::create_js_error_with_type(
+                        &format!("Cannot access '{}' before initialization", name),
+                        "ReferenceError",
+                    );
+                    return Err(js_err);
+                }
+            }
         }
         assign_to(variable, item, env)?;
         eval_statement(body, env, false, in_arrow_function)
