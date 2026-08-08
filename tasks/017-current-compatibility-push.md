@@ -662,3 +662,8 @@ Focused stage 2135 catches exceptions thrown from an internally invoked
 when a read implementation calls `push()` after EOF. The focused contract
 passes, and upstream readable-destroy testing advances to AbortSignal error
 name compatibility.
+
+Focused stage 2136 implements `stream.addAbortSignal()` and abort-aware
+`Readable` construction, destroying the public stream with an `AbortError`
+and `ABORT_ERR`. The focused abort contract passes. The upstream fixture now
+reaches a remaining combined abort/read lifecycle mismatch.
