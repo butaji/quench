@@ -147,11 +147,27 @@ impl Object {
 
     /// Define a property with explicit flags.
     pub fn define(&mut self, key: &str, value: Value, mut flags: PropertyFlags) {
+        self.update_array_length_for_index(key);
         self.getters.shift_remove(key);
         self.setters.shift_remove(key);
         self.properties.insert(key.to_string(), value.clone());
         flags.value = Some(value);
         self.descriptors.insert(key.to_string(), flags);
+    }
+
+    /// If `key` is an array index on an Array object, extend the dense elements
+    /// and length so the index is within bounds (per Array exotic semantics).
+    fn update_array_length_for_index(&mut self, key: &str) {
+        if self.kind != ObjectKind::Array {
+            return;
+        }
+        if let Some(idx) = as_array_index(key) {
+            let new_len = idx + 1;
+            if new_len > self.elements.len() {
+                self.elements.resize(new_len, Value::Undefined);
+            }
+            self.define_array_length(self.elements.len() as f64);
+        }
     }
 
     /// Get property descriptor flags for a key.
@@ -420,6 +436,7 @@ impl Object {
         setter: Option<Value>,
         flags: PropertyFlags,
     ) {
+        self.update_array_length_for_index(key);
         define_accessor(self, key, getter, setter, flags);
     }
 
