@@ -158,10 +158,9 @@ fn make_typed_array_constructor(
     // Set per-type prototype as the constructor's .prototype property
     let _ = ctor_rc.set_property("prototype", Value::Object(Rc::clone(&proto_rc)));
     // Set constructor property on per-type prototype to point back to constructor
-    proto_rc.borrow_mut().properties.insert(
-        "constructor".to_string(),
-        Value::NativeFunction(Rc::clone(&ctor_rc)),
-    );
+    proto_rc
+        .borrow_mut()
+        .set_nonenumerable("constructor", Value::NativeFunction(Rc::clone(&ctor_rc)));
 
     Value::NativeFunction(ctor_rc)
 }
@@ -203,6 +202,7 @@ fn construct_typed_array(
                 buffer
                     .borrow_mut()
                     .set("byteLength", Value::Number(byte_length as f64));
+                src_elements = (0..length).map(|_| Value::Number(0.0)).collect();
             }
             // new TypedArray(typedArray) or new TypedArray(array-like)
             Value::Object(src_rc) if !Rc::ptr_eq(src_rc, &object_rc) => {
@@ -241,6 +241,7 @@ fn construct_typed_array(
             buffer
                 .borrow_mut()
                 .set("byteLength", Value::Number(byte_length as f64));
+            src_elements = (0..length).map(|_| Value::Number(0.0)).collect();
         }
     }
 
