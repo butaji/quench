@@ -326,6 +326,17 @@ const __quenchNetModule = {
     pause() {
       return this;
     }
+    pipe(destination, options = {}) {
+      this.on("data", (chunk) => {
+        if (!destination.destroyed) destination.write(chunk);
+      });
+      this.once("end", () => {
+        if (options.end !== false && !destination.writableEnded) {
+          destination.end();
+        }
+      });
+      return destination;
+    }
     setNoDelay() {
       return this;
     }

@@ -382,3 +382,8 @@ The next HTTP slice exposed missing `pause()` methods on incoming requests and
 responses. Both now preserve the Node chainable surface; focused stage 2084
 passes, as do upstream `test-http-pause-no-dump.js` and
 `test-http-pause-resume-one-end.js`.
+
+The next HTTP pipeline fixture exposed a missing `net.Socket.prototype.pipe()`
+surface. It now forwards data, conditionally ends the destination, and returns
+the destination as Node does. Focused stage 2085 and upstream
+`test-http-many-ended-pipelines.js` pass.
