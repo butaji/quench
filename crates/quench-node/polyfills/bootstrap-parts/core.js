@@ -1201,7 +1201,7 @@ let __quenchHttpModule;
       return this;
     };
     class NodeClientRequest extends NodeIncomingMessage {
-      constructor(options = {}) {
+      constructor(options = {}, callback) {
         super();
         if (typeof options === "string" || options instanceof URL) {
           const parsed = new URL(String(options));
@@ -1211,6 +1211,21 @@ let __quenchHttpModule;
             path: `${parsed.pathname}${parsed.search}`,
             method: "GET"
           };
+        }
+        if (
+          options &&
+          typeof options === "object" &&
+          options.port !== undefined &&
+          typeof makeRequest === "function"
+        ) {
+          const server = servers.get(String(options.port));
+          return makeRequest(
+            server ? server._handler : () => {},
+            options.path || "/",
+            callback,
+            { ...options, method: options.method || "GET" },
+            server
+          );
         }
         this.path = options.path || "/";
         this.method = options.method || "GET";
