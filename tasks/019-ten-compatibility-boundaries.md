@@ -775,3 +775,12 @@ pass. The related `test-stream-readable-no-unneeded-readable.js` fixture and
 the maintained PassThrough/readable/backpressure stage cluster remain green.
 `test-stream-consumers.js` still independently reports its existing missing
 `Callback 5`; no consumers-fixture pass is claimed.
+
+Stage 2454 fixes stream-consumers callback 5 at the shared Buffer UTF-8
+boundary. The byte sequence `ED A0 80` encodes a surrogate code point and is
+not valid UTF-8; Buffer decoding now rejects that scalar and, like Node,
+reprocesses each byte as a separate replacement character. The focused Buffer
+and `stream/consumers.text()` contract passes, along with the maintained Buffer
+UTF-8 stages. The authoritative `test-stream-consumers.js` fixture advances to
+`Callback 7`, its first Web `TransformStream` blob-consumer block, which remains
+a separate lifecycle boundary.
