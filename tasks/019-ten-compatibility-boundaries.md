@@ -76,7 +76,10 @@ own commit.
   occurs while resolving or executing `prelude-ls/lib/index.js` from nested
   `levn`/`type-check` loads, then gets reported as `MODULE_NOT_FOUND`. Direct
   loading succeeds, narrowing this to nested local-module cache/execution
-  re-entry.
+  re-entry. A focused test of normalizing nested `require.cache` and child
+  module keys to realpaths did not change the failure and was reverted; the
+  next loader probe must distinguish package-root traversal from swallowed
+  nested execution exceptions.
 - Item 10: partially improved. Stage 2343 reproduces the upstream
   `common.mustCall` readable backpressure shape and now verifies all four
   `_read()` demands and three writable callbacks. The fix removes a stale
