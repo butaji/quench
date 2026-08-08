@@ -250,50 +250,8 @@ fn setup_number_static(proto: &Rc<RefCell<Object>>, ctx: &mut Context) {
         configurable: false,
         value: None,
     };
-    number_obj.borrow_mut().define(
-        "isInteger",
-        Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
-            // Per spec: only returns true if arg is already Number type and integer
-            Ok(Value::Boolean(matches!(
-                args.first(),
-                Some(Value::Number(n)) if n.is_finite() && n.fract() == 0.0
-            )))
-        }))),
-        static_flags.clone(),
-    );
-    number_obj.borrow_mut().define(
-        "isNaN",
-        Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
-            // Per spec: returns true only if arg is already Number type AND is NaN
-            Ok(Value::Boolean(
-                matches!(args.first(), Some(Value::Number(n)) if n.is_nan()),
-            ))
-        }))),
-        static_flags.clone(),
-    );
-    number_obj.borrow_mut().define(
-        "isFinite",
-        Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
-            // Per spec: only returns true if arg is already Number type and finite
-            Ok(Value::Boolean(matches!(
-                args.first(),
-                Some(Value::Number(n)) if n.is_finite()
-            )))
-        }))),
-        static_flags.clone(),
-    );
-    number_obj.borrow_mut().define(
-        "isSafeInteger",
-        Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
-            // Per spec: only returns true if arg is already Number and safe integer
-            Ok(Value::Boolean(matches!(
-                args.first(),
-                Some(Value::Number(n))
-                    if n.is_finite() && n.fract() == 0.0 && n.abs() <= 9007199254740991.0
-            )))
-        }))),
-        static_flags.clone(),
-    );
+    // isInteger / isNaN / isFinite / isSafeInteger are self-hosted in JS
+    // (builtins/core/number_statics.js) via Object.defineProperty.
     number_obj.borrow_mut().define(
         "parseInt",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
@@ -320,13 +278,7 @@ fn setup_number_static(proto: &Rc<RefCell<Object>>, ctx: &mut Context) {
     );
 
     // Add static methods to number_ctor before it's moved
-    number_ctor.set_static_method("isInteger", number_obj.borrow().get("isInteger").unwrap());
-    number_ctor.set_static_method("isNaN", number_obj.borrow().get("isNaN").unwrap());
-    number_ctor.set_static_method("isFinite", number_obj.borrow().get("isFinite").unwrap());
-    number_ctor.set_static_method(
-        "isSafeInteger",
-        number_obj.borrow().get("isSafeInteger").unwrap(),
-    );
+    // (isInteger/isNaN/isFinite/isSafeInteger are self-hosted in JS).
     number_ctor.set_static_method("parseInt", number_obj.borrow().get("parseInt").unwrap());
     number_ctor.set_static_method("parseFloat", number_obj.borrow().get("parseFloat").unwrap());
     number_ctor.set_static_method("MAX_VALUE", Value::Number(f64::MAX));

@@ -106,29 +106,35 @@ pub fn eval_expression(
             is_async,
             is_generator,
         } => {
-            let closure = capture_env_for_closure(env);
-            let func = Value::Function({
-                let mut f = ValueFunction::new(
-                    name.clone(),
-                    params.clone(),
-                    body.clone(),
-                    Rc::clone(&closure),
-                    *is_async,
-                    *is_generator,
-                );
-                f.strict = crate::interpreter::is_strict_mode();
-                f
-            });
-            // Per ES spec §12.4.1.3: a named FunctionExpression creates an
-            // immutable binding for its own name inside the function's environment.
-            // Access scopes directly to avoid double RefCell borrow.
-            if let Some(ref name) = name {
-                let func_clone = func.clone();
-                if let Some(scope) = closure.borrow().scopes.last() {
-                    scope.borrow_mut().define(name.clone(), func_clone);
-                }
+            // A named FunctionExpression creates an isolated child env with an
+            // immutable self-binding (available for recursion) whose parent is
+            // the enclosing env — the name must NOT leak to the enclosing scope
+            // (ES §14.1.21). Anonymous functions capture the enclosing env.
+            let closure = if name.is_some() {
+                let inner =
+                    Rc::new(RefCell::new(crate::env::Environment::with_parent(Rc::clone(env))));
+                inner.borrow_mut().push_scope();
+                inner
+            } else {
+                capture_env_for_closure(env)
+            };
+            let mut f = ValueFunction::new(
+                name.clone(),
+                params.clone(),
+                body.clone(),
+                Rc::clone(&closure),
+                *is_async,
+                *is_generator,
+            );
+            f.strict = crate::interpreter::is_strict_mode();
+            if let Some(name) = name {
+                closure
+                    .borrow_mut()
+                    .current_scope()
+                    .borrow_mut()
+                    .define(name.clone(), Value::Function(f.clone()));
             }
-            Ok(func)
+            Ok(Value::Function(f))
         }
         Expression::ArrowFunction {
             params,
