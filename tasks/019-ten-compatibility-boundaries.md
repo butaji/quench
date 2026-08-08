@@ -230,4 +230,6 @@ An isolated HTTP probe confirms the first request-side destroy/response case
 passes, while destroying an incoming request from its resumed `end` handler
 never reaches the server `close` response callback before timeout. The next
 HTTP fix must preserve the `end` → `destroy` → `close` ordering for
-`IncomingMessage`; no event reorder is retained yet.
+`IncomingMessage`. Stage 2380 now verifies that ordering by treating a flowing
+incoming request as consumed even without an explicit `data` listener. The
+full `test-stream-destroy.js` fixture still has another HTTP mismatch.
