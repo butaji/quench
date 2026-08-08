@@ -113,6 +113,12 @@ const isIPv6 = (input) => {
 };
 const isIPv6String = (input) => {
   if (input.length === 0) return false;
+  if (
+    (input.startsWith(":") && !input.startsWith("::")) ||
+    (input.endsWith(":") && !input.endsWith("::"))
+  ) {
+    return false;
+  }
   const address = normalizeIPv6Zone(input);
   if (!address) return false;
   const parsed = parseIPv6Groups(address);
