@@ -394,6 +394,10 @@ fixture remains open.
 Stages 2413–2415 verify mounted promise path reads/metadata, mutations, and
 FileHandle reads independently; all pass. The remaining full-fixture assertion
 is therefore still an interaction or later attribute-contract issue.
+Stages 2416 and 2417 also pass the full mounted attribute tail and the
+`link`/`mkdtemp` operations. The complete `test-vfs-fs-promises.js` failure is
+now narrowed to an interaction in its single long sequence, despite every
+operation family passing independently.
 
 Stage 2378 passes the four basic stream `destroy()` contracts for readable and
 writable streams, including implicit `AbortError`, explicit error messages,
