@@ -692,3 +692,8 @@ Focused stage 2151 implements the basic `Duplex.toWeb()` conversion, exposing
 Web readable and writable streams backed by the Node duplex. The focused
 contract passes, and upstream Duplex testing advances through the basic bridge
 to a later multi-case/BYOB callback-count mismatch.
+
+Focused stage 2152 verifies `Duplex.toWeb(..., { readableType: "bytes" })`
+with a BYOB reader and writable-side callback. The contract passes, isolating
+the remaining upstream mismatch to repeated conversion/deprecation sequencing
+rather than byte reads themselves.
