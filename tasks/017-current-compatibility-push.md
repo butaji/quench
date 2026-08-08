@@ -495,3 +495,10 @@ queue contract passes, as do the existing `test-http-agent.js`,
 `test-http-agent-maxtotalsockets.js`, and `test-http-abort-client.js` fixtures.
 `test-http-agent-destroyed-socket.js` advances to a later socket lifecycle
 assertion, so the complete destroyed-socket contract remains open.
+
+The Agent lifecycle slice now gates queued request dispatch on the active slot,
+adds the public request-socket `destroy()` surface, and emits the corresponding
+non-keep-alive free notifications. Focused stage 2103 and the existing Agent
+fixtures pass. `test-http-agent-destroyed-socket.js` advances to its final
+socket-close countdown after server shutdown; transport close propagation is
+still unresolved.
