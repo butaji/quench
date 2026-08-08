@@ -1712,6 +1712,9 @@ let __quenchHttpModule;
         const output = bodyForbidden ? NodeBuffer.alloc(0) : value;
         const finish = () => {
           response.writableFinished = true;
+          if (response.socket?._httpMessage === response) {
+            response.socket._httpMessage = null;
+          }
           queueMicrotask(() => {
             response.emit("finish");
             if (output.length) response.__emitData(output);
