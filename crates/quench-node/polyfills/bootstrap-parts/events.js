@@ -185,7 +185,9 @@ const __nodeReadableStart = (stream) => {
     stream._ended ||
     stream.destroyed ||
     stream._readableState.errored ||
-    stream._readableState.reading
+    stream._readableState.reading ||
+    (!stream.readableObjectMode &&
+      stream.readableLength >= stream.readableHighWaterMark)
   ) {
     return;
   }
