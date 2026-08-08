@@ -34,6 +34,19 @@ const __quenchComposeArgumentError = (message, code) => {
   error.code = code;
   return error;
 };
+const __quenchComposeDestroy = (composed, streams) => {
+  const destroy = composed.destroy;
+  composed.destroy = function (error, callback) {
+    if (!this.__quenchComposeDestroying) {
+      this.__quenchComposeDestroying = true;
+      for (const stream of streams) {
+        if (stream !== this && !stream?.destroyed) stream?.destroy?.(error);
+      }
+    }
+    return destroy.call(this, error, callback);
+  };
+  return composed;
+};
 const __quenchComposeStreams = (streams, result) => {
   if (streams.length === 0) {
     throw __quenchComposeArgumentError(
@@ -84,7 +97,7 @@ const __quenchComposeStreams = (streams, result) => {
     });
     composed.writable = __quenchComposeWritable(streams[0]);
     composed.readable = __quenchComposeReadable(streams[streams.length - 1]);
-    return composed;
+    return __quenchComposeDestroy(composed, streams);
   }
   const first = streams[0];
   const last = streams[streams.length - 1];
@@ -104,7 +117,7 @@ const __quenchComposeStreams = (streams, result) => {
     if (callback) callback();
     return composed;
   };
-  return composed;
+  return __quenchComposeDestroy(composed, streams);
 };
 const __quenchAddStreamDefaults = (result) => {
   result.pipeline ||= () => undefined;
