@@ -1202,6 +1202,17 @@ class __QuenchVirtualFileSystem {
     stream.fd = typeof options.fd === "number" ? options.fd : null;
     stream.pending = true;
     stream.bytesWritten = 0;
+    stream.autoClose = options.autoClose !== false;
+    stream.once("finish", () => {
+      if (!stream.autoClose || stream.fd === null || options.fd !== undefined) {
+        return;
+      }
+      try {
+        this.closeSync(stream.fd);
+      } catch (_) {}
+      stream.fd = null;
+      stream.emit("close");
+    });
     setTimeout(() => {
       try {
         if (stream.fd === null) stream.fd = this.openSync(path, flags);
