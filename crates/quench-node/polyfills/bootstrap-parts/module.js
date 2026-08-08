@@ -61,6 +61,14 @@ const nodeModulePaths = (from) => {
   }
   return result;
 };
+const moduleStat = (filename) => {
+  try {
+    const stat = __quenchOriginalRequireWithModule("fs").statSync(filename);
+    return stat.isDirectory() ? 1 : 0;
+  } catch (_) {
+    return -1;
+  }
+};
 const __quenchModule = {
   builtinModules: __quenchBuiltinModules,
   _cache: Object.create(null),
@@ -109,7 +117,8 @@ const __quenchModule = {
     if (/^\.\.?\//.test(value) || value.startsWith("/")) return ["."];
     return ["node_modules"];
   },
-  _nodeModulePaths: nodeModulePaths
+  _nodeModulePaths: nodeModulePaths,
+  _stat: moduleStat
 };
 globalThis.require = (specifier) => {
   if (String(specifier).replace(/^node:/, "") === "module") {

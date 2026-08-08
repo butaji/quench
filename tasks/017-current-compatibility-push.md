@@ -535,3 +535,7 @@ Stage 2109 keeps `.node` files on the native-addon path: the CommonJS loader
 now reports `ERR_DLOPEN_FAILED` instead of evaluating a binary addon as
 JavaScript. The focused native-addon error contract and upstream
 `test-module-loading-error.js` pass.
+
+Focused stage 2110 implements `Module._stat()`: it returns `1` for
+directories, `0` for files, and a negative value for missing paths. The
+focused contract and upstream `test-module-stat.js` both pass.
