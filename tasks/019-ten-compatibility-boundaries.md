@@ -927,3 +927,15 @@ validation reject through the returned Promise, including the empty/no-initial
 authoritative `test-stream-reduce.js` fixture pass. The upstream map, filter,
 and drop/take fixtures, maintained helper stages, both Rust tests, and the six
 representative application stages remain green.
+
+Stage 2469 implements the terminal readable predicates `some`, `every`, and
+`find` on source streams and derived helper chains without calling the public
+`map` method. They preserve source order under concurrency, short-circuit with
+exact predicate counts, expose/destroy the underlying source lifecycle, return
+their distinct empty-stream defaults, validate through rejected Promises, and
+wake a non-settling predicate when its external signal aborts. The focused and
+translated upstream semantic matrices pass with the maintained helper cluster,
+upstream map/filter/reduce fixtures, Rust tests, and application stages. The
+authoritative `test-stream-some-find-every.mjs` fixture still fails before
+evaluation because `stream` is not registered in the ESM builtin loader; that
+loader surface is tracked separately for the next stage.

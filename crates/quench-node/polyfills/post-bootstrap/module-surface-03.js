@@ -420,15 +420,13 @@ const __quenchReadableConcurrentTransform = async function* (
   callback,
   options,
   mode,
-  errorState
+  errorState,
+  prefetchBeforeYield = true
 ) {
   const opts = __quenchReadableOperatorOptions(options);
   const controller = new AbortController();
   const signal = controller.signal;
   const externalSignal = opts.signal;
-  const onAbort = () => controller.abort(externalSignal.reason);
-  if (externalSignal?.aborted) onAbort();
-  else externalSignal?.addEventListener?.("abort", onAbort, { once: true });
   const iterator = source[Symbol.asyncIterator]();
   const pending = [];
   const queueLimit = opts.concurrency + opts.highWaterMark;
@@ -441,6 +439,12 @@ const __quenchReadableConcurrentTransform = async function* (
     resumeProgress = undefined;
     resume();
   };
+  const onAbort = () => {
+    controller.abort(externalSignal.reason);
+    notifyProgress();
+  };
+  if (externalSignal?.aborted) onAbort();
+  else externalSignal?.addEventListener?.("abort", onAbort, { once: true });
   const fill = async () => {
     while (
       !sourceDone &&
@@ -449,6 +453,7 @@ const __quenchReadableConcurrentTransform = async function* (
     ) {
       if (signal.aborted) throw __quenchReadableAbortError(signal);
       const next = await iterator.next();
+      if (signal.aborted) throw __quenchReadableAbortError(signal);
       if (next.done) {
         sourceDone = true;
         break;
@@ -492,17 +497,22 @@ const __quenchReadableConcurrentTransform = async function* (
     while (pending.length) {
       const entry = pending[0];
       while (!entry.settled) {
+        if (signal.aborted) throw __quenchReadableAbortError(signal);
         await __quenchReadableOperatorResult(waitForProgress(), errorState);
+        if (signal.aborted) throw __quenchReadableAbortError(signal);
         await fill();
       }
       if (errorState?.hasError) throw errorState.error;
       pending.shift();
       if (entry.failed) throw entry.error;
       if (signal.aborted) throw __quenchReadableAbortError(signal);
-      await fill();
       const result = entry.result;
+      if (prefetchBeforeYield || mode !== "filter" || !result) await fill();
       if (mode === "filter") {
-        if (result) yield entry.value;
+        if (result) {
+          yield entry.value;
+          if (!prefetchBeforeYield) await fill();
+        }
       } else if (mode !== "forEach") {
         if (mode === "flatMap" && result != null) {
           if (Array.isArray(result)) yield* result;
@@ -708,6 +718,39 @@ const __quenchReduceReadable = async (
     externalSignal?.removeEventListener?.("abort", onAbort);
   }
 };
+const __quenchPredicateReadable = async (
+  readable,
+  predicate,
+  options,
+  mode
+) => {
+  __quenchIterableOptions(predicate, options ?? undefined);
+  const slice = __quenchReadableSlice(readable, {
+    drop: 0,
+    take: Infinity,
+    operations: []
+  });
+  const callback =
+    mode === "every"
+      ? async (...args) => !(await predicate(...args))
+      : predicate;
+  const values = __quenchReadableConcurrentTransform(
+    slice[Symbol.asyncIterator](),
+    callback,
+    options ?? undefined,
+    "filter",
+    undefined,
+    false
+  );
+  for await (const value of values) {
+    readable.destroy?.();
+    if (mode === "find") return value;
+    return mode === "some";
+  }
+  if (mode === "every") return true;
+  if (mode === "some") return false;
+  return undefined;
+};
 const __quenchSliceCount = (count) => {
   let value = Number(count);
   if (Number.isNaN(value)) value = 0;
@@ -832,6 +875,13 @@ const __quenchReadableSlice = (stream, operations) => {
   };
   return {
     readable: true,
+    get destroyed() {
+      return stream.destroyed === true;
+    },
+    destroy(error) {
+      stream.destroy?.(error);
+      return this;
+    },
     emit(event, ...args) {
       if (event === "error") {
         const state = operations.errorState;
@@ -893,6 +943,15 @@ const __quenchReadableSlice = (stream, operations) => {
         options,
         arguments.length > 1
       );
+    },
+    some(predicate, options) {
+      return __quenchPredicateReadable(this, predicate, options, "some");
+    },
+    every(predicate, options) {
+      return __quenchPredicateReadable(this, predicate, options, "every");
+    },
+    find(predicate, options) {
+      return __quenchPredicateReadable(this, predicate, options, "find");
     },
     toArray() {
       return __quenchCollectReadable(stream, operations);
@@ -967,6 +1026,15 @@ const __quenchAddSliceMethods = (prototype) => {
       options,
       arguments.length > 1
     );
+  };
+  prototype.some = function (predicate, options) {
+    return __quenchPredicateReadable(this, predicate, options, "some");
+  };
+  prototype.every = function (predicate, options) {
+    return __quenchPredicateReadable(this, predicate, options, "every");
+  };
+  prototype.find = function (predicate, options) {
+    return __quenchPredicateReadable(this, predicate, options, "find");
   };
 };
 const __quenchAddReadableSlices = (result) => {
