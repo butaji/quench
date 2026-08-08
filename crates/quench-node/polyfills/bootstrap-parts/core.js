@@ -2674,13 +2674,13 @@ let __quenchHttpModule;
           requestOptions = { ...target, method: "GET" };
           target = `http://${target.hostname || target.host || "localhost"}:${
             target.port || 80
-          }${target.path || "/"}`;
+          }${target.path || `${target.pathname || "/"}${target.search || ""}`}`;
         }
         const url = typeof target === "string" ? new URL(target) : target;
         const server = servers.get(url.port || "80");
         const request = makeRequest(
           server ? server._handler : () => {},
-          url.pathname,
+          `${url.pathname}${url.search}`,
           callback,
           requestOptions,
           server
@@ -2732,7 +2732,7 @@ let __quenchHttpModule;
         const server = servers.get(url.port || "80");
         const request = makeRequest(
           server ? server._handler : () => {},
-          url.pathname,
+          `${url.pathname}${url.search}`,
           callback,
           options || {},
           server
