@@ -115,7 +115,10 @@ ownership still needs a separate state model.
   shared `mustCall` contract (`expected 11 calls, got 1`); an attempted
   read-ahead correction was reverted after it overfilled the buffer before
   the pipe's first write callback, so no unverified scheduling behavior was
-  retained.
+  retained. A focused `_final()` double-callback trace also confirms `finish`
+  fires once while the duplicate error remains suppressed (`finish=1,
+errors=0`); a direct finish-guard change was reverted pending an
+  event-loop/auto-destroy trace.
 
 ## New fs evidence
 
