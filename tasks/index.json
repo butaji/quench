@@ -1,7 +1,7 @@
 {
   "$schema": "quench stages v1",
-  "current_stage": 20,
-  "goal": "Pure JavaScript engine in quench-runtime with OXC AST -> compact Quench IR -> interpreter, generic over Runtime<Heap, Collector, Allocator, Frames, Executor, Exceptions, Environments>; standalone quench-test262 runner owns metadata, harness, stages, isolation, metrics, and reports; 100% ECMA-262 test262 with minimum memory/RSS and V8-grade performance and no undocumented skips. Execution order: tasks/10-ways-to-speed-up.md (Phases A–C); work queue: tasks/refactor-plan.md; architecture: docs/architecture.md.",
+  "current_stage": 23,
+  "goal": "Pure JavaScript engine in quench-runtime with OXC AST -> compact Quench IR -> interpreter, generic over Runtime<Heap, Collector, Allocator, Frames, Executor, Exceptions, Environments>; standalone quench-test262 runner owns metadata, harness, stages, isolation, metrics, and reports; 100% ECMA-262 test262 with minimum memory/RSS and V8-grade performance and no undocumented skips. Execution order: tasks/10-ways-to-speed-up.md (Phases A\u2013C); work queue: tasks/refactor-plan.md; architecture: docs/architecture.md.",
   "scope": {
     "includes": [
       "test/"
@@ -137,7 +137,7 @@
       "id": 20,
       "path": "test/language/statements/do-while",
       "tests": 36,
-      "status": "in_progress"
+      "status": "done"
     },
     {
       "id": 21,

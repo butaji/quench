@@ -105,3 +105,29 @@ fn test_replace_all_with_substitution() {
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), Value::String("(ab)(ab)".to_string()));
 }
+
+#[test]
+fn test_split_string_separator_is_literal_not_regex() {
+    let mut ctx = Context::new().unwrap();
+    // "." as a plain string separator must not act as the regex "match any char".
+    let result = ctx.eval("'1'.split('.').length").unwrap();
+    assert_eq!(
+        result,
+        crate::value::Value::Number(1.0),
+        "literal '.' must split into one element"
+    );
+}
+
+#[test]
+fn test_split_empty_separator_splits_code_points() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval("'abc'.split('').length").unwrap();
+    assert_eq!(result, crate::value::Value::Number(3.0));
+}
+
+#[test]
+fn test_split_regex_separator_still_works() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval("'a,b;c'.split(/[,;]/).length").unwrap();
+    assert_eq!(result, crate::value::Value::Number(3.0));
+}

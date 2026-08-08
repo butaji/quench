@@ -1616,6 +1616,51 @@ mod do_while_statement {
     }
 
     #[test]
+    fn do_while_direct_break_returns_body_value() {
+        // A direct break inherits the last non-empty body value (UpdateEmpty).
+        assert_eq!(
+            eval("do { 1; break; } while (false)").unwrap(),
+            Value::Number(1.0)
+        );
+        assert_eq!(
+            eval("do { 3; break; } while (false)").unwrap(),
+            Value::Number(3.0)
+        );
+    }
+
+    #[test]
+    fn do_while_direct_continue_returns_body_value() {
+        assert_eq!(
+            eval("do { 6; continue; } while (false)").unwrap(),
+            Value::Number(6.0)
+        );
+        assert_eq!(
+            eval("do { continue; } while (false)").unwrap(),
+            Value::Undefined
+        );
+    }
+
+    #[test]
+    fn do_while_break_through_if_is_empty() {
+        // A break nested in an `if` wraps to an empty completion (undefined).
+        assert_eq!(
+            eval("do { 1; if (true) break; } while (false)").unwrap(),
+            Value::Undefined
+        );
+    }
+
+    #[test]
+    fn labeled_nested_do_while_break_preserves_var_hoisting() {
+        let result = eval(
+            "do_out: do { var before = 'black'; do_in: do { var inner = 'hole'; \
+             break do_in; var after = 'sun'; } while (0); var outer = 'won'; } \
+             while (false); after",
+        )
+        .unwrap();
+        assert_eq!(result, Value::Undefined);
+    }
+
+    #[test]
     fn do_while_return_interrupts() {
         assert_eq!(
             eval("function f() { do { return 99; } while (true); } f()").unwrap(),
