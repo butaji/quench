@@ -1,6 +1,6 @@
 # Stage 20 — test/language/statements/do-while
 
-**Status:** in_progress · **Path:** `test/language/statements/do-while`.
+**Status:** done · **Path:** `test/language/statements/do-while`.
 
 ```bash
 TEST262_STAGE=20 TEST262_DIGEST=1 TEST262_JSON=1 cargo test -p quench-runtime \
@@ -12,15 +12,6 @@ TEST262_STAGE=20 TEST262_DIGEST=1 TEST262_JSON=1 cargo test -p quench-runtime \
 | Date | Notes |
 |------|-------|
 | 2026-07-23 | Baseline after stage 18 |
+| 2026-08-08 | 36/36 green. Fixed break/continue completion value (UpdateEmpty), String.split literal-vs-regex separator, and do-while-body tail-call detection. |
 
-## Top remaining clusters
-
-| Cluster | Fix direction |
-|---------|---------------|
-| `ReferenceError: __in__do__IN__after__break` | do-while + for-in interaction after labeled break |
-| `__odds === 0` (expected 5) | do-while loop body / completion |
-| `__evaluated === undefined` | expression completion in do-while |
-| `cptn-abrupt-empty` completion value | abrupt completion / empty completion |
-| `tco-body.js` stack overflow | tail-call optimization in do-while body |
-
-See `tasks/failures-20.json`.
+All previously-failing clusters are resolved (see notes above).

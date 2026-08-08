@@ -328,7 +328,13 @@ pub(crate) fn string_split_impl(args: Vec<Value>) -> Result<Value, JsError> {
             .get(1)
             .map(|v| to_number(v) as usize)
             .unwrap_or(usize::MAX);
-        if separator == Value::String("".to_string()) {
+        // A RegExp separator splits by regex; any other separator is a literal
+        // string (StringSplit), including the empty string (code points).
+        if let Some(regex) = get_separator_regex(&separator) {
+            return Ok(split_by_regex(&string, &regex, limit));
+        }
+        let sep_str = to_js_string(&separator);
+        if sep_str.is_empty() {
             let chars: Vec<Value> = string
                 .chars()
                 .take(limit)
@@ -336,9 +342,12 @@ pub(crate) fn string_split_impl(args: Vec<Value>) -> Result<Value, JsError> {
                 .collect();
             return Ok(make_value_array(chars));
         }
-        if let Some(regex) = get_separator_regex(&separator) {
-            return Ok(split_by_regex(&string, &regex, limit));
-        }
+        let parts: Vec<Value> = string
+            .split(&sep_str)
+            .take(limit)
+            .map(|p| Value::String(p.to_string()))
+            .collect();
+        return Ok(make_value_array(parts));
     }
     Ok(make_value_array(vec![Value::String(string)]))
 }
@@ -346,14 +355,7 @@ pub(crate) fn string_split_impl(args: Vec<Value>) -> Result<Value, JsError> {
 fn get_separator_regex(separator: &Value) -> Option<Regex> {
     match separator {
         Value::Object(ref obj) => obj.borrow().internal_regex.clone(),
-        _ => {
-            let sep_str = to_js_string(separator);
-            if sep_str.is_empty() {
-                None
-            } else {
-                Regex::new(&sep_str).ok()
-            }
-        }
+        _ => None,
     }
 }
 
