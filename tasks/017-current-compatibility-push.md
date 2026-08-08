@@ -324,3 +324,14 @@ Focused stage 2074 adds symlink copy coverage for `dereference: true` and
 zero failures and zero retries. The corresponding upstream symlink,
 destination-symlink, directory-exists, async-filter, and force/dereference
 fixtures all pass.
+
+The next fs-copy error cluster adds directory-to-file and self-subdirectory
+validation, plus explicit `EEXIST` preservation when a symlink would overwrite
+an existing file. Focused stage 2075 and the upstream directory-to-file,
+symlink-over-file, and self-subdirectory fixtures pass. The upstream Unix
+socket-copy fixture remains an explicit transport/liveness gap because its
+server-created socket is not observable at the copy boundary in the current
+runtime path.
+
+Stages 2071–2075 pass as a grouped focused run: 5/5, zero failures and zero
+retries.

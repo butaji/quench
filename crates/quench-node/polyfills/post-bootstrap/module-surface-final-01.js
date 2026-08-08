@@ -614,6 +614,12 @@ const __quenchApplyFinalModule01 = (name, originalRequire) => {
       };
       const sourcePath = copyValue(source);
       const destinationPath = copyValue(destination);
+      const normalizedSource = sourcePath
+        .replace(/\\/g, "/")
+        .replace(/\/+$/, "");
+      const normalizedDestination = destinationPath
+        .replace(/\\/g, "/")
+        .replace(/\/+$/, "");
       if (typeof options.filter === "function") {
         const decision = options.filter(sourcePath, destinationPath);
         if (decision && typeof decision.then === "function") {
@@ -639,17 +645,29 @@ const __quenchApplyFinalModule01 = (name, originalRequire) => {
         try {
           if (result.lstatSync(destinationPath).isSymbolicLink?.()) {
             result.unlinkSync(destinationPath);
-          } else if (options.force === false) return;
-        } catch (_) {}
+          } else {
+            if (options.force === false) return;
+            const error = new Error(
+              `EEXIST: file already exists, symlink '${destinationPath}'`
+            );
+            error.code = "EEXIST";
+            throw error;
+          }
+        } catch (error) {
+          if (error.code === "EEXIST") throw error;
+        }
         result.symlinkSync(result.readlinkSync(sourcePath), destinationPath);
         return;
       }
       if (sourceStat.isDirectory?.()) {
-        if (!options.recursive) {
-          const error = new TypeError(
-            "Cannot copy a directory without recursive option"
+        if (
+          normalizedDestination === normalizedSource ||
+          normalizedDestination.startsWith(`${normalizedSource}/`)
+        ) {
+          const error = new Error(
+            `Cannot copy ${sourcePath} to a subdirectory of itself, ${destinationPath}`
           );
-          error.code = "ERR_FS_EISDIR";
+          error.code = "ERR_FS_CP_EINVAL";
           throw error;
         }
         if (options.errorOnExist) {
@@ -663,6 +681,25 @@ const __quenchApplyFinalModule01 = (name, originalRequire) => {
           } catch (error) {
             if (error.code === "ERR_FS_CP_EEXIST") throw error;
           }
+        }
+        try {
+          const destinationStat = result.lstatSync(destinationPath);
+          if (!destinationStat.isDirectory?.()) {
+            const error = new Error(
+              `Cannot copy a non-directory ${destinationPath} with directory ${sourcePath}`
+            );
+            error.code = "ERR_FS_CP_DIR_TO_NON_DIR";
+            throw error;
+          }
+        } catch (error) {
+          if (error.code === "ERR_FS_CP_DIR_TO_NON_DIR") throw error;
+        }
+        if (!options.recursive) {
+          const error = new TypeError(
+            "Cannot copy a directory without recursive option"
+          );
+          error.code = "ERR_FS_EISDIR";
+          throw error;
         }
         result.mkdirSync(destinationPath, { recursive: true });
         for (const entry of result.readdirSync(sourcePath, {
@@ -726,11 +763,20 @@ const __quenchApplyFinalModule01 = (name, originalRequire) => {
         if (!allowed) return;
       }
       if (sourceStat.isDirectory?.()) {
-        if (!options.recursive) {
-          const error = new TypeError(
-            "Cannot copy a directory without recursive option"
+        const normalizedSource = sourcePath
+          .replace(/\\/g, "/")
+          .replace(/\/+$/, "");
+        const normalizedDestination = destinationPath
+          .replace(/\\/g, "/")
+          .replace(/\/+$/, "");
+        if (
+          normalizedDestination === normalizedSource ||
+          normalizedDestination.startsWith(`${normalizedSource}/`)
+        ) {
+          const error = new Error(
+            `Cannot copy ${sourcePath} to a subdirectory of itself, ${destinationPath}`
           );
-          error.code = "ERR_FS_EISDIR";
+          error.code = "ERR_FS_CP_EINVAL";
           throw error;
         }
         if (options.errorOnExist) {
@@ -744,6 +790,25 @@ const __quenchApplyFinalModule01 = (name, originalRequire) => {
           } catch (error) {
             if (error.code === "ERR_FS_CP_EEXIST") throw error;
           }
+        }
+        try {
+          const destinationStat = result.lstatSync(destinationPath);
+          if (!destinationStat.isDirectory?.()) {
+            const error = new Error(
+              `Cannot copy a non-directory ${destinationPath} with directory ${sourcePath}`
+            );
+            error.code = "ERR_FS_CP_DIR_TO_NON_DIR";
+            throw error;
+          }
+        } catch (error) {
+          if (error.code === "ERR_FS_CP_DIR_TO_NON_DIR") throw error;
+        }
+        if (!options.recursive) {
+          const error = new TypeError(
+            "Cannot copy a directory without recursive option"
+          );
+          error.code = "ERR_FS_EISDIR";
+          throw error;
         }
         result.mkdirSync(destinationPath, { recursive: true });
         for (const entry of result.readdirSync(sourcePath, {
