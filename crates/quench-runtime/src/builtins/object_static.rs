@@ -19,8 +19,8 @@ pub use descriptors::{
     to_property_key,
 };
 pub use freezing::{
-    is_frozen_object, object_freeze, object_get_prototype_of, object_is_extensible,
-    object_is_frozen, object_prevent_extensions, object_set_prototype_of,
+    is_frozen_object, object_freeze, object_get_prototype_of, object_is_frozen,
+    object_prevent_extensions, object_set_prototype_of,
 };
 
 use crate::value::{JsError, Value};
