@@ -2079,7 +2079,9 @@ const __quenchVfsPromiseNames = [
   "chmod",
   "chown",
   "copyFile",
+  "lchmod",
   "lchown",
+  "link",
   "lstat",
   "mkdir",
   "mkdtemp",
@@ -2097,6 +2099,7 @@ const __quenchVfsPromiseNames = [
   "truncate",
   "unlink",
   "utimes",
+  "lutimes",
   "writeFile"
 ];
 if (globalThis.__nodeFs?.promises) {
