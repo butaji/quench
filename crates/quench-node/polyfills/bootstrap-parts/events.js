@@ -599,7 +599,11 @@ class NodeReadable extends NodeEventEmitter {
     this._endEmitted = true;
     this._readableState.endEmitted = true;
     this.emit("end");
-    if (this._autoDestroy) queueMicrotask(() => this.destroy());
+    if (this._autoDestroy) {
+      queueMicrotask(() => {
+        if (!this.__nodeDuplex || this.writableFinished) this.destroy();
+      });
+    }
   }
 
   iterator(options = {}) {
