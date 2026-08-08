@@ -2392,7 +2392,10 @@ let __quenchHttpModule;
             serverRequest._readableState.ended = true;
             serverRequest.emit("end");
           };
-          if (serverRequest.listenerCount("data")) {
+          if (
+            serverRequest.listenerCount("data") ||
+            serverRequest.readableFlowing === true
+          ) {
             endServerRequest();
             closeServerRequest();
           } else {
