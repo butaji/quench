@@ -141,6 +141,45 @@ class __QuenchMemoryProvider extends __QuenchVirtualProvider {
   constructor() {
     super();
     this._readonly = false;
+    const entryPrototype = {
+      isFile() {
+        return this.type === 0;
+      },
+      isDirectory() {
+        return this.type === 1;
+      },
+      isSymbolicLink() {
+        return this.type === 2;
+      },
+      isDynamic() {
+        return typeof this.contentProvider === "function";
+      },
+      getContentSync() {
+        if (typeof this.contentProvider !== "function") return this.content;
+        const value = this.contentProvider();
+        if (value && typeof value.then === "function") {
+          const error = new Error("Content is async-only");
+          error.code = "ERR_INVALID_STATE";
+          throw error;
+        }
+        return value;
+      },
+      async getContentAsync() {
+        return typeof this.contentProvider === "function"
+          ? await this.contentProvider()
+          : this.content;
+      }
+    };
+    const root = Object.assign(Object.create(entryPrototype), {
+      type: 1,
+      mode: 0o755,
+      children: new Map(),
+      populated: true,
+      nlink: 1,
+      uid: 0,
+      gid: 0
+    });
+    Object.defineProperty(this, Symbol("kRoot"), { value: root });
   }
   get readonly() {
     return this._readonly;
@@ -261,6 +300,29 @@ class __QuenchVirtualFileSystem {
     this.readonly = false;
     this.mountPoint = null;
     this.__entries = new Map([["/", { type: "dir", children: new Set() }]]);
+    if (provider instanceof __QuenchMemoryProvider) {
+      const root = Object.getOwnPropertySymbols(provider)
+        .map((symbol) => provider[symbol])
+        .find((entry) => entry?.type === 1 && entry.children instanceof Map);
+      if (root) {
+        for (const [name, entry] of root.children) {
+          this.__entries.set(`/${name}`, {
+            type:
+              entry.type === 0 ? "file" : entry.type === 1 ? "dir" : "symlink",
+            data: entry.content || "",
+            contentProvider: entry.contentProvider,
+            target: entry.target,
+            children: new Set(),
+            mode: entry.mode,
+            uid: entry.uid,
+            gid: entry.gid,
+            nlink: entry.nlink,
+            populate: entry.populate,
+            populated: entry.populated
+          });
+        }
+      }
+    }
     this.__fds = new Map();
     this.__closedFds = new Set();
     this.__realFds = new Set();
@@ -320,6 +382,19 @@ class __QuenchVirtualFileSystem {
     };
     this.promises.open = async (path, flags = "r") =>
       this.openSync(path, flags);
+    const readFilePromise = this.promises.readFile;
+    this.promises.readFile = async (path, options) => {
+      const entry = this.__entry(path);
+      if (entry?.contentProvider) {
+        const data = await entry.contentProvider();
+        return options === "utf8" || options?.encoding
+          ? globalThis.Buffer.from(data).toString(
+              options === "utf8" ? "utf8" : options.encoding
+            )
+          : globalThis.Buffer.from(data);
+      }
+      return readFilePromise(path, options);
+    };
   }
   __entry(path) {
     return this.__entries.get(__quenchVfsResolvePath(this.__entries, path));
@@ -946,9 +1021,19 @@ class __QuenchVirtualFileSystem {
     const entry = this.__entry(key);
     if (!entry) throw __quenchVfsError("ENOENT", "open", path);
     if (entry.type !== "file") throw __quenchVfsError("EISDIR", "read", path);
+    const data = entry.contentProvider ? entry.contentProvider() : entry.data;
+    if (data && typeof data.then === "function") {
+      const error = new Error("Content is async-only");
+      error.code = "ERR_INVALID_STATE";
+      throw error;
+    }
     return options === "utf8" || options?.encoding
-      ? entry.data
-      : globalThis.Buffer.from(entry.data);
+      ? typeof data === "string"
+        ? data
+        : globalThis.Buffer.from(data).toString(
+            options === "utf8" ? "utf8" : options.encoding
+          )
+      : globalThis.Buffer.from(data);
   }
   readFile(path, options, callback) {
     if (typeof options === "function") {
@@ -1300,8 +1385,50 @@ class __QuenchVirtualFileSystem {
     if (!this.__entries.has(key)) {
       throw __quenchVfsError("ENOENT", "scandir", path);
     }
-    if (this.__entries.get(key).type !== "dir") {
+    const entry = this.__entries.get(key);
+    if (entry.type !== "dir") {
       throw __quenchVfsError("ENOTDIR", "scandir", path);
+    }
+    if (typeof entry.populate === "function" && !entry.populated) {
+      const add = (name, value) => {
+        const childKey = `${key === "/" ? "" : key}/${name}`;
+        const dynamic = typeof value === "function";
+        this.__entries.set(childKey, {
+          type: "file",
+          data: dynamic ? "" : value,
+          contentProvider: dynamic ? value : undefined,
+          children: new Set(),
+          mode: 0o644,
+          mtimeMs: Date.now(),
+          ctimeMs: Date.now()
+        });
+      };
+      const scoped = {
+        addFile: add,
+        addDirectory: (name) => {
+          const childKey = `${key === "/" ? "" : key}/${name}`;
+          this.__entries.set(childKey, {
+            type: "dir",
+            children: new Set(),
+            mode: 0o755,
+            mtimeMs: Date.now(),
+            ctimeMs: Date.now()
+          });
+        },
+        addSymlink: (name, target) => {
+          const childKey = `${key === "/" ? "" : key}/${name}`;
+          this.__entries.set(childKey, {
+            type: "symlink",
+            target,
+            children: new Set(),
+            mode: 0o777,
+            mtimeMs: Date.now(),
+            ctimeMs: Date.now()
+          });
+        }
+      };
+      entry.populate(scoped);
+      entry.populated = true;
     }
     const prefix = key === "/" ? "/" : `${key}/`;
     const names = [...this.__entries.keys()]
