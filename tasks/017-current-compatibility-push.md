@@ -434,3 +434,8 @@ Focused stage 2093 isolates ECDSA P-256 generation, key metadata, signing,
 and verification; the complete contract passes under quench-node. This
 narrows the remaining upstream CryptoKey discrepancy to its combined
 multi-algorithm/lifecycle path rather than basic ECDSA support.
+
+Focused stage 2094 independently verifies RSA-PSS 2048-bit generation,
+signing, and verification with SHA-256 and a 32-byte salt. It passes under
+quench-node, further narrowing the upstream CryptoKey mismatch to combined
+fixture sequencing or the remaining AES/lifecycle path.
