@@ -138,8 +138,18 @@ class __QuenchVirtualProvider {
   }
 }
 class __QuenchMemoryProvider extends __QuenchVirtualProvider {
+  constructor() {
+    super();
+    this._readonly = false;
+  }
+  get readonly() {
+    return this._readonly;
+  }
   get supportsSymlinks() {
     return true;
+  }
+  setReadOnly() {
+    this._readonly = true;
   }
 }
 class __QuenchRealFSProvider extends __QuenchVirtualProvider {
@@ -1735,6 +1745,34 @@ __QuenchVirtualFileSystem.prototype.write = function (
 __QuenchVirtualFileSystem.prototype.close = function (fd, callback) {
   __quenchVfsCallback(this, callback, () => this.closeSync(fd));
 };
+const __quenchVfsMutationMethods = [
+  "writeFileSync",
+  "appendFileSync",
+  "mkdirSync",
+  "mkdtempSync",
+  "rmdirSync",
+  "rmSync",
+  "unlinkSync",
+  "copyFileSync",
+  "renameSync",
+  "symlinkSync",
+  "linkSync",
+  "truncateSync",
+  "chmodSync",
+  "chownSync",
+  "lchownSync",
+  "utimesSync",
+  "lutimesSync"
+];
+for (const name of __quenchVfsMutationMethods) {
+  const original = __QuenchVirtualFileSystem.prototype[name];
+  __QuenchVirtualFileSystem.prototype[name] = function (...args) {
+    if (this.provider.readonly) {
+      throw __quenchVfsError("EROFS", name.replace(/Sync$/, ""), args[0]);
+    }
+    return original.apply(this, args);
+  };
+}
 const __quenchVfsMounts = new Set();
 let __quenchVfsNextFd = 0x40000000;
 let __quenchVfsNextIno = 1;
