@@ -29,6 +29,11 @@ the server receives EOF, runs `end`, and completes cleanup. The upstream
 `test-net-allow-half-open-async-iter.js` still fails at its larger harness
 callback path, so this stage is only a transport primitive/lifecycle claim.
 
+Stage 2317 makes the host poll phase drain all pending native accepts in one
+turn and removes destroyed sockets from its native registration set. Three
+concurrent native clients complete independent ping/pong writes in the
+focused stage.
+
 ## Required integration contract
 
 1. The host must extend the Stage 2313 hook into a bounded native poll step that can report readable,
@@ -49,6 +54,7 @@ callback path, so this stage is only a transport primitive/lifecycle claim.
 - Stage 2314: native stream readiness probe (passing).
 - Stage 2315: gated public `net` TCP ping/pong loopback (passing).
 - Stage 2316: gated native half-close and EOF delivery (passing).
+- Stage 2317: gated concurrent native client acceptance (passing).
 - Next: one accepted socket with one write/read round trip and explicit close.
 - Then: half-close exchange from Node's
   `test-net-allow-half-open-async-iter.js`.
