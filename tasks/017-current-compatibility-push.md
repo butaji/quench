@@ -709,3 +709,8 @@ callback after the readable side has ended, including byte/BYOB conversion.
 The contract passes. Duplex auto-destroy now waits for the writable side when
 the readable side ends; the upstream fixture retains a later sequencing
 callback mismatch.
+
+Focused stage 2157 adds side-specific Duplex option handling for
+`readableObjectMode`, `writableObjectMode`, `readableHighWaterMark`, and
+`writableHighWaterMark`. The focused contract and upstream
+`test-stream-duplex-props.js` both pass.
