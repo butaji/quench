@@ -791,3 +791,5 @@ pass.
 - Stage 2184: flatten the no-custom-destroy completion path so writable `close` and destroy callbacks remain deferred but run before a zero-delay timer, matching stage 466 and preserving stages 2175–2181.
 - Stage 2185: replace the Web Streams reader's infinite microtask polling with resolver-based pending reads. Stage 2150 now exits cleanly after delivering its data, and related Web/Duplex stages 2151–2153, 2160, 2163, and 2164 remain green.
 - Post-fix targeted audit on 2026-08-08: all six previously failing focused stages (456, 466, 475, 1866, 2135, 2150) pass together. The five representative npm application probes and the Rust test suite also pass.
+- Stage 2186 isolates short `AbortSignal.any()`/`AbortSignal.timeout()` delivery through `events.once()`; it is the next probe for the longer upstream timeout fixture.
+- Stage 2187 isolates the same timeout behavior through `Promise.race()` and `assert.rejects()`; both short probes pass, while the long upstream case still exposes timer ordering.
