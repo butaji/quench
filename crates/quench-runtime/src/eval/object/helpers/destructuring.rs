@@ -461,10 +461,19 @@ fn copy_enumerable_own_properties(
     let mut rest = Object::new(ObjectKind::Ordinary);
     rest.prototype = crate::builtins::get_object_prototype();
     let src = obj.borrow();
-    for i in 0..src.elements.len() {
-        if src.holes.contains(&i) {
-            continue;
+    // 1. Integer-indexed keys, ascending (per ES OrdinaryOwnPropertyKeys).
+    let mut indices: Vec<usize> = (0..src.elements.len())
+        .filter(|i| !src.holes.contains(i))
+        .collect();
+    for key in src.properties.keys().chain(src.getters.keys()) {
+        if let Some(i) = crate::value::object::helpers::as_array_index(key) {
+            if !indices.contains(&i) {
+                indices.push(i);
+            }
         }
+    }
+    indices.sort_unstable();
+    for i in indices {
         let key = i.to_string();
         if excluded.contains(&key) || !src.is_enumerable(&key) {
             continue;
@@ -472,21 +481,27 @@ fn copy_enumerable_own_properties(
         let val = copy_enumerable_value(obj, &key, &src, env)?;
         rest.set(&key, val);
     }
-    let mut keys: Vec<String> = src
+    // 2. String keys (non-numeric, non-symbol), in insertion order, then
+//    symbol keys (whose property-key form contains a NUL separator).
+    for key in src
         .properties
         .keys()
         .chain(src.getters.keys())
-        .filter(|key| crate::value::object::helpers::as_array_index(key).is_none())
-        .cloned()
-        .collect();
-    keys.sort();
-    keys.dedup();
-    for key in keys {
-        if excluded.contains(&key) || !src.is_enumerable(&key) {
+        .chain(src.setters.keys())
+        .chain(src.symbol_properties.keys())
+    {
+        if crate::value::object::helpers::as_array_index(key).is_some()
+            || excluded.contains(key)
+            || !src.is_enumerable(key)
+        {
             continue;
         }
-        let val = copy_enumerable_value(obj, &key, &src, env)?;
-        rest.set(&key, val);
+        let val = copy_enumerable_value(obj, key, &src, env)?;
+        if key.contains('\0') {
+            rest.set_symbol(key, val);
+        } else {
+            rest.set(key, val);
+        }
     }
     Ok(Value::Object(Rc::new(RefCell::new(rest))))
 }
