@@ -242,6 +242,16 @@ class NodeReadable extends NodeEventEmitter {
     this.readableDefaultEncoding = options.defaultEncoding || "utf8";
     this._autoDestroy = options.autoDestroy !== false;
     this._destroy = options.destroy;
+    if (options.signal?.addEventListener && !options.__quenchCompatConstruct) {
+      const abort = () => {
+        const error = new Error("The operation was aborted");
+        error.name = "AbortError";
+        error.code = "ABORT_ERR";
+        this.destroy(error);
+      };
+      if (options.signal.aborted) abort();
+      else options.signal.addEventListener("abort", abort, { once: true });
+    }
     if (!NodeBuffer.isEncoding(this.readableDefaultEncoding)) {
       const error = new TypeError("Unknown encoding");
       error.code = "ERR_UNKNOWN_ENCODING";
@@ -838,6 +848,16 @@ const NodeWritableCompat = function Writable(options = {}) {
       this.on("error", () => {
         if (!this.destroyed) this.destroy();
       });
+    }
+    if (options.signal?.addEventListener) {
+      const abort = () => {
+        const error = new Error("The operation was aborted");
+        error.name = "AbortError";
+        error.code = "ABORT_ERR";
+        this.destroy(error);
+      };
+      if (options.signal.aborted) abort();
+      else options.signal.addEventListener("abort", abort, { once: true });
     }
     return this;
   }
