@@ -8,6 +8,8 @@ assert.strictEqual(stream.read(), null);
 stream.end("value");
 
 setImmediate(() => {
-  assert.strictEqual(stream.readableEnded, true);
+  assert.strictEqual(stream.readableEnded, false);
   assert.strictEqual(stream.writableEnded, true);
+  assert.strictEqual(stream.read().toString(), "value");
+  setImmediate(() => assert.strictEqual(stream.readableEnded, true));
 });
