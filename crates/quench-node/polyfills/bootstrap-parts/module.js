@@ -27,6 +27,13 @@ const __quenchBuiltinModules = [
   "worker_threads",
   "zlib"
 ];
+const decodeFilePath = (value) => {
+  try {
+    return decodeURIComponent(value);
+  } catch (_) {
+    return value;
+  }
+};
 const formatValue = (value) => {
   if (value && typeof value === "object") {
     try {
@@ -49,7 +56,9 @@ const __quenchModule = {
       typeof URL === "function" &&
       filename instanceof URL &&
       filename.protocol === "file:";
-    const raw = isFileUrlObject ? filename.pathname : String(filename || "");
+    const raw = isFileUrlObject
+      ? decodeFilePath(filename.pathname)
+      : String(filename || "");
     if (typeof filename !== "string" && !isFileUrlObject) {
       const error = new TypeError(
         `The argument 'filename' must be a file URL object, file URL string, or absolute path string. Received ${formatValue(filename)}`
@@ -64,7 +73,7 @@ const __quenchModule = {
       error.code = "ERR_INVALID_ARG_VALUE";
       throw error;
     }
-    const base = isFileUrl ? raw.slice(7) : raw;
+    const base = isFileUrl ? decodeFilePath(raw.slice(7)) : raw;
     const directory = base ? pathApi.dirname(base) : process.cwd();
     return (specifier) => {
       const value = String(specifier);
