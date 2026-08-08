@@ -239,7 +239,7 @@ const __quenchDgramSend = (socket, message, ...args) => {
           : NodeBuffer.from(payload);
   const offset = hasOffset ? args[0] : 0;
   const length = hasOffset ? args[1] : payload.byteLength;
-  if (socket._connected && args.length >= 3) {
+  if (socket._connected && args.length >= 3 && typeof args[2] !== "function") {
     throw Object.assign(new Error("Already connected"), {
       code: "ERR_SOCKET_DGRAM_IS_CONNECTED"
     });
@@ -453,13 +453,16 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
         address = type === "udp6" ? "::" : "0.0.0.0";
       }
       const lookupAddress = address || (type === "udp6" ? "::" : "0.0.0.0");
+      socket._bindPending = true;
       socket[__quenchDgramStateSymbol].handle.lookup(
         lookupAddress,
         (error, resolvedAddress) => {
           if (error) {
+            socket._bindPending = false;
             socket.emit("error", error);
             return;
           }
+          socket._bindPending = false;
           if (!socket._bound && !socket._closed) {
             __quenchDgramBind(socket, type, port, resolvedAddress, callback);
           }
