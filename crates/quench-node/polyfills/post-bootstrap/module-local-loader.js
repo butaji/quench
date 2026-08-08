@@ -41,6 +41,16 @@ const __quenchPackagePath = (specifier, parent) => {
   while (true) {
     const root = path.join(directory, "node_modules", packageName);
     try {
+      if (!subpath) {
+        for (const candidate of [
+          `${root}.js`,
+          `${root}.json`,
+          `${root}.node`
+        ]) {
+          __nodeFs.readFileSync(candidate, "utf8");
+          return candidate;
+        }
+      }
       const entry = __quenchPackageEntry(root, subpath);
       return __quenchLocalModulePath(entry, root);
     } catch (_) {}
@@ -78,6 +88,38 @@ const __quenchValidateRequireId = (specifier) => {
 };
 const __quenchResolve = (specifier, parent, options) => {
   __quenchValidateRequireId(specifier);
+  if (options !== undefined && (!options || typeof options !== "object")) {
+    const error = new TypeError("options must be an object");
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  if (options?.paths !== undefined) {
+    if (!Array.isArray(options.paths)) {
+      const error = new TypeError("options.paths must be an array");
+      error.code = "ERR_INVALID_ARG_VALUE";
+      throw error;
+    }
+    for (const value of options.paths) {
+      if (typeof value !== "string") {
+        const error = new TypeError("options.paths entries must be strings");
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+    }
+    if (options.paths.length === 0) {
+      const error = new Error(`Cannot find module '${specifier}'`);
+      error.code = "MODULE_NOT_FOUND";
+      throw error;
+    }
+  }
+  const normalized = String(specifier).replace(/^node:/, "");
+  if (
+    __quenchOriginalRequireWithLocalModules("module").builtinModules.includes(
+      normalized
+    )
+  ) {
+    return specifier;
+  }
   const lookupParent =
     (options?.paths?.[0] && path.resolve(options.paths[0], "index.js")) ||
     parent;
@@ -96,6 +138,14 @@ const __quenchResolve = (specifier, parent, options) => {
 const __quenchResolvePaths = (specifier, parent) => {
   __quenchValidateRequireId(specifier);
   if (specifier.startsWith(".") || specifier.startsWith("/")) return null;
+  const normalized = String(specifier).replace(/^node:/, "");
+  if (
+    __quenchOriginalRequireWithLocalModules("module").builtinModules.includes(
+      normalized
+    )
+  ) {
+    return null;
+  }
   return __quenchOriginalRequireWithLocalModules("module")._nodeModulePaths(
     path.dirname(parent)
   );

@@ -16,6 +16,8 @@ assert.strictEqual(
 );
 assert.strictEqual(typeof require.resolve.paths("resolve-package"), "object");
 assert.ok(Array.isArray(require.resolve.paths("resolve-package")));
+assert.strictEqual(require.resolve("path"), "path");
+assert.strictEqual(require.resolve.paths("path"), null);
 assert.strictEqual(entry, true);
 
 console.log("module resolve pass");
