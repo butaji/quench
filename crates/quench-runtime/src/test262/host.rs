@@ -45,7 +45,9 @@ impl Default for QuenchHost {
 impl Test262Host for QuenchHost {
     fn run_script(&mut self, source: &str) -> Result<(), String> {
         let mut ctx = Context::new().map_err(|e| format!("{:?}", e))?;
-        crate::builtins::register_builtins(&mut ctx);
+        // Context::new() already registers builtins (init_builtins); do not
+        // re-register — that would create fresh constructor objects and replace
+        // the globals (so a JS builtin attaching to Number would be lost).
         // Harness eval forces sloppy mode internally and restores it. The test
         // body itself must start sloppy (strictness is applied by prepending
         // `"use strict";` in run_prepared), so force sloppy before eval. The
@@ -57,7 +59,7 @@ impl Test262Host for QuenchHost {
 
     fn run_module_script(&mut self, source: &str) -> Result<(), String> {
         let mut ctx = Context::new().map_err(|e| format!("{:?}", e))?;
-        crate::builtins::register_builtins(&mut ctx);
+        // See run_script: Context::new() already registers builtins.
         try_inject_harness(&mut ctx).map_err(|e| format!("harness load failure: {}", e))?;
         crate::interpreter::set_strict_mode(false);
         ctx.eval_es_module(source)
