@@ -172,7 +172,9 @@ pub fn assign_array_with_iterator(
         }
     }
     if !iterator_done {
-        if let Some(err) = call_iterator_return(iterator, true) {
+        // Normal completion: the iterator closes without an error, so the
+        // return method's non-Object result is a TypeError.
+        if let Some(err) = call_iterator_return(iterator, false) {
             return Err(err);
         }
     }
