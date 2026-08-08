@@ -566,6 +566,11 @@ directory without `package.json` now falls back to `index.js` and related
 extensions. The focused contract and upstream
 `test-module-circular-symlinks.js` both pass through the package lookup path.
 
+Focused stage 2117 adds `require.resolve()` and `require.resolve.paths()` for
+relative, absolute, and bare package lookups, reusing the same resolver as
+`require()` without evaluating the target. The focused contract passes.
+The upstream `test-require-resolve-opts-paths-relative.js` fixture also passes.
+
 Focused stage 2116 uses `module.globalPaths` when resolving bare packages, so
 packages provided through `NODE_PATH` load without a local `node_modules`
 entry. The focused global-package contract passes.
