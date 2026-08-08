@@ -571,6 +571,11 @@ relative, absolute, and bare package lookups, reusing the same resolver as
 `require()` without evaluating the target. The focused contract passes.
 The upstream `test-require-resolve-opts-paths-relative.js` fixture also passes.
 
+The resolver now recognizes built-in modules in `require.resolve()` and
+returns `null` from `require.resolve.paths()` for those names, matching Node’s
+non-filesystem resolution contract. The broader `test-require-resolve.js`
+fixture remains open around custom `options.paths` ordering.
+
 Focused stage 2116 uses `module.globalPaths` when resolving bare packages, so
 packages provided through `NODE_PATH` load without a local `node_modules`
 entry. The focused global-package contract passes.
