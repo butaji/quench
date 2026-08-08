@@ -30,3 +30,4 @@ Thumbs.db
 # test262 report
 /target/test262_report.json
 /target/test262_report.md
+tasks/failures-*.json
