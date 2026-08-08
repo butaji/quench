@@ -793,3 +793,4 @@ pass.
 - Post-fix targeted audit on 2026-08-08: all six previously failing focused stages (456, 466, 475, 1866, 2135, 2150) pass together. The five representative npm application probes and the Rust test suite also pass.
 - Stage 2186 isolates short `AbortSignal.any()`/`AbortSignal.timeout()` delivery through `events.once()`; it is the next probe for the longer upstream timeout fixture.
 - Stage 2187 isolates the same timeout behavior through `Promise.race()` and `assert.rejects()`; both short probes pass, while the long upstream case still exposes timer ordering.
+- Stage 2189 updates stale focused stage 475 to current Node behavior: `Readable.push()` after destroy returns `false` rather than throwing. This resolves the sole failure in the complete 2,073-stage audit; Node CLI behavior was checked directly.
