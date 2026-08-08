@@ -992,7 +992,9 @@ class NodeWritable extends NodeEventEmitter {
         this._writableState.finished = true;
         this.writableFinished = true;
         this.emit("finish");
-        if (this._autoDestroy) this.destroy();
+        if (this._autoDestroy && (!this.__nodeDuplex || this.readableEnded)) {
+          this.destroy();
+        }
         if (callback) callback();
       });
     };
@@ -1067,7 +1069,9 @@ class NodeDuplex extends NodeReadable {
       "writableCorked",
       "_autoDestroy",
       "_corkedChunks",
+      "_writeQueue",
       "_write",
+      "_final",
       "_destroy",
       "writableDefaultEncoding"
     ]) {
@@ -1103,7 +1107,14 @@ const NodeDuplexCompat = function Duplex(options = {}) {
   );
 };
 NodeDuplexCompat.prototype = NodeDuplex.prototype;
-for (const method of ["write", "end", "cork", "uncork", "setDefaultEncoding"]) {
+for (const method of [
+  "write",
+  "end",
+  "cork",
+  "uncork",
+  "setDefaultEncoding",
+  "__nodeProcessWrite"
+]) {
   NodeDuplex.prototype[method] = NodeWritable.prototype[method];
 }
 const __nodeDuplexPair = (readable, writable) => {
