@@ -1,3 +1,37 @@
+const __nodeTimerPromiseSchedulerError = (code, message) => {
+  const error = new TypeError(message);
+  error.code = code;
+  return error;
+};
+class NodeTimerPromiseScheduler {
+  constructor() {
+    const error = new Error("Illegal constructor");
+    error.code = "ERR_ILLEGAL_CONSTRUCTOR";
+    throw error;
+  }
+  wait(_delay = 0, options = {}) {
+    if (this !== globalThis.__nodeTimersPromises.scheduler) {
+      throw __nodeTimerPromiseSchedulerError(
+        "ERR_INVALID_THIS",
+        'Value of "this" must be of type Scheduler'
+      );
+    }
+    return globalThis.__nodeTimersPromises.setTimeout(
+      _delay,
+      undefined,
+      options
+    );
+  }
+  yield(options = {}) {
+    if (this !== globalThis.__nodeTimersPromises.scheduler) {
+      throw __nodeTimerPromiseSchedulerError(
+        "ERR_INVALID_THIS",
+        'Value of "this" must be of type Scheduler'
+      );
+    }
+    return globalThis.__nodeTimersPromises.setImmediate(undefined, options);
+  }
+}
 globalThis.__nodeTimersPromises = {
   setTimeout: (_delay = 0, value, options = {}) =>
     new Promise((resolve, reject) =>
@@ -42,12 +76,7 @@ globalThis.__nodeTimersPromises = {
       yield value;
     }
   },
-  scheduler: {
-    wait: (_delay = 0, options = {}) =>
-      globalThis.__nodeTimersPromises.setTimeout(_delay, undefined, options),
-    yield: (options = {}) =>
-      globalThis.__nodeTimersPromises.setImmediate(undefined, options)
-  }
+  scheduler: Object.create(NodeTimerPromiseScheduler.prototype)
 };
 
 const processListeners = {};
