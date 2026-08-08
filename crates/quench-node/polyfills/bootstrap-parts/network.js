@@ -319,6 +319,7 @@ const __quenchNetModule = {
       this._nativeEnded = false;
       this._corked = 0;
       this._timeoutTimer = null;
+      this._peer = null;
     }
     get bufferSize() {
       return this._bufferSize;
@@ -440,12 +441,14 @@ const __quenchNetModule = {
           ? NodeBuffer.byteLength(_data)
           : _data?.byteLength || _data?.length || 0;
       if (!this.destroyed) {
+        const bytes =
+          typeof _data === "string"
+            ? Array.from(new TextEncoder().encode(_data))
+            : Array.from(new Uint8Array(_data.buffer || _data));
         if (this._nativeId) {
-          const bytes =
-            typeof _data === "string"
-              ? Array.from(new TextEncoder().encode(_data))
-              : Array.from(new Uint8Array(_data.buffer || _data));
           __quench_tcp_write(this._nativeId, bytes);
+        } else if (this._peer && !this._peer.destroyed && bytes.length) {
+          queueMicrotask(() => this._peer.emit("data", NodeBuffer.from(bytes)));
         }
         this._bufferSize += length;
         this.bytesWritten += length;
@@ -478,6 +481,9 @@ const __quenchNetModule = {
         this.emit("finish");
         this.emit("end");
         this.emit("close");
+        if (this._peer && !this._peer.destroyed) {
+          queueMicrotask(() => this._peer.emit("end"));
+        }
       });
       return this;
     }
@@ -491,7 +497,12 @@ const __quenchNetModule = {
       const server = [...__quenchNetServers].find(
         (candidate) => candidate.listening
       );
-      if (server?._handler) server._handler(socket);
+      if (server?._handler) {
+        const serverSocket = new __quenchNetModule.Socket();
+        socket._peer = serverSocket;
+        serverSocket._peer = socket;
+        server._handler(serverSocket);
+      }
     });
     return socket;
   },
