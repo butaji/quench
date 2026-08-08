@@ -942,3 +942,4 @@ pass.
 - Stage 2289 registers adopted dgram fds as live bound sockets and preserves callback-only `bind({ fd }, callback)` overloads. Upstream fd-bind testing now reaches packet exchange, with a remaining concurrent raw-fd identity mismatch (`60001` vs `60000`).
 - Stage 2290 assigns unique synthetic ephemeral ports to raw UDP handles, eliminating concurrent fd-adoption cross-delivery. Upstream `test-dgram-bind-fd.js` now passes.
 - Stage 2291 rejects UDP payloads larger than 65,507 bytes with Node-compatible `EMSGSIZE` callback/error metadata. The focused size contract and upstream `test-dgram-msgsize.js` pass.
+- Stage 2292 allows same-port dgram binds when `reusePort: true`. The focused reuse-port contract and upstream `test-dgram-reuseport.js` pass.

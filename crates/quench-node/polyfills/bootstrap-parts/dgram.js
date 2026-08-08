@@ -66,7 +66,7 @@ const __quenchDgramBind = (socket, type, port, address, callback) => {
   }
   const resolvedPort =
     typeof port === "number" && port > 0 ? port : __quenchDgramNextPort++;
-  if (__quenchDgramBoundPorts.has(resolvedPort)) {
+  if (__quenchDgramBoundPorts.has(resolvedPort) && !socket._reusePort) {
     const error = Object.assign(new Error("bind EADDRINUSE"), {
       code: "EADDRINUSE",
       syscall: "bind"
@@ -505,6 +505,7 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
     type,
     _sendBlockList: options?.sendBlockList,
     _receiveBlockList: options?.receiveBlockList,
+    _reusePort: options?.reusePort === true,
     bind: (port, address, callback) => {
       if (socket._bound || socket._bindPending) {
         throw Object.assign(new Error("Socket is already bound"), {
