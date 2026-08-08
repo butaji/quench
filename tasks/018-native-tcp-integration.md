@@ -102,3 +102,10 @@ polled alongside `__quench_io_poll()` and `execute_pending_job()`. The latter
 is the smaller integration seam: JavaScript timer creation/cancellation would
 register deadlines, and the host loop would dispatch due callbacks without
 blocking the JS job queue.
+
+Stage 2444 prototypes this seam: the host loop now owns timer deadlines while
+the JS layer owns handles, cancellation, ref state, and callback invocation.
+The focused microtask/`setImmediate`/delayed-timeout ordering stage passes, as
+do the representative application stages and ordinary upstream timers. Full
+backpressure and watch-promises fixtures remain unresolved, so this is a
+partial scheduler integration rather than a completed Node timer claim.

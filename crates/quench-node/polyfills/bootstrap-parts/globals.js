@@ -728,3 +728,107 @@ if (globalThis.Blob && !globalThis.Blob.__quenchTypeNormalized) {
 if (globalThis.process && typeof globalThis.process.emit !== "function") {
   globalThis.process.emit = () => globalThis.process;
 }
+
+if (globalThis.__quench_host_timer_scheduler) {
+  const __quenchHostTimers = new Map();
+  let __quenchHostTimerId = 1;
+  const __quenchHostNow = () =>
+    Number(BigInt(globalThis.__quench_now_ns()) / 1000000n);
+  const __quenchHostHandle = (entry) => {
+    const handle = {
+      active: true,
+      refed: true,
+      ref() {
+        this.refed = true;
+        return this;
+      },
+      unref() {
+        this.refed = false;
+        return this;
+      },
+      hasRef() {
+        return this.active && this.refed;
+      },
+      refresh() {
+        if (this.active) entry.due = __quenchHostNow() + entry.delay;
+        return this;
+      },
+      [Symbol.toPrimitive]() {
+        return entry.id;
+      }
+    };
+    Symbol.dispose ||= Symbol("dispose");
+    handle[Symbol.dispose] = () => __quenchHostClear(handle);
+    entry.handle = handle;
+    return handle;
+  };
+  const __quenchHostClear = (handle) => {
+    const entry = __quenchHostTimers.get(Number(handle));
+    if (!entry) return;
+    entry.handle.active = false;
+    __quenchHostTimers.delete(entry.id);
+  };
+  const __quenchHostSchedule = (callback, delay, args, repeat) => {
+    const entry = {
+      id: __quenchHostTimerId++,
+      callback,
+      args,
+      delay: Math.max(0, __nodeTimerDelay(delay)),
+      due: __quenchHostNow() + Math.max(0, __nodeTimerDelay(delay)),
+      repeat
+    };
+    __quenchHostTimers.set(entry.id, entry);
+    const handle = __quenchHostHandle(entry);
+    handle[Symbol.toPrimitive] = () => entry.id;
+    return handle;
+  };
+  globalThis.setTimeout = (callback, delay = 0, ...args) => {
+    if (typeof callback !== "function")
+      throw new TypeError('The "callback" argument must be of type function');
+    return __quenchHostSchedule(callback, delay, args, false);
+  };
+  globalThis.clearTimeout = __quenchHostClear;
+  globalThis.setInterval = (callback, delay = 0, ...args) => {
+    if (typeof callback !== "function")
+      throw new TypeError('The "callback" argument must be of type function');
+    return __quenchHostSchedule(callback, delay, args, true);
+  };
+  globalThis.clearInterval = __quenchHostClear;
+  globalThis.setImmediate = (callback, ...args) => {
+    if (typeof callback !== "function")
+      throw new TypeError('The "callback" argument must be of type function');
+    return __quenchHostSchedule(callback, 0, args, false);
+  };
+  globalThis.clearImmediate = __quenchHostClear;
+  globalThis.__nodeTimers = {
+    setTimeout: globalThis.setTimeout,
+    clearTimeout: globalThis.clearTimeout,
+    setInterval: globalThis.setInterval,
+    clearInterval: globalThis.clearInterval,
+    setImmediate: globalThis.setImmediate,
+    clearImmediate: globalThis.clearImmediate
+  };
+  globalThis.__quench_timer_next_delay = () => {
+    let next = -1;
+    const now = __quenchHostNow();
+    for (const entry of __quenchHostTimers.values()) {
+      if (!entry.handle.refed) continue;
+      const delay = Math.max(0, entry.due - now);
+      if (next < 0 || delay < next) next = delay;
+    }
+    return next;
+  };
+  globalThis.__quench_timer_poll = () => {
+    const now = __quenchHostNow();
+    const due = [...__quenchHostTimers.values()]
+      .filter((entry) => entry.due <= now && entry.handle.active)
+      .sort((a, b) => a.id - b.id);
+    for (const entry of due) {
+      if (!entry.handle.active) continue;
+      if (entry.repeat) entry.due = now + entry.delay;
+      else __quenchHostTimers.delete(entry.id);
+      entry.callback.apply(entry.handle, entry.args);
+      if (!entry.repeat) entry.handle.active = false;
+    }
+  };
+}
