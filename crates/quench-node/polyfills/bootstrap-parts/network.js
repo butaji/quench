@@ -317,6 +317,7 @@ const __quenchNetModule = {
       this._noDelay = false;
       this._nativeId = 0;
       this._nativeConnected = false;
+      this.connecting = false;
       this._nativeEnded = false;
       this._corked = 0;
       this._timeoutTimer = null;
@@ -469,6 +470,7 @@ const __quenchNetModule = {
     connect(_options, callback) {
       globalThis.__quenchValidateConnectionOptions(_options);
       if (!this._handle) this._handle = { setKeepAlive: () => {} };
+      this.connecting = true;
       if (typeof callback === "function") this.once("connect", callback);
       if (_options?.__quenchNativeTransport) {
         const nativeHost = _options.host || "127.0.0.1";
@@ -481,7 +483,10 @@ const __quenchNetModule = {
         this.remotePort = nativePort;
         __quenchNativeSockets.add(this);
       }
-      queueMicrotask(() => this.emit("connect"));
+      queueMicrotask(() => {
+        this.connecting = false;
+        this.emit("connect");
+      });
       if (!_options?.__quenchNativeTransport) {
         queueMicrotask(() => {
           const server = [...__quenchNetServers].find(
