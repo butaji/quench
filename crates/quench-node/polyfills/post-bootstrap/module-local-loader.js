@@ -245,7 +245,7 @@ const __quenchLoadLocalModule = (specifier, parent) => {
   if (
     __quenchLocalModuleCache.has(cacheFilename) &&
     globalThis.require.cache &&
-    !globalThis.require.cache[cacheFilename]
+    !globalThis.require.cache[filename]
   ) {
     __quenchLocalModuleCache.delete(cacheFilename);
   }
