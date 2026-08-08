@@ -103,6 +103,18 @@
       "file": "017-current-compatibility-push.md",
       "title": "Current compatibility push — stream/iter and auditable baselines",
       "status": "in-progress"
+    },
+    {
+      "id": "018",
+      "file": "018-native-tcp-integration.md",
+      "title": "Native TCP integration",
+      "status": "in-progress"
+    },
+    {
+      "id": "019",
+      "file": "019-ten-compatibility-boundaries.md",
+      "title": "Ten remaining evidence boundaries",
+      "status": "in-progress"
     }
   ]
 }

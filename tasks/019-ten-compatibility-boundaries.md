@@ -712,3 +712,31 @@ The documented timer stages 367–369, 401, and 405–408 all pass: interval
 scheduling, handles, next-tick forwarding, timer promises, and abort behavior
 are green. Stage 366 remains the sole focused timer anomaly and is tracked
 separately from the passing timer contract.
+
+Stage 2449 isolates the remaining no-consumer PassThrough boundary from
+`test-stream-pipe-flow.js`. PassThrough is now a distinct subclass of the
+canonical Transform implementation: it buffers unread output, accounts for
+object-mode and byte-mode readable high-water marks, and holds the active
+transform write callback until `read()` creates capacity. The focused stage
+confirms two unread object-mode chunks do not allow writable `finish` to fire.
+The upstream fixture advances past its former unexpected `finish` call and now
+reports its separate `Callback 0` source-end scheduling failure, so the full
+fixture is not claimed passing. Stage 550's post-`end()` writable-state
+assertion was also corrected from `true` to the local Node CLI's current
+`false` result.
+
+The proportional regression gate passes every focused stage that directly
+mentions `PassThrough` through stage 1875, plus stages 2449 and 2450; the
+pre-existing `Duplex.from({ readable, writable })` method-copy failure in stage
+2167 remains separate. Stream/backpressure stages 2343, 2370, 2372, 2442, and
+2445 pass, as do the Web Streams adapter stages 2243–2246. Rust crate tests pass
+2/2. The representative application stages for Ajv (2047), debug (2069), Chalk
+(2080), `ms` (2081), Prettier (2104), and the process-entry smoke contract
+(2251) all pass.
+
+The complete focused audit at commit `397aae48f` plus the stage-2449 worktree
+contains 2,288 selected stages: 2,195 pass and 93 fail after retry. The failures
+span already-open timer, URL, dgram, stream/Duplex, filesystem, and dirty
+real-provider boundaries; policy validation classifies them as unrecorded, so
+this checkpoint is explicitly not a green full-suite claim. Exact per-stage
+results are retained in `target/compat/focused-stage-metrics.jsonl`.
