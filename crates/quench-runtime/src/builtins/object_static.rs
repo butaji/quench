@@ -243,17 +243,25 @@ pub fn object_create(args: Vec<Value>) -> Result<Value, JsError> {
             ))
         }
     };
-    let mut obj = if let Some(p) = proto {
+    let obj = if let Some(p) = proto {
         Object::with_prototype(ObjectKind::Ordinary, p)
     } else {
         Object::new(ObjectKind::Ordinary)
     };
+    let obj_rc = Rc::new(RefCell::new(obj));
     if let Some(Value::Object(props_obj)) = args.get(1) {
-        for (k, v) in props_obj.borrow().properties.iter() {
-            obj.set(k, v.clone());
+        // Apply each property descriptor via DefineProperty.
+        let keys: Vec<String> = props_obj.borrow().own_keys();
+        for key in keys {
+            let desc = props_obj.borrow().get(&key).unwrap_or(Value::Undefined);
+            crate::builtins::object_static::descriptors::object_define_property(vec![
+                Value::Object(Rc::clone(&obj_rc)),
+                Value::String(key),
+                desc,
+            ])?;
         }
     }
-    Ok(Value::Object(Rc::new(RefCell::new(obj))))
+    Ok(Value::Object(obj_rc))
 }
 
 /// Check whether a property key is internal (not user data)

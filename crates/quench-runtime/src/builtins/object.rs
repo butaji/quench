@@ -126,7 +126,7 @@ pub fn register_object(ctx: &mut Context) {
     // Set Object.prototype.constructor = Object
     object_proto_rc
         .borrow_mut()
-        .set("constructor", object_ctor.clone());
+        .set_nonenumerable("constructor", object_ctor.clone());
     ctx.set_global("Object".to_string(), object_ctor);
 }
 
@@ -154,7 +154,7 @@ fn register_object_prototype_methods(object_proto_rc: &Rc<RefCell<Object>>) {
     };
 
     // Object.prototype.toString
-    object_proto_rc.borrow_mut().set(
+    object_proto_rc.borrow_mut().set_nonenumerable(
         "toString",
         Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
             let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
@@ -164,7 +164,7 @@ fn register_object_prototype_methods(object_proto_rc: &Rc<RefCell<Object>>) {
     );
 
     // Object.prototype.valueOf
-    object_proto_rc.borrow_mut().set(
+    object_proto_rc.borrow_mut().set_nonenumerable(
         "valueOf",
         Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
             let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
@@ -182,7 +182,7 @@ fn register_object_prototype_methods(object_proto_rc: &Rc<RefCell<Object>>) {
     );
 
     // Object.prototype.hasOwnProperty
-    object_proto_rc.borrow_mut().set(
+    object_proto_rc.borrow_mut().set_nonenumerable(
         "hasOwnProperty",
         Value::NativeFunction(Rc::new(NativeFunction::new(
             object_prototype_has_own_property,
@@ -190,7 +190,7 @@ fn register_object_prototype_methods(object_proto_rc: &Rc<RefCell<Object>>) {
     );
 
     // Object.prototype.isPrototypeOf
-    object_proto_rc.borrow_mut().set(
+    object_proto_rc.borrow_mut().set_nonenumerable(
         "isPrototypeOf",
         Value::NativeFunction(Rc::new(NativeFunction::new(
             object_prototype_is_prototype_of,
@@ -198,19 +198,19 @@ fn register_object_prototype_methods(object_proto_rc: &Rc<RefCell<Object>>) {
     );
 
     // Object.prototype.propertyIsEnumerable
-    object_proto_rc.borrow_mut().set(
+    object_proto_rc.borrow_mut().set_nonenumerable(
         "propertyIsEnumerable",
         Value::NativeFunction(Rc::new(NativeFunction::new(
             object_prototype_property_is_enumerable,
         ))),
     );
 
-    object_proto_rc.borrow_mut().set(
+    object_proto_rc.borrow_mut().set_nonenumerable(
         "__lookupGetter__",
         Value::NativeFunction(Rc::new(NativeFunction::new(object_prototype_lookup_getter))),
     );
 
-    object_proto_rc.borrow_mut().set(
+    object_proto_rc.borrow_mut().set_nonenumerable(
         "__lookupSetter__",
         Value::NativeFunction(Rc::new(NativeFunction::new(object_prototype_lookup_setter))),
     );
