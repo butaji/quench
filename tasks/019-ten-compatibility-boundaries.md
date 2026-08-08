@@ -140,6 +140,13 @@ errors=0`); a direct finish-guard change was reverted pending an
   narrowed to the fixture's combined promise/finally scheduling rather than
   basic slice output.
 
+Stage 2442's differential trace found one missing general stream contract:
+Node's `Readable.pipe()` starts flowing by calling `resume()`, while quench
+only installed the data/end listeners. `pipe()` now resumes the readable, and
+the focused trace plus existing backpressure/drop stages pass. The authoritative
+backpressure fixture still reports one `_read()` call instead of eleven, so
+downstream drain/read-demand scheduling remains unresolved.
+
 ## New fs evidence
 
 The temporary stage-2345 callback-label probe showed that callback-style
