@@ -147,6 +147,13 @@ the focused trace plus existing backpressure/drop stages pass. The authoritative
 backpressure fixture still reports one `_read()` call instead of eleven, so
 downstream drain/read-demand scheduling remains unresolved.
 
+Stage 2443 independently verifies `Readable.from(asyncGenerator).take(1)`
+resolves `toArray()` without waiting for the generator's next promise, and the
+upstream generator remains unadvanced until explicitly released. The full
+`test-stream-drop-take.js` fixture still misses its combined callback, so the
+remaining difference is an aggregate promise/finally scheduling interaction,
+not basic take cancellation.
+
 Post-`42edaf10e` regression checkpoint: the Ajv, debug, `ms`, and Prettier
 application stages pass, along with stream stages 2343, 2370, 2372, 2440, and 2442. This confirms the `pipe()` auto-resume change did not regress the
 maintained application or focused stream coverage; the upstream backpressure
