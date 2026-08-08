@@ -129,6 +129,9 @@ class NodeAbortSignal {
   removeEventListener(event, listener) {
     this._listeners = this._listeners.filter((item) => item !== listener);
   }
+  listenerCount(event) {
+    return event === "abort" ? this._listeners.length : 0;
+  }
   throwIfAborted() {
     if (this.aborted) throw this.reason;
   }
