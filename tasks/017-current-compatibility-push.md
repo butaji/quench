@@ -468,3 +468,11 @@ Node's order for generated, imported, and cloned keys. The focused stage
 passes. The upstream `test-webcrypto-deduplicate-usages.js` still ends with
 `Callback 0: expected 1 calls, got 0`, so its combined lifecycle mismatch is
 recorded separately from the now-covered usage-list contract.
+
+Focused stage 2099 covers the HTTP server request socket's parser-owned
+`data` listener, which Node exposes through `req.socket.listenerCount("data")`.
+The runtime now installs that listener and forwards request-body chunks to the
+server-side socket before request dispatch completes. The focused contract
+passes, and `test-http-dump-req-when-res-ends.js` advances beyond its original
+listener assertion. Its remaining callback is the raw `net.createConnection()`
+data path, which still requires a real duplex net-to-HTTP transport model.
