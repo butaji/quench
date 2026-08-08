@@ -363,3 +363,8 @@ Real-application stage 2081 now verifies the installed `ms` package through
 its CommonJS entry point, covering string-to-duration and duration-to-string
 conversions. The same deterministic assertions pass under quench-node and
 host Node.
+
+An ESLint Linter application probe remains unresolved: package loading reaches
+the public API, but the first lint operation overflows the QuickJS stack inside
+ESLint's parser/configuration path. A focused RegExp-flags surface probe (stage
+2083) passes, so this is not being misclassified as a missing primitive.
