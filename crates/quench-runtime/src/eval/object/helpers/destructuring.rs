@@ -310,7 +310,7 @@ pub fn take_iterator_step(
         return Ok((Value::Undefined, true));
     };
     let done = crate::eval::member::eval_object_member(&result_obj, "done", Some(env))?;
-    if matches!(done, Value::Boolean(true)) {
+    if crate::value::to_bool(&done) {
         return Ok((Value::Undefined, true));
     }
     let value = crate::eval::member::eval_object_member(&result_obj, "value", Some(env))?;
