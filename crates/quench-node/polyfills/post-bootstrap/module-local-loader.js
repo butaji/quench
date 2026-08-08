@@ -48,9 +48,25 @@ const __quenchPackagePath = (specifier, parent) => {
     if (next === directory) break;
     directory = next;
   }
-  const error = new Error(`Cannot find module ${specifier}`);
+  const error = new Error(`Cannot find module '${specifier}'`);
   error.code = "MODULE_NOT_FOUND";
   throw error;
+};
+const __quenchValidateRequireId = (specifier) => {
+  if (typeof specifier !== "string") {
+    const error = new TypeError(
+      `The "id" argument must be of type string. Received ${typeof specifier}`
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  if (specifier.length === 0) {
+    const error = new TypeError(
+      `The argument 'id' must be a non-empty string. Received '${specifier}'`
+    );
+    error.code = "ERR_INVALID_ARG_VALUE";
+    throw error;
+  }
 };
 const __quenchLocalModulePath = (specifier, parent) => {
   const path = __quenchOriginalRequireWithLocalModules("path");
@@ -72,7 +88,7 @@ const __quenchLocalModulePath = (specifier, parent) => {
       return candidate;
     } catch (_) {}
   }
-  const error = new Error(`Cannot find module ${specifier}`);
+  const error = new Error(`Cannot find module '${specifier}'`);
   error.code = "MODULE_NOT_FOUND";
   throw error;
 };
@@ -83,6 +99,11 @@ const __quenchLoadLocalModule = (specifier, parent) => {
       : __quenchPackagePath(specifier, parent);
   if (__quenchLocalModuleCache.has(filename)) {
     return __quenchLocalModuleCache.get(filename).exports;
+  }
+  if (filename.endsWith(".node")) {
+    const error = new Error(`file too short: ${filename}`);
+    error.code = "ERR_DLOPEN_FAILED";
+    throw error;
   }
   const source = __nodeFs.readFileSync(filename, "utf8");
   const module = { exports: {}, children: [], parent: null, filename };
@@ -99,6 +120,7 @@ const __quenchLoadLocalModule = (specifier, parent) => {
   }
   const path = __quenchOriginalRequireWithLocalModules("path");
   const localRequire = (name) => {
+    __quenchValidateRequireId(name);
     if (name.startsWith(".") || name.startsWith("/")) {
       const childFilename = __quenchLocalModulePath(name, filename);
       const childExports = __quenchLoadLocalModule(name, filename);
@@ -135,7 +157,8 @@ const __quenchLoadLocalModule = (specifier, parent) => {
 globalThis.__quenchLoadLocalModule = (specifier, parent) =>
   __quenchLoadLocalModule(specifier, parent);
 globalThis.require = (specifier) => {
-  const name = String(specifier);
+  __quenchValidateRequireId(specifier);
+  const name = specifier;
   if (!name.startsWith(".") && !name.startsWith("/")) {
     try {
       return __quenchOriginalRequireWithLocalModules(specifier);
