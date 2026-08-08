@@ -356,6 +356,16 @@ class __quenchTextDecoderStream extends __quenchTransformStream {
     this.ignoreBOM = Boolean(options?.ignoreBOM);
   }
 }
+class __quenchByteLengthQueuingStrategy {
+  constructor({ highWaterMark }) {
+    this._highWaterMark = Number(highWaterMark);
+  }
+}
+class __quenchCountQueuingStrategy {
+  constructor({ highWaterMark }) {
+    this._highWaterMark = Number(highWaterMark);
+  }
+}
 const __quenchPrivateGetter = (Constructor, property, storage) =>
   Object.defineProperty(Constructor.prototype, property, {
     configurable: true,
@@ -381,6 +391,29 @@ for (const [Constructor, properties] of [
   for (const property of properties) {
     __quenchPrivateGetter(Constructor, property, Symbol(property));
   }
+}
+for (const [Constructor, size] of [
+  [__quenchByteLengthQueuingStrategy, (value) => value?.byteLength ?? 0],
+  [__quenchCountQueuingStrategy, () => 1]
+]) {
+  Object.defineProperties(Constructor.prototype, {
+    highWaterMark: {
+      configurable: true,
+      get() {
+        if (!(this instanceof Constructor))
+          throw new TypeError("Cannot read private member");
+        return this._highWaterMark;
+      }
+    },
+    size: {
+      configurable: true,
+      get() {
+        if (!(this instanceof Constructor))
+          throw new TypeError("Cannot read private member");
+        return size;
+      }
+    }
+  });
 }
 Object.defineProperty(__quenchCompressionStream.prototype, Symbol.toStringTag, {
   value: "CompressionStream"
@@ -411,15 +444,15 @@ for (const constructor of [
   "ReadableStreamDefaultController",
   "TransformStreamDefaultController",
   "WritableStreamDefaultWriter",
-  "WritableStreamDefaultController",
-  "ByteLengthQueuingStrategy",
-  "CountQueuingStrategy"
+  "WritableStreamDefaultController"
 ]) {
   globalThis[constructor] ||= class {};
 }
 globalThis.CompressionStream ||= __quenchCompressionStream;
 globalThis.TextEncoderStream ||= __quenchTextEncoderStream;
 globalThis.TextDecoderStream ||= __quenchTextDecoderStream;
+globalThis.ByteLengthQueuingStrategy ||= __quenchByteLengthQueuingStrategy;
+globalThis.CountQueuingStrategy ||= __quenchCountQueuingStrategy;
 if (globalThis.Blob?.prototype) {
   globalThis.Blob.prototype.stream = function () {
     const blob = this;
