@@ -435,6 +435,11 @@ and verification; the complete contract passes under quench-node. This
 narrows the remaining upstream CryptoKey discrepancy to its combined
 multi-algorithm/lifecycle path rather than basic ECDSA support.
 
+Focused stage 2095 independently verifies AES-GCM 128-bit key generation,
+encryption, and decryption. It passes under quench-node, narrowing the
+remaining upstream CryptoKey failure further to combined fixture sequencing
+or reflection/lifecycle bookkeeping.
+
 Focused stage 2094 independently verifies RSA-PSS 2048-bit generation,
 signing, and verification with SHA-256 and a 32-byte salt. It passes under
 quench-node, further narrowing the upstream CryptoKey mismatch to combined
