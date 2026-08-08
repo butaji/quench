@@ -335,3 +335,9 @@ runtime path.
 
 Stages 2071–2075 pass as a grouped focused run: 5/5, zero failures and zero
 retries.
+
+The next net cluster corrected `net.isIP()` validation for malformed IPv6
+compression, dotted tails, and scoped-address zones while retaining valid
+IPv4, IPv6, and zone forms. Focused stage 2076 and upstream
+`test-net-isip.js` pass. Stages 2071–2076 pass as a grouped focused run: 6/6,
+zero failures and zero retries.

@@ -43,9 +43,32 @@
         };
         result.createConnection ||= () => undefined;
         result.connect ||= result.createConnection;
-        result.isIP ||= () => 0;
-        result.isIPv4 ||= () => false;
-        result.isIPv6 ||= () => false;
+        const originalIsIP = result.isIP;
+        const originalIsIPv4 = result.isIPv4;
+        const originalIsIPv6 = result.isIPv6;
+        const validDottedTail = /(?:^|:)\d{1,3}(?:\.\d{1,3}){3}$/;
+        const isMalformedIPv6 = (value) => {
+          if (typeof value !== "string" || !value.includes(":")) return false;
+          if (
+            (value.startsWith(":") && !value.startsWith("::")) ||
+            (value.endsWith(":") && !value.endsWith("::")) ||
+            value.indexOf("::", value.indexOf("::") + 2) !== -1
+          ) {
+            return true;
+          }
+          const dotted = /:[^%]*\./.test(value);
+          if (dotted && !validDottedTail.test(value)) return true;
+          const zone = value.match(/%(.+)$/)?.[1];
+          return Boolean(zone && !/^[0-9A-Za-z._-]+$/.test(zone));
+        };
+        result.isIP = (value) =>
+          isMalformedIPv6(value) ? 0 : originalIsIP?.(value) || 0;
+        result.isIPv4 = (value) =>
+          typeof value === "string" && value.includes(":")
+            ? false
+            : originalIsIPv4?.(value) || false;
+        result.isIPv6 = (value) =>
+          isMalformedIPv6(value) ? false : originalIsIPv6?.(value) || false;
         for (const constructor of [
           "Server",
           "Socket",
