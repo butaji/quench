@@ -393,11 +393,34 @@ const __quenchReadableOperatorOptions = (options) => {
   }
   return { ...value, concurrency, highWaterMark };
 };
+const __quenchReadableOperatorResult = (promise, errorState) => {
+  if (!errorState) return promise;
+  if (errorState.hasError) return Promise.reject(errorState.error);
+  return new Promise((resolve, reject) => {
+    const cleanup = () => errorState.listeners.delete(onError);
+    const onError = (error) => {
+      cleanup();
+      reject(error);
+    };
+    errorState.listeners.add(onError);
+    Promise.resolve(promise).then(
+      (value) => {
+        cleanup();
+        resolve(value);
+      },
+      (error) => {
+        cleanup();
+        reject(error);
+      }
+    );
+  });
+};
 const __quenchReadableConcurrentTransform = async function* (
   source,
   callback,
   options,
-  mode
+  mode,
+  errorState
 ) {
   const opts = __quenchReadableOperatorOptions(options);
   const controller = new AbortController();
@@ -427,7 +450,10 @@ const __quenchReadableConcurrentTransform = async function* (
     await fill();
     while (pending.length) {
       const entry = pending.shift();
-      const result = await entry.promise;
+      const result = await __quenchReadableOperatorResult(
+        entry.promise,
+        errorState
+      );
       if (signal.aborted) throw __quenchReadableAbortError(signal);
       await fill();
       if (mode === "filter") {
@@ -518,7 +544,8 @@ const __quenchReadableSliceValues = (stream, operations) => {
       current,
       operation.callback,
       operation.options,
-      operation.type
+      operation.type,
+      operations.errorState
     );
   }
   return current;
@@ -646,57 +673,75 @@ const __quenchSliceFlatMap = (stream, operations, callback, options) => {
     })
   });
 };
-const __quenchReadableSlice = (stream, operations) => ({
-  readable: true,
-  emit(event, ...args) {
-    if (event === "error") return stream.emit?.(event, ...args) ?? false;
-    return true;
-  },
-  on(event, listener) {
-    if (event === "error") stream.on?.(event, listener);
-    return this;
-  },
-  once(event, listener) {
-    if (event === "error") stream.once?.(event, listener);
-    return this;
-  },
-  drop(count, options) {
-    __quenchSliceOptions(options);
-    return __quenchReadableSlice(stream, {
-      drop: operations.drop + __quenchSliceCount(count),
-      take: operations.take,
-      operations: operations.operations,
-      signal: options?.signal || operations.signal
-    });
-  },
-  take(count, options) {
-    __quenchSliceOptions(options);
-    return __quenchReadableSlice(stream, {
-      drop: operations.drop,
-      take: Math.min(operations.take, __quenchSliceCount(count)),
-      operations: operations.operations,
-      signal: options?.signal || operations.signal
-    });
-  },
-  map(callback, options) {
-    return __quenchSliceMap(stream, operations, callback, options);
-  },
-  filter(callback, options) {
-    return __quenchSliceFilter(stream, operations, callback, options);
-  },
-  flatMap(callback, options) {
-    return __quenchSliceFlatMap(stream, operations, callback, options);
-  },
-  forEach(callback, options) {
-    return __quenchForEachReadable(this, callback, options);
-  },
-  toArray() {
-    return __quenchCollectReadable(stream, operations);
-  },
-  [Symbol.asyncIterator]() {
-    return __quenchReadableSliceIterator(stream, operations);
-  }
-});
+const __quenchReadableSlice = (stream, operations) => {
+  operations.errorState ||= {
+    error: undefined,
+    hasError: false,
+    listeners: new Set()
+  };
+  return {
+    readable: true,
+    emit(event, ...args) {
+      if (event === "error") {
+        const state = operations.errorState;
+        if (!state.hasError) {
+          state.error = args[0];
+          state.hasError = true;
+          for (const listener of [...state.listeners]) listener(state.error);
+        }
+        stream.emit?.(event, ...args);
+        return true;
+      }
+      return true;
+    },
+    on(event, listener) {
+      if (event === "error") stream.on?.(event, listener);
+      return this;
+    },
+    once(event, listener) {
+      if (event === "error") stream.once?.(event, listener);
+      return this;
+    },
+    drop(count, options) {
+      __quenchSliceOptions(options);
+      return __quenchReadableSlice(stream, {
+        drop: operations.drop + __quenchSliceCount(count),
+        take: operations.take,
+        operations: operations.operations,
+        signal: options?.signal || operations.signal,
+        errorState: operations.errorState
+      });
+    },
+    take(count, options) {
+      __quenchSliceOptions(options);
+      return __quenchReadableSlice(stream, {
+        drop: operations.drop,
+        take: Math.min(operations.take, __quenchSliceCount(count)),
+        operations: operations.operations,
+        signal: options?.signal || operations.signal,
+        errorState: operations.errorState
+      });
+    },
+    map(callback, options) {
+      return __quenchSliceMap(stream, operations, callback, options);
+    },
+    filter(callback, options) {
+      return __quenchSliceFilter(stream, operations, callback, options);
+    },
+    flatMap(callback, options) {
+      return __quenchSliceFlatMap(stream, operations, callback, options);
+    },
+    forEach(callback, options) {
+      return __quenchForEachReadable(this, callback, options);
+    },
+    toArray() {
+      return __quenchCollectReadable(stream, operations);
+    },
+    [Symbol.asyncIterator]() {
+      return __quenchReadableSliceIterator(stream, operations);
+    }
+  };
+};
 const __quenchAddSliceMethods = (prototype) => {
   prototype.drop ||= function (count, options) {
     __quenchSliceOptions(options);
