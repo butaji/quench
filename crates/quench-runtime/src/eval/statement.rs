@@ -247,17 +247,14 @@ fn eval_function_body_impl(
             return Ok(val);
         }
 
-        // Check for tail-call return inside a block at the last position.
-        // Per ES §14.2.1, the block's body is in tail position.
-        if is_last_stmt {
-            if let Statement::Block(inner_stmts) = stmt {
-                if acc_stack_len() > 0
-                    && handle_tail_call_in_block(inner_stmts, env, in_arrow_function)?.is_some()
-                {
-                    // Tail call was set; break to let trampoline run.
-                    break;
-                }
-            }
+        // Check for tail-call return inside the last statement (blocks, loop
+        // bodies, etc.). Per ES §14.2.1 / §14.8.2.1 these are in tail position.
+        if is_last_stmt
+            && acc_stack_len() > 0
+            && handle_tail_call_in_stmt(stmt, env, in_arrow_function)?.is_some()
+        {
+            // Tail call was set; break to let trampoline run.
+            break;
         }
 
         let stmt_val = eval_statement(stmt, env, false, in_arrow_function)?;
@@ -363,30 +360,37 @@ fn handle_tail_call_in_block(
         return Ok(None);
     }
     let last_stmt = &stmts[stmts.len() - 1];
+    handle_tail_call_in_stmt(last_stmt, env, in_arrow_function)
+}
 
-    // Last statement is a Return → check for tail call.
-    if let Statement::Return(ref expr) = last_stmt {
-        if expr.as_ref().is_some_and(|e| is_tail_expr(e))
-            && try_handle_tail_call(expr, env, in_arrow_function)?
-        {
-            return Ok(Some(()));
+/// Find a tail-call return inside a single statement. Loop bodies are in tail
+/// position (ES §14.8.2.1 HasCallInTailPosition), so recurse into them.
+fn handle_tail_call_in_stmt(
+    stmt: &Statement,
+    env: &Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
+) -> Result<Option<()>, JsError> {
+    match stmt {
+        Statement::Return(ref expr) => {
+            if expr.as_ref().is_some_and(|e| is_tail_expr(e))
+                && try_handle_tail_call(expr, env, in_arrow_function)?
+            {
+                return Ok(Some(()));
+            }
+            // Non-tail return inside block: evaluate it and propagate via control flow.
+            let val = match expr.as_ref() {
+                Some(e) => eval_expression(e, env, in_arrow_function)?,
+                None => Value::Undefined,
+            };
+            set_control_flow(ControlFlow::Return(val));
+            Ok(Some(()))
         }
-        // Non-tail return inside block: evaluate it and propagate via control flow.
-        let val = match expr.as_ref() {
-            Some(e) => eval_expression(e, env, in_arrow_function)?,
-            None => Value::Undefined,
-        };
-        set_control_flow(ControlFlow::Return(val));
-        return Ok(Some(()));
+        Statement::Block(inner) => handle_tail_call_in_block(inner, env, in_arrow_function),
+        Statement::DoWhile { body, .. }
+        | Statement::While { body, .. }
+        | Statement::For { body, .. } => handle_tail_call_in_stmt(body, env, in_arrow_function),
+        _ => Ok(None),
     }
-
-    // Last statement is a nested Block → recurse.
-    if let Statement::Block(inner_stmts) = last_stmt {
-        return handle_tail_call_in_block(inner_stmts, env, in_arrow_function);
-    }
-
-    // No tail-call found; caller will evaluate the block normally.
-    Ok(None)
 }
 
 /// Evaluate a single statement
@@ -806,22 +810,26 @@ fn eval_do_while_impl(
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
 ) -> Result<Value, JsError> {
+    // Per ES spec §14.8.2.2, an abrupt (break/continue) exit returns the body's
+    // completion value (UpdateEmpty(stmtResult, V)); eval_statement already
+    // computes that value for the enclosing block.
     loop {
         take_control_flow();
         let body_val = eval_statement(body, env, false, in_arrow_function)?;
         match take_control_flow() {
             Some(cf @ ControlFlow::Break(_)) => {
                 if loop_handles_break(&cf, loop_labels) {
-                    break;
+                    return Ok(body_val);
                 }
                 set_control_flow(cf);
-                break;
+                return Ok(body_val);
             }
             Some(cf @ ControlFlow::Continue(_)) => {
                 if !loop_handles_continue(&cf, loop_labels) {
                     set_control_flow(cf);
-                    break;
+                    return Ok(body_val);
                 }
+                // Handled continue falls through to the condition check.
             }
             Some(ControlFlow::Return(val)) | Some(ControlFlow::Yield(val)) => {
                 set_control_flow(ControlFlow::Return(val.clone()));
@@ -838,7 +846,6 @@ fn eval_do_while_impl(
             return Ok(body_val);
         }
     }
-    Ok(Value::Undefined)
 }
 
 fn eval_for(
