@@ -181,7 +181,10 @@ const __quenchDgramSend = (socket, message, ...args) => {
       family: socket.type === "udp6" ? "IPv6" : "IPv4",
       port: 0
     };
-    target?.emit("message", deliveredPayload, sourceAddress);
+    target?.emit("message", deliveredPayload, {
+      ...sourceAddress,
+      size: deliveredPayload.byteLength
+    });
     if (typeof callback === "function") callback(null, length);
   });
   return socket;
