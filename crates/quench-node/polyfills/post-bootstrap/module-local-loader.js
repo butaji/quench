@@ -85,7 +85,7 @@ const __quenchLoadLocalModule = (specifier, parent) => {
     return __quenchLocalModuleCache.get(filename).exports;
   }
   const source = __nodeFs.readFileSync(filename, "utf8");
-  const module = { exports: {} };
+  const module = { exports: {}, children: [], parent: null, filename };
   __quenchLocalModuleCache.set(filename, module);
   if (filename.endsWith(".json")) {
     try {
@@ -100,7 +100,14 @@ const __quenchLoadLocalModule = (specifier, parent) => {
   const path = __quenchOriginalRequireWithLocalModules("path");
   const localRequire = (name) => {
     if (name.startsWith(".") || name.startsWith("/")) {
-      return __quenchLoadLocalModule(name, filename);
+      const childFilename = __quenchLocalModulePath(name, filename);
+      const childExports = __quenchLoadLocalModule(name, filename);
+      const childModule = __quenchLocalModuleCache.get(childFilename);
+      if (childModule && !module.children.includes(childModule)) {
+        childModule.parent = module;
+        module.children.push(childModule);
+      }
+      return childExports;
     }
     try {
       return __quenchOriginalRequireWithLocalModules(name);

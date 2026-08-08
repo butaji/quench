@@ -307,6 +307,7 @@ globalThis.process = {
   release: { name: "node", lts: "Quench" },
   config: {
     variables: {
+      node_module_version: 127,
       v8_enable_i18n_support: false,
       v8_enable_temporal_support: false,
       node_shared: false,

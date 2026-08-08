@@ -519,3 +519,9 @@ Focused stage 2106 fixes percent-encoded Unicode file URLs in
 `module.createRequire()`. Both the focused multibyte path contract and
 upstream `test-module-create-require-multibyte.js` pass, along with the base
 createRequire fixture.
+
+Focused stage 2107 covers module metadata needed by real CommonJS packages:
+local modules now maintain `module.children` and child `parent` links, and
+`process.config.variables.node_module_version` is exposed as a positive
+integer. Upstream `test-module-children.js` and `test-module-version.js` both
+pass.
