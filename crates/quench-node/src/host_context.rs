@@ -743,6 +743,7 @@ macro_rules! run_host_context {
                 std::fs::read_link(path).map(|value| value.to_string_lossy().into_owned()).map_err(|_| rquickjs::Error::new_from_js("fs", "readlinkSync failed"))
             }),
         )?;
+        ctx.globals().set("__quench_host_timer_scheduler", true)?;
         let bootstrap_source = BOOTSTRAP_PARTS.join("\n");
         ctx.eval::<(), _>(bootstrap_source.as_bytes()).map_err(|error| {
             eprintln!("Bootstrap JavaScript exception: {error:?}");
@@ -829,7 +830,7 @@ macro_rules! run_host_context {
             }
         }
         ctx.eval::<(), _>(b"if (globalThis.__quench_test_promises?.length) Promise.allSettled(globalThis.__quench_test_promises).then(() => { globalThis.__quench_tests_settled = true; });")?;
-        ctx.eval::<(), _>(b"if (typeof globalThis.__quench_io_poll === 'function') globalThis.__quench_io_poll();")?;
+        ctx.eval::<(), _>(b"if (typeof globalThis.__quench_io_poll === 'function') globalThis.__quench_io_poll(); if (typeof globalThis.__quench_timer_poll === 'function') globalThis.__quench_timer_poll();")?;
         while ctx.execute_pending_job() {}
         if let Ok(detail) = ctx.globals().get::<_, String>("__quench_async_error") {
             if !detail.is_empty() {
@@ -847,7 +848,7 @@ macro_rules! run_host_context {
                         eprintln!("Process beforeExit handler failure: {detail}");
                         error
                     })?;
-                ctx.eval::<(), _>(b"try { if (typeof globalThis.__quench_io_poll === 'function') globalThis.__quench_io_poll(); } catch (error) { globalThis.__quench_exit_error = error && error.stack ? `${error.name}: ${error.message}\\n${error.stack}` : String(error); throw error; }")
+                ctx.eval::<(), _>(b"try { if (typeof globalThis.__quench_io_poll === 'function') globalThis.__quench_io_poll(); if (typeof globalThis.__quench_timer_poll === 'function') globalThis.__quench_timer_poll(); } catch (error) { globalThis.__quench_exit_error = error && error.stack ? `${error.name}: ${error.message}\\n${error.stack}` : String(error); throw error; }")
                     .map_err(|error| {
                         let detail = ctx.globals().get::<_, String>("__quench_exit_error").unwrap_or_else(|_| format!("{error:?}"));
                         eprintln!("Host I/O poll failure: {detail}");
@@ -858,7 +859,9 @@ macro_rules! run_host_context {
                     ran_job = true;
                 }
                 if !ran_job {
-                    break;
+                    let wait_ms = ctx.eval::<i64, _>(b"typeof globalThis.__quench_timer_next_delay === 'function' ? globalThis.__quench_timer_next_delay() : -1")?;
+                    if wait_ms < 0 { break; }
+                    std::thread::sleep(std::time::Duration::from_millis(wait_ms.min(60_000) as u64));
                 }
             }
         }
