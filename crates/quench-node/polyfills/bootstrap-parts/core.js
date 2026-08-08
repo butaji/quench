@@ -1886,7 +1886,23 @@ let __quenchHttpModule;
         writable: true,
         writableHighWaterMark: 16 * 1024,
         writableCorked: 0,
-        setTimeout: () => request.socket,
+        setTimeout(msecs) {
+          this.timeout = msecs;
+          if (this.__timeoutTimer !== undefined) {
+            clearTimeout(this.__timeoutTimer);
+          }
+          if (!this.__timeoutListener) {
+            this.__timeoutListener = () => request.emit("timeout");
+            this.on("timeout", this.__timeoutListener);
+          }
+          if (msecs > 0) {
+            this.__timeoutTimer = setTimeout(() => {
+              this.__timeoutTimer = undefined;
+              if (!this.destroyed) this.emit("timeout");
+            }, msecs);
+          }
+          return this;
+        },
         setEncoding: () => request.socket,
         destroy() {
           if (this.destroyed) return this;
@@ -1896,7 +1912,23 @@ let __quenchHttpModule;
           return this;
         }
       });
-      queueMicrotask(() => request.emit("socket", request.socket));
+      if (options.timeout !== undefined) {
+        request.socket.setTimeout(options.timeout);
+      }
+      queueMicrotask(() => {
+        request.emit("socket", request.socket);
+        queueMicrotask(() => {
+          request.socket.__connected = true;
+          if (request._timeoutAfterConnect !== undefined) {
+            if (request._timeoutTimer !== undefined) {
+              clearTimeout(request._timeoutTimer);
+              request._timeoutTimer = undefined;
+            }
+            request.socket.setTimeout(request._timeoutAfterConnect);
+          }
+          request.socket.emit("connect");
+        });
+      });
       request.finished = false;
       request.writableFinished = false;
       request.headers = Object.create(null);
@@ -2007,6 +2039,11 @@ let __quenchHttpModule;
           throw error;
         }
         request.timeout = msecs;
+        if (request.socket.__connected) {
+          request.socket.setTimeout(msecs);
+        } else {
+          request._timeoutAfterConnect = msecs;
+        }
         if (msecs === 0 && !request.__socketTimeoutListener) {
           request.__socketTimeoutListener = () => request.emit("timeout");
           request.socket.once("timeout", request.__socketTimeoutListener);

@@ -825,6 +825,8 @@ pass.
 - Stage 2212 reproduces two sequential requests, including a null-prototype options object, to isolate the remaining response callback gap.
 - Stage 2213 emits the client request's `socket` event with its in-memory socket so timeout/listener consumers can observe it.
 - Upstream `test-http-client-set-timeout-after-end.js` now passes with the socket event and zero-timeout listener behavior.
+- Stage 2214 tracks socket timeout values across request creation, connect, and `setTimeout()` rescheduling.
+- The upstream timeout fixture now reaches a duplicate-timeout callback-count discrepancy after socket timeout scheduling is aligned.
 - Upstream `test-http-hostname-typechecking.js` now passes with synchronous host-option validation.
 - Stage 2207 supports `new http.ClientRequest(serverAddress, callback)` by routing it through the same in-memory request path as `http.request()`.
 - Upstream `test-http-client-input-function.js` now passes with the `ClientRequest` constructor path.
