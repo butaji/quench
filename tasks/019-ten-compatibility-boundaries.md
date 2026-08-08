@@ -69,4 +69,7 @@ own commit.
   `_read()` demands and three writable callbacks. The fix removes a stale
   `reading = true` assignment that suppressed demand after `push()` had
   already completed. Broader concurrent/infinite-stream cadence fixtures still
-  need verification.
+  need verification. Stage 2344 traces the remaining upstream difference:
+  quench reaches all writable callbacks but invokes the batched `_read()` hook
+  three times where Node invokes it eleven times, so readable buffer-demand
+  accounting remains the next stream implementation target.
