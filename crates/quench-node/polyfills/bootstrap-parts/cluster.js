@@ -867,7 +867,12 @@ const __quenchRequireStreamIter = () => {
     pull: (readable, transform) => ({
       async *[Symbol.asyncIterator]() {
         for await (const value of readable) {
-          yield transform ? transform(value) : value;
+          const result = transform ? transform(value) : value;
+          if (result && typeof result[Symbol.asyncIterator] === "function") {
+            for await (const transformed of result) yield transformed;
+          } else {
+            yield result;
+          }
         }
       }
     }),
