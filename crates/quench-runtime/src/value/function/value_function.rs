@@ -976,6 +976,7 @@ fn generate_source_text(f: &ValueFunction) -> String {
                 variable,
                 object,
                 body,
+                ..
             } => {
                 format!(
                     "for ({} in {}) {}",
