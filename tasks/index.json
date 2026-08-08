@@ -1,6 +1,6 @@
 {
   "$schema": "quench stages v1",
-  "current_stage": 24,
+  "current_stage": 25,
   "goal": "Pure JavaScript engine in quench-runtime with OXC AST -> compact Quench IR -> interpreter, generic over Runtime<Heap, Collector, Allocator, Frames, Executor, Exceptions, Environments>; standalone quench-test262 runner owns metadata, harness, stages, isolation, metrics, and reports; 100% ECMA-262 test262 with minimum memory/RSS and V8-grade performance and no undocumented skips. North star (ADR 0003): two planes \u2014 ECMAScript execution plane + persistent TypeScript semantic plane (TypeGraph, reflection, opt-in validation) meeting only through guards; compact bytecode as canonical execution format long-term (ADR 0002 instruction IR is the near-term Tier-0 step). Execution order: tasks/10-ways-to-speed-up.md (Phases A\u2013C); work queue: tasks/refactor-plan.md; architecture: docs/architecture.md.",
   "test262_pin": {
     "submodule_commit": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
@@ -165,7 +165,7 @@
       "id": 24,
       "path": "test/language/statements/for-in",
       "tests": 115,
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 25,
