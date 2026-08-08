@@ -15,13 +15,13 @@ if (Array.isArray(__quenchClusterWorkers.workers)) {
         worker.prependOnceListener("exit", remove);
       } else worker.once("exit", remove);
     },
-    enumerable: false,
+    enumerable: false
   });
   Object.defineProperty(workers, Symbol.iterator, {
     value: function* () {
       for (const key of Object.keys(workers)) yield workers[key];
     },
-    enumerable: false,
+    enumerable: false
   });
   __quenchClusterWorkers.workers = workers;
 }

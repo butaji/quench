@@ -37,7 +37,7 @@ const __quenchChannel = (name) => {
       const previous = [...stores].map(([store, transform]) => [
         store,
         store.getStore?.(),
-        typeof transform === "function" ? transform(message) : message,
+        typeof transform === "function" ? transform(message) : message
       ]);
       for (const [store, , value] of previous) store.enterWith?.(value);
       try {
@@ -52,7 +52,7 @@ const __quenchChannel = (name) => {
       const previous = [...stores].map(([store, transform]) => [
         store,
         store.getStore?.(),
-        typeof transform === "function" ? transform(message) : message,
+        typeof transform === "function" ? transform(message) : message
       ]);
       for (const [store, , value] of previous) store.enterWith?.(value);
       channel.publish(message);
@@ -64,9 +64,9 @@ const __quenchChannel = (name) => {
           for (const [store, previousValue] of previous) {
             store.enterWith?.(previousValue);
           }
-        },
+        }
       };
-    },
+    }
   };
   Object.setPrototypeOf(channel, __QuenchChannelClass.prototype);
   __quenchChannels.set(name, channel);
@@ -80,12 +80,13 @@ const __quenchDiagnostics = {
   unsubscribe: (name, callback) => __quenchChannel(name).unsubscribe(callback),
   BoundedChannel: class BoundedChannel {
     constructor(nameOrChannels) {
-      const channels = typeof nameOrChannels === "string"
-        ? {
-          start: __quenchChannel(`tracing:${nameOrChannels}:start`),
-          end: __quenchChannel(`tracing:${nameOrChannels}:end`),
-        }
-        : nameOrChannels;
+      const channels =
+        typeof nameOrChannels === "string"
+          ? {
+              start: __quenchChannel(`tracing:${nameOrChannels}:start`),
+              end: __quenchChannel(`tracing:${nameOrChannels}:end`)
+            }
+          : nameOrChannels;
       this.start = channels?.start;
       this.end = channels?.end;
     }
@@ -131,25 +132,32 @@ const __quenchDiagnostics = {
   },
   TracingChannel: class TracingChannel {
     constructor(nameOrChannels) {
-      const channels = typeof nameOrChannels === "string"
-        ? {
-          start: __quenchChannel(`tracing:${nameOrChannels}:start`),
-          end: __quenchChannel(`tracing:${nameOrChannels}:end`),
-          asyncStart: __quenchChannel(`tracing:${nameOrChannels}:asyncStart`),
-          asyncEnd: __quenchChannel(`tracing:${nameOrChannels}:asyncEnd`),
-          error: __quenchChannel(`tracing:${nameOrChannels}:error`),
-        }
-        : nameOrChannels;
+      const channels =
+        typeof nameOrChannels === "string"
+          ? {
+              start: __quenchChannel(`tracing:${nameOrChannels}:start`),
+              end: __quenchChannel(`tracing:${nameOrChannels}:end`),
+              asyncStart: __quenchChannel(
+                `tracing:${nameOrChannels}:asyncStart`
+              ),
+              asyncEnd: __quenchChannel(`tracing:${nameOrChannels}:asyncEnd`),
+              error: __quenchChannel(`tracing:${nameOrChannels}:error`)
+            }
+          : nameOrChannels;
       if (typeof nameOrChannels === "object") {
-        for (
-          const name of ["start", "end", "asyncStart", "asyncEnd", "error"]
-        ) {
+        for (const name of [
+          "start",
+          "end",
+          "asyncStart",
+          "asyncEnd",
+          "error"
+        ]) {
           if (
             channels?.[name] !== undefined &&
             !(channels[name] instanceof __QuenchChannelClass)
           ) {
             const error = new TypeError(
-              `The "nameOrChannels.${name}" property must be an instance of Channel`,
+              `The "nameOrChannels.${name}" property must be an instance of Channel`
             );
             error.code = "ERR_INVALID_ARG_TYPE";
             throw error;
@@ -167,9 +175,11 @@ const __quenchDiagnostics = {
     }
     get hasSubscribers() {
       return Boolean(
-        this.start?.hasSubscribers || this.end?.hasSubscribers ||
-          this.asyncStart?.hasSubscribers || this.asyncEnd?.hasSubscribers ||
-          this.error?.hasSubscribers,
+        this.start?.hasSubscribers ||
+        this.end?.hasSubscribers ||
+        this.asyncStart?.hasSubscribers ||
+        this.asyncEnd?.hasSubscribers ||
+        this.error?.hasSubscribers
       );
     }
     subscribe(handlers = {}) {
@@ -221,7 +231,7 @@ const __quenchDiagnostics = {
       };
       return result.then(
         (value) => continuation(value, false),
-        (error) => continuation(error, true),
+        (error) => continuation(error, true)
       );
     }
     traceCallback(fn, position = -1, context = {}, thisArg, ...args) {
@@ -230,7 +240,7 @@ const __quenchDiagnostics = {
       const callback = args[callbackIndex];
       if (typeof callback !== "function") {
         const error = new TypeError(
-          'The "callback" argument must be of type function',
+          'The "callback" argument must be of type function'
         );
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
@@ -265,13 +275,13 @@ const __quenchDiagnostics = {
   tracingChannel: (name) => {
     if (typeof name !== "string" && (!name || typeof name !== "object")) {
       const error = new TypeError(
-        'The "nameOrChannels" argument must be of type string or an instance of TracingChannel or Object',
+        'The "nameOrChannels" argument must be of type string or an instance of TracingChannel or Object'
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
     return new __quenchDiagnostics.TracingChannel(name);
-  },
+  }
 };
 globalThis.__nodeDiagnosticsChannel = __quenchDiagnostics;
 globalThis.require = (specifier) => {

@@ -41,7 +41,7 @@ globalThis.__nodeTimersPromises = {
       } else await new Promise((resolve) => queueMicrotask(resolve));
       yield value;
     }
-  },
+  }
 };
 
 const processListeners = {};
@@ -60,7 +60,7 @@ process.once = (event, listener) => {
 };
 process.removeListener = (event, listener) => {
   processListeners[event] = (processListeners[event] || []).filter(
-    (item) => item !== listener,
+    (item) => item !== listener
   );
   return process;
 };
@@ -68,7 +68,7 @@ process.removeAllListeners = (event) => {
   if (event) delete processListeners[event];
   else {
     Object.keys(processListeners).forEach(
-      (key) => delete processListeners[key],
+      (key) => delete processListeners[key]
     );
   }
 };
@@ -82,7 +82,7 @@ process.emitWarning = (warning, options = {}) => {
   process.emit("warning", {
     name: options.name || "Warning",
     message,
-    code: options.code,
+    code: options.code
   });
   return undefined;
 };

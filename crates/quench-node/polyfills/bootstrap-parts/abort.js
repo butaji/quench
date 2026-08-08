@@ -19,8 +19,8 @@ globalThis.require = (specifier) => {
       __quenchOriginalRequireWithTransferableAbort(specifier),
       {
         transferableAbortSignal: __quenchTransferableAbortSignal,
-        transferableAbortController: __quenchTransferableAbortController,
-      },
+        transferableAbortController: __quenchTransferableAbortController
+      }
     );
   }
   return __quenchOriginalRequireWithTransferableAbort(specifier);

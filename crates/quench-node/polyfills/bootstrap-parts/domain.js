@@ -22,7 +22,7 @@ class __quenchDomain {
   removeListener(event, listener) {
     this._listeners.set(
       event,
-      (this._listeners.get(event) || []).filter((item) => item !== listener),
+      (this._listeners.get(event) || []).filter((item) => item !== listener)
     );
     return this;
   }
@@ -37,7 +37,8 @@ class __quenchDomain {
   }
   enter() {
     if (!this.disposed) {
-      const stack = globalThis.__quench_domain_stack ||
+      const stack =
+        globalThis.__quench_domain_stack ||
         (globalThis.__quench_domain_stack = []);
       stack.push(this);
       globalThis.__quench_active_domain = this;
@@ -74,7 +75,7 @@ class __quenchDomain {
       configurable: true,
       enumerable: false,
       value: this,
-      writable: true,
+      writable: true
     });
     return this;
   }
@@ -117,15 +118,15 @@ const __quenchDomainModule = {
   Domain: __quenchDomain,
   create: () => new __quenchDomain(),
   createDomain: () => new __quenchDomain(),
-  _stack: [],
+  _stack: []
 };
 Object.defineProperty(__quenchDomainModule, "active", {
   enumerable: true,
-  get: () => globalThis.__quench_active_domain || null,
+  get: () => globalThis.__quench_active_domain || null
 });
 Object.defineProperty(__quenchDomainModule, "_stack", {
   enumerable: true,
-  get: () => globalThis.__quench_domain_stack || [],
+  get: () => globalThis.__quench_domain_stack || []
 });
 if (!globalThis.__quench_domain_promises_patched && globalThis.Promise) {
   const originalThen = Promise.prototype.then;
@@ -133,15 +134,15 @@ if (!globalThis.__quench_domain_promises_patched && globalThis.Promise) {
     typeof callback !== "function"
       ? callback
       : (...args) =>
-        activeDomain
-          ? activeDomain.run(() => callback(...args))
-          : callback(...args);
+          activeDomain
+            ? activeDomain.run(() => callback(...args))
+            : callback(...args);
   Promise.prototype.then = function (onFulfilled, onRejected) {
     const activeDomain = globalThis.__quench_active_domain;
     return originalThen.call(
       this,
       wrap(onFulfilled, activeDomain),
-      wrap(onRejected, activeDomain),
+      wrap(onRejected, activeDomain)
     );
   };
   globalThis.__quench_domain_promises_patched = true;

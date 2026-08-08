@@ -16,12 +16,12 @@
           iterations,
           length,
           digest,
-          callback,
+          callback
         ) => {
           Promise.resolve().then(() =>
             callback(
               null,
-              result.pbkdf2Sync(digest, password, salt, iterations, length),
+              result.pbkdf2Sync(digest, password, salt, iterations, length)
             )
           );
         };

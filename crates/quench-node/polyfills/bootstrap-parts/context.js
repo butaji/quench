@@ -13,10 +13,10 @@ const __quenchVmInvalidTypeSuffix = (value) =>
   value === null
     ? " Received null"
     : typeof value === "object"
-    ? ` Received an instance of ${value.constructor?.name || "Object"}`
-    : ` Received type ${typeof value} (${
-      typeof value === "string" ? `'${value}'` : String(value)
-    })`;
+      ? ` Received an instance of ${value.constructor?.name || "Object"}`
+      : ` Received type ${typeof value} (${
+          typeof value === "string" ? `'${value}'` : String(value)
+        })`;
 const __quenchVmCacheMatches = (data, code) => {
   const bytes = ArrayBuffer.isView(data)
     ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
@@ -28,7 +28,7 @@ const __quenchVmCheckRestrictedDeclaration = (code) => {
   if (!declaration) return;
   const descriptor = Object.getOwnPropertyDescriptor(
     globalThis,
-    declaration[1],
+    declaration[1]
   );
   if (descriptor?.configurable === false) {
     throw new SyntaxError(`${declaration[1]} has already been declared`);
@@ -68,7 +68,7 @@ const __quenchVmApplyScriptCache = (script, options) => {
   if (options?.cachedData) {
     script.cachedDataRejected = !__quenchVmCacheMatches(
       options.cachedData,
-      script.code,
+      script.code
     );
   }
 };
@@ -120,18 +120,20 @@ const __quenchVmValidateContextOptions = (options, allowFilename) => {
   if (options === undefined) return;
   if (allowFilename && typeof options === "string") return;
   if (
-    options === null || typeof options !== "object" || Array.isArray(options)
+    options === null ||
+    typeof options !== "object" ||
+    Array.isArray(options)
   ) {
     __quenchVmTypeError(
-      `The "options" argument must be of type object.${
-        __quenchVmInvalidTypeSuffix(options)
-      }`,
+      `The "options" argument must be of type object.${__quenchVmInvalidTypeSuffix(
+        options
+      )}`
     );
   }
   for (const key of ["name", "origin", "contextName", "contextOrigin"]) {
     if (options[key] !== undefined && typeof options[key] !== "string") {
       __quenchVmTypeError(
-        `The "options.${key}" property must be of type string. Received null`,
+        `The "options.${key}" property must be of type string. Received null`
       );
     }
   }
@@ -139,27 +141,27 @@ const __quenchVmValidateContextOptions = (options, allowFilename) => {
 const __quenchVmValidateCompileFields = (options) => {
   if (options.filename === null) {
     __quenchVmTypeError(
-      'The "options.filename" property must be of type string. Received null',
+      'The "options.filename" property must be of type string. Received null'
     );
   }
   if (options.columnOffset === null) {
     __quenchVmTypeError(
-      'The "options.columnOffset" property must be of type number. Received null',
+      'The "options.columnOffset" property must be of type number. Received null'
     );
   }
   if (options.lineOffset === null) {
     __quenchVmTypeError(
-      'The "options.lineOffset" property must be of type number. Received null',
+      'The "options.lineOffset" property must be of type number. Received null'
     );
   }
   if (options.cachedData === null) {
     __quenchVmTypeError(
-      'The "options.cachedData" property must be an instance of Buffer, TypedArray, or DataView. Received null',
+      'The "options.cachedData" property must be an instance of Buffer, TypedArray, or DataView. Received null'
     );
   }
   if (options.produceCachedData === null) {
     __quenchVmTypeError(
-      'The "options.produceCachedData" property must be of type boolean. Received null',
+      'The "options.produceCachedData" property must be of type boolean. Received null'
     );
   }
   if (
@@ -167,24 +169,24 @@ const __quenchVmValidateCompileFields = (options) => {
     !__quenchVmContexts.has(options.parsingContext)
   ) {
     __quenchVmTypeError(
-      `The "options.parsingContext" property must be an instance of Context.${
-        __quenchVmInvalidTypeSuffix(options.parsingContext)
-      }`,
+      `The "options.parsingContext" property must be an instance of Context.${__quenchVmInvalidTypeSuffix(
+        options.parsingContext
+      )}`
     );
   }
 };
 const __quenchVmValidateExtensions = (extensions) => {
   if (!Array.isArray(extensions)) {
     __quenchVmTypeError(
-      'The "options.contextExtensions" property must be an instance of Array. Received null',
+      'The "options.contextExtensions" property must be an instance of Array. Received null'
     );
   }
   for (const [index, extension] of extensions.entries()) {
     if (extension === null || typeof extension !== "object") {
       __quenchVmTypeError(
-        `The "options.contextExtensions[${index}]" property must be of type object.${
-          __quenchVmInvalidTypeSuffix(extension)
-        }`,
+        `The "options.contextExtensions[${index}]" property must be of type object.${__quenchVmInvalidTypeSuffix(
+          extension
+        )}`
       );
     }
   }
@@ -192,12 +194,14 @@ const __quenchVmValidateExtensions = (extensions) => {
 const __quenchVmValidateCompileOptions = (options) => {
   if (options === undefined) return;
   if (
-    options === null || typeof options !== "object" || Array.isArray(options)
+    options === null ||
+    typeof options !== "object" ||
+    Array.isArray(options)
   ) {
     __quenchVmTypeError(
-      `The "options" argument must be of type object.${
-        __quenchVmInvalidTypeSuffix(options)
-      }`,
+      `The "options" argument must be of type object.${__quenchVmInvalidTypeSuffix(
+        options
+      )}`
     );
   }
   __quenchVmValidateCompileFields(options);
@@ -208,7 +212,9 @@ const __quenchVmValidateCompileOptions = (options) => {
 const __quenchVmValidateScriptOptions = (options) => {
   if (options === undefined) return;
   if (
-    options === null || typeof options !== "object" || Array.isArray(options)
+    options === null ||
+    typeof options !== "object" ||
+    Array.isArray(options)
   ) {
     __quenchVmTypeError("The options argument must be an object");
   }
@@ -224,20 +230,20 @@ const __quenchVmFormatStack = (
   filename,
   lineOffset,
   columnOffset,
-  code,
+  code
 ) =>
   code
     ? `${filename}:${
-      lineOffset + 1
-    }\n${code}\n ^\n\n${error.name}: ${error.message}\nat ${filename}:${
-      lineOffset + 1
-    }:${columnOffset + 7}`
+        lineOffset + 1
+      }\n${code}\n ^\n\n${error.name}: ${error.message}\nat ${filename}:${
+        lineOffset + 1
+      }:${columnOffset + 7}`
     : `${filename}:${lineOffset + 1}:${columnOffset + 8}\n ^\n${error.stack}`;
 const __quenchVmRestoreProperties = (
   keys,
   previous,
   hiddenProcess,
-  previousPrototype,
+  previousPrototype
 ) => {
   for (const key of keys) {
     const descriptor = previous.get(key);
@@ -253,14 +259,15 @@ const __quenchVmRestoreProperties = (
 const __quenchVmInstallContext = (sandbox) => {
   const keys = [
     ...Object.getOwnPropertyNames(sandbox),
-    ...Object.getOwnPropertySymbols(sandbox),
+    ...Object.getOwnPropertySymbols(sandbox)
   ];
   const previous = new Map();
   const originalGlobalKeys = new Set([
     ...Object.getOwnPropertyNames(globalThis),
-    ...Object.getOwnPropertySymbols(globalThis),
+    ...Object.getOwnPropertySymbols(globalThis)
   ]);
-  const hiddenProcess = !keys.includes("process") &&
+  const hiddenProcess =
+    !keys.includes("process") &&
     Object.getOwnPropertyDescriptor(globalThis, "process");
   if (hiddenProcess) Reflect.deleteProperty(globalThis, "process");
   const previousPrototype = Object.getPrototypeOf(globalThis);
@@ -286,25 +293,23 @@ const __quenchVmInstallContext = (sandbox) => {
     previous,
     originalGlobalKeys,
     hiddenProcess,
-    previousPrototype,
+    previousPrototype
   };
 };
 const __quenchVmRestoreNewContext = (
   original,
   keys,
   preservesHostGlobals,
-  hidesProcess,
+  hidesProcess
 ) => {
   if (hidesProcess && original.has("process")) {
     Object.defineProperty(globalThis, "process", original.get("process"));
   }
   if (!preservesHostGlobals) {
-    for (
-      const key of [
-        ...Object.getOwnPropertyNames(globalThis),
-        ...Object.getOwnPropertySymbols(globalThis),
-      ]
-    ) {
+    for (const key of [
+      ...Object.getOwnPropertyNames(globalThis),
+      ...Object.getOwnPropertySymbols(globalThis)
+    ]) {
       if (!original.has(key)) Reflect.deleteProperty(globalThis, key);
     }
     for (const [key, descriptor] of original) {
@@ -325,17 +330,17 @@ const __quenchVmRunInNewContext = (code, sandbox, options) => {
   }
   const keys = [
     ...Object.getOwnPropertyNames(sandbox),
-    ...Object.getOwnPropertySymbols(sandbox),
+    ...Object.getOwnPropertySymbols(sandbox)
   ];
   const hidesProcess = !keys.includes("process");
   const preservesHostGlobals = keys.some(
-    (key) => typeof sandbox[key] === "function",
+    (key) => typeof sandbox[key] === "function"
   );
   const original = new Map(
     Object.getOwnPropertyNames(globalThis).map((key) => [
       key,
-      Object.getOwnPropertyDescriptor(globalThis, key),
-    ]),
+      Object.getOwnPropertyDescriptor(globalThis, key)
+    ])
   );
   if (hidesProcess) Reflect.deleteProperty(globalThis, "process");
   try {
@@ -343,7 +348,7 @@ const __quenchVmRunInNewContext = (code, sandbox, options) => {
     const result = __quenchVmEvaluateContext(code, sandbox, options, {
       keys,
       originalGlobalKeys: new Set(original.keys()),
-      formatCode: true,
+      formatCode: true
     });
     if (typeof result === "function") {
       Object.setPrototypeOf(result, Object.create(Function.prototype));
@@ -359,7 +364,7 @@ const __quenchVmRunInNewContext = (code, sandbox, options) => {
       original,
       keys,
       preservesHostGlobals,
-      hidesProcess,
+      hidesProcess
     );
   }
 };

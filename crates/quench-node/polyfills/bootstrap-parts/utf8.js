@@ -55,9 +55,8 @@ const __quenchDecodeUtf8 = (bytes, final) => {
       break;
     }
     if (width === 1) {
-      output += bytes[index] < 0x80
-        ? String.fromCharCode(bytes[index])
-        : "\ufffd";
+      output +=
+        bytes[index] < 0x80 ? String.fromCharCode(bytes[index]) : "\ufffd";
       index++;
       continue;
     }
