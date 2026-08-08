@@ -49,7 +49,7 @@ const isValidIPv6GroupPosition = (
   index,
   groups,
   hasDoubleColon,
-  isHead,
+  isHead
 ) => {
   if (isHead && hasDoubleColon && group.includes(".")) return false;
   if (
@@ -196,7 +196,7 @@ const normalizeAddress = (address, label = "address") => {
   if (address && typeof address.address === "string") {
     return {
       value: address.address,
-      explicit: address.family !== undefined,
+      explicit: address.family !== undefined
     };
   }
   const error = new TypeError(`Invalid ${label}`);
@@ -280,11 +280,12 @@ const resolveBlockListCheck = (address, type, checkType) => {
   if (type === undefined) {
     resolvedType = isIPv4(str) ? "ipv4" : isIPv6(str) ? "ipv6" : null;
   } else resolvedType = resolveAddressType(str, type, checkType);
-  const inputKind = address &&
-      typeof address !== "string" &&
-      typeof address.address === "string"
-    ? "socket"
-    : "string";
+  const inputKind =
+    address &&
+    typeof address !== "string" &&
+    typeof address.address === "string"
+      ? "socket"
+      : "string";
   return { str, resolvedType, explicitType, inputKind };
 };
 const __quenchNetModule = {
@@ -342,13 +343,14 @@ const __quenchNetModule = {
     }
     write(_data, callback) {
       if (!this.destroyed) {
-        this._bufferSize += typeof _data === "string"
-          ? NodeBuffer.byteLength(_data)
-          : _data?.byteLength || _data?.length || 0;
+        this._bufferSize +=
+          typeof _data === "string"
+            ? NodeBuffer.byteLength(_data)
+            : _data?.byteLength || _data?.length || 0;
       }
       if (this.destroyed && typeof callback === "function") {
         const error = new Error(
-          "Cannot call write after a stream was destroyed",
+          "Cannot call write after a stream was destroyed"
         );
         error.code = "ERR_STREAM_DESTROYED";
         queueMicrotask(() => callback(error));
@@ -375,8 +377,8 @@ const __quenchNetModule = {
     const socket = new __quenchNetModule.Socket();
     socket.connect(options, callback);
     queueMicrotask(() => {
-      const server = [...__quenchNetServers].find((candidate) =>
-        candidate.listening
+      const server = [...__quenchNetServers].find(
+        (candidate) => candidate.listening
       );
       if (server?._handler) server._handler(socket);
     });
@@ -409,7 +411,7 @@ const __quenchNetModule = {
       const lower = type.toLowerCase();
       if (lower !== "ipv4" && lower !== "ipv6") {
         const e = new TypeError(
-          `Invalid type '${type}' [ERR_INVALID_ARG_VALUE]`,
+          `Invalid type '${type}' [ERR_INVALID_ARG_VALUE]`
         );
         e.code = "ERR_INVALID_ARG_VALUE";
         throw e;
@@ -420,21 +422,19 @@ const __quenchNetModule = {
       const normalized = normalizeAddress(address);
       const str = normalized.value;
       const explicit = type !== undefined || normalized.explicit;
-      const resolvedType = resolveAddressType(
-        str,
-        type,
-        (value) => this._checkType(value),
+      const resolvedType = resolveAddressType(str, type, (value) =>
+        this._checkType(value)
       );
       if (resolvedType === "ipv4") {
         const existing = this._v4.get(str);
         this._v4.set(str, {
-          explicit: (existing && existing.explicit) || explicit,
+          explicit: (existing && existing.explicit) || explicit
         });
         this._rules.push(`Address: IPv4 ${str}`);
       } else {
         const existing = this._v6.get(str);
         this._v6.set(str, {
-          explicit: (existing && existing.explicit) || explicit,
+          explicit: (existing && existing.explicit) || explicit
         });
         this._rules.push(`Address: IPv6 ${str}`);
       }
@@ -451,7 +451,7 @@ const __quenchNetModule = {
       if (resolvedType === "ipv4") {
         if (compareV4(start, end) > 0) {
           const e = new TypeError(
-            'The value of "start" must be lower than "end" [ERR_INVALID_ARG_VALUE]',
+            'The value of "start" must be lower than "end" [ERR_INVALID_ARG_VALUE]'
           );
           e.code = "ERR_INVALID_ARG_VALUE";
           throw e;
@@ -461,7 +461,7 @@ const __quenchNetModule = {
       } else {
         if (compareV6(start, end) > 0) {
           const e = new TypeError(
-            'The value of "start" must be lower than "end" [ERR_INVALID_ARG_VALUE]',
+            'The value of "start" must be lower than "end" [ERR_INVALID_ARG_VALUE]'
           );
           e.code = "ERR_INVALID_ARG_VALUE";
           throw e;
@@ -477,15 +477,13 @@ const __quenchNetModule = {
         e.code = "ERR_INVALID_ARG_TYPE";
         throw e;
       }
-      const resolvedType = resolveAddressType(
-        net,
-        type,
-        (value) => this._checkType(value),
+      const resolvedType = resolveAddressType(net, type, (value) =>
+        this._checkType(value)
       );
       const maxPrefix = resolvedType === "ipv4" ? 32 : 128;
       if (!Number.isFinite(prefix) || prefix < 0 || prefix > maxPrefix) {
         const e = new TypeError(
-          `Prefix must be between 0 and ${maxPrefix} [ERR_OUT_OF_RANGE]`,
+          `Prefix must be between 0 and ${maxPrefix} [ERR_OUT_OF_RANGE]`
         );
         e.code = "ERR_OUT_OF_RANGE";
         throw e;
@@ -510,9 +508,8 @@ const __quenchNetModule = {
   SocketAddress: class SocketAddress {
     constructor(input) {
       this.address = input && input.address ? String(input.address) : "";
-      this.family = input && input.family !== undefined
-        ? input.family
-        : undefined;
+      this.family =
+        input && input.family !== undefined ? input.family : undefined;
       this.flowlabel = (input && input.flowlabel) || 0;
       this.port = (input && input.port) || 0;
     }
@@ -547,7 +544,7 @@ const __quenchNetModule = {
     server.unref = () => server;
     server._handler = handler;
     return server;
-  },
+  }
 };
 globalThis.__quench_require_part_01 = (name, specifier) =>
   name === "net" ? __quenchNetModule : undefined;

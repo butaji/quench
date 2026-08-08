@@ -20,8 +20,8 @@ const __quenchDnsNormalizeServer = (server) => {
   return address.startsWith("fe80:")
     ? null
     : port && port !== "53"
-    ? `${address}:${port}`
-    : address;
+      ? `${address}:${port}`
+      : address;
 };
 const __quenchDnsNormalizeServers = (servers) =>
   [...servers]
@@ -32,9 +32,10 @@ const __quenchDnsValidateServers = (servers) => {
   const normalized = __quenchDnsNormalizeServers(servers);
   const net = globalThis.require("net");
   for (const server of normalized) {
-    const address = typeof server === "string" && net.isIP(server) === 0
-      ? server.replace(/:\d+$/, "")
-      : server;
+    const address =
+      typeof server === "string" && net.isIP(server) === 0
+        ? server.replace(/:\d+$/, "")
+        : server;
     if (typeof server !== "string" || net.isIP(address) === 0) {
       const error = new TypeError(`Invalid IP address: ${server}`);
       error.code = "ERR_INVALID_IP_ADDRESS";
@@ -48,7 +49,7 @@ const __quenchDnsValidateServers = (servers) => {
 const __quenchDnsLookup = (hostname, options, callback) => {
   if (typeof hostname !== "string") {
     const error = new TypeError(
-      `The "hostname" argument must be of type string. Received ${hostname}`,
+      `The "hostname" argument must be of type string. Received ${hostname}`
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -60,7 +61,7 @@ const __quenchDnsLookup = (hostname, options, callback) => {
   if (typeof callback !== "function") {
     throw Object.assign(
       new TypeError('The "callback" argument must be of type function'),
-      { code: "ERR_INVALID_ARG_TYPE" },
+      { code: "ERR_INVALID_ARG_TYPE" }
     );
   }
   if (
@@ -69,24 +70,25 @@ const __quenchDnsLookup = (hostname, options, callback) => {
   ) {
     throw Object.assign(
       new TypeError('The "options" argument must be of type object'),
-      { code: "ERR_INVALID_ARG_TYPE" },
+      { code: "ERR_INVALID_ARG_TYPE" }
     );
   }
   if (typeof options?.family === "string") {
     throw Object.assign(new TypeError('The "family" option is invalid'), {
-      code: options.family === "nodejs.org"
-        ? "ERR_INVALID_ARG_TYPE"
-        : "ERR_INVALID_ARG_VALUE",
+      code:
+        options.family === "nodejs.org"
+          ? "ERR_INVALID_ARG_TYPE"
+          : "ERR_INVALID_ARG_VALUE"
     });
   }
   if (hostname.length === 0) {
     throw Object.assign(new TypeError("Invalid hostname"), {
-      code: "ERR_INVALID_ARG_VALUE",
+      code: "ERR_INVALID_ARG_VALUE"
     });
   }
   if (options?.hints !== undefined && options.hints % 2) {
     const error = new TypeError(
-      `The argument 'hints' is invalid. Received ${options.hints}`,
+      `The argument 'hints' is invalid. Received ${options.hints}`
     );
     error.code = "ERR_INVALID_ARG_VALUE";
     throw error;
@@ -97,7 +99,7 @@ const __quenchDnsLookup = (hostname, options, callback) => {
 const __quenchDnsResolve = (hostname, rrtype, callback) => {
   if (typeof hostname !== "string") {
     const error = new TypeError(
-      `The "name" argument must be of type string. Received ${hostname}`,
+      `The "name" argument must be of type string. Received ${hostname}`
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -108,7 +110,7 @@ const __quenchDnsResolve = (hostname, rrtype, callback) => {
   }
   if (typeof rrtype !== "string") {
     const error = new TypeError(
-      'The "rrtype" argument must be of type string. Received an instance of Array',
+      'The "rrtype" argument must be of type string. Received an instance of Array'
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -118,11 +120,11 @@ const __quenchDnsResolve = (hostname, rrtype, callback) => {
 const __quenchDnsLookupService = function __quenchDnsLookupService(
   address,
   port,
-  callback,
+  callback
 ) {
   if (typeof address !== "string" || arguments.length < 3) {
     const error = new TypeError(
-      `The "address", "port", and "callback" arguments must be specified`,
+      `The "address", "port", and "callback" arguments must be specified`
     );
     error.code = "ERR_MISSING_ARGS";
     throw error;
@@ -130,13 +132,13 @@ const __quenchDnsLookupService = function __quenchDnsLookupService(
   if (typeof callback !== "function") {
     throw Object.assign(
       new TypeError('The "callback" argument must be of type function'),
-      { code: "ERR_INVALID_ARG_TYPE" },
+      { code: "ERR_INVALID_ARG_TYPE" }
     );
   }
   if (globalThis.require("net").isIP(address) === 0) {
     throw Object.assign(
       new TypeError(`The argument 'address' is invalid. Received '${address}'`),
-      { code: "ERR_INVALID_ARG_VALUE" },
+      { code: "ERR_INVALID_ARG_VALUE" }
     );
   }
   if (
@@ -146,7 +148,7 @@ const __quenchDnsLookupService = function __quenchDnsLookupService(
     port > 65535
   ) {
     throw Object.assign(new RangeError("Port should be >= 0 and < 65536"), {
-      code: "ERR_SOCKET_BAD_PORT",
+      code: "ERR_SOCKET_BAD_PORT"
     });
   }
   queueMicrotask(() => callback(null, "localhost", "tcp"));
@@ -191,24 +193,22 @@ const __quenchDns = {
       if (typeof hostname !== "string") {
         throw Object.assign(
           new TypeError(
-            `The "name" argument must be of type string. Received ${hostname}`,
+            `The "name" argument must be of type string. Received ${hostname}`
           ),
-          { code: "ERR_INVALID_ARG_TYPE" },
+          { code: "ERR_INVALID_ARG_TYPE" }
         );
       }
       if (typeof rrtype !== "string") {
         throw Object.assign(
           new TypeError(
-            'The "rrtype" argument must be of type string. Received an instance of Array',
+            'The "rrtype" argument must be of type string. Received an instance of Array'
           ),
-          { code: "ERR_INVALID_ARG_TYPE" },
+          { code: "ERR_INVALID_ARG_TYPE" }
         );
       }
       return new Promise((resolve, reject) =>
-        __quenchDnsResolve(
-          hostname,
-          rrtype,
-          (error, value) => error ? reject(error) : resolve(value),
+        __quenchDnsResolve(hostname, rrtype, (error, value) =>
+          error ? reject(error) : resolve(value)
         )
       );
     },
@@ -217,15 +217,15 @@ const __quenchDns = {
       if (typeof address !== "string" || args.length === 0) {
         throw Object.assign(
           new TypeError('The "address" and "port" arguments must be specified'),
-          { code: "ERR_MISSING_ARGS" },
+          { code: "ERR_MISSING_ARGS" }
         );
       }
       if (globalThis.require("net").isIP(address) === 0) {
         throw Object.assign(
           new TypeError(
-            `The argument 'address' is invalid. Received '${address}'`,
+            `The argument 'address' is invalid. Received '${address}'`
           ),
-          { code: "ERR_INVALID_ARG_VALUE" },
+          { code: "ERR_INVALID_ARG_VALUE" }
         );
       }
       if (
@@ -235,7 +235,7 @@ const __quenchDns = {
         port > 65535
       ) {
         throw Object.assign(new RangeError("Port should be >= 0 and < 65536"), {
-          code: "ERR_SOCKET_BAD_PORT",
+          code: "ERR_SOCKET_BAD_PORT"
         });
       }
       return Promise.resolve({ hostname: "localhost", service: "tcp" });
@@ -244,36 +244,33 @@ const __quenchDns = {
       if (hostname && typeof hostname !== "string") {
         throw Object.assign(
           new TypeError(
-            `The "hostname" argument must be of type string. Received ${hostname}`,
+            `The "hostname" argument must be of type string. Received ${hostname}`
           ),
-          { code: "ERR_INVALID_ARG_TYPE" },
+          { code: "ERR_INVALID_ARG_TYPE" }
         );
       }
       if (!hostname) {
         return Promise.reject(
           Object.assign(new TypeError("Invalid hostname"), {
-            code: "ERR_INVALID_ARG_VALUE",
-          }),
+            code: "ERR_INVALID_ARG_VALUE"
+          })
         );
       }
       if (options.hints !== undefined && options.hints % 2) {
         throw Object.assign(
           new TypeError(
-            `The argument 'hints' is invalid. Received ${options.hints}`,
+            `The argument 'hints' is invalid. Received ${options.hints}`
           ),
-          { code: "ERR_INVALID_ARG_VALUE" },
+          { code: "ERR_INVALID_ARG_VALUE" }
         );
       }
       return new Promise((resolve, reject) =>
-        __quenchDnsLookup(
-          hostname,
-          options,
-          (error, address, family) =>
-            error ? reject(error) : resolve({ address, family }),
+        __quenchDnsLookup(hostname, options, (error, address, family) =>
+          error ? reject(error) : resolve({ address, family })
         )
       );
-    },
-  },
+    }
+  }
 };
 globalThis.require = (specifier) => {
   const name = String(specifier).replace(/^node:/, "");

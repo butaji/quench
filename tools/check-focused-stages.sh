@@ -66,12 +66,18 @@ cleanup_fixture_artifacts() {
         find "$root/tests/node/test/.tmp.0/$fixture_dir" -depth -type d -empty -delete 2>/dev/null || true
       fi
     done
+    for fixture_file in access-mode; do
+      if [ -e "$root/tests/node/test/.tmp.0/$fixture_file" ]; then
+        rm -f -- "$root/tests/node/test/.tmp.0/$fixture_file"
+      fi
+    done
   fi
   for artifact in access-read-only chmod-symlink-file chmod-symlink-target \
     copy-destination copy-source fchmod-file mkdir-parent-file readdir-empty \
     readdir-files readdir-for readdir-just readdir-testing realpath-cycle-a \
     realpath-cycle-b symlink-time-link symlink-time-target write-file-basic.txt \
-    write-file-descriptor.txt write-string-overload.txt; do
+    write-file-descriptor.txt write-string-overload.txt stage-2021-write.txt \
+    stage-2023-write.txt; do
     if [ -e "$root/$artifact" ] || [ -L "$root/$artifact" ]; then
       rm -f -- "$root/$artifact"
     fi
@@ -141,6 +147,11 @@ for stage in $(find "$root/tests/node-compat" -mindepth 2 -type f \( -name '*.js
   printf '{"stage":%s,"outcome":"%s","attempts":%s,"duration_ms":%s,"isolation":"shared-workspace","isolation_reason":"serial_runner_cleans_known_artifacts_only"}\n' \
     "$stage" "$outcome" "$attempts" "$((stage_finished_ms - stage_started_ms))" >>"$metrics"
 done
+
+# Remove artifacts emitted by the final stage as well as those left by the
+# previous stage. This keeps the post-run policy check independent of stage
+# ordering.
+cleanup_fixture_artifacts
 
 summary="$root/target/compat/focused-latest.txt"
 mkdir -p "$(dirname "$summary")"

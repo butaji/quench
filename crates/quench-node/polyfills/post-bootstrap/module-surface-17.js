@@ -8,14 +8,11 @@
         const createServer = result.createServer;
         result.createServer = (...args) => {
           const server = createServer?.(...args) || new result.Server();
-          if (
-            result.Server?.prototype &&
-            !(server instanceof result.Server)
-          ) {
+          if (result.Server?.prototype && !(server instanceof result.Server)) {
             const currentPrototype = Object.getPrototypeOf(server);
             if (
               Object.getPrototypeOf(result.Server.prototype) !==
-                currentPrototype
+              currentPrototype
             ) {
               Object.setPrototypeOf(result.Server.prototype, currentPrototype);
             }
@@ -49,14 +46,12 @@
         result.isIP ||= () => 0;
         result.isIPv4 ||= () => false;
         result.isIPv6 ||= () => false;
-        for (
-          const constructor of [
-            "Server",
-            "Socket",
-            "SocketAddress",
-            "BlockList",
-          ]
-        ) {
+        for (const constructor of [
+          "Server",
+          "Socket",
+          "SocketAddress",
+          "BlockList"
+        ]) {
           result[constructor] ||= function Constructor() {};
         }
       }

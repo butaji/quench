@@ -24,11 +24,18 @@ Feature-gated `stream/iter` stages are run with:
 cargo run -p quench-node -- --experimental-stream-iter --stage 169
 ````
 
-The Node test suite is tracked as the `tests/node` submodule. Compatibility
-stages live under `tests/node-compat`; each stage is committed and verified
-before advancing.
+Node 24 is the compatibility target, initially on Linux x86_64. The Node test
+suite is tracked as the `tests/node` submodule. Compatibility stages live under
+`tests/node-compat`; each stage is committed and verified before advancing. The
+primary manifest covers `test/parallel/`, `test/es-module/`, and required
+`test/common/` and `test/fixtures/` support files.
 
 ## Scope
+
+The authoritative test-source map is documented in
+[`docs/authoritative-test-sources.md`](docs/authoritative-test-sources.md). It
+covers the Node.js suite, LLRT, Deno's node compatibility runner, WPT, and
+Test262, with Node's suite as the primary oracle.
 
 The repository contains only the `quench-node` crate, its polyfills, the Node
 test submodule, compatibility stages, and the small harness needed to run them.
@@ -36,7 +43,9 @@ Polyfills are intentionally kept readable and uncompressed.
 
 `tools/compat-coverage.sh` reports the current fixture and upstream-test
 inventory. It deliberately reports Node API coverage as `unmeasured`: a count of
-focused fixtures is not a valid percentage of the full Node API surface.
+focused fixtures is not a valid percentage of the full Node API surface. Node's
+upstream suite is the primary behavioral oracle; Hono and a representative npm
+CLI are the initial release-facing application gates.
 `tools/check-focused-stages.sh` runs every focused stage and reports concrete
 pass/fail counts; it does not turn those counts into an API percentage. Both
 focused-stage runners validate their actual failure list against
@@ -66,7 +75,8 @@ streams/events, filesystem/modules, crypto/network/OS, and harness/globals. Each
 stream must own distinct files or use an isolated worktree. Local reports should
 show fixture pass/fail/skip/timeout counts, cluster rates, unique failure
 signatures, and regressions. These metrics measure test progress, not the
-percentage of the Node API surface.
+percentage of the Node API surface. Release acceptance additionally requires
+zero application-gate failures and no manifest regressions.
 
 ## Runtime boundary
 

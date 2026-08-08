@@ -21,19 +21,17 @@ const __nodeUtilFormatCompact = (options, args) => {
   ) {
     return null;
   }
-  return `[ ${
-    args[1]
-      .map((value) =>
-        value && typeof value === "object" ? "[Object]" : String(value)
-      )
-      .join(", ")
-  } ]`;
+  return `[ ${args[1]
+    .map((value) =>
+      value && typeof value === "object" ? "[Object]" : String(value)
+    )
+    .join(", ")} ]`;
 };
 globalThis.__nodeUtil.formatWithOptions = (options, ...args) => {
   if (!options || typeof options !== "object" || Array.isArray(options)) {
     const error = new TypeError(
       'The "inspectOptions" argument must be an object.' +
-        globalThis.__nodeCommon.invalidArgTypeHelper(options),
+        globalThis.__nodeCommon.invalidArgTypeHelper(options)
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -72,11 +70,11 @@ const __nodeQuerystringEscape = (value) => {
       const next = input.charCodeAt(index + 1);
       if (next >= 0xdc00 && next <= 0xdfff) {
         normalized += String.fromCodePoint(
-          0x10000 + ((code - 0xd800) << 10) + next - 0xdc00,
+          0x10000 + ((code - 0xd800) << 10) + next - 0xdc00
         );
       } else {
         normalized += String.fromCodePoint(
-          0x10000 + ((code - 0xd800) << 10) + next,
+          0x10000 + ((code - 0xd800) << 10) + next
         );
       }
       index += 1;
@@ -102,7 +100,7 @@ const __nodeQuerystringDecodeByte = (input, index, decodeSpaces) => {
   ) {
     return {
       bytes: [parseInt(input.slice(index + 1, index + 3), 16)],
-      advance: 2,
+      advance: 2
     };
   }
   let character = input[index];
@@ -117,7 +115,7 @@ const __nodeQuerystringDecodeByte = (input, index, decodeSpaces) => {
   }
   return {
     bytes: Array.from(new TextEncoder().encode(character)),
-    advance: character.length - 1,
+    advance: character.length - 1
   };
 };
 const __nodeQuerystringParseValue = (value, options) => {
@@ -130,11 +128,12 @@ const __nodeQuerystringParseValue = (value, options) => {
   return globalThis.__nodeQuerystring.unescape(inputValue);
 };
 const __nodeQuerystringAddValue = (result, key, value) => {
-  result[key] = result[key] === undefined
-    ? value
-    : Array.isArray(result[key])
-    ? result[key].concat(value)
-    : [result[key], value];
+  result[key] =
+    result[key] === undefined
+      ? value
+      : Array.isArray(result[key])
+        ? result[key].concat(value)
+        : [result[key], value];
 };
 const __nodeQuerystringMaxKeys = (options) => {
   if (!options || options.maxKeys === undefined) return 1000;
@@ -162,9 +161,10 @@ const __nodeQuerystringExports = {
     if (!object || typeof object !== "object") return "";
     sep = sep == null ? "&" : String(sep);
     eq = eq == null ? "=" : String(eq);
-    const encode = options && options.encodeURIComponent
-      ? options.encodeURIComponent
-      : globalThis.__nodeQuerystring.escape;
+    const encode =
+      options && options.encodeURIComponent
+        ? options.encodeURIComponent
+        : globalThis.__nodeQuerystring.escape;
     return Object.keys(object)
       .flatMap((key) => {
         const value = object[key];
@@ -175,12 +175,13 @@ const __nodeQuerystringExports = {
           let encodedValue;
           try {
             encodedKey = encode(key);
-            encodedValue = item === null ||
-                typeof item === "object" ||
-                typeof item === "function" ||
-                (typeof item === "number" && !Number.isFinite(item))
-              ? ""
-              : encode(item);
+            encodedValue =
+              item === null ||
+              typeof item === "object" ||
+              typeof item === "function" ||
+              (typeof item === "number" && !Number.isFinite(item))
+                ? ""
+                : encode(item);
           } catch (error) {
             if (error instanceof URIError) {
               error.code = "ERR_INVALID_URI";
@@ -207,16 +208,16 @@ const __nodeQuerystringExports = {
         const index = part.indexOf(equals);
         const key = __nodeQuerystringParseValue(
           index < 0 ? part : part.slice(0, index),
-          options,
+          options
         );
         const value = __nodeQuerystringParseValue(
           index < 0 ? "" : part.slice(index + equals.length),
-          options,
+          options
         );
         __nodeQuerystringAddValue(result, key, value);
       });
     return result;
-  },
+  }
 };
 let __nodeQuerystringInstance;
 globalThis.__nodeQuerystringInitialized = false;
@@ -233,13 +234,13 @@ globalThis.__nodeQuerystring = new Proxy(
     getOwnPropertyDescriptor: (_, key) => ({
       enumerable: true,
       configurable: true,
-      value: __nodeQuerystringExports[key],
+      value: __nodeQuerystringExports[key]
     }),
     set: (_, key, value) => {
       __nodeQuerystringExports[key] = value;
       return true;
-    },
-  },
+    }
+  }
 );
 class NodeURLSearchParams {
   constructor(init = "") {
@@ -297,21 +298,21 @@ class NodeURLSearchParams {
   }
   has(key) {
     return this._pairs.some(
-      ([name]) => name === globalThis.__nodeURLSearchString(key),
+      ([name]) => name === globalThis.__nodeURLSearchString(key)
     );
   }
   delete(key) {
     this._pairs = this._pairs.filter(
-      ([name]) => name !== globalThis.__nodeURLSearchString(key),
+      ([name]) => name !== globalThis.__nodeURLSearchString(key)
     );
   }
   toString() {
     return this._pairs
       .map(
         ([key, value]) =>
-          `${globalThis.__nodeURLFormEncode(key).replace(/%20/g, "+")}=${
-            globalThis.__nodeURLFormEncode(value).replace(/%20/g, "+")
-          }`,
+          `${globalThis.__nodeURLFormEncode(key).replace(/%20/g, "+")}=${globalThis
+            .__nodeURLFormEncode(value)
+            .replace(/%20/g, "+")}`
       )
       .join("&");
   }
@@ -532,13 +533,14 @@ Object.defineProperty(globalThis, "URL", {
 const __nodeLegacyUrlHostInvalid = (host) =>
   !/^\[[^\]]+\](?::\d*)?$/.test(host) && /[#/?@[\\\]^|]/.test(host);
 const __nodeLegacyUrlValidateAuthority = (value) => {
-  const rawAuthority = value.match(/^[a-z][a-z0-9+.-]*:\/\/([^/?#]+)/i)?.[1] ||
-    "";
+  const rawAuthority =
+    value.match(/^[a-z][a-z0-9+.-]*:\/\/([^/?#]+)/i)?.[1] || "";
   const host = rawAuthority.slice(rawAuthority.lastIndexOf("@") + 1);
   const hostnameForIdna = host.startsWith("[")
     ? host.slice(0, host.indexOf("]") + 1)
     : host.split(":")[0];
-  const idnaInvalid = !hostnameForIdna.startsWith("[") &&
+  const idnaInvalid =
+    !hostnameForIdna.startsWith("[") &&
     Array.from(hostnameForIdna).some((character) =>
       character.normalize("NFKD").match(/[#%/:?@[\\\]^|]/)
     );
@@ -559,7 +561,7 @@ const __nodeLegacyUrlAuthority = (input) => {
   const at = authority.lastIndexOf("@");
   const auth = at >= 0 ? decodeURIComponent(authority.slice(0, at)) : null;
   const host = globalThis.__nodeLegacyHostASCII(
-    (at >= 0 ? authority.slice(at + 1) : authority).toLowerCase(),
+    (at >= 0 ? authority.slice(at + 1) : authority).toLowerCase()
   );
   return { auth, host };
 };
@@ -583,14 +585,16 @@ const __nodeLegacyUrlParts = (input, parsed, omitAuthInHref = false) => {
   const { pathname: rawPathname, search: parsedSearch } =
     __nodeLegacyUrlPathParts(parsed, host);
   const rawQuery = input.split("#", 1)[0].match(/\?([^#]*)/)?.[1];
-  const search = rawQuery === undefined
-    ? parsedSearch
-    : `?${globalThis.__nodeLegacyQueryNormalize(rawQuery)}`;
+  const search =
+    rawQuery === undefined
+      ? parsedSearch
+      : `?${globalThis.__nodeLegacyQueryNormalize(rawQuery)}`;
   const pathname = __nodeLegacyPathname(input, protocol, host, rawPathname);
   const hrefPath = globalThis.__nodeLegacyUrlHrefPath(pathname);
-  const hrefAuth = !omitAuthInHref && auth
-    ? `${auth.replace(/[" @<]/g, encodeURIComponent)}@`
-    : "";
+  const hrefAuth =
+    !omitAuthInHref && auth
+      ? `${auth.replace(/[" @<]/g, encodeURIComponent)}@`
+      : "";
   return {
     protocol: __nodeLegacyUrlValue(protocol),
     slashes: globalThis.__nodeLegacyUrlSlashes(input, protocol) ? true : null,
@@ -605,11 +609,13 @@ const __nodeLegacyUrlParts = (input, parsed, omitAuthInHref = false) => {
     query: search ? search.slice(1) : null,
     pathname: __nodeLegacyUrlValue(pathname),
     path: __nodeLegacyUrlPathValue(pathname, search),
-    href: `${
-      globalThis.__nodeLegacyUrlHrefPrefix(protocol, hrefAuth, host)
-    }${hrefPath}${search || ""}${
+    href: `${globalThis.__nodeLegacyUrlHrefPrefix(
+      protocol,
+      hrefAuth,
+      host
+    )}${hrefPath}${search || ""}${
       input.includes("#") ? `#${input.split("#").slice(1).join("#")}` : ""
-    }`,
+    }`
   };
 };
 const __nodeLegacyPathname = (input, protocol, host, pathname) =>
@@ -679,10 +685,12 @@ const __nodeUrlModuleExports = {
   },
   parse: (value, parseQueryString = false) => {
     if (typeof value !== "string") globalThis.__nodePrepareLegacyUrl(value);
-    const raw = typeof value === "string"
-      ? value.trim().replace(/^[\x00-\x20]+|[\x00-\x20]+$/g, "")
-      : value;
-    const earlyProtocolRelative = typeof raw === "string" &&
+    const raw =
+      typeof value === "string"
+        ? value.trim().replace(/^[\x00-\x20]+|[\x00-\x20]+$/g, "")
+        : value;
+    const earlyProtocolRelative =
+      typeof raw === "string" &&
       globalThis.__nodeLegacyProtocolRelativeParts(raw);
     if (earlyProtocolRelative) return earlyProtocolRelative;
     if (typeof raw === "string" && /^\[[^\]]+\](?:[/?#]|$)/.test(raw)) {
@@ -696,12 +704,11 @@ const __nodeUrlModuleExports = {
       const hashIndex = raw.indexOf("#");
       const withoutHash = hashIndex < 0 ? raw : raw.slice(0, hashIndex);
       const queryIndex = withoutHash.indexOf("?");
-      const pathname = queryIndex < 0
-        ? withoutHash
-        : withoutHash.slice(0, queryIndex);
+      const pathname =
+        queryIndex < 0 ? withoutHash : withoutHash.slice(0, queryIndex);
       const search = queryIndex < 0 ? null : withoutHash.slice(queryIndex);
       const parsed = globalThis.__nodeLegacyPathOnlyParts(
-        globalThis.__nodeLegacyPathEncode(pathname),
+        globalThis.__nodeLegacyPathEncode(pathname)
       );
       parsed.search = search;
       parsed.query = search?.slice(1) || null;
@@ -713,9 +720,8 @@ const __nodeUrlModuleExports = {
     const prepared = globalThis.__nodePrepareLegacyUrl(value);
     __nodeLegacyUrlValidateAuthority(prepared.input);
     const { input, parsed, hadOuterWhitespace } = prepared;
-    const protocolRelative = globalThis.__nodeLegacyProtocolRelativeParts(
-      input,
-    );
+    const protocolRelative =
+      globalThis.__nodeLegacyProtocolRelativeParts(input);
     if (protocolRelative) return protocolRelative;
     const mailto = globalThis.__nodeLegacyMailtoParts(input);
     if (mailto) return mailto;
@@ -733,7 +739,7 @@ const __nodeUrlModuleExports = {
     }
     return String(value);
   },
-  resolve: (from, to) => globalThis.__nodeLegacyResolve(from, to),
+  resolve: (from, to) => globalThis.__nodeLegacyResolve(from, to)
 };
 let __nodeUrlModuleInstance;
 globalThis.__nodeUrlModule = new Proxy(
@@ -746,7 +752,7 @@ globalThis.__nodeUrlModule = new Proxy(
     getOwnPropertyDescriptor: (_, key) => ({
       enumerable: true,
       configurable: true,
-      value: __nodeUrlModuleExports[key],
-    }),
-  },
+      value: __nodeUrlModuleExports[key]
+    })
+  }
 );

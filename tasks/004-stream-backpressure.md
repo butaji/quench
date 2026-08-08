@@ -1,5 +1,12 @@
 # Implement stream backpressure semantics
 
+## Contract alignment
+
+This task supports the Node 24 application-runtime contract on Linux x86_64;
+observable Node behavior remains the compatibility target.
+See `docs/authoritative-test-sources.md` for the Node, LLRT, Deno, WPT, and
+Test262 reference roles.
+
 ## Goal
 
 Make Node-compatible streams preserve buffering, ordering, pause/resume, and backpressure behavior.

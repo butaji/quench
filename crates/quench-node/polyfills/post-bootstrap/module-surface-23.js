@@ -17,10 +17,10 @@
               disable: () => {
                 enabled = false;
               },
-              categories: (options?.categories || []).join(","),
+              categories: (options?.categories || []).join(",")
             };
           },
-          getEnabledCategories: () => "",
+          getEnabledCategories: () => ""
         };
       }
       return originalRequire(name);

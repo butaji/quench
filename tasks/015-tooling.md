@@ -1,5 +1,13 @@
 # Tooling and harness improvements
 
+## Contract alignment
+
+This task supports the Node 24 application-runtime contract on Linux x86_64;
+observable Node behavior remains the compatibility target. Tooling must report
+explicit manifest statuses and application-gate regressions.
+Use `docs/authoritative-test-sources.md` as the source map for Node, LLRT,
+Deno, WPT, and Test262 integration.
+
 ## Goal
 
 Make the per-slice feedback loop fast, deterministic, and self-explanatory.
@@ -184,3 +192,20 @@ throughput decisions: no previous report for trend/regression comparison, no
 retry/flake history, no structured capability-probe frames, and no worker-level
 startup/cache timing. These are measurement gaps, not compatibility claims;
 the current canonical parallel report is nevertheless fresh and auditable.
+
+The focused-stage cleanup also removes the known root-level artifacts emitted
+by stages 2021 and 2023. This keeps generated files from being misclassified
+as runtime failures or unclassified focused conflicts.
+
+The cleanup change was verified with
+`QUENCH_FOCUSED_STAGE_FROM=1256 QUENCH_FOCUSED_STAGE_TO=1256
+tools/check-focused-stages.sh`: the stage passed without retries or runtime
+failures.
+
+The cleanup manifest also covers the `access-mode` file emitted by the fs
+access focused stage, preventing that application fixture from becoming an
+unclassified gate conflict.
+
+The runner also performs cleanup after the final stage, not only before each
+stage. The grouped 2058–2060 gate passes 3/3 with no leftover `access-mode`
+file.

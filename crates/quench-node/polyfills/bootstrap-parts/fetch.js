@@ -4,5 +4,5 @@ Object.defineProperty(globalThis, "fetch", {
   },
   configurable: true,
   writable: true,
-  enumerable: false,
+  enumerable: false
 });

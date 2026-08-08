@@ -25,7 +25,7 @@ const __nodeFsSetFdTimes = (fd, atime, mtime) => {
   }
   if (!Number.isInteger(fd) || fd < 0) {
     const error = new RangeError(
-      'The value of "fd" is out of range. It must be >= 0 && <= 2147483647. Received -1',
+      'The value of "fd" is out of range. It must be >= 0 && <= 2147483647. Received -1'
     );
     error.code = "ERR_OUT_OF_RANGE";
     throw error;

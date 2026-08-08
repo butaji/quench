@@ -1,5 +1,12 @@
 # Add Buffer-based fs read and write paths
 
+## Contract alignment
+
+This task supports the Node 24 application-runtime contract on Linux x86_64;
+observable Node behavior remains the compatibility target.
+See `docs/authoritative-test-sources.md` for the Node, LLRT, Deno, WPT, and
+Test262 reference roles.
+
 ## Goal
 
 Allow Node `fs` APIs to move binary data directly between Rust and `Buffer`/`ArrayBuffer` values.

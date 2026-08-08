@@ -16,7 +16,7 @@ const __quenchDgramTypeDetail = (value) => {
 const __quenchDgramBufferError = (type, code, message) => {
   const syscall = `uv_${type}_buffer_size`;
   const error = new Error(
-    `Could not get or set buffer size: ${syscall} returned ${code} (${message})`,
+    `Could not get or set buffer size: ${syscall} returned ${code} (${message})`
   );
   error.name = "SystemError";
   error.code = "ERR_SOCKET_BUFFER_SIZE";
@@ -27,7 +27,7 @@ const __quenchDgramBufferError = (type, code, message) => {
     get: () => errorErrno,
     set: (value) => {
       errorErrno = value;
-    },
+    }
   });
   let errorSyscall = syscall;
   Object.defineProperty(error, "syscall", {
@@ -35,37 +35,37 @@ const __quenchDgramBufferError = (type, code, message) => {
     get: () => errorSyscall,
     set: (value) => {
       errorSyscall = value;
-    },
+    }
   });
   return error;
 };
 const __quenchDgramBind = (socket, type, port, address, callback) => {
   if (socket._bound) {
     throw Object.assign(new Error("Socket is already bound"), {
-      code: "ERR_SOCKET_ALREADY_BOUND",
+      code: "ERR_SOCKET_ALREADY_BOUND"
     });
   }
   if (typeof address === "function") callback = address;
-  const resolvedPort = typeof port === "number" && port > 0
-    ? port
-    : __quenchDgramNextPort++;
+  const resolvedPort =
+    typeof port === "number" && port > 0 ? port : __quenchDgramNextPort++;
   if (__quenchDgramBoundPorts.has(resolvedPort)) {
     throw Object.assign(new Error("bind EADDRINUSE"), {
       code: "EADDRINUSE",
-      syscall: "bind",
+      syscall: "bind"
     });
   }
   socket._bound = true;
   socket._bindPending = true;
   __quenchDgramBoundPorts.add(resolvedPort);
   socket._address = {
-    address: typeof address === "string"
-      ? address
-      : type === "udp6"
-      ? "::"
-      : "0.0.0.0",
+    address:
+      typeof address === "string"
+        ? address
+        : type === "udp6"
+          ? "::"
+          : "0.0.0.0",
     family: type === "udp6" ? "IPv6" : "IPv4",
-    port: resolvedPort,
+    port: resolvedPort
   };
   queueMicrotask(() => {
     socket._bindPending = false;
@@ -78,9 +78,9 @@ const __quenchDgramSend = (socket, message, ...args) => {
   if (message === undefined) {
     throw Object.assign(
       new TypeError(
-        'The "buffer" argument must be of type string or an instance of Buffer, TypedArray, or DataView. Received undefined',
+        'The "buffer" argument must be of type string or an instance of Buffer, TypedArray, or DataView. Received undefined'
       ),
-      { code: "ERR_INVALID_ARG_TYPE" },
+      { code: "ERR_INVALID_ARG_TYPE" }
     );
   }
   if (
@@ -92,11 +92,12 @@ const __quenchDgramSend = (socket, message, ...args) => {
     throw Object.assign(
       new TypeError('The "buffer" argument must be a Buffer'),
       {
-        code: "ERR_INVALID_ARG_TYPE",
-      },
+        code: "ERR_INVALID_ARG_TYPE"
+      }
     );
   }
-  const hasOffset = args.length >= 5 ||
+  const hasOffset =
+    args.length >= 5 ||
     (args.length === 4 && typeof args[3] === "function") ||
     (socket._connected && args.length >= 2);
   const addressIndex = args.length >= 4 ? 3 : hasOffset ? -1 : 1;
@@ -110,19 +111,20 @@ const __quenchDgramSend = (socket, message, ...args) => {
   ) {
     throw Object.assign(
       new TypeError(
-        `The "address" argument must be of type string.${
-          __quenchDgramTypeDetail(address)
-        }`,
+        `The "address" argument must be of type string.${__quenchDgramTypeDetail(
+          address
+        )}`
       ),
-      { code: "ERR_INVALID_ARG_TYPE" },
+      { code: "ERR_INVALID_ARG_TYPE" }
     );
   }
   const callback = args.at(-1);
-  const payload = typeof message === "string"
-    ? NodeBuffer.from(message)
-    : Array.isArray(message)
-    ? NodeBuffer.concat(message)
-    : message;
+  const payload =
+    typeof message === "string"
+      ? NodeBuffer.from(message)
+      : Array.isArray(message)
+        ? NodeBuffer.concat(message)
+        : message;
   const length = hasOffset ? args[1] : payload.byteLength;
   if (socket._connected) {
     socket._sendQueueSize = (socket._sendQueueSize || 0) + length;
@@ -139,9 +141,9 @@ const __quenchDgramSendTo = (socket, message, ...args) => {
   if (args[0] === undefined) {
     throw Object.assign(
       new TypeError(
-        'The "offset" argument must be of type number. Received undefined',
+        'The "offset" argument must be of type number. Received undefined'
       ),
-      { code: "ERR_INVALID_ARG_TYPE" },
+      { code: "ERR_INVALID_ARG_TYPE" }
     );
   }
   if (typeof args[0] !== "number") {
@@ -149,9 +151,9 @@ const __quenchDgramSendTo = (socket, message, ...args) => {
       new TypeError(
         `The "offset" argument must be of type number. Received type string ('${
           args[0]
-        }')`,
+        }')`
       ),
-      { code: "ERR_INVALID_ARG_TYPE" },
+      { code: "ERR_INVALID_ARG_TYPE" }
     );
   }
   if (typeof args[1] !== "number") {
@@ -159,9 +161,9 @@ const __quenchDgramSendTo = (socket, message, ...args) => {
       new TypeError(
         `The "length" argument must be of type number. Received type string ('${
           args[1]
-        }')`,
+        }')`
       ),
-      { code: "ERR_INVALID_ARG_TYPE" },
+      { code: "ERR_INVALID_ARG_TYPE" }
     );
   }
   if (typeof args[3] !== "string") {
@@ -169,9 +171,9 @@ const __quenchDgramSendTo = (socket, message, ...args) => {
       new TypeError(
         `The "address" argument must be of type string. Received type boolean (${
           args[3]
-        })`,
+        })`
       ),
-      { code: "ERR_INVALID_ARG_TYPE" },
+      { code: "ERR_INVALID_ARG_TYPE" }
     );
   }
   if (typeof args[2] !== "number") {
@@ -179,9 +181,9 @@ const __quenchDgramSendTo = (socket, message, ...args) => {
       new TypeError(
         `The "port" argument must be of type number. Received type boolean (${
           args[2]
-        })`,
+        })`
       ),
-      { code: "ERR_INVALID_ARG_TYPE" },
+      { code: "ERR_INVALID_ARG_TYPE" }
     );
   }
   return __quenchDgramSend(socket, message, ...args);
@@ -193,12 +195,12 @@ const __quenchDgramConnect = (socket, port, address, callback) => {
   }
   if (!Number.isInteger(port) || port <= 0 || port >= 65536) {
     throw Object.assign(new RangeError("Port should be > 0 and < 65536"), {
-      code: "ERR_SOCKET_BAD_PORT",
+      code: "ERR_SOCKET_BAD_PORT"
     });
   }
   if (socket._connected || socket._connecting) {
     throw Object.assign(new Error("Already connected"), {
-      code: "ERR_SOCKET_DGRAM_IS_CONNECTED",
+      code: "ERR_SOCKET_DGRAM_IS_CONNECTED"
     });
   }
   socket._connecting = true;
@@ -214,7 +216,7 @@ const __quenchDgramConnect = (socket, port, address, callback) => {
 const __quenchDgramDisconnect = (socket) => {
   if (!socket._connected) {
     throw Object.assign(new Error("Not connected"), {
-      code: "ERR_SOCKET_DGRAM_NOT_CONNECTED",
+      code: "ERR_SOCKET_DGRAM_NOT_CONNECTED"
     });
   }
   socket._connected = false;
@@ -224,7 +226,7 @@ const __quenchDgramDisconnect = (socket) => {
 const __quenchDgramRemoteAddress = (socket) => {
   if (!socket._connected) {
     throw Object.assign(new Error("Not connected"), {
-      code: "ERR_SOCKET_DGRAM_NOT_CONNECTED",
+      code: "ERR_SOCKET_DGRAM_NOT_CONNECTED"
     });
   }
   return { ...socket._remote, family: "IPv4" };
@@ -242,7 +244,7 @@ const __quenchDgramAddress = (socket, type) => {
     socket._address || {
       address: "0.0.0.0",
       family: type === "udp6" ? "IPv6" : "IPv4",
-      port: 0,
+      port: 0
     }
   );
 };
@@ -253,7 +255,7 @@ const __quenchDgramOn = (socket, listeners, event, callback) => {
 const __quenchDgramOnce = (socket, listeners, event, callback) => {
   const wrapper = (...args) => {
     listeners[event] = (listeners[event] || []).filter(
-      (listener) => listener !== wrapper,
+      (listener) => listener !== wrapper
     );
     callback.apply(socket, args);
   };
@@ -272,7 +274,7 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
     bindSync: (options = {}) => {
       if (socket._bound) {
         throw Object.assign(new Error("Socket is already bound"), {
-          code: "ERR_SOCKET_ALREADY_BOUND",
+          code: "ERR_SOCKET_ALREADY_BOUND"
         });
       }
       if (
@@ -282,8 +284,8 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
         throw Object.assign(
           new TypeError('The "options" argument must be of type object'),
           {
-            code: "ERR_INVALID_ARG_TYPE",
-          },
+            code: "ERR_INVALID_ARG_TYPE"
+          }
         );
       }
       const config = options;
@@ -292,36 +294,36 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
       const address = config?.address || (type === "udp6" ? "::" : "0.0.0.0");
       if (!Number.isInteger(port) || port < 0 || port > 65535) {
         throw Object.assign(new RangeError("Port should be >= 0 and < 65536"), {
-          code: "ERR_SOCKET_BAD_PORT",
+          code: "ERR_SOCKET_BAD_PORT"
         });
       }
       if (typeof address !== "string") {
         throw Object.assign(
           new TypeError('The "address" argument must be of type string'),
           {
-            code: "ERR_INVALID_ARG_TYPE",
-          },
+            code: "ERR_INVALID_ARG_TYPE"
+          }
         );
       }
       if (address === "localhost") {
         throw Object.assign(new TypeError("Invalid IP address"), {
-          code: "ERR_INVALID_ARG_VALUE",
+          code: "ERR_INVALID_ARG_VALUE"
         });
       }
       if (
         options?.sendBlockList?.check?.(
           address,
-          type === "udp6" ? "ipv6" : "ipv4",
+          type === "udp6" ? "ipv6" : "ipv4"
         )
       ) {
         throw Object.assign(new Error("IP is blocked"), {
-          code: "ERR_IP_BLOCKED",
+          code: "ERR_IP_BLOCKED"
         });
       }
       if (__quenchDgramBoundPorts.has(resolvedPort)) {
         throw Object.assign(new Error("bind EADDRINUSE"), {
           code: "EADDRINUSE",
-          syscall: "bind",
+          syscall: "bind"
         });
       }
       socket._bound = true;
@@ -329,7 +331,7 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
       socket._address = {
         address,
         family: type === "udp6" ? "IPv6" : "IPv4",
-        port: resolvedPort,
+        port: resolvedPort
       };
       queueMicrotask(() => socket._bound && socket.emit("listening"));
       return socket._address;
@@ -341,40 +343,40 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
     connectSync: (port, address = "127.0.0.1") => {
       if (socket._bindPending) {
         throw Object.assign(new Error("Socket is already bound"), {
-          code: "ERR_SOCKET_ALREADY_BOUND",
+          code: "ERR_SOCKET_ALREADY_BOUND"
         });
       }
       if (!Number.isInteger(port) || port <= 0 || port >= 65536) {
         throw Object.assign(new RangeError("Port should be > 0 and < 65536"), {
-          code: "ERR_SOCKET_BAD_PORT",
+          code: "ERR_SOCKET_BAD_PORT"
         });
       }
       if (typeof address !== "string") {
         throw Object.assign(
           new TypeError('The "address" argument must be of type string'),
           {
-            code: "ERR_INVALID_ARG_TYPE",
-          },
+            code: "ERR_INVALID_ARG_TYPE"
+          }
         );
       }
       if (address === "localhost") {
         throw Object.assign(new TypeError("Invalid IP address"), {
-          code: "ERR_INVALID_ARG_VALUE",
+          code: "ERR_INVALID_ARG_VALUE"
         });
       }
       if (socket._connected) {
         throw Object.assign(new Error("Already connected"), {
-          code: "ERR_SOCKET_DGRAM_IS_CONNECTED",
+          code: "ERR_SOCKET_DGRAM_IS_CONNECTED"
         });
       }
       if (
         options?.sendBlockList?.check?.(
           address,
-          type === "udp6" ? "ipv6" : "ipv4",
+          type === "udp6" ? "ipv6" : "ipv4"
         )
       ) {
         throw Object.assign(new Error("IP is blocked"), {
-          code: "ERR_IP_BLOCKED",
+          code: "ERR_IP_BLOCKED"
         });
       }
       if (!socket._bound) {
@@ -384,7 +386,7 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
         socket._address = {
           address: type === "udp6" ? "::" : "0.0.0.0",
           family: type === "udp6" ? "IPv6" : "IPv4",
-          port: localPort,
+          port: localPort
         };
       }
       socket._connected = true;
@@ -415,8 +417,8 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
         throw Object.assign(
           new TypeError("Buffer size must be a positive integer"),
           {
-            code: "ERR_SOCKET_BAD_BUFFER_SIZE",
-          },
+            code: "ERR_SOCKET_BAD_BUFFER_SIZE"
+          }
         );
       }
       if (value > 0x7fffffff) {
@@ -432,8 +434,8 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
         throw Object.assign(
           new TypeError("Buffer size must be a positive integer"),
           {
-            code: "ERR_SOCKET_BAD_BUFFER_SIZE",
-          },
+            code: "ERR_SOCKET_BAD_BUFFER_SIZE"
+          }
         );
       }
       if (value > 0x7fffffff) {
@@ -450,9 +452,9 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
       if (typeof value !== "number") {
         throw Object.assign(
           new TypeError(
-            `The "ttl" argument must be of type number. Received type string ('${value}')`,
+            `The "ttl" argument must be of type number. Received type string ('${value}')`
           ),
-          { code: "ERR_INVALID_ARG_TYPE" },
+          { code: "ERR_INVALID_ARG_TYPE" }
         );
       }
       if (value <= 0 || value >= 256) throw new Error("setTTL EINVAL");
@@ -482,9 +484,9 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
       if (typeof value !== "number") {
         throw Object.assign(
           new TypeError(
-            `The "ttl" argument must be of type number. Received type string ('${value}')`,
+            `The "ttl" argument must be of type number. Received type string ('${value}')`
           ),
-          { code: "ERR_INVALID_ARG_TYPE" },
+          { code: "ERR_INVALID_ARG_TYPE" }
         );
       }
       if (value <= 0 || value >= 256) throw new Error("setMulticastTTL EINVAL");
@@ -498,7 +500,7 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
       __quenchDgramOnce(socket, listeners, event, callback),
     emit: (event, ...args) => __quenchDgramEmit(socket, listeners, event, args),
     ref: () => socket,
-    unref: () => socket,
+    unref: () => socket
   };
   Object.assign(socket, __quenchDgramMembershipMethods(socket));
   socket[__quenchDgramStateSymbol] = { handle: { fd: 0 } };
@@ -508,7 +510,7 @@ const __quenchDgramValidateType = (type) => {
   if (type === "udp4" || type === "udp6") return type;
   throw Object.assign(
     new TypeError("Bad socket type specified. Valid types are: udp4, udp6"),
-    { code: "ERR_SOCKET_BAD_TYPE" },
+    { code: "ERR_SOCKET_BAD_TYPE" }
   );
 };
 const __quenchDgram = {
@@ -522,26 +524,25 @@ const __quenchDgram = {
     ) {
       return __quenchDgramValidateType(type);
     }
-    const requested = typeof type === "string"
-      ? type
-      : type?.type || options?.type;
+    const requested =
+      typeof type === "string" ? type : type?.type || options?.type;
     const config = typeof type === "object" ? type : options;
     for (const name of ["recvBufferSize", "sendBufferSize"]) {
       if (config?.[name] !== undefined && typeof config[name] !== "number") {
         throw Object.assign(
           new TypeError(`The "${name}" option must be a number`),
           {
-            code: "ERR_INVALID_ARG_TYPE",
-          },
+            code: "ERR_INVALID_ARG_TYPE"
+          }
         );
       }
     }
     return __quenchDgramSocket(__quenchDgramValidateType(requested), config);
-  },
+  }
 };
 globalThis.require = (specifier) =>
   String(specifier).replace(/^node:/, "") === "dgram"
     ? __quenchDgram
     : specifier === "internal/dgram"
-    ? { kStateSymbol: __quenchDgramStateSymbol }
-    : __quenchOriginalRequireWithDgram(specifier);
+      ? { kStateSymbol: __quenchDgramStateSymbol }
+      : __quenchOriginalRequireWithDgram(specifier);

@@ -23,7 +23,7 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase04 {
       const bits = signed ? 63 : 64;
       const received = String(value).replace(/(\d)(?=(\d\d\d)+(?!\d))/g, "$1_");
       const error = new RangeError(
-        `The value of "value" is out of range. It must be >= ${min}n and < 2n ** ${bits}n. Received ${received}n`,
+        `The value of "value" is out of range. It must be >= ${min}n and < 2n ** ${bits}n. Received ${received}n`
       );
       error.code = "ERR_OUT_OF_RANGE";
       throw error;
@@ -91,7 +91,7 @@ NodeBuffer.from = (value, ...args) => {
   if (__nodeBufferIsArrayBuffer(value) || value instanceof SharedArrayBuffer) {
     Object.defineProperties(result, {
       parent: { value, configurable: true },
-      offset: { value: result.byteOffset, configurable: true },
+      offset: { value: result.byteOffset, configurable: true }
     });
   }
   if (typeof value === "string") {

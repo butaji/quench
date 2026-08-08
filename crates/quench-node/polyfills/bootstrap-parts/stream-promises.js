@@ -17,10 +17,12 @@ const __quenchStreamPromises = {
           reject(error);
         }
       };
-      const readable = destination.readable !== false &&
+      const readable =
+        destination.readable !== false &&
         (destination.readable !== undefined ||
           destination.readableEnded !== undefined);
-      const writable = destination.writable !== false &&
+      const writable =
+        destination.writable !== false &&
         (destination.writable !== undefined ||
           destination.writableEnded !== undefined);
       if (readable) destination.once("end", complete);
@@ -43,15 +45,17 @@ const __quenchStreamPromises = {
       throw Object.assign(
         new TypeError('The "cleanup" option must be of type boolean'),
         {
-          code: "ERR_INVALID_ARG_TYPE",
-        },
+          code: "ERR_INVALID_ARG_TYPE"
+        }
       );
     }
     return new Promise((resolve, reject) => {
-      const readable = options.readable !== false &&
+      const readable =
+        options.readable !== false &&
         stream.readable !== false &&
         (stream.readable !== undefined || stream.readableEnded !== undefined);
-      const writable = options.writable !== false &&
+      const writable =
+        options.writable !== false &&
         stream.writable !== false &&
         (stream.writable !== undefined || stream.writableEnded !== undefined);
       let ended = !readable;
@@ -86,7 +90,7 @@ const __quenchStreamPromises = {
       stream.once("error", onError);
       settle();
     });
-  },
+  }
 };
 globalThis.require = (specifier) => {
   if (String(specifier).replace(/^node:/, "") === "stream/promises") {

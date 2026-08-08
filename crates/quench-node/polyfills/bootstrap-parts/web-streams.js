@@ -7,7 +7,7 @@ class __quenchReadableStream {
       enqueue: (value) => this._queue.push(value),
       close: () => {
         this._closed = true;
-      },
+      }
     };
     source.start?.(controller);
   }
@@ -23,7 +23,7 @@ class __quenchReadableStream {
           ? { value: stream._queue.shift(), done: false }
           : { value: undefined, done: stream._closed };
       },
-      releaseLock() {},
+      releaseLock() {}
     };
   }
   cancel() {
@@ -61,7 +61,7 @@ class __quenchWritableStream {
     return {
       write: (value) => Promise.resolve(sink.write?.(value)),
       close: () => Promise.resolve(sink.close?.()),
-      releaseLock() {},
+      releaseLock() {}
     };
   }
 }
@@ -76,11 +76,11 @@ class __quenchTransformStream {
       error: (error) => {
         this.readable._error = error;
         this.readable._closed = true;
-      },
+      }
     };
     this.writable = new __quenchWritableStream({
       write: (value) => transform.transform?.(value, this._controller),
-      close: () => transform.flush?.(this._controller),
+      close: () => transform.flush?.(this._controller)
     });
   }
 }
@@ -95,14 +95,14 @@ class __quenchDecompressionStream extends __quenchTransformStream {
         try {
           const zlib = globalThis.require("zlib");
           const input = NodeBuffer.concat(
-            chunks.map((value) => NodeBuffer.from(value)),
+            chunks.map((value) => NodeBuffer.from(value))
           );
           let output;
           if (format === "gzip") {
             output = zlib.gunzipSync(input, { rejectGarbageAfterEnd: true });
           } else if (format === "brotli") {
             output = zlib.brotliDecompressSync(input, {
-              rejectGarbageAfterEnd: true,
+              rejectGarbageAfterEnd: true
             });
           } else {
             output = zlib.inflateSync(input);
@@ -119,7 +119,7 @@ class __quenchDecompressionStream extends __quenchTransformStream {
         } catch (_) {
           controller.error?.(new TypeError("Decompression failed"));
         }
-      },
+      }
     });
   }
 }
@@ -127,7 +127,7 @@ const __quenchWebStreams = {
   ReadableStream: __quenchReadableStream,
   WritableStream: __quenchWritableStream,
   TransformStream: __quenchTransformStream,
-  DecompressionStream: __quenchDecompressionStream,
+  DecompressionStream: __quenchDecompressionStream
 };
 globalThis.ReadableStream ||= __quenchReadableStream;
 globalThis.WritableStream ||= __quenchWritableStream;
@@ -146,7 +146,7 @@ if (globalThis.Blob?.prototype) {
             controller.close();
           });
         }
-      },
+      }
     });
   };
 }

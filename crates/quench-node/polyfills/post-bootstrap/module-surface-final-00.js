@@ -9,15 +9,15 @@ const __quenchTestReporterFallbacks = () =>
       "spec",
       "tap",
       "teamcity",
-      "xunit",
-    ].map((name) => [name, () => undefined]),
+      "xunit"
+    ].map((name) => [name, () => undefined])
   );
 const __quenchInspectorPromisesFallbacks = () => ({
   open: async () => undefined,
   close: async () => undefined,
   url: async () => undefined,
   waitForDebugger: async () => undefined,
-  Session: function Session() {},
+  Session: function Session() {}
 });
 const __quenchStreamWebFallbacks = (result, originalRequire, name) => {
   result = globalThis.__quenchFsPromisesModule || Object.assign({}, result);
@@ -25,23 +25,21 @@ const __quenchStreamWebFallbacks = (result, originalRequire, name) => {
   result.constants = globalThis.__quenchFsConstantsModule;
   result.ReadableStream = Object.assign(
     function ReadableStream() {},
-    result.ReadableStream,
+    result.ReadableStream
   );
   result.ReadableStream.prototype =
     originalRequire(name).ReadableStream.prototype;
   result.ReadableStream.from ||= async function* (source) {
     yield* source;
   };
-  for (
-    const constructor of [
-      "WritableStream",
-      "TransformStream",
-      "ReadableStreamDefaultReader",
-      "WritableStreamDefaultWriter",
-      "ByteLengthQueuingStrategy",
-      "CountQueuingStrategy",
-    ]
-  ) {
+  for (const constructor of [
+    "WritableStream",
+    "TransformStream",
+    "ReadableStreamDefaultReader",
+    "WritableStreamDefaultWriter",
+    "ByteLengthQueuingStrategy",
+    "CountQueuingStrategy"
+  ]) {
     result[constructor] ||= function Constructor() {};
   }
   return result;
@@ -49,7 +47,8 @@ const __quenchStreamWebFallbacks = (result, originalRequire, name) => {
 const __quenchApplyFinalModule00 = (name, result, originalRequire) => {
   const normalized = String(name).replace(/^node:/, "");
   if (
-    normalized === "diagnostics_channel" && globalThis.__nodeDiagnosticsChannel
+    normalized === "diagnostics_channel" &&
+    globalThis.__nodeDiagnosticsChannel
   ) {
     return globalThis.__nodeDiagnosticsChannel;
   }

@@ -9,9 +9,10 @@ const __nodeUtilInspectBuffer = (value) => {
       }
       return `${key}: ${item === undefined ? "undefined" : String(item)}`;
     });
-  const rendered = typeof custom === "function"
-    ? custom.call(value)
-    : `<Buffer ${Array.from(value).join(" ")}>`;
+  const rendered =
+    typeof custom === "function"
+      ? custom.call(value)
+      : `<Buffer ${Array.from(value).join(" ")}>`;
   if (typeof custom === "function" && properties.length) {
     return `${rendered.slice(0, -1)}${
       rendered.endsWith("Buffer >") ? "" : ", "
@@ -35,10 +36,10 @@ const __nodeUtilFormatNumeric = (value) => {
 };
 const __nodeUtilInspectNoResult = Symbol("inspect-no-result");
 const __nodeUtilInspectSharedBuffer = (value) =>
-  `SharedArrayBuffer { [Uint8Contents]: <${
-    Array.from(new Uint8Array(value), (byte) =>
-      byte.toString(16).padStart(2, "0")).join(" ")
-  }>, [byteLength]: ${value.byteLength} }`;
+  `SharedArrayBuffer { [Uint8Contents]: <${Array.from(
+    new Uint8Array(value),
+    (byte) => byte.toString(16).padStart(2, "0")
+  ).join(" ")}>, [byteLength]: ${value.byteLength} }`;
 const __nodeUtilInspectError = (value) => {
   let base = Object.prototype.hasOwnProperty.call(value, "stack")
     ? value.stack || `${value.name}: ${value.message}`
@@ -57,7 +58,7 @@ const __nodeUtilInspectError = (value) => {
     "actual",
     "expected",
     "operator",
-    "diff",
+    "diff"
   ].filter((key) => Object.prototype.hasOwnProperty.call(value, key));
   const inspectField = (key) => {
     const field = value[key];
@@ -71,38 +72,41 @@ const __nodeUtilInspectError = (value) => {
     return __nodeUtilInspectValue(field, true);
   };
   return keys.length
-    ? `${base} { ${
-      keys.map((key) => `${key}: ${inspectField(key)}`).join(", ")
-    } }`
+    ? `${base} { ${keys
+        .map((key) => `${key}: ${inspectField(key)}`)
+        .join(", ")} }`
     : base;
 };
 const __nodeUtilInspectFunction = (value) => {
   const source = Function.prototype.toString.call(value);
   const tag = Object.prototype.toString.call(value).slice(8, -1);
-  const generator = /^\s*(?:async\s+)?function\*/.test(source) ||
+  const generator =
+    /^\s*(?:async\s+)?function\*/.test(source) ||
     tag.includes("GeneratorFunction");
   if (!generator) {
-    const kind = /^\s*async\s+function/.test(source) || tag === "AsyncFunction"
-      ? "AsyncFunction"
-      : "Function";
+    const kind =
+      /^\s*async\s+function/.test(source) || tag === "AsyncFunction"
+        ? "AsyncFunction"
+        : "Function";
     return `[${kind}${value.name ? `: ${value.name}` : " (anonymous)"}]`;
   }
-  const asyncGenerator = /^\s*async\s+function\*/.test(source) ||
-    tag === "AsyncGeneratorFunction";
+  const asyncGenerator =
+    /^\s*async\s+function\*/.test(source) || tag === "AsyncGeneratorFunction";
   const kind = asyncGenerator ? "AsyncGeneratorFunction" : "GeneratorFunction";
-  const nullPrototype = Object.getPrototypeOf(value) === null
-    ? " (null prototype)"
-    : "";
-  const customTag = value[Symbol.toStringTag] &&
-      !/^(?:Async)?(?:Generator)?Function$/.test(value[Symbol.toStringTag])
-    ? ` [${value[Symbol.toStringTag]}]`
-    : "";
-  const functionConstructor = value.constructor?.name ||
-    Object.getPrototypeOf(value)?.constructor?.name;
-  const asyncSuffix = !asyncGenerator &&
-      (functionConstructor === "AsyncFunction" || (customTag && !nullPrototype))
-    ? " AsyncFunction"
-    : "";
+  const nullPrototype =
+    Object.getPrototypeOf(value) === null ? " (null prototype)" : "";
+  const customTag =
+    value[Symbol.toStringTag] &&
+    !/^(?:Async)?(?:Generator)?Function$/.test(value[Symbol.toStringTag])
+      ? ` [${value[Symbol.toStringTag]}]`
+      : "";
+  const functionConstructor =
+    value.constructor?.name || Object.getPrototypeOf(value)?.constructor?.name;
+  const asyncSuffix =
+    !asyncGenerator &&
+    (functionConstructor === "AsyncFunction" || (customTag && !nullPrototype))
+      ? " AsyncFunction"
+      : "";
   return `[${kind}${nullPrototype}${
     value.name ? `: ${value.name}` : " (anonymous)"
   }]${asyncSuffix}${customTag}`;
@@ -176,16 +180,14 @@ const __nodeUtilInspectValue = (value, quoteStrings = false) => {
   if (basic !== __nodeUtilInspectNoResult) return basic;
   if (Array.isArray(value)) {
     return value.length
-      ? `[ ${
-        value.map((item) => __nodeUtilInspectValue(item, quoteStrings)).join(
-          ", ",
-        )
-      } ]`
+      ? `[ ${value
+          .map((item) => __nodeUtilInspectValue(item, quoteStrings))
+          .join(", ")} ]`
       : "[]";
   }
   if (typeof value === "object") {
     const entries = Object.keys(value).map(
-      (key) => `${key}: ${__nodeUtilInspectValue(value[key], quoteStrings)}`,
+      (key) => `${key}: ${__nodeUtilInspectValue(value[key], quoteStrings)}`
     );
     return `{${entries.length ? ` ${entries.join(", ")} ` : ""}}`;
   }
@@ -194,23 +196,19 @@ const __nodeUtilInspectValue = (value, quoteStrings = false) => {
 const __nodeUtilInspectNamedArray = (value) => {
   const indexed = Object.keys(value).some((key) => /^\d+$/.test(key));
   const items = indexed
-    ? Array.from(
-      { length: value.length },
-      (_, index) =>
+    ? Array.from({ length: value.length }, (_, index) =>
         Object.prototype.hasOwnProperty.call(value, index)
           ? __nodeUtilInspectValue(value[index])
-          : `<${value.length} empty items>`,
-    )
+          : `<${value.length} empty items>`
+      )
     : [`<${value.length} empty items>`];
   const extras = Object.keys(value)
     .filter((key) => !/^\d+$/.test(key))
     .map((key) => `${key}: ${__nodeUtilInspectValue(value[key])}`);
-  return `${value.constructor.name}(${value.length}) [ ${
-    [
-      ...items,
-      ...extras,
-    ].join(", ")
-  } ]`;
+  return `${value.constructor.name}(${value.length}) [ ${[
+    ...items,
+    ...extras
+  ].join(", ")} ]`;
 };
 const __nodeUtilContainsFunction = (value) =>
   typeof value === "function" ||
@@ -226,7 +224,7 @@ const __nodeUtilStructured = (value, depth = 0) => {
   }
   if (Array.isArray(value)) {
     const items = value.map(
-      (item) => `${childIndent}${__nodeUtilStructured(item, depth + 1)}`,
+      (item) => `${childIndent}${__nodeUtilStructured(item, depth + 1)}`
     );
     items.push(`${childIndent}[length]: ${value.length}`);
     return `[\n${items.join(",\n")}\n${indent}]`;
@@ -234,7 +232,7 @@ const __nodeUtilStructured = (value, depth = 0) => {
   if (value && typeof value === "object") {
     const entries = Object.keys(value).map(
       (key) =>
-        `${childIndent}${key}: ${__nodeUtilStructured(value[key], depth + 1)}`,
+        `${childIndent}${key}: ${__nodeUtilStructured(value[key], depth + 1)}`
     );
     return `{\n${entries.join(",\n")}\n${indent}}`;
   }
@@ -244,7 +242,7 @@ const __nodeUtilStructured = (value, depth = 0) => {
 };
 const __nodeUtilFormatNullPrototype = (value) => {
   const entries = Object.keys(value).map(
-    (key) => `${key}: ${__nodeUtilInspectValue(value[key])}`,
+    (key) => `${key}: ${__nodeUtilInspectValue(value[key])}`
   );
   const name = __nodePrototypeNames.get(value) || "Object";
   return `[${name}: null prototype] {${
@@ -279,7 +277,7 @@ const __nodeUtilFormatObjectValue = (value) => {
         Array.isArray(value[key])
           ? "[Array]"
           : __nodeUtilInspectValue(value[key])
-      }`,
+      }`
   );
   const name = value.constructor?.name;
   const prefix = name && name !== "Object" ? `${name} ` : "";
@@ -335,14 +333,15 @@ const __nodeUtilDeprecate = (
   functionToWrap,
   message = "",
   code,
-  options = {},
+  options = {}
 ) => {
   if (code !== undefined && typeof code !== "string") {
-    const received = code === null
-      ? "Received null"
-      : `Received type ${typeof code} (${String(code)})`;
+    const received =
+      code === null
+        ? "Received null"
+        : `Received type ${typeof code} (${String(code)})`;
     const error = new TypeError(
-      'The "code" argument must be of type string. ' + received,
+      'The "code" argument must be of type string. ' + received
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -354,7 +353,7 @@ const __nodeUtilDeprecate = (
       setImmediate(() =>
         process.emitWarning(String(message), {
           name: "DeprecationWarning",
-          code,
+          code
         })
       );
     }
@@ -362,7 +361,7 @@ const __nodeUtilDeprecate = (
   };
   Object.defineProperty(deprecatedFunction, "length", {
     configurable: true,
-    value: functionToWrap.length,
+    value: functionToWrap.length
   });
   if (options.modifyPrototype !== false) {
     deprecatedFunction.prototype = functionToWrap.prototype;
@@ -400,11 +399,12 @@ globalThis.__nodeUtil = {
   },
   stripVTControlCharacters: (value) => {
     if (typeof value !== "string") {
-      const received = value !== null && typeof value === "object"
-        ? ` Received an instance of ${value.constructor?.name || "Object"}`
-        : ` Received type ${typeof value} (${String(value)})`;
+      const received =
+        value !== null && typeof value === "object"
+          ? ` Received an instance of ${value.constructor?.name || "Object"}`
+          : ` Received type ${typeof value} (${String(value)})`;
       const error = new TypeError(
-        'The "str" argument must be of type string.' + received,
+        'The "str" argument must be of type string.' + received
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
@@ -413,19 +413,19 @@ globalThis.__nodeUtil = {
       .replace(/\u001b\][\s\S]*?(?:\u0007|\u001b\\|\u009c)/g, "")
       .replace(
         /[\u001b\u009b][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[-a-zA-Z\d\/#&.:=?%@~_]+)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g,
-        "",
+        ""
       );
   },
-  promisify: (fn) => (...args) =>
-    new Promise((resolve, reject) =>
-      fn(
-        ...args,
-        (error, ...values) =>
+  promisify:
+    (fn) =>
+    (...args) =>
+      new Promise((resolve, reject) =>
+        fn(...args, (error, ...values) =>
           error
             ? reject(error)
-            : resolve(values.length > 1 ? values : values[0]),
-      )
-    ),
+            : resolve(values.length > 1 ? values : values[0])
+        )
+      ),
   format: (...args) => {
     if (!args.length) return "";
     if (typeof args[0] !== "string") {
@@ -457,7 +457,7 @@ globalThis.__nodeUtil = {
       options = {
         showHidden: options,
         depth: depth === undefined ? 2 : depth,
-        colors: colors === true,
+        colors: colors === true
       };
     } else if (typeof options === "number") options = { depth: options };
     if (value instanceof Date) return value.toISOString();
@@ -527,7 +527,7 @@ globalThis.__nodeUtil = {
   },
   getCallSites: () => [
     { scriptName: "", lineNumber: 0 },
-    { scriptName: "", lineNumber: 0 },
+    { scriptName: "", lineNumber: 0 }
   ],
   types: {
     isDate: (value) => value instanceof Date,
@@ -639,8 +639,8 @@ globalThis.__nodeUtil = {
     isModuleNamespaceObject: (value) => __nodeModuleNamespaces.has(value),
     isCryptoKey: (value) =>
       globalThis.__quenchWebCryptoKeyBrand?.has(value) === true,
-    isKeyObject: () => false,
-  },
+    isKeyObject: () => false
+  }
 };
 globalThis.__nodeUtil.inspect.defaultOptions = { numericSeparator: false };
 globalThis.__nodeUtil.inspect.custom = Symbol.for("nodejs.util.inspect.custom");

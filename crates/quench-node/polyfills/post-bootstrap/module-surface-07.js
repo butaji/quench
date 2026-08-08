@@ -6,7 +6,7 @@
       if (String(name).replace(/^node:/, "") === "timers/promises") {
         result.scheduler ||= {
           wait: async () => undefined,
-          yield: async () => undefined,
+          yield: async () => undefined
         };
       }
       return result;

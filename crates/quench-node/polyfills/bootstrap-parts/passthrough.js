@@ -18,7 +18,7 @@ class __quenchPassThrough {
       if (called) return;
       called = true;
       this._listeners[event] = (this._listeners[event] || []).filter(
-        (listener) => listener !== wrapped,
+        (listener) => listener !== wrapped
       );
       callback(...args);
     };
@@ -58,7 +58,7 @@ globalThis.require = (specifier) => {
     return Object.assign(
       {},
       __quenchOriginalRequireWithPassThrough(specifier),
-      { PassThrough: __quenchPassThrough },
+      { PassThrough: __quenchPassThrough }
     );
   }
   return __quenchOriginalRequireWithPassThrough(specifier);

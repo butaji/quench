@@ -12,7 +12,7 @@
     }
     if (value === null && baseURL === null) {
       const error = new TypeError(
-        "Base URL is not allowed for dictionary input",
+        "Base URL is not allowed for dictionary input"
       );
       error.code = "ERR_OPERATION_FAILED";
       throw error;
@@ -36,12 +36,12 @@
       password: { input: url.password },
       pathname: {
         groups: getURLPatternGroups(source, url.pathname),
-        input: url.pathname,
+        input: url.pathname
       },
       port: { input: url.port },
       protocol: { input: url.protocol },
       search: { input: url.search },
-      username: { input: url.username },
+      username: { input: url.username }
     };
   };
   const isURLPatternMatch = (source, value, baseURL) => {
@@ -49,7 +49,7 @@
     const pathname = getURLPatternURL(value, baseURL).pathname;
     return (
       pathname ===
-        source.replace(/:[^/]+/g, () => pathname.split("/").slice(-1)[0])
+      source.replace(/:[^/]+/g, () => pathname.split("/").slice(-1)[0])
     );
   };
   const validateURLPatternBase = (baseURL) => {
@@ -64,11 +64,11 @@
     options,
     optionsFlags,
     baseURL,
-    argumentCount,
+    argumentCount
   ) => {
     if (!isConstructed) {
       const error = new TypeError(
-        "Class constructor URLPattern cannot be invoked without 'new'",
+        "Class constructor URLPattern cannot be invoked without 'new'"
       );
       error.code = "ERR_CONSTRUCT_CALL_REQUIRED";
       throw error;
@@ -98,22 +98,19 @@
     instance[`_${property}`] = options?.[property] || "*";
   };
   const initializeURLPattern = (instance, options) => {
-    const patternOptions = typeof options === "string"
-      ? new URL(options)
-      : options;
-    for (
-      const property of [
-        "origin",
-        "protocol",
-        "username",
-        "password",
-        "hostname",
-        "port",
-        "pathname",
-        "search",
-        "hash",
-      ]
-    ) {
+    const patternOptions =
+      typeof options === "string" ? new URL(options) : options;
+    for (const property of [
+      "origin",
+      "protocol",
+      "username",
+      "password",
+      "hostname",
+      "port",
+      "pathname",
+      "search",
+      "hash"
+    ]) {
       setURLPatternProperty(instance, patternOptions, property);
     }
     instance._hasRegExpGroups = false;
@@ -127,22 +124,20 @@
         }
         return this[name];
       };
-    for (
-      const [property, internal] of Object.entries({
-        protocol: "_protocol",
-        username: "_username",
-        password: "_password",
-        hostname: "_hostname",
-        port: "_port",
-        pathname: "_pathname",
-        search: "_search",
-        hash: "_hash",
-        hasRegExpGroups: "_hasRegExpGroups",
-      })
-    ) {
+    for (const [property, internal] of Object.entries({
+      protocol: "_protocol",
+      username: "_username",
+      password: "_password",
+      hostname: "_hostname",
+      port: "_port",
+      pathname: "_pathname",
+      search: "_search",
+      hash: "_hash",
+      hasRegExpGroups: "_hasRegExpGroups"
+    })) {
       Object.defineProperty(URLPattern.prototype, property, {
         configurable: true,
-        get: getProperty(internal),
+        get: getProperty(internal)
       });
     }
     URLPattern.prototype.test = function (value, baseURL) {
@@ -175,66 +170,65 @@
   };
   const normalizeURLSearchValue = (value) => {
     const raw = String(value).replace(/^\?/, "");
-    return `?${
-      raw
-        .split("&")
-        .map((part) =>
-          part
-            .split("=")
-            .map((segment) =>
-              globalThis
-                .__nodeUrlEncode(segment.replace(/\+/g, " "))
-                .replace(/%25([0-9A-F]{2})/gi, "%$1")
-                .replace(/%3F/gi, "?")
-            )
-            .join("=")
-        )
-        .join("&")
-    }`;
+    return `?${raw
+      .split("&")
+      .map((part) =>
+        part
+          .split("=")
+          .map((segment) =>
+            globalThis
+              .__nodeUrlEncode(segment.replace(/\+/g, " "))
+              .replace(/%25([0-9A-F]{2})/gi, "%$1")
+              .replace(/%3F/gi, "?")
+          )
+          .join("=")
+      )
+      .join("&")}`;
   };
   const normalizeURLSetterValue = (property, value) =>
     typeof value === "symbol"
       ? (() => {
-        throw new TypeError("Cannot convert a Symbol value to a string");
-      })()
+          throw new TypeError("Cannot convert a Symbol value to a string");
+        })()
       : property === "username" || property === "password"
-      ? globalThis.__nodeUrlEncode(value)
-      : property === "pathname"
-      ? String(value)
-        .split("/")
-        .map((segment) =>
-          globalThis
-            .__nodeUrlEncode(segment)
-            .replace(/%25([0-9A-F]{2})/gi, "%$1")
-            .replace(/%3B/gi, ";")
-            .replace(/%3A/gi, ":")
-            .replace(/%40/gi, "@")
-            .replace(/%5B/gi, "[")
-            .replace(/%5D/gi, "]")
-        )
-        .join("/")
-      : property === "search"
-      ? String(value) === "" ? "" : normalizeURLSearchValue(value)
-      : property === "hash"
-      ? String(value) === ""
-        ? ""
-        : `#${
-          globalThis.__nodeUrlEncode(String(value).replace(/^#/, "")).replace(
-            /%2F/gi,
-            "/",
-          ).replace(/%5C/gi, "\\").replace(/%23/gi, "#").replace(/%3B/gi, ";")
-            .replace(/%3F/gi, "?")
-        }`
-      : String(value);
+        ? globalThis.__nodeUrlEncode(value)
+        : property === "pathname"
+          ? String(value)
+              .split("/")
+              .map((segment) =>
+                globalThis
+                  .__nodeUrlEncode(segment)
+                  .replace(/%25([0-9A-F]{2})/gi, "%$1")
+                  .replace(/%3B/gi, ";")
+                  .replace(/%3A/gi, ":")
+                  .replace(/%40/gi, "@")
+                  .replace(/%5B/gi, "[")
+                  .replace(/%5D/gi, "]")
+              )
+              .join("/")
+          : property === "search"
+            ? String(value) === ""
+              ? ""
+              : normalizeURLSearchValue(value)
+            : property === "hash"
+              ? String(value) === ""
+                ? ""
+                : `#${globalThis
+                    .__nodeUrlEncode(String(value).replace(/^#/, ""))
+                    .replace(/%2F/gi, "/")
+                    .replace(/%5C/gi, "\\")
+                    .replace(/%23/gi, "#")
+                    .replace(/%3B/gi, ";")
+                    .replace(/%3F/gi, "?")}`
+              : String(value);
   // eslint-disable-next-line complexity
   const setURLAccessorValue = (target, property, value) => {
     if (!(target instanceof globalThis.__nodeURL)) {
       throw new TypeError("Cannot read private member");
     }
     const normalized = normalizeURLSetterValue(property, value);
-    target[`_${property}`] = property === "pathname" && normalized === ""
-      ? "/"
-      : normalized;
+    target[`_${property}`] =
+      property === "pathname" && normalized === "" ? "/" : normalized;
     if (property === "hostname") {
       target._host = normalized + (target._port ? `:${target._port}` : "");
     }
@@ -244,12 +238,13 @@
         : "";
     }
     if (property === "port") {
-      target._host = target._host.replace(/:\d*$/, "") +
+      target._host =
+        target._host.replace(/:\d*$/, "") +
         (normalized ? `:${normalized}` : "");
     }
     if (property === "search" && target.searchParams) {
       target.searchParams._pairs = new globalThis.__nodeURLSearchParams(
-        normalized,
+        normalized
       )._pairs;
     }
   };
@@ -262,23 +257,21 @@
   globalThis.__nodeThrowReadonlyURLSetter = throwReadonlyURLSetter;
   // eslint-disable-next-line max-lines-per-function
   const installURLAccessorDescriptors = (prototype) => {
-    for (
-      const property of [
-        "origin",
-        "protocol",
-        "username",
-        "password",
-        "host",
-        "hostname",
-        "port",
-        "pathname",
-        "search",
-        "searchParams",
-        "hash",
-      ]
-    ) {
-      const accessor = prototype &&
-        Object.getOwnPropertyDescriptor(prototype, property);
+    for (const property of [
+      "origin",
+      "protocol",
+      "username",
+      "password",
+      "host",
+      "hostname",
+      "port",
+      "pathname",
+      "search",
+      "searchParams",
+      "hash"
+    ]) {
+      const accessor =
+        prototype && Object.getOwnPropertyDescriptor(prototype, property);
       const readonly = property === "origin" || property === "searchParams";
       const fallback = Object.getOwnPropertyDescriptor(
         {
@@ -287,42 +280,40 @@
               throw new TypeError(
                 property === "search"
                   ? "Receiver must be an instance of class URL"
-                  : "Cannot read private member",
+                  : "Cannot read private member"
               );
             }
             return property === "origin"
               ? this.protocol === "blob:" && this.pathname
                 ? new globalThis.__nodeURL(decodeURIComponent(this.pathname))
-                  .origin
+                    .origin
                 : ["http:", "https:", "ftp:", "ws:", "wss:"].includes(
-                    this.protocol,
-                  ) && this.host
-                ? `${this.protocol}//${this.host}`
-                : "null"
+                      this.protocol
+                    ) && this.host
+                  ? `${this.protocol}//${this.host}`
+                  : "null"
               : this[`_${property}`];
           },
           set [property](value) {
             setURLAccessorValue(this, property, value);
-          },
+          }
         },
-        property,
+        property
       );
       if (prototype) {
         Object.defineProperty(prototype, property, {
           ...(accessor || fallback),
           enumerable: true,
-          set: readonly ? undefined : fallback.set,
+          set: readonly ? undefined : fallback.set
         });
       }
     }
   };
   const __nodeURLInspect = (receiver, options = {}) => {
     const params = receiver.searchParams.toString()
-      ? `URLSearchParams { '${
-        receiver.searchParams._pairs.map((pair) =>
-          pair.map(String).join("' => '")
-        ).join("', '")
-      }' }`
+      ? `URLSearchParams { '${receiver.searchParams._pairs
+          .map((pair) => pair.map(String).join("' => '"))
+          .join("', '")}' }`
       : "URLSearchParams {}";
     const fields = [
       `href: '${receiver.href}'`,
@@ -336,11 +327,12 @@
       `pathname: '${receiver.pathname}'`,
       `search: '${receiver.search}'`,
       `searchParams: ${params}`,
-      `hash: '${receiver.hash}'`,
+      `hash: '${receiver.hash}'`
     ];
-    const name = receiver.constructor.name === "NodeURL"
-      ? "URL"
-      : receiver.constructor.name;
+    const name =
+      receiver.constructor.name === "NodeURL"
+        ? "URL"
+        : receiver.constructor.name;
     const hidden = options.showHidden
       ? `,\n  Symbol(context): URLContext {\n    href: '${receiver.href}',\n    protocol_end: 6,\n    username_end: 16,\n    host_start: 25,\n    host_end: 35,\n    pathname_start: 40,\n    search_start: 51,\n    hash_start: 58,\n    port: 8080,\n    scheme_type: 2,\n    [hasPort]: [Getter],\n    [hasSearch]: [Getter],\n    [hasHash]: [Getter]\n  }`
       : "";
@@ -349,29 +341,29 @@
   const installURLExtraMethods = (prototype) => {
     if (prototype && !prototype.toJSON) {
       const toJSON = new Proxy(() => undefined, {
-        apply: (_target, receiver) => prototype.toString.call(receiver),
+        apply: (_target, receiver) => prototype.toString.call(receiver)
       });
       Object.defineProperty(toJSON, "name", { value: "toJSON" });
       Object.defineProperty(prototype, "toJSON", {
         configurable: true,
         enumerable: true,
         value: toJSON,
-        writable: true,
+        writable: true
       });
     }
     const inspect = Symbol.for("nodejs.util.inspect.custom");
     if (prototype && !prototype[inspect]) {
       const inspectMethod = new Proxy(() => undefined, {
-        apply: (_target, receiver, args) => __nodeURLInspect(receiver, args[1]),
+        apply: (_target, receiver, args) => __nodeURLInspect(receiver, args[1])
       });
       Object.defineProperty(inspectMethod, "name", {
-        value: `[${inspect.description}]`,
+        value: `[${inspect.description}]`
       });
       Object.defineProperty(prototype, inspect, {
         configurable: true,
         enumerable: false,
         value: inspectMethod,
-        writable: true,
+        writable: true
       });
     }
   };
@@ -387,63 +379,60 @@
         const input = String(value);
         if (input === "") throw new TypeError("Invalid URL");
         const parsed = new globalThis.__nodeURL(input);
-        for (
-          const property of [
-            "protocol",
-            "username",
-            "password",
-            "host",
-            "hostname",
-            "port",
-            "pathname",
-            "search",
-            "hash",
-          ]
-        ) {
+        for (const property of [
+          "protocol",
+          "username",
+          "password",
+          "host",
+          "hostname",
+          "port",
+          "pathname",
+          "search",
+          "hash"
+        ]) {
           this[property] = parsed[property];
         }
         this.searchParams._pairs = parsed.searchParams._pairs;
-      },
+      }
     },
-    "href",
+    "href"
   ).set;
   const installURLTag = (prototype) => {
-    const tag = prototype &&
+    const tag =
+      prototype &&
       Object.getOwnPropertyDescriptor(prototype, Symbol.toStringTag);
     if (prototype && (!tag || tag.configurable)) {
       Object.defineProperty(prototype, Symbol.toStringTag, {
         configurable: true,
         enumerable: false,
-        value: "URL",
+        value: "URL"
       });
     }
   };
   const reorderURLProperties = (prototype) => {
-    for (
-      const property of [
-        "toString",
-        "href",
-        "origin",
-        "protocol",
-        "username",
-        "password",
-        "host",
-        "hostname",
-        "port",
-        "pathname",
-        "search",
-        "searchParams",
-        "hash",
-        "toJSON",
-      ]
-    ) {
+    for (const property of [
+      "toString",
+      "href",
+      "origin",
+      "protocol",
+      "username",
+      "password",
+      "host",
+      "hostname",
+      "port",
+      "pathname",
+      "search",
+      "searchParams",
+      "hash",
+      "toJSON"
+    ]) {
       const descriptor = Object.getOwnPropertyDescriptor(prototype, property);
       if (descriptor?.configurable) {
         if (property === "href" && !descriptor.set) descriptor.set = setURLHref;
         delete prototype[property];
         Object.defineProperty(prototype, property, {
           ...descriptor,
-          enumerable: true,
+          enumerable: true
         });
       }
     }
@@ -451,22 +440,22 @@
   const installURLToStringDescriptor = (URLConstructor) => {
     const prototype = URLConstructor?.prototype;
     installURLTag(prototype);
-    const descriptor = prototype &&
-      Object.getOwnPropertyDescriptor(prototype, "toString");
+    const descriptor =
+      prototype && Object.getOwnPropertyDescriptor(prototype, "toString");
     if (descriptor) {
       Object.defineProperty(prototype, "toString", {
         ...descriptor,
-        enumerable: true,
+        enumerable: true
       });
     }
-    const href = prototype &&
-      Object.getOwnPropertyDescriptor(prototype, "href");
+    const href =
+      prototype && Object.getOwnPropertyDescriptor(prototype, "href");
     if (href) {
       Object.defineProperty(prototype, "href", {
         configurable: href.configurable,
         enumerable: true,
         get: href.get,
-        set: href.set || setURLHref,
+        set: href.set || setURLHref
       });
     }
     installURLAccessorDescriptors(prototype);
@@ -480,7 +469,7 @@
         options,
         optionsFlags,
         baseURL,
-        arguments.length,
+        arguments.length
       );
       const source = initializeURLPattern(this, options);
       this._source = source;

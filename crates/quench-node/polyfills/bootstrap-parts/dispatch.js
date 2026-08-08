@@ -2,7 +2,7 @@ const __quenchRequireParts = [
   globalThis.__quench_require_part_00,
   globalThis.__quench_require_part_01,
   globalThis.__quench_require_part_02,
-  globalThis.__quench_require_part_03,
+  globalThis.__quench_require_part_03
 ];
 globalThis.require = (specifier) => {
   const name = String(specifier).replace(/^node:/, "");
@@ -13,7 +13,7 @@ globalThis.require = (specifier) => {
     return {
       getVirtualFd(fd) {
         return globalThis.__quenchVfsFdHandles?.get(fd);
-      },
+      }
     };
   }
   for (const handler of __quenchRequireParts) {
@@ -23,7 +23,7 @@ globalThis.require = (specifier) => {
   if (name.startsWith(".") || name.startsWith("/")) {
     return globalThis.__quenchLoadLocalModule(
       name,
-      globalThis.__quench_script_filename || globalThis.__filename,
+      globalThis.__quench_script_filename || globalThis.__filename
     );
   }
   throw new Error("Cannot find module " + String(specifier));

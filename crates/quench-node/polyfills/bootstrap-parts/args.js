@@ -5,7 +5,7 @@ const __quenchParseOption = (
   index,
   definitions,
   values,
-  tokens,
+  tokens
 ) => {
   const negative = argument.startsWith("--no-");
   const name = (
@@ -14,9 +14,8 @@ const __quenchParseOption = (
   const definition = definitions[name] || {};
   const separator = argument.indexOf("=");
   const inline = separator >= 0 ? argument.slice(separator + 1) : undefined;
-  const value = definition.type === "boolean"
-    ? !negative
-    : (inline ?? args[index + 1]);
+  const value =
+    definition.type === "boolean" ? !negative : (inline ?? args[index + 1]);
   values[name] = definition.multiple ? [...(values[name] || []), value] : value;
   tokens.push({ kind: "option", name, value });
   return separator >= 0 || definition.type === "boolean" ? index : index + 1;
@@ -40,7 +39,7 @@ const __quenchParseArgs = (options = {}) => {
       index,
       definitions,
       values,
-      tokens,
+      tokens
     );
   }
   return { values, positionals, ...(options.tokens ? { tokens } : {}) };
@@ -48,7 +47,7 @@ const __quenchParseArgs = (options = {}) => {
 globalThis.require = (specifier) => {
   if (String(specifier).replace(/^node:/, "") === "util") {
     return Object.assign({}, __quenchOriginalRequireWithParseArgs(specifier), {
-      parseArgs: __quenchParseArgs,
+      parseArgs: __quenchParseArgs
     });
   }
   return __quenchOriginalRequireWithParseArgs(specifier);

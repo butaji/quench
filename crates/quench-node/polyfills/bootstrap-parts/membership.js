@@ -3,14 +3,14 @@ const __quenchDgramMembership = (socket, operation, address) => {
     throw Object.assign(
       new TypeError('The "multicastAddress" argument must be specified'),
       {
-        code: "ERR_MISSING_ARGS",
-      },
+        code: "ERR_MISSING_ARGS"
+      }
     );
   }
   if (address !== "224.0.0.114") throw new Error(`${operation} EINVAL`);
   if (!socket._bound) {
     throw Object.assign(new Error("Not running"), {
-      code: "ERR_SOCKET_DGRAM_NOT_RUNNING",
+      code: "ERR_SOCKET_DGRAM_NOT_RUNNING"
     });
   }
 };
@@ -24,41 +24,41 @@ const __quenchDgramMembershipMethods = (socket) => ({
       socket,
       "addSourceSpecificMembership",
       source,
-      group,
+      group
     ),
   dropSourceSpecificMembership: (source, group) =>
     __quenchSourceMembership(
       socket,
       "dropSourceSpecificMembership",
       source,
-      group,
-    ),
+      group
+    )
 });
 const __quenchSourceMembership = (socket, operation, source, group) => {
   if (typeof source !== "string") {
     throw Object.assign(
       new TypeError(
-        'The "sourceAddress" argument must be of type string. Received type number (0)',
+        'The "sourceAddress" argument must be of type string. Received type number (0)'
       ),
-      { code: "ERR_INVALID_ARG_TYPE" },
+      { code: "ERR_INVALID_ARG_TYPE" }
     );
   }
   if (typeof group !== "string") {
     throw Object.assign(
       new TypeError(
-        'The "groupAddress" argument must be of type string. Received type number (0)',
+        'The "groupAddress" argument must be of type string. Received type number (0)'
       ),
-      { code: "ERR_INVALID_ARG_TYPE" },
+      { code: "ERR_INVALID_ARG_TYPE" }
     );
   }
   if (source === "0" || group === "0") {
     throw Object.assign(new Error(`${operation} EINVAL`), {
-      code: "EINVAL",
+      code: "EINVAL"
     });
   }
   if (!socket._bound) {
     throw Object.assign(new Error("Not running"), {
-      code: "ERR_SOCKET_DGRAM_NOT_RUNNING",
+      code: "ERR_SOCKET_DGRAM_NOT_RUNNING"
     });
   }
 };

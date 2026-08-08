@@ -11,5 +11,5 @@ assert.strictEqual(error?.name, "TypeError");
 assert.strictEqual(error?.code, "ERR_INVALID_ARG_TYPE");
 assert.strictEqual(
   error?.message,
-  'The "options.ciphers" property must be of type string. Received type number (1)',
+  'The "options.ciphers" property must be of type string. Received type number (1)'
 );

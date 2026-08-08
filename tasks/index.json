@@ -1,6 +1,6 @@
 {
   "project": "quench-node",
-  "description": "Node API compatibility and host-boundary improvements grounded in the current rquickjs implementation. Roadmap to 100% Node API surface.",
+  "description": "Node 24 application compatibility and host-boundary improvements grounded in the current rquickjs implementation. The release contract is observable Node behavior on Linux x86_64, measured by upstream fixtures and real application gates.",
   "tasks": [
     {
       "id": "001",
@@ -59,7 +59,7 @@
     {
       "id": "010",
       "file": "010-node-api-surface-map.md",
-      "title": "Node API surface map and 100% coverage strategy",
+      "title": "Node API surface map and measurable Node 24 compatibility strategy",
       "status": "in-progress"
     },
     {
@@ -77,7 +77,7 @@
     {
       "id": "013",
       "file": "013-upstream-fixtures.md",
-      "title": "Upstream fixtures — pass every tests/node/test/parallel/*.js",
+      "title": "Upstream fixtures — Node 24 application compatibility manifest",
       "status": "in-progress"
     },
     {

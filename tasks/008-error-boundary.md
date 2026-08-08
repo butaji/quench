@@ -1,5 +1,12 @@
 # Preserve Node error codes across the host boundary
 
+## Contract alignment
+
+This task supports the Node 24 application-runtime contract on Linux x86_64;
+observable Node behavior remains the compatibility target.
+See `docs/authoritative-test-sources.md` for the Node, LLRT, Deno, WPT, and
+Test262 reference roles.
+
 ## Goal
 
 Make native failures expose the Node-compatible error type, code, message, and relevant fields.

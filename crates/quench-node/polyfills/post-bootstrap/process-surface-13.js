@@ -6,7 +6,7 @@
   ) {
     Object.defineProperty(globalThis.process.stdin, "constructor", {
       value: function ReadStream() {},
-      configurable: true,
+      configurable: true
     });
   }
 }
