@@ -328,6 +328,14 @@ impl Environment {
         }
     }
 
+    /// Whether a `var` binding with this name already has a live value in the
+    /// current var scope (i.e. it was initialized, not only declared).
+    pub fn var_scope_has_value(&self, name: &str) -> bool {
+        self.scopes
+            .first()
+            .is_some_and(|s| s.borrow().has_value(name))
+    }
+
     pub fn initialize_declared(&mut self, name: &str, value: Value) {
         for scope_rc in self.scopes.iter().rev() {
             let mut scope = scope_rc.borrow_mut();
