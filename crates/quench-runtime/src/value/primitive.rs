@@ -260,11 +260,16 @@ pub fn to_object(value: &Value) -> Value {
             let mut obj =
                 crate::value::object::Object::new(crate::value::kind::ObjectKind::Ordinary);
             obj.exotic_kind = Some(crate::value::kind::ExoticKind::String);
+            let chars: Vec<Value> = s
+                .chars()
+                .map(|c| Value::String(c.to_string()))
+                .collect();
+            obj.elements = chars.clone();
+            for (i, c) in chars.iter().enumerate() {
+                obj.properties.insert(i.to_string(), c.clone());
+            }
             obj.properties
-                .insert("0".to_string(), Value::String(s.clone()));
-            obj.elements = vec![Value::String(s.clone())];
-            obj.properties
-                .insert("length".to_string(), Value::Number(s.len() as f64));
+                .insert("length".to_string(), Value::Number(chars.len() as f64));
             Value::Object(Rc::new(RefCell::new(obj)))
         }
         Value::Object(_)
