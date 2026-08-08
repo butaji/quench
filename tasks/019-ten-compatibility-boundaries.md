@@ -135,7 +135,10 @@ errors=0`); a direct finish-guard change was reverted pending an
   `test-stream-drop-take.js` (`Callback 4` is never observed) and
   `test-stream-backpressure.js` (`_read()` expected 11 calls, got 1), proving
   that iterator cancellation and byte-buffer demand are separate remaining
-  contracts.
+  contracts. Stage 2372 independently passes finite, infinite, chained, and
+  abort-signal `drop()`/`take()` results, so the upstream callback gap is
+  narrowed to the fixture's combined promise/finally scheduling rather than
+  basic slice output.
 
 ## New fs evidence
 
