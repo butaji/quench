@@ -648,3 +648,8 @@ listener is present and exposes `.read()` plus `readable` notification. The
 focused backpressure stage remains green after this change. The upstream
 pipe-flow fixture now reaches a remaining `finish` timing mismatch in a
 no-consumer path.
+
+The readable-demand guard was corrected for `highWaterMark: 0`, which must
+still permit an initial `_read()` call. The authoritative
+`test-stream-readable-hwm-0.js` now passes, and the backpressure stage remains
+green.
