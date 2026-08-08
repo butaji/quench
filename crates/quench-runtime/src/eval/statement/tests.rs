@@ -674,32 +674,33 @@ mod function_body {
         assert_eq!(eval("function f() {} f()").unwrap(), Value::Undefined);
     }
 
-    /// Expression statement at end: its completion value is the return value.
-    /// Per ES spec, the completion value of the last statement becomes the
-    /// function's return value when no explicit return is present.
+    /// ES §9.2.6: a function body that completes without an explicit `return`
+    /// produces `undefined`, regardless of the last statement's completion
+    /// value. (The completion value only matters for eval/REPL, not calls.)
     #[test]
-    fn expression_completion_is_return_value() {
+    fn expression_completion_is_undefined_without_return() {
         assert_eq!(
             eval("function f() { 42; } f()").unwrap(),
-            Value::Number(42.0)
+            Value::Undefined
         );
     }
 
-    /// Postfix increment: x++ evaluates to the original value (1), then increments.
+    /// Postfix increment: x++ evaluates to the original value (1), then
+    /// increments — but without a `return` the function still yields undefined.
     #[test]
     fn postfix_increment_completion() {
         assert_eq!(
             eval("function f() { var x = 1; x++; } f()").unwrap(),
-            Value::Number(1.0)
+            Value::Undefined
         );
     }
 
-    /// Multiple statements: last statement's completion is the return value.
+    /// Multiple statements: without an explicit return the result is undefined.
     #[test]
-    fn last_statement_completion_is_return() {
+    fn last_statement_completion_is_undefined() {
         assert_eq!(
             eval("function f() { var x = 1; var y = 2; x + y; } f()").unwrap(),
-            Value::Number(3.0)
+            Value::Undefined
         );
     }
 }
