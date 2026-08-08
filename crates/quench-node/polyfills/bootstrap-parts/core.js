@@ -1826,6 +1826,7 @@ let __quenchHttpModule;
         throw error;
       }
       const request = attachHttpSignal(new NodeIncomingMessage());
+      Object.setPrototypeOf(request, NodeClientRequest.prototype);
       request.destroy = (error) => {
         if (request.destroyed) return request;
         request.destroyed = true;
