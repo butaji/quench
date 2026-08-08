@@ -703,3 +703,9 @@ duplex has ended, including immediate readable closure. Focused stage 2154
 fixes Duplex readable/writable side isolation so writable chunks are not
 emitted as readable `data`. Both contracts pass; upstream Duplex testing now
 advances beyond its initial exit-state assertion to a later missing callback.
+
+Focused stage 2155 verifies that a Duplex writable write still reaches its
+callback after the readable side has ended, including byte/BYOB conversion.
+The contract passes. Duplex auto-destroy now waits for the writable side when
+the readable side ends; the upstream fixture retains a later sequencing
+callback mismatch.
