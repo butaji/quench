@@ -156,6 +156,10 @@ const __nodeWritableComplete = (state, stream, size, callback, error) => {
     stream.emit("drain");
   }
   if (callback) callback(error);
+  if (!stream.destroyed && stream._writeQueue?.length) {
+    const next = stream._writeQueue.shift();
+    stream.__nodeProcessWrite(next);
+  }
 };
 const __nodeReadablePushChunk = (stream, chunk) => {
   stream._readableState.reading = false;
@@ -744,6 +748,7 @@ class NodeWritable extends NodeEventEmitter {
     this.writableCorked = 0;
     this._autoDestroy = options.autoDestroy !== false;
     this._corkedChunks = [];
+    this._writeQueue = [];
     if (options.write !== undefined) this._write = options.write;
     if (options.final !== undefined) this._final = options.final;
     if (options.destroy !== undefined) this._destroy = options.destroy;
@@ -873,16 +878,22 @@ class NodeWritable extends NodeEventEmitter {
     this.writableLength += size;
     if (this.writableCorked > 0) this._corkedChunks.push(chunk);
     else if (!this.__nodeDuplex) this.emit("data", chunk);
+    const request = { chunk, encoding, callback, size };
+    if (this._writableState.writing) this._writeQueue.push(request);
+    else this.__nodeProcessWrite(request);
+    const writable = this.writableLength < this.writableHighWaterMark;
+    this.writableNeedDrain = !writable;
+    this._writableState.needDrain = this.writableNeedDrain;
+    return writable;
+  }
+  __nodeProcessWrite(request) {
+    const { chunk, encoding, callback, size } = request;
     const state = { completed: false };
     const complete = (error) =>
       __nodeWritableComplete(state, this, size, callback, error);
     this._writableState.writing = true;
     if (this._write) this._write.call(this, chunk, encoding, complete);
     else queueMicrotask(complete);
-    const writable = this.writableLength < this.writableHighWaterMark;
-    this.writableNeedDrain = !writable;
-    this._writableState.needDrain = this.writableNeedDrain;
-    return writable;
   }
   end(chunk, encoding, callback) {
     if (typeof encoding === "function") callback = encoding;
