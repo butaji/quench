@@ -289,6 +289,7 @@ class NodeReadable extends NodeEventEmitter {
       resumeScheduled: false,
       readingMore: false,
       dataEmitted: false,
+      awaitDrainWriters: null,
       errorEmitted: false,
       errored: null
     };
@@ -469,8 +470,27 @@ class NodeReadable extends NodeEventEmitter {
     destination.emit?.("pipe", this);
     this.on("data", (chunk) => {
       if (destination.write(chunk) === false) {
+        const waiting = this._readableState.awaitDrainWriters;
+        if (waiting === null) {
+          this._readableState.awaitDrainWriters = destination;
+        } else if (waiting !== destination && !waiting.has?.(destination)) {
+          this._readableState.awaitDrainWriters = new Set([
+            ...(waiting instanceof Set ? waiting : [waiting]),
+            destination
+          ]);
+        }
         this.pause();
-        destination.once("drain", () => this.resume());
+        destination.once("drain", () => {
+          const pending = this._readableState.awaitDrainWriters;
+          if (pending instanceof Set) {
+            pending.delete(destination);
+            if (pending.size === 0)
+              this._readableState.awaitDrainWriters = null;
+          } else if (pending === destination) {
+            this._readableState.awaitDrainWriters = null;
+          }
+          if (this._readableState.awaitDrainWriters === null) this.resume();
+        });
       }
     });
     if (options.end !== false) this.on("end", () => destination.end());
@@ -479,9 +499,11 @@ class NodeReadable extends NodeEventEmitter {
   }
   pause() {
     if (this.destroyed) return this;
+    const wasPaused = this._paused;
     this._paused = true;
     this.readableFlowing = false;
     this._readableState.readingMore = false;
+    if (!wasPaused) this.emit("pause");
     return this;
   }
   resume() {
