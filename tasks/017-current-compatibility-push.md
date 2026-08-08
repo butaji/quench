@@ -502,3 +502,10 @@ non-keep-alive free notifications. Focused stage 2103 and the existing Agent
 fixtures pass. `test-http-agent-destroyed-socket.js` advances to its final
 socket-close countdown after server shutdown; transport close propagation is
 still unresolved.
+
+Real-application verification reran the installed `ajv`, `debug`, `chalk`, and
+`ms` probes; all four pass under quench-node. A new host-Node Prettier smoke
+probe formats Babel syntax successfully, but quench-node fails while loading
+the package through the current ESM application path. The exploratory stage
+was removed, and Prettier ESM loading is retained as an explicit next app-level
+compatibility target rather than counted as passing.
