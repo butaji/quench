@@ -503,6 +503,13 @@ Stage 2431 fixes absolute symlink targets inside a `RealFSProvider` root by
 preserving the host absolute target instead of incorrectly joining it twice.
 The focused absolute-link/realpath regression passes.
 
+Compatibility audit after commit `4e1ef777f`: the maintained focused suite
+contains 2,314 stage files across 2,373 stage directories, and
+`tools/check-focused-stages.sh` completes successfully. The generated
+differential coverage report is stale until the full measurement command is
+rerun; its previous metadata predates the current commit and is not used as
+current pass-rate evidence.
+
 Stage 2423 makes `RealFSProvider` access dispatch to the host filesystem before
 the virtual-entry lookup. Existing and missing-path promise access now pass in
 the focused regression; this removes the first concrete unresolved await from
