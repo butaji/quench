@@ -285,7 +285,9 @@ fn for_init_check(
 ) -> bool {
     match init {
         crate::ast::ForInit::Expression(expr) => expr_check(expr),
-        crate::ast::ForInit::VarDeclaration { init, .. } => init.as_ref().is_some_and(expr_check),
+        crate::ast::ForInit::VarDeclaration { declarations, .. } => declarations
+            .iter()
+            .any(|(_, init)| init.as_ref().is_some_and(expr_check)),
     }
 }
 
