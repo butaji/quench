@@ -8,6 +8,17 @@ use crate::value::{
 };
 use crate::Context;
 
+thread_local! {
+    /// The realm's Number.prototype, so boxed Number objects (ToObject) can
+    /// inherit it (mirrors STRING_PROTOTYPE in string.rs).
+    static NUMBER_PROTOTYPE: RefCell<Option<Rc<RefCell<Object>>>> = const { RefCell::new(None) };
+}
+
+/// The realm's Number.prototype, if registered.
+pub fn get_number_prototype() -> Option<Rc<RefCell<Object>>> {
+    NUMBER_PROTOTYPE.with(|np| np.borrow().clone())
+}
+
 /// Create non-writable, non-enumerable, non-configurable property flags
 fn constant_flags(value: f64) -> PropertyFlags {
     PropertyFlags {
@@ -34,6 +45,10 @@ pub fn register_number(ctx: &mut Context) {
     if let Some(object_proto) = crate::builtins::get_object_prototype() {
         number_proto_rc.borrow_mut().prototype = Some(object_proto);
     }
+
+    NUMBER_PROTOTYPE.with(|np| {
+        *np.borrow_mut() = Some(Rc::clone(&number_proto_rc));
+    });
 
     setup_number_static(&number_proto_rc, ctx);
 }
