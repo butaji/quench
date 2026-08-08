@@ -318,6 +318,10 @@ cases (transform, abort, auto-close, locking, or range validation), rather than
 the basic iterator or batch-reading contract. The crate's Rust unit tests pass
 (2/2); the upstream aggregate must be split into focused probes before changing
 the implementation.
+Stage 2401 adds that missing concurrency evidence: basic, binary, ranged,
+chunked, and already-aborted pulls pass concurrently. The remaining upstream
+failure is therefore narrowed further to the unrepresented auto-close,
+transform, or end-of-suite validation/lifecycle cases.
 
 Stage 2378 passes the four basic stream `destroy()` contracts for readable and
 writable streams, including implicit `AbortError`, explicit error messages,
