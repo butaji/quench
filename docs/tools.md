@@ -190,6 +190,7 @@ diff <(jq --sort-keys . before.json) <(jq --sort-keys . after.json)
 - `TEST262_ISOLATED=1` — subprocess per test (default: fast in-process *serial* with a thread-local harness-IR cache; use isolated for full crash isolation / parallel scan, build `run-test` first)
 - `TEST262_PARALLEL=1` — parallel in-stage (default on)
 - `TEST262_SERIAL=1` — force serial execution
+- `TEST262_TIMEOUT_SECS=N` — per-test timeout in seconds (default 10; isolated subprocesses are killed on expiry so no stale process lingers)
 - `TEST262_NOSKIP=1` — run crash-list files
 - `RUN_TEST_BIN` — path to prebuilt `run-test` binary
 - `RUST_BACKTRACE=1` — stack traces on panics
