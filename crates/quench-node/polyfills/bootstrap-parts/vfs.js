@@ -1382,14 +1382,22 @@ class __QuenchVirtualFileSystem {
         return names.sort();
       };
       let previous = snapshot();
-      const timer = setInterval(() => {
+      let timer;
+      let firstPoll = true;
+      const poll = () => {
         const next = snapshot();
         const unchanged =
           Array.isArray(next) &&
           Array.isArray(previous) &&
           next.length === previous.length &&
           next.every((value, index) => value === previous[index]);
-        if (next === previous || unchanged) return;
+        if (next === previous || unchanged) {
+          if (firstPoll) {
+            firstPoll = false;
+            timer = setInterval(poll, interval);
+          }
+          return;
+        }
         const nextName = Array.isArray(next)
           ? next.find((name) => !previous.includes(name))
           : undefined;
@@ -1428,8 +1436,14 @@ class __QuenchVirtualFileSystem {
             ? globalThis.Buffer.from(filename)
             : filename
         );
-      }, interval);
+        if (firstPoll) {
+          firstPoll = false;
+          timer = setInterval(poll, interval);
+        }
+      };
+      timer = setTimeout(poll, 0);
       const close = () => {
+        clearTimeout(timer);
         clearInterval(timer);
         emitter.emit("close");
       };
