@@ -99,9 +99,13 @@ impl Object {
             self.properties
                 .retain(|k, _| k.parse::<usize>().map(|i| i < new_len).unwrap_or(true));
             self.holes.retain(|i| *i < new_len);
-        } else {
+        } else if new_len <= crate::value::object::MAX_ARRAY_ELEMENTS {
+            // Reasonable growth: pre-allocate the dense vector.
             self.elements.resize(new_len, Value::Undefined);
         }
+        // For lengths beyond the dense vector, out-of-range indices remain holes
+        // (reads return undefined); the logical length is tracked by the
+        // "length" property. This avoids pre-allocating absurdly large vectors.
         self.define_array_length(new_len as f64);
     }
 
@@ -217,7 +221,10 @@ impl Object {
     /// Check if object has a Symbol-keyed property.
     pub fn has_symbol(&self, key: &Value) -> bool {
         if let Value::Symbol(sym) = key {
-            return self.symbol_properties.contains_key(&sym.property_key());
+            // Symbol-keyed properties may be stored under the symbol's property
+            // key in any own-property store (symbol_properties, properties,
+            // descriptors, accessors), so route through has_own.
+            return self.has_own(&sym.property_key());
         }
         false
     }
