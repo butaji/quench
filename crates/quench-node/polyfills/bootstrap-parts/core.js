@@ -1639,6 +1639,15 @@ let __quenchHttpModule;
           response.__socketCloseListener &&
           typeof response.socket?.write === "function"
         ) {
+          if (response.socket.__quenchRawHttp && !response.__rawHeadersSent) {
+            const headers = Object.entries(response.headers)
+              .map(([key, value]) => `${key}: ${value}`)
+              .join("\r\n");
+            response.__rawHeadersSent = true;
+            response.socket.write(
+              `HTTP/1.1 ${response.statusCode} ${response.statusMessage}\r\n${headers}\r\n\r\n`
+            );
+          }
           return response.socket.write(value, callback);
         }
         queueMicrotask(() => {
@@ -1693,6 +1702,15 @@ let __quenchHttpModule;
           });
         };
         if (assignedSocket) {
+          if (response.socket.__quenchRawHttp && !response.__rawHeadersSent) {
+            const headers = Object.entries(response.headers)
+              .map(([key, value]) => `${key}: ${value}`)
+              .join("\r\n");
+            response.__rawHeadersSent = true;
+            response.socket.write(
+              `HTTP/1.1 ${response.statusCode} ${response.statusMessage}\r\n${headers}\r\n\r\n`
+            );
+          }
           let writes = output.length ? 2 : 1;
           const written = () => {
             writes--;
@@ -2557,6 +2575,37 @@ let __quenchHttpModule;
         this.maxRequestsPerSocket = 0;
         this[globalThis.__nodeHttpConnectionsCheckingInterval] = {
           _destroyed: false
+        };
+        this.__quenchRawConnection = (socket) => {
+          socket.__quenchRawHttp = true;
+          let pending = "";
+          socket.on("data", (chunk) => {
+            pending += chunk.toString();
+            const boundary = pending.indexOf("\r\n\r\n");
+            if (boundary < 0) return;
+            const lines = pending.slice(0, boundary).split("\r\n");
+            pending = pending.slice(boundary + 4);
+            const [method, url, version] = lines.shift().split(" ");
+            const request = new NodeIncomingMessage();
+            request.method = method;
+            request.url = url;
+            request.httpVersion = (version || "HTTP/1.1").slice(5);
+            request.headers = Object.create(null);
+            request.rawHeaders = [];
+            for (const line of lines) {
+              const separator = line.indexOf(":");
+              if (separator < 1) continue;
+              const name = line.slice(0, separator);
+              const value = line.slice(separator + 1).trim();
+              request.headers[name.toLowerCase()] = value;
+              request.rawHeaders.push(name, value);
+            }
+            request.socket = socket;
+            const response = new NodeServerResponse(request);
+            response.assignSocket(socket);
+            this._handler?.(request, response);
+          });
+          this.emit("connection", socket);
         };
       }
       listen(port, host, callback) {
