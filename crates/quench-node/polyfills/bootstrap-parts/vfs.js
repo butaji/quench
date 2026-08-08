@@ -2271,6 +2271,19 @@ if (globalThis.__nodeFs?.promises) {
           vfs[`${name}Sync`](target, __quenchVfsRelative(vfs, args[0]))
         );
       }
+      if (
+        (name === "rename" || name === "copyFile") &&
+        typeof args[0] === "string" &&
+        vfs.shouldHandle(args[0])
+      ) {
+        return Promise.resolve(
+          vfs[`${name}Sync`](
+            __quenchVfsRelative(vfs, path),
+            __quenchVfsRelative(vfs, args[0]),
+            ...args.slice(1)
+          )
+        );
+      }
       return Promise.resolve().then(() => {
         const result = vfs[method](__quenchVfsRelative(vfs, path), ...args);
         if (name === "mkdtemp" && typeof result === "string") {
