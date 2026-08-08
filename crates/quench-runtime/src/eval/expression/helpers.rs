@@ -69,10 +69,15 @@ pub fn eval_unary_expr(
                     return Ok(Value::String("undefined".to_string()));
                 }
                 if env.borrow().is_tdz(name) {
-                    return Err(JsError(format!(
-                        "ReferenceError: cannot access '{}' before initialization",
-                        name
-                    )));
+                    let (err_val, js_err) = crate::value::error::create_js_error_with_type(
+                        &format!(
+                            "ReferenceError: cannot access '{}' before initialization",
+                            name
+                        ),
+                        "ReferenceError",
+                    );
+                    crate::value::set_thrown_value(err_val);
+                    return Err(js_err);
                 }
             }
         }
