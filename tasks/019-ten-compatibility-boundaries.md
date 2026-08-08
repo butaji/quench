@@ -697,3 +697,9 @@ Host timer polling now excludes unrefed timers when no refed timer keeps the
 event loop alive, while still processing them during a live refed turn. The
 authoritative `test-timers-immediate-unref-simple.js` fixture now passes, and
 the stream backpressure stage remains green.
+
+The latest aggregate parallel sweep confirms
+`test-net-socket-end-before-connect.js` now passes in the full runner.
+Remaining aggregate failures are crypto PQC, runner watch mode, fs-promises
+file-handle pull, VM modules, HTTP/2, inspector overwrite, and server-close
+lifecycle; these remain separate compatibility boundaries.
