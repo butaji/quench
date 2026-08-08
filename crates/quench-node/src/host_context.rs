@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     io::{ErrorKind, Read, Write},
-    net::{TcpListener, TcpStream},
+    net::{Shutdown, TcpListener, TcpStream},
     sync::{Mutex, OnceLock},
 };
 
@@ -138,6 +138,19 @@ pub(crate) fn quench_tcp_write(id: u32, data: Vec<u8>) -> rquickjs::Result<u32> 
         .map_err(|_| rquickjs::Error::new_from_js("tcp", "write failed"))
 }
 
+pub(crate) fn quench_tcp_shutdown(id: u32) -> rquickjs::Result<()> {
+    let resources = quench_tcp_resources()
+        .lock()
+        .expect("tcp resource mutex poisoned");
+    let stream = match resources.get(&id) {
+        Some(QuenchTcpResource::Stream(stream)) => stream,
+        _ => return Err(rquickjs::Error::new_from_js("tcp", "not a stream")),
+    };
+    stream
+        .shutdown(Shutdown::Write)
+        .map_err(|_| rquickjs::Error::new_from_js("tcp", "shutdown failed"))
+}
+
 pub(crate) fn quench_tcp_close(id: u32) {
     quench_tcp_resources()
         .lock()
@@ -156,6 +169,7 @@ macro_rules! run_host_context {
         ctx.globals().set("__quench_tcp_read", Func::from($crate::host_context::quench_tcp_read))?;
         ctx.globals().set("__quench_tcp_readable", Func::from($crate::host_context::quench_tcp_readable))?;
         ctx.globals().set("__quench_tcp_write", Func::from($crate::host_context::quench_tcp_write))?;
+        ctx.globals().set("__quench_tcp_shutdown", Func::from($crate::host_context::quench_tcp_shutdown))?;
         ctx.globals().set("__quench_tcp_close", Func::from($crate::host_context::quench_tcp_close))?;
         ctx.globals().set(
             "__quench_fs_exists",
