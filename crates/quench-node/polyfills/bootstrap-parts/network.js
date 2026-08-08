@@ -419,6 +419,13 @@ const __quenchNetModule = {
       return this;
     }
     address() {
+      if (this._nativeId) {
+        return {
+          address: this.localAddress || "127.0.0.1",
+          family: "IPv4",
+          port: this.localPort
+        };
+      }
       return this.destroyed ? null : undefined;
     }
     destroy() {
