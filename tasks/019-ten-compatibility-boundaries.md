@@ -844,3 +844,14 @@ The authoritative `test-stream-finished.js` advances beyond its prior missing
 queue TypeError but aborts later in QuickJS GC (`gc_decref_child` ref-count
 assertion), so the full finished fixture remains unclaimed and requires an
 interaction-level reduction before further lifecycle changes.
+
+Stage 2461 replaces the callback `stream.pipeline()` no-op with a functional
+iterable/stream chain. Iterable and string sources are adapted through
+`Readable.from`, errors settle the callback once, and destination finish/end
+completes it. The post-bootstrap Web pipeline adapter uses object mode so a
+Web-to-Web chain preserves arbitrary values while direct `Duplex.fromWeb`
+retains Node's byte-mode default. The focused callback-validation, Web adapter,
+and empty-iterable stages pass, as does authoritative
+`test-stream-pipeline-with-empty-string.js`. The broader upstream readable/
+writable-pair adapter fixture still fails earlier on a separate missing method
+surface and is not claimed fixed.
