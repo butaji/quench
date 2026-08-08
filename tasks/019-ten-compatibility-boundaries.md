@@ -27,4 +27,7 @@ own commit.
 - Item 1: improved. Stage 2333 verifies explicit `Socket.connect()` server
   delivery; upstream `test-net-socket-tos.js` passes. The local-address
   reconnect fixture still has a separate close/callback mismatch.
-- Items 2–10: queued.
+- Item 2: partially improved. Stage 2334 verifies `connecting` true before
+  the connect turn and false during the connect event; remote-address fixture
+  lifecycle callbacks remain unresolved.
+- Items 3–10: queued.
