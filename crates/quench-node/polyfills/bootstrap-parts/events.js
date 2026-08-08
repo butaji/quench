@@ -1318,6 +1318,53 @@ class NodeTransform extends NodeWritable {
     })(this);
   }
 }
+class NodePassThrough extends NodeTransform {
+  constructor(options = {}) {
+    super(options);
+    this.__nodeDuplex = true;
+    this.readableEnded = false;
+    this.readableObjectMode =
+      options.readableObjectMode ?? options.objectMode === true;
+    this.readableHighWaterMark =
+      options.readableHighWaterMark ?? options.highWaterMark ?? 16 * 1024;
+    this._transform = undefined;
+    this._write = (chunk, _encoding, callback) => {
+      if (this.push(chunk)) callback();
+      else this.__passThroughPendingCallback = callback;
+    };
+  }
+  push(chunk) {
+    const acceptedBySurface = super.push(chunk);
+    if (chunk === null || chunk === undefined) return acceptedBySurface;
+    return (
+      this.listenerCount("data") > 0 ||
+      this.readableLength < this.readableHighWaterMark
+    );
+  }
+  read() {
+    const chunk = super.read();
+    if (
+      this.__passThroughPendingCallback &&
+      this.readableLength < this.readableHighWaterMark
+    ) {
+      const callback = this.__passThroughPendingCallback;
+      this.__passThroughPendingCallback = null;
+      callback();
+    }
+    return chunk;
+  }
+  get readableLength() {
+    if (this.readableObjectMode) return this._readableChunks.length;
+    return this._readableChunks.reduce(
+      (length, chunk) =>
+        length +
+        (typeof chunk === "string"
+          ? NodeBuffer.byteLength(chunk)
+          : chunk?.byteLength || 0),
+      0
+    );
+  }
+}
 const NodeStream = function NodeStream() {
   this._events = Object.create(null);
 };
@@ -1416,7 +1463,7 @@ const __nodeStreamExports = {
   Duplex: NodeDuplexCompat,
   duplexPair: __nodeDuplexPairFactory,
   Transform: NodeTransform,
-  PassThrough: NodeTransform,
+  PassThrough: NodePassThrough,
   isDisturbed: (stream) => Boolean(stream?._readableState?.dataEmitted),
   isErrored: (stream) =>
     Boolean(stream?.errored || stream?._readableState?.errored)
