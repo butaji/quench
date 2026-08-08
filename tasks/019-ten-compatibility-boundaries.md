@@ -377,6 +377,11 @@ recursive mkdir/readdir/rmdir, rename/unlink, copyFile, and missing-file open—
 against one real provider and passes. The unresolved full fixture therefore
 requires interaction with its initial and final sections rather than a missing
 individual promise method.
+The broader `test-vfs-*.js` sweep also exposes a central mounted-dispatch gap in
+`test-vfs-fs-promises.js`, alongside older VFS bigint, fd, provider, and
+attribute fixtures. These are now part of the remaining Node-suite verification
+surface; the next implementation target is the mounted `fs/promises` dispatch
+path rather than another isolated real-provider operation.
 
 Stage 2378 passes the four basic stream `destroy()` contracts for readable and
 writable streams, including implicit `AbortError`, explicit error messages,
