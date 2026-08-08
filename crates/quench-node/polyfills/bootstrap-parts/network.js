@@ -312,12 +312,13 @@ const __quenchNetModule = {
       this._bufferSize = 0;
       this.bytesRead = 0;
       this.bytesWritten = 0;
-      this._handle = options?.handle || {};
+      this._handle = options?.handle || null;
       this._noDelay = false;
       this._nativeId = 0;
       this._nativeConnected = false;
       this._nativeEnded = false;
       this._corked = 0;
+      this._timeoutTimer = null;
     }
     get bufferSize() {
       return this._bufferSize;
@@ -356,6 +357,22 @@ const __quenchNetModule = {
     setKeepAlive() {
       return this;
     }
+    setTimeout(timeout, callback) {
+      if (this._timeoutTimer) {
+        globalThis.clearTimeout(this._timeoutTimer);
+        this._timeoutTimer = null;
+      }
+      const delay = Number(timeout) || 0;
+      this.timeout = delay;
+      if (delay > 0) {
+        if (typeof callback === "function") this.once("timeout", callback);
+        this._timeoutTimer = globalThis.setTimeout(() => {
+          this._timeoutTimer = null;
+          if (!this.destroyed) this.emit("timeout");
+        }, delay);
+      }
+      return this;
+    }
     cork() {
       this._corked++;
       return this;
@@ -369,6 +386,10 @@ const __quenchNetModule = {
     }
     destroy() {
       this.destroyed = true;
+      if (this._timeoutTimer) {
+        globalThis.clearTimeout(this._timeoutTimer);
+        this._timeoutTimer = null;
+      }
       if (this._nativeId) {
         __quench_tcp_close(this._nativeId);
         this._nativeId = 0;
