@@ -129,7 +129,10 @@ requests. A transport probe showed that its client writes from the `connect`
 callback before the in-memory peer is attached; naïve pending-write flushing
 regressed the verified raw HTTP keep-alive/response lifecycle and was reverted.
 The remaining fix must coordinate pending writes with HTTP response socket
-assignment before claiming the upstream fixture.
+assignment before claiming the upstream fixture. Reordering peer attachment
+before the client `connect` event causes the same regression, so that approach
+was also reverted; the next implementation needs an explicit parser-ready
+queue boundary.
 
 Stage 2362 independently verifies that callback-style and promise-style
 `fs.access()` each deliver exactly once for a missing path, including the
