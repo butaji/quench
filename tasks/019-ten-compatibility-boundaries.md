@@ -111,3 +111,9 @@ current runtime: `test-fs-cp-async-skip-validation-when-filtered.mjs`,
 `test-fs-cp-sync-async-filter-error.mjs` all pass individually. They should be
 removed from the next differential queue refresh; this is evidence correction,
 not a new filesystem implementation claim.
+
+The same stale report's representative dgram entries
+(`test-dgram-bind-sync.js`, `test-dgram-bytes-length.js`, and
+`test-dgram-bind-error-repeat.js`) also pass individually on the current
+runtime. A fresh differential run is required before treating those clusters
+as remaining failures.
