@@ -703,26 +703,40 @@ fn eval_var_decl(
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
 ) -> Result<Value, JsError> {
-    let already_declared = env.borrow().current_scope().borrow().has(name);
-    if !already_declared {
-        env.borrow_mut().declare_var(name.to_string(), *kind);
-    }
-    let mut value = if let Some(expr) = init {
-        eval_expression(expr, env, in_arrow_function)?
-    } else {
-        Value::Undefined
-    };
-    // Per ES §13.3.3 SetFunctionName: only when IsAnonymousFunctionDefinition(Initializer).
-    if let (Some(expr), Value::Function(ref mut f)) = (init, &mut value) {
-        if f.name.is_none() && crate::eval::object::is_anonymous_function_definition(expr) {
-            f.name = Some(name.to_string());
-            let _ = f.set_property("name", Value::String(name.to_string()));
+    // ES var-hoisting: a `var x;` with no initializer is a no-op when the
+    // binding is already live in the var scope — re-declaration must not reset
+    // the value (e.g. a body block re-declaring a var bound by the loop head).
+    let is_noop_redecl = init.is_none() && env.borrow().var_scope_has_value(name);
+    if !is_noop_redecl {
+        let already_declared = env.borrow().current_scope().borrow().has(name);
+        if !already_declared {
+            env.borrow_mut().declare_var(name.to_string(), *kind);
         }
-    }
-    env.borrow_mut().initialize_declared(name, value.clone());
-    // For top-level var declarations, also set on globalThis
-    if *kind == VarKind::Var && env.borrow().get_parent().is_none() {
-        set_on_global_this(env, name, value);
+        let mut value = if let Some(expr) = init {
+            eval_expression(expr, env, in_arrow_function)?
+        } else {
+            Value::Undefined
+        };
+        // Per ES §13.3.3 SetFunctionName: only when IsAnonymousFunctionDefinition(Initializer).
+        if let (Some(expr), Value::Function(ref mut f)) = (init, &mut value) {
+            if f.name.is_none() && crate::eval::object::is_anonymous_function_definition(expr) {
+                f.name = Some(name.to_string());
+                let _ = f.set_property("name", Value::String(name.to_string()));
+            }
+        }
+        env.borrow_mut().initialize_declared(name, value.clone());
+        // For top-level var declarations, also set on globalThis
+        if *kind == VarKind::Var && env.borrow().get_parent().is_none() {
+            set_on_global_this(env, name, value);
+        }
+    } else {
+        // No-op var re-declaration (already live): preserve the existing value
+        // rather than resetting it, but still mirror it onto globalThis so the
+        // top-level binding stays visible.
+        let value = env.borrow().get(name).unwrap_or(Value::Undefined);
+        if *kind == VarKind::Var && env.borrow().get_parent().is_none() {
+            set_on_global_this(env, name, value);
+        }
     }
     Ok(Value::Undefined)
 }
