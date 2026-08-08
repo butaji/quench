@@ -121,6 +121,12 @@ current runtime: `test-fs-cp-async-skip-validation-when-filtered.mjs`,
 removed from the next differential queue refresh; this is evidence correction,
 not a new filesystem implementation claim.
 
+Stage 2362 independently verifies that callback-style and promise-style
+`fs.access()` each deliver exactly once for a missing path, including the
+`ENOENT` error code. This narrows the unresolved upstream `test-fs-access.js`
+callback-count failure to its combined credential, invalid-argument, and
+promise sequencing rather than the basic missing-path error path.
+
 The same stale report's representative dgram entries
 (`test-dgram-bind-sync.js`, `test-dgram-bytes-length.js`, and
 `test-dgram-bind-error-repeat.js`) also pass individually on the current
