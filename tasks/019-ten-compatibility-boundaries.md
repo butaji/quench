@@ -659,6 +659,12 @@ the internal `timers.getLibuvNow()` binding through the host monotonic clock.
 This verifies 30 successive one-millisecond callbacks preserve both order and
 monotonic timestamp behavior.
 
+Host bootstrap scheduling now drains pending JavaScript jobs before polling due
+timers. A focused trace corrected the ordering from `setImmediate, nextTick,
+nextTick` to Node's `nextTick, nextTick, setImmediate`; timer ordering remains
+passing. The upstream `emittedReadable` fixture still has a separate state
+reset mismatch and remains open.
+
 The net server-close sweep now has a precise boundary: two connection events,
 two socket close events, and the `server.close()` callback are observed, but
 the server `close` listener is not observed through the close method. Direct
