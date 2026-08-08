@@ -16,6 +16,14 @@ readiness probe with distinct would-block, readable, and EOF results. Its
 loopback stage passes after a real write and confirms the signal is available
 before consuming data.
 
+Stage 2315 wires the first public `net` loopback path to those primitives when
+the internal `__quenchNativeTransport` option is present. `Server.listen()`
+binds a real listener and reports its ephemeral port; `createConnection()`
+creates a real client; the host poll hook delivers `connection` and `data`.
+The focused ping/pong stage passes. The option is intentionally gated while
+ordering, half-close, liveness, and ordinary Node option normalization are
+completed.
+
 ## Required integration contract
 
 1. The host must extend the Stage 2313 hook into a bounded native poll step that can report readable,
@@ -34,6 +42,7 @@ before consuming data.
 - Stage 2312: host primitive loopback exchange (passing).
 - Stage 2313: host-owned I/O poll scheduling seam (passing).
 - Stage 2314: native stream readiness probe (passing).
+- Stage 2315: gated public `net` TCP ping/pong loopback (passing).
 - Next: one accepted socket with one write/read round trip and explicit close.
 - Then: half-close exchange from Node's
   `test-net-allow-half-open-async-iter.js`.
