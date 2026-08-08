@@ -2595,8 +2595,37 @@ let __quenchHttpModule;
                 headers[name.toLowerCase()] = value;
                 rawHeaders.push(name, value);
               }
-              const bodyLength = Number(headers["content-length"] || 0);
-              if (pending.length < boundary + 4 + bodyLength) return;
+              const bodyStart = boundary + 4;
+              const isChunked =
+                headers["transfer-encoding"]?.toLowerCase() === "chunked";
+              let body = "";
+              let consumedBody = 0;
+              if (isChunked) {
+                let cursor = bodyStart;
+                for (;;) {
+                  const lineEnd = pending.indexOf("\r\n", cursor);
+                  if (lineEnd < 0) return;
+                  const size = parseInt(
+                    pending.slice(cursor, lineEnd).split(";", 1)[0],
+                    16
+                  );
+                  if (!Number.isFinite(size)) return;
+                  const chunkStart = lineEnd + 2;
+                  const chunkEnd = chunkStart + size;
+                  if (pending.length < chunkEnd + 2) return;
+                  body += pending.slice(chunkStart, chunkEnd);
+                  cursor = chunkEnd + 2;
+                  if (size === 0) {
+                    consumedBody = cursor - bodyStart;
+                    break;
+                  }
+                }
+              } else {
+                const bodyLength = Number(headers["content-length"] || 0);
+                if (pending.length < bodyStart + bodyLength) return;
+                body = pending.slice(bodyStart, bodyStart + bodyLength);
+                consumedBody = bodyLength;
+              }
               pending = pending.slice(boundary + 4);
               const [method, url, version] = lines[0].split(" ");
               const request = new NodeIncomingMessage();
@@ -2606,12 +2635,11 @@ let __quenchHttpModule;
               request.headers = headers;
               request.rawHeaders = rawHeaders;
               request.socket = socket;
-              const body = pending.slice(0, bodyLength);
-              pending = pending.slice(bodyLength);
+              pending = pending.slice(consumedBody);
               const response = new NodeServerResponse(request);
               response.assignSocket(socket);
               this._handler?.(request, response);
-              if (bodyLength) request.emit("data", NodeBuffer.from(body));
+              if (body) request.emit("data", NodeBuffer.from(body));
               request.emit("end");
             }
           });
