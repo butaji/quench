@@ -455,6 +455,7 @@ const __quenchCoreStaticModules = new Map([
       }
     })
   ],
+  ["internal/vfs/router", () => globalThis.require("internal/vfs/router")],
   [
     "internal/util",
     () => {
