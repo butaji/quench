@@ -120,6 +120,7 @@ const __quenchDgramSend = (socket, message, ...args) => {
       ? 1
       : -1;
   const address = addressIndex < 0 ? undefined : args[addressIndex];
+  const callback = args.at(-1);
   if (
     address !== undefined &&
     address !== null &&
@@ -135,6 +136,19 @@ const __quenchDgramSend = (socket, message, ...args) => {
       ),
       { code: "ERR_INVALID_ARG_TYPE" }
     );
+  }
+  if (
+    address &&
+    socket._sendBlockList?.check?.(
+      address,
+      socket.type === "udp6" ? "ipv6" : "ipv4"
+    )
+  ) {
+    const error = Object.assign(new Error("IP is blocked"), {
+      code: "ERR_IP_BLOCKED"
+    });
+    queueMicrotask(() => callback?.(error));
+    return socket;
   }
   if (
     Array.isArray(message) &&
@@ -153,7 +167,6 @@ const __quenchDgramSend = (socket, message, ...args) => {
       { code: "ERR_INVALID_ARG_TYPE" }
     );
   }
-  const callback = args.at(-1);
   const destinationPort = socket._connected
     ? socket._remote?.port
     : hasOffset
@@ -231,14 +244,20 @@ const __quenchDgramSend = (socket, message, ...args) => {
         candidate._bound && candidate._address?.port === destinationPort
     );
     const sourceAddress = socket._address || {
-      address: socket.type === "udp6" ? "::" : "0.0.0.0",
+      address: socket.type === "udp6" ? "::1" : "127.0.0.1",
       family: socket.type === "udp6" ? "IPv6" : "IPv4",
       port: 0
     };
-    target?.emit("message", deliveredPayload, {
-      ...sourceAddress,
-      size: deliveredPayload.byteLength
-    });
+    const blocked = target?._receiveBlockList?.check?.(
+      sourceAddress.address,
+      socket.type === "udp6" ? "ipv6" : "ipv4"
+    );
+    if (!blocked) {
+      target?.emit("message", deliveredPayload, {
+        ...sourceAddress,
+        size: deliveredPayload.byteLength
+      });
+    }
     if (typeof callback === "function") callback(null, length);
   });
   return socket;
@@ -308,6 +327,18 @@ const __quenchDgramConnect = (socket, port, address, callback) => {
     throw Object.assign(new Error("Already connected"), {
       code: "ERR_SOCKET_DGRAM_IS_CONNECTED"
     });
+  }
+  if (
+    socket._sendBlockList?.check?.(
+      address,
+      socket.type === "udp6" ? "ipv6" : "ipv4"
+    )
+  ) {
+    const error = Object.assign(new Error("IP is blocked"), {
+      code: "ERR_IP_BLOCKED"
+    });
+    queueMicrotask(() => callback?.(error));
+    return socket;
   }
   socket._connecting = true;
   socket._remote = { address, port };
@@ -379,6 +410,8 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
   const listeners = {};
   const socket = {
     type,
+    _sendBlockList: options?.sendBlockList,
+    _receiveBlockList: options?.receiveBlockList,
     bind: (port, address, callback) =>
       __quenchDgramBind(socket, type, port, address, callback),
     bindSync: (options = {}) => {
