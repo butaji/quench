@@ -355,6 +355,10 @@ Stages 2407 and 2408 verify that case standalone and alongside the other VFS
 pipeline cases; both pass. The authoritative stream failure therefore requires
 the broader fixture's earlier stream event mix, not the start-offset write
 implementation alone.
+VFS writable streams now implement Node's default finish-time auto-close for
+path-opened streams while preserving explicit-fd ownership. The focused
+pipeline stages remain green, but the authoritative callback 23 failure is
+unchanged and still requires the full event-mix probe.
 
 Stage 2378 passes the four basic stream `destroy()` contracts for readable and
 writable streams, including implicit `AbortError`, explicit error messages,
