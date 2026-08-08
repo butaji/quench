@@ -600,6 +600,13 @@ const __quenchApplyFinalModule01 = (name, originalRequire) => {
           throw error;
         }
       }
+      if (options?.dereference === true && options?.verbatimSymlinks === true) {
+        const error = new TypeError(
+          "The 'dereference' and 'verbatimSymlinks' options cannot be used together"
+        );
+        error.code = "ERR_INCOMPATIBLE_OPTION_PAIR";
+        throw error;
+      }
     };
     const copyPath = (source, destination, options = {}) => {
       const copyValue = (value) => {

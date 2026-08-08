@@ -413,3 +413,8 @@ access, invalid and out-of-range mode validation, missing-path `ENOENT`, and
 callback/promise completion all pass. The full upstream `test-fs-access.js`
 fixture remains platform-limited because it changes UID and branches on root
 permissions; its callback mismatch is not treated as portable API evidence.
+
+The fs copy validation slice now rejects the incompatible option pair
+`dereference: true` plus `verbatimSymlinks: true` with
+`ERR_INCOMPATIBLE_OPTION_PAIR`. Focused stage 2090 and upstream
+`test-fs-cp-sync-incompatible-options-error.mjs` pass.
