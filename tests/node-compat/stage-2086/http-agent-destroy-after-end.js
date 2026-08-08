@@ -12,16 +12,20 @@ class Agent extends http.Agent {
 const server = http.createServer((_request, response) => response.end());
 server.listen(0, () => {
   const agent = new Agent({ keepAlive: true, maxSockets: 1 });
-  http.get({ agent, port: server.address().port }, (response) => {
-    response.resume();
-    response.once("end", () => {
-      response.destroy();
-      http.get({ agent, port: server.address().port }, (second) => {
-        second.resume();
-        assert.strictEqual(socketsCreated, 1);
-        agent.destroy();
-        server.close();
+  const request = http.get(
+    { agent, port: server.address().port },
+    (response) => {
+      response.resume();
+      response.once("end", () => {
+        response.destroy();
+        http.get({ agent, port: server.address().port }, (second) => {
+          second.resume();
+          assert.strictEqual(socketsCreated, 1);
+          agent.destroy();
+          server.close();
+        });
       });
-    });
-  });
+    }
+  );
+  request.end();
 });

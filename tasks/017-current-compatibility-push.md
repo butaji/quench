@@ -389,7 +389,8 @@ the destination as Node does. Focused stage 2085 and upstream
 `test-http-many-ended-pipelines.js` pass.
 
 A reduced keep-alive agent reproducer is covered by focused stage 2086 and
-passes, including reuse after `IncomingMessage.destroy()` with one created
-socket. The exact upstream `test-http-client-abort-keep-alive-destroy-res.js`
-still misses one harness callback, so the broader agent lifecycle remains
-unresolved pending a closer callback-order comparison.
+passes, including the upstream sequence of calling `req.end()` after
+`http.get()`, reuse after `IncomingMessage.destroy()`, and one created socket.
+The exact upstream `test-http-client-abort-keep-alive-destroy-res.js` still
+misses one harness callback, so the broader agent lifecycle remains unresolved
+pending a closer callback-order comparison.
