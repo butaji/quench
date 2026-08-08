@@ -9,6 +9,6 @@ pass.on("data", (chunk) => chunks.push(chunk));
 pass.end(Buffer.from("through"));
 assert.strictEqual(Buffer.concat(chunks).toString(), "through");
 assert.strictEqual(pass.readable, true);
-assert.strictEqual(pass.writable, true);
+assert.strictEqual(pass.writable, false);
 
 console.log("stream pass through passed");
