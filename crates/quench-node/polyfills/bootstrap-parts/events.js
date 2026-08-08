@@ -493,6 +493,12 @@ class NodeReadable extends NodeEventEmitter {
   }
   push(chunk, encoding) {
     if (this.destroyed) return false;
+    if (this.__nodeDuplex && this.readable === false && chunk !== null) {
+      const error = new Error("stream.push() after EOF");
+      error.code = "ERR_STREAM_PUSH_AFTER_EOF";
+      queueMicrotask(() => this.emit("error", error));
+      return false;
+    }
     if (this._ended && chunk !== null) {
       return __nodeReadablePushError(
         "stream.push() after EOF",
@@ -586,6 +592,7 @@ class NodeReadable extends NodeEventEmitter {
   }
 
   _emitEnd() {
+    if (this.readable === false) return;
     if (!this.readableEnded) this.readableEnded = true;
     this._readableState.ended = true;
     this._readableState.needReadable = false;

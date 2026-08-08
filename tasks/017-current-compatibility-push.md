@@ -714,3 +714,8 @@ Focused stage 2157 adds side-specific Duplex option handling for
 `readableObjectMode`, `writableObjectMode`, `readableHighWaterMark`, and
 `writableHighWaterMark`. The focused contract and upstream
 `test-stream-duplex-props.js` both pass.
+
+Focused stage 2158 aligns `Duplex({ readable: false }).push()` with Node's
+asynchronous `ERR_STREAM_PUSH_AFTER_EOF` error event. Focused stage 2159
+suppresses `end` emission for disabled readable sides. Both contracts pass,
+and upstream `test-stream-duplex-readable-writable.js` passes.
