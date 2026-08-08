@@ -6,6 +6,7 @@ globalThis.__quenchInternalFsBinding = {
   }
 };
 globalThis.__quenchInternalFallbackBinding = { fstat: () => undefined };
+globalThis.__quenchDgramUdpFds = new Set();
 globalThis.__quenchDgramUDPClass = class UDP {
   constructor() {
     this.fd = -1;
@@ -13,9 +14,11 @@ globalThis.__quenchDgramUDPClass = class UDP {
   bind(address, _port, _flags) {
     if (address === "localhost") return -99;
     this.fd = 1;
+    globalThis.__quenchDgramUdpFds.add(this.fd);
     return 0;
   }
   close() {
+    globalThis.__quenchDgramUdpFds.delete(this.fd);
     this.fd = -1;
   }
 };

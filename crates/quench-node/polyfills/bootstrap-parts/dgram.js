@@ -813,6 +813,13 @@ globalThis.require = (specifier) =>
       ? {
           kStateSymbol: __quenchDgramStateSymbol,
           _createSocketHandle(address, port, type) {
+            const fd = arguments[3];
+            if (fd !== undefined) {
+              if (!globalThis.__quenchDgramUdpFds.has(fd)) return -9;
+              const adopted = new globalThis.__quenchDgramUDPClass();
+              adopted.fd = fd;
+              return adopted;
+            }
             const handle = new globalThis.__quenchDgramUDPClass();
             if (address === null) return handle;
             const result = handle.bind(address, port, 0);
