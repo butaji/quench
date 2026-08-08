@@ -510,9 +510,18 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
         socket[__quenchDgramStateSymbol].handle.fd = port.fd;
         globalThis.__quenchDgramActiveFds.add(port.fd);
         socket._address = {
-          address: port.address || (type === "udp6" ? "::" : "0.0.0.0"),
-          family: type === "udp6" ? "IPv6" : "IPv4",
-          port: port.port || __quenchDgramNextPort++
+          ...(globalThis.__quenchDgramUdpHandleInfo.get(port.fd) || {}),
+          address:
+            port.address ||
+            globalThis.__quenchDgramUdpHandleInfo.get(port.fd)?.address ||
+            (type === "udp6" ? "::" : "0.0.0.0"),
+          family:
+            globalThis.__quenchDgramUdpHandleInfo.get(port.fd)?.family ||
+            (type === "udp6" ? "IPv6" : "IPv4"),
+          port:
+            port.port ||
+            globalThis.__quenchDgramUdpHandleInfo.get(port.fd)?.port ||
+            __quenchDgramNextPort++
         };
         setImmediate(() => {
           callback?.call(socket);
