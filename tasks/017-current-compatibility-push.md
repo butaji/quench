@@ -358,3 +358,8 @@ Real-application coverage now includes the installed `chalk` package: focused
 stage 2080 loads its CommonJS entry point and exercises chained styling. The
 probe passes under quench-node and the equivalent host-Node smoke check passes;
 the assertion avoids terminal-color output so it remains deterministic in CI.
+
+Real-application stage 2081 now verifies the installed `ms` package through
+its CommonJS entry point, covering string-to-duration and duration-to-string
+conversions. The same deterministic assertions pass under quench-node and
+host Node.
