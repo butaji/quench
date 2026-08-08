@@ -755,3 +755,11 @@ passes; the upstream fixture still reports the separate PassThrough callback
 Focused stage 2169 adds the own `Duplex.prototype.writableFinished` property
 and verifies its transition through `finish`. The focused contract and
 upstream `test-stream-duplex-writable-finished.js` both pass.
+
+Fresh differential baseline completed on 2026-08-08 against the current
+runtime binary across all 4,682 parallel fixtures: 998 exact matches, 2,447
+Quench-only failures, 526 output mismatches, 462 both-failed cases, 172
+Node-only failures, and 77 timeouts. The largest Quench-only prefixes are
+`http2` (265), `http` (239), `tls` (160), `fs` (154), and `stream` (140).
+The first `fs-access` candidate is environment-sensitive under the local
+root/user setup and is not being treated as a portable compatibility fix.
