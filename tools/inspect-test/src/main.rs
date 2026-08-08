@@ -4,8 +4,8 @@
 //!   cargo run --bin inspect-test -- <path-to-test.js>
 //!   cargo run --bin inspect-test -- --source <path-to-test.js>
 
-use std::path::PathBuf;
 use quench_runtime::test262::metadata::Test262Metadata;
+use std::path::PathBuf;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -41,7 +41,10 @@ fn main() {
     };
 
     println!("╔══════════════════════════════════════════════════╗");
-    println!("║  Test: {}", path.file_name().unwrap_or_default().to_string_lossy());
+    println!(
+        "║  Test: {}",
+        path.file_name().unwrap_or_default().to_string_lossy()
+    );
     println!("╚══════════════════════════════════════════════════╝");
     println!("  Path: {}", path.display());
 
@@ -93,7 +96,8 @@ fn main() {
     let has_throw = source.contains("throw");
     let has_done = source.contains("$DONE");
     let has_module = source.contains("export");
-    println!("  assert.*: {}, throw: {}, $DONE: {}, export: {}",
+    println!(
+        "  assert.*: {}, throw: {}, $DONE: {}, export: {}",
         if has_assert { "yes" } else { "no" },
         if has_throw { "yes" } else { "no" },
         if has_done { "yes" } else { "no" },
