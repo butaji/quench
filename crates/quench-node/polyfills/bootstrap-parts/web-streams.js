@@ -142,6 +142,24 @@ const __quenchWebStreams = {
 globalThis.ReadableStream ||= __quenchReadableStream;
 globalThis.WritableStream ||= __quenchWritableStream;
 globalThis.TransformStream ||= __quenchTransformStream;
+globalThis.DecompressionStream ||= __quenchDecompressionStream;
+for (const constructor of [
+  "ReadableStreamDefaultReader",
+  "ReadableStreamBYOBReader",
+  "ReadableStreamBYOBRequest",
+  "ReadableByteStreamController",
+  "ReadableStreamDefaultController",
+  "TransformStreamDefaultController",
+  "WritableStreamDefaultWriter",
+  "WritableStreamDefaultController",
+  "ByteLengthQueuingStrategy",
+  "CountQueuingStrategy",
+  "TextEncoderStream",
+  "TextDecoderStream",
+  "CompressionStream"
+]) {
+  globalThis[constructor] ||= class {};
+}
 if (globalThis.Blob?.prototype) {
   globalThis.Blob.prototype.stream = function () {
     const blob = this;

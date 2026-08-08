@@ -23,11 +23,31 @@ const __quenchStreamWebFallbacks = (result, originalRequire, name) => {
   result = globalThis.__quenchFsPromisesModule || Object.assign({}, result);
   globalThis.__quenchFsConstantsModule ||= originalRequire("fs").constants;
   result.constants = globalThis.__quenchFsConstantsModule;
-  result.ReadableStream = Object.assign(
-    function ReadableStream() {},
-    result.ReadableStream
-  );
-  result.ReadableStream.prototype =
+  for (const constructor of [
+    "ReadableStream",
+    "ReadableStreamDefaultReader",
+    "ReadableStreamBYOBReader",
+    "ReadableStreamBYOBRequest",
+    "ReadableByteStreamController",
+    "ReadableStreamDefaultController",
+    "TransformStream",
+    "TransformStreamDefaultController",
+    "WritableStream",
+    "WritableStreamDefaultWriter",
+    "WritableStreamDefaultController",
+    "ByteLengthQueuingStrategy",
+    "CountQueuingStrategy",
+    "TextEncoderStream",
+    "TextDecoderStream",
+    "CompressionStream",
+    "DecompressionStream"
+  ]) {
+    if (typeof globalThis[constructor] === "function") {
+      result[constructor] = globalThis[constructor];
+    }
+  }
+  result.ReadableStream ||= function ReadableStream() {};
+  result.ReadableStream.prototype ||=
     originalRequire(name).ReadableStream.prototype;
   result.ReadableStream.from ||= async function* (source) {
     yield* source;
