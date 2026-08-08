@@ -368,3 +368,12 @@ An ESLint Linter application probe remains unresolved: package loading reaches
 the public API, but the first lint operation overflows the QuickJS stack inside
 ESLint's parser/configuration path. A focused RegExp-flags surface probe (stage
 2083) passes, so this is not being misclassified as a missing primitive.
+
+Fresh full differential rebaseline completed at 2026-08-08T02:42:45Z against
+all 4,682 parallel fixtures with zero worker failures: 924 exact matches and
+3,758 differences (501 both-failed, 174 Node-only failures, 531 output
+mismatches, 2,465 quench-only failures, 87 timeouts, and 191
+Node-environment-limited cases). The current actionable owned queue is HTTP
+(87), net (55), streams (42), and fs (35). The differential is complete and
+authoritative; its focused-evidence freshness marker remains stale until the
+next focused gate.
