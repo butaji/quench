@@ -7,6 +7,8 @@ class __quenchReadableStream {
     this.locked = false;
     this._readWaiters = [];
     this._cancel = source.cancel?.bind(source);
+    this._pull = source.pull?.bind(source);
+    this._pulling = false;
     this[__quenchWebStreamsState] = { state: "readable" };
     const controller = {
       desiredSize: 0,
@@ -36,6 +38,7 @@ class __quenchReadableStream {
     this._close = controller.close;
     this._errorStream = controller.error;
     this[__quenchWebStreamsState].controller = controller;
+    this._controller = controller;
     source.start?.(controller);
   }
   getReader() {
@@ -53,6 +56,12 @@ class __quenchReadableStream {
           return { value: stream._queue.shift(), done: false };
         }
         if (stream._closed) return { value: undefined, done: true };
+        if (stream._pull && !stream._pulling) {
+          stream._pulling = true;
+          Promise.resolve(stream._pull(stream._controller)).finally(() => {
+            stream._pulling = false;
+          });
+        }
         return new Promise((resolve) => stream._readWaiters.push(resolve));
       },
       cancel: async (reason) => {
