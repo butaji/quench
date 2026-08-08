@@ -2860,6 +2860,24 @@ let __quenchHttpModule;
         ) {
           callback = typeof options === "function" ? options : callback;
           options = target;
+          for (const name of ["hostname", "host"]) {
+            const value = options[name];
+            if (
+              value !== undefined &&
+              value !== null &&
+              typeof value !== "string"
+            ) {
+              const received =
+                value && typeof value === "object"
+                  ? `an instance of ${value.constructor?.name || "Object"}`
+                  : `type ${typeof value} (${String(value)})`;
+              const error = new TypeError(
+                `The "options.${name}" property must be of type string or one of undefined or null. Received ${received}`
+              );
+              error.code = "ERR_INVALID_ARG_TYPE";
+              throw error;
+            }
+          }
           if (
             typeof options.path === "string" &&
             /[^\u0021-\u00ff]/.test(options.path)
