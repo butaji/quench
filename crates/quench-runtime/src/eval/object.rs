@@ -227,21 +227,30 @@ pub(crate) fn touch_assignment_target(
         }
         Expression::ArrayPattern(bindings) => {
             for binding in bindings {
-                if let BindingElement::AssignmentTarget(target) = binding {
-                    touch_assignment_target(target, env)?;
-                }
+                touch_binding_element_references(binding, env)?;
             }
             Ok(())
         }
         Expression::ObjectPattern(props) => {
             for (_, binding) in props {
-                if let BindingElement::AssignmentTarget(target) = binding {
-                    touch_assignment_target(target, env)?;
-                }
+                touch_binding_element_references(binding, env)?;
             }
             Ok(())
         }
         _ => Ok(()),
+    }
+}
+
+/// Touch a direct assignment-target reference within a binding element. Nested
+/// sub-patterns are evaluated during their own destructuring, not upfront.
+fn touch_binding_element_references(
+    binding: &BindingElement,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<(), JsError> {
+    if let BindingElement::AssignmentTarget(target) = binding {
+        touch_assignment_target(target, env)
+    } else {
+        Ok(())
     }
 }
 
