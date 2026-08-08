@@ -978,6 +978,17 @@ const __nodeDuplexPair = (readable, writable) => {
 };
 const __nodeDuplexFrom = (body) => {
   if (body instanceof NodeDuplex) return body;
+  if (typeof body === "function") {
+    const result = body();
+    if (result === undefined) {
+      const error = new TypeError(
+        "The function must return a stream or iterable"
+      );
+      error.code = "ERR_INVALID_RETURN_VALUE";
+      throw error;
+    }
+    return __nodeDuplexFrom(result);
+  }
   if (
     body &&
     typeof body === "object" &&
@@ -990,6 +1001,9 @@ const __nodeDuplexFrom = (body) => {
   const writable = body?.writable === true || typeof body?.write === "function";
   if (readable || writable) {
     return __nodeDuplexPair(readable ? body : null, writable ? body : null);
+  }
+  if (body && typeof body.stream === "function") {
+    return __nodeDuplexFromWeb({ readable: body.stream() });
   }
   if (
     body &&
