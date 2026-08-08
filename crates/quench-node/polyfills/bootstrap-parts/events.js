@@ -730,6 +730,7 @@ class NodeWritable extends NodeEventEmitter {
     this._autoDestroy = options.autoDestroy !== false;
     this._corkedChunks = [];
     this._write = options.write;
+    this._final = options.final;
     this._destroy = options.destroy;
     this.writableDefaultEncoding = options.defaultEncoding || "utf8";
     if (this._autoDestroy && !options.__quenchCompatConstruct) {
@@ -762,6 +763,32 @@ class NodeWritable extends NodeEventEmitter {
       __nodeWritableDestroyComplete(this, callback, destroyError);
     if (this._destroy) this._destroy.call(this, error || null, complete);
     else queueMicrotask(() => complete(error));
+    return this;
+  }
+  _undestroy() {
+    this.destroyed = false;
+    this.closed = false;
+    this.writable = true;
+    this.writableAborted = false;
+    this.writableEnded = false;
+    this.writableFinished = false;
+    this.writableNeedDrain = false;
+    this.writableLength = 0;
+    this.writableCorked = 0;
+    this._writableState = {
+      objectMode: this.writableObjectMode,
+      needDrain: false,
+      ending: false,
+      ended: false,
+      finished: false,
+      writable: undefined,
+      writing: false,
+      errored: null,
+      errorEmitted: false
+    };
+    this.errored = null;
+    this.__destroyCompleteScheduled = false;
+    this.__writeErrorEmitted = false;
     return this;
   }
   cork() {
