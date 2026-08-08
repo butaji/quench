@@ -468,6 +468,7 @@ const __quenchNetModule = {
     }
     connect(_options, callback) {
       globalThis.__quenchValidateConnectionOptions(_options);
+      if (!this._handle) this._handle = { setKeepAlive: () => {} };
       if (typeof callback === "function") this.once("connect", callback);
       if (_options?.__quenchNativeTransport) {
         const nativeHost = _options.host || "127.0.0.1";
@@ -481,6 +482,19 @@ const __quenchNetModule = {
         __quenchNativeSockets.add(this);
       }
       queueMicrotask(() => this.emit("connect"));
+      if (!_options?.__quenchNativeTransport) {
+        queueMicrotask(() => {
+          const server = [...__quenchNetServers].find(
+            (candidate) => candidate.listening
+          );
+          if (!server?._handler) return;
+          const serverSocket = new __quenchNetModule.Socket();
+          serverSocket._handle = { setKeepAlive: () => {} };
+          this._peer = serverSocket;
+          serverSocket._peer = this;
+          server._handler(serverSocket);
+        });
+      }
       return this;
     }
     write(_data, callback) {
@@ -542,19 +556,6 @@ const __quenchNetModule = {
     socket._handle = { setKeepAlive: () => {} };
     socket.connect(options, callback);
     if (options?.__quenchNativeTransport) return socket;
-    queueMicrotask(() => {
-      const server = [...__quenchNetServers].find(
-        (candidate) => candidate.listening
-      );
-      if (server?._handler) {
-        const serverSocket = new __quenchNetModule.Socket();
-        serverSocket._handle = { setKeepAlive: () => {} };
-        socket._handle = { setKeepAlive: () => {} };
-        socket._peer = serverSocket;
-        serverSocket._peer = socket;
-        server._handler(serverSocket);
-      }
-    });
     return socket;
   },
   setDefaultAutoSelectFamilyAttemptTimeout: () => undefined,
