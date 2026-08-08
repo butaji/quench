@@ -13,7 +13,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::value::object::Object;
-use crate::value::{JsError, NativeFunction, ObjectKind, PropertyFlags, Value};
+use crate::value::{NativeFunction, ObjectKind, PropertyFlags, Value};
 use crate::Context;
 
 /// Register the frozen `__ops__` object on the context's global scope.
@@ -23,9 +23,9 @@ pub fn register_ops_object(ctx: &mut Context) {
     // toPrimitive(value, hint) — hint is "number", "string", or undefined
     let to_primitive_fn = NativeFunction::new(|args: Vec<Value>| {
         let value = args.first().cloned().unwrap_or(Value::Undefined);
-        let hint = args.get(1).map(|v| crate::value::to_js_string(v));
+        let hint = args.get(1).map(crate::value::to_js_string);
         let hint_str = hint.as_deref();
-        crate::eval::ops::to_primitive(&value, hint_str).map_err(JsError::from)
+        crate::eval::ops::to_primitive(&value, hint_str)
     });
     ops.define(
         "toPrimitive",
@@ -57,13 +57,151 @@ pub fn register_ops_object(ctx: &mut Context) {
     // toPropertyKey(value)
     let to_property_key_fn = NativeFunction::new(|args: Vec<Value>| {
         let value = args.first().cloned().unwrap_or(Value::Undefined);
-        crate::eval::ops::to_property_key(&value)
-            .map(|k| Value::String(k))
-            .map_err(JsError::from)
+        crate::eval::ops::to_property_key(&value).map(Value::String)
     });
     ops.define(
         "toPropertyKey",
         Value::NativeFunction(Rc::new(to_property_key_fn)),
+        PropertyFlags {
+            value: None,
+            writable: false,
+            enumerable: false,
+            configurable: false,
+        },
+    );
+
+    // toObject(value)
+    let to_object_fn = NativeFunction::new(|args: Vec<Value>| {
+        let value = args.first().cloned().unwrap_or(Value::Undefined);
+        Ok(crate::eval::ops::to_object(&value))
+    });
+    ops.define(
+        "toObject",
+        Value::NativeFunction(Rc::new(to_object_fn)),
+        PropertyFlags {
+            value: None,
+            writable: false,
+            enumerable: false,
+            configurable: false,
+        },
+    );
+
+    // toString(value)
+    let to_string_fn = NativeFunction::new(|args: Vec<Value>| {
+        let value = args.first().cloned().unwrap_or(Value::Undefined);
+        Ok(Value::String(crate::eval::ops::to_string(&value)))
+    });
+    ops.define(
+        "toString",
+        Value::NativeFunction(Rc::new(to_string_fn)),
+        PropertyFlags {
+            value: None,
+            writable: false,
+            enumerable: false,
+            configurable: false,
+        },
+    );
+
+    // sameValue(a, b)
+    let same_value_fn = NativeFunction::new(|args: Vec<Value>| {
+        let a = args.first().cloned().unwrap_or(Value::Undefined);
+        let b = args.get(1).cloned().unwrap_or(Value::Undefined);
+        Ok(Value::Boolean(crate::eval::ops::same_value(&a, &b)))
+    });
+    ops.define(
+        "sameValue",
+        Value::NativeFunction(Rc::new(same_value_fn)),
+        PropertyFlags {
+            value: None,
+            writable: false,
+            enumerable: false,
+            configurable: false,
+        },
+    );
+
+    // sameValueZero(a, b)
+    let same_value_zero_fn = NativeFunction::new(|args: Vec<Value>| {
+        let a = args.first().cloned().unwrap_or(Value::Undefined);
+        let b = args.get(1).cloned().unwrap_or(Value::Undefined);
+        Ok(Value::Boolean(crate::eval::ops::same_value_zero(&a, &b)))
+    });
+    ops.define(
+        "sameValueZero",
+        Value::NativeFunction(Rc::new(same_value_zero_fn)),
+        PropertyFlags {
+            value: None,
+            writable: false,
+            enumerable: false,
+            configurable: false,
+        },
+    );
+
+    // isCallable(value)
+    let is_callable_fn = NativeFunction::new(|args: Vec<Value>| {
+        let v = args.first().cloned().unwrap_or(Value::Undefined);
+        Ok(Value::Boolean(crate::eval::ops::is_callable(&v)))
+    });
+    ops.define(
+        "isCallable",
+        Value::NativeFunction(Rc::new(is_callable_fn)),
+        PropertyFlags {
+            value: None,
+            writable: false,
+            enumerable: false,
+            configurable: false,
+        },
+    );
+
+    // isConstructor(value)
+    let is_constructor_fn = NativeFunction::new(|args: Vec<Value>| {
+        let v = args.first().cloned().unwrap_or(Value::Undefined);
+        Ok(Value::Boolean(crate::eval::ops::is_constructor(&v)))
+    });
+    ops.define(
+        "isConstructor",
+        Value::NativeFunction(Rc::new(is_constructor_fn)),
+        PropertyFlags {
+            value: None,
+            writable: false,
+            enumerable: false,
+            configurable: false,
+        },
+    );
+
+    // hasOwn(obj, key)
+    let has_own_fn = NativeFunction::new(|args: Vec<Value>| {
+        let obj = args.first().cloned().unwrap_or(Value::Undefined);
+        let key = args
+            .get(1)
+            .map(crate::value::to_js_string)
+            .unwrap_or_default();
+        match obj {
+            Value::Object(o) => Ok(Value::Boolean(crate::eval::ops::has_own(&o, &key))),
+            _ => Err(crate::eval::ops::throw_type_error("hasOwn: not an object")),
+        }
+    });
+    ops.define(
+        "hasOwn",
+        Value::NativeFunction(Rc::new(has_own_fn)),
+        PropertyFlags {
+            value: None,
+            writable: false,
+            enumerable: false,
+            configurable: false,
+        },
+    );
+
+    // throwTypeError(message)
+    let throw_type_error_fn = NativeFunction::new(|args: Vec<Value>| {
+        let msg = args
+            .first()
+            .map(crate::value::to_js_string)
+            .unwrap_or_default();
+        Err(crate::eval::ops::throw_type_error(&msg))
+    });
+    ops.define(
+        "throwTypeError",
+        Value::NativeFunction(Rc::new(throw_type_error_fn)),
         PropertyFlags {
             value: None,
             writable: false,

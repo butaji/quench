@@ -8,9 +8,17 @@
 
 // Re-export the canonical implementations from their homes.
 pub use crate::builtins::object_static::to_property_key;
+pub use crate::value::coerce::to_js_string as to_string; // ToString (§7.1.12)
 pub use crate::value::coerce::to_number;
+pub use crate::value::compare::same_value; // SameValue (§7.2.9)
+pub use crate::value::primitive::to_object; // ToObject (§7.1.13)
 pub use crate::value::primitive::to_primitive;
 pub use crate::value::primitive::PrimitiveHint;
+
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use crate::value::{Object, Value};
 
 /// PreferredType for ToPrimitive hint (ES spec §7.1.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,6 +36,36 @@ impl PreferredType {
             PreferredType::String => Some("string"),
         }
     }
+}
+
+/// SameValueZero (§7.2.10): like SameValue but +0 and -0 compare equal.
+pub fn same_value_zero(a: &Value, b: &Value) -> bool {
+    if let (Value::Number(ai), Value::Number(bi)) = (a, b) {
+        if *ai == 0.0 && *bi == 0.0 {
+            return true;
+        }
+    }
+    same_value(a, b)
+}
+
+/// IsCallable (§7.2.3).
+pub fn is_callable(v: &Value) -> bool {
+    v.is_callable()
+}
+
+/// IsConstructor (§7.2.4).
+pub fn is_constructor(v: &Value) -> bool {
+    crate::eval::class::helpers::is_constructor_value(v)
+}
+
+/// OrdinaryHasOwnProperty (§7.3.2): whether `o` has an own property `key`.
+pub fn has_own(o: &Rc<RefCell<Object>>, key: &str) -> bool {
+    o.borrow().has_own(key)
+}
+
+/// Throw a TypeError from a JS builtin.
+pub fn throw_type_error(msg: &str) -> crate::JsError {
+    crate::value::error::create_js_error_with_type(msg, "TypeError").1
 }
 
 #[cfg(test)]
@@ -184,5 +222,49 @@ mod tests {
         assert_eq!(PreferredType::Default.as_option_str(), None);
         assert_eq!(PreferredType::Number.as_option_str(), Some("number"));
         assert_eq!(PreferredType::String.as_option_str(), Some("string"));
+    }
+
+    // ── same_value_zero (§7.2.10) ───────────────────────────────────────────────
+
+    #[test]
+    fn test_same_value_zero_plus_minus_zero() {
+        // SameValueZero treats +0 and -0 as equal (unlike SameValue).
+        assert!(same_value_zero(&Value::Number(0.0), &Value::Number(-0.0)));
+        assert!(!same_value(&Value::Number(0.0), &Value::Number(-0.0)));
+    }
+
+    #[test]
+    fn test_same_value_zero_nan() {
+        assert!(same_value_zero(&Value::Number(f64::NAN), &Value::Number(f64::NAN)));
+        assert!(same_value(&Value::Number(f64::NAN), &Value::Number(f64::NAN)));
+    }
+
+    #[test]
+    fn test_same_value_zero_distinct() {
+        assert!(!same_value_zero(&Value::Number(1.0), &Value::Number(2.0)));
+        assert!(!same_value_zero(&Value::String("a".into()), &Value::String("b".into())));
+    }
+
+    // ── is_callable / is_constructor ────────────────────────────────────────────
+
+    #[test]
+    fn test_is_callable_and_constructor() {
+        let mut ctx = crate::Context::new().unwrap();
+        let fn_val = ctx.eval("(function () {})").unwrap();
+        let arrow_val = ctx.eval("(() => {})").unwrap();
+        let num_val = Value::Number(1.0);
+        assert!(is_callable(&fn_val));
+        assert!(is_callable(&arrow_val));
+        assert!(!is_callable(&num_val));
+        assert!(is_constructor(&fn_val));
+        assert!(!is_constructor(&arrow_val));
+    }
+
+    // ── throw_type_error ────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_throw_type_error_is_type_error() {
+        let err = throw_type_error("boom");
+        assert!(err.to_string().contains("TypeError"));
     }
 }
