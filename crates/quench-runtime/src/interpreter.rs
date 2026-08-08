@@ -376,6 +376,32 @@ pub fn reset_depth() {
     CURRENT_DEPTH.with(|cell| cell.set(0));
 }
 
+/// Reset all interpreter thread-local run-state to its default. The threaded
+/// test262 runner gets this for free (each test runs on a fresh thread with
+/// empty thread-locals), but the in-thread runner reuses one thread across
+/// many tests, so a stale NEW_TARGET / CONTROL_FLOW / label stack / generator
+/// value would otherwise leak from one test into the next. Call at the start of
+/// each top-level test run (not from Context::new, which is also used for
+/// nested realm creation and must not clobber the caller's in-progress state).
+pub fn reset_interpreter_state() {
+    CONTROL_FLOW.with(|cell| cell.set(None));
+    CURRENT_EVAL_ENV.with(|cell| *cell.borrow_mut() = None);
+    GENERATOR_RESUME_VALUE.with(|cell| *cell.borrow_mut() = Value::Undefined);
+    GENERATOR_YIELD_VALUE.with(|cell| *cell.borrow_mut() = None);
+    GENERATOR_RETURN_VALUE.with(|cell| *cell.borrow_mut() = None);
+    LABEL_STACK.with(|cell| cell.borrow_mut().clear());
+    EVAL_BARRIER_DEPTH.with(|cell| *cell.borrow_mut() = 0);
+    DIRECT_EVAL.with(|cell| cell.set(false));
+    EVAL_IN_CLASS_FIELD.with(|cell| cell.set(false));
+    INSIDE_SUPER_CALL.with(|cell| cell.set(0));
+    CURRENT_THIS.with(|cell| cell.set(None));
+    CALL_THIS.with(|cell| cell.set(None));
+    CURRENT_DEPTH.with(|cell| cell.set(0));
+    SUPER_CLASS.with(|cell| *cell.borrow_mut() = None);
+    NEW_TARGET.with(|cell| *cell.borrow_mut() = None);
+    STRICT_MODE.with(|cell| cell.set(false));
+}
+
 /// Evaluate a complete program with hoisting.
 pub fn eval_ir_program(
     program: &crate::ir::IrProgram,
