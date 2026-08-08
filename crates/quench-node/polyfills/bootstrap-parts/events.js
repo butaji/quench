@@ -308,11 +308,20 @@ class NodeReadable extends NodeEventEmitter {
       !this.readableEnded || (this._ended && !this.listenerCount("end"));
     this.readable = false;
     const hasError = error !== undefined && error !== null;
-    if (!hasError && this._destroy) {
-      this._destroy.call(this, null, (destroyError) => {
-        if (destroyError) this.destroy(destroyError, callback);
-        else {
-          this.destroyed = true;
+    if (this._destroy && !this._destroying) {
+      this._destroying = true;
+      this._destroy.call(this, hasError ? error : null, (destroyError) => {
+        if (destroyError) {
+          this._readableState.errored = destroyError;
+          this._readableState.errorEmitted = false;
+          this.errored = destroyError;
+          queueMicrotask(() => {
+            this._readableState.errorEmitted = true;
+            this.emit("error", destroyError);
+            __nodeReadableEmitClose(this);
+            if (callback) callback(destroyError);
+          });
+        } else {
           queueMicrotask(() => {
             __nodeReadableEmitClose(this);
             if (callback) callback();
@@ -642,6 +651,7 @@ Object.defineProperty(NodeReadable.prototype, "readableDidRead", {
     return this._readableState?.dataEmitted === true;
   }
 });
+NodeReadable.prototype.destroyed = false;
 class NodeWritable extends NodeEventEmitter {
   constructor(options = {}) {
     super();
