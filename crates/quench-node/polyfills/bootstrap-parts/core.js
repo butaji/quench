@@ -1236,6 +1236,31 @@ let __quenchHttpModule;
       response.finished = false;
       response.writableEnded = false;
       response.writableFinished = false;
+      response.closed = false;
+      response.errored = undefined;
+      const signalDestroy = response.destroy;
+      response.destroy = (error) => {
+        if (response.__clientRequest && error !== undefined) {
+          if (response.destroyed) return response;
+          response.destroyed = true;
+          response.errored = error;
+          queueMicrotask(() => {
+            response.__clientRequest.emit("error", error);
+            response.closed = true;
+            response.emit("close");
+          });
+          return response;
+        }
+        if (response.__httpClientResponse) return signalDestroy(error);
+        if (response.destroyed) return response;
+        response.destroyed = true;
+        if (error !== undefined) response.errored = error;
+        queueMicrotask(() => {
+          response.closed = true;
+          response.emit("close");
+        });
+        return response;
+      };
       const socket = Object.assign(new globalThis.__nodeEventEmitter(), {
         writableCorked: 0,
         writableHighWaterMark: 16 * 1024,
@@ -1964,6 +1989,7 @@ let __quenchHttpModule;
       };
       const response = makeResponse();
       response.__httpClientResponse = true;
+      response.__clientRequest = request;
       if (context?.address) {
         response.socket.__quenchServerPort = context.address().port;
       }
@@ -2041,8 +2067,8 @@ let __quenchHttpModule;
         response.emit("close");
         return request;
       };
-      response.destroy = () => {
-        destroyResponse();
+      response.destroy = (error) => {
+        destroyResponse(error);
         destroyRequest();
         return response;
       };
