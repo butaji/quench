@@ -1,10 +1,12 @@
 const __quenchOriginalRequireWithWebStreams = globalThis.require;
+const __quenchWebStreamsState = Symbol("kState");
 class __quenchReadableStream {
   constructor(source = {}) {
     this._queue = [];
     this._closed = false;
     this._readWaiters = [];
     const controller = {
+      desiredSize: 0,
       enqueue: (value) => {
         const waiter = this._readWaiters.shift();
         if (waiter) waiter({ value, done: false });
@@ -17,6 +19,7 @@ class __quenchReadableStream {
         }
       }
     };
+    this[__quenchWebStreamsState] = { controller };
     source.start?.(controller);
   }
   getReader() {
@@ -158,6 +161,9 @@ if (globalThis.Blob?.prototype) {
   };
 }
 globalThis.require = (specifier) => {
+  if (String(specifier).replace(/^node:/, "") === "internal/webstreams/util") {
+    return { kState: __quenchWebStreamsState };
+  }
   if (String(specifier).replace(/^node:/, "") === "stream/web") {
     return __quenchWebStreams;
   }
