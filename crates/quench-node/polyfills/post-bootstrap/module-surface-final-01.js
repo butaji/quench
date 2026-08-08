@@ -897,6 +897,10 @@ const __quenchApplyFinalModule01 = (name, originalRequire) => {
 };
 if (globalThis.require) {
   const originalRequire = globalThis.require;
-  globalThis.require = (name) =>
+  const wrappedRequire = (name) =>
     __quenchApplyFinalModule01(name, originalRequire);
+  Object.assign(wrappedRequire, originalRequire);
+  wrappedRequire.cache = originalRequire.cache || Object.create(null);
+  wrappedRequire.extensions = originalRequire.extensions || Object.create(null);
+  globalThis.require = wrappedRequire;
 }

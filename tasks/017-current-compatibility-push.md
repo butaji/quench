@@ -539,3 +539,8 @@ JavaScript. The focused native-addon error contract and upstream
 Focused stage 2110 implements `Module._stat()`: it returns `1` for
 directories, `0` for files, and a negative value for missing paths. The
 focused contract and upstream `test-module-stat.js` both pass.
+
+Focused stage 2111 exposes the top-level CommonJS `module` object plus
+`require.cache` and `require.extensions`. The main module has a null parent and
+the expected filename, matching Node’s entrypoint surface. The focused
+contract and upstream `test-module-parent-deprecation.js` both pass.
