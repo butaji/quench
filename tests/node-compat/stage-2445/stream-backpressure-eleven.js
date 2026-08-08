@@ -16,7 +16,7 @@ const target = new Writable({
   }
 });
 source.pipe(target);
-setTimeout(() => {
+target.on("finish", () => {
   console.log(
     JSON.stringify({
       reads,
@@ -25,4 +25,4 @@ setTimeout(() => {
       finished: target.writableFinished
     })
   );
-}, 100);
+});
