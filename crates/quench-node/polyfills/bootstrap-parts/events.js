@@ -1230,6 +1230,7 @@ class NodeTransform extends NodeWritable {
     super(options);
     this.readable = options.readable !== false;
     this.writable = options.writable !== false;
+    this._readableChunks = [];
     if (typeof options.transform === "function") {
       this._transform = options.transform;
     }
@@ -1261,8 +1262,18 @@ class NodeTransform extends NodeWritable {
       queueMicrotask(() => this.emit("error", error));
       return false;
     }
-    if (chunk !== undefined) this.emit("data", chunk);
+    if (chunk !== undefined) {
+      if (this.listenerCount("data")) this.emit("data", chunk);
+      else {
+        this._readableChunks.push(chunk);
+        if (this.listenerCount("readable"))
+          queueMicrotask(() => this.emit("readable"));
+      }
+    }
     return chunk !== null;
+  }
+  read() {
+    return this._readableChunks.shift() ?? null;
   }
   write(chunk, encoding, callback) {
     if (typeof encoding === "function") {
