@@ -844,6 +844,15 @@ macro_rules! run_host_context {
             .map_err(|error| { eprintln!("Final global surface failure: {error:?}"); error })?;
         if !ctx.globals().get::<_, bool>("__quench_force_exit").unwrap_or(false) {
             loop {
+                let pending_timer = ctx.eval::<i64, _>(b"typeof globalThis.__quench_timer_next_delay === 'function' ? globalThis.__quench_timer_next_delay() : -1")?;
+                if pending_timer >= 0 {
+                    std::thread::sleep(std::time::Duration::from_millis(pending_timer.min(60_000) as u64));
+                    ctx.eval::<(), _>(b"if (typeof globalThis.__quench_io_poll === 'function') globalThis.__quench_io_poll(); if (typeof globalThis.__quench_timer_poll === 'function') globalThis.__quench_timer_poll();")?;
+                    while ctx.execute_pending_job() {
+                        ctx.eval::<(), _>(b"if (typeof globalThis.__quench_timer_poll === 'function') globalThis.__quench_timer_poll();")?;
+                    }
+                    continue;
+                }
                 ctx.eval::<(), _>(b"try { if (typeof process?.emit === 'function') process.emit('beforeExit', process.exitCode || 0); } catch (error) { globalThis.__quench_exit_error = error && error.stack ? `${error.name}: ${error.message}\\n${error.stack}` : String(error); throw error; }")
                     .map_err(|error| {
                         let detail = ctx.globals().get::<_, String>("__quench_exit_error").unwrap_or_else(|_| format!("{error:?}"));
