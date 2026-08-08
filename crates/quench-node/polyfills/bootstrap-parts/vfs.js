@@ -975,6 +975,9 @@ class __QuenchVirtualFileSystem {
       return fd;
     }
     const key = __quenchVfsPath(path);
+    if (this.__entry(key)?.type === "dir") {
+      throw __quenchVfsError("EISDIR", "open", path);
+    }
     if (this.__entry(key) && String(flags).includes("x")) {
       throw __quenchVfsError("EEXIST", "open", path);
     }
@@ -1745,9 +1748,14 @@ __QuenchVirtualFileSystem.prototype.read = function (
     callback = position;
     position = null;
   }
-  __quenchVfsCallback(this, callback, () =>
-    this.readSync(fd, buffer, offset, length, position)
-  );
+  queueMicrotask(() => {
+    try {
+      const bytesRead = this.readSync(fd, buffer, offset, length, position);
+      callback(null, bytesRead, buffer);
+    } catch (error) {
+      callback(error);
+    }
+  });
 };
 __QuenchVirtualFileSystem.prototype.write = function (
   fd,
@@ -1761,9 +1769,14 @@ __QuenchVirtualFileSystem.prototype.write = function (
     callback = position;
     position = null;
   }
-  __quenchVfsCallback(this, callback, () =>
-    this.writeSync(fd, buffer, offset, length, position)
-  );
+  queueMicrotask(() => {
+    try {
+      const bytesWritten = this.writeSync(fd, buffer, offset, length, position);
+      callback(null, bytesWritten, buffer);
+    } catch (error) {
+      callback(error);
+    }
+  });
 };
 __QuenchVirtualFileSystem.prototype.close = function (fd, callback) {
   __quenchVfsCallback(this, callback, () => this.closeSync(fd));
