@@ -514,3 +514,8 @@ Focused stage 2105 adds Node-compatible `module.createRequire()` filename
 validation for file URLs, absolute paths, relative paths, HTTPS URLs, and
 invalid objects. The focused contract and upstream
 `test-module-create-require.js` both pass.
+
+Focused stage 2106 fixes percent-encoded Unicode file URLs in
+`module.createRequire()`. Both the focused multibyte path contract and
+upstream `test-module-create-require-multibyte.js` pass, along with the base
+createRequire fixture.
