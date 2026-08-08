@@ -251,6 +251,20 @@ pub fn register_ops_object(ctx: &mut Context) {
         },
     );
 
+    // preventExtensions(obj)
+    let prevent_extensions_fn =
+        NativeFunction::new(crate::builtins::object_static::object_prevent_extensions);
+    ops.define(
+        "preventExtensions",
+        Value::NativeFunction(Rc::new(prevent_extensions_fn)),
+        PropertyFlags {
+            value: None,
+            writable: false,
+            enumerable: false,
+            configurable: false,
+        },
+    );
+
     // throwTypeError(message)
     let throw_type_error_fn = NativeFunction::new(|args: Vec<Value>| {
         let msg = args

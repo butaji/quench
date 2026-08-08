@@ -19,3 +19,8 @@ Object.getPrototypeOf = function getPrototypeOf(o) {
 Object.setPrototypeOf = function setPrototypeOf(o, proto) {
   return __ops__.setPrototypeOf(o, proto);
 };
+
+// Object.preventExtensions(o) — §19.1.2.15: ToObject(o), then make non-extensible.
+Object.preventExtensions = function preventExtensions(o) {
+  return __ops__.preventExtensions(__ops__.toObject(o));
+};
