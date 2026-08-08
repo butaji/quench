@@ -307,6 +307,7 @@ const __quenchNetModule = {
       super();
       this.readable = true;
       this.writable = true;
+      this.readyState = "open";
       this.allowHalfOpen = false;
       this.destroyed = false;
       this._bufferSize = 0;
@@ -355,7 +356,14 @@ const __quenchNetModule = {
       }
       return this;
     }
-    setKeepAlive() {
+    setKeepAlive(enable = false, initialDelay = 0) {
+      if (typeof this._handle?.setKeepAlive === "function") {
+        const delay = Math.max(
+          0,
+          Math.floor((Number(initialDelay) || 0) / 1000)
+        );
+        this._handle.setKeepAlive(Boolean(enable), delay);
+      }
       return this;
     }
     setTimeout(timeout, callback) {
@@ -406,6 +414,7 @@ const __quenchNetModule = {
     }
     destroy() {
       this.destroyed = true;
+      this.readyState = "closed";
       if (this._timeoutTimer) {
         globalThis.clearTimeout(this._timeoutTimer);
         this._timeoutTimer = null;
@@ -491,6 +500,7 @@ const __quenchNetModule = {
   createConnection: (options, callback) => {
     globalThis.__quenchValidateConnectionOptions(options);
     const socket = new __quenchNetModule.Socket();
+    socket._handle = { setKeepAlive: () => {} };
     socket.connect(options, callback);
     if (options?.__quenchNativeTransport) return socket;
     queueMicrotask(() => {
@@ -499,6 +509,8 @@ const __quenchNetModule = {
       );
       if (server?._handler) {
         const serverSocket = new __quenchNetModule.Socket();
+        serverSocket._handle = { setKeepAlive: () => {} };
+        socket._handle = { setKeepAlive: () => {} };
         socket._peer = serverSocket;
         serverSocket._peer = socket;
         server._handler(serverSocket);
