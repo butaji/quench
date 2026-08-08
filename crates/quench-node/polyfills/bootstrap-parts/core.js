@@ -1833,6 +1833,11 @@ let __quenchHttpModule;
       request.destroy = (error) => {
         if (request.destroyed) return request;
         request.destroyed = true;
+        if (request.socket?.__timeoutTimer !== undefined) {
+          clearTimeout(request.socket.__timeoutTimer);
+          request.socket.__timeoutTimer = undefined;
+        }
+        if (request.socket) request.socket.destroyed = true;
         if (request.__signalAbortListener) {
           options.signal?.removeEventListener(
             "abort",
@@ -2051,15 +2056,16 @@ let __quenchHttpModule;
         } else {
           request._timeoutAfterConnect = msecs;
         }
-        if (msecs === 0 && !request.__socketTimeoutListener) {
-          request.__socketTimeoutListener = () => request.emit("timeout");
-          request.socket.once("timeout", request.__socketTimeoutListener);
-        }
         if (request._timeoutTimer !== undefined) {
           clearTimeout(request._timeoutTimer);
         }
         if (typeof callback === "function") request.once("timeout", callback);
-        if (msecs > 0 && !request.destroyed && !request.aborted) {
+        if (
+          msecs > 0 &&
+          !request.socket &&
+          !request.destroyed &&
+          !request.aborted
+        ) {
           request._timeoutTimer = setTimeout(() => {
             request._timeoutTimer = undefined;
             if (!request.destroyed && !request.aborted) request.emit("timeout");
