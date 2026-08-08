@@ -158,6 +158,12 @@ large backpressure trace reaches 18 writes and 3 reads, up from 1 write before
 interleaving. The remaining 3/11 readable-demand mismatch is now isolated from
 timer starvation and is the next stream-state target.
 
+The upstream backpressure guard also exposed a missing public state contract:
+`_readableState.length` was absent. It now reflects the live buffered-chunk
+length. The exact fixture advances from an assertion exception to a
+deterministic 3/11 `_read()` mismatch; the failing diagnostic stage was
+removed, while the passing large trace remains as evidence.
+
 Stage 2443 independently verifies `Readable.from(asyncGenerator).take(1)`
 resolves `toArray()` without waiting for the generator's next promise, and the
 upstream generator remains unadvanced until explicitly released. The full
