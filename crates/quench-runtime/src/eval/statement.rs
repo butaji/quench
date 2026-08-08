@@ -207,7 +207,16 @@ pub fn eval_function_body(
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
 ) -> Result<Value, JsError> {
-    eval_function_body_with_meta(stmts, env, in_arrow_function).map(|r| r.value)
+    let r = eval_function_body_with_meta(stmts, env, in_arrow_function)?;
+    // ES §9.2.6: a function body that completes without a `return` statement
+    // produces the value `undefined`, regardless of the last statement's
+    // completion value. Only an explicit `return` (or an arrow expression body,
+    // handled separately) yields a value.
+    if r.explicit_return {
+        Ok(r.value)
+    } else {
+        Ok(Value::Undefined)
+    }
 }
 
 pub(crate) fn eval_function_body_with_meta(
