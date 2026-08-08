@@ -297,6 +297,10 @@ Stage 2394 adds the missing `internal/vfs/file_handle` `VirtualFileHandle`
 base class, including stub error contracts, metadata no-ops, close state, and
 async disposal. The focused stage and authoritative
 `test-vfs-virtual-file-handle.js` now pass completely.
+Stage 2395 adds VFS `createReadStream()` and `createWriteStream()` surfaces
+with paths, delayed open/ready events, range/encoding reads, and writable file
+updates. The focused stream-surface stage passes; the authoritative
+`test-vfs-streams.js` now advances to a remaining lifecycle callback mismatch.
 
 Stage 2378 passes the four basic stream `destroy()` contracts for readable and
 writable streams, including implicit `AbortError`, explicit error messages,

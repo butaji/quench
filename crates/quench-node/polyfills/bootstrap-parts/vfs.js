@@ -1106,6 +1106,79 @@ class __QuenchVirtualFileSystem {
     if (!this.__isReal()) return;
     return globalThis.__nodeFs.unwatchFile(this.__realPath(path), listener);
   }
+  createReadStream(path, options = {}) {
+    const stream = new globalThis.__nodeStream.Readable({
+      highWaterMark: options.highWaterMark,
+      read() {}
+    });
+    stream.path = path;
+    stream.fd = null;
+    stream.bytesRead = 0;
+    stream.close = (callback) => {
+      if (stream.fd !== null) {
+        try {
+          this.closeSync(stream.fd);
+        } catch (_) {}
+        stream.fd = null;
+      }
+      if (typeof callback === "function") queueMicrotask(callback);
+      return stream;
+    };
+    setTimeout(() => {
+      try {
+        const fd = this.openSync(path, "r");
+        stream.fd = fd;
+        stream.emit("open", fd);
+        stream.emit("ready");
+        const bytes = globalThis.Buffer.from(this.readFileSync(path));
+        const start = options.start ?? 0;
+        const end = options.end === undefined ? bytes.length : options.end + 1;
+        const chunk = bytes.subarray(start, Math.min(end, bytes.length));
+        if (options.encoding) stream.setEncoding(options.encoding);
+        if (chunk.length) {
+          stream.push(
+            options.encoding ? chunk.toString(options.encoding) : chunk
+          );
+          stream.bytesRead = chunk.length;
+        }
+        stream.push(null);
+        if (options.autoClose !== false)
+          stream.once("end", () => stream.close());
+      } catch (error) {
+        stream.emit("error", error);
+        stream.destroy();
+      }
+    }, 0);
+    return stream;
+  }
+  createWriteStream(path, options = {}) {
+    const flags = options.flags || "w";
+    const stream = new globalThis.__nodeStream.Writable({
+      write: (chunk, encoding, callback) => {
+        try {
+          const data =
+            typeof chunk === "string" ? chunk : globalThis.Buffer.from(chunk);
+          if (flags.includes("a")) this.appendFileSync(path, data);
+          else this.writeFileSync(path, data);
+          callback();
+        } catch (error) {
+          callback(error);
+        }
+      }
+    });
+    stream.path = path;
+    stream.fd = null;
+    setTimeout(() => {
+      try {
+        stream.fd = this.openSync(path, flags);
+        stream.emit("open", stream.fd);
+        stream.emit("ready");
+      } catch (error) {
+        stream.emit("error", error);
+      }
+    }, 0);
+    return stream;
+  }
   readdirSync(path, options = {}) {
     if (this.__isReal()) {
       return globalThis.__nodeFs.readdirSync(this.__realPath(path), options);
