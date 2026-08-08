@@ -100,10 +100,29 @@ fn map_clear_impl(_args: Vec<Value>) -> Result<Value, JsError> {
 
 fn map_iterator_impl(_args: Vec<Value>) -> Result<Value, JsError> {
     let this = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
-    let items = map_entries(&this)
-        .map(|e| e.borrow().elements.clone())
-        .unwrap_or_default();
-    Ok(self::helpers::make_iterator(items))
+    let Some(entries) = map_entries(&this) else {
+        return Ok(self::helpers::make_iterator(Vec::new()));
+    };
+    // Live iterator: read the current entries at each index so entries added
+    // during traversal are visited (per ES MapIterator).
+    let index = Rc::new(RefCell::new(0usize));
+    let next_fn = NativeFunction::new(move |_| {
+        let mut res = Object::new(ObjectKind::Ordinary);
+        let mut i = index.borrow_mut();
+        let e = entries.borrow();
+        if *i < e.elements.len() {
+            res.set("value", e.elements[*i].clone());
+            res.set("done", Value::Boolean(false));
+            *i += 1;
+        } else {
+            res.set("value", Value::Undefined);
+            res.set("done", Value::Boolean(true));
+        }
+        Ok(Value::Object(Rc::new(RefCell::new(res))))
+    });
+    let mut iter = Object::new(ObjectKind::Ordinary);
+    iter.set("next", Value::NativeFunction(Rc::new(next_fn)));
+    Ok(Value::Object(Rc::new(RefCell::new(iter))))
 }
 
 pub fn register_map_and_set(ctx: &mut Context) {

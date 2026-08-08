@@ -7,7 +7,7 @@ use super::helpers::{
     init_set_object, iterator_prop_key, make_iterator, map_update_size, native_fn, set_has_value,
     set_populate, set_values,
 };
-use crate::value::{JsError, Object, ObjectKind, Value};
+use crate::value::{JsError, NativeFunction, Object, ObjectKind, Value};
 use crate::Context;
 
 fn set_add_impl(args: Vec<Value>) -> Result<Value, JsError> {
@@ -68,10 +68,29 @@ fn set_clear_impl(_args: Vec<Value>) -> Result<Value, JsError> {
 
 fn set_iterator_impl(_args: Vec<Value>) -> Result<Value, JsError> {
     let this = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
-    let items = set_values(&this)
-        .map(|v| v.borrow().elements.clone())
-        .unwrap_or_default();
-    Ok(make_iterator(items))
+    let Some(values) = set_values(&this) else {
+        return Ok(make_iterator(Vec::new()));
+    };
+    // Live iterator: read the current values at each index so values added
+    // during traversal are visited (per ES SetIterator).
+    let index = Rc::new(RefCell::new(0usize));
+    let next_fn = NativeFunction::new(move |_| {
+        let mut res = Object::new(ObjectKind::Ordinary);
+        let mut i = index.borrow_mut();
+        let v = values.borrow();
+        if *i < v.elements.len() {
+            res.set("value", v.elements[*i].clone());
+            res.set("done", Value::Boolean(false));
+            *i += 1;
+        } else {
+            res.set("value", Value::Undefined);
+            res.set("done", Value::Boolean(true));
+        }
+        Ok(Value::Object(Rc::new(RefCell::new(res))))
+    });
+    let mut iter = Object::new(ObjectKind::Ordinary);
+    iter.set("next", Value::NativeFunction(Rc::new(next_fn)));
+    Ok(Value::Object(Rc::new(RefCell::new(iter))))
 }
 
 pub fn register_set(ctx: &mut Context, set_proto: Rc<RefCell<Object>>) {
