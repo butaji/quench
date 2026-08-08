@@ -1,6 +1,9 @@
 # ADR 0002: Compact IR + IR interpreter (not walker, not bytecode yet)
 
-- Status: accepted (2026-08-08)
+- Status: accepted (2026-08-08); scoped by ADR 0003 — this ADR governs the
+  near-term Tier-0 interpreter on the ECMAScript execution plane. The
+  long-term instruction encoding is compact bytecode per ADR 0003;
+  "not bytecode yet" applies to the current milestone only.
 - Context: the engine pipeline is documented as `OXC AST -> Quench IR ->
   interpreter` (`docs/architecture.md`), but `QuenchIr`/`IrProgram`
   (`src/ir.rs`) is only an owned `Box<[ast::Statement]>` wrapper — execution
