@@ -587,12 +587,9 @@ globalThis.__nodeFs.promises = {
         error ? reject(error) : resolve()
       );
     }),
-  access: (value, mode) =>
-    new Promise((resolve, reject) =>
-      globalThis.__nodeFs.access(value, mode, (error) =>
-        error ? reject(error) : resolve()
-      )
-    ),
+  access: async (value, mode = 0) => {
+    globalThis.__nodeFs.accessSync(value, mode);
+  },
   truncate: (value, length = 0) =>
     Promise.resolve().then(() =>
       globalThis.__nodeFs.truncateSync(value, length)
