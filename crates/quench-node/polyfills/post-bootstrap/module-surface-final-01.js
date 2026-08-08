@@ -902,5 +902,7 @@ if (globalThis.require) {
   Object.assign(wrappedRequire, originalRequire);
   wrappedRequire.cache = originalRequire.cache || Object.create(null);
   wrappedRequire.extensions = originalRequire.extensions || Object.create(null);
+  const moduleApi = originalRequire("module");
+  moduleApi._extensions = wrappedRequire.extensions;
   globalThis.require = wrappedRequire;
 }
