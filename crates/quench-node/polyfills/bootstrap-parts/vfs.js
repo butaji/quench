@@ -296,10 +296,10 @@ class __QuenchVirtualFileSystem {
   __entry(path) {
     return this.__entries.get(__quenchVfsResolvePath(this.__entries, path));
   }
-  __makeHandle(path, flags) {
+  __makeHandle(path, flags, existingFd) {
     flags = __quenchVfsNormalizeFlags(flags);
     if (this.provider instanceof __QuenchRealFSProvider) {
-      const fd = this.openSync(path, flags);
+      const fd = existingFd ?? this.openSync(path, flags);
       let closed = false;
       const check = () => {
         if (closed) throw __quenchVfsError("EBADF", "read", path);
@@ -313,11 +313,37 @@ class __QuenchVirtualFileSystem {
             )
           : globalThis.Buffer.from(bytes);
       };
+      const readSync = (buffer, offset, length, position) => {
+        check();
+        const bytes = globalThis.__quench_fs_native_read_at(
+          fd,
+          position == null ? 0 : position,
+          length
+        );
+        buffer.set(bytes, offset);
+        return bytes.length;
+      };
+      const writeSync = (buffer, offset, length, position) => {
+        check();
+        return globalThis.__quench_fs_native_write_at(
+          fd,
+          position == null ? 0 : position,
+          Array.from(buffer.subarray(offset, offset + length))
+        );
+      };
+      const statSync = () => {
+        check();
+        return globalThis.__nodeFs.fstatSync(fd);
+      };
       return {
         fd,
         get closed() {
           return closed;
         },
+        readSync,
+        writeSync,
+        statSync,
+        stat: async () => statSync(),
         readFileSync,
         readFile: async (options) => readFileSync(options),
         closeSync: () => {
@@ -858,6 +884,10 @@ class __QuenchVirtualFileSystem {
       );
       this.__realFds.add(fd);
       this.__fds.set(fd, this.__realPath(path));
+      globalThis.__quenchVfsFdHandles ||= new Map();
+      globalThis.__quenchVfsFdHandles.set(fd, {
+        entry: this.__makeHandle(path, flags, fd)
+      });
       return fd;
     }
     const key = __quenchVfsPath(path);
