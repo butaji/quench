@@ -159,6 +159,12 @@ fn eval_for_of_iterator(
             Ok(pair) => pair,
             Err(e) => return abrupt_close(&iterator, Err(e)),
         };
+        // If the loop body suspended at a generator yield, leave the iterator
+        // open and propagate the yield signal so the generator's next() suspends
+        // here (the loop resumes at this point on a later next()).
+        if crate::interpreter::peek_generator_yield() {
+            return Ok(body_val);
+        }
         if let Some(flow) = flow {
             match flow {
                 ControlFlow::Break(_) => {
