@@ -98,10 +98,12 @@ const __quenchDgramSend = (socket, message, ...args) => {
     !ArrayBuffer.isView(message)
   ) {
     throw Object.assign(
-      new TypeError('The "buffer" argument must be a Buffer'),
-      {
-        code: "ERR_INVALID_ARG_TYPE"
-      }
+      new TypeError(
+        `The "buffer" argument must be of type string or an instance of Buffer, TypedArray, or DataView.${__quenchDgramTypeDetail(
+          message
+        )}`
+      ),
+      { code: "ERR_INVALID_ARG_TYPE" }
     );
   }
   const hasOffset =
@@ -134,12 +136,39 @@ const __quenchDgramSend = (socket, message, ...args) => {
       { code: "ERR_INVALID_ARG_TYPE" }
     );
   }
+  if (
+    Array.isArray(message) &&
+    message.some(
+      (chunk) =>
+        typeof chunk !== "string" &&
+        !(chunk instanceof NodeBuffer) &&
+        !ArrayBuffer.isView(chunk) &&
+        !(chunk instanceof ArrayBuffer)
+    )
+  ) {
+    throw Object.assign(
+      new TypeError(
+        'The "buffer list arguments" argument must be of type string or an instance of Buffer, TypedArray, or DataView. Received an instance of Array'
+      ),
+      { code: "ERR_INVALID_ARG_TYPE" }
+    );
+  }
   const callback = args.at(-1);
   const destinationPort = socket._connected
     ? socket._remote?.port
     : hasOffset
       ? args[2]
       : args[0];
+  if (
+    !socket._connected &&
+    (!Number.isInteger(destinationPort) ||
+      destinationPort <= 0 ||
+      destinationPort >= 65536)
+  ) {
+    throw Object.assign(new RangeError("Port should be > 0 and < 65536"), {
+      code: "ERR_SOCKET_BAD_PORT"
+    });
+  }
   const payload =
     typeof message === "string"
       ? NodeBuffer.from(message)
@@ -164,6 +193,31 @@ const __quenchDgramSend = (socket, message, ...args) => {
           : NodeBuffer.from(payload);
   const offset = hasOffset ? args[0] : 0;
   const length = hasOffset ? args[1] : payload.byteLength;
+  if (socket._connected && args.length >= 3) {
+    throw Object.assign(new Error("Already connected"), {
+      code: "ERR_SOCKET_DGRAM_IS_CONNECTED"
+    });
+  }
+  if (
+    hasOffset &&
+    (!Number.isInteger(offset) || offset < 0 || offset > bytePayload.byteLength)
+  ) {
+    throw Object.assign(
+      new RangeError('"offset" is outside of buffer bounds'),
+      { code: "ERR_BUFFER_OUT_OF_BOUNDS" }
+    );
+  }
+  if (
+    hasOffset &&
+    (!Number.isInteger(length) ||
+      length < 0 ||
+      offset + length > bytePayload.byteLength)
+  ) {
+    throw Object.assign(
+      new RangeError('"length" is outside of buffer bounds'),
+      { code: "ERR_BUFFER_OUT_OF_BOUNDS" }
+    );
+  }
   const deliveredPayload = hasOffset
     ? bytePayload.subarray(offset, offset + length)
     : bytePayload;
