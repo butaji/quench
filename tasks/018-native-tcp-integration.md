@@ -93,3 +93,12 @@ confirming the ordering diagnosis. It still failed the full backpressure and
 watch-promises fixtures and consumed CPU during long waits, so the prototype
 was discarded rather than integrated. A production fix needs host-backed
 non-blocking timers or an equivalent bounded scheduler mechanism.
+
+The local `rquickjs` 0.9 source confirms two host-backed implementation routes:
+`AsyncRuntime`/`AsyncContext` with `Promise::wrap_future()` can host a Rust
+sleep future, but would require migrating the synchronous harness; alternatively
+the existing `Runtime` can keep its shape while a Rust deadline registry is
+polled alongside `__quench_io_poll()` and `execute_pending_job()`. The latter
+is the smaller integration seam: JavaScript timer creation/cancellation would
+register deadlines, and the host loop would dispatch due callbacks without
+blocking the JS job queue.
