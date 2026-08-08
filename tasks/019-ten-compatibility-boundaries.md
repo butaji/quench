@@ -596,3 +596,9 @@ through the direct runtime binary, including block five with `interval: 1000`.
 The remaining upstream timeout is therefore in an assertion or harness detail
 not represented by that reduced sequence; no broader watcher claim is made
 from this probe.
+
+The current binary recheck preserves the same VFS promise boundary: stage
+2420's mounted mutation/attribute sequence passes, while the complete
+`test-vfs-fs-promises.js` fixture still exits with `Callback 0`. This confirms
+the aggregate failure has not regressed into the independently verified
+operation sequence.
