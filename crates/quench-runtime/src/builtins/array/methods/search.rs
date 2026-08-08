@@ -1,6 +1,6 @@
 //! Array search methods (indexOf, includes, find, findLast, findLastIndex)
 
-use crate::value::{to_number, JsError, ObjectKind, Value};
+use crate::value::{JsError, ObjectKind, Value};
 
 /// Get the array elements from 'this'
 fn get_this_array() -> Result<Vec<Value>, JsError> {
@@ -43,46 +43,6 @@ fn call_find_callback(
 // ============================================================================
 // Search method implementations
 // ============================================================================
-
-/// Resolve a fromIndex argument: negative values count back from the end.
-fn resolve_from_index(arg: Option<&Value>, len: usize) -> usize {
-    match arg {
-        Some(v) => {
-            let n = to_number(v);
-            if n < 0.0 {
-                ((len as f64 + n).max(0.0)) as usize
-            } else {
-                (n as usize).min(len)
-            }
-        }
-        None => 0,
-    }
-}
-
-/// SameValueZero comparison (like strict equality, but NaN matches NaN
-/// and +0/-0 are treated as equal).
-fn same_value_zero(a: &Value, b: &Value) -> bool {
-    if let (Value::Number(x), Value::Number(y)) = (a, b) {
-        return x == y || (x.is_nan() && y.is_nan());
-    }
-    crate::value::strict_eq(a, b)
-}
-
-/// Array.prototype.indexOf(searchElement, fromIndex?)
-/// Array.prototype.includes(searchElement, fromIndex?)
-pub fn proto_includes(args: Vec<Value>) -> Result<Value, JsError> {
-    let elements = get_this_array()?;
-    let search = args.first().cloned().unwrap_or(Value::Undefined);
-    let from_idx = resolve_from_index(args.get(1), elements.len());
-
-    #[allow(clippy::needless_range_loop)]
-    for i in from_idx..elements.len() {
-        if same_value_zero(&elements[i], &search) {
-            return Ok(Value::Boolean(true));
-        }
-    }
-    Ok(Value::Boolean(false))
-}
 
 /// Array.prototype.find(predicate, thisArg?)
 pub fn proto_find(args: Vec<Value>) -> Result<Value, JsError> {
