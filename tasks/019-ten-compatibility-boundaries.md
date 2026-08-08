@@ -58,7 +58,9 @@ reaches the public custom-agent path but receives quench's intentional
 `ENOTSUP` from `NodeHttpAgent.createConnection()` where Node requires a live
 reusable socket (and reports `ECONNRESET` only for `destroy`, not `abort`).
 This is now classified as the remaining agent/transport integration boundary;
-no error-code-only shim was added.
+a prototype custom socket path reached the queued-request scheduler but sent
+a response to the request marked `mustNotCall`, so it was reverted. No
+error-code-only shim was added.
 
 - Item 7: partially improved. Stage 2340 verifies default-address bind,
   implicit sender bind, packet delivery, remote metadata, and close callback
