@@ -626,3 +626,8 @@ timers before emitting `beforeExit`. Crate tests and stage 2445 remain green;
 the authoritative `test-stream-backpressure.js` fixture still reports only
 3/11 `read` calls, so the remaining gap is explicitly tracked as event-loop
 tracing work rather than claimed as complete.
+
+The readable-demand guard now prevents `_read()` from being scheduled while
+the buffered length is already at `highWaterMark`. This advances the official
+backpressure fixture from 3/11 reads to 11/11 reads; its remaining assertion is
+396/410 write callbacks, isolating the next gap to final buffered-chunk drain.
