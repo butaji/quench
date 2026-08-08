@@ -341,11 +341,6 @@ pub fn set_super_property(
     };
 
     // Walk the prototype chain to find a setter (ES §10.2.9.2 OrdinarySetWithOwnDescriptor).
-    let this_obj = match &this_val {
-        Value::Object(o) => Some(o.clone()),
-        _ => None,
-    };
-
     let mut current: Option<Rc<RefCell<Object>>> = Some(proto);
     while let Some(obj_rc) = current {
         {
@@ -361,9 +356,19 @@ pub fn set_super_property(
         }
     }
 
-    // No setter found. Assign to `this` directly.
-    if let Some(this_obj) = this_obj {
-        crate::eval::object::assign_to_object(&this_obj, &prop_name, &value, env)?;
+    // No setter found. Assign to the receiver (`this`) directly. The receiver
+    // may be a plain object, a function, or a class (e.g. static method super).
+    match &this_val {
+        Value::Object(this_obj) => {
+            crate::eval::object::assign_to_object(this_obj, &prop_name, &value, env)?;
+        }
+        Value::Function(f) => {
+            let _ = f.set_property(&prop_name, value.clone());
+        }
+        Value::Class(class) => {
+            class.set_static_property(&prop_name, value.clone(), env)?;
+        }
+        _ => {}
     }
 
     Ok(value)
