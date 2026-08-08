@@ -398,6 +398,9 @@ Stages 2416 and 2417 also pass the full mounted attribute tail and the
 `link`/`mkdtemp` operations. The complete `test-vfs-fs-promises.js` failure is
 now narrowed to an interaction in its single long sequence, despite every
 operation family passing independently.
+The VFS sweep's `test-vfs-memory-provider.js` now passes completely after
+adding `MemoryProvider.setReadOnly()` and centralized `EROFS` guards for
+mutating operations. Reads and metadata remain available in read-only mode.
 
 Stage 2378 passes the four basic stream `destroy()` contracts for readable and
 writable streams, including implicit `AbortError`, explicit error messages,
