@@ -2490,7 +2490,7 @@ let __quenchHttpModule;
           options = {};
         } else if (options == null) {
           options = {};
-        } else if (typeof options !== "object") {
+        } else if (typeof options !== "object" || Array.isArray(options)) {
           const error = new TypeError(
             'The "options" argument must be of type object'
           );
