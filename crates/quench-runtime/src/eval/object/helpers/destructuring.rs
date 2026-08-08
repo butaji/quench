@@ -345,6 +345,12 @@ pub fn call_iterator_return(iterator: &Rc<RefCell<Object>>, is_error: bool) -> O
     };
     drop(binding);
     if !callable {
+        // Per ES GetMethod, a non-callable `return` throws TypeError. When the
+        // iteration already completed abruptly with an error, that original
+        // error takes precedence.
+        if is_error {
+            return None;
+        }
         let (_, js_err) = crate::value::error::create_js_error_with_type(
             "iterator.return is not a function",
             "TypeError",
