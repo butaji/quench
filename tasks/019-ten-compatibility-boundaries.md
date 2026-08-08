@@ -30,6 +30,10 @@ own commit.
 - Item 2: partially improved. Stage 2334 verifies `connecting` true before
   the connect turn and false during the connect event; remote-address fixture
   lifecycle callbacks remain unresolved.
+- Item 2: improved further. `net.Server.close()` now tracks accepted sockets
+  and completes its close callback/event after the tracked set drains. The
+  authoritative `test-net-server-close.js` passes; native transport and
+  broader remote-address lifecycle cases remain separate.
 - Item 3: improved. Stage 2335 and upstream
   `test-net-socket-timeout-unref.js` pass with socket `ref`, `unref`, and
   `hasRef` state.
