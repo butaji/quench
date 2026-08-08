@@ -1870,7 +1870,16 @@ let __quenchHttpModule;
       request.path = request.url;
       request.protocol =
         context?.constructor?.name === "NodeHttpServer" ? "http:" : "http:";
-      request.host = options.hostname || options.host || "localhost";
+      const optionHostname = Object.prototype.hasOwnProperty.call(
+        options,
+        "hostname"
+      )
+        ? options.hostname
+        : undefined;
+      const optionHost = Object.prototype.hasOwnProperty.call(options, "host")
+        ? options.host
+        : undefined;
+      request.host = optionHostname || optionHost || "localhost";
       request.method = options.method || "GET";
       request.writable = true;
       request.socket = Object.assign(new globalThis.__nodeEventEmitter(), {
@@ -2880,7 +2889,9 @@ let __quenchHttpModule;
           callback = typeof options === "function" ? options : callback;
           options = target;
           for (const name of ["hostname", "host"]) {
-            const value = options[name];
+            const value = Object.prototype.hasOwnProperty.call(options, name)
+              ? options[name]
+              : undefined;
             if (
               value !== undefined &&
               value !== null &&
@@ -2923,9 +2934,18 @@ let __quenchHttpModule;
             options.defaultPort ??
             options.agent?.defaultPort ??
             80;
-          target = `http://${
-            options.hostname || options.host || "localhost"
-          }:${effectivePort}${options.path || "/"}`;
+          const hostname = Object.prototype.hasOwnProperty.call(
+            options,
+            "hostname"
+          )
+            ? options.hostname
+            : undefined;
+          const host = Object.prototype.hasOwnProperty.call(options, "host")
+            ? options.host
+            : undefined;
+          target = `http://${hostname || host || "localhost"}:${effectivePort}${
+            options.path || "/"
+          }`;
           if (
             options.timeout !== undefined &&
             typeof options.timeout !== "number"
