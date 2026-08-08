@@ -442,7 +442,7 @@ const __quenchReadableConcurrentTransform = async function* (
   } finally {
     controller.abort();
     externalSignal?.removeEventListener?.("abort", onAbort);
-    await iterator.return?.();
+    iterator.return?.();
   }
 };
 const __quenchReadableSliceSource = async function* (stream, operations) {
@@ -461,7 +461,7 @@ const __quenchReadableSliceSource = async function* (stream, operations) {
       yield next.value;
     }
   } finally {
-    await iterator.return?.();
+    iterator.return?.();
     if (!stream.readableEnded && !stream.destroyed) stream.destroy?.();
   }
 };
