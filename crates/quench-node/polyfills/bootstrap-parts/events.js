@@ -277,6 +277,11 @@ class NodeReadable extends NodeEventEmitter {
       errorEmitted: false,
       errored: null
     };
+    Object.defineProperty(this._readableState, "length", {
+      configurable: true,
+      enumerable: true,
+      get: () => this.readableLength
+    });
     this.errored = null;
     if (typeof options.read === "function") this._read = options.read;
     this.readableHighWaterMark =
