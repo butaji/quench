@@ -1,5 +1,4 @@
 const __quenchDnsFallbacks = (result) => {
-  result = Object.assign({}, result);
   result.resolve ||= (hostname, callback) => callback?.(null, []);
   result.resolve4 ||= result.resolve;
   result.resolve6 ||= result.resolve;
