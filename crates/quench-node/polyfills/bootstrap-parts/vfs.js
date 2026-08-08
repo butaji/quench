@@ -1978,6 +1978,20 @@ for (const __quenchVfsFsMethod of [
 ]) {
   __quenchVfsWrapFs(__quenchVfsFsMethod);
 }
+const __quenchVfsOriginalOpenAsBlob = globalThis.__nodeFs?.openAsBlob;
+if (typeof __quenchVfsOriginalOpenAsBlob === "function") {
+  globalThis.__nodeFs.openAsBlob = (path, options) => {
+    const vfs = [...__quenchVfsMounts]
+      .reverse()
+      .find((item) => item.shouldHandle(path));
+    if (!vfs) return __quenchVfsOriginalOpenAsBlob(path, options);
+    return Promise.resolve(
+      new Blob([vfs.readFileSync(__quenchVfsRelative(vfs, path))], {
+        type: options?.type || ""
+      })
+    );
+  };
+}
 const __quenchVfsWrapAsyncFs = (name, syncName = `${name}Sync`) => {
   const original = globalThis.__nodeFs?.[name];
   if (typeof original !== "function") return;

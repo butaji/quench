@@ -107,6 +107,10 @@ globalThis.__nodeFs.createReadStream = function (value, options = {}) {
   }, 0);
   return stream;
 };
+globalThis.__nodeFs.openAsBlob = async (value, options = {}) => {
+  const data = globalThis.__nodeFs.readFileSync(value);
+  return new Blob([data], { type: options.type || "" });
+};
 globalThis.__nodeFs.ReadStream = globalThis.__nodeFs.createReadStream;
 class NodeAbortSignal {
   constructor(reason) {
