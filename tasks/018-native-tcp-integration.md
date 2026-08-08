@@ -85,3 +85,11 @@ backpressure and watch-promises fixtures, while ordinary timer fixtures and
 focused stream contracts pass. A future host scheduler step must provide
 non-blocking delayed callbacks with Node ordering; changing callback behavior
 in JavaScript alone would misrepresent timer semantics.
+
+An isolated clean-worktree prototype replaced synchronous delay with
+cooperative deadline polling using `__quench_now_ns()`. Its minimal stream
+trace advanced from two reads with no callbacks to four reads with callbacks,
+confirming the ordering diagnosis. It still failed the full backpressure and
+watch-promises fixtures and consumed CPU during long waits, so the prototype
+was discarded rather than integrated. A production fix needs host-backed
+non-blocking timers or an equivalent bounded scheduler mechanism.
