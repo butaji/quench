@@ -507,9 +507,19 @@ class __QuenchVirtualFileSystem {
       return false;
     }
   }
-  accessSync(path) {
-    if (!this.existsSync(path)) {
+  accessSync(path, mode = 0) {
+    const entry = this.__entry(path);
+    if (!entry) {
       throw __quenchVfsError("ENOENT", "access", path);
+    }
+    const requested = mode == null ? 0 : Number(mode);
+    const permissions = entry.mode ?? (entry.type === "dir" ? 0o755 : 0o666);
+    if (
+      (requested & 4 && !(permissions & 0o444)) ||
+      (requested & 2 && !(permissions & 0o222)) ||
+      (requested & 1 && !(permissions & 0o111))
+    ) {
+      throw __quenchVfsError("EACCES", "access", path);
     }
   }
   truncateSync(path, length = 0) {
@@ -526,8 +536,10 @@ class __QuenchVirtualFileSystem {
       entry.data += "\0".repeat(size - entry.data.length);
     }
   }
-  chmodSync(path) {
-    if (!this.__entry(path)) throw __quenchVfsError("ENOENT", "chmod", path);
+  chmodSync(path, mode) {
+    const entry = this.__entry(path);
+    if (!entry) throw __quenchVfsError("ENOENT", "chmod", path);
+    entry.mode = Number(mode) & 0o777;
   }
   chownSync(path) {
     if (!this.__entry(path)) throw __quenchVfsError("ENOENT", "chown", path);
@@ -566,13 +578,13 @@ class __QuenchVirtualFileSystem {
               ? 0o40755
               : entry.type === "symlink"
                 ? 0o120777
-                : 0o100644
+                : 0o100000 | (entry.mode ?? 0o666)
           )
         : entry.type === "dir"
           ? 0o40755
           : entry.type === "symlink"
             ? 0o120777
-            : 0o100644,
+            : 0o100000 | (entry.mode ?? 0o666),
       ino: options?.bigint
         ? BigInt(__quenchVfsNextIno++)
         : __quenchVfsNextIno++,
@@ -689,7 +701,8 @@ class __QuenchVirtualFileSystem {
     }
     this.__entries.set(key, {
       type: "file",
-      data: typeof data === "string" ? data : String(data)
+      data: typeof data === "string" ? data : String(data),
+      mode: 0o666
     });
   }
   appendFileSync(path, data) {
