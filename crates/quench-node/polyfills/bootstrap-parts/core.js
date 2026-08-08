@@ -2622,6 +2622,7 @@ let __quenchHttpModule;
                 headers["transfer-encoding"]?.toLowerCase() === "chunked";
               let body = "";
               let consumedBody = 0;
+              const trailers = Object.create(null);
               if (isChunked) {
                 let cursor = bodyStart;
                 for (;;) {
@@ -2638,6 +2639,22 @@ let __quenchHttpModule;
                   body += pending.slice(chunkStart, chunkEnd);
                   cursor = chunkEnd + 2;
                   if (size === 0) {
+                    if (pending.slice(cursor, cursor + 2) === "\r\n") {
+                      cursor += 2;
+                    } else {
+                      const trailerEnd = pending.indexOf("\r\n\r\n", cursor);
+                      if (trailerEnd < 0) return;
+                      for (const trailer of pending
+                        .slice(cursor, trailerEnd)
+                        .split("\r\n")) {
+                        const separator = trailer.indexOf(":");
+                        if (separator > 0) {
+                          trailers[trailer.slice(0, separator).toLowerCase()] =
+                            trailer.slice(separator + 1).trim();
+                        }
+                      }
+                      cursor = trailerEnd + 4;
+                    }
                     consumedBody = cursor - bodyStart;
                     break;
                   }
@@ -2656,6 +2673,7 @@ let __quenchHttpModule;
               request.httpVersion = (version || "HTTP/1.1").slice(5);
               request.headers = headers;
               request.rawHeaders = rawHeaders;
+              request.trailers = trailers;
               request.socket = socket;
               pending = pending.slice(consumedBody);
               const response = new NodeServerResponse(request);

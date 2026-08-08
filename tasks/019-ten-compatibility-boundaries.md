@@ -45,7 +45,9 @@ own commit.
   buffering and data/end delivery; stage 2351 verifies client half-close
   behavior. Stage 2352 adds chunked request-body decoding, and stage 2353 adds
   standards-compliant chunked response framing. More complete HTTP parsing and
-  lifecycle semantics remain queued.
+  lifecycle semantics remain queued. Stage 2365 consumes chunked request
+  trailers, exposes them on `IncomingMessage.trailers`, and preserves the next
+  keep-alive request.
 - Item 6: partially improved. Stage 2339 verifies two concurrent HTTP requests
   with independent response bodies and clean shutdown; upstream multi-request
   failures remain specific to harness/agent interactions.
