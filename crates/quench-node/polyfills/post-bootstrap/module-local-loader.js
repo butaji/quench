@@ -32,11 +32,14 @@ const __quenchPackageEntry = (root, subpath) => {
 };
 const __quenchResolvedExtensions = new Map();
 const __quenchPackagePath = (specifier, parent) => {
-  const parts = specifier.startsWith("@")
-    ? specifier.split("/").slice(0, 2)
-    : specifier.split("/").slice(0, 1);
+  const normalizedSpecifier = specifier.replace(/\/+$/, "");
+  const parts = normalizedSpecifier.startsWith("@")
+    ? normalizedSpecifier.split("/").slice(0, 2)
+    : normalizedSpecifier.split("/").slice(0, 1);
   const packageName = parts.join("/");
-  const subpath = specifier.slice(packageName.length).replace(/^\//, "");
+  const subpath = normalizedSpecifier
+    .slice(packageName.length)
+    .replace(/^\//, "");
   let directory = path.dirname(parent);
   while (true) {
     const root = path.join(directory, "node_modules", packageName);
@@ -47,8 +50,10 @@ const __quenchPackagePath = (specifier, parent) => {
           `${root}.json`,
           `${root}.node`
         ]) {
-          __nodeFs.readFileSync(candidate, "utf8");
-          return candidate;
+          try {
+            __nodeFs.readFileSync(candidate, "utf8");
+            return candidate;
+          } catch (_) {}
         }
       }
       const entry = __quenchPackageEntry(root, subpath);
@@ -87,7 +92,18 @@ const __quenchValidateRequireId = (specifier) => {
   }
 };
 const __quenchResolve = (specifier, parent, options) => {
-  __quenchValidateRequireId(specifier);
+  if (typeof specifier !== "string") {
+    let received;
+    if (specifier === null) received = "null";
+    else if (specifier === undefined) received = "undefined";
+    else if (typeof specifier === "object") received = "an instance of Object";
+    else received = `type ${typeof specifier} (${String(specifier)})`;
+    const error = new TypeError(
+      `The "request" argument must be of type string. Received ${received}`
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
   if (options !== undefined && (!options || typeof options !== "object")) {
     const error = new TypeError("options must be an object");
     error.code = "ERR_INVALID_ARG_TYPE";
@@ -112,7 +128,8 @@ const __quenchResolve = (specifier, parent, options) => {
       throw error;
     }
   }
-  const normalized = String(specifier).replace(/^node:/, "");
+  const request = specifier.replace(/\/+$/, "");
+  const normalized = request.replace(/^node:/, "");
   if (
     __quenchOriginalRequireWithLocalModules("module").builtinModules.includes(
       normalized
@@ -131,18 +148,18 @@ const __quenchResolve = (specifier, parent, options) => {
   const lookupParent =
     (suppliedPath && path.resolve(suppliedPath, "index.js")) || parent;
   let filename;
-  if (specifier.startsWith(".") || specifier.startsWith("/")) {
-    filename = __quenchLocalModulePath(specifier, lookupParent);
+  if (request.startsWith(".") || request.startsWith("/")) {
+    filename = __quenchLocalModulePath(request, lookupParent);
   } else if (
     suppliedPath &&
     path.basename(path.resolve(suppliedPath)) === "node_modules"
   ) {
-    filename = __quenchLocalModulePath(
-      specifier,
-      path.join(suppliedPath, "index.js")
+    filename = __quenchPackagePath(
+      request,
+      path.join(path.dirname(suppliedPath), "index.js")
     );
   } else {
-    filename = __quenchPackagePath(specifier, lookupParent);
+    filename = __quenchPackagePath(request, lookupParent);
   }
   try {
     return __nodeFs.realpathSync(filename);
@@ -151,8 +168,21 @@ const __quenchResolve = (specifier, parent, options) => {
   }
 };
 const __quenchResolvePaths = (specifier, parent) => {
-  __quenchValidateRequireId(specifier);
-  if (specifier.startsWith(".") || specifier.startsWith("/")) return null;
+  if (typeof specifier !== "string") {
+    let received;
+    if (specifier === null) received = "null";
+    else if (specifier === undefined) received = "undefined";
+    else if (typeof specifier === "object") received = "an instance of Object";
+    else received = `type ${typeof specifier} (${String(specifier)})`;
+    const error = new TypeError(
+      `The "request" argument must be of type string. Received ${received}`
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  if (specifier.startsWith(".") || specifier.startsWith("/")) {
+    return [path.dirname(parent)];
+  }
   const normalized = String(specifier).replace(/^node:/, "");
   if (
     __quenchOriginalRequireWithLocalModules("module").builtinModules.includes(
@@ -208,18 +238,19 @@ const __quenchLoadLocalModule = (specifier, parent) => {
     specifier.startsWith(".") || specifier.startsWith("/")
       ? __quenchLocalModulePath(specifier, parent)
       : __quenchPackagePath(specifier, parent);
+  let cacheFilename = filename;
   try {
-    filename = __nodeFs.realpathSync(filename);
+    cacheFilename = __nodeFs.realpathSync(filename);
   } catch (_) {}
   if (
-    __quenchLocalModuleCache.has(filename) &&
+    __quenchLocalModuleCache.has(cacheFilename) &&
     globalThis.require.cache &&
-    !globalThis.require.cache[filename]
+    !globalThis.require.cache[cacheFilename]
   ) {
-    __quenchLocalModuleCache.delete(filename);
+    __quenchLocalModuleCache.delete(cacheFilename);
   }
-  if (__quenchLocalModuleCache.has(filename)) {
-    return __quenchLocalModuleCache.get(filename).exports;
+  if (__quenchLocalModuleCache.has(cacheFilename)) {
+    return __quenchLocalModuleCache.get(cacheFilename).exports;
   }
   if (filename.endsWith(".node")) {
     const error = new Error(`file too short: ${filename}`);
@@ -229,7 +260,7 @@ const __quenchLoadLocalModule = (specifier, parent) => {
   const source = __nodeFs.readFileSync(filename, "utf8");
   const path = __quenchOriginalRequireWithLocalModules("path");
   const module = { exports: {}, children: [], parent: null, filename };
-  __quenchLocalModuleCache.set(filename, module);
+  __quenchLocalModuleCache.set(cacheFilename, module);
   if (globalThis.require.cache) globalThis.require.cache[filename] = module;
   const basename = path.basename(filename);
   const extension =
@@ -267,7 +298,7 @@ const __quenchLoadLocalModule = (specifier, parent) => {
     try {
       return __quenchOriginalRequireWithLocalModules(name);
     } catch (_) {
-      return __quenchLoadLocalModule(name, filename);
+      return __quenchLoadLocalModule(name.replace(/\/+$/, ""), filename);
     }
   };
   localRequire.resolve = (name, options) =>
@@ -300,7 +331,7 @@ globalThis.require = (specifier) => {
       return __quenchOriginalRequireWithLocalModules(specifier);
     } catch (_) {
       return __quenchLoadLocalModule(
-        name,
+        name.replace(/\/+$/, ""),
         globalThis.__quench_script_filename || globalThis.__filename
       );
     }

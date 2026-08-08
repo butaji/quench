@@ -579,9 +579,14 @@ fixture remains open around custom `options.paths` ordering.
 Focused stage 2118 removes descendant duplicates from explicit
 `require.resolve(..., { paths })` lookup lists, matching Node’s handling of
 nested `node_modules` entries. The focused path-order contract passes.
-The broader `test-require-resolve.js` fixture now advances past its path-order
-assertions and remains open at trailing-slash package entry resolution
-(`no_index/`).
+The broader `test-require-resolve.js` fixture advanced past its path-order
+assertions and identified a trailing-slash package entry resolution gap
+(`no_index/`), fixed in stage 2119 below.
+
+Stage 2119 fixes package-main resolution for trailing-slash package names,
+preserves filesystem paths while using realpaths only for cache identity, and
+matches Node’s `require.resolve()` argument errors and relative lookup paths.
+The focused contract and upstream `test-require-resolve.js` both pass.
 
 Focused stage 2116 uses `module.globalPaths` when resolving bare packages, so
 packages provided through `NODE_PATH` load without a local `node_modules`
