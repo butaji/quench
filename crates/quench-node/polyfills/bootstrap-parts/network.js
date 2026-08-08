@@ -485,16 +485,16 @@ const __quenchNetModule = {
       if (typeof callback === "function") queueMicrotask(callback);
       if (this._nativeId) {
         __quench_tcp_shutdown(this._nativeId);
+        this.writable = false;
+        this.readyState = "readOnly";
         queueMicrotask(() => this.emit("finish"));
         return this;
       }
+      this.writable = false;
+      this.readyState = "readOnly";
       queueMicrotask(() => {
         this._bufferSize = 0;
-        this._handle = null;
-        this.destroyed = true;
         this.emit("finish");
-        this.emit("end");
-        this.emit("close");
         if (this._peer && !this._peer.destroyed) {
           queueMicrotask(() => this._peer.emit("end"));
         }
