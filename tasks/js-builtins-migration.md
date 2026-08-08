@@ -37,17 +37,21 @@ The loader and bridge that let JS builtins run at scale are landed:
 - [x] **Bootstrap ordering** — `bootstrap_js_builtins` runs after realm globals
       (`globalThis`) are set up, so JS builtins can attach to constructors.
 
-## Open core gap — constructor-static write aliases a same-named global
+## Open core gap — bare identifier resolves to a same-named constructor static
 
 `register_builtins` was called twice per realm (`Context::new()` + the explicit
 call in `test262/host.rs`), so constructor globals were replaced after
 bootstrap — fixed by removing the redundant re-registration in `host.rs`.
 
-Remaining gap: a JS `Number.isNaN = …` assignment also overwrites the global
-`isNaN` function (the bare `isNaN` becomes identical to `Number.isNaN`), so the
-no-coercion `Number.isNaN` clobbers the coercing global `isNaN`. `Number` is
-correctly the constructor (`Number !== globalThis`), and `set_static_method`
-only writes the constructor's map, yet the global binding changes. This blocks
+Remaining gap: a JS `Number.isNaN = …` (constructor-static write, via
+`assign_to_native_constructor` → `set_static_method`, which only touches the
+constructor's map) makes the **bare** `isNaN`/`isFinite` identifier resolve to
+the constructor static, even though `globalThis.isNaN` still holds the correct
+coercing function. So the no-coercion `Number.isNaN` shadows the coercing
+global `isNaN`. Mechanism: bare resolution (`Environment::get` →
+`get_global_this_property` → `Object::get`) walks the global object's property
+store/prototype chain and finds the constructor static, while direct
+`globalThis.isNaN` member access returns the own coercing function. This blocks
 migrating constructor statics whose names collide with global functions.
 `Number` statics migration was reverted pending this fix; global `isNaN`/
 `isFinite` (top-level functions) migrate cleanly.
