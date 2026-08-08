@@ -73,13 +73,39 @@ pub fn get_enumerable_keys(value: &Value) -> Result<Vec<String>, JsError> {
 }
 
 fn get_object_keys(o: &Rc<RefCell<Object>>) -> Result<Vec<String>, JsError> {
-    let obj = o.borrow();
-    let mut keys = obj.own_keys();
-    for i in 0..obj.elements.len() {
-        let key = i.to_string();
-        if !keys.contains(&key) {
-            keys.push(key);
+    // EnumerateObjectProperties: walk the prototype chain, collecting each
+    // object's own enumerable keys — integer indices ascending, then string
+    // keys in creation (descriptor insertion) order — skipping keys already
+    // seen (shadowed).
+    let mut keys = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut current: Option<Rc<RefCell<Object>>> = Some(Rc::clone(o));
+    while let Some(obj_rc) = current {
+        let obj = obj_rc.borrow();
+        for i in 0..obj.elements.len() {
+            if obj.holes.contains(&i) {
+                continue;
+            }
+            let key = i.to_string();
+            if !seen.contains(&key) {
+                seen.insert(key.clone());
+                if obj.is_enumerable(&key) {
+                    keys.push(key);
+                }
+            }
         }
+        for key in obj.descriptors.keys() {
+            if crate::value::object::as_array_index(key).is_some() {
+                continue;
+            }
+            if !seen.contains(key) {
+                seen.insert(key.clone());
+                if obj.is_enumerable(key) {
+                    keys.push(key.clone());
+                }
+            }
+        }
+        current = obj.prototype.clone();
     }
     Ok(keys)
 }

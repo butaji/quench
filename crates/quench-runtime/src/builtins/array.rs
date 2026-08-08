@@ -100,7 +100,7 @@ pub fn register_array(ctx: &mut Context) {
 
     // Set Array.prototype.constructor = the NativeConstructor
     let array_constructor_rc = Rc::new(array_constructor.clone());
-    array_proto_rc.borrow_mut().set(
+    array_proto_rc.borrow_mut().set_nonenumerable(
         "constructor",
         Value::NativeConstructor(Rc::clone(&array_constructor_rc)),
     );
@@ -165,7 +165,7 @@ fn make_array_direct(args: &[Value], proto: &Rc<RefCell<Object>>) -> Result<Valu
 }
 
 fn setup_array_length_getter(array_proto: &Rc<RefCell<Object>>) {
-    array_proto.borrow_mut().set(
+    array_proto.borrow_mut().set_nonenumerable(
         "length",
         Value::NativeFunction(Rc::new(NativeFunction::new(move |_| {
             match crate::builtins::get_native_this() {
@@ -196,7 +196,7 @@ pub fn register_array_iterator() {
     let iter_fn = NativeFunction::new(array_values_iterator);
     array_proto
         .borrow_mut()
-        .set(&key, Value::NativeFunction(Rc::new(iter_fn)));
+        .set_nonenumerable(&key, Value::NativeFunction(Rc::new(iter_fn)));
 }
 
 fn array_values_iterator(_args: Vec<Value>) -> Result<Value, JsError> {
