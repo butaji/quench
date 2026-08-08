@@ -1020,6 +1020,27 @@ class __QuenchVirtualFileSystem {
       typeof path !== "number"
     )
       return globalThis.__nodeFs.readFileSync(this.__realPath(path), options);
+    const flag = typeof options === "object" ? options.flag : undefined;
+    if (flag === "w+" || flag === "w") {
+      this.writeFileSync(path, "");
+    } else if (flag === "a+" || flag === "a") {
+      if (!this.existsSync(path)) this.writeFileSync(path, "");
+    }
+    const encoding =
+      options === "utf8"
+        ? "utf8"
+        : typeof options === "object"
+          ? options.encoding
+          : undefined;
+    if (
+      encoding &&
+      encoding !== "buffer" &&
+      !globalThis.Buffer.isEncoding(encoding)
+    ) {
+      const error = new TypeError(`Unknown encoding: ${encoding}`);
+      error.code = "ERR_UNKNOWN_ENCODING";
+      throw error;
+    }
     const key = typeof path === "number" ? this.__fds.get(path) : path;
     const entry = this.__entry(key);
     if (!entry) throw __quenchVfsError("ENOENT", "open", path);
@@ -1030,7 +1051,8 @@ class __QuenchVirtualFileSystem {
       error.code = "ERR_INVALID_STATE";
       throw error;
     }
-    return options === "utf8" || options?.encoding
+    return options === "utf8" ||
+      (options?.encoding && options.encoding !== "buffer")
       ? typeof data === "string"
         ? data
         : globalThis.Buffer.from(data).toString(
@@ -1673,9 +1695,13 @@ class __QuenchVirtualFileSystem {
       return globalThis.__nodeFs.rmSync(this.__realPath(path), options);
     }
     const key = __quenchVfsPath(path);
-    if (!this.__entries.has(key)) {
+    const entry = this.__entries.get(key);
+    if (!entry) {
       if (options.force) return;
       throw __quenchVfsError("ENOENT", "rm", path);
+    }
+    if (entry.type === "dir" && !options.recursive) {
+      throw __quenchVfsError("EISDIR", "rm", path);
     }
     for (const child of [...this.__entries.keys()]) {
       if (child === key || child.startsWith(`${key}/`)) {
