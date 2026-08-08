@@ -483,7 +483,7 @@ class NodeReadable extends NodeEventEmitter {
         }
       }
       if (!this._ended) {
-        this._pump?.();
+        __nodeReadableStart(this);
       } else if (!this._chunks.length) this._emitEnd();
     });
     return this;
