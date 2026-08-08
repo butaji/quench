@@ -88,6 +88,35 @@ pub fn assign_array_destructuring(
     assign_array_with_iterator(bindings, &iter, env)
 }
 
+/// Evaluate all assignment-target references in a binding pattern before any
+/// iterator consumption, so a throwing reference aborts early (per the LHS
+/// reference-evaluation phase of destructuring).
+fn touch_binding_references(
+    binding: &BindingElement,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<(), JsError> {
+    match binding {
+        BindingElement::AssignmentTarget(target) => {
+            crate::eval::object::touch_assignment_target(target, env)
+        }
+        BindingElement::ArrayPattern(elements) => {
+            for element in elements {
+                touch_binding_references(element, env)?;
+            }
+            Ok(())
+        }
+        BindingElement::ObjectPattern(props) => {
+            for (_, b) in props {
+                touch_binding_references(b, env)?;
+            }
+            Ok(())
+        }
+        BindingElement::Default(b, _) => touch_binding_references(b, env),
+        BindingElement::Rest(b) => touch_binding_references(b, env),
+        _ => Ok(()),
+    }
+}
+
 /// Obtain an iterator object from an iterable per ES GetIterator.
 pub fn obtain_iterator(o: &Rc<RefCell<Object>>) -> Result<Rc<RefCell<Object>>, JsError> {
     if o.borrow().get("next").is_some() {
@@ -149,12 +178,24 @@ pub fn assign_array_with_iterator(
     let mut iterator_done = false;
     for binding in bindings {
         if let BindingElement::Rest(inner) = binding {
+            // Evaluate the rest LHS reference before consuming the iterator.
+            if let Err(e) = touch_binding_references(inner, env) {
+                call_iterator_return(iterator, true);
+                return Err(e);
+            }
             let rest_array = collect_remaining_array(iterator, &mut index, env)?;
             if let Err(error) = assign_binding_elem(inner, &rest_array, env) {
                 call_iterator_return(iterator, true);
                 return Err(error);
             }
             return Ok(());
+        }
+        // Per IteratorDestructuringAssignmentEvaluation, the LHS references are
+        // evaluated before the iterator is stepped, so a throwing reference
+        // (e.g. a computed member with a thrower) aborts before consuming items.
+        if let Err(e) = touch_binding_references(binding, env) {
+            call_iterator_return(iterator, true);
+            return Err(e);
         }
         let (elem_value, done) = take_iterator_step(iterator, &mut index, env)?;
         iterator_done = done;
