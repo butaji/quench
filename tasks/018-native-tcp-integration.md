@@ -24,6 +24,11 @@ The focused ping/pong stage passes. The option is intentionally gated while
 ordering, half-close, liveness, and ordinary Node option normalization are
 completed.
 
+Stage 2316 adds native write shutdown and verifies a real client half-close:
+the server receives EOF, runs `end`, and completes cleanup. The upstream
+`test-net-allow-half-open-async-iter.js` still fails at its larger harness
+callback path, so this stage is only a transport primitive/lifecycle claim.
+
 ## Required integration contract
 
 1. The host must extend the Stage 2313 hook into a bounded native poll step that can report readable,
@@ -43,6 +48,7 @@ completed.
 - Stage 2313: host-owned I/O poll scheduling seam (passing).
 - Stage 2314: native stream readiness probe (passing).
 - Stage 2315: gated public `net` TCP ping/pong loopback (passing).
+- Stage 2316: gated native half-close and EOF delivery (passing).
 - Next: one accepted socket with one write/read round trip and explicit close.
 - Then: half-close exchange from Node's
   `test-net-allow-half-open-async-iter.js`.

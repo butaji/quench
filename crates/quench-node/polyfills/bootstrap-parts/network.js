@@ -408,6 +408,11 @@ const __quenchNetModule = {
         this.write(_data);
       }
       if (typeof callback === "function") queueMicrotask(callback);
+      if (this._nativeId) {
+        __quench_tcp_shutdown(this._nativeId);
+        queueMicrotask(() => this.emit("finish"));
+        return this;
+      }
       queueMicrotask(() => {
         this._bufferSize = 0;
         this._handle = null;
