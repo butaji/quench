@@ -293,7 +293,13 @@ pub fn take_iterator_step(
         return Err(JsError("TypeError: iterator threw".to_string()));
     }
     let Value::Object(result_obj) = result else {
-        return Ok((Value::Undefined, true));
+        // Per ES §7.4.2 IteratorNext: if Type(result) is not an Object, throw
+        // a TypeError (a non-Object iterator result is not "done").
+        let (_, js_err) = crate::value::error::create_js_error_with_type(
+            "Iterator result is not an object",
+            "TypeError",
+        );
+        return Err(js_err);
     };
     let done = crate::eval::member::eval_object_member(&result_obj, "done", Some(env))?;
     if crate::value::to_bool(&done) {
@@ -311,6 +317,23 @@ pub fn take_iterator_step(
 /// a non-Object return value; only the `return` method's own throw is surfaced
 /// on a normal close.
 pub fn call_iterator_return(iterator: &Rc<RefCell<Object>>, is_error: bool) -> Option<JsError> {
+    // Save the enclosing abrupt completion (break/continue/return) that
+    // triggered the close. The return-method must run without seeing it
+    // (eval_function_body would otherwise consume that stale completion
+    // mid-body and mis-return), but it must be restored afterward so the
+    // enclosing context keeps propagating it. When the return-method itself
+    // errors, that error takes precedence and the stale completion is dropped.
+    let saved_cf = crate::interpreter::take_control_flow();
+    let result = call_iterator_return_impl(iterator, is_error);
+    if result.is_none() {
+        if let Some(cf) = saved_cf {
+            crate::interpreter::set_control_flow(cf);
+        }
+    }
+    result
+}
+
+fn call_iterator_return_impl(iterator: &Rc<RefCell<Object>>, is_error: bool) -> Option<JsError> {
     let iter_this = Value::Object(Rc::clone(iterator));
     let binding = iterator.borrow();
     if let Some(getter) = binding.get_getter("return") {
@@ -515,7 +538,7 @@ fn copy_enumerable_own_properties(
         rest.set(&key, val);
     }
     // 2. String keys (non-numeric, non-symbol), in insertion order, then
-//    symbol keys (whose property-key form contains a NUL separator).
+    //    symbol keys (whose property-key form contains a NUL separator).
     for key in src
         .properties
         .keys()
