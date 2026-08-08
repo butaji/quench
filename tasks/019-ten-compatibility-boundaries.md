@@ -636,3 +636,9 @@ Writable finalization now waits for the active write and queued writes to drain
 before emitting `finish` or auto-destroying. The authoritative
 `test-stream-backpressure.js` fixture now passes at 11/11 reads and 410/410
 writes, and stage 2445 remains green.
+
+The legacy PassThrough override was removed in favor of the canonical stream
+implementation. A focused object-mode pipe stage now confirms that string
+chunks count as one unit, avoiding premature `drain` registration. The full
+pipe-flow fixture advanced past its earlier drain assertion; it still has a
+separate asynchronous stream-surface failure under investigation.
