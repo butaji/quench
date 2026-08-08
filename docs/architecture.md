@@ -25,12 +25,15 @@ and builtins. `quench-test262` owns frontmatter, harness loading, stage
 selection, isolation, metrics, and reporting. The runner communicates with
 the engine only through its host execution interface.
 
-**Shape (target, R0/R1 — not yet landed):** small Rust core + self-hosted
-JS builtins. Today **all builtins are Rust**
-(`crates/quench-runtime/src/builtins/*.rs`); there are no JS builtins yet.
-The governing rule (ADR 0001): everything that can be done in JS must be
-done in JS, keeping the Rust core at the minimum possible size. JS is ~1/3
-the LOC of equivalent Rust and easier to keep spec-faithful.
+**Shape (JS-first, Rust-minimal):** small Rust core + self-hosted JS builtins.
+The core gap is landed: `builtins/core/bootstrap.rs` evals embedded
+`builtins/**/*.js` at realm init, and `__ops__` is the only Rust↔JS spec-op
+bridge. Proof-of-scale: `isNaN`/`isFinite` are self-hosted over
+`__ops__.toNumber`. Most builtins are still Rust
+(`crates/quench-runtime/src/builtins/*.rs`) — migration debt repaid per-stage
+under R0/R1. The governing rule (ADR 0001): everything that can be done in
+JS must be done in JS, keeping the Rust core at the minimum possible size. JS
+is ~1/3 the LOC of equivalent Rust and easier to keep spec-faithful.
 
 **Boundaries:** the runtime stays generic over replaceable
 implementations so subsystems evolve independently:
@@ -113,16 +116,17 @@ src/  (current layout — see the repo tree)
 ├── env/             # lexical environments
 ├── value/           # Value, Object (one canonical property store), JsError
 ├── context/         # Context, Realm
-└── builtins/        # all builtins, currently pure Rust
+└── builtins/        # Rust builtins + JS builtins (growing under R0/R1)
 ```
 
-Target additions under R0/R1 (do not exist yet): `builtins/core/` reduced
-to crate-backed primitives only, plus `builtins/bootstrap.rs` parsing and
-evaluating `builtins/*.js` at realm init.
+The R0/R1 core gap is landed: `builtins/core/bootstrap.rs` parses and
+evaluates the embedded `builtins/**/*.js` files at realm init, and
+`builtins/core/global_functions.js` holds the first self-hosted builtins
+(`isNaN`/`isFinite`). R0/R1 continues to move builtins from Rust to JS.
 
 Remainder of `eval/` is eval nodes only — no spec-op re-implementations.
 
-## JS builtins *(target — R0, none exist yet)*
+## JS builtins *(R0 in progress — first builtins landed)*
 
 ```
 crates/quench-runtime/builtins/
@@ -143,9 +147,6 @@ algorithms on top of `__ops__`. Embedded via `include_str!`; parsed once
 per `Realm` by `builtins/bootstrap.rs`.
 
 ## `__ops__` — the only Rust↔JS bridge for spec ops
-
-(The current Rust scaffold is registered under the pre-rename name; R1
-renames it to `__ops__`.)
 
 Frozen object exposed at realm init. Each property is a canonical spec
 abstract op, implemented once in `eval/ops.rs` and bound as a

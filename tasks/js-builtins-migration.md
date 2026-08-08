@@ -8,18 +8,24 @@ self-hosted `builtins/*.js` tree calling only the `__ops__` bridge.
 **Pause:** stage-25 conformance pursuit is paused while this Rust Core gap lands;
 resume the stage sequence after.
 
-## Rust Core gap (R0 + R1 infrastructure)
+## Rust Core gap (R0 + R1 infrastructure) — DONE
 
-The core lacks the loader and bridge that let JS builtins run at scale:
+The loader and bridge that let JS builtins run at scale are landed:
 
-- [ ] **`builtins/bootstrap.rs`** — parse + eval each embedded `builtins/*.js`
+- [x] **`builtins/bootstrap.rs`** — parse + eval each embedded `builtins/*.js`
       file in dependency order during realm init (R0 item).
-- [ ] **`__ops__` wired in** — `builtins/core/ops_wrapper.rs` exists but
-      `register_ops_object` is never called; wire it into the init path so JS
-      builtins can call spec ops (R1 item; rename global to `__ops__`).
-- [ ] **`builtins/*.js` tree** — `include_str!`-embedded JS sources.
-- [ ] **Proof-of-scale** — move one self-contained builtin to JS; delete its
-      Rust `register_*`; gated by full `cargo test` + stage run green.
+- [x] **`__ops__` wired in** — `register_ops_object` is called at the start of
+      `register_builtins`; the bridge is renamed to `__ops__` (R1 item).
+- [x] **`builtins/*.js` tree** — `include_str!`-embedded JS sources
+      (`builtins/core/global_functions.js`).
+- [x] **Proof-of-scale** — `isNaN`/`isFinite` moved to JS over
+      `__ops__.toNumber`; their Rust `register_native` bodies deleted. Full
+      `cargo test` + stage 0/25 green.
+
+## Next: migrate the R0 order
+
+Each builtin: JS shell → delete the Rust `register_*` → full `cargo test
+-p quench-runtime` green before next.
 
 ## Migration order (R0)
 
