@@ -264,7 +264,12 @@ const __quenchDgramSend = (socket, message, ...args) => {
           : NodeBuffer.from(payload);
   const offset = hasOffset ? args[0] : 0;
   const length = hasOffset ? args[1] : payload.byteLength;
-  if (socket._connected && args.length >= 3 && typeof args[2] !== "function") {
+  if (
+    socket._connected &&
+    args.length >= 3 &&
+    (typeof args[2] !== "function" ||
+      (typeof args[0] === "number" && typeof args[1] === "string"))
+  ) {
     throw Object.assign(new Error("Already connected"), {
       code: "ERR_SOCKET_DGRAM_IS_CONNECTED"
     });
