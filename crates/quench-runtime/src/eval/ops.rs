@@ -63,6 +63,17 @@ pub fn has_own(o: &Rc<RefCell<Object>>, key: &str) -> bool {
     o.borrow().has_own(key)
 }
 
+/// IsExtensible (§9.1.3): whether `v` is extensible. Functions/classes are
+/// always extensible; primitives are never extensible.
+pub fn is_extensible(v: &Value) -> bool {
+    match v {
+        Value::Object(o) => o.borrow().extensible,
+        Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_) => true,
+        Value::Class(c) => c.is_extensible(),
+        _ => false,
+    }
+}
+
 /// Throw a TypeError from a JS builtin.
 pub fn throw_type_error(msg: &str) -> crate::JsError {
     crate::value::error::create_js_error_with_type(msg, "TypeError").1

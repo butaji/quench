@@ -191,6 +191,22 @@ pub fn register_ops_object(ctx: &mut Context) {
         },
     );
 
+    // isExtensible(value)
+    let is_extensible_fn = NativeFunction::new(|args: Vec<Value>| {
+        let v = args.first().cloned().unwrap_or(Value::Undefined);
+        Ok(Value::Boolean(crate::eval::ops::is_extensible(&v)))
+    });
+    ops.define(
+        "isExtensible",
+        Value::NativeFunction(Rc::new(is_extensible_fn)),
+        PropertyFlags {
+            value: None,
+            writable: false,
+            enumerable: false,
+            configurable: false,
+        },
+    );
+
     // throwTypeError(message)
     let throw_type_error_fn = NativeFunction::new(|args: Vec<Value>| {
         let msg = args
