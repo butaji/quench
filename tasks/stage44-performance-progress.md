@@ -1,54 +1,27 @@
 # Stage 44 Performance + Instrumentation Progress
 
-This measures pure `quench-runtime` through the `quench-test262` boundary.
-Node adapters and engine-internal runner coupling are out of scope.
+Runner throughput and diagnostics for pure `quench-runtime` through the
+`quench-test262` boundary. No conformance rule changes.
 
-- Stage: `test/language/expressions` (Stage 44)
-- Updated: 2026-08-07
-- Scope: Runner throughput and diagnostics only (no conformance rule changes)
+## Status (2026-08-08)
 
-## Plan status (17 items)
+Done: digest timing payload (stage wall/execution + per-test vectors),
+top-N slow-test reporting, fixture graph metrics (nodes/edges/depth),
+worker batch counters and auto-scaling knobs (`TEST262_WORKER_BATCH*`),
+metrics log sink (`TEST262_METRICS_LOG`), memory reductions in the digest
+path (compact timing records, paths allocated only for failures,
+deterministic index-ordered parallel outcomes), isolation-fallback
+counters in the metrics JSON.
 
-- [x] Add end-to-end digest timing payload with stage wall/execution timing plus test timing vectors.
-- [x] Add slow-test reporting and output for top-N slowest tests.
-- [x] Add per-stage metrics reset and collection plumbing in digest path.
-- [x] Add fixture graph metrics counters (nodes, edges, max depth, selected modules).
-- [x] Track worker start and worker batch counters for parallel scheduling behavior.
-- [x] Emit full metric JSON payload including fixture cache counters and worker batch knobs.
-- [x] Add optional metric log sink (`TEST262_METRICS_LOG`) with append semantics.
-- [x] Add configurable worker batch sizing (`TEST262_WORKER_BATCH*`) controls and auto-scaling.
-- [x] Add fixture load timing and module-load test counters already wired through metrics payload.
-- [x] Tune fixture module traversal using deduplicating BFS state to avoid redundant loading and enable accurate graph telemetry.
-- [x] Reduce digest memory/allocations by storing compact timing records (`index + enum outcome + elapsed`) and printing slow tests by resolving paths only at render time with lossless UTF-8 conversion.
-- [x] Skip path-to-string conversion for all non-failing digest outcomes; allocate paths only when recording failures.
-- [x] Preserve deterministic outcome ordering in parallel runs with an index-addressed `Vec<Option<TimedOutcome>>` and a single forward flatten pass (no final sort).
-- [x] Remove redundant BFS `discovered` set in fixture traversal and reuse `selected_modules` as the dedupe frontier set.
-- [x] Record process-isolation fallback count for panic-driven fallback paths.
-- [x] Include `fixture_invalid_syntax_modules` and `isolation_fallbacks` in the digest metrics JSON payload.
-- [x] Reduce failure-grouping allocations by cloning `TestFailure` only when detail mode is requested.
-- [ ] Confirm and connect this workspace's full test262 execution path so measured stage44 throughput work can be validated on demand.
+## Open
+
+- [ ] Run and compare staged metrics (`TEST262_METRICS=1`) on the native
+  runner to validate the stage-44 throughput work end to end.
 
 ## Notes
 
-- Progress is currently in the transitional
+- Implementation currently lives in the transitional
   `crates/quench-runtime/src/test262/runner/` module; extraction to
-  `quench-test262` is part of the boundary work.
-- Stage-44 performance path is implemented in runner logic, and unit tests for available Rust targets pass.
-- Remaining work is to run and compare staged metrics after these changes (`TEST262_METRICS=1`) on a native runner.
-- Status note: the pure `quench-runtime` engine is the only target host.
-- 2026-08-07: User-directed pivot away from Node adapters; the native
-  `quench-runtime` engine is the baseline for the standalone runner.
-- 2026-08-07: Ran Stage 44 (`test/language/expressions`) in digest mode with `TEST262_DIGEST=1 TEST262_METRICS=1`.
-  - Stage: 44
-  - Tests: 11,101
-  - Wall: 390,678 ms
-  - Execution: 390,683 ms
-  - Passed: 11,038
-  - Failed: 63
-  - Skipped: 0
-  - Slow-test threshold: 5 ms (`--show` showed top ~2.4s timeout case and many >100 ms TCO cases)
-  - Main blockers:
-    - 1 timeout on dynamic-import/catch nested ambiguous import test
-    - 14+ assertion mismatches around destructuring yield/name/function-name cases and object spreads
-    - 8 `TypeError` in spread/new/super paths
-  - This confirms stage 44 remains non-green and needs runtime conformance fixes before full 50K+ run can progress.
+  `quench-test262` is part of `tasks/019-runtime-boundaries.md`.
+- The pure `quench-runtime` engine is the only target host (pivot away
+  from Node adapters, 2026-08-07).
