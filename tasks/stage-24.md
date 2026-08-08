@@ -23,11 +23,14 @@ TEST262_STAGE=24 TEST262_DIGEST=1 TEST262_JSON=1 cargo test -p quench-runtime \
   descriptors. (13 → 10)
 - TDZ for lexical bindings: declare in TDZ (scope confined to the for-in)
   before object eval; eval_identifier/typeof set thrown value. (10 → 5)
+- Strict-eval for-in LHS: don't treat assignment-target LHS as a var. (5 → 3)
+- Typed-array: zeroed elements + non-enumerable props/constructor; class
+  instances no longer carry an own enumerable constructor; eval_new native
+  constructor prototype for Class. (3 → 2)
+- Live enumeration: skip keys deleted mid-iteration. (2 → 1)
 
-## Top remaining clusters
+## Remaining
 
-| Cluster | Count | Fix direction |
-|---------|-------|---------------|
-| Sputnik `A3`/`A4` | 2 | strict-eval: for-in iterable assignment to an outer var |
-| Sputnik `A7_T2` | 1 | live enumeration (deletion during iteration reflected) |
-| `resizable-buffer`, `head-var-bound-names-in-stmt` | 2 | for-in edge cases |
+| Test | Fix direction |
+|------|---------------|
+| `head-var-bound-names-in-stmt` | `var x;` in a for-in body block should refer to the enclosing function-scoped var, not create a shadowing block binding and reset it |
