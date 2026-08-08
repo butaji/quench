@@ -494,6 +494,10 @@ including iterator `throw()`. The focused regression covers both contracts;
 the authoritative mkdir fixture now passes. A focused pending-`return()` probe
 also passes; the full watch-promises fixture still has a later interaction.
 
+Stage 2431 fixes absolute symlink targets inside a `RealFSProvider` root by
+preserving the host absolute target instead of incorrectly joining it twice.
+The focused absolute-link/realpath regression passes.
+
 Stage 2423 makes `RealFSProvider` access dispatch to the host filesystem before
 the virtual-entry lookup. Existing and missing-path promise access now pass in
 the focused regression; this removes the first concrete unresolved await from

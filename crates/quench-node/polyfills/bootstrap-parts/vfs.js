@@ -1838,7 +1838,9 @@ class __QuenchVirtualFileSystem {
         throw __quenchVfsError("EACCES", "symlink", path);
       }
       const targetPath = String(target).startsWith("/")
-        ? this.__realPath(target)
+        ? String(target).startsWith(this.provider.root)
+          ? String(target)
+          : this.__realPath(target)
         : globalThis.__nodePath.resolve(
             globalThis.__nodePath.dirname(destination),
             String(target)
@@ -1870,6 +1872,14 @@ class __QuenchVirtualFileSystem {
       const target = globalThis.__quench_fs_native_readlink(
         this.__realPath(path)
       );
+      const providerRoot = this.provider.root;
+      if (
+        globalThis.__nodePath.isAbsolute(target) &&
+        (target === providerRoot ||
+          target.startsWith(`${providerRoot}${globalThis.__nodePath.sep}`))
+      ) {
+        return target.slice(providerRoot.length) || "/";
+      }
       if (globalThis.__nodePath.isAbsolute(target)) {
         const resolved = globalThis.__nodePath.resolve(target);
         const root = globalThis.__quench_fs_native_realpath(this.provider.root);
