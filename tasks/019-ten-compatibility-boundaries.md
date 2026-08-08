@@ -968,3 +968,13 @@ the maintained compose cluster. Authoritative `test-stream-compose.js`
 advances through validation to its later composed-destroy propagation
 assertion, which remains separate. Rust and representative application stages
 remain green.
+
+Stage 2473 propagates `destroy(error)` from a composed wrapper through every
+destroyable underlying stage before destroying the wrapper itself. The focused
+PassThrough/custom-Duplex cascade observes synchronous `destroyed` state on all
+three objects and retains error listeners through asynchronous close delivery.
+The maintained compose and Duplex lifecycle cluster passes. Authoritative
+`test-stream-compose.js` advances beyond its tail-Duplex destruction assertion
+to the final Web `TransformStream` composition case, whose Web endpoint shape
+is tracked separately. Rust and representative application stages remain
+green.
