@@ -517,7 +517,7 @@ const __quenchNetModule = {
             serverSocket._handle = { setKeepAlive: () => {} };
             this._peer = serverSocket;
             serverSocket._peer = this;
-            httpServer.emit("connection", serverSocket);
+            httpServer.__quenchRawConnection?.(serverSocket);
             return;
           }
           if (!server?._handler) return;
