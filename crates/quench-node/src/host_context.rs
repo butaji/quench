@@ -659,6 +659,7 @@ macro_rules! run_host_context {
             }
         }
         ctx.eval::<(), _>(b"if (globalThis.__quench_test_promises?.length) Promise.allSettled(globalThis.__quench_test_promises).then(() => { globalThis.__quench_tests_settled = true; });")?;
+        ctx.eval::<(), _>(b"if (typeof globalThis.__quench_io_poll === 'function') globalThis.__quench_io_poll();")?;
         while ctx.execute_pending_job() {}
         if let Ok(detail) = ctx.globals().get::<_, String>("__quench_async_error") {
             if !detail.is_empty() {
@@ -674,6 +675,12 @@ macro_rules! run_host_context {
                     .map_err(|error| {
                         let detail = ctx.globals().get::<_, String>("__quench_exit_error").unwrap_or_else(|_| format!("{error:?}"));
                         eprintln!("Process beforeExit handler failure: {detail}");
+                        error
+                    })?;
+                ctx.eval::<(), _>(b"try { if (typeof globalThis.__quench_io_poll === 'function') globalThis.__quench_io_poll(); } catch (error) { globalThis.__quench_exit_error = error && error.stack ? `${error.name}: ${error.message}\\n${error.stack}` : String(error); throw error; }")
+                    .map_err(|error| {
+                        let detail = ctx.globals().get::<_, String>("__quench_exit_error").unwrap_or_else(|_| format!("{error:?}"));
+                        eprintln!("Host I/O poll failure: {detail}");
                         error
                     })?;
                 let mut ran_job = false;

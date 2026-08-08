@@ -5,9 +5,15 @@ accept, read, write, and close operations. They are intentionally not yet wired
 into the public `net` module because the current host loop only drains
 JavaScript jobs; it does not own a native-I/O wait/poll phase.
 
+Stage 2313 now provides the first host-owned scheduling seam: the host invokes
+`globalThis.__quench_io_poll()` before draining pending jobs and on each
+`beforeExit` turn. The stage verifies that this hook is visible to JavaScript,
+but it intentionally does not claim native readiness delivery or public
+`net` integration yet.
+
 ## Required integration contract
 
-1. The host must expose a bounded native poll step that can report readable,
+1. The host must extend the Stage 2313 hook into a bounded native poll step that can report readable,
    writable, EOF, and error states without an unbounded JavaScript interval.
 2. `net.Server.listen()` must register a native listener, publish its actual
    ephemeral port, and deliver accepted sockets through the existing EventEmitter
@@ -21,6 +27,7 @@ JavaScript jobs; it does not own a native-I/O wait/poll phase.
 ## Verification order
 
 - Stage 2312: host primitive loopback exchange (passing).
+- Stage 2313: host-owned I/O poll scheduling seam (passing).
 - Next: one accepted socket with one write/read round trip and explicit close.
 - Then: half-close exchange from Node's
   `test-net-allow-half-open-async-iter.js`.
