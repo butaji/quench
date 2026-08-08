@@ -391,6 +391,9 @@ The mounted promise dispatch table also lacked `lchmod`, `lutimes`, and
 mutation, and handle stages pass, while an isolated copy of the full fixture
 still reports a later assertion failure, so the complete mounted promise
 fixture remains open.
+Stages 2413–2415 verify mounted promise path reads/metadata, mutations, and
+FileHandle reads independently; all pass. The remaining full-fixture assertion
+is therefore still an interaction or later attribute-contract issue.
 
 Stage 2378 passes the four basic stream `destroy()` contracts for readable and
 writable streams, including implicit `AbortError`, explicit error messages,
