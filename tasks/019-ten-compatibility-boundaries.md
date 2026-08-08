@@ -334,6 +334,10 @@ Stages 2404 and 2405 verify the two remaining scale boundaries independently:
 a 300 KB ranged pull and 19 concurrent pull handles both pass. The upstream
 fixture's stall is therefore an interaction between specific operation types,
 not file size or descriptor count alone.
+The grouped interaction probe then isolated the remaining cases to
+`testPullStartLimitWithTransforms()` (zlib iterator composition) and
+`testPullSyncArgumentValidation()` under the full mix. Locking and closed-handle
+cases are now verified with an explicit `ERR_INVALID_STATE` error contract.
 
 Stage 2378 passes the four basic stream `destroy()` contracts for readable and
 writable streams, including implicit `AbortError`, explicit error messages,
