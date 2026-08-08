@@ -405,6 +405,9 @@ The bigint-position fixture also now passes: virtual `readSync` and `writeSync`
 normalize BigInt positions before applying descriptor offsets.
 The ctime fixture now passes as well. In-memory entries expose `mtimeMs` and
 `ctimeMs`, and path/descriptor writes update both timestamps together.
+The fd fixture now passes completely after enforcing `EISDIR` for directory
+opens and matching Node's async `read`/`write` callback result shapes,
+including the returned buffer argument.
 
 Stage 2378 passes the four basic stream `destroy()` contracts for readable and
 writable streams, including implicit `AbortError`, explicit error messages,
