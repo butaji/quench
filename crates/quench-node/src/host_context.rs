@@ -107,6 +107,23 @@ pub(crate) fn quench_tcp_read(id: u32) -> rquickjs::Result<Vec<u8>> {
     }
 }
 
+pub(crate) fn quench_tcp_readable(id: u32) -> rquickjs::Result<i32> {
+    let resources = quench_tcp_resources()
+        .lock()
+        .expect("tcp resource mutex poisoned");
+    let stream = match resources.get(&id) {
+        Some(QuenchTcpResource::Stream(stream)) => stream,
+        _ => return Err(rquickjs::Error::new_from_js("tcp", "not a stream")),
+    };
+    let mut byte = [0; 1];
+    match stream.peek(&mut byte) {
+        Ok(0) => Ok(2),
+        Ok(_) => Ok(1),
+        Err(error) if error.kind() == ErrorKind::WouldBlock => Ok(0),
+        Err(_) => Err(rquickjs::Error::new_from_js("tcp", "peek failed")),
+    }
+}
+
 pub(crate) fn quench_tcp_write(id: u32, data: Vec<u8>) -> rquickjs::Result<u32> {
     let mut resources = quench_tcp_resources()
         .lock()
@@ -137,6 +154,7 @@ macro_rules! run_host_context {
         ctx.globals().set("__quench_tcp_accept", Func::from($crate::host_context::quench_tcp_accept))?;
         ctx.globals().set("__quench_tcp_connect", Func::from($crate::host_context::quench_tcp_connect))?;
         ctx.globals().set("__quench_tcp_read", Func::from($crate::host_context::quench_tcp_read))?;
+        ctx.globals().set("__quench_tcp_readable", Func::from($crate::host_context::quench_tcp_readable))?;
         ctx.globals().set("__quench_tcp_write", Func::from($crate::host_context::quench_tcp_write))?;
         ctx.globals().set("__quench_tcp_close", Func::from($crate::host_context::quench_tcp_close))?;
         ctx.globals().set(

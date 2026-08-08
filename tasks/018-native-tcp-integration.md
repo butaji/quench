@@ -11,6 +11,11 @@ Stage 2313 now provides the first host-owned scheduling seam: the host invokes
 but it intentionally does not claim native readiness delivery or public
 `net` integration yet.
 
+Stage 2314 adds `__quench_tcp_readable()`, a non-destructive native stream
+readiness probe with distinct would-block, readable, and EOF results. Its
+loopback stage passes after a real write and confirms the signal is available
+before consuming data.
+
 ## Required integration contract
 
 1. The host must extend the Stage 2313 hook into a bounded native poll step that can report readable,
@@ -28,6 +33,7 @@ but it intentionally does not claim native readiness delivery or public
 
 - Stage 2312: host primitive loopback exchange (passing).
 - Stage 2313: host-owned I/O poll scheduling seam (passing).
+- Stage 2314: native stream readiness probe (passing).
 - Next: one accepted socket with one write/read round trip and explicit close.
 - Then: half-close exchange from Node's
   `test-net-allow-half-open-async-iter.js`.
