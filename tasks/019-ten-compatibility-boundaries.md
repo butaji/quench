@@ -48,4 +48,10 @@ own commit.
   selection. The remaining exclusive implicit-bind fixture still depends on
   unsupported cluster worker behavior; the IPv6 multicast cases need a
   platform-backed validation seam.
-- Items 8–10: queued.
+- Item 8: partially improved. Existing stages 2309 and 2311 verify synchronous
+  and callback/promise permission errors, including single-callback ordering.
+  The authoritative fixture cannot currently provide stronger evidence in this
+  harness because its root-user guard and `process.setuid('nobody')` branch
+  terminate with an opaque QuickJS exception; credential-switch behavior must
+  be fixed before claiming the full fixture.
+- Items 9–10: queued.
