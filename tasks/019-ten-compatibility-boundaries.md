@@ -245,10 +245,11 @@ focused stage passes. Stat and the upstream fixture's remaining `read()`,
 Stage 2384 reduces `test-vfs-real-provider-promises.js` to its complete
 operation sequence and verifies real-provider promise write/read, stat/lstat,
 access success and `ENOENT`, recursive mkdir/readdir/rmdir, rename/unlink,
-copyFile, and missing-file provider open. The focused probe passes, while the
-authoritative fixture still reports an opaque `Callback 0` exception; this is
-now tracked as a harness/fixture interaction rather than an unverified broad
-promises claim.
+copyFile, and missing-file provider open. The synchronous-reduction probe
+passes, but a trustworthy event-loop-held probe stops at the first awaited
+`promises.readFile()` after `promises.writeFile()`. The authoritative fixture
+still reports an opaque `Callback 0` exception, so the full promises surface
+remains unresolved.
 The real-provider handle implementation now also supports positioned async
 `read()`/`write()`, descriptor-backed `writeFileSync()`/`writeFile()`, and
 `truncateSync()`/`truncate()` through native `pread`/`pwrite`/`ftruncate`.
