@@ -435,6 +435,11 @@ and verification; the complete contract passes under quench-node. This
 narrows the remaining upstream CryptoKey discrepancy to its combined
 multi-algorithm/lifecycle path rather than basic ECDSA support.
 
+Focused verification for stages 2090–2095 completed at 2026-08-08T03:02:03Z:
+6/6 stages passed serially with zero failures, zero retries, and zero
+policy-covered failures. This covers the fs.cp option-pair checks and the
+HMAC, ECDSA, RSA-PSS, and AES-GCM WebCrypto contracts added in this slice.
+
 Focused stage 2095 independently verifies AES-GCM 128-bit key generation,
 encryption, and decryption. It passes under quench-node, narrowing the
 remaining upstream CryptoKey failure further to combined fixture sequencing
