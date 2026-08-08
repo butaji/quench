@@ -37,24 +37,23 @@ The loader and bridge that let JS builtins run at scale are landed:
 - [x] **Bootstrap ordering** — `bootstrap_js_builtins` runs after realm globals
       (`globalThis`) are set up, so JS builtins can attach to constructors.
 
-## Open core gap — bare identifier resolves to a same-named constructor static
+## Resolved — named-function-expression leak (the aliasing bug's root cause)
 
 `register_builtins` was called twice per realm (`Context::new()` + the explicit
 call in `test262/host.rs`), so constructor globals were replaced after
 bootstrap — fixed by removing the redundant re-registration in `host.rs`.
 
-Remaining gap: a JS `Number.isNaN = …` (constructor-static write, via
-`assign_to_native_constructor` → `set_static_method`, which only touches the
-constructor's map) makes the **bare** `isNaN`/`isFinite` identifier resolve to
-the constructor static, even though `globalThis.isNaN` still holds the correct
-coercing function. So the no-coercion `Number.isNaN` shadows the coercing
-global `isNaN`. Mechanism: bare resolution (`Environment::get` →
-`get_global_this_property` → `Object::get`) walks the global object's property
-store/prototype chain and finds the constructor static, while direct
-`globalThis.isNaN` member access returns the own coercing function. This blocks
-migrating constructor statics whose names collide with global functions.
-`Number` statics migration was reverted pending this fix; global `isNaN`/
-`isFinite` (top-level functions) migrate cleanly.
+The `Number.isNaN = …` aliasing was caused by **named function expressions
+leaking their name to the enclosing scope**: `function isNaN` in a JS builtin
+defined a global `isNaN` binding that shadowed the coercing global. Fixed by
+creating an isolated child env for the self-binding (ES §14.1.21). This unblocks
+self-hosting constructor statics whose names collide with globals.
+
+**Landed:** `Number.isNaN`/`isFinite`/`isInteger`/`isSafeInteger` are now
+self-hosted in `builtins/core/number_statics.js` (pure-spec, no coercion); the
+Rust `register_native` bodies are deleted. Global `isNaN`/`isFinite` are
+self-hosted in `global_functions.js`. Stage 26 (function) improved 391/60 →
+399/52 from the leak fix, with no done-stage regressions.
 
 ## Next: migrate the R0 order
 
