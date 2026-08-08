@@ -1248,6 +1248,15 @@ class __QuenchVirtualFileSystem {
   symlinkSync(target, path) {
     if (this.__isReal()) {
       const destination = this.__realPath(path);
+      if (
+        String(target).startsWith("/") &&
+        !String(target).startsWith(
+          `${this.provider.root}${globalThis.__nodePath.sep}`
+        ) &&
+        String(target) !== this.provider.root
+      ) {
+        throw __quenchVfsError("EACCES", "symlink", path);
+      }
       const targetPath = String(target).startsWith("/")
         ? this.__realPath(target)
         : globalThis.__nodePath.resolve(
