@@ -599,6 +599,14 @@ contract and upstream `test-module-main-fail.js` both pass.
 The same error contract now also passes `test-module-main-preserve-symlinks-fail.js`,
 including CLI flags before the missing entrypoint.
 
+Focused stage 2121 fixes `Readable.destroy(error)` custom `_destroy` dispatch:
+the original error reaches the hook, returned errors emit once, and close/callback
+ordering remains asynchronous. The focused contract targets the remaining
+upstream `test-stream-readable-destroy.js` lifecycle gap.
+The upstream fixture now advances through custom-destroy assertions and stops
+at its legacy `Readable.call(this)` subclass pattern, which requires converting
+the compatibility constructor from an ES class to a callable constructor.
+
 Focused stage 2116 uses `module.globalPaths` when resolving bare packages, so
 packages provided through `NODE_PATH` load without a local `node_modules`
 entry. The focused global-package contract passes.
