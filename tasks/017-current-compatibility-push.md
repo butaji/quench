@@ -667,3 +667,8 @@ Focused stage 2136 implements `stream.addAbortSignal()` and abort-aware
 `Readable` construction, destroying the public stream with an `AbortError`
 and `ABORT_ERR`. The focused abort contract passes. The upstream fixture now
 reaches a remaining combined abort/read lifecycle mismatch.
+
+Focused stage 2139 prevents deferred `Readable` data delivery after
+destruction, including listeners added after the stream is destroyed. The
+focused no-data-flush contract passes; this closes one component of the
+remaining abort/read lifecycle mismatch.
