@@ -34,6 +34,20 @@ must not touch the others.
 `QuenchIr` is the owned post-frontend representation. Legacy parser helpers
 may still return the lowered runtime `Program` while callers migrate to the
 `*_ir` entry points.
+
+**Decision (ADR 0002):** the IR is a compact, index-addressed **instruction
+IR** executed by a pc-based IR interpreter — not an AST walker, and not a
+bytecode VM yet (no opcode encoding, no register allocation). `IrProgram`
+owns arenas (`funcs`, `consts`, `atoms`, legacy AST side tables); each
+`IrFunction` holds a `Box<[Instr]>` of high-level ops with `u32` operands
+plus a try-handler table. An `src/ir/compile/` pass lowers `crate::ast` →
+IR; uncompiled constructs use `LegacyStmt`/`LegacyExpr` escape hatches into
+owned AST subtrees so coverage grows stage-gated. Generators/async stay on
+the AST replay engine until resumable IR frames land as a separate measured
+step. TS/JSX/TSX support grows through `lower/` + the compiler only — the
+IR and executor are frontend-agnostic. Details and milestones:
+`docs/adr/0002-compact-ir-interpreter.md`.
+
 The target representation is an owned, compact, index-addressed IR:
 
 - OXC owns parse-time nodes only. `parser.rs` lowers while the OXC allocator
