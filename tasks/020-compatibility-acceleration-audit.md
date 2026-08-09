@@ -175,3 +175,6 @@ large non-match corpus, so the compatibility objective remains open.
   shape (`EADDRNOTAVAIL`, address, port, and syscall); upstream
   `test-net-better-error-messages-listen.js` passes alongside duplicate-bind
   coverage.
+- Client connections now reject a local port already held by an in-memory
+  listener with asynchronous `EADDRINUSE`; `test-net-client-bind-twice.js`
+  passes with the existing listen-error fixture.
