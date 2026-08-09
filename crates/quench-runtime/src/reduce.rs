@@ -6,6 +6,7 @@ use oxc::{
     parser::Parser,
     semantic::SemanticBuilder,
     span::SourceType,
+    syntax::operator::BinaryOperator,
 };
 
 use crate::{
@@ -39,24 +40,69 @@ pub fn reduce_source(source: &str) -> Result<ResidualProgram, Vec<String>> {
         ..ProgramDb::default()
     };
     let mut ops = Vec::new();
+    let mut next_register = 0;
     for statement in parsed.program.body.iter() {
         let Statement::ExpressionStatement(expression) = statement else {
             continue;
         };
-        let Expression::NumericLiteral(number) = &expression.expression else {
+        let Some(register) = reduce_expression(
+            &expression.expression,
+            &mut ops,
+            &mut facts,
+            &mut next_register,
+        ) else {
             continue;
         };
-        let value = number.value;
-        facts.constants.push(crate::facts::ConstantFact {
-            value: crate::facts::Constant::Number(value),
-        });
-        ops.push(Op::Const {
-            dst: 0,
-            value: Constant::Number(value),
-        });
-        ops.push(Op::Return { src: 0 });
+        ops.push(Op::Return { src: register });
     }
     Ok(ResidualProgram { facts, ops })
+}
+
+fn reduce_expression(
+    expression: &Expression<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+) -> Option<u16> {
+    if let Expression::NumericLiteral(number) = expression {
+        let register = *next_register;
+        *next_register = next_register.saturating_add(1);
+        facts.constants.push(crate::facts::ConstantFact {
+            value: crate::facts::Constant::Number(number.value),
+        });
+        ops.push(Op::Const {
+            dst: register,
+            value: Constant::Number(number.value),
+        });
+        return Some(register);
+    }
+    let Expression::BinaryExpression(binary) = expression else {
+        return None;
+    };
+    let operator = reduce_operator(binary.operator)?;
+    let lhs = reduce_expression(&binary.left, ops, facts, next_register)?;
+    let rhs = reduce_expression(&binary.right, ops, facts, next_register)?;
+    let dst = *next_register;
+    *next_register = next_register.saturating_add(1);
+    ops.push(Op::Binary {
+        dst,
+        operator,
+        lhs,
+        rhs,
+    });
+    Some(dst)
+}
+
+fn reduce_operator(operator: BinaryOperator) -> Option<crate::ops::BinaryOp> {
+    Some(match operator {
+        BinaryOperator::Addition => crate::ops::BinaryOp::Add,
+        BinaryOperator::Subtraction => crate::ops::BinaryOp::Subtract,
+        BinaryOperator::Multiplication => crate::ops::BinaryOp::Multiply,
+        BinaryOperator::Division => crate::ops::BinaryOp::Divide,
+        BinaryOperator::Remainder => crate::ops::BinaryOp::Remainder,
+        BinaryOperator::Exponential => crate::ops::BinaryOp::Exponentiate,
+        _ => return None,
+    })
 }
 
 fn analyze_semantics(program: &oxc::ast::ast::Program<'_>) -> Result<(usize, usize), Vec<String>> {
