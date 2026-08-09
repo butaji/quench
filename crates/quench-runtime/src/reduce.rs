@@ -4,6 +4,7 @@ use oxc::{
     allocator::Allocator,
     ast::ast::{Expression, Statement},
     parser::Parser,
+    semantic::SemanticBuilder,
     span::SourceType,
 };
 
@@ -31,7 +32,12 @@ pub fn reduce_source(source: &str) -> Result<ResidualProgram, Vec<String>> {
             .map(|error| format!("SyntaxError: {error}"))
             .collect());
     }
-    let mut facts = ProgramDb::default();
+    let (scope_count, symbol_count) = analyze_semantics(&parsed.program)?;
+    let mut facts = ProgramDb {
+        scope_count,
+        symbol_count,
+        ..ProgramDb::default()
+    };
     let mut ops = Vec::new();
     for statement in parsed.program.body.iter() {
         let Statement::ExpressionStatement(expression) = statement else {
@@ -51,4 +57,19 @@ pub fn reduce_source(source: &str) -> Result<ResidualProgram, Vec<String>> {
         ops.push(Op::Return { src: 0 });
     }
     Ok(ResidualProgram { facts, ops })
+}
+
+fn analyze_semantics(program: &oxc::ast::ast::Program<'_>) -> Result<(usize, usize), Vec<String>> {
+    let semantic = SemanticBuilder::new().build(program);
+    if !semantic.errors.is_empty() {
+        return Err(semantic
+            .errors
+            .iter()
+            .map(|error| format!("SyntaxError: {error}"))
+            .collect());
+    }
+    Ok((
+        semantic.semantic.scopes().len(),
+        semantic.semantic.symbols().len(),
+    ))
 }
