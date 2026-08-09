@@ -151,6 +151,11 @@ pub enum Builtin {
     FunctionBind,
     ArrayJoin,
     TypeError,
+    ObjectPrototype,
+    ArrayPush,
+    ObjectDefineProperty,
+    ObjectGetOwnPropertyNames,
+    ObjectPropertyIsEnumerable,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
