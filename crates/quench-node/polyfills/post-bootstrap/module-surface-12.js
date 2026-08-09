@@ -472,8 +472,12 @@ globalThis.__quenchResolveObjectEarly = (result, from, to, originalResolve) => {
     : null;
 };
 globalThis.__quenchAddLegacyParseMethods = (result) => {
+  if (globalThis.__quenchLegacyUrlParseMethod) {
+    result.parse = globalThis.__quenchLegacyUrlParseMethod;
+    return;
+  }
   const originalParse = result.parse;
-  result.parse = (input, ...args) => {
+  const parse = (input, ...args) => {
     const parsed = originalParse(input, ...args);
     const resolveObject = (target) => {
       if (/^javascript:/i.test(target)) return originalParse(target);
@@ -493,6 +497,8 @@ globalThis.__quenchAddLegacyParseMethods = (result) => {
     });
     return parsed;
   };
+  globalThis.__quenchLegacyUrlParseMethod = parse;
+  result.parse = parse;
 };
 globalThis.__nodeLegacyMailtoParts = (input) => {
   if (!/^mailto:/i.test(input)) return null;

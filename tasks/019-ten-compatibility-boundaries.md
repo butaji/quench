@@ -1048,3 +1048,22 @@ matrix and complete authoritative `test-stream-compose.js` fixture pass. The
 maintained compose/Web/Transform/readable-helper cluster, all adjacent upstream
 helper fixtures, both Rust tests, and representative application stages remain
 green.
+
+A fresh focused-stage audit after stage 2480 reports 2230/2319 passing and 89
+failing stages. The gate rejects the run because all failures remain
+unclassified; the largest common cluster is 63 legacy URL stages that load the
+same `url` facade repeatedly. This audit is a progress baseline, not a clean
+compatibility claim.
+
+Stage 2481 makes the legacy `url.parse` decorator idempotent across repeated
+`require("url")` and `require("node:url")` facade construction. The canonical
+realm-level wrapper is reused instead of wrapping the shared parser again, so
+one parsed object is no longer decorated repeatedly with non-configurable
+`resolve` and `resolveObject` properties. The focused identity/decorator stage
+passes, and all 63 URL stages attributed to this repeated-wrapper failure now
+pass serially, including the prior query-object coercion cases. Authoritative
+`test-url-parse-query.js` passes; `test-url-parse-invalid-input.js`,
+`test-url-parse-format.js`, and `test-url-format.js` still expose independent
+legacy URL validation/formatting gaps and are not claimed by this stage. The
+post-fix full audit reports 2294/2320 passing with 26 unclassified failures; its
+intentional nonzero gate status records those remaining boundaries.
