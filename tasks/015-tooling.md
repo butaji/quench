@@ -265,3 +265,7 @@ its finalization step; stages 533, 1153, and 1949 all pass.
 Module `createRequire` filename classification and validation are now split;
 `module.js` passes ESLint with zero warnings, and its focused module stages
 remain green.
+
+Buffer allocation input classification and normalization were split into
+focused predicates. `allocation.js` now passes ESLint with zero warnings, and
+buffer allocation stages remain green.

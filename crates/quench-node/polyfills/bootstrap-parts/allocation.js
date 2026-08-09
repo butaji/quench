@@ -23,7 +23,7 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase04 {
       const bits = signed ? 63 : 64;
       const received = String(value).replace(/(\d)(?=(\d\d\d)+(?!\d))/g, "$1_");
       const error = new RangeError(
-        `The value of "value" is out of range. It must be >= ${min}n and < 2n ** ${bits}n. Received ${received}n`
+        `The value of "value" is out of range. It must be >= ${min}n and < 2n ** ${bits}n. Received ${received}n`,
       );
       error.code = "ERR_OUT_OF_RANGE";
       throw error;
@@ -65,8 +65,7 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase04 {
     return this.subarray(begin, end);
   }
   static copyBytesFrom(view, offset = 0, length) {
-    const result = __NodeBufferBase04.copyBytesFrom(view, offset, length);
-    return NodeBuffer.from(result);
+    return __NodeBufferBase04.copyBytesFrom(view, offset, length);
   }
   static of(...values) {
     return new NodeBuffer(values);
@@ -86,12 +85,80 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase04 {
 NodeBuffer.prototype[Symbol.for("nodejs.util.inspect.custom")] =
   NodeBuffer.prototype.inspect;
 const __nodeBufferFromWithAlignment = NodeBuffer.from;
+const __nodeBufferFromTypeError = (value) => {
+  let received;
+  if (value === undefined) received = "Received undefined";
+  else if (value === null) received = "Received null";
+  else if (typeof value === "symbol") {
+    received = `Received type symbol (${String(value)})`;
+  } else if (typeof value === "bigint") {
+    received = `Received type bigint (${String(value)}n)`;
+  } else if (typeof value === "function") received = "Received function ";
+  else if (Object.getPrototypeOf(value) === null) {
+    received = "Received [Object: null prototype] {}";
+  } else {
+    const name = value?.constructor?.name ||
+      Object.prototype.toString.call(value).slice(8, -1);
+    received = `Received an instance of ${name}`;
+  }
+  const error = new TypeError(
+    "The first argument must be of type string or an instance of Buffer, " +
+      "ArrayBuffer, or Array or an Array-like Object. " +
+      received,
+  );
+  error.code = "ERR_INVALID_ARG_TYPE";
+  return error;
+};
+const __nodeBufferFromIsPrimitiveUnsupported = (value) =>
+  value == null || ["function", "symbol", "bigint"].includes(typeof value);
+const __nodeBufferFromIsBinaryView = (value) =>
+  typeof value === "string" ||
+  __nodeBufferIsArrayBuffer(value) ||
+  (typeof SharedArrayBuffer !== "undefined" &&
+    value instanceof SharedArrayBuffer) ||
+  value instanceof Uint8Array ||
+  ArrayBuffer.isView(value) ||
+  Array.isArray(value);
+const __nodeBufferFromIsBufferLike = (value) =>
+  (value?.type === "Buffer" && Array.isArray(value.data)) ||
+  (value?.buffer && __nodeBufferIsArrayBuffer(value.buffer)) ||
+  Boolean(value?.[Symbol.toPrimitive]) ||
+  Object.prototype.toString.call(value) === "[object String]";
+const __nodeBufferFromIsUnsupported = (value) => {
+  if (__nodeBufferFromIsPrimitiveUnsupported(value)) return true;
+  if (__nodeBufferFromIsBinaryView(value)) return false;
+  if (__nodeBufferFromIsBufferLike(value)) return false;
+  return !(value && typeof value === "object" && typeof value.length === "number");
+};
+const __nodeBufferFromSpecialValue = (value) => {
+  if (value?.type === "Buffer" && Array.isArray(value.data)) return value.data;
+  if (!ArrayBuffer.isView(value) && value?.buffer && __nodeBufferIsArrayBuffer(value.buffer)) {
+    return value.buffer;
+  }
+  return undefined;
+};
+const __nodeBufferNormalizeFromValue = (value) => {
+  const special = __nodeBufferFromSpecialValue(value);
+  if (special !== undefined) return special;
+  if (Object.prototype.toString.call(value) === "[object String]") return String(value);
+  if (value?.[Symbol.toPrimitive]) return value[Symbol.toPrimitive]("string");
+  if (ArrayBuffer.isView(value) && !(value instanceof Uint8Array)) return Array.from(value);
+  return value;
+};
 NodeBuffer.from = (value, ...args) => {
+  if (__nodeBufferFromIsUnsupported(value)) {
+    throw __nodeBufferFromTypeError(value);
+  }
+  value = __nodeBufferNormalizeFromValue(value);
   const result = __nodeBufferFromWithAlignment.call(NodeBuffer, value, ...args);
-  if (__nodeBufferIsArrayBuffer(value) || value instanceof SharedArrayBuffer) {
+  if (
+    __nodeBufferIsArrayBuffer(value) ||
+    (typeof SharedArrayBuffer !== "undefined" &&
+      value instanceof SharedArrayBuffer)
+  ) {
     Object.defineProperties(result, {
       parent: { value, configurable: true },
-      offset: { value: result.byteOffset, configurable: true }
+      offset: { value: result.byteOffset, configurable: true },
     });
   }
   if (typeof value === "string") {
