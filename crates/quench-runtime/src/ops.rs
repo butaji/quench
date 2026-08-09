@@ -14,6 +14,14 @@ pub enum Op {
         dst: u16,
         slot: u16,
     },
+    MakeFunction {
+        dst: u16,
+        body: Vec<Op>,
+    },
+    Call {
+        dst: u16,
+        callee: u16,
+    },
     Binary {
         dst: u16,
         operator: BinaryOp,

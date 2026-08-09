@@ -1,5 +1,7 @@
 //! Minimal residual-op interpreter.
 
+use std::rc::Rc;
+
 use crate::{ops::Op, value::Value};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -7,6 +9,7 @@ pub enum VmError {
     RegisterOutOfBounds(u16),
     NonNumericOperand,
     MissingReturn,
+    NotCallable,
 }
 
 pub fn execute(ops: &[Op]) -> Result<Value, VmError> {
@@ -16,6 +19,10 @@ pub fn execute(ops: &[Op]) -> Result<Value, VmError> {
             Op::Const { dst, value } => write_register(&mut registers, *dst, value),
             Op::StoreLocal { slot, src } => copy_register(&mut registers, *slot, *src)?,
             Op::LoadLocal { dst, slot } => copy_register(&mut registers, *dst, *slot)?,
+            Op::MakeFunction { dst, body } => {
+                write_value(&mut registers, *dst, Value::Function(Rc::new(body.clone())));
+            }
+            Op::Call { dst, callee } => execute_call(&mut registers, *dst, *callee)?,
             Op::Binary {
                 dst,
                 operator,
@@ -26,6 +33,15 @@ pub fn execute(ops: &[Op]) -> Result<Value, VmError> {
         }
     }
     Err(VmError::MissingReturn)
+}
+
+fn execute_call(registers: &mut Vec<Value>, dst: u16, callee: u16) -> Result<(), VmError> {
+    let Value::Function(body) = read_register(registers, callee)? else {
+        return Err(VmError::NotCallable);
+    };
+    let value = execute(&body)?;
+    write_value(registers, dst, value);
+    Ok(())
 }
 
 fn copy_register(registers: &mut Vec<Value>, dst: u16, src: u16) -> Result<(), VmError> {
