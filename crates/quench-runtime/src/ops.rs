@@ -134,6 +134,7 @@ pub enum Builtin {
     ArrayIncludes,
     ArrayIndexOf,
     ArrayLastIndexOf,
+    ArraySlice,
     ArrayForEach,
     FunctionCall,
     Boolean,
