@@ -1434,3 +1434,8 @@ flagged stream lifecycle boundaries: `test-stream-iter-writable-from.js`,
 representative application stages (Ajv 2047, debug 2069, Chalk 2080, ms 2081,
 Prettier 2104, and process argv0 2251) also pass, and `cargo test -p
 quench-node` remains 2/2 green.
+
+A broader stream audit confirms `test-stream-compose.js` passes, while
+`test-stream-duplex-from.js` still fails with one unmet `common.mustCall`
+callback (callback 11). This is retained as the next Duplex.from lifecycle
+investigation target; no completion claim is made for the full stream suite.
