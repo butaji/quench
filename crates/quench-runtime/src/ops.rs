@@ -128,6 +128,7 @@ pub enum Builtin {
     ArrayIsArray,
     ArrayMap,
     ArrayFilter,
+    ArraySome,
     ArrayForEach,
     FunctionCall,
     Boolean,
