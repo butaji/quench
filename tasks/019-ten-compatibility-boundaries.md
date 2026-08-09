@@ -1476,3 +1476,8 @@ Verification correction: a subsequent clean rerun shows the full
 stage 2531 remains green). The earlier statement that the authoritative
 fixture passed is withdrawn; HTTP close ordering remains open and is not used
 as completion evidence.
+
+The follow-up fix resets copied client terminal state (`complete` and the
+close-emitted marker) when constructing each server-side request. The
+authoritative `test-stream-destroy.js` fixture now passes again, with the
+focused stage and full focused gate remaining green at 2369/2369.
