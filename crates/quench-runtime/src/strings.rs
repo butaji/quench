@@ -24,6 +24,9 @@ pub(crate) fn property_method(key: &str) -> Option<crate::ops::Builtin> {
         "trimEnd" => Some(crate::ops::Builtin::StringTrimEnd),
         "codePointAt" => Some(crate::ops::Builtin::StringCodePointAt),
         "toString" => Some(crate::ops::Builtin::StringToString),
+        "replace" => Some(crate::ops::Builtin::StringReplace),
+        "replaceAll" => Some(crate::ops::Builtin::StringReplaceAll),
+        "search" => Some(crate::ops::Builtin::StringSearch),
         _ => None,
     }
 }
@@ -55,6 +58,9 @@ pub(crate) fn execute_builtin(
         crate::ops::Builtin::StringTrimEnd => trim_end(receiver),
         crate::ops::Builtin::StringCodePointAt => code_point_at(receiver, arguments),
         crate::ops::Builtin::StringToString => to_string_value(receiver),
+        crate::ops::Builtin::StringReplace => replace(receiver, arguments, false),
+        crate::ops::Builtin::StringReplaceAll => replace(receiver, arguments, true),
+        crate::ops::Builtin::StringSearch => search(receiver, arguments),
         _ => return None,
     };
     Some(Ok(result))
@@ -284,6 +290,28 @@ pub(crate) fn code_point_at(receiver: Option<&Value>, arguments: &[Value]) -> Va
 
 pub(crate) fn to_string_value(receiver: Option<&Value>) -> Value {
     Value::String(receiver.map_or_else(String::new, to_string))
+}
+
+pub(crate) fn replace(receiver: Option<&Value>, arguments: &[Value], all: bool) -> Value {
+    let Some(Value::String(value)) = receiver else {
+        return Value::String(String::new());
+    };
+    let pattern = arguments.first().map_or_else(String::new, to_string);
+    let replacement = arguments.get(1).map_or_else(String::new, to_string);
+    let result = if all {
+        value.replace(&pattern, &replacement)
+    } else {
+        value.replacen(&pattern, &replacement, 1)
+    };
+    Value::String(result)
+}
+
+pub(crate) fn search(receiver: Option<&Value>, arguments: &[Value]) -> Value {
+    let Some(Value::String(value)) = receiver else {
+        return Value::Number(-1.0);
+    };
+    let pattern = arguments.first().map_or_else(String::new, to_string);
+    Value::Number(value.find(&pattern).map_or(-1.0, |index| index as f64))
 }
 
 fn argument(arguments: &[Value]) -> String {
