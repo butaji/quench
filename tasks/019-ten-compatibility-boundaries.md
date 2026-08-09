@@ -1400,3 +1400,6 @@ to-writable fixture still has asynchronous callback accounting to resolve.
 
 After stage 2523, the full focused gate reports 2360/2360 passing; Rust tests
 remain 2/2 and representative application stages remain 6/6.
+
+Post-stage-2525 verification reports 2362/2362 focused stages passing; Rust
+tests remain 2/2 and representative applications remain 6/6.
