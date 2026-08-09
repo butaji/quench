@@ -1259,3 +1259,11 @@ focused self-spawn stage and complete authoritative `test-process-argv-0.js`
 fixture pass; the adjacent exec-path and maintained child-process stages remain
 green. The broader `test-process-env.js` retains its separate opaque QuickJS
 exception and is not claimed. The full focused gate reports 2338/2338 passing.
+
+Stage 2500 evaluates CommonJS entry files through the module wrapper that Node
+provides. This makes a top-level `return` legal and keeps entry declarations in
+module scope while passing `exports`, `require`, `module`, `__filename`, and
+`__dirname` explicitly. The focused process-environment matrix and complete
+authoritative `test-process-env.js` fixture pass. Stage 256 now avoids declaring
+a lexical `module` binding over the wrapper parameter while retaining its VM
+namespace assertions. The full focused gate reports 2339/2339 passing.
