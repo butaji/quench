@@ -39,23 +39,38 @@ pub fn reduce_source(source: &str) -> Result<ResidualProgram, Vec<String>> {
         symbol_count,
         ..ProgramDb::default()
     };
+    let ops = reduce_statements(&parsed.program.body, &mut facts)?;
+    Ok(ResidualProgram { facts, ops })
+}
+
+fn reduce_statements(
+    statements: &[Statement<'_>],
+    facts: &mut ProgramDb,
+) -> Result<Vec<Op>, Vec<String>> {
     let mut ops = Vec::new();
     let mut next_register = 0;
-    for statement in parsed.program.body.iter() {
-        let Statement::ExpressionStatement(expression) = statement else {
-            continue;
-        };
-        let Some(register) = reduce_expression(
-            &expression.expression,
-            &mut ops,
-            &mut facts,
-            &mut next_register,
-        ) else {
-            continue;
-        };
-        ops.push(Op::Return { src: register });
+    for statement in statements {
+        match statement {
+            Statement::EmptyStatement(_) => {}
+            Statement::ExpressionStatement(expression) => {
+                let Some(register) =
+                    reduce_expression(&expression.expression, &mut ops, facts, &mut next_register)
+                else {
+                    return Err(vec!["Unsupported executable expression".to_string()]);
+                };
+                ops.push(Op::Return { src: register });
+            }
+            _ => return Err(vec!["Unsupported executable statement".to_string()]),
+        }
     }
-    Ok(ResidualProgram { facts, ops })
+    if ops.is_empty() {
+        ops.push(Op::Const {
+            dst: 0,
+            value: Constant::Undefined,
+        });
+        ops.push(Op::Return { src: 0 });
+    }
+    Ok(ops)
 }
 
 fn reduce_expression(
