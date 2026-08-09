@@ -77,6 +77,12 @@ pub enum Op {
         discriminant: u16,
         cases: Vec<(Option<Constant>, Vec<Op>)>,
     },
+    Conditional {
+        dst: u16,
+        condition: u16,
+        consequent: Vec<Op>,
+        alternate: Vec<Op>,
+    },
     Unary {
         dst: u16,
         operator: UnaryOp,

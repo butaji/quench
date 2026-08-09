@@ -37,7 +37,8 @@ pub(crate) fn execute_in_place(ops: &[Op], registers: &mut Vec<Value>) -> Result
             | Op::Branch { .. }
             | Op::Try { .. }
             | Op::Loop { .. }
-            | Op::Switch { .. } => crate::branch::execute_special(registers, op)?,
+            | Op::Switch { .. }
+            | Op::Conditional { .. } => crate::branch::execute_special(registers, op)?,
             Op::Unary { dst, operator, src } => execute_unary(registers, *dst, *operator, *src)?,
             Op::Binary {
                 dst,
