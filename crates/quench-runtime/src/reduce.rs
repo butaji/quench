@@ -126,7 +126,9 @@ pub(crate) fn reduce_statement(
         Statement::BlockStatement(block) => {
             reduce_block(block, ops, facts, next_register, next_slot, locals)
         }
-        Statement::VariableDeclaration(_) | Statement::FunctionDeclaration(_) => {
+        Statement::VariableDeclaration(_)
+        | Statement::FunctionDeclaration(_)
+        | Statement::ClassDeclaration(_) => {
             reduce_declaration_statement(statement, ops, facts, next_register, next_slot, locals)
         }
         Statement::ReturnStatement(return_statement) => {
