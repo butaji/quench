@@ -6,6 +6,14 @@ pub enum Op {
         dst: u16,
         value: Constant,
     },
+    StoreLocal {
+        slot: u16,
+        src: u16,
+    },
+    LoadLocal {
+        dst: u16,
+        slot: u16,
+    },
     Binary {
         dst: u16,
         operator: BinaryOp,

@@ -1,8 +1,10 @@
 //! OXC-to-residual reduction entry point.
 
+use std::collections::HashMap;
+
 use oxc::{
     allocator::Allocator,
-    ast::ast::{Expression, Statement},
+    ast::ast::{BindingPatternKind, Expression, Statement},
     parser::Parser,
     semantic::SemanticBuilder,
     span::SourceType,
@@ -49,17 +51,26 @@ fn reduce_statements(
 ) -> Result<Vec<Op>, Vec<String>> {
     let mut ops = Vec::new();
     let mut next_register = 0;
+    let mut next_slot = 0;
+    let mut locals = HashMap::new();
     for statement in statements {
         match statement {
             Statement::EmptyStatement(_) => {}
-            Statement::ExpressionStatement(expression) => {
-                let Some(register) =
-                    reduce_expression(&expression.expression, &mut ops, facts, &mut next_register)
-                else {
-                    return Err(vec!["Unsupported executable expression".to_string()]);
-                };
-                ops.push(Op::Return { src: register });
-            }
+            Statement::VariableDeclaration(declaration) => reduce_declaration(
+                declaration,
+                &mut ops,
+                facts,
+                &mut next_register,
+                &mut next_slot,
+                &mut locals,
+            )?,
+            Statement::ExpressionStatement(expression) => reduce_expression_statement(
+                &expression.expression,
+                &mut ops,
+                facts,
+                &mut next_register,
+                &locals,
+            )?,
             _ => return Err(vec!["Unsupported executable statement".to_string()]),
         }
     }
@@ -73,11 +84,93 @@ fn reduce_statements(
     Ok(ops)
 }
 
+fn reduce_expression_statement(
+    expression: &Expression<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Result<(), Vec<String>> {
+    let Some(register) = reduce_expression(expression, ops, facts, next_register, locals) else {
+        return Err(vec!["Unsupported executable expression".to_string()]);
+    };
+    ops.push(Op::Return { src: register });
+    Ok(())
+}
+
+fn reduce_declaration(
+    declaration: &oxc::ast::ast::VariableDeclaration<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    next_slot: &mut u16,
+    locals: &mut HashMap<String, u16>,
+) -> Result<(), Vec<String>> {
+    for declarator in &declaration.declarations {
+        let BindingPatternKind::BindingIdentifier(identifier) = &declarator.id.kind else {
+            return Err(vec!["Unsupported binding pattern".to_string()]);
+        };
+        let slot = *next_slot;
+        *next_slot = next_slot.saturating_add(1);
+        locals.insert(identifier.name.to_string(), slot);
+        let register = match declarator.init.as_ref() {
+            Some(init) => reduce_expression(init, ops, facts, next_register, locals),
+            None => Some(emit_undefined(ops, next_register)),
+        };
+        let Some(register) = register else {
+            return Err(vec!["Unsupported variable initializer".to_string()]);
+        };
+        ops.push(Op::StoreLocal {
+            slot,
+            src: register,
+        });
+    }
+    Ok(())
+}
+
+fn emit_undefined(ops: &mut Vec<Op>, next_register: &mut u16) -> u16 {
+    let register = *next_register;
+    *next_register = next_register.saturating_add(1);
+    ops.push(Op::Const {
+        dst: register,
+        value: Constant::Undefined,
+    });
+    register
+}
+
 fn reduce_expression(
     expression: &Expression<'_>,
     ops: &mut Vec<Op>,
     facts: &mut ProgramDb,
     next_register: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<u16> {
+    if let Some(register) = reduce_atom(expression, ops, facts, next_register, locals) {
+        return Some(register);
+    }
+    let Expression::BinaryExpression(binary) = expression else {
+        return None;
+    };
+    let operator = reduce_operator(binary.operator)?;
+    let lhs = reduce_expression(&binary.left, ops, facts, next_register, locals)?;
+    let rhs = reduce_expression(&binary.right, ops, facts, next_register, locals)?;
+    let dst = *next_register;
+    *next_register = next_register.saturating_add(1);
+    ops.push(Op::Binary {
+        dst,
+        operator,
+        lhs,
+        rhs,
+    });
+    Some(dst)
+}
+
+fn reduce_atom(
+    expression: &Expression<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    locals: &HashMap<String, u16>,
 ) -> Option<u16> {
     if let Some(value) = reduce_literal(expression) {
         let register = *next_register;
@@ -91,21 +184,17 @@ fn reduce_expression(
         });
         return Some(register);
     }
-    let Expression::BinaryExpression(binary) = expression else {
-        return None;
-    };
-    let operator = reduce_operator(binary.operator)?;
-    let lhs = reduce_expression(&binary.left, ops, facts, next_register)?;
-    let rhs = reduce_expression(&binary.right, ops, facts, next_register)?;
-    let dst = *next_register;
-    *next_register = next_register.saturating_add(1);
-    ops.push(Op::Binary {
-        dst,
-        operator,
-        lhs,
-        rhs,
-    });
-    Some(dst)
+    if let Expression::Identifier(identifier) = expression {
+        let slot = *locals.get(identifier.name.as_str())?;
+        let register = *next_register;
+        *next_register = next_register.saturating_add(1);
+        ops.push(Op::LoadLocal {
+            dst: register,
+            slot,
+        });
+        return Some(register);
+    }
+    None
 }
 
 struct Literal {
