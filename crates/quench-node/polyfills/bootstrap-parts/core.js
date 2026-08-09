@@ -1242,8 +1242,9 @@ let __quenchHttpModule;
           return JSON.parse(await this.text());
         }
         clone() {
-          if (this.bodyUsed)
+          if (this.bodyUsed) {
             throw new TypeError("Body has already been consumed.");
+          }
           return new Request(this);
         }
       };
@@ -1302,6 +1303,7 @@ let __quenchHttpModule;
         value.aborted = true;
         value.destroyed = true;
         value.__abortErrorEmitted = true;
+        const shouldEmitAbortError = !value.complete;
         if (value.__httpClientResponse) {
           const error = new Error("socket hang up");
           error.code = "ECONNRESET";
@@ -1315,7 +1317,7 @@ let __quenchHttpModule;
         const error = new Error("The operation was aborted");
         error.name = "AbortError";
         queueMicrotask(() => {
-          if (!value.complete) value.emit?.("error", error);
+          if (shouldEmitAbortError) value.emit?.("error", error);
           value.emit?.("close");
         });
         return value;
@@ -1330,6 +1332,7 @@ let __quenchHttpModule;
       }
       resume() {
         this._paused = false;
+        this.readableFlowing = true;
         if (this.complete) return this;
         queueMicrotask(() => {
           if (this.complete) return;
@@ -1882,6 +1885,16 @@ let __quenchHttpModule;
             writes--;
             if (writes === 0) finish();
           };
+          const writeAndComplete = (chunk) => {
+            let completed = false;
+            const complete = () => {
+              if (completed) return;
+              completed = true;
+              written();
+            };
+            response.socket.write(chunk, complete);
+            if (!response.socket.__quenchRawHttp) queueMicrotask(complete);
+          };
           if (output.length) {
             const payload =
               response.headers["transfer-encoding"] === "chunked"
@@ -1891,7 +1904,7 @@ let __quenchHttpModule;
                     NodeBuffer.from("\r\n")
                   ])
                 : output;
-            response.socket.write(payload, written);
+            writeAndComplete(payload);
           }
           let terminator = NodeBuffer.alloc(0);
           if (response.headers["transfer-encoding"] === "chunked") {
@@ -1902,7 +1915,7 @@ let __quenchHttpModule;
               trailerLines ? `0\r\n${trailerLines}\r\n\r\n` : "0\r\n\r\n"
             );
           }
-          response.socket.write(terminator, written);
+          writeAndComplete(terminator);
           return response;
         }
         queueMicrotask(() => {
@@ -1988,12 +2001,14 @@ let __quenchHttpModule;
         if (req.method === "HEAD") this.__hasBody = false;
       }
       assignSocket(socket) {
-        if (socket._httpMessage) {
-          const error = new Error(
-            "ServerResponse has an already assigned socket"
-          );
+        if (socket._httpMessage === this) {
+          const error = new Error("Socket already assigned");
           error.code = "ERR_HTTP_SOCKET_ASSIGNED";
           throw error;
+        }
+        if (socket._httpMessage) {
+          socket._httpMessage.detachSocket?.(socket);
+          socket._httpMessage = null;
         }
         if (typeof socket.on !== "function") {
           const error = new TypeError("socket.on is not a function");
@@ -2321,6 +2336,7 @@ let __quenchHttpModule;
       const response = makeResponse();
       response.__httpClientResponse = true;
       response.__clientRequest = request;
+      request.socket = response.socket;
       if (context?.address) {
         response.socket.__quenchServerPort = context.address().port;
       }
@@ -2487,7 +2503,9 @@ let __quenchHttpModule;
           );
         }
         const serverRequest = new NodeIncomingMessage();
+        const serverRequestDestroy = serverRequest.destroy;
         Object.assign(serverRequest, request);
+        serverRequest.destroy = serverRequestDestroy;
         serverRequest.complete = false;
         serverRequest.__closeEmitted = false;
         // Node's HTTP parser owns a data listener on the request socket while
@@ -2768,6 +2786,7 @@ let __quenchHttpModule;
         };
         this.__quenchRawConnection = (socket) => {
           socket.__quenchRawHttp = true;
+          socket.allowHalfOpen = this.httpAllowHalfOpen === true;
           let pending = "";
           socket.on("data", (chunk) => {
             pending += chunk.toString();
@@ -2833,7 +2852,7 @@ let __quenchHttpModule;
                 body = pending.slice(bodyStart, bodyStart + bodyLength);
                 consumedBody = bodyLength;
               }
-              pending = pending.slice(boundary + 4);
+              pending = pending.slice(boundary + 4 + consumedBody);
               const [method, url, version] = lines[0].split(" ");
               const request = new NodeIncomingMessage();
               request.method = method;
@@ -2843,12 +2862,20 @@ let __quenchHttpModule;
               request.rawHeaders = rawHeaders;
               request.trailers = trailers;
               request.socket = socket;
-              pending = pending.slice(consumedBody);
               const response = new NodeServerResponse(request);
               response.assignSocket(socket);
               this._handler?.(request, response);
               if (body) request.emit("data", NodeBuffer.from(body));
               request.emit("end");
+              if (pending.length) {
+                const remainder = pending;
+                pending = "";
+                queueMicrotask(() => {
+                  pending = remainder;
+                  socket.emit("data", "");
+                });
+                return;
+              }
             }
           });
           this.emit("connection", socket);
