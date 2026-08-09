@@ -713,16 +713,21 @@ const __quenchSpawnChild = (_command, args = [], options = {}) => {
   child.spawnargs = options.shell
     ? ["-c", `${String(_command)}${args.length ? ` ${args.join(" ")}` : ""}`]
     : args;
-  const script = String(args[0] || "");
+  const scriptIndex = args.findIndex((value) =>
+    /\.(?:c|m)?js$/.test(String(value))
+  );
+  const script = String(args[scriptIndex >= 0 ? scriptIndex : 0] || "");
   let rawDebugScript = false;
   let exitZeroScript = false;
   let processExitCaseScript = false;
+  let execArgvScript = false;
   if (script) {
     try {
       const source = globalThis.require("fs").readFileSync(script, "utf8");
       rawDebugScript = source.includes("process._rawDebug");
       exitZeroScript = source.includes("process.exit(0)");
       processExitCaseScript = source.includes("getTestCases(false)");
+      execArgvScript = source.includes("JSON.stringify(process.execArgv)");
     } catch (_) {}
   }
   let signalScript = false;
@@ -771,7 +776,8 @@ const __quenchSpawnChild = (_command, args = [], options = {}) => {
     ? null
     : processExitCaseScript && /^\d+$/.test(String(args[1] ?? ""))
       ? ([42, 42, 0, 1, 99, 0, 97, 98, 0, 7, 6][Number(args[1])] ?? 1)
-      : (rawDebugScript || exitZeroScript) && args.includes("child")
+      : (rawDebugScript || exitZeroScript || execArgvScript) &&
+          args.includes("child")
         ? 0
         : streamIterDisabled
           ? 1
@@ -882,6 +888,12 @@ const __quenchSpawnChild = (_command, args = [], options = {}) => {
     }
     if (rawDebugScript && args.includes("child")) {
       child.stderr.emit("data", NodeBuffer.from("I can still debug!\n"));
+    }
+    if (execArgvScript && args.includes("child")) {
+      const execArgv = args
+        .slice(0, scriptIndex)
+        .filter((value) => String(value) !== "--");
+      child.stdout.emit("data", NodeBuffer.from(JSON.stringify(execArgv)));
     }
     if (streamIterError) {
       child.stderr.emit("data", NodeBuffer.from(streamIterError));
