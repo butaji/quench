@@ -64,7 +64,11 @@ pub enum Op {
 pub enum Builtin {
     Boolean,
     Eval,
+    IsFinite,
+    IsNaN,
     Number,
+    ParseFloat,
+    ParseInt,
     String,
 }
 
