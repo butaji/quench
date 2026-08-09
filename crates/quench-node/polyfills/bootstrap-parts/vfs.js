@@ -772,6 +772,12 @@ class __QuenchVirtualFileSystem {
     }
   }
   accessSync(path, mode = 0) {
+    const requested = mode == null ? 0 : Number(mode);
+    if (!Number.isInteger(requested) || requested < 0 || requested > 7) {
+      const error = new RangeError('The value of "mode" is out of range');
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
     if (this.__isReal()) {
       return globalThis.__nodeFs.accessSync(this.__realPath(path), mode);
     }
@@ -779,7 +785,6 @@ class __QuenchVirtualFileSystem {
     if (!entry) {
       throw __quenchVfsError("ENOENT", "access", path);
     }
-    const requested = mode == null ? 0 : Number(mode);
     const permissions = entry.mode ?? (entry.type === "dir" ? 0o755 : 0o666);
     if (
       (requested & 4 && !(permissions & 0o444)) ||

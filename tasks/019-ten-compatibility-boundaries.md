@@ -1514,3 +1514,8 @@ Follow-up upstream audit confirms `test-crypto-random.js` remains green after
 stage 2535. `test-buffer-from.js` still fails outside the focused coercion
 probe; its broader Buffer/copyBytesFrom matrix remains open and is not claimed
 by the crypto change.
+
+Stage 2537 validates fs access modes in the virtual filesystem. Invalid mode
+bits such as `8` now reject with `ERR_OUT_OF_RANGE`, and the focused stage plus
+full gate pass at 2373/2373. The larger `test-fs-promises.js` fixture still has
+an independent callback-accounting gap.
