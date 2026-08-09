@@ -425,15 +425,20 @@ class NodeReadable extends NodeEventEmitter {
     });
     return this;
   }
-  static from(iterable) {
-    const stream = new NodeReadable({ objectMode: true });
+  static from(iterable, options = {}) {
+    const signal = options.signal;
+    const stream = new NodeReadable({
+      ...options,
+      signal: undefined,
+      objectMode: options.objectMode !== false,
+    });
     const asyncIterator = iterable?.[Symbol.asyncIterator]?.();
     if (asyncIterator) {
       stream._pump = async () => {
         if (stream._pumping) return;
         stream._pumping = true;
         try {
-          while (!stream._paused && !stream._ended) {
+          while (!stream._paused && !stream._ended && !stream.destroyed) {
             const next = await asyncIterator.next();
             if (next.done) {
               stream._ended = true;
@@ -447,47 +452,82 @@ class NodeReadable extends NodeEventEmitter {
             } else {
               stream._chunks.push(next.value);
               stream._paused = true;
+              if (stream.listenerCount("readable")) stream.emit("readable");
             }
           }
+        } catch (error) {
+          stream.destroy(error);
         } finally {
           stream._pumping = false;
         }
       };
-      stream._destroy = (_error, callback) => {
-        Promise.resolve(asyncIterator.return?.()).then(() => callback());
+      stream._destroy = (error, callback) => {
+        Promise.resolve(asyncIterator.return?.()).then(() => callback(error));
       };
     } else {
-      try {
-        stream._sourceChunks = Array.from(iterable);
-      } catch (error) {
-        const pendingErrorHandler = () => {};
-        pendingErrorHandler.__quenchInternal = true;
-        stream.on("error", pendingErrorHandler);
+      stream._sourceIterator = iterable?.[Symbol.iterator]?.();
+      stream._sourceDone = false;
+      if (!stream._sourceIterator) {
+        const error = new TypeError("iterable must be iterable");
+        error.code = "ERR_INVALID_ARG_TYPE";
         queueMicrotask(() => stream.destroy(error));
         return stream;
       }
-      stream._index = 0;
       stream._pump = () => {
-        while (!stream._paused && stream._index < stream._sourceChunks.length) {
-          const value = stream._sourceChunks[stream._index++];
+        while (!stream._paused && !stream._ended && !stream.destroyed) {
+          let result;
+          try {
+            result = stream._sourceIterator.next();
+          } catch (error) {
+            stream.destroy(error);
+            return;
+          }
+          if (result.done) {
+            stream._sourceDone = true;
+            break;
+          }
+          const value = result.value;
           if (stream.listenerCount("data")) {
             stream.emit("data", value);
             if (!stream.listenerCount("data")) break;
-          } else stream._chunks.push(value);
+          } else {
+            stream._chunks.push(value);
+            stream._paused = true;
+            if (stream.listenerCount("readable")) stream.emit("readable");
+            break;
+          }
         }
-        if (!stream._paused && stream._index === stream._sourceChunks.length) {
+        if (!stream._paused && !stream.destroyed && stream._sourceDone) {
           stream._ended = true;
           stream.readableEnded = true;
           stream.emit("end");
         }
       };
+      stream._destroy = (error, callback) => {
+        Promise.resolve(stream._sourceIterator.return?.()).then(() => callback(error));
+      };
     }
     const on = stream.on.bind(stream);
     stream.on = (event, listener) => {
       const result = on(event, listener);
-      if (event === "data") queueMicrotask(stream._pump);
+      if (event === "data" || event === "readable") {
+        if (event === "data") stream._paused = false;
+        queueMicrotask(stream._pump);
+      }
       return result;
     };
+    if (signal?.addEventListener) {
+      const abort = () => {
+        const error = signal.reason || Object.assign(new Error("The operation was aborted"), {
+          name: "AbortError",
+        });
+        stream.errored = error;
+        stream._readableState.errored = error;
+        stream.destroy(error);
+      };
+      if (signal.aborted) queueMicrotask(abort);
+      else signal.addEventListener("abort", abort, { once: true });
+    }
     return stream;
   }
   pipe(destination, options = {}) {
@@ -659,6 +699,13 @@ class NodeReadable extends NodeEventEmitter {
     return this;
   }
   read(size) {
+    if (
+      this._sourceIterator &&
+      this._chunks.length === 0 &&
+      !this._sourceDone
+    ) {
+      this._pump();
+    }
     if (!this._chunks || this._chunks.length === 0) {
       if (!this._readableState.ended && !this.destroyed) {
         __nodeReadableStart(this);
@@ -763,7 +810,10 @@ class NodeReadable extends NodeEventEmitter {
         }
         continue;
       }
-      if (this.readableEnded || this.destroyed) return;
+      if (this.readableEnded || this.destroyed) {
+        if (this.errored) throw this.errored;
+        return;
+      }
       const result = await new Promise((resolve, reject) => {
         let settled = false;
         const cleanup = () => {
@@ -780,7 +830,13 @@ class NodeReadable extends NodeEventEmitter {
         };
         const onData = (value) => finish({ type: "data", value });
         const onEnd = () => finish({ type: "end" });
-        const onClose = () => finish({ type: "end" });
+        const onClose = () => {
+          if (this.errored) {
+            reject(this.errored);
+            return;
+          }
+          finish({ type: "end" });
+        };
         const onError = (error) => {
           if (settled) return;
           settled = true;
@@ -791,6 +847,7 @@ class NodeReadable extends NodeEventEmitter {
         this.once("end", onEnd);
         this.once("close", onClose);
         this.once("error", onError);
+        __nodeReadableStart(this);
       });
       if (result.type === "end") return;
       yield result.value;
