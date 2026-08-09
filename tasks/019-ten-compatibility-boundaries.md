@@ -1509,3 +1509,8 @@ finite fractional numeric sizes before range validation. The authoritative
 `test-crypto-random.js` fixture passes; stale stage 487 validation was updated
 to reflect Node's fractional-size behavior. The focused gate reports
 2372/2372 passing.
+
+Follow-up upstream audit confirms `test-crypto-random.js` remains green after
+stage 2535. `test-buffer-from.js` still fails outside the focused coercion
+probe; its broader Buffer/copyBytesFrom matrix remains open and is not claimed
+by the crypto change.
