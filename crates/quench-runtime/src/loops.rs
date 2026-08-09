@@ -11,6 +11,43 @@ use crate::{
     ops::{Constant, Op},
 };
 
+pub(crate) fn reduce_update(
+    update: &oxc::ast::ast::UpdateExpression<'_>,
+    ops: &mut Vec<Op>,
+    next_register: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<u16> {
+    let oxc::ast::ast::SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) =
+        &update.argument
+    else {
+        return None;
+    };
+    let slot = *locals.get(identifier.name.as_str())?;
+    let old = *next_register;
+    *next_register = next_register.saturating_add(1);
+    ops.push(Op::LoadLocal { dst: old, slot });
+    let one = *next_register;
+    *next_register = next_register.saturating_add(1);
+    ops.push(Op::Const {
+        dst: one,
+        value: Constant::Number(1.0),
+    });
+    let updated = *next_register;
+    *next_register = next_register.saturating_add(1);
+    let operator = match update.operator {
+        oxc::syntax::operator::UpdateOperator::Increment => crate::ops::BinaryOp::Add,
+        oxc::syntax::operator::UpdateOperator::Decrement => crate::ops::BinaryOp::Subtract,
+    };
+    ops.push(Op::Binary {
+        dst: updated,
+        operator,
+        lhs: old,
+        rhs: one,
+    });
+    ops.push(Op::StoreLocal { slot, src: updated });
+    Some(if update.prefix { updated } else { old })
+}
+
 pub(crate) fn execute(
     registers: &mut Vec<crate::value::Value>,
     op: &crate::ops::Op,
