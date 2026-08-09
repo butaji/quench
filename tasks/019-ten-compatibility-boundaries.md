@@ -1202,3 +1202,12 @@ the focused host-scheduler context stage pass, as does authoritative
 `test-domain-from-timer.js`; `test-domain-timer.js` still reports an opaque
 harness exception and is not claimed. The post-fix audit reports 2331/2332
 passing with only stage 2383 unclassified.
+
+Stage 2494 aligns RealFS descriptor reads with Node's observable internal-
+binding behavior. Local Node confirms that `fs.readFileSync(fd)` does not call a
+monkeypatched public `fs.fstatSync`; the RealFS handle test now expects the same
+isolation, and the focused stage proves the read succeeds even when the public
+method throws. Stages 2383 and 2494 pass. The complete parallel focused-stage
+gate now reports 2333/2333 passing with zero failures, without manual fixture
+cleanup. This closes the maintained focused backlog, not the broader upstream
+Node fixture backlog.

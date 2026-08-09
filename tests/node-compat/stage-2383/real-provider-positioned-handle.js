@@ -53,7 +53,7 @@ provider.closeSync(fd);
   };
   const observedFd = provider.openSync("/file.txt", "r");
   getVirtualFd(observedFd).entry.readFileSync("utf8");
-  assert.strictEqual(observed, 1);
+  assert.strictEqual(observed, 0);
   provider.closeSync(observedFd);
   fsModule.fstatSync = originalFstatSync;
 }
