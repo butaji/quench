@@ -103,3 +103,6 @@ large non-match corpus, so the compatibility objective remains open.
 - Commit `0d4cc5810` normalizes broadcast iterator writes to byte chunks and
   applies drop-oldest/drop-newest policies in synchronous writes. The basic
   and backpressure broadcast fixtures now pass.
+- Commit `2bda2538c` implements lazy cached `stream/iter.shareSync()` with
+  cancellation and source-error propagation. `test-stream-iter-share-sync.js`
+  now passes; `toReadable()` remains a separate open cluster.
