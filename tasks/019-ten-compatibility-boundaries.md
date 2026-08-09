@@ -1541,3 +1541,8 @@ the peer socket is established before user code writes the first bytes. The
 focused HTTP dispatch stage passes, and `test-http-server.js` advances from
 zero to two of four requests; remaining half-close/keep-alive framing is still
 open.
+Stage 2540 adds a focused raw HTTP sequence with one request followed by a
+POST and two pipelined requests; it passes with four server handler calls.
+The upstream `test-http-server.js` remains at two of four, indicating its
+remaining discrepancy depends on response timing/close assertions beyond the
+minimal parser reproduction.
