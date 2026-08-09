@@ -10,35 +10,31 @@ pub(crate) fn execute_builtin(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Option<Result<Value, crate::execute::VmError>> {
+    use crate::ops::Builtin::*;
     let result = match builtin {
-        crate::ops::Builtin::Array => return Some(Ok(crate::builtins::array(arguments))),
-        crate::ops::Builtin::ArrayIsArray => {
-            return Some(Ok(crate::builtins::is_array(arguments.first())))
-        }
-        crate::ops::Builtin::ArrayMap => {
-            return Some(crate::builtins::array_map(receiver, arguments))
-        }
-        crate::ops::Builtin::ArrayFilter => {
-            return Some(crate::builtins::array_filter(receiver, arguments));
-        }
-        crate::ops::Builtin::ArraySome => return Some(some(receiver, arguments)),
-        crate::ops::Builtin::ArrayEvery => return Some(every(receiver, arguments)),
-        crate::ops::Builtin::ArrayFind => return Some(find(receiver, arguments)),
-        crate::ops::Builtin::ArrayIncludes => includes(receiver, arguments),
-        crate::ops::Builtin::ArrayIndexOf => index_of(receiver, arguments),
-        crate::ops::Builtin::ArrayLastIndexOf => last_index_of(receiver, arguments),
-        crate::ops::Builtin::ArraySlice => slice(receiver, arguments),
-        crate::ops::Builtin::ArrayConcat => concat(receiver, arguments),
-        crate::ops::Builtin::ArrayFlat => flat(receiver, arguments),
-        crate::ops::Builtin::ArrayFlatMap => return Some(flat_map(receiver, arguments)),
-        crate::ops::Builtin::ArrayAt => return Some(Ok(at(receiver, arguments))),
-        crate::ops::Builtin::ArrayToReversed => return Some(Ok(to_reversed(receiver))),
-        crate::ops::Builtin::ArrayReduce => return Some(reduce_values(receiver, arguments, false)),
-        crate::ops::Builtin::ArrayReduceRight => {
-            return Some(reduce_values(receiver, arguments, true));
-        }
-        crate::ops::Builtin::ArrayForEach => {
-            return Some(crate::builtins::array_for_each(receiver, arguments));
+        Array => return Some(Ok(crate::builtins::array(arguments))),
+        ArrayIsArray => return Some(Ok(crate::builtins::is_array(arguments.first()))),
+        ArrayMap => return Some(crate::builtins::array_map(receiver, arguments)),
+        ArrayFilter => return Some(crate::builtins::array_filter(receiver, arguments)),
+        ArraySome => return Some(some(receiver, arguments)),
+        ArrayEvery => return Some(every(receiver, arguments)),
+        ArrayFind => return Some(find(receiver, arguments)),
+        ArrayIncludes => includes(receiver, arguments),
+        ArrayIndexOf => index_of(receiver, arguments),
+        ArrayLastIndexOf => last_index_of(receiver, arguments),
+        ArraySlice => slice(receiver, arguments),
+        ArrayConcat => concat(receiver, arguments),
+        ArrayFlat => flat(receiver, arguments),
+        ArrayFlatMap => return Some(flat_map(receiver, arguments)),
+        ArrayAt => return Some(Ok(at(receiver, arguments))),
+        ArrayToReversed => return Some(Ok(to_reversed(receiver))),
+        ArrayReduce => return Some(reduce_values(receiver, arguments, false)),
+        ArrayReduceRight => return Some(reduce_values(receiver, arguments, true)),
+        ArrayForEach => return Some(crate::builtins::array_for_each(receiver, arguments)),
+        ArrayToLocaleString => {
+            return Some(crate::intl::tolocale::array_to_locale_string(
+                receiver, arguments,
+            ))
         }
         _ => return None,
     };
@@ -101,6 +97,7 @@ pub(crate) fn property(values: &[Value], key: &str) -> Value {
         "join" => crate::ops::Builtin::ArrayJoin,
         "reduce" => crate::ops::Builtin::ArrayReduce,
         "reduceRight" => crate::ops::Builtin::ArrayReduceRight,
+        "toLocaleString" => crate::ops::Builtin::ArrayToLocaleString,
         _ => return index(values, key),
     };
     Value::Builtin(method)
