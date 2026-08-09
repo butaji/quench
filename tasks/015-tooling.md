@@ -132,6 +132,11 @@ next bootstrap evaluation. Crypto stages 2553, 892, and 1403 plus the
 upstream PBKDF2 fixture pass; the broader upstream key-generation fixture
 retains an unrelated missing-exception failure.
 
+The crypto key-object declarations were split after the complete
+`__quenchCryptoKeyObjectInvalidThis` helper. `module-surface-14.js` is now 407
+lines and its 285-line tail runs immediately afterward. Rust tests and crypto
+stages 1403, 2553, and 892 pass after the extraction.
+
 The Buffer encoding bootstrap was split at an existing ordered tail: the main
 `encoding.js` file is now below the 500-line limit while `encoding-tail.js`
 retains the final `NodeBuffer.compare` and `NodeBuffer.from` definitions.
