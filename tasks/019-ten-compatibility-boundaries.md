@@ -1182,3 +1182,14 @@ close callback, both before a subsequently queued microtask when there are no
 connections. Stage 2318, the focused callback/event-order stage, the adjacent
 native-net cluster, and complete authoritative `test-net-server-close.js` pass.
 The post-fix audit reports 2326/2330 passing with 4 unclassified failures.
+
+Stage 2492 makes the remaining stateful filesystem fixtures rerunnable. The
+permission fixture restores its exact generated file's write bit before
+overwriting it, and the real-provider readlink fixture removes only its two
+known generated links before recreating them. The focused regression performs
+both setup cycles twice and cleans its scoped directory. Stages 2373, 2389, and
+2492 all pass on two consecutive runs without manual preparation. Stage 2060
+uses the same exact-path permission restore for its generated access-mode file.
+No compatibility behavior or vendored Node source is changed. A second full
+audit without manual preparation reports 2329/2331 passing with only stages
+1827 and 2383 unclassified.
