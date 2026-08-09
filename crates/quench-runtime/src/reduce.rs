@@ -1,15 +1,5 @@
 //! OXC-to-residual reduction entry point.
 
-use std::collections::HashMap;
-
-use oxc::{
-    allocator::Allocator,
-    ast::ast::{AssignmentTarget, BindingPatternKind, Expression, Statement},
-    parser::Parser,
-    span::SourceType,
-    syntax::operator::{AssignmentOperator, UnaryOperator, UpdateOperator},
-};
-
 use crate::{
     arrays, blocks, conditional,
     facts::ProgramDb,
@@ -19,6 +9,14 @@ use crate::{
     ops::{Constant, Op},
     properties,
 };
+use oxc::{
+    allocator::Allocator,
+    ast::ast::{AssignmentTarget, BindingPatternKind, Expression, Statement},
+    parser::Parser,
+    span::SourceType,
+    syntax::operator::{AssignmentOperator, UnaryOperator, UpdateOperator},
+};
+use std::collections::HashMap;
 
 #[derive(Debug, PartialEq)]
 pub struct ResidualProgram {
@@ -346,7 +344,6 @@ fn reduce_unary(
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
-    let src = reduce_expression(&unary.argument, ops, facts, next_register, locals)?;
     let operator = match unary.operator {
         UnaryOperator::UnaryPlus => crate::ops::UnaryOp::Plus,
         UnaryOperator::UnaryNegation => crate::ops::UnaryOp::Minus,
@@ -354,6 +351,13 @@ fn reduce_unary(
         UnaryOperator::Void => crate::ops::UnaryOp::Void,
         UnaryOperator::Typeof => crate::ops::UnaryOp::Typeof,
         _ => return None,
+    };
+    let src = if operator == crate::ops::UnaryOp::Typeof
+        && matches!(&unary.argument, Expression::Identifier(identifier) if !locals.contains_key(identifier.name.as_str()))
+    {
+        emit_undefined(ops, next_register)
+    } else {
+        reduce_expression(&unary.argument, ops, facts, next_register, locals)?
     };
     let dst = *next_register;
     *next_register = next_register.saturating_add(1);
