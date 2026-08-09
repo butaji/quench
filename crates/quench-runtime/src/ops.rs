@@ -60,6 +60,7 @@ pub enum Op {
         dst: u16,
         callee: u16,
         args: Vec<u16>,
+        spreads: Vec<bool>,
     },
     CallMethod {
         dst: u16,
