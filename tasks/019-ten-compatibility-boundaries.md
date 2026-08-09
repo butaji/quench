@@ -1360,3 +1360,8 @@ value and `internal/async_hooks.enabledHooksExist()` reports the no-hooks
 state. The focused stage and authoritative default-path and async-local-storage
 `stream.finished()` fixtures pass; the full focused gate reports 2356/2356
 passing.
+
+Stage 2520 records the maintained Web Streams pipeline smoke contract,
+including a TransformStream between readable and writable endpoints. The
+focused pipeline stage passes; the larger `test-webstreams-pipeline.js` fixture
+still has a separate later lifecycle mismatch and is not claimed complete.
