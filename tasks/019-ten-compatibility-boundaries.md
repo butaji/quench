@@ -1536,3 +1536,8 @@ the handler is now registered as the server's `connection` listener and is not
 also called directly. The focused handler-once stage passes and the change is
 pushed, but the full `test-net-stream.js` fixture still reports repeated error
 callbacks, so network compatibility remains open.
+Stage 2539 defers in-memory `net.Socket`'s `connect` event by one microtask so
+the peer socket is established before user code writes the first bytes. The
+focused HTTP dispatch stage passes, and `test-http-server.js` advances from
+zero to two of four requests; remaining half-close/keep-alive framing is still
+open.
