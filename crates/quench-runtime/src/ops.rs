@@ -62,6 +62,11 @@ pub enum Op {
         then_ops: Vec<Op>,
         else_ops: Vec<Op>,
     },
+    Try {
+        body: Vec<Op>,
+        handler: Option<Vec<Op>>,
+        finalizer: Option<Vec<Op>>,
+    },
     Unary {
         dst: u16,
         operator: UnaryOp,
