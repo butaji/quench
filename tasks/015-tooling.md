@@ -297,6 +297,10 @@ listener path was restored to the prior invocation semantics. All 29 affected
 stages now pass again, including events, streams, diagnostics, HTTP, and VFS
 coverage.
 
+A fresh verification on `b9ee4f096` completed with six workers in 106 seconds:
+2,388/2,388 focused stages passed with zero failures, and all six application
+gates passed.
+
 TLS option field and ticket-key validation were split into helpers. `tls.js`
 now passes ESLint with zero warnings; stages 520, 1168, 1242, 2009, 2010,
 2011, and 2029 pass.
