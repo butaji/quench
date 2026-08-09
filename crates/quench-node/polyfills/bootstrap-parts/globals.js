@@ -111,11 +111,13 @@ globalThis.queueMicrotask = (callback) =>
     try {
       callback();
     } catch (error) {
-      if (!globalThis.__quench_async_error) {
-        globalThis.__quench_async_error =
-          error && error.stack
-            ? `${error.name}: ${error.message}\n${error.stack}`
-            : String(error);
+      const handled = globalThis.process?.emit?.("uncaughtException", error);
+      if (!handled && !globalThis.__quench_pending_uncaught) {
+        Object.defineProperty(globalThis, "__quench_pending_uncaught", {
+          configurable: true,
+          value: error,
+          writable: true
+        });
       }
     }
   });
