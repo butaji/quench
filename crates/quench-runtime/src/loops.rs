@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use oxc::{
-    ast::ast::{Expression, ForStatement, ForStatementInit, Statement},
+    ast::ast::{Expression, ForInStatement, ForStatement, ForStatementInit, Statement},
     syntax::operator::BinaryOperator,
 };
 
@@ -46,6 +46,57 @@ pub(crate) fn reduce_update(
     });
     ops.push(Op::StoreLocal { slot, src: updated });
     Some(if update.prefix { updated } else { old })
+}
+
+pub(crate) fn reduce_for_in(
+    statement: &ForInStatement<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    next_slot: &mut u16,
+    locals: &mut HashMap<String, u16>,
+) -> Result<(), Vec<String>> {
+    let oxc::ast::ast::ForStatementLeft::VariableDeclaration(declaration) = &statement.left else {
+        return Err(vec!["Unsupported for-in binding".to_string()]);
+    };
+    let Some(declarator) = declaration.declarations.first() else {
+        return Err(vec!["Missing for-in binding".to_string()]);
+    };
+    let oxc::ast::ast::BindingPatternKind::BindingIdentifier(identifier) = &declarator.id.kind
+    else {
+        return Err(vec!["Unsupported for-in binding".to_string()]);
+    };
+    let slot = *next_slot;
+    *next_slot = next_slot.saturating_add(1);
+    locals.insert(identifier.name.to_string(), slot);
+    let object =
+        crate::reduce::reduce_expression(&statement.right, ops, facts, next_register, locals)
+            .ok_or_else(|| vec!["Unsupported for-in object".to_string()])?;
+    let body = crate::branch::reduce(&statement.body, facts, locals)?;
+    ops.push(Op::ForIn { object, slot, body });
+    Ok(())
+}
+
+pub(crate) fn execute_for_in(
+    registers: &mut Vec<crate::value::Value>,
+    op: &Op,
+) -> Result<(), crate::execute::VmError> {
+    let Op::ForIn { object, slot, body } = op else {
+        return Err(crate::execute::VmError::MissingReturn);
+    };
+    let value = crate::execute::read_register(registers, *object)?;
+    let keys = match value {
+        crate::value::Value::Object(properties) => {
+            properties.iter().map(|(key, _)| key.clone()).collect()
+        }
+        crate::value::Value::Array(values) => (0..values.len()).map(|i| i.to_string()).collect(),
+        _ => Vec::new(),
+    };
+    for key in keys {
+        crate::execute::write_value(registers, *slot, crate::value::Value::String(key));
+        let _ = crate::execute::execute_in_place(body, registers)?;
+    }
+    Ok(())
 }
 
 pub(crate) fn execute(

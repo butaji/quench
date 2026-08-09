@@ -35,6 +35,7 @@ pub mod reduce;
 mod semantic;
 mod sequences;
 mod special;
+mod statement_control;
 mod statements;
 mod switch;
 mod templates;

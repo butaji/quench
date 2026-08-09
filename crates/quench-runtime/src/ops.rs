@@ -88,6 +88,11 @@ pub enum Op {
         body: Vec<Op>,
         update: Vec<Op>,
     },
+    ForIn {
+        object: u16,
+        slot: u16,
+        body: Vec<Op>,
+    },
     Switch {
         discriminant: u16,
         cases: Vec<(Option<Constant>, Vec<Op>)>,
