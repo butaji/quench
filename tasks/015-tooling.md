@@ -221,3 +221,5 @@ comparisons. With six workers and a 10-second per-stage timeout, stages 1–500
 completed with 500/500 passing and zero failed stages.
 The same sweep for stages 501–1000 also completed with 500/500 passing and
 zero failed stages.
+Stages 1001–1500 completed with 485/485 discovered stages passing and zero
+failed stages.
