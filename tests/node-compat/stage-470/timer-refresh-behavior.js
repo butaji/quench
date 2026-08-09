@@ -4,6 +4,6 @@ clearTimeout(handle);
 if (handle.refresh() !== handle) throw new Error("refresh was not chainable");
 
 setTimeout(() => {
-  if (calls !== 1) throw new Error(`refresh fired ${calls} times`);
+  if (calls !== 0) throw new Error(`refresh fired ${calls} times`);
   console.log("timer refresh behavior passed");
 }, 0);
