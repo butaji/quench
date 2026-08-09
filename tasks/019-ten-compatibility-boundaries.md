@@ -1557,3 +1557,8 @@ Post-2542 verification: `cargo test -p quench-node` passes 2/2, and example
 application stages 2047, 2069, 2080, 2081, 2104, and 2251 all pass. These
 checks do not close the remaining upstream Buffer typed-array layout or
 network/HTTP lifecycle gaps.
+Fresh authoritative rerun confirms the remaining gaps: `test-buffer-from.js`
+fails on Float64Array reinterpretation (`RangeError: invalid offset`),
+`test-stream-destroy.js` misses callback 15, and `test-stream-pipeline.js`
+still fails its broader validation/lifecycle matrix. No completion claim is
+made from the focused gate alone.
