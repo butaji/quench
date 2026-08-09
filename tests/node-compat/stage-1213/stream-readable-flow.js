@@ -7,9 +7,8 @@ assert.strictEqual(readable.pause(), readable);
 
 let closeError;
 const closed = new Readable({ read() {} });
-closed.once = (event, listener) => {
-  if (event === "close") closed.closeListener = listener;
-};
 finished(closed, (error) => (closeError = error));
-closed.closeListener();
-assert.strictEqual(closeError.code, "ERR_STREAM_PREMATURE_CLOSE");
+closed.destroy();
+setImmediate(() => {
+  assert.strictEqual(closeError.code, "ERR_STREAM_PREMATURE_CLOSE");
+});
