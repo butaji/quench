@@ -816,7 +816,7 @@ const __quenchRequireStreamIter = () => {
     }
     if (
       options.backpressure !== undefined &&
-      !["wait", "drop-newest", "drop-oldest"].includes(options.backpressure)
+      !["wait", "drop-newest"].includes(options.backpressure)
     ) {
       const error = new TypeError("invalid backpressure option");
       error.code = "ERR_INVALID_ARG_VALUE";
@@ -827,6 +827,9 @@ const __quenchRequireStreamIter = () => {
     const backpressure = options.backpressure || state.backpressure || "wait";
     state.backpressure = backpressure;
     return {
+      get canWrite() {
+        return writable.destroyed ? null : !writable.writableNeedDrain;
+      },
       async write(value) {
         if (state.ended) throw new Error("write after end");
         if (backpressure === "drop-newest" && state.blocked) return;
@@ -841,6 +844,15 @@ const __quenchRequireStreamIter = () => {
         if (value !== undefined) await this.write(value);
         state.ended = true;
         writable.end?.();
+      },
+      writeSync() {
+        return false;
+      },
+      writevSync() {
+        return false;
+      },
+      endSync() {
+        return -1;
       }
     };
   };
@@ -881,6 +893,8 @@ const __quenchRequireStreamIter = () => {
     broadcast,
     Broadcast,
     fromWritable,
+    ondrain: (writer) =>
+      writer?.canWrite === null ? null : Promise.resolve(true),
     pull: (readable, transform) => ({
       async *[Symbol.asyncIterator]() {
         for await (const value of readable) {
