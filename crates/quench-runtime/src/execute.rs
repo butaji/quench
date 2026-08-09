@@ -193,6 +193,13 @@ fn execute_builtin_tail(
         crate::ops::Builtin::String => Ok(Value::String(to_string(arguments.first()))),
         crate::ops::Builtin::Unescape => Ok(crate::builtins::unescape(arguments.first())),
         crate::ops::Builtin::MathPow => Ok(crate::builtins::math_pow(arguments)),
+        crate::ops::Builtin::MathAbs
+        | crate::ops::Builtin::MathFloor
+        | crate::ops::Builtin::MathCeil
+        | crate::ops::Builtin::MathRound
+        | crate::ops::Builtin::MathTrunc
+        | crate::ops::Builtin::MathMax
+        | crate::ops::Builtin::MathMin => crate::math::execute(builtin, arguments),
         _ => Ok(Value::Undefined),
     }
 }
