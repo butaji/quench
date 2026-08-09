@@ -47,6 +47,9 @@ fn special_property(builtin: Builtin, key: &str) -> Option<Value> {
         (Builtin::DatePrototype, "getYear") => Builtin::DateGetYear,
         (Builtin::DatePrototype, "setYear") => Builtin::DateSetYear,
         (Builtin::Reflect, "construct") => Builtin::ReflectConstruct,
+        (Builtin::RegExp, "prototype") => Builtin::RegExpPrototype,
+        (Builtin::RegExpPrototype, "test") => Builtin::RegExpTest,
+        (Builtin::RegExpPrototype, "exec") => Builtin::RegExpExec,
         (Builtin::ObjectPrototype, "hasOwnProperty") => Builtin::ObjectHasOwnProperty,
         (Builtin::ObjectPrototype, "propertyIsEnumerable") => Builtin::ObjectPropertyIsEnumerable,
         (Builtin::Object, "defineProperty") => Builtin::ObjectDefineProperty,
@@ -75,6 +78,9 @@ fn builtin_name(builtin: Builtin) -> &'static str {
         Builtin::Date => "Date",
         Builtin::DateGetYear => "getYear",
         Builtin::DateSetYear => "setYear",
+        Builtin::RegExp => "RegExp",
+        Builtin::RegExpTest => "test",
+        Builtin::RegExpExec => "exec",
         _ => "",
     }
 }
