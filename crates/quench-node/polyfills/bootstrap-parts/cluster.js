@@ -883,6 +883,30 @@ const __quenchRequireStreamIter = () => {
     state.writer = writer;
     return writer;
   };
+  const toWritable = (writer) => {
+    if (!writer || typeof writer.write !== "function") {
+      const error = new TypeError("writer must provide write()");
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    const writable = new NodeWritable({
+      write(chunk, encoding, callback) {
+        Promise.resolve(writer.write(chunk)).then(() => callback(), callback);
+      },
+      final(callback) {
+        Promise.resolve(writer.end?.()).then(() => callback(), callback);
+      }
+    });
+    writable._writev =
+      typeof writer.writev === "function"
+        ? (chunks, callback) =>
+            Promise.resolve(
+              writer.writev(chunks.map((item) => item.chunk))
+            ).then(() => callback(), callback)
+        : null;
+    writable.writableHighWaterMark = Number.MAX_SAFE_INTEGER;
+    return writable;
+  };
   return {
     from: (source) =>
       typeof source?.[Symbol.asyncIterator] === "function"
@@ -921,6 +945,7 @@ const __quenchRequireStreamIter = () => {
     broadcast,
     Broadcast,
     fromWritable,
+    toWritable,
     ondrain: (writer) =>
       writer?.canWrite === null ? null : Promise.resolve(true),
     pull: (readable, transform) => ({
