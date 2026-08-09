@@ -13,6 +13,7 @@
 
 pub mod execute;
 pub mod facts;
+mod literal;
 pub mod ops;
 pub mod reduce;
 pub mod value;

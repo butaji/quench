@@ -10,19 +10,32 @@ pub enum VmError {
     NonNumericOperand,
     MissingReturn,
     NotCallable,
+    ArgumentCount,
 }
 
 pub fn execute(ops: &[Op]) -> Result<Value, VmError> {
-    let mut registers = Vec::new();
+    execute_with_registers(ops, Vec::new())
+}
+
+fn execute_with_registers(ops: &[Op], mut registers: Vec<Value>) -> Result<Value, VmError> {
     for op in ops {
         match op {
             Op::Const { dst, value } => write_register(&mut registers, *dst, value),
             Op::StoreLocal { slot, src } => copy_register(&mut registers, *slot, *src)?,
             Op::LoadLocal { dst, slot } => copy_register(&mut registers, *dst, *slot)?,
-            Op::MakeFunction { dst, body } => {
-                write_value(&mut registers, *dst, Value::Function(Rc::new(body.clone())));
+            Op::MakeFunction { dst, body, params } => {
+                write_value(
+                    &mut registers,
+                    *dst,
+                    Value::Function(Rc::new(crate::value::FunctionValue {
+                        body: body.clone(),
+                        params: *params,
+                    })),
+                );
             }
-            Op::Call { dst, callee } => execute_call(&mut registers, *dst, *callee)?,
+            Op::Call { dst, callee, args } => {
+                execute_call(&mut registers, *dst, *callee, args)?;
+            }
             Op::Binary {
                 dst,
                 operator,
@@ -35,11 +48,23 @@ pub fn execute(ops: &[Op]) -> Result<Value, VmError> {
     Err(VmError::MissingReturn)
 }
 
-fn execute_call(registers: &mut Vec<Value>, dst: u16, callee: u16) -> Result<(), VmError> {
+fn execute_call(
+    registers: &mut Vec<Value>,
+    dst: u16,
+    callee: u16,
+    args: &[u16],
+) -> Result<(), VmError> {
     let Value::Function(body) = read_register(registers, callee)? else {
         return Err(VmError::NotCallable);
     };
-    let value = execute(&body)?;
+    let arguments = args
+        .iter()
+        .map(|index| read_register(registers, *index))
+        .collect::<Result<Vec<_>, _>>()?;
+    if arguments.len() != usize::from(body.params) {
+        return Err(VmError::ArgumentCount);
+    }
+    let value = execute_with_registers(&body.body, arguments)?;
     write_value(registers, dst, value);
     Ok(())
 }

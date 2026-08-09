@@ -17,10 +17,12 @@ pub enum Op {
     MakeFunction {
         dst: u16,
         body: Vec<Op>,
+        params: u16,
     },
     Call {
         dst: u16,
         callee: u16,
+        args: Vec<u16>,
     },
     Binary {
         dst: u16,

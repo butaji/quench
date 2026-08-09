@@ -1,6 +1,7 @@
 //! OXC-to-residual reduction entry point.
 
 use std::collections::HashMap;
+use std::convert::TryFrom;
 
 use oxc::{
     allocator::Allocator,
@@ -8,11 +9,12 @@ use oxc::{
     parser::Parser,
     semantic::SemanticBuilder,
     span::SourceType,
-    syntax::operator::{AssignmentOperator, BinaryOperator, UpdateOperator},
+    syntax::operator::{AssignmentOperator, UpdateOperator},
 };
 
 use crate::{
     facts::ProgramDb,
+    literal::{reduce_literal, reduce_operator},
     ops::{Constant, Op},
 };
 
@@ -60,10 +62,17 @@ fn reduce_statements(
     statements: &[Statement<'_>],
     facts: &mut ProgramDb,
 ) -> Result<Vec<Op>, Vec<String>> {
+    reduce_statements_with_locals(statements, facts, HashMap::new(), 0)
+}
+
+fn reduce_statements_with_locals(
+    statements: &[Statement<'_>],
+    facts: &mut ProgramDb,
+    mut locals: HashMap<String, u16>,
+    mut next_slot: u16,
+) -> Result<Vec<Op>, Vec<String>> {
     let mut ops = Vec::new();
     let mut next_register = 0;
-    let mut next_slot = 0;
-    let mut locals = HashMap::new();
     let mut last_value = None;
     for statement in statements {
         if let Some(value) = reduce_statement(
@@ -135,16 +144,15 @@ fn reduce_function_declaration(
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
 ) -> Result<(), Vec<String>> {
-    if !function.params.items.is_empty() {
-        return Err(vec!["Function parameters are unsupported".to_string()]);
-    }
     let Some(identifier) = function.id.as_ref() else {
         return Err(vec!["Anonymous function declaration".to_string()]);
     };
     let Some(body) = function.body.as_ref() else {
         return Err(vec!["Function without body".to_string()]);
     };
-    let body_ops = reduce_statements(&body.statements, facts)?;
+    let (parameters, parameter_count) = function_parameters(function)?;
+    let body_ops =
+        reduce_statements_with_locals(&body.statements, facts, parameters, parameter_count)?;
     let slot = *next_slot;
     *next_slot = next_slot.saturating_add(1);
     locals.insert(identifier.name.to_string(), slot);
@@ -153,12 +161,30 @@ fn reduce_function_declaration(
     ops.push(Op::MakeFunction {
         dst: register,
         body: body_ops,
+        params: parameter_count,
     });
     ops.push(Op::StoreLocal {
         slot,
         src: register,
     });
     Ok(())
+}
+
+fn function_parameters(
+    function: &oxc::ast::ast::Function<'_>,
+) -> Result<(HashMap<String, u16>, u16), Vec<String>> {
+    let mut parameters = HashMap::new();
+    for (slot, parameter) in function.params.items.iter().enumerate() {
+        let BindingPatternKind::BindingIdentifier(identifier) = &parameter.pattern.kind else {
+            return Err(vec!["Unsupported function parameter pattern".to_string()]);
+        };
+        let slot =
+            u16::try_from(slot).map_err(|_| vec!["Too many function parameters".to_string()])?;
+        parameters.insert(identifier.name.to_string(), slot);
+    }
+    let count = u16::try_from(function.params.items.len())
+        .map_err(|_| vec!["Too many function parameters".to_string()])?;
+    Ok((parameters, count))
 }
 
 fn reduce_if_statement(
@@ -303,13 +329,21 @@ fn reduce_call(
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
-    if !call.arguments.is_empty() {
-        return None;
-    }
     let callee = reduce_expression(&call.callee, ops, facts, next_register, locals)?;
+    let mut args = Vec::new();
+    for argument in &call.arguments {
+        let expression = argument.as_expression()?;
+        args.push(reduce_expression(
+            expression,
+            ops,
+            facts,
+            next_register,
+            locals,
+        )?);
+    }
     let dst = *next_register;
     *next_register = next_register.saturating_add(1);
-    ops.push(Op::Call { dst, callee });
+    ops.push(Op::Call { dst, callee, args });
     Some(dst)
 }
 
@@ -417,45 +451,6 @@ fn reduce_atom(
         return Some(register);
     }
     None
-}
-
-struct Literal {
-    fact: crate::facts::Constant,
-    op: Constant,
-}
-
-fn reduce_literal(expression: &Expression<'_>) -> Option<Literal> {
-    match expression {
-        Expression::NumericLiteral(number) => Some(Literal {
-            fact: crate::facts::Constant::Number(number.value),
-            op: Constant::Number(number.value),
-        }),
-        Expression::BooleanLiteral(boolean) => Some(Literal {
-            fact: crate::facts::Constant::Boolean(boolean.value),
-            op: Constant::Boolean(boolean.value),
-        }),
-        Expression::StringLiteral(string) => Some(Literal {
-            fact: crate::facts::Constant::String(string.value.to_string()),
-            op: Constant::String(string.value.to_string()),
-        }),
-        Expression::NullLiteral(_) => Some(Literal {
-            fact: crate::facts::Constant::Null,
-            op: Constant::Null,
-        }),
-        _ => None,
-    }
-}
-
-fn reduce_operator(operator: BinaryOperator) -> Option<crate::ops::BinaryOp> {
-    Some(match operator {
-        BinaryOperator::Addition => crate::ops::BinaryOp::Add,
-        BinaryOperator::Subtraction => crate::ops::BinaryOp::Subtract,
-        BinaryOperator::Multiplication => crate::ops::BinaryOp::Multiply,
-        BinaryOperator::Division => crate::ops::BinaryOp::Divide,
-        BinaryOperator::Remainder => crate::ops::BinaryOp::Remainder,
-        BinaryOperator::Exponential => crate::ops::BinaryOp::Exponentiate,
-        _ => return None,
-    })
 }
 
 fn analyze_semantics(program: &oxc::ast::ast::Program<'_>) -> Result<(usize, usize), Vec<String>> {
