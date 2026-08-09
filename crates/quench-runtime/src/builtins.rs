@@ -43,6 +43,9 @@ fn special_property(builtin: Builtin, key: &str) -> Option<Value> {
         (Builtin::ArrayPrototype, "join") => Builtin::ArrayJoin,
         (Builtin::ArrayPrototype, "push") => Builtin::ArrayPush,
         (Builtin::Object, "prototype") => Builtin::ObjectPrototype,
+        (Builtin::Date, "prototype") => Builtin::DatePrototype,
+        (Builtin::DatePrototype, "getYear") => Builtin::DateGetYear,
+        (Builtin::DatePrototype, "setYear") => Builtin::DateSetYear,
         (Builtin::ObjectPrototype, "hasOwnProperty") => Builtin::ObjectHasOwnProperty,
         (Builtin::ObjectPrototype, "propertyIsEnumerable") => Builtin::ObjectPropertyIsEnumerable,
         (Builtin::Object, "defineProperty") => Builtin::ObjectDefineProperty,
@@ -68,6 +71,9 @@ fn builtin_name(builtin: Builtin) -> &'static str {
         Builtin::Object => "Object",
         Builtin::String => "String",
         Builtin::Number => "Number",
+        Builtin::Date => "Date",
+        Builtin::DateGetYear => "getYear",
+        Builtin::DateSetYear => "setYear",
         _ => "",
     }
 }
@@ -162,7 +168,7 @@ fn callable_descriptor(value: Value) -> Value {
 
 fn builtin_length(builtin: Builtin) -> f64 {
     match builtin {
-        Builtin::Escape | Builtin::Unescape => 1.0,
+        Builtin::Escape | Builtin::Unescape | Builtin::DateSetYear => 1.0,
         _ => 0.0,
     }
 }
