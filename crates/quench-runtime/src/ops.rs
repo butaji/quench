@@ -57,6 +57,11 @@ pub enum Op {
         callee: u16,
         args: Vec<u16>,
     },
+    Branch {
+        condition: u16,
+        then_ops: Vec<Op>,
+        else_ops: Vec<Op>,
+    },
     Unary {
         dst: u16,
         operator: UnaryOp,
