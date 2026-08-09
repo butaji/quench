@@ -1566,3 +1566,7 @@ Documentation audit: reviewed `AGENTS.md`, `README.md`, the authoritative test
 source map, glossary, and ADR 0001. The stated release contract is Node 24 on
 Linux x86_64 with zero curated application-gate failures and no manifest
 regressions; current fixture failures therefore remain release blockers.
+Aggregate verification: documented `tools/check-all-tests.sh` completed
+successfully (Cargo fallback ran 2/2 Rust tests; focused stages completed), and
+`tools/check-focused-stages.sh` also completed successfully. These aggregate
+checks do not include the still-failing authoritative fixtures listed above.
