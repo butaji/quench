@@ -24,6 +24,9 @@ pub(crate) fn property(builtin: Builtin, key: &str) -> Value {
     if matches!(builtin, Builtin::Object) && key == "getOwnPropertyDescriptor" {
         return Value::Builtin(Builtin::ObjectGetOwnPropertyDescriptor);
     }
+    if builtin == Builtin::Math && key == "pow" {
+        return Value::Builtin(Builtin::MathPow);
+    }
     Value::Undefined
 }
 
