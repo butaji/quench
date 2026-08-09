@@ -117,3 +117,6 @@ large non-match corpus, so the compatibility objective remains open.
 - Commit `12e8e1c70` moves the standalone PBKDF2 validation helpers into
   `crypto-head.js`; `crypto.js` is now 495 lines and the PBKDF2/HMAC fixtures
   remain passing.
+- The Buffer copy/concat validation helpers are now isolated in
+  `copy-head.js`; `copy.js` is 496 lines. The size gate is down to 21 remaining
+  oversized files, and stages 1019 and 1026 pass after the split.
