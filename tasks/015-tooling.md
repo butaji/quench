@@ -125,6 +125,13 @@ The same ordered-tail strategy now applies to the URL module surface:
 kept in `module-surface-06-tail.js` through scoped helper handoffs. URL stages
 282 and 2482 remain green after the extraction.
 
+The crypto fallback declarations were split at a top-level declaration
+boundary. `module-surface-13.js` is now 417 lines and the exact remaining
+crypto fallback declarations execute from `module-surface-13-tail.js` in the
+next bootstrap evaluation. Crypto stages 2553, 892, and 1403 plus the
+upstream PBKDF2 fixture pass; the broader upstream key-generation fixture
+retains an unrelated missing-exception failure.
+
 The Buffer encoding bootstrap was split at an existing ordered tail: the main
 `encoding.js` file is now below the 500-line limit while `encoding-tail.js`
 retains the final `NodeBuffer.compare` and `NodeBuffer.from` definitions.
