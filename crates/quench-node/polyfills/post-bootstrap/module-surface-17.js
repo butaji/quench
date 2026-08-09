@@ -34,9 +34,12 @@
           };
           const close = server.close;
           server.close = (callback) => {
-            server.listening = false;
             const result = close?.(callback);
-            callback?.();
+            if (!close) {
+              server.listening = false;
+              server.emit?.("close");
+              callback?.call(server);
+            }
             return result || server;
           };
           return server;
