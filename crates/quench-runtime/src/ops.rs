@@ -22,6 +22,10 @@ pub enum Op {
         dst: u16,
         properties: Vec<(String, u16)>,
     },
+    MakeBuiltin {
+        dst: u16,
+        builtin: Builtin,
+    },
     GetProperty {
         dst: u16,
         object: u16,
@@ -51,6 +55,11 @@ pub enum Op {
     Return {
         src: u16,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Builtin {
+    Eval,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
