@@ -884,9 +884,10 @@ const __quenchRequireStreamIter = () => {
     return writer;
   };
   return {
-    from: (source) => ({
-      [Symbol.asyncIterator]: () => fromAsyncSource(source)
-    }),
+    from: (source) =>
+      typeof source?.[Symbol.asyncIterator] === "function"
+        ? source
+        : { [Symbol.asyncIterator]: () => fromAsyncSource(source) },
     fromSync: (source) => {
       if (
         source === null ||
