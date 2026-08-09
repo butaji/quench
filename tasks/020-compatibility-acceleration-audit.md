@@ -111,3 +111,6 @@ large non-match corpus, so the compatibility objective remains open.
   readable-event backpressure, source-error/abort propagation, iterator
   cleanup, and async-generator transform support. The full upstream
   `test-stream-iter-to-readable.js` fixture passes.
+- Commit `b4fde24d8` adds synchronous gzip, deflate, Brotli, and Zstd
+  `zlib/iter` transforms and preserves Buffer identity from `bytesSync()`.
+  The full upstream `test-stream-iter-transform-sync.js` fixture passes.
