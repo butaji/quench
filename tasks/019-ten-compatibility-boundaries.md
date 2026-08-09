@@ -1447,3 +1447,10 @@ the full focused gate reports 2366/2366 passing. The upstream Duplex fixture
 now advances past the missing generator callback but still exposes a duplicate
 writable-error callback (callback 22), with related pipeline/promise lifecycle
 cases retained for follow-up.
+
+The Duplex pair error bridge was then corrected to defer underlying writable
+error forwarding by one microtask. This removes the duplicate error emission:
+the authoritative `test-stream-duplex-from.js` fixture now passes, while the
+focused gate remains 2366/2366. The broader `test-stream-pipeline.js`,
+`test-stream-promises.js`, and `test-stream-destroy.js` fixtures still expose
+independent validation or lifecycle gaps and remain explicitly open.
