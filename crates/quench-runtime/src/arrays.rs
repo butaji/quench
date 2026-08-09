@@ -48,6 +48,7 @@ pub(crate) fn property(values: &[Value], key: &str) -> Value {
         "find" => crate::ops::Builtin::ArrayFind,
         "includes" => crate::ops::Builtin::ArrayIncludes,
         "indexOf" => crate::ops::Builtin::ArrayIndexOf,
+        "lastIndexOf" => crate::ops::Builtin::ArrayLastIndexOf,
         _ => return index(values, key),
     };
     Value::Builtin(method)
@@ -150,6 +151,17 @@ pub(crate) fn index_of(receiver: Option<&Value>, arguments: &[Value]) -> Value {
         return Value::Number(-1.0);
     };
     let index = values.iter().position(|value| strict_equal(value, search));
+    Value::Number(index.map_or(-1.0, |value| value as f64))
+}
+
+pub(crate) fn last_index_of(receiver: Option<&Value>, arguments: &[Value]) -> Value {
+    let Some(Value::Array(values)) = receiver else {
+        return Value::Number(-1.0);
+    };
+    let Some(search) = arguments.first() else {
+        return Value::Number(-1.0);
+    };
+    let index = values.iter().rposition(|value| strict_equal(value, search));
     Value::Number(index.map_or(-1.0, |value| value as f64))
 }
 
