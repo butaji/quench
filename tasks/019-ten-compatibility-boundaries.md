@@ -1378,3 +1378,9 @@ stage passes; the larger writable interop fixture still has additional
 validation and writev boundaries.
 The full focused gate, Rust tests, and representative application stages remain
 green at 2359/2359, 2/2, and 6/6 respectively.
+
+Stage 2523 adds `stream/iter.fromWritable()` validation for `writev()` chunk
+arrays, cached writer identity, and rejection of object-mode writables. The
+focused validation stage passes; the upstream interop fixture now reaches its
+final asynchronous callback accounting, with that scheduling boundary still
+open.
