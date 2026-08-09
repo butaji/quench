@@ -1164,3 +1164,12 @@ after every selected side completes. The focused finished cluster passes; the
 authoritative fixture now advances further and terminates in a QuickJS GC
 reference-count assertion, which remains separate. The post-fix audit reports
 2320/2328 passing with 8 unclassified failures.
+
+Stage 2490 normalizes `process.argv[0]` to the same absolute executable path as
+`process.execPath`, while retaining Node's separate `process.argv0` launch name.
+This removes the literal `quench-node` placeholder from the public argv array;
+stages 0 and 56, the corrected stage 2251 contract, and the focused invariant
+stage pass. The complete authoritative `test-process-execpath.js` fixture
+passes. `test-process-argv-0.js` reaches a separate child-process stdout gap and
+is not claimed. The post-fix audit reports 2323/2329 passing with 6
+unclassified failures.
