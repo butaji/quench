@@ -1346,3 +1346,10 @@ host evaluation. Focused stages and authoritative
 `test-process-exit-from-before-exit.js` and
 `test-process-beforeexit-throw-exit.js` fixtures pass; the full focused gate
 reports 2354/2354 passing.
+
+Stage 2518 adds the callback form of `stream.finished()` for readable and
+writable streams. The focused stream-finished callback stage passes and the
+full focused gate reports 2355/2355 passing. The larger upstream
+`test-stream-finished.js` fixture now reaches a native QuickJS GC assertion
+after exercising cancellation and promisified paths; that runtime limitation
+remains under investigation.
