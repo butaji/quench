@@ -18,6 +18,25 @@
 16. **No stale progress tracking**: do not add stage ledgers, pass-rate reports, or task status files. Test runs are ephemeral verification output.
 17. **Commit and push as you progress** (`GOAL.md`): small commits as work lands; never leave a finished, verified step uncommitted.
 
+## Frozen doctrine
+
+1. Never represent the same semantic fact twice.
+2. OXC owns syntax; Quench does not invent another syntax tree.
+3. Static structure remains data or disappears.
+4. VM code represents only dynamic uncertainty.
+5. Semantic abstractions do not imply runtime allocations.
+6. Share semantic mechanisms; specialize physical execution.
+7. One declaration generates every mechanical consequence.
+8. Generated LOC is cheap; handwritten semantic LOC is expensive.
+9. Facts have three states: `Proven`, `Guarded`, and `Unknown`.
+10. Never optimize through observable JavaScript behavior.
+11. Keep heap references compact.
+12. No subsystem gets its own universe unless semantics truly require it.
+13. Types are facts, not another runtime.
+14. Profiles are facts, not another optimizer.
+15. A JIT, if added, consumes the same residual Ops.
+16. If something can disappear before runtime, it must justify why it exists.
+
 ## Commands
 
 ```bash
