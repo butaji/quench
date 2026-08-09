@@ -120,6 +120,11 @@ and prototype normalization live in the ordered
 lines (down from 628). Representative filesystem stages 27, 73, 430, 431,
 868, 1257, 1259, 1847, 1848, 2001, and 2087 pass after the split.
 
+The same ordered-tail strategy now applies to the URL module surface:
+`module-surface-06.js` is 497 lines, and its require-wrapper installation is
+kept in `module-surface-06-tail.js` through scoped helper handoffs. URL stages
+282 and 2482 remain green after the extraction.
+
 The Buffer encoding bootstrap was split at an existing ordered tail: the main
 `encoding.js` file is now below the 500-line limit while `encoding-tail.js`
 retains the final `NodeBuffer.compare` and `NodeBuffer.from` definitions.
