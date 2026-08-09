@@ -1,10 +1,10 @@
 const { types } = require("util");
 const vm = require("vm");
 
-const module = new vm.SourceTextModule("");
-module.link(() => 0);
-module.evaluate();
-if (!types.isModuleNamespaceObject(module.namespace)) {
+const sourceModule = new vm.SourceTextModule("");
+sourceModule.link(() => 0);
+sourceModule.evaluate();
+if (!types.isModuleNamespaceObject(sourceModule.namespace)) {
   throw new Error("module namespace check failed");
 }
 if (types.isKeyObject() || types.isCryptoKey()) {
