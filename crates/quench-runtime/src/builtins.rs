@@ -198,6 +198,36 @@ pub(crate) fn object(arguments: &[Value]) -> Value {
     }
 }
 
+/// Construct an error object for the given error constructor.
+///
+/// The resulting object carries `name`, `message`, and `constructor` so that
+/// `err.constructor` and `err.constructor.name` behave like the specification.
+pub(crate) fn error(builtin: Builtin, arguments: &[Value]) -> Value {
+    let (name, constructor) = match builtin {
+        Builtin::RangeError => ("RangeError", Builtin::RangeError),
+        Builtin::ReferenceError => ("ReferenceError", Builtin::ReferenceError),
+        Builtin::SyntaxError => ("SyntaxError", Builtin::SyntaxError),
+        Builtin::EvalError => ("EvalError", Builtin::EvalError),
+        Builtin::URIError => ("URIError", Builtin::URIError),
+        Builtin::AggregateError => ("AggregateError", Builtin::AggregateError),
+        Builtin::TypeError => ("TypeError", Builtin::TypeError),
+        _ => ("Error", Builtin::Error),
+    };
+    let message = arguments.first().map_or_else(
+        || Value::String(String::new()),
+        |value| Value::String(value_to_string(value)),
+    );
+    let mut properties = vec![
+        ("name".to_string(), Value::String(name.to_string())),
+        ("message".to_string(), message),
+        ("constructor".to_string(), Value::Builtin(constructor)),
+    ];
+    if let Some(Value::Object(existing)) = arguments.first() {
+        properties.extend((**existing).clone());
+    }
+    Value::Object(Rc::new(properties))
+}
+
 pub(crate) fn same_value(left: Option<&Value>, right: Option<&Value>) -> bool {
     let (Some(left), Some(right)) = (left, right) else {
         return matches!((left, right), (None, None));

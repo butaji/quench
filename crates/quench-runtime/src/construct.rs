@@ -51,7 +51,19 @@ pub(crate) fn construct_value(
     match target {
         Value::Builtin(crate::ops::Builtin::Array) => Ok(crate::builtins::array(arguments)),
         Value::Builtin(crate::ops::Builtin::Object) => Ok(crate::builtins::object(arguments)),
-        Value::Builtin(crate::ops::Builtin::TypeError) => Ok(crate::builtins::object(arguments)),
+        Value::Builtin(crate::ops::Builtin::TypeError) => Ok(crate::builtins::error(
+            crate::ops::Builtin::TypeError,
+            arguments,
+        )),
+        Value::Builtin(
+            crate::ops::Builtin::Error
+            | crate::ops::Builtin::RangeError
+            | crate::ops::Builtin::ReferenceError
+            | crate::ops::Builtin::SyntaxError
+            | crate::ops::Builtin::EvalError
+            | crate::ops::Builtin::URIError
+            | crate::ops::Builtin::AggregateError,
+        ) => Ok(crate::builtins::error(*target_builtin(target), arguments)),
         Value::Builtin(crate::ops::Builtin::Date) => Ok(crate::builtins::object(arguments)),
         Value::Builtin(crate::ops::Builtin::RegExp) => Ok(crate::builtins::object(arguments)),
         Value::Builtin(
