@@ -26,9 +26,19 @@ pub(crate) fn reduce_expression(
     ops: &mut Vec<Op>,
     facts: &mut ProgramDb,
     next_register: &mut u16,
+    locals: &HashMap<String, u16>,
 ) -> Option<u16> {
     let body = function.body.as_ref()?;
-    let (parameters, parameter_count) = function_parameters(function).ok()?;
+    let (mut parameters, parameter_count) = function_parameters(function).ok()?;
+    let captures = locals
+        .values()
+        .copied()
+        .max()
+        .map_or(0, |slot| slot.saturating_add(1));
+    for slot in parameters.values_mut() {
+        *slot = slot.saturating_add(captures);
+    }
+    parameters.extend(locals.iter().map(|(name, slot)| (name.clone(), *slot)));
     let body_ops = crate::reduce::reduce_statements_with_locals(
         &body.statements,
         facts,
@@ -42,25 +52,48 @@ pub(crate) fn reduce_expression(
         dst: register,
         body: body_ops,
         params: parameter_count,
+        captures,
     });
     Some(register)
 }
 
-pub(crate) fn make(body: &[Op], params: u16) -> crate::value::Value {
+pub(crate) fn make(
+    body: &[Op],
+    params: u16,
+    captures: Vec<crate::value::Value>,
+) -> crate::value::Value {
     crate::value::Value::Function(std::rc::Rc::new(crate::value::FunctionValue {
         body: body.to_vec(),
         params,
+        captures: std::rc::Rc::new(captures),
         properties: std::rc::Rc::new(Vec::new()),
     }))
 }
 
-pub(crate) fn write(registers: &mut Vec<crate::value::Value>, dst: u16, body: &[Op], params: u16) {
-    crate::execute::write_value(registers, dst, make(body, params));
+pub(crate) fn write(
+    registers: &mut Vec<crate::value::Value>,
+    dst: u16,
+    body: &[Op],
+    params: u16,
+    captures: u16,
+) {
+    let values = registers
+        .iter()
+        .take(usize::from(captures))
+        .cloned()
+        .collect();
+    crate::execute::write_value(registers, dst, make(body, params, values));
 }
 
 pub(crate) fn write_op(registers: &mut Vec<crate::value::Value>, op: &Op) {
-    let Op::MakeFunction { dst, body, params } = op else {
+    let Op::MakeFunction {
+        dst,
+        body,
+        params,
+        captures,
+    } = op
+    else {
         return;
     };
-    write(registers, *dst, body, *params);
+    write(registers, *dst, body, *params, *captures);
 }

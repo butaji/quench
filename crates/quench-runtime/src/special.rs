@@ -25,7 +25,7 @@ fn reduce_primary(
             crate::logical::reduce_expression(value, ops, facts, next_register, locals)
         }
         Expression::FunctionExpression(value) => {
-            crate::functions::reduce_expression(value, ops, facts, next_register)
+            crate::functions::reduce_expression(value, ops, facts, next_register, locals)
         }
         Expression::ObjectExpression(value) => {
             crate::objects::reduce(value, ops, facts, next_register, locals)
@@ -64,7 +64,7 @@ fn reduce_secondary(
             crate::construct::reduce(value, ops, facts, next_register, locals)
         }
         Expression::UpdateExpression(value) => {
-            crate::reduce::reduce_update(value, ops, next_register, locals)
+            crate::loops::reduce_update(value, ops, next_register, locals)
         }
         Expression::AssignmentExpression(value) => {
             crate::reduce::reduce_assignment(value, ops, facts, next_register, locals)
