@@ -12,7 +12,7 @@ const __quenchDgramTypeDetail = (value) => {
   if (typeof value === "boolean") return ` Received type boolean (${value})`;
   if (typeof value === "number") return ` Received type number (${value})`;
   if (typeof value === "boolean") return ` Received type boolean (${value})`;
-  if (typeof value === "bigint") return ` Received type bigint (${value})`;
+  if (typeof value === "bigint") return ` Received type bigint (${value}n)`;
   if (typeof value === "symbol") {
     return ` Received type symbol (${String(value)})`;
   }
@@ -140,8 +140,8 @@ const __quenchDgramSend = (socket, message, ...args) => {
     );
   }
   const hasOffset =
-    ((wasUnbound || socket._implicitSend) &&
-      args.length >= 2 &&
+    (!socket._connected &&
+      args.length >= 3 &&
       typeof args[0] === "number" &&
       typeof args[1] === "number") ||
     (socket._connected && args.length >= 2);
