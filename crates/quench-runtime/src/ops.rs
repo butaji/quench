@@ -31,6 +31,7 @@ pub enum BinaryOp {
 pub enum Constant {
     Number(f64),
     Boolean(bool),
+    String(String),
     Null,
     Undefined,
 }

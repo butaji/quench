@@ -71,6 +71,7 @@ impl From<&crate::ops::Constant> for Value {
         match value {
             crate::ops::Constant::Number(value) => Self::Number(*value),
             crate::ops::Constant::Boolean(value) => Self::Boolean(*value),
+            crate::ops::Constant::String(value) => Self::String(value.clone()),
             crate::ops::Constant::Null => Self::Null,
             crate::ops::Constant::Undefined => Self::Undefined,
         }
