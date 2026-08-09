@@ -47,6 +47,32 @@ const __quenchComposeDestroy = (composed, streams) => {
   };
   return composed;
 };
+const __quenchComposeStreamValues = async (stream, values) => {
+  const output = [];
+  const onData = (value) => output.push(value);
+  if (stream.readable !== false) stream.on?.("data", onData);
+  try {
+    for (const value of values) {
+      await new Promise((resolve, reject) => {
+        let settled = false;
+        const finish = (error) => {
+          if (settled) return;
+          settled = true;
+          if (error) reject(error);
+          else resolve();
+        };
+        try {
+          stream.write(value, finish);
+        } catch (error) {
+          finish(error);
+        }
+      });
+    }
+  } finally {
+    stream.removeListener?.("data", onData);
+  }
+  return output;
+};
 const __quenchComposeStreams = (streams, result) => {
   if (streams.length === 0) {
     throw __quenchComposeArgumentError(
@@ -81,7 +107,8 @@ const __quenchComposeStreams = (streams, result) => {
           let values = [chunk];
           for (const stage of streams) {
             if (typeof stage !== "function") {
-              throw new TypeError("stream stage is not callable");
+              values = await __quenchComposeStreamValues(stage, values);
+              continue;
             }
             const next = [];
             const source = (async function* () {
