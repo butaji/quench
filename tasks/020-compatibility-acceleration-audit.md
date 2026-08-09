@@ -181,3 +181,4 @@ large non-match corpus, so the compatibility objective remains open.
 - Client connections now reject a local port already held by an in-memory
   listener with asynchronous `EADDRINUSE`; `test-net-client-bind-twice.js`
   passes with the existing listen-error fixture.
+ - BoundSocket IPv6 defaults now honor `ipv6Only: true` by selecting `::`, and reuse-port handles can share a requested port; the upstream boundsocket fixture remains open on a separate synchronous error assertion.
