@@ -120,3 +120,10 @@ large non-match corpus, so the compatibility objective remains open.
 - The Buffer copy/concat validation helpers are now isolated in
   `copy-head.js`; `copy.js` is 496 lines. The size gate is down to 21 remaining
   oversized files, and stages 1019 and 1026 pass after the split.
+- The six maintained application gates (Ajv, debug, Chalk, ms, Prettier, and
+  `process.argv0`) pass in parallel. The remaining upstream HTTP agent cluster
+  is reproducible: `test-http-agent-destroyed-socket.js` reports one extra
+  callback, while `test-http-agent-maxsockets-respected.js` and
+  `test-http-agent-scheduling.js` each miss a callback. An initial idempotent
+  response close-release experiment was reverted because it did not change
+  those outcomes; the lifecycle issue remains open for focused investigation.
