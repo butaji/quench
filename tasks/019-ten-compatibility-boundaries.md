@@ -1523,3 +1523,10 @@ an independent callback-accounting gap.
 Subsequent clean verification shows `test-fs-promises.js` now completes
 successfully after stage 2537; the access-mode correction closed its callback
 accounting failure.
+
+Current verification audit: representative application stages 2047 (Ajv),
+2069 (debug), 2080 (Chalk), 2081 (ms), 2104 (Prettier), and 2251
+(`process.argv0`) each pass locally. The authoritative `test-buffer-from.js`,
+`test-net-stream.js`, `test-http-server.js`, `test-stream-destroy.js`, and
+`test-stream-pipeline.js` fixtures remain open; their failures are not covered
+by the focused 2373/2373 gate and no completion claim is made for them.
