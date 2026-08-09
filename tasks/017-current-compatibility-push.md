@@ -1,8 +1,14 @@
 # Current compatibility push — Node 24 application compatibility and auditable baselines
 
+> Contract: This task is part of broad Node 24 compatibility across Linux
+> x86_64, Linux ARM64, macOS, and Windows. Native addons and Node-API are
+> excluded. Use the statuses and release gates in
+> [compatibility-contract.md](../docs/compatibility-contract.md).
+
 This progress log follows the Node 24 application-runtime contract: upstream
 Node tests are the primary oracle, focused stages are regression guards, and
-Hono plus a representative CLI are release-facing application gates.
+The six workload classes defined in `docs/compatibility-contract.md` are the
+release-facing application gates.
 The authoritative Node, LLRT, Deno, WPT, and Test262 references are maintained
 in `docs/authoritative-test-sources.md`.
 
@@ -998,3 +1004,14 @@ pass.
 - Post-2310 application regression check: Ajv, debug, Chalk, `ms`, and Prettier npm stages all pass, as do stages 2310–2311 and the two Rust tests. No application regression was observed.
 - Native transport audit on 2026-08-08: `crates/quench-node` contains no `TcpListener`, `TcpStream`, Tokio, or standard-library TCP host binding; `tcp-binding.js` is a descriptor-only stub and `network.js` dispatches sockets through an in-memory server set. This confirms the remaining raw TCP/half-open Node fixtures require a new host transport primitive before full Node network compatibility can be claimed.
 - Stage 2312 adds the first native transport foundation: Rust-backed nonblocking TCP bind, ephemeral-port lookup, connect, accept, read, write, and close host primitives. A focused loopback exchange passes; integration into the public `net.Server`/`net.Socket` surface remains the next step.
+
+Current pushed increments (2026-08-09):
+
+- `65180fa59` aligns client-request and response socket identity, fixing
+  destroyed HTTP-agent socket reuse. Targeted HTTP-agent fixtures and
+  `test-http-server.js` pass.
+- `567a129e1` reports `ERR_MULTIPLE_CALLBACK` when a Writable `_final()`
+  callback runs more than once. The duplicate-callback, destroy, and pipeline
+  fixtures pass.
+- `4c03b65ca` preserves the `fs.realpath.native` alias after VFS wrapping;
+  `test-fs-realpath-native.js` passes.
