@@ -6,3 +6,4 @@ description = "Residual VM kernel for the Quench program reducer"
 license = "MIT"
 
 [dependencies]
+oxc = "0.47"
