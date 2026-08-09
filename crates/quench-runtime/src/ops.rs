@@ -155,6 +155,8 @@ pub enum Builtin {
     DatePrototype,
     DateGetYear,
     DateSetYear,
+    Reflect,
+    ReflectConstruct,
     ObjectPrototype,
     ArrayPush,
     ObjectDefineProperty,

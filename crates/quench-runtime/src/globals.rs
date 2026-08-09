@@ -61,6 +61,7 @@ fn builtin(name: &str) -> Option<crate::ops::Builtin> {
         "Function" => Some(crate::ops::Builtin::Function),
         "TypeError" => Some(crate::ops::Builtin::TypeError),
         "Date" => Some(crate::ops::Builtin::Date),
+        "Reflect" => Some(crate::ops::Builtin::Reflect),
         _ => None,
     }
 }
