@@ -441,6 +441,7 @@ dependencies = [
 name = "quench-test262"
 version = "0.1.0"
 dependencies = [
+ "quench-runtime",
  "serde",
  "tempfile",
 ]

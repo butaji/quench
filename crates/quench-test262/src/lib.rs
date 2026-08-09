@@ -6,6 +6,9 @@
 
 use std::path::Path;
 
+pub mod runtime_host;
+pub use runtime_host::RuntimeHost;
+
 /// Engine-facing execution contract for an external conformance runner.
 pub trait Test262Host: Send {
     /// Execute a complete script source.
