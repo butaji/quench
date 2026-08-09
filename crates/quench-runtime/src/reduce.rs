@@ -4,11 +4,11 @@ use std::collections::HashMap;
 
 use oxc::{
     allocator::Allocator,
-    ast::ast::{BindingPatternKind, Expression, Statement},
+    ast::ast::{AssignmentTarget, BindingPatternKind, Expression, Statement},
     parser::Parser,
     semantic::SemanticBuilder,
     span::SourceType,
-    syntax::operator::BinaryOperator,
+    syntax::operator::{AssignmentOperator, BinaryOperator},
 };
 
 use crate::{
@@ -200,6 +200,9 @@ fn reduce_expression(
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
+    if let Expression::AssignmentExpression(assignment) = expression {
+        return reduce_assignment(assignment, ops, facts, next_register, locals);
+    }
     if let Some(register) = reduce_atom(expression, ops, facts, next_register, locals) {
         return Some(register);
     }
@@ -218,6 +221,39 @@ fn reduce_expression(
         rhs,
     });
     Some(dst)
+}
+
+fn reduce_assignment(
+    assignment: &oxc::ast::ast::AssignmentExpression<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<u16> {
+    let AssignmentTarget::AssignmentTargetIdentifier(identifier) = &assignment.left else {
+        return None;
+    };
+    let slot = *locals.get(identifier.name.as_str())?;
+    let rhs = reduce_expression(&assignment.right, ops, facts, next_register, locals)?;
+    let value = if assignment.operator == AssignmentOperator::Assign {
+        rhs
+    } else {
+        let operator = assignment.operator.to_binary_operator()?;
+        let lhs = *next_register;
+        *next_register = next_register.saturating_add(1);
+        ops.push(Op::LoadLocal { dst: lhs, slot });
+        let dst = *next_register;
+        *next_register = next_register.saturating_add(1);
+        ops.push(Op::Binary {
+            dst,
+            operator: reduce_operator(operator)?,
+            lhs,
+            rhs,
+        });
+        dst
+    };
+    ops.push(Op::StoreLocal { slot, src: value });
+    Some(value)
 }
 
 fn reduce_atom(
