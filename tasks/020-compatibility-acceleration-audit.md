@@ -140,3 +140,6 @@ large non-match corpus, so the compatibility objective remains open.
 - `test-net-blocklist.js` now passes with asynchronous `ERR_IP_BLOCKED` handling
   for direct IPv4 and localhost connection cases; focused IP validation stages
   2076–2078 remain passing.
+- `test-net-bind-twice.js` now passes after nonnative servers reject occupied
+  ports with asynchronous `EADDRINUSE`; focused stage 2318 and the blocklist
+  fixture remain passing.

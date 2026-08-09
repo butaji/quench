@@ -918,6 +918,23 @@ const __quenchNetModule = {
         _port && typeof _port === "object"
           ? _port
           : { port: _port, host };
+      const requestedPort = Number(listenOptions.port || 0);
+      const occupied = [...__quenchNetServers].some(
+        (candidate) =>
+          candidate.listening &&
+          !candidate._nativeTransport &&
+          requestedPort !== 0 &&
+          candidate.address().port === requestedPort
+      );
+      if (occupied) {
+        const error = new Error(
+          `listen EADDRINUSE: address already in use 127.0.0.1:${requestedPort}`
+        );
+        error.code = "EADDRINUSE";
+        error.syscall = "listen";
+        queueMicrotask(() => server.emit("error", error));
+        return server;
+      }
       if (__quenchNativeTransportRequested(listenOptions)) {
         server._nativeId = __quench_tcp_bind(
           listenOptions.host || "127.0.0.1",
