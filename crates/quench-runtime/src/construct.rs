@@ -42,6 +42,7 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<(), crate::
         Value::Builtin(crate::ops::Builtin::Array) => crate::builtins::array(&arguments),
         Value::Builtin(crate::ops::Builtin::Object) => crate::builtins::object(&arguments),
         Value::Builtin(crate::ops::Builtin::TypeError) => crate::builtins::object(&arguments),
+        Value::Builtin(crate::ops::Builtin::Date) => crate::builtins::object(&arguments),
         Value::Function(_) => Value::Object(std::rc::Rc::new(Vec::new())),
         _ => return Err(crate::execute::VmError::NotCallable),
     };
