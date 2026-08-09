@@ -13,7 +13,7 @@ use crate::{
 };
 use oxc::{
     allocator::Allocator,
-    ast::ast::{AssignmentTarget, BindingPatternKind, Expression, Statement},
+    ast::ast::{Argument, AssignmentTarget, BindingPatternKind, Expression, Statement},
     parser::Parser,
     span::SourceType,
     syntax::operator::{AssignmentOperator, UnaryOperator},
@@ -34,25 +34,28 @@ pub fn reduce_source_with_type(
     source: &str,
     source_type: SourceType,
 ) -> Result<ResidualProgram, Vec<String>> {
-    let allocator = Allocator::default();
-    let parsed = Parser::new(&allocator, source, source_type).parse();
-    if parsed.panicked {
-        return Err(vec!["SyntaxError: OXC parser rejected source".to_string()]);
-    }
-    if !parsed.errors.is_empty() {
-        return Err(parsed
-            .errors
-            .iter()
-            .map(|error| format!("SyntaxError: {error}"))
-            .collect());
-    }
-    let (scope_count, symbol_count) = crate::semantic::analyze(&parsed.program)?;
-    let mut facts = ProgramDb {
+    let (scope_count, symbol_count, ops) = {
+        let allocator = Allocator::default();
+        let parsed = Parser::new(&allocator, source, source_type).parse();
+        if parsed.panicked {
+            return Err(vec!["SyntaxError: OXC parser rejected source".to_string()]);
+        }
+        if !parsed.errors.is_empty() {
+            return Err(parsed
+                .errors
+                .iter()
+                .map(|error| format!("SyntaxError: {error}"))
+                .collect());
+        }
+        let (scope_count, symbol_count) = crate::semantic::analyze(&parsed.program)?;
+        let ops = reduce_statements(&parsed.program.body, &mut ProgramDb::default())?;
+        (scope_count, symbol_count, ops)
+    };
+    let facts = ProgramDb {
         scope_count,
         symbol_count,
         ..ProgramDb::default()
     };
-    let ops = reduce_statements(&parsed.program.body, &mut facts)?;
     Ok(ResidualProgram { facts, ops })
 }
 fn reduce_statements(
@@ -397,14 +400,25 @@ pub(crate) fn reduce_call(
     let callee = reduce_expression(&call.callee, ops, facts, next_register, locals)?;
     let mut args = Vec::new();
     for argument in &call.arguments {
-        let expression = argument.as_expression()?;
-        args.push(reduce_expression(
-            expression,
-            ops,
-            facts,
-            next_register,
-            locals,
-        )?);
+        match argument {
+            Argument::SpreadElement(spread) => {
+                let src = reduce_expression(&spread.argument, ops, facts, next_register, locals)?;
+                let dst = *next_register;
+                *next_register = next_register.saturating_add(1);
+                ops.push(Op::Spread { dst, src });
+                args.push(dst);
+            }
+            _ => {
+                let expression = argument.as_expression()?;
+                args.push(reduce_expression(
+                    expression,
+                    ops,
+                    facts,
+                    next_register,
+                    locals,
+                )?);
+            }
+        }
     }
     let dst = *next_register;
     *next_register = next_register.saturating_add(1);
