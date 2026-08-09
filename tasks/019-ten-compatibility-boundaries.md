@@ -1562,3 +1562,7 @@ fails on Float64Array reinterpretation (`RangeError: invalid offset`),
 `test-stream-destroy.js` misses callback 15, and `test-stream-pipeline.js`
 still fails its broader validation/lifecycle matrix. No completion claim is
 made from the focused gate alone.
+Documentation audit: reviewed `AGENTS.md`, `README.md`, the authoritative test
+source map, glossary, and ADR 0001. The stated release contract is Node 24 on
+Linux x86_64 with zero curated application-gate failures and no manifest
+regressions; current fixture failures therefore remain release blockers.
