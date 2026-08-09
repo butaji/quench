@@ -1318,6 +1318,10 @@ class NodeTransform extends NodeWritable {
     super(options);
     this.readable = options.readable !== false;
     this.writable = options.writable !== false;
+    this.readableObjectMode =
+      options.readableObjectMode ?? options.objectMode === true;
+    this.readableHighWaterMark =
+      options.readableHighWaterMark ?? options.highWaterMark ?? 16 * 1024;
     this._readableChunks = [];
     this._transformEndEmitted = false;
     this._transformFlowScheduled = false;
@@ -1386,9 +1390,13 @@ class NodeTransform extends NodeWritable {
       return false;
     }
     if (chunk !== undefined) {
-      if (this.listenerCount("data")) this.emit("data", chunk);
+      const value =
+        !this.readableObjectMode && typeof chunk === "string"
+          ? NodeBuffer.from(chunk)
+          : chunk;
+      if (this.listenerCount("data")) this.emit("data", value);
       else {
-        this._readableChunks.push(chunk);
+        this._readableChunks.push(value);
         if (this.listenerCount("readable"))
           queueMicrotask(() => this.emit("readable"));
       }
@@ -1436,7 +1444,37 @@ class NodeTransform extends NodeWritable {
   [Symbol.asyncIterator]() {
     if (this.readable === false) return (async function* () {})();
     return (async function* (stream) {
-      while (stream._chunks?.length) yield stream._chunks.shift();
+      while (true) {
+        if (stream._readableChunks.length) {
+          yield stream._readableChunks.shift();
+          continue;
+        }
+        if (stream.readableEnded || stream.destroyed) return;
+        const item = await new Promise((resolve, reject) => {
+          const cleanup = () => {
+            stream.removeListener("data", onData);
+            stream.removeListener("end", onEnd);
+            stream.removeListener("error", onError);
+          };
+          const onData = (value) => {
+            cleanup();
+            resolve({ value, done: false });
+          };
+          const onEnd = () => {
+            cleanup();
+            resolve({ value: undefined, done: true });
+          };
+          const onError = (error) => {
+            cleanup();
+            reject(error);
+          };
+          stream.once("data", onData);
+          stream.once("end", onEnd);
+          stream.once("error", onError);
+        });
+        if (item.done) return;
+        yield item.value;
+      }
     })(this);
   }
 }
