@@ -775,7 +775,9 @@ if (globalThis.__quench_host_timer_scheduler) {
       args,
       delay: Math.max(0, __nodeTimerDelay(delay)),
       due: __quenchHostNow() + Math.max(0, __nodeTimerDelay(delay)),
-      repeat
+      repeat,
+      domain: globalThis.__quench_active_domain,
+      resource: globalThis.__nodeCurrentAsyncResource
     };
     __quenchHostTimers.set(entry.id, entry);
     const handle = __quenchHostHandle(entry);
@@ -835,7 +837,17 @@ if (globalThis.__quench_host_timer_scheduler) {
       if (!entry.handle.active) continue;
       if (entry.repeat) entry.due = now + entry.delay;
       else __quenchHostTimers.delete(entry.id);
-      entry.callback.apply(entry.handle, entry.args);
+      const previousResource = globalThis.__nodeCurrentAsyncResource;
+      globalThis.__nodeCurrentAsyncResource = entry.resource;
+      try {
+        if (entry.domain) {
+          entry.domain.run(() =>
+            entry.callback.apply(entry.handle, entry.args)
+          );
+        } else entry.callback.apply(entry.handle, entry.args);
+      } finally {
+        globalThis.__nodeCurrentAsyncResource = previousResource;
+      }
       if (!entry.repeat) entry.handle.active = false;
     }
   };
