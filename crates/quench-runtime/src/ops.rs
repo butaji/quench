@@ -137,6 +137,10 @@ pub enum Builtin {
     Unescape,
     Math,
     MathPow,
+    Function,
+    FunctionPrototype,
+    FunctionBind,
+    ArrayJoin,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
