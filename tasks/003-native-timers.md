@@ -1,5 +1,10 @@
 # Implement Node-compatible native timers
 
+> Contract: This task is part of broad Node 24 compatibility across Linux
+> x86_64, Linux ARM64, macOS, and Windows. Native addons and Node-API are
+> excluded. Use the statuses and release gates in
+> [compatibility-contract.md](../docs/compatibility-contract.md).
+
 ## Contract alignment
 
 This task supports the Node 24 application-runtime contract on Linux x86_64;
@@ -64,3 +69,9 @@ Pre-aborted `timers/promises.setInterval()` signals are covered by
 `tests/node-compat/stage-407/timers-promises-interval-abort.js`.
 Pre-aborted `timers/promises.setImmediate()` signals are covered by
 `tests/node-compat/stage-408/timers-promises-immediate-abort.js`.
+
+The timer compatibility sweep on 2026-08-09 also passed stages 366, 367, 368,
+369, 401–408, 412, 434–436, 468–471, 872, 1104–1105, 1293–1294, 1827, 2067,
+2214, 2223, 2225–2229, 2486, 2493, 2495, and 2501 in parallel. Full scheduler
+ordering and broad upstream coverage remain open, so this task stays
+in-progress.
