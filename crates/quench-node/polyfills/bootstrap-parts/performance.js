@@ -1,3 +1,4 @@
+const __nodePerformanceEntries = [];
 const __nodePerformance = {
   now: () => Date.now() - __nodeStartedAt,
   timeOrigin: __nodeStartedAt,
@@ -6,7 +7,7 @@ const __nodePerformance = {
       name: String(name),
       entryType: "mark",
       startTime: __nodePerformance.now(),
-      duration: 0
+      duration: 0,
     };
     (
       __nodePerformanceMarks.get(entry.name) ||
@@ -27,7 +28,7 @@ const __nodePerformance = {
       name: String(name),
       entryType: "measure",
       startTime: start,
-      duration: Math.max(0, end - start)
+      duration: Math.max(0, end - start),
     };
     __nodePerformanceEntries.push(entry);
     return entry;
@@ -61,11 +62,11 @@ const __nodePerformance = {
     __nodePerformanceEntries.filter(
       (entry) =>
         entry.name === String(name) &&
-        (entryType === undefined || entry.entryType === String(entryType))
+        (entryType === undefined || entry.entryType === String(entryType)),
     ),
   getEntriesByType: (entryType) =>
     __nodePerformanceEntries.filter(
-      (entry) => entry.entryType === String(entryType)
+      (entry) => entry.entryType === String(entryType),
     ),
   timerify: (functionToWrap) => {
     if (typeof functionToWrap !== "function") {
@@ -74,11 +75,11 @@ const __nodePerformance = {
     const wrapped = (...args) => functionToWrap(...args);
     Object.defineProperty(wrapped, "name", {
       configurable: true,
-      value: functionToWrap.name
+      value: functionToWrap.name,
     });
     return wrapped;
   },
-  toJSON: () => ({ timeOrigin: __nodeStartedAt })
+  toJSON: () => ({ timeOrigin: __nodeStartedAt }),
 };
 class NodePerformanceObserver {
   constructor(callback) {
@@ -93,7 +94,7 @@ class NodePerformanceObserver {
 globalThis.__nodePerfHooks = {
   performance: __nodePerformance,
   timerify: __nodePerformance.timerify,
-  PerformanceObserver: NodePerformanceObserver
+  PerformanceObserver: NodePerformanceObserver,
 };
 const __nodePrototypeNames = new WeakMap();
 const __nodeSetPrototypeOf = Object.setPrototypeOf;
