@@ -12,6 +12,9 @@ pub(crate) fn property(builtin: Builtin, key: &str) -> Value {
     if matches!(builtin, Builtin::Object) && key == "keys" {
         return Value::Builtin(Builtin::ObjectKeys);
     }
+    if matches!(builtin, Builtin::Object) && key == "getOwnPropertyDescriptor" {
+        return Value::Builtin(Builtin::ObjectGetOwnPropertyDescriptor);
+    }
     Value::Undefined
 }
 
@@ -40,6 +43,50 @@ pub(crate) fn has_own_property(receiver: Option<&Value>, key: Option<&Value>) ->
         _ => false,
     };
     Value::Boolean(present)
+}
+
+pub(crate) fn descriptor(value: Option<&Value>, key: Option<&Value>) -> Value {
+    let Some(value) = value else {
+        return Value::Undefined;
+    };
+    let Some(key) = key.map(value_to_string) else {
+        return Value::Undefined;
+    };
+    let property = match value {
+        Value::Object(properties) => properties
+            .iter()
+            .rev()
+            .find(|(name, _)| name == &key)
+            .map(|(_, value)| value.clone()),
+        Value::Array(values) => array_descriptor(values, &key),
+        Value::String(value) => string_descriptor(value, &key),
+        _ => None,
+    };
+    property.map_or(Value::Undefined, |property| descriptor_object(&property))
+}
+
+fn array_descriptor(values: &[Value], key: &str) -> Option<Value> {
+    if key == "length" {
+        return None;
+    }
+    key.parse::<usize>()
+        .ok()
+        .and_then(|index| values.get(index).cloned())
+}
+
+fn string_descriptor(value: &str, key: &str) -> Option<Value> {
+    let index = key.parse::<usize>().ok()?;
+    let character = value.chars().nth(index)?;
+    Some(Value::String(character.to_string()))
+}
+
+fn descriptor_object(value: &Value) -> Value {
+    Value::Object(Rc::new(vec![
+        ("value".to_string(), value.clone()),
+        ("writable".to_string(), Value::Boolean(true)),
+        ("enumerable".to_string(), Value::Boolean(true)),
+        ("configurable".to_string(), Value::Boolean(true)),
+    ]))
 }
 
 fn value_to_string(value: &Value) -> String {

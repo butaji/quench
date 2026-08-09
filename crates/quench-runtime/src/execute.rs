@@ -199,6 +199,10 @@ pub(crate) fn execute_builtin_with_receiver(
             receiver,
             arguments.first(),
         )),
+        crate::ops::Builtin::ObjectGetOwnPropertyDescriptor => Ok(crate::builtins::descriptor(
+            arguments.first(),
+            arguments.get(1),
+        )),
         crate::ops::Builtin::ParseFloat => Ok(Value::Number(parse_float(arguments.first()))),
         crate::ops::Builtin::ParseInt => Ok(Value::Number(parse_int(arguments))),
         crate::ops::Builtin::String => Ok(Value::String(to_string(arguments.first()))),
