@@ -87,6 +87,7 @@ pub enum Builtin {
     ArrayIsArray,
     Boolean,
     Eval,
+    Escape,
     IsFinite,
     IsNaN,
     Number,
@@ -98,6 +99,7 @@ pub enum Builtin {
     ParseFloat,
     ParseInt,
     String,
+    Unescape,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
