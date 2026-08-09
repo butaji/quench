@@ -237,7 +237,14 @@ pub fn register_uri(ctx: &mut Context) {
         Ok(Value::Number(crate::builtins::date::spec_parse_float(&s)))
     });
 
-    // isNaN / isFinite are self-hosted in JS (builtins/core/global_functions.js).
+    ctx.register_native("isNaN", |args| {
+        let value = args.first().cloned().unwrap_or(Value::Undefined);
+        Ok(Value::Boolean(to_number(&value).is_nan()))
+    });
+    ctx.register_native("isFinite", |args| {
+        let value = args.first().cloned().unwrap_or(Value::Undefined);
+        Ok(Value::Boolean(to_number(&value).is_finite()))
+    });
     // encodeURI(uri) — leaves reserved characters alone.
     ctx.register_native("encodeURI", |args| {
         let s = args.first().map(to_js_string).unwrap_or_default();
