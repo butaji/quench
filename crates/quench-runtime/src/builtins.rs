@@ -26,6 +26,8 @@ fn property_lookup(builtin: Builtin, key: &str) -> Value {
         (Object, "is") => ObjectIs,
         (Object, "keys") => ObjectKeys,
         (Object, "getOwnPropertyDescriptor") => ObjectGetOwnPropertyDescriptor,
+        (Map, "prototype") => MapPrototype,
+        (Set, "prototype") => SetPrototype,
         _ => return Value::Undefined,
     };
     Value::Builtin(value)
@@ -36,53 +38,35 @@ fn special_property(builtin: Builtin, key: &str) -> Option<Value> {
     if builtin == Math {
         return crate::math::property(key).map(Value::Builtin);
     }
-    if let Some(value) = symbol_property(builtin, key) {
-        return Some(Value::Builtin(value));
-    }
     let value = match (builtin, key) {
-        (Function, "prototype") => FunctionPrototype,
-        (FunctionPrototype, "call") => FunctionCall,
-        (FunctionPrototype, "bind") => FunctionBind,
-        (FunctionCall, "bind") => FunctionBind,
-        (ArrayPrototype, "join") => ArrayJoin,
-        (ArrayPrototype, "push") => ArrayPush,
-        (Object, "prototype") => ObjectPrototype,
-        (Date, "prototype") => DatePrototype,
-        (DatePrototype, "getYear") => DateGetYear,
-        (DatePrototype, "setYear") => DateSetYear,
-        (DatePrototype, "toLocaleString") => DateToLocaleString,
-        (DatePrototype, "toLocaleDateString") => DateToLocaleDateString,
-        (DatePrototype, "toLocaleTimeString") => DateToLocaleTimeString,
-        (Reflect, "construct") => ReflectConstruct,
-        (RegExp, "prototype") => RegExpPrototype,
-        (RegExpPrototype, "test") => RegExpTest,
-        (RegExpPrototype, "exec") => RegExpExec,
-        (ObjectPrototype, "hasOwnProperty") => ObjectHasOwnProperty,
-        (ObjectPrototype, "propertyIsEnumerable") => ObjectPropertyIsEnumerable,
-        (Object, "defineProperty") => ObjectDefineProperty,
-        (Object, "getOwnPropertyNames") => ObjectGetOwnPropertyNames,
+        (Symbol, k) => crate::builtin_meta::symbol::symbol_prop(k),
+        (MapPrototype | SetPrototype, k) => {
+            crate::builtin_meta::collections::collections_property(builtin, k).and_then(|v| match v
+            {
+                Value::Builtin(b) => Some(b),
+                _ => None,
+            })
+        }
+        (DatePrototype, k) => crate::builtin_meta::date::date_prop(k),
+        (Function, "prototype") => Some(FunctionPrototype),
+        (FunctionPrototype, "call") => Some(FunctionCall),
+        (FunctionPrototype, "bind") => Some(FunctionBind),
+        (FunctionCall, "bind") => Some(FunctionBind),
+        (ArrayPrototype, "join") => Some(ArrayJoin),
+        (ArrayPrototype, "push") => Some(ArrayPush),
+        (Object, "prototype") => Some(ObjectPrototype),
+        (Date, "prototype") => Some(DatePrototype),
+        (Reflect, "construct") => Some(ReflectConstruct),
+        (RegExp, "prototype") => Some(RegExpPrototype),
+        (RegExpPrototype, "test") => Some(RegExpTest),
+        (RegExpPrototype, "exec") => Some(RegExpExec),
+        (ObjectPrototype, "hasOwnProperty") => Some(ObjectHasOwnProperty),
+        (ObjectPrototype, "propertyIsEnumerable") => Some(ObjectPropertyIsEnumerable),
+        (Object, "defineProperty") => Some(ObjectDefineProperty),
+        (Object, "getOwnPropertyNames") => Some(ObjectGetOwnPropertyNames),
         _ => return None,
     };
-    Some(Value::Builtin(value))
-}
-
-fn symbol_property(builtin: Builtin, key: &str) -> Option<Builtin> {
-    use Builtin::*;
-    match (builtin, key) {
-        (Symbol, "iterator") => Some(SymbolIterator),
-        (Symbol, "toStringTag") => Some(SymbolToStringTag),
-        (Symbol, "toPrimitive") => Some(SymbolToPrimitive),
-        (Symbol, "hasInstance") => Some(SymbolHasInstance),
-        (Symbol, "isConcatSpreadable") => Some(SymbolIsConcatSpreadable),
-        (Symbol, "species") => Some(SymbolSpecies),
-        (Symbol, "match") => Some(SymbolMatch),
-        (Symbol, "replace") => Some(SymbolReplace),
-        (Symbol, "search") => Some(SymbolSearch),
-        (Symbol, "split") => Some(SymbolSplit),
-        (Symbol, "for") => Some(SymbolFor),
-        (Symbol, "keyFor") => Some(SymbolKeyFor),
-        _ => None,
-    }
+    value.map(Value::Builtin)
 }
 
 fn callable_property(builtin: Builtin, key: &str) -> Option<Value> {
@@ -91,13 +75,6 @@ fn callable_property(builtin: Builtin, key: &str) -> Option<Value> {
         "name" => Some(Value::String(builtin_name(builtin).to_string())),
         _ => None,
     }
-}
-
-fn callable_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
-    if !matches!(key, "length" | "name") {
-        return None;
-    }
-    Some(callable_property(builtin, key).unwrap())
 }
 
 fn builtin_name(builtin: Builtin) -> &'static str {
@@ -185,24 +162,24 @@ pub(crate) fn descriptor(value: Option<&Value>, key: Option<&Value>) -> Value {
         Value::Array(values) => array_descriptor(values, &key),
         Value::String(value) => string_descriptor(value, &key),
         Value::Builtin(builtin) if matches!(key.as_str(), "length" | "name") => {
-            return callable_descriptor(*builtin, &key).unwrap()
+            return callable_property(*builtin, &key).unwrap_or(Value::Undefined);
         }
         Value::Function(function) if key == "length" => {
-            return callable_descriptor_value(Value::Number(f64::from(function.params)))
+            return Value::Object(Rc::new(vec![
+                (
+                    "value".to_string(),
+                    Value::Number(f64::from(function.params)),
+                ),
+                ("writable".to_string(), Value::Boolean(false)),
+                ("enumerable".to_string(), Value::Boolean(false)),
+                ("configurable".to_string(), Value::Boolean(true)),
+            ]));
         }
         _ => None,
     };
     property.map_or(Value::Undefined, |property| descriptor_object(&property))
 }
 
-fn callable_descriptor_value(value: Value) -> Value {
-    Value::Object(Rc::new(vec![
-        ("value".to_string(), value),
-        ("writable".to_string(), Value::Boolean(false)),
-        ("enumerable".to_string(), Value::Boolean(false)),
-        ("configurable".to_string(), Value::Boolean(true)),
-    ]))
-}
 fn builtin_length(builtin: Builtin) -> f64 {
     matches!(
         builtin,

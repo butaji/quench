@@ -529,6 +529,7 @@ dependencies = [
 name = "quench-runtime"
 version = "0.1.0"
 dependencies = [
+ "num-bigint",
  "oxc",
 ]
 

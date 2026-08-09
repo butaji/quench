@@ -24,10 +24,20 @@ pub fn execute_call(
             arguments.push(value);
         }
     }
-    let value = match super::read_register(registers, callee)? {
-        Value::Function(body) => crate::functions::execute(&body, &arguments)?,
-        Value::BoundFunction(bound) => crate::functions::execute_bound(&bound, &arguments)?,
-        Value::Builtin(builtin) => super::execute_builtin_with_receiver(builtin, &arguments, None)?,
+    let callee_value = super::read_register(registers, callee)?;
+    let value = match &callee_value {
+        Value::Function(body) => crate::functions::execute(body, &arguments)?,
+        Value::BoundFunction(bound) => crate::functions::execute_bound(bound, &arguments)?,
+        Value::Builtin(builtin) => {
+            super::execute_builtin_with_receiver(*builtin, &arguments, None)?
+        }
+        Value::Proxy(proxy) => {
+            if *proxy.revoked.borrow() {
+                return Err(VmError::EvalError("Cannot call revoked proxy".to_string()));
+            }
+            let this_arg = arguments.first().cloned().unwrap_or(Value::Undefined);
+            crate::proxy::proxy_apply(&callee_value, &this_arg, &arguments[1..])?
+        }
         _ => return Err(VmError::NotCallable),
     };
     super::write_value(registers, dst, value);
@@ -40,13 +50,14 @@ pub fn execute_builtin_tail(
     receiver: Option<&Value>,
 ) -> Result<Value, VmError> {
     use crate::ops::Builtin;
-    if let Some(result) = crate::strings::execute_builtin(builtin, receiver, arguments)
-        .or_else(|| crate::intl::execute(builtin, arguments, receiver))
-    {
+    if let Some(result) = early_dispatch(builtin, receiver, arguments) {
         return result;
     }
     if crate::math::is_builtin(builtin) {
         return crate::math::execute(builtin, arguments);
+    }
+    if is_proxy_or_reflect(builtin) {
+        return crate::proxy::builtin(builtin, arguments);
     }
     Ok(match builtin {
         Builtin::ObjectIs => Value::Boolean(crate::builtins::same_value(
@@ -64,4 +75,35 @@ pub fn execute_builtin_tail(
         Builtin::MathPow => crate::builtins::math_pow(arguments),
         _ => Value::Undefined,
     })
+}
+
+fn early_dispatch(
+    builtin: crate::ops::Builtin,
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Option<Result<Value, VmError>> {
+    crate::strings::execute_builtin(builtin, receiver, arguments)
+        .or_else(|| crate::intl::execute(builtin, arguments, receiver))
+        .or_else(|| crate::collections::execute_builtin(builtin, receiver, arguments))
+}
+
+fn is_proxy_or_reflect(builtin: crate::ops::Builtin) -> bool {
+    use crate::ops::Builtin;
+    matches!(
+        builtin,
+        Builtin::Proxy
+            | Builtin::ProxyRevocable
+            | Builtin::ReflectGet
+            | Builtin::ReflectSet
+            | Builtin::ReflectHas
+            | Builtin::ReflectDeleteProperty
+            | Builtin::ReflectGetPrototypeOf
+            | Builtin::ReflectSetPrototypeOf
+            | Builtin::ReflectIsExtensible
+            | Builtin::ReflectPreventExtensions
+            | Builtin::ReflectGetOwnPropertyDescriptor
+            | Builtin::ReflectDefineProperty
+            | Builtin::ReflectOwnKeys
+            | Builtin::ReflectApply
+    )
 }
