@@ -219,3 +219,5 @@ Stage discovery now filters the parallel runner to numeric `stage-*`
 directories, preventing fixture-package directories from reaching integer
 comparisons. With six workers and a 10-second per-stage timeout, stages 1–500
 completed with 500/500 passing and zero failed stages.
+The same sweep for stages 501–1000 also completed with 500/500 passing and
+zero failed stages.
