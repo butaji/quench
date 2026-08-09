@@ -15,6 +15,7 @@ mod blocks;
 mod conditional;
 pub mod execute;
 pub mod facts;
+mod functions;
 mod literal;
 mod logical;
 pub mod ops;
