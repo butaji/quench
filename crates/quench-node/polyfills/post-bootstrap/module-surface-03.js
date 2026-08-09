@@ -144,25 +144,47 @@ const __quenchComposeStreams = (streams, result) => {
     });
     composed.writable = __quenchComposeWritable(streams[0]);
     composed.readable = __quenchComposeReadable(streams[streams.length - 1]);
+    const write = composed.write;
+    let pendingWrites = 0;
+    let endCallback;
+    let endRequested = false;
+    let finalized = false;
+    const finalize = (error) => {
+      if (finalized) return;
+      finalized = true;
+      if (error) {
+        composed.destroy(error);
+        endCallback?.(error);
+        return;
+      }
+      composed.writableEnded = true;
+      composed.writableFinished = true;
+      composed.writable = false;
+      composed.emit("finish");
+      endCallback?.();
+    };
+    composed.write = function (chunk, encoding, callback) {
+      if (typeof encoding === "function") {
+        callback = encoding;
+        encoding = undefined;
+      }
+      pendingWrites++;
+      return write.call(this, chunk, encoding, (error) => {
+        pendingWrites--;
+        callback?.(error);
+        if (error) finalize(error);
+        else if (endRequested && pendingWrites === 0) finalize();
+      });
+    };
     composed.end = function (chunk, encoding, callback) {
       if (typeof encoding === "function") {
         callback = encoding;
         encoding = undefined;
       }
-      const finish = (error) => {
-        if (error) {
-          this.destroy(error);
-          callback?.(error);
-          return;
-        }
-        this.writableEnded = true;
-        this.writableFinished = true;
-        this.writable = false;
-        this.emit("finish");
-        callback?.();
-      };
-      if (chunk === undefined) finish();
-      else this.write(chunk, encoding, finish);
+      endRequested = true;
+      endCallback = callback;
+      if (chunk !== undefined) this.write(chunk, encoding);
+      if (pendingWrites === 0) finalize();
       return this;
     };
     if (!composed.writable) {
@@ -197,8 +219,15 @@ const __quenchComposeStreams = (streams, result) => {
       first.write(chunk, encoding, callback);
     }
   });
+  composed.writable = __quenchComposeWritable(first);
+  composed.readable = __quenchComposeReadable(last);
   last.on("data", (chunk) => composed.push(chunk));
   last.on("end", () => composed.push(null));
+  last.on("finish", () => {
+    if (last.readable !== false) return;
+    composed.writableFinished = true;
+    composed.emit("finish");
+  });
   composed.end = (chunk, encoding, callback) => {
     if (chunk !== undefined) composed.write(chunk, encoding);
     first.end();
