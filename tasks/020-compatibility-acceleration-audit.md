@@ -127,3 +127,6 @@ large non-match corpus, so the compatibility objective remains open.
   `test-http-agent-scheduling.js` each miss a callback. An initial idempotent
   response close-release experiment was reverted because it did not change
   those outcomes; the lifecycle issue remains open for focused investigation.
+- `tools/check-all-tests.sh` completed the Rust unit-test phase with 2/2 tests
+  passing, but stalled during its larger compatibility phase without producing
+  a result; this remains an open suite-runner verification issue.
