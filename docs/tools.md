@@ -104,7 +104,8 @@ TEST262_STAGE=16 bash tools/run-each.sh
 
 ### 6. `tools/digest-all.sh` — Master Report
 
-Runs digest on ALL stages (see `tasks/index.json`) sequentially and produces a markdown report at `tasks/digest-report.md`. Stages that crash are noted separately.
+Runs digest on ALL stages (see `tasks/index.json`) sequentially. Its output is
+diagnostic evidence, not persisted task status.
 
 ```bash
 bash tools/digest-all.sh
@@ -112,7 +113,8 @@ bash tools/digest-all.sh
 
 ### 7. `tools/stage-status.sh` — Stage Overview
 
-Shows all stages (see `tasks/index.json`) with their status, test counts, and overall progress percentage.
+Shows stage identity and workflow status from `tasks/index.json`. Run a stage
+to establish current conformance.
 
 ```bash
 bash tools/stage-status.sh
@@ -186,7 +188,7 @@ diff <(jq --sort-keys . before.json) <(jq --sort-keys . after.json)
 - `TEST262_DIGEST=1` — collect all failures, don't stop at first
 - `TEST262_QUICK=1` — minimal output, just counts
 - `TEST262_JSON=1` — machine-readable JSON output
-- `TEST262_FAILED_JSON=tasks/failures-N.json` — rerun only prior failures
+- `TEST262_FAILED_JSON=/tmp/failures-N.json` — rerun only a diagnostic failure set
 - `TEST262_ISOLATED=1` — subprocess per test (default: fast in-process *serial* with a thread-local harness-IR cache; use isolated for full crash isolation / parallel scan, build `run-test` first)
 - `TEST262_PARALLEL=1` — parallel in-stage (default on)
 - `TEST262_SERIAL=1` — force serial execution
@@ -195,7 +197,7 @@ diff <(jq --sort-keys . before.json) <(jq --sort-keys . after.json)
 - `RUN_TEST_BIN` — path to prebuilt `run-test` binary
 - `RUST_BACKTRACE=1` — stack traces on panics
 
-See also `tasks/harness-roadmap.md` for the full harness speed roadmap.
+The implementation queue is `tasks/implementation-plan.md`.
 
 ## Improving the Tools
 
