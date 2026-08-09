@@ -1211,3 +1211,13 @@ method throws. Stages 2383 and 2494 pass. The complete parallel focused-stage
 gate now reports 2333/2333 passing with zero failures, without manual fixture
 cleanup. This closes the maintained focused backlog, not the broader upstream
 Node fixture backlog.
+
+Stage 2495 implements active Timeout refresh on the host scheduler. Refreshing
+inside a callback or after a completed callback requeues the same handle with a
+new due time, while a handle explicitly cleared remains inert. One-shot
+completion only deactivates a handle when its callback did not reinsert the
+timer, and the handle retains private entry state so a post-fire clear remains
+authoritative. The focused callback/post-fire/cleared matrix and maintained
+timer/domain stages pass, together with complete authoritative
+`test-timers-refresh-in-callback.js`. The full focused gate remains clean at
+2334/2334 passing.
