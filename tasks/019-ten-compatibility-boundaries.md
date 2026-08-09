@@ -1293,3 +1293,10 @@ Stage 2506 models self-signaled child termination after removing the final
 The focused signal-child stage and authoritative
 `test-process-remove-all-signal-listeners.js` fixture pass; the full focused
 gate reports 2343/2343 passing.
+
+Stages 2507–2508 align entry-process arguments and raw debugging. Fixture
+execution now exposes `[execPath, scriptPath]` plus intentional experimental
+flags, without leaking Quench's runner controls into `process.argv`; `_rawDebug`
+formats `%s` arguments and writes to stderr. The focused argv/raw-debug stages
+and complete authoritative `test-process-raw-debug.js` fixture pass, and the
+full focused gate reports 2345/2345 passing.
