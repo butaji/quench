@@ -59,7 +59,10 @@ pub enum Op {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Builtin {
+    Boolean,
     Eval,
+    Number,
+    String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

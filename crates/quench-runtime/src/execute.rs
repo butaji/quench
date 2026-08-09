@@ -137,7 +137,7 @@ fn execute_call(
             }
             execute_with_registers(&body.body, arguments)?
         }
-        Value::Builtin(crate::ops::Builtin::Eval) => execute_eval(&arguments)?,
+        Value::Builtin(builtin) => execute_builtin(builtin, &arguments)?,
         _ => return Err(VmError::NotCallable),
     };
     write_value(registers, dst, value);
@@ -151,6 +151,42 @@ fn execute_eval(arguments: &[Value]) -> Result<Value, VmError> {
     let program = crate::reduce::reduce_source(source)
         .map_err(|errors| VmError::EvalError(errors.join("; ")))?;
     execute(&program.ops).map_err(|error| VmError::EvalError(format!("{error:?}")))
+}
+
+fn execute_builtin(builtin: crate::ops::Builtin, arguments: &[Value]) -> Result<Value, VmError> {
+    match builtin {
+        crate::ops::Builtin::Boolean => {
+            Ok(Value::Boolean(arguments.first().is_some_and(is_truthy)))
+        }
+        crate::ops::Builtin::Eval => execute_eval(arguments),
+        crate::ops::Builtin::Number => Ok(Value::Number(to_number(arguments.first()))),
+        crate::ops::Builtin::String => Ok(Value::String(to_string(arguments.first()))),
+    }
+}
+
+fn to_number(value: Option<&Value>) -> f64 {
+    match value {
+        None | Some(Value::Undefined) => f64::NAN,
+        Some(Value::Null) => 0.0,
+        Some(Value::Boolean(value)) => f64::from(*value),
+        Some(Value::Number(value)) => *value,
+        Some(Value::String(value)) => value.trim().parse().unwrap_or(f64::NAN),
+        Some(Value::Array(_)) | Some(Value::Object(_)) => f64::NAN,
+        Some(Value::Function(_)) | Some(Value::Builtin(_)) => f64::NAN,
+    }
+}
+
+fn to_string(value: Option<&Value>) -> String {
+    match value {
+        None | Some(Value::Undefined) => "undefined".to_string(),
+        Some(Value::Null) => "null".to_string(),
+        Some(Value::Boolean(value)) => value.to_string(),
+        Some(Value::Number(value)) => value.to_string(),
+        Some(Value::String(value)) => value.clone(),
+        Some(Value::Array(_)) => String::new(),
+        Some(Value::Object(_)) => "[object Object]".to_string(),
+        Some(Value::Function(_)) | Some(Value::Builtin(_)) => "function".to_string(),
+    }
 }
 
 fn copy_register(registers: &mut Vec<Value>, dst: u16, src: u16) -> Result<(), VmError> {

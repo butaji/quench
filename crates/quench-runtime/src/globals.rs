@@ -15,12 +15,12 @@ pub(crate) fn reduce(
     if locals.contains_key(name) {
         return None;
     }
-    if name == "eval" {
+    if let Some(builtin) = builtin(name) {
         let register = *next_register;
         *next_register = next_register.saturating_add(1);
         ops.push(Op::MakeBuiltin {
             dst: register,
-            builtin: crate::ops::Builtin::Eval,
+            builtin,
         });
         return Some(register);
     }
@@ -41,4 +41,14 @@ pub(crate) fn reduce(
         value,
     });
     Some(register)
+}
+
+fn builtin(name: &str) -> Option<crate::ops::Builtin> {
+    match name {
+        "Boolean" => Some(crate::ops::Builtin::Boolean),
+        "eval" => Some(crate::ops::Builtin::Eval),
+        "Number" => Some(crate::ops::Builtin::Number),
+        "String" => Some(crate::ops::Builtin::String),
+        _ => None,
+    }
 }
