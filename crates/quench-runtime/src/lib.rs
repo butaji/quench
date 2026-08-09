@@ -29,4 +29,5 @@ pub mod reduce;
 mod semantic;
 mod sequences;
 mod templates;
+mod transparent;
 pub mod value;
