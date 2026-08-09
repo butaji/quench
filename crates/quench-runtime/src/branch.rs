@@ -27,6 +27,7 @@ pub(crate) fn execute_special(registers: &mut Vec<Value>, op: &Op) -> Result<(),
         Op::Try { .. } => crate::exceptions::execute(registers, op),
         Op::Loop { .. } => crate::loops::execute(registers, op),
         Op::Switch { .. } => crate::switch::execute(registers, op),
+        Op::Conditional { .. } => crate::conditional::execute(registers, op),
         _ => Err(VmError::MissingReturn),
     }
 }
