@@ -272,6 +272,7 @@ fn set_function_property(
     Value::Function(Rc::new(crate::value::FunctionValue {
         body: function.body.clone(),
         params: function.params,
+        captures: function.captures.clone(),
         properties: Rc::new(properties),
     }))
 }

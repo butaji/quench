@@ -18,7 +18,7 @@ use oxc::{
     ast::ast::{AssignmentTarget, BindingPatternKind, Expression, Statement},
     parser::Parser,
     span::SourceType,
-    syntax::operator::{AssignmentOperator, UnaryOperator, UpdateOperator},
+    syntax::operator::{AssignmentOperator, UnaryOperator},
 };
 use std::collections::HashMap;
 #[derive(Debug, PartialEq)]
@@ -69,6 +69,7 @@ pub(crate) fn reduce_statements_with_locals(
     mut locals: HashMap<String, u16>,
     mut next_slot: u16,
 ) -> Result<Vec<Op>, Vec<String>> {
+    predeclare_functions(statements, &mut locals, &mut next_slot);
     let mut ops = Vec::new();
     let mut next_register = 0;
     let mut last_value = None;
@@ -85,6 +86,26 @@ pub(crate) fn reduce_statements_with_locals(
         }
     }
     finish_program(ops, last_value)
+}
+
+fn predeclare_functions(
+    statements: &[Statement<'_>],
+    locals: &mut HashMap<String, u16>,
+    next_slot: &mut u16,
+) {
+    for statement in statements {
+        let Statement::FunctionDeclaration(function) = statement else {
+            continue;
+        };
+        let Some(identifier) = function.id.as_ref() else {
+            continue;
+        };
+        if locals.contains_key(identifier.name.as_str()) {
+            continue;
+        }
+        locals.insert(identifier.name.to_string(), *next_slot);
+        *next_slot = next_slot.saturating_add(1);
+    }
 }
 pub(crate) fn reduce_statement(
     statement: &Statement<'_>,
@@ -103,7 +124,7 @@ pub(crate) fn reduce_statement(
             reduce_declaration_statement(statement, ops, facts, next_register, next_slot, locals)
         }
         Statement::ReturnStatement(return_statement) => {
-            reduce_return_statement(return_statement, ops, facts, next_register, locals)
+            control_flow::reduce_return(return_statement, ops, facts, next_register, locals)
         }
         Statement::ThrowStatement(statement) => {
             control_flow::reduce_throw(statement, ops, facts, next_register, locals)
@@ -125,20 +146,6 @@ pub(crate) fn reduce_statement(
         _ => Err(vec!["Unsupported executable statement".to_string()]),
     }
 }
-fn reduce_return_statement(
-    statement: &oxc::ast::ast::ReturnStatement<'_>,
-    ops: &mut Vec<Op>,
-    facts: &mut ProgramDb,
-    next_register: &mut u16,
-    locals: &HashMap<String, u16>,
-) -> Result<Option<u16>, Vec<String>> {
-    let register = statement
-        .argument
-        .as_ref()
-        .and_then(|expression| reduce_expression(expression, ops, facts, next_register, locals))
-        .or_else(|| Some(emit_undefined(ops, next_register)));
-    Ok(register)
-}
 pub(crate) fn reduce_function_declaration(
     function: &oxc::ast::ast::Function<'_>,
     ops: &mut Vec<Op>,
@@ -153,24 +160,47 @@ pub(crate) fn reduce_function_declaration(
     let Some(body) = function.body.as_ref() else {
         return Err(vec!["Function without body".to_string()]);
     };
-    let (parameters, parameter_count) = functions::function_parameters(function)?;
+    let slot = if let Some(slot) = locals.get(identifier.name.as_str()) {
+        *slot
+    } else {
+        let slot = *next_slot;
+        *next_slot = next_slot.saturating_add(1);
+        locals.insert(identifier.name.to_string(), slot);
+        slot
+    };
+    let (parameters, parameter_count, captures) = function_locals(function, locals)?;
     let body_ops =
         reduce_statements_with_locals(&body.statements, facts, parameters, parameter_count)?;
-    let slot = *next_slot;
-    *next_slot = next_slot.saturating_add(1);
-    locals.insert(identifier.name.to_string(), slot);
     let register = *next_register;
     *next_register = next_register.saturating_add(1);
     ops.push(Op::MakeFunction {
         dst: register,
         body: body_ops,
         params: parameter_count,
+        captures,
     });
     ops.push(Op::StoreLocal {
         slot,
         src: register,
     });
     Ok(())
+}
+
+fn function_locals(
+    function: &oxc::ast::ast::Function<'_>,
+    locals: &HashMap<String, u16>,
+) -> Result<(HashMap<String, u16>, u16, u16), Vec<String>> {
+    let (mut parameters, parameter_count) = functions::function_parameters(function)?;
+    let captures = locals
+        .values()
+        .copied()
+        .max()
+        .map_or(0, |slot| slot.saturating_add(1));
+    for slot in parameters.values_mut() {
+        *slot = slot.saturating_add(captures);
+    }
+    parameters.extend(locals.iter().map(|(name, slot)| (name.clone(), *slot)));
+    Ok((parameters, parameter_count, captures))
 }
 fn reduce_if_statement(
     statement: &oxc::ast::ast::IfStatement<'_>,
@@ -393,46 +423,6 @@ pub(crate) fn reduce_call(
     *next_register = next_register.saturating_add(1);
     ops.push(Op::Call { dst, callee, args });
     Some(dst)
-}
-pub(crate) fn reduce_update(
-    update: &oxc::ast::ast::UpdateExpression<'_>,
-    ops: &mut Vec<Op>,
-    next_register: &mut u16,
-    locals: &HashMap<String, u16>,
-) -> Option<u16> {
-    let oxc::ast::ast::SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) =
-        &update.argument
-    else {
-        return None;
-    };
-    let slot = *locals.get(identifier.name.as_str())?;
-    let old = *next_register;
-    *next_register = next_register.saturating_add(1);
-    ops.push(Op::LoadLocal { dst: old, slot });
-    let one = *next_register;
-    *next_register = next_register.saturating_add(1);
-    ops.push(Op::Const {
-        dst: one,
-        value: Constant::Number(1.0),
-    });
-    let updated = *next_register;
-    *next_register = next_register.saturating_add(1);
-    let operator = match update.operator {
-        UpdateOperator::Increment => crate::ops::BinaryOp::Add,
-        UpdateOperator::Decrement => crate::ops::BinaryOp::Subtract,
-    };
-    ops.push(Op::Binary {
-        dst: updated,
-        operator,
-        lhs: old,
-        rhs: one,
-    });
-    ops.push(Op::StoreLocal { slot, src: updated });
-    if update.prefix {
-        Some(updated)
-    } else {
-        Some(old)
-    }
 }
 pub(crate) fn reduce_assignment(
     assignment: &oxc::ast::ast::AssignmentExpression<'_>,
