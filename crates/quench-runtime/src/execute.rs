@@ -112,17 +112,7 @@ fn string_property(value: &str, key: &str) -> Value {
     if key == "length" {
         return Value::Number(value.chars().count() as f64);
     }
-    let method = match key {
-        "includes" => Some(crate::ops::Builtin::StringIncludes),
-        "startsWith" => Some(crate::ops::Builtin::StringStartsWith),
-        "endsWith" => Some(crate::ops::Builtin::StringEndsWith),
-        "repeat" => Some(crate::ops::Builtin::StringRepeat),
-        "trim" => Some(crate::ops::Builtin::StringTrim),
-        "toLowerCase" => Some(crate::ops::Builtin::StringToLowerCase),
-        "toUpperCase" => Some(crate::ops::Builtin::StringToUpperCase),
-        "charAt" => Some(crate::ops::Builtin::StringCharAt),
-        _ => None,
-    };
+    let method = crate::strings::property_method(key);
     if let Some(method) = method {
         return Value::Builtin(method);
     }
