@@ -1,5 +1,7 @@
 //! Module support stubs.
 
+#![allow(dead_code)]
+
 use crate::value::Value;
 use std::rc::Rc;
 

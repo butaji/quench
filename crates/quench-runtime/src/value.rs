@@ -1,19 +1,71 @@
 //! Machine-sized runtime values for the residual kernel.
 
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, collections::VecDeque, rc::Rc};
 
-use crate::ops::{Builtin, Op};
+use crate::ops::{Builtin, Constant, Op};
+
+/// Promise state: pending, fulfilled, or rejected.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PromiseState {
+    Pending,
+    Fulfilled(Value),
+    Rejected(Value),
+}
+
+/// Heap-allocated Promise data.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PromiseData {
+    pub state: PromiseState,
+    pub result: Option<Value>,
+    pub then_actions: Vec<(Option<Value>, Option<Value>)>,
+}
+
+impl Default for PromiseData {
+    fn default() -> Self {
+        Self {
+            state: PromiseState::Pending,
+            result: None,
+            then_actions: Vec::new(),
+        }
+    }
+}
+
+/// Map key-value storage.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MapData {
+    pub keys: VecDeque<Value>,
+    pub values: Vec<Value>,
+}
+
+/// Set value storage.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SetData {
+    pub values: VecDeque<Value>,
+}
+
+/// A Proxy value wrapping a target and handler.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProxyValue {
+    pub target: Value,
+    pub handler: Value,
+    pub revoked: Rc<RefCell<bool>>,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Number(f64),
     Boolean(bool),
     String(String),
+    BigInt(String),
     Array(Rc<Vec<Value>>),
     Object(Rc<Vec<(String, Value)>>),
     Builtin(Builtin),
     Function(Rc<FunctionValue>),
     BoundFunction(Rc<BoundFunctionValue>),
+    Proxy(Rc<ProxyValue>),
+    Promise(Rc<PromiseData>),
+    Map(Rc<MapData>),
+    Set(Rc<SetData>),
     Null,
     Undefined,
 }
@@ -33,14 +85,15 @@ pub struct BoundFunctionValue {
     pub arguments: Vec<Value>,
 }
 
-impl From<&crate::ops::Constant> for Value {
-    fn from(value: &crate::ops::Constant) -> Self {
+impl From<&Constant> for Value {
+    fn from(value: &Constant) -> Self {
         match value {
-            crate::ops::Constant::Number(value) => Self::Number(*value),
-            crate::ops::Constant::Boolean(value) => Self::Boolean(*value),
-            crate::ops::Constant::String(value) => Self::String(value.clone()),
-            crate::ops::Constant::Null => Self::Null,
-            crate::ops::Constant::Undefined => Self::Undefined,
+            Constant::Number(value) => Self::Number(*value),
+            Constant::Boolean(value) => Self::Boolean(*value),
+            Constant::String(value) => Self::String(value.clone()),
+            Constant::BigInt(value) => Self::BigInt(value.clone()),
+            Constant::Null => Self::Null,
+            Constant::Undefined => Self::Undefined,
         }
     }
 }

@@ -1,5 +1,6 @@
 use crate::intl::tolocale::value::{is_finite, to_number, to_string};
-use crate::{ops::Op, value::Value};
+use crate::ops::Op;
+use crate::value::Value;
 use std::rc::Rc;
 
 mod vm_arithmetic;
@@ -40,6 +41,7 @@ pub fn execute_builtin_with_receiver(
     if let Some(result) = crate::intl::tolocale::symbol::dispatch(builtin, arguments, receiver)
         .or_else(|| crate::arrays::execute_builtin(builtin, receiver, arguments))
         .or_else(|| crate::intl::tolocale::dispatch(builtin, receiver, arguments))
+        .or_else(|| crate::collections::execute_builtin(builtin, receiver, arguments))
     {
         return result;
     }
@@ -108,6 +110,8 @@ pub fn get_property(value: &Value, key: &str) -> Value {
             .rev()
             .find(|(name, _)| name == key)
             .map_or(Value::Undefined, |(_, value)| value.clone()),
+        Map(_) => crate::collections::map::property(key),
+        Set(_) => crate::collections::set::property(key),
         _ => Value::Undefined,
     }
 }

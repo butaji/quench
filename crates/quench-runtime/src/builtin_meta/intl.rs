@@ -3,28 +3,21 @@
 use crate::ops::Builtin;
 
 pub const fn fn_name(b: Builtin) -> Option<&'static str> {
-    intl_static_name(b)
-        .or_else(|| intl_locale_name(b))
-        .or_else(|| intl_number_format_name(b))
-        .or_else(|| intl_plural_rules_name(b))
-        .or_else(|| intl_date_time_format_name(b))
-        .or_else(|| intl_collator_name(b))
-        .or_else(|| intl_list_format_name(b))
-        .or_else(|| intl_relative_time_format_name(b))
-        .or_else(|| intl_segmenter_name(b))
-        .or_else(|| intl_display_names_name(b))
+    intl_name_group_a(b)
 }
 
-const fn intl_static_name(b: Builtin) -> Option<&'static str> {
+pub const fn fn_len(b: Builtin) -> Option<f64> {
+    intl_fn_len(b)
+}
+
+pub const fn short_name(b: Builtin) -> Option<&'static str> {
+    intl_short_name(b)
+}
+
+const fn intl_name_group_a(b: Builtin) -> Option<&'static str> {
     match b {
         Builtin::IntlGetCanonicalLocales => Some("Intl.getCanonicalLocales"),
         Builtin::IntlSupportedValuesOf => Some("Intl.supportedValuesOf"),
-        _ => None,
-    }
-}
-
-const fn intl_locale_name(b: Builtin) -> Option<&'static str> {
-    match b {
         Builtin::IntlLocaleToString => Some("Intl.Locale.prototype.toString"),
         Builtin::IntlLocaleMaximize => Some("Intl.Locale.prototype.maximize"),
         Builtin::IntlLocaleMinimize => Some("Intl.Locale.prototype.minimize"),
@@ -35,33 +28,15 @@ const fn intl_locale_name(b: Builtin) -> Option<&'static str> {
         Builtin::IntlLocaleGetTimeZones => Some("Intl.Locale.prototype.getTimeZones"),
         Builtin::IntlLocaleGetTextInfo => Some("Intl.Locale.prototype.getTextInfo"),
         Builtin::IntlLocaleGetWeekInfo => Some("Intl.Locale.prototype.getWeekInfo"),
-        _ => None,
-    }
-}
-
-const fn intl_number_format_name(b: Builtin) -> Option<&'static str> {
-    match b {
         Builtin::IntlNumberFormatFormat => Some("Intl.NumberFormat.prototype.format"),
         Builtin::IntlNumberFormatFormatToParts => Some("Intl.NumberFormat.prototype.formatToParts"),
         Builtin::IntlNumberFormatResolvedOptions => {
             Some("Intl.NumberFormat.prototype.resolvedOptions")
         }
-        _ => None,
-    }
-}
-
-const fn intl_plural_rules_name(b: Builtin) -> Option<&'static str> {
-    match b {
         Builtin::IntlPluralRulesSelect => Some("Intl.PluralRules.prototype.select"),
         Builtin::IntlPluralRulesResolvedOptions => {
             Some("Intl.PluralRules.prototype.resolvedOptions")
         }
-        _ => None,
-    }
-}
-
-const fn intl_date_time_format_name(b: Builtin) -> Option<&'static str> {
-    match b {
         Builtin::IntlDateTimeFormatFormat => Some("Intl.DateTimeFormat.prototype.format"),
         Builtin::IntlDateTimeFormatFormatToParts => {
             Some("Intl.DateTimeFormat.prototype.formatToParts")
@@ -69,56 +44,26 @@ const fn intl_date_time_format_name(b: Builtin) -> Option<&'static str> {
         Builtin::IntlDateTimeFormatResolvedOptions => {
             Some("Intl.DateTimeFormat.prototype.resolvedOptions")
         }
-        _ => None,
+        _ => intl_name_group_b(b),
     }
 }
 
-const fn intl_collator_name(b: Builtin) -> Option<&'static str> {
+const fn intl_name_group_b(b: Builtin) -> Option<&'static str> {
     match b {
         Builtin::IntlCollatorCompare => Some("Intl.Collator.prototype.compare"),
         Builtin::IntlCollatorResolvedOptions => Some("Intl.Collator.prototype.resolvedOptions"),
-        _ => None,
-    }
-}
-
-const fn intl_list_format_name(b: Builtin) -> Option<&'static str> {
-    match b {
         Builtin::IntlListFormatFormat => Some("Intl.ListFormat.prototype.format"),
         Builtin::IntlListFormatFormatToParts => Some("Intl.ListFormat.prototype.formatToParts"),
-        Builtin::IntlListFormatResolvedOptions => {
-            Some("Intl.ListFormat.prototype.resolvedOptions")
-        }
-        _ => None,
-    }
-}
-
-const fn intl_relative_time_format_name(b: Builtin) -> Option<&'static str> {
-    match b {
-        Builtin::IntlRelativeTimeFormatFormat => {
-            Some("Intl.RelativeTimeFormat.prototype.format")
-        }
+        Builtin::IntlListFormatResolvedOptions => Some("Intl.ListFormat.prototype.resolvedOptions"),
+        Builtin::IntlRelativeTimeFormatFormat => Some("Intl.RelativeTimeFormat.prototype.format"),
         Builtin::IntlRelativeTimeFormatFormatToParts => {
             Some("Intl.RelativeTimeFormat.prototype.formatToParts")
         }
         Builtin::IntlRelativeTimeFormatResolvedOptions => {
             Some("Intl.RelativeTimeFormat.prototype.resolvedOptions")
         }
-        _ => None,
-    }
-}
-
-const fn intl_segmenter_name(b: Builtin) -> Option<&'static str> {
-    match b {
         Builtin::IntlSegmenterSegment => Some("Intl.Segmenter.prototype.segment"),
-        Builtin::IntlSegmenterResolvedOptions => {
-            Some("Intl.Segmenter.prototype.resolvedOptions")
-        }
-        _ => None,
-    }
-}
-
-const fn intl_display_names_name(b: Builtin) -> Option<&'static str> {
-    match b {
+        Builtin::IntlSegmenterResolvedOptions => Some("Intl.Segmenter.prototype.resolvedOptions"),
         Builtin::IntlDisplayNamesOf => Some("Intl.DisplayNames.prototype.of"),
         Builtin::IntlDisplayNamesResolvedOptions => {
             Some("Intl.DisplayNames.prototype.resolvedOptions")
@@ -127,7 +72,7 @@ const fn intl_display_names_name(b: Builtin) -> Option<&'static str> {
     }
 }
 
-pub const fn fn_len(b: Builtin) -> Option<f64> {
+const fn intl_fn_len(b: Builtin) -> Option<f64> {
     match b {
         Builtin::IntlGetCanonicalLocales => Some(1.0),
         Builtin::IntlSupportedValuesOf => Some(1.0),
@@ -165,19 +110,7 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
     }
 }
 
-pub const fn short_name(b: Builtin) -> Option<&'static str> {
-    intl_locale_short(b)
-        .or_else(|| intl_number_format_short(b))
-        .or_else(|| intl_plural_rules_short(b))
-        .or_else(|| intl_date_time_format_short(b))
-        .or_else(|| intl_collator_short(b))
-        .or_else(|| intl_list_format_short(b))
-        .or_else(|| intl_relative_time_format_short(b))
-        .or_else(|| intl_segmenter_short(b))
-        .or_else(|| intl_display_names_short(b))
-}
-
-const fn intl_locale_short(b: Builtin) -> Option<&'static str> {
+const fn intl_short_name(b: Builtin) -> Option<&'static str> {
     match b {
         Builtin::IntlLocaleToString => Some("toString"),
         Builtin::IntlLocaleMaximize => Some("maximize"),
@@ -189,72 +122,24 @@ const fn intl_locale_short(b: Builtin) -> Option<&'static str> {
         Builtin::IntlLocaleGetTimeZones => Some("getTimeZones"),
         Builtin::IntlLocaleGetTextInfo => Some("getTextInfo"),
         Builtin::IntlLocaleGetWeekInfo => Some("getWeekInfo"),
-        _ => None,
-    }
-}
-
-const fn intl_number_format_short(b: Builtin) -> Option<&'static str> {
-    match b {
         Builtin::IntlNumberFormatFormat => Some("format"),
         Builtin::IntlNumberFormatFormatToParts => Some("formatToParts"),
         Builtin::IntlNumberFormatResolvedOptions => Some("resolvedOptions"),
-        _ => None,
-    }
-}
-
-const fn intl_plural_rules_short(b: Builtin) -> Option<&'static str> {
-    match b {
         Builtin::IntlPluralRulesSelect => Some("select"),
         Builtin::IntlPluralRulesResolvedOptions => Some("resolvedOptions"),
-        _ => None,
-    }
-}
-
-const fn intl_date_time_format_short(b: Builtin) -> Option<&'static str> {
-    match b {
         Builtin::IntlDateTimeFormatFormat => Some("format"),
         Builtin::IntlDateTimeFormatFormatToParts => Some("formatToParts"),
         Builtin::IntlDateTimeFormatResolvedOptions => Some("resolvedOptions"),
-        _ => None,
-    }
-}
-
-const fn intl_collator_short(b: Builtin) -> Option<&'static str> {
-    match b {
         Builtin::IntlCollatorCompare => Some("compare"),
         Builtin::IntlCollatorResolvedOptions => Some("resolvedOptions"),
-        _ => None,
-    }
-}
-
-const fn intl_list_format_short(b: Builtin) -> Option<&'static str> {
-    match b {
         Builtin::IntlListFormatFormat => Some("format"),
         Builtin::IntlListFormatFormatToParts => Some("formatToParts"),
         Builtin::IntlListFormatResolvedOptions => Some("resolvedOptions"),
-        _ => None,
-    }
-}
-
-const fn intl_relative_time_format_short(b: Builtin) -> Option<&'static str> {
-    match b {
         Builtin::IntlRelativeTimeFormatFormat => Some("format"),
         Builtin::IntlRelativeTimeFormatFormatToParts => Some("formatToParts"),
         Builtin::IntlRelativeTimeFormatResolvedOptions => Some("resolvedOptions"),
-        _ => None,
-    }
-}
-
-const fn intl_segmenter_short(b: Builtin) -> Option<&'static str> {
-    match b {
         Builtin::IntlSegmenterSegment => Some("segment"),
         Builtin::IntlSegmenterResolvedOptions => Some("resolvedOptions"),
-        _ => None,
-    }
-}
-
-const fn intl_display_names_short(b: Builtin) -> Option<&'static str> {
-    match b {
         Builtin::IntlDisplayNamesOf => Some("of"),
         Builtin::IntlDisplayNamesResolvedOptions => Some("resolvedOptions"),
         _ => None,
