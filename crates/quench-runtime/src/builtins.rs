@@ -39,6 +39,13 @@ pub(crate) fn property(builtin: Builtin, key: &str) -> Value {
 fn special_property(builtin: Builtin, key: &str) -> Option<Value> {
     let value = match (builtin, key) {
         (Builtin::Math, "pow") => Builtin::MathPow,
+        (Builtin::Math, "abs") => Builtin::MathAbs,
+        (Builtin::Math, "floor") => Builtin::MathFloor,
+        (Builtin::Math, "ceil") => Builtin::MathCeil,
+        (Builtin::Math, "round") => Builtin::MathRound,
+        (Builtin::Math, "trunc") => Builtin::MathTrunc,
+        (Builtin::Math, "max") => Builtin::MathMax,
+        (Builtin::Math, "min") => Builtin::MathMin,
         (Builtin::Function, "prototype") => Builtin::FunctionPrototype,
         (Builtin::FunctionPrototype, "call") => Builtin::FunctionCall,
         (Builtin::FunctionPrototype, "bind") => Builtin::FunctionBind,

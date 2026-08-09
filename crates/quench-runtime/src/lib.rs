@@ -28,6 +28,7 @@ mod literal;
 mod locals;
 mod logical;
 mod loops;
+mod math;
 mod methods;
 mod objects;
 pub mod ops;
