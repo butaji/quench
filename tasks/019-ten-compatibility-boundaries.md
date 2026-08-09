@@ -1067,3 +1067,15 @@ pass serially, including the prior query-object coercion cases. Authoritative
 legacy URL validation/formatting gaps and are not claimed by this stage. The
 post-fix full audit reports 2294/2320 passing with 26 unclassified failures; its
 intentional nonzero gate status records those remaining boundaries.
+
+Stage 2482 aligns quoted-host legacy URL formatting with the local Node 26.5.1
+CLI and the vendored upstream fixture. A quote immediately after an authority
+gets exactly one pathname separator, while an existing separator is retained,
+the underlying formatter's synthetic trailing slash is removed when absent
+from the input, and quotes already inside a pathname do not trigger the host
+repair. The older stage 1231 case is corrected to carry the trailing slash used
+by its expected output and the upstream test vector. Both focused stages, the
+maintained URL regression sample, and the complete authoritative
+`test-url-format.js` fixture pass. `test-url-parse-format.js` advances to an
+independent parsed-object prototype mismatch and is not claimed here. The
+post-fix audit reports 2296/2321 passing with 25 unclassified failures.
