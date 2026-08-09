@@ -559,6 +559,9 @@ class NodeReadable extends NodeEventEmitter {
     queueMicrotask(() => {
       this._readableState.resumeScheduled = false;
       this.emit("resume");
+      if (!this._chunks.length && !this._ended) {
+        __nodeReadableStart(this);
+      }
       while (!this._paused && !this.destroyed) {
         while (!this._paused && this._chunks.length) {
           const chunk = this._chunks.shift();
