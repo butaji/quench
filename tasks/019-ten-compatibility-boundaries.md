@@ -1307,3 +1307,9 @@ failure fallback, allowing the parent close callback to observe `(0, null)`.
 The focused exit-zero stage and authoritative
 `test-process-exit-after-fetch-throw.js` fixture pass; the full focused gate
 reports 2346/2346 passing.
+
+Stage 2510 aligns indexed child exit-code cases. Self-spawned scripts using
+the shared process-exit-code matrix now return the expected status for each
+case, including exit-handler and uncaught-error variants. The focused matrix
+and authoritative `test-process-exit-code.js` fixture pass; the full focused
+gate reports 2347/2347 passing.
