@@ -160,3 +160,6 @@ large non-match corpus, so the compatibility objective remains open.
   assertion, with IPv6 and full filesystem/pipe adoption coverage pending.
 - BoundSocket now accepts IPv6 hosts and reports `IPv6` family metadata; the
   extended upstream fixture remains open on a separate assertion.
+- In-memory socket delivery now increments `bytesRead`; `test-net-bytes-stats.js`
+  advances from 0 to 6 bytes, but its client close/reconnect cycle still stops
+  after the first connection and remains open.
