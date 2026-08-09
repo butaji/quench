@@ -27,6 +27,9 @@ fn reduce_primary(
         Expression::FunctionExpression(value) => {
             crate::functions::reduce_expression(value, ops, facts, next_register, locals)
         }
+        Expression::ArrowFunctionExpression(value) => {
+            crate::functions::reduce_arrow(value, ops, facts, next_register, locals)
+        }
         Expression::ObjectExpression(value) => {
             crate::objects::reduce(value, ops, facts, next_register, locals)
         }
