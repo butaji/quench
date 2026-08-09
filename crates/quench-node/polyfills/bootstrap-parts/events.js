@@ -1715,6 +1715,69 @@ const __nodeStreamExports = {
   pipeline: __nodePipeline,
   Transform: NodeTransform,
   PassThrough: NodePassThrough,
+  finished: (stream, options, callback) => {
+    if (typeof options === "function") {
+      callback = options;
+      options = {};
+    }
+    if (options == null) options = {};
+    if (typeof options !== "object") {
+      throw Object.assign(
+        new TypeError("The options argument must be an object"),
+        {
+          code: "ERR_INVALID_ARG_TYPE"
+        }
+      );
+    }
+    if (typeof callback !== "function") {
+      throw Object.assign(
+        new TypeError("The callback argument must be a function"),
+        {
+          code: "ERR_INVALID_ARG_TYPE"
+        }
+      );
+    }
+    const readable =
+      options.readable !== false &&
+      stream?.readable !== false &&
+      (stream?.readable !== undefined || stream?.readableEnded !== undefined);
+    const writable =
+      options.writable !== false &&
+      stream?.writable !== false &&
+      (stream?.writable !== undefined || stream?.writableEnded !== undefined);
+    let ended = !readable;
+    let finished = !writable;
+    let settled = false;
+    const done = (error) => {
+      if (settled) return;
+      settled = true;
+      stream.removeListener?.("end", onEnd);
+      stream.removeListener?.("finish", onFinish);
+      stream.removeListener?.("error", onError);
+      callback(error);
+    };
+    const settle = () => {
+      if (ended && finished) done();
+    };
+    const onEnd = () => {
+      ended = true;
+      settle();
+    };
+    const onFinish = () => {
+      finished = true;
+      settle();
+    };
+    const onError = (error) => done(error);
+    stream.once?.("end", onEnd);
+    stream.once?.("finish", onFinish);
+    stream.once?.("error", onError);
+    settle();
+    return () => {
+      stream.removeListener?.("end", onEnd);
+      stream.removeListener?.("finish", onFinish);
+      stream.removeListener?.("error", onError);
+    };
+  },
   isDisturbed: (stream) => Boolean(stream?._readableState?.dataEmitted),
   isErrored: (stream) =>
     Boolean(stream?.errored || stream?._readableState?.errored)
