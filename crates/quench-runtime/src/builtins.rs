@@ -15,6 +15,9 @@ pub(crate) fn property(builtin: Builtin, key: &str) -> Value {
     if builtin == Builtin::ArrayPrototype && key == "map" {
         return Value::Builtin(Builtin::ArrayMap);
     }
+    if builtin == Builtin::ArrayPrototype && key == "forEach" {
+        return Value::Builtin(Builtin::ArrayForEach);
+    }
     if builtin == Builtin::ArrayMap && key == "call" {
         return Value::Builtin(Builtin::FunctionCall);
     }
@@ -266,6 +269,27 @@ pub(crate) fn array(arguments: &[Value]) -> Value {
 
 pub(crate) fn array_map(arguments: &[Value]) -> Value {
     function_call(arguments)
+}
+
+pub(crate) fn array_for_each(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let Some(Value::Array(values)) = receiver else {
+        return Ok(Value::Undefined);
+    };
+    let Some(callback) = arguments.first() else {
+        return Ok(Value::Undefined);
+    };
+    for (index, value) in values.iter().enumerate() {
+        let args = [
+            value.clone(),
+            Value::Number(index as f64),
+            receiver.cloned().unwrap_or(Value::Undefined),
+        ];
+        crate::functions::execute_target(callback, &Value::Undefined, &args)?;
+    }
+    Ok(Value::Undefined)
 }
 
 pub(crate) fn array_join(receiver: Option<&Value>, arguments: &[Value]) -> Value {
