@@ -3,6 +3,15 @@ use std::rc::Rc;
 use crate::{ops::Builtin, value::Value};
 
 pub(crate) fn property(builtin: Builtin, key: &str) -> Value {
+    if builtin == Builtin::Array && key == "prototype" {
+        return Value::Builtin(Builtin::ArrayPrototype);
+    }
+    if builtin == Builtin::ArrayPrototype && key == "map" {
+        return Value::Builtin(Builtin::ArrayMap);
+    }
+    if builtin == Builtin::ArrayMap && key == "call" {
+        return Value::Builtin(Builtin::FunctionCall);
+    }
     if matches!(builtin, Builtin::Array) && key == "isArray" {
         return Value::Builtin(Builtin::ArrayIsArray);
     }
@@ -43,6 +52,18 @@ pub(crate) fn has_own_property(receiver: Option<&Value>, key: Option<&Value>) ->
         _ => false,
     };
     Value::Boolean(present)
+}
+
+pub(crate) fn object_special(
+    builtin: Builtin,
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Value {
+    match builtin {
+        Builtin::ObjectHasOwnProperty => has_own_property(receiver, arguments.first()),
+        Builtin::ObjectGetOwnPropertyDescriptor => descriptor(arguments.first(), arguments.get(1)),
+        _ => Value::Undefined,
+    }
 }
 
 pub(crate) fn descriptor(value: Option<&Value>, key: Option<&Value>) -> Value {
@@ -147,6 +168,24 @@ pub(crate) fn array(arguments: &[Value]) -> Value {
         }
     }
     Value::Array(Rc::new(arguments.to_vec()))
+}
+
+pub(crate) fn array_map(arguments: &[Value]) -> Value {
+    function_call(arguments)
+}
+
+pub(crate) fn function_call(arguments: &[Value]) -> Value {
+    let Some(Value::Array(values)) = arguments.first() else {
+        return Value::Array(Rc::new(Vec::new()));
+    };
+    let mapped = match arguments.get(1) {
+        Some(Value::Builtin(Builtin::String)) => values
+            .iter()
+            .map(|value| Value::String(value_to_string(value)))
+            .collect(),
+        _ => values.iter().cloned().collect(),
+    };
+    Value::Array(Rc::new(mapped))
 }
 
 pub(crate) fn object(arguments: &[Value]) -> Value {
