@@ -116,6 +116,11 @@ fn string_property(value: &str, key: &str) -> Value {
         "includes" => Some(crate::ops::Builtin::StringIncludes),
         "startsWith" => Some(crate::ops::Builtin::StringStartsWith),
         "endsWith" => Some(crate::ops::Builtin::StringEndsWith),
+        "repeat" => Some(crate::ops::Builtin::StringRepeat),
+        "trim" => Some(crate::ops::Builtin::StringTrim),
+        "toLowerCase" => Some(crate::ops::Builtin::StringToLowerCase),
+        "toUpperCase" => Some(crate::ops::Builtin::StringToUpperCase),
+        "charAt" => Some(crate::ops::Builtin::StringCharAt),
         _ => None,
     };
     if let Some(method) = method {
@@ -180,6 +185,9 @@ fn execute_builtin_tail(
     arguments: &[Value],
     receiver: Option<&Value>,
 ) -> Result<Value, VmError> {
+    if let Some(result) = crate::strings::execute_builtin(builtin, receiver, arguments) {
+        return result;
+    }
     match builtin {
         crate::ops::Builtin::ObjectIs => Ok(Value::Boolean(crate::builtins::same_value(
             arguments.first(),
@@ -193,11 +201,6 @@ fn execute_builtin_tail(
         crate::ops::Builtin::ParseFloat => Ok(Value::Number(parse_float(arguments.first()))),
         crate::ops::Builtin::ParseInt => Ok(Value::Number(parse_int(arguments))),
         crate::ops::Builtin::String => Ok(Value::String(to_string(arguments.first()))),
-        crate::ops::Builtin::StringIncludes => Ok(crate::strings::includes(receiver, arguments)),
-        crate::ops::Builtin::StringStartsWith => {
-            Ok(crate::strings::starts_with(receiver, arguments))
-        }
-        crate::ops::Builtin::StringEndsWith => Ok(crate::strings::ends_with(receiver, arguments)),
         crate::ops::Builtin::Unescape => Ok(crate::builtins::unescape(arguments.first())),
         crate::ops::Builtin::MathPow => Ok(crate::builtins::math_pow(arguments)),
         _ => Ok(Value::Undefined),
