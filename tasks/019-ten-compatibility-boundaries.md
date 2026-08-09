@@ -1519,3 +1519,7 @@ Stage 2537 validates fs access modes in the virtual filesystem. Invalid mode
 bits such as `8` now reject with `ERR_OUT_OF_RANGE`, and the focused stage plus
 full gate pass at 2373/2373. The larger `test-fs-promises.js` fixture still has
 an independent callback-accounting gap.
+
+Subsequent clean verification shows `test-fs-promises.js` now completes
+successfully after stage 2537; the access-mode correction closed its callback
+accounting failure.
