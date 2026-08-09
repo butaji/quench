@@ -514,11 +514,13 @@ const __quenchRequireStreamIter = () => {
     let failure;
     let totalBytes = 0;
     const publish = (value) => {
-      const batch = Array.isArray(value) ? value : [value];
+      const batch = (Array.isArray(value) ? value : [value]).flatMap(
+        normalizeChunk,
+      );
       const bytes = batch.reduce(
         (sum, item) =>
           sum + (item?.byteLength ?? NodeBuffer.byteLength(String(item))),
-        0
+        0,
       );
       if (totalBytes + bytes > budget) {
         if (backpressure === "drop-newest") return false;
@@ -726,9 +728,14 @@ const __quenchRequireStreamIter = () => {
         const bytes = (Array.isArray(value) ? value : [value]).reduce(
           (sum, item) =>
             sum + (item?.byteLength ?? NodeBuffer.byteLength(String(item))),
-          0
+          0,
         );
-        if (totalBytes + bytes > budget) return false;
+        if (
+          totalBytes + bytes > budget &&
+          (backpressure === "strict" || backpressure === "unbounded")
+        ) {
+          return false;
+        }
         return publish(value);
       },
       writevSync(values) {
