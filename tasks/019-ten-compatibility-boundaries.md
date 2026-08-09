@@ -1267,3 +1267,9 @@ module scope while passing `exports`, `require`, `module`, `__filename`, and
 authoritative `test-process-env.js` fixture pass. Stage 256 now avoids declaring
 a lexical `module` binding over the wrapper parameter while retaining its VM
 namespace assertions. The full focused gate reports 2339/2339 passing.
+
+Stage 2501 aligns domain timer error descriptors with Node. Errors routed from
+an active domain now receive a non-enumerable `domain` property while retaining
+`domainThrown`; the focused common-harness timer matrix and authoritative
+`test-domain-timer.js` fixture pass, as does `test-domain-from-timer.js`. The
+full focused gate reports 2340/2340 passing.
