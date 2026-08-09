@@ -37,6 +37,14 @@ pub(crate) fn reduce_operator(operator: BinaryOperator) -> Option<crate::ops::Bi
         BinaryOperator::Division => crate::ops::BinaryOp::Divide,
         BinaryOperator::Remainder => crate::ops::BinaryOp::Remainder,
         BinaryOperator::Exponential => crate::ops::BinaryOp::Exponentiate,
+        BinaryOperator::Equality => crate::ops::BinaryOp::Equal,
+        BinaryOperator::Inequality => crate::ops::BinaryOp::NotEqual,
+        BinaryOperator::StrictEquality => crate::ops::BinaryOp::StrictEqual,
+        BinaryOperator::StrictInequality => crate::ops::BinaryOp::StrictNotEqual,
+        BinaryOperator::LessThan => crate::ops::BinaryOp::LessThan,
+        BinaryOperator::LessEqualThan => crate::ops::BinaryOp::LessEqual,
+        BinaryOperator::GreaterThan => crate::ops::BinaryOp::GreaterThan,
+        BinaryOperator::GreaterEqualThan => crate::ops::BinaryOp::GreaterEqual,
         _ => return None,
     })
 }
