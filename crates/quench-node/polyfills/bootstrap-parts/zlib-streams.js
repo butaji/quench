@@ -35,9 +35,7 @@ const __quenchValidateZlibParams = (level, strategy) => {
     throw error;
   }
 };
-const __quenchZlibTransform = (options, method) => {
-  const listeners = {};
-  const stream = {
+const __quenchZlibStreamEvents = (stream, listeners, method) => ({
     on(event, callback) {
       (listeners[event] ||= []).push(callback);
       return stream;
@@ -64,6 +62,8 @@ const __quenchZlibTransform = (options, method) => {
       queueMicrotask(() => stream.emit("end").emit("finish"));
       return stream;
     },
+});
+const __quenchZlibStreamControls = (stream, method) => ({
     flush(kind, callback) {
       if (typeof kind === "function") {
         callback = kind;
@@ -101,10 +101,19 @@ const __quenchZlibTransform = (options, method) => {
       __quenchValidateZlibParams(level, strategy);
       return stream;
     },
+});
+const __quenchZlibTransform = (options, method) => {
+  const listeners = {};
+  const stream = {
     readable: true,
     writable: true,
     _closed: false,
   };
+  Object.assign(
+    stream,
+    __quenchZlibStreamEvents(stream, listeners, method),
+    __quenchZlibStreamControls(stream, method),
+  );
   return stream;
 };
 const __quenchValidateFlushOptions = (options) => {
@@ -140,50 +149,40 @@ const __quenchValidateCompressionWindowBits = (options) => {
     throw error;
   }
 };
+const __quenchCreateZlibStream = (module, method, prototype, options, validate) => {
+  validate?.(options);
+  const stream = __quenchZlibTransform(options, module[method]);
+  Object.setPrototypeOf(stream, module[prototype].prototype);
+  return stream;
+};
+const __quenchZlibStreamExports = (module) => ({
+  createGzip: (options) => {
+    __quenchValidateFlushOptions(options);
+    __quenchValidateCompressionWindowBits(options);
+    const stream = __quenchCreateZlibStream(
+      module, "gzipSync", "Gzip", options,
+    );
+    stream.__flushKinds = [0, 4, 5];
+    return stream;
+  },
+  createGunzip: (options) => __quenchCreateZlibStream(
+    module, "gunzipSync", "Gunzip", options, __quenchValidateFlushOptions,
+  ),
+  createDeflate: (options) => __quenchCreateZlibStream(
+    module, "deflateSync", "Deflate", options, (value) => {
+      __quenchValidateFlushOptions(value);
+      __quenchValidateCompressionWindowBits(value);
+    },
+  ),
+  createInflate: (options) => __quenchCreateZlibStream(
+    module, "inflateSync", "Inflate", options, __quenchValidateFlushOptions,
+  ),
+  createUnzip: (options) => __quenchCreateZlibStream(
+    module, "unzipSync", "Unzip", options, __quenchValidateFlushOptions,
+  ),
+});
 globalThis.require = (specifier) => {
   const module = __quenchOriginalRequireWithZlibStreams(specifier);
   if (String(specifier).replace(/^node:/, "") !== "zlib") return module;
-  return Object.assign({}, module, {
-    createGzip: (options) => {
-      __quenchValidateFlushOptions(options);
-      __quenchValidateCompressionWindowBits(options);
-      const stream = __quenchZlibTransform(options, module.gzipSync);
-      stream.__flushKinds = [0, 4, 5];
-      Object.setPrototypeOf(stream, module.Gzip.prototype);
-      return stream;
-    },
-    createGunzip: (options) => (
-      __quenchValidateFlushOptions(options),
-        (() => {
-          const stream = __quenchZlibTransform(options, module.gunzipSync);
-          Object.setPrototypeOf(stream, module.Gunzip.prototype);
-          return stream;
-        })()
-    ),
-    createDeflate: (options) => (
-      __quenchValidateFlushOptions(options),
-        __quenchValidateCompressionWindowBits(options),
-        (() => {
-          const stream = __quenchZlibTransform(options, module.deflateSync);
-          Object.setPrototypeOf(stream, module.Deflate.prototype);
-          return stream;
-        })()
-    ),
-    createInflate: (options) => (
-      __quenchValidateFlushOptions(options),
-        (() => {
-          const stream = __quenchZlibTransform(options, module.inflateSync);
-          Object.setPrototypeOf(stream, module.Inflate.prototype);
-          return stream;
-        })()
-    ),
-    createUnzip: (options) => (
-      __quenchValidateFlushOptions(options),
-        (() => {
-          const stream = __quenchZlibTransform(options, module.unzipSync);
-          Object.setPrototypeOf(stream, module.Unzip.prototype);
-          return stream;
-        })()
-    ),
-  });
+  return Object.assign({}, module, __quenchZlibStreamExports(module));
 };
