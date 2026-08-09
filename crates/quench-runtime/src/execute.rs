@@ -198,7 +198,14 @@ fn to_string(value: Option<&Value>) -> String {
         Some(Value::Boolean(value)) => value.to_string(),
         Some(Value::Number(value)) => value.to_string(),
         Some(Value::String(value)) => value.clone(),
-        Some(Value::Array(_)) => String::new(),
+        Some(Value::Array(values)) => values
+            .iter()
+            .map(|value| match value {
+                Value::Null | Value::Undefined => String::new(),
+                _ => to_string(Some(value)),
+            })
+            .collect::<Vec<_>>()
+            .join(","),
         Some(Value::Object(_)) => "[object Object]".to_string(),
         Some(Value::Function(_)) | Some(Value::Builtin(_)) => "function".to_string(),
     }
