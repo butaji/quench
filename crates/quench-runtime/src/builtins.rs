@@ -263,16 +263,13 @@ fn set_function_property(
     key: &str,
     value: Value,
 ) -> Value {
-    let mut properties = (*function.properties).clone();
-    if let Some((_, current)) = properties.iter_mut().rev().find(|(name, _)| name == key) {
-        *current = value;
-    } else {
-        properties.push((key.to_string(), value));
+    {
+        let mut properties = function.properties.borrow_mut();
+        if let Some((_, current)) = properties.iter_mut().rev().find(|(name, _)| name == key) {
+            *current = value;
+        } else {
+            properties.push((key.to_string(), value));
+        }
     }
-    Value::Function(Rc::new(crate::value::FunctionValue {
-        body: function.body.clone(),
-        params: function.params,
-        captures: function.captures.clone(),
-        properties: Rc::new(properties),
-    }))
+    Value::Function(function)
 }
