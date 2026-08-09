@@ -809,6 +809,11 @@ const __quenchRequireStreamIter = () => {
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
+    if (writable.writableObjectMode) {
+      const error = new Error("fromWritable does not support object mode");
+      error.code = "ERR_INVALID_STATE";
+      throw error;
+    }
     if (options === null || typeof options !== "object") {
       const error = new TypeError("options must be an object");
       error.code = "ERR_INVALID_ARG_TYPE";
@@ -826,7 +831,8 @@ const __quenchRequireStreamIter = () => {
     writableCache.set(writable, state);
     const backpressure = options.backpressure || state.backpressure || "wait";
     state.backpressure = backpressure;
-    return {
+    if (state.writer) return state.writer;
+    const writer = {
       get canWrite() {
         return writable.destroyed ? null : !writable.writableNeedDrain;
       },
@@ -845,6 +851,25 @@ const __quenchRequireStreamIter = () => {
         state.ended = true;
         writable.end?.();
       },
+      writev(chunks) {
+        if (!Array.isArray(chunks)) {
+          const error = new TypeError("chunks must be an array");
+          error.code = "ERR_INVALID_ARG_TYPE";
+          throw error;
+        }
+        for (const chunk of chunks) {
+          if (!(
+            typeof chunk === "string" ||
+            ArrayBuffer.isView(chunk) ||
+            chunk instanceof ArrayBuffer
+          )) {
+            const error = new TypeError("chunk must be a string or buffer");
+            error.code = "ERR_INVALID_ARG_TYPE";
+            throw error;
+          }
+        }
+        return Promise.all(chunks.map((chunk) => this.write(chunk)));
+      },
       writeSync() {
         return false;
       },
@@ -855,6 +880,8 @@ const __quenchRequireStreamIter = () => {
         return -1;
       }
     };
+    state.writer = writer;
+    return writer;
   };
   return {
     from: (source) => ({
