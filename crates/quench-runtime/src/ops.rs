@@ -135,6 +135,8 @@ pub enum Builtin {
     ParseInt,
     String,
     Unescape,
+    Math,
+    MathPow,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
