@@ -31,6 +31,8 @@ pub(crate) fn execute_builtin(
         crate::ops::Builtin::ArrayConcat => concat(receiver, arguments),
         crate::ops::Builtin::ArrayFlat => flat(receiver, arguments),
         crate::ops::Builtin::ArrayFlatMap => return Some(flat_map(receiver, arguments)),
+        crate::ops::Builtin::ArrayAt => return Some(Ok(at(receiver, arguments))),
+        crate::ops::Builtin::ArrayToReversed => return Some(Ok(to_reversed(receiver))),
         crate::ops::Builtin::ArrayReduce => return Some(reduce_values(receiver, arguments, false)),
         crate::ops::Builtin::ArrayReduceRight => {
             return Some(reduce_values(receiver, arguments, true));
@@ -92,6 +94,8 @@ pub(crate) fn property(values: &[Value], key: &str) -> Value {
         "concat" => crate::ops::Builtin::ArrayConcat,
         "flat" => crate::ops::Builtin::ArrayFlat,
         "flatMap" => crate::ops::Builtin::ArrayFlatMap,
+        "at" => crate::ops::Builtin::ArrayAt,
+        "toReversed" => crate::ops::Builtin::ArrayToReversed,
         "join" => crate::ops::Builtin::ArrayJoin,
         "reduce" => crate::ops::Builtin::ArrayReduce,
         "reduceRight" => crate::ops::Builtin::ArrayReduceRight,
@@ -292,6 +296,35 @@ pub(crate) fn flat_map(
         }
     }
     Ok(Value::Array(Rc::new(mapped)))
+}
+
+pub(crate) fn at(receiver: Option<&Value>, arguments: &[Value]) -> Value {
+    let Some(Value::Array(values)) = receiver else {
+        return Value::Undefined;
+    };
+    let Some(Value::Number(number)) = arguments.first() else {
+        return Value::Undefined;
+    };
+    let index = number.trunc() as isize;
+    let index = if index < 0 {
+        values.len() as isize + index
+    } else {
+        index
+    };
+    if index < 0 {
+        return Value::Undefined;
+    }
+    values
+        .get(index as usize)
+        .cloned()
+        .unwrap_or(Value::Undefined)
+}
+
+pub(crate) fn to_reversed(receiver: Option<&Value>) -> Value {
+    let Some(Value::Array(values)) = receiver else {
+        return Value::Array(Rc::new(Vec::new()));
+    };
+    Value::Array(Rc::new(values.iter().rev().cloned().collect()))
 }
 
 pub(crate) fn reduce_values(
