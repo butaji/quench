@@ -155,6 +155,9 @@ large non-match corpus, so the compatibility objective remains open.
   preserves local endpoint metadata, routes path connections, and rejects
   conflicting local-address options. The authoritative fixture still has one
   unresolved synchronous assertion in its extended adoption matrix.
+- Connection validation now accepts string path-only options, and a direct
+  adopted pipe server/client ping-pong probe succeeds. The full BoundSocket
+  fixture remains open on a later lifecycle assertion.
 - BoundSocket path construction now maps missing parent paths to `EACCES` and
   overlong paths to `EINVAL`; the extended fixture still has an unresolved
   assertion, with IPv6 and full filesystem/pipe adoption coverage pending.
