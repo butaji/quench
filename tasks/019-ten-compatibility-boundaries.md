@@ -1242,3 +1242,11 @@ removed. The focused prototype/whitespace/path/relative-authority matrix and
 corrected legacy focused stages pass. Complete authoritative
 `test-url-parse-format.js` and `test-url-format.js` fixtures pass, and the full
 focused gate remains clean at 2336/2336.
+
+Stage 2498 aligns invalid legacy-URL argument diagnostics with Node's received-
+value formatting. Anonymous functions render as `Received function ` rather
+than a generic function type, and bigint values retain their `n` suffix. The
+focused primitive/object/function/bigint/symbol matrix and complete
+authoritative `test-url-parse-invalid-input.js` fixture pass, including its
+malformed-URL and spawned-child cases. The adjacent URL parse/format/query
+fixtures remain green, and the full focused gate reports 2337/2337 passing.
