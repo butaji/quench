@@ -6,6 +6,8 @@ export default [
       "target/**",
       "node_modules/**",
     ],
+  },
+  {
     rules: {
       "complexity": ["error", { max: 10 }],
       "max-lines": ["error", {

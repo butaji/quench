@@ -112,6 +112,12 @@ function stats(results) {
   };
 }
 
+function classifyStatus(owner, fixtureEntry, prefixReason, ownership) {
+  if (fixtureEntry || prefixReason) return "platform-limited";
+  if (owner === ownership.default.owner) return ownership.default.status;
+  return "owned";
+}
+
 function classify(result, ownership) {
   const fixtureEntry = Object.entries(
     ownership.platformLimitedFixtures || {},
@@ -128,11 +134,7 @@ function classify(result, ownership) {
     : `Owned by workstream ${owner}`;
   return {
     owner,
-    status: fixtureEntry || prefixReason
-      ? "platform-limited"
-      : owner === ownership.default.owner
-      ? ownership.default.status
-      : "owned",
+    status: classifyStatus(owner, fixtureEntry, prefixReason, ownership),
     reason: fixtureEntry?.[1] || prefixReason || mappedReason,
   };
 }
