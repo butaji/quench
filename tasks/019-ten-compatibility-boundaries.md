@@ -1390,6 +1390,8 @@ Readable instances now expose `Stream.toAsyncStreamable`, trusted sources carry
 their original stream identity, and `stream/iter.from()` preserves that source
 without an extra wrapper. The focused protocol stage and authoritative
 `test-stream-iter-readable-interop.js` fixture pass.
+The post-change full focused gate reports 2361/2361 passing; Rust tests remain
+2/2 and representative application stages remain 6/6.
 
 After stage 2523, the full focused gate reports 2360/2360 passing; Rust tests
 remain 2/2 and representative application stages remain 6/6.
