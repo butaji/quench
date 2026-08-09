@@ -94,15 +94,45 @@ const __quenchComposeStreams = (streams, result) => {
                 if (step.done) break;
                 next.push(step.value);
               }
+            } else if (output?.then) {
+              const value = await output;
+              if (value !== undefined) {
+                const error = new TypeError(
+                  "ERR_INVALID_RETURN_VALUE: terminal stream function must return undefined"
+                );
+                error.code = "ERR_INVALID_RETURN_VALUE";
+                throw error;
+              }
             }
             values = next;
           }
-          for (const value of values) outputStream.emit("data", value);
+          for (const value of values) outputStream.push(value);
         })().then(() => callback(), callback);
       }
     });
     composed.writable = __quenchComposeWritable(streams[0]);
     composed.readable = __quenchComposeReadable(streams[streams.length - 1]);
+    composed.end = function (chunk, encoding, callback) {
+      if (typeof encoding === "function") {
+        callback = encoding;
+        encoding = undefined;
+      }
+      const finish = (error) => {
+        if (error) {
+          this.destroy(error);
+          callback?.(error);
+          return;
+        }
+        this.writableEnded = true;
+        this.writableFinished = true;
+        this.writable = false;
+        this.emit("finish");
+        callback?.();
+      };
+      if (chunk === undefined) finish();
+      else this.write(chunk, encoding, finish);
+      return this;
+    };
     return __quenchComposeDestroy(composed, streams);
   }
   const first = streams[0];
