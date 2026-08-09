@@ -94,6 +94,10 @@ pub(crate) fn has_own_property(receiver: Option<&Value>, key: Option<&Value>) ->
                     .parse::<usize>()
                     .is_ok_and(|i| i < value.chars().count())
         }
+        Some(Value::Builtin(builtin)) => {
+            callable_property(*builtin, &key).is_some()
+                || special_property(*builtin, &key).is_some()
+        }
         _ => false,
     };
     Value::Boolean(present)
@@ -103,6 +107,9 @@ pub(crate) fn object_property_is_enumerable(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Value {
+    if matches!(receiver, Some(Value::Builtin(_))) {
+        return Value::Boolean(false);
+    }
     has_own_property(receiver, arguments.first())
 }
 
