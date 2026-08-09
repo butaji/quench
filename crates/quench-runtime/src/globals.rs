@@ -47,7 +47,11 @@ fn builtin(name: &str) -> Option<crate::ops::Builtin> {
     match name {
         "Boolean" => Some(crate::ops::Builtin::Boolean),
         "eval" => Some(crate::ops::Builtin::Eval),
+        "isFinite" => Some(crate::ops::Builtin::IsFinite),
+        "isNaN" => Some(crate::ops::Builtin::IsNaN),
         "Number" => Some(crate::ops::Builtin::Number),
+        "parseFloat" => Some(crate::ops::Builtin::ParseFloat),
+        "parseInt" => Some(crate::ops::Builtin::ParseInt),
         "String" => Some(crate::ops::Builtin::String),
         _ => None,
     }
