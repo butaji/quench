@@ -69,6 +69,8 @@ pub enum Builtin {
     IsFinite,
     IsNaN,
     Number,
+    Object,
+    ObjectIs,
     ParseFloat,
     ParseInt,
     String,

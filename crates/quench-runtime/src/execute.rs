@@ -1,8 +1,6 @@
 //! Minimal residual-op interpreter.
-
-use std::rc::Rc;
-
 use crate::{ops::Op, value::Value};
+use std::rc::Rc;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VmError {
@@ -175,6 +173,11 @@ fn execute_builtin(builtin: crate::ops::Builtin, arguments: &[Value]) -> Result<
         crate::ops::Builtin::IsFinite => Ok(Value::Boolean(is_finite(arguments.first()))),
         crate::ops::Builtin::IsNaN => Ok(Value::Boolean(to_number(arguments.first()).is_nan())),
         crate::ops::Builtin::Number => Ok(Value::Number(to_number(arguments.first()))),
+        crate::ops::Builtin::Object => Ok(crate::builtins::object(arguments)),
+        crate::ops::Builtin::ObjectIs => Ok(Value::Boolean(crate::builtins::same_value(
+            arguments.first(),
+            arguments.get(1),
+        ))),
         crate::ops::Builtin::ParseFloat => Ok(Value::Number(parse_float(arguments.first()))),
         crate::ops::Builtin::ParseInt => Ok(Value::Number(parse_int(arguments))),
         crate::ops::Builtin::String => Ok(Value::String(to_string(arguments.first()))),

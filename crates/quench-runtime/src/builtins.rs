@@ -6,6 +6,9 @@ pub(crate) fn property(builtin: Builtin, key: &str) -> Value {
     if matches!(builtin, Builtin::Array) && key == "isArray" {
         return Value::Builtin(Builtin::ArrayIsArray);
     }
+    if matches!(builtin, Builtin::Object) && key == "is" {
+        return Value::Builtin(Builtin::ObjectIs);
+    }
     Value::Undefined
 }
 
@@ -18,4 +21,30 @@ pub(crate) fn array(arguments: &[Value]) -> Value {
         }
     }
     Value::Array(Rc::new(arguments.to_vec()))
+}
+
+pub(crate) fn object(arguments: &[Value]) -> Value {
+    match arguments.first() {
+        Some(Value::Array(_))
+        | Some(Value::Object(_))
+        | Some(Value::Function(_))
+        | Some(Value::Builtin(_)) => arguments[0].clone(),
+        _ => Value::Object(Rc::new(Vec::new())),
+    }
+}
+
+pub(crate) fn same_value(left: Option<&Value>, right: Option<&Value>) -> bool {
+    let (Some(left), Some(right)) = (left, right) else {
+        return matches!((left, right), (None, None));
+    };
+    if let (Value::Number(left), Value::Number(right)) = (left, right) {
+        return (left.is_nan() && right.is_nan())
+            || (left == right && left.is_sign_negative() == right.is_sign_negative());
+    }
+    match (left, right) {
+        (Value::Array(left), Value::Array(right)) => Rc::ptr_eq(left, right),
+        (Value::Object(left), Value::Object(right)) => Rc::ptr_eq(left, right),
+        (Value::Function(left), Value::Function(right)) => Rc::ptr_eq(left, right),
+        _ => left == right,
+    }
 }
