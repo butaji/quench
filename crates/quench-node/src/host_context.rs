@@ -821,6 +821,8 @@ macro_rules! run_host_context {
         ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-09.js").as_bytes())?;
         ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-10.js").as_bytes())?;
         ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-11.js").as_bytes())?;
+        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-11-tail.js").as_bytes())?;
+        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-11-final.js").as_bytes())?;
         ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-12.js").as_bytes())?;
         ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-13.js").as_bytes())?;
         ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-14.js").as_bytes())?;
