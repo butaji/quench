@@ -1018,3 +1018,12 @@ the maintained compose cluster. Authoritative `test-stream-compose.js`
 advances to `Callback 11`, the first async-iterable source composition that
 must auto-start without an input write. Rust and application stages remain
 green.
+
+Stage 2478 auto-starts source-only functional compositions. Iterable and
+zero-argument generator sources are collected after listener installation,
+then passed through the same ordered function/stream stage runner; readable
+output and EOF or terminal `finish` are emitted only after the source pipeline
+settles. The focused async-iterable-to-Transform contract and maintained
+compose cluster pass. Authoritative `test-stream-compose.js` advances from
+`Callback 11` to `Callback 29`, the nested composed-source/transform/sink
+completion boundary. Rust and application stages remain green.
