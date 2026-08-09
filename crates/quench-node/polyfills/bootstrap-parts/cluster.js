@@ -254,9 +254,9 @@ const __quenchRequireStreamIter = () => {
     return chunks;
   };
   const asyncBytes = async (source, options) =>
-    new Uint8Array(concat(await readAsync(source, normalizeOptions(options))));
+    concat(await readAsync(source, normalizeOptions(options)));
   const syncBytes = (source, options) =>
-    new Uint8Array(concat(syncChunks(source, normalizeOptions(options))));
+    concat(syncChunks(source, normalizeOptions(options)));
   const decoderEncoding = (options) => {
     const encoding = options.encoding || "utf-8";
     if (typeof encoding !== "string") {
