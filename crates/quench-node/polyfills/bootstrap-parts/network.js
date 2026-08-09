@@ -809,11 +809,11 @@ const __quenchNetModule = {
       const finish = () => {
         if (!server._closeRequested || server._connections.size) return;
         server._closeRequested = false;
+        server.emit("close");
         if (typeof callback === "function" && !callbackCalled) {
           callbackCalled = true;
           callback.call(server);
         }
-        server.emit("close");
       };
       server._finishClose = finish;
       finish();

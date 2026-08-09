@@ -1173,3 +1173,12 @@ stage pass. The complete authoritative `test-process-execpath.js` fixture
 passes. `test-process-argv-0.js` reaches a separate child-process stdout gap and
 is not claimed. The post-fix audit reports 2323/2329 passing with 6
 unclassified failures.
+
+Stage 2491 preserves Node event-loop ordering for timers and net server close.
+Stage 4 now records that a queued microtask precedes a zero-delay timer. The net
+facade no longer marks a server non-listening before delegating to its real
+`close()` implementation, and the server emits `close` before invoking the
+close callback, both before a subsequently queued microtask when there are no
+connections. Stage 2318, the focused callback/event-order stage, the adjacent
+native-net cluster, and complete authoritative `test-net-server-close.js` pass.
+The post-fix audit reports 2326/2330 passing with 4 unclassified failures.
