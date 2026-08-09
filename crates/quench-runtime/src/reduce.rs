@@ -79,15 +79,15 @@ fn reduce_expression(
     facts: &mut ProgramDb,
     next_register: &mut u16,
 ) -> Option<u16> {
-    if let Expression::NumericLiteral(number) = expression {
+    if let Some(value) = reduce_literal(expression) {
         let register = *next_register;
         *next_register = next_register.saturating_add(1);
         facts.constants.push(crate::facts::ConstantFact {
-            value: crate::facts::Constant::Number(number.value),
+            value: value.fact.clone(),
         });
         ops.push(Op::Const {
             dst: register,
-            value: Constant::Number(number.value),
+            value: value.op,
         });
         return Some(register);
     }
@@ -106,6 +106,33 @@ fn reduce_expression(
         rhs,
     });
     Some(dst)
+}
+
+struct Literal {
+    fact: crate::facts::Constant,
+    op: Constant,
+}
+
+fn reduce_literal(expression: &Expression<'_>) -> Option<Literal> {
+    match expression {
+        Expression::NumericLiteral(number) => Some(Literal {
+            fact: crate::facts::Constant::Number(number.value),
+            op: Constant::Number(number.value),
+        }),
+        Expression::BooleanLiteral(boolean) => Some(Literal {
+            fact: crate::facts::Constant::Boolean(boolean.value),
+            op: Constant::Boolean(boolean.value),
+        }),
+        Expression::StringLiteral(string) => Some(Literal {
+            fact: crate::facts::Constant::String(string.value.to_string()),
+            op: Constant::String(string.value.to_string()),
+        }),
+        Expression::NullLiteral(_) => Some(Literal {
+            fact: crate::facts::Constant::Null,
+            op: Constant::Null,
+        }),
+        _ => None,
+    }
 }
 
 fn reduce_operator(operator: BinaryOperator) -> Option<crate::ops::BinaryOp> {
