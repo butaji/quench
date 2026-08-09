@@ -11,9 +11,11 @@
 //! compact representations (`Value`, `HeapRef`, `Shape`, `Frame`, `Code`,
 //! `Fact`, and `Continuation`) before adding breadth.
 
+mod conditional;
 pub mod execute;
 pub mod facts;
 mod literal;
 pub mod ops;
 pub mod reduce;
+mod semantic;
 pub mod value;
