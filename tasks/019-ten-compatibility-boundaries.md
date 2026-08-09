@@ -1553,3 +1553,7 @@ invalid-input assertion mismatch.
 Stage 2542 aligns invalid-argument diagnostics for null-prototype objects
 with the Node test helper. The Buffer fixture now advances beyond its initial
 error matrix; a later typed-array layout limitation remains open.
+Post-2542 verification: `cargo test -p quench-node` passes 2/2, and example
+application stages 2047, 2069, 2080, 2081, 2104, and 2251 all pass. These
+checks do not close the remaining upstream Buffer typed-array layout or
+network/HTTP lifecycle gaps.
