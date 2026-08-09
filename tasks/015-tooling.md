@@ -356,3 +356,8 @@ and 457 lines; dgram stages 764 through 768 and the quench-node Rust tests pass.
 The filesystem stream and promise helpers were split at the completed `mkdtemp`
 callback boundary. `streams.js` is now 468 lines and `streams-tail.js` is 243
 lines; representative stream stages 1879, 1882, 1883, 2452, and 2554 pass.
+
+The filesystem promise write/read and positioned-handle surface was split at
+the completed pull-iterator boundary. `writes.js` is now 453 lines and
+`writes-tail.js` is 309 lines; filesystem write/read stages 1260 through 1264
+pass with the quench-node Rust tests.
