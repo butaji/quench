@@ -171,3 +171,7 @@ large non-match corpus, so the compatibility objective remains open.
 - Socket writes and receives now honor `latin1`/`binary`/`ascii` byte mapping and
   `setEncoding()` delivery. Upstream `test-net-binary.js` and
   `test-net-bytes-stats.js` both pass after the change.
+- In-memory `listen()` now rejects nonlocal IPv4 addresses with the Node error
+  shape (`EADDRNOTAVAIL`, address, port, and syscall); upstream
+  `test-net-better-error-messages-listen.js` passes alongside duplicate-bind
+  coverage.
