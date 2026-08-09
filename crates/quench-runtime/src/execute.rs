@@ -10,7 +10,6 @@ pub enum VmError {
     NonNumericOperand,
     MissingReturn,
     NotCallable,
-    ArgumentCount,
     EvalError(String),
     Thrown,
 }
@@ -141,9 +140,9 @@ fn execute_call(
         .collect::<Result<Vec<_>, _>>()?;
     let value = match read_register(registers, callee)? {
         Value::Function(body) => {
-            if arguments.len() != usize::from(body.params) {
-                return Err(VmError::ArgumentCount);
-            }
+            let mut arguments = arguments;
+            arguments.resize(usize::from(body.params), Value::Undefined);
+            arguments.truncate(usize::from(body.params));
             execute_with_registers(&body.body, arguments)?
         }
         Value::Builtin(builtin) => execute_builtin(builtin, &arguments)?,
