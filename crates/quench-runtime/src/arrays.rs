@@ -5,6 +5,42 @@ use oxc::ast::ast::{ArrayExpression, ArrayExpressionElement};
 
 use crate::{facts::ProgramDb, ops::Op, value::Value};
 
+pub(crate) fn execute_builtin(
+    builtin: crate::ops::Builtin,
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Option<Result<Value, crate::execute::VmError>> {
+    let result = match builtin {
+        crate::ops::Builtin::Array => return Some(Ok(crate::builtins::array(arguments))),
+        crate::ops::Builtin::ArrayIsArray => {
+            return Some(Ok(crate::builtins::is_array(arguments.first())))
+        }
+        crate::ops::Builtin::ArrayMap => {
+            return Some(crate::builtins::array_map(receiver, arguments))
+        }
+        crate::ops::Builtin::ArrayFilter => {
+            return Some(crate::builtins::array_filter(receiver, arguments));
+        }
+        crate::ops::Builtin::ArraySome => return Some(some(receiver, arguments)),
+        crate::ops::Builtin::ArrayEvery => return Some(every(receiver, arguments)),
+        crate::ops::Builtin::ArrayFind => return Some(find(receiver, arguments)),
+        crate::ops::Builtin::ArrayIncludes => includes(receiver, arguments),
+        crate::ops::Builtin::ArrayIndexOf => index_of(receiver, arguments),
+        crate::ops::Builtin::ArrayLastIndexOf => last_index_of(receiver, arguments),
+        crate::ops::Builtin::ArraySlice => slice(receiver, arguments),
+        crate::ops::Builtin::ArrayConcat => concat(receiver, arguments),
+        crate::ops::Builtin::ArrayReduce => return Some(reduce_values(receiver, arguments, false)),
+        crate::ops::Builtin::ArrayReduceRight => {
+            return Some(reduce_values(receiver, arguments, true));
+        }
+        crate::ops::Builtin::ArrayForEach => {
+            return Some(crate::builtins::array_for_each(receiver, arguments));
+        }
+        _ => return None,
+    };
+    Some(Ok(result))
+}
+
 pub(crate) fn reduce(
     array: &ArrayExpression<'_>,
     ops: &mut Vec<Op>,
@@ -51,6 +87,9 @@ pub(crate) fn property(values: &[Value], key: &str) -> Value {
         "indexOf" => crate::ops::Builtin::ArrayIndexOf,
         "lastIndexOf" => crate::ops::Builtin::ArrayLastIndexOf,
         "slice" => crate::ops::Builtin::ArraySlice,
+        "concat" => crate::ops::Builtin::ArrayConcat,
+        "reduce" => crate::ops::Builtin::ArrayReduce,
+        "reduceRight" => crate::ops::Builtin::ArrayReduceRight,
         _ => return index(values, key),
     };
     Value::Builtin(method)
@@ -180,6 +219,55 @@ pub(crate) fn slice(receiver: Option<&Value>, arguments: &[Value]) -> Value {
         return Value::Array(Rc::new(Vec::new()));
     }
     Value::Array(Rc::new(values[start as usize..end as usize].to_vec()))
+}
+
+pub(crate) fn concat(receiver: Option<&Value>, arguments: &[Value]) -> Value {
+    let Some(Value::Array(values)) = receiver else {
+        return Value::Array(Rc::new(Vec::new()));
+    };
+    let mut result = values.as_ref().clone();
+    for argument in arguments {
+        match argument {
+            Value::Array(values) => result.extend(values.iter().cloned()),
+            value => result.push(value.clone()),
+        }
+    }
+    Value::Array(Rc::new(result))
+}
+
+pub(crate) fn reduce_values(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+    reverse: bool,
+) -> Result<Value, crate::execute::VmError> {
+    let Some(Value::Array(values)) = receiver else {
+        return Ok(Value::Undefined);
+    };
+    let Some(callback) = arguments.first() else {
+        return Ok(Value::Undefined);
+    };
+    let indices: Vec<usize> = if reverse {
+        (0..values.len()).rev().collect()
+    } else {
+        (0..values.len()).collect()
+    };
+    if indices.is_empty() && arguments.get(1).is_none() {
+        return Ok(Value::Undefined);
+    }
+    let (mut accumulator, start) = match arguments.get(1) {
+        Some(value) => (value.clone(), 0),
+        None => (values[indices.first().copied().unwrap_or(0)].clone(), 1),
+    };
+    for index in indices.into_iter().skip(start) {
+        let args = [
+            accumulator,
+            values[index].clone(),
+            Value::Number(index as f64),
+            receiver.cloned().unwrap_or(Value::Undefined),
+        ];
+        accumulator = crate::functions::execute_target(callback, &Value::Undefined, &args)?;
+    }
+    Ok(accumulator)
 }
 
 fn relative_index(value: Option<&Value>, length: isize) -> isize {
