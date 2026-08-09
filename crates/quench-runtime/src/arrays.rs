@@ -88,6 +88,7 @@ pub(crate) fn property(values: &[Value], key: &str) -> Value {
         "lastIndexOf" => crate::ops::Builtin::ArrayLastIndexOf,
         "slice" => crate::ops::Builtin::ArraySlice,
         "concat" => crate::ops::Builtin::ArrayConcat,
+        "join" => crate::ops::Builtin::ArrayJoin,
         "reduce" => crate::ops::Builtin::ArrayReduce,
         "reduceRight" => crate::ops::Builtin::ArrayReduceRight,
         _ => return index(values, key),
