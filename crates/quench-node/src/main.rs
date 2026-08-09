@@ -48,6 +48,7 @@ const BOOTSTRAP_PARTS: &[&str] = &[
     include_str!("../polyfills/bootstrap-parts/filesystem-permissions.js"),
     include_str!("../polyfills/bootstrap-parts/timestamps.js"),
     include_str!("../polyfills/bootstrap-parts/links.js"),
+    include_str!("../polyfills/bootstrap-parts/links-tail.js"),
     include_str!("../polyfills/bootstrap-parts/directory-options.js"),
     include_str!("../polyfills/bootstrap-parts/directory.js"),
     include_str!("../polyfills/bootstrap-parts/stream-classes.js"),
