@@ -23,8 +23,19 @@ pub struct ResidualProgram {
 }
 
 pub fn reduce_source(source: &str) -> Result<ResidualProgram, Vec<String>> {
+    reduce_source_with_type(source, SourceType::default())
+}
+
+pub fn reduce_module_source(source: &str) -> Result<ResidualProgram, Vec<String>> {
+    reduce_source_with_type(source, SourceType::mjs())
+}
+
+pub fn reduce_source_with_type(
+    source: &str,
+    source_type: SourceType,
+) -> Result<ResidualProgram, Vec<String>> {
     let allocator = Allocator::default();
-    let parsed = Parser::new(&allocator, source, SourceType::default()).parse();
+    let parsed = Parser::new(&allocator, source, source_type).parse();
     if parsed.panicked {
         return Err(vec!["SyntaxError: OXC parser rejected source".to_string()]);
     }
