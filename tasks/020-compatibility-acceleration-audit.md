@@ -81,6 +81,12 @@ with the largest owned signatures in HTTP (145), net (47), stream (45), fs
 HTTP agent cluster after preserving the existing focused and application
 gates.
 
+The three representative HTTP-agent fixtures were rerun locally after the
+refresh. `test-http-agent-destroyed-socket.js` reports callback 2 called four
+times instead of three; `test-http-agent-maxsockets-respected.js` misses
+callback 1; and `test-http-agent-scheduling.js` misses callback 3. These are
+the current reproducible signatures for the next bounded investigation.
+
 In progress. The audit and application-gate tools are implemented and pass
 their syntax and live application checks. The latest application snapshot is
 green for stages 2047, 2069, 2080, 2081, 2104, and 2251. Current audit evidence
