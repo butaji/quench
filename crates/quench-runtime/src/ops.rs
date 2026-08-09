@@ -93,6 +93,7 @@ pub enum UnaryOp {
     Not,
     Void,
     Typeof,
+    ToString,
 }
 
 #[derive(Debug, Clone, PartialEq)]
