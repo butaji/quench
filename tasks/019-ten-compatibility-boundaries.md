@@ -998,3 +998,13 @@ Authoritative `test-stream-compose.js` advances from its first stream-pair
 callback to the async-generator composition callback at line 58, whose
 asynchronous finalization remains separate. Rust and application stages stay
 green.
+
+Stage 2476 finalizes all-function composition after its asynchronous work.
+Generator results are pushed through the composed readable buffer, terminal
+async consumers are awaited and required to return `undefined`, and `finish`/
+EOF are emitted only after the transform callback settles. The focused chained
+generator and generator-to-sink contracts pass with the maintained compose
+cluster. Authoritative `test-stream-compose.js` advances through those function
+blocks to the mixed Transform/function error case at line 224, which currently
+reports a non-callable stream stage and remains separate. Rust and application
+stages remain green.
