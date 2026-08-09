@@ -1465,3 +1465,8 @@ Stage 2531 makes HTTP `IncomingMessage` close delivery idempotent. Repeated
 transport/destroy paths now expose a single `close` event, fixing the
 authoritative `test-stream-destroy.js` callback accounting failure. The focused
 stage passes and the full focused gate reports 2368/2368 passing.
+
+Stage 2532 locks the three upstream `stream.pipeline()` argument-validation
+contracts (`ERR_MISSING_ARGS` and `ERR_INVALID_ARG_TYPE`) in a focused stage.
+Those cases pass locally; the larger `test-stream-pipeline.js` fixture still
+has a later lifecycle failure and is not claimed complete.
