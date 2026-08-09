@@ -53,6 +53,7 @@ fn reduce_statements(
     let mut next_register = 0;
     let mut next_slot = 0;
     let mut locals = HashMap::new();
+    let mut last_value = None;
     for statement in statements {
         match statement {
             Statement::EmptyStatement(_) => {}
@@ -70,11 +71,18 @@ fn reduce_statements(
                 facts,
                 &mut next_register,
                 &locals,
-            )?,
+            )
+            .map(|register| last_value = Some(register))?,
             _ => return Err(vec!["Unsupported executable statement".to_string()]),
         }
     }
-    if ops.is_empty() {
+    finish_program(ops, last_value)
+}
+
+fn finish_program(mut ops: Vec<Op>, last_value: Option<u16>) -> Result<Vec<Op>, Vec<String>> {
+    if let Some(register) = last_value {
+        ops.push(Op::Return { src: register });
+    } else {
         ops.push(Op::Const {
             dst: 0,
             value: Constant::Undefined,
@@ -90,12 +98,11 @@ fn reduce_expression_statement(
     facts: &mut ProgramDb,
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
-) -> Result<(), Vec<String>> {
+) -> Result<u16, Vec<String>> {
     let Some(register) = reduce_expression(expression, ops, facts, next_register, locals) else {
         return Err(vec!["Unsupported executable expression".to_string()]);
     };
-    ops.push(Op::Return { src: register });
-    Ok(())
+    Ok(register)
 }
 
 fn reduce_declaration(
