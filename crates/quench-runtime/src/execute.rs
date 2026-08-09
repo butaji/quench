@@ -1,4 +1,3 @@
-//! Minimal residual-op interpreter.
 use crate::{ops::Op, value::Value};
 use std::rc::Rc;
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,7 +54,6 @@ pub(crate) fn execute_in_place(ops: &[Op], registers: &mut Vec<Value>) -> Result
     }
     Err(VmError::MissingReturn)
 }
-
 fn execute_terminal(op: &Op, registers: &[Value]) -> Result<Value, VmError> {
     match op {
         Op::Return { src } => read_register(registers, *src),
@@ -148,14 +146,6 @@ fn execute_call(
     write_value(registers, dst, value);
     Ok(())
 }
-fn execute_eval(arguments: &[Value]) -> Result<Value, VmError> {
-    let Some(Value::String(source)) = arguments.first() else {
-        return Ok(Value::Undefined);
-    };
-    let program = crate::reduce::reduce_source(source)
-        .map_err(|errors| VmError::EvalError(errors.join("; ")))?;
-    execute(&program.ops).map_err(|error| VmError::EvalError(format!("{error:?}")))
-}
 pub(crate) fn execute_builtin_with_receiver(
     builtin: crate::ops::Builtin,
     arguments: &[Value],
@@ -173,12 +163,23 @@ pub(crate) fn execute_builtin_with_receiver(
         crate::ops::Builtin::Boolean => {
             Ok(Value::Boolean(arguments.first().is_some_and(is_truthy)))
         }
-        crate::ops::Builtin::Eval => execute_eval(arguments),
+        crate::ops::Builtin::Eval | crate::ops::Builtin::ReflectConstruct => {
+            crate::reflect::builtin(builtin, arguments)
+        }
         crate::ops::Builtin::Escape => Ok(crate::builtins::escape(arguments.first())),
         crate::ops::Builtin::IsFinite => Ok(Value::Boolean(is_finite(arguments.first()))),
         crate::ops::Builtin::IsNaN => Ok(Value::Boolean(to_number(arguments.first()).is_nan())),
         crate::ops::Builtin::Number => Ok(Value::Number(to_number(arguments.first()))),
         crate::ops::Builtin::Object => Ok(crate::builtins::object(arguments)),
+        _ => execute_builtin_tail(builtin, arguments, receiver),
+    }
+}
+fn execute_builtin_tail(
+    builtin: crate::ops::Builtin,
+    arguments: &[Value],
+    receiver: Option<&Value>,
+) -> Result<Value, VmError> {
+    match builtin {
         crate::ops::Builtin::ObjectIs => Ok(Value::Boolean(crate::builtins::same_value(
             arguments.first(),
             arguments.get(1),
@@ -196,7 +197,6 @@ pub(crate) fn execute_builtin_with_receiver(
         _ => Ok(Value::Undefined),
     }
 }
-
 fn is_finite(value: Option<&Value>) -> bool {
     matches!(value, Some(Value::Number(number)) if number.is_finite())
 }

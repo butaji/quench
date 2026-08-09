@@ -46,6 +46,7 @@ fn special_property(builtin: Builtin, key: &str) -> Option<Value> {
         (Builtin::Date, "prototype") => Builtin::DatePrototype,
         (Builtin::DatePrototype, "getYear") => Builtin::DateGetYear,
         (Builtin::DatePrototype, "setYear") => Builtin::DateSetYear,
+        (Builtin::Reflect, "construct") => Builtin::ReflectConstruct,
         (Builtin::ObjectPrototype, "hasOwnProperty") => Builtin::ObjectHasOwnProperty,
         (Builtin::ObjectPrototype, "propertyIsEnumerable") => Builtin::ObjectPropertyIsEnumerable,
         (Builtin::Object, "defineProperty") => Builtin::ObjectDefineProperty,
