@@ -446,6 +446,7 @@ const __quenchDgramConnect = (socket, port, address, callback) => {
     callback = address;
     address = "127.0.0.1";
   }
+  address ??= socket.type === "udp6" ? "::1" : "127.0.0.1";
   if (!Number.isInteger(port) || port <= 0 || port >= 65536) {
     throw Object.assign(new RangeError("Port should be > 0 and < 65536"), {
       code: "ERR_SOCKET_BAD_PORT"
@@ -470,10 +471,10 @@ const __quenchDgramConnect = (socket, port, address, callback) => {
   }
   socket._connecting = true;
   socket._remote = { address, port };
-  setTimeout(() => {
+  if (typeof callback === "function") socket.once("connect", callback);
+  queueMicrotask(() => {
     socket._connecting = false;
     socket._connected = true;
-    callback?.();
     socket.emit("connect");
   });
   return socket;
