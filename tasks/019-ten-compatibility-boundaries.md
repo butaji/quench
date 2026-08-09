@@ -1126,3 +1126,15 @@ still requires the unimplemented `internal/timers` module, while
 `test-timers-refresh-in-callback.js` exposes a separate active-handle refresh
 boundary; neither is claimed here. The post-correction audit reports 2309/2325
 passing with 16 unclassified failures.
+
+Stage 2487 corrects the oldest readable/Transform scheduling contracts against
+local Node. A byte-mode Transform emits a Buffer even when `_transform` pushes
+a string, a resumed `Readable.from()` completes on its later flow turn rather
+than the immediately following microtask, and `_readableState.reading` returns
+to `false` once `_read()` pushes EOF while `ended` becomes true. Stages 371,
+372, 1005, and the consolidated scheduling stage pass, together with complete
+authoritative `test-stream-readable-pause-and-resume.js` and
+`test-stream-readableListening-state.js` fixtures. Transform constructor and
+flush fixtures still expose independent validation/finalization boundaries and
+are not claimed. The post-correction audit reports 2313/2326 passing with 13
+unclassified failures.
