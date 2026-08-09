@@ -1148,3 +1148,19 @@ and `close` exactly once in Node order. The complete authoritative
 `test-stream-auto-destroy.js` fixture passes; the broader Transform destroy
 fixture retains a separate opaque QuickJS failure and is not claimed. The
 post-fix audit reports 2317/2327 passing with 10 unclassified failures.
+
+Stage 2489 makes `stream.finished()` monitor the stream sides selected by its
+options and the stream's actual readable/writable shape. A writable-only watch
+completes on `finish`, while the default Duplex watch waits until buffered
+readable output is consumed. PassThrough `resume()` now drains or discards
+buffered chunks even without a data listener, allowing its pending EOF to
+surface. Corrected stage 1861, options/abort stage 1864, and the focused
+selected-side matrix pass. Authoritative `test-stream-finished.js` advances to
+a later premature-close assertion. Stages 1211 and 1213 are also corrected to
+Node's current contracts: a plain emitter-like object is rejected with
+`ERR_INVALID_ARG_TYPE`, and premature close is exercised by destroying a real
+Readable rather than replacing its listener API. Close is successful only
+after every selected side completes. The focused finished cluster passes; the
+authoritative fixture now advances further and terminates in a QuickJS GC
+reference-count assertion, which remains separate. The post-fix audit reports
+2320/2328 passing with 8 unclassified failures.

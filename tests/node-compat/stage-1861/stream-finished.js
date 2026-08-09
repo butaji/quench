@@ -10,8 +10,14 @@ finished(stream, (error) => {
 stream.end("done");
 
 setImmediate(() => {
-  if (callbackCount !== 1) throw new Error("finished callback count mismatch");
-  if (callbackError !== undefined) {
-    throw new Error(`finished unexpectedly failed: ${callbackError}`);
-  }
+  if (callbackCount !== 0)
+    throw new Error("finished completed before readable");
+  stream.resume();
+  setImmediate(() => {
+    if (callbackCount !== 1)
+      throw new Error("finished callback count mismatch");
+    if (callbackError !== undefined) {
+      throw new Error(`finished unexpectedly failed: ${callbackError}`);
+    }
+  });
 });

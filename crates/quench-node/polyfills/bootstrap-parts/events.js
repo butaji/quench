@@ -1526,13 +1526,9 @@ class NodePassThrough extends NodeTransform {
   resume() {
     this._paused = false;
     this.readableFlowing = true;
-    while (
-      !this._paused &&
-      this.listenerCount("data") > 0 &&
-      this._readableChunks.length
-    ) {
+    while (!this._paused && this._readableChunks.length) {
       const chunk = this.read();
-      this.emit("data", chunk);
+      if (this.listenerCount("data") > 0) this.emit("data", chunk);
     }
     return this;
   }
