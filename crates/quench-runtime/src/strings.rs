@@ -13,6 +13,8 @@ pub(crate) fn property_method(key: &str) -> Option<crate::ops::Builtin> {
         "charCodeAt" => Some(crate::ops::Builtin::StringCharCodeAt),
         "indexOf" => Some(crate::ops::Builtin::StringIndexOf),
         "lastIndexOf" => Some(crate::ops::Builtin::StringLastIndexOf),
+        "slice" => Some(crate::ops::Builtin::StringSlice),
+        "substring" => Some(crate::ops::Builtin::StringSubstring),
         _ => None,
     }
 }
@@ -34,6 +36,8 @@ pub(crate) fn execute_builtin(
         crate::ops::Builtin::StringCharCodeAt => char_code_at(receiver, arguments),
         crate::ops::Builtin::StringIndexOf => index_of(receiver, arguments),
         crate::ops::Builtin::StringLastIndexOf => last_index_of(receiver, arguments),
+        crate::ops::Builtin::StringSlice => slice(receiver, arguments),
+        crate::ops::Builtin::StringSubstring => substring(receiver, arguments),
         _ => return None,
     };
     Some(Ok(result))
@@ -129,6 +133,58 @@ pub(crate) fn last_index_of(receiver: Option<&Value>, arguments: &[Value]) -> Va
     };
     let search = argument(arguments);
     Value::Number(value.rfind(&search).map_or(-1.0, |index| index as f64))
+}
+
+pub(crate) fn slice(receiver: Option<&Value>, arguments: &[Value]) -> Value {
+    let Some(Value::String(value)) = receiver else {
+        return Value::String(String::new());
+    };
+    let chars: Vec<char> = value.chars().collect();
+    let length = chars.len() as isize;
+    let start = string_index(arguments.first(), length);
+    let end = arguments
+        .get(1)
+        .map_or(length, |value| string_index(Some(value), length));
+    Value::String(
+        chars[start.min(end) as usize..end.max(start) as usize]
+            .iter()
+            .collect(),
+    )
+}
+
+pub(crate) fn substring(receiver: Option<&Value>, arguments: &[Value]) -> Value {
+    let Some(Value::String(value)) = receiver else {
+        return Value::String(String::new());
+    };
+    let chars: Vec<char> = value.chars().collect();
+    let length = chars.len() as isize;
+    let start = substring_index(arguments.first(), length);
+    let end = arguments
+        .get(1)
+        .map_or(length, |value| substring_index(Some(value), length));
+    Value::String(
+        chars[start.min(end) as usize..end.max(start) as usize]
+            .iter()
+            .collect(),
+    )
+}
+
+fn string_index(value: Option<&Value>, length: isize) -> isize {
+    let number = value.and_then(number).unwrap_or(0.0).trunc() as isize;
+    if number < 0 {
+        (length + number).max(0)
+    } else {
+        number.min(length)
+    }
+}
+
+fn substring_index(value: Option<&Value>, length: isize) -> isize {
+    value
+        .and_then(number)
+        .unwrap_or(0.0)
+        .max(0.0)
+        .trunc()
+        .min(length as f64) as isize
 }
 
 fn argument(arguments: &[Value]) -> String {

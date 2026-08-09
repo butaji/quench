@@ -151,6 +151,8 @@ pub enum Builtin {
     StringCharCodeAt,
     StringIndexOf,
     StringLastIndexOf,
+    StringSlice,
+    StringSubstring,
     ArrayReduce,
     ArrayReduceRight,
     ArrayForEach,
