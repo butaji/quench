@@ -23,6 +23,7 @@ fn execute_with_registers(ops: &[Op], mut registers: Vec<Value>) -> Result<Value
             Op::Const { dst, value } => write_register(&mut registers, *dst, value),
             Op::StoreLocal { slot, src } => copy_register(&mut registers, *slot, *src)?,
             Op::LoadLocal { dst, slot } => copy_register(&mut registers, *dst, *slot)?,
+            Op::MakeArray { dst, elements } => execute_array(&mut registers, *dst, elements)?,
             Op::MakeFunction { dst, body, params } => {
                 write_value(
                     &mut registers,
@@ -49,6 +50,15 @@ fn execute_with_registers(ops: &[Op], mut registers: Vec<Value>) -> Result<Value
         }
     }
     Err(VmError::MissingReturn)
+}
+
+fn execute_array(registers: &mut Vec<Value>, dst: u16, elements: &[u16]) -> Result<(), VmError> {
+    let values = elements
+        .iter()
+        .map(|index| read_register(registers, *index))
+        .collect::<Result<Vec<_>, _>>()?;
+    write_value(registers, dst, Value::Array(Rc::new(values)));
+    Ok(())
 }
 
 fn execute_call(
@@ -103,6 +113,7 @@ fn type_of(value: &Value) -> &'static str {
         Value::Boolean(_) => "boolean",
         Value::Number(_) => "number",
         Value::String(_) => "string",
+        Value::Array(_) => "object",
         Value::Function(_) => "function",
     }
 }
@@ -119,6 +130,7 @@ fn is_truthy(value: &Value) -> bool {
         Value::Boolean(value) => *value,
         Value::Number(value) => *value != 0.0 && !value.is_nan(),
         Value::String(value) => !value.is_empty(),
+        Value::Array(_) => true,
         Value::Null | Value::Undefined => false,
         Value::Function(_) => true,
     }
