@@ -29,6 +29,8 @@ pub(crate) fn execute_builtin(
         crate::ops::Builtin::ArrayLastIndexOf => last_index_of(receiver, arguments),
         crate::ops::Builtin::ArraySlice => slice(receiver, arguments),
         crate::ops::Builtin::ArrayConcat => concat(receiver, arguments),
+        crate::ops::Builtin::ArrayFlat => flat(receiver, arguments),
+        crate::ops::Builtin::ArrayFlatMap => return Some(flat_map(receiver, arguments)),
         crate::ops::Builtin::ArrayReduce => return Some(reduce_values(receiver, arguments, false)),
         crate::ops::Builtin::ArrayReduceRight => {
             return Some(reduce_values(receiver, arguments, true));
@@ -88,6 +90,8 @@ pub(crate) fn property(values: &[Value], key: &str) -> Value {
         "lastIndexOf" => crate::ops::Builtin::ArrayLastIndexOf,
         "slice" => crate::ops::Builtin::ArraySlice,
         "concat" => crate::ops::Builtin::ArrayConcat,
+        "flat" => crate::ops::Builtin::ArrayFlat,
+        "flatMap" => crate::ops::Builtin::ArrayFlatMap,
         "join" => crate::ops::Builtin::ArrayJoin,
         "reduce" => crate::ops::Builtin::ArrayReduce,
         "reduceRight" => crate::ops::Builtin::ArrayReduceRight,
@@ -234,6 +238,60 @@ pub(crate) fn concat(receiver: Option<&Value>, arguments: &[Value]) -> Value {
         }
     }
     Value::Array(Rc::new(result))
+}
+
+pub(crate) fn flat(receiver: Option<&Value>, arguments: &[Value]) -> Value {
+    let Some(Value::Array(values)) = receiver else {
+        return Value::Array(Rc::new(Vec::new()));
+    };
+    let depth = arguments
+        .first()
+        .and_then(|value| match value {
+            Value::Number(number) => Some(number.max(0.0) as usize),
+            _ => None,
+        })
+        .unwrap_or(1);
+    Value::Array(Rc::new(flatten(values, depth)))
+}
+
+fn flatten(values: &[Value], depth: usize) -> Vec<Value> {
+    let mut result = Vec::new();
+    for value in values {
+        if depth > 0 {
+            if let Value::Array(nested) = value {
+                result.extend(flatten(nested, depth - 1));
+                continue;
+            }
+        }
+        result.push(value.clone());
+    }
+    result
+}
+
+pub(crate) fn flat_map(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let Some(Value::Array(values)) = receiver else {
+        return Ok(Value::Array(Rc::new(Vec::new())));
+    };
+    let Some(callback) = arguments.first() else {
+        return Ok(Value::Array(values.clone()));
+    };
+    let mut mapped = Vec::new();
+    for (index, value) in values.iter().enumerate() {
+        let args = [
+            value.clone(),
+            Value::Number(index as f64),
+            receiver.cloned().unwrap_or(Value::Undefined),
+        ];
+        let result = crate::functions::execute_target(callback, &Value::Undefined, &args)?;
+        match result {
+            Value::Array(nested) => mapped.extend(nested.iter().cloned()),
+            value => mapped.push(value),
+        }
+    }
+    Ok(Value::Array(Rc::new(mapped)))
 }
 
 pub(crate) fn reduce_values(
