@@ -1279,3 +1279,10 @@ Stage 2504 models synchronous self-child output for a script overriding
 retaining its Buffer/encoding contract. The focused fixture and complete
 authoritative `test-process-really-exit.js` fixture pass, and the full focused
 gate reports 2341/2341 passing.
+
+Stage 2505 aligns IPC self-child shutdown with Node when piped stdout is
+destroyed. Child stdio streams now expose `destroy()`, and an IPC child remains
+pending until its `send("go")` path emits the successful exit/close sequence.
+The focused IPC/stdio stage and authoritative
+`test-process-external-stdio-close-spawn.js` fixture pass; the full focused gate
+reports 2342/2342 passing.
