@@ -17,6 +17,7 @@ use crate::{
     literal::{reduce_literal, reduce_operator},
     logical,
     ops::{Constant, Op},
+    properties,
 };
 
 #[derive(Debug, PartialEq)]
@@ -316,6 +317,9 @@ fn reduce_special(
         }
         Expression::FunctionExpression(function) => {
             functions::reduce_expression(function, ops, facts, next_register)
+        }
+        Expression::StaticMemberExpression(_) | Expression::ComputedMemberExpression(_) => {
+            properties::reduce(expression, ops, facts, next_register, locals)
         }
         Expression::ConditionalExpression(value) => {
             conditional::reduce_expression(value, ops, facts, next_register, locals)
