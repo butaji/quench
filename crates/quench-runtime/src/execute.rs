@@ -199,7 +199,12 @@ fn execute_builtin_tail(
         | crate::ops::Builtin::MathRound
         | crate::ops::Builtin::MathTrunc
         | crate::ops::Builtin::MathMax
-        | crate::ops::Builtin::MathMin => crate::math::execute(builtin, arguments),
+        | crate::ops::Builtin::MathMin
+        | crate::ops::Builtin::MathSign
+        | crate::ops::Builtin::MathSqrt
+        | crate::ops::Builtin::MathCbrt
+        | crate::ops::Builtin::MathHypot
+        | crate::ops::Builtin::MathImul => crate::math::execute(builtin, arguments),
         _ => Ok(Value::Undefined),
     }
 }
