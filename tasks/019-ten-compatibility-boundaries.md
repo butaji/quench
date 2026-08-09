@@ -1027,3 +1027,12 @@ settles. The focused async-iterable-to-Transform contract and maintained
 compose cluster pass. Authoritative `test-stream-compose.js` advances from
 `Callback 11` to `Callback 29`, the nested composed-source/transform/sink
 completion boundary. Rust and application stages remain green.
+
+Stage 2479 completes nested composition lifecycles. Functional wrappers count
+pending writes and delay `finish` until every asynchronous transform callback
+settles; outer stream-to-stream wrappers inherit writable/readable endpoint
+flags and forward a terminal sink's `finish`. The focused composed source →
+composed transform → composed sink contract produces ordered output and
+finishes. Authoritative `test-stream-compose.js` advances from `Callback 29` to
+`Callback 33`, its first endpoint object-mode/toArray case. The maintained
+compose cluster, Rust tests, and application stages remain green.
