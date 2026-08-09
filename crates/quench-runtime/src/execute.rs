@@ -29,7 +29,7 @@ fn execute_with_registers(ops: &[Op], mut registers: Vec<Value>) -> Result<Value
                 execute_set_property(&mut registers, *object, key, *src)?;
             }
             Op::MakeFunction { dst, body, params } => {
-                execute_function(&mut registers, *dst, body, *params)
+                write_value(&mut registers, *dst, crate::functions::make(body, *params))
             }
             Op::Call { dst, callee, args } => {
                 execute_call(&mut registers, *dst, *callee, args)?;
@@ -68,16 +68,6 @@ fn execute_array(registers: &mut Vec<Value>, dst: u16, elements: &[u16]) -> Resu
 fn write_builtin(registers: &mut Vec<Value>, dst: u16, builtin: crate::ops::Builtin) {
     write_value(registers, dst, Value::Builtin(builtin));
 }
-fn execute_function(registers: &mut Vec<Value>, dst: u16, body: &[Op], params: u16) {
-    write_value(
-        registers,
-        dst,
-        Value::Function(Rc::new(crate::value::FunctionValue {
-            body: body.to_vec(),
-            params,
-        })),
-    );
-}
 fn execute_object(
     registers: &mut Vec<Value>,
     dst: u16,
@@ -104,6 +94,12 @@ pub(crate) fn get_property(value: &Value, key: &str) -> Value {
             ),
         Value::String(value) => string_property(value, key),
         Value::Function(function) if key == "length" => Value::Number(f64::from(function.params)),
+        Value::Function(function) => function
+            .properties
+            .iter()
+            .rev()
+            .find(|(name, _)| name == key)
+            .map_or(Value::Undefined, |(_, value)| value.clone()),
         _ => Value::Undefined,
     }
 }
