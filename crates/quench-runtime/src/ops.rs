@@ -156,6 +156,7 @@ pub enum BinaryOp {
     BitwiseOr,
     BitwiseXor,
     BitwiseAnd,
+    Instanceof,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

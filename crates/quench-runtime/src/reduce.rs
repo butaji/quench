@@ -463,6 +463,9 @@ fn reduce_atom(
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
+    if matches!(expression, Expression::ThisExpression(_)) {
+        return Some(emit_undefined(ops, next_register));
+    }
     if let Some(value) = reduce_literal(expression) {
         let register = *next_register;
         *next_register = next_register.saturating_add(1);
