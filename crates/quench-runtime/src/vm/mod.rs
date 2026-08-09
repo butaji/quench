@@ -92,6 +92,14 @@ fn is_simple_builtin(builtin: Builtin) -> bool {
             | Builtin::NumberToExponential
             | Builtin::Object
             | Builtin::Date
+            | Builtin::Error
+            | Builtin::RangeError
+            | Builtin::ReferenceError
+            | Builtin::SyntaxError
+            | Builtin::EvalError
+            | Builtin::URIError
+            | Builtin::AggregateError
+            | Builtin::TypeError
     )
 }
 
@@ -121,6 +129,14 @@ fn execute_simple_builtin(
             crate::number_fmt::number_format(arguments.first(), arguments.get(1), builtin)
         }
         Builtin::Object => Ok(crate::builtins::object(arguments)),
+        Builtin::Error
+        | Builtin::RangeError
+        | Builtin::ReferenceError
+        | Builtin::SyntaxError
+        | Builtin::EvalError
+        | Builtin::URIError
+        | Builtin::AggregateError
+        | Builtin::TypeError => Ok(crate::builtins::error(builtin, arguments)),
         Builtin::Date => {
             crate::date::execute(builtin, receiver, arguments).unwrap_or(Ok(Value::Undefined))
         }
