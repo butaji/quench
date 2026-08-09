@@ -137,19 +137,24 @@ fn execute_call(
         .map(|index| read_register(registers, *index))
         .collect::<Result<Vec<_>, _>>()?;
     let value = match read_register(registers, callee)? {
-        Value::Function(body) => {
-            let mut parameters = arguments;
-            parameters.resize(usize::from(body.params), Value::Undefined);
-            parameters.truncate(usize::from(body.params));
-            let mut captured = body.captures.as_ref().clone();
-            captured.extend(parameters);
-            execute_with_registers(&body.body, captured)?
-        }
+        Value::Function(body) => execute_function(&body, &arguments)?,
         Value::Builtin(builtin) => execute_builtin_with_receiver(builtin, &arguments, None)?,
         _ => return Err(VmError::NotCallable),
     };
     write_value(registers, dst, value);
     Ok(())
+}
+
+pub(crate) fn execute_function(
+    function: &crate::value::FunctionValue,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
+    let mut parameters = arguments.to_vec();
+    parameters.resize(usize::from(function.params), Value::Undefined);
+    parameters.truncate(usize::from(function.params));
+    let mut registers = function.captures.as_ref().clone();
+    registers.extend(parameters);
+    execute_with_registers(&function.body, registers)
 }
 fn execute_eval(arguments: &[Value]) -> Result<Value, VmError> {
     let Some(Value::String(source)) = arguments.first() else {
@@ -352,6 +357,10 @@ fn evaluate_binary(
         crate::ops::BinaryOp::BitwiseOr => bitwise_numbers(left, right, |a, b| a | b)?,
         crate::ops::BinaryOp::BitwiseXor => bitwise_numbers(left, right, |a, b| a ^ b)?,
         crate::ops::BinaryOp::BitwiseAnd => bitwise_numbers(left, right, |a, b| a & b)?,
+        crate::ops::BinaryOp::Instanceof => Value::Boolean(matches!(
+            (left, right),
+            (Value::Object(_), Value::Function(_))
+        )),
     })
 }
 fn arithmetic_value(left: &Value, right: &Value, operator: crate::ops::BinaryOp) -> Value {
