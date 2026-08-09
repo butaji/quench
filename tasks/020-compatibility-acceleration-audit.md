@@ -164,5 +164,7 @@ large non-match corpus, so the compatibility objective remains open.
   advances from 0 to 6 bytes, but its client close/reconnect cycle still stops
   after the first connection and remains open.
 - Reconnecting a previously destroyed in-memory socket now resets terminal,
-  peer, and buffered state. The bytes-stats fixture still stops after its first
-  cycle, so the close/reconnect trigger remains open.
+  peer, buffered, and finish-event state.
+- The default server `allowHalfOpen` behavior and reusable-socket finish/counter
+  reset are now aligned; `test-net-bytes-stats.js` passes with two connections
+  and 12 bytes read/written. The earlier close/reconnect gap is resolved.
