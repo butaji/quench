@@ -17,6 +17,21 @@ globalThis.require = (specifier) => {
       }
     };
   }
+  if (name === "internal/timers") {
+    return {
+      setUnrefTimeout(callback, delay, ...args) {
+        if (typeof callback !== "function") {
+          throw Object.assign(
+            new TypeError('The "callback" argument must be of type function'),
+            { code: "ERR_INVALID_ARG_TYPE" }
+          );
+        }
+        const timer = globalThis.setTimeout(callback, delay, ...args);
+        timer.unref();
+        return timer;
+      }
+    };
+  }
   if (name === "internal/vfs/router") {
     const path = globalThis.__nodePath;
     return {
