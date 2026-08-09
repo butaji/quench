@@ -137,12 +137,15 @@ fn evaluate_binary(
         | crate::ops::BinaryOp::Multiply
         | crate::ops::BinaryOp::Divide
         | crate::ops::BinaryOp::Remainder
-        | crate::ops::BinaryOp::Exponentiate => {
-            let (Value::Number(left), Value::Number(right)) = (&left, &right) else {
-                return Err(VmError::NonNumericOperand);
-            };
-            Value::Number(numeric_binary(*left, *right, operator))
-        }
+        | crate::ops::BinaryOp::Exponentiate => match (&left, &right, operator) {
+            (Value::String(left), Value::String(right), crate::ops::BinaryOp::Add) => {
+                Value::String(format!("{left}{right}"))
+            }
+            (Value::Number(left), Value::Number(right), _) => {
+                Value::Number(numeric_binary(*left, *right, operator))
+            }
+            _ => return Err(VmError::NonNumericOperand),
+        },
         crate::ops::BinaryOp::Equal => Value::Boolean(left == right),
         crate::ops::BinaryOp::NotEqual => Value::Boolean(left != right),
         crate::ops::BinaryOp::StrictEqual => Value::Boolean(left == right),
