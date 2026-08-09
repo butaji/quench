@@ -29,7 +29,10 @@ pub(crate) fn execute_in_place(ops: &[Op], registers: &mut Vec<Value>) -> Result
             Op::MakeObject { dst, properties } => execute_object(registers, *dst, properties)?,
             Op::MakeBuiltin { dst, builtin } => write_builtin(registers, *dst, *builtin),
             Op::GetProperty { .. } => crate::properties::execute_get(registers, op)?,
-            Op::SetProperty { .. } => execute_set_property_op(registers, op)?,
+            Op::GetPropertyDynamic { .. } => crate::properties::execute_get_dynamic(registers, op)?,
+            Op::SetProperty { .. } | Op::SetPropertyDynamic { .. } => {
+                crate::properties::execute_set_property(registers, op)?
+            }
             Op::MakeFunction { .. } => crate::functions::write_op(registers, op),
             Op::Call { dst, callee, args } => execute_call(registers, *dst, *callee, args)?,
             Op::CallMethod { .. }
@@ -104,17 +107,6 @@ pub(crate) fn get_property(value: &Value, key: &str) -> Value {
         _ => Value::Undefined,
     }
 }
-fn execute_set_property_op(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
-    let Op::SetProperty { object, key, src } = op else {
-        return Err(VmError::MissingReturn);
-    };
-    let target = read_register(registers, *object)?.clone();
-    let value = read_register(registers, *src)?.clone();
-    let result = crate::builtins::set_property(target, key, value);
-    write_value(registers, *object, result);
-    Ok(())
-}
-
 fn array_property(values: &[Value], key: &str) -> Value {
     if key == "length" {
         return Value::Number(values.len() as f64);
