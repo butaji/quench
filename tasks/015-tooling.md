@@ -286,6 +286,12 @@ zero warnings; representative events/diagnostics stages remain green.
 ESLint with zero warnings. Read-file, URL, abort, and encoding stages 10,
 1257, 1313, 1624, 176, and 1853 pass.
 
+The current owned-polyfill ESLint baseline is 327 errors and zero warnings,
+down from 342 errors at the previous audit. Remaining file-size violations are
+concentrated in the large bootstrap parts (`core`, `vfs`, `network`, `api`,
+`cluster`, and related modules) plus `src/host_context.rs`; these require
+structural extraction rather than lint suppression.
+
 TLS option field and ticket-key validation were split into helpers. `tls.js`
 now passes ESLint with zero warnings; stages 520, 1168, 1242, 2009, 2010,
 2011, and 2029 pass.
