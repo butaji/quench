@@ -1,10 +1,15 @@
 use crate::{
-    execute::{execute_with_registers, VmError},
+    execute::{execute_in_place, VmError},
     ops::Op,
     value::Value,
 };
 
-pub(crate) fn execute(registers: &[Value], op: &Op) -> Result<(), VmError> {
+/// Execute a `try`/`catch`/`finally` container.
+///
+/// Returns `Ok(Some(value))` when the body (or handler) performed an explicit
+/// `return`, `Ok(None)` when it completed normally, and `Err` when an
+/// unhandled exception escaped.
+pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Value>, VmError> {
     let Op::Try {
         body,
         handler,
@@ -13,16 +18,21 @@ pub(crate) fn execute(registers: &[Value], op: &Op) -> Result<(), VmError> {
     else {
         return Err(VmError::MissingReturn);
     };
-    let result = execute_with_registers(body, registers.to_vec());
-    let result = match result {
-        Ok(value) => Ok(value),
-        Err(error) => handler
-            .as_ref()
-            .map(|ops| execute_with_registers(ops.as_slice(), registers.to_vec()))
-            .unwrap_or(Err(error)),
+    let body_result = execute_in_place(body, registers);
+    let result = match body_result {
+        Ok(value) => Some(value),
+        Err(VmError::MissingReturn) => None,
+        Err(error) => match handler {
+            Some(ops) => match execute_in_place(ops, registers) {
+                Ok(value) => Some(value),
+                Err(VmError::MissingReturn) => None,
+                Err(error) => return Err(error),
+            },
+            None => return Err(error),
+        },
     };
     if let Some(finalizer) = finalizer {
-        execute_with_registers(finalizer, registers.to_vec())?;
+        let _ = execute_in_place(finalizer, registers);
     }
-    result.map(|_| ())
+    Ok(result)
 }

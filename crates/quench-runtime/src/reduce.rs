@@ -6,7 +6,7 @@ use crate::{
     facts::ProgramDb,
     functions, identifiers,
     literal::{reduce_literal, reduce_operator},
-    ops::{Constant, Op},
+    ops::Op,
     properties, special,
     statements::reduce_declaration as reduce_declaration_statement,
     transparent,
@@ -64,12 +64,33 @@ fn reduce_statements(
 pub(crate) fn reduce_statements_with_locals(
     statements: &[Statement<'_>],
     facts: &mut ProgramDb,
+    locals: HashMap<String, u16>,
+    next_slot: u16,
+) -> Result<Vec<Op>, Vec<String>> {
+    reduce_statements_opt(statements, facts, locals, next_slot, true)
+}
+
+/// Reduce statements without appending a terminal `Return`. Used for nested
+/// blocks whose control flow continues after the block (if/try/switch bodies).
+pub(crate) fn reduce_statements_no_tail(
+    statements: &[Statement<'_>],
+    facts: &mut ProgramDb,
+    locals: HashMap<String, u16>,
+    next_slot: u16,
+) -> Result<Vec<Op>, Vec<String>> {
+    reduce_statements_opt(statements, facts, locals, next_slot, false)
+}
+
+fn reduce_statements_opt(
+    statements: &[Statement<'_>],
+    facts: &mut ProgramDb,
     mut locals: HashMap<String, u16>,
     mut next_slot: u16,
+    tail: bool,
 ) -> Result<Vec<Op>, Vec<String>> {
-    predeclare_functions(statements, &mut locals, &mut next_slot);
+    crate::reduce_support::predeclare_functions(statements, &mut locals, &mut next_slot);
     let mut ops = Vec::new();
-    let mut next_register = register_base(&locals);
+    let mut next_register = crate::reduce_support::register_base(&locals);
     let mut last_value = None;
     for statement in statements {
         if let Some(value) = reduce_statement(
@@ -83,36 +104,13 @@ pub(crate) fn reduce_statements_with_locals(
             last_value = Some(value);
         }
     }
-    finish_program(ops, last_value)
-}
-
-pub(crate) fn register_base(locals: &HashMap<String, u16>) -> u16 {
-    locals
-        .values()
-        .copied()
-        .max()
-        .map_or(0, |slot| slot.saturating_add(1))
-}
-
-fn predeclare_functions(
-    statements: &[Statement<'_>],
-    locals: &mut HashMap<String, u16>,
-    next_slot: &mut u16,
-) {
-    for statement in statements {
-        let Statement::FunctionDeclaration(function) = statement else {
-            continue;
-        };
-        let Some(identifier) = function.id.as_ref() else {
-            continue;
-        };
-        if locals.contains_key(identifier.name.as_str()) {
-            continue;
-        }
-        locals.insert(identifier.name.to_string(), *next_slot);
-        *next_slot = next_slot.saturating_add(1);
+    if tail {
+        crate::reduce_support::finish_program(ops, last_value)
+    } else {
+        Ok(ops)
     }
 }
+
 pub(crate) fn reduce_statement(
     statement: &Statement<'_>,
     ops: &mut Vec<Op>,
@@ -279,21 +277,6 @@ fn reduce_static_if(
     }
 }
 
-pub(crate) fn finish_program(
-    mut ops: Vec<Op>,
-    last_value: Option<u16>,
-) -> Result<Vec<Op>, Vec<String>> {
-    if let Some(register) = last_value {
-        ops.push(Op::Return { src: register });
-    } else {
-        ops.push(Op::Const {
-            dst: 0,
-            value: Constant::Undefined,
-        });
-        ops.push(Op::Return { src: 0 });
-    }
-    Ok(ops)
-}
 fn reduce_expression_statement(
     expression: &Expression<'_>,
     ops: &mut Vec<Op>,
@@ -325,7 +308,7 @@ pub(crate) fn reduce_declaration(
         locals.insert(identifier.name.to_string(), slot);
         let register = match declarator.init.as_ref() {
             Some(init) => reduce_expression(init, ops, facts, next_register, locals),
-            None => Some(emit_undefined(ops, next_register)),
+            None => Some(crate::reduce_support::emit_undefined(ops, next_register)),
         };
         let Some(register) = register else {
             return Err(vec!["Unsupported variable initializer".to_string()]);
@@ -337,15 +320,7 @@ pub(crate) fn reduce_declaration(
     }
     Ok(())
 }
-pub(crate) fn emit_undefined(ops: &mut Vec<Op>, next_register: &mut u16) -> u16 {
-    let register = *next_register;
-    *next_register = next_register.saturating_add(1);
-    ops.push(Op::Const {
-        dst: register,
-        value: Constant::Undefined,
-    });
-    register
-}
+
 pub(crate) fn reduce_expression(
     expression: &Expression<'_>,
     ops: &mut Vec<Op>,
@@ -399,7 +374,7 @@ pub(crate) fn reduce_unary(
     let src = if operator == crate::ops::UnaryOp::Typeof
         && matches!(&unary.argument, Expression::Identifier(identifier) if !locals.contains_key(identifier.name.as_str()))
     {
-        emit_undefined(ops, next_register)
+        crate::reduce_support::emit_undefined(ops, next_register)
     } else {
         reduce_expression(&unary.argument, ops, facts, next_register, locals)?
     };
@@ -476,7 +451,7 @@ fn reduce_atom(
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
     if matches!(expression, Expression::ThisExpression(_)) {
-        return Some(emit_undefined(ops, next_register));
+        return Some(crate::reduce_support::emit_undefined(ops, next_register));
     }
     if let Some(value) = reduce_literal(expression) {
         let register = *next_register;

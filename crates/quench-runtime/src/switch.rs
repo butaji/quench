@@ -50,7 +50,7 @@ fn reduce_cases(
             })
             .transpose()?;
         let mut body = Vec::new();
-        let mut next_slot = crate::reduce::register_base(locals);
+        let mut next_slot = crate::reduce_support::register_base(locals);
         let mut body_locals = locals.clone();
         for statement in &case.consequent {
             crate::reduce::reduce_statement(
@@ -62,7 +62,7 @@ fn reduce_cases(
                 &mut body_locals,
             )?;
         }
-        cases.push((test, crate::reduce::finish_program(body, None)?));
+        cases.push((test, body));
     }
     Ok(cases)
 }
