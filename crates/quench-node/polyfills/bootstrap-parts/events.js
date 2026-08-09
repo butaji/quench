@@ -189,8 +189,9 @@ const __nodeReadablePushChunk = (stream, chunk) => {
     __nodeReadableClearAwaitDrain(stream);
     stream._readableState.dataEmitted = true;
     stream._readableState.needReadable = false;
-    if (stream.listenerCount("data"))
+    if (stream.listenerCount("data")) {
       stream.emit("data", stream._decode(chunk));
+    }
   }
   const length = chunk?.byteLength ?? chunk?.length ?? 0;
   if (length < stream.readableHighWaterMark) {
@@ -456,7 +457,15 @@ class NodeReadable extends NodeEventEmitter {
         Promise.resolve(asyncIterator.return?.()).then(() => callback());
       };
     } else {
-      stream._sourceChunks = Array.from(iterable);
+      try {
+        stream._sourceChunks = Array.from(iterable);
+      } catch (error) {
+        const pendingErrorHandler = () => {};
+        pendingErrorHandler.__quenchInternal = true;
+        stream.on("error", pendingErrorHandler);
+        queueMicrotask(() => stream.destroy(error));
+        return stream;
+      }
       stream._index = 0;
       stream._pump = () => {
         while (!stream._paused && stream._index < stream._sourceChunks.length) {
@@ -518,8 +527,9 @@ class NodeReadable extends NodeEventEmitter {
           const pending = this._readableState.awaitDrainWriters;
           if (pending instanceof Set) {
             pending.delete(destination);
-            if (pending.size === 0 && this._readableState.pipes.length <= 1)
+            if (pending.size === 0 && this._readableState.pipes.length <= 1) {
               this._readableState.awaitDrainWriters = null;
+            }
           } else if (pending === destination) {
             this._readableState.awaitDrainWriters = null;
           }
@@ -612,8 +622,9 @@ class NodeReadable extends NodeEventEmitter {
         !this.allowHalfOpen &&
         !this._writableState.ended &&
         !this.destroyed
-      )
+      ) {
         this.end();
+      }
       this._readableState.reading = false;
       return __nodeReadablePushEnd(this);
     }
@@ -911,8 +922,9 @@ class NodeWritable extends NodeEventEmitter {
         !this.allowHalfOpen &&
         !this._writableState.ended &&
         !this.destroyed
-      )
+      ) {
         this.end();
+      }
       this.readableEnded = true;
       this.emit("end");
       return false;
@@ -1018,7 +1030,17 @@ class NodeWritable extends NodeEventEmitter {
       }
     };
     if (typeof this._final === "function") {
-      this._final(() => this.__nodeMaybeFinish());
+      let finalCallbackCalled = false;
+      this._final(() => {
+        if (finalCallbackCalled) {
+          const duplicate = new Error("Callback called multiple times");
+          duplicate.code = "ERR_MULTIPLE_CALLBACK";
+          this.emit("error", duplicate);
+          return;
+        }
+        finalCallbackCalled = true;
+        this.__nodeMaybeFinish();
+      });
     } else this.__nodeMaybeFinish();
     return this;
   }
@@ -1196,6 +1218,9 @@ const __nodeDuplexFrom = (body) => {
         }
       };
       const duplex = new NodeDuplex({ readable: true, writable: true });
+      const pendingErrorHandler = () => {};
+      pendingErrorHandler.__quenchInternal = true;
+      duplex.on("error", pendingErrorHandler);
       duplex._write = (chunk, _encoding, callback) => {
         const resolve = waiters.shift();
         if (resolve) resolve({ value: chunk, done: false });
@@ -1265,6 +1290,9 @@ const __nodeDuplexFrom = (body) => {
       writable: false,
       objectMode: true
     });
+    const pendingErrorHandler = () => {};
+    pendingErrorHandler.__quenchInternal = true;
+    duplex.on("error", pendingErrorHandler);
     Promise.resolve(body).then(
       (value) => {
         if (value !== undefined && value !== null) duplex.push(value);
@@ -1451,8 +1479,9 @@ class NodeTransform extends NodeWritable {
       if (this.listenerCount("data")) this.emit("data", value);
       else if (!this._transformResumed) {
         this._readableChunks.push(value);
-        if (this.listenerCount("readable"))
+        if (this.listenerCount("readable")) {
           queueMicrotask(() => this.emit("readable"));
+        }
       }
     }
     return chunk !== null;
@@ -1718,8 +1747,32 @@ Object.defineProperty(NodeReadableCompat, "from", {
 });
 const __nodePipeline = (...args) => {
   const callback = args.pop();
-  const streams = args.map((stream, index) => {
-    if (typeof stream === "function") return NodeDuplex.from(stream);
+  const streams = [];
+  for (let index = 0; index < args.length; index++) {
+    const stream = args[index];
+    if (typeof stream === "function") {
+      if (index > 0 && stream.constructor?.name === "GeneratorFunction") {
+        const error = new TypeError(
+          "The function must return an async iterable or stream"
+        );
+        error.code = "ERR_INVALID_RETURN_VALUE";
+        throw error;
+      }
+      if (stream.constructor?.name === "AsyncGeneratorFunction") {
+        streams.push(NodeDuplex.from(stream));
+        continue;
+      }
+      const result = stream(streams[index - 1]);
+      if (result === undefined) {
+        const error = new TypeError(
+          "The function must return a stream or iterable"
+        );
+        error.code = "ERR_INVALID_RETURN_VALUE";
+        throw error;
+      }
+      streams.push(NodeDuplex.from(result));
+      continue;
+    }
     if (
       index === 0 &&
       !stream?.pipe &&
@@ -1727,10 +1780,11 @@ const __nodePipeline = (...args) => {
         stream?.[Symbol.iterator] ||
         stream?.[Symbol.asyncIterator])
     ) {
-      return NodeReadable.from(stream);
+      streams.push(NodeReadable.from(stream));
+      continue;
     }
-    return stream;
-  });
+    streams.push(stream);
+  }
   let settled = false;
   const complete = (error) => {
     if (settled) return;
