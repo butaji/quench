@@ -566,6 +566,16 @@ const __quenchNetModule = {
       if (_options.keepAlive !== undefined) {
         this.setKeepAlive(_options.keepAlive, _options.keepAliveInitialDelay);
       }
+      const blockList = _options.blockList;
+      const blockAddress = _options.host === "localhost"
+        ? "127.0.0.1"
+        : _options.host || "127.0.0.1";
+      if (blockList?.check?.(blockAddress)) {
+        const error = new Error(`Cannot connect to ${blockAddress}`);
+        error.code = "ERR_IP_BLOCKED";
+        queueMicrotask(() => this.emit("error", error));
+        return this;
+      }
       this.connecting = true;
       if (typeof callback === "function") this.once("connect", callback);
       if (__quenchNativeTransportRequested(_options)) {

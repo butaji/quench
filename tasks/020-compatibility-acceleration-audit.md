@@ -137,3 +137,6 @@ large non-match corpus, so the compatibility objective remains open.
   `finish` emission idempotent and emitting the default non-half-open peer's
   finish transition before destruction. The async-iterator fixture and focused
   stages 2316 and 2338 remain passing.
+- `test-net-blocklist.js` now passes with asynchronous `ERR_IP_BLOCKED` handling
+  for direct IPv4 and localhost connection cases; focused IP validation stages
+  2076–2078 remain passing.
