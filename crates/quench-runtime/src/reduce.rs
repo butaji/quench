@@ -1,7 +1,7 @@
 //! OXC-to-residual reduction entry point.
 
 use crate::{
-    arrays, blocks, conditional,
+    arrays, blocks, conditional, control_flow,
     facts::ProgramDb,
     functions, identifiers,
     literal::{reduce_literal, reduce_operator},
@@ -17,13 +17,11 @@ use oxc::{
     syntax::operator::{AssignmentOperator, UnaryOperator, UpdateOperator},
 };
 use std::collections::HashMap;
-
 #[derive(Debug, PartialEq)]
 pub struct ResidualProgram {
     pub facts: ProgramDb,
     pub ops: Vec<Op>,
 }
-
 pub fn reduce_source(source: &str) -> Result<ResidualProgram, Vec<String>> {
     reduce_source_with_type(source, SourceType::default())
 }
@@ -112,6 +110,9 @@ pub(crate) fn reduce_statement(
         }
         Statement::ReturnStatement(return_statement) => {
             reduce_return_statement(return_statement, ops, facts, next_register, locals)
+        }
+        Statement::ThrowStatement(statement) => {
+            control_flow::reduce_throw(statement, ops, facts, next_register, locals)
         }
         Statement::IfStatement(statement) => {
             reduce_if_statement(statement, ops, facts, next_register, next_slot, locals)

@@ -12,6 +12,7 @@ pub enum VmError {
     NotCallable,
     ArgumentCount,
     EvalError(String),
+    Thrown,
 }
 
 pub fn execute(ops: &[Op]) -> Result<Value, VmError> {
@@ -53,10 +54,18 @@ fn execute_with_registers(ops: &[Op], mut registers: Vec<Value>) -> Result<Value
                 lhs,
                 rhs,
             } => execute_binary(&mut registers, *dst, *operator, *lhs, *rhs)?,
-            Op::Return { src } => return read_register(&registers, *src),
+            Op::Return { .. } | Op::Throw { .. } => return execute_terminal(op, &registers),
         }
     }
     Err(VmError::MissingReturn)
+}
+
+fn execute_terminal(op: &Op, registers: &[Value]) -> Result<Value, VmError> {
+    match op {
+        Op::Return { src } => read_register(registers, *src),
+        Op::Throw { .. } => Err(VmError::Thrown),
+        _ => Err(VmError::MissingReturn),
+    }
 }
 
 fn execute_array(registers: &mut Vec<Value>, dst: u16, elements: &[u16]) -> Result<(), VmError> {
