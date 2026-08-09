@@ -7,7 +7,7 @@ use crate::{
     literal::{reduce_literal, reduce_operator},
     logical, objects,
     ops::{Constant, Op},
-    properties,
+    properties, templates,
 };
 use oxc::{
     allocator::Allocator,
@@ -318,6 +318,9 @@ fn reduce_special(
         }
         Expression::ObjectExpression(object) => {
             objects::reduce(object, ops, facts, next_register, locals)
+        }
+        Expression::TemplateLiteral(template) => {
+            templates::reduce(template, ops, facts, next_register, locals)
         }
         Expression::StaticMemberExpression(_) | Expression::ComputedMemberExpression(_) => {
             properties::reduce(expression, ops, facts, next_register, locals)

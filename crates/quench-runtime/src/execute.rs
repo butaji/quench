@@ -223,6 +223,7 @@ fn execute_unary(
         crate::ops::UnaryOp::Not => Value::Boolean(!is_truthy(&value)),
         crate::ops::UnaryOp::Void => Value::Undefined,
         crate::ops::UnaryOp::Typeof => Value::String(type_of(&value).to_string()),
+        crate::ops::UnaryOp::ToString => Value::String(to_string(Some(&value))),
     };
     write_value(registers, dst, result);
     Ok(())
