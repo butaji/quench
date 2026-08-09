@@ -259,10 +259,7 @@ fn type_of(value: &Value) -> &'static str {
 }
 
 fn numeric_unary(value: Value, transform: fn(f64) -> f64) -> Result<Value, VmError> {
-    let Value::Number(number) = value else {
-        return Err(VmError::NonNumericOperand);
-    };
-    Ok(Value::Number(transform(number)))
+    Ok(Value::Number(transform(to_number(Some(&value)))))
 }
 
 fn is_truthy(value: &Value) -> bool {
