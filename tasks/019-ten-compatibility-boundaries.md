@@ -1481,3 +1481,8 @@ The follow-up fix resets copied client terminal state (`complete` and the
 close-emitted marker) when constructing each server-side request. The
 authoritative `test-stream-destroy.js` fixture now passes again, with the
 focused stage and full focused gate remaining green at 2369/2369.
+
+Verification correction: a subsequent clean rerun still reports an unmet
+callback in `test-stream-destroy.js` (callback 15). The focused reproduction is
+green, but the full fixture remains open and the preceding pass claim is not
+authoritative.
