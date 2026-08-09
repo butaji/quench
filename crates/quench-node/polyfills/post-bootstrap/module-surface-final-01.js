@@ -153,7 +153,11 @@ const __quenchUrlPrefix = (input, protocol, authority) => {
   if (protocol === "mailto:") {
     return `${protocol}${__quenchUrlAuth(input)}${authority}`;
   }
-  if (!input.slashes && !globalThis.__quenchSpecialUrlProtocol(protocol)) {
+  if (
+    !input.slashes &&
+    (!globalThis.__quenchSpecialUrlProtocol(protocol) ||
+      (!authority && protocol !== "file:"))
+  ) {
     return `${protocol}${__quenchUrlAuth(input)}${authority}`;
   }
   return `${protocol}//${__quenchUrlAuth(input)}${authority}`;
@@ -463,6 +467,13 @@ const __quenchAddUrlParseFallback = (result) => {
   if (typeof originalParse !== "function") return;
   result.parse = (input, ...args) => {
     const parsed = originalParse.call(result, input, ...args);
+    if (
+      parsed &&
+      result.Url?.prototype &&
+      Object.getPrototypeOf(parsed) !== result.Url.prototype
+    ) {
+      Object.setPrototypeOf(parsed, result.Url.prototype);
+    }
     if (
       typeof input === "string" &&
       input.startsWith("//") &&
