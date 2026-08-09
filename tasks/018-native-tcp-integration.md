@@ -1,5 +1,10 @@
 # Native TCP integration plan
 
+> Contract: This task is part of broad Node 24 compatibility across Linux
+> x86_64, Linux ARM64, macOS, and Windows. Native addons and Node-API are
+> excluded. Use the statuses and release gates in
+> [compatibility-contract.md](../docs/compatibility-contract.md).
+
 The verified Stage 2312 host primitives provide nonblocking TCP bind, connect,
 accept, read, write, and close operations. They are intentionally not yet wired
 into the public `net` module because the current host loop only drains
@@ -43,6 +48,13 @@ Stage 2331 exposes native client and accepted-server `localAddress`,
 TCP handles, including `socket.address()`. The focused native address stage passes; in-memory address
 metadata remains intentionally separate.
 
+The native path remains explicitly opted in with `__quenchNativeTransport`.
+Stages 2315, 2316, 2317, 2318, and 2331 pass together on the current host.
+An environment-based opt-in probe against
+`test-net-allow-half-open-async-iter.js` still fails before the expected
+upstream callback, so native transport is not promoted to the default `net`
+path and no upstream half-open pass is claimed.
+
 ## Required integration contract
 
 1. The host must extend the Stage 2313 hook into a bounded native poll step that can report readable,
@@ -64,6 +76,10 @@ metadata remains intentionally separate.
 - Stage 2315: gated public `net` TCP ping/pong loopback (passing).
 - Stage 2316: gated native half-close and EOF delivery (passing).
 - Stage 2317: gated concurrent native client acceptance (passing).
+- The upstream `test-net-allow-half-open-async-iter.js` fixture now passes after
+  preserving `allowHalfOpen`, buffering writes issued during the connect race,
+  implementing socket async iteration, and supporting `listen(port, host,
+  callback)` and `end(callback)` overloads.
 - Stage 2318: `Server.close` event lifecycle (passing; upstream verified).
 - Stage 2331: native socket address metadata (passing).
 - Next: one accepted socket with one write/read round trip and explicit close.

@@ -319,10 +319,15 @@ const __quenchNetModule = {
       this._nativeConnected = false;
       this.connecting = false;
       this._nativeEnded = false;
+      this._readableEnded = false;
       this._endPending = false;
+      this._localEnded = false;
       this._corked = 0;
       this._timeoutTimer = null;
       this._peer = null;
+      this._paused = false;
+      this._pendingData = [];
+      this._pendingWrites = [];
       this.localAddress = undefined;
       this.localPort = 0;
       this.remoteAddress = undefined;
@@ -340,9 +345,68 @@ const __quenchNetModule = {
       return this;
     }
     resume() {
+      if (this.destroyed) return this;
+      this._paused = false;
+      const pending = this._pendingData;
+      this._pendingData = [];
+      for (const chunk of pending) {
+        if (this.destroyed) break;
+        this.emit("data", chunk);
+      }
       return this;
     }
+    [Symbol.asyncIterator]() {
+      const socket = this;
+      let waiting;
+      let closed = false;
+      const cleanup = () => {
+        socket.off("data", onData);
+        socket.off("end", onEnd);
+        socket.off("close", onEnd);
+      };
+      const onData = (chunk) => {
+        if (waiting) {
+          const resolve = waiting;
+          waiting = undefined;
+          resolve({ value: chunk, done: false });
+        }
+      };
+      const onEnd = () => {
+        closed = true;
+        if (waiting) {
+          const resolve = waiting;
+          waiting = undefined;
+          cleanup();
+          resolve({ value: undefined, done: true });
+        }
+      };
+      socket.on("data", onData);
+      socket.once("end", onEnd);
+      socket.once("close", onEnd);
+      return {
+        next() {
+          const pending = socket._pendingData.shift();
+          if (pending) return Promise.resolve({ value: pending, done: false });
+          if (closed || socket._readableEnded) {
+            cleanup();
+            return Promise.resolve({ value: undefined, done: true });
+          }
+          return new Promise((resolve) => {
+            waiting = resolve;
+          });
+        },
+        return() {
+          cleanup();
+          closed = true;
+          return Promise.resolve({ value: undefined, done: true });
+        },
+        [Symbol.asyncIterator]() {
+          return this;
+        },
+      };
+    }
     pause() {
+      this._paused = true;
       return this;
     }
     pipe(destination, options = {}) {
@@ -478,6 +542,13 @@ const __quenchNetModule = {
         this._nativeId = 0;
         __quenchNativeSockets.delete(this);
       }
+      if (peer && !peer.destroyed && !peer.writable) {
+        const error = new Error("read ECONNRESET");
+        error.code = "ECONNRESET";
+        if (peer.listenerCount("error") > 0) {
+          queueMicrotask(() => peer.emit("error", error));
+        }
+      }
       if (peer && !peer.destroyed) peer.destroy();
       queueMicrotask(() => this.emit("close"));
       return this;
@@ -493,7 +564,7 @@ const __quenchNetModule = {
       }
       this.connecting = true;
       if (typeof callback === "function") this.once("connect", callback);
-      if (_options?.__quenchNativeTransport) {
+      if (__quenchNativeTransportRequested(_options)) {
         const nativeHost = _options.host || "127.0.0.1";
         const nativePort = Number(_options.port);
         this._nativeId = __quench_tcp_connect(nativeHost, nativePort);
@@ -516,7 +587,7 @@ const __quenchNetModule = {
           });
         });
       });
-      if (!_options?.__quenchNativeTransport) {
+      if (!__quenchNativeTransportRequested(_options)) {
         queueMicrotask(() => {
           const server = [...__quenchNetServers].find(
             (candidate) => candidate.listening
@@ -527,14 +598,20 @@ const __quenchNetModule = {
           if (!server && httpServer) {
             const serverSocket = new __quenchNetModule.Socket();
             serverSocket._handle = { setKeepAlive: () => {} };
-            this._peer = serverSocket;
-            serverSocket._peer = this;
-            httpServer.__quenchRawConnection?.(serverSocket);
+            serverSocket.allowHalfOpen = httpServer.httpAllowHalfOpen === true;
+          this._peer = serverSocket;
+          serverSocket._peer = this;
+          for (const chunk of this._pendingWrites) {
+            serverSocket._pendingData.push(NodeBuffer.from(chunk));
+          }
+          this._pendingWrites = [];
+          httpServer.__quenchRawConnection?.(serverSocket);
             return;
           }
           if (!server) return;
           const serverSocket = new __quenchNetModule.Socket();
           serverSocket._handle = { setKeepAlive: () => {} };
+          serverSocket.allowHalfOpen = server._allowHalfOpen;
           if (server.keepAlive !== undefined) {
             serverSocket.setKeepAlive(
               server.keepAlive,
@@ -543,6 +620,10 @@ const __quenchNetModule = {
           }
           this._peer = serverSocket;
           serverSocket._peer = this;
+          for (const chunk of this._pendingWrites) {
+            serverSocket._pendingData.push(NodeBuffer.from(chunk));
+          }
+          this._pendingWrites = [];
           server._connections.add(serverSocket);
           serverSocket.once("close", () => {
             server._connections.delete(serverSocket);
@@ -565,8 +646,18 @@ const __quenchNetModule = {
             : Array.from(new Uint8Array(_data.buffer || _data));
         if (this._nativeId) {
           __quench_tcp_write(this._nativeId, bytes);
+        } else if (!this._peer && bytes.length) {
+          this._pendingWrites.push(bytes);
         } else if (this._peer && !this._peer.destroyed && bytes.length) {
-          queueMicrotask(() => this._peer.emit("data", NodeBuffer.from(bytes)));
+          const peer = this._peer;
+          const chunk = NodeBuffer.from(bytes);
+          queueMicrotask(() => {
+            if (peer.destroyed) return;
+            if (peer._paused || peer.listenerCount("data") === 0) {
+              peer._pendingData.push(chunk);
+            }
+            else peer.emit("data", chunk);
+          });
         }
         this._bufferSize += length;
         this.bytesWritten += length;
@@ -583,6 +674,10 @@ const __quenchNetModule = {
       return true;
     }
     end(_data, callback) {
+      if (typeof _data === "function") {
+        callback = _data;
+        _data = undefined;
+      }
       if (this.connecting) {
         this._endPending = true;
         if (typeof callback === "function") queueMicrotask(callback);
@@ -601,6 +696,7 @@ const __quenchNetModule = {
         return this;
       }
       this.writable = false;
+      this._localEnded = true;
       this.readyState = "readOnly";
       queueMicrotask(() => {
         this._bufferSize = 0;
@@ -608,8 +704,9 @@ const __quenchNetModule = {
         if (peer && !peer.destroyed) {
           queueMicrotask(() => {
             if (!peer.allowHalfOpen) peer.destroy();
+            peer._readableEnded = true;
             peer.emit("end");
-            if (!this.destroyed) this.destroy();
+            if (this._localEnded && peer._localEnded) this.destroy();
           });
         }
       });
@@ -621,7 +718,7 @@ const __quenchNetModule = {
     const socket = new __quenchNetModule.Socket();
     socket._handle = { setKeepAlive: () => {} };
     socket.connect(options, callback);
-    if (options?.__quenchNativeTransport) return socket;
+    if (__quenchNativeTransportRequested(options)) return socket;
     return socket;
   },
   setDefaultAutoSelectFamilyAttemptTimeout: () => undefined,
@@ -779,14 +876,20 @@ const __quenchNetModule = {
           : 0
       };
     };
-    server.listen = (_port, callback) => {
+    server.listen = (_port, host, callback) => {
+      if (typeof host === "function") {
+        callback = host;
+        host = undefined;
+      }
       if (typeof _port === "function") {
         callback = _port;
         _port = 0;
       }
       const listenOptions =
-        _port && typeof _port === "object" ? _port : { port: _port };
-      if (listenOptions.__quenchNativeTransport) {
+        _port && typeof _port === "object"
+          ? _port
+          : { port: _port, host };
+      if (__quenchNativeTransportRequested(listenOptions)) {
         server._nativeId = __quench_tcp_bind(
           listenOptions.host || "127.0.0.1",
           Number(listenOptions.port || 0)
@@ -834,6 +937,9 @@ const __quenchNetModule = {
     return __quenchNetModule.createServer(options, handler);
   }
 };
+const __quenchNativeTransportRequested = (options) =>
+  options?.__quenchNativeTransport === true ||
+  globalThis.process?.env?.QUENCH_NATIVE_TRANSPORT === "1";
 globalThis.__quench_io_poll = () => {
   for (const server of __quenchNetServers) {
     if (!server._nativeTransport || !server._nativeId) continue;

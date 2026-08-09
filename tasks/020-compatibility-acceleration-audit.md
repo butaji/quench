@@ -130,3 +130,6 @@ large non-match corpus, so the compatibility objective remains open.
 - `tools/check-all-tests.sh` completed the Rust unit-test phase with 2/2 tests
   passing, but stalled during its larger compatibility phase without producing
   a result; this remains an open suite-runner verification issue.
+- The network half-close slice now passes the authoritative
+  `test-net-allow-half-open-async-iter.js` fixture and focused stages 2316,
+  2338, and 2491.
