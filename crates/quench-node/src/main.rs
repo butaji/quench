@@ -64,6 +64,7 @@ const BOOTSTRAP_PARTS: &[&str] = &[
     include_str!("../polyfills/bootstrap-parts/colors.js"),
     include_str!("../polyfills/bootstrap-parts/format.js"),
     include_str!("../polyfills/bootstrap-parts/crypto-validation.js"),
+    include_str!("../polyfills/bootstrap-parts/crypto-head.js"),
     include_str!("../polyfills/bootstrap-parts/crypto.js"),
     include_str!("../polyfills/bootstrap-parts/random.js"),
     include_str!("../polyfills/bootstrap-parts/crypto-hmac-validation.js"),
