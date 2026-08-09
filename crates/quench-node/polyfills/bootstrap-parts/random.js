@@ -72,6 +72,7 @@ const __nodeCryptoRandomBytes = (size, callback) => {
       { code: "ERR_INVALID_ARG_TYPE" }
     );
   }
+  size = Math.trunc(size);
   if (!Number.isInteger(size) || size < 0 || size > 0x7fffffff) {
     throw Object.assign(
       new RangeError(

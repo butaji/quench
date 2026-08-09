@@ -1503,3 +1503,9 @@ in-memory socket schedules only one close event. The focused stage passes and
 the existing network lifecycle stages remain green. The full
 `test-net-stream.js` fixture still reports a repeated callback in its larger
 queued-write/error sequence, so that fixture remains open.
+
+Stage 2535 aligns crypto `randomBytes()` size coercion with Node by truncating
+finite fractional numeric sizes before range validation. The authoritative
+`test-crypto-random.js` fixture passes; stale stage 487 validation was updated
+to reflect Node's fractional-size behavior. The focused gate reports
+2372/2372 passing.
