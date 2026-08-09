@@ -1286,3 +1286,10 @@ pending until its `send("go")` path emits the successful exit/close sequence.
 The focused IPC/stdio stage and authoritative
 `test-process-external-stdio-close-spawn.js` fixture pass; the full focused gate
 reports 2342/2342 passing.
+
+Stage 2506 models self-signaled child termination after removing the final
+`SIGINT` listener. A supported signal-script child now reports `(null,
+"SIGINT")` through `exit`/`close`, matching Node's process status contract.
+The focused signal-child stage and authoritative
+`test-process-remove-all-signal-listeners.js` fixture pass; the full focused
+gate reports 2343/2343 passing.
