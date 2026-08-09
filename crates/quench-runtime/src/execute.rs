@@ -178,6 +178,9 @@ fn execute_builtin_tail(
     if let Some(result) = crate::strings::execute_builtin(builtin, receiver, arguments) {
         return result;
     }
+    if let Some(result) = crate::intl::execute(builtin, arguments, receiver) {
+        return result;
+    }
     if crate::math::is_builtin(builtin) {
         return crate::math::execute(builtin, arguments);
     }

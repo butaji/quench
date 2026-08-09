@@ -24,6 +24,7 @@ pub mod facts;
 mod functions;
 mod globals;
 mod identifiers;
+mod intl;
 mod literal;
 mod locals;
 mod logical;

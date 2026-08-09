@@ -271,6 +271,15 @@ pub enum Builtin {
     IntlDisplayNames,
     IntlDisplayNamesOf,
     IntlDisplayNamesResolvedOptions,
+    IntlLocalePrototype,
+    IntlNumberFormatPrototype,
+    IntlPluralRulesPrototype,
+    IntlDateTimeFormatPrototype,
+    IntlCollatorPrototype,
+    IntlListFormatPrototype,
+    IntlRelativeTimeFormatPrototype,
+    IntlSegmenterPrototype,
+    IntlDisplayNamesPrototype,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

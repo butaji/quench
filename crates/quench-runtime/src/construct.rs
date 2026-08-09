@@ -54,7 +54,26 @@ pub(crate) fn construct_value(
         Value::Builtin(crate::ops::Builtin::TypeError) => Ok(crate::builtins::object(arguments)),
         Value::Builtin(crate::ops::Builtin::Date) => Ok(crate::builtins::object(arguments)),
         Value::Builtin(crate::ops::Builtin::RegExp) => Ok(crate::builtins::object(arguments)),
+        Value::Builtin(
+            crate::ops::Builtin::IntlNumberFormat
+            | crate::ops::Builtin::IntlDateTimeFormat
+            | crate::ops::Builtin::IntlCollator
+            | crate::ops::Builtin::IntlPluralRules
+            | crate::ops::Builtin::IntlListFormat
+            | crate::ops::Builtin::IntlRelativeTimeFormat
+            | crate::ops::Builtin::IntlSegmenter
+            | crate::ops::Builtin::IntlDisplayNames
+            | crate::ops::Builtin::IntlLocale,
+        ) => crate::intl::execute(*target_builtin(target), arguments, None)
+            .unwrap_or_else(|| Ok(crate::builtins::object(arguments))),
         Value::Function(_) => Ok(Value::Object(std::rc::Rc::new(Vec::new()))),
         _ => Err(crate::execute::VmError::NotCallable),
+    }
+}
+
+fn target_builtin(target: &Value) -> &crate::ops::Builtin {
+    match target {
+        Value::Builtin(builtin) => builtin,
+        _ => &crate::ops::Builtin::Array,
     }
 }

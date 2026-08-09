@@ -3,37 +3,32 @@ use std::rc::Rc;
 use crate::{ops::Builtin, value::Value};
 
 pub(crate) fn property(builtin: Builtin, key: &str) -> Value {
+    if let Some(value) = crate::intl::property(builtin, key) {
+        return value;
+    }
+    property_lookup(builtin, key)
+}
+
+fn property_lookup(builtin: Builtin, key: &str) -> Value {
     if let Some(value) = special_property(builtin, key) {
         return value;
     }
     if let Some(value) = callable_property(builtin, key) {
         return value;
     }
-    if builtin == Builtin::Array && key == "prototype" {
-        return Value::Builtin(Builtin::ArrayPrototype);
+    match (builtin, key) {
+        (Builtin::Array, "prototype") => Value::Builtin(Builtin::ArrayPrototype),
+        (Builtin::ArrayPrototype, "map") => Value::Builtin(Builtin::ArrayMap),
+        (Builtin::ArrayPrototype, "forEach") => Value::Builtin(Builtin::ArrayForEach),
+        (Builtin::ArrayMap, "call") => Value::Builtin(Builtin::FunctionCall),
+        (Builtin::Array, "isArray") => Value::Builtin(Builtin::ArrayIsArray),
+        (Builtin::Object, "is") => Value::Builtin(Builtin::ObjectIs),
+        (Builtin::Object, "keys") => Value::Builtin(Builtin::ObjectKeys),
+        (Builtin::Object, "getOwnPropertyDescriptor") => {
+            Value::Builtin(Builtin::ObjectGetOwnPropertyDescriptor)
+        }
+        _ => Value::Undefined,
     }
-    if builtin == Builtin::ArrayPrototype && key == "map" {
-        return Value::Builtin(Builtin::ArrayMap);
-    }
-    if builtin == Builtin::ArrayPrototype && key == "forEach" {
-        return Value::Builtin(Builtin::ArrayForEach);
-    }
-    if builtin == Builtin::ArrayMap && key == "call" {
-        return Value::Builtin(Builtin::FunctionCall);
-    }
-    if matches!(builtin, Builtin::Array) && key == "isArray" {
-        return Value::Builtin(Builtin::ArrayIsArray);
-    }
-    if matches!(builtin, Builtin::Object) && key == "is" {
-        return Value::Builtin(Builtin::ObjectIs);
-    }
-    if matches!(builtin, Builtin::Object) && key == "keys" {
-        return Value::Builtin(Builtin::ObjectKeys);
-    }
-    if matches!(builtin, Builtin::Object) && key == "getOwnPropertyDescriptor" {
-        return Value::Builtin(Builtin::ObjectGetOwnPropertyDescriptor);
-    }
-    Value::Undefined
 }
 
 fn special_property(builtin: Builtin, key: &str) -> Option<Value> {

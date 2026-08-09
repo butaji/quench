@@ -63,6 +63,7 @@ fn builtin(name: &str) -> Option<crate::ops::Builtin> {
         "Date" => Some(crate::ops::Builtin::Date),
         "Reflect" => Some(crate::ops::Builtin::Reflect),
         "RegExp" => Some(crate::ops::Builtin::RegExp),
+        "Intl" => Some(crate::ops::Builtin::Intl),
         _ => None,
     }
 }
