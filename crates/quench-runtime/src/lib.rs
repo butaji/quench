@@ -36,6 +36,7 @@ mod semantic;
 mod sequences;
 mod special;
 mod statements;
+mod switch;
 mod templates;
 mod transparent;
 pub mod value;

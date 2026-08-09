@@ -2,7 +2,7 @@
 use crate::{
     arrays,
     blocks::reduce as reduce_block,
-    control_flow,
+    control_flow::{self, reduce_try_statement},
     facts::ProgramDb,
     functions, identifiers,
     literal::{reduce_literal, reduce_operator},
@@ -10,6 +10,7 @@ use crate::{
     ops::{Constant, Op},
     properties, special,
     statements::reduce_declaration as reduce_declaration_statement,
+    switch::reduce as reduce_switch,
     transparent,
 };
 use oxc::{
@@ -113,8 +114,9 @@ pub(crate) fn reduce_statement(
         Statement::ForStatement(statement) => {
             loops::reduce_for(statement, ops, facts, next_register, next_slot, locals).map(|_| None)
         }
-        Statement::TryStatement(statement) => {
-            control_flow::reduce_try_statement(statement, ops, facts, locals)
+        Statement::TryStatement(statement) => reduce_try_statement(statement, ops, facts, locals),
+        Statement::SwitchStatement(statement) => {
+            reduce_switch(statement, ops, facts, next_register, locals).map(|_| None)
         }
         Statement::ExpressionStatement(expression) => {
             reduce_expression_statement(&expression.expression, ops, facts, next_register, locals)
@@ -262,7 +264,9 @@ fn reduce_expression_statement(
     locals: &HashMap<String, u16>,
 ) -> Result<u16, Vec<String>> {
     let Some(register) = reduce_expression(expression, ops, facts, next_register, locals) else {
-        return Err(vec!["Unsupported executable expression".to_string()]);
+        return Err(vec![format!(
+            "Unsupported executable expression: {expression:?}"
+        )]);
     };
     Ok(register)
 }

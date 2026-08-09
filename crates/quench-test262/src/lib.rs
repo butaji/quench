@@ -186,7 +186,13 @@ impl<H: Test262Host> Test262Runner<H> {
     {
         let metadata = TestMetadata::parse(source)?;
         let mut composed = String::new();
+        let mut includes = vec!["assert.js".to_string(), "sta.js".to_string()];
         for include in &metadata.includes {
+            if !includes.contains(include) {
+                includes.push(include.clone());
+            }
+        }
+        for include in &includes {
             composed.push_str(&load(include)?);
             composed.push('\n');
         }

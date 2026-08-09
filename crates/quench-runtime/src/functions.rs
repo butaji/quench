@@ -53,3 +53,14 @@ pub(crate) fn make(body: &[Op], params: u16) -> crate::value::Value {
         properties: std::rc::Rc::new(Vec::new()),
     }))
 }
+
+pub(crate) fn write(registers: &mut Vec<crate::value::Value>, dst: u16, body: &[Op], params: u16) {
+    crate::execute::write_value(registers, dst, make(body, params));
+}
+
+pub(crate) fn write_op(registers: &mut Vec<crate::value::Value>, op: &Op) {
+    let Op::MakeFunction { dst, body, params } = op else {
+        return;
+    };
+    write(registers, *dst, body, *params);
+}
