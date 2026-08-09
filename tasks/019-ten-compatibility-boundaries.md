@@ -1325,3 +1325,9 @@ Stage 2512 makes recursive `process.exit()` calls from within the final
 `exit` event harmless, matching Node's non-recursive shutdown behavior. The
 focused recursion stage and authoritative `test-process-exit.js` fixture pass;
 the full focused gate remains clean at 2349/2349 passing.
+
+Stage 2513 routes queued callback exceptions through `uncaughtException`,
+including callbacks scheduled before the listener is registered. Pending errors
+are retained until a listener is attached, preserving Node next-tick ordering.
+The focused next-tick stage and authoritative `test-process-next-tick.js`
+fixture pass; the full focused gate reports 2350/2350 passing.
