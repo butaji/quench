@@ -1,4 +1,5 @@
-use crate::{execute::VmError, value::Value};
+use crate::execute::{run_vm, VmError};
+use crate::value::Value;
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let target = arguments.first().ok_or(VmError::NotCallable)?;
@@ -18,5 +19,5 @@ pub(crate) fn builtin(builtin: crate::ops::Builtin, arguments: &[Value]) -> Resu
     };
     let program = crate::reduce::reduce_source(source)
         .map_err(|errors| VmError::EvalError(errors.join("; ")))?;
-    crate::execute::execute(&program.ops).map_err(|error| VmError::EvalError(format!("{error:?}")))
+    run_vm(&program.ops).map_err(|error| VmError::EvalError(format!("{error:?}")))
 }
