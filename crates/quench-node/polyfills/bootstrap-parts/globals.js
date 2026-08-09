@@ -750,7 +750,10 @@ if (globalThis.__quench_host_timer_scheduler) {
         return this.active && this.refed;
       },
       refresh() {
-        if (this.active) entry.due = __quenchHostNow() + entry.delay;
+        if (entry.cleared) return this;
+        this.active = true;
+        entry.due = __quenchHostNow() + entry.delay;
+        __quenchHostTimers.set(entry.id, entry);
         return this;
       },
       [Symbol.toPrimitive]() {
@@ -759,12 +762,15 @@ if (globalThis.__quench_host_timer_scheduler) {
     };
     Symbol.dispose ||= Symbol("dispose");
     handle[Symbol.dispose] = () => __quenchHostClear(handle);
+    Object.defineProperty(handle, "__quenchHostEntry", { value: entry });
     entry.handle = handle;
     return handle;
   };
   const __quenchHostClear = (handle) => {
-    const entry = __quenchHostTimers.get(Number(handle));
+    const entry =
+      __quenchHostTimers.get(Number(handle)) || handle?.__quenchHostEntry;
     if (!entry) return;
+    entry.cleared = true;
     entry.handle.active = false;
     __quenchHostTimers.delete(entry.id);
   };
@@ -776,6 +782,7 @@ if (globalThis.__quench_host_timer_scheduler) {
       delay: Math.max(0, __nodeTimerDelay(delay)),
       due: __quenchHostNow() + Math.max(0, __nodeTimerDelay(delay)),
       repeat,
+      cleared: false,
       domain: globalThis.__quench_active_domain,
       resource: globalThis.__nodeCurrentAsyncResource
     };
@@ -848,7 +855,9 @@ if (globalThis.__quench_host_timer_scheduler) {
       } finally {
         globalThis.__nodeCurrentAsyncResource = previousResource;
       }
-      if (!entry.repeat) entry.handle.active = false;
+      if (!entry.repeat && !__quenchHostTimers.has(entry.id)) {
+        entry.handle.active = false;
+      }
     }
   };
 }
