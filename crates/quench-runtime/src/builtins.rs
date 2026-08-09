@@ -6,6 +6,9 @@ pub(crate) fn property(builtin: Builtin, key: &str) -> Value {
     if let Some(value) = special_property(builtin, key) {
         return value;
     }
+    if let Some(value) = callable_property(builtin, key) {
+        return value;
+    }
     if builtin == Builtin::Array && key == "prototype" {
         return Value::Builtin(Builtin::ArrayPrototype);
     }
@@ -47,6 +50,26 @@ fn special_property(builtin: Builtin, key: &str) -> Option<Value> {
         _ => return None,
     };
     Some(Value::Builtin(value))
+}
+
+fn callable_property(builtin: Builtin, key: &str) -> Option<Value> {
+    match key {
+        "length" => Some(Value::Number(builtin_length(builtin))),
+        "name" => Some(Value::String(builtin_name(builtin).to_string())),
+        _ => None,
+    }
+}
+
+fn builtin_name(builtin: Builtin) -> &'static str {
+    match builtin {
+        Builtin::Escape => "escape",
+        Builtin::Unescape => "unescape",
+        Builtin::Array => "Array",
+        Builtin::Object => "Object",
+        Builtin::String => "String",
+        Builtin::Number => "Number",
+        _ => "",
+    }
 }
 
 pub(crate) fn object_method(value: &Value, key: &str) -> Value {
