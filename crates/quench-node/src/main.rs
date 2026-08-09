@@ -77,6 +77,8 @@ const BOOTSTRAP_PARTS: &[&str] = &[
     include_str!("../polyfills/bootstrap-parts/random.js"),
     include_str!("../polyfills/bootstrap-parts/crypto-hmac-validation.js"),
     include_str!("../polyfills/bootstrap-parts/core.js"),
+    include_str!("../polyfills/bootstrap-parts/network-head.js"),
+    include_str!("../polyfills/bootstrap-parts/network-socket.js"),
     include_str!("../polyfills/bootstrap-parts/network.js"),
     include_str!("../polyfills/bootstrap-parts/network-validation.js"),
     include_str!("../polyfills/bootstrap-parts/filesystem-internals.js"),
