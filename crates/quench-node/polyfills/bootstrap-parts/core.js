@@ -714,6 +714,15 @@ const __quenchSpawnChild = (_command, args = [], options = {}) => {
     ? ["-c", `${String(_command)}${args.length ? ` ${args.join(" ")}` : ""}`]
     : args;
   const script = String(args[0] || "");
+  let rawDebugScript = false;
+  if (script) {
+    try {
+      rawDebugScript = globalThis
+        .require("fs")
+        .readFileSync(script, "utf8")
+        .includes("process._rawDebug");
+    } catch (_) {}
+  }
   let signalScript = false;
   if (args.includes("--do-test") && script) {
     try {
@@ -758,20 +767,24 @@ const __quenchSpawnChild = (_command, args = [], options = {}) => {
     : "";
   const code = signalScript
     ? null
-    : streamIterDisabled
-      ? 1
-      : args.includes("-e")
-        ? 0
-        : args.includes("you-are-the-child")
+    : rawDebugScript && args.includes("child")
+      ? 0
+      : streamIterDisabled
+        ? 1
+        : args.includes("-e")
           ? 0
-          : script.endsWith("exit.js")
-            ? Number(args[1] || 0)
-            : options.shell &&
-                /does-not-exist|hopefully_you_dont_have/.test(String(_command))
-              ? 127
-              : String(_command).endsWith("echo")
-                ? 0
-                : 1;
+          : args.includes("you-are-the-child")
+            ? 0
+            : script.endsWith("exit.js")
+              ? Number(args[1] || 0)
+              : options.shell &&
+                  /does-not-exist|hopefully_you_dont_have/.test(
+                    String(_command)
+                  )
+                ? 127
+                : String(_command).endsWith("echo")
+                  ? 0
+                  : 1;
   let sends = 0;
   child.send = (...values) => {
     __quenchValidateChildMessage(values[0]);
@@ -862,6 +875,9 @@ const __quenchSpawnChild = (_command, args = [], options = {}) => {
           child.stdout.emit("data", NodeBuffer.from(process.execPath));
         }
       } catch (_) {}
+    }
+    if (rawDebugScript && args.includes("child")) {
+      child.stderr.emit("data", NodeBuffer.from("I can still debug!\n"));
     }
     if (streamIterError) {
       child.stderr.emit("data", NodeBuffer.from(streamIterError));

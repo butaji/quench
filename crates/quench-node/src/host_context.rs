@@ -256,7 +256,26 @@ macro_rules! run_host_context {
         ctx.globals().set("__quench_pid", std::process::id())?;
         ctx.globals().set("__quench_exec_path", std::env::current_exe().unwrap_or_else(|_| PathBuf::from("quench-node")).to_string_lossy().into_owned())?;
         ctx.globals().set("__filename", ctx.globals().get::<_, String>("__quench_script_filename").unwrap_or_else(|_| std::env::current_exe().unwrap_or_else(|_| PathBuf::from("quench-node")).to_string_lossy().into_owned()))?;
-        ctx.globals().set("__quench_argv", env::args().collect::<Vec<String>>())?;
+        let script_argv = ctx.globals().get::<_, String>("__quench_script_filename").ok();
+        let quench_argv = match script_argv {
+            Some(filename) => {
+                let mut argv = vec![
+                    std::env::current_exe()
+                        .unwrap_or_else(|_| PathBuf::from("quench-node"))
+                        .to_string_lossy()
+                        .into_owned(),
+                    filename,
+                ];
+                argv.extend(
+                    env::args()
+                        .skip(1)
+                        .filter(|arg| arg.starts_with("--experimental-")),
+                );
+                argv
+            }
+            None => env::args().collect::<Vec<String>>(),
+        };
+        ctx.globals().set("__quench_argv", quench_argv)?;
         ctx.globals().set("__quench_env_keys", std::env::vars().map(|(key, _)| key).collect::<Vec<String>>())?;
         ctx.globals().set("__quench_platform", std::env::consts::OS)?;
         ctx.globals().set("__quench_arch", std::env::consts::ARCH)?;
