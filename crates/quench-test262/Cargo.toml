@@ -8,3 +8,6 @@ license = "MIT"
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }
 tempfile = "3"
+
+[dependencies]
+quench-runtime = { path = "../quench-runtime" }
