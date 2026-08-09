@@ -1230,3 +1230,15 @@ refreshing a timer moves it behind same-expiry peers instead of retaining its
 original handle-ID position. The focused internal/unref/tie-order stage and the
 complete authoritative `test-timers-refresh.js` fixture pass. The full focused
 gate remains clean at 2335/2335 passing.
+
+Stage 2497 completes the authoritative legacy URL parse/format matrix. Parsed
+objects inherit `url.Url.prototype`; surrounding whitespace no longer removes
+authentication from `href`; path-only query/hash text is normalized into every
+derived field; hierarchical paths preserve legacy-safe punctuation and dot
+segments rather than adopting WHATWG normalization; special protocols without
+an authority format with a single slash; and authenticated protocol-relative
+URLs are parsed through a synthetic authority before their protocol is
+removed. The focused prototype/whitespace/path/relative-authority matrix and
+corrected legacy focused stages pass. Complete authoritative
+`test-url-parse-format.js` and `test-url-format.js` fixtures pass, and the full
+focused gate remains clean at 2336/2336.
