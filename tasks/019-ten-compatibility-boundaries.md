@@ -1426,3 +1426,11 @@ errors delegate to the iterator writer's `fail()`. Both authoritative writable
 fixtures (`test-stream-iter-writable-from.js` and
 `test-stream-iter-writable-interop.js`) now pass, as does the focused stage.
 The post-change focused gate reports 2365/2365 passing.
+
+Follow-up authoritative verification after stage 2528 reran the previously
+flagged stream lifecycle boundaries: `test-stream-iter-writable-from.js`,
+`test-stream-iter-writable-interop.js`, `test-webstreams-pipeline.js`, and
+`test-stream-finished.js` all completed successfully. The six maintained
+representative application stages (Ajv 2047, debug 2069, Chalk 2080, ms 2081,
+Prettier 2104, and process argv0 2251) also pass, and `cargo test -p
+quench-node` remains 2/2 green.
