@@ -140,7 +140,9 @@ pub(crate) fn descriptor(value: Option<&Value>, key: Option<&Value>) -> Value {
             .map(|(_, value)| value.clone()),
         Value::Array(values) => array_descriptor(values, &key),
         Value::String(value) => string_descriptor(value, &key),
-        Value::Builtin(builtin) if key == "length" => Some(Value::Number(builtin_length(*builtin))),
+        Value::Builtin(builtin) if matches!(key.as_str(), "length" | "name") => {
+            return callable_descriptor(callable_property(*builtin, &key).unwrap())
+        }
         Value::Function(function) if key == "length" => {
             return callable_descriptor(Value::Number(f64::from(function.params)))
         }
