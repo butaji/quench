@@ -376,3 +376,8 @@ The network bootstrap was split into address validators, the `Socket` class,
 and the remaining module/server surface. The resulting files are 300, 500,
 and 446 lines; network stages 2037, 2348, 2482, 2498, and 2554 pass with the
 quench-node Rust tests.
+
+The API/assertion bootstrap was split into foundational globals, assertion
+methods, and two rejection/matching tails. The resulting files are 262, 452,
+255, and 253 lines; API stages 10 through 19 pass with the quench-node Rust
+tests.
