@@ -106,3 +106,8 @@ large non-match corpus, so the compatibility objective remains open.
 - Commit `2bda2538c` implements lazy cached `stream/iter.shareSync()` with
   cancellation and source-error propagation. `test-stream-iter-share-sync.js`
   now passes; `toReadable()` remains a separate open cluster.
+- Commit `725a6d6da` completes the byte-mode `toReadable()` and
+  `toReadableSync()` adapters. It adds lazy synchronous-source pumping,
+  readable-event backpressure, source-error/abort propagation, iterator
+  cleanup, and async-generator transform support. The full upstream
+  `test-stream-iter-to-readable.js` fixture passes.
