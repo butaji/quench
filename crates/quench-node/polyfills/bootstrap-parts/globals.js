@@ -732,6 +732,7 @@ if (globalThis.process && typeof globalThis.process.emit !== "function") {
 if (globalThis.__quench_host_timer_scheduler) {
   const __quenchHostTimers = new Map();
   let __quenchHostTimerId = 1;
+  let __quenchHostTimerOrder = 1;
   const __quenchHostNow = () =>
     Number(BigInt(globalThis.__quench_now_ns()) / 1000000n);
   const __quenchHostHandle = (entry) => {
@@ -753,6 +754,7 @@ if (globalThis.__quench_host_timer_scheduler) {
         if (entry.cleared) return this;
         this.active = true;
         entry.due = __quenchHostNow() + entry.delay;
+        entry.order = __quenchHostTimerOrder++;
         __quenchHostTimers.set(entry.id, entry);
         return this;
       },
@@ -783,6 +785,7 @@ if (globalThis.__quench_host_timer_scheduler) {
       due: __quenchHostNow() + Math.max(0, __nodeTimerDelay(delay)),
       repeat,
       cleared: false,
+      order: __quenchHostTimerOrder++,
       domain: globalThis.__quench_active_domain,
       resource: globalThis.__nodeCurrentAsyncResource
     };
@@ -839,7 +842,7 @@ if (globalThis.__quench_host_timer_scheduler) {
           entry.handle.active &&
           (entry.handle.refed || hasRefedTimer)
       )
-      .sort((a, b) => a.id - b.id);
+      .sort((a, b) => a.due - b.due || a.order - b.order);
     for (const entry of due) {
       if (!entry.handle.active) continue;
       if (entry.repeat) entry.due = now + entry.delay;
