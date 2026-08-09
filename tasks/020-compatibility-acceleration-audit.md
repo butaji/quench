@@ -168,3 +168,6 @@ large non-match corpus, so the compatibility objective remains open.
 - The default server `allowHalfOpen` behavior and reusable-socket finish/counter
   reset are now aligned; `test-net-bytes-stats.js` passes with two connections
   and 12 bytes read/written. The earlier close/reconnect gap is resolved.
+- Socket writes and receives now honor `latin1`/`binary`/`ascii` byte mapping and
+  `setEncoding()` delivery. Upstream `test-net-binary.js` and
+  `test-net-bytes-stats.js` both pass after the change.

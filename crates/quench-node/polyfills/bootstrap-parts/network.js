@@ -691,15 +691,23 @@ const __quenchNetModule = {
       }
       return this;
     }
-    write(_data, callback) {
+    write(_data, encoding, callback) {
+      if (typeof encoding === "function") {
+        callback = encoding;
+        encoding = undefined;
+      }
       const length =
         typeof _data === "string"
-          ? NodeBuffer.byteLength(_data)
+          ? ["latin1", "binary", "ascii"].includes(encoding)
+            ? _data.length
+            : NodeBuffer.byteLength(_data, encoding)
           : _data?.byteLength || _data?.length || 0;
       if (!this.destroyed) {
         const bytes =
           typeof _data === "string"
-            ? Array.from(new TextEncoder().encode(_data))
+            ? ["latin1", "binary", "ascii"].includes(encoding)
+              ? Array.from(_data, (value) => value.charCodeAt(0) & 0xff)
+              : Array.from(new TextEncoder().encode(_data))
             : Array.from(new Uint8Array(_data.buffer || _data));
         if (this._nativeId) {
           __quench_tcp_write(this._nativeId, bytes);
@@ -711,10 +719,13 @@ const __quenchNetModule = {
           queueMicrotask(() => {
             if (peer.destroyed) return;
             peer.bytesRead += chunk.length;
+            const delivered = peer.encoding
+              ? chunk.toString(peer.encoding)
+              : chunk;
             if (peer._paused || peer.listenerCount("data") === 0) {
-              peer._pendingData.push(chunk);
+              peer._pendingData.push(delivered);
             }
-            else peer.emit("data", chunk);
+            else peer.emit("data", delivered);
           });
         }
         this._bufferSize += length;
