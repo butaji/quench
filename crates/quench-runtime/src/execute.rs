@@ -7,7 +7,6 @@ use crate::{ops::Op, value::Value};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VmError {
     RegisterOutOfBounds(u16),
-    NonNumericOperand,
     MissingReturn,
     NotCallable,
     EvalError(String),
@@ -300,15 +299,7 @@ fn evaluate_binary(
         | crate::ops::BinaryOp::Multiply
         | crate::ops::BinaryOp::Divide
         | crate::ops::BinaryOp::Remainder
-        | crate::ops::BinaryOp::Exponentiate => match (&left, &right, operator) {
-            (Value::String(left), Value::String(right), crate::ops::BinaryOp::Add) => {
-                Value::String(format!("{left}{right}"))
-            }
-            (Value::Number(left), Value::Number(right), _) => {
-                Value::Number(numeric_binary(*left, *right, operator))
-            }
-            _ => return Err(VmError::NonNumericOperand),
-        },
+        | crate::ops::BinaryOp::Exponentiate => arithmetic_value(left, right, operator),
         crate::ops::BinaryOp::Equal => Value::Boolean(loose_equal(left, right)),
         crate::ops::BinaryOp::NotEqual => Value::Boolean(!loose_equal(left, right)),
         crate::ops::BinaryOp::StrictEqual => Value::Boolean(left == right),
@@ -321,6 +312,21 @@ fn evaluate_binary(
         crate::ops::BinaryOp::BitwiseXor => bitwise_numbers(left, right, |a, b| a ^ b)?,
         crate::ops::BinaryOp::BitwiseAnd => bitwise_numbers(left, right, |a, b| a & b)?,
     })
+}
+
+fn arithmetic_value(left: &Value, right: &Value, operator: crate::ops::BinaryOp) -> Value {
+    if operator == crate::ops::BinaryOp::Add
+        && (matches!(left, Value::String(_)) || matches!(right, Value::String(_)))
+    {
+        return Value::String(format!(
+            "{}{}",
+            to_string(Some(left)),
+            to_string(Some(right))
+        ));
+    }
+    let left = to_number(Some(left));
+    let right = to_number(Some(right));
+    Value::Number(numeric_binary(left, right, operator))
 }
 
 fn loose_equal(left: &Value, right: &Value) -> bool {
