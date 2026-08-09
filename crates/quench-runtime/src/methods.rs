@@ -24,7 +24,7 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError
         Value::Builtin(builtin) => {
             execute_builtin_with_receiver(builtin, &arguments, Some(&receiver))?
         }
-        Value::Function(function) => crate::execute::execute_function(&function, &arguments)?,
+        Value::Function(function) => crate::functions::execute(&function, &arguments)?,
         _ => return Err(VmError::NotCallable),
     };
     write_value(registers, *dst, value);
