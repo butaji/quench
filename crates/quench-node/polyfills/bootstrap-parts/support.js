@@ -98,12 +98,16 @@ globalThis.__nodeCommon = {
   invalidArgTypeHelper: (input) => {
     if (input == null) return ` Received ${input}`;
     if (typeof input === "string") return ` Received type string ('${input}')`;
+    if (typeof input === "function") {
+      return ` Received function ${input.name}`;
+    }
     if (typeof input === "object") {
       return ` Received an instance of ${input.constructor?.name || "Object"}`;
     }
     let rendered;
     try {
-      rendered = String(input);
+      rendered =
+        typeof input === "bigint" ? `${String(input)}n` : String(input);
     } catch (_) {
       rendered = Object.prototype.toString.call(input);
     }
