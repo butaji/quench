@@ -172,10 +172,46 @@ fn reduce_if_statement(
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
 ) -> Result<Option<u16>, Vec<String>> {
-    let Expression::BooleanLiteral(condition) = &statement.test else {
-        return Err(vec!["Dynamic branch is unsupported".to_string()]);
+    let condition = match &statement.test {
+        Expression::BooleanLiteral(condition) => {
+            return reduce_static_if(
+                statement,
+                condition.value,
+                ops,
+                facts,
+                next_register,
+                next_slot,
+                locals,
+            );
+        }
+        test => reduce_expression(test, ops, facts, next_register, locals)
+            .ok_or_else(|| vec!["Unsupported branch condition".to_string()])?,
     };
-    let selected = if condition.value {
+    let then_ops = crate::branch::reduce(&statement.consequent, facts, locals)?;
+    let else_ops = statement
+        .alternate
+        .as_ref()
+        .map(|alternate| crate::branch::reduce(alternate, facts, locals))
+        .transpose()?
+        .unwrap_or_else(Vec::new);
+    ops.push(Op::Branch {
+        condition,
+        then_ops,
+        else_ops,
+    });
+    Ok(None)
+}
+
+fn reduce_static_if(
+    statement: &oxc::ast::ast::IfStatement<'_>,
+    condition: bool,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    next_slot: &mut u16,
+    locals: &mut HashMap<String, u16>,
+) -> Result<Option<u16>, Vec<String>> {
+    let selected = if condition {
         Some(&statement.consequent)
     } else {
         statement.alternate.as_ref()
@@ -196,7 +232,11 @@ fn reduce_if_statement(
         _ => Err(vec!["Unsupported conditional statement".to_string()]),
     }
 }
-fn finish_program(mut ops: Vec<Op>, last_value: Option<u16>) -> Result<Vec<Op>, Vec<String>> {
+
+pub(crate) fn finish_program(
+    mut ops: Vec<Op>,
+    last_value: Option<u16>,
+) -> Result<Vec<Op>, Vec<String>> {
     if let Some(register) = last_value {
         ops.push(Op::Return { src: register });
     } else {
