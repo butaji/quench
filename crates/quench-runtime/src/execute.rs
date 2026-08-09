@@ -24,6 +24,7 @@ fn execute_with_registers(ops: &[Op], mut registers: Vec<Value>) -> Result<Value
             Op::StoreLocal { slot, src } => copy_register(&mut registers, *slot, *src)?,
             Op::LoadLocal { dst, slot } => copy_register(&mut registers, *dst, *slot)?,
             Op::MakeArray { dst, elements } => execute_array(&mut registers, *dst, elements)?,
+            Op::MakeObject { dst, properties } => execute_object(&mut registers, *dst, properties)?,
             Op::GetProperty { dst, object, key } => {
                 let value = get_property(&read_register(&registers, *object)?, key);
                 write_value(&mut registers, *dst, value);
@@ -65,9 +66,27 @@ fn execute_array(registers: &mut Vec<Value>, dst: u16, elements: &[u16]) -> Resu
     Ok(())
 }
 
+fn execute_object(
+    registers: &mut Vec<Value>,
+    dst: u16,
+    properties: &[(String, u16)],
+) -> Result<(), VmError> {
+    let values = properties
+        .iter()
+        .map(|(key, index)| Ok((key.clone(), read_register(registers, *index)?)))
+        .collect::<Result<Vec<_>, VmError>>()?;
+    write_value(registers, dst, Value::Object(Rc::new(values)));
+    Ok(())
+}
+
 fn get_property(value: &Value, key: &str) -> Value {
     match value {
         Value::Array(values) => array_property(values, key),
+        Value::Object(properties) => properties
+            .iter()
+            .rev()
+            .find(|(name, _)| name == key)
+            .map_or(Value::Undefined, |(_, value)| value.clone()),
         Value::String(value) => string_property(value, key),
         Value::Function(function) if key == "length" => Value::Number(f64::from(function.params)),
         _ => Value::Undefined,
@@ -148,6 +167,7 @@ fn type_of(value: &Value) -> &'static str {
         Value::Number(_) => "number",
         Value::String(_) => "string",
         Value::Array(_) => "object",
+        Value::Object(_) => "object",
         Value::Function(_) => "function",
     }
 }
@@ -165,6 +185,7 @@ fn is_truthy(value: &Value) -> bool {
         Value::Number(value) => *value != 0.0 && !value.is_nan(),
         Value::String(value) => !value.is_empty(),
         Value::Array(_) => true,
+        Value::Object(_) => true,
         Value::Null | Value::Undefined => false,
         Value::Function(_) => true,
     }
