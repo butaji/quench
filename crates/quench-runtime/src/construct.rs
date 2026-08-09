@@ -41,6 +41,7 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<(), crate::
     let value = match crate::execute::read_register(registers, *callee)? {
         Value::Builtin(crate::ops::Builtin::Array) => crate::builtins::array(&arguments),
         Value::Builtin(crate::ops::Builtin::Object) => crate::builtins::object(&arguments),
+        Value::Builtin(crate::ops::Builtin::TypeError) => crate::builtins::object(&arguments),
         Value::Function(_) => Value::Object(std::rc::Rc::new(Vec::new())),
         _ => return Err(crate::execute::VmError::NotCallable),
     };
