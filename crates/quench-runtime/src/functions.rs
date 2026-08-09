@@ -21,6 +21,21 @@ pub(crate) fn function_parameters(
     Ok((parameters, count))
 }
 
+pub(crate) fn reduce_body(
+    body: &oxc::ast::ast::FunctionBody<'_>,
+    facts: &mut ProgramDb,
+    parameters: HashMap<String, u16>,
+    parameter_count: u16,
+    captures: u16,
+) -> Result<Vec<Op>, Vec<String>> {
+    crate::reduce::reduce_statements_with_locals(
+        &body.statements,
+        facts,
+        parameters,
+        captures.saturating_add(parameter_count).saturating_add(1),
+    )
+}
+
 pub(crate) fn reduce_expression(
     function: &oxc::ast::ast::Function<'_>,
     ops: &mut Vec<Op>,
@@ -47,7 +62,7 @@ pub(crate) fn reduce_expression(
         &body.statements,
         facts,
         parameters,
-        parameter_count,
+        captures.saturating_add(parameter_count).saturating_add(1),
     )
     .ok()?;
     let register = *next_register;
