@@ -1395,13 +1395,30 @@ class NodeTransform extends NodeWritable {
           ? NodeBuffer.from(chunk)
           : chunk;
       if (this.listenerCount("data")) this.emit("data", value);
-      else {
+      else if (!this._transformResumed) {
         this._readableChunks.push(value);
         if (this.listenerCount("readable"))
           queueMicrotask(() => this.emit("readable"));
       }
     }
     return chunk !== null;
+  }
+  resume() {
+    this.readableFlowing = true;
+    this._transformResumed = true;
+    while (this._readableChunks.length) {
+      const chunk = this._readableChunks.shift();
+      if (this.listenerCount("data")) this.emit("data", chunk);
+    }
+    if (
+      this.readableEnded &&
+      !this._transformEndEmitted &&
+      this.listenerCount("end")
+    ) {
+      this._transformEndEmitted = true;
+      queueMicrotask(() => this.emit("end"));
+    }
+    return this;
   }
   read() {
     return this._readableChunks.shift() ?? null;

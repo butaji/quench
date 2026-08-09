@@ -1138,3 +1138,13 @@ authoritative `test-stream-readable-pause-and-resume.js` and
 flush fixtures still expose independent validation/finalization boundaries and
 are not claimed. The post-correction audit reports 2313/2326 passing with 13
 unclassified failures.
+
+Stage 2488 gives Transform its readable-side `resume()` behavior. Resuming
+drains or discards already buffered output, later output is discarded while
+flowing without a data consumer, and an exhausted readable side can emit `end`
+before writable `finish` triggers auto-destroy. The focused event-order stage
+and stages 1923, 1925, and 2146 observe `end`, `finish`, the custom destroy hook,
+and `close` exactly once in Node order. The complete authoritative
+`test-stream-auto-destroy.js` fixture passes; the broader Transform destroy
+fixture retains a separate opaque QuickJS failure and is not claimed. The
+post-fix audit reports 2317/2327 passing with 10 unclassified failures.
