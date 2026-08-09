@@ -25,6 +25,13 @@ pub(crate) fn reduce_literal(expression: &Expression<'_>) -> Option<Literal> {
             fact: FactConstant::Null,
             op: Constant::Null,
         }),
+        Expression::TemplateLiteral(template) if template.expressions.is_empty() => {
+            let value = template.quasis.first()?.value.cooked.as_ref()?.to_string();
+            Some(Literal {
+                fact: FactConstant::String(value.clone()),
+                op: Constant::String(value),
+            })
+        }
         _ => None,
     }
 }
