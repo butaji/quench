@@ -35,6 +35,7 @@ fn execute_with_registers(ops: &[Op], mut registers: Vec<Value>) -> Result<Value
                 execute_call(&mut registers, *dst, *callee, args)?;
             }
             Op::CallMethod { .. } => crate::methods::execute(&mut registers, op)?,
+            Op::Construct { .. } => crate::construct::execute(&mut registers, op)?,
             Op::Unary { dst, operator, src } => {
                 execute_unary(&mut registers, *dst, *operator, *src)?
             }
@@ -154,7 +155,7 @@ fn execute_call(
             arguments.truncate(usize::from(body.params));
             execute_with_registers(&body.body, arguments)?
         }
-        Value::Builtin(builtin) => execute_builtin(builtin, &arguments)?,
+        Value::Builtin(builtin) => execute_builtin_with_receiver(builtin, &arguments, None)?,
         _ => return Err(VmError::NotCallable),
     };
     write_value(registers, dst, value);
@@ -167,9 +168,6 @@ fn execute_eval(arguments: &[Value]) -> Result<Value, VmError> {
     let program = crate::reduce::reduce_source(source)
         .map_err(|errors| VmError::EvalError(errors.join("; ")))?;
     execute(&program.ops).map_err(|error| VmError::EvalError(format!("{error:?}")))
-}
-fn execute_builtin(builtin: crate::ops::Builtin, arguments: &[Value]) -> Result<Value, VmError> {
-    execute_builtin_with_receiver(builtin, arguments, None)
 }
 pub(crate) fn execute_builtin_with_receiver(
     builtin: crate::ops::Builtin,
