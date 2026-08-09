@@ -56,25 +56,44 @@ pub(crate) fn reduce_for_in(
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
 ) -> Result<(), Vec<String>> {
-    let oxc::ast::ast::ForStatementLeft::VariableDeclaration(declaration) = &statement.left else {
-        return Err(vec!["Unsupported for-in binding".to_string()]);
-    };
-    let Some(declarator) = declaration.declarations.first() else {
-        return Err(vec!["Missing for-in binding".to_string()]);
-    };
-    let oxc::ast::ast::BindingPatternKind::BindingIdentifier(identifier) = &declarator.id.kind
-    else {
-        return Err(vec!["Unsupported for-in binding".to_string()]);
-    };
-    let slot = *next_slot;
-    *next_slot = next_slot.saturating_add(1);
-    locals.insert(identifier.name.to_string(), slot);
+    let slot = for_in_slot(&statement.left, next_slot, locals)?;
     let object =
         crate::reduce::reduce_expression(&statement.right, ops, facts, next_register, locals)
             .ok_or_else(|| vec!["Unsupported for-in object".to_string()])?;
     let body = crate::branch::reduce(&statement.body, facts, locals)?;
     ops.push(Op::ForIn { object, slot, body });
     Ok(())
+}
+
+fn for_in_slot(
+    left: &oxc::ast::ast::ForStatementLeft<'_>,
+    next_slot: &mut u16,
+    locals: &mut HashMap<String, u16>,
+) -> Result<u16, Vec<String>> {
+    let name = match left {
+        oxc::ast::ast::ForStatementLeft::VariableDeclaration(declaration) => {
+            let Some(declarator) = declaration.declarations.first() else {
+                return Err(vec!["Missing for-in binding".to_string()]);
+            };
+            let oxc::ast::ast::BindingPatternKind::BindingIdentifier(identifier) =
+                &declarator.id.kind
+            else {
+                return Err(vec!["Unsupported for-in binding".to_string()]);
+            };
+            identifier.name.to_string()
+        }
+        oxc::ast::ast::ForStatementLeft::AssignmentTargetIdentifier(identifier) => {
+            identifier.name.to_string()
+        }
+        _ => return Err(vec!["Unsupported for-in binding".to_string()]),
+    };
+    if let Some(slot) = locals.get(&name) {
+        return Ok(*slot);
+    }
+    let slot = *next_slot;
+    *next_slot = next_slot.saturating_add(1);
+    locals.insert(name, slot);
+    Ok(slot)
 }
 
 pub(crate) fn execute_for_in(
