@@ -1,6 +1,16 @@
 use crate::{execute::VmError, ops::Op, value::Value};
 use std::collections::HashMap;
 
+macro_rules! execute_branch {
+    ($registers:expr, $op:expr) => {
+        match $crate::branch::execute_or_continue($registers, $op)? {
+            Some(value) => return Ok(value),
+            None => {}
+        }
+    };
+}
+pub(crate) use execute_branch;
+
 pub(crate) fn execute(registers: &[Value], op: &Op) -> Result<Value, VmError> {
     let Op::Branch {
         condition,
@@ -17,6 +27,14 @@ pub(crate) fn execute(registers: &[Value], op: &Op) -> Result<Value, VmError> {
         else_ops
     };
     crate::execute::execute_with_registers(selected, registers.to_vec())
+}
+
+pub(crate) fn execute_or_continue(registers: &[Value], op: &Op) -> Result<Option<Value>, VmError> {
+    match execute(registers, op) {
+        Ok(value) => Ok(Some(value)),
+        Err(VmError::MissingReturn) => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 pub(crate) fn execute_special(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
