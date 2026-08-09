@@ -7,6 +7,10 @@
 
 ## Goal
 
+Use the data-first IR and generated adapters as the default acceleration path:
+one general schema change should resolve the largest compatible failure cluster
+with the fewest maintainable lines.
+
 Reduce the time from an observed Node mismatch to a verified general fix by
 2–5x, while preserving the full compatibility objective, readable polyfills,
 local-only verification, and authoritative evidence.
@@ -64,6 +68,18 @@ local-only verification, and authoritative evidence.
    release gates are actually complete.
 
 ## Status
+
+### 2026-08-09 differential refresh checkpoint
+
+The full parallel differential refresh completed 4,682/4,682 fixtures with
+zero worker failures in 694 seconds. It produced 1,268 matches and 3,414
+non-matches: 2,141 Quench failures, 570 output mismatches, 391 both-failed
+cases, 241 Node-only failures, and 71 timeouts; 192 fixtures are classified
+as environment-limited. `tools/compat-queue.sh` now reports fresh evidence
+with the largest owned signatures in HTTP (145), net (47), stream (45), fs
+(36), and REPL (35). The next implementation slice should start with the
+HTTP agent cluster after preserving the existing focused and application
+gates.
 
 In progress. The audit and application-gate tools are implemented and pass
 their syntax and live application checks. The latest application snapshot is

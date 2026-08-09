@@ -1,6 +1,15 @@
 # Compatibility throughput and differential triage
 
+> Contract: This task is part of broad Node 24 compatibility across Linux
+> x86_64, Linux ARM64, macOS, and Windows. Native addons and Node-API are
+> excluded. Use the statuses and release gates in
+> [compatibility-contract.md](../docs/compatibility-contract.md).
+
 ## Goal
+
+Prioritize changes that collapse multiple failures into one declaration or
+generic adapter. Differential clusters should map to reusable data and code,
+not a growing collection of fixture-specific wrappers.
 
 Increase Node 24 application-compatibility implementation throughput by 2–5x without weakening
 the readable-polyfill, local-verification, or no-GitHub-CI requirements.
@@ -81,16 +90,17 @@ handoff to avoid conflicting changes.
 Extend local reports to show:
 
 - upstream fixtures executed;
-- pass, fail, skip, timeout, and platform-limited counts;
+- pass, fail, unsupported, platform-limited, known-conflict, and not-tested
+  counts;
 - pass rate by API prefix/cluster;
 - unique failure signatures;
 - regressions since the previous run;
 - completed and unassigned work items.
 
 Do not call this an API percentage. Node tests are not one-to-one with Node
-APIs; API coverage remains `unmeasured`. The initial manifest targets Node 24
-parallel/ESM/support trees, and release readiness also requires zero failures
-in the Hono and representative npm CLI application gates.
+APIs; API coverage remains `unmeasured`. The manifest targets all applicable
+Node 24 trees, and release readiness also requires zero unexplained failures
+in all six workload-class application gates.
 The authoritative source roles and implementation order are maintained in
 `docs/authoritative-test-sources.md`.
 
@@ -124,6 +134,21 @@ parallel. Together these changes target roughly 2–5x throughput; this is a
 working hypothesis to validate with before/after corpus and cycle-time data.
 
 ## Status
+
+### 2026-08-09 differential refresh
+
+The full parallel differential corpus completed 4,682/4,682 fixtures with
+zero worker failures in 694 seconds. The fresh report records 1,268 matches,
+3,414 non-matches, 391 both-failed cases, 241 Node-only failures, 570 output
+mismatches, 2,141 Quench failures, 71 timeouts, and 192 environment-limited
+fixtures. The top owned queue signatures are HTTP (145), net (47), stream
+(45), fs (36), and REPL (35). The report is current at
+`target/compat/differential-parallel.json`; compatibility work remains open.
+
+The throughput work is now tracked and extended by task 020. The ranked audit
+identified fragmented evidence and missing release-gate orchestration as the
+largest immediate process costs; those improvements are implemented in
+`tools/compat-goal-audit.sh` and `tools/check-application-stages.sh`.
 
 The HTTP queue recently verified stage 2045 against the upstream
 `test-http-client-upload.js` fixture. Request chunk boundaries and response
