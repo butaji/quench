@@ -155,6 +155,7 @@ pub(crate) fn execute_builtin_with_receiver(
         crate::ops::Builtin::ArrayLastIndexOf => {
             Ok(crate::arrays::last_index_of(receiver, arguments))
         }
+        crate::ops::Builtin::ArraySlice => Ok(crate::arrays::slice(receiver, arguments)),
         crate::ops::Builtin::ArrayForEach => crate::builtins::array_for_each(receiver, arguments),
         crate::ops::Builtin::FunctionCall
         | crate::ops::Builtin::FunctionBind
