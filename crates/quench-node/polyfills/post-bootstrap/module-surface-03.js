@@ -73,6 +73,38 @@ const __quenchComposeStreamValues = async (stream, values) => {
   }
   return output;
 };
+const __quenchComposeStageValues = async (stages, initialValues) => {
+  let values = initialValues;
+  for (const stage of stages) {
+    if (typeof stage !== "function") {
+      values = await __quenchComposeStreamValues(stage, values);
+      continue;
+    }
+    const next = [];
+    const source = (async function* () {
+      for (const value of values) yield value;
+    })();
+    const output = stage(source);
+    if (output && typeof output.next === "function") {
+      while (true) {
+        const step = await output.next();
+        if (step.done) break;
+        next.push(step.value);
+      }
+    } else if (output?.then) {
+      const value = await output;
+      if (value !== undefined) {
+        const error = new TypeError(
+          "ERR_INVALID_RETURN_VALUE: terminal stream function must return undefined"
+        );
+        error.code = "ERR_INVALID_RETURN_VALUE";
+        throw error;
+      }
+    }
+    values = next;
+  }
+  return values;
+};
 const __quenchComposeStreams = (streams, result) => {
   if (streams.length === 0) {
     throw __quenchComposeArgumentError(
@@ -103,38 +135,11 @@ const __quenchComposeStreams = (streams, result) => {
       objectMode: true,
       transform(chunk, encoding, callback) {
         const outputStream = this;
-        (async () => {
-          let values = [chunk];
-          for (const stage of streams) {
-            if (typeof stage !== "function") {
-              values = await __quenchComposeStreamValues(stage, values);
-              continue;
-            }
-            const next = [];
-            const source = (async function* () {
-              for (const value of values) yield value;
-            })();
-            const output = stage(source);
-            if (output && typeof output.next === "function") {
-              while (true) {
-                const step = await output.next();
-                if (step.done) break;
-                next.push(step.value);
-              }
-            } else if (output?.then) {
-              const value = await output;
-              if (value !== undefined) {
-                const error = new TypeError(
-                  "ERR_INVALID_RETURN_VALUE: terminal stream function must return undefined"
-                );
-                error.code = "ERR_INVALID_RETURN_VALUE";
-                throw error;
-              }
-            }
-            values = next;
-          }
-          for (const value of values) outputStream.push(value);
-        })().then(() => callback(), callback);
+        __quenchComposeStageValues(streams, [chunk])
+          .then((values) => {
+            for (const value of values) outputStream.push(value);
+          })
+          .then(() => callback(), callback);
       }
     });
     composed.writable = __quenchComposeWritable(streams[0]);
@@ -160,6 +165,26 @@ const __quenchComposeStreams = (streams, result) => {
       else this.write(chunk, encoding, finish);
       return this;
     };
+    if (!composed.writable) {
+      queueMicrotask(() => {
+        (async () => {
+          const first = streams[0];
+          const source = typeof first === "function" ? first() : first;
+          const values = [];
+          for await (const value of source) values.push(value);
+          const output = await __quenchComposeStageValues(
+            streams.slice(1),
+            values
+          );
+          for (const value of output) composed.push(value);
+          if (composed.readable !== false) composed.push(null);
+          else {
+            composed.writableFinished = true;
+            composed.emit("finish");
+          }
+        })().catch((error) => composed.destroy(error));
+      });
+    }
     return __quenchComposeDestroy(composed, streams);
   }
   const first = streams[0];
