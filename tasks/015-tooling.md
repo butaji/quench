@@ -281,3 +281,7 @@ polyfill now passes ESLint with zero warnings; stages 2230, 2231, 2232, and
 EventEmitter listener invocation, capture-rejection handling, and unhandled
 domain errors were split into methods. `support.js` now passes ESLint with
 zero warnings; representative events/diagnostics stages remain green.
+
+`read-file.js` path and option validation now use focused helpers and passes
+ESLint with zero warnings. Read-file, URL, abort, and encoding stages 10,
+1257, 1313, 1624, 176, and 1853 pass.
