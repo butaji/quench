@@ -16,38 +16,36 @@ pub(crate) fn execute_with_registers(
     ops: &[Op],
     mut registers: Vec<Value>,
 ) -> Result<Value, VmError> {
+    execute_in_place(ops, &mut registers)
+}
+
+pub(crate) fn execute_in_place(ops: &[Op], registers: &mut Vec<Value>) -> Result<Value, VmError> {
     for op in ops {
         match op {
-            Op::Const { dst, value } => write_register(&mut registers, *dst, value),
-            Op::StoreLocal { slot, src } => copy_register(&mut registers, *slot, *src)?,
-            Op::LoadLocal { dst, slot } => copy_register(&mut registers, *dst, *slot)?,
-            Op::MakeArray { dst, elements } => execute_array(&mut registers, *dst, elements)?,
-            Op::MakeObject { dst, properties } => execute_object(&mut registers, *dst, properties)?,
-            Op::MakeBuiltin { dst, builtin } => write_builtin(&mut registers, *dst, *builtin),
-            Op::GetProperty { dst, object, key } => {
-                let value = get_property(&read_register(&registers, *object)?, key);
-                write_value(&mut registers, *dst, value);
-            }
-            Op::SetProperty { .. } => execute_set_property_op(&mut registers, op)?,
-            Op::MakeFunction { dst, body, params } => {
-                write_value(&mut registers, *dst, crate::functions::make(body, *params))
-            }
-            Op::Call { dst, callee, args } => {
-                execute_call(&mut registers, *dst, *callee, args)?;
-            }
-            Op::CallMethod { .. } | Op::Construct { .. } | Op::Branch { .. } | Op::Try { .. } => {
-                crate::branch::execute_special(&mut registers, op)?;
-            }
-            Op::Unary { dst, operator, src } => {
-                execute_unary(&mut registers, *dst, *operator, *src)?
-            }
+            Op::Const { dst, value } => write_register(registers, *dst, value),
+            Op::StoreLocal { slot, src } => copy_register(registers, *slot, *src)?,
+            Op::LoadLocal { dst, slot } => copy_register(registers, *dst, *slot)?,
+            Op::MakeArray { dst, elements } => execute_array(registers, *dst, elements)?,
+            Op::MakeObject { dst, properties } => execute_object(registers, *dst, properties)?,
+            Op::MakeBuiltin { dst, builtin } => write_builtin(registers, *dst, *builtin),
+            Op::GetProperty { .. } => crate::properties::execute_get(registers, op)?,
+            Op::SetProperty { .. } => execute_set_property_op(registers, op)?,
+            Op::MakeFunction { .. } => crate::functions::write_op(registers, op),
+            Op::Call { dst, callee, args } => execute_call(registers, *dst, *callee, args)?,
+            Op::CallMethod { .. }
+            | Op::Construct { .. }
+            | Op::Branch { .. }
+            | Op::Try { .. }
+            | Op::Loop { .. }
+            | Op::Switch { .. } => crate::branch::execute_special(registers, op)?,
+            Op::Unary { dst, operator, src } => execute_unary(registers, *dst, *operator, *src)?,
             Op::Binary {
                 dst,
                 operator,
                 lhs,
                 rhs,
-            } => execute_binary(&mut registers, *dst, *operator, *lhs, *rhs)?,
-            Op::Return { .. } | Op::Throw { .. } => return execute_terminal(op, &registers),
+            } => execute_binary(registers, *dst, *operator, *lhs, *rhs)?,
+            Op::Return { .. } | Op::Throw { .. } => return execute_terminal(op, registers),
         }
     }
     Err(VmError::MissingReturn)
@@ -177,6 +175,8 @@ pub(crate) fn execute_builtin_with_receiver(
             arguments.first(),
             Some(Value::Array(_))
         ))),
+        crate::ops::Builtin::ArrayMap => Ok(crate::builtins::array_map(arguments)),
+        crate::ops::Builtin::FunctionCall => Ok(crate::builtins::function_call(arguments)),
         crate::ops::Builtin::Boolean => {
             Ok(Value::Boolean(arguments.first().is_some_and(is_truthy)))
         }
@@ -191,18 +191,15 @@ pub(crate) fn execute_builtin_with_receiver(
             arguments.get(1),
         ))),
         crate::ops::Builtin::ObjectKeys => Ok(crate::builtins::keys(arguments.first())),
-        crate::ops::Builtin::ObjectHasOwnProperty => Ok(crate::builtins::has_own_property(
-            receiver,
-            arguments.first(),
-        )),
-        crate::ops::Builtin::ObjectGetOwnPropertyDescriptor => Ok(crate::builtins::descriptor(
-            arguments.first(),
-            arguments.get(1),
-        )),
+        crate::ops::Builtin::ObjectHasOwnProperty
+        | crate::ops::Builtin::ObjectGetOwnPropertyDescriptor => Ok(
+            crate::builtins::object_special(builtin, receiver, arguments),
+        ),
         crate::ops::Builtin::ParseFloat => Ok(Value::Number(parse_float(arguments.first()))),
         crate::ops::Builtin::ParseInt => Ok(Value::Number(parse_int(arguments))),
         crate::ops::Builtin::String => Ok(Value::String(to_string(arguments.first()))),
         crate::ops::Builtin::Unescape => Ok(crate::builtins::unescape(arguments.first())),
+        _ => Ok(Value::Undefined),
     }
 }
 fn is_finite(value: Option<&Value>) -> bool {

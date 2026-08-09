@@ -67,6 +67,16 @@ pub enum Op {
         handler: Option<Vec<Op>>,
         finalizer: Option<Vec<Op>>,
     },
+    Loop {
+        init: Vec<Op>,
+        test: Vec<Op>,
+        body: Vec<Op>,
+        update: Vec<Op>,
+    },
+    Switch {
+        discriminant: u16,
+        cases: Vec<(Option<Constant>, Vec<Op>)>,
+    },
     Unary {
         dst: u16,
         operator: UnaryOp,
@@ -90,6 +100,8 @@ pub enum Op {
 pub enum Builtin {
     Array,
     ArrayIsArray,
+    ArrayMap,
+    FunctionCall,
     Boolean,
     Eval,
     Escape,
@@ -101,6 +113,7 @@ pub enum Builtin {
     ObjectKeys,
     ObjectHasOwnProperty,
     ObjectGetOwnPropertyDescriptor,
+    ArrayPrototype,
     ParseFloat,
     ParseInt,
     String,
