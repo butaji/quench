@@ -37,7 +37,7 @@ pub(crate) fn execute_in_place(ops: &[Op], registers: &mut Vec<Value>) -> Result
             Op::ForIn { .. } => crate::loops::execute_for_in(registers, op)?,
             Op::MakeFunction { .. } => crate::functions::write_op(registers, op),
             Op::Call { dst, callee, args } => execute_call(registers, *dst, *callee, args)?,
-            Op::Branch { .. } => return crate::branch::execute(registers, op),
+            Op::Branch { .. } => crate::branch::execute_branch!(registers, op),
             Op::CallMethod { .. }
             | Op::Construct { .. }
             | Op::Try { .. }
