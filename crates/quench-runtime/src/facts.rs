@@ -26,6 +26,8 @@ impl<T> Fact<T> {
 #[derive(Debug, Default, PartialEq)]
 pub struct ProgramDb {
     pub constants: Vec<ConstantFact>,
+    pub scope_count: usize,
+    pub symbol_count: usize,
 }
 
 #[derive(Debug, Clone, PartialEq)]
