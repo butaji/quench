@@ -11,6 +11,27 @@ use crate::{
     ops::{Constant, Op},
 };
 
+pub(crate) fn execute(
+    registers: &mut Vec<crate::value::Value>,
+    op: &crate::ops::Op,
+) -> Result<(), crate::execute::VmError> {
+    let crate::ops::Op::Loop {
+        init,
+        test,
+        body,
+        update,
+    } = op
+    else {
+        return Err(crate::execute::VmError::MissingReturn);
+    };
+    crate::execute::execute_in_place(init, registers)?;
+    while crate::execute::is_truthy(&crate::execute::execute_in_place(test, registers)?) {
+        crate::execute::execute_in_place(body, registers)?;
+        crate::execute::execute_in_place(update, registers)?;
+    }
+    Ok(())
+}
+
 pub(crate) fn reduce_for(
     statement: &ForStatement<'_>,
     ops: &mut Vec<Op>,
@@ -19,8 +40,35 @@ pub(crate) fn reduce_for(
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
 ) -> Result<(), Vec<String>> {
-    let (name, start) = numeric_init(statement.init.as_ref())?;
-    let (limit, step) = numeric_test_and_update(statement, &name)?;
+    let Some((name, start, limit, step)) = static_bounds(statement) else {
+        return reduce_dynamic_for(statement, ops, facts, next_register, next_slot, locals);
+    };
+    reduce_static_for(
+        statement,
+        (name, start, limit, step),
+        ops,
+        facts,
+        next_register,
+        next_slot,
+        locals,
+    )
+}
+
+fn static_bounds(statement: &ForStatement<'_>) -> Option<(String, f64, f64, f64)> {
+    let (name, start) = numeric_init(statement.init.as_ref()).ok()?;
+    let (limit, step) = numeric_test_and_update(statement, &name).ok()?;
+    Some((name, start, limit, step))
+}
+
+fn reduce_static_for(
+    statement: &ForStatement<'_>,
+    (name, start, limit, step): (String, f64, f64, f64),
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    next_slot: &mut u16,
+    locals: &mut HashMap<String, u16>,
+) -> Result<(), Vec<String>> {
     let slot = *next_slot;
     *next_slot = next_slot.saturating_add(1);
     locals.insert(name, slot);
@@ -42,6 +90,113 @@ pub(crate) fn reduce_for(
         count += 1;
     }
     Ok(())
+}
+
+fn reduce_dynamic_for(
+    statement: &ForStatement<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    next_slot: &mut u16,
+    locals: &mut HashMap<String, u16>,
+) -> Result<(), Vec<String>> {
+    let init = reduce_for_init(statement, ops, facts, next_register, next_slot, locals)?;
+    let test = reduce_fragment(statement.test.as_ref(), ops, facts, next_register, locals)?;
+    let body = reduce_body_fragment(statement, ops, facts, next_register, next_slot, locals)?;
+    let update = reduce_fragment(statement.update.as_ref(), ops, facts, next_register, locals)?;
+    ops.push(Op::Loop {
+        init,
+        test,
+        body,
+        update,
+    });
+    Ok(())
+}
+
+fn reduce_for_init(
+    statement: &ForStatement<'_>,
+    _ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    next_slot: &mut u16,
+    locals: &mut HashMap<String, u16>,
+) -> Result<Vec<Op>, Vec<String>> {
+    let mut fragment = Vec::new();
+    match statement.init.as_ref() {
+        Some(ForStatementInit::VariableDeclaration(declaration)) => {
+            crate::reduce::reduce_declaration(
+                declaration,
+                &mut fragment,
+                facts,
+                next_register,
+                next_slot,
+                locals,
+            )?;
+        }
+        Some(init) => {
+            let expression = init
+                .as_expression()
+                .ok_or_else(|| vec!["Unsupported for initializer".to_string()])?;
+            crate::reduce::reduce_expression(
+                expression,
+                &mut fragment,
+                facts,
+                next_register,
+                locals,
+            )
+            .ok_or_else(|| vec!["Unsupported for initializer".to_string()])?;
+        }
+        None => {}
+    }
+    crate::reduce::finish_program(fragment, None)
+}
+
+fn reduce_fragment(
+    expression: Option<&Expression<'_>>,
+    _parent_ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Result<Vec<Op>, Vec<String>> {
+    let mut fragment = Vec::new();
+    if let Some(expression) = expression {
+        let register = crate::reduce::reduce_expression(
+            expression,
+            &mut fragment,
+            facts,
+            next_register,
+            locals,
+        )
+        .ok_or_else(|| vec!["Unsupported loop fragment".to_string()])?;
+        fragment.push(Op::Return { src: register });
+    } else {
+        fragment.push(Op::Const {
+            dst: 0,
+            value: Constant::Boolean(true),
+        });
+        fragment.push(Op::Return { src: 0 });
+    }
+    Ok(fragment)
+}
+
+fn reduce_body_fragment(
+    statement: &ForStatement<'_>,
+    _parent_ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    next_slot: &mut u16,
+    locals: &mut HashMap<String, u16>,
+) -> Result<Vec<Op>, Vec<String>> {
+    let mut fragment = Vec::new();
+    reduce_body(
+        &statement.body,
+        &mut fragment,
+        facts,
+        next_register,
+        next_slot,
+        locals,
+    )?;
+    crate::reduce::finish_program(fragment, None)
 }
 
 struct LoopContext<'a> {

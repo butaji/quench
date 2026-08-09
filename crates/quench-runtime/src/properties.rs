@@ -71,6 +71,19 @@ pub(crate) fn reduce_assignment(
     Some(value)
 }
 
+pub(crate) fn execute_get(
+    registers: &mut Vec<crate::value::Value>,
+    op: &crate::ops::Op,
+) -> Result<(), crate::execute::VmError> {
+    let crate::ops::Op::GetProperty { dst, object, key } = op else {
+        return Err(crate::execute::VmError::MissingReturn);
+    };
+    let value =
+        crate::execute::get_property(&crate::execute::read_register(registers, *object)?, key);
+    crate::execute::write_value(registers, *dst, value);
+    Ok(())
+}
+
 pub(crate) fn reduce_method_call(
     call: &oxc::ast::ast::CallExpression<'_>,
     ops: &mut Vec<Op>,
