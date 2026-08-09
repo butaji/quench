@@ -1,6 +1,6 @@
 //! Machine-sized runtime values for the residual kernel.
 
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 
 use crate::ops::{Builtin, Op};
 
@@ -22,5 +22,5 @@ pub struct FunctionValue {
     pub body: Vec<Op>,
     pub params: u16,
     pub captures: Rc<Vec<Value>>,
-    pub properties: Rc<Vec<(String, Value)>>,
+    pub properties: Rc<RefCell<Vec<(String, Value)>>>,
 }

@@ -66,7 +66,7 @@ pub(crate) fn make(
         body: body.to_vec(),
         params,
         captures: std::rc::Rc::new(captures),
-        properties: std::rc::Rc::new(Vec::new()),
+        properties: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
     }))
 }
 
@@ -77,11 +77,12 @@ pub(crate) fn write(
     params: u16,
     captures: u16,
 ) {
-    let values = registers
+    let mut values = registers
         .iter()
         .take(usize::from(captures))
         .cloned()
-        .collect();
+        .collect::<Vec<_>>();
+    values.resize(usize::from(captures), crate::value::Value::Undefined);
     crate::execute::write_value(registers, dst, make(body, params, values));
 }
 

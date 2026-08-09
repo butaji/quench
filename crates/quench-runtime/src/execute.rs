@@ -100,6 +100,7 @@ pub(crate) fn get_property(value: &Value, key: &str) -> Value {
         Value::Function(function) if key == "length" => Value::Number(f64::from(function.params)),
         Value::Function(function) => function
             .properties
+            .borrow()
             .iter()
             .rev()
             .find(|(name, _)| name == key)
@@ -154,6 +155,7 @@ pub(crate) fn execute_function(
     parameters.truncate(usize::from(function.params));
     let mut registers = function.captures.as_ref().clone();
     registers.extend(parameters);
+    registers.resize(registers.len().saturating_add(32), Value::Undefined);
     execute_with_registers(&function.body, registers)
 }
 fn execute_eval(arguments: &[Value]) -> Result<Value, VmError> {
