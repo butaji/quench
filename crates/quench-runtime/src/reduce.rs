@@ -164,8 +164,7 @@ pub(crate) fn reduce_function_declaration(
         slot
     };
     let (parameters, parameter_count, captures) = function_locals(function, locals)?;
-    let body_ops =
-        reduce_statements_with_locals(&body.statements, facts, parameters, parameter_count)?;
+    let body_ops = functions::reduce_body(body, facts, parameters, parameter_count, captures)?;
     let register = *next_register;
     *next_register = next_register.saturating_add(1);
     ops.push(Op::MakeFunction {
