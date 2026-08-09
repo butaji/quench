@@ -1,7 +1,6 @@
 {
   "$schema": "quench stages v1",
   "current_stage": 26,
-  "goal": "Quench = OXC program data + unified facts + partial evaluation + a tiny semantic algebra + macro-generated physical specialization + a compact heap. The only implementation plan is docs/adr/0005-oxc-facts-residual-vm.md and tasks/implementation-plan.md. Stage metadata records identity and workflow status only; run test262 for conformance evidence.",
   "test262_pin": {
     "submodule_commit": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
     "note": "The 100% ECMA-262 test262 claim is pinned to this commit and the scope below."
