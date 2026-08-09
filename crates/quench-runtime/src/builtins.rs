@@ -68,3 +68,29 @@ pub(crate) fn keys(value: Option<&Value>) -> Value {
     };
     Value::Array(Rc::new(keys))
 }
+
+pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
+    match target {
+        Value::Object(properties) => {
+            let mut properties = (*properties).clone();
+            if let Some((_, current)) = properties.iter_mut().rev().find(|(name, _)| name == key) {
+                *current = value;
+            } else {
+                properties.push((key.to_string(), value));
+            }
+            Value::Object(Rc::new(properties))
+        }
+        Value::Array(values) => set_array_property(values, key, value),
+        other => other,
+    }
+}
+
+fn set_array_property(values: Rc<Vec<Value>>, key: &str, value: Value) -> Value {
+    let Ok(index) = key.parse::<usize>() else {
+        return Value::Array(values);
+    };
+    let mut values = (*values).clone();
+    values.resize(index.saturating_add(1), Value::Undefined);
+    values[index] = value;
+    Value::Array(Rc::new(values))
+}

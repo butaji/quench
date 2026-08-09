@@ -446,7 +446,7 @@ fn reduce_assignment(
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
     let AssignmentTarget::AssignmentTargetIdentifier(identifier) = &assignment.left else {
-        return None;
+        return properties::reduce_assignment(assignment, ops, facts, next_register, locals);
     };
     let slot = *locals.get(identifier.name.as_str())?;
     let rhs = reduce_expression(&assignment.right, ops, facts, next_register, locals)?;

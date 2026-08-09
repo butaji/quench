@@ -9,11 +9,9 @@ pub enum VmError {
     EvalError(String),
     Thrown,
 }
-
 pub fn execute(ops: &[Op]) -> Result<Value, VmError> {
     execute_with_registers(ops, Vec::new())
 }
-
 fn execute_with_registers(ops: &[Op], mut registers: Vec<Value>) -> Result<Value, VmError> {
     for op in ops {
         match op {
@@ -27,15 +25,11 @@ fn execute_with_registers(ops: &[Op], mut registers: Vec<Value>) -> Result<Value
                 let value = get_property(&read_register(&registers, *object)?, key);
                 write_value(&mut registers, *dst, value);
             }
+            Op::SetProperty { object, key, src } => {
+                execute_set_property(&mut registers, *object, key, *src)?;
+            }
             Op::MakeFunction { dst, body, params } => {
-                write_value(
-                    &mut registers,
-                    *dst,
-                    Value::Function(Rc::new(crate::value::FunctionValue {
-                        body: body.clone(),
-                        params: *params,
-                    })),
-                );
+                execute_function(&mut registers, *dst, body, *params)
             }
             Op::Call { dst, callee, args } => {
                 execute_call(&mut registers, *dst, *callee, args)?;
@@ -54,7 +48,6 @@ fn execute_with_registers(ops: &[Op], mut registers: Vec<Value>) -> Result<Value
     }
     Err(VmError::MissingReturn)
 }
-
 fn execute_terminal(op: &Op, registers: &[Value]) -> Result<Value, VmError> {
     match op {
         Op::Return { src } => read_register(registers, *src),
@@ -62,7 +55,6 @@ fn execute_terminal(op: &Op, registers: &[Value]) -> Result<Value, VmError> {
         _ => Err(VmError::MissingReturn),
     }
 }
-
 fn execute_array(registers: &mut Vec<Value>, dst: u16, elements: &[u16]) -> Result<(), VmError> {
     let values = elements
         .iter()
@@ -71,11 +63,19 @@ fn execute_array(registers: &mut Vec<Value>, dst: u16, elements: &[u16]) -> Resu
     write_value(registers, dst, Value::Array(Rc::new(values)));
     Ok(())
 }
-
 fn write_builtin(registers: &mut Vec<Value>, dst: u16, builtin: crate::ops::Builtin) {
     write_value(registers, dst, Value::Builtin(builtin));
 }
-
+fn execute_function(registers: &mut Vec<Value>, dst: u16, body: &[Op], params: u16) {
+    write_value(
+        registers,
+        dst,
+        Value::Function(Rc::new(crate::value::FunctionValue {
+            body: body.to_vec(),
+            params,
+        })),
+    );
+}
 fn execute_object(
     registers: &mut Vec<Value>,
     dst: u16,
@@ -88,7 +88,6 @@ fn execute_object(
     write_value(registers, dst, Value::Object(Rc::new(values)));
     Ok(())
 }
-
 fn get_property(value: &Value, key: &str) -> Value {
     match value {
         Value::Builtin(builtin) => crate::builtins::property(*builtin, key),
@@ -103,7 +102,18 @@ fn get_property(value: &Value, key: &str) -> Value {
         _ => Value::Undefined,
     }
 }
-
+fn execute_set_property(
+    registers: &mut Vec<Value>,
+    object: u16,
+    key: &str,
+    src: u16,
+) -> Result<(), VmError> {
+    let target = read_register(registers, object)?.clone();
+    let value = read_register(registers, src)?.clone();
+    let result = crate::builtins::set_property(target, key, value);
+    write_value(registers, object, result);
+    Ok(())
+}
 fn array_property(values: &[Value], key: &str) -> Value {
     if key == "length" {
         return Value::Number(values.len() as f64);
@@ -113,7 +123,6 @@ fn array_property(values: &[Value], key: &str) -> Value {
         .and_then(|index| values.get(index).cloned())
         .unwrap_or(Value::Undefined)
 }
-
 fn string_property(value: &str, key: &str) -> Value {
     if key == "length" {
         return Value::Number(value.chars().count() as f64);
@@ -124,7 +133,6 @@ fn string_property(value: &str, key: &str) -> Value {
         .map(|character| Value::String(character.to_string()))
         .unwrap_or(Value::Undefined)
 }
-
 fn execute_call(
     registers: &mut Vec<Value>,
     dst: u16,
@@ -148,7 +156,6 @@ fn execute_call(
     write_value(registers, dst, value);
     Ok(())
 }
-
 fn execute_eval(arguments: &[Value]) -> Result<Value, VmError> {
     let Some(Value::String(source)) = arguments.first() else {
         return Ok(Value::Undefined);
@@ -157,7 +164,6 @@ fn execute_eval(arguments: &[Value]) -> Result<Value, VmError> {
         .map_err(|errors| VmError::EvalError(errors.join("; ")))?;
     execute(&program.ops).map_err(|error| VmError::EvalError(format!("{error:?}")))
 }
-
 fn execute_builtin(builtin: crate::ops::Builtin, arguments: &[Value]) -> Result<Value, VmError> {
     match builtin {
         crate::ops::Builtin::Array => Ok(crate::builtins::array(arguments)),
@@ -183,15 +189,12 @@ fn execute_builtin(builtin: crate::ops::Builtin, arguments: &[Value]) -> Result<
         crate::ops::Builtin::String => Ok(Value::String(to_string(arguments.first()))),
     }
 }
-
 fn is_finite(value: Option<&Value>) -> bool {
     matches!(value, Some(Value::Number(number)) if number.is_finite())
 }
-
 fn parse_float(value: Option<&Value>) -> f64 {
     to_string(value).trim().parse().unwrap_or(f64::NAN)
 }
-
 fn parse_int(arguments: &[Value]) -> f64 {
     let text = to_string(arguments.first()).trim().to_string();
     let radix = arguments
@@ -210,7 +213,6 @@ fn parse_int(arguments: &[Value]) -> f64 {
         .map(|value| sign * value as f64)
         .unwrap_or(f64::NAN)
 }
-
 fn to_number(value: Option<&Value>) -> f64 {
     match value {
         None | Some(Value::Undefined) => f64::NAN,
@@ -222,7 +224,6 @@ fn to_number(value: Option<&Value>) -> f64 {
         Some(Value::Function(_)) | Some(Value::Builtin(_)) => f64::NAN,
     }
 }
-
 fn parse_number(value: &str) -> f64 {
     let value = value.trim();
     if value.is_empty() {
@@ -237,7 +238,6 @@ fn parse_number(value: &str) -> f64 {
     }
     value.parse().unwrap_or(f64::NAN)
 }
-
 fn to_string(value: Option<&Value>) -> String {
     match value {
         None | Some(Value::Undefined) => "undefined".to_string(),
@@ -257,13 +257,11 @@ fn to_string(value: Option<&Value>) -> String {
         Some(Value::Function(_)) | Some(Value::Builtin(_)) => "function".to_string(),
     }
 }
-
 fn copy_register(registers: &mut Vec<Value>, dst: u16, src: u16) -> Result<(), VmError> {
     let value = read_register(registers, src)?;
     write_value(registers, dst, value);
     Ok(())
 }
-
 fn execute_unary(
     registers: &mut Vec<Value>,
     dst: u16,
@@ -282,7 +280,6 @@ fn execute_unary(
     write_value(registers, dst, result);
     Ok(())
 }
-
 fn type_of(value: &Value) -> &'static str {
     match value {
         Value::Undefined => "undefined",
@@ -296,11 +293,9 @@ fn type_of(value: &Value) -> &'static str {
         Value::Function(_) => "function",
     }
 }
-
 fn numeric_unary(value: Value, transform: fn(f64) -> f64) -> Result<Value, VmError> {
     Ok(Value::Number(transform(to_number(Some(&value)))))
 }
-
 fn is_truthy(value: &Value) -> bool {
     match value {
         Value::Boolean(value) => *value,
@@ -313,7 +308,6 @@ fn is_truthy(value: &Value) -> bool {
         Value::Function(_) => true,
     }
 }
-
 fn execute_binary(
     registers: &mut Vec<Value>,
     dst: u16,
@@ -327,7 +321,6 @@ fn execute_binary(
     write_value(registers, dst, value);
     Ok(())
 }
-
 fn evaluate_binary(
     left: &Value,
     right: &Value,
@@ -353,7 +346,6 @@ fn evaluate_binary(
         crate::ops::BinaryOp::BitwiseAnd => bitwise_numbers(left, right, |a, b| a & b)?,
     })
 }
-
 fn arithmetic_value(left: &Value, right: &Value, operator: crate::ops::BinaryOp) -> Value {
     if operator == crate::ops::BinaryOp::Add
         && (matches!(left, Value::String(_)) || matches!(right, Value::String(_)))
@@ -368,7 +360,6 @@ fn arithmetic_value(left: &Value, right: &Value, operator: crate::ops::BinaryOp)
     let right = to_number(Some(right));
     Value::Number(numeric_binary(left, right, operator))
 }
-
 fn loose_equal(left: &Value, right: &Value) -> bool {
     if std::mem::discriminant(left) == std::mem::discriminant(right) {
         return strict_equal(left, right);
@@ -390,7 +381,6 @@ fn loose_equal(left: &Value, right: &Value) -> bool {
     }
     false
 }
-
 fn strict_equal(left: &Value, right: &Value) -> bool {
     match (left, right) {
         (Value::Array(left), Value::Array(right)) => std::rc::Rc::ptr_eq(left, right),
@@ -404,7 +394,6 @@ fn strict_equal(left: &Value, right: &Value) -> bool {
         _ => false,
     }
 }
-
 fn bitwise_numbers(
     left: &Value,
     right: &Value,
@@ -414,7 +403,6 @@ fn bitwise_numbers(
     let right = to_int32(to_number(Some(right)));
     Ok(Value::Number(f64::from(operation(left, right))))
 }
-
 fn to_int32(value: f64) -> i32 {
     if !value.is_finite() || value == 0.0 {
         return 0;
@@ -431,7 +419,6 @@ fn to_int32(value: f64) -> i32 {
         wrapped as i32
     }
 }
-
 fn numeric_binary(left: f64, right: f64, operator: crate::ops::BinaryOp) -> f64 {
     match operator {
         crate::ops::BinaryOp::Add => left + right,
@@ -443,7 +430,6 @@ fn numeric_binary(left: f64, right: f64, operator: crate::ops::BinaryOp) -> f64 
         _ => 0.0,
     }
 }
-
 fn compare_values(
     left: &Value,
     right: &Value,
@@ -458,7 +444,6 @@ fn compare_values(
         !left.is_nan() && !right.is_nan() && compare(left, right),
     ))
 }
-
 fn compare_strings(left: &str, right: &str, compare: fn(f64, f64) -> bool) -> bool {
     let ordering = left.cmp(right);
     match ordering {
@@ -467,11 +452,9 @@ fn compare_strings(left: &str, right: &str, compare: fn(f64, f64) -> bool) -> bo
         std::cmp::Ordering::Greater => compare(1.0, 0.0),
     }
 }
-
 fn write_register(registers: &mut Vec<Value>, index: u16, value: &crate::ops::Constant) {
     write_value(registers, index, value.into());
 }
-
 fn write_value(registers: &mut Vec<Value>, index: u16, value: Value) {
     let index = usize::from(index);
     if registers.len() <= index {
@@ -479,14 +462,12 @@ fn write_value(registers: &mut Vec<Value>, index: u16, value: Value) {
     }
     registers[index] = value;
 }
-
 fn read_register(registers: &[Value], index: u16) -> Result<Value, VmError> {
     registers
         .get(usize::from(index))
         .cloned()
         .ok_or(VmError::RegisterOutOfBounds(index))
 }
-
 impl From<&crate::ops::Constant> for Value {
     fn from(value: &crate::ops::Constant) -> Self {
         match value {
