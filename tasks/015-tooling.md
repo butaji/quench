@@ -386,3 +386,8 @@ The Rust host context now keeps its TCP implementation in `host_context.rs`
 and includes the exported runtime macro from `host_context_macro.inc`; the
 Rust source file is 187 lines and the public macro behavior remains covered by
 the passing quench-node Rust tests.
+
+The writes-tail extraction retained the performance marks declaration but
+omitted the adjacent entries store. The entries store is now initialized in the
+performance bootstrap; performance stages 403 and 404, representative HTTP
+and stream stages, Rust tests, and application gates pass again.
