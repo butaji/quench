@@ -1486,3 +1486,8 @@ Verification correction: a subsequent clean rerun still reports an unmet
 callback in `test-stream-destroy.js` (callback 15). The focused reproduction is
 green, but the full fixture remains open and the preceding pass claim is not
 authoritative.
+
+The next transport audit shows the gap is shared below HTTP: `test-http-server.js`
+receives zero of its four expected requests, while `test-net-stream.js` reports
+duplicate data callbacks. These are retained as the next network connection
+and framing investigation rather than attributed solely to HTTP parsing.
