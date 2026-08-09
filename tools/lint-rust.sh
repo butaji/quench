@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$root_dir"
+
+fail=0
+while IFS= read -r file; do
+    lines=$(wc -l < "$file")
+    if (( lines > 500 )); then
+        printf '%s: %d lines (maximum 500)\n' "$file" "$lines" >&2
+        fail=1
+    fi
+done < <(rg --files -g '*.rs' -g '!target/**' | sort)
+
+while IFS= read -r file; do
+    awk '
+        function braces(text, clean) {
+            clean = text
+            gsub(/\/\/.*$/, "", clean)
+            return gsub(/{/, "{", clean) - gsub(/}/, "}", clean)
+        }
+        /(^|[^[:alnum:]_])fn[[:space:]]+[[:alnum:]_]+[[:space:]]*\(/ {
+            start = NR
+            depth = 0
+            active = 1
+        }
+        active {
+            depth += braces($0)
+            if (depth <= 0 && NR > start && $0 ~ /}/) {
+                if (NR - start + 1 > 40) {
+                    printf "%s:%d: function exceeds 40 lines (%d)\n", FILENAME, start, NR - start + 1 > "/dev/stderr"
+                    fail = 1
+                }
+                active = 0
+            }
+        }
+        END { exit fail }
+    ' "$file" || fail=1
+done < <(rg --files -g '*.rs' -g '!target/**' | sort)
+
+if (( fail != 0 )); then
+    exit 1
+fi
+
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings -D clippy::cognitive_complexity
