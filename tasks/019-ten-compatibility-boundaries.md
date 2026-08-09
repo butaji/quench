@@ -1370,3 +1370,9 @@ Stage 2521 completes the Web Streams writable `finished()` lifecycle. Writable
 streams now expose a closed promise that resolves on `close()` and rejects on
 `abort()`, allowing callback and promise observers to receive terminal state.
 The focused stage and authoritative `test-webstreams-finished.js` fixture pass.
+
+Stage 2522 adds the basic `stream/iter.fromWritable()` synchronous-method and
+drainable-protocol surface: `writeSync()`/`writevSync()` return false,
+`endSync()` returns -1, and `ondrain()` resolves for a live writer. The focused
+stage passes; the larger writable interop fixture still has additional
+validation and writev boundaries.
