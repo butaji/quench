@@ -14,6 +14,8 @@ pub fn execute(ops: &[Op]) -> Result<Value, VmError> {
     for op in ops {
         match op {
             Op::Const { dst, value } => write_register(&mut registers, *dst, value),
+            Op::StoreLocal { slot, src } => copy_register(&mut registers, *slot, *src)?,
+            Op::LoadLocal { dst, slot } => copy_register(&mut registers, *dst, *slot)?,
             Op::Binary {
                 dst,
                 operator,
@@ -24,6 +26,12 @@ pub fn execute(ops: &[Op]) -> Result<Value, VmError> {
         }
     }
     Err(VmError::MissingReturn)
+}
+
+fn copy_register(registers: &mut Vec<Value>, dst: u16, src: u16) -> Result<(), VmError> {
+    let value = read_register(registers, src)?;
+    write_value(registers, dst, value);
+    Ok(())
 }
 
 fn execute_binary(
@@ -52,11 +60,15 @@ fn execute_binary(
 }
 
 fn write_register(registers: &mut Vec<Value>, index: u16, value: &crate::ops::Constant) {
+    write_value(registers, index, value.into());
+}
+
+fn write_value(registers: &mut Vec<Value>, index: u16, value: Value) {
     let index = usize::from(index);
     if registers.len() <= index {
         registers.resize(index + 1, Value::Undefined);
     }
-    registers[index] = value.into();
+    registers[index] = value;
 }
 
 fn read_register(registers: &[Value], index: u16) -> Result<Value, VmError> {
