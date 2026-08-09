@@ -1,0 +1,43 @@
+//! Object method metadata.
+
+use crate::ops::Builtin;
+
+pub const fn fn_name(b: Builtin) -> Option<&'static str> {
+    match b {
+        Builtin::ObjectHasOwnProperty => Some("Object.prototype.hasOwnProperty"),
+        Builtin::ObjectPropertyIsEnumerable => {
+            Some("Object.prototype.propertyIsEnumerable")
+        }
+        Builtin::ObjectGetOwnPropertyDescriptor => {
+            Some("Object.getOwnPropertyDescriptor")
+        }
+        Builtin::ObjectKeys => Some("Object.keys"),
+        Builtin::ObjectIs => Some("Object.is"),
+        Builtin::ObjectDefineProperty => Some("Object.defineProperty"),
+        Builtin::ObjectGetOwnPropertyNames => Some("Object.getOwnPropertyNames"),
+        _ => None,
+    }
+}
+
+pub const fn fn_len(b: Builtin) -> Option<f64> {
+    match b {
+        Builtin::ObjectHasOwnProperty | Builtin::ObjectPropertyIsEnumerable
+        | Builtin::ObjectKeys | Builtin::ObjectGetOwnPropertyNames => Some(1.0),
+        Builtin::ObjectGetOwnPropertyDescriptor | Builtin::ObjectIs => Some(2.0),
+        Builtin::ObjectDefineProperty => Some(3.0),
+        _ => None,
+    }
+}
+
+pub const fn short_name(b: Builtin) -> Option<&'static str> {
+    match b {
+        Builtin::ObjectHasOwnProperty => Some("hasOwnProperty"),
+        Builtin::ObjectPropertyIsEnumerable => Some("propertyIsEnumerable"),
+        Builtin::ObjectGetOwnPropertyDescriptor => Some("getOwnPropertyDescriptor"),
+        Builtin::ObjectKeys => Some("keys"),
+        Builtin::ObjectIs => Some("is"),
+        Builtin::ObjectDefineProperty => Some("defineProperty"),
+        Builtin::ObjectGetOwnPropertyNames => Some("getOwnPropertyNames"),
+        _ => None,
+    }
+}
