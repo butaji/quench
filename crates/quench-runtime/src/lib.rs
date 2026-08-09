@@ -19,6 +19,7 @@ pub mod facts;
 mod functions;
 mod literal;
 mod logical;
+mod objects;
 pub mod ops;
 mod properties;
 pub mod reduce;
