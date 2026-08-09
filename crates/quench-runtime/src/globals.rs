@@ -56,6 +56,7 @@ fn builtin(name: &str) -> Option<crate::ops::Builtin> {
         "parseFloat" => Some(crate::ops::Builtin::ParseFloat),
         "parseInt" => Some(crate::ops::Builtin::ParseInt),
         "String" => Some(crate::ops::Builtin::String),
+        "Symbol" => Some(crate::ops::Builtin::Symbol),
         "unescape" => Some(crate::ops::Builtin::Unescape),
         "Math" => Some(crate::ops::Builtin::Math),
         "Function" => Some(crate::ops::Builtin::Function),
