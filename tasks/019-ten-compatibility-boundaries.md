@@ -1393,5 +1393,10 @@ without an extra wrapper. The focused protocol stage and authoritative
 The post-change full focused gate reports 2361/2361 passing; Rust tests remain
 2/2 and representative application stages remain 6/6.
 
+Stage 2525 adds the initial `stream/iter.toWritable()` adapter surface,
+including writer validation, a maximal high-water mark, and conditional
+`_writev` support. The focused adapter stage passes; the full upstream
+to-writable fixture still has asynchronous callback accounting to resolve.
+
 After stage 2523, the full focused gate reports 2360/2360 passing; Rust tests
 remain 2/2 and representative application stages remain 6/6.
