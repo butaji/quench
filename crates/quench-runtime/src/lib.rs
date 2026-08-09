@@ -15,6 +15,7 @@ mod conditional;
 pub mod execute;
 pub mod facts;
 mod literal;
+mod logical;
 pub mod ops;
 pub mod reduce;
 mod semantic;

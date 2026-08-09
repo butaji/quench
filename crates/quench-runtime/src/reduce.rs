@@ -15,6 +15,7 @@ use crate::{
     conditional,
     facts::ProgramDb,
     literal::{reduce_literal, reduce_operator},
+    logical,
     ops::{Constant, Op},
 };
 
@@ -324,6 +325,9 @@ fn reduce_special(
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
     match expression {
+        Expression::LogicalExpression(value) => {
+            logical::reduce_expression(value, ops, facts, next_register, locals)
+        }
         Expression::ConditionalExpression(value) => {
             conditional::reduce_expression(value, ops, facts, next_register, locals)
         }
