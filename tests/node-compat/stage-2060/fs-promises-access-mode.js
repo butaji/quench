@@ -3,6 +3,11 @@ const fs = require("fs");
 const path = require("path");
 
 const file = path.join(process.cwd(), "tests/node/test/.tmp.0/access-mode");
+try {
+  fs.chmodSync(file, 0o644);
+} catch (error) {
+  if (error.code !== "ENOENT") throw error;
+}
 fs.writeFileSync(file, "");
 fs.chmodSync(file, 0o444);
 
