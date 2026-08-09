@@ -136,6 +136,8 @@ pub enum Builtin {
     ArrayLastIndexOf,
     ArraySlice,
     ArrayConcat,
+    ArrayFlat,
+    ArrayFlatMap,
     ArrayReduce,
     ArrayReduceRight,
     ArrayForEach,
