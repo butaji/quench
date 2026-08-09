@@ -1193,3 +1193,12 @@ uses the same exact-path permission restore for its generated access-mode file.
 No compatibility behavior or vendored Node source is changed. A second full
 audit without manual preparation reports 2329/2331 passing with only stages
 1827 and 2383 unclassified.
+
+Stage 2493 carries the scheduling domain and current async resource through the
+host timer queue. Timer callbacks run inside the domain active at scheduling
+time, thrown errors acquire Node's `domain` metadata and reach its error
+listener, and the prior async resource is restored afterward. Stage 1827 and
+the focused host-scheduler context stage pass, as does authoritative
+`test-domain-from-timer.js`; `test-domain-timer.js` still reports an opaque
+harness exception and is not claimed. The post-fix audit reports 2331/2332
+passing with only stage 2383 unclassified.
