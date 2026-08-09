@@ -237,6 +237,10 @@ The stage-2469 owned regression fixture was refactored into predicate and
 abort-validation helpers. It now passes its stage and ESLint with zero
 warnings, removing one function-size violation without changing assertions.
 
+The zlib CRC32 validation was extracted from the checksum loop, reducing its
+complexity violation while preserving input and seed validation; zlib stage
+2031 remains green.
+
 The repository ESLint configuration now uses a dedicated global ignore entry
 for the vendored `tests/node` submodule. The owned `tools/compat-decision-report.cjs`
 classification function was split to satisfy the complexity limit; that file
