@@ -1095,3 +1095,13 @@ local Node confirms that the former unconnected two-number call is the
 port/address overload, so retaining the old expectation would contradict the
 behavior under test. The post-fix audit reports 2301/2322 passing with 21
 unclassified failures.
+
+Stage 2484 completes the asynchronous datagram connect-listener contract. A
+missing destination address receives the family-specific loopback default, a
+connect callback is registered as an ordinary one-time `connect` listener, and
+the connection transition is queued before microtasks scheduled after
+`connect()` returns. Existing listeners therefore run before the callback and
+both observe the connected remote address exactly once. The focused ordering
+stage, recovered stage 1181, the adjacent connect/state/send cluster, and the
+complete authoritative `test-dgram-connect.js` fixture pass. The post-fix audit
+reports 2303/2323 passing with 20 unclassified failures.
