@@ -110,9 +110,17 @@ pub(crate) fn descriptor(value: Option<&Value>, key: Option<&Value>) -> Value {
             .map(|(_, value)| value.clone()),
         Value::Array(values) => array_descriptor(values, &key),
         Value::String(value) => string_descriptor(value, &key),
+        Value::Builtin(builtin) if key == "length" => Some(Value::Number(builtin_length(*builtin))),
         _ => None,
     };
     property.map_or(Value::Undefined, |property| descriptor_object(&property))
+}
+
+fn builtin_length(builtin: Builtin) -> f64 {
+    match builtin {
+        Builtin::Escape | Builtin::Unescape => 1.0,
+        _ => 0.0,
+    }
 }
 
 fn array_descriptor(values: &[Value], key: &str) -> Option<Value> {
