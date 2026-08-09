@@ -1,217 +1,20 @@
-//! OXC-to-residual reduction entry point.
+//! Expression reduction helpers.
 use crate::{
     arrays,
-    blocks::reduce as reduce_block,
-    control_flow,
     facts::ProgramDb,
-    functions, identifiers,
+    identifiers,
     literal::{reduce_literal, reduce_operator},
     ops::Op,
-    properties, special,
-    statements::reduce_declaration as reduce_declaration_statement,
-    transparent,
+    properties, special, transparent,
 };
 use oxc::{
-    allocator::Allocator,
-    ast::ast::{Argument, AssignmentTarget, BindingPatternKind, Expression, Statement},
-    parser::Parser,
-    span::SourceType,
-    syntax::operator::{AssignmentOperator, UnaryOperator},
+    ast::ast::{
+        Argument, AssignmentOperator, AssignmentTarget, BindingPatternKind, Expression, Statement,
+    },
+    syntax::operator::UnaryOperator,
 };
 use std::collections::HashMap;
-#[derive(Debug, PartialEq)]
-pub struct ResidualProgram {
-    pub facts: ProgramDb,
-    pub ops: Vec<Op>,
-}
-pub fn reduce_source(source: &str) -> Result<ResidualProgram, Vec<String>> {
-    reduce_source_with_type(source, SourceType::default())
-}
-pub fn reduce_module_source(source: &str) -> Result<ResidualProgram, Vec<String>> {
-    reduce_source_with_type(source, SourceType::mjs())
-}
-pub fn reduce_source_with_type(
-    source: &str,
-    source_type: SourceType,
-) -> Result<ResidualProgram, Vec<String>> {
-    let (scope_count, symbol_count, ops) = {
-        let allocator = Allocator::default();
-        let parsed = Parser::new(&allocator, source, source_type).parse();
-        if parsed.panicked {
-            return Err(vec!["SyntaxError: OXC parser rejected source".to_string()]);
-        }
-        if !parsed.errors.is_empty() {
-            return Err(parsed
-                .errors
-                .iter()
-                .map(|error| format!("SyntaxError: {error}"))
-                .collect());
-        }
-        let (scope_count, symbol_count) = crate::semantic::analyze(&parsed.program)?;
-        let ops = reduce_statements(&parsed.program.body, &mut ProgramDb::default())?;
-        (scope_count, symbol_count, ops)
-    };
-    let facts = ProgramDb {
-        scope_count,
-        symbol_count,
-        ..ProgramDb::default()
-    };
-    Ok(ResidualProgram { facts, ops })
-}
-fn reduce_statements(
-    statements: &[Statement<'_>],
-    facts: &mut ProgramDb,
-) -> Result<Vec<Op>, Vec<String>> {
-    reduce_statements_with_locals(statements, facts, HashMap::new(), 0)
-}
-pub(crate) fn reduce_statements_with_locals(
-    statements: &[Statement<'_>],
-    facts: &mut ProgramDb,
-    locals: HashMap<String, u16>,
-    next_slot: u16,
-) -> Result<Vec<Op>, Vec<String>> {
-    reduce_statements_opt(statements, facts, locals, next_slot, true)
-}
-
-/// Reduce statements without appending a terminal `Return`. Used for nested
-/// blocks whose control flow continues after the block (if/try/switch bodies).
-pub(crate) fn reduce_statements_no_tail(
-    statements: &[Statement<'_>],
-    facts: &mut ProgramDb,
-    locals: HashMap<String, u16>,
-    next_slot: u16,
-) -> Result<Vec<Op>, Vec<String>> {
-    reduce_statements_opt(statements, facts, locals, next_slot, false)
-}
-
-fn reduce_statements_opt(
-    statements: &[Statement<'_>],
-    facts: &mut ProgramDb,
-    mut locals: HashMap<String, u16>,
-    mut next_slot: u16,
-    tail: bool,
-) -> Result<Vec<Op>, Vec<String>> {
-    crate::reduce_support::predeclare_functions(statements, &mut locals, &mut next_slot);
-    let mut ops = Vec::new();
-    let mut next_register = crate::reduce_support::register_base(&locals);
-    let mut last_value = None;
-    for statement in statements {
-        if let Some(value) = reduce_statement(
-            statement,
-            &mut ops,
-            facts,
-            &mut next_register,
-            &mut next_slot,
-            &mut locals,
-        )? {
-            last_value = Some(value);
-        }
-    }
-    if tail {
-        crate::reduce_support::finish_program(ops, last_value)
-    } else {
-        Ok(ops)
-    }
-}
-
-pub(crate) fn reduce_statement(
-    statement: &Statement<'_>,
-    ops: &mut Vec<Op>,
-    facts: &mut ProgramDb,
-    next_register: &mut u16,
-    next_slot: &mut u16,
-    locals: &mut HashMap<String, u16>,
-) -> Result<Option<u16>, Vec<String>> {
-    match statement {
-        Statement::EmptyStatement(_) => Ok(None),
-        Statement::BlockStatement(block) => {
-            reduce_block(block, ops, facts, next_register, next_slot, locals)
-        }
-        Statement::VariableDeclaration(_)
-        | Statement::FunctionDeclaration(_)
-        | Statement::ClassDeclaration(_) => {
-            reduce_declaration_statement(statement, ops, facts, next_register, next_slot, locals)
-        }
-        Statement::ReturnStatement(return_statement) => {
-            control_flow::reduce_return(return_statement, ops, facts, next_register, locals)
-        }
-        Statement::ThrowStatement(statement) => {
-            control_flow::reduce_throw(statement, ops, facts, next_register, locals)
-        }
-        Statement::ExpressionStatement(expression) => {
-            reduce_expression_statement(&expression.expression, ops, facts, next_register, locals)
-                .map(Some)
-        }
-        statement => crate::statement_control::reduce(
-            statement,
-            ops,
-            facts,
-            next_register,
-            next_slot,
-            locals,
-        ),
-    }
-}
-pub(crate) fn reduce_function_declaration(
-    function: &oxc::ast::ast::Function<'_>,
-    ops: &mut Vec<Op>,
-    facts: &mut ProgramDb,
-    next_register: &mut u16,
-    next_slot: &mut u16,
-    locals: &mut HashMap<String, u16>,
-) -> Result<(), Vec<String>> {
-    let Some(identifier) = function.id.as_ref() else {
-        return Err(vec!["Anonymous function declaration".to_string()]);
-    };
-    let Some(body) = function.body.as_ref() else {
-        return Err(vec!["Function without body".to_string()]);
-    };
-    let slot = if let Some(slot) = locals.get(identifier.name.as_str()) {
-        *slot
-    } else {
-        let slot = *next_slot;
-        *next_slot = next_slot.saturating_add(1);
-        locals.insert(identifier.name.to_string(), slot);
-        slot
-    };
-    let (parameters, parameter_count, captures) = function_locals(function, locals)?;
-    let body_ops = functions::reduce_body(body, facts, parameters, parameter_count, captures)?;
-    let register = *next_register;
-    *next_register = next_register.saturating_add(1);
-    ops.push(Op::MakeFunction {
-        dst: register,
-        body: body_ops,
-        params: parameter_count,
-        captures,
-    });
-    ops.push(Op::StoreLocal {
-        slot,
-        src: register,
-    });
-    Ok(())
-}
-
-fn function_locals(
-    function: &oxc::ast::ast::Function<'_>,
-    locals: &HashMap<String, u16>,
-) -> Result<(HashMap<String, u16>, u16, u16), Vec<String>> {
-    let (mut parameters, parameter_count) = functions::function_parameters(function)?;
-    let captures = locals
-        .values()
-        .copied()
-        .max()
-        .map_or(0, |slot| slot.saturating_add(1));
-    for slot in parameters.values_mut() {
-        *slot = slot.saturating_add(captures);
-    }
-    parameters.insert(
-        "arguments".to_string(),
-        captures.saturating_add(parameter_count),
-    );
-    parameters.extend(locals.iter().map(|(name, slot)| (name.clone(), *slot)));
-    Ok((parameters, parameter_count, captures))
-}
-pub(crate) fn reduce_if_statement(
+pub fn reduce_if_statement(
     statement: &oxc::ast::ast::IfStatement<'_>,
     ops: &mut Vec<Op>,
     facts: &mut ProgramDb,
@@ -240,7 +43,7 @@ pub(crate) fn reduce_if_statement(
         .as_ref()
         .map(|alternate| crate::branch::reduce(alternate, facts, locals))
         .transpose()?
-        .unwrap_or_else(Vec::new);
+        .unwrap_or_default();
     ops.push(Op::Branch {
         condition,
         then_ops,
@@ -248,7 +51,6 @@ pub(crate) fn reduce_if_statement(
     });
     Ok(None)
 }
-
 fn reduce_static_if(
     statement: &oxc::ast::ast::IfStatement<'_>,
     condition: bool,
@@ -279,8 +81,7 @@ fn reduce_static_if(
         _ => Err(vec!["Unsupported conditional statement".to_string()]),
     }
 }
-
-fn reduce_expression_statement(
+pub fn reduce_expression_statement(
     expression: &Expression<'_>,
     ops: &mut Vec<Op>,
     facts: &mut ProgramDb,
@@ -294,7 +95,7 @@ fn reduce_expression_statement(
     };
     Ok(register)
 }
-pub(crate) fn reduce_declaration(
+pub fn reduce_declaration(
     declaration: &oxc::ast::ast::VariableDeclaration<'_>,
     ops: &mut Vec<Op>,
     facts: &mut ProgramDb,
@@ -323,8 +124,7 @@ pub(crate) fn reduce_declaration(
     }
     Ok(())
 }
-
-pub(crate) fn reduce_expression(
+pub fn reduce_expression(
     expression: &Expression<'_>,
     ops: &mut Vec<Op>,
     facts: &mut ProgramDb,
@@ -356,7 +156,7 @@ pub(crate) fn reduce_expression(
     });
     Some(dst)
 }
-pub(crate) fn reduce_unary(
+pub fn reduce_unary(
     unary: &oxc::ast::ast::UnaryExpression<'_>,
     ops: &mut Vec<Op>,
     facts: &mut ProgramDb,
@@ -375,8 +175,10 @@ pub(crate) fn reduce_unary(
         _ => return None,
     };
     let src = if operator == crate::ops::UnaryOp::Typeof
-        && matches!(&unary.argument, Expression::Identifier(identifier) if !locals.contains_key(identifier.name.as_str()))
-    {
+        && matches!(
+            &unary.argument,
+            Expression::Identifier(identifier) if !locals.contains_key(identifier.name.as_str())
+        ) {
         crate::reduce_support::emit_undefined(ops, next_register)
     } else {
         reduce_expression(&unary.argument, ops, facts, next_register, locals)?
@@ -386,8 +188,7 @@ pub(crate) fn reduce_unary(
     ops.push(Op::Unary { dst, operator, src });
     Some(dst)
 }
-
-pub(crate) fn reduce_call(
+pub fn reduce_call(
     call: &oxc::ast::ast::CallExpression<'_>,
     ops: &mut Vec<Op>,
     facts: &mut ProgramDb,
@@ -398,6 +199,24 @@ pub(crate) fn reduce_call(
         return Some(result);
     }
     let callee = reduce_expression(&call.callee, ops, facts, next_register, locals)?;
+    let (args, spreads) = reduce_call_arguments(call, ops, facts, next_register, locals)?;
+    let dst = *next_register;
+    *next_register += 1;
+    ops.push(Op::Call {
+        dst,
+        callee,
+        args,
+        spreads,
+    });
+    Some(dst)
+}
+fn reduce_call_arguments(
+    call: &oxc::ast::ast::CallExpression<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<(Vec<u16>, Vec<bool>)> {
     let mut args = Vec::new();
     let mut spreads = Vec::new();
     for argument in &call.arguments {
@@ -420,17 +239,9 @@ pub(crate) fn reduce_call(
             }
         }
     }
-    let dst = *next_register;
-    *next_register = next_register.saturating_add(1);
-    ops.push(Op::Call {
-        dst,
-        callee,
-        args,
-        spreads,
-    });
-    Some(dst)
+    Some((args, spreads))
 }
-pub(crate) fn reduce_assignment(
+pub fn reduce_assignment(
     assignment: &oxc::ast::ast::AssignmentExpression<'_>,
     ops: &mut Vec<Op>,
     facts: &mut ProgramDb,
@@ -462,7 +273,7 @@ pub(crate) fn reduce_assignment(
     ops.push(Op::StoreLocal { slot, src: value });
     Some(value)
 }
-fn reduce_atom(
+pub fn reduce_atom(
     expression: &Expression<'_>,
     ops: &mut Vec<Op>,
     facts: &mut ProgramDb,
