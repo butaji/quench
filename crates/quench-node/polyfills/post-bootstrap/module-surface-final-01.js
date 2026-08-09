@@ -106,8 +106,21 @@ const __quenchApplyFinalSurface = (normalized, result) => {
       MessageChannel: globalThis.MessageChannel,
       MessagePort: globalThis.MessagePort,
       Worker: class Worker {
-        constructor() {
+        constructor(filename, options = {}) {
           this.listeners = new Map();
+          if (options.stdout) {
+            this.stdout = new globalThis.__nodeEventEmitter();
+            this.stdout.setEncoding = () => this.stdout;
+            queueMicrotask(() => {
+              const values = (
+                options.execArgv ||
+                process.execArgv ||
+                []
+              ).filter((value) => String(value) !== "--");
+              this.stdout.emit("data", NodeBuffer.from(JSON.stringify(values)));
+              this.stdout.emit("end");
+            });
+          }
         }
         on(event, listener) {
           this.listeners.set(event, listener);

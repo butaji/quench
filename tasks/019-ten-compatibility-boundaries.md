@@ -1313,3 +1313,10 @@ the shared process-exit-code matrix now return the expected status for each
 case, including exit-handler and uncaught-error variants. The focused matrix
 and authoritative `test-process-exit-code.js` fixture pass; the full focused
 gate reports 2347/2347 passing.
+
+Stage 2511 aligns Worker stdout and `execArgv` behavior. Worker instances
+created with `{ stdout: true }` now expose an encoding-capable readable stream,
+emit the normalized execution arguments, and retain the expected end event.
+Script-position parsing also accepts child exec flags before the entry path.
+The focused Worker stage and authoritative `test-process-exec-argv.js` fixture
+pass; the full focused gate reports 2348/2348 passing.
