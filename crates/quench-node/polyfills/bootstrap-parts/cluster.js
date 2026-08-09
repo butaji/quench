@@ -841,6 +841,71 @@ const __quenchRequireStreamIter = () => {
     };
     return shared;
   };
+  const validateReadableOptions = (options) => {
+    if (options === undefined) return {};
+    if (!options || typeof options !== "object" || Array.isArray(options)) {
+      const error = new TypeError("options must be an object");
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    const highWaterMark = options.highWaterMark;
+    if (highWaterMark !== undefined && typeof highWaterMark !== "number") {
+      const error = new TypeError("highWaterMark must be a number");
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (highWaterMark !== undefined &&
+      (!Number.isInteger(highWaterMark) || highWaterMark < 0)) {
+      const error = new RangeError("highWaterMark must be non-negative");
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    if (options.signal !== undefined &&
+      typeof options.signal?.addEventListener !== "function") {
+      const error = new TypeError("signal must be an AbortSignal");
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    return options;
+  };
+  const validateReadableSource = (source) => {
+    if (
+      source === null ||
+      source === undefined ||
+      typeof source === "string" ||
+      (!source?.[Symbol.iterator] && !source?.[Symbol.asyncIterator])
+    ) {
+      const error = new TypeError("source must be iterable");
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+  };
+  const toReadable = (source, options) => {
+    const opts = validateReadableOptions(options);
+    validateReadableSource(source);
+    const chunks = (async function* () {
+      for await (const value of sourceAsync(source)) {
+        yield* normalizeChunk(value);
+      }
+    })();
+    return globalThis.__nodeStream.Readable.from(chunks, {
+      ...opts,
+      objectMode: false,
+      highWaterMark: opts.highWaterMark ?? 64 * 1024,
+    });
+  };
+  const toReadableSync = (source, options) => {
+    const opts = validateReadableOptions(options);
+    validateReadableSource(source);
+    const chunks = (function* () {
+      for (const value of sourceSync(source)) yield* normalizeChunk(value);
+    })();
+    return globalThis.__nodeStream.Readable.from(chunks, {
+      ...opts,
+      objectMode: false,
+      highWaterMark: opts.highWaterMark ?? 64 * 1024,
+    });
+  };
   const Broadcast = {
     from(source, options = {}) {
       const protocol = Symbol.for("Stream.broadcastProtocol");
@@ -1087,6 +1152,8 @@ const __quenchRequireStreamIter = () => {
     tapSync,
     pullSync,
     shareSync,
+    toReadable,
+    toReadableSync,
     push,
     merge,
     broadcast,
@@ -1095,7 +1162,15 @@ const __quenchRequireStreamIter = () => {
     toWritable,
     ondrain: (writer) =>
       writer?.canWrite === null ? null : Promise.resolve(true),
-    pull: (readable, transform) => ({
+    pull: (readable, transform) => {
+      if (transform?.constructor?.name === "AsyncGeneratorFunction") {
+        return {
+          async *[Symbol.asyncIterator]() {
+            yield* transform(sourceAsync(readable));
+          },
+        };
+      }
+      return {
       async *[Symbol.asyncIterator]() {
         for await (const value of readable) {
           const result = transform ? transform(value) : value;
