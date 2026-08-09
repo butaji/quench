@@ -78,7 +78,15 @@ pub(crate) fn construct_value(
             | crate::ops::Builtin::IntlLocale,
         ) => crate::intl::execute(*target_builtin(target), arguments, None)
             .unwrap_or_else(|| Ok(crate::builtins::object(arguments))),
-        Value::Function(_) => Ok(Value::Object(std::rc::Rc::new(Vec::new()))),
+        Value::Function(function) => {
+            let object = Value::Object(std::rc::Rc::new(Vec::new()));
+            let result = crate::functions::execute(function, &object, arguments)?;
+            if matches!(result, Value::Object(_)) {
+                Ok(result)
+            } else {
+                Ok(object)
+            }
+        }
         _ => Err(crate::execute::VmError::NotCallable),
     }
 }

@@ -26,7 +26,9 @@ pub fn execute_call(
     }
     let callee_value = super::read_register(registers, callee)?;
     let value = match &callee_value {
-        Value::Function(body) => crate::functions::execute(body, &arguments)?,
+        Value::Function(body) => {
+            crate::functions::execute(body, &crate::value::Value::Undefined, &arguments)?
+        }
         Value::BoundFunction(bound) => crate::functions::execute_bound(bound, &arguments)?,
         Value::Builtin(builtin) => {
             super::execute_builtin_with_receiver(*builtin, &arguments, None)?
