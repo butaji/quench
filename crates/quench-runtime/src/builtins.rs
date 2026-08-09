@@ -10,53 +10,79 @@ pub(crate) fn property(builtin: Builtin, key: &str) -> Value {
 }
 
 fn property_lookup(builtin: Builtin, key: &str) -> Value {
+    use Builtin::*;
     if let Some(value) = special_property(builtin, key) {
         return value;
     }
     if let Some(value) = callable_property(builtin, key) {
         return value;
     }
-    match (builtin, key) {
-        (Builtin::Array, "prototype") => Value::Builtin(Builtin::ArrayPrototype),
-        (Builtin::ArrayPrototype, "map") => Value::Builtin(Builtin::ArrayMap),
-        (Builtin::ArrayPrototype, "forEach") => Value::Builtin(Builtin::ArrayForEach),
-        (Builtin::ArrayMap, "call") => Value::Builtin(Builtin::FunctionCall),
-        (Builtin::Array, "isArray") => Value::Builtin(Builtin::ArrayIsArray),
-        (Builtin::Object, "is") => Value::Builtin(Builtin::ObjectIs),
-        (Builtin::Object, "keys") => Value::Builtin(Builtin::ObjectKeys),
-        (Builtin::Object, "getOwnPropertyDescriptor") => {
-            Value::Builtin(Builtin::ObjectGetOwnPropertyDescriptor)
-        }
-        _ => Value::Undefined,
-    }
+    let value = match (builtin, key) {
+        (Array, "prototype") => ArrayPrototype,
+        (ArrayPrototype, "map") => ArrayMap,
+        (ArrayPrototype, "forEach") => ArrayForEach,
+        (ArrayMap, "call") => FunctionCall,
+        (Array, "isArray") => ArrayIsArray,
+        (Object, "is") => ObjectIs,
+        (Object, "keys") => ObjectKeys,
+        (Object, "getOwnPropertyDescriptor") => ObjectGetOwnPropertyDescriptor,
+        _ => return Value::Undefined,
+    };
+    Value::Builtin(value)
 }
 
 fn special_property(builtin: Builtin, key: &str) -> Option<Value> {
-    if builtin == Builtin::Math {
+    use Builtin::*;
+    if builtin == Math {
         return crate::math::property(key).map(Value::Builtin);
     }
+    if let Some(value) = symbol_property(builtin, key) {
+        return Some(Value::Builtin(value));
+    }
     let value = match (builtin, key) {
-        (Builtin::Function, "prototype") => Builtin::FunctionPrototype,
-        (Builtin::FunctionPrototype, "call") => Builtin::FunctionCall,
-        (Builtin::FunctionPrototype, "bind") => Builtin::FunctionBind,
-        (Builtin::FunctionCall, "bind") => Builtin::FunctionBind,
-        (Builtin::ArrayPrototype, "join") => Builtin::ArrayJoin,
-        (Builtin::ArrayPrototype, "push") => Builtin::ArrayPush,
-        (Builtin::Object, "prototype") => Builtin::ObjectPrototype,
-        (Builtin::Date, "prototype") => Builtin::DatePrototype,
-        (Builtin::DatePrototype, "getYear") => Builtin::DateGetYear,
-        (Builtin::DatePrototype, "setYear") => Builtin::DateSetYear,
-        (Builtin::Reflect, "construct") => Builtin::ReflectConstruct,
-        (Builtin::RegExp, "prototype") => Builtin::RegExpPrototype,
-        (Builtin::RegExpPrototype, "test") => Builtin::RegExpTest,
-        (Builtin::RegExpPrototype, "exec") => Builtin::RegExpExec,
-        (Builtin::ObjectPrototype, "hasOwnProperty") => Builtin::ObjectHasOwnProperty,
-        (Builtin::ObjectPrototype, "propertyIsEnumerable") => Builtin::ObjectPropertyIsEnumerable,
-        (Builtin::Object, "defineProperty") => Builtin::ObjectDefineProperty,
-        (Builtin::Object, "getOwnPropertyNames") => Builtin::ObjectGetOwnPropertyNames,
+        (Function, "prototype") => FunctionPrototype,
+        (FunctionPrototype, "call") => FunctionCall,
+        (FunctionPrototype, "bind") => FunctionBind,
+        (FunctionCall, "bind") => FunctionBind,
+        (ArrayPrototype, "join") => ArrayJoin,
+        (ArrayPrototype, "push") => ArrayPush,
+        (Object, "prototype") => ObjectPrototype,
+        (Date, "prototype") => DatePrototype,
+        (DatePrototype, "getYear") => DateGetYear,
+        (DatePrototype, "setYear") => DateSetYear,
+        (DatePrototype, "toLocaleString") => DateToLocaleString,
+        (DatePrototype, "toLocaleDateString") => DateToLocaleDateString,
+        (DatePrototype, "toLocaleTimeString") => DateToLocaleTimeString,
+        (Reflect, "construct") => ReflectConstruct,
+        (RegExp, "prototype") => RegExpPrototype,
+        (RegExpPrototype, "test") => RegExpTest,
+        (RegExpPrototype, "exec") => RegExpExec,
+        (ObjectPrototype, "hasOwnProperty") => ObjectHasOwnProperty,
+        (ObjectPrototype, "propertyIsEnumerable") => ObjectPropertyIsEnumerable,
+        (Object, "defineProperty") => ObjectDefineProperty,
+        (Object, "getOwnPropertyNames") => ObjectGetOwnPropertyNames,
         _ => return None,
     };
     Some(Value::Builtin(value))
+}
+
+fn symbol_property(builtin: Builtin, key: &str) -> Option<Builtin> {
+    use Builtin::*;
+    match (builtin, key) {
+        (Symbol, "iterator") => Some(SymbolIterator),
+        (Symbol, "toStringTag") => Some(SymbolToStringTag),
+        (Symbol, "toPrimitive") => Some(SymbolToPrimitive),
+        (Symbol, "hasInstance") => Some(SymbolHasInstance),
+        (Symbol, "isConcatSpreadable") => Some(SymbolIsConcatSpreadable),
+        (Symbol, "species") => Some(SymbolSpecies),
+        (Symbol, "match") => Some(SymbolMatch),
+        (Symbol, "replace") => Some(SymbolReplace),
+        (Symbol, "search") => Some(SymbolSearch),
+        (Symbol, "split") => Some(SymbolSplit),
+        (Symbol, "for") => Some(SymbolFor),
+        (Symbol, "keyFor") => Some(SymbolKeyFor),
+        _ => None,
+    }
 }
 
 fn callable_property(builtin: Builtin, key: &str) -> Option<Value> {
@@ -67,20 +93,29 @@ fn callable_property(builtin: Builtin, key: &str) -> Option<Value> {
     }
 }
 
+fn callable_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
+    if !matches!(key, "length" | "name") {
+        return None;
+    }
+    Some(callable_property(builtin, key).unwrap())
+}
+
 fn builtin_name(builtin: Builtin) -> &'static str {
+    use Builtin::*;
     match builtin {
-        Builtin::Escape => "escape",
-        Builtin::Unescape => "unescape",
-        Builtin::Array => "Array",
-        Builtin::Object => "Object",
-        Builtin::String => "String",
-        Builtin::Number => "Number",
-        Builtin::Date => "Date",
-        Builtin::DateGetYear => "getYear",
-        Builtin::DateSetYear => "setYear",
-        Builtin::RegExp => "RegExp",
-        Builtin::RegExpTest => "test",
-        Builtin::RegExpExec => "exec",
+        Escape => "escape",
+        Unescape => "unescape",
+        Array => "Array",
+        Object => "Object",
+        String => "String",
+        Symbol => "Symbol",
+        Number => "Number",
+        Date => "Date",
+        DateGetYear => "getYear",
+        DateSetYear => "setYear",
+        RegExp => "RegExp",
+        RegExpTest => "test",
+        RegExpExec => "exec",
         _ => "",
     }
 }
@@ -137,12 +172,8 @@ pub(crate) fn object_special(
         _ => Value::Undefined,
     }
 }
-
 pub(crate) fn descriptor(value: Option<&Value>, key: Option<&Value>) -> Value {
-    let Some(value) = value else {
-        return Value::Undefined;
-    };
-    let Some(key) = key.map(value_to_string) else {
+    let (Some(value), Some(key)) = (value, key.map(value_to_string)) else {
         return Value::Undefined;
     };
     let property = match value {
@@ -154,17 +185,17 @@ pub(crate) fn descriptor(value: Option<&Value>, key: Option<&Value>) -> Value {
         Value::Array(values) => array_descriptor(values, &key),
         Value::String(value) => string_descriptor(value, &key),
         Value::Builtin(builtin) if matches!(key.as_str(), "length" | "name") => {
-            return callable_descriptor(callable_property(*builtin, &key).unwrap())
+            return callable_descriptor(*builtin, &key).unwrap()
         }
         Value::Function(function) if key == "length" => {
-            return callable_descriptor(Value::Number(f64::from(function.params)))
+            return callable_descriptor_value(Value::Number(f64::from(function.params)))
         }
         _ => None,
     };
     property.map_or(Value::Undefined, |property| descriptor_object(&property))
 }
 
-fn callable_descriptor(value: Value) -> Value {
+fn callable_descriptor_value(value: Value) -> Value {
     Value::Object(Rc::new(vec![
         ("value".to_string(), value),
         ("writable".to_string(), Value::Boolean(false)),
@@ -172,12 +203,11 @@ fn callable_descriptor(value: Value) -> Value {
         ("configurable".to_string(), Value::Boolean(true)),
     ]))
 }
-
 fn builtin_length(builtin: Builtin) -> f64 {
-    match builtin {
-        Builtin::Escape | Builtin::Unescape | Builtin::DateSetYear => 1.0,
-        _ => 0.0,
-    }
+    matches!(
+        builtin,
+        Builtin::Escape | Builtin::Unescape | Builtin::DateSetYear
+    ) as i32 as f64
 }
 
 fn array_descriptor(values: &[Value], key: &str) -> Option<Value> {
@@ -190,9 +220,10 @@ fn array_descriptor(values: &[Value], key: &str) -> Option<Value> {
 }
 
 fn string_descriptor(value: &str, key: &str) -> Option<Value> {
-    let index = key.parse::<usize>().ok()?;
-    let character = value.chars().nth(index)?;
-    Some(Value::String(character.to_string()))
+    value
+        .chars()
+        .nth(key.parse::<usize>().ok()?)
+        .map(|character| Value::String(character.to_string()))
 }
 
 fn descriptor_object(value: &Value) -> Value {
@@ -205,33 +236,35 @@ fn descriptor_object(value: &Value) -> Value {
 }
 
 fn value_to_string(value: &Value) -> String {
+    use Value::*;
     match value {
-        Value::String(value) => value.clone(),
-        Value::Number(value) => value.to_string(),
-        Value::Boolean(value) => value.to_string(),
-        Value::Null => "null".to_string(),
-        Value::Undefined => "undefined".to_string(),
+        String(value) => value.clone(),
+        Number(value) => value.to_string(),
+        Boolean(value) => value.to_string(),
+        Null => "null".to_string(),
+        Undefined => "undefined".to_string(),
         _ => "[object Object]".to_string(),
     }
 }
 
 pub(crate) fn escape(value: Option<&Value>) -> Value {
+    let source = value.map_or_else(|| value_to_string(&Value::Undefined), value_to_string);
     let mut result = String::new();
-    for character in value
-        .map_or_else(|| value_to_string(&Value::Undefined), value_to_string)
-        .chars()
-    {
+    for character in source.chars() {
         if character.is_ascii_alphanumeric() || "@*_+-./".contains(character) {
             result.push(character);
-        } else if (character as u32) <= 0xFF {
-            result.push_str(&format!("%{:02X}", character as u32));
         } else {
-            result.push_str(&format!("%u{:04X}", character as u32));
+            let code = character as u32;
+            let escaped = if code <= 0xFF {
+                format!("%{code:02X}")
+            } else {
+                format!("%u{code:04X}")
+            };
+            result.push_str(&escaped);
         }
     }
     Value::String(result)
 }
-
 pub(crate) fn unescape(value: Option<&Value>) -> Value {
     let text = value.map_or_else(|| value_to_string(&Value::Undefined), value_to_string);
     let mut result = String::new();
@@ -242,8 +275,7 @@ pub(crate) fn unescape(value: Option<&Value>) -> Value {
             continue;
         }
         let digits: String = chars.by_ref().take(2).collect();
-        let parsed = u8::from_str_radix(&digits, 16).ok().map(char::from);
-        if let Some(parsed) = parsed {
+        if let Some(parsed) = u8::from_str_radix(&digits, 16).ok().map(char::from) {
             result.push(parsed);
         } else {
             result.push('%');
@@ -254,11 +286,9 @@ pub(crate) fn unescape(value: Option<&Value>) -> Value {
 }
 
 pub(crate) fn array(arguments: &[Value]) -> Value {
-    if arguments.len() == 1 {
-        if let Value::Number(length) = arguments[0] {
-            if length >= 0.0 && length.fract() == 0.0 {
-                return Value::Array(Rc::new(vec![Value::Undefined; length as usize]));
-            }
+    if let [Value::Number(length)] = arguments {
+        if *length >= 0.0 && length.fract() == 0.0 {
+            return Value::Array(Rc::new(vec![Value::Undefined; *length as usize]));
         }
     }
     Value::Array(Rc::new(arguments.to_vec()))
@@ -276,11 +306,7 @@ pub(crate) fn array_map(
     };
     let mut mapped = Vec::with_capacity(values.len());
     for (index, value) in values.iter().enumerate() {
-        let args = [
-            value.clone(),
-            Value::Number(index as f64),
-            receiver.cloned().unwrap_or(Value::Undefined),
-        ];
+        let args = [value.clone(), Value::Number(index as f64), Value::Undefined];
         mapped.push(crate::functions::execute_target(
             callback,
             &Value::Undefined,
@@ -297,16 +323,14 @@ pub(crate) fn array_for_each(
     let Some(Value::Array(values)) = receiver else {
         return Ok(Value::Undefined);
     };
-    let Some(callback) = arguments.first() else {
-        return Ok(Value::Undefined);
-    };
-    for (index, value) in values.iter().enumerate() {
-        let args = [
-            value.clone(),
-            Value::Number(index as f64),
-            receiver.cloned().unwrap_or(Value::Undefined),
-        ];
-        crate::functions::execute_target(callback, &Value::Undefined, &args)?;
+    if let Some(callback) = arguments.first() {
+        for (index, value) in values.iter().enumerate() {
+            crate::functions::execute_target(
+                callback,
+                &Value::Undefined,
+                &[value.clone(), Value::Number(index as f64), Value::Undefined],
+            )?;
+        }
     }
     Ok(Value::Undefined)
 }
@@ -323,11 +347,7 @@ pub(crate) fn array_filter(
     };
     let mut filtered = Vec::new();
     for (index, value) in values.iter().enumerate() {
-        let args = [
-            value.clone(),
-            Value::Number(index as f64),
-            receiver.cloned().unwrap_or(Value::Undefined),
-        ];
+        let args = [value.clone(), Value::Number(index as f64), Value::Undefined];
         let result = crate::functions::execute_target(callback, &Value::Undefined, &args)?;
         if crate::execute::is_truthy(&result) {
             filtered.push(value.clone());

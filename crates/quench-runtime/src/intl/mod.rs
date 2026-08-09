@@ -16,6 +16,7 @@ pub(crate) mod number;
 pub(crate) mod plural;
 pub(crate) mod relative;
 pub(crate) mod segmenter;
+pub(crate) mod tolocale;
 
 /// Internal slot key stored on constructed Intl objects.
 pub(crate) const SLOT: &str = "__intl";
