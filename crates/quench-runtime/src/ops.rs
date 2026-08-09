@@ -71,6 +71,7 @@ pub enum Builtin {
     Number,
     Object,
     ObjectIs,
+    ObjectKeys,
     ParseFloat,
     ParseInt,
     String,
