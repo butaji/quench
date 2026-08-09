@@ -28,6 +28,7 @@ const BOOTSTRAP_PARTS: &[&str] = &[
     include_str!("../polyfills/bootstrap-parts/encoding.js"),
     include_str!("../polyfills/bootstrap-parts/encoding-tail.js"),
     include_str!("../polyfills/bootstrap-parts/pool.js"),
+    include_str!("../polyfills/bootstrap-parts/copy-head.js"),
     include_str!("../polyfills/bootstrap-parts/copy.js"),
     include_str!("../polyfills/bootstrap-parts/buffer-validation.js"),
     include_str!("../polyfills/bootstrap-parts/views.js"),
