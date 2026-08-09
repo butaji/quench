@@ -874,12 +874,15 @@ macro_rules! run_host_context {
                     continue;
                 }
                 let work_before = ctx.eval::<i64, _>(b"globalThis.__quench_work_generation || 0")?;
-                ctx.eval::<(), _>(b"try { if (typeof process?.emit === 'function') process.emit('beforeExit', process.exitCode || 0); } catch (error) { globalThis.__quench_exit_error = error && error.stack ? `${error.name}: ${error.message}\\n${error.stack}` : String(error); throw error; }")
-                    .map_err(|error| {
+                let before_exit = ctx.eval::<(), _>(b"try { if (typeof process?.emit === 'function') process.emit('beforeExit', process.exitCode || 0); } catch (error) { globalThis.__quench_exit_error = error && error.stack ? `${error.name}: ${error.message}\\n${error.stack}` : String(error); throw error; }");
+                if let Err(error) = before_exit {
+                    if !ctx.globals().get::<_, bool>("__quench_force_exit").unwrap_or(false) {
                         let detail = ctx.globals().get::<_, String>("__quench_exit_error").unwrap_or_else(|_| format!("{error:?}"));
                         eprintln!("Process beforeExit handler failure: {detail}");
-                        error
-                    })?;
+                        ctx.globals().set("__quench_force_exit", true)?;
+                    }
+                    break;
+                }
                 ctx.eval::<(), _>(b"try { if (typeof globalThis.__quench_io_poll === 'function') globalThis.__quench_io_poll(); if (typeof globalThis.__quench_timer_poll === 'function') globalThis.__quench_timer_poll(); } catch (error) { globalThis.__quench_exit_error = error && error.stack ? `${error.name}: ${error.message}\\n${error.stack}` : String(error); throw error; }")
                     .map_err(|error| {
                         let detail = ctx.globals().get::<_, String>("__quench_exit_error").unwrap_or_else(|_| format!("{error:?}"));

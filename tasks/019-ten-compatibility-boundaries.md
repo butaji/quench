@@ -1338,3 +1338,11 @@ network work without treating `nextTick` alone as loop-keeping; network servers
 emit `listening` alongside their callback. The focused re-entry/listening stages
 and authoritative `test-process-beforeexit.js` fixture pass; the full focused
 gate reports 2352/2352 passing.
+
+Stages 2516–2517 align process exit behavior from `beforeExit`. Explicit
+`process.exit()` from `beforeExit` transitions directly to final exit dispatch,
+and thrown `beforeExit` handlers proceed to exit handlers instead of aborting
+host evaluation. Focused stages and authoritative
+`test-process-exit-from-before-exit.js` and
+`test-process-beforeexit-throw-exit.js` fixtures pass; the full focused gate
+reports 2354/2354 passing.
