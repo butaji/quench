@@ -1,7 +1,6 @@
 //! OXC-to-residual reduction entry point.
 
 use std::collections::HashMap;
-use std::convert::TryFrom;
 
 use oxc::{
     allocator::Allocator,
@@ -14,6 +13,7 @@ use oxc::{
 use crate::{
     blocks, conditional,
     facts::ProgramDb,
+    functions,
     literal::{reduce_literal, reduce_operator},
     logical,
     ops::{Constant, Op},
@@ -66,7 +66,7 @@ fn reduce_statements(
     reduce_statements_with_locals(statements, facts, HashMap::new(), 0)
 }
 
-fn reduce_statements_with_locals(
+pub(crate) fn reduce_statements_with_locals(
     statements: &[Statement<'_>],
     facts: &mut ProgramDb,
     mut locals: HashMap<String, u16>,
@@ -154,7 +154,7 @@ fn reduce_function_declaration(
     let Some(body) = function.body.as_ref() else {
         return Err(vec!["Function without body".to_string()]);
     };
-    let (parameters, parameter_count) = function_parameters(function)?;
+    let (parameters, parameter_count) = functions::function_parameters(function)?;
     let body_ops =
         reduce_statements_with_locals(&body.statements, facts, parameters, parameter_count)?;
     let slot = *next_slot;
@@ -172,23 +172,6 @@ fn reduce_function_declaration(
         src: register,
     });
     Ok(())
-}
-
-fn function_parameters(
-    function: &oxc::ast::ast::Function<'_>,
-) -> Result<(HashMap<String, u16>, u16), Vec<String>> {
-    let mut parameters = HashMap::new();
-    for (slot, parameter) in function.params.items.iter().enumerate() {
-        let BindingPatternKind::BindingIdentifier(identifier) = &parameter.pattern.kind else {
-            return Err(vec!["Unsupported function parameter pattern".to_string()]);
-        };
-        let slot =
-            u16::try_from(slot).map_err(|_| vec!["Too many function parameters".to_string()])?;
-        parameters.insert(identifier.name.to_string(), slot);
-    }
-    let count = u16::try_from(function.params.items.len())
-        .map_err(|_| vec!["Too many function parameters".to_string()])?;
-    Ok((parameters, count))
 }
 
 fn reduce_if_statement(
@@ -330,6 +313,9 @@ fn reduce_special(
     match expression {
         Expression::LogicalExpression(value) => {
             logical::reduce_expression(value, ops, facts, next_register, locals)
+        }
+        Expression::FunctionExpression(function) => {
+            functions::reduce_expression(function, ops, facts, next_register)
         }
         Expression::ConditionalExpression(value) => {
             conditional::reduce_expression(value, ops, facts, next_register, locals)
