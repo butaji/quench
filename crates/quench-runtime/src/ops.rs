@@ -138,6 +138,8 @@ pub enum Builtin {
     ArrayConcat,
     ArrayFlat,
     ArrayFlatMap,
+    ArrayAt,
+    ArrayToReversed,
     ArrayReduce,
     ArrayReduceRight,
     ArrayForEach,
