@@ -285,3 +285,7 @@ zero warnings; representative events/diagnostics stages remain green.
 `read-file.js` path and option validation now use focused helpers and passes
 ESLint with zero warnings. Read-file, URL, abort, and encoding stages 10,
 1257, 1313, 1624, 176, and 1853 pass.
+
+TLS option field and ticket-key validation were split into helpers. `tls.js`
+now passes ESLint with zero warnings; stages 520, 1168, 1242, 2009, 2010,
+2011, and 2029 pass.
