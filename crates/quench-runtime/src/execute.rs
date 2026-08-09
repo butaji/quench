@@ -166,7 +166,41 @@ fn evaluate_binary(
         crate::ops::BinaryOp::LessEqual => compare_numbers(left, right, |a, b| a <= b)?,
         crate::ops::BinaryOp::GreaterThan => compare_numbers(left, right, |a, b| a > b)?,
         crate::ops::BinaryOp::GreaterEqual => compare_numbers(left, right, |a, b| a >= b)?,
+        crate::ops::BinaryOp::BitwiseOr => bitwise_numbers(left, right, |a, b| a | b)?,
+        crate::ops::BinaryOp::BitwiseXor => bitwise_numbers(left, right, |a, b| a ^ b)?,
+        crate::ops::BinaryOp::BitwiseAnd => bitwise_numbers(left, right, |a, b| a & b)?,
     })
+}
+
+fn bitwise_numbers(
+    left: &Value,
+    right: &Value,
+    operation: fn(i32, i32) -> i32,
+) -> Result<Value, VmError> {
+    let (Value::Number(left), Value::Number(right)) = (left, right) else {
+        return Err(VmError::NonNumericOperand);
+    };
+    Ok(Value::Number(f64::from(operation(
+        to_int32(*left),
+        to_int32(*right),
+    ))))
+}
+
+fn to_int32(value: f64) -> i32 {
+    if !value.is_finite() || value == 0.0 {
+        return 0;
+    }
+    let truncated = value.trunc() % 4_294_967_296.0;
+    let wrapped = if truncated < 0.0 {
+        truncated + 4_294_967_296.0
+    } else {
+        truncated
+    };
+    if wrapped >= 2_147_483_648.0 {
+        (wrapped - 4_294_967_296.0) as i32
+    } else {
+        wrapped as i32
+    }
 }
 
 fn numeric_binary(left: f64, right: f64, operator: crate::ops::BinaryOp) -> f64 {
