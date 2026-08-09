@@ -782,9 +782,64 @@ const __quenchRequireStreamIter = () => {
         },
         get consumerCount() {
           return consumers.size;
-        }
-      }
+        },
+      },
     };
+  };
+  const shareSync = (source, options = {}) => {
+    const sourceIterator = sourceSync(source)[Symbol.iterator]();
+    const batches = [];
+    const consumers = new Set();
+    let cancelled = false;
+    let sourceDone = false;
+    let sourceError;
+    const shared = {
+      pull() {
+        const consumer = { active: true, index: 0 };
+        consumers.add(consumer);
+        return {
+          *[Symbol.iterator]() {
+            try {
+              while (!cancelled && consumer.active) {
+                if (consumer.index < batches.length) {
+                  yield batches[consumer.index++];
+                  continue;
+                }
+                if (sourceError) throw sourceError;
+                if (sourceDone) return;
+                let result;
+                try {
+                  result = sourceIterator.next();
+                } catch (error) {
+                  sourceError = error;
+                  throw error;
+                }
+                if (result.done) {
+                  sourceDone = true;
+                  return;
+                }
+                batches.push(result.value);
+                consumer.index++;
+                yield result.value;
+              }
+            } finally {
+              consumer.active = false;
+              consumers.delete(consumer);
+            }
+          },
+        };
+      },
+      cancel() {
+        cancelled = true;
+        for (const consumer of consumers) consumer.active = false;
+        consumers.clear();
+        sourceIterator.return?.();
+      },
+      get consumerCount() {
+        return consumers.size;
+      },
+    };
+    return shared;
   };
   const Broadcast = {
     from(source, options = {}) {
@@ -1031,6 +1086,7 @@ const __quenchRequireStreamIter = () => {
     tap,
     tapSync,
     pullSync,
+    shareSync,
     push,
     merge,
     broadcast,
