@@ -1097,6 +1097,20 @@ const __quenchNetModule = {
         server._path = adoptedBound._path;
       }
       const requestedPort = Number(listenOptions.port || 0);
+      const listenHost = listenOptions.host || "0.0.0.0";
+      if (
+        typeof listenHost === "string" &&
+        isIPv4(listenHost) &&
+        !["0.0.0.0", "127.0.0.1"].includes(listenHost)
+      ) {
+        const error = new Error("Cannot assign requested address");
+        error.code = "EADDRNOTAVAIL";
+        error.address = listenHost;
+        error.port = requestedPort;
+        error.syscall = "listen";
+        queueMicrotask(() => server.emit("error", error));
+        return server;
+      }
       const occupied = [...__quenchNetServers].some(
         (candidate) =>
           candidate.listening &&
