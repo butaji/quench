@@ -1,7 +1,6 @@
 //! Minimal residual-op interpreter.
 use crate::{ops::Op, value::Value};
 use std::rc::Rc;
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VmError {
     RegisterOutOfBounds(u16),
@@ -178,6 +177,7 @@ fn execute_builtin(builtin: crate::ops::Builtin, arguments: &[Value]) -> Result<
             arguments.first(),
             arguments.get(1),
         ))),
+        crate::ops::Builtin::ObjectKeys => Ok(crate::builtins::keys(arguments.first())),
         crate::ops::Builtin::ParseFloat => Ok(Value::Number(parse_float(arguments.first()))),
         crate::ops::Builtin::ParseInt => Ok(Value::Number(parse_int(arguments))),
         crate::ops::Builtin::String => Ok(Value::String(to_string(arguments.first()))),

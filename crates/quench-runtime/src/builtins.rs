@@ -9,6 +9,9 @@ pub(crate) fn property(builtin: Builtin, key: &str) -> Value {
     if matches!(builtin, Builtin::Object) && key == "is" {
         return Value::Builtin(Builtin::ObjectIs);
     }
+    if matches!(builtin, Builtin::Object) && key == "keys" {
+        return Value::Builtin(Builtin::ObjectKeys);
+    }
     Value::Undefined
 }
 
@@ -47,4 +50,21 @@ pub(crate) fn same_value(left: Option<&Value>, right: Option<&Value>) -> bool {
         (Value::Function(left), Value::Function(right)) => Rc::ptr_eq(left, right),
         _ => left == right,
     }
+}
+
+pub(crate) fn keys(value: Option<&Value>) -> Value {
+    let keys = match value {
+        Some(Value::Object(properties)) => properties
+            .iter()
+            .map(|(key, _)| Value::String(key.clone()))
+            .collect(),
+        Some(Value::Array(values)) => (0..values.len())
+            .map(|index| Value::String(index.to_string()))
+            .collect(),
+        Some(Value::String(value)) => (0..value.chars().count())
+            .map(|index| Value::String(index.to_string()))
+            .collect(),
+        _ => Vec::new(),
+    };
+    Value::Array(Rc::new(keys))
 }
