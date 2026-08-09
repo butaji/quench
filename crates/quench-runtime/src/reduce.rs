@@ -1,12 +1,11 @@
 //! OXC-to-residual reduction entry point.
 use crate::{
-    arrays, blocks, conditional, control_flow,
+    arrays, blocks, control_flow,
     facts::ProgramDb,
     functions, identifiers,
     literal::{reduce_literal, reduce_operator},
-    logical, objects,
     ops::{Constant, Op},
-    properties, sequences, templates, transparent,
+    properties, special, transparent,
 };
 use oxc::{
     allocator::Allocator,
@@ -269,7 +268,7 @@ pub(crate) fn reduce_expression(
     if let Expression::ParenthesizedExpression(value) = expression {
         return transparent::reduce(value, ops, facts, next_register, locals);
     }
-    if let Some(value) = reduce_special(expression, ops, facts, next_register, locals) {
+    if let Some(value) = special::reduce(expression, ops, facts, next_register, locals) {
         return Some(value);
     }
     if let Some(register) = reduce_atom(expression, ops, facts, next_register, locals) {
@@ -291,47 +290,7 @@ pub(crate) fn reduce_expression(
     });
     Some(dst)
 }
-fn reduce_special(
-    expression: &Expression<'_>,
-    ops: &mut Vec<Op>,
-    facts: &mut ProgramDb,
-    next_register: &mut u16,
-    locals: &HashMap<String, u16>,
-) -> Option<u16> {
-    match expression {
-        Expression::LogicalExpression(value) => {
-            logical::reduce_expression(value, ops, facts, next_register, locals)
-        }
-        Expression::FunctionExpression(function) => {
-            functions::reduce_expression(function, ops, facts, next_register)
-        }
-        Expression::ObjectExpression(object) => {
-            objects::reduce(object, ops, facts, next_register, locals)
-        }
-        Expression::TemplateLiteral(template) => {
-            templates::reduce(template, ops, facts, next_register, locals)
-        }
-        Expression::SequenceExpression(sequence) => {
-            sequences::reduce(sequence, ops, facts, next_register, locals)
-        }
-        Expression::StaticMemberExpression(_) | Expression::ComputedMemberExpression(_) => {
-            properties::reduce(expression, ops, facts, next_register, locals)
-        }
-        Expression::ConditionalExpression(value) => {
-            conditional::reduce_expression(value, ops, facts, next_register, locals)
-        }
-        Expression::UnaryExpression(value) => {
-            reduce_unary(value, ops, facts, next_register, locals)
-        }
-        Expression::CallExpression(value) => reduce_call(value, ops, facts, next_register, locals),
-        Expression::UpdateExpression(value) => reduce_update(value, ops, next_register, locals),
-        Expression::AssignmentExpression(value) => {
-            reduce_assignment(value, ops, facts, next_register, locals)
-        }
-        _ => None,
-    }
-}
-fn reduce_unary(
+pub(crate) fn reduce_unary(
     unary: &oxc::ast::ast::UnaryExpression<'_>,
     ops: &mut Vec<Op>,
     facts: &mut ProgramDb,
@@ -358,7 +317,7 @@ fn reduce_unary(
     ops.push(Op::Unary { dst, operator, src });
     Some(dst)
 }
-fn reduce_call(
+pub(crate) fn reduce_call(
     call: &oxc::ast::ast::CallExpression<'_>,
     ops: &mut Vec<Op>,
     facts: &mut ProgramDb,
@@ -385,7 +344,7 @@ fn reduce_call(
     ops.push(Op::Call { dst, callee, args });
     Some(dst)
 }
-fn reduce_update(
+pub(crate) fn reduce_update(
     update: &oxc::ast::ast::UpdateExpression<'_>,
     ops: &mut Vec<Op>,
     next_register: &mut u16,
@@ -425,7 +384,7 @@ fn reduce_update(
         Some(old)
     }
 }
-fn reduce_assignment(
+pub(crate) fn reduce_assignment(
     assignment: &oxc::ast::ast::AssignmentExpression<'_>,
     ops: &mut Vec<Op>,
     facts: &mut ProgramDb,

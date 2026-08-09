@@ -52,6 +52,11 @@ pub enum Op {
         key: String,
         args: Vec<u16>,
     },
+    Construct {
+        dst: u16,
+        callee: u16,
+        args: Vec<u16>,
+    },
     Unary {
         dst: u16,
         operator: UnaryOp,
