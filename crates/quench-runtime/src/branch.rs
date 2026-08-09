@@ -1,7 +1,7 @@
 use crate::{execute::VmError, ops::Op, value::Value};
 use std::collections::HashMap;
 
-pub(crate) fn execute(registers: &[Value], op: &Op) -> Result<(), VmError> {
+pub(crate) fn execute(registers: &[Value], op: &Op) -> Result<Value, VmError> {
     let Op::Branch {
         condition,
         then_ops,
@@ -16,14 +16,14 @@ pub(crate) fn execute(registers: &[Value], op: &Op) -> Result<(), VmError> {
     } else {
         else_ops
     };
-    crate::execute::execute_with_registers(selected, registers.to_vec()).map(|_| ())
+    crate::execute::execute_with_registers(selected, registers.to_vec())
 }
 
 pub(crate) fn execute_special(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
     match op {
         Op::CallMethod { .. } => crate::methods::execute(registers, op),
         Op::Construct { .. } => crate::construct::execute(registers, op),
-        Op::Branch { .. } => execute(registers, op),
+        Op::Branch { .. } => execute(registers, op).map(|_| ()),
         Op::Try { .. } => crate::exceptions::execute(registers, op),
         Op::Loop { .. } => crate::loops::execute(registers, op),
         Op::Switch { .. } => crate::switch::execute(registers, op),

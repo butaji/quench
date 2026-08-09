@@ -98,3 +98,19 @@ pub(crate) fn write_op(registers: &mut Vec<crate::value::Value>, op: &Op) {
     };
     write(registers, *dst, body, *params, *captures);
 }
+
+pub(crate) fn execute(
+    function: &crate::value::FunctionValue,
+    arguments: &[crate::value::Value],
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    let mut parameters = arguments.to_vec();
+    parameters.resize(usize::from(function.params), crate::value::Value::Undefined);
+    parameters.truncate(usize::from(function.params));
+    let mut registers = function.captures.as_ref().clone();
+    registers.extend(parameters);
+    registers.resize(
+        registers.len().saturating_add(32),
+        crate::value::Value::Undefined,
+    );
+    crate::execute::execute_with_registers(&function.body, registers)
+}
