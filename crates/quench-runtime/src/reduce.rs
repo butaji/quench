@@ -7,7 +7,7 @@ use crate::{
     literal::{reduce_literal, reduce_operator},
     logical, objects,
     ops::{Constant, Op},
-    properties, sequences, templates,
+    properties, sequences, templates, transparent,
 };
 use oxc::{
     allocator::Allocator,
@@ -25,11 +25,9 @@ pub struct ResidualProgram {
 pub fn reduce_source(source: &str) -> Result<ResidualProgram, Vec<String>> {
     reduce_source_with_type(source, SourceType::default())
 }
-
 pub fn reduce_module_source(source: &str) -> Result<ResidualProgram, Vec<String>> {
     reduce_source_with_type(source, SourceType::mjs())
 }
-
 pub fn reduce_source_with_type(
     source: &str,
     source_type: SourceType,
@@ -86,7 +84,6 @@ pub(crate) fn reduce_statements_with_locals(
     }
     finish_program(ops, last_value)
 }
-
 pub(crate) fn reduce_statement(
     statement: &Statement<'_>,
     ops: &mut Vec<Op>,
@@ -280,6 +277,9 @@ pub(crate) fn reduce_expression(
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
+    if let Expression::ParenthesizedExpression(value) = expression {
+        return transparent::reduce(value, ops, facts, next_register, locals);
+    }
     if let Some(value) = reduce_special(expression, ops, facts, next_register, locals) {
         return Some(value);
     }
