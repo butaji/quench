@@ -181,6 +181,7 @@ pub(crate) fn execute_builtin_with_receiver(
             Ok(Value::Boolean(arguments.first().is_some_and(is_truthy)))
         }
         crate::ops::Builtin::Eval => execute_eval(arguments),
+        crate::ops::Builtin::Escape => Ok(crate::builtins::escape(arguments.first())),
         crate::ops::Builtin::IsFinite => Ok(Value::Boolean(is_finite(arguments.first()))),
         crate::ops::Builtin::IsNaN => Ok(Value::Boolean(to_number(arguments.first()).is_nan())),
         crate::ops::Builtin::Number => Ok(Value::Number(to_number(arguments.first()))),
@@ -201,6 +202,7 @@ pub(crate) fn execute_builtin_with_receiver(
         crate::ops::Builtin::ParseFloat => Ok(Value::Number(parse_float(arguments.first()))),
         crate::ops::Builtin::ParseInt => Ok(Value::Number(parse_int(arguments))),
         crate::ops::Builtin::String => Ok(Value::String(to_string(arguments.first()))),
+        crate::ops::Builtin::Unescape => Ok(crate::builtins::unescape(arguments.first())),
     }
 }
 fn is_finite(value: Option<&Value>) -> bool {
