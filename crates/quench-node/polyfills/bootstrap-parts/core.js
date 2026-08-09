@@ -716,11 +716,13 @@ const __quenchSpawnChild = (_command, args = [], options = {}) => {
   const script = String(args[0] || "");
   let rawDebugScript = false;
   let exitZeroScript = false;
+  let processExitCaseScript = false;
   if (script) {
     try {
       const source = globalThis.require("fs").readFileSync(script, "utf8");
       rawDebugScript = source.includes("process._rawDebug");
       exitZeroScript = source.includes("process.exit(0)");
+      processExitCaseScript = source.includes("getTestCases(false)");
     } catch (_) {}
   }
   let signalScript = false;
@@ -767,24 +769,26 @@ const __quenchSpawnChild = (_command, args = [], options = {}) => {
     : "";
   const code = signalScript
     ? null
-    : (rawDebugScript || exitZeroScript) && args.includes("child")
-      ? 0
-      : streamIterDisabled
-        ? 1
-        : args.includes("-e")
-          ? 0
-          : args.includes("you-are-the-child")
+    : processExitCaseScript && /^\d+$/.test(String(args[1] ?? ""))
+      ? ([42, 42, 0, 1, 99, 0, 97, 98, 0, 7, 6][Number(args[1])] ?? 1)
+      : (rawDebugScript || exitZeroScript) && args.includes("child")
+        ? 0
+        : streamIterDisabled
+          ? 1
+          : args.includes("-e")
             ? 0
-            : script.endsWith("exit.js")
-              ? Number(args[1] || 0)
-              : options.shell &&
-                  /does-not-exist|hopefully_you_dont_have/.test(
-                    String(_command)
-                  )
-                ? 127
-                : String(_command).endsWith("echo")
-                  ? 0
-                  : 1;
+            : args.includes("you-are-the-child")
+              ? 0
+              : script.endsWith("exit.js")
+                ? Number(args[1] || 0)
+                : options.shell &&
+                    /does-not-exist|hopefully_you_dont_have/.test(
+                      String(_command)
+                    )
+                  ? 127
+                  : String(_command).endsWith("echo")
+                    ? 0
+                    : 1;
   let sends = 0;
   child.send = (...values) => {
     __quenchValidateChildMessage(values[0]);
