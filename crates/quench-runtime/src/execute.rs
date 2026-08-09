@@ -35,9 +35,9 @@ pub(crate) fn execute_in_place(ops: &[Op], registers: &mut Vec<Value>) -> Result
             }
             Op::MakeFunction { .. } => crate::functions::write_op(registers, op),
             Op::Call { dst, callee, args } => execute_call(registers, *dst, *callee, args)?,
+            Op::Branch { .. } => return crate::branch::execute(registers, op),
             Op::CallMethod { .. }
             | Op::Construct { .. }
-            | Op::Branch { .. }
             | Op::Try { .. }
             | Op::Loop { .. }
             | Op::Switch { .. }
@@ -138,7 +138,7 @@ fn execute_call(
         .map(|index| read_register(registers, *index))
         .collect::<Result<Vec<_>, _>>()?;
     let value = match read_register(registers, callee)? {
-        Value::Function(body) => execute_function(&body, &arguments)?,
+        Value::Function(body) => crate::functions::execute(&body, &arguments)?,
         Value::Builtin(builtin) => execute_builtin_with_receiver(builtin, &arguments, None)?,
         _ => return Err(VmError::NotCallable),
     };
@@ -146,18 +146,6 @@ fn execute_call(
     Ok(())
 }
 
-pub(crate) fn execute_function(
-    function: &crate::value::FunctionValue,
-    arguments: &[Value],
-) -> Result<Value, VmError> {
-    let mut parameters = arguments.to_vec();
-    parameters.resize(usize::from(function.params), Value::Undefined);
-    parameters.truncate(usize::from(function.params));
-    let mut registers = function.captures.as_ref().clone();
-    registers.extend(parameters);
-    registers.resize(registers.len().saturating_add(32), Value::Undefined);
-    execute_with_registers(&function.body, registers)
-}
 fn execute_eval(arguments: &[Value]) -> Result<Value, VmError> {
     let Some(Value::String(source)) = arguments.first() else {
         return Ok(Value::Undefined);
