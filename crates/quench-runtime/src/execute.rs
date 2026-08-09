@@ -115,6 +115,9 @@ fn array_property(values: &[Value], key: &str) -> Value {
     if key == "forEach" {
         return Value::Builtin(crate::ops::Builtin::ArrayForEach);
     }
+    if key == "map" {
+        return Value::Builtin(crate::ops::Builtin::ArrayMap);
+    }
     key.parse::<usize>()
         .ok()
         .and_then(|index| values.get(index).cloned())
@@ -157,7 +160,7 @@ pub(crate) fn execute_builtin_with_receiver(
     match builtin {
         crate::ops::Builtin::Array => Ok(crate::builtins::array(arguments)),
         crate::ops::Builtin::ArrayIsArray => Ok(crate::builtins::is_array(arguments.first())),
-        crate::ops::Builtin::ArrayMap => Ok(crate::builtins::array_map(arguments)),
+        crate::ops::Builtin::ArrayMap => crate::builtins::array_map(receiver, arguments),
         crate::ops::Builtin::ArrayForEach => crate::builtins::array_for_each(receiver, arguments),
         crate::ops::Builtin::FunctionCall
         | crate::ops::Builtin::FunctionBind

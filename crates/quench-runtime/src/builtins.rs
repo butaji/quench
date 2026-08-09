@@ -267,8 +267,30 @@ pub(crate) fn array(arguments: &[Value]) -> Value {
     Value::Array(Rc::new(arguments.to_vec()))
 }
 
-pub(crate) fn array_map(arguments: &[Value]) -> Value {
-    function_call(arguments)
+pub(crate) fn array_map(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let Some(Value::Array(values)) = receiver else {
+        return Ok(Value::Array(Rc::new(Vec::new())));
+    };
+    let Some(callback) = arguments.first() else {
+        return Ok(Value::Array(values.clone()));
+    };
+    let mut mapped = Vec::with_capacity(values.len());
+    for (index, value) in values.iter().enumerate() {
+        let args = [
+            value.clone(),
+            Value::Number(index as f64),
+            receiver.cloned().unwrap_or(Value::Undefined),
+        ];
+        mapped.push(crate::functions::execute_target(
+            callback,
+            &Value::Undefined,
+            &args,
+        )?);
+    }
+    Ok(Value::Array(Rc::new(mapped)))
 }
 
 pub(crate) fn array_for_each(
@@ -347,20 +369,6 @@ fn value_to_number(value: &Value) -> f64 {
         Value::String(value) => value.parse().unwrap_or(f64::NAN),
         _ => f64::NAN,
     }
-}
-
-pub(crate) fn function_call(arguments: &[Value]) -> Value {
-    let Some(Value::Array(values)) = arguments.first() else {
-        return Value::Array(Rc::new(Vec::new()));
-    };
-    let mapped = match arguments.get(1) {
-        Some(Value::Builtin(Builtin::String)) => values
-            .iter()
-            .map(|value| Value::String(value_to_string(value)))
-            .collect(),
-        _ => values.iter().cloned().collect(),
-    };
-    Value::Array(Rc::new(mapped))
 }
 
 pub(crate) fn object(arguments: &[Value]) -> Value {
