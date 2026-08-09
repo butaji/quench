@@ -207,28 +207,6 @@ class NodeEventEmitter {
     };
     return this.on(event, wrapped);
   }
-  _emitListener(listener, event, args) {
-    const result = Reflect.apply(listener, this, args);
-    if (this.captureRejections && result?.then) {
-      result.catch((error) => setImmediate(() => {
-        if (this._captureRejectionHandled) return;
-        this._captureRejectionHandled = true;
-        const rejection = this[Symbol.for("nodejs.rejection")];
-        if (typeof rejection === "function") rejection.call(this, error, event, ...args);
-        else this.emit("error", error);
-      }));
-    }
-  }
-  _emitUnhandledError(args) {
-    const error = args[0];
-    if (error && typeof error === "object") {
-      error.domain = this.domain;
-      error.domainEmitter = this;
-      error.domainThrown = false;
-    }
-    this.domain.emit("error", error);
-    return true;
-  }
   emit(event, ...args) {
     this._events ||= Object.create(null);
     if (event === "error") {
@@ -245,10 +223,27 @@ class NodeEventEmitter {
       ? listeners
       : [listeners];
     if (event === "error" && values.length === 0 && this.domain) {
-      return this._emitUnhandledError(args);
+      const error = args[0];
+      if (error && typeof error === "object") {
+        error.domain = this.domain;
+        error.domainEmitter = this;
+        error.domainThrown = false;
+      }
+      this.domain.emit("error", error);
+      return true;
     }
-    values.slice().filter((listener) => typeof listener === "function")
-      .forEach((listener) => this._emitListener(listener, event, args));
+    values.slice().filter((listener) => typeof listener === "function").forEach((listener) => {
+      const result = Reflect.apply(listener, this, args);
+      if (this.captureRejections && result?.then) {
+        result.catch((error) => setImmediate(() => {
+          if (this._captureRejectionHandled) return;
+          this._captureRejectionHandled = true;
+          const rejection = this[Symbol.for("nodejs.rejection")];
+          if (typeof rejection === "function") rejection.call(this, error, event, ...args);
+          else this.emit("error", error);
+        }));
+      }
+    });
     return values.length > 0;
   }
   removeListener(event, listener) {
