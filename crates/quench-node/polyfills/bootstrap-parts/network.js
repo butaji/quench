@@ -505,13 +505,15 @@ const __quenchNetModule = {
         __quenchNativeSockets.add(this);
       }
       queueMicrotask(() => {
-        this.connecting = false;
-        this.emit("connect");
         queueMicrotask(() => {
-          if (this._endPending && !this.destroyed) {
-            this._endPending = false;
-            this.end();
-          }
+          this.connecting = false;
+          this.emit("connect");
+          queueMicrotask(() => {
+            if (this._endPending && !this.destroyed) {
+              this._endPending = false;
+              this.end();
+            }
+          });
         });
       });
       if (!_options?.__quenchNativeTransport) {
