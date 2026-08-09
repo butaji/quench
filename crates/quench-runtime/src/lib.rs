@@ -20,6 +20,7 @@ mod functions;
 mod literal;
 mod logical;
 pub mod ops;
+mod properties;
 pub mod reduce;
 mod semantic;
 pub mod value;
