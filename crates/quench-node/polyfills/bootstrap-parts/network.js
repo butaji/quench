@@ -570,6 +570,16 @@ const __quenchNetModule = {
         _options = { port: _options };
       }
       globalThis.__quenchValidateConnectionOptions(_options);
+      if (
+        this._handle?.constructor?.name === "BoundSocket" &&
+        (_options.localAddress !== undefined || _options.localPort !== undefined)
+      ) {
+        const error = new TypeError(
+          "localAddress and localPort cannot be used with a bound socket"
+        );
+        error.code = "ERR_INVALID_ARG_VALUE";
+        throw error;
+      }
       if (!this._handle) this._handle = { setKeepAlive: () => {} };
       if (_options.keepAlive !== undefined) {
         this.setKeepAlive(_options.keepAlive, _options.keepAliveInitialDelay);
@@ -615,12 +625,15 @@ const __quenchNetModule = {
       });
       if (!__quenchNativeTransportRequested(_options)) {
         queueMicrotask(() => {
-          const requestedPort = Number(_options.port || 0);
-          const server = [...__quenchNetServers].find(
-            (candidate) =>
-              candidate.listening &&
-              (!requestedPort || candidate.address().port === requestedPort)
-          );
+      const requestedPort = Number(_options.port || 0);
+      const requestedPath = _options.path;
+      const server = [...__quenchNetServers].find(
+        (candidate) =>
+          candidate.listening &&
+          ((!requestedPath &&
+            (!requestedPort || candidate.address().port === requestedPort)) ||
+            (requestedPath && candidate._path === requestedPath))
+      );
           const httpServer = [
             ...(globalThis.__quenchHttpServers?.values() || [])
           ].find((candidate) => candidate.listening);
@@ -1006,12 +1019,14 @@ const __quenchNetModule = {
     server._nativeId = 0;
     server._nativeTransport = false;
     server._port = 0;
+    server._path = undefined;
     server._handle = { close: () => {} };
     server.keepAlive = options?.keepAlive;
     server.keepAliveInitialDelay = options?.keepAliveInitialDelay;
     server._allowHalfOpen = options?.allowHalfOpen !== false;
     server.address = () => {
       if (!server.listening) return null;
+      if (server._path !== undefined) return server._path;
       return {
         address: "127.0.0.1",
         family: "IPv4",
@@ -1039,6 +1054,7 @@ const __quenchNetModule = {
         adoptedBound._assertOpen();
         adoptedBound._adopted = true;
         server._port = adoptedBound._port;
+        server._path = adoptedBound._path;
       }
       const requestedPort = Number(listenOptions.port || 0);
       const occupied = [...__quenchNetServers].some(
