@@ -1403,3 +1403,8 @@ remain 2/2 and representative application stages remain 6/6.
 
 Post-stage-2525 verification reports 2362/2362 focused stages passing; Rust
 tests remain 2/2 and representative applications remain 6/6.
+
+Stage 2526 verifies the primary `toWritable()` round trip: writes from a
+classic Writable adapter reach the `stream/iter.push()` readable and complete
+with the expected text. The focused basic adapter stage passes; later upstream
+adapter sections still expose asynchronous callback accounting.
