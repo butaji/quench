@@ -334,3 +334,8 @@ gates passed.
 TLS option field and ticket-key validation were split into helpers. `tls.js` now
 passes ESLint with zero warnings; stages 520, 1168, 1242, 2009, 2010, 2011, and
 2029 pass.
+
+The stream/pipeline compatibility surface was split at complete validation and
+iteration helper boundaries. `module-surface-03.js` is now 500 lines, with
+ordered tails of 452 and 396 lines; stream stages 1879, 1882, 1883, 2452, and
+2554 plus the quench-node Rust tests pass.
