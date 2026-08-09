@@ -9,7 +9,7 @@ use oxc::{
     parser::Parser,
     semantic::SemanticBuilder,
     span::SourceType,
-    syntax::operator::{AssignmentOperator, UpdateOperator},
+    syntax::operator::{AssignmentOperator, UnaryOperator, UpdateOperator},
 };
 
 use crate::{
@@ -293,6 +293,9 @@ fn reduce_expression(
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
+    if let Expression::UnaryExpression(unary) = expression {
+        return reduce_unary(unary, ops, facts, next_register, locals);
+    }
     if let Expression::CallExpression(call) = expression {
         return reduce_call(call, ops, facts, next_register, locals);
     }
@@ -319,6 +322,27 @@ fn reduce_expression(
         lhs,
         rhs,
     });
+    Some(dst)
+}
+
+fn reduce_unary(
+    unary: &oxc::ast::ast::UnaryExpression<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<u16> {
+    let src = reduce_expression(&unary.argument, ops, facts, next_register, locals)?;
+    let operator = match unary.operator {
+        UnaryOperator::UnaryPlus => crate::ops::UnaryOp::Plus,
+        UnaryOperator::UnaryNegation => crate::ops::UnaryOp::Minus,
+        UnaryOperator::LogicalNot => crate::ops::UnaryOp::Not,
+        UnaryOperator::Void => crate::ops::UnaryOp::Void,
+        _ => return None,
+    };
+    let dst = *next_register;
+    *next_register = next_register.saturating_add(1);
+    ops.push(Op::Unary { dst, operator, src });
     Some(dst)
 }
 

@@ -24,6 +24,11 @@ pub enum Op {
         callee: u16,
         args: Vec<u16>,
     },
+    Unary {
+        dst: u16,
+        operator: UnaryOp,
+        src: u16,
+    },
     Binary {
         dst: u16,
         operator: BinaryOp,
@@ -51,6 +56,14 @@ pub enum BinaryOp {
     LessEqual,
     GreaterThan,
     GreaterEqual,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnaryOp {
+    Plus,
+    Minus,
+    Not,
+    Void,
 }
 
 #[derive(Debug, Clone, PartialEq)]

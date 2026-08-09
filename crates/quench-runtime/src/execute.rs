@@ -36,6 +36,9 @@ fn execute_with_registers(ops: &[Op], mut registers: Vec<Value>) -> Result<Value
             Op::Call { dst, callee, args } => {
                 execute_call(&mut registers, *dst, *callee, args)?;
             }
+            Op::Unary { dst, operator, src } => {
+                execute_unary(&mut registers, *dst, *operator, *src)?
+            }
             Op::Binary {
                 dst,
                 operator,
@@ -73,6 +76,40 @@ fn copy_register(registers: &mut Vec<Value>, dst: u16, src: u16) -> Result<(), V
     let value = read_register(registers, src)?;
     write_value(registers, dst, value);
     Ok(())
+}
+
+fn execute_unary(
+    registers: &mut Vec<Value>,
+    dst: u16,
+    operator: crate::ops::UnaryOp,
+    src: u16,
+) -> Result<(), VmError> {
+    let value = read_register(registers, src)?;
+    let result = match operator {
+        crate::ops::UnaryOp::Plus => numeric_unary(value, |number| number)?,
+        crate::ops::UnaryOp::Minus => numeric_unary(value, |number| -number)?,
+        crate::ops::UnaryOp::Not => Value::Boolean(!is_truthy(&value)),
+        crate::ops::UnaryOp::Void => Value::Undefined,
+    };
+    write_value(registers, dst, result);
+    Ok(())
+}
+
+fn numeric_unary(value: Value, transform: fn(f64) -> f64) -> Result<Value, VmError> {
+    let Value::Number(number) = value else {
+        return Err(VmError::NonNumericOperand);
+    };
+    Ok(Value::Number(transform(number)))
+}
+
+fn is_truthy(value: &Value) -> bool {
+    match value {
+        Value::Boolean(value) => *value,
+        Value::Number(value) => *value != 0.0 && !value.is_nan(),
+        Value::String(value) => !value.is_empty(),
+        Value::Null | Value::Undefined => false,
+        Value::Function(_) => true,
+    }
 }
 
 fn execute_binary(
