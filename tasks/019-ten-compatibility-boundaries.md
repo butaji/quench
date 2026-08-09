@@ -1115,3 +1115,14 @@ does not provide. Both focused stages and authoritative
 `test-dgram-address.js` pass. `test-dgram-bind-default-address.js` still ends in
 an opaque QuickJS exception and is not claimed. The post-fix audit reports
 2305/2324 passing with 19 unclassified failures.
+
+Stage 2486 corrects three stale timer contracts against the local Node 26.5.1
+CLI. A microtask queued after `setTimeout()` runs before the timer callback,
+and `refresh()` remains chainable but does not reactivate a handle after
+`clearTimeout()` or `clearInterval()`. Stages 366, 470, 471, and the consolidated
+timer-order stage pass, as do authoritative `test-timers-ordering.js` and
+`test-timers-clear-timeout-interval-equivalent.js`. The broader refresh fixture
+still requires the unimplemented `internal/timers` module, while
+`test-timers-refresh-in-callback.js` exposes a separate active-handle refresh
+boundary; neither is claimed here. The post-correction audit reports 2309/2325
+passing with 16 unclassified failures.

@@ -1,10 +1,11 @@
 const assert = require("assert");
+const order = [];
 const cancelled = setTimeout(() => order.push("cancelled"), 1);
 clearTimeout(cancelled);
-let fired = false;
 setTimeout(() => {
-  fired = true;
+  order.push("timer");
+  assert.deepStrictEqual(order, ["microtask", "timer"]);
 }, 1);
 queueMicrotask(() => {
-  if (!fired) throw new Error("timer did not run");
+  order.push("microtask");
 });
