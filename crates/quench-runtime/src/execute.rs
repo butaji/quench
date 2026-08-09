@@ -170,10 +170,25 @@ fn to_number(value: Option<&Value>) -> f64 {
         Some(Value::Null) => 0.0,
         Some(Value::Boolean(value)) => f64::from(*value),
         Some(Value::Number(value)) => *value,
-        Some(Value::String(value)) => value.trim().parse().unwrap_or(f64::NAN),
+        Some(Value::String(value)) => parse_number(value),
         Some(Value::Array(_)) | Some(Value::Object(_)) => f64::NAN,
         Some(Value::Function(_)) | Some(Value::Builtin(_)) => f64::NAN,
     }
+}
+
+fn parse_number(value: &str) -> f64 {
+    let value = value.trim();
+    if value.is_empty() {
+        return 0.0;
+    }
+    for (prefix, radix) in [("0b", 2), ("0o", 8), ("0x", 16)] {
+        if let Some(digits) = value.strip_prefix(prefix) {
+            return i64::from_str_radix(digits, radix)
+                .map(|number| number as f64)
+                .unwrap_or(f64::NAN);
+        }
+    }
+    value.parse().unwrap_or(f64::NAN)
 }
 
 fn to_string(value: Option<&Value>) -> String {
