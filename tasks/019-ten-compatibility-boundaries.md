@@ -1376,3 +1376,5 @@ drainable-protocol surface: `writeSync()`/`writevSync()` return false,
 `endSync()` returns -1, and `ondrain()` resolves for a live writer. The focused
 stage passes; the larger writable interop fixture still has additional
 validation and writev boundaries.
+The full focused gate, Rust tests, and representative application stages remain
+green at 2359/2359, 2/2, and 6/6 respectively.
