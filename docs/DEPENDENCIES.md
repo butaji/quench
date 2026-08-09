@@ -21,4 +21,4 @@ the same change that first uses it. Do not add crates speculatively.
 
 `oxc` is the sole syntax and semantic frontend. A dependency that introduces a
 second parser, syntax tree, type runtime, optimizer IR, or executor conflicts
-with ADR 0005 unless that ADR is amended first.
+with the repository doctrine unless that doctrine is amended first.
