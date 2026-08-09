@@ -12,7 +12,7 @@ use oxc::{
 };
 
 use crate::{
-    conditional,
+    blocks, conditional,
     facts::ProgramDb,
     literal::{reduce_literal, reduce_operator},
     logical,
@@ -90,7 +90,7 @@ fn reduce_statements_with_locals(
     finish_program(ops, last_value)
 }
 
-fn reduce_statement(
+pub(crate) fn reduce_statement(
     statement: &Statement<'_>,
     ops: &mut Vec<Op>,
     facts: &mut ProgramDb,
@@ -100,6 +100,9 @@ fn reduce_statement(
 ) -> Result<Option<u16>, Vec<String>> {
     match statement {
         Statement::EmptyStatement(_) => Ok(None),
+        Statement::BlockStatement(block) => {
+            blocks::reduce(block, ops, facts, next_register, next_slot, locals)
+        }
         Statement::VariableDeclaration(declaration) => {
             reduce_declaration(declaration, ops, facts, next_register, next_slot, locals)?;
             Ok(None)
