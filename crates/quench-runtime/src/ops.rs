@@ -14,6 +14,10 @@ pub enum Op {
         dst: u16,
         slot: u16,
     },
+    MakeArray {
+        dst: u16,
+        elements: Vec<u16>,
+    },
     MakeFunction {
         dst: u16,
         body: Vec<Op>,

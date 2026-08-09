@@ -9,6 +9,7 @@ pub enum Value {
     Number(f64),
     Boolean(bool),
     String(String),
+    Array(Rc<Vec<Value>>),
     Function(Rc<FunctionValue>),
     Null,
     Undefined,

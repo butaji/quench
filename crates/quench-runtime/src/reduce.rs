@@ -11,7 +11,7 @@ use oxc::{
 };
 
 use crate::{
-    blocks, conditional,
+    arrays, blocks, conditional,
     facts::ProgramDb,
     functions,
     literal::{reduce_literal, reduce_operator},
@@ -471,6 +471,9 @@ fn reduce_atom(
             value: value.op,
         });
         return Some(register);
+    }
+    if let Expression::ArrayExpression(array) = expression {
+        return arrays::reduce(array, ops, facts, next_register, locals);
     }
     if let Expression::Identifier(identifier) = expression {
         let slot = *locals.get(identifier.name.as_str())?;
