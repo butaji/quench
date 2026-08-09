@@ -1360,6 +1360,10 @@ let __quenchHttpModule;
       return globalThis.__nodeEventEmitter.prototype.once.apply(this, args);
     };
     NodeIncomingMessage.prototype.emit = function (...args) {
+      if (args[0] === "close") {
+        if (this.__closeEmitted) return this;
+        this.__closeEmitted = true;
+      }
       globalThis.__nodeEventEmitter.prototype.emit.apply(this, args);
       return this;
     };
