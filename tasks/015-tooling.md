@@ -223,3 +223,5 @@ The same sweep for stages 501–1000 also completed with 500/500 passing and
 zero failed stages.
 Stages 1001–1500 completed with 485/485 discovered stages passing and zero
 failed stages.
+Stages 1501–2000 completed with 428/428 discovered stages passing and zero
+failed stages.
