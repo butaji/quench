@@ -5,6 +5,7 @@ use crate::{ops::Op, value::Value};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VmError {
     RegisterOutOfBounds(u16),
+    NonNumericOperand,
     MissingReturn,
 }
 
@@ -13,10 +14,41 @@ pub fn execute(ops: &[Op]) -> Result<Value, VmError> {
     for op in ops {
         match op {
             Op::Const { dst, value } => write_register(&mut registers, *dst, value),
+            Op::Binary {
+                dst,
+                operator,
+                lhs,
+                rhs,
+            } => execute_binary(&mut registers, *dst, *operator, *lhs, *rhs)?,
             Op::Return { src } => return read_register(&registers, *src),
         }
     }
     Err(VmError::MissingReturn)
+}
+
+fn execute_binary(
+    registers: &mut Vec<Value>,
+    dst: u16,
+    operator: crate::ops::BinaryOp,
+    lhs: u16,
+    rhs: u16,
+) -> Result<(), VmError> {
+    let Value::Number(left) = read_register(registers, lhs)? else {
+        return Err(VmError::NonNumericOperand);
+    };
+    let Value::Number(right) = read_register(registers, rhs)? else {
+        return Err(VmError::NonNumericOperand);
+    };
+    let value = match operator {
+        crate::ops::BinaryOp::Add => left + right,
+        crate::ops::BinaryOp::Subtract => left - right,
+        crate::ops::BinaryOp::Multiply => left * right,
+        crate::ops::BinaryOp::Divide => left / right,
+        crate::ops::BinaryOp::Remainder => left % right,
+        crate::ops::BinaryOp::Exponentiate => left.powf(right),
+    };
+    write_register(registers, dst, &crate::ops::Constant::Number(value));
+    Ok(())
 }
 
 fn write_register(registers: &mut Vec<Value>, index: u16, value: &crate::ops::Constant) {
