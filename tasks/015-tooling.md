@@ -229,6 +229,10 @@ Stages 2001–2554 completed with 474/474 discovered stages passing and zero
 failed stages using the normal 30-second timeout; stage 2223 is intentionally
 slow and is a false timeout at the tighter 10-second diagnostic limit.
 
+A fresh full-range parallel verification on commit `e6900c102` completed in 92
+seconds: 2,388/2,388 focused stages passed, with zero failed stages and zero
+covered policy failures using six workers.
+
 The repository ESLint configuration now uses a dedicated global ignore entry
 for the vendored `tests/node` submodule. The owned `tools/compat-decision-report.cjs`
 classification function was split to satisfy the complexity limit; that file
