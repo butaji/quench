@@ -891,10 +891,61 @@ const __quenchRequireStreamIter = () => {
     }
     const writable = new NodeWritable({
       write(chunk, encoding, callback) {
-        Promise.resolve(writer.write(chunk)).then(() => callback(), callback);
+        if (typeof writer.writeSync === "function") {
+          let accepted;
+          try {
+            accepted = writer.writeSync(chunk);
+          } catch (error) {
+            callback(error);
+            return;
+          }
+          if (accepted === true) {
+            queueMicrotask(callback);
+            return;
+          }
+        }
+        let pending;
+        try {
+          pending = writer.write(chunk);
+        } catch (error) {
+          callback(error);
+          return;
+        }
+        Promise.resolve(pending).then(() => callback(), callback);
       },
       final(callback) {
-        Promise.resolve(writer.end?.()).then(() => callback(), callback);
+        if (typeof writer.endSync === "function") {
+          let result;
+          try {
+            result = writer.endSync();
+          } catch (error) {
+            callback(error);
+            return;
+          }
+          if (result !== -1) {
+            queueMicrotask(callback);
+            return;
+          }
+        }
+        let pending;
+        try {
+          pending = writer.end?.();
+        } catch (error) {
+          callback(error);
+          return;
+        }
+        Promise.resolve(pending).then(() => callback(), callback);
+      },
+      destroy(error, callback) {
+        if (error && typeof writer.fail === "function") {
+          try {
+            writer.fail(error);
+          } catch (failure) {
+            callback(failure);
+            return;
+          }
+        }
+        callback();
       }
     });
     writable._writev =

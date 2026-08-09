@@ -1418,3 +1418,11 @@ the authoritative `test-stream-iter-writable-from.js` and
 `test-stream-iter-writable-interop.js` fixtures still report Callback 0
 asynchronous accounting failures.
 The full focused gate reports 2364/2364 passing after this change.
+
+Stage 2528 completes the `stream/iter.toWritable()` sync-first and error
+boundaries. `writeSync()` and `endSync()` are honored when they can complete,
+synchronous exceptions from `write()`/`end()` reach callbacks, and destroy
+errors delegate to the iterator writer's `fail()`. Both authoritative writable
+fixtures (`test-stream-iter-writable-from.js` and
+`test-stream-iter-writable-interop.js`) now pass, as does the focused stage.
+The post-change focused gate reports 2365/2365 passing.
