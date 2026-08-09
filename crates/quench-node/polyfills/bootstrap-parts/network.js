@@ -707,10 +707,21 @@ const __quenchNetModule = {
       this.readyState = "readOnly";
       queueMicrotask(() => {
         this._bufferSize = 0;
-        this.emit("finish");
+        if (!this.__finishEmitted) {
+          this.__finishEmitted = true;
+          this.emit("finish");
+        }
         if (peer && !peer.destroyed) {
           queueMicrotask(() => {
-            if (!peer.allowHalfOpen) peer.destroy();
+            if (!peer.allowHalfOpen) {
+              peer.writable = false;
+              peer._localEnded = true;
+              if (!peer.__finishEmitted) {
+                peer.__finishEmitted = true;
+                peer.emit("finish");
+              }
+              peer.destroy();
+            }
             peer._readableEnded = true;
             peer.emit("end");
             if (this._localEnded && peer._localEnded) this.destroy();
