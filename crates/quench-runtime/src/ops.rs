@@ -43,6 +43,14 @@ pub enum BinaryOp {
     Divide,
     Remainder,
     Exponentiate,
+    Equal,
+    NotEqual,
+    StrictEqual,
+    StrictNotEqual,
+    LessThan,
+    LessEqual,
+    GreaterThan,
+    GreaterEqual,
 }
 
 #[derive(Debug, Clone, PartialEq)]

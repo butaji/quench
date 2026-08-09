@@ -82,22 +82,62 @@ fn execute_binary(
     lhs: u16,
     rhs: u16,
 ) -> Result<(), VmError> {
-    let Value::Number(left) = read_register(registers, lhs)? else {
-        return Err(VmError::NonNumericOperand);
-    };
-    let Value::Number(right) = read_register(registers, rhs)? else {
-        return Err(VmError::NonNumericOperand);
-    };
-    let value = match operator {
+    let left = read_register(registers, lhs)?;
+    let right = read_register(registers, rhs)?;
+    let value = evaluate_binary(&left, &right, operator)?;
+    write_value(registers, dst, value);
+    Ok(())
+}
+
+fn evaluate_binary(
+    left: &Value,
+    right: &Value,
+    operator: crate::ops::BinaryOp,
+) -> Result<Value, VmError> {
+    Ok(match operator {
+        crate::ops::BinaryOp::Add
+        | crate::ops::BinaryOp::Subtract
+        | crate::ops::BinaryOp::Multiply
+        | crate::ops::BinaryOp::Divide
+        | crate::ops::BinaryOp::Remainder
+        | crate::ops::BinaryOp::Exponentiate => {
+            let (Value::Number(left), Value::Number(right)) = (&left, &right) else {
+                return Err(VmError::NonNumericOperand);
+            };
+            Value::Number(numeric_binary(*left, *right, operator))
+        }
+        crate::ops::BinaryOp::Equal => Value::Boolean(left == right),
+        crate::ops::BinaryOp::NotEqual => Value::Boolean(left != right),
+        crate::ops::BinaryOp::StrictEqual => Value::Boolean(left == right),
+        crate::ops::BinaryOp::StrictNotEqual => Value::Boolean(left != right),
+        crate::ops::BinaryOp::LessThan => compare_numbers(left, right, |a, b| a < b)?,
+        crate::ops::BinaryOp::LessEqual => compare_numbers(left, right, |a, b| a <= b)?,
+        crate::ops::BinaryOp::GreaterThan => compare_numbers(left, right, |a, b| a > b)?,
+        crate::ops::BinaryOp::GreaterEqual => compare_numbers(left, right, |a, b| a >= b)?,
+    })
+}
+
+fn numeric_binary(left: f64, right: f64, operator: crate::ops::BinaryOp) -> f64 {
+    match operator {
         crate::ops::BinaryOp::Add => left + right,
         crate::ops::BinaryOp::Subtract => left - right,
         crate::ops::BinaryOp::Multiply => left * right,
         crate::ops::BinaryOp::Divide => left / right,
         crate::ops::BinaryOp::Remainder => left % right,
         crate::ops::BinaryOp::Exponentiate => left.powf(right),
+        _ => 0.0,
+    }
+}
+
+fn compare_numbers(
+    left: &Value,
+    right: &Value,
+    compare: fn(f64, f64) -> bool,
+) -> Result<Value, VmError> {
+    let (Value::Number(left), Value::Number(right)) = (left, right) else {
+        return Err(VmError::NonNumericOperand);
     };
-    write_register(registers, dst, &crate::ops::Constant::Number(value));
-    Ok(())
+    Ok(Value::Boolean(compare(*left, *right)))
 }
 
 fn write_register(registers: &mut Vec<Value>, index: u16, value: &crate::ops::Constant) {
