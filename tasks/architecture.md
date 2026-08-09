@@ -57,3 +57,55 @@ with the relevant commands and test262 runs at execution time.
   `quench-test262`.
 - Preserve zero warnings, 500-line files, 40-line functions, and cognitive
   complexity ≤ 10 for every Rust change.
+
+## Test262 domain work plan
+
+Implement each domain as a semantic adapter plus the smallest suitable crate
+kernel. Do not mark an entire domain complete merely because the dependency
+is linked; the domain is covered only when its observable test262 behavior is
+implemented and verified.
+
+- **RegExp:** integrate `regress` behind `RegExpCompile`, `RegExpExec`, and
+  canonical string-regexp operations. Preserve JavaScript UTF-16 indices,
+  captures, named groups, flags, `lastIndex`, statics, and error ordering.
+- **Date:** use `chrono` for Gregorian arithmetic and timestamp conversion;
+  implement ECMAScript `TimeClip`, parsing, UTC/local conversion, legacy
+  Annex B methods, invalid-date behavior, and exact object properties in the
+  runtime layer.
+- **ECMA-402:** select ICU4X components for `Intl.Locale`, Collator,
+  NumberFormat, DateTimeFormat, DisplayNames, ListFormat, PluralRules,
+  RelativeTimeFormat, Segmenter, and supported calendar/time-zone data. Use
+  ICU4X data generation to minimize RSS; keep ECMA-402 option processing and
+  locale negotiation in one semantic owner.
+- **BigInt:** use `num-bigint` for arbitrary-precision arithmetic, with a
+  compact small-value fast path in the runtime representation and exact JS
+  conversion/error semantics at the boundary.
+- **JSON and URI:** use `serde_json` and `urlencoding` only as internal
+  algorithmic kernels after compatibility review; retain JS-specific
+  traversal, ordering, Unicode, malformed-input, and exception behavior.
+- **Collections and ordering:** use `indexmap` only where insertion order is
+  the required storage primitive; do not delegate Map/Set identity, equality,
+  iteration, or mutation semantics to the crate.
+- **Stage selection:** derive runnable domain sets from the pinned test262
+  directory and frontmatter. Stable `language`, `built-ins`, `annexB`, and
+  `intl402` are conformance domains; `staging` is proposal work and must not
+  be silently counted as stable coverage.
+
+### Dependency acceptance gate
+
+Before adding a crate, compare its documented syntax/semantic coverage with
+the relevant ECMA specification and test262 failures. Record the dependency
+in `docs/DEPENDENCIES.md` in the same change, use feature flags to control
+binary/RSS cost, and keep the adapter small enough to obey the Rust lint
+limits. No crate may introduce a second AST, runtime object model, optimizer
+IR, or alternate semantic path.
+
+Primary references used for this plan:
+
+- <https://github.com/tc39/test262>
+- <https://docs.rs/regress>
+- <https://docs.rs/chrono>
+- <https://docs.rs/num-bigint>
+- <https://docs.rs/serde_json>
+- <https://docs.rs/urlencoding>
+- <https://icu4x.unicode.org/>
