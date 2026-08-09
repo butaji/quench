@@ -38,6 +38,10 @@ pub(crate) fn reduce_expression(
     for slot in parameters.values_mut() {
         *slot = slot.saturating_add(captures);
     }
+    parameters.insert(
+        "arguments".to_string(),
+        captures.saturating_add(parameter_count),
+    );
     parameters.extend(locals.iter().map(|(name, slot)| (name.clone(), *slot)));
     let body_ops = crate::reduce::reduce_statements_with_locals(
         &body.statements,
@@ -103,11 +107,17 @@ pub(crate) fn execute(
     function: &crate::value::FunctionValue,
     arguments: &[crate::value::Value],
 ) -> Result<crate::value::Value, crate::execute::VmError> {
+    let original_arguments = arguments.to_vec();
     let mut parameters = arguments.to_vec();
     parameters.resize(usize::from(function.params), crate::value::Value::Undefined);
     parameters.truncate(usize::from(function.params));
     let mut registers = function.captures.as_ref().clone();
     registers.extend(parameters);
+    crate::execute::write_value(
+        &mut registers,
+        function.captures.len() as u16 + function.params,
+        crate::value::Value::Array(std::rc::Rc::new(original_arguments)),
+    );
     registers.resize(
         registers.len().saturating_add(32),
         crate::value::Value::Undefined,

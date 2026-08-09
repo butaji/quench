@@ -33,6 +33,7 @@ pub(crate) fn execute_in_place(ops: &[Op], registers: &mut Vec<Value>) -> Result
             Op::SetProperty { .. } | Op::SetPropertyDynamic { .. } => {
                 crate::properties::execute_set_property(registers, op)?
             }
+            Op::DeleteProperty { .. } => crate::properties::execute_delete_property(registers, op)?,
             Op::MakeFunction { .. } => crate::functions::write_op(registers, op),
             Op::Call { dst, callee, args } => execute_call(registers, *dst, *callee, args)?,
             Op::Branch { .. } => return crate::branch::execute(registers, op),
@@ -287,6 +288,7 @@ fn execute_unary(
         crate::ops::UnaryOp::Void => Value::Undefined,
         crate::ops::UnaryOp::Typeof => Value::String(type_of(&value).to_string()),
         crate::ops::UnaryOp::ToString => Value::String(to_string(Some(&value))),
+        crate::ops::UnaryOp::Delete => Value::Boolean(true),
     };
     write_value(registers, dst, result);
     Ok(())

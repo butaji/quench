@@ -94,6 +94,20 @@ pub(crate) fn execute_set_property(
     Ok(())
 }
 
+pub(crate) fn execute_delete_property(
+    registers: &mut Vec<crate::value::Value>,
+    op: &Op,
+) -> Result<(), crate::execute::VmError> {
+    let Op::DeleteProperty { object, key } = op else {
+        return Err(crate::execute::VmError::MissingReturn);
+    };
+    let target = crate::execute::read_register(registers, *object)?.clone();
+    let key = dynamic_property_key(&crate::execute::read_register(registers, *key)?)?;
+    let result = crate::builtins::delete_property(target, &key);
+    crate::execute::write_value(registers, *object, result);
+    Ok(())
+}
+
 fn property_key(value: &crate::ops::Constant) -> Option<String> {
     match value {
         crate::ops::Constant::String(value) => Some(value.clone()),

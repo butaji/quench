@@ -46,6 +46,10 @@ pub enum Op {
         key: u16,
         src: u16,
     },
+    DeleteProperty {
+        object: u16,
+        key: u16,
+    },
     MakeFunction {
         dst: u16,
         body: Vec<Op>,
@@ -173,6 +177,7 @@ pub enum UnaryOp {
     Void,
     Typeof,
     ToString,
+    Delete,
 }
 
 #[derive(Debug, Clone, PartialEq)]
