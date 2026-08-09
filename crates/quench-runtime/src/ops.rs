@@ -31,9 +31,19 @@ pub enum Op {
         object: u16,
         key: String,
     },
+    GetPropertyDynamic {
+        dst: u16,
+        object: u16,
+        key: u16,
+    },
     SetProperty {
         object: u16,
         key: String,
+        src: u16,
+    },
+    SetPropertyDynamic {
+        object: u16,
+        key: u16,
         src: u16,
     },
     MakeFunction {
