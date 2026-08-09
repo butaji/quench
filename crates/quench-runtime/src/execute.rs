@@ -87,7 +87,7 @@ fn execute_object(
 pub(crate) fn get_property(value: &Value, key: &str) -> Value {
     match value {
         Value::Builtin(builtin) => crate::builtins::property(*builtin, key),
-        Value::Array(values) => array_property(values, key),
+        Value::Array(values) => crate::arrays::property(values, key),
         Value::Object(properties) => properties
             .iter()
             .rev()
@@ -107,24 +107,6 @@ pub(crate) fn get_property(value: &Value, key: &str) -> Value {
             .map_or(Value::Undefined, |(_, value)| value.clone()),
         _ => Value::Undefined,
     }
-}
-fn array_property(values: &[Value], key: &str) -> Value {
-    if key == "length" {
-        return Value::Number(values.len() as f64);
-    }
-    if key == "forEach" {
-        return Value::Builtin(crate::ops::Builtin::ArrayForEach);
-    }
-    if key == "map" {
-        return Value::Builtin(crate::ops::Builtin::ArrayMap);
-    }
-    if key == "filter" {
-        return Value::Builtin(crate::ops::Builtin::ArrayFilter);
-    }
-    key.parse::<usize>()
-        .ok()
-        .and_then(|index| values.get(index).cloned())
-        .unwrap_or(Value::Undefined)
 }
 fn string_property(value: &str, key: &str) -> Value {
     if key == "length" {
@@ -165,6 +147,7 @@ pub(crate) fn execute_builtin_with_receiver(
         crate::ops::Builtin::ArrayIsArray => Ok(crate::builtins::is_array(arguments.first())),
         crate::ops::Builtin::ArrayMap => crate::builtins::array_map(receiver, arguments),
         crate::ops::Builtin::ArrayFilter => crate::builtins::array_filter(receiver, arguments),
+        crate::ops::Builtin::ArraySome => crate::arrays::some(receiver, arguments),
         crate::ops::Builtin::ArrayForEach => crate::builtins::array_for_each(receiver, arguments),
         crate::ops::Builtin::FunctionCall
         | crate::ops::Builtin::FunctionBind
