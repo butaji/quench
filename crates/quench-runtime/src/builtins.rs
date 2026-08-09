@@ -111,9 +111,21 @@ pub(crate) fn descriptor(value: Option<&Value>, key: Option<&Value>) -> Value {
         Value::Array(values) => array_descriptor(values, &key),
         Value::String(value) => string_descriptor(value, &key),
         Value::Builtin(builtin) if key == "length" => Some(Value::Number(builtin_length(*builtin))),
+        Value::Function(function) if key == "length" => {
+            return callable_descriptor(Value::Number(f64::from(function.params)))
+        }
         _ => None,
     };
     property.map_or(Value::Undefined, |property| descriptor_object(&property))
+}
+
+fn callable_descriptor(value: Value) -> Value {
+    Value::Object(Rc::new(vec![
+        ("value".to_string(), value),
+        ("writable".to_string(), Value::Boolean(false)),
+        ("enumerable".to_string(), Value::Boolean(false)),
+        ("configurable".to_string(), Value::Boolean(true)),
+    ]))
 }
 
 fn builtin_length(builtin: Builtin) -> f64 {
