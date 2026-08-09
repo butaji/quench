@@ -546,7 +546,6 @@ const __quenchNetModule = {
             server._connections.delete(serverSocket);
             server._finishClose?.();
           });
-          server._handler?.(serverSocket);
           server.emit("connection", serverSocket);
         });
       }
@@ -826,7 +825,7 @@ const __quenchNetModule = {
       return server;
     };
     server.unref = () => server;
-    server._handler = handler;
+    if (typeof handler === "function") server.on("connection", handler);
     return server;
   },
   Server: function Server(options, handler) {
@@ -852,7 +851,6 @@ globalThis.__quench_io_poll = () => {
         server._connections.delete(socket);
         server._finishClose?.();
       });
-      server._handler?.(socket);
       server.emit("connection", socket);
     }
   }
