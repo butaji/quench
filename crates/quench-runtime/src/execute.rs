@@ -112,6 +112,9 @@ fn array_property(values: &[Value], key: &str) -> Value {
     if key == "length" {
         return Value::Number(values.len() as f64);
     }
+    if key == "forEach" {
+        return Value::Builtin(crate::ops::Builtin::ArrayForEach);
+    }
     key.parse::<usize>()
         .ok()
         .and_then(|index| values.get(index).cloned())
@@ -155,6 +158,7 @@ pub(crate) fn execute_builtin_with_receiver(
         crate::ops::Builtin::Array => Ok(crate::builtins::array(arguments)),
         crate::ops::Builtin::ArrayIsArray => Ok(crate::builtins::is_array(arguments.first())),
         crate::ops::Builtin::ArrayMap => Ok(crate::builtins::array_map(arguments)),
+        crate::ops::Builtin::ArrayForEach => crate::builtins::array_for_each(receiver, arguments),
         crate::ops::Builtin::FunctionCall
         | crate::ops::Builtin::FunctionBind
         | crate::ops::Builtin::ArrayJoin => {
@@ -486,15 +490,4 @@ pub(crate) fn read_register(registers: &[Value], index: u16) -> Result<Value, Vm
         .get(usize::from(index))
         .cloned()
         .ok_or(VmError::RegisterOutOfBounds(index))
-}
-impl From<&crate::ops::Constant> for Value {
-    fn from(value: &crate::ops::Constant) -> Self {
-        match value {
-            crate::ops::Constant::Number(value) => Self::Number(*value),
-            crate::ops::Constant::Boolean(value) => Self::Boolean(*value),
-            crate::ops::Constant::String(value) => Self::String(value.clone()),
-            crate::ops::Constant::Null => Self::Null,
-            crate::ops::Constant::Undefined => Self::Undefined,
-        }
-    }
 }
