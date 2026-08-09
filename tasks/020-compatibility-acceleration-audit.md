@@ -133,7 +133,7 @@ large non-match corpus, so the compatibility objective remains open.
 - The network half-close slice now passes the authoritative
   `test-net-allow-half-open-async-iter.js` fixture and focused stages 2316,
   2338, and 2491.
-- The follow-up `test-net-allow-half-open.js` fixture remains reproducibly
-  open: after unique ephemeral-port routing was added, it advances to a later
-  callback-count mismatch in its two-server lifecycle. It is not counted as a
-  passing upstream fixture yet.
+- The follow-up `test-net-allow-half-open.js` fixture is now passing after making socket
+  `finish` emission idempotent and emitting the default non-half-open peer's
+  finish transition before destruction. The async-iterator fixture and focused
+  stages 2316 and 2338 remain passing.
