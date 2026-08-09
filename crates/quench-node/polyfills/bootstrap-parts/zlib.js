@@ -47,7 +47,7 @@ const __quenchZlibConstants = Object.freeze({
   BROTLI_PARAM_SIZE_HINT: 5,
   BROTLI_PARAM_LARGE_WINDOW: 6,
   BROTLI_PARAM_NPOSTFIX: 7,
-  BROTLI_PARAM_NDIRECT: 8
+  BROTLI_PARAM_NDIRECT: 8,
 });
 const __quenchZlibCodes = Object.freeze({
   Z_OK: 0,
@@ -59,7 +59,7 @@ const __quenchZlibCodes = Object.freeze({
   Z_MEM_ERROR: -4,
   Z_BUF_ERROR: -5,
   Z_VERSION_ERROR: -6,
-  Z_MAX_CHUNK: Infinity
+  Z_MAX_CHUNK: Infinity,
 });
 const __quenchValidateZlibCallbackInput = (input) => {
   if (
@@ -75,14 +75,14 @@ const __quenchValidateZlibCallbackInput = (input) => {
     throw error;
   }
 };
-const __quenchCrc32 = (input, seed = 0) => {
+const __quenchValidateCrc32 = (input, seed) => {
   if (
     typeof input !== "string" &&
     !(input instanceof Uint8Array) &&
     !(input instanceof ArrayBuffer)
   ) {
     const error = new TypeError(
-      'The "data" argument must be of type string or an instance of Buffer or Uint8Array'
+      'The "data" argument must be of type string or an instance of Buffer or Uint8Array',
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -92,12 +92,14 @@ const __quenchCrc32 = (input, seed = 0) => {
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
-  const bytes =
-    typeof input === "string"
-      ? new TextEncoder().encode(input)
-      : input instanceof ArrayBuffer
-        ? new Uint8Array(input)
-        : input;
+  return typeof input === "string"
+    ? new TextEncoder().encode(input)
+    : input instanceof ArrayBuffer
+    ? new Uint8Array(input)
+    : input;
+};
+const __quenchCrc32 = (input, seed = 0) => {
+  const bytes = __quenchValidateCrc32(input, seed);
   let crc = ~seed >>> 0;
   for (const byte of bytes) {
     crc ^= byte;
@@ -118,7 +120,7 @@ const __quenchZlibCallback = (method, Engine) => (input, options, callback) => {
     const error = new TypeError(
       `The "callback" argument must be of type function. Received ${
         callback === undefined ? "undefined" : typeof callback
-      }`
+      }`,
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -130,7 +132,7 @@ const __quenchZlibCallback = (method, Engine) => (input, options, callback) => {
         null,
         options?.info
           ? { buffer, engine: Engine ? new Engine(options) : {} }
-          : buffer
+          : buffer,
       );
     } catch (error) {
       callback(error);
@@ -164,19 +166,19 @@ globalThis.require = (specifier) => {
     gunzipSync: __quenchZlibSyncInfo(module.gunzipSync, module.Gunzip),
     deflateRawSync: __quenchZlibSyncInfo(
       module.deflateRawSync,
-      module.DeflateRaw
+      module.DeflateRaw,
     ),
     inflateRawSync: __quenchZlibSyncInfo(
       module.inflateRawSync,
-      module.InflateRaw
+      module.InflateRaw,
     ),
     brotliCompressSync: __quenchZlibSyncInfo(
       module.brotliCompressSync,
-      module.BrotliCompress
+      module.BrotliCompress,
     ),
     brotliDecompressSync: __quenchZlibSyncInfo(
       module.brotliDecompressSync,
-      module.BrotliDecompress
+      module.BrotliDecompress,
     ),
     unzipSync: (input, options) => {
       const method = input[0] === 0x1f && input[1] === 0x8b ? gunzip : inflate;
@@ -189,40 +191,40 @@ globalThis.require = (specifier) => {
       (input, options) =>
         (input[0] === 0x1f && input[1] === 0x8b ? gunzip : inflate)(
           input,
-          options
+          options,
         ),
-      module.Unzip
+      module.Unzip,
     ),
     zstdCompressSync: __quenchZlibSyncInfo(
       module.zstdCompressSync || module.gzipSync,
-      module.ZstdCompress || module.Gzip
+      module.ZstdCompress || module.Gzip,
     ),
     zstdDecompressSync: __quenchZlibSyncInfo(
       module.zstdDecompressSync || module.gunzipSync,
-      module.ZstdDecompress || module.Gunzip
+      module.ZstdDecompress || module.Gunzip,
     ),
     zstdCompress: __quenchZlibCallback(
       module.zstdCompressSync || module.gzipSync,
-      module.ZstdCompress || module.Gzip
+      module.ZstdCompress || module.Gzip,
     ),
     zstdDecompress: __quenchZlibCallback(
       module.zstdDecompressSync || module.gunzipSync,
-      module.ZstdDecompress || module.Gunzip
+      module.ZstdDecompress || module.Gunzip,
     ),
     ZstdCompress: module.ZstdCompress || module.Gzip,
-    ZstdDecompress: module.ZstdDecompress || module.Gunzip
+    ZstdDecompress: module.ZstdDecompress || module.Gunzip,
   });
   Object.defineProperty(exported, "constants", {
     value: __quenchZlibConstants,
     enumerable: true,
     writable: false,
-    configurable: false
+    configurable: false,
   });
   Object.defineProperty(exported, "codes", {
     value: __quenchZlibCodes,
     enumerable: true,
     writable: false,
-    configurable: false
+    configurable: false,
   });
   return exported;
 };
