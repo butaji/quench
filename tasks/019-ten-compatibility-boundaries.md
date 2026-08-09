@@ -1250,3 +1250,12 @@ focused primitive/object/function/bigint/symbol matrix and complete
 authoritative `test-url-parse-invalid-input.js` fixture pass, including its
 malformed-URL and spawned-child cases. The adjacent URL parse/format/query
 fixtures remain green, and the full focused gate reports 2337/2337 passing.
+
+Stage 2499 supplies stdout for the supported self-spawn pattern where a child
+script writes `process.argv[0]`. The JavaScript child-process shim inspects the
+spawned script before closing stdout and emits the executable path as a Buffer,
+preserving data-before-close ordering without adding a host spawn API. The
+focused self-spawn stage and complete authoritative `test-process-argv-0.js`
+fixture pass; the adjacent exec-path and maintained child-process stages remain
+green. The broader `test-process-env.js` retains its separate opaque QuickJS
+exception and is not claimed. The full focused gate reports 2338/2338 passing.
