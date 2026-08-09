@@ -45,6 +45,7 @@ pub(crate) fn property(values: &[Value], key: &str) -> Value {
         "filter" => crate::ops::Builtin::ArrayFilter,
         "some" => crate::ops::Builtin::ArraySome,
         "every" => crate::ops::Builtin::ArrayEvery,
+        "find" => crate::ops::Builtin::ArrayFind,
         _ => return index(values, key),
     };
     Value::Builtin(method)
@@ -103,4 +104,28 @@ pub(crate) fn every(
         }
     }
     Ok(Value::Boolean(true))
+}
+
+pub(crate) fn find(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let Some(Value::Array(values)) = receiver else {
+        return Ok(Value::Undefined);
+    };
+    let Some(callback) = arguments.first() else {
+        return Ok(Value::Undefined);
+    };
+    for (index, value) in values.iter().enumerate() {
+        let args = [
+            value.clone(),
+            Value::Number(index as f64),
+            receiver.cloned().unwrap_or(Value::Undefined),
+        ];
+        let result = crate::functions::execute_target(callback, &Value::Undefined, &args)?;
+        if crate::execute::is_truthy(&result) {
+            return Ok(value.clone());
+        }
+    }
+    Ok(Value::Undefined)
 }
