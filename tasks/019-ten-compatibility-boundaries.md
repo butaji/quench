@@ -1008,3 +1008,13 @@ cluster. Authoritative `test-stream-compose.js` advances through those function
 blocks to the mixed Transform/function error case at line 224, which currently
 reports a non-callable stream stage and remains separate. Rust and application
 stages remain green.
+
+Stage 2477 adapts Node stream stages inside a functional composition. Ordered
+values are written through each Transform/Writable, readable output is captured
+before the write callback settles, and the original write error rejects the
+composed transform rather than being replaced by a non-callable-stage error.
+The focused Transform/generator/Writable and original-error contracts pass with
+the maintained compose cluster. Authoritative `test-stream-compose.js`
+advances to `Callback 11`, the first async-iterable source composition that
+must auto-start without an input write. Rust and application stages remain
+green.
