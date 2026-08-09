@@ -215,10 +215,15 @@ const __quenchComposeStreams = (streams, result) => {
     streams[index].pipe(streams[index + 1]);
   }
   const composed = new result.Transform({
+    writableObjectMode: first.writableObjectMode === true,
+    readableObjectMode: last.readableObjectMode === true,
     transform(chunk, encoding, callback) {
       first.write(chunk, encoding, callback);
     }
   });
+  composed.writableObjectMode = first.writableObjectMode === true;
+  composed.readableObjectMode = last.readableObjectMode === true;
+  composed._writableState.objectMode = composed.writableObjectMode;
   composed.writable = __quenchComposeWritable(first);
   composed.readable = __quenchComposeReadable(last);
   last.on("data", (chunk) => composed.push(chunk));
@@ -1201,7 +1206,7 @@ const __quenchAddSliceMethods = (prototype) => {
   };
 };
 const __quenchAddReadableSlices = (result) => {
-  for (const name of ["Readable"]) {
+  for (const name of ["Readable", "Duplex", "Transform", "PassThrough"]) {
     const prototype = result[name]?.prototype;
     if (!prototype) continue;
     prototype.drop ||= function (count, options) {
