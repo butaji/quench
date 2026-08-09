@@ -1497,3 +1497,9 @@ Destroying one side now closes the other, with existing half-close and server
 close-order stages still green. The focused stage and full focused gate pass at
 2370/2370; `test-net-stream.js` still has a separate queued-data/backpressure
 callback mismatch.
+
+Stage 2534 makes `net.Socket.destroy()` idempotent: repeated destruction of an
+in-memory socket schedules only one close event. The focused stage passes and
+the existing network lifecycle stages remain green. The full
+`test-net-stream.js` fixture still reports a repeated callback in its larger
+queued-write/error sequence, so that fixture remains open.
