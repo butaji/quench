@@ -339,3 +339,8 @@ The stream/pipeline compatibility surface was split at complete validation and
 iteration helper boundaries. `module-surface-03.js` is now 500 lines, with
 ordered tails of 452 and 396 lines; stream stages 1879, 1882, 1883, 2452, and
 2554 plus the quench-node Rust tests pass.
+
+The compression/zlib bootstrap was split while preserving initialization order:
+the helper definitions load first, the zlib module surface second, and common
+fixture helpers last. The resulting files are 410, 294, and 281 lines; zlib
+stages 242 through 250 and the quench-node Rust tests pass.
