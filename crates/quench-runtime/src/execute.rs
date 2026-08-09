@@ -12,7 +12,10 @@ pub enum VmError {
 pub fn execute(ops: &[Op]) -> Result<Value, VmError> {
     execute_with_registers(ops, Vec::new())
 }
-fn execute_with_registers(ops: &[Op], mut registers: Vec<Value>) -> Result<Value, VmError> {
+pub(crate) fn execute_with_registers(
+    ops: &[Op],
+    mut registers: Vec<Value>,
+) -> Result<Value, VmError> {
     for op in ops {
         match op {
             Op::Const { dst, value } => write_register(&mut registers, *dst, value),
@@ -25,9 +28,7 @@ fn execute_with_registers(ops: &[Op], mut registers: Vec<Value>) -> Result<Value
                 let value = get_property(&read_register(&registers, *object)?, key);
                 write_value(&mut registers, *dst, value);
             }
-            Op::SetProperty { object, key, src } => {
-                execute_set_property(&mut registers, *object, key, *src)?;
-            }
+            Op::SetProperty { .. } => execute_set_property_op(&mut registers, op)?,
             Op::MakeFunction { dst, body, params } => {
                 write_value(&mut registers, *dst, crate::functions::make(body, *params))
             }
@@ -36,6 +37,7 @@ fn execute_with_registers(ops: &[Op], mut registers: Vec<Value>) -> Result<Value
             }
             Op::CallMethod { .. } => crate::methods::execute(&mut registers, op)?,
             Op::Construct { .. } => crate::construct::execute(&mut registers, op)?,
+            Op::Branch { .. } => crate::branch::execute(&registers, op)?,
             Op::Unary { dst, operator, src } => {
                 execute_unary(&mut registers, *dst, *operator, *src)?
             }
@@ -103,18 +105,17 @@ pub(crate) fn get_property(value: &Value, key: &str) -> Value {
         _ => Value::Undefined,
     }
 }
-fn execute_set_property(
-    registers: &mut Vec<Value>,
-    object: u16,
-    key: &str,
-    src: u16,
-) -> Result<(), VmError> {
-    let target = read_register(registers, object)?.clone();
-    let value = read_register(registers, src)?.clone();
+fn execute_set_property_op(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
+    let Op::SetProperty { object, key, src } = op else {
+        return Err(VmError::MissingReturn);
+    };
+    let target = read_register(registers, *object)?.clone();
+    let value = read_register(registers, *src)?.clone();
     let result = crate::builtins::set_property(target, key, value);
-    write_value(registers, object, result);
+    write_value(registers, *object, result);
     Ok(())
 }
+
 fn array_property(values: &[Value], key: &str) -> Value {
     if key == "length" {
         return Value::Number(values.len() as f64);
@@ -309,7 +310,7 @@ fn type_of(value: &Value) -> &'static str {
 fn numeric_unary(value: Value, transform: fn(f64) -> f64) -> Result<Value, VmError> {
     Ok(Value::Number(transform(to_number(Some(&value)))))
 }
-fn is_truthy(value: &Value) -> bool {
+pub(crate) fn is_truthy(value: &Value) -> bool {
     match value {
         Value::Boolean(value) => *value,
         Value::Number(value) => *value != 0.0 && !value.is_nan(),

@@ -13,6 +13,7 @@
 
 mod arrays;
 mod blocks;
+mod branch;
 mod builtins;
 mod conditional;
 mod construct;
