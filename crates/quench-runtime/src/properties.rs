@@ -70,3 +70,42 @@ pub(crate) fn reduce_assignment(
     });
     Some(value)
 }
+
+pub(crate) fn reduce_method_call(
+    call: &oxc::ast::ast::CallExpression<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<u16> {
+    let (object, key) = match &call.callee {
+        Expression::StaticMemberExpression(member) => {
+            (&member.object, member.property.name.to_string())
+        }
+        Expression::ComputedMemberExpression(member) => {
+            let key = property_key(&reduce_literal(&member.expression)?.op)?;
+            (&member.object, key)
+        }
+        _ => return None,
+    };
+    let object = crate::reduce::reduce_expression(object, ops, facts, next_register, locals)?;
+    let mut args = Vec::new();
+    for argument in &call.arguments {
+        args.push(crate::reduce::reduce_expression(
+            argument.as_expression()?,
+            ops,
+            facts,
+            next_register,
+            locals,
+        )?);
+    }
+    let dst = *next_register;
+    *next_register = next_register.saturating_add(1);
+    ops.push(Op::CallMethod {
+        dst,
+        object,
+        key,
+        args,
+    });
+    Some(dst)
+}

@@ -15,6 +15,44 @@ pub(crate) fn property(builtin: Builtin, key: &str) -> Value {
     Value::Undefined
 }
 
+pub(crate) fn object_method(value: &Value, key: &str) -> Value {
+    if matches!(value, Value::Object(_) | Value::Array(_)) && key == "hasOwnProperty" {
+        return Value::Builtin(Builtin::ObjectHasOwnProperty);
+    }
+    Value::Undefined
+}
+
+pub(crate) fn has_own_property(receiver: Option<&Value>, key: Option<&Value>) -> Value {
+    let Some(key) = key.map(value_to_string) else {
+        return Value::Boolean(false);
+    };
+    let present = match receiver {
+        Some(Value::Object(properties)) => properties.iter().any(|(name, _)| name == &key),
+        Some(Value::Array(values)) => {
+            key == "length" || key.parse::<usize>().is_ok_and(|i| i < values.len())
+        }
+        Some(Value::String(value)) => {
+            key == "length"
+                || key
+                    .parse::<usize>()
+                    .is_ok_and(|i| i < value.chars().count())
+        }
+        _ => false,
+    };
+    Value::Boolean(present)
+}
+
+fn value_to_string(value: &Value) -> String {
+    match value {
+        Value::String(value) => value.clone(),
+        Value::Number(value) => value.to_string(),
+        Value::Boolean(value) => value.to_string(),
+        Value::Null => "null".to_string(),
+        Value::Undefined => "undefined".to_string(),
+        _ => "[object Object]".to_string(),
+    }
+}
+
 pub(crate) fn array(arguments: &[Value]) -> Value {
     if arguments.len() == 1 {
         if let Value::Number(length) = arguments[0] {

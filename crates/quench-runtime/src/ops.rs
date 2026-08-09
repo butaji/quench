@@ -46,6 +46,12 @@ pub enum Op {
         callee: u16,
         args: Vec<u16>,
     },
+    CallMethod {
+        dst: u16,
+        object: u16,
+        key: String,
+        args: Vec<u16>,
+    },
     Unary {
         dst: u16,
         operator: UnaryOp,
@@ -77,6 +83,7 @@ pub enum Builtin {
     Object,
     ObjectIs,
     ObjectKeys,
+    ObjectHasOwnProperty,
     ParseFloat,
     ParseInt,
     String,

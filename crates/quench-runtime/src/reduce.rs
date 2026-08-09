@@ -1,5 +1,4 @@
 //! OXC-to-residual reduction entry point.
-
 use crate::{
     arrays, blocks, conditional, control_flow,
     facts::ProgramDb,
@@ -53,14 +52,12 @@ pub fn reduce_source_with_type(
     let ops = reduce_statements(&parsed.program.body, &mut facts)?;
     Ok(ResidualProgram { facts, ops })
 }
-
 fn reduce_statements(
     statements: &[Statement<'_>],
     facts: &mut ProgramDb,
 ) -> Result<Vec<Op>, Vec<String>> {
     reduce_statements_with_locals(statements, facts, HashMap::new(), 0)
 }
-
 pub(crate) fn reduce_statements_with_locals(
     statements: &[Statement<'_>],
     facts: &mut ProgramDb,
@@ -121,7 +118,6 @@ pub(crate) fn reduce_statement(
         _ => Err(vec!["Unsupported executable statement".to_string()]),
     }
 }
-
 fn reduce_return_statement(
     statement: &oxc::ast::ast::ReturnStatement<'_>,
     ops: &mut Vec<Op>,
@@ -136,7 +132,6 @@ fn reduce_return_statement(
         .or_else(|| Some(emit_undefined(ops, next_register)));
     Ok(register)
 }
-
 fn reduce_function_declaration(
     function: &oxc::ast::ast::Function<'_>,
     ops: &mut Vec<Op>,
@@ -170,7 +165,6 @@ fn reduce_function_declaration(
     });
     Ok(())
 }
-
 fn reduce_if_statement(
     statement: &oxc::ast::ast::IfStatement<'_>,
     ops: &mut Vec<Op>,
@@ -203,7 +197,6 @@ fn reduce_if_statement(
         _ => Err(vec!["Unsupported conditional statement".to_string()]),
     }
 }
-
 fn finish_program(mut ops: Vec<Op>, last_value: Option<u16>) -> Result<Vec<Op>, Vec<String>> {
     if let Some(register) = last_value {
         ops.push(Op::Return { src: register });
@@ -216,7 +209,6 @@ fn finish_program(mut ops: Vec<Op>, last_value: Option<u16>) -> Result<Vec<Op>, 
     }
     Ok(ops)
 }
-
 fn reduce_expression_statement(
     expression: &Expression<'_>,
     ops: &mut Vec<Op>,
@@ -229,7 +221,6 @@ fn reduce_expression_statement(
     };
     Ok(register)
 }
-
 fn reduce_declaration(
     declaration: &oxc::ast::ast::VariableDeclaration<'_>,
     ops: &mut Vec<Op>,
@@ -259,7 +250,6 @@ fn reduce_declaration(
     }
     Ok(())
 }
-
 pub(crate) fn emit_undefined(ops: &mut Vec<Op>, next_register: &mut u16) -> u16 {
     let register = *next_register;
     *next_register = next_register.saturating_add(1);
@@ -269,7 +259,6 @@ pub(crate) fn emit_undefined(ops: &mut Vec<Op>, next_register: &mut u16) -> u16 
     });
     register
 }
-
 pub(crate) fn reduce_expression(
     expression: &Expression<'_>,
     ops: &mut Vec<Op>,
@@ -302,7 +291,6 @@ pub(crate) fn reduce_expression(
     });
     Some(dst)
 }
-
 fn reduce_special(
     expression: &Expression<'_>,
     ops: &mut Vec<Op>,
@@ -343,7 +331,6 @@ fn reduce_special(
         _ => None,
     }
 }
-
 fn reduce_unary(
     unary: &oxc::ast::ast::UnaryExpression<'_>,
     ops: &mut Vec<Op>,
@@ -371,7 +358,6 @@ fn reduce_unary(
     ops.push(Op::Unary { dst, operator, src });
     Some(dst)
 }
-
 fn reduce_call(
     call: &oxc::ast::ast::CallExpression<'_>,
     ops: &mut Vec<Op>,
@@ -379,6 +365,9 @@ fn reduce_call(
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
+    if let Some(result) = properties::reduce_method_call(call, ops, facts, next_register, locals) {
+        return Some(result);
+    }
     let callee = reduce_expression(&call.callee, ops, facts, next_register, locals)?;
     let mut args = Vec::new();
     for argument in &call.arguments {
@@ -396,7 +385,6 @@ fn reduce_call(
     ops.push(Op::Call { dst, callee, args });
     Some(dst)
 }
-
 fn reduce_update(
     update: &oxc::ast::ast::UpdateExpression<'_>,
     ops: &mut Vec<Op>,
@@ -437,7 +425,6 @@ fn reduce_update(
         Some(old)
     }
 }
-
 fn reduce_assignment(
     assignment: &oxc::ast::ast::AssignmentExpression<'_>,
     ops: &mut Vec<Op>,
@@ -470,7 +457,6 @@ fn reduce_assignment(
     ops.push(Op::StoreLocal { slot, src: value });
     Some(value)
 }
-
 fn reduce_atom(
     expression: &Expression<'_>,
     ops: &mut Vec<Op>,
