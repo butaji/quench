@@ -112,6 +112,15 @@ fn string_property(value: &str, key: &str) -> Value {
     if key == "length" {
         return Value::Number(value.chars().count() as f64);
     }
+    let method = match key {
+        "includes" => Some(crate::ops::Builtin::StringIncludes),
+        "startsWith" => Some(crate::ops::Builtin::StringStartsWith),
+        "endsWith" => Some(crate::ops::Builtin::StringEndsWith),
+        _ => None,
+    };
+    if let Some(method) = method {
+        return Value::Builtin(method);
+    }
     key.parse::<usize>()
         .ok()
         .and_then(|index| value.chars().nth(index))
@@ -184,6 +193,11 @@ fn execute_builtin_tail(
         crate::ops::Builtin::ParseFloat => Ok(Value::Number(parse_float(arguments.first()))),
         crate::ops::Builtin::ParseInt => Ok(Value::Number(parse_int(arguments))),
         crate::ops::Builtin::String => Ok(Value::String(to_string(arguments.first()))),
+        crate::ops::Builtin::StringIncludes => Ok(crate::strings::includes(receiver, arguments)),
+        crate::ops::Builtin::StringStartsWith => {
+            Ok(crate::strings::starts_with(receiver, arguments))
+        }
+        crate::ops::Builtin::StringEndsWith => Ok(crate::strings::ends_with(receiver, arguments)),
         crate::ops::Builtin::Unescape => Ok(crate::builtins::unescape(arguments.first())),
         crate::ops::Builtin::MathPow => Ok(crate::builtins::math_pow(arguments)),
         _ => Ok(Value::Undefined),

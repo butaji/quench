@@ -39,6 +39,7 @@ mod sequences;
 mod special;
 mod statement_control;
 mod statements;
+mod strings;
 mod switch;
 mod templates;
 mod transparent;
