@@ -3,6 +3,9 @@ use std::rc::Rc;
 use crate::{ops::Builtin, value::Value};
 
 pub(crate) fn property(builtin: Builtin, key: &str) -> Value {
+    if let Some(value) = special_property(builtin, key) {
+        return value;
+    }
     if builtin == Builtin::Array && key == "prototype" {
         return Value::Builtin(Builtin::ArrayPrototype);
     }
@@ -24,10 +27,19 @@ pub(crate) fn property(builtin: Builtin, key: &str) -> Value {
     if matches!(builtin, Builtin::Object) && key == "getOwnPropertyDescriptor" {
         return Value::Builtin(Builtin::ObjectGetOwnPropertyDescriptor);
     }
-    if builtin == Builtin::Math && key == "pow" {
-        return Value::Builtin(Builtin::MathPow);
-    }
     Value::Undefined
+}
+
+fn special_property(builtin: Builtin, key: &str) -> Option<Value> {
+    let value = match (builtin, key) {
+        (Builtin::Math, "pow") => Builtin::MathPow,
+        (Builtin::Function, "prototype") => Builtin::FunctionPrototype,
+        (Builtin::FunctionPrototype, "call") => Builtin::FunctionCall,
+        (Builtin::FunctionPrototype, "bind") => Builtin::FunctionBind,
+        (Builtin::ArrayPrototype, "join") => Builtin::ArrayJoin,
+        _ => return None,
+    };
+    Some(Value::Builtin(value))
 }
 
 pub(crate) fn object_method(value: &Value, key: &str) -> Value {
@@ -175,6 +187,40 @@ pub(crate) fn array(arguments: &[Value]) -> Value {
 
 pub(crate) fn array_map(arguments: &[Value]) -> Value {
     function_call(arguments)
+}
+
+pub(crate) fn array_join(receiver: Option<&Value>, arguments: &[Value]) -> Value {
+    let Some(Value::Array(values)) = receiver else {
+        return Value::String(String::new());
+    };
+    let separator = arguments
+        .first()
+        .map_or_else(|| ",".to_string(), value_to_string);
+    Value::String(
+        values
+            .iter()
+            .map(value_to_string)
+            .collect::<Vec<_>>()
+            .join(&separator),
+    )
+}
+
+pub(crate) fn math_pow(arguments: &[Value]) -> Value {
+    let base = arguments.first().map_or(f64::NAN, value_to_number);
+    let exponent = arguments.get(1).map_or(f64::NAN, value_to_number);
+    Value::Number(base.powf(exponent))
+}
+
+pub(crate) fn is_array(value: Option<&Value>) -> Value {
+    Value::Boolean(matches!(value, Some(Value::Array(_))))
+}
+
+fn value_to_number(value: &Value) -> f64 {
+    match value {
+        Value::Number(value) => *value,
+        Value::String(value) => value.parse().unwrap_or(f64::NAN),
+        _ => f64::NAN,
+    }
 }
 
 pub(crate) fn function_call(arguments: &[Value]) -> Value {

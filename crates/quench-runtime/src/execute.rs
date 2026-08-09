@@ -139,6 +139,7 @@ fn execute_call(
         .collect::<Result<Vec<_>, _>>()?;
     let value = match read_register(registers, callee)? {
         Value::Function(body) => crate::functions::execute(&body, &arguments)?,
+        Value::BoundFunction(bound) => crate::functions::execute_bound(&bound, &arguments)?,
         Value::Builtin(builtin) => execute_builtin_with_receiver(builtin, &arguments, None)?,
         _ => return Err(VmError::NotCallable),
     };
@@ -161,12 +162,13 @@ pub(crate) fn execute_builtin_with_receiver(
 ) -> Result<Value, VmError> {
     match builtin {
         crate::ops::Builtin::Array => Ok(crate::builtins::array(arguments)),
-        crate::ops::Builtin::ArrayIsArray => Ok(Value::Boolean(matches!(
-            arguments.first(),
-            Some(Value::Array(_))
-        ))),
+        crate::ops::Builtin::ArrayIsArray => Ok(crate::builtins::is_array(arguments.first())),
         crate::ops::Builtin::ArrayMap => Ok(crate::builtins::array_map(arguments)),
-        crate::ops::Builtin::FunctionCall => Ok(crate::builtins::function_call(arguments)),
+        crate::ops::Builtin::FunctionCall
+        | crate::ops::Builtin::FunctionBind
+        | crate::ops::Builtin::ArrayJoin => {
+            crate::functions::function_builtin(builtin, receiver, arguments)
+        }
         crate::ops::Builtin::Boolean => {
             Ok(Value::Boolean(arguments.first().is_some_and(is_truthy)))
         }
@@ -189,19 +191,11 @@ pub(crate) fn execute_builtin_with_receiver(
         crate::ops::Builtin::ParseInt => Ok(Value::Number(parse_int(arguments))),
         crate::ops::Builtin::String => Ok(Value::String(to_string(arguments.first()))),
         crate::ops::Builtin::Unescape => Ok(crate::builtins::unescape(arguments.first())),
-        crate::ops::Builtin::MathPow => Ok(math_pow(arguments)),
+        crate::ops::Builtin::MathPow => Ok(crate::builtins::math_pow(arguments)),
         _ => Ok(Value::Undefined),
     }
 }
-fn math_pow(arguments: &[Value]) -> Value {
-    let base = arguments
-        .first()
-        .map_or(f64::NAN, |value| to_number(Some(value)));
-    let exponent = arguments
-        .get(1)
-        .map_or(f64::NAN, |value| to_number(Some(value)));
-    Value::Number(base.powf(exponent))
-}
+
 fn is_finite(value: Option<&Value>) -> bool {
     matches!(value, Some(Value::Number(number)) if number.is_finite())
 }
@@ -234,7 +228,9 @@ fn to_number(value: Option<&Value>) -> f64 {
         Some(Value::Number(value)) => *value,
         Some(Value::String(value)) => parse_number(value),
         Some(Value::Array(_)) | Some(Value::Object(_)) => f64::NAN,
-        Some(Value::Function(_)) | Some(Value::Builtin(_)) => f64::NAN,
+        Some(Value::Function(_)) | Some(Value::BoundFunction(_)) | Some(Value::Builtin(_)) => {
+            f64::NAN
+        }
     }
 }
 fn parse_number(value: &str) -> f64 {
@@ -267,7 +263,9 @@ fn to_string(value: Option<&Value>) -> String {
             .collect::<Vec<_>>()
             .join(","),
         Some(Value::Object(_)) => "[object Object]".to_string(),
-        Some(Value::Function(_)) | Some(Value::Builtin(_)) => "function".to_string(),
+        Some(Value::Function(_)) | Some(Value::BoundFunction(_)) | Some(Value::Builtin(_)) => {
+            "function".to_string()
+        }
     }
 }
 fn copy_register(registers: &mut Vec<Value>, dst: u16, src: u16) -> Result<(), VmError> {
@@ -304,6 +302,7 @@ fn type_of(value: &Value) -> &'static str {
         Value::Object(_) => "object",
         Value::Builtin(_) => "function",
         Value::Function(_) => "function",
+        Value::BoundFunction(_) => "function",
     }
 }
 fn numeric_unary(value: Value, transform: fn(f64) -> f64) -> Result<Value, VmError> {
@@ -319,6 +318,7 @@ pub(crate) fn is_truthy(value: &Value) -> bool {
         Value::Builtin(_) => true,
         Value::Null | Value::Undefined => false,
         Value::Function(_) => true,
+        Value::BoundFunction(_) => true,
     }
 }
 fn execute_binary(
