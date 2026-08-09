@@ -399,14 +399,13 @@ pub(crate) fn reduce_call(
     }
     let callee = reduce_expression(&call.callee, ops, facts, next_register, locals)?;
     let mut args = Vec::new();
+    let mut spreads = Vec::new();
     for argument in &call.arguments {
         match argument {
             Argument::SpreadElement(spread) => {
                 let src = reduce_expression(&spread.argument, ops, facts, next_register, locals)?;
-                let dst = *next_register;
-                *next_register = next_register.saturating_add(1);
-                ops.push(Op::Spread { dst, src });
-                args.push(dst);
+                args.push(src);
+                spreads.push(true);
             }
             _ => {
                 let expression = argument.as_expression()?;
@@ -417,12 +416,18 @@ pub(crate) fn reduce_call(
                     next_register,
                     locals,
                 )?);
+                spreads.push(false);
             }
         }
     }
     let dst = *next_register;
     *next_register = next_register.saturating_add(1);
-    ops.push(Op::Call { dst, callee, args });
+    ops.push(Op::Call {
+        dst,
+        callee,
+        args,
+        spreads,
+    });
     Some(dst)
 }
 pub(crate) fn reduce_assignment(
