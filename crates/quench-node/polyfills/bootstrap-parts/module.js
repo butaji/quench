@@ -102,13 +102,13 @@ const initPaths = () => {
   }
   return globalPaths;
 };
-const __quenchRequireFilename = (filename, pathApi) => {
-  const isFileUrl = typeof filename === "string" && filename.startsWith("file://");
-  const isFileUrlObject = typeof URL === "function" &&
-    filename instanceof URL && filename.protocol === "file:";
-  const raw = isFileUrlObject
-    ? decodeFilePath(filename.pathname)
-    : String(filename || "");
+const __quenchValidateRequireFilename = (
+  filename,
+  pathApi,
+  isFileUrl,
+  isFileUrlObject,
+  raw,
+) => {
   if (typeof filename !== "string" && !isFileUrlObject) {
     const error = new TypeError(
       `The argument 'filename' must be a file URL object, file URL string, or absolute path string. Received ${formatValue(filename)}`,
@@ -121,6 +121,21 @@ const __quenchRequireFilename = (filename, pathApi) => {
     error.code = "ERR_INVALID_ARG_VALUE";
     throw error;
   }
+};
+const __quenchRequireFilename = (filename, pathApi) => {
+  const isFileUrl = typeof filename === "string" && filename.startsWith("file://");
+  const isFileUrlObject = typeof URL === "function" &&
+    filename instanceof URL && filename.protocol === "file:";
+  const raw = isFileUrlObject
+    ? decodeFilePath(filename.pathname)
+    : String(filename || "");
+  __quenchValidateRequireFilename(
+    filename,
+    pathApi,
+    isFileUrl,
+    isFileUrlObject,
+    raw,
+  );
   return { isFileUrl, raw, isFileUrlObject };
 };
 const __quenchCreatedRequire = (directory, pathApi) => (specifier) => {
