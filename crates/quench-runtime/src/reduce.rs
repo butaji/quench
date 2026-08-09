@@ -83,6 +83,13 @@ fn reduce_statement(
             reduce_declaration(declaration, ops, facts, next_register, next_slot, locals)?;
             Ok(None)
         }
+        Statement::FunctionDeclaration(function) => {
+            reduce_function_declaration(function, ops, facts, next_register, next_slot, locals)
+                .map(|_| None)
+        }
+        Statement::ReturnStatement(return_statement) => {
+            reduce_return_statement(return_statement, ops, facts, next_register, locals)
+        }
         Statement::IfStatement(statement) => {
             reduce_if_statement(statement, ops, facts, next_register, next_slot, locals)
         }
@@ -92,6 +99,55 @@ fn reduce_statement(
         }
         _ => Err(vec!["Unsupported executable statement".to_string()]),
     }
+}
+
+fn reduce_return_statement(
+    statement: &oxc::ast::ast::ReturnStatement<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Result<Option<u16>, Vec<String>> {
+    let register = statement
+        .argument
+        .as_ref()
+        .and_then(|expression| reduce_expression(expression, ops, facts, next_register, locals))
+        .or_else(|| Some(emit_undefined(ops, next_register)));
+    Ok(register)
+}
+
+fn reduce_function_declaration(
+    function: &oxc::ast::ast::Function<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    next_slot: &mut u16,
+    locals: &mut HashMap<String, u16>,
+) -> Result<(), Vec<String>> {
+    if !function.params.items.is_empty() {
+        return Err(vec!["Function parameters are unsupported".to_string()]);
+    }
+    let Some(identifier) = function.id.as_ref() else {
+        return Err(vec!["Anonymous function declaration".to_string()]);
+    };
+    let Some(body) = function.body.as_ref() else {
+        return Err(vec!["Function without body".to_string()]);
+    };
+    let body_ops = reduce_statements(&body.statements, facts)?;
+    let slot = *next_slot;
+    *next_slot = next_slot.saturating_add(1);
+    locals.insert(identifier.name.to_string(), slot);
+    let register = *next_register;
+    *next_register = next_register.saturating_add(1);
+    ops.push(Op::MakeFunction {
+        dst: register,
+        body: body_ops,
+    });
+    ops.push(Op::StoreLocal {
+        slot,
+        src: register,
+    });
+    Ok(())
 }
 
 fn reduce_if_statement(
@@ -200,6 +256,9 @@ fn reduce_expression(
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
+    if let Expression::CallExpression(call) = expression {
+        return reduce_call(call, ops, facts, next_register, locals);
+    }
     if let Expression::UpdateExpression(update) = expression {
         return reduce_update(update, ops, next_register, locals);
     }
@@ -223,6 +282,23 @@ fn reduce_expression(
         lhs,
         rhs,
     });
+    Some(dst)
+}
+
+fn reduce_call(
+    call: &oxc::ast::ast::CallExpression<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<u16> {
+    if !call.arguments.is_empty() {
+        return None;
+    }
+    let callee = reduce_expression(&call.callee, ops, facts, next_register, locals)?;
+    let dst = *next_register;
+    *next_register = next_register.saturating_add(1);
+    ops.push(Op::Call { dst, callee });
     Some(dst)
 }
 
