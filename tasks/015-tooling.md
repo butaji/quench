@@ -381,3 +381,8 @@ The API/assertion bootstrap was split into foundational globals, assertion
 methods, and two rejection/matching tails. The resulting files are 262, 452,
 255, and 253 lines; API stages 10 through 19 pass with the quench-node Rust
 tests.
+
+The Rust host context now keeps its TCP implementation in `host_context.rs`
+and includes the exported runtime macro from `host_context_macro.inc`; the
+Rust source file is 187 lines and the public macro behavior remains covered by
+the passing quench-node Rust tests.
