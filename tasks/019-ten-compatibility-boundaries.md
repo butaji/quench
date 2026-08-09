@@ -1331,3 +1331,10 @@ including callbacks scheduled before the listener is registered. Pending errors
 are retained until a listener is attached, preserving Node next-tick ordering.
 The focused next-tick stage and authoritative `test-process-next-tick.js`
 fixture pass; the full focused gate reports 2350/2350 passing.
+
+Stages 2514–2515 align `beforeExit` re-entry and network listening events.
+Host loop work tracking now re-emits `beforeExit` after real timer/immediate or
+network work without treating `nextTick` alone as loop-keeping; network servers
+emit `listening` alongside their callback. The focused re-entry/listening stages
+and authoritative `test-process-beforeexit.js` fixture pass; the full focused
+gate reports 2352/2352 passing.
