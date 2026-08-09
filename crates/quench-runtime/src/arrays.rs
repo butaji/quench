@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use oxc::ast::ast::{ArrayExpression, ArrayExpressionElement};
 
@@ -49,6 +50,7 @@ pub(crate) fn property(values: &[Value], key: &str) -> Value {
         "includes" => crate::ops::Builtin::ArrayIncludes,
         "indexOf" => crate::ops::Builtin::ArrayIndexOf,
         "lastIndexOf" => crate::ops::Builtin::ArrayLastIndexOf,
+        "slice" => crate::ops::Builtin::ArraySlice,
         _ => return index(values, key),
     };
     Value::Builtin(method)
@@ -163,6 +165,46 @@ pub(crate) fn last_index_of(receiver: Option<&Value>, arguments: &[Value]) -> Va
     };
     let index = values.iter().rposition(|value| strict_equal(value, search));
     Value::Number(index.map_or(-1.0, |value| value as f64))
+}
+
+pub(crate) fn slice(receiver: Option<&Value>, arguments: &[Value]) -> Value {
+    let Some(Value::Array(values)) = receiver else {
+        return Value::Array(Rc::new(Vec::new()));
+    };
+    let length = values.len() as isize;
+    let start = relative_index(arguments.first(), length);
+    let end = arguments
+        .get(1)
+        .map_or(length, |value| end_index(value, length));
+    if end <= start {
+        return Value::Array(Rc::new(Vec::new()));
+    }
+    Value::Array(Rc::new(values[start as usize..end as usize].to_vec()))
+}
+
+fn relative_index(value: Option<&Value>, length: isize) -> isize {
+    let number = match value {
+        None | Some(Value::Undefined) => 0.0,
+        Some(Value::Number(number)) => *number,
+        _ => 0.0,
+    };
+    if number.is_nan() {
+        return 0;
+    }
+    let integer = number.trunc() as isize;
+    if integer < 0 {
+        (length + integer).max(0)
+    } else {
+        integer.min(length)
+    }
+}
+
+fn end_index(value: &Value, length: isize) -> isize {
+    if matches!(value, Value::Undefined) {
+        length
+    } else {
+        relative_index(Some(value), length)
+    }
 }
 
 fn strict_equal(left: &Value, right: &Value) -> bool {
