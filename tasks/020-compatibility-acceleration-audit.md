@@ -182,3 +182,6 @@ large non-match corpus, so the compatibility objective remains open.
   listener with asynchronous `EADDRINUSE`; `test-net-client-bind-twice.js`
   passes with the existing listen-error fixture.
  - BoundSocket IPv6 defaults now honor `ipv6Only: true` by selecting `::`, and reuse-port handles can share a requested port; the upstream boundsocket fixture remains open on a separate synchronous error assertion.
+- CJS loading of the upstream test helper now supplies its missing `common.PIPE`
+  contract, and non-root BoundSocket binds to privileged ports report `EACCES`.
+  The BoundSocket fixture still has one path-error assertion to isolate.
