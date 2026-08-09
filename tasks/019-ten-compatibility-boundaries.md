@@ -1413,7 +1413,8 @@ with the expected text. The focused basic adapter stage passes; later upstream
 adapter sections still expose asynchronous callback accounting.
 
 Stage 2527 completes corked `toWritable()` batching through the iterator
-writer's `writev()` method. The focused writev stage and authoritative
-`test-stream-iter-writable-from.js` and `test-stream-iter-writable-interop.js`
-fixtures pass.
+writer's `writev()` method. The focused writev stage passes; direct reruns of
+the authoritative `test-stream-iter-writable-from.js` and
+`test-stream-iter-writable-interop.js` fixtures still report Callback 0
+asynchronous accounting failures.
 The full focused gate reports 2364/2364 passing after this change.
