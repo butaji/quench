@@ -254,3 +254,7 @@ for the vendored `tests/node` submodule. The owned `tools/compat-decision-report
 classification function was split to satisfy the complexity limit; that file
 passes ESLint with zero warnings. The full owned JavaScript tree still has
 remaining file/function/complexity violations and is not yet clean.
+
+Buffer float-offset range-error construction was extracted into a helper; the
+buffer-validation module now passes ESLint with zero warnings, and stages 1, 2,
+and 1005 remain green.
