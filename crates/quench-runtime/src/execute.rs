@@ -312,8 +312,8 @@ fn evaluate_binary(
             }
             _ => return Err(VmError::NonNumericOperand),
         },
-        crate::ops::BinaryOp::Equal => Value::Boolean(left == right),
-        crate::ops::BinaryOp::NotEqual => Value::Boolean(left != right),
+        crate::ops::BinaryOp::Equal => Value::Boolean(loose_equal(left, right)),
+        crate::ops::BinaryOp::NotEqual => Value::Boolean(!loose_equal(left, right)),
         crate::ops::BinaryOp::StrictEqual => Value::Boolean(left == right),
         crate::ops::BinaryOp::StrictNotEqual => Value::Boolean(left != right),
         crate::ops::BinaryOp::LessThan => compare_numbers(left, right, |a, b| a < b)?,
@@ -324,6 +324,28 @@ fn evaluate_binary(
         crate::ops::BinaryOp::BitwiseXor => bitwise_numbers(left, right, |a, b| a ^ b)?,
         crate::ops::BinaryOp::BitwiseAnd => bitwise_numbers(left, right, |a, b| a & b)?,
     })
+}
+
+fn loose_equal(left: &Value, right: &Value) -> bool {
+    if std::mem::discriminant(left) == std::mem::discriminant(right) {
+        return left == right;
+    }
+    if matches!(
+        (left, right),
+        (Value::Null, Value::Undefined) | (Value::Undefined, Value::Null)
+    ) {
+        return true;
+    }
+    if matches!(left, Value::Boolean(_)) || matches!(right, Value::Boolean(_)) {
+        return to_number(Some(left)) == to_number(Some(right));
+    }
+    if matches!(
+        (left, right),
+        (Value::Number(_), Value::String(_)) | (Value::String(_), Value::Number(_))
+    ) {
+        return to_number(Some(left)) == to_number(Some(right));
+    }
+    false
 }
 
 fn bitwise_numbers(
