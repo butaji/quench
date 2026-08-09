@@ -1,6 +1,15 @@
 {
   "project": "quench-node",
-  "description": "Node 24 application compatibility and host-boundary improvements grounded in the current rquickjs implementation. The release contract is observable Node behavior on Linux x86_64, measured by upstream fixtures and real application gates.",
+  "description": "Broad Node 24 compatibility across Linux x86_64, Linux ARM64, macOS, and Windows, measured by applicable upstream fixtures and six representative application gates. Native addons and Node-API are excluded.",
+  "contract": {
+    "document": "docs/compatibility-contract.md",
+    "node": "24",
+    "platforms": ["linux-x86_64", "linux-arm64", "macos", "windows"],
+    "excluded": ["native-addons", "node-api", "typescript-execution", "package-installation"],
+    "statuses": ["pass", "fail", "unsupported", "platform-limited", "known-conflict", "not-tested"],
+    "application_gate_classes": ["web-server", "cli", "package-loader", "streams", "crypto", "database-sdk"],
+    "clean_runs_required": 2
+  },
   "tasks": [
     {
       "id": "001",
@@ -96,7 +105,7 @@
       "id": "016",
       "file": "016-compatibility-throughput.md",
       "title": "Compatibility throughput and differential triage",
-      "status": "planned"
+      "status": "in-progress"
     },
     {
       "id": "017",
@@ -114,6 +123,12 @@
       "id": "019",
       "file": "019-ten-compatibility-boundaries.md",
       "title": "Ten remaining evidence boundaries",
+      "status": "in-progress"
+    },
+    {
+      "id": "020",
+      "file": "020-compatibility-acceleration-audit.md",
+      "title": "Compatibility acceleration audit and execution loop",
       "status": "in-progress"
     }
   ]
