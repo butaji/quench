@@ -3,7 +3,7 @@
 use crate::{
     arrays, blocks, conditional,
     facts::ProgramDb,
-    functions,
+    functions, identifiers,
     literal::{reduce_literal, reduce_operator},
     logical, objects,
     ops::{Constant, Op},
@@ -487,14 +487,7 @@ fn reduce_atom(
         return arrays::reduce(array, ops, facts, next_register, locals);
     }
     if let Expression::Identifier(identifier) = expression {
-        let slot = *locals.get(identifier.name.as_str())?;
-        let register = *next_register;
-        *next_register = next_register.saturating_add(1);
-        ops.push(Op::LoadLocal {
-            dst: register,
-            slot,
-        });
-        return Some(register);
+        return identifiers::reduce(identifier, ops, facts, next_register, locals);
     }
     None
 }
