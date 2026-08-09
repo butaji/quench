@@ -273,3 +273,7 @@ buffer allocation stages remain green.
 Child-process spawn command, argument, option, and uid/gid validation were
 split into helpers. `child-process-validation.js` now passes ESLint with zero
 warnings; representative spawn/event stages remain green.
+
+Fetch response handling and request sending were split into helpers. The fetch
+polyfill now passes ESLint with zero warnings; stages 2230, 2231, 2232, and
+2234 pass.
