@@ -76,6 +76,33 @@ pub(crate) fn reduce_expression(
     Some(register)
 }
 
+pub(crate) fn reduce_arrow(
+    function: &oxc::ast::ast::ArrowFunctionExpression<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<u16> {
+    if !function.params.items.is_empty() {
+        return None;
+    }
+    let captures = locals
+        .values()
+        .copied()
+        .max()
+        .map_or(0, |slot| slot.saturating_add(1));
+    let body_ops = reduce_body(&function.body, facts, locals.clone(), 0, captures).ok()?;
+    let register = *next_register;
+    *next_register = next_register.saturating_add(1);
+    ops.push(Op::MakeFunction {
+        dst: register,
+        body: body_ops,
+        params: 0,
+        captures,
+    });
+    Some(register)
+}
+
 pub(crate) fn make(
     body: &[Op],
     params: u16,
