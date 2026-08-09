@@ -21,6 +21,7 @@ mod collections;
 mod conditional;
 mod construct;
 mod control_flow;
+pub mod date;
 mod exceptions;
 pub mod execute;
 pub mod facts;

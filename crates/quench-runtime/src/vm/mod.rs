@@ -1,5 +1,5 @@
 use crate::intl::tolocale::value::{is_finite, to_number, to_string};
-use crate::ops::Op;
+use crate::ops::{Builtin, Op};
 use crate::value::Value;
 use std::rc::Rc;
 
@@ -36,22 +36,71 @@ pub fn execute_in_place(ops: &[Op], registers: &mut Vec<Value>) -> Result<Value,
 }
 
 pub fn execute_builtin_with_receiver(
-    builtin: crate::ops::Builtin,
+    builtin: Builtin,
     arguments: &[Value],
     receiver: Option<&Value>,
 ) -> Result<Value, VmError> {
-    use crate::ops::Builtin;
-    if let Some(result) = crate::intl::tolocale::symbol::dispatch(builtin, arguments, receiver)
-        .or_else(|| crate::arrays::execute_builtin(builtin, receiver, arguments))
-        .or_else(|| crate::intl::tolocale::dispatch(builtin, receiver, arguments))
-        .or_else(|| crate::collections::execute_builtin(builtin, receiver, arguments))
-    {
+    if let Some(result) = early_dispatch(builtin, receiver, arguments) {
         return result;
     }
     match builtin {
-        Builtin::FunctionCall | Builtin::FunctionBind | Builtin::ArrayJoin => {
+        _ if is_function_builtin(builtin) => {
             crate::functions::function_builtin(builtin, receiver, arguments)
         }
+        _ if is_simple_builtin(builtin) => execute_simple_builtin(builtin, arguments, receiver),
+        _ => vm_ops::execute_builtin_tail(builtin, arguments, receiver),
+    }
+}
+
+fn early_dispatch(
+    builtin: Builtin,
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Option<Result<Value, VmError>> {
+    crate::intl::tolocale::symbol::dispatch(builtin, arguments, receiver)
+        .or_else(|| crate::arrays::execute_builtin(builtin, receiver, arguments))
+        .or_else(|| crate::intl::tolocale::dispatch(builtin, receiver, arguments))
+        .or_else(|| crate::collections::execute_builtin(builtin, receiver, arguments))
+        .or_else(|| crate::date::execute(builtin, receiver, arguments))
+}
+
+fn is_function_builtin(builtin: Builtin) -> bool {
+    matches!(
+        builtin,
+        Builtin::FunctionCall | Builtin::FunctionBind | Builtin::ArrayJoin
+    )
+}
+
+fn is_simple_builtin(builtin: Builtin) -> bool {
+    matches!(
+        builtin,
+        Builtin::Boolean
+            | Builtin::Eval
+            | Builtin::ReflectConstruct
+            | Builtin::Escape
+            | Builtin::IsFinite
+            | Builtin::IsNaN
+            | Builtin::Number
+            | Builtin::NumberToString
+            | Builtin::NumberValueOf
+            | Builtin::ObjectPrototypeToString
+            | Builtin::ObjectPrototypeValueOf
+            | Builtin::FunctionPrototypeToString
+            | Builtin::FunctionPrototypeValueOf
+            | Builtin::NumberToFixed
+            | Builtin::NumberToPrecision
+            | Builtin::NumberToExponential
+            | Builtin::Object
+            | Builtin::Date
+    )
+}
+
+fn execute_simple_builtin(
+    builtin: Builtin,
+    arguments: &[Value],
+    receiver: Option<&Value>,
+) -> Result<Value, VmError> {
+    match builtin {
         Builtin::Boolean => Ok(Value::Boolean(arguments.first().is_some_and(is_truthy))),
         Builtin::Eval | Builtin::ReflectConstruct => crate::reflect::builtin(builtin, arguments),
         Builtin::Escape => Ok(crate::builtins::escape(arguments.first())),
@@ -72,7 +121,10 @@ pub fn execute_builtin_with_receiver(
             crate::number_fmt::number_format(arguments.first(), arguments.get(1), builtin)
         }
         Builtin::Object => Ok(crate::builtins::object(arguments)),
-        _ => vm_ops::execute_builtin_tail(builtin, arguments, receiver),
+        Builtin::Date => {
+            crate::date::execute(builtin, receiver, arguments).unwrap_or(Ok(Value::Undefined))
+        }
+        _ => Ok(Value::Undefined),
     }
 }
 
