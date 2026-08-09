@@ -48,6 +48,9 @@ fn builtin_method(builtin: Builtin, key: &str) -> Option<Builtin> {
         (ObjectPrototype, "toString") => Some(ObjectPrototypeToString),
         (ObjectPrototype, "valueOf") => Some(ObjectPrototypeValueOf),
         (Date, "prototype") => Some(DatePrototype),
+        (Date, "now") => Some(DateNow),
+        (Date, "parse") => Some(DateParse),
+        (Date, "UTC") => Some(DateUTC),
         (Reflect, "construct") => Some(ReflectConstruct),
         (RegExp, "prototype") => Some(RegExpPrototype),
         (RegExpPrototype, "test") => Some(RegExpTest),
@@ -109,10 +112,14 @@ pub(crate) fn callable(builtin: Builtin, key: &str) -> Option<Value> {
 }
 
 fn builtin_length(builtin: Builtin) -> f64 {
-    matches!(
-        builtin,
-        Builtin::Escape | Builtin::Unescape | Builtin::DateSetYear
-    ) as i32 as f64
+    use Builtin::*;
+    match builtin {
+        Escape | Unescape | DateSetYear => 1.0,
+        DateNow => 0.0,
+        DateParse => 1.0,
+        DateUTC => 7.0,
+        _ => 0.0,
+    }
 }
 
 pub(crate) fn builtin_name(builtin: Builtin) -> &'static str {
