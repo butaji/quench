@@ -55,6 +55,7 @@ pub(crate) fn reduce_operator(operator: BinaryOperator) -> Option<crate::ops::Bi
         BinaryOperator::BitwiseOR => crate::ops::BinaryOp::BitwiseOr,
         BinaryOperator::BitwiseXOR => crate::ops::BinaryOp::BitwiseXor,
         BinaryOperator::BitwiseAnd => crate::ops::BinaryOp::BitwiseAnd,
+        BinaryOperator::Instanceof => crate::ops::BinaryOp::Instanceof,
         _ => return None,
     })
 }
