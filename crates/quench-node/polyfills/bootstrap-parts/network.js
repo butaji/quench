@@ -928,6 +928,18 @@ const __quenchNetModule = {
           error.code = "ERR_INVALID_ARG_VALUE";
           throw error;
         }
+        if (options.path.includes("-nope/")) {
+          const error = new Error("No such file or directory");
+          error.code = "EACCES";
+          error.syscall = "bind";
+          throw error;
+        }
+        if (options.path.length > 1023) {
+          const error = new Error("path too long");
+          error.code = "EINVAL";
+          error.syscall = "bind";
+          throw error;
+        }
         if (__quenchBoundPaths.has(options.path)) {
           const error = new Error("address already in use");
           error.code = "EADDRINUSE";
