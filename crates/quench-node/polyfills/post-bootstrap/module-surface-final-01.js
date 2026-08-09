@@ -276,10 +276,15 @@ const __quenchFormatUrlString = (input, originalFormat, args, result) => {
     protocol && !formatted.startsWith(protocol)
       ? `${protocol}${formatted}`
       : formatted.replace(/^null(?=\/)/, "");
-  const quotedHost = input.match(/^([A-Za-z][A-Za-z0-9+.-]*:\/\/[^\"]*)\"/);
-  return quotedHost
-    ? withProtocol.replace(quotedHost[1], `${quotedHost[1]}/`)
-    : withProtocol;
+  const quotedHost = input.match(/^([A-Za-z][A-Za-z0-9+.-]*:\/\/[^/\"]*)\"/);
+  if (!quotedHost) return withProtocol;
+  const suffix = withProtocol.slice(quotedHost[1].length);
+  const separated = suffix.startsWith("/")
+    ? withProtocol
+    : `${quotedHost[1]}/${suffix}`;
+  return !input.endsWith("/") && separated.endsWith("/")
+    ? separated.slice(0, -1)
+    : separated;
 };
 const __quenchValidateUrlFormatOptions = (options) => {
   if (
