@@ -315,6 +315,7 @@ macro_rules! run_host_context {
                     "sha1" => Ok(Sha1::digest(value).to_vec()),
                     "sha224" => Ok(Sha224::digest(value).to_vec()),
                     "sha256" => Ok(Sha256::digest(value).to_vec()),
+                    "sha384" => Ok(Sha384::digest(value).to_vec()),
                     "sha512" => Ok(Sha512::digest(value).to_vec()),
                     "md5" => Ok(Md5::digest(value).to_vec()),
                     _ => Err(rquickjs::Error::new_from_js("crypto", "unsupported digest")),
@@ -826,6 +827,7 @@ macro_rules! run_host_context {
         ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-12.js").as_bytes())?;
         ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-12-tail.js").as_bytes())?;
         ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-13.js").as_bytes())?;
+        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-13-tail.js").as_bytes())?;
         ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-14.js").as_bytes())?;
         ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-15.js").as_bytes())?;
         ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-16.js").as_bytes())?;
