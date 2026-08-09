@@ -8,6 +8,7 @@ const isIPv4Part = (part) => {
 const __quenchNetServers = new Set();
 let __quenchNextEphemeralPort = 40000;
 const __quenchBoundPorts = new Set();
+const __quenchBoundPaths = new Set();
 const __quenchNativeSockets = new Set();
 const isIPv4 = (input) => {
   if (input == null) return false;
@@ -316,6 +317,12 @@ const __quenchNetModule = {
       this.bytesRead = 0;
       this.bytesWritten = 0;
       this._handle = options?.handle || null;
+      this._boundPort = this._handle?._port;
+      this._boundHost = this._handle?._host;
+      if (this._handle?.constructor?.name === "BoundSocket") {
+        this._handle._assertOpen();
+        this._handle._adopted = true;
+      }
       this._noDelay = false;
       this._nativeId = 0;
       this._nativeConnected = false;
@@ -578,6 +585,10 @@ const __quenchNetModule = {
         return this;
       }
       this.connecting = true;
+      if (this._boundPort) {
+        this.localPort = this._boundPort;
+        this.localAddress = this._boundHost;
+      }
       if (typeof callback === "function") this.once("connect", callback);
       if (__quenchNativeTransportRequested(_options)) {
         const nativeHost = _options.host || "127.0.0.1";
@@ -888,6 +899,36 @@ const __quenchNetModule = {
         throw error;
       }
       const host = options.host ?? "0.0.0.0";
+      if (options.path !== undefined) {
+        if (typeof options.path !== "string") {
+          const error = new TypeError("path must be a string");
+          error.code = "ERR_INVALID_ARG_TYPE";
+          throw error;
+        }
+        if (
+          options.host !== undefined ||
+          options.port !== undefined ||
+          options.ipv6Only !== undefined ||
+          options.reusePort !== undefined
+        ) {
+          const error = new TypeError("path cannot be combined with TCP options");
+          error.code = "ERR_INVALID_ARG_VALUE";
+          throw error;
+        }
+        if (__quenchBoundPaths.has(options.path)) {
+          const error = new Error("address already in use");
+          error.code = "EADDRINUSE";
+          error.syscall = "bind";
+          throw error;
+        }
+        __quenchBoundPaths.add(options.path);
+        this._path = options.path;
+        this._host = options.path;
+        this._port = 0;
+        this._closed = false;
+        this._adopted = false;
+        return;
+      }
       if (typeof host !== "string") {
         const error = new TypeError("host must be a string");
         error.code = "ERR_INVALID_ARG_TYPE";
@@ -936,6 +977,7 @@ const __quenchNetModule = {
     }
     address() {
       this._assertOpen();
+      if (this._path !== undefined) return this._path;
       return { address: this._host, family: "IPv4", port: this._port };
     }
     fd() {
@@ -945,7 +987,11 @@ const __quenchNetModule = {
     close() {
       this._assertOpen();
       this._closed = true;
-      __quenchBoundPorts.delete(this._port);
+      if (this._path !== undefined) __quenchBoundPaths.delete(this._path);
+      else __quenchBoundPorts.delete(this._port);
+    }
+    get isPipe() {
+      return this._path !== undefined;
     }
   },
   createServer: (options, handler) => {
@@ -987,6 +1033,13 @@ const __quenchNetModule = {
         _port && typeof _port === "object"
           ? _port
           : { port: _port, host };
+      const adoptedBound =
+        _port?.constructor?.name === "BoundSocket" ? _port : undefined;
+      if (adoptedBound) {
+        adoptedBound._assertOpen();
+        adoptedBound._adopted = true;
+        server._port = adoptedBound._port;
+      }
       const requestedPort = Number(listenOptions.port || 0);
       const occupied = [...__quenchNetServers].some(
         (candidate) =>
@@ -1010,7 +1063,7 @@ const __quenchNetModule = {
           Number(listenOptions.port || 0)
         );
         server._nativeTransport = true;
-      } else {
+      } else if (!adoptedBound) {
         server._port = Number(listenOptions.port) || __quenchNextEphemeralPort++;
       }
       server.listening = true;

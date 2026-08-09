@@ -147,3 +147,7 @@ large non-match corpus, so the compatibility objective remains open.
   occupied-port, and nonlocal-address behavior. The upstream
   `test-net-boundsocket.js` fixture advances past those checks but still has an
   adoption-path assertion open.
+- BoundSocket now also validates `{ path }` pipe options, rejects conflicting
+  TCP options and duplicate paths, exposes `isPipe`, and reports path
+  addresses. Pipe server/client adoption remains open in the same upstream
+  fixture.
