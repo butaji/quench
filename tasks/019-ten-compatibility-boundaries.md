@@ -1491,3 +1491,9 @@ The next transport audit shows the gap is shared below HTTP: `test-http-server.j
 receives zero of its four expected requests, while `test-net-stream.js` reports
 duplicate data callbacks. These are retained as the next network connection
 and framing investigation rather than attributed solely to HTTP parsing.
+
+Stage 2533 makes in-memory socket teardown propagate to the peer endpoint.
+Destroying one side now closes the other, with existing half-close and server
+close-order stages still green. The focused stage and full focused gate pass at
+2370/2370; `test-net-stream.js` still has a separate queued-data/backpressure
+callback mismatch.
