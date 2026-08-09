@@ -12,9 +12,12 @@
 //! `Fact`, and `Continuation`) before adding breadth.
 
 mod arrays;
+mod bigint;
 mod blocks;
 mod branch;
+mod builtin_meta;
 mod builtins;
+mod collections;
 mod conditional;
 mod construct;
 mod control_flow;
@@ -31,10 +34,14 @@ mod logical;
 mod loops;
 mod math;
 mod methods;
+mod modules;
 mod number_fmt;
 mod objects;
 pub mod ops;
+mod packing;
+mod promise;
 mod properties;
+mod proxy;
 pub mod reduce;
 mod reduce_support;
 mod reflect;

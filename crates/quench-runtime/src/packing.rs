@@ -3,6 +3,8 @@
 //! The four categories are:
 //!
 //! - **Immediate values**: inline, no heap allocation, stored directly in a register.
+
+#![allow(dead_code)]
 //!   `Number`, `Boolean`, `Null`, `Undefined`, `Builtin`.
 //!
 //! - **Heap references**: pointers to shared heap-allocated data.
@@ -15,9 +17,9 @@
 //! - **Continuations**: the full call-stack used to suspend and resume execution.
 //!   A `Continuation` holds the active frames and the current program counter.
 
-use std::{cell::RefCell, collections::VecDeque, rc::Rc};
+use std::{cell::RefCell, rc::Rc};
 
-use crate::ops::{Builtin, Op};
+use crate::{ops::Op, value::Value};
 
 // ---------------------------------------------------------------------------
 // Immediate values — small, inline, no heap allocation.
@@ -30,7 +32,7 @@ pub enum Immediate {
     Boolean(bool),
     Null,
     Undefined,
-    Builtin(Builtin),
+    Builtin(crate::ops::Builtin),
 }
 
 // ---------------------------------------------------------------------------
@@ -43,105 +45,11 @@ pub struct HeapRef(u32);
 
 impl HeapRef {
     pub const INVALID: Self = Self(u32::MAX);
-    pub fn index(&self) -> u32 { self.0 }
-    pub fn is_invalid(&self) -> bool { self.0 == u32::MAX }
-}
-
-/// Promise state: pending, fulfilled, or rejected.
-#[derive(Debug, Clone, PartialEq)]
-pub enum PromiseState {
-    Pending,
-    Fulfilled(Value),
-    Rejected(Value),
-}
-
-/// Heap-allocated Promise data.
-#[derive(Debug, Clone, PartialEq)]
-pub struct PromiseData {
-    pub state: PromiseState,
-    pub result: Option<Value>,
-    pub then_actions: Vec<(Option<Value>, Option<Value>)>,
-}
-
-impl Default for PromiseData {
-    fn default() -> Self {
-        Self { state: PromiseState::Pending, result: None, then_actions: Vec::new() }
+    pub fn index(&self) -> u32 {
+        self.0
     }
-}
-
-/// Map key-value storage.
-#[derive(Debug, Clone, PartialEq)]
-pub struct MapData {
-    pub keys: VecDeque<Value>,
-    pub values: Vec<Value>,
-}
-
-/// Set value storage.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SetData {
-    pub values: VecDeque<Value>,
-}
-
-// ---------------------------------------------------------------------------
-// Full runtime value — the union of immediates and heap references.
-// ---------------------------------------------------------------------------
-
-/// Machine-sized runtime value for the residual kernel.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Value {
-    // Immediates — no heap allocation.
-    Number(f64),
-    Boolean(bool),
-    Null,
-    Undefined,
-    Builtin(Builtin),
-    // Heap references — shared pointers.
-    String(String),
-    Array(Rc<Vec<Value>>),
-    Object(Rc<Vec<(String, Value)>>),
-    Function(Rc<FunctionValue>),
-    BoundFunction(Rc<BoundFunctionValue>),
-    Proxy(Rc<ProxyValue>),
-    Promise(Rc<PromiseData>),
-    Map(Rc<MapData>),
-    Set(Rc<SetData>),
-    ModuleNamespace(Rc<Vec<(String, Value)>>),
-}
-
-/// The closure environment associated with a function.
-#[derive(Debug, Clone, PartialEq)]
-pub struct FunctionValue {
-    pub body: Vec<Op>,
-    pub params: u16,
-    pub env_idx: u16,
-    pub captures: Rc<RefCell<Vec<Value>>>,
-    pub properties: Rc<RefCell<Vec<(String, Value)>>>,
-}
-
-/// A bound-function value created by `Function.prototype.bind`.
-#[derive(Debug, Clone, PartialEq)]
-pub struct BoundFunctionValue {
-    pub target: Value,
-    pub receiver: Value,
-    pub arguments: Vec<Value>,
-}
-
-/// A Proxy value wrapping a target and handler.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ProxyValue {
-    pub target: Value,
-    pub handler: Value,
-}
-
-impl From<&crate::ops::Constant> for Value {
-    fn from(value: &crate::ops::Constant) -> Self {
-        match value {
-            crate::ops::Constant::Number(value) => Self::Number(*value),
-            crate::ops::Constant::Boolean(value) => Self::Boolean(*value),
-            crate::ops::Constant::String(value) => Self::String(value.clone()),
-            crate::ops::Constant::Null => Self::Null,
-            crate::ops::Constant::Undefined => Self::Undefined,
-        }
+    pub fn is_invalid(&self) -> bool {
+        self.0 == u32::MAX
     }
 }
 
@@ -179,11 +87,16 @@ impl Default for Frame {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Continuation {
     Done(Value),
-    Active { frames: Vec<Frame>, frame_idx: usize },
+    Active {
+        frames: Vec<Frame>,
+        frame_idx: usize,
+    },
 }
 
 impl Default for Continuation {
-    fn default() -> Self { Self::Done(Value::Undefined) }
+    fn default() -> Self {
+        Self::Done(Value::Undefined)
+    }
 }
 
 impl Continuation {

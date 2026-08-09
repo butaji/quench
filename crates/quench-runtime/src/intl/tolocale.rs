@@ -27,9 +27,16 @@ pub(crate) mod value {
                 .collect::<Vec<_>>()
                 .join(","),
             Some(Value::Object(_)) => "[object Object]".to_string(),
-            Some(Value::Function(_) | Value::BoundFunction(_) | Value::Builtin(_)) => {
-                "function".to_string()
-            }
+            Some(
+                Value::Function(_)
+                | Value::BoundFunction(_)
+                | Value::Builtin(_)
+                | Value::Proxy(_)
+                | Value::Promise(_)
+                | Value::Map(_)
+                | Value::Set(_),
+            ) => "function".to_string(),
+            Some(Value::BigInt(_)) => "[object BigInt]".to_string(),
         }
     }
 
@@ -45,7 +52,12 @@ pub(crate) mod value {
                 | Value::Object(_)
                 | Value::Function(_)
                 | Value::BoundFunction(_)
-                | Value::Builtin(_),
+                | Value::Builtin(_)
+                | Value::Proxy(_)
+                | Value::Promise(_)
+                | Value::Map(_)
+                | Value::Set(_)
+                | Value::BigInt(_),
             ) => f64::NAN,
         }
     }
@@ -91,7 +103,12 @@ pub(crate) mod value {
             | Value::Object(_)
             | Value::Builtin(_)
             | Value::Function(_)
-            | Value::BoundFunction(_) => true,
+            | Value::BoundFunction(_)
+            | Value::Proxy(_)
+            | Value::Promise(_)
+            | Value::Map(_)
+            | Value::Set(_)
+            | Value::BigInt(_) => true,
         }
     }
 
@@ -108,6 +125,8 @@ pub(crate) mod value {
             }
             Value::String(_) => "string",
             Value::Builtin(_) | Value::Function(_) | Value::BoundFunction(_) => "function",
+            Value::BigInt(_) => "bigint",
+            Value::Proxy(_) | Value::Promise(_) | Value::Map(_) | Value::Set(_) => "object",
         }
     }
 

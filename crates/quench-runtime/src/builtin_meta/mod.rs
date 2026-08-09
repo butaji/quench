@@ -3,10 +3,13 @@
 //! Provides static metadata about JavaScript builtins: constructor names,
 //! prototypes, function lengths, and short names.
 
+#![allow(dead_code)]
+
 use crate::ops::Builtin;
 
 pub mod array;
 pub mod bigint;
+pub mod collections;
 pub mod date;
 pub mod function;
 pub mod intl;
@@ -14,8 +17,8 @@ pub mod math;
 pub mod methods;
 pub mod number;
 pub mod object;
-pub mod regexp;
 pub mod reflect;
+pub mod regexp;
 pub mod string;
 pub mod symbol;
 
@@ -45,6 +48,8 @@ pub fn constructor_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::String => Some("String"),
         Builtin::Symbol => Some("Symbol"),
         Builtin::TypeError => Some("TypeError"),
+        Builtin::Map => Some("Map"),
+        Builtin::Set => Some("Set"),
         _ => None,
     }
 }
@@ -72,6 +77,8 @@ pub fn prototype(builtin: Builtin) -> Option<Builtin> {
         Builtin::IntlPluralRules => Some(Builtin::IntlPluralRulesPrototype),
         Builtin::IntlRelativeTimeFormat => Some(Builtin::IntlRelativeTimeFormatPrototype),
         Builtin::IntlSegmenter => Some(Builtin::IntlSegmenterPrototype),
+        Builtin::Map => Some(Builtin::MapPrototype),
+        Builtin::Set => Some(Builtin::SetPrototype),
         _ => None,
     }
 }
@@ -102,6 +109,8 @@ pub fn constructor_length(builtin: Builtin) -> Option<f64> {
         Builtin::String => Some(1.0),
         Builtin::Symbol => Some(0.0),
         Builtin::TypeError => Some(1.0),
+        Builtin::Map => Some(0.0),
+        Builtin::Set => Some(0.0),
         _ => None,
     }
 }
