@@ -36,6 +36,7 @@ fn special_property(builtin: Builtin, key: &str) -> Option<Value> {
         (Builtin::Function, "prototype") => Builtin::FunctionPrototype,
         (Builtin::FunctionPrototype, "call") => Builtin::FunctionCall,
         (Builtin::FunctionPrototype, "bind") => Builtin::FunctionBind,
+        (Builtin::FunctionCall, "bind") => Builtin::FunctionBind,
         (Builtin::ArrayPrototype, "join") => Builtin::ArrayJoin,
         _ => return None,
     };
