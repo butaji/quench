@@ -83,7 +83,6 @@ fn record(categories: &mut BTreeMap<String, (usize, Vec<PathBuf>)>, reason: Stri
 fn categorize(reason: &str) -> String {
     for marker in [
         "SyntaxError",
-        "Unsupported",
         "Residual VM error",
         "NotCallable",
         "RegisterOutOfBounds",
@@ -92,6 +91,9 @@ fn categorize(reason: &str) -> String {
         if reason.contains(marker) {
             return shorten(marker);
         }
+    }
+    if let Some(rest) = reason.strip_prefix("Unsupported") {
+        return shorten(&format!("Unsupported{rest}"));
     }
     shorten(reason)
 }
