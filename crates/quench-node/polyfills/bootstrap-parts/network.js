@@ -791,9 +791,12 @@ const __quenchNetModule = {
       }
       server.listening = true;
       __quenchNetServers.add(server);
-      if (typeof callback === "function") {
-        queueMicrotask(() => callback.call(server));
-      }
+      queueMicrotask(() => {
+        globalThis.__quench_work_generation =
+          (globalThis.__quench_work_generation || 0) + 1;
+        server.emit("listening");
+        if (typeof callback === "function") callback.call(server);
+      });
       return server;
     };
     server.close = (callback) => {
