@@ -269,3 +269,7 @@ remain green.
 Buffer allocation input classification and normalization were split into
 focused predicates. `allocation.js` now passes ESLint with zero warnings, and
 buffer allocation stages remain green.
+
+Child-process spawn command, argument, option, and uid/gid validation were
+split into helpers. `child-process-validation.js` now passes ESLint with zero
+warnings; representative spawn/event stages remain green.
