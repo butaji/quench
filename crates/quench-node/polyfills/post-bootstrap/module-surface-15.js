@@ -605,6 +605,7 @@ const __nodeLegacyUrlReceived = (value) => {
       .call(value)
       .slice(8, -1)}`;
   }
+  if (typeof value === "bigint") return `type bigint (${value}n)`;
   return `type ${typeof value} (${String(value)})`;
 };
 const __nodePrepareLegacyUrlInput = (value) => {
