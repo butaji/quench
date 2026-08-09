@@ -15,48 +15,44 @@ const __quenchTlsArgDetail = (value) => {
   if (value === null) return " Received null";
   return ` Received an instance of ${value?.constructor?.name || typeof value}`;
 };
-const __quenchTlsValidateOptions = (options = {}) => {
-  const stringOptions = ["ciphers", "passphrase", "ecdhCurve"];
-  for (const name of stringOptions) {
-    if (options[name] !== undefined && typeof options[name] !== "string") {
+const __quenchTlsValidateFields = (options, names, type) => {
+  for (const name of names) {
+    if (options[name] !== undefined && typeof options[name] !== type) {
       const detail = __quenchTlsArgDetail(options[name]);
       const error = new TypeError(
-        `The "options.${name}" property must be of type string.${detail}`
+        `The "options.${name}" property must be of type ${type}.${detail}`,
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
   }
-  for (const name of ["handshakeTimeout", "sessionTimeout"]) {
-    if (options[name] !== undefined && typeof options[name] !== "number") {
-      const detail = __quenchTlsArgDetail(options[name]);
-      const error = new TypeError(
-        `The "options.${name}" property must be of type number.${detail}`
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
-    }
-  }
+};
+const __quenchTlsValidateTicketKeys = (options) => {
   if (options.ticketKeys !== undefined) {
     if (!ArrayBuffer.isView(options.ticketKeys)) {
       const error = new TypeError(
-        'The "options.ticketKeys" property must be an instance of Buffer or Uint8Array'
+        'The "options.ticketKeys" property must be an instance of Buffer or Uint8Array',
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
     if (options.ticketKeys.byteLength !== 48) {
       const error = new RangeError(
-        "The property 'options.ticketKeys' must be exactly 48 bytes"
+        "The property 'options.ticketKeys' must be exactly 48 bytes",
       );
       error.code = "ERR_INVALID_ARG_VALUE";
       throw error;
     }
   }
+};
+const __quenchTlsValidateOptions = (options = {}) => {
+  __quenchTlsValidateFields(options, ["ciphers", "passphrase", "ecdhCurve"], "string");
+  __quenchTlsValidateFields(options, ["handshakeTimeout", "sessionTimeout"], "number");
+  __quenchTlsValidateTicketKeys(options);
   for (const name of ["minVersion", "maxVersion"]) {
     if (options[name] !== undefined && !/^TLSv1\.[0-3]$/.test(options[name])) {
       const error = new TypeError(
-        `Invalid TLS protocol version: ${options[name]}`
+        `Invalid TLS protocol version: ${options[name]}`,
       );
       error.code = "ERR_TLS_INVALID_PROTOCOL_VERSION";
       throw error;
@@ -84,7 +80,7 @@ const __quenchTlsModule = {
       configurable: true,
       value() {
         if (this !== context) throw new TypeError("Illegal invocation");
-      }
+      },
     });
     return { context, getCiphers: __quenchTlsCiphers };
   },
@@ -96,8 +92,8 @@ const __quenchTlsModule = {
         new Uint8Array(
           protocols.buffer,
           protocols.byteOffset,
-          protocols.byteLength
-        )
+          protocols.byteLength,
+        ),
       );
       return;
     }
@@ -107,7 +103,7 @@ const __quenchTlsModule = {
       const value = NodeBuffer.from(String(values[index]));
       if (value.length > 255) {
         const error = new RangeError(
-          `The byte length of the protocol at index ${index} exceeds the maximum length. It must be <= 255. Received ${value.length}`
+          `The byte length of the protocol at index ${index} exceeds the maximum length. It must be <= 255. Received ${value.length}`,
         );
         error.code = "ERR_OUT_OF_RANGE";
         throw error;
@@ -126,7 +122,7 @@ const __quenchTlsModule = {
       typeof options.checkServerIdentity !== "function"
     ) {
       const error = new TypeError(
-        'The "options.checkServerIdentity" property must be of type function'
+        'The "options.checkServerIdentity" property must be of type function',
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
@@ -136,7 +132,7 @@ const __quenchTlsModule = {
   createServer: (options = {}) => {
     __quenchTlsValidateOptions(options);
     throw __quenchTlsUnsupported("tls.createServer");
-  }
+  },
 };
 globalThis.__nodeTlsModule = __quenchTlsModule;
 globalThis.require = (specifier) => {
