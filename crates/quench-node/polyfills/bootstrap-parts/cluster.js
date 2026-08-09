@@ -904,6 +904,26 @@ const __quenchRequireStreamIter = () => {
               writer.writev(chunks.map((item) => item.chunk))
             ).then(() => callback(), callback)
         : null;
+    if (typeof writer.writev === "function") {
+      const originalWrite = writable._write;
+      writable._write = function (chunk, encoding, callback) {
+        if (this.writableCorked > 0) {
+          (this.__iterBatch ||= []).push({ chunk, callback });
+          return;
+        }
+        originalWrite.call(this, chunk, encoding, callback);
+      };
+      const originalUncork = writable.uncork.bind(writable);
+      writable.uncork = function () {
+        originalUncork();
+        const batch = this.__iterBatch?.splice(0) || [];
+        if (!batch.length || this.writableCorked > 0) return;
+        Promise.resolve(writer.writev(batch.map(({ chunk }) => chunk))).then(
+          () => batch.forEach(({ callback }) => callback()),
+          (error) => batch.forEach(({ callback }) => callback(error))
+        );
+      };
+    }
     writable.writableHighWaterMark = Number.MAX_SAFE_INTEGER;
     return writable;
   };
