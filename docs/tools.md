@@ -189,7 +189,7 @@ diff <(jq --sort-keys . before.json) <(jq --sort-keys . after.json)
 - `TEST262_QUICK=1` — minimal output, just counts
 - `TEST262_JSON=1` — machine-readable JSON output
 - `TEST262_FAILED_JSON=/tmp/failures-N.json` — rerun only a diagnostic failure set
-- `TEST262_ISOLATED=1` — subprocess per test (default: fast in-process *serial* with a thread-local harness-IR cache; use isolated for full crash isolation / parallel scan, build `run-test` first)
+- `TEST262_ISOLATED=1` — subprocess per test (default: fast in-process *serial* with a thread-local harness cache; use isolated for full crash isolation / parallel scan, build `run-test` first)
 - `TEST262_PARALLEL=1` — parallel in-stage (default on)
 - `TEST262_SERIAL=1` — force serial execution
 - `TEST262_TIMEOUT_SECS=N` — per-test timeout in seconds (default 10; isolated subprocesses are killed on expiry so no stale process lingers)
@@ -197,7 +197,9 @@ diff <(jq --sort-keys . before.json) <(jq --sort-keys . after.json)
 - `RUN_TEST_BIN` — path to prebuilt `run-test` binary
 - `RUST_BACKTRACE=1` — stack traces on panics
 
-The implementation queue is `tasks/implementation-plan.md`.
+Architecture and implementation constraints are defined by
+[`ADR 0005`](adr/0005-oxc-facts-residual-vm.md). `tasks/index.json` is stage
+metadata only; the staged test262 run is the conformance progress authority.
 
 ## Improving the Tools
 
