@@ -84,6 +84,7 @@ pub enum Builtin {
     ObjectIs,
     ObjectKeys,
     ObjectHasOwnProperty,
+    ObjectGetOwnPropertyDescriptor,
     ParseFloat,
     ParseInt,
     String,
