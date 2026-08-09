@@ -1530,3 +1530,9 @@ Current verification audit: representative application stages 2047 (Ajv),
 `test-net-stream.js`, `test-http-server.js`, `test-stream-destroy.js`, and
 `test-stream-pipeline.js` fixtures remain open; their failures are not covered
 by the focused 2373/2373 gate and no completion claim is made for them.
+
+Stage 2538 removes a duplicate invocation path for `net.createServer(handler)`:
+the handler is now registered as the server's `connection` listener and is not
+also called directly. The focused handler-once stage passes and the change is
+pushed, but the full `test-net-stream.js` fixture still reports repeated error
+callbacks, so network compatibility remains open.
