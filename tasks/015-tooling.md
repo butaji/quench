@@ -241,6 +241,10 @@ The zlib CRC32 validation was extracted from the checksum loop, reducing its
 complexity violation while preserving input and seed validation; zlib stage
 2031 remains green.
 
+Zlib stream flush and parameter validation were extracted into helpers. The
+owned zlib-streams lint errors dropped from five to two, and stages 522, 1232,
+1778, 1780, 1783, 1784, and 1785 all pass.
+
 The repository ESLint configuration now uses a dedicated global ignore entry
 for the vendored `tests/node` submodule. The owned `tools/compat-decision-report.cjs`
 classification function was split to satisfy the complexity limit; that file
