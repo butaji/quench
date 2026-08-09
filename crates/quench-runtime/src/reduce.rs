@@ -352,6 +352,7 @@ fn reduce_unary(
         UnaryOperator::UnaryNegation => crate::ops::UnaryOp::Minus,
         UnaryOperator::LogicalNot => crate::ops::UnaryOp::Not,
         UnaryOperator::Void => crate::ops::UnaryOp::Void,
+        UnaryOperator::Typeof => crate::ops::UnaryOp::Typeof,
         _ => return None,
     };
     let dst = *next_register;
