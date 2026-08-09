@@ -1015,3 +1015,18 @@ Current pushed increments (2026-08-09):
   fixtures pass.
 - `4c03b65ca` preserves the `fs.realpath.native` alias after VFS wrapping;
   `test-fs-realpath-native.js` passes.
+
+## 2026-08-09 lint and verification checkpoint
+
+- Pushed commits `80a0479ce`, `41045ac8f`, `562511f06`, `2a00ad062`,
+  `47b911b27`, `88c2fc8fd`, `d28b152a5`, `fe0608bdf`, and `4bbf07be3`
+  record the compatibility and safe module-surface splits completed in this
+  slice.
+- The custom Rust function/complexity gate reports zero diagnostics.
+- The file-size gate is now 23 files over the 500-line limit; Buffer,
+  filesystem IO, metadata, URL, and module-surface splits are below the limit.
+- The focused stage gate, aggregate test gate, application probes (Ajv, debug,
+  Chalk, `ms`, Prettier), and two Rust tests remain passing.
+- The full differential remains open: the latest bounded run processed 4,682
+  fixtures with 1,211 matches, 3,471 differences, 2,095 quench failures, and
+  134 timeouts. HTTP, net, stream, and fs remain the largest actionable queues.
