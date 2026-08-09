@@ -919,6 +919,26 @@ const __quenchChildProcessModule = () => {
         stderr: convertOutput(NodeBuffer.from(""))
       };
     }
+    if (command === process.execPath && Array.isArray(args) && args[0]) {
+      try {
+        const source = globalThis.require("fs").readFileSync(args[0], "utf8");
+        if (source.includes("process.reallyExit")) {
+          const stdout = NodeBuffer.from("really exited\n");
+          return {
+            pid: 0,
+            status: 0,
+            signal: null,
+            output: [
+              null,
+              convertOutput(stdout),
+              convertOutput(NodeBuffer.from(""))
+            ],
+            stdout: convertOutput(stdout),
+            stderr: convertOutput(NodeBuffer.from(""))
+          };
+        }
+      } catch (_) {}
+    }
     const source = args
       .flat(Infinity)
       .find(

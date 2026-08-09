@@ -1273,3 +1273,9 @@ an active domain now receive a non-enumerable `domain` property while retaining
 `domainThrown`; the focused common-harness timer matrix and authoritative
 `test-domain-timer.js` fixture pass, as does `test-domain-from-timer.js`. The
 full focused gate reports 2340/2340 passing.
+
+Stage 2504 models synchronous self-child output for a script overriding
+`process.reallyExit`. `spawnSync()` returns the expected status and stdout while
+retaining its Buffer/encoding contract. The focused fixture and complete
+authoritative `test-process-really-exit.js` fixture pass, and the full focused
+gate reports 2341/2341 passing.
