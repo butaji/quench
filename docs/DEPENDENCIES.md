@@ -13,6 +13,7 @@ the same change that first uses it. Do not add crates speculatively.
 | `num-bigint` | BigInt arithmetic. |
 | `serde_json` | JSON parsing and serialization. |
 | `urlencoding` | URI percent encoding/decoding. |
+| `icu` / selected ICU4X crates | Modular ECMA-402 locale, calendar, formatting, collation, and segmentation data; use generated minimal data. |
 | `indexmap` | Ordered storage where ECMAScript order is observable. |
 | `rustc-hash` | Internal non-observable hashing. |
 | `phf` | Static generated lookup tables. |

@@ -74,3 +74,36 @@ path unless a sound guard preserves their behavior.
 `quench-runtime` remains a pure JavaScript runtime. `quench-test262` owns only
 test262 metadata, exact harness composition, and host classification; it may
 never override harness behavior.
+
+## Test262 domain strategy
+
+Test262 covers ECMA-262, ECMA-402, and JSON, and its repository is organized
+by domains such as `language`, `built-ins`, `intl402`, `annexB`, `harness`, and
+`staging`. A domain is not a guarantee that one dependency implements the
+whole domain: ECMAScript wrappers, property descriptors, coercion, errors,
+identity, iteration, and observable ordering remain Quench semantics.
+
+Use mature crates for algorithmic/data-heavy kernels where their semantics
+match the specification, behind the canonical runtime operations:
+
+| Test262 area | Preferred kernel | Boundary and caveat |
+|---|---|---|
+| RegExp | `regress` | It targets ECMAScript syntax and supports backreferences/lookaround. The JS `RegExp` object, UTF-16 indexing, captures, flags, statics, `lastIndex`, and observable errors remain runtime-owned. Validate newer syntax and Unicode behavior against test262. |
+| Date and legacy date arithmetic | `chrono` | It supplies Gregorian date/time arithmetic and timestamp conversion. ECMAScript `Date` parsing, clipping, `TimeClip`, UTC/local host policy, legacy methods, and exact observable formatting remain runtime-owned. `chrono` is not an ECMA-402 implementation. |
+| Intl date/time, number, collation, locale, segmentation | ICU4X selected components | ICU4X is modular and data-driven; use generated, minimal locale/calendar data rather than linking the entire data set. ECMA-402 constructors, option coercion, supported-locale negotiation, property descriptors, and protocol behavior remain runtime-owned. |
+| BigInt | `num-bigint` | It supplies arbitrary-precision digits and arithmetic. JS `BigInt` parsing, mixed-number TypeErrors, conversions, division semantics, string formatting, and object identity remain runtime-owned. |
+| JSON | `serde_json` as an internal kernel where compatible | JS `JSON.parse`/`stringify` behavior, revivers/replacers, property order, numeric limits, Unicode, and exact error behavior require a semantic adapter; do not expose serde's model as a second runtime. |
+| URI encoding | `urlencoding` or a narrower equivalent | Use only for the compatible percent-encoding primitive. ECMAScript URI character sets, malformed escape errors, UTF-16 treatment, and `encodeURI` versus `encodeURIComponent` remain runtime-owned. |
+| Ordered keyed collections | `indexmap` where appropriate | It can provide insertion ordering, but Map/Set equality, iterator state, mutation visibility, and GC/identity remain Quench-owned. |
+
+`regex` is not a substitute for `regress`: its linear-time engine intentionally
+omits JavaScript features such as backreferences and lookaround. Likewise,
+`chrono` is not a substitute for ICU4X for locale-sensitive formatting. Crates
+must be selected behind semantic adapters, with feature flags and generated
+data chosen for RSS and binary-size goals.
+
+The practical order is: language/reducer primitives, ordinary built-ins,
+RegExp and numeric kernels, Date, URI/JSON, then selected ECMA-402 components.
+`staging` and proposal-specific tests are never treated as stable conformance
+claims, while `intl402` remains a first-class ECMA-402 domain rather than a
+runner exception.
