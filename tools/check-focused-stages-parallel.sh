@@ -37,7 +37,7 @@ trap 'rm -rf "$metrics_dir"; rm -f "$failures"' EXIT HUP INT TERM
 export metrics_dir
 
 find "$root/tests/node-compat" -mindepth 2 -type f \( -name '*.js' -o -name '*.mjs' \) -exec dirname {} \; | sort -u | xargs -n 1 basename \
-  | sed 's/stage-//' | sort -n | while IFS= read -r stage; do
+  | sed 's/^stage-//' | awk '/^[0-9]+$/ { print }' | sort -n | while IFS= read -r stage; do
   if [ "$stage" -lt "$stage_from" ] || [ "$stage" -gt "$stage_to" ]; then
     continue
   fi

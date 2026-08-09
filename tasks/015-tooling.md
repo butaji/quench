@@ -1,5 +1,10 @@
 # Tooling and harness improvements
 
+> Contract: This task is part of broad Node 24 compatibility across Linux
+> x86_64, Linux ARM64, macOS, and Windows. Native addons and Node-API are
+> excluded. Use the statuses and release gates in
+> [compatibility-contract.md](../docs/compatibility-contract.md).
+
 ## Contract alignment
 
 This task supports the Node 24 application-runtime contract on Linux x86_64;
@@ -209,3 +214,8 @@ unclassified gate conflict.
 The runner also performs cleanup after the final stage, not only before each
 stage. The grouped 2058–2060 gate passes 3/3 with no leftover `access-mode`
 file.
+
+Stage discovery now filters the parallel runner to numeric `stage-*`
+directories, preventing fixture-package directories from reaching integer
+comparisons. With six workers and a 10-second per-stage timeout, stages 1–500
+completed with 500/500 passing and zero failed stages.
