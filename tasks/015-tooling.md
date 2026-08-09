@@ -348,3 +348,7 @@ stages 242 through 250 and the quench-node Rust tests pass.
 The filesystem links/stat/open-stream surface was split at the completed
 `fstatSync` boundary. `links.js` is now 490 lines and `links-tail.js` is 240
 lines; representative filesystem stages 27, 73, 430, 431, 868, and 1257 pass.
+
+The dgram socket implementation was split into initialization helpers, the
+bind/send surface, and the socket/event surface. The files are now 47, 493,
+and 457 lines; dgram stages 764 through 768 and the quench-node Rust tests pass.
