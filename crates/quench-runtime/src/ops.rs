@@ -18,6 +18,11 @@ pub enum Op {
         dst: u16,
         elements: Vec<u16>,
     },
+    GetProperty {
+        dst: u16,
+        object: u16,
+        key: String,
+    },
     MakeFunction {
         dst: u16,
         body: Vec<Op>,
