@@ -66,7 +66,7 @@ pub fn execute_builtin_tail(
         )),
         Builtin::ObjectKeys => crate::builtins::keys(arguments.first()),
         Builtin::ObjectHasOwnProperty | Builtin::ObjectGetOwnPropertyDescriptor => {
-            crate::builtins::object_special(builtin, receiver, arguments)
+            crate::builtins::object::object_special(builtin, receiver, arguments)
         }
         Builtin::ParseFloat => Value::Number(parse_float(arguments.first())),
         Builtin::ParseInt => Value::Number(parse_int(arguments)),
@@ -85,6 +85,7 @@ fn early_dispatch(
     crate::strings::execute_builtin(builtin, receiver, arguments)
         .or_else(|| crate::intl::execute(builtin, arguments, receiver))
         .or_else(|| crate::collections::execute_builtin(builtin, receiver, arguments))
+        .or_else(|| crate::regexp::execute_builtin(builtin, receiver, arguments))
 }
 
 fn is_proxy_or_reflect(builtin: crate::ops::Builtin) -> bool {

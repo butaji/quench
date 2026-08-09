@@ -45,6 +45,7 @@ mod proxy;
 pub mod reduce;
 mod reduce_support;
 mod reflect;
+pub mod regexp;
 mod semantic;
 mod sequences;
 mod special;
