@@ -371,3 +371,8 @@ The querystring and URL bootstrap was split before the URLSearchParams class;
 the querystring surface remains initialized before the URL helpers. `colors.js`
 is now 321 lines and `colors-tail.js` is 463 lines; URL stages 2482, 2498, 282,
 411, and 529 pass with the quench-node Rust tests.
+
+The network bootstrap was split into address validators, the `Socket` class,
+and the remaining module/server surface. The resulting files are 300, 500,
+and 446 lines; network stages 2037, 2348, 2482, 2498, and 2554 pass with the
+quench-node Rust tests.
