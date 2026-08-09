@@ -55,6 +55,9 @@ pub enum Op {
     Return {
         src: u16,
     },
+    Throw {
+        src: u16,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
