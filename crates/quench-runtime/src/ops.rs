@@ -145,6 +145,7 @@ pub enum Builtin {
     FunctionPrototype,
     FunctionBind,
     ArrayJoin,
+    TypeError,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
