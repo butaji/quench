@@ -245,6 +245,10 @@ Zlib stream flush and parameter validation were extracted into helpers. The
 owned zlib-streams lint errors dropped from five to two, and stages 522, 1232,
 1778, 1780, 1783, 1784, and 1785 all pass.
 
+The remaining zlib-streams factory/wrapper functions were split into stream
+factory helpers. The module now passes ESLint with zero warnings and all
+targeted zlib stages remain green.
+
 The repository ESLint configuration now uses a dedicated global ignore entry
 for the vendored `tests/node` submodule. The owned `tools/compat-decision-report.cjs`
 classification function was split to satisfy the complexity limit; that file
