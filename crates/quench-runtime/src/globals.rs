@@ -59,6 +59,7 @@ fn builtin(name: &str) -> Option<crate::ops::Builtin> {
         "unescape" => Some(crate::ops::Builtin::Unescape),
         "Math" => Some(crate::ops::Builtin::Math),
         "Function" => Some(crate::ops::Builtin::Function),
+        "TypeError" => Some(crate::ops::Builtin::TypeError),
         _ => None,
     }
 }
