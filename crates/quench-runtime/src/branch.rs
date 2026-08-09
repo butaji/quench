@@ -57,12 +57,18 @@ pub(crate) fn reduce(
 ) -> Result<Vec<Op>, Vec<String>> {
     match statement {
         oxc::ast::ast::Statement::BlockStatement(block) => {
-            crate::reduce::reduce_statements_with_locals(&block.body, facts, locals.clone(), 0)
+            let next_slot = crate::reduce::register_base(locals);
+            crate::reduce::reduce_statements_with_locals(
+                &block.body,
+                facts,
+                locals.clone(),
+                next_slot,
+            )
         }
         statement => {
             let mut ops = Vec::new();
-            let mut next_register = 0;
-            let mut next_slot = 0;
+            let mut next_register = crate::reduce::register_base(locals);
+            let mut next_slot = crate::reduce::register_base(locals);
             let mut locals = locals.clone();
             let last = crate::reduce::reduce_statement(
                 statement,
