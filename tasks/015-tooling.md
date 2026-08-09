@@ -225,3 +225,6 @@ Stages 1001–1500 completed with 485/485 discovered stages passing and zero
 failed stages.
 Stages 1501–2000 completed with 428/428 discovered stages passing and zero
 failed stages.
+Stages 2001–2554 completed with 474/474 discovered stages passing and zero
+failed stages using the normal 30-second timeout; stage 2223 is intentionally
+slow and is a false timeout at the tighter 10-second diagnostic limit.
