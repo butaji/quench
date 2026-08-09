@@ -1,12 +1,7 @@
 # Quench
 
-Quench is a Rust ECMAScript runtime pursuing 100% of the pinned ECMA-262
-test262 suite, excluding `intl402` and `staging`.
-
-Its architecture is fixed by [ADR 0005](docs/adr/0005-oxc-facts-residual-vm.md):
-
-> Quench = OXC program data + unified facts + partial evaluation + a tiny
-> semantic algebra + macro-generated physical specialization + a compact heap.
+Quench is OXC program data plus unified facts, partial evaluation, a tiny
+semantic algebra, macro-generated physical specialization, and a compact heap.
 
 The governing principle is: **AST is data. Types are data. Shapes are data.
 Semantics are combinators. The VM exists only for uncertainty.**
@@ -29,10 +24,4 @@ Semantics are combinators. The VM exists only for uncertainty.**
 16. Work that can disappear before runtime must justify remaining.
 
 The canonical path is OXC AST and semantic data to `ProgramDb`, then a reducer
-to residual operations, then the VM. `tasks/index.json` records only test262
-stage identity and workflow status; run the stage to establish conformance.
-
-```bash
-cargo build -p quench-runtime
-cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
-```
+to residual operations. The VM exists only for dynamic uncertainty.

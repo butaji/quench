@@ -1,11 +1,19 @@
 //! Standalone ECMA-262 conformance runner boundary.
 //!
 //! This crate owns runner outcomes and dispatch. The engine is accessed only
-//! through [`quench_runtime::Test262Host`]; parser, IR, heap, and builtin
-//! implementation details remain in `quench-runtime`.
+//! through the [`Test262Host`] boundary. Engine implementation details remain
+//! outside this crate.
 
-use quench_runtime::Test262Host;
 use std::path::Path;
+
+/// Engine-facing execution contract for an external conformance runner.
+pub trait Test262Host: Send {
+    /// Execute a complete script source.
+    fn run_script(&mut self, source: &str) -> Result<(), String>;
+
+    /// Execute a complete ES module source.
+    fn run_module_script(&mut self, source: &str) -> Result<(), String>;
+}
 
 /// Runner metadata needed before dispatching one test.
 #[derive(Debug, Default, PartialEq, Eq)]

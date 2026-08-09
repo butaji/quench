@@ -1,5 +1,4 @@
-use quench_runtime::Test262Host;
-use quench_test262::{Test262Runner, TestMetadata, TestOutcome};
+use quench_test262::{Test262Host, Test262Runner, TestMetadata, TestOutcome};
 
 struct Probe;
 
@@ -208,7 +207,7 @@ fn runner_reports_harness_aware_batch_outcomes() {
 #[test]
 fn discovers_skips_fixture_files() {
     // *_FIXTURE.js files are harness fixtures, not standalone tests; they must
-    // not be collected as runnable cases (the quench-runtime runner excludes
+    // not be collected as runnable cases (the runner excludes
     // them too).
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("a.js"), "pass").unwrap();
