@@ -142,21 +142,10 @@ pub(crate) fn execute_builtin_with_receiver(
     arguments: &[Value],
     receiver: Option<&Value>,
 ) -> Result<Value, VmError> {
+    if let Some(result) = crate::arrays::execute_builtin(builtin, receiver, arguments) {
+        return result;
+    }
     match builtin {
-        crate::ops::Builtin::Array => Ok(crate::builtins::array(arguments)),
-        crate::ops::Builtin::ArrayIsArray => Ok(crate::builtins::is_array(arguments.first())),
-        crate::ops::Builtin::ArrayMap => crate::builtins::array_map(receiver, arguments),
-        crate::ops::Builtin::ArrayFilter => crate::builtins::array_filter(receiver, arguments),
-        crate::ops::Builtin::ArraySome => crate::arrays::some(receiver, arguments),
-        crate::ops::Builtin::ArrayEvery => crate::arrays::every(receiver, arguments),
-        crate::ops::Builtin::ArrayFind => crate::arrays::find(receiver, arguments),
-        crate::ops::Builtin::ArrayIncludes => Ok(crate::arrays::includes(receiver, arguments)),
-        crate::ops::Builtin::ArrayIndexOf => Ok(crate::arrays::index_of(receiver, arguments)),
-        crate::ops::Builtin::ArrayLastIndexOf => {
-            Ok(crate::arrays::last_index_of(receiver, arguments))
-        }
-        crate::ops::Builtin::ArraySlice => Ok(crate::arrays::slice(receiver, arguments)),
-        crate::ops::Builtin::ArrayForEach => crate::builtins::array_for_each(receiver, arguments),
         crate::ops::Builtin::FunctionCall
         | crate::ops::Builtin::FunctionBind
         | crate::ops::Builtin::ArrayJoin => {
@@ -176,6 +165,7 @@ pub(crate) fn execute_builtin_with_receiver(
         _ => execute_builtin_tail(builtin, arguments, receiver),
     }
 }
+
 fn execute_builtin_tail(
     builtin: crate::ops::Builtin,
     arguments: &[Value],
