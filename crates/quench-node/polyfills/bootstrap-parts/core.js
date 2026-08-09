@@ -2488,6 +2488,8 @@ let __quenchHttpModule;
         }
         const serverRequest = new NodeIncomingMessage();
         Object.assign(serverRequest, request);
+        serverRequest.complete = false;
+        serverRequest.__closeEmitted = false;
         // Node's HTTP parser owns a data listener on the request socket while
         // a request is being dispatched. User code can observe this listener
         // through req.socket.listenerCount("data"), even before it attaches a
