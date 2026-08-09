@@ -22,10 +22,14 @@ pub fn reduce_source(source: &str) -> Result<ResidualProgram, Vec<String>> {
     let allocator = Allocator::default();
     let parsed = Parser::new(&allocator, source, SourceType::default()).parse();
     if parsed.panicked {
-        return Err(vec!["OXC parser panicked".to_string()]);
+        return Err(vec!["SyntaxError: OXC parser rejected source".to_string()]);
     }
     if !parsed.errors.is_empty() {
-        return Err(parsed.errors.iter().map(ToString::to_string).collect());
+        return Err(parsed
+            .errors
+            .iter()
+            .map(|error| format!("SyntaxError: {error}"))
+            .collect());
     }
     let mut facts = ProgramDb::default();
     let mut ops = Vec::new();
