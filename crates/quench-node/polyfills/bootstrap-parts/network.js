@@ -695,6 +695,7 @@ const __quenchNetModule = {
           const chunk = NodeBuffer.from(bytes);
           queueMicrotask(() => {
             if (peer.destroyed) return;
+            peer.bytesRead += chunk.length;
             if (peer._paused || peer.listenerCount("data") === 0) {
               peer._pendingData.push(chunk);
             }
