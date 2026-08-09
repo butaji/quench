@@ -1737,6 +1737,10 @@ const __nodeStreamExports = {
         }
       );
     }
+    if (typeof stream?.getReader === "function" && stream._closedPromise) {
+      stream._closedPromise.then(() => callback(), callback);
+      return () => {};
+    }
     const readable =
       options.readable !== false &&
       stream?.readable !== false &&
