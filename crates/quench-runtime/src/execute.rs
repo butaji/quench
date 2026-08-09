@@ -42,7 +42,12 @@ pub(crate) fn execute_in_place(ops: &[Op], registers: &mut Vec<Value>) -> Result
             DeleteProperty { .. } => crate::properties::execute_delete_property(registers, op)?,
             ForIn { .. } => crate::loops::execute_for_in(registers, op)?,
             MakeFunction { .. } => crate::functions::write_op(registers, op),
-            Call { dst, callee, args } => execute_call(registers, *dst, *callee, args)?,
+            Call {
+                dst,
+                callee,
+                args,
+                spreads,
+            } => execute_call(registers, *dst, *callee, args, spreads)?,
             Branch { .. } => crate::branch::execute_branch!(registers, op),
             Try { .. } => crate::branch::execute_try!(registers, op),
             CallMethod { .. }
@@ -166,11 +171,21 @@ fn execute_call(
     dst: u16,
     callee: u16,
     args: &[u16],
+    spreads: &[bool],
 ) -> Result<(), VmError> {
-    let arguments = args
-        .iter()
-        .map(|index| read_register(registers, *index))
-        .collect::<Result<Vec<_>, _>>()?;
+    let mut arguments = Vec::new();
+    for (i, index) in args.iter().enumerate() {
+        let value = read_register(registers, *index)?;
+        if spreads.get(i) == Some(&true) {
+            if let Value::Array(values) = value {
+                arguments.extend(values.iter().cloned());
+            } else {
+                arguments.push(value);
+            }
+        } else {
+            arguments.push(value);
+        }
+    }
     let value = match read_register(registers, callee)? {
         Value::Function(body) => crate::functions::execute(&body, &arguments)?,
         Value::BoundFunction(bound) => crate::functions::execute_bound(&bound, &arguments)?,
