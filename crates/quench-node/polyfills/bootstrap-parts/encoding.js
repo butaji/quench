@@ -129,6 +129,13 @@ const __nodeCopyBytesOutput = (view, range) => {
   );
   const output = new NodeBuffer(range.byteLength);
   output.set(bytes);
+  const alignment = view.BYTES_PER_ELEMENT || 1;
+  if (alignment > 1 && output.byteOffset % alignment !== 0) {
+    const aligned = new Uint8Array(new ArrayBuffer(range.byteLength));
+    aligned.set(output);
+    Object.setPrototypeOf(aligned, NodeBuffer.prototype);
+    return aligned;
+  }
   return output;
 };
 const __nodeBufferInvalidOffset = (offset, limit) =>
@@ -331,197 +338,157 @@ class NodeBuffer extends Uint8Array {
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
-
-  static alloc(size, fill = 0, encoding) {
-    const length = NodeBuffer._validateSize(size);
-    __nodeAllocatorCounts.zeroFilled++;
-    return new NodeBuffer(length).fill(fill, 0, length, encoding);
-  }
-
-  static allocUnsafe(size) {
-    __nodeAllocatorCounts.uninitialized++;
-    return new NodeBuffer(NodeBuffer._validateSize(size));
-  }
-
-  static allocUnsafeSlow(size) {
-    __nodeAllocatorCounts.uninitialized++;
-    return new NodeBuffer(NodeBuffer._validateSize(size));
-  }
-
-  static concat(list, totalLength) {
-    if (!Array.isArray(list)) {
-      throw new TypeError("The list argument must be an Array");
-    }
-    if (
-      totalLength !== undefined &&
-      (!Number.isInteger(totalLength) || totalLength < 0)
-    ) {
-      throw new RangeError("The value of length is out of range");
-    }
-    const length =
-      totalLength ?? list.reduce((sum, item) => sum + item.byteLength, 0);
-    const output = new NodeBuffer(length);
-    let offset = 0;
-    for (const item of list) {
-      if (!ArrayBuffer.isView(item)) {
-        throw new TypeError("list items must be buffers");
-      }
-      const count = Math.min(item.byteLength, length - offset);
-      output.set(new Uint8Array(item.buffer, item.byteOffset, count), offset);
-      offset += count;
-      if (offset === length) break;
-    }
-    return output;
-  }
-
-  static _validateSize(size) {
-    if (typeof size !== "number") {
-      const error = new TypeError('The "size" argument must be of type number');
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
-    }
-    if (!Number.isFinite(size) || size < 0 || size > 0x7fffffff) {
-      const error = new RangeError('The value of "size" is out of range');
-      error.code = "ERR_OUT_OF_RANGE";
-      throw error;
-    }
-    return Math.trunc(size);
-  }
-
-  static of(...values) {
-    return new NodeBuffer(values);
-  }
-
-  static copyBytesFrom(view, offset = 0, length) {
-    __nodeCopyBytesValidateView(view, offset, length);
-    return __nodeCopyBytesOutput(
-      view,
-      __nodeCopyBytesRange(view, offset, length)
-    );
-  }
-
-  toString(encoding = "utf8", start = 0, end = this.length) {
-    const first = Math.max(0, Math.trunc(Number(start)) || 0);
-    const last = Math.min(this.length, Math.trunc(Number(end)) || 0);
-    return __nodeBufferEncodedString(
-      this.subarray(first, last),
-      String(encoding).toLowerCase()
-    );
-  }
-
-  write(value, offset = 0, length, encoding = "utf8") {
-    if (typeof length === "string") {
-      encoding = length;
-      length = undefined;
-    }
-    const bytes = NodeBuffer.from(String(value), encoding);
-    const available = this.length - offset;
-    const count = Math.min(
-      available,
-      length === undefined ? available : Math.max(0, Number(length)),
-      bytes.length
-    );
-    this.set(bytes.subarray(0, count), offset);
-    return count;
-  }
-
-  static isBuffer(value) {
-    return value instanceof NodeBuffer;
-  }
-
-  static isEncoding(encoding) {
-    if (typeof encoding !== "string") return false;
-    return [
-      "hex",
-      "utf8",
-      "utf-8",
-      "ascii",
-      "latin1",
-      "binary",
-      "base64",
-      "base64url",
-      "ucs2",
-      "ucs-2",
-      "utf16le",
-      "utf-16le"
-    ].includes(encoding.toLowerCase());
-  }
-
-  static isAscii(value) {
-    if (value instanceof ArrayBuffer && __nodeDetachedBuffers.has(value)) {
-      const error = new TypeError("ArrayBuffer is detached");
-      error.code = "ERR_INVALID_STATE";
-      throw error;
-    }
-    if (!(value instanceof Uint8Array)) {
-      const error = new TypeError(
-        'The "input" argument must be an instance of Uint8Array'
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
-    }
-    return value.every((byte) => byte < 0x80);
-  }
-
-  static isUtf8(value) {
-    return __nodeIsValidUtf8(__nodeValidateUtf8Input(value));
-  }
-
-  static compare(left, right) {
-    if (!(left instanceof Uint8Array)) {
-      const error = new TypeError(
-        `The "buf1" argument must be an instance of Buffer or Uint8Array.${__nodeBufferConcatReceived(
-          left
-        )}`
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
-    }
-    if (!(right instanceof Uint8Array)) {
-      const error = new TypeError(
-        `The "buf2" argument must be an instance of Buffer or Uint8Array.${__nodeBufferConcatReceived(
-          right
-        )}`
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
-    }
-    const a = NodeBuffer.from(left);
-    const b = NodeBuffer.from(right);
-    const length = Math.min(a.length, b.length);
-    for (let i = 0; i < length; i++) {
-      if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1;
-    }
-    return a.length === b.length ? 0 : a.length < b.length ? -1 : 1;
-  }
-
-  static byteLength(value, encoding = "utf8") {
-    return __nodeBufferByteLength(value, encoding);
-  }
-
-  subarray(begin = 0, end = this.length) {
-    const index = (value, fallback) => {
-      const number = Math.trunc(Number(value));
-      if (Number.isNaN(number)) return fallback;
-      return Math.max(
-        0,
-        Math.min(this.length, number < 0 ? this.length + number : number)
-      );
-    };
-    const start = index(begin, 0);
-    const finish = Math.max(start, index(end, this.length));
-    const output = new NodeBuffer(
-      this.buffer,
-      this.byteOffset + start,
-      finish - start
-    );
-    return output;
-  }
-
-  slice(start = 0, end = this.length) {
-    return this.subarray(start, end);
-  }
 }
+NodeBuffer.prototype.toString = function toString(
+  encoding = "utf8",
+  start = 0,
+  end = this.length
+) {
+  const first = Math.max(0, Math.trunc(Number(start)) || 0);
+  const last = Math.min(this.length, Math.trunc(Number(end)) || 0);
+  return __nodeBufferEncodedString(
+    this.subarray(first, last),
+    String(encoding).toLowerCase()
+  );
+};
+NodeBuffer.concat = (list, totalLength) => {
+  if (!Array.isArray(list)) {
+    throw new TypeError("The list argument must be an Array");
+  }
+  if (
+    totalLength !== undefined &&
+    (!Number.isInteger(totalLength) || totalLength < 0)
+  ) {
+    throw new RangeError("The value of length is out of range");
+  }
+  const length =
+    totalLength ?? list.reduce((sum, item) => sum + item.byteLength, 0);
+  const output = new NodeBuffer(length);
+  let offset = 0;
+  for (const item of list) {
+    if (!ArrayBuffer.isView(item))
+      throw new TypeError("list items must be buffers");
+    const count = Math.min(item.byteLength, length - offset);
+    output.set(new Uint8Array(item.buffer, item.byteOffset, count), offset);
+    offset += count;
+    if (offset === length) break;
+  }
+  return output;
+};
+NodeBuffer._validateSize = (size) => {
+  if (typeof size !== "number") {
+    const error = new TypeError('The "size" argument must be of type number');
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  if (!Number.isFinite(size) || size < 0 || size > 0x7fffffff) {
+    const error = new RangeError('The value of "size" is out of range');
+    error.code = "ERR_OUT_OF_RANGE";
+    throw error;
+  }
+  return Math.trunc(size);
+};
+NodeBuffer.alloc = (size, fill = 0, encoding) => {
+  const length = NodeBuffer._validateSize(size);
+  __nodeAllocatorCounts.zeroFilled++;
+  return new NodeBuffer(length).fill(fill, 0, length, encoding);
+};
+NodeBuffer.allocUnsafe = (size) => {
+  __nodeAllocatorCounts.uninitialized++;
+  return new NodeBuffer(NodeBuffer._validateSize(size));
+};
+NodeBuffer.allocUnsafeSlow = NodeBuffer.allocUnsafe;
+NodeBuffer.of = (...values) => new NodeBuffer(values);
+NodeBuffer.copyBytesFrom = (view, offset = 0, length) => {
+  __nodeCopyBytesValidateView(view, offset, length);
+  return __nodeCopyBytesOutput(
+    view,
+    __nodeCopyBytesRange(view, offset, length)
+  );
+};
+NodeBuffer.isBuffer = (value) => value instanceof NodeBuffer;
+NodeBuffer.isEncoding = (encoding) => {
+  if (typeof encoding !== "string") return false;
+  return [
+    "hex",
+    "utf8",
+    "utf-8",
+    "ascii",
+    "latin1",
+    "binary",
+    "base64",
+    "base64url",
+    "ucs2",
+    "ucs-2",
+    "utf16le",
+    "utf-16le"
+  ].includes(encoding.toLowerCase());
+};
+NodeBuffer.isUtf8 = (value) =>
+  __nodeIsValidUtf8(__nodeValidateUtf8Input(value));
+NodeBuffer.byteLength = (value, encoding = "utf8") =>
+  __nodeBufferByteLength(value, encoding);
+NodeBuffer.prototype.subarray = function subarray(
+  begin = 0,
+  end = this.length
+) {
+  const index = (value, fallback) => {
+    const number = Math.trunc(Number(value));
+    if (Number.isNaN(number)) return fallback;
+    return Math.max(
+      0,
+      Math.min(this.length, number < 0 ? this.length + number : number)
+    );
+  };
+  const start = index(begin, 0);
+  const finish = Math.max(start, index(end, this.length));
+  return new NodeBuffer(this.buffer, this.byteOffset + start, finish - start);
+};
+NodeBuffer.prototype.slice = function slice(start = 0, end = this.length) {
+  return this.subarray(start, end);
+};
+NodeBuffer.isAscii = (value) => {
+  if (value instanceof ArrayBuffer && __nodeDetachedBuffers.has(value)) {
+    const error = new TypeError("ArrayBuffer is detached");
+    error.code = "ERR_INVALID_STATE";
+    throw error;
+  }
+  if (!(value instanceof Uint8Array)) {
+    const error = new TypeError(
+      'The "input" argument must be an instance of Uint8Array'
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  return value.every((byte) => byte < 0x80);
+};
+NodeBuffer.compare = (left, right) => {
+  if (!(left instanceof Uint8Array)) {
+    const error = new TypeError(
+      `The "buf1" argument must be an instance of Buffer or Uint8Array.${__nodeBufferConcatReceived(
+        left
+      )}`
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  if (!(right instanceof Uint8Array)) {
+    const error = new TypeError(
+      `The "buf2" argument must be an instance of Buffer or Uint8Array.${__nodeBufferConcatReceived(
+        right
+      )}`
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  const a = NodeBuffer.from(left);
+  const b = NodeBuffer.from(right);
+  const length = Math.min(a.length, b.length);
+  for (let i = 0; i < length; i++) {
+    if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1;
+  }
+  return a.length === b.length ? 0 : a.length < b.length ? -1 : 1;
+};
 const __nodeFinalBufferFrom = NodeBuffer.from;
 NodeBuffer.from = (...args) => {
   const source = __nodeFinalBufferFrom.apply(NodeBuffer, args);
