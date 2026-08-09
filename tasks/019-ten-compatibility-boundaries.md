@@ -1079,3 +1079,19 @@ maintained URL regression sample, and the complete authoritative
 `test-url-format.js` fixture pass. `test-url-parse-format.js` advances to an
 independent parsed-object prototype mismatch and is not claimed here. The
 post-fix audit reports 2296/2321 passing with 25 unclassified failures.
+
+Stage 2483 selects the datagram `send()` overload from its argument shape
+rather than the socket's bound state. An unconnected call with numeric offset
+and length is recognized only when a destination-port argument is also
+present, so an explicitly bound socket supports both legacy offset forms while
+`send(buffer, port, invalidAddress)` still validates the address. BigInt type
+details include Node's `n` suffix. The focused bound-sender/ambiguous-address
+contract and stages 1177, 1193, 1199, and 2264 pass. Authoritative
+`test-dgram-send-callback-buffer-length.js` and its empty-address variant pass;
+`test-dgram-send-address-types.js` reaches an independent `util.inspect`
+BigInt-rendering mismatch in the upstream assertion helper and is not claimed.
+Stage 2302 now establishes its offset/length bounds on a connected socket;
+local Node confirms that the former unconnected two-number call is the
+port/address overload, so retaining the old expectation would contradict the
+behavior under test. The post-fix audit reports 2301/2322 passing with 21
+unclassified failures.
