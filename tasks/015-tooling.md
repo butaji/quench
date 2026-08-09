@@ -233,6 +233,10 @@ A fresh full-range parallel verification on commit `e6900c102` completed in 92
 seconds: 2,388/2,388 focused stages passed, with zero failed stages and zero
 covered policy failures using six workers.
 
+The stage-2469 owned regression fixture was refactored into predicate and
+abort-validation helpers. It now passes its stage and ESLint with zero
+warnings, removing one function-size violation without changing assertions.
+
 The repository ESLint configuration now uses a dedicated global ignore entry
 for the vendored `tests/node` submodule. The owned `tools/compat-decision-report.cjs`
 classification function was split to satisfy the complexity limit; that file
