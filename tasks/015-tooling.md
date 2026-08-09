@@ -113,6 +113,13 @@ decomposed in subsequent slices.
 
 ## Status
 
+The data-first LOC strategy was applied to filesystem validation: the
+`__nodeFs` declaration remains the source of truth, while its final methods
+and prototype normalization live in the ordered
+`filesystem-validation-tail.js` adapter. The main declaration is now 498
+lines (down from 628). Representative filesystem stages 27, 73, 430, 431,
+868, 1257, 1259, 1847, 1848, 2001, and 2087 pass after the split.
+
 The Buffer encoding bootstrap was split at an existing ordered tail: the main
 `encoding.js` file is now below the 500-line limit while `encoding-tail.js`
 retains the final `NodeBuffer.compare` and `NodeBuffer.from` definitions.
