@@ -55,7 +55,9 @@ pub(crate) fn reduce(
     let mut elements = Vec::new();
     for element in &array.elements {
         let register = match element {
-            ArrayExpressionElement::Elision(_) => crate::reduce::emit_undefined(ops, next_register),
+            ArrayExpressionElement::Elision(_) => {
+                crate::reduce_support::emit_undefined(ops, next_register)
+            }
             ArrayExpressionElement::SpreadElement(_) => return None,
             _ => crate::reduce::reduce_expression(
                 element.as_expression()?,

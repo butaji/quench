@@ -17,8 +17,11 @@ pub(crate) fn reduce_return(
         .and_then(|expression| {
             crate::reduce::reduce_expression(expression, ops, facts, next_register, locals)
         })
-        .or_else(|| Some(crate::reduce::emit_undefined(ops, next_register)));
-    Ok(register)
+        .or_else(|| Some(crate::reduce_support::emit_undefined(ops, next_register)));
+    if let Some(register) = register {
+        ops.push(Op::Return { src: register });
+    }
+    Ok(None)
 }
 
 pub(crate) fn reduce_throw(
@@ -43,30 +46,21 @@ pub(crate) fn reduce_try(
     facts: &mut crate::facts::ProgramDb,
     locals: &HashMap<String, u16>,
 ) -> Result<(), Vec<String>> {
-    let body = crate::reduce::reduce_statements_with_locals(
-        &statement.block.body,
-        facts,
-        locals.clone(),
-        0,
-    )?;
+    let body =
+        crate::reduce::reduce_statements_no_tail(&statement.block.body, facts, locals.clone(), 0)?;
     let handler = statement
         .handler
         .as_ref()
         .map(|handler| {
             let handler_locals = handler_locals(handler, locals);
-            crate::reduce::reduce_statements_with_locals(
-                &handler.body.body,
-                facts,
-                handler_locals,
-                0,
-            )
+            crate::reduce::reduce_statements_no_tail(&handler.body.body, facts, handler_locals, 0)
         })
         .transpose()?;
     let finalizer = statement
         .finalizer
         .as_ref()
         .map(|finalizer| {
-            crate::reduce::reduce_statements_with_locals(&finalizer.body, facts, locals.clone(), 0)
+            crate::reduce::reduce_statements_no_tail(&finalizer.body, facts, locals.clone(), 0)
         })
         .transpose()?;
     ops.push(Op::Try {

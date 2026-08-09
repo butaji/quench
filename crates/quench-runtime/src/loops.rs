@@ -255,7 +255,7 @@ fn reduce_for_init(
         }
         None => {}
     }
-    crate::reduce::finish_program(fragment, None)
+    crate::reduce_support::finish_program(fragment, None)
 }
 
 fn reduce_fragment(
@@ -303,7 +303,7 @@ fn reduce_body_fragment(
         next_slot,
         locals,
     )?;
-    crate::reduce::finish_program(fragment, None)
+    crate::reduce_support::finish_program(fragment, None)
 }
 
 struct LoopContext<'a> {

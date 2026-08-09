@@ -11,7 +11,17 @@ macro_rules! execute_branch {
 }
 pub(crate) use execute_branch;
 
-pub(crate) fn execute(registers: &[Value], op: &Op) -> Result<Value, VmError> {
+macro_rules! execute_try {
+    ($registers:expr, $op:expr) => {
+        match $crate::exceptions::execute($registers, $op)? {
+            Some(value) => return Ok(value),
+            None => {}
+        }
+    };
+}
+pub(crate) use execute_try;
+
+pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<Value, VmError> {
     let Op::Branch {
         condition,
         then_ops,
@@ -26,10 +36,13 @@ pub(crate) fn execute(registers: &[Value], op: &Op) -> Result<Value, VmError> {
     } else {
         else_ops
     };
-    crate::execute::execute_with_registers(selected, registers.to_vec())
+    crate::execute::execute_in_place(selected, registers)
 }
 
-pub(crate) fn execute_or_continue(registers: &[Value], op: &Op) -> Result<Option<Value>, VmError> {
+pub(crate) fn execute_or_continue(
+    registers: &mut Vec<Value>,
+    op: &Op,
+) -> Result<Option<Value>, VmError> {
     match execute(registers, op) {
         Ok(value) => Ok(Some(value)),
         Err(VmError::MissingReturn) => Ok(None),
@@ -42,7 +55,6 @@ pub(crate) fn execute_special(registers: &mut Vec<Value>, op: &Op) -> Result<(),
         Op::CallMethod { .. } => crate::methods::execute(registers, op),
         Op::Construct { .. } => crate::construct::execute(registers, op),
         Op::Branch { .. } => execute(registers, op).map(|_| ()),
-        Op::Try { .. } => crate::exceptions::execute(registers, op),
         Op::Loop { .. } => crate::loops::execute(registers, op),
         Op::Switch { .. } => crate::switch::execute(registers, op),
         Op::Conditional { .. } => crate::conditional::execute(registers, op),
@@ -57,20 +69,15 @@ pub(crate) fn reduce(
 ) -> Result<Vec<Op>, Vec<String>> {
     match statement {
         oxc::ast::ast::Statement::BlockStatement(block) => {
-            let next_slot = crate::reduce::register_base(locals);
-            crate::reduce::reduce_statements_with_locals(
-                &block.body,
-                facts,
-                locals.clone(),
-                next_slot,
-            )
+            let next_slot = crate::reduce_support::register_base(locals);
+            crate::reduce::reduce_statements_no_tail(&block.body, facts, locals.clone(), next_slot)
         }
         statement => {
             let mut ops = Vec::new();
-            let mut next_register = crate::reduce::register_base(locals);
-            let mut next_slot = crate::reduce::register_base(locals);
+            let mut next_register = crate::reduce_support::register_base(locals);
+            let mut next_slot = crate::reduce_support::register_base(locals);
             let mut locals = locals.clone();
-            let last = crate::reduce::reduce_statement(
+            crate::reduce::reduce_statement(
                 statement,
                 &mut ops,
                 facts,
@@ -78,7 +85,7 @@ pub(crate) fn reduce(
                 &mut next_slot,
                 &mut locals,
             )?;
-            crate::reduce::finish_program(ops, last)
+            Ok(ops)
         }
     }
 }

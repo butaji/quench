@@ -35,6 +35,7 @@ mod objects;
 pub mod ops;
 mod properties;
 pub mod reduce;
+mod reduce_support;
 mod reflect;
 mod semantic;
 mod sequences;
