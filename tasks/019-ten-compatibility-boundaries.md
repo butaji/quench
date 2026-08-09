@@ -1546,3 +1546,7 @@ POST and two pipelined requests; it passes with four server handler calls.
 The upstream `test-http-server.js` remains at two of four, indicating its
 remaining discrepancy depends on response timing/close assertions beyond the
 minimal parser reproduction.
+Stage 2541 makes `Buffer.from()` recognize boxed strings from another VM realm
+without relying on `instanceof String`. The focused cross-realm stage passes;
+the upstream Buffer fixture advances past that case but still has a separate
+invalid-input assertion mismatch.
