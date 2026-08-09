@@ -5,7 +5,6 @@ pub mod array;
 pub mod array_buffer;
 pub mod bigint;
 pub mod console;
-pub mod core;
 pub mod data_view;
 pub mod date;
 pub mod error;
@@ -95,9 +94,11 @@ impl serde::Serialize for JsValueProxy<'_> {
             Value::Generator(ref gen) => {
                 let state = gen.borrow().state.clone();
                 let label = match state {
+                    crate::value::generator::GeneratorState::Start => "Generator (start)",
                     crate::value::generator::GeneratorState::Suspended => "Generator (suspended)",
-                    crate::value::generator::GeneratorState::Running => "Generator (running)",
+                    crate::value::generator::GeneratorState::Executing => "Generator (executing)",
                     crate::value::generator::GeneratorState::Completed => "Generator (completed)",
+                    crate::value::generator::GeneratorState::Closed => "Generator (closed)",
                 };
                 serializer.serialize_str(label)
             }
@@ -128,8 +129,6 @@ impl Object {
 
 /// Register all built-in globals into the context
 pub fn register_builtins(ctx: &mut Context) {
-    // The `__ops__` bridge must exist before any self-hosted JS builtin runs.
-    core::ops_wrapper::register_ops_object(ctx);
     console::register_console(ctx);
     json::register_json(ctx);
     math::register_math(ctx);

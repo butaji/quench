@@ -52,8 +52,28 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
     });
     // Save label stack depth before parse so we can restore on any exit path.
     let label_depth = crate::interpreter::label_stack_depth();
+    let in_class_field = crate::interpreter::is_eval_in_class_field()
+        || crate::interpreter::get_current_eval_env()
+            .is_some_and(|e| e.borrow().is_in_class_field_initializer());
     let mut program = match ctx.parse(&source) {
         Ok(program) => program,
+        Err(e)
+            if in_class_field
+                && crate::interpreter::is_direct_eval()
+                && source.contains("new.target") =>
+        {
+            let lowered_source = source.replace("new.target", "__quench_eval_new_target__");
+            match ctx.parse(&lowered_source) {
+                Ok(program) => program,
+                Err(_) => {
+                    CURRENT_CONTEXT.with(|cell| *cell.borrow_mut() = prev_ctx);
+                    let (err_val, js_err) =
+                        crate::value::error::create_js_error_with_type(&e.0, "SyntaxError");
+                    crate::value::set_thrown_value(err_val);
+                    return Err(js_err);
+                }
+            }
+        }
         Err(e) => {
             CURRENT_CONTEXT.with(|cell| {
                 *cell.borrow_mut() = prev_ctx;
@@ -85,9 +105,6 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
         }
     }
     reject_eval_var_lexical_conflict(&program, ctx)?;
-    let in_class_field = crate::interpreter::is_eval_in_class_field()
-        || crate::interpreter::get_current_eval_env()
-            .is_some_and(|e| e.borrow().is_in_class_field_initializer());
     if in_class_field {
         let ast::Program::Script(body) = &program;
         if let Err(js_err) =
@@ -192,10 +209,6 @@ pub fn init_builtins(ctx: &mut Context) -> Result<(), JsError> {
     init_es_module_cache(ctx)?;
     init_js_globals(ctx)?;
     sync_globals_to_global_this(ctx);
-    // Self-hosted JS builtins run after the Rust core establishes the
-    // foundational intrinsics, the `__ops__` bridge, and the realm globals
-    // (globalThis) so they can attach to the constructors (ADR 0001).
-    crate::builtins::core::bootstrap::bootstrap_js_builtins(ctx)?;
     register_eval_function(ctx)?;
     Ok(())
 }
