@@ -341,6 +341,7 @@ globalThis.process = {
   },
   exitCode: 0,
   exit: (code) => {
+    if (globalThis.__quench_emitting_exit) return;
     process.exitCode = code;
     process.__quench_force_exit = true;
     globalThis.__quench_force_exit = true;
