@@ -53,6 +53,7 @@ pub(crate) fn construct_value(
         Value::Builtin(crate::ops::Builtin::Object) => Ok(crate::builtins::object(arguments)),
         Value::Builtin(crate::ops::Builtin::TypeError) => Ok(crate::builtins::object(arguments)),
         Value::Builtin(crate::ops::Builtin::Date) => Ok(crate::builtins::object(arguments)),
+        Value::Builtin(crate::ops::Builtin::RegExp) => Ok(crate::builtins::object(arguments)),
         Value::Function(_) => Ok(Value::Object(std::rc::Rc::new(Vec::new()))),
         _ => Err(crate::execute::VmError::NotCallable),
     }
