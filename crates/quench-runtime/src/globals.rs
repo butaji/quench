@@ -48,6 +48,7 @@ fn builtin(name: &str) -> Option<crate::ops::Builtin> {
         "Array" => Some(crate::ops::Builtin::Array),
         "Boolean" => Some(crate::ops::Builtin::Boolean),
         "eval" => Some(crate::ops::Builtin::Eval),
+        "escape" => Some(crate::ops::Builtin::Escape),
         "isFinite" => Some(crate::ops::Builtin::IsFinite),
         "isNaN" => Some(crate::ops::Builtin::IsNaN),
         "Number" => Some(crate::ops::Builtin::Number),
@@ -55,6 +56,7 @@ fn builtin(name: &str) -> Option<crate::ops::Builtin> {
         "parseFloat" => Some(crate::ops::Builtin::ParseFloat),
         "parseInt" => Some(crate::ops::Builtin::ParseInt),
         "String" => Some(crate::ops::Builtin::String),
+        "unescape" => Some(crate::ops::Builtin::Unescape),
         _ => None,
     }
 }

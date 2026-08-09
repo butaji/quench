@@ -100,6 +100,44 @@ fn value_to_string(value: &Value) -> String {
     }
 }
 
+pub(crate) fn escape(value: Option<&Value>) -> Value {
+    let mut result = String::new();
+    for character in value
+        .map_or_else(|| value_to_string(&Value::Undefined), value_to_string)
+        .chars()
+    {
+        if character.is_ascii_alphanumeric() || "@*_+-./".contains(character) {
+            result.push(character);
+        } else if (character as u32) <= 0xFF {
+            result.push_str(&format!("%{:02X}", character as u32));
+        } else {
+            result.push_str(&format!("%u{:04X}", character as u32));
+        }
+    }
+    Value::String(result)
+}
+
+pub(crate) fn unescape(value: Option<&Value>) -> Value {
+    let text = value.map_or_else(|| value_to_string(&Value::Undefined), value_to_string);
+    let mut result = String::new();
+    let mut chars = text.chars().peekable();
+    while let Some(character) = chars.next() {
+        if character != '%' {
+            result.push(character);
+            continue;
+        }
+        let digits: String = chars.by_ref().take(2).collect();
+        let parsed = u8::from_str_radix(&digits, 16).ok().map(char::from);
+        if let Some(parsed) = parsed {
+            result.push(parsed);
+        } else {
+            result.push('%');
+            result.push_str(&digits);
+        }
+    }
+    Value::String(result)
+}
+
 pub(crate) fn array(arguments: &[Value]) -> Value {
     if arguments.len() == 1 {
         if let Value::Number(length) = arguments[0] {
