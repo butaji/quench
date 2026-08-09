@@ -1319,6 +1319,8 @@ class NodeTransform extends NodeWritable {
     this.readable = options.readable !== false;
     this.writable = options.writable !== false;
     this._readableChunks = [];
+    this._transformEndEmitted = false;
+    this._transformFlowScheduled = false;
     if (typeof options.transform === "function") {
       this._transform = options.transform;
     }
@@ -1336,11 +1338,44 @@ class NodeTransform extends NodeWritable {
     };
     return this.on(event, wrapped);
   }
+  on(event, listener) {
+    const result = super.on(event, listener);
+    if (
+      (event === "data" || event === "end") &&
+      !this.__quenchPassThroughFlow &&
+      !this._transformFlowScheduled
+    ) {
+      this._transformFlowScheduled = true;
+      queueMicrotask(() => {
+        this._transformFlowScheduled = false;
+        while (this._readableChunks.length && this.listenerCount("data")) {
+          this.emit("data", this._readableChunks.shift());
+        }
+        if (
+          this.readableEnded &&
+          !this._readableChunks.length &&
+          !this._transformEndEmitted &&
+          this.listenerCount("end")
+        ) {
+          this._transformEndEmitted = true;
+          this.emit("end");
+        }
+      });
+    }
+    return result;
+  }
   push(chunk) {
     if (chunk === null) {
       if (!this.readableEnded) {
         this.readableEnded = true;
-        this.emit("end");
+        if (
+          !this._readableChunks.length &&
+          !this._transformEndEmitted &&
+          this.listenerCount("end")
+        ) {
+          this._transformEndEmitted = true;
+          this.emit("end");
+        }
       }
       return false;
     }
@@ -1408,6 +1443,7 @@ class NodeTransform extends NodeWritable {
 class NodePassThrough extends NodeTransform {
   constructor(options = {}) {
     super(options);
+    this.__quenchPassThroughFlow = true;
     this.__nodeDuplex = true;
     this.readableEnded = false;
     this.readableObjectMode =

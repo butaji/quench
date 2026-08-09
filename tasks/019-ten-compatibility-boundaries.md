@@ -987,3 +987,14 @@ stage and maintained Web pipeline/fromWeb/identity cluster pass. Authoritative
 `test-stream-compose.js` now reaches deferred lifecycle assertions and reports
 the earlier two-Transform output as empty; that general composed-flow boundary
 remains separate. Rust and representative application stages remain green.
+
+Stage 2475 gives `Transform` its missing late-listener flow lifecycle. Output
+pushed before a `data` listener is retained, drained in a microtask after the
+listener chain is installed, and followed by exactly one deferred `end` once
+the buffer is empty. PassThrough keeps its own backpressure-aware resume loop
+rather than sharing this direct flush. The focused `end(...).on('data').on('end')`
+compose contract and maintained Transform/PassThrough stages pass.
+Authoritative `test-stream-compose.js` advances from its first stream-pair
+callback to the async-generator composition callback at line 58, whose
+asynchronous finalization remains separate. Rust and application stages stay
+green.
