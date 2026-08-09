@@ -25,6 +25,18 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError
             execute_builtin_with_receiver(builtin, &arguments, Some(&receiver))?
         }
         Value::Function(function) => crate::functions::execute(&function, &arguments)?,
+        Value::Undefined if matches!(receiver, Value::Builtin(_) | Value::Function(_)) => {
+            // Fallback: when callee is undefined, call the receiver directly.
+            // This handles `toString.call(x)` where toString is a Builtin/Function
+            // without an explicit `call` property.
+            match &receiver {
+                Value::Builtin(builtin) => {
+                    execute_builtin_with_receiver(*builtin, &arguments, Some(&receiver))?
+                }
+                Value::Function(function) => crate::functions::execute(function, &arguments)?,
+                _ => return Err(VmError::NotCallable),
+            }
+        }
         _ => return Err(VmError::NotCallable),
     };
     write_value(registers, *dst, value);

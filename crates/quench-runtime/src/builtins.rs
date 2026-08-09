@@ -1,227 +1,24 @@
+pub mod object;
+pub mod props;
+
 use std::rc::Rc;
 
 use crate::{ops::Builtin, value::Value};
 
 pub(crate) fn property(builtin: Builtin, key: &str) -> Value {
-    if let Some(value) = crate::intl::property(builtin, key) {
-        return value;
-    }
-    property_lookup(builtin, key)
+    props::lookup(builtin, key)
 }
 
-fn property_lookup(builtin: Builtin, key: &str) -> Value {
-    use Builtin::*;
-    if let Some(value) = special_property(builtin, key) {
-        return value;
-    }
-    if let Some(value) = callable_property(builtin, key) {
-        return value;
-    }
-    let value = match (builtin, key) {
-        (Array, "prototype") => ArrayPrototype,
-        (ArrayPrototype, "map") => ArrayMap,
-        (ArrayPrototype, "forEach") => ArrayForEach,
-        (ArrayMap, "call") => FunctionCall,
-        (Array, "isArray") => ArrayIsArray,
-        (Object, "is") => ObjectIs,
-        (Object, "keys") => ObjectKeys,
-        (Object, "getOwnPropertyDescriptor") => ObjectGetOwnPropertyDescriptor,
-        (Map, "prototype") => MapPrototype,
-        (Set, "prototype") => SetPrototype,
-        _ => return Value::Undefined,
-    };
-    Value::Builtin(value)
+pub(crate) fn special_property(builtin: Builtin, key: &str) -> Option<Value> {
+    props::special_property(builtin, key)
 }
 
-fn special_property(builtin: Builtin, key: &str) -> Option<Value> {
-    use Builtin::*;
-    if builtin == Math {
-        return crate::math::property(key).map(Value::Builtin);
-    }
-    let value = match (builtin, key) {
-        (Symbol, k) => crate::builtin_meta::symbol::symbol_prop(k),
-        (MapPrototype | SetPrototype, k) => {
-            crate::builtin_meta::collections::collections_property(builtin, k).and_then(|v| match v
-            {
-                Value::Builtin(b) => Some(b),
-                _ => None,
-            })
-        }
-        (DatePrototype, k) => crate::builtin_meta::date::date_prop(k),
-        (Function, "prototype") => Some(FunctionPrototype),
-        (FunctionPrototype, "call") => Some(FunctionCall),
-        (FunctionPrototype, "bind") => Some(FunctionBind),
-        (FunctionCall, "bind") => Some(FunctionBind),
-        (ArrayPrototype, "join") => Some(ArrayJoin),
-        (ArrayPrototype, "push") => Some(ArrayPush),
-        (Object, "prototype") => Some(ObjectPrototype),
-        (Date, "prototype") => Some(DatePrototype),
-        (Reflect, "construct") => Some(ReflectConstruct),
-        (RegExp, "prototype") => Some(RegExpPrototype),
-        (RegExpPrototype, "test") => Some(RegExpTest),
-        (RegExpPrototype, "exec") => Some(RegExpExec),
-        (ObjectPrototype, "hasOwnProperty") => Some(ObjectHasOwnProperty),
-        (ObjectPrototype, "propertyIsEnumerable") => Some(ObjectPropertyIsEnumerable),
-        (Object, "defineProperty") => Some(ObjectDefineProperty),
-        (Object, "getOwnPropertyNames") => Some(ObjectGetOwnPropertyNames),
-        _ => return None,
-    };
-    value.map(Value::Builtin)
+pub(crate) fn callable_property(builtin: Builtin, key: &str) -> Option<Value> {
+    props::callable(builtin, key)
 }
 
-fn callable_property(builtin: Builtin, key: &str) -> Option<Value> {
-    match key {
-        "length" => Some(Value::Number(builtin_length(builtin))),
-        "name" => Some(Value::String(builtin_name(builtin).to_string())),
-        _ => None,
-    }
-}
-
-fn builtin_name(builtin: Builtin) -> &'static str {
-    use Builtin::*;
-    match builtin {
-        Escape => "escape",
-        Unescape => "unescape",
-        Array => "Array",
-        Object => "Object",
-        String => "String",
-        Symbol => "Symbol",
-        Number => "Number",
-        Date => "Date",
-        DateGetYear => "getYear",
-        DateSetYear => "setYear",
-        RegExp => "RegExp",
-        RegExpTest => "test",
-        RegExpExec => "exec",
-        _ => "",
-    }
-}
-
-pub(crate) fn object_method(value: &Value, key: &str) -> Value {
-    if matches!(value, Value::Object(_) | Value::Array(_)) && key == "hasOwnProperty" {
-        return Value::Builtin(Builtin::ObjectHasOwnProperty);
-    }
-    Value::Undefined
-}
-
-pub(crate) fn has_own_property(receiver: Option<&Value>, key: Option<&Value>) -> Value {
-    let Some(key) = key.map(value_to_string) else {
-        return Value::Boolean(false);
-    };
-    let present = match receiver {
-        Some(Value::Object(properties)) => properties.iter().any(|(name, _)| name == &key),
-        Some(Value::Array(values)) => {
-            key == "length" || key.parse::<usize>().is_ok_and(|i| i < values.len())
-        }
-        Some(Value::String(value)) => {
-            key == "length"
-                || key
-                    .parse::<usize>()
-                    .is_ok_and(|i| i < value.chars().count())
-        }
-        Some(Value::Builtin(builtin)) => {
-            callable_property(*builtin, &key).is_some()
-                || special_property(*builtin, &key).is_some()
-        }
-        _ => false,
-    };
-    Value::Boolean(present)
-}
-
-pub(crate) fn object_property_is_enumerable(
-    receiver: Option<&Value>,
-    arguments: &[Value],
-) -> Value {
-    if matches!(receiver, Some(Value::Builtin(_))) {
-        return Value::Boolean(false);
-    }
-    has_own_property(receiver, arguments.first())
-}
-
-pub(crate) fn object_special(
-    builtin: Builtin,
-    receiver: Option<&Value>,
-    arguments: &[Value],
-) -> Value {
-    match builtin {
-        Builtin::ObjectHasOwnProperty => has_own_property(receiver, arguments.first()),
-        Builtin::ObjectGetOwnPropertyDescriptor => descriptor(arguments.first(), arguments.get(1)),
-        _ => Value::Undefined,
-    }
-}
-pub(crate) fn descriptor(value: Option<&Value>, key: Option<&Value>) -> Value {
-    let (Some(value), Some(key)) = (value, key.map(value_to_string)) else {
-        return Value::Undefined;
-    };
-    let property = match value {
-        Value::Object(properties) => properties
-            .iter()
-            .rev()
-            .find(|(name, _)| name == &key)
-            .map(|(_, value)| value.clone()),
-        Value::Array(values) => array_descriptor(values, &key),
-        Value::String(value) => string_descriptor(value, &key),
-        Value::Builtin(builtin) if matches!(key.as_str(), "length" | "name") => {
-            return callable_property(*builtin, &key).unwrap_or(Value::Undefined);
-        }
-        Value::Function(function) if key == "length" => {
-            return Value::Object(Rc::new(vec![
-                (
-                    "value".to_string(),
-                    Value::Number(f64::from(function.params)),
-                ),
-                ("writable".to_string(), Value::Boolean(false)),
-                ("enumerable".to_string(), Value::Boolean(false)),
-                ("configurable".to_string(), Value::Boolean(true)),
-            ]));
-        }
-        _ => None,
-    };
-    property.map_or(Value::Undefined, |property| descriptor_object(&property))
-}
-
-fn builtin_length(builtin: Builtin) -> f64 {
-    matches!(
-        builtin,
-        Builtin::Escape | Builtin::Unescape | Builtin::DateSetYear
-    ) as i32 as f64
-}
-
-fn array_descriptor(values: &[Value], key: &str) -> Option<Value> {
-    if key == "length" {
-        return None;
-    }
-    key.parse::<usize>()
-        .ok()
-        .and_then(|index| values.get(index).cloned())
-}
-
-fn string_descriptor(value: &str, key: &str) -> Option<Value> {
-    value
-        .chars()
-        .nth(key.parse::<usize>().ok()?)
-        .map(|character| Value::String(character.to_string()))
-}
-
-fn descriptor_object(value: &Value) -> Value {
-    Value::Object(Rc::new(vec![
-        ("value".to_string(), value.clone()),
-        ("writable".to_string(), Value::Boolean(true)),
-        ("enumerable".to_string(), Value::Boolean(true)),
-        ("configurable".to_string(), Value::Boolean(true)),
-    ]))
-}
-
-fn value_to_string(value: &Value) -> String {
-    use Value::*;
-    match value {
-        String(value) => value.clone(),
-        Number(value) => value.to_string(),
-        Boolean(value) => value.to_string(),
-        Null => "null".to_string(),
-        Undefined => "undefined".to_string(),
-        _ => "[object Object]".to_string(),
-    }
+pub(crate) fn builtin_name(builtin: Builtin) -> &'static str {
+    props::builtin_name(builtin)
 }
 
 pub(crate) fn escape(value: Option<&Value>) -> Value {
@@ -242,6 +39,7 @@ pub(crate) fn escape(value: Option<&Value>) -> Value {
     }
     Value::String(result)
 }
+
 pub(crate) fn unescape(value: Option<&Value>) -> Value {
     let text = value.map_or_else(|| value_to_string(&Value::Undefined), value_to_string);
     let mut result = String::new();
@@ -474,4 +272,66 @@ fn set_function_property(
         }
     }
     Value::Function(function)
+}
+
+/// Implement `Object.prototype.toString` using the receiver's [[Class]].
+pub(crate) fn prototype_to_string(receiver: Option<&Value>) -> Value {
+    let tag = match receiver {
+        None | Some(Value::Undefined) => "Undefined",
+        Some(Value::Null) => "Null",
+        Some(Value::Boolean(_)) => "Boolean",
+        Some(Value::Number(_)) => "Number",
+        Some(Value::String(s)) if s.starts_with("Symbol(") => "Symbol",
+        Some(Value::String(_)) => "String",
+        Some(Value::BigInt(_)) => "BigInt",
+        Some(Value::Array(_)) => "Array",
+        Some(Value::Object(_)) => "Object",
+        Some(Value::Function(_)) => "Function",
+        Some(Value::BoundFunction(_)) => "Function",
+        Some(Value::Builtin(_)) => "Function",
+        Some(Value::Proxy(_)) => "Object",
+        Some(Value::Promise(_)) => "Promise",
+        Some(Value::Map(_)) => "Map",
+        Some(Value::Set(_)) => "Set",
+    };
+    Value::String(format!("[object {tag}]"))
+}
+
+/// Implement `Object.prototype.valueOf`.
+pub(crate) fn prototype_value_of(receiver: Option<&Value>) -> Value {
+    match receiver {
+        None | Some(Value::Undefined) | Some(Value::Null) => Value::Null,
+        Some(v) => v.clone(),
+    }
+}
+
+/// Implement `Function.prototype.toString`.
+pub(crate) fn function_prototype_to_string(receiver: Option<&Value>) -> Value {
+    match receiver {
+        Some(Value::Builtin(b)) => Value::String(format!(
+            "function {}() {{ [native code] }}",
+            builtin_name(*b)
+        )),
+        Some(Value::Function(_)) | Some(Value::BoundFunction(_)) => {
+            Value::String("function () {{ [native code] }}".to_string())
+        }
+        _ => Value::String("".to_string()),
+    }
+}
+
+/// Implement `Function.prototype.valueOf`.
+pub(crate) fn function_prototype_value_of(receiver: Option<&Value>) -> Value {
+    prototype_value_of(receiver)
+}
+
+fn value_to_string(value: &Value) -> String {
+    use Value::*;
+    match value {
+        String(value) => value.clone(),
+        Number(value) => value.to_string(),
+        Boolean(value) => value.to_string(),
+        Null => "null".to_string(),
+        Undefined => "undefined".to_string(),
+        _ => "[object Object]".to_string(),
+    }
 }

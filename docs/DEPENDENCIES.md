@@ -13,6 +13,7 @@ speculatively.
 |---|---|
 | `oxc` | Canonical parser, AST, and semantic scope/symbol data. |
 | `num-bigint` | BigInt arithmetic. |
+| `regress` | RegExp execution support. |
 | `tempfile` | Temporary filesystem isolation in `quench-test262`. |
 
 ## Candidate dependencies

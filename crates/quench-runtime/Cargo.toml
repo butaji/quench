@@ -8,3 +8,4 @@ license = "MIT"
 [dependencies]
 num-bigint = "0.4"
 oxc = { version = "0.47", features = ["semantic"] }
+regress = "0.10"

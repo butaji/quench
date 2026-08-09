@@ -263,7 +263,7 @@ pub(crate) fn proxy_get_own_property_descriptor(
             );
         }
     }
-    Ok(crate::builtins::descriptor(
+    Ok(crate::builtins::object::descriptor(
         Some(target),
         Some(&Value::String(prop.to_string())),
     ))
@@ -314,7 +314,7 @@ fn has_own_property(target: &Value, prop: &str) -> bool {
                     .is_ok_and(|i| i < value.chars().count())
         }
         Value::Builtin(builtin) => {
-            crate::builtins::has_own_property(
+            crate::builtins::object::has_own_property(
                 Some(&Value::Builtin(*builtin)),
                 Some(&Value::String(prop.to_string())),
             ) == Value::Boolean(true)
