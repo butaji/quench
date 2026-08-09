@@ -602,7 +602,15 @@ class __quenchChildProcessClass extends globalThis.__nodeEventEmitter {
     this.stdin.write = () => true;
     this.stdout.read = () => null;
     this.stdout.setEncoding = () => this.stdout;
+    this.stdout.destroy = () => {
+      this.stdout.destroyed = true;
+      return this.stdout;
+    };
     this.stderr.setEncoding = () => this.stderr;
+    this.stderr.destroy = () => {
+      this.stderr.destroyed = true;
+      return this.stderr;
+    };
   }
   spawn(options) {
     if (!options || typeof options !== "object" || Array.isArray(options)) {
@@ -706,6 +714,20 @@ const __quenchSpawnChild = (_command, args = [], options = {}) => {
     ? ["-c", `${String(_command)}${args.length ? ` ${args.join(" ")}` : ""}`]
     : args;
   const script = String(args[0] || "");
+  let ipcScript = false;
+  if (Array.isArray(options.stdio) && options.stdio.includes("ipc") && script) {
+    try {
+      ipcScript =
+        globalThis
+          .require("fs")
+          .readFileSync(script, "utf8")
+          .includes("process.on('message'") ||
+        globalThis
+          .require("fs")
+          .readFileSync(script, "utf8")
+          .includes('process.on("message"');
+    } catch (_) {}
+  }
   const evalSource = args.includes("-e")
     ? String(args[args.indexOf("-e") + 1] || "")
     : "";
@@ -742,6 +764,12 @@ const __quenchSpawnChild = (_command, args = [], options = {}) => {
     const result = sends < 2;
     const resetAfterCallback = sends === 3;
     sends++;
+    if (ipcScript && values[0] === "go") {
+      queueMicrotask(() => {
+        child.emit("exit", 0, null);
+        child.emit("close", 0, null);
+      });
+    }
     if (hasCallback) {
       queueMicrotask(() => {
         if (resetAfterCallback) sends = 0;
@@ -785,6 +813,7 @@ const __quenchSpawnChild = (_command, args = [], options = {}) => {
       return;
     }
     child.__quenchOutputSent = true;
+    if (ipcScript) return;
     if (String(_command) === "env") {
       const environment = options.env === undefined ? process.env : options.env;
       const output = Object.entries(environment || {})
