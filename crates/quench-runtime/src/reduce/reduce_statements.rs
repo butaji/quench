@@ -217,6 +217,10 @@ fn function_locals(
         "arguments".to_string(),
         captures.saturating_add(parameter_count),
     );
+    parameters.insert(
+        "this".to_string(),
+        captures.saturating_add(parameter_count).saturating_add(1),
+    );
     parameters.extend(locals.iter().map(|(name, slot)| (name.clone(), *slot)));
     Ok((parameters, parameter_count, captures))
 }

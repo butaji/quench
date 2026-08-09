@@ -38,7 +38,9 @@ pub(crate) fn reduce_body(
         &body.statements,
         facts,
         parameters,
-        captures.saturating_add(parameter_count).saturating_add(1),
+        captures
+            .saturating_add(parameter_count)
+            .saturating_add(2),
     )
 }
 
@@ -63,12 +65,18 @@ pub(crate) fn reduce_expression(
         "arguments".to_string(),
         captures.saturating_add(parameter_count),
     );
+    parameters.insert(
+        "this".to_string(),
+        captures.saturating_add(parameter_count).saturating_add(1),
+    );
     parameters.extend(locals.iter().map(|(name, slot)| (name.clone(), *slot)));
     let body_ops = crate::reduce::reduce_statements_with_locals(
         &body.statements,
         facts,
         parameters,
-        captures.saturating_add(parameter_count).saturating_add(1),
+        captures
+            .saturating_add(parameter_count)
+            .saturating_add(2),
     )
     .ok()?;
     let register = *next_register;
@@ -102,12 +110,18 @@ pub(crate) fn reduce_arrow(
         "arguments".to_string(),
         captures.saturating_add(parameter_count),
     );
+    parameters.insert(
+        "this".to_string(),
+        captures.saturating_add(parameter_count).saturating_add(1),
+    );
     parameters.extend(locals.iter().map(|(name, slot)| (name.clone(), *slot)));
     let body_ops = crate::reduce::reduce_statements_with_locals(
         &function.body.statements,
         facts,
         parameters,
-        captures.saturating_add(parameter_count).saturating_add(1),
+        captures
+            .saturating_add(parameter_count)
+            .saturating_add(2),
     )
     .ok()?;
     let register = *next_register;
@@ -165,6 +179,7 @@ pub(crate) fn write_op(registers: &mut Vec<crate::value::Value>, op: &Op) {
 
 pub(crate) fn execute(
     function: &crate::value::FunctionValue,
+    this_value: &crate::value::Value,
     arguments: &[crate::value::Value],
 ) -> Result<crate::value::Value, crate::execute::VmError> {
     let original_arguments = arguments.to_vec();
@@ -177,6 +192,11 @@ pub(crate) fn execute(
         &mut registers,
         function.captures.borrow().len() as u16 + function.params,
         crate::value::Value::Array(std::rc::Rc::new(original_arguments)),
+    );
+    crate::execute::write_value(
+        &mut registers,
+        function.captures.borrow().len() as u16 + function.params + 1,
+        this_value.clone(),
     );
     registers.resize(
         registers.len().saturating_add(32),
@@ -197,7 +217,7 @@ pub(crate) fn execute_bound(
             &combined,
             Some(&bound.receiver),
         ),
-        crate::value::Value::Function(function) => execute(function, &combined),
+        crate::value::Value::Function(function) => execute(function, &bound.receiver, &combined),
         crate::value::Value::BoundFunction(next) => execute_bound(next, &combined),
         _ => Err(crate::execute::VmError::NotCallable),
     }
@@ -212,7 +232,7 @@ pub(crate) fn execute_target(
         crate::value::Value::Builtin(builtin) => {
             crate::execute::execute_builtin_with_receiver(*builtin, arguments, Some(receiver))
         }
-        crate::value::Value::Function(function) => execute(function, arguments),
+        crate::value::Value::Function(function) => execute(function, receiver, arguments),
         crate::value::Value::BoundFunction(bound) => execute_bound(bound, arguments),
         _ => Err(crate::execute::VmError::NotCallable),
     }

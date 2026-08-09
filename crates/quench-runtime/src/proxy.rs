@@ -73,10 +73,11 @@ pub(crate) fn call_trap(
     receiver: Option<&Value>,
 ) -> Result<Value, VmError> {
     match trap {
-        Value::Function(func) => crate::functions::execute(func, arguments),
-        Value::Builtin(builtin) => {
-            crate::execute::execute_builtin_with_receiver(*builtin, arguments, receiver)
-        }
+        Value::Function(func) => crate::functions::execute(
+            func,
+            receiver.unwrap_or(&crate::value::Value::Undefined),
+            arguments,
+        ),
         Value::BoundFunction(bound) => crate::functions::execute_bound(bound, arguments),
         _ => Err(VmError::NotCallable),
     }
@@ -176,7 +177,7 @@ pub(crate) fn proxy_apply(
         }
     }
     match target {
-        Value::Function(func) => crate::functions::execute(func, arguments),
+        Value::Function(func) => crate::functions::execute(func, this_arg, arguments),
         Value::Builtin(builtin) => {
             crate::execute::execute_builtin_with_receiver(*builtin, arguments, Some(this_arg))
         }

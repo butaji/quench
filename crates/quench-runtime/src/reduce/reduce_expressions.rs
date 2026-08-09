@@ -281,6 +281,15 @@ pub fn reduce_atom(
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
     if matches!(expression, Expression::ThisExpression(_)) {
+        if let Some(slot) = locals.get("this") {
+            let register = *next_register;
+            *next_register = next_register.saturating_add(1);
+            ops.push(Op::LoadLocal {
+                dst: register,
+                slot: *slot,
+            });
+            return Some(register);
+        }
         return Some(crate::reduce_support::emit_undefined(ops, next_register));
     }
     if let Some(value) = reduce_literal(expression) {
