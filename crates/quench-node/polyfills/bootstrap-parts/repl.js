@@ -1,4 +1,8 @@
 const __quenchOriginalRequireWithRepl = globalThis.require;
+const __quenchFinishRepl = (server) => {
+  server.displayPrompt();
+  return server;
+};
 const __quenchReplStart = (options = {}) => {
   const listeners = {};
   const server = {
@@ -35,10 +39,9 @@ const __quenchReplStart = (options = {}) => {
       server.closed = true;
       server.emit("exit");
     },
-    displayPrompt: () => server.output?.write?.(server.prompt)
+    displayPrompt: () => server.output?.write?.(server.prompt),
   };
-  server.displayPrompt();
-  return server;
+  return __quenchFinishRepl(server);
 };
 const __quenchRepl = {
   start: __quenchReplStart,
@@ -46,14 +49,14 @@ const __quenchRepl = {
     this.input = options.input;
     this.output = options.output;
     this.writer = {
-      options: { colors: true }
+      options: { colors: true },
     };
     this.closed = false;
     if (this.input?.on && this.output?.write) {
       this.input.on("data", () => this.output.write("\"'string'\"\n"));
       this.input.resume?.();
     }
-  }
+  },
 };
 globalThis.require = (specifier) => {
   if (String(specifier).replace(/^node:/, "") === "repl") return __quenchRepl;
