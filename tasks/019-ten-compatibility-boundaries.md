@@ -1470,3 +1470,9 @@ Stage 2532 locks the three upstream `stream.pipeline()` argument-validation
 contracts (`ERR_MISSING_ARGS` and `ERR_INVALID_ARG_TYPE`) in a focused stage.
 Those cases pass locally; the larger `test-stream-pipeline.js` fixture still
 has a later lifecycle failure and is not claimed complete.
+
+Verification correction: a subsequent clean rerun shows the full
+`test-stream-destroy.js` fixture still fails callback accounting (the focused
+stage 2531 remains green). The earlier statement that the authoritative
+fixture passed is withdrawn; HTTP close ordering remains open and is not used
+as completion evidence.
