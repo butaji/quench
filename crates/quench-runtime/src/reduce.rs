@@ -4,6 +4,7 @@ use crate::{
     facts::ProgramDb,
     functions, identifiers,
     literal::{reduce_literal, reduce_operator},
+    loops,
     ops::{Constant, Op},
     properties, special, transparent,
 };
@@ -109,6 +110,9 @@ pub(crate) fn reduce_statement(
         }
         Statement::IfStatement(statement) => {
             reduce_if_statement(statement, ops, facts, next_register, next_slot, locals)
+        }
+        Statement::ForStatement(statement) => {
+            loops::reduce_for(statement, ops, facts, next_register, next_slot, locals).map(|_| None)
         }
         Statement::ExpressionStatement(expression) => {
             reduce_expression_statement(&expression.expression, ops, facts, next_register, locals)
