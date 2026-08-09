@@ -281,22 +281,35 @@ const __quenchRequireStreamIter = () => {
       throw error;
     }
     return normalized === "latin1" ||
-      normalized === "iso-8859-1" ||
-      normalized === "ascii"
+        normalized === "iso-8859-1" ||
+        normalized === "ascii"
       ? "iso-8859-1"
       : normalized;
   };
+  const decodeText = (bytes, encoding) => {
+    if (encoding === "iso-8859-1") {
+      let result = "";
+      for (const byte of bytes) result += String.fromCharCode(byte);
+      return result;
+    }
+    try {
+      const result = new TextDecoder(encoding).decode(bytes);
+      return encoding === "utf-8" && result.startsWith("\uFEFF")
+        ? result.slice(1)
+        : result;
+    } catch (error) {
+      const failure = new TypeError(error.message || "Invalid encoded data");
+      failure.code = "ERR_INVALID_ARG_VALUE";
+      throw failure;
+    }
+  };
   const asyncText = async (source, options) => {
     const opts = normalizeOptions(options);
-    return new TextDecoder(decoderEncoding(opts)).decode(
-      await asyncBytes(source, opts)
-    );
+    return decodeText(await asyncBytes(source, opts), decoderEncoding(opts));
   };
   const syncText = (source, options) => {
     const opts = normalizeOptions(options);
-    return new TextDecoder(decoderEncoding(opts)).decode(
-      syncBytes(source, opts)
-    );
+    return decodeText(syncBytes(source, opts), decoderEncoding(opts));
   };
   const asyncArray = async (source, options) =>
     readAsyncValues(source, normalizeOptions(options));
