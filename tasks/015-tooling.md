@@ -258,3 +258,6 @@ remaining file/function/complexity violations and is not yet clean.
 Buffer float-offset range-error construction was extracted into a helper; the
 buffer-validation module now passes ESLint with zero warnings, and stages 1, 2,
 and 1005 remain green.
+
+The REPL startup factory now passes ESLint with zero warnings after extracting
+its finalization step; stages 533, 1153, and 1949 all pass.
