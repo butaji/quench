@@ -1,7 +1,7 @@
 # AGENTS.md
 
 1. **Goal**: build the frozen OXC-facts residual-VM architecture from scratch with minimum handwritten LOC.
-2. **Architecture (only plan)**: OXC owns AST, scopes, and symbols; Quench queries that data plus unified `ProgramDb` facts (`Proven`, `Guarded`, `Unknown`) and reduces programs to residual ops. Do not build a second AST, HIR/MIR ladder, TypeGraph, self-hosted-JS builtin layer, or alternate semantic pipeline. Use the five reducer contexts (`value`, `place`, `effect`, `control`, `define`) and a small semantic kernel. Preserve observable JS behavior before specializing. Keep compact `HeapRef(u32)` references, shapes/slots, and continuations as runtime foundations.
+2. **Architecture (only plan)**: OXC owns AST, scopes, and symbols; Quench queries that data plus unified `ProgramDb` facts (`Proven`, `Guarded`, `Unknown`) and reduces programs directly to flat residual ops. Do not build a second AST, HIR/MIR ladder, TypeGraph, self-hosted-JS builtin layer, or alternate semantic pipeline. Implement canonical completion-aware semantics before specialization. Use the five reducer contexts (`value`, `place`, `effect`, `control`, `define`). Keep compact `HeapRef(u32)` references, shapes/slots, and stack frames as runtime foundations; materialize continuations only for genuine suspension.
 3. **Test runner ownership**: `crates/quench-test262` owns test262 metadata, harness composition, and runner contracts. Never put test262 runner code in `crates/quench-runtime`; never modify `tests/test262/`.
 4. **Harness fidelity is absolute**: `quench-test262` must not override, rewrite, shim, short-circuit, or replace any behavior of the test262 harness. It may only load the exact declared harness sources, compose them as specified by test262, execute them through the host contract, and classify the resulting completion.
 5. **Runtime isolation is absolute**: `quench-runtime` is a pure JavaScript runtime and must know nothing about test262, its harness, metadata, fixtures, staging, or conformance policy. All such concerns belong exclusively to `quench-test262`.
@@ -27,15 +27,21 @@
 5. Semantic abstractions do not imply runtime allocations.
 6. Share semantic mechanisms; specialize physical execution.
 7. One declaration generates every mechanical consequence.
-8. Generated LOC is cheap; handwritten semantic LOC is expensive.
+8. Generate mechanics, handwrite observable algorithms, and budget generated
+   binary size as well as handwritten source.
 9. Facts have three states: `Proven`, `Guarded`, and `Unknown`.
 10. Never optimize through observable JavaScript behavior.
 11. Keep heap references compact.
 12. No subsystem gets its own universe unless semantics truly require it.
 13. Types are facts, not another runtime.
 14. Profiles are facts, not another optimizer.
-15. A JIT, if added, consumes the same residual Ops.
+15. Optional native execution consumes the same residual Ops, remains bounded
+    and disposable, and owns no alternative semantics.
 16. If something can disappear before runtime, it must justify why it exists.
+17. Complete slow semantics and cheap `Unknown` behavior precede guarded fast
+    paths.
+18. Generated LOC, binary text, static data, caches, and native code all count
+    toward the memory and complexity budget.
 
 ## Commands
 
