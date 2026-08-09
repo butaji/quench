@@ -158,3 +158,5 @@ large non-match corpus, so the compatibility objective remains open.
 - BoundSocket path construction now maps missing parent paths to `EACCES` and
   overlong paths to `EINVAL`; the extended fixture still has an unresolved
   assertion, with IPv6 and full filesystem/pipe adoption coverage pending.
+- BoundSocket now accepts IPv6 hosts and reports `IPv6` family metadata; the
+  extended upstream fixture remains open on a separate assertion.
