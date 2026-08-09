@@ -277,3 +277,7 @@ warnings; representative spawn/event stages remain green.
 Fetch response handling and request sending were split into helpers. The fetch
 polyfill now passes ESLint with zero warnings; stages 2230, 2231, 2232, and
 2234 pass.
+
+EventEmitter listener invocation, capture-rejection handling, and unhandled
+domain errors were split into methods. `support.js` now passes ESLint with
+zero warnings; representative events/diagnostics stages remain green.
