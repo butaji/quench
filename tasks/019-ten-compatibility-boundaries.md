@@ -1454,3 +1454,9 @@ the authoritative `test-stream-duplex-from.js` fixture now passes, while the
 focused gate remains 2366/2366. The broader `test-stream-pipeline.js`,
 `test-stream-promises.js`, and `test-stream-destroy.js` fixtures still expose
 independent validation or lifecycle gaps and remain explicitly open.
+
+Stage 2530 fixes `stream/promises.pipeline()` premature readable-close
+handling. A destroyed readable now rejects the pipeline with
+`ERR_STREAM_PREMATURE_CLOSE` even after its `readable` flag is cleared. The
+focused stage and authoritative `test-stream-promises.js` fixture pass; the
+post-change focused gate reports 2367/2367 passing.
