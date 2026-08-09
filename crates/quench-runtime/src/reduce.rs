@@ -69,7 +69,7 @@ pub(crate) fn reduce_statements_with_locals(
 ) -> Result<Vec<Op>, Vec<String>> {
     predeclare_functions(statements, &mut locals, &mut next_slot);
     let mut ops = Vec::new();
-    let mut next_register = 0;
+    let mut next_register = register_base(&locals);
     let mut last_value = None;
     for statement in statements {
         if let Some(value) = reduce_statement(
@@ -84,6 +84,14 @@ pub(crate) fn reduce_statements_with_locals(
         }
     }
     finish_program(ops, last_value)
+}
+
+pub(crate) fn register_base(locals: &HashMap<String, u16>) -> u16 {
+    locals
+        .values()
+        .copied()
+        .max()
+        .map_or(0, |slot| slot.saturating_add(1))
 }
 
 fn predeclare_functions(
