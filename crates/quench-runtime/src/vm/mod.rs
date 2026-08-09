@@ -194,8 +194,8 @@ fn run_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Value>, VmError>
         ForIn { .. } => run_for_in(registers, op)?,
         MakeFunction { .. } => crate::functions::write_op(registers, op),
         Call { .. } => run_call(registers, op)?,
-        Branch { .. } => run_branch(registers, op)?,
-        Try { .. } => run_try(registers, op)?,
+        Branch { .. } => return run_branch(registers, op),
+        Try { .. } => return run_try(registers, op),
         CallMethod { .. } | Construct { .. } => run_method_or_construct(registers, op)?,
         Loop { .. } | Switch { .. } | Conditional { .. } => run_loop_or_special(registers, op)?,
         Unary { dst, operator, src } => {
@@ -293,20 +293,12 @@ fn run_terminal(registers: &[Value], op: &Op) -> Result<Value, VmError> {
     execute_terminal(op, registers)
 }
 
-fn run_branch(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
-    match crate::branch::execute_or_continue(registers, op) {
-        Ok(Some(_)) => Err(VmError::MissingReturn),
-        Ok(None) => Ok(()),
-        Err(e) => Err(e),
-    }
+fn run_branch(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Value>, VmError> {
+    crate::branch::execute_or_continue(registers, op)
 }
 
-fn run_try(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
-    match crate::exceptions::execute(registers, op) {
-        Ok(Some(_)) => Err(VmError::MissingReturn),
-        Ok(None) => Ok(()),
-        Err(e) => Err(e),
-    }
+fn run_try(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Value>, VmError> {
+    crate::exceptions::execute(registers, op)
 }
 
 fn execute_terminal(op: &Op, registers: &[Value]) -> Result<Value, VmError> {
