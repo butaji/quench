@@ -1,4 +1,13 @@
 const __quenchOriginalRequireWithDomain = globalThis.require;
+const __quenchMarkDomainError = (error, domain, thrown) => {
+  Object.defineProperty(error, "domain", {
+    configurable: true,
+    enumerable: false,
+    value: domain,
+    writable: true
+  });
+  error.domainThrown = thrown;
+};
 class __quenchDomain {
   constructor() {
     this.members = [];
@@ -62,8 +71,7 @@ class __quenchDomain {
       return callback(...args);
     } catch (error) {
       if (!this.listeners("error").length) throw error;
-      error.domain = this;
-      error.domainThrown = true;
+      __quenchMarkDomainError(error, this, true);
       this.emit("error", error);
     } finally {
       this.exit();
@@ -90,8 +98,7 @@ class __quenchDomain {
         try {
           return callback(...args);
         } catch (error) {
-          error.domain = this;
-          error.domainThrown = true;
+          __quenchMarkDomainError(error, this, true);
           this.emit("error", error);
         }
       });
@@ -99,9 +106,8 @@ class __quenchDomain {
   intercept(callback) {
     return (error, ...args) => {
       if (error instanceof Error) {
-        error.domain = this;
+        __quenchMarkDomainError(error, this, false);
         error.domainBound = callback;
-        error.domainThrown = false;
         this.emit("error", error);
         return;
       }
