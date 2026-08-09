@@ -136,11 +136,12 @@ pub(crate) fn reduce_assignment(
             );
         }
     }
-    let (object, key) = assignment_target(&assignment.left)?;
+    let (object_expression, key) = assignment_target(&assignment.left)?;
     if assignment.operator != oxc::syntax::operator::AssignmentOperator::Assign {
         return None;
     }
-    let object = crate::reduce::reduce_expression(object, ops, facts, next_register, locals)?;
+    let object =
+        crate::reduce::reduce_expression(object_expression, ops, facts, next_register, locals)?;
     let value =
         crate::reduce::reduce_expression(&assignment.right, ops, facts, next_register, locals)?;
     ops.push(Op::SetProperty {
@@ -148,6 +149,7 @@ pub(crate) fn reduce_assignment(
         key,
         src: value,
     });
+    store_object_binding(object_expression, object, ops, locals);
     Some(value)
 }
 
@@ -188,7 +190,26 @@ fn reduce_dynamic_assignment(
         key,
         src: value,
     });
+    store_object_binding(&member.object, object, ops, locals);
     Some(value)
+}
+
+fn store_object_binding(
+    expression: &Expression<'_>,
+    object: u16,
+    ops: &mut Vec<Op>,
+    locals: &HashMap<String, u16>,
+) {
+    let Expression::Identifier(identifier) = expression else {
+        return;
+    };
+    let Some(slot) = locals.get(identifier.name.as_str()) else {
+        return;
+    };
+    ops.push(Op::StoreLocal {
+        slot: *slot,
+        src: object,
+    });
 }
 
 pub(crate) fn execute_get(
