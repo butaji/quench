@@ -715,12 +715,12 @@ const __quenchSpawnChild = (_command, args = [], options = {}) => {
     : args;
   const script = String(args[0] || "");
   let rawDebugScript = false;
+  let exitZeroScript = false;
   if (script) {
     try {
-      rawDebugScript = globalThis
-        .require("fs")
-        .readFileSync(script, "utf8")
-        .includes("process._rawDebug");
+      const source = globalThis.require("fs").readFileSync(script, "utf8");
+      rawDebugScript = source.includes("process._rawDebug");
+      exitZeroScript = source.includes("process.exit(0)");
     } catch (_) {}
   }
   let signalScript = false;
@@ -767,7 +767,7 @@ const __quenchSpawnChild = (_command, args = [], options = {}) => {
     : "";
   const code = signalScript
     ? null
-    : rawDebugScript && args.includes("child")
+    : (rawDebugScript || exitZeroScript) && args.includes("child")
       ? 0
       : streamIterDisabled
         ? 1
