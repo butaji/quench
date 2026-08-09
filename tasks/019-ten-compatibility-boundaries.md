@@ -1221,3 +1221,12 @@ authoritative. The focused callback/post-fire/cleared matrix and maintained
 timer/domain stages pass, together with complete authoritative
 `test-timers-refresh-in-callback.js`. The full focused gate remains clean at
 2334/2334 passing.
+
+Stage 2496 exposes the focused `internal/timers.setUnrefTimeout` surface used by
+upstream timer tests. It validates callbacks with `ERR_INVALID_ARG_TYPE`,
+returns the ordinary chainable Timeout handle after unrefing it, and forwards
+callback arguments. Host timers now also carry a mutable insertion order:
+refreshing a timer moves it behind same-expiry peers instead of retaining its
+original handle-ID position. The focused internal/unref/tie-order stage and the
+complete authoritative `test-timers-refresh.js` fixture pass. The full focused
+gate remains clean at 2335/2335 passing.
