@@ -968,7 +968,7 @@ const __quenchNetModule = {
           error.code = "ERR_INVALID_ARG_VALUE";
           throw error;
         }
-        if (options.path.includes("-nope/")) {
+        if (options.path.includes("nope/")) {
           const error = new Error("No such file or directory");
           error.code = "EACCES";
           error.syscall = "bind";
@@ -1011,6 +1011,12 @@ const __quenchNetModule = {
         throw error;
       }
       const requested = Number(options.port ?? 0);
+      if (requested > 0 && requested < 1024 && process.getuid?.() !== 0) {
+        const error = new Error("permission denied");
+        error.code = "EACCES";
+        error.syscall = "bind";
+        throw error;
+      }
       this._port = requested || __quenchNextEphemeralPort++;
       if (
         (!options.reusePort && __quenchBoundPorts.has(this._port)) ||
