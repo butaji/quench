@@ -2,7 +2,7 @@
 
 use std::rc::Rc;
 
-use crate::ops::Op;
+use crate::ops::{Builtin, Op};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
@@ -11,6 +11,7 @@ pub enum Value {
     String(String),
     Array(Rc<Vec<Value>>),
     Object(Rc<Vec<(String, Value)>>),
+    Builtin(Builtin),
     Function(Rc<FunctionValue>),
     Null,
     Undefined,
