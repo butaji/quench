@@ -897,7 +897,7 @@ macro_rules! run_host_context {
                 }
             }
         }
-        ctx.eval::<(), _>(b"try { if (typeof process?.emit === 'function') process.emit('exit', process.exitCode || 0); } catch (error) { globalThis.__quench_exit_error = error && error.stack ? `${error.name}: ${error.message}\\n${error.stack}` : String(error); throw error; }")
+        ctx.eval::<(), _>(b"try { Object.defineProperty(globalThis, '__quench_emitting_exit', { configurable: true, value: true }); if (typeof process?.emit === 'function') process.emit('exit', process.exitCode || 0); } catch (error) { globalThis.__quench_exit_error = error && error.stack ? `${error.name}: ${error.message}\\n${error.stack}` : String(error); throw error; }")
             .map_err(|error| {
                 let detail = ctx.globals().get::<_, String>("__quench_exit_error").unwrap_or_else(|_| format!("{error:?}"));
                 eprintln!("Process exit handler failure: {detail}");
