@@ -5,9 +5,6 @@ edition = "2021"
 description = "ECMA-262 test262 runner for a host JavaScript engine"
 license = "MIT"
 
-[dependencies]
-quench-runtime = { path = "../quench-runtime" }
-
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }
 tempfile = "3"
