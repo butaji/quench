@@ -114,3 +114,6 @@ large non-match corpus, so the compatibility objective remains open.
 - Commit `b4fde24d8` adds synchronous gzip, deflate, Brotli, and Zstd
   `zlib/iter` transforms and preserves Buffer identity from `bytesSync()`.
   The full upstream `test-stream-iter-transform-sync.js` fixture passes.
+- Commit `12e8e1c70` moves the standalone PBKDF2 validation helpers into
+  `crypto-head.js`; `crypto.js` is now 495 lines and the PBKDF2/HMAC fixtures
+  remain passing.
