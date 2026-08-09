@@ -344,3 +344,7 @@ The compression/zlib bootstrap was split while preserving initialization order:
 the helper definitions load first, the zlib module surface second, and common
 fixture helpers last. The resulting files are 410, 294, and 281 lines; zlib
 stages 242 through 250 and the quench-node Rust tests pass.
+
+The filesystem links/stat/open-stream surface was split at the completed
+`fstatSync` boundary. `links.js` is now 490 lines and `links-tail.js` is 240
+lines; representative filesystem stages 27, 73, 430, 431, 868, and 1257 pass.
