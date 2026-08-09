@@ -81,7 +81,7 @@ pub(crate) mod value {
         to_string(value).trim().parse().unwrap_or(f64::NAN)
     }
 
-    pub(crate) fn is_truthy(value: &Value) -> bool {
+    pub fn is_truthy(value: &Value) -> bool {
         match value {
             Value::Boolean(value) => *value,
             Value::Number(value) => *value != 0.0 && !value.is_nan(),
