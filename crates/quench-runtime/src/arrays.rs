@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use oxc::ast::ast::ArrayExpression;
+use oxc::ast::ast::{ArrayExpression, ArrayExpressionElement};
 
 use crate::{facts::ProgramDb, ops::Op};
 
@@ -13,13 +13,18 @@ pub(crate) fn reduce(
 ) -> Option<u16> {
     let mut elements = Vec::new();
     for element in &array.elements {
-        elements.push(crate::reduce::reduce_expression(
-            element.as_expression()?,
-            ops,
-            facts,
-            next_register,
-            locals,
-        )?);
+        let register = match element {
+            ArrayExpressionElement::Elision(_) => crate::reduce::emit_undefined(ops, next_register),
+            ArrayExpressionElement::SpreadElement(_) => return None,
+            _ => crate::reduce::reduce_expression(
+                element.as_expression()?,
+                ops,
+                facts,
+                next_register,
+                locals,
+            )?,
+        };
+        elements.push(register);
     }
     let register = *next_register;
     *next_register = next_register.saturating_add(1);
