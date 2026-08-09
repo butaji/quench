@@ -31,6 +31,11 @@ pub enum Op {
         object: u16,
         key: String,
     },
+    SetProperty {
+        object: u16,
+        key: String,
+        src: u16,
+    },
     MakeFunction {
         dst: u16,
         body: Vec<Op>,
