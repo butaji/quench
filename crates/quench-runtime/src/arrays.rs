@@ -46,6 +46,7 @@ pub(crate) fn property(values: &[Value], key: &str) -> Value {
         "some" => crate::ops::Builtin::ArraySome,
         "every" => crate::ops::Builtin::ArrayEvery,
         "find" => crate::ops::Builtin::ArrayFind,
+        "includes" => crate::ops::Builtin::ArrayIncludes,
         _ => return index(values, key),
     };
     Value::Builtin(method)
@@ -128,4 +129,23 @@ pub(crate) fn find(
         }
     }
     Ok(Value::Undefined)
+}
+
+pub(crate) fn includes(receiver: Option<&Value>, arguments: &[Value]) -> Value {
+    let Some(Value::Array(values)) = receiver else {
+        return Value::Boolean(false);
+    };
+    let Some(search) = arguments.first() else {
+        return Value::Boolean(false);
+    };
+    Value::Boolean(values.iter().any(|value| same_value_zero(value, search)))
+}
+
+fn same_value_zero(left: &Value, right: &Value) -> bool {
+    match (left, right) {
+        (Value::Number(left), Value::Number(right)) => {
+            (left.is_nan() && right.is_nan()) || left == right
+        }
+        _ => left == right,
+    }
 }
