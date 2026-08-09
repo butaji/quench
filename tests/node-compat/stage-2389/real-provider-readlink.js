@@ -6,8 +6,12 @@ const vfs = require("node:vfs");
 const root = path.join(process.cwd(), "stage-2389-readlink");
 fs.mkdirSync(root, { recursive: true });
 fs.writeFileSync(path.join(root, "target.txt"), "x");
-fs.symlinkSync("target.txt", path.join(root, "relative-link"));
-fs.symlinkSync(path.join(root, "target.txt"), path.join(root, "absolute-link"));
+const relativeLink = path.join(root, "relative-link");
+const absoluteLink = path.join(root, "absolute-link");
+fs.rmSync(relativeLink, { force: true });
+fs.rmSync(absoluteLink, { force: true });
+fs.symlinkSync("target.txt", relativeLink);
+fs.symlinkSync(path.join(root, "target.txt"), absoluteLink);
 const provider = vfs.create(new vfs.RealFSProvider(root));
 
 assert.strictEqual(provider.readlinkSync("/relative-link"), "target.txt");
