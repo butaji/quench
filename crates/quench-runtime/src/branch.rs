@@ -1,26 +1,6 @@
 use crate::{execute::VmError, ops::Op, value::Value};
 use std::collections::HashMap;
 
-macro_rules! execute_branch {
-    ($registers:expr, $op:expr) => {
-        match $crate::branch::execute_or_continue($registers, $op)? {
-            Some(value) => return Ok(value),
-            None => {}
-        }
-    };
-}
-pub(crate) use execute_branch;
-
-macro_rules! execute_try {
-    ($registers:expr, $op:expr) => {
-        match $crate::exceptions::execute($registers, $op)? {
-            Some(value) => return Ok(value),
-            None => {}
-        }
-    };
-}
-pub(crate) use execute_try;
-
 pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<Value, VmError> {
     let Op::Branch {
         condition,
@@ -47,18 +27,6 @@ pub(crate) fn execute_or_continue(
         Ok(value) => Ok(Some(value)),
         Err(VmError::MissingReturn) => Ok(None),
         Err(error) => Err(error),
-    }
-}
-
-pub(crate) fn execute_special(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
-    match op {
-        Op::CallMethod { .. } => crate::methods::execute(registers, op),
-        Op::Construct { .. } => crate::construct::execute(registers, op),
-        Op::Branch { .. } => execute(registers, op).map(|_| ()),
-        Op::Loop { .. } => crate::loops::execute(registers, op),
-        Op::Switch { .. } => crate::switch::execute(registers, op),
-        Op::Conditional { .. } => crate::conditional::execute(registers, op),
-        _ => Err(VmError::MissingReturn),
     }
 }
 

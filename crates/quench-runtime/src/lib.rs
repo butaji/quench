@@ -49,3 +49,4 @@ mod templates;
 mod transparent;
 mod unary;
 pub mod value;
+pub mod vm;
