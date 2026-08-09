@@ -148,6 +148,7 @@ pub(crate) fn execute_builtin_with_receiver(
         crate::ops::Builtin::ArrayMap => crate::builtins::array_map(receiver, arguments),
         crate::ops::Builtin::ArrayFilter => crate::builtins::array_filter(receiver, arguments),
         crate::ops::Builtin::ArraySome => crate::arrays::some(receiver, arguments),
+        crate::ops::Builtin::ArrayEvery => crate::arrays::every(receiver, arguments),
         crate::ops::Builtin::ArrayForEach => crate::builtins::array_for_each(receiver, arguments),
         crate::ops::Builtin::FunctionCall
         | crate::ops::Builtin::FunctionBind
