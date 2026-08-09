@@ -247,7 +247,7 @@ pub(crate) fn function_builtin(
         crate::ops::Builtin::ArrayJoin => Ok(crate::builtins::array_join(receiver, arguments)),
         crate::ops::Builtin::ArrayPush => Ok(crate::builtins::array_push(receiver, arguments)),
         crate::ops::Builtin::ObjectPropertyIsEnumerable => Ok(
-            crate::builtins::object_property_is_enumerable(receiver, arguments),
+            crate::builtins::object::object_property_is_enumerable(receiver, arguments),
         ),
         _ => Err(crate::execute::VmError::NotCallable),
     }
