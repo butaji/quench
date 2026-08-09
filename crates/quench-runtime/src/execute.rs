@@ -34,6 +34,7 @@ pub(crate) fn execute_in_place(ops: &[Op], registers: &mut Vec<Value>) -> Result
                 crate::properties::execute_set_property(registers, op)?
             }
             Op::DeleteProperty { .. } => crate::properties::execute_delete_property(registers, op)?,
+            Op::ForIn { .. } => crate::loops::execute_for_in(registers, op)?,
             Op::MakeFunction { .. } => crate::functions::write_op(registers, op),
             Op::Call { dst, callee, args } => execute_call(registers, *dst, *callee, args)?,
             Op::Branch { .. } => return crate::branch::execute(registers, op),
@@ -147,7 +148,6 @@ fn execute_call(
     write_value(registers, dst, value);
     Ok(())
 }
-
 fn execute_eval(arguments: &[Value]) -> Result<Value, VmError> {
     let Some(Value::String(source)) = arguments.first() else {
         return Ok(Value::Undefined);

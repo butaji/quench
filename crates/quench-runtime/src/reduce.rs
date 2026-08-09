@@ -2,15 +2,13 @@
 use crate::{
     arrays,
     blocks::reduce as reduce_block,
-    control_flow::{self, reduce_try_statement},
+    control_flow,
     facts::ProgramDb,
     functions, identifiers,
     literal::{reduce_literal, reduce_operator},
-    loops,
     ops::{Constant, Op},
     properties, special,
     statements::reduce_declaration as reduce_declaration_statement,
-    switch::reduce as reduce_switch,
     transparent,
 };
 use oxc::{
@@ -129,21 +127,18 @@ pub(crate) fn reduce_statement(
         Statement::ThrowStatement(statement) => {
             control_flow::reduce_throw(statement, ops, facts, next_register, locals)
         }
-        Statement::IfStatement(statement) => {
-            reduce_if_statement(statement, ops, facts, next_register, next_slot, locals)
-        }
-        Statement::ForStatement(statement) => {
-            loops::reduce_for(statement, ops, facts, next_register, next_slot, locals).map(|_| None)
-        }
-        Statement::TryStatement(statement) => reduce_try_statement(statement, ops, facts, locals),
-        Statement::SwitchStatement(statement) => {
-            reduce_switch(statement, ops, facts, next_register, locals).map(|_| None)
-        }
         Statement::ExpressionStatement(expression) => {
             reduce_expression_statement(&expression.expression, ops, facts, next_register, locals)
                 .map(Some)
         }
-        _ => Err(vec!["Unsupported executable statement".to_string()]),
+        statement => crate::statement_control::reduce(
+            statement,
+            ops,
+            facts,
+            next_register,
+            next_slot,
+            locals,
+        ),
     }
 }
 pub(crate) fn reduce_function_declaration(
@@ -206,7 +201,7 @@ fn function_locals(
     parameters.extend(locals.iter().map(|(name, slot)| (name.clone(), *slot)));
     Ok((parameters, parameter_count, captures))
 }
-fn reduce_if_statement(
+pub(crate) fn reduce_if_statement(
     statement: &oxc::ast::ast::IfStatement<'_>,
     ops: &mut Vec<Op>,
     facts: &mut ProgramDb,
