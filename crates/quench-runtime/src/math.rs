@@ -13,9 +13,24 @@ pub(crate) fn execute(
         Builtin::MathTrunc => numbers.first().copied().unwrap_or(f64::NAN).trunc(),
         Builtin::MathMax => numbers.into_iter().fold(f64::NEG_INFINITY, f64::max),
         Builtin::MathMin => numbers.into_iter().fold(f64::INFINITY, f64::min),
+        Builtin::MathSign => numbers.first().copied().unwrap_or(f64::NAN).signum(),
+        Builtin::MathSqrt => numbers.first().copied().unwrap_or(f64::NAN).sqrt(),
+        Builtin::MathCbrt => numbers.first().copied().unwrap_or(f64::NAN).cbrt(),
+        Builtin::MathHypot => numbers
+            .iter()
+            .map(|value| value * value)
+            .sum::<f64>()
+            .sqrt(),
+        Builtin::MathImul => imul(numbers.first(), numbers.get(1)),
         _ => return Err(crate::execute::VmError::NotCallable),
     };
     Ok(Value::Number(value))
+}
+
+fn imul(left: Option<&f64>, right: Option<&f64>) -> f64 {
+    let left = left.copied().unwrap_or(f64::NAN) as i32;
+    let right = right.copied().unwrap_or(f64::NAN) as i32;
+    left.wrapping_mul(right) as f64
 }
 
 fn number(value: &Value) -> f64 {
