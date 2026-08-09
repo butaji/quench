@@ -19,6 +19,16 @@ pub(crate) fn execute(registers: &[Value], op: &Op) -> Result<(), VmError> {
     crate::execute::execute_with_registers(selected, registers.to_vec()).map(|_| ())
 }
 
+pub(crate) fn execute_special(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
+    match op {
+        Op::CallMethod { .. } => crate::methods::execute(registers, op),
+        Op::Construct { .. } => crate::construct::execute(registers, op),
+        Op::Branch { .. } => execute(registers, op),
+        Op::Try { .. } => crate::exceptions::execute(registers, op),
+        _ => Err(VmError::MissingReturn),
+    }
+}
+
 pub(crate) fn reduce(
     statement: &oxc::ast::ast::Statement<'_>,
     facts: &mut crate::facts::ProgramDb,
