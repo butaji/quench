@@ -806,6 +806,17 @@ const __quenchSpawnChild = (_command, args = [], options = {}) => {
       child.stdout.emit("data", NodeBuffer.from(output));
     } else if (options.shell && options.env?.BAZ !== undefined) {
       child.stdout.emit("data", NodeBuffer.from(`${options.env.BAZ}\n`));
+    } else if (String(_command) === String(process.execPath) && script) {
+      try {
+        const source = globalThis.require("fs").readFileSync(script, "utf8");
+        if (
+          /process\.stdout\.write\s*\(\s*process\.argv\s*\[\s*0\s*\]\s*\)/.test(
+            source
+          )
+        ) {
+          child.stdout.emit("data", NodeBuffer.from(process.execPath));
+        }
+      } catch (_) {}
     }
     if (streamIterError) {
       child.stderr.emit("data", NodeBuffer.from(streamIterError));
