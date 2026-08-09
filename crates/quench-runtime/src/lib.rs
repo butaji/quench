@@ -14,6 +14,7 @@
 mod arrays;
 mod blocks;
 mod conditional;
+mod control_flow;
 pub mod execute;
 pub mod facts;
 mod functions;
