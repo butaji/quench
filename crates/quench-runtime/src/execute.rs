@@ -302,8 +302,8 @@ fn evaluate_binary(
         | crate::ops::BinaryOp::Exponentiate => arithmetic_value(left, right, operator),
         crate::ops::BinaryOp::Equal => Value::Boolean(loose_equal(left, right)),
         crate::ops::BinaryOp::NotEqual => Value::Boolean(!loose_equal(left, right)),
-        crate::ops::BinaryOp::StrictEqual => Value::Boolean(left == right),
-        crate::ops::BinaryOp::StrictNotEqual => Value::Boolean(left != right),
+        crate::ops::BinaryOp::StrictEqual => Value::Boolean(strict_equal(left, right)),
+        crate::ops::BinaryOp::StrictNotEqual => Value::Boolean(!strict_equal(left, right)),
         crate::ops::BinaryOp::LessThan => compare_values(left, right, |a, b| a < b)?,
         crate::ops::BinaryOp::LessEqual => compare_values(left, right, |a, b| a <= b)?,
         crate::ops::BinaryOp::GreaterThan => compare_values(left, right, |a, b| a > b)?,
@@ -331,7 +331,7 @@ fn arithmetic_value(left: &Value, right: &Value, operator: crate::ops::BinaryOp)
 
 fn loose_equal(left: &Value, right: &Value) -> bool {
     if std::mem::discriminant(left) == std::mem::discriminant(right) {
-        return left == right;
+        return strict_equal(left, right);
     }
     if matches!(
         (left, right),
@@ -349,6 +349,20 @@ fn loose_equal(left: &Value, right: &Value) -> bool {
         return to_number(Some(left)) == to_number(Some(right));
     }
     false
+}
+
+fn strict_equal(left: &Value, right: &Value) -> bool {
+    match (left, right) {
+        (Value::Array(left), Value::Array(right)) => std::rc::Rc::ptr_eq(left, right),
+        (Value::Object(left), Value::Object(right)) => std::rc::Rc::ptr_eq(left, right),
+        (Value::Function(left), Value::Function(right)) => std::rc::Rc::ptr_eq(left, right),
+        (Value::Number(left), Value::Number(right)) => left == right,
+        (Value::Boolean(left), Value::Boolean(right)) => left == right,
+        (Value::String(left), Value::String(right)) => left == right,
+        (Value::Builtin(left), Value::Builtin(right)) => left == right,
+        (Value::Null, Value::Null) | (Value::Undefined, Value::Undefined) => true,
+        _ => false,
+    }
 }
 
 fn bitwise_numbers(
