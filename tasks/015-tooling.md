@@ -261,3 +261,7 @@ and 1005 remain green.
 
 The REPL startup factory now passes ESLint with zero warnings after extracting
 its finalization step; stages 533, 1153, and 1949 all pass.
+
+Module `createRequire` filename classification and validation are now split;
+`module.js` passes ESLint with zero warnings, and its focused module stages
+remain green.
