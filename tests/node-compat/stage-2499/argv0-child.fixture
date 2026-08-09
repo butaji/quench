@@ -1,0 +1,1 @@
+if (process.argv[2] === "child") process.stdout.write(process.argv[0]);
