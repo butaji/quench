@@ -31,7 +31,7 @@ const __quenchStreamPromises = {
       destination.once?.("error", fail);
       for (const stream of streams) {
         stream.once?.("close", () => {
-          if (stream.readable && !stream.readableEnded) {
+          if (!stream.readableEnded) {
             const error = new Error("Premature close");
             error.code = "ERR_STREAM_PREMATURE_CLOSE";
             fail(error);
