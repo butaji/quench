@@ -959,7 +959,7 @@ const __quenchNetModule = {
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
       }
-      if (!isIPv4(host) && host !== "0.0.0.0") {
+      if (!isIPv4(host) && !isIPv6(host) && host !== "0.0.0.0") {
         const error = new TypeError("host must be an IPv4 address");
         error.code = "ERR_INVALID_ARG_VALUE";
         throw error;
@@ -985,6 +985,7 @@ const __quenchNetModule = {
       }
       __quenchBoundPorts.add(this._port);
       this._host = host;
+      this._family = isIPv6(host) ? "IPv6" : "IPv4";
       this._closed = false;
       this._adopted = false;
     }
@@ -1003,7 +1004,7 @@ const __quenchNetModule = {
     address() {
       this._assertOpen();
       if (this._path !== undefined) return this._path;
-      return { address: this._host, family: "IPv4", port: this._port };
+      return { address: this._host, family: this._family, port: this._port };
     }
     fd() {
       this._assertOpen();
