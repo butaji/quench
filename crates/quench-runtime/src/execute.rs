@@ -189,8 +189,18 @@ pub(crate) fn execute_builtin_with_receiver(
         crate::ops::Builtin::ParseInt => Ok(Value::Number(parse_int(arguments))),
         crate::ops::Builtin::String => Ok(Value::String(to_string(arguments.first()))),
         crate::ops::Builtin::Unescape => Ok(crate::builtins::unescape(arguments.first())),
+        crate::ops::Builtin::MathPow => Ok(math_pow(arguments)),
         _ => Ok(Value::Undefined),
     }
+}
+fn math_pow(arguments: &[Value]) -> Value {
+    let base = arguments
+        .first()
+        .map_or(f64::NAN, |value| to_number(Some(value)));
+    let exponent = arguments
+        .get(1)
+        .map_or(f64::NAN, |value| to_number(Some(value)));
+    Value::Number(base.powf(exponent))
 }
 fn is_finite(value: Option<&Value>) -> bool {
     matches!(value, Some(Value::Number(number)) if number.is_finite())
