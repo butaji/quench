@@ -1300,3 +1300,10 @@ flags, without leaking Quench's runner controls into `process.argv`; `_rawDebug`
 formats `%s` arguments and writes to stderr. The focused argv/raw-debug stages
 and complete authoritative `test-process-raw-debug.js` fixture pass, and the
 full focused gate reports 2345/2345 passing.
+
+Stage 2509 aligns self-child scripts that explicitly call `process.exit(0)`.
+The simulated child now reports successful completion rather than its generic
+failure fallback, allowing the parent close callback to observe `(0, null)`.
+The focused exit-zero stage and authoritative
+`test-process-exit-after-fetch-throw.js` fixture pass; the full focused gate
+reports 2346/2346 passing.
