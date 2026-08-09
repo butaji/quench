@@ -59,6 +59,7 @@ const BOOTSTRAP_PARTS: &[&str] = &[
     include_str!("../polyfills/bootstrap-parts/read-file.js"),
     include_str!("../polyfills/bootstrap-parts/internal-fs-binding.js"),
     include_str!("../polyfills/bootstrap-parts/streams.js"),
+    include_str!("../polyfills/bootstrap-parts/streams-tail.js"),
     include_str!("../polyfills/bootstrap-parts/writes.js"),
     include_str!("../polyfills/bootstrap-parts/performance.js"),
     include_str!("../polyfills/bootstrap-parts/formatting-tail.js"),
