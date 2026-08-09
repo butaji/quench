@@ -1,4 +1,5 @@
 //! VM op execution helpers (arithmetic, unary, binary, call dispatch).
+use crate::bigint;
 use crate::intl::tolocale::value::{
     is_truthy, loose_equal, strict_equal, to_int32, to_number, to_string, type_of,
 };
@@ -15,8 +16,14 @@ pub(crate) fn execute_unary(
     use crate::ops::UnaryOp;
     let value = read_register(registers, src)?;
     let result = match operator {
-        UnaryOp::Plus => numeric_unary(value, |number| number)?,
-        UnaryOp::Minus => numeric_unary(value, |number| -number)?,
+        UnaryOp::Plus => numeric_unary(&value, |n| n)?,
+        UnaryOp::Minus => {
+            if let Value::BigInt(ref s) = value {
+                Value::BigInt(bigint::negate(s))
+            } else {
+                numeric_unary(&value, |n| -n)?
+            }
+        }
         UnaryOp::Not => Value::Boolean(!is_truthy(&value)),
         UnaryOp::Void => Value::Undefined,
         UnaryOp::Typeof => Value::String(type_of(&value).to_string()),
@@ -27,8 +34,8 @@ pub(crate) fn execute_unary(
     Ok(())
 }
 
-fn numeric_unary(value: Value, transform: fn(f64) -> f64) -> Result<Value, VmError> {
-    Ok(Value::Number(transform(to_number(Some(&value)))))
+fn numeric_unary(value: &Value, transform: fn(f64) -> f64) -> Result<Value, VmError> {
+    Ok(Value::Number(transform(to_number(Some(value)))))
 }
 
 pub(crate) fn execute_binary(
@@ -50,6 +57,9 @@ fn evaluate_binary(
     operator: crate::ops::BinaryOp,
 ) -> Result<Value, VmError> {
     use crate::ops::BinaryOp;
+    if matches!(left, Value::BigInt(_)) || matches!(right, Value::BigInt(_)) {
+        return bigint_binary(left, right, operator);
+    }
     Ok(match operator {
         BinaryOp::Add
         | BinaryOp::Subtract
@@ -73,6 +83,31 @@ fn evaluate_binary(
             (Value::Object(_), Value::Function(_))
         )),
     })
+}
+
+fn bigint_binary(
+    left: &Value,
+    right: &Value,
+    operator: crate::ops::BinaryOp,
+) -> Result<Value, VmError> {
+    use crate::ops::BinaryOp;
+    let left_s = bigint_str(left);
+    let right_s = bigint_str(right);
+    Ok(match operator {
+        BinaryOp::Add => Value::BigInt(bigint::add(&left_s, &right_s)),
+        BinaryOp::Subtract => Value::BigInt(bigint::subtract(&left_s, &right_s)),
+        BinaryOp::Multiply => Value::BigInt(bigint::multiply(&left_s, &right_s)),
+        BinaryOp::Divide => Value::BigInt(bigint::divide(&left_s, &right_s)),
+        BinaryOp::Remainder => Value::BigInt(bigint::remainder(&left_s, &right_s)),
+        _ => Value::Undefined,
+    })
+}
+
+fn bigint_str(value: &Value) -> String {
+    match value {
+        Value::BigInt(s) => s.clone(),
+        _ => to_number(Some(value)).trunc().to_string(),
+    }
 }
 
 fn arithmetic_value(left: &Value, right: &Value, operator: crate::ops::BinaryOp) -> Value {

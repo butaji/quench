@@ -87,6 +87,7 @@ fn is_truthy(value: &Constant) -> bool {
         Constant::Boolean(value) => *value,
         Constant::Number(value) => *value != 0.0 && !value.is_nan(),
         Constant::String(value) => !value.is_empty(),
+        Constant::BigInt(_) => true,
         Constant::Null | Constant::Undefined => false,
     }
 }

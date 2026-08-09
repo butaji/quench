@@ -1,19 +1,10 @@
 use crate::execute::{run_vm, VmError};
 use crate::value::Value;
 
-pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
-    let target = arguments.first().ok_or(VmError::NotCallable)?;
-    let values = match arguments.get(1) {
-        Some(Value::Array(values)) => values.as_ref().clone(),
-        _ => Vec::new(),
-    };
-    crate::construct::construct_value(target, &values)
-}
-
-pub(crate) fn builtin(builtin: crate::ops::Builtin, arguments: &[Value]) -> Result<Value, VmError> {
-    if builtin == crate::ops::Builtin::ReflectConstruct {
-        return construct(arguments);
-    }
+pub(crate) fn builtin(
+    _builtin: crate::ops::Builtin,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
     let Some(Value::String(source)) = arguments.first() else {
         return Ok(Value::Undefined);
     };

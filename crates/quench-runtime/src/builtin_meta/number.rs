@@ -16,10 +16,12 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
 
 pub const fn fn_len(b: Builtin) -> Option<f64> {
     match b {
-        Builtin::NumberToString | Builtin::NumberValueOf
-        | Builtin::NumberToLocaleString => Some(0.0),
-        Builtin::NumberToFixed | Builtin::NumberToPrecision
-        | Builtin::NumberToExponential => Some(1.0),
+        Builtin::NumberToString | Builtin::NumberValueOf | Builtin::NumberToLocaleString => {
+            Some(0.0)
+        }
+        Builtin::NumberToFixed | Builtin::NumberToPrecision | Builtin::NumberToExponential => {
+            Some(1.0)
+        }
         _ => None,
     }
 }
