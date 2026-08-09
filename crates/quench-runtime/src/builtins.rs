@@ -314,6 +314,31 @@ pub(crate) fn array_for_each(
     Ok(Value::Undefined)
 }
 
+pub(crate) fn array_filter(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let Some(Value::Array(values)) = receiver else {
+        return Ok(Value::Array(Rc::new(Vec::new())));
+    };
+    let Some(callback) = arguments.first() else {
+        return Ok(Value::Array(values.clone()));
+    };
+    let mut filtered = Vec::new();
+    for (index, value) in values.iter().enumerate() {
+        let args = [
+            value.clone(),
+            Value::Number(index as f64),
+            receiver.cloned().unwrap_or(Value::Undefined),
+        ];
+        let result = crate::functions::execute_target(callback, &Value::Undefined, &args)?;
+        if crate::execute::is_truthy(&result) {
+            filtered.push(value.clone());
+        }
+    }
+    Ok(Value::Array(Rc::new(filtered)))
+}
+
 pub(crate) fn array_join(receiver: Option<&Value>, arguments: &[Value]) -> Value {
     let Some(Value::Array(values)) = receiver else {
         return Value::String(String::new());
