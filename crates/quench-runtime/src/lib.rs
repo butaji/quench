@@ -25,6 +25,7 @@ mod globals;
 mod identifiers;
 mod literal;
 mod logical;
+mod loops;
 mod methods;
 mod objects;
 pub mod ops;
