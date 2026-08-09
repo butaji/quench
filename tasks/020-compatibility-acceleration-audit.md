@@ -97,3 +97,9 @@ large non-match corpus, so the compatibility objective remains open.
   issue.
 - The fix was formatted, pushed, and validated with the focused stage 2554;
   application gates remain green.
+
+- Commit `7723557fc` aligns `stream/iter` text consumers for Latin-1,
+  invalid UTF-8, and BOM handling. The upstream text-consumer fixture passes.
+- Commit `0d4cc5810` normalizes broadcast iterator writes to byte chunks and
+  applies drop-oldest/drop-newest policies in synchronous writes. The basic
+  and backpressure broadcast fixtures now pass.
