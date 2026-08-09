@@ -6,6 +6,7 @@ const isIPv4Part = (part) => {
   return part.length <= 3;
 };
 const __quenchNetServers = new Set();
+let __quenchNextEphemeralPort = 40000;
 const __quenchNativeSockets = new Set();
 const isIPv4 = (input) => {
   if (input == null) return false;
@@ -557,6 +558,9 @@ const __quenchNetModule = {
       return this.destroy();
     }
     connect(_options, callback) {
+      if (typeof _options !== "object" || _options === null) {
+        _options = { port: _options };
+      }
       globalThis.__quenchValidateConnectionOptions(_options);
       if (!this._handle) this._handle = { setKeepAlive: () => {} };
       if (_options.keepAlive !== undefined) {
@@ -589,8 +593,11 @@ const __quenchNetModule = {
       });
       if (!__quenchNativeTransportRequested(_options)) {
         queueMicrotask(() => {
+          const requestedPort = Number(_options.port || 0);
           const server = [...__quenchNetServers].find(
-            (candidate) => candidate.listening
+            (candidate) =>
+              candidate.listening &&
+              (!requestedPort || candidate.address().port === requestedPort)
           );
           const httpServer = [
             ...(globalThis.__quenchHttpServers?.values() || [])
@@ -862,6 +869,7 @@ const __quenchNetModule = {
     server._closeRequested = false;
     server._nativeId = 0;
     server._nativeTransport = false;
+    server._port = 0;
     server._handle = { close: () => {} };
     server.keepAlive = options?.keepAlive;
     server.keepAliveInitialDelay = options?.keepAliveInitialDelay;
@@ -873,7 +881,7 @@ const __quenchNetModule = {
         family: "IPv4",
         port: server._nativeTransport
           ? __quench_tcp_bound_port(server._nativeId)
-          : 0
+          : server._port
       };
     };
     server.listen = (_port, host, callback) => {
@@ -895,6 +903,8 @@ const __quenchNetModule = {
           Number(listenOptions.port || 0)
         );
         server._nativeTransport = true;
+      } else {
+        server._port = Number(listenOptions.port) || __quenchNextEphemeralPort++;
       }
       server.listening = true;
       __quenchNetServers.add(server);
