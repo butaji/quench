@@ -577,9 +577,12 @@ const __quenchNetModule = {
         this._nativeEnded = false;
         this._readableEnded = false;
         this._localEnded = false;
+        this.__finishEmitted = false;
         this._peer = null;
         this._pendingData = [];
         this._pendingWrites = [];
+        this.bytesRead = 0;
+        this.bytesWritten = 0;
       }
       globalThis.__quenchValidateConnectionOptions(_options);
       if (
@@ -715,8 +718,8 @@ const __quenchNetModule = {
           });
         }
         this._bufferSize += length;
-        this.bytesWritten += length;
       }
+      if (length) this.bytesWritten += length;
       if (this.destroyed && typeof callback === "function") {
         const error = new Error(
           "Cannot call write after a stream was destroyed"
@@ -1049,7 +1052,7 @@ const __quenchNetModule = {
     server._handle = { close: () => {} };
     server.keepAlive = options?.keepAlive;
     server.keepAliveInitialDelay = options?.keepAliveInitialDelay;
-    server._allowHalfOpen = options?.allowHalfOpen !== false;
+    server._allowHalfOpen = options?.allowHalfOpen === true;
     server.address = () => {
       if (!server.listening) return null;
       if (server._path !== undefined) return server._path;
