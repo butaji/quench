@@ -13,6 +13,7 @@ pub enum Value {
     Object(Rc<Vec<(String, Value)>>),
     Builtin(Builtin),
     Function(Rc<FunctionValue>),
+    BoundFunction(Rc<BoundFunctionValue>),
     Null,
     Undefined,
 }
@@ -23,4 +24,11 @@ pub struct FunctionValue {
     pub params: u16,
     pub captures: Rc<Vec<Value>>,
     pub properties: Rc<RefCell<Vec<(String, Value)>>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BoundFunctionValue {
+    pub target: Value,
+    pub receiver: Value,
+    pub arguments: Vec<Value>,
 }

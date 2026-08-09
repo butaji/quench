@@ -114,3 +114,67 @@ pub(crate) fn execute(
     );
     crate::execute::execute_with_registers(&function.body, registers)
 }
+
+pub(crate) fn execute_bound(
+    bound: &crate::value::BoundFunctionValue,
+    arguments: &[crate::value::Value],
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    let mut combined = bound.arguments.clone();
+    combined.extend_from_slice(arguments);
+    match &bound.target {
+        crate::value::Value::Builtin(builtin) => crate::execute::execute_builtin_with_receiver(
+            *builtin,
+            &combined,
+            Some(&bound.receiver),
+        ),
+        crate::value::Value::Function(function) => execute(function, &combined),
+        crate::value::Value::BoundFunction(next) => execute_bound(next, &combined),
+        _ => Err(crate::execute::VmError::NotCallable),
+    }
+}
+
+pub(crate) fn execute_target(
+    target: &crate::value::Value,
+    receiver: &crate::value::Value,
+    arguments: &[crate::value::Value],
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    match target {
+        crate::value::Value::Builtin(builtin) => {
+            crate::execute::execute_builtin_with_receiver(*builtin, arguments, Some(receiver))
+        }
+        crate::value::Value::Function(function) => execute(function, arguments),
+        crate::value::Value::BoundFunction(bound) => execute_bound(bound, arguments),
+        _ => Err(crate::execute::VmError::NotCallable),
+    }
+}
+
+pub(crate) fn function_builtin(
+    builtin: crate::ops::Builtin,
+    receiver: Option<&crate::value::Value>,
+    arguments: &[crate::value::Value],
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    match builtin {
+        crate::ops::Builtin::FunctionCall => {
+            let receiver = receiver.ok_or(crate::execute::VmError::NotCallable)?;
+            let this = arguments
+                .first()
+                .cloned()
+                .unwrap_or(crate::value::Value::Undefined);
+            execute_target(receiver, &this, &arguments[1..])
+        }
+        crate::ops::Builtin::FunctionBind => {
+            let target = arguments
+                .first()
+                .ok_or(crate::execute::VmError::NotCallable)?;
+            Ok(crate::value::Value::BoundFunction(std::rc::Rc::new(
+                crate::value::BoundFunctionValue {
+                    target: receiver.cloned().unwrap_or(crate::value::Value::Undefined),
+                    receiver: target.clone(),
+                    arguments: arguments[1..].to_vec(),
+                },
+            )))
+        }
+        crate::ops::Builtin::ArrayJoin => Ok(crate::builtins::array_join(receiver, arguments)),
+        _ => Err(crate::execute::VmError::NotCallable),
+    }
+}
