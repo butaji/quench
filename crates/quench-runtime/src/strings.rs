@@ -20,6 +20,10 @@ pub(crate) fn property_method(key: &str) -> Option<crate::ops::Builtin> {
         "split" => Some(crate::ops::Builtin::StringSplit),
         "padStart" => Some(crate::ops::Builtin::StringPadStart),
         "padEnd" => Some(crate::ops::Builtin::StringPadEnd),
+        "trimStart" => Some(crate::ops::Builtin::StringTrimStart),
+        "trimEnd" => Some(crate::ops::Builtin::StringTrimEnd),
+        "codePointAt" => Some(crate::ops::Builtin::StringCodePointAt),
+        "toString" => Some(crate::ops::Builtin::StringToString),
         _ => None,
     }
 }
@@ -47,6 +51,10 @@ pub(crate) fn execute_builtin(
         crate::ops::Builtin::StringSplit => split(receiver, arguments),
         crate::ops::Builtin::StringPadStart => pad_start(receiver, arguments),
         crate::ops::Builtin::StringPadEnd => pad_end(receiver, arguments),
+        crate::ops::Builtin::StringTrimStart => trim_start(receiver),
+        crate::ops::Builtin::StringTrimEnd => trim_end(receiver),
+        crate::ops::Builtin::StringCodePointAt => code_point_at(receiver, arguments),
+        crate::ops::Builtin::StringToString => to_string_value(receiver),
         _ => return None,
     };
     Some(Ok(result))
@@ -247,6 +255,35 @@ fn pad(receiver: Option<&Value>, arguments: &[Value], start: bool) -> Value {
     } else {
         Value::String(format!("{value}{padding}"))
     }
+}
+
+pub(crate) fn trim_start(receiver: Option<&Value>) -> Value {
+    let Some(Value::String(value)) = receiver else {
+        return Value::String(String::new());
+    };
+    Value::String(value.trim_start().to_string())
+}
+
+pub(crate) fn trim_end(receiver: Option<&Value>) -> Value {
+    let Some(Value::String(value)) = receiver else {
+        return Value::String(String::new());
+    };
+    Value::String(value.trim_end().to_string())
+}
+
+pub(crate) fn code_point_at(receiver: Option<&Value>, arguments: &[Value]) -> Value {
+    let Some(Value::String(value)) = receiver else {
+        return Value::Undefined;
+    };
+    let index = arguments.first().and_then(number).unwrap_or(0.0).max(0.0) as usize;
+    value
+        .chars()
+        .nth(index)
+        .map_or(Value::Undefined, |value| Value::Number(value as u32 as f64))
+}
+
+pub(crate) fn to_string_value(receiver: Option<&Value>) -> Value {
+    Value::String(receiver.map_or_else(String::new, to_string))
 }
 
 fn argument(arguments: &[Value]) -> String {
