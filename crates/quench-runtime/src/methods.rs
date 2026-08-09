@@ -20,10 +20,13 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError
         .iter()
         .map(|index| read_register(registers, *index))
         .collect::<Result<Vec<_>, _>>()?;
-    let Value::Builtin(builtin) = callee else {
-        return Err(VmError::NotCallable);
+    let value = match callee {
+        Value::Builtin(builtin) => {
+            execute_builtin_with_receiver(builtin, &arguments, Some(&receiver))?
+        }
+        Value::Function(function) => crate::execute::execute_function(&function, &arguments)?,
+        _ => return Err(VmError::NotCallable),
     };
-    let value = execute_builtin_with_receiver(builtin, &arguments, Some(&receiver))?;
     write_value(registers, *dst, value);
     Ok(())
 }
