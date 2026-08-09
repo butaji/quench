@@ -465,6 +465,7 @@ const __quenchNetModule = {
       return this.destroyed ? null : undefined;
     }
     destroy() {
+      if (this.destroyed) return this;
       const peer = this._peer;
       this.destroyed = true;
       this.readyState = "closed";
