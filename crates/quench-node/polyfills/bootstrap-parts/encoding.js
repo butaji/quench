@@ -278,7 +278,15 @@ const __nodeBufferValidateEncoding = (value, encoding) => {
   return encoding;
 };
 const __nodeBufferFromPrimitive = (value, encoding) => {
-  if (value instanceof String) return NodeBuffer.from(String(value), encoding);
+  if (
+    value instanceof String ||
+    (typeof value === "object" &&
+      Object.prototype.toString.call(value) === "[object String]")
+  ) {
+    let text = "";
+    for (let index = 0; index < value.length; index++) text += value[index];
+    return NodeBuffer.from(text, encoding);
+  }
   if (
     value &&
     typeof value === "object" &&
