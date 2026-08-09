@@ -27,7 +27,10 @@ pub fn execute_with_registers(ops: &[Op], mut registers: Vec<Value>) -> Result<V
 
 pub fn execute_in_place(ops: &[Op], registers: &mut Vec<Value>) -> Result<Value, VmError> {
     for op in ops {
-        run_op(registers, op)?;
+        match run_op(registers, op)? {
+            None => {}
+            Some(value) => return Ok(value),
+        }
     }
     Err(VmError::MissingReturn)
 }
@@ -57,6 +60,14 @@ pub fn execute_builtin_with_receiver(
         Builtin::Number => Ok(Value::Number(to_number(arguments.first()))),
         Builtin::NumberToString => Ok(Value::String(to_string(arguments.first()))),
         Builtin::NumberValueOf => Ok(Value::Number(to_number(arguments.first()))),
+        Builtin::ObjectPrototypeToString => Ok(crate::builtins::prototype_to_string(receiver)),
+        Builtin::ObjectPrototypeValueOf => Ok(crate::builtins::prototype_value_of(receiver)),
+        Builtin::FunctionPrototypeToString => {
+            Ok(crate::builtins::function_prototype_to_string(receiver))
+        }
+        Builtin::FunctionPrototypeValueOf => {
+            Ok(crate::builtins::function_prototype_value_of(receiver))
+        }
         Builtin::NumberToFixed | Builtin::NumberToPrecision | Builtin::NumberToExponential => {
             crate::number_fmt::number_format(arguments.first(), arguments.get(1), builtin)
         }
@@ -96,7 +107,7 @@ pub fn get_property(value: &Value, key: &str) -> Value {
             .rev()
             .find(|(name, _)| name == key)
             .map_or_else(
-                || crate::builtins::object_method(value, key),
+                || crate::builtins::object::object_method(value, key),
                 |(_, value)| value.clone(),
             ),
         String(value) => string_property(value, key),
@@ -116,7 +127,7 @@ pub fn get_property(value: &Value, key: &str) -> Value {
     }
 }
 
-fn run_op(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
+fn run_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Value>, VmError> {
     use Op::*;
     match op {
         Const { dst, value } => write_value(registers, *dst, value.into()),
@@ -139,9 +150,9 @@ fn run_op(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
             vm_arithmetic::execute_unary(registers, *dst, *operator, *src)?
         }
         Binary { .. } => run_binary(registers, op)?,
-        Return { .. } | Throw { .. } => run_terminal(registers, op)?,
+        Return { .. } | Throw { .. } => return run_terminal(registers, op).map(Some),
     }
-    Ok(())
+    Ok(None)
 }
 
 fn run_make_array(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
@@ -226,9 +237,8 @@ fn run_loop_or_special(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmErro
     Ok(())
 }
 
-fn run_terminal(registers: &[Value], op: &Op) -> Result<(), VmError> {
-    let _ = execute_terminal(op, registers)?;
-    Err(VmError::MissingReturn)
+fn run_terminal(registers: &[Value], op: &Op) -> Result<Value, VmError> {
+    execute_terminal(op, registers)
 }
 
 fn run_branch(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
