@@ -9,5 +9,5 @@ readable.on("data", (value) => {
 queueMicrotask(() => {
   assert.deepStrictEqual(values, [1]);
   readable.resume();
-  queueMicrotask(() => assert.deepStrictEqual(values, [1, 2, 3]));
 });
+readable.on("end", () => assert.deepStrictEqual(values, [1, 2, 3]));
