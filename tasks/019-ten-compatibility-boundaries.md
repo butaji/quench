@@ -1036,3 +1036,15 @@ composed transform → composed sink contract produces ordered output and
 finishes. Authoritative `test-stream-compose.js` advances from `Callback 29` to
 `Callback 33`, its first endpoint object-mode/toArray case. The maintained
 compose cluster, Rust tests, and application stages remain green.
+
+Stage 2480 completes the compose fixture's endpoint data contract. The outer
+wrapper copies writable object mode from the first stream and readable object
+mode from the last, byte-mode Transform output normalizes strings to Buffer,
+and Transform async iteration drains buffered output while waiting for later
+data/EOF when necessary. Readable helpers are installed on Duplex, Transform,
+and PassThrough prototypes as well as Readable, allowing composed `toArray()`
+to observe both object- and byte-mode output. The focused two-direction mode
+matrix and complete authoritative `test-stream-compose.js` fixture pass. The
+maintained compose/Web/Transform/readable-helper cluster, all adjacent upstream
+helper fixtures, both Rust tests, and representative application stages remain
+green.
