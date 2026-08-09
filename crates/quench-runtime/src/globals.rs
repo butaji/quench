@@ -51,6 +51,7 @@ fn builtin(name: &str) -> Option<crate::ops::Builtin> {
         "isFinite" => Some(crate::ops::Builtin::IsFinite),
         "isNaN" => Some(crate::ops::Builtin::IsNaN),
         "Number" => Some(crate::ops::Builtin::Number),
+        "Object" => Some(crate::ops::Builtin::Object),
         "parseFloat" => Some(crate::ops::Builtin::ParseFloat),
         "parseInt" => Some(crate::ops::Builtin::ParseInt),
         "String" => Some(crate::ops::Builtin::String),
