@@ -144,7 +144,8 @@ stages 2037, 2348, 2482, and 2498 pass after the extraction.
 
 The final module-surface declarations were split after the complete
 `__quenchResolvePath` declaration. `module-surface-final-01.js` is now 487
-lines and its 533-line tail executes before `global-surface.js`. Rust tests and
+lines and its ordered 102-line and 431-line tails execute before
+`global-surface.js`. Rust tests and
 stages 411, 529, 1164, and 1640 pass after the extraction.
 
 The Buffer encoding bootstrap was split at an existing ordered tail: the main
