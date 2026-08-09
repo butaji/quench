@@ -519,7 +519,13 @@ const __quenchDgramClose = (socket, callback) => {
   return socket;
 };
 const __quenchDgramAddress = (socket, type) => {
-  if (!socket._bound) throw new Error("getsockname EBADF");
+  if (!socket._bound) {
+    throw Object.assign(new Error("getsockname EBADF"), {
+      code: "EBADF",
+      errno: -9,
+      syscall: "getsockname"
+    });
+  }
   return (
     socket._address || {
       address: "0.0.0.0",

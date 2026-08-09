@@ -1105,3 +1105,13 @@ both observe the connected remote address exactly once. The focused ordering
 stage, recovered stage 1181, the adjacent connect/state/send cluster, and the
 complete authoritative `test-dgram-connect.js` fixture pass. The post-fix audit
 reports 2303/2323 passing with 20 unclassified failures.
+
+Stage 2485 records Node's pending-bind address timing. `address()` before the
+asynchronous numeric-IP bind completes throws the full `getsockname EBADF`
+error shape (`code`, `errno`, and `syscall`); the bound address becomes visible
+inside the bind callback. Stage 554 is corrected to inspect and use the socket
+from that callback instead of asserting a synchronous bind that local Node
+does not provide. Both focused stages and authoritative
+`test-dgram-address.js` pass. `test-dgram-bind-default-address.js` still ends in
+an opaque QuickJS exception and is not claimed. The post-fix audit reports
+2305/2324 passing with 19 unclassified failures.
