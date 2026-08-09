@@ -163,3 +163,6 @@ large non-match corpus, so the compatibility objective remains open.
 - In-memory socket delivery now increments `bytesRead`; `test-net-bytes-stats.js`
   advances from 0 to 6 bytes, but its client close/reconnect cycle still stops
   after the first connection and remains open.
+- Reconnecting a previously destroyed in-memory socket now resets terminal,
+  peer, and buffered state. The bytes-stats fixture still stops after its first
+  cycle, so the close/reconnect trigger remains open.

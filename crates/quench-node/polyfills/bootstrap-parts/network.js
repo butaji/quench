@@ -569,6 +569,18 @@ const __quenchNetModule = {
       if (typeof _options !== "object" || _options === null) {
         _options = { port: _options };
       }
+      if (this.destroyed) {
+        this.destroyed = false;
+        this.readable = true;
+        this.writable = true;
+        this.readyState = "open";
+        this._nativeEnded = false;
+        this._readableEnded = false;
+        this._localEnded = false;
+        this._peer = null;
+        this._pendingData = [];
+        this._pendingWrites = [];
+      }
       globalThis.__quenchValidateConnectionOptions(_options);
       if (
         this._handle?.constructor?.name === "BoundSocket" &&
