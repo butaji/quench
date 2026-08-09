@@ -1365,3 +1365,8 @@ Stage 2520 records the maintained Web Streams pipeline smoke contract,
 including a TransformStream between readable and writable endpoints. The
 focused pipeline stage passes; the larger `test-webstreams-pipeline.js` fixture
 still has a separate later lifecycle mismatch and is not claimed complete.
+
+Stage 2521 completes the Web Streams writable `finished()` lifecycle. Writable
+streams now expose a closed promise that resolves on `close()` and rejects on
+`abort()`, allowing callback and promise observers to receive terminal state.
+The focused stage and authoritative `test-webstreams-finished.js` fixture pass.

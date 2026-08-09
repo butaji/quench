@@ -41,6 +41,9 @@ const __quenchStreamPromises = {
     });
   },
   finished: (stream, options = {}) => {
+    if (stream?._closedPromise) {
+      return stream._closedPromise;
+    }
     if (typeof stream?.getReader === "function") {
       return new Promise((resolve, reject) => {
         queueMicrotask(() =>

@@ -208,6 +208,10 @@ class __quenchWritableStream {
     this.locked = false;
     this[__quenchWebStreamsState] = { state: "writable" };
     this._finishWaiters = [];
+    this._closedPromise = new Promise((resolve, reject) => {
+      this._resolveClosed = resolve;
+      this._rejectClosed = reject;
+    });
   }
   getWriter() {
     if (this.locked) {
@@ -223,6 +227,7 @@ class __quenchWritableStream {
       close: async () => {
         await sink.close?.();
         stream._closed = true;
+        stream._resolveClosed();
         stream[__quenchWebStreamsState].state = "closed";
         while (stream._finishWaiters.length) stream._finishWaiters.shift()();
       },
@@ -230,6 +235,7 @@ class __quenchWritableStream {
         await sink.abort?.(error);
         stream[__quenchWebStreamsState].state = "errored";
         stream[__quenchWebStreamsState].storedError = error;
+        stream._rejectClosed(error);
       },
       releaseLock() {
         stream.locked = false;
