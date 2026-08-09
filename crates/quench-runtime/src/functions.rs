@@ -84,7 +84,7 @@ pub(crate) fn make(
     crate::value::Value::Function(std::rc::Rc::new(crate::value::FunctionValue {
         body: body.to_vec(),
         params,
-        captures: std::rc::Rc::new(captures),
+        captures: std::rc::Rc::new(std::cell::RefCell::new(captures)),
         properties: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
     }))
 }
@@ -126,11 +126,11 @@ pub(crate) fn execute(
     let mut parameters = arguments.to_vec();
     parameters.resize(usize::from(function.params), crate::value::Value::Undefined);
     parameters.truncate(usize::from(function.params));
-    let mut registers = function.captures.as_ref().clone();
+    let mut registers = function.captures.borrow().clone();
     registers.extend(parameters);
     crate::execute::write_value(
         &mut registers,
-        function.captures.len() as u16 + function.params,
+        function.captures.borrow().len() as u16 + function.params,
         crate::value::Value::Array(std::rc::Rc::new(original_arguments)),
     );
     registers.resize(

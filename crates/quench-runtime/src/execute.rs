@@ -18,12 +18,11 @@ pub(crate) fn execute_with_registers(
 ) -> Result<Value, VmError> {
     execute_in_place(ops, &mut registers)
 }
-
 pub(crate) fn execute_in_place(ops: &[Op], registers: &mut Vec<Value>) -> Result<Value, VmError> {
     for op in ops {
         match op {
             Op::Const { dst, value } => write_register(registers, *dst, value),
-            Op::StoreLocal { slot, src } => copy_register(registers, *slot, *src)?,
+            Op::StoreLocal { slot, src } => crate::locals::store(registers, *slot, *src)?,
             Op::LoadLocal { dst, slot } => copy_register(registers, *dst, *slot)?,
             Op::MakeArray { dst, elements } => execute_array(registers, *dst, elements)?,
             Op::MakeObject { dst, properties } => execute_object(registers, *dst, properties)?,
@@ -56,6 +55,7 @@ pub(crate) fn execute_in_place(ops: &[Op], registers: &mut Vec<Value>) -> Result
     }
     Err(VmError::MissingReturn)
 }
+
 fn execute_terminal(op: &Op, registers: &[Value]) -> Result<Value, VmError> {
     match op {
         Op::Return { src } => read_register(registers, *src),
@@ -269,7 +269,7 @@ fn to_string(value: Option<&Value>) -> String {
         }
     }
 }
-fn copy_register(registers: &mut Vec<Value>, dst: u16, src: u16) -> Result<(), VmError> {
+pub(crate) fn copy_register(registers: &mut Vec<Value>, dst: u16, src: u16) -> Result<(), VmError> {
     let value = read_register(registers, src)?;
     write_value(registers, dst, value);
     Ok(())
