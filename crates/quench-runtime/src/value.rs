@@ -22,7 +22,7 @@ pub enum Value {
 pub struct FunctionValue {
     pub body: Vec<Op>,
     pub params: u16,
-    pub captures: Rc<Vec<Value>>,
+    pub captures: Rc<RefCell<Vec<Value>>>,
     pub properties: Rc<RefCell<Vec<(String, Value)>>>,
 }
 
