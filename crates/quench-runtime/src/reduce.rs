@@ -15,7 +15,7 @@ use crate::{
     facts::ProgramDb,
     functions,
     literal::{reduce_literal, reduce_operator},
-    logical,
+    logical, objects,
     ops::{Constant, Op},
     properties,
 };
@@ -317,6 +317,9 @@ fn reduce_special(
         }
         Expression::FunctionExpression(function) => {
             functions::reduce_expression(function, ops, facts, next_register)
+        }
+        Expression::ObjectExpression(object) => {
+            objects::reduce(object, ops, facts, next_register, locals)
         }
         Expression::StaticMemberExpression(_) | Expression::ComputedMemberExpression(_) => {
             properties::reduce(expression, ops, facts, next_register, locals)

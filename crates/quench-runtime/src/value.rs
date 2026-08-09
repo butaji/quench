@@ -10,6 +10,7 @@ pub enum Value {
     Boolean(bool),
     String(String),
     Array(Rc<Vec<Value>>),
+    Object(Rc<Vec<(String, Value)>>),
     Function(Rc<FunctionValue>),
     Null,
     Undefined,
