@@ -215,6 +215,20 @@ pub(crate) fn is_array(value: Option<&Value>) -> Value {
     Value::Boolean(matches!(value, Some(Value::Array(_))))
 }
 
+pub(crate) fn delete_property(target: Value, key: &str) -> Value {
+    match target {
+        Value::Object(properties) => Value::Object(Rc::new(
+            properties
+                .iter()
+                .filter(|(name, _)| name != key)
+                .cloned()
+                .collect(),
+        )),
+        Value::Array(values) if key != "length" => Value::Array(values),
+        value => value,
+    }
+}
+
 fn value_to_number(value: &Value) -> f64 {
     match value {
         Value::Number(value) => *value,
