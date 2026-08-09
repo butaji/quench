@@ -1,12 +1,16 @@
 //! OXC-to-residual reduction entry point.
 use crate::{
-    arrays, blocks, control_flow,
+    arrays,
+    blocks::reduce as reduce_block,
+    control_flow,
     facts::ProgramDb,
     functions, identifiers,
     literal::{reduce_literal, reduce_operator},
     loops,
     ops::{Constant, Op},
-    properties, special, transparent,
+    properties, special,
+    statements::reduce_declaration as reduce_declaration_statement,
+    transparent,
 };
 use oxc::{
     allocator::Allocator,
@@ -92,15 +96,10 @@ pub(crate) fn reduce_statement(
     match statement {
         Statement::EmptyStatement(_) => Ok(None),
         Statement::BlockStatement(block) => {
-            blocks::reduce(block, ops, facts, next_register, next_slot, locals)
+            reduce_block(block, ops, facts, next_register, next_slot, locals)
         }
-        Statement::VariableDeclaration(declaration) => {
-            reduce_declaration(declaration, ops, facts, next_register, next_slot, locals)?;
-            Ok(None)
-        }
-        Statement::FunctionDeclaration(function) => {
-            reduce_function_declaration(function, ops, facts, next_register, next_slot, locals)
-                .map(|_| None)
+        Statement::VariableDeclaration(_) | Statement::FunctionDeclaration(_) => {
+            reduce_declaration_statement(statement, ops, facts, next_register, next_slot, locals)
         }
         Statement::ReturnStatement(return_statement) => {
             reduce_return_statement(return_statement, ops, facts, next_register, locals)
@@ -113,6 +112,9 @@ pub(crate) fn reduce_statement(
         }
         Statement::ForStatement(statement) => {
             loops::reduce_for(statement, ops, facts, next_register, next_slot, locals).map(|_| None)
+        }
+        Statement::TryStatement(statement) => {
+            control_flow::reduce_try_statement(statement, ops, facts, locals)
         }
         Statement::ExpressionStatement(expression) => {
             reduce_expression_statement(&expression.expression, ops, facts, next_register, locals)
@@ -135,7 +137,7 @@ fn reduce_return_statement(
         .or_else(|| Some(emit_undefined(ops, next_register)));
     Ok(register)
 }
-fn reduce_function_declaration(
+pub(crate) fn reduce_function_declaration(
     function: &oxc::ast::ast::Function<'_>,
     ops: &mut Vec<Op>,
     facts: &mut ProgramDb,
@@ -264,7 +266,7 @@ fn reduce_expression_statement(
     };
     Ok(register)
 }
-fn reduce_declaration(
+pub(crate) fn reduce_declaration(
     declaration: &oxc::ast::ast::VariableDeclaration<'_>,
     ops: &mut Vec<Op>,
     facts: &mut ProgramDb,

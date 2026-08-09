@@ -35,9 +35,9 @@ pub(crate) fn execute_with_registers(
             Op::Call { dst, callee, args } => {
                 execute_call(&mut registers, *dst, *callee, args)?;
             }
-            Op::CallMethod { .. } => crate::methods::execute(&mut registers, op)?,
-            Op::Construct { .. } => crate::construct::execute(&mut registers, op)?,
-            Op::Branch { .. } => crate::branch::execute(&registers, op)?,
+            Op::CallMethod { .. } | Op::Construct { .. } | Op::Branch { .. } | Op::Try { .. } => {
+                crate::branch::execute_special(&mut registers, op)?;
+            }
             Op::Unary { dst, operator, src } => {
                 execute_unary(&mut registers, *dst, *operator, *src)?
             }
