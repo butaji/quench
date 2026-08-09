@@ -1164,11 +1164,13 @@ const __nodeDuplexPair = (readable, writable) => {
     };
     duplex._final = (callback) => writable.end(undefined, undefined, callback);
     writable.once("error", (error) => {
-      if (duplex.__pairWriteError === error) {
-        duplex.__pairWriteError = null;
-        return;
-      }
-      duplex.destroy(error);
+      queueMicrotask(() => {
+        if (duplex.__pairWriteError === error) {
+          duplex.__pairWriteError = null;
+          return;
+        }
+        duplex.destroy(error);
+      });
     });
   }
   return duplex;
