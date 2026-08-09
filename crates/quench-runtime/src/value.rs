@@ -21,5 +21,6 @@ pub enum Value {
 pub struct FunctionValue {
     pub body: Vec<Op>,
     pub params: u16,
+    pub captures: Rc<Vec<Value>>,
     pub properties: Rc<Vec<(String, Value)>>,
 }

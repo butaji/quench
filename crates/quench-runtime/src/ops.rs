@@ -40,6 +40,7 @@ pub enum Op {
         dst: u16,
         body: Vec<Op>,
         params: u16,
+        captures: u16,
     },
     Call {
         dst: u16,

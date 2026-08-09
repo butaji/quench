@@ -146,10 +146,12 @@ fn execute_call(
         .collect::<Result<Vec<_>, _>>()?;
     let value = match read_register(registers, callee)? {
         Value::Function(body) => {
-            let mut arguments = arguments;
-            arguments.resize(usize::from(body.params), Value::Undefined);
-            arguments.truncate(usize::from(body.params));
-            execute_with_registers(&body.body, arguments)?
+            let mut parameters = arguments;
+            parameters.resize(usize::from(body.params), Value::Undefined);
+            parameters.truncate(usize::from(body.params));
+            let mut captured = body.captures.as_ref().clone();
+            captured.extend(parameters);
+            execute_with_registers(&body.body, captured)?
         }
         Value::Builtin(builtin) => execute_builtin_with_receiver(builtin, &arguments, None)?,
         _ => return Err(VmError::NotCallable),
