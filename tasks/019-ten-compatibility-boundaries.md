@@ -1439,3 +1439,11 @@ A broader stream audit confirms `test-stream-compose.js` passes, while
 `test-stream-duplex-from.js` still fails with one unmet `common.mustCall`
 callback (callback 11). This is retained as the next Duplex.from lifecycle
 investigation target; no completion claim is made for the full stream suite.
+
+Stage 2529 adds the generator-function bridge used by `Duplex.from()` and
+`pipeline()`: async/sync generator functions receive a queued writable source
+and expose generated values on the readable side. The focused stage passes and
+the full focused gate reports 2366/2366 passing. The upstream Duplex fixture
+now advances past the missing generator callback but still exposes a duplicate
+writable-error callback (callback 22), with related pipeline/promise lifecycle
+cases retained for follow-up.

@@ -1156,19 +1156,65 @@ const __nodeDuplexPair = (readable, writable) => {
       const finish = (error) => {
         if (settled) return;
         settled = true;
+        if (error) duplex.__pairWriteError = error;
         callback(error);
       };
       const accepted = writable.write(chunk, encoding, finish);
       if (accepted !== false && !settled) finish();
     };
     duplex._final = (callback) => writable.end(undefined, undefined, callback);
-    writable.once("error", (error) => duplex.destroy(error));
+    writable.once("error", (error) => {
+      if (duplex.__pairWriteError === error) {
+        duplex.__pairWriteError = null;
+        return;
+      }
+      duplex.destroy(error);
+    });
   }
   return duplex;
 };
 const __nodeDuplexFrom = (body) => {
   if (body instanceof NodeDuplex) return body;
   if (typeof body === "function") {
+    if (
+      body.constructor?.name === "AsyncGeneratorFunction" ||
+      body.constructor?.name === "GeneratorFunction"
+    ) {
+      const queue = [];
+      const waiters = [];
+      let ended = false;
+      const source = {
+        [Symbol.asyncIterator]() {
+          return this;
+        },
+        next() {
+          if (queue.length) return Promise.resolve(queue.shift());
+          if (ended) return Promise.resolve({ done: true });
+          return new Promise((resolve) => waiters.push(resolve));
+        }
+      };
+      const duplex = new NodeDuplex({ readable: true, writable: true });
+      duplex._write = (chunk, _encoding, callback) => {
+        const resolve = waiters.shift();
+        if (resolve) resolve({ value: chunk, done: false });
+        else queue.push({ value: chunk, done: false });
+        callback();
+      };
+      duplex._final = (callback) => {
+        ended = true;
+        for (const resolve of waiters.splice(0)) resolve({ done: true });
+        callback();
+      };
+      Promise.resolve().then(async () => {
+        try {
+          for await (const value of body(source)) duplex.push(value);
+          duplex.push(null);
+        } catch (error) {
+          duplex.destroy(error);
+        }
+      });
+      return duplex;
+    }
     const result = body();
     if (result === undefined) {
       const error = new TypeError(
@@ -1671,6 +1717,7 @@ Object.defineProperty(NodeReadableCompat, "from", {
 const __nodePipeline = (...args) => {
   const callback = args.pop();
   const streams = args.map((stream, index) => {
+    if (typeof stream === "function") return NodeDuplex.from(stream);
     if (
       index === 0 &&
       !stream?.pipe &&
