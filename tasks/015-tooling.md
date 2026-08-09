@@ -361,3 +361,8 @@ The filesystem promise write/read and positioned-handle surface was split at
 the completed pull-iterator boundary. `writes.js` is now 453 lines and
 `writes-tail.js` is 309 lines; filesystem write/read stages 1260 through 1264
 pass with the quench-node Rust tests.
+
+The global/process bootstrap was split before timer registration, preserving
+the initialization order for globals, process, and timer state. `globals.js`
+is now 454 lines and `globals-tail.js` is 417 lines; global stages 0 through 9
+pass with the quench-node Rust tests.
