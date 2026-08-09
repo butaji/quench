@@ -7,12 +7,12 @@ use oxc::{
     allocator::Allocator,
     ast::ast::{AssignmentTarget, BindingPatternKind, Expression, Statement},
     parser::Parser,
-    semantic::SemanticBuilder,
     span::SourceType,
     syntax::operator::{AssignmentOperator, UnaryOperator, UpdateOperator},
 };
 
 use crate::{
+    conditional,
     facts::ProgramDb,
     literal::{reduce_literal, reduce_operator},
     ops::{Constant, Op},
@@ -48,7 +48,7 @@ pub fn reduce_source_with_type(
             .map(|error| format!("SyntaxError: {error}"))
             .collect());
     }
-    let (scope_count, symbol_count) = analyze_semantics(&parsed.program)?;
+    let (scope_count, symbol_count) = crate::semantic::analyze(&parsed.program)?;
     let mut facts = ProgramDb {
         scope_count,
         symbol_count,
@@ -286,24 +286,15 @@ fn emit_undefined(ops: &mut Vec<Op>, next_register: &mut u16) -> u16 {
     register
 }
 
-fn reduce_expression(
+pub(crate) fn reduce_expression(
     expression: &Expression<'_>,
     ops: &mut Vec<Op>,
     facts: &mut ProgramDb,
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
-    if let Expression::UnaryExpression(unary) = expression {
-        return reduce_unary(unary, ops, facts, next_register, locals);
-    }
-    if let Expression::CallExpression(call) = expression {
-        return reduce_call(call, ops, facts, next_register, locals);
-    }
-    if let Expression::UpdateExpression(update) = expression {
-        return reduce_update(update, ops, next_register, locals);
-    }
-    if let Expression::AssignmentExpression(assignment) = expression {
-        return reduce_assignment(assignment, ops, facts, next_register, locals);
+    if let Some(value) = reduce_special(expression, ops, facts, next_register, locals) {
+        return Some(value);
     }
     if let Some(register) = reduce_atom(expression, ops, facts, next_register, locals) {
         return Some(register);
@@ -323,6 +314,29 @@ fn reduce_expression(
         rhs,
     });
     Some(dst)
+}
+
+fn reduce_special(
+    expression: &Expression<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<u16> {
+    match expression {
+        Expression::ConditionalExpression(value) => {
+            conditional::reduce_expression(value, ops, facts, next_register, locals)
+        }
+        Expression::UnaryExpression(value) => {
+            reduce_unary(value, ops, facts, next_register, locals)
+        }
+        Expression::CallExpression(value) => reduce_call(value, ops, facts, next_register, locals),
+        Expression::UpdateExpression(value) => reduce_update(value, ops, next_register, locals),
+        Expression::AssignmentExpression(value) => {
+            reduce_assignment(value, ops, facts, next_register, locals)
+        }
+        _ => None,
+    }
 }
 
 fn reduce_unary(
@@ -475,19 +489,4 @@ fn reduce_atom(
         return Some(register);
     }
     None
-}
-
-fn analyze_semantics(program: &oxc::ast::ast::Program<'_>) -> Result<(usize, usize), Vec<String>> {
-    let semantic = SemanticBuilder::new().build(program);
-    if !semantic.errors.is_empty() {
-        return Err(semantic
-            .errors
-            .iter()
-            .map(|error| format!("SyntaxError: {error}"))
-            .collect());
-    }
-    Ok((
-        semantic.semantic.scopes().len(),
-        semantic.semantic.symbols().len(),
-    ))
 }
