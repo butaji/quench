@@ -853,6 +853,8 @@ if (globalThis.__quench_host_timer_scheduler) {
       const previousResource = globalThis.__nodeCurrentAsyncResource;
       globalThis.__nodeCurrentAsyncResource = entry.resource;
       try {
+        globalThis.__quench_work_generation =
+          (globalThis.__quench_work_generation || 0) + 1;
         if (entry.domain) {
           entry.domain.run(() =>
             entry.callback.apply(entry.handle, entry.args)

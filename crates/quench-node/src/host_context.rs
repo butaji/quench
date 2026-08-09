@@ -873,6 +873,7 @@ macro_rules! run_host_context {
                     }
                     continue;
                 }
+                let work_before = ctx.eval::<i64, _>(b"globalThis.__quench_work_generation || 0")?;
                 ctx.eval::<(), _>(b"try { if (typeof process?.emit === 'function') process.emit('beforeExit', process.exitCode || 0); } catch (error) { globalThis.__quench_exit_error = error && error.stack ? `${error.name}: ${error.message}\\n${error.stack}` : String(error); throw error; }")
                     .map_err(|error| {
                         let detail = ctx.globals().get::<_, String>("__quench_exit_error").unwrap_or_else(|_| format!("{error:?}"));
@@ -890,9 +891,18 @@ macro_rules! run_host_context {
                     ran_job = true;
                     ctx.eval::<(), _>(b"if (typeof globalThis.__quench_timer_poll === 'function') globalThis.__quench_timer_poll();")?;
                 }
+                if ran_job {
+                    let work_after = ctx.eval::<i64, _>(b"globalThis.__quench_work_generation || 0")?;
+                    if work_after > work_before { continue; }
+                    break;
+                }
                 if !ran_job {
                     let wait_ms = ctx.eval::<i64, _>(b"typeof globalThis.__quench_timer_next_delay === 'function' ? globalThis.__quench_timer_next_delay() : -1")?;
-                    if wait_ms < 0 { break; }
+                    if wait_ms < 0 {
+                        let work_after = ctx.eval::<i64, _>(b"globalThis.__quench_work_generation || 0")?;
+                        if work_after > work_before { continue; }
+                        break;
+                    }
                     std::thread::sleep(std::time::Duration::from_millis(wait_ms.min(60_000) as u64));
                 }
             }
