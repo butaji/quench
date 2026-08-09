@@ -11,7 +11,7 @@ use md5::Md5;
 use rand::RngCore;
 use rquickjs::{function::Func, Context, Runtime};
 use sha1::Sha1;
-use sha2::{Digest, Sha224, Sha256, Sha512};
+use sha2::{Digest, Sha224, Sha256, Sha384, Sha512};
 use sha3::{digest::ExtendableOutput, digest::Update, Shake128, Shake256};
 use walkdir::WalkDir;
 
@@ -38,6 +38,7 @@ const BOOTSTRAP_PARTS: &[&str] = &[
     include_str!("../polyfills/bootstrap-parts/support.js"),
     include_str!("../polyfills/bootstrap-parts/events.js"),
     include_str!("../polyfills/bootstrap-parts/filesystem-validation.js"),
+    include_str!("../polyfills/bootstrap-parts/filesystem-validation-tail.js"),
     include_str!("../polyfills/bootstrap-parts/file-descriptors.js"),
     include_str!("../polyfills/bootstrap-parts/filesystem-access-validation.js"),
     include_str!("../polyfills/bootstrap-parts/io.js"),
@@ -90,6 +91,8 @@ const BOOTSTRAP_PARTS: &[&str] = &[
     include_str!("../polyfills/bootstrap-parts/types.js"),
     include_str!("../polyfills/bootstrap-parts/stream-promises.js"),
     include_str!("../polyfills/bootstrap-parts/web-streams.js"),
+    include_str!("../polyfills/bootstrap-parts/web-streams-require.js"),
+    include_str!("../polyfills/bootstrap-parts/web-streams-blob.js"),
     include_str!("../polyfills/bootstrap-parts/consumers.js"),
     include_str!("../polyfills/bootstrap-parts/punycode.js"),
     include_str!("../polyfills/bootstrap-parts/module.js"),
@@ -174,14 +177,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // itself, so experimental feature switches must not be mistaken for it;
     // their compatibility behavior is selected by the JS polyfills.
     raw_args.retain(|arg| {
-        !arg.starts_with("--") ||
-            matches!(
+        !arg.starts_with("--")
+            || matches!(
                 arg.as_str(),
-                "--help"
-                    | "--stage"
-                    | "--test-dir"
-                    | "--reuse-dir"
-                    | "--eval"
+                "--help" | "--stage" | "--test-dir" | "--reuse-dir" | "--eval"
             )
     });
     let mut args = raw_args.into_iter();
@@ -210,9 +209,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("-e") | Some("--eval") => run_source(&args.next().unwrap_or_default()),
         Some(path) => {
             let source = fs::read_to_string(path)?;
-            run_source_with_runtime_at_path(&source, &Runtime::new()?, Some(PathBuf::from(path).as_path()))
+            run_source_with_runtime_at_path(
+                &source,
+                &Runtime::new()?,
+                Some(PathBuf::from(path).as_path()),
+            )
         }
-        None => run_source("")
+        None => run_source(""),
     }
 }
 
