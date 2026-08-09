@@ -782,6 +782,12 @@ class NodeReadable extends NodeEventEmitter {
       yield result.value;
     }
   }
+  [Symbol.for("Stream.toAsyncStreamable")]() {
+    return {
+      stream: this,
+      [Symbol.asyncIterator]: () => this[Symbol.asyncIterator]()
+    };
+  }
 }
 NodeReadable.prototype.readableEnded = false;
 NodeReadable.prototype.readable = true;

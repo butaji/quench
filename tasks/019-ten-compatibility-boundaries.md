@@ -1385,5 +1385,11 @@ focused validation stage passes; the upstream interop fixture now reaches its
 final asynchronous callback accounting, with that scheduling boundary still
 open.
 
+Stage 2524 completes the readable side of the `stream/iter` interop protocol.
+Readable instances now expose `Stream.toAsyncStreamable`, trusted sources carry
+their original stream identity, and `stream/iter.from()` preserves that source
+without an extra wrapper. The focused protocol stage and authoritative
+`test-stream-iter-readable-interop.js` fixture pass.
+
 After stage 2523, the full focused gate reports 2360/2360 passing; Rust tests
 remain 2/2 and representative application stages remain 6/6.
