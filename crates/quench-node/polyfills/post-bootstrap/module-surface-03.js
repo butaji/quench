@@ -297,7 +297,6 @@ const __quenchIsFinishedStream = (stream) =>
   (typeof stream.pipe === "function" ||
     typeof stream.read === "function" ||
     typeof stream.write === "function" ||
-    (typeof stream.once === "function" && typeof stream.emit === "function") ||
     typeof stream.getReader === "function" ||
     typeof stream.getWriter === "function" ||
     stream._readableState ||
@@ -371,8 +370,16 @@ const __quenchFinishedStream = (stream, options, callback) => {
     return () => undefined;
   }
   let active = true;
-  let finishSeen = false;
-  let endSeen = false;
+  const watchReadable =
+    options.readable !== false &&
+    stream.readable !== false &&
+    (stream.readable === true || Boolean(stream._readableState));
+  const watchWritable =
+    options.writable !== false &&
+    stream.writable !== false &&
+    (stream.writable === true || Boolean(stream._writableState));
+  let finishSeen = !watchWritable || stream.writableFinished === true;
+  let endSeen = !watchReadable || stream.readableEnded === true;
   let abortCleanup;
   const complete = (error) => {
     if (!active) return;
@@ -425,31 +432,26 @@ const __quenchFinishedStream = (stream, options, callback) => {
     signal.addEventListener?.("abort", abort, { once: true });
     abortCleanup = () => signal.removeEventListener?.("abort", abort);
   }
-  listenOnce("end", () => {
-    endSeen = true;
-    if (
-      !stream.writable ||
-      (!stream.socket && finishSeen) ||
-      stream.destroyed
-    ) {
-      complete();
-    }
-  });
-  listenOnce("finish", () => {
-    finishSeen = true;
-    if ((!stream.readable && !stream.socket) || endSeen || stream.destroyed) {
-      complete();
-    }
-  });
+  if (watchReadable)
+    listenOnce("end", () => {
+      endSeen = true;
+      if (finishSeen || stream.destroyed) complete();
+    });
+  if (watchWritable)
+    listenOnce("finish", () => {
+      finishSeen = true;
+      if (endSeen || stream.destroyed) complete();
+    });
   listenOnce("error", complete);
   listenOnce("close", () => {
-    if (finishSeen || endSeen || stream.complete) complete();
+    if ((finishSeen && endSeen) || stream.complete) complete();
     else {
       const error = new Error("Premature close");
       error.code = "ERR_STREAM_PREMATURE_CLOSE";
       complete(error);
     }
   });
+  if (finishSeen && endSeen) queueMicrotask(() => complete());
   return () => {
     active = false;
     abortCleanup?.();
