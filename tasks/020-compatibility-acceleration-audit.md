@@ -185,3 +185,6 @@ large non-match corpus, so the compatibility objective remains open.
 - CJS loading of the upstream test helper now supplies its missing `common.PIPE`
   contract, and non-root BoundSocket binds to privileged ports report `EACCES`.
   The BoundSocket fixture still has one path-error assertion to isolate.
+- Abstract Unix socket paths are now rejected with `ERR_INVALID_ARG_VALUE` on
+  non-Linux platforms; the fixture advances past platform validation and now
+  exposes an asynchronous adoption callback-lifecycle gap.

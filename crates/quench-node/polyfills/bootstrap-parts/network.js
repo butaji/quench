@@ -958,6 +958,11 @@ const __quenchNetModule = {
           error.code = "ERR_INVALID_ARG_TYPE";
           throw error;
         }
+        if (options.path.startsWith("\0") && process.platform !== "linux") {
+          const error = new TypeError("abstract socket paths are Linux-only");
+          error.code = "ERR_INVALID_ARG_VALUE";
+          throw error;
+        }
         if (
           options.host !== undefined ||
           options.port !== undefined ||
