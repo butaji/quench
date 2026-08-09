@@ -1550,3 +1550,6 @@ Stage 2541 makes `Buffer.from()` recognize boxed strings from another VM realm
 without relying on `instanceof String`. The focused cross-realm stage passes;
 the upstream Buffer fixture advances past that case but still has a separate
 invalid-input assertion mismatch.
+Stage 2542 aligns invalid-argument diagnostics for null-prototype objects
+with the Node test helper. The Buffer fixture now advances beyond its initial
+error matrix; a later typed-array layout limitation remains open.

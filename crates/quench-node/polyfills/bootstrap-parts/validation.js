@@ -9,9 +9,8 @@ const __nodeBufferFromReceived = (value) => {
   }
   if (typeof value === "bigint") return ` Received type bigint (${value}n)`;
   if (typeof value === "function") return ` Received function ${value.name}`;
-  if (Object.getPrototypeOf(value) === null) {
-    return " Received [Object: null prototype] {}";
-  }
+  if (Object.getPrototypeOf(value) === null)
+    return " Received an instance of Object";
   const name = value.constructor?.name || "Object";
   return ` Received an instance of ${name}`;
 };
