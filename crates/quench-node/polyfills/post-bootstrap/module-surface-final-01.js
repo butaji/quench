@@ -52,6 +52,12 @@ const __quenchUtilTypesFallbacks = (result) => {
   return (__quenchUtilTypesTypedFallbacks(result), result);
 };
 const __quenchInternalStreamFallback = (normalized) => {
+  if (normalized === "internal/async_context_frame") {
+    return { current: () => null };
+  }
+  if (normalized === "internal/async_hooks") {
+    return { enabledHooksExist: () => false };
+  }
   if (normalized === "internal/url") return { isURL: globalThis.__nodeIsURL };
   if (normalized === "internal/webstreams/adapters") {
     const stream = globalThis.require("stream");
