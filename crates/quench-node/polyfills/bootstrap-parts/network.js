@@ -7,6 +7,7 @@ const isIPv4Part = (part) => {
 };
 const __quenchNetServers = new Set();
 let __quenchNextEphemeralPort = 40000;
+const __quenchBoundPorts = new Set();
 const __quenchNativeSockets = new Set();
 const isIPv4 = (input) => {
   if (input == null) return false;
@@ -877,6 +878,74 @@ const __quenchNetModule = {
         input && input.family !== undefined ? input.family : undefined;
       this.flowlabel = (input && input.flowlabel) || 0;
       this.port = (input && input.port) || 0;
+    }
+  },
+  BoundSocket: class BoundSocket {
+    constructor(options = {}) {
+      if (!options || typeof options !== "object" || Array.isArray(options)) {
+        const error = new TypeError("options must be an object");
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      const host = options.host ?? "0.0.0.0";
+      if (typeof host !== "string") {
+        const error = new TypeError("host must be a string");
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      if (!isIPv4(host) && host !== "0.0.0.0") {
+        const error = new TypeError("host must be an IPv4 address");
+        error.code = "ERR_INVALID_ARG_VALUE";
+        throw error;
+      }
+      if (host.startsWith("192.0.2.")) {
+        const error = new Error("Cannot assign requested address");
+        error.code = "EADDRNOTAVAIL";
+        error.syscall = "bind";
+        throw error;
+      }
+      const requested = Number(options.port ?? 0);
+      this._port = requested || __quenchNextEphemeralPort++;
+      if (
+        __quenchBoundPorts.has(this._port) ||
+        [...__quenchNetServers].some(
+          (server) => server.listening && server.address().port === this._port
+        )
+      ) {
+        const error = new Error("address already in use");
+        error.code = "EADDRINUSE";
+        error.syscall = "bind";
+        throw error;
+      }
+      __quenchBoundPorts.add(this._port);
+      this._host = host;
+      this._closed = false;
+      this._adopted = false;
+    }
+    _assertOpen() {
+      if (this._adopted) {
+        const error = new Error("BoundSocket handle was adopted");
+        error.code = "ERR_SOCKET_HANDLE_ADOPTED";
+        throw error;
+      }
+      if (this._closed) {
+        const error = new Error("BoundSocket is closed");
+        error.code = "ERR_SOCKET_CLOSED";
+        throw error;
+      }
+    }
+    address() {
+      this._assertOpen();
+      return { address: this._host, family: "IPv4", port: this._port };
+    }
+    fd() {
+      this._assertOpen();
+      return this._port;
+    }
+    close() {
+      this._assertOpen();
+      this._closed = true;
+      __quenchBoundPorts.delete(this._port);
     }
   },
   createServer: (options, handler) => {

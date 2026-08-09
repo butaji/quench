@@ -143,3 +143,7 @@ large non-match corpus, so the compatibility objective remains open.
 - `test-net-bind-twice.js` now passes after nonnative servers reject occupied
   ports with asynchronous `EADDRINUSE`; focused stage 2318 and the blocklist
   fixture remain passing.
+- `net.BoundSocket` now has foundational validation, ephemeral address/fd/close,
+  occupied-port, and nonlocal-address behavior. The upstream
+  `test-net-boundsocket.js` fixture advances past those checks but still has an
+  adoption-path assertion open.
