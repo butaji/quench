@@ -90,9 +90,21 @@ fn execute_unary(
         crate::ops::UnaryOp::Minus => numeric_unary(value, |number| -number)?,
         crate::ops::UnaryOp::Not => Value::Boolean(!is_truthy(&value)),
         crate::ops::UnaryOp::Void => Value::Undefined,
+        crate::ops::UnaryOp::Typeof => Value::String(type_of(&value).to_string()),
     };
     write_value(registers, dst, result);
     Ok(())
+}
+
+fn type_of(value: &Value) -> &'static str {
+    match value {
+        Value::Undefined => "undefined",
+        Value::Null => "object",
+        Value::Boolean(_) => "boolean",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Function(_) => "function",
+    }
 }
 
 fn numeric_unary(value: Value, transform: fn(f64) -> f64) -> Result<Value, VmError> {
