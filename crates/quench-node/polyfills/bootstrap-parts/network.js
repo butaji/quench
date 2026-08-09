@@ -595,6 +595,19 @@ const __quenchNetModule = {
         error.code = "ERR_INVALID_ARG_VALUE";
         throw error;
       }
+      const localPort = Number(_options.localPort || 0);
+      if (
+        localPort &&
+        [...__quenchNetServers].some(
+          (server) => server.listening && server.address().port === localPort
+        )
+      ) {
+        const error = new Error("address already in use");
+        error.code = "EADDRINUSE";
+        error.syscall = "connect";
+        queueMicrotask(() => this.emit("error", error));
+        return this;
+      }
       if (!this._handle) this._handle = { setKeepAlive: () => {} };
       if (_options.keepAlive !== undefined) {
         this.setKeepAlive(_options.keepAlive, _options.keepAliveInitialDelay);
