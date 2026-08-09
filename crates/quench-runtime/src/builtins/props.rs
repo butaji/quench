@@ -138,6 +138,14 @@ pub(crate) fn builtin_name(builtin: Builtin) -> &'static str {
         RegExp => "RegExp",
         RegExpTest => "test",
         RegExpExec => "exec",
+        Error => "Error",
+        TypeError => "TypeError",
+        RangeError => "RangeError",
+        ReferenceError => "ReferenceError",
+        SyntaxError => "SyntaxError",
+        EvalError => "EvalError",
+        URIError => "URIError",
+        AggregateError => "AggregateError",
         _ => "",
     }
 }

@@ -390,6 +390,14 @@ pub enum Builtin {
     SetDelete,
     SetClear,
     SetForEach,
+    Error,
+    ErrorPrototype,
+    RangeError,
+    ReferenceError,
+    SyntaxError,
+    EvalError,
+    URIError,
+    AggregateError,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
