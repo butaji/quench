@@ -84,6 +84,11 @@ process.stdout ||= { isTTY: false };
 process.stderr ||= { isTTY: false };
 process.on = (event, listener) => {
   (processListeners[event] ||= []).push(listener);
+  if (event === "uncaughtException" && globalThis.__quench_pending_uncaught) {
+    const error = globalThis.__quench_pending_uncaught;
+    globalThis.__quench_pending_uncaught = undefined;
+    queueMicrotask(() => listener(error));
+  }
   return process;
 };
 process.once = (event, listener) => {
