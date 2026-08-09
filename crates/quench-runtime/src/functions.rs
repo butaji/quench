@@ -45,3 +45,11 @@ pub(crate) fn reduce_expression(
     });
     Some(register)
 }
+
+pub(crate) fn make(body: &[Op], params: u16) -> crate::value::Value {
+    crate::value::Value::Function(std::rc::Rc::new(crate::value::FunctionValue {
+        body: body.to_vec(),
+        params,
+        properties: std::rc::Rc::new(Vec::new()),
+    }))
+}

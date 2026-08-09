@@ -166,6 +166,7 @@ pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
             Value::Object(Rc::new(properties))
         }
         Value::Array(values) => set_array_property(values, key, value),
+        Value::Function(function) => set_function_property(function, key, value),
         other => other,
     }
 }
@@ -178,4 +179,22 @@ fn set_array_property(values: Rc<Vec<Value>>, key: &str, value: Value) -> Value 
     values.resize(index.saturating_add(1), Value::Undefined);
     values[index] = value;
     Value::Array(Rc::new(values))
+}
+
+fn set_function_property(
+    function: Rc<crate::value::FunctionValue>,
+    key: &str,
+    value: Value,
+) -> Value {
+    let mut properties = (*function.properties).clone();
+    if let Some((_, current)) = properties.iter_mut().rev().find(|(name, _)| name == key) {
+        *current = value;
+    } else {
+        properties.push((key.to_string(), value));
+    }
+    Value::Function(Rc::new(crate::value::FunctionValue {
+        body: function.body.clone(),
+        params: function.params,
+        properties: Rc::new(properties),
+    }))
 }
