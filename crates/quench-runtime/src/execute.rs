@@ -24,6 +24,10 @@ fn execute_with_registers(ops: &[Op], mut registers: Vec<Value>) -> Result<Value
             Op::StoreLocal { slot, src } => copy_register(&mut registers, *slot, *src)?,
             Op::LoadLocal { dst, slot } => copy_register(&mut registers, *dst, *slot)?,
             Op::MakeArray { dst, elements } => execute_array(&mut registers, *dst, elements)?,
+            Op::GetProperty { dst, object, key } => {
+                let value = get_property(&read_register(&registers, *object)?, key);
+                write_value(&mut registers, *dst, value);
+            }
             Op::MakeFunction { dst, body, params } => {
                 write_value(
                     &mut registers,
@@ -59,6 +63,36 @@ fn execute_array(registers: &mut Vec<Value>, dst: u16, elements: &[u16]) -> Resu
         .collect::<Result<Vec<_>, _>>()?;
     write_value(registers, dst, Value::Array(Rc::new(values)));
     Ok(())
+}
+
+fn get_property(value: &Value, key: &str) -> Value {
+    match value {
+        Value::Array(values) => array_property(values, key),
+        Value::String(value) => string_property(value, key),
+        Value::Function(function) if key == "length" => Value::Number(f64::from(function.params)),
+        _ => Value::Undefined,
+    }
+}
+
+fn array_property(values: &[Value], key: &str) -> Value {
+    if key == "length" {
+        return Value::Number(values.len() as f64);
+    }
+    key.parse::<usize>()
+        .ok()
+        .and_then(|index| values.get(index).cloned())
+        .unwrap_or(Value::Undefined)
+}
+
+fn string_property(value: &str, key: &str) -> Value {
+    if key == "length" {
+        return Value::Number(value.chars().count() as f64);
+    }
+    key.parse::<usize>()
+        .ok()
+        .and_then(|index| value.chars().nth(index))
+        .map(|character| Value::String(character.to_string()))
+        .unwrap_or(Value::Undefined)
 }
 
 fn execute_call(
