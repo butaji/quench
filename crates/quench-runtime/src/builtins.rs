@@ -38,6 +38,12 @@ fn special_property(builtin: Builtin, key: &str) -> Option<Value> {
         (Builtin::FunctionPrototype, "bind") => Builtin::FunctionBind,
         (Builtin::FunctionCall, "bind") => Builtin::FunctionBind,
         (Builtin::ArrayPrototype, "join") => Builtin::ArrayJoin,
+        (Builtin::ArrayPrototype, "push") => Builtin::ArrayPush,
+        (Builtin::Object, "prototype") => Builtin::ObjectPrototype,
+        (Builtin::ObjectPrototype, "hasOwnProperty") => Builtin::ObjectHasOwnProperty,
+        (Builtin::ObjectPrototype, "propertyIsEnumerable") => Builtin::ObjectPropertyIsEnumerable,
+        (Builtin::Object, "defineProperty") => Builtin::ObjectDefineProperty,
+        (Builtin::Object, "getOwnPropertyNames") => Builtin::ObjectGetOwnPropertyNames,
         _ => return None,
     };
     Some(Value::Builtin(value))
@@ -68,6 +74,13 @@ pub(crate) fn has_own_property(receiver: Option<&Value>, key: Option<&Value>) ->
         _ => false,
     };
     Value::Boolean(present)
+}
+
+pub(crate) fn object_property_is_enumerable(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Value {
+    has_own_property(receiver, arguments.first())
 }
 
 pub(crate) fn object_special(
@@ -204,6 +217,15 @@ pub(crate) fn array_join(receiver: Option<&Value>, arguments: &[Value]) -> Value
             .collect::<Vec<_>>()
             .join(&separator),
     )
+}
+
+pub(crate) fn array_push(receiver: Option<&Value>, arguments: &[Value]) -> Value {
+    let Some(Value::Array(values)) = receiver else {
+        return Value::Number(f64::NAN);
+    };
+    let mut result = values.as_ref().clone();
+    result.extend_from_slice(arguments);
+    Value::Number(result.len() as f64)
 }
 
 pub(crate) fn math_pow(arguments: &[Value]) -> Value {
