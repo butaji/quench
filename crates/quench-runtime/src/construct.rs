@@ -38,14 +38,22 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<(), crate::
         .iter()
         .map(|index| crate::execute::read_register(registers, *index))
         .collect::<Result<Vec<_>, _>>()?;
-    let value = match crate::execute::read_register(registers, *callee)? {
-        Value::Builtin(crate::ops::Builtin::Array) => crate::builtins::array(&arguments),
-        Value::Builtin(crate::ops::Builtin::Object) => crate::builtins::object(&arguments),
-        Value::Builtin(crate::ops::Builtin::TypeError) => crate::builtins::object(&arguments),
-        Value::Builtin(crate::ops::Builtin::Date) => crate::builtins::object(&arguments),
-        Value::Function(_) => Value::Object(std::rc::Rc::new(Vec::new())),
-        _ => return Err(crate::execute::VmError::NotCallable),
-    };
+    let target = crate::execute::read_register(registers, *callee)?;
+    let value = construct_value(&target, &arguments)?;
     crate::execute::write_value(registers, *dst, value);
     Ok(())
+}
+
+pub(crate) fn construct_value(
+    target: &Value,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    match target {
+        Value::Builtin(crate::ops::Builtin::Array) => Ok(crate::builtins::array(arguments)),
+        Value::Builtin(crate::ops::Builtin::Object) => Ok(crate::builtins::object(arguments)),
+        Value::Builtin(crate::ops::Builtin::TypeError) => Ok(crate::builtins::object(arguments)),
+        Value::Builtin(crate::ops::Builtin::Date) => Ok(crate::builtins::object(arguments)),
+        Value::Function(_) => Ok(Value::Object(std::rc::Rc::new(Vec::new()))),
+        _ => Err(crate::execute::VmError::NotCallable),
+    }
 }
