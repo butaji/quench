@@ -7,8 +7,14 @@ use crate::{facts::ProgramDb, ops::Op};
 pub(crate) fn function_parameters(
     function: &oxc::ast::ast::Function<'_>,
 ) -> Result<(HashMap<String, u16>, u16), Vec<String>> {
+    parameters(&function.params)
+}
+
+fn parameters(
+    formal: &oxc::ast::ast::FormalParameters<'_>,
+) -> Result<(HashMap<String, u16>, u16), Vec<String>> {
     let mut parameters = HashMap::new();
-    for (slot, parameter) in function.params.items.iter().enumerate() {
+    for (slot, parameter) in formal.items.iter().enumerate() {
         let BindingPatternKind::BindingIdentifier(identifier) = &parameter.pattern.kind else {
             return Err(vec!["Unsupported function parameter pattern".to_string()]);
         };
@@ -16,7 +22,7 @@ pub(crate) fn function_parameters(
             u16::try_from(slot).map_err(|_| vec!["Too many function parameters".to_string()])?;
         parameters.insert(identifier.name.to_string(), slot);
     }
-    let count = u16::try_from(function.params.items.len())
+    let count = u16::try_from(formal.items.len())
         .map_err(|_| vec!["Too many function parameters".to_string()])?;
     Ok((parameters, count))
 }
@@ -83,21 +89,33 @@ pub(crate) fn reduce_arrow(
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
-    if !function.params.items.is_empty() {
-        return None;
-    }
+    let (mut parameters, parameter_count) = parameters(&function.params).ok()?;
     let captures = locals
         .values()
         .copied()
         .max()
         .map_or(0, |slot| slot.saturating_add(1));
-    let body_ops = reduce_body(&function.body, facts, locals.clone(), 0, captures).ok()?;
+    for slot in parameters.values_mut() {
+        *slot = slot.saturating_add(captures);
+    }
+    parameters.insert(
+        "arguments".to_string(),
+        captures.saturating_add(parameter_count),
+    );
+    parameters.extend(locals.iter().map(|(name, slot)| (name.clone(), *slot)));
+    let body_ops = crate::reduce::reduce_statements_with_locals(
+        &function.body.statements,
+        facts,
+        parameters,
+        captures.saturating_add(parameter_count).saturating_add(1),
+    )
+    .ok()?;
     let register = *next_register;
     *next_register = next_register.saturating_add(1);
     ops.push(Op::MakeFunction {
         dst: register,
         body: body_ops,
-        params: 0,
+        params: parameter_count,
         captures,
     });
     Some(register)
