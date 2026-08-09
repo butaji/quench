@@ -1384,3 +1384,6 @@ arrays, cached writer identity, and rejection of object-mode writables. The
 focused validation stage passes; the upstream interop fixture now reaches its
 final asynchronous callback accounting, with that scheduling boundary still
 open.
+
+After stage 2523, the full focused gate reports 2360/2360 passing; Rust tests
+remain 2/2 and representative application stages remain 6/6.
