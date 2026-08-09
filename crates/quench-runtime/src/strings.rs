@@ -1,4 +1,5 @@
 use crate::value::Value;
+use std::rc::Rc;
 
 pub(crate) fn property_method(key: &str) -> Option<crate::ops::Builtin> {
     match key {
@@ -15,6 +16,10 @@ pub(crate) fn property_method(key: &str) -> Option<crate::ops::Builtin> {
         "lastIndexOf" => Some(crate::ops::Builtin::StringLastIndexOf),
         "slice" => Some(crate::ops::Builtin::StringSlice),
         "substring" => Some(crate::ops::Builtin::StringSubstring),
+        "concat" => Some(crate::ops::Builtin::StringConcat),
+        "split" => Some(crate::ops::Builtin::StringSplit),
+        "padStart" => Some(crate::ops::Builtin::StringPadStart),
+        "padEnd" => Some(crate::ops::Builtin::StringPadEnd),
         _ => None,
     }
 }
@@ -38,6 +43,10 @@ pub(crate) fn execute_builtin(
         crate::ops::Builtin::StringLastIndexOf => last_index_of(receiver, arguments),
         crate::ops::Builtin::StringSlice => slice(receiver, arguments),
         crate::ops::Builtin::StringSubstring => substring(receiver, arguments),
+        crate::ops::Builtin::StringConcat => concat(receiver, arguments),
+        crate::ops::Builtin::StringSplit => split(receiver, arguments),
+        crate::ops::Builtin::StringPadStart => pad_start(receiver, arguments),
+        crate::ops::Builtin::StringPadEnd => pad_end(receiver, arguments),
         _ => return None,
     };
     Some(Ok(result))
@@ -185,6 +194,59 @@ fn substring_index(value: Option<&Value>, length: isize) -> isize {
         .max(0.0)
         .trunc()
         .min(length as f64) as isize
+}
+
+pub(crate) fn concat(receiver: Option<&Value>, arguments: &[Value]) -> Value {
+    let Some(Value::String(value)) = receiver else {
+        return Value::String(String::new());
+    };
+    let mut result = value.clone();
+    for argument in arguments {
+        result.push_str(&to_string(argument));
+    }
+    Value::String(result)
+}
+
+pub(crate) fn split(receiver: Option<&Value>, arguments: &[Value]) -> Value {
+    let Some(Value::String(value)) = receiver else {
+        return Value::Array(Rc::new(Vec::new()));
+    };
+    let separator = arguments.first().map_or_else(String::new, to_string);
+    let values = if separator.is_empty() {
+        value
+            .chars()
+            .map(|c| Value::String(c.to_string()))
+            .collect()
+    } else {
+        value
+            .split(&separator)
+            .map(|part| Value::String(part.to_string()))
+            .collect()
+    };
+    Value::Array(Rc::new(values))
+}
+
+pub(crate) fn pad_start(receiver: Option<&Value>, arguments: &[Value]) -> Value {
+    pad(receiver, arguments, true)
+}
+
+pub(crate) fn pad_end(receiver: Option<&Value>, arguments: &[Value]) -> Value {
+    pad(receiver, arguments, false)
+}
+
+fn pad(receiver: Option<&Value>, arguments: &[Value], start: bool) -> Value {
+    let Some(Value::String(value)) = receiver else {
+        return Value::String(String::new());
+    };
+    let target = arguments.first().and_then(number).unwrap_or(0.0).max(0.0) as usize;
+    let fill = arguments.get(1).map_or_else(|| " ".to_string(), to_string);
+    let count = target.saturating_sub(value.chars().count());
+    let padding: String = fill.chars().cycle().take(count).collect();
+    if start {
+        Value::String(format!("{padding}{value}"))
+    } else {
+        Value::String(format!("{value}{padding}"))
+    }
 }
 
 fn argument(arguments: &[Value]) -> String {
