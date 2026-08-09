@@ -131,6 +131,7 @@ pub enum Builtin {
     ArraySome,
     ArrayEvery,
     ArrayFind,
+    ArrayIncludes,
     ArrayForEach,
     FunctionCall,
     Boolean,
