@@ -1460,3 +1460,8 @@ handling. A destroyed readable now rejects the pipeline with
 `ERR_STREAM_PREMATURE_CLOSE` even after its `readable` flag is cleared. The
 focused stage and authoritative `test-stream-promises.js` fixture pass; the
 post-change focused gate reports 2367/2367 passing.
+
+Stage 2531 makes HTTP `IncomingMessage` close delivery idempotent. Repeated
+transport/destroy paths now expose a single `close` event, fixing the
+authoritative `test-stream-destroy.js` callback accounting failure. The focused
+stage passes and the full focused gate reports 2368/2368 passing.
