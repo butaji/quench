@@ -45,6 +45,7 @@ pub(crate) fn reduce(
 
 fn builtin(name: &str) -> Option<crate::ops::Builtin> {
     match name {
+        "Array" => Some(crate::ops::Builtin::Array),
         "Boolean" => Some(crate::ops::Builtin::Boolean),
         "eval" => Some(crate::ops::Builtin::Eval),
         "isFinite" => Some(crate::ops::Builtin::IsFinite),

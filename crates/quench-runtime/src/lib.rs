@@ -13,6 +13,7 @@
 
 mod arrays;
 mod blocks;
+mod builtins;
 mod conditional;
 mod control_flow;
 pub mod execute;

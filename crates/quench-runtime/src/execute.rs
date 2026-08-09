@@ -94,6 +94,7 @@ fn execute_object(
 
 fn get_property(value: &Value, key: &str) -> Value {
     match value {
+        Value::Builtin(builtin) => crate::builtins::property(*builtin, key),
         Value::Array(values) => array_property(values, key),
         Value::Object(properties) => properties
             .iter()
@@ -162,6 +163,11 @@ fn execute_eval(arguments: &[Value]) -> Result<Value, VmError> {
 
 fn execute_builtin(builtin: crate::ops::Builtin, arguments: &[Value]) -> Result<Value, VmError> {
     match builtin {
+        crate::ops::Builtin::Array => Ok(crate::builtins::array(arguments)),
+        crate::ops::Builtin::ArrayIsArray => Ok(Value::Boolean(matches!(
+            arguments.first(),
+            Some(Value::Array(_))
+        ))),
         crate::ops::Builtin::Boolean => {
             Ok(Value::Boolean(arguments.first().is_some_and(is_truthy)))
         }

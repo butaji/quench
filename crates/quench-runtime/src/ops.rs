@@ -62,6 +62,8 @@ pub enum Op {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Builtin {
+    Array,
+    ArrayIsArray,
     Boolean,
     Eval,
     IsFinite,
