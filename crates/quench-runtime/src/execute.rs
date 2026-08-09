@@ -353,13 +353,9 @@ fn bitwise_numbers(
     right: &Value,
     operation: fn(i32, i32) -> i32,
 ) -> Result<Value, VmError> {
-    let (Value::Number(left), Value::Number(right)) = (left, right) else {
-        return Err(VmError::NonNumericOperand);
-    };
-    Ok(Value::Number(f64::from(operation(
-        to_int32(*left),
-        to_int32(*right),
-    ))))
+    let left = to_int32(to_number(Some(left)));
+    let right = to_int32(to_number(Some(right)));
+    Ok(Value::Number(f64::from(operation(left, right))))
 }
 
 fn to_int32(value: f64) -> i32 {
