@@ -1320,3 +1320,8 @@ emit the normalized execution arguments, and retain the expected end event.
 Script-position parsing also accepts child exec flags before the entry path.
 The focused Worker stage and authoritative `test-process-exec-argv.js` fixture
 pass; the full focused gate reports 2348/2348 passing.
+
+Stage 2512 makes recursive `process.exit()` calls from within the final
+`exit` event harmless, matching Node's non-recursive shutdown behavior. The
+focused recursion stage and authoritative `test-process-exit.js` fixture pass;
+the full focused gate remains clean at 2349/2349 passing.
