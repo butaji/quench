@@ -228,3 +228,9 @@ failed stages.
 Stages 2001–2554 completed with 474/474 discovered stages passing and zero
 failed stages using the normal 30-second timeout; stage 2223 is intentionally
 slow and is a false timeout at the tighter 10-second diagnostic limit.
+
+The repository ESLint configuration now uses a dedicated global ignore entry
+for the vendored `tests/node` submodule. The owned `tools/compat-decision-report.cjs`
+classification function was split to satisfy the complexity limit; that file
+passes ESLint with zero warnings. The full owned JavaScript tree still has
+remaining file/function/complexity violations and is not yet clean.
