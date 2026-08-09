@@ -6,6 +6,7 @@ description = "Residual VM kernel for the Quench program reducer"
 license = "MIT"
 
 [dependencies]
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 num-bigint = "0.4"
 oxc = { version = "0.47", features = ["semantic"] }
 regress = "0.10"
