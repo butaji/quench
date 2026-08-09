@@ -26,5 +26,6 @@ pub mod ops;
 mod properties;
 pub mod reduce;
 mod semantic;
+mod sequences;
 mod templates;
 pub mod value;
