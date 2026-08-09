@@ -34,6 +34,7 @@ fn execute_with_registers(ops: &[Op], mut registers: Vec<Value>) -> Result<Value
             Op::Call { dst, callee, args } => {
                 execute_call(&mut registers, *dst, *callee, args)?;
             }
+            Op::CallMethod { .. } => crate::methods::execute(&mut registers, op)?,
             Op::Unary { dst, operator, src } => {
                 execute_unary(&mut registers, *dst, *operator, *src)?
             }
@@ -88,7 +89,7 @@ fn execute_object(
     write_value(registers, dst, Value::Object(Rc::new(values)));
     Ok(())
 }
-fn get_property(value: &Value, key: &str) -> Value {
+pub(crate) fn get_property(value: &Value, key: &str) -> Value {
     match value {
         Value::Builtin(builtin) => crate::builtins::property(*builtin, key),
         Value::Array(values) => array_property(values, key),
@@ -96,7 +97,10 @@ fn get_property(value: &Value, key: &str) -> Value {
             .iter()
             .rev()
             .find(|(name, _)| name == key)
-            .map_or(Value::Undefined, |(_, value)| value.clone()),
+            .map_or_else(
+                || crate::builtins::object_method(value, key),
+                |(_, value)| value.clone(),
+            ),
         Value::String(value) => string_property(value, key),
         Value::Function(function) if key == "length" => Value::Number(f64::from(function.params)),
         _ => Value::Undefined,
@@ -165,6 +169,13 @@ fn execute_eval(arguments: &[Value]) -> Result<Value, VmError> {
     execute(&program.ops).map_err(|error| VmError::EvalError(format!("{error:?}")))
 }
 fn execute_builtin(builtin: crate::ops::Builtin, arguments: &[Value]) -> Result<Value, VmError> {
+    execute_builtin_with_receiver(builtin, arguments, None)
+}
+pub(crate) fn execute_builtin_with_receiver(
+    builtin: crate::ops::Builtin,
+    arguments: &[Value],
+    receiver: Option<&Value>,
+) -> Result<Value, VmError> {
     match builtin {
         crate::ops::Builtin::Array => Ok(crate::builtins::array(arguments)),
         crate::ops::Builtin::ArrayIsArray => Ok(Value::Boolean(matches!(
@@ -184,6 +195,10 @@ fn execute_builtin(builtin: crate::ops::Builtin, arguments: &[Value]) -> Result<
             arguments.get(1),
         ))),
         crate::ops::Builtin::ObjectKeys => Ok(crate::builtins::keys(arguments.first())),
+        crate::ops::Builtin::ObjectHasOwnProperty => Ok(crate::builtins::has_own_property(
+            receiver,
+            arguments.first(),
+        )),
         crate::ops::Builtin::ParseFloat => Ok(Value::Number(parse_float(arguments.first()))),
         crate::ops::Builtin::ParseInt => Ok(Value::Number(parse_int(arguments))),
         crate::ops::Builtin::String => Ok(Value::String(to_string(arguments.first()))),
@@ -455,14 +470,14 @@ fn compare_strings(left: &str, right: &str, compare: fn(f64, f64) -> bool) -> bo
 fn write_register(registers: &mut Vec<Value>, index: u16, value: &crate::ops::Constant) {
     write_value(registers, index, value.into());
 }
-fn write_value(registers: &mut Vec<Value>, index: u16, value: Value) {
+pub(crate) fn write_value(registers: &mut Vec<Value>, index: u16, value: Value) {
     let index = usize::from(index);
     if registers.len() <= index {
         registers.resize(index + 1, Value::Undefined);
     }
     registers[index] = value;
 }
-fn read_register(registers: &[Value], index: u16) -> Result<Value, VmError> {
+pub(crate) fn read_register(registers: &[Value], index: u16) -> Result<Value, VmError> {
     registers
         .get(usize::from(index))
         .cloned()
