@@ -316,10 +316,10 @@ fn evaluate_binary(
         crate::ops::BinaryOp::NotEqual => Value::Boolean(!loose_equal(left, right)),
         crate::ops::BinaryOp::StrictEqual => Value::Boolean(left == right),
         crate::ops::BinaryOp::StrictNotEqual => Value::Boolean(left != right),
-        crate::ops::BinaryOp::LessThan => compare_numbers(left, right, |a, b| a < b)?,
-        crate::ops::BinaryOp::LessEqual => compare_numbers(left, right, |a, b| a <= b)?,
-        crate::ops::BinaryOp::GreaterThan => compare_numbers(left, right, |a, b| a > b)?,
-        crate::ops::BinaryOp::GreaterEqual => compare_numbers(left, right, |a, b| a >= b)?,
+        crate::ops::BinaryOp::LessThan => compare_values(left, right, |a, b| a < b)?,
+        crate::ops::BinaryOp::LessEqual => compare_values(left, right, |a, b| a <= b)?,
+        crate::ops::BinaryOp::GreaterThan => compare_values(left, right, |a, b| a > b)?,
+        crate::ops::BinaryOp::GreaterEqual => compare_values(left, right, |a, b| a >= b)?,
         crate::ops::BinaryOp::BitwiseOr => bitwise_numbers(left, right, |a, b| a | b)?,
         crate::ops::BinaryOp::BitwiseXor => bitwise_numbers(left, right, |a, b| a ^ b)?,
         crate::ops::BinaryOp::BitwiseAnd => bitwise_numbers(left, right, |a, b| a & b)?,
@@ -391,15 +391,28 @@ fn numeric_binary(left: f64, right: f64, operator: crate::ops::BinaryOp) -> f64 
     }
 }
 
-fn compare_numbers(
+fn compare_values(
     left: &Value,
     right: &Value,
     compare: fn(f64, f64) -> bool,
 ) -> Result<Value, VmError> {
-    let (Value::Number(left), Value::Number(right)) = (left, right) else {
-        return Err(VmError::NonNumericOperand);
-    };
-    Ok(Value::Boolean(compare(*left, *right)))
+    if let (Value::String(left), Value::String(right)) = (left, right) {
+        return Ok(Value::Boolean(compare_strings(left, right, compare)));
+    }
+    let left = to_number(Some(left));
+    let right = to_number(Some(right));
+    Ok(Value::Boolean(
+        !left.is_nan() && !right.is_nan() && compare(left, right),
+    ))
+}
+
+fn compare_strings(left: &str, right: &str, compare: fn(f64, f64) -> bool) -> bool {
+    let ordering = left.cmp(right);
+    match ordering {
+        std::cmp::Ordering::Less => compare(0.0, 1.0),
+        std::cmp::Ordering::Equal => compare(0.0, 0.0),
+        std::cmp::Ordering::Greater => compare(1.0, 0.0),
+    }
 }
 
 fn write_register(registers: &mut Vec<Value>, index: u16, value: &crate::ops::Constant) {
