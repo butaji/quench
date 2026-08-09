@@ -8,7 +8,8 @@ assert.strictEqual(seen, true);
 let timerRan = false;
 setTimeout(() => {
   timerRan = true;
+  assert.strictEqual(timerRan, true);
 }, 0);
 queueMicrotask(() => {
-  if (!timerRan) throw new Error("timer did not run");
+  assert.strictEqual(timerRan, false);
 });
