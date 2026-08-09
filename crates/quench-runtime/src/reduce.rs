@@ -199,6 +199,10 @@ fn function_locals(
     for slot in parameters.values_mut() {
         *slot = slot.saturating_add(captures);
     }
+    parameters.insert(
+        "arguments".to_string(),
+        captures.saturating_add(parameter_count),
+    );
     parameters.extend(locals.iter().map(|(name, slot)| (name.clone(), *slot)));
     Ok((parameters, parameter_count, captures))
 }
@@ -377,6 +381,9 @@ pub(crate) fn reduce_unary(
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
+    if unary.operator == UnaryOperator::Delete {
+        return crate::unary::reduce_delete(&unary.argument, ops, facts, next_register, locals);
+    }
     let operator = match unary.operator {
         UnaryOperator::UnaryPlus => crate::ops::UnaryOp::Plus,
         UnaryOperator::UnaryNegation => crate::ops::UnaryOp::Minus,
@@ -397,6 +404,7 @@ pub(crate) fn reduce_unary(
     ops.push(Op::Unary { dst, operator, src });
     Some(dst)
 }
+
 pub(crate) fn reduce_call(
     call: &oxc::ast::ast::CallExpression<'_>,
     ops: &mut Vec<Op>,
