@@ -151,3 +151,7 @@ large non-match corpus, so the compatibility objective remains open.
   TCP options and duplicate paths, exposes `isPipe`, and reports path
   addresses. Pipe server/client adoption remains open in the same upstream
   fixture.
+- BoundSocket adoption now transfers TCP/path ownership to servers and sockets,
+  preserves local endpoint metadata, routes path connections, and rejects
+  conflicting local-address options. The authoritative fixture still has one
+  unresolved synchronous assertion in its extended adoption matrix.
