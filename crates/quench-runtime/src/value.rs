@@ -9,7 +9,13 @@ pub enum Value {
     Number(f64),
     Boolean(bool),
     String(String),
-    Function(Rc<Vec<Op>>),
+    Function(Rc<FunctionValue>),
     Null,
     Undefined,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FunctionValue {
+    pub body: Vec<Op>,
+    pub params: u16,
 }
