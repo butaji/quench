@@ -465,6 +465,7 @@ const __quenchNetModule = {
       return this.destroyed ? null : undefined;
     }
     destroy() {
+      const peer = this._peer;
       this.destroyed = true;
       this.readyState = "closed";
       if (this._timeoutTimer) {
@@ -476,6 +477,7 @@ const __quenchNetModule = {
         this._nativeId = 0;
         __quenchNativeSockets.delete(this);
       }
+      if (peer && !peer.destroyed) peer.destroy();
       queueMicrotask(() => this.emit("close"));
       return this;
     }
