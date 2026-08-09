@@ -262,7 +262,7 @@ fn reduce_declaration(
     Ok(())
 }
 
-fn emit_undefined(ops: &mut Vec<Op>, next_register: &mut u16) -> u16 {
+pub(crate) fn emit_undefined(ops: &mut Vec<Op>, next_register: &mut u16) -> u16 {
     let register = *next_register;
     *next_register = next_register.saturating_add(1);
     ops.push(Op::Const {
