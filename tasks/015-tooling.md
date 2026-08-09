@@ -366,3 +366,8 @@ The global/process bootstrap was split before timer registration, preserving
 the initialization order for globals, process, and timer state. `globals.js`
 is now 454 lines and `globals-tail.js` is 417 lines; global stages 0 through 9
 pass with the quench-node Rust tests.
+
+The querystring and URL bootstrap was split before the URLSearchParams class;
+the querystring surface remains initialized before the URL helpers. `colors.js`
+is now 321 lines and `colors-tail.js` is 463 lines; URL stages 2482, 2498, 282,
+411, and 529 pass with the quench-node Rust tests.
