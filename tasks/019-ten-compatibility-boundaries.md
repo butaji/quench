@@ -1353,3 +1353,10 @@ full focused gate reports 2355/2355 passing. The larger upstream
 `test-stream-finished.js` fixture now reaches a native QuickJS GC assertion
 after exercising cancellation and promisified paths; that runtime limitation
 remains under investigation.
+
+Stage 2519 adds the internal async-context fallbacks used by stream lifecycle
+tests. `internal/async_context_frame.current()` returns the inactive-frame
+value and `internal/async_hooks.enabledHooksExist()` reports the no-hooks
+state. The focused stage and authoritative default-path and async-local-storage
+`stream.finished()` fixtures pass; the full focused gate reports 2356/2356
+passing.
