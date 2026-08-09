@@ -951,7 +951,7 @@ const __quenchNetModule = {
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
       }
-      const host = options.host ?? "0.0.0.0";
+      const host = options.host ?? (options.ipv6Only ? "::" : "0.0.0.0");
       if (options.path !== undefined) {
         if (typeof options.path !== "string") {
           const error = new TypeError("path must be a string");
@@ -1013,7 +1013,7 @@ const __quenchNetModule = {
       const requested = Number(options.port ?? 0);
       this._port = requested || __quenchNextEphemeralPort++;
       if (
-        __quenchBoundPorts.has(this._port) ||
+        (!options.reusePort && __quenchBoundPorts.has(this._port)) ||
         [...__quenchNetServers].some(
           (server) => server.listening && server.address().port === this._port
         )
@@ -1025,6 +1025,7 @@ const __quenchNetModule = {
       }
       __quenchBoundPorts.add(this._port);
       this._host = host;
+      this._reusePort = options.reusePort === true;
       this._family = isIPv6(host) ? "IPv6" : "IPv4";
       this._closed = false;
       this._adopted = false;
