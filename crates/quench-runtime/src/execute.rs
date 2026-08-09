@@ -11,6 +11,7 @@ pub enum VmError {
     MissingReturn,
     NotCallable,
     ArgumentCount,
+    EvalError(String),
 }
 
 pub fn execute(ops: &[Op]) -> Result<Value, VmError> {
@@ -25,6 +26,7 @@ fn execute_with_registers(ops: &[Op], mut registers: Vec<Value>) -> Result<Value
             Op::LoadLocal { dst, slot } => copy_register(&mut registers, *dst, *slot)?,
             Op::MakeArray { dst, elements } => execute_array(&mut registers, *dst, elements)?,
             Op::MakeObject { dst, properties } => execute_object(&mut registers, *dst, properties)?,
+            Op::MakeBuiltin { dst, builtin } => write_builtin(&mut registers, *dst, *builtin),
             Op::GetProperty { dst, object, key } => {
                 let value = get_property(&read_register(&registers, *object)?, key);
                 write_value(&mut registers, *dst, value);
@@ -64,6 +66,10 @@ fn execute_array(registers: &mut Vec<Value>, dst: u16, elements: &[u16]) -> Resu
         .collect::<Result<Vec<_>, _>>()?;
     write_value(registers, dst, Value::Array(Rc::new(values)));
     Ok(())
+}
+
+fn write_builtin(registers: &mut Vec<Value>, dst: u16, builtin: crate::ops::Builtin) {
+    write_value(registers, dst, Value::Builtin(builtin));
 }
 
 fn execute_object(
@@ -120,19 +126,31 @@ fn execute_call(
     callee: u16,
     args: &[u16],
 ) -> Result<(), VmError> {
-    let Value::Function(body) = read_register(registers, callee)? else {
-        return Err(VmError::NotCallable);
-    };
     let arguments = args
         .iter()
         .map(|index| read_register(registers, *index))
         .collect::<Result<Vec<_>, _>>()?;
-    if arguments.len() != usize::from(body.params) {
-        return Err(VmError::ArgumentCount);
-    }
-    let value = execute_with_registers(&body.body, arguments)?;
+    let value = match read_register(registers, callee)? {
+        Value::Function(body) => {
+            if arguments.len() != usize::from(body.params) {
+                return Err(VmError::ArgumentCount);
+            }
+            execute_with_registers(&body.body, arguments)?
+        }
+        Value::Builtin(crate::ops::Builtin::Eval) => execute_eval(&arguments)?,
+        _ => return Err(VmError::NotCallable),
+    };
     write_value(registers, dst, value);
     Ok(())
+}
+
+fn execute_eval(arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(Value::String(source)) = arguments.first() else {
+        return Ok(Value::Undefined);
+    };
+    let program = crate::reduce::reduce_source(source)
+        .map_err(|errors| VmError::EvalError(errors.join("; ")))?;
+    execute(&program.ops).map_err(|error| VmError::EvalError(format!("{error:?}")))
 }
 
 fn copy_register(registers: &mut Vec<Value>, dst: u16, src: u16) -> Result<(), VmError> {
@@ -168,6 +186,7 @@ fn type_of(value: &Value) -> &'static str {
         Value::String(_) => "string",
         Value::Array(_) => "object",
         Value::Object(_) => "object",
+        Value::Builtin(_) => "function",
         Value::Function(_) => "function",
     }
 }
@@ -186,6 +205,7 @@ fn is_truthy(value: &Value) -> bool {
         Value::String(value) => !value.is_empty(),
         Value::Array(_) => true,
         Value::Object(_) => true,
+        Value::Builtin(_) => true,
         Value::Null | Value::Undefined => false,
         Value::Function(_) => true,
     }

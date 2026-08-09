@@ -15,6 +15,15 @@ pub(crate) fn reduce(
     if locals.contains_key(name) {
         return None;
     }
+    if name == "eval" {
+        let register = *next_register;
+        *next_register = next_register.saturating_add(1);
+        ops.push(Op::MakeBuiltin {
+            dst: register,
+            builtin: crate::ops::Builtin::Eval,
+        });
+        return Some(register);
+    }
     let (fact, value) = match name {
         "undefined" => (FactConstant::Undefined, Constant::Undefined),
         "NaN" => (FactConstant::Number(f64::NAN), Constant::Number(f64::NAN)),
