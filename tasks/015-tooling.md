@@ -137,6 +137,11 @@ The crypto key-object declarations were split after the complete
 lines and its 285-line tail runs immediately afterward. Rust tests and crypto
 stages 1403, 2553, and 892 pass after the extraction.
 
+The HTTP/URL compatibility declarations in `module-surface-15.js` were split
+after the complete `__quenchCryptoHashOneShotFallback` declaration. The main
+file is now 349 lines and its 338-line tail executes in order. Rust tests and
+stages 2037, 2348, 2482, and 2498 pass after the extraction.
+
 The Buffer encoding bootstrap was split at an existing ordered tail: the main
 `encoding.js` file is now below the 500-line limit while `encoding-tail.js`
 retains the final `NodeBuffer.compare` and `NodeBuffer.from` definitions.
