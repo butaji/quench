@@ -226,6 +226,7 @@ pub fn reduce_function_declaration(
         params: parameter_count,
         captures,
         kind: crate::ops::FunctionKind::Ordinary,
+        is_async: function.r#async,
     });
     ops.push(Op::StoreLocal {
         slot,
