@@ -158,6 +158,7 @@ pub enum Op {
 pub enum FunctionKind {
     Ordinary,
     Arrow,
+    Generator,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
