@@ -149,7 +149,15 @@ fn open_self_iterator(iterator: Value) -> Result<Value, crate::execute::VmError>
 }
 
 fn step(value: Value) -> Result<Value, crate::execute::VmError> {
-    Ok(step_value(&value)?.unwrap_or(Value::Undefined))
+    match step_value(&value) {
+        Ok(value) => Ok(value.unwrap_or(Value::Undefined)),
+        Err(error) => {
+            if let Value::Iterator(data) = &value {
+                mark_done(data);
+            }
+            Err(error)
+        }
+    }
 }
 
 fn rest(value: Value) -> Result<Value, crate::execute::VmError> {
@@ -158,10 +166,18 @@ fn rest(value: Value) -> Result<Value, crate::execute::VmError> {
 
 pub(crate) fn collect(value: &Value) -> Result<Vec<Value>, crate::execute::VmError> {
     let mut values = Vec::new();
-    while let Some(value) = step_value(value)? {
-        values.push(value);
+    loop {
+        match step_value(value) {
+            Ok(Some(value)) => values.push(value),
+            Ok(None) => return Ok(values),
+            Err(error) => {
+                if let Value::Iterator(data) = value {
+                    mark_done(data);
+                }
+                return Err(error);
+            }
+        }
     }
-    Ok(values)
 }
 
 pub(crate) fn collect_iterable(value: Value) -> Result<Vec<Value>, crate::execute::VmError> {
@@ -433,68 +449,4 @@ fn not_iterable() -> crate::execute::VmError {
     crate::value::error::throw_type_error("value is not iterable")
 }
 
-pub(crate) fn from_map(receiver: Option<&Value>) -> Value {
-    let Some(Value::Map(data)) = receiver else {
-        return empty();
-    };
-    let values = data
-        .keys
-        .iter()
-        .zip(&data.values)
-        .map(|(key, value)| Value::array(vec![key.clone(), value.clone()]))
-        .collect();
-    make(values)
-}
-
-pub(crate) fn from_set(receiver: Option<&Value>) -> Value {
-    let Some(Value::Set(data)) = receiver else {
-        return empty();
-    };
-    make(data.values.iter().cloned().collect())
-}
-
-pub(crate) fn next(receiver: Option<&Value>) -> Value {
-    let Some(iterator @ Value::Iterator(_)) = receiver else {
-        return result(Value::Undefined, true);
-    };
-    match step_value(iterator) {
-        Ok(Some(value)) => result(value, false),
-        Ok(None) => result(Value::Undefined, true),
-        Err(_) => result(Value::Undefined, true),
-    }
-}
-
-pub(crate) fn property(key: &str) -> Value {
-    match key {
-        "next" => Value::Builtin(crate::ops::Builtin::IteratorNext),
-        _ => Value::Undefined,
-    }
-}
-
-pub(crate) fn make(values: Vec<Value>) -> Value {
-    Value::Iterator(Rc::new(IteratorData {
-        state: RefCell::new(IteratorState::Native {
-            values,
-            index: 0,
-            done: false,
-        }),
-    }))
-}
-fn make_protocol(iterator: Value, next: Value) -> Value {
-    Value::Iterator(Rc::new(IteratorData {
-        state: RefCell::new(IteratorState::Protocol {
-            iterator,
-            next,
-            done: false,
-        }),
-    }))
-}
-fn empty() -> Value {
-    make(Vec::new())
-}
-fn result(value: Value, done: bool) -> Value {
-    Value::Object(Rc::new(vec![
-        ("value".to_string(), value),
-        ("done".to_string(), Value::Boolean(done)),
-    ]))
-}
+include!("iterator_values.rs");
