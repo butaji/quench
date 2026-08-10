@@ -1,3 +1,5 @@
+use std::sync::{Arc, Mutex};
+
 use quench_test262::{Test262Host, Test262Runner, TestMetadata, TestOutcome};
 
 struct Probe;
@@ -40,6 +42,22 @@ impl Test262Host for HarnessProbe {
     }
 
     fn run_module_script(&mut self, _source: &str) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+struct CaptureHost {
+    seen: Arc<Mutex<Vec<String>>>,
+}
+
+impl Test262Host for CaptureHost {
+    fn run_script(&mut self, source: &str) -> Result<(), String> {
+        self.seen.lock().unwrap().push(source.to_string());
+        Ok(())
+    }
+
+    fn run_module_script(&mut self, source: &str) -> Result<(), String> {
+        self.seen.lock().unwrap().push(source.to_string());
         Ok(())
     }
 }
@@ -124,6 +142,64 @@ fn runner_composes_includes_and_only_strict_before_dispatch() {
         .run_test_with_harness(source, |name| Ok(format!("// {name} harness")))
         .unwrap();
     assert_eq!(outcome, TestOutcome::Pass);
+}
+
+#[test]
+fn runner_composes_async_harness_before_declared_includes() {
+    let source =
+        "/*---\nflags: [async, onlyStrict]\nincludes: [asyncHelpers.js, propertyHelper.js]\n---*/\npass";
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let mut runner = Test262Runner::new(CaptureHost { seen: seen.clone() });
+
+    let outcome = runner
+        .run_test_with_harness(source, |name| Ok(format!("// {name} harness")))
+        .unwrap();
+
+    assert_eq!(outcome, TestOutcome::Pass);
+    let composed = seen.lock().unwrap().pop().unwrap();
+    assert!(
+        composed.find("// assert.js harness").unwrap()
+            < composed.find("// sta.js harness").unwrap()
+    );
+    assert!(
+        composed.find("// sta.js harness").unwrap()
+            < composed.find("// doneprintHandle.js harness").unwrap()
+    );
+    assert!(
+        composed.find("// doneprintHandle.js harness").unwrap()
+            < composed.find("// asyncHelpers.js harness").unwrap()
+    );
+    assert!(
+        composed.find("// asyncHelpers.js harness").unwrap()
+            < composed.find("// propertyHelper.js harness").unwrap()
+    );
+    assert!(
+        composed.find("// propertyHelper.js harness").unwrap()
+            < composed.find("\"use strict\";").unwrap()
+    );
+    assert!(composed.find("\"use strict\";").unwrap() < composed.rfind("pass").unwrap());
+}
+
+#[test]
+fn runner_keeps_raw_async_tests_unmodified() {
+    let source = "/*---\nflags: [raw, async]\nincludes: [asyncHelpers.js]\n---*/\npass";
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let load_count = Arc::new(Mutex::new(0usize));
+    let mut runner = Test262Runner::new(CaptureHost { seen: seen.clone() });
+
+    let outcome = runner
+        .run_test_with_harness(source, {
+            let load_count = load_count.clone();
+            move |_| {
+                *load_count.lock().unwrap() += 1;
+                Ok(String::new())
+            }
+        })
+        .unwrap();
+
+    assert_eq!(outcome, TestOutcome::Pass);
+    assert_eq!(*load_count.lock().unwrap(), 0);
+    assert_eq!(seen.lock().unwrap().pop().unwrap(), source);
 }
 
 #[test]
