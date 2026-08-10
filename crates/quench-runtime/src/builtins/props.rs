@@ -106,7 +106,7 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
 fn host_capability_method(kind: crate::ops::HostCapabilityKind, key: &str) -> Option<Builtin> {
     use crate::ops::HostCapabilityKind::*;
     let expected = match kind {
-        GetGlobal => "getGlobal",
+        GetGlobal => "global",
         CreateRealm => "createRealm",
         EvalScript => "evalScript",
         DetachArrayBuffer => "detachArrayBuffer",
