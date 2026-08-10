@@ -27,6 +27,7 @@ pub(crate) mod value {
             Some(Value::Int16Array(_)) => "[object Int16Array]".to_string(),
             Some(Value::Int8Array(_)) => "[object Int8Array]".to_string(),
             Some(Value::Int32Array(_)) => "[object Int32Array]".to_string(),
+            Some(Value::Uint16Array(_)) => "[object Uint16Array]".to_string(),
             Some(Value::Uint32Array(_)) => "[object Uint32Array]".to_string(),
             Some(Value::Uint8Array(_)) => "[object Uint8Array]".to_string(),
             Some(Value::Uint8ClampedArray(_)) => "[object Uint8ClampedArray]".to_string(),
@@ -75,6 +76,7 @@ pub(crate) mod value {
                 | Value::Int16Array(_)
                 | Value::Int8Array(_)
                 | Value::Int32Array(_)
+                | Value::Uint16Array(_)
                 | Value::Uint32Array(_)
                 | Value::Uint8Array(_)
                 | Value::Uint8ClampedArray(_)
@@ -159,6 +161,7 @@ pub(crate) mod value {
             | Value::Int16Array(_)
             | Value::Int8Array(_)
             | Value::Int32Array(_)
+            | Value::Uint16Array(_)
             | Value::Uint32Array(_)
             | Value::Uint8Array(_)
             | Value::Uint8ClampedArray(_)
@@ -186,6 +189,7 @@ pub(crate) mod value {
             | Value::Int16Array(_)
             | Value::Int8Array(_)
             | Value::Int32Array(_)
+            | Value::Uint16Array(_)
             | Value::Uint32Array(_)
             | Value::Uint8Array(_)
             | Value::Uint8ClampedArray(_)
@@ -257,6 +261,9 @@ pub(crate) mod value {
             (Value::Int16Array(left), Value::Int16Array(right)) => std::rc::Rc::ptr_eq(left, right),
             (Value::Int8Array(left), Value::Int8Array(right)) => std::rc::Rc::ptr_eq(left, right),
             (Value::Int32Array(left), Value::Int32Array(right)) => std::rc::Rc::ptr_eq(left, right),
+            (Value::Uint16Array(left), Value::Uint16Array(right)) => {
+                std::rc::Rc::ptr_eq(left, right)
+            }
             (Value::Uint32Array(left), Value::Uint32Array(right)) => {
                 std::rc::Rc::ptr_eq(left, right)
             }

@@ -222,6 +222,7 @@ pub(crate) fn object(arguments: &[Value]) -> Value {
         | Some(Value::Int16Array(_))
         | Some(Value::Int8Array(_))
         | Some(Value::Int32Array(_))
+        | Some(Value::Uint16Array(_))
         | Some(Value::Uint8Array(_))
         | Some(Value::Uint8ClampedArray(_))
         | Some(Value::Uint32Array(_))
@@ -280,6 +281,7 @@ pub(crate) fn same_value(left: Option<&Value>, right: Option<&Value>) -> bool {
         (Value::Int16Array(left), Value::Int16Array(right)) => Rc::ptr_eq(left, right),
         (Value::Int8Array(left), Value::Int8Array(right)) => Rc::ptr_eq(left, right),
         (Value::Int32Array(left), Value::Int32Array(right)) => Rc::ptr_eq(left, right),
+        (Value::Uint16Array(left), Value::Uint16Array(right)) => Rc::ptr_eq(left, right),
         (Value::Uint8Array(left), Value::Uint8Array(right)) => Rc::ptr_eq(left, right),
         (Value::Uint8ClampedArray(left), Value::Uint8ClampedArray(right)) => {
             Rc::ptr_eq(left, right)
@@ -392,6 +394,7 @@ pub(crate) fn prototype_to_string(receiver: Option<&Value>) -> Value {
         Some(Value::Int16Array(_)) => "Int16Array",
         Some(Value::Int8Array(_)) => "Int8Array",
         Some(Value::Int32Array(_)) => "Int32Array",
+        Some(Value::Uint16Array(_)) => "Uint16Array",
         Some(Value::Uint8Array(_)) => "Uint8Array",
         Some(Value::Uint8ClampedArray(_)) => "Uint8ClampedArray",
         Some(Value::Uint32Array(_)) => "Uint32Array",
