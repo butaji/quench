@@ -5,7 +5,10 @@ pub mod props;
 
 use std::rc::Rc;
 
-use crate::{ops::Builtin, value::Value};
+use crate::{
+    ops::Builtin,
+    value::{ObjectData, Value},
+};
 
 const DESCRIPTOR_PREFIX: &str = "\0quench:descriptor:\0";
 
@@ -231,14 +234,14 @@ pub(crate) fn object(arguments: &[Value]) -> Value {
         | Some(Value::Builtin(_)) => arguments[0].clone(),
         Some(
             value @ (Value::String(_) | Value::Number(_) | Value::Boolean(_) | Value::BigInt(_)),
-        ) => Value::Object(Rc::new(vec![
+        ) => Value::Object(Rc::new(ObjectData::new(vec![
             ("_value".to_string(), value.clone()),
             (
                 "constructor".to_string(),
                 Value::Builtin(object::boxed_constructor(value)),
             ),
-        ])),
-        _ => Value::Object(Rc::new(Vec::new())),
+        ]))),
+        _ => Value::Object(Rc::new(ObjectData::new(Vec::new()))),
     }
 }
 
@@ -267,9 +270,9 @@ pub(crate) fn error(builtin: Builtin, arguments: &[Value]) -> Value {
         ("constructor".to_string(), Value::Builtin(constructor)),
     ];
     if let Some(Value::Object(existing)) = arguments.first() {
-        properties.extend((**existing).clone());
+        properties.extend(existing.properties.clone());
     }
-    Value::Object(Rc::new(properties))
+    Value::Object(Rc::new(ObjectData::new(properties)))
 }
 
 pub(crate) fn same_value(left: Option<&Value>, right: Option<&Value>) -> bool {
@@ -373,13 +376,13 @@ pub(crate) fn define_own_property(
         define_property_value(target.clone(), key, value)
     };
     if let Value::Object(properties) = &mut result {
-        let metadata = Value::Object(Rc::new(descriptor.clone()));
+        let metadata = Value::Object(Rc::new(ObjectData::new(descriptor.clone())));
         let properties = Rc::make_mut(properties);
         properties.retain(|(name, _)| name != &descriptor_key(key));
         properties.push((descriptor_key(key), metadata));
     }
     if let Value::Function(function) = &result {
-        let metadata = Value::Object(Rc::new(descriptor.clone()));
+        let metadata = Value::Object(Rc::new(ObjectData::new(descriptor.clone())));
         let mut properties = function.properties.borrow_mut();
         properties.retain(|(name, _)| name != &descriptor_key(key));
         properties.push((descriptor_key(key), metadata));

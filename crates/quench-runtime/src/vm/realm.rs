@@ -36,7 +36,7 @@ pub(super) fn create(parent: &VmContext) -> RealmId {
     });
     let state = Rc::new(RealmState {
         id,
-        global: RefCell::new(Rc::new(Vec::new())),
+        global: RefCell::new(Rc::new(crate::value::ObjectData::new(Vec::new()))),
         context: child_context(parent, id),
         token: Rc::new(HostCapabilityValue::new(HostCapabilityRef {
             realm: id,
