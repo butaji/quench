@@ -158,20 +158,10 @@ pub fn reduce_expression(
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
     if let Expression::TaggedTemplateExpression(tagged) = expression {
-        return reduce_tagged_template(tagged, ops, facts, next_register, locals);
+        return super::tagged_template::reduce(tagged, ops, facts, next_register, locals);
     }
     if let Expression::AwaitExpression(await_expression) = expression {
-        let src = reduce_expression(
-            &await_expression.argument,
-            ops,
-            facts,
-            next_register,
-            locals,
-        )?;
-        let dst = *next_register;
-        *next_register = next_register.saturating_add(1);
-        ops.push(Op::Await { dst, src });
-        return Some(dst);
+        return reduce_await(await_expression, ops, facts, next_register, locals);
     }
     if let Expression::ParenthesizedExpression(value) = expression {
         return transparent::reduce(value, ops, facts, next_register, locals);
@@ -186,18 +176,12 @@ pub fn reduce_expression(
         return None;
     };
     if binary.operator == oxc::syntax::operator::BinaryOperator::In {
-        let key = reduce_expression(&binary.left, ops, facts, next_register, locals)?;
-        let object = reduce_expression(&binary.right, ops, facts, next_register, locals)?;
-        let dst = *next_register;
-        *next_register = next_register.saturating_add(1);
-        ops.push(Op::GetPropertyDynamic { dst, object, key });
-        return Some(dst);
+        return reduce_in(binary, ops, facts, next_register, locals);
     }
     let operator = reduce_operator(binary.operator)?;
     let lhs = reduce_expression(&binary.left, ops, facts, next_register, locals)?;
     let rhs = reduce_expression(&binary.right, ops, facts, next_register, locals)?;
-    let dst = *next_register;
-    *next_register = next_register.saturating_add(1);
+    let dst = take_register(next_register);
     ops.push(Op::Binary {
         dst,
         operator,
@@ -207,63 +191,39 @@ pub fn reduce_expression(
     Some(dst)
 }
 
-fn reduce_tagged_template(
-    tagged: &oxc::ast::ast::TaggedTemplateExpression<'_>,
+fn reduce_await(
+    expression: &oxc::ast::ast::AwaitExpression<'_>,
     ops: &mut Vec<Op>,
     facts: &mut ProgramDb,
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
-    let callee = reduce_expression(&tagged.tag, ops, facts, next_register, locals)?;
-    let cooked = reduce_template_parts(&tagged.quasi, true, ops, next_register)?;
-    let raw = reduce_template_parts(&tagged.quasi, false, ops, next_register)?;
-    ops.push(Op::SetProperty {
-        object: cooked,
-        key: "raw".to_string(),
-        src: raw,
-    });
-    let mut args = vec![cooked];
-    for expression in &tagged.quasi.expressions {
-        args.push(reduce_expression(
-            expression,
-            ops,
-            facts,
-            next_register,
-            locals,
-        )?);
-    }
-    let spreads = vec![false; args.len()];
-    let dst = *next_register;
-    *next_register = next_register.saturating_add(1);
-    ops.push(Op::Call {
-        dst,
-        callee,
-        args,
-        spreads,
-    });
+    let src = reduce_expression(&expression.argument, ops, facts, next_register, locals)?;
+    let dst = take_register(next_register);
+    ops.push(Op::Await { dst, src });
     Some(dst)
 }
 
-fn reduce_template_parts(
-    template: &oxc::ast::ast::TemplateLiteral<'_>,
-    cooked: bool,
+fn reduce_in(
+    binary: &oxc::ast::ast::BinaryExpression<'_>,
     ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
     next_register: &mut u16,
+    locals: &HashMap<String, u16>,
 ) -> Option<u16> {
-    let mut elements = Vec::with_capacity(template.quasis.len());
-    for quasi in &template.quasis {
-        let value = if cooked {
-            quasi.value.cooked.as_ref()?.as_str()
-        } else {
-            quasi.value.raw.as_str()
-        };
-        elements.push(emit_string(ops, next_register, value));
-    }
-    let dst = *next_register;
-    *next_register = next_register.saturating_add(1);
-    ops.push(Op::MakeArray { dst, elements });
+    let key = reduce_expression(&binary.left, ops, facts, next_register, locals)?;
+    let object = reduce_expression(&binary.right, ops, facts, next_register, locals)?;
+    let dst = take_register(next_register);
+    ops.push(Op::GetPropertyDynamic { dst, object, key });
     Some(dst)
 }
+
+fn take_register(next_register: &mut u16) -> u16 {
+    let register = *next_register;
+    *next_register = next_register.saturating_add(1);
+    register
+}
+
 pub fn reduce_unary(
     unary: &oxc::ast::ast::UnaryExpression<'_>,
     ops: &mut Vec<Op>,
@@ -370,25 +330,32 @@ pub fn reduce_assignment(
         );
     };
     let rhs = reduce_expression(&assignment.right, ops, facts, next_register, locals)?;
-    let value = if assignment.operator == AssignmentOperator::Assign {
-        rhs
-    } else {
-        let operator = assignment.operator.to_binary_operator()?;
-        let lhs = *next_register;
-        *next_register = next_register.saturating_add(1);
-        ops.push(Op::LoadLocal { dst: lhs, slot });
-        let dst = *next_register;
-        *next_register = next_register.saturating_add(1);
-        ops.push(Op::Binary {
-            dst,
-            operator: reduce_operator(operator)?,
-            lhs,
-            rhs,
-        });
-        dst
-    };
+    let value = reduce_assignment_value(assignment.operator, slot, rhs, ops, next_register)?;
     ops.push(Op::StoreLocal { slot, src: value });
     Some(value)
+}
+
+fn reduce_assignment_value(
+    assignment: AssignmentOperator,
+    slot: u16,
+    rhs: u16,
+    ops: &mut Vec<Op>,
+    next_register: &mut u16,
+) -> Option<u16> {
+    if assignment == AssignmentOperator::Assign {
+        return Some(rhs);
+    }
+    let lhs = take_register(next_register);
+    ops.push(Op::LoadLocal { dst: lhs, slot });
+    let dst = take_register(next_register);
+    let operator = reduce_operator(assignment.to_binary_operator()?)?;
+    ops.push(Op::Binary {
+        dst,
+        operator,
+        lhs,
+        rhs,
+    });
+    Some(dst)
 }
 pub fn reduce_atom(
     expression: &Expression<'_>,
@@ -471,8 +438,8 @@ fn reduce_regexp_literal(
         dst: callee,
         builtin: crate::ops::Builtin::RegExp,
     });
-    let pattern_register = emit_string(ops, next_register, pattern);
-    let flags_register = emit_string(ops, next_register, flags);
+    let pattern_register = super::tagged_template::emit_string(ops, next_register, pattern);
+    let flags_register = super::tagged_template::emit_string(ops, next_register, flags);
     let dst = *next_register;
     *next_register = next_register.saturating_add(1);
     ops.push(Op::Construct {
@@ -481,14 +448,4 @@ fn reduce_regexp_literal(
         args: vec![pattern_register, flags_register],
     });
     Some(dst)
-}
-
-fn emit_string(ops: &mut Vec<Op>, next_register: &mut u16, value: &str) -> u16 {
-    let dst = *next_register;
-    *next_register = next_register.saturating_add(1);
-    ops.push(Op::Const {
-        dst,
-        value: crate::ops::Constant::String(value.to_string()),
-    });
-    dst
 }

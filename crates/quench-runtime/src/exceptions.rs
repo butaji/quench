@@ -14,6 +14,7 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Valu
         body,
         handler,
         finalizer,
+        catch_slot,
     } = op
     else {
         return Err(VmError::MissingReturn);
@@ -22,17 +23,30 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Valu
     let result = match body_result {
         Ok(value) => Some(value),
         Err(VmError::MissingReturn) => None,
-        Err(error) => match handler {
-            Some(ops) => match execute_in_place(ops, registers) {
-                Ok(value) => Some(value),
-                Err(VmError::MissingReturn) => None,
-                Err(error) => return Err(error),
-            },
-            None => return Err(error),
+        Err(VmError::Thrown(value)) => match handler {
+            Some(ops) => {
+                bind_caught(value, *catch_slot, registers);
+                match execute_in_place(ops, registers) {
+                    Ok(value) => Some(value),
+                    Err(VmError::MissingReturn) => None,
+                    Err(error) => return Err(error),
+                }
+            }
+            None => return Err(VmError::Thrown(value)),
         },
+        Err(error) => return Err(error),
     };
     if let Some(finalizer) = finalizer {
-        let _ = execute_in_place(finalizer, registers);
+        match execute_in_place(finalizer, registers) {
+            Ok(_) | Err(VmError::MissingReturn) => {}
+            Err(error) => return Err(error),
+        }
     }
     Ok(result)
+}
+
+fn bind_caught(value: Value, catch_slot: Option<u16>, registers: &mut Vec<Value>) {
+    if let Some(slot) = catch_slot {
+        crate::execute::write_value(registers, slot, value);
+    }
 }
