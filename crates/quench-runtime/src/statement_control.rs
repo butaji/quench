@@ -55,6 +55,10 @@ pub(crate) fn reduce(
             ops.push(Op::Break);
             Ok(None)
         }
+        Statement::ContinueStatement(_) => {
+            ops.push(Op::Continue);
+            Ok(None)
+        }
         _ => Err(vec![format!(
             "Unsupported executable statement: {statement:?}"
         )]),
