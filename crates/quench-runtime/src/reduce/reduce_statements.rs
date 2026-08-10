@@ -46,7 +46,17 @@ pub fn reduce_source_with_type(
                 .collect());
         }
         let (scope_count, symbol_count) = crate::semantic::analyze(&parsed.program)?;
-        let ops = reduce_statements(&parsed.program.body, source_type, &mut ProgramDb::default())?;
+        let strict = source_type.is_module()
+            || parsed
+                .program
+                .directives
+                .iter()
+                .any(|directive| directive.directive.as_str() == "use strict");
+        let mut facts = ProgramDb {
+            strict,
+            ..ProgramDb::default()
+        };
+        let ops = reduce_statements(&parsed.program.body, source_type, &mut facts)?;
         (scope_count, symbol_count, ops)
     };
     let facts = ProgramDb {
@@ -270,22 +280,48 @@ pub fn reduce_function_declaration(
     };
     let slot = declaration_slot(identifier.name.as_str(), next_slot, locals);
     let (parameters, parameter_count, captures) = function_locals(function, locals)?;
-    let body_ops = functions::reduce_body(body, facts, parameters, parameter_count, captures)?;
-    let register = take_register(next_register);
-    ops.push(Op::MakeFunctionWithKind {
-        dst: register,
-        body: body_ops,
-        params: parameter_count,
+    let strictness = crate::reduce_support::function_strictness(body, facts.strict);
+    let body_ops = functions::reduce_body(
+        body,
+        facts,
+        parameters,
+        parameter_count,
         captures,
-        kind: crate::ops::FunctionKind::Ordinary,
-        strictness: crate::reduce_support::function_strictness(body),
-        is_async: function.r#async,
-    });
+        strictness,
+    )?;
+    let register = take_register(next_register);
+    ops.push(function_declaration_op(
+        register,
+        body_ops,
+        parameter_count,
+        captures,
+        strictness,
+        function.r#async,
+    ));
     ops.push(Op::StoreLocal {
         slot,
         src: register,
     });
     Ok(())
+}
+
+fn function_declaration_op(
+    dst: u16,
+    body: Vec<Op>,
+    params: u16,
+    captures: u16,
+    strictness: crate::ops::FunctionStrictness,
+    is_async: bool,
+) -> Op {
+    Op::MakeFunctionWithKind {
+        dst,
+        body,
+        params,
+        captures,
+        kind: crate::ops::FunctionKind::Ordinary,
+        strictness,
+        is_async,
+    }
 }
 
 fn declaration_slot(name: &str, next_slot: &mut u16, locals: &mut HashMap<String, u16>) -> u16 {

@@ -115,6 +115,12 @@ pub(crate) fn reduce(
 }
 
 pub(crate) fn property(values: &crate::value::ArrayData, key: &str) -> Value {
+    if let Some(value) = values.property(key) {
+        return value;
+    }
+    if values.is_arguments() && key == "length" {
+        return Value::Undefined;
+    }
     if key == "length" {
         return Value::Number(values.logical_len() as f64);
     }
@@ -141,6 +147,8 @@ pub(crate) fn property(values: &crate::value::ArrayData, key: &str) -> Value {
         "reduce" => crate::ops::Builtin::ArrayReduce,
         "reduceRight" => crate::ops::Builtin::ArrayReduceRight,
         "toLocaleString" => crate::ops::Builtin::ArrayToLocaleString,
+        "hasOwnProperty" => crate::ops::Builtin::ObjectHasOwnProperty,
+        "propertyIsEnumerable" => crate::ops::Builtin::ObjectPropertyIsEnumerable,
         _ => return index(values, key),
     };
     Value::Builtin(method)
@@ -157,10 +165,10 @@ fn sort(receiver: Option<&Value>) -> Value {
     result
 }
 
-fn index(values: &[Value], key: &str) -> Value {
+fn index(values: &crate::value::ArrayData, key: &str) -> Value {
     key.parse::<usize>()
         .ok()
-        .and_then(|index| values.get(index).cloned())
+        .and_then(|index| values.get_index(index))
         .unwrap_or(Value::Undefined)
 }
 

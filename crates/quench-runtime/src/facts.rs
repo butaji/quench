@@ -28,6 +28,7 @@ pub struct ProgramDb {
     pub constants: Vec<ConstantFact>,
     pub scope_count: usize,
     pub symbol_count: usize,
+    pub(crate) strict: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]

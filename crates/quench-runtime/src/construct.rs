@@ -241,7 +241,7 @@ fn construct_error(
 }
 
 fn construct_function(
-    function: &crate::value::FunctionValue,
+    function: &std::rc::Rc<crate::value::FunctionValue>,
     target: &Value,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
