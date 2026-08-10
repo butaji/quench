@@ -274,6 +274,8 @@ mod tests {
         let function = Value::Function(Rc::new(FunctionValue {
             body: Vec::new(),
             params: 2,
+            kind: crate::ops::FunctionKind::Ordinary,
+            strictness: crate::ops::FunctionStrictness::Sloppy,
             is_async: false,
             captures: Rc::new(RefCell::new(Vec::new())),
             properties: Rc::new(RefCell::new(vec![(
