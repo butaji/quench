@@ -118,7 +118,9 @@ pub(crate) fn execute_delete_property(
     };
     let target = crate::execute::read_register(registers, *object)?.clone();
     let key = dynamic_property_key(&crate::execute::read_register(registers, *key)?)?;
-    let result = crate::builtins::delete_property(target, &key);
+    let result = crate::builtins::delete_property(target.clone(), &key);
+    crate::locals::replace_object(&target, &result);
+    crate::vm::synchronize_global_object(registers, &target, &result);
     crate::execute::write_value(registers, *object, result);
     Ok(())
 }

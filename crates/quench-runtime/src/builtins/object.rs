@@ -109,7 +109,15 @@ pub(crate) fn object_property_is_enumerable(
     if matches!(receiver, Some(Value::Builtin(_))) {
         return Value::Boolean(false);
     }
-    has_own_property(receiver, arguments.first())
+    let (Some(receiver), Some(key)) = (receiver, arguments.first()) else {
+        return Value::Boolean(false);
+    };
+    let Ok(key) = crate::properties::dynamic_property_key(key) else {
+        return Value::Boolean(false);
+    };
+    let owned = owns_property(receiver, &key).unwrap_or(false);
+    let enumerable = crate::builtins::descriptor_flag(receiver, &key, "enumerable").unwrap_or(true);
+    Value::Boolean(owned && enumerable)
 }
 
 pub(crate) fn object_special(
