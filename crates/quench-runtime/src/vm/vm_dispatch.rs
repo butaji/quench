@@ -33,6 +33,7 @@ fn run_simple_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Option<Va
         | IteratorStep { .. }
         | IteratorRest { .. } => crate::collections::iterator::execute(registers, op)?,
         ValidateClassHeritage { .. } => run_class_heritage(registers, op)?,
+        AppendInstanceField(_) => crate::classes::append_instance_field(registers, op)?,
         DeleteProperty { .. } => run_delete_property(registers, op)?,
         MakeFunction { .. } | MakeFunctionWithKind { .. } => {
             crate::functions::write_op(registers, op)

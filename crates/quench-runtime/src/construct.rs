@@ -307,7 +307,7 @@ fn construct_function(
     if let Some(super_constructor) = derived_constructor(function) {
         return construct_value(&super_constructor, arguments);
     }
-    let object = constructor_receiver(target);
+    let object = initialize_instance_fields(function, constructor_receiver(target))?;
     let (result, final_this) = crate::functions::execute_construct(function, &object, arguments)?;
     if crate::value::is_object(&result) {
         Ok(result)
@@ -316,6 +316,47 @@ fn construct_function(
     } else {
         Ok(object)
     }
+}
+
+fn initialize_instance_fields(
+    function: &crate::value::FunctionValue,
+    mut receiver: Value,
+) -> Result<Value, crate::execute::VmError> {
+    for field in function.instance_fields.borrow().iter() {
+        receiver = initialize_instance_field(field, receiver)?;
+    }
+    Ok(receiver)
+}
+
+fn initialize_instance_field(
+    field: &crate::value::InstanceFieldPlan,
+    receiver: Value,
+) -> Result<Value, crate::execute::VmError> {
+    let key = match &field.key {
+        crate::value::InstanceFieldKey::Static(key) => key.to_string(),
+        crate::value::InstanceFieldKey::Dynamic(key) => crate::conversion::to_property_key(key)?,
+    };
+    let value = match &field.initializer {
+        crate::value::InstanceFieldInitializer::Undefined => Value::Undefined,
+        crate::value::InstanceFieldInitializer::Callable(initializer) => {
+            crate::functions::execute(initializer, &receiver, &[])?
+        }
+    };
+    define_instance_field(receiver, &key, value)
+}
+
+fn define_instance_field(
+    receiver: Value,
+    key: &str,
+    value: Value,
+) -> Result<Value, crate::execute::VmError> {
+    let descriptor = [
+        ("value".to_string(), value),
+        ("writable".to_string(), Value::Boolean(true)),
+        ("enumerable".to_string(), Value::Boolean(true)),
+        ("configurable".to_string(), Value::Boolean(true)),
+    ];
+    crate::builtins::define_own_property(&receiver, key, &descriptor)
 }
 
 fn derived_constructor(function: &crate::value::FunctionValue) -> Option<Value> {
