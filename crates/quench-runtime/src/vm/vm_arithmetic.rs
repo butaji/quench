@@ -16,13 +16,7 @@ pub(crate) fn execute_unary(
     let value = read_register(registers, src)?;
     let result = match operator {
         UnaryOp::Plus => unary_plus(&value)?,
-        UnaryOp::Minus => {
-            if let Some(s) = bigint_value(&value) {
-                Value::BigInt(bigint::negate(s).map_err(bigint_error)?)
-            } else {
-                numeric_unary(&value, |n| -n)?
-            }
-        }
+        UnaryOp::Minus => unary_minus(&value)?,
         UnaryOp::Not => Value::Boolean(!is_truthy(&value)),
         UnaryOp::Void => Value::Undefined,
         UnaryOp::Typeof => Value::String(type_of(&value).to_string()),
@@ -73,13 +67,11 @@ fn evaluate_binary(
         BinaryOp::LessEqual => compare_values(left, right, |a, b| a <= b)?,
         BinaryOp::GreaterThan => compare_values(left, right, |a, b| a > b)?,
         BinaryOp::GreaterEqual => compare_values(left, right, |a, b| a >= b)?,
-        BinaryOp::BitwiseOr => bitwise_numbers(left, right, |a, b| a | b)?,
-        BinaryOp::BitwiseXor => bitwise_numbers(left, right, |a, b| a ^ b)?,
-        BinaryOp::BitwiseAnd => bitwise_numbers(left, right, |a, b| a & b)?,
-        BinaryOp::ShiftLeft => bitwise_numbers(left, right, |a, b| a.wrapping_shl(shift_count(b)))?,
-        BinaryOp::ShiftRight => {
-            bitwise_numbers(left, right, |a, b| a.wrapping_shr(shift_count(b)))?
-        }
+        BinaryOp::BitwiseOr
+        | BinaryOp::BitwiseXor
+        | BinaryOp::BitwiseAnd
+        | BinaryOp::ShiftLeft
+        | BinaryOp::ShiftRight => bitwise_value(left, right, operator)?,
         BinaryOp::ShiftRightZeroFill => Value::Number(shift_right_unsigned(left, right)?),
         BinaryOp::Instanceof => Value::Boolean(instanceof(left, right)),
     })
@@ -185,8 +177,13 @@ fn arithmetic_value(
     right: &Value,
     operator: crate::ops::BinaryOp,
 ) -> Result<Value, VmError> {
-    let left = crate::conversion::to_primitive(left, "default")?;
-    let right = crate::conversion::to_primitive(right, "default")?;
+    let hint = if operator == crate::ops::BinaryOp::Add {
+        "default"
+    } else {
+        "number"
+    };
+    let left = crate::conversion::to_primitive(left, hint)?;
+    let right = crate::conversion::to_primitive(right, hint)?;
     if operator == crate::ops::BinaryOp::Add
         && (matches!(left, Value::String(_)) || matches!(right, Value::String(_)))
     {
@@ -204,14 +201,52 @@ fn arithmetic_value(
     Ok(Value::Number(numeric_binary(left, right, operator)))
 }
 
-fn bitwise_numbers(
+fn bitwise_value(
     left: &Value,
     right: &Value,
-    operation: fn(i32, i32) -> i32,
+    operator: crate::ops::BinaryOp,
 ) -> Result<Value, VmError> {
-    let left = to_int32(crate::conversion::to_number(left)?);
-    let right = to_int32(crate::conversion::to_number(right)?);
-    Ok(Value::Number(f64::from(operation(left, right))))
+    let left = crate::conversion::to_primitive(left, "number")?;
+    let right = crate::conversion::to_primitive(right, "number")?;
+    if has_bigint_operand(&left, &right) {
+        return bigint_bitwise(&left, &right, operator);
+    }
+    let left = to_int32(crate::conversion::primitive_to_number(&left)?);
+    let right = to_int32(crate::conversion::primitive_to_number(&right)?);
+    Ok(Value::Number(f64::from(number_bitwise(
+        left, right, operator,
+    ))))
+}
+
+fn bigint_bitwise(
+    left: &Value,
+    right: &Value,
+    operator: crate::ops::BinaryOp,
+) -> Result<Value, VmError> {
+    use crate::ops::BinaryOp;
+    let (Some(left), Some(right)) = (bigint_value(left), bigint_value(right)) else {
+        return Err(type_error("Cannot mix BigInt and other types"));
+    };
+    let result = match operator {
+        BinaryOp::BitwiseAnd => bigint::bitwise_and(left, right),
+        BinaryOp::BitwiseOr => bigint::bitwise_or(left, right),
+        BinaryOp::BitwiseXor => bigint::bitwise_xor(left, right),
+        BinaryOp::ShiftLeft => bigint::shift_left(left, right),
+        BinaryOp::ShiftRight => bigint::shift_right(left, right),
+        _ => return Err(type_error("Invalid BigInt operator")),
+    };
+    Ok(Value::BigInt(result.map_err(bigint_error)?))
+}
+
+fn number_bitwise(left: i32, right: i32, operator: crate::ops::BinaryOp) -> i32 {
+    match operator {
+        crate::ops::BinaryOp::BitwiseAnd => left & right,
+        crate::ops::BinaryOp::BitwiseOr => left | right,
+        crate::ops::BinaryOp::BitwiseXor => left ^ right,
+        crate::ops::BinaryOp::ShiftLeft => left.wrapping_shl(shift_count(right)),
+        crate::ops::BinaryOp::ShiftRight => left.wrapping_shr(shift_count(right)),
+        _ => 0,
+    }
 }
 
 /// Shift amount: the low 5 bits of the right operand, per ECMAScript.
@@ -221,8 +256,13 @@ fn shift_count(right: i32) -> u32 {
 
 /// ECMAScript unsigned right shift: ToUint32(left) >> (count & 31), as a number.
 fn shift_right_unsigned(left: &Value, right: &Value) -> Result<f64, VmError> {
-    let left = to_int32(crate::conversion::to_number(left)?) as u32;
-    let right = to_int32(crate::conversion::to_number(right)?);
+    let left = crate::conversion::to_primitive(left, "number")?;
+    let right = crate::conversion::to_primitive(right, "number")?;
+    if has_bigint_operand(&left, &right) {
+        return Err(type_error("BigInt has no unsigned right shift"));
+    }
+    let left = to_int32(crate::conversion::primitive_to_number(&left)?) as u32;
+    let right = to_int32(crate::conversion::primitive_to_number(&right)?);
     Ok(f64::from(left >> shift_count(right)))
 }
 
@@ -292,6 +332,16 @@ fn unary_plus(value: &Value) -> Result<Value, VmError> {
         return Err(type_error("Cannot convert BigInt value to number"));
     }
     numeric_unary(value, |n| n)
+}
+
+fn unary_minus(value: &Value) -> Result<Value, VmError> {
+    let value = crate::conversion::to_primitive(value, "number")?;
+    if let Some(value) = bigint_value(&value) {
+        return Ok(Value::BigInt(bigint::negate(value).map_err(bigint_error)?));
+    }
+    Ok(Value::Number(-crate::conversion::primitive_to_number(
+        &value,
+    )?))
 }
 
 fn has_bigint_operand(left: &Value, right: &Value) -> bool {

@@ -1,4 +1,11 @@
 #[derive(Debug, Clone, PartialEq)]
+pub enum ArrayElement {
+    Value(u16),
+    Elision,
+    Spread(u16),
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Op {
     Const { dst: u16, value: Constant },
     StoreLocal { slot: u16, src: u16 },
@@ -14,6 +21,7 @@ pub enum Op {
     LoadBinding { dst: u16, slot: u16, name: String },
     LoadLocal { dst: u16, slot: u16 },
     MakeArray { dst: u16, elements: Vec<u16> },
+    BuildArray { dst: u16, elements: Vec<ArrayElement> },
     MakeObject { dst: u16, properties: Vec<(String, u16)> },
     MakeBuiltin { dst: u16, builtin: Builtin },
     GetProperty { dst: u16, object: u16, key: String },
