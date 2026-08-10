@@ -346,7 +346,6 @@ struct GlobalObjectGuard {
     restore: bool,
     realm: Option<RealmId>,
 }
-
 include!("vm_global.rs");
 
 pub(crate) fn bare_call_receiver(
@@ -412,6 +411,7 @@ fn is_object_special(builtin: Builtin) -> bool {
             | Builtin::ObjectGetOwnPropertyNames
             | Builtin::ObjectGetOwnPropertySymbols
             | Builtin::ObjectKeys
+            | Builtin::ObjectCreate
             | Builtin::ObjectSetPrototypeOf
             | Builtin::ObjectPropertyIsEnumerable
     )
