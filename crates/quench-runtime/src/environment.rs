@@ -114,6 +114,8 @@ fn same_identity(left: &Value, right: &Value) -> bool {
     match (left, right) {
         (Value::Object(left), Value::Object(right)) => Rc::ptr_eq(left, right),
         (Value::Array(left), Value::Array(right)) => Rc::ptr_eq(left, right),
+        (Value::Map(left), Value::Map(right)) => Rc::ptr_eq(left, right),
+        (Value::Set(left), Value::Set(right)) => Rc::ptr_eq(left, right),
         _ => false,
     }
 }

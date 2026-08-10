@@ -33,6 +33,7 @@ fn is_simple_builtin(builtin: Builtin) -> bool {
             | Builtin::Number
             | Builtin::NumberToString
             | Builtin::NumberValueOf
+            | Builtin::BoxedValueOf
             | Builtin::ObjectPrototypeToString
             | Builtin::ObjectPrototypeValueOf
             | Builtin::FunctionPrototypeToString
@@ -76,6 +77,10 @@ fn execute_simple_builtin(
         Builtin::ArrayBufferIsView => Ok(Value::Boolean(is_array_buffer_view(arguments.first()))),
         Builtin::NumberToString => Ok(Value::String(to_string(arguments.first()))),
         Builtin::NumberValueOf => Ok(Value::Number(to_number(arguments.first()))),
+        Builtin::BoxedValueOf => Ok(receiver.map_or(Value::Undefined, |value| match value {
+            Value::Object(_) => crate::execute::get_property(value, "_value"),
+            _ => value.clone(),
+        })),
         Builtin::ObjectPrototypeToString => Ok(crate::builtins::prototype_to_string(receiver)),
         Builtin::ObjectPrototypeValueOf => Ok(crate::builtins::prototype_value_of(receiver)),
         Builtin::FunctionPrototypeToString | Builtin::FunctionPrototypeValueOf => {

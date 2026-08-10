@@ -28,11 +28,22 @@ pub fn property(key: &str) -> Value {
     }
 }
 
-pub(crate) fn map_new(_arguments: &[Value]) -> Value {
-    Value::Map(Rc::new(MapData {
+pub(crate) fn map_new(arguments: &[Value]) -> Value {
+    let mut data = MapData {
         keys: VecDeque::new(),
         values: Vec::new(),
-    }))
+    };
+    if let Some(Value::Array(entries)) = arguments.first() {
+        for entry in entries.iter() {
+            if let Value::Array(pair) = entry {
+                data.keys
+                    .push_back(pair.first().cloned().unwrap_or(Value::Undefined));
+                data.values
+                    .push(pair.get(1).cloned().unwrap_or(Value::Undefined));
+            }
+        }
+    }
+    Value::Map(Rc::new(data))
 }
 
 pub(crate) fn map_set(receiver: Option<&Value>, arguments: &[Value]) -> Value {
@@ -50,7 +61,9 @@ pub(crate) fn map_set(receiver: Option<&Value>, arguments: &[Value]) -> Value {
         data.keys.push_back(key.clone());
         data.values.push(value);
     }
-    Value::Map(Rc::new(data))
+    let result = Value::Map(Rc::new(data));
+    crate::locals::replace_value(receiver.unwrap(), &result);
+    result
 }
 
 pub(crate) fn map_get(receiver: Option<&Value>, arguments: &[Value]) -> Value {

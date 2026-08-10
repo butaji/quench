@@ -80,6 +80,10 @@ fn construct_builtin(
         crate::ops::Builtin::Number => construct_number(arguments),
         crate::ops::Builtin::Boolean => construct_boolean(arguments),
         crate::ops::Builtin::Promise => construct_promise(arguments),
+        crate::ops::Builtin::Map | crate::ops::Builtin::Set => {
+            crate::collections::execute_builtin(builtin, None, arguments)
+                .unwrap_or_else(|| Err(crate::vm::not_callable()))
+        }
         crate::ops::Builtin::Date => crate::date::execute(builtin, None, arguments)
             .unwrap_or_else(|| Ok(crate::builtins::object(arguments))),
         crate::ops::Builtin::RegExp => Ok(construct_regexp(arguments)),

@@ -55,7 +55,7 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
     if let HostCapability(kind) = builtin {
         return host_capability_method(kind, key);
     }
-    if let Some(method) = typed_array_property(builtin, key) {
+    if let Some(method) = specialized_method(builtin, key) {
         return Some(method);
     }
     match (builtin, key) {
@@ -83,12 +83,39 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
         (PromisePrototype, "finally") => Some(PromiseFinally),
         (Promise, "resolve") => Some(PromiseResolve),
         (Promise, "reject") => Some(PromiseReject),
-        (Reflect, "construct") => Some(ReflectConstruct),
         (RegExp, "prototype") => Some(RegExpPrototype),
         (RegExpPrototype, "test") => Some(RegExpTest),
         (RegExpPrototype, "exec") => Some(RegExpExec),
         _ => builtin_method2(builtin, key),
     }
+}
+
+fn specialized_method(builtin: Builtin, key: &str) -> Option<Builtin> {
+    typed_array_property(builtin, key).or_else(|| {
+        (builtin == Builtin::Reflect)
+            .then(|| reflect_method(key))
+            .flatten()
+    })
+}
+
+fn reflect_method(key: &str) -> Option<Builtin> {
+    use Builtin::*;
+    Some(match key {
+        "construct" => ReflectConstruct,
+        "get" => ReflectGet,
+        "set" => ReflectSet,
+        "has" => ReflectHas,
+        "deleteProperty" => ReflectDeleteProperty,
+        "getPrototypeOf" => ReflectGetPrototypeOf,
+        "setPrototypeOf" => ReflectSetPrototypeOf,
+        "isExtensible" => ReflectIsExtensible,
+        "preventExtensions" => ReflectPreventExtensions,
+        "getOwnPropertyDescriptor" => ReflectGetOwnPropertyDescriptor,
+        "defineProperty" => ReflectDefineProperty,
+        "ownKeys" => ReflectOwnKeys,
+        "apply" => ReflectApply,
+        _ => return None,
+    })
 }
 
 fn typed_array_property(builtin: Builtin, key: &str) -> Option<Builtin> {
@@ -230,17 +257,21 @@ fn builtin_method3(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Number, "prototype") => Some(NumberPrototype),
         (NumberPrototype, "toLocaleString") => Some(NumberToLocaleString),
         (NumberPrototype, "toString") => Some(NumberToString),
-        (NumberPrototype, "valueOf") => Some(NumberValueOf),
+        (NumberPrototype, "valueOf") => Some(BoxedValueOf),
         (NumberPrototype, "toFixed") => Some(NumberToFixed),
         (NumberPrototype, "toPrecision") => Some(NumberToPrecision),
         (NumberPrototype, "toExponential") => Some(NumberToExponential),
         (Number, "isNaN") => Some(IsNaN),
         (Number, "isFinite") => Some(IsFinite),
         (Boolean, "prototype") => Some(BooleanPrototype),
+        (BooleanPrototype, "valueOf") => Some(BoxedValueOf),
         #[allow(unreachable_patterns)]
         (Symbol, "prototype") => Some(SymbolPrototype),
+        (SymbolPrototype, "valueOf") => Some(BoxedValueOf),
         (String, "prototype") => Some(StringPrototype),
+        (StringPrototype, "valueOf") => Some(BoxedValueOf),
         (BigInt, "prototype") => Some(BigIntPrototype),
+        (BigIntPrototype, "valueOf") => Some(BoxedValueOf),
         _ => None,
     }
 }

@@ -79,13 +79,18 @@ pub(crate) fn execute(
         return Err(crate::execute::VmError::MissingReturn);
     };
     let value = crate::execute::read_register(registers, *discriminant)?;
-    if let Some((_, body)) = cases.iter().find(|(test, _)| {
+    let exact = cases.iter().position(|(test, _)| {
         test.as_ref()
-            .map_or(true, |test| same_constant(&value, test))
-    }) {
+            .is_some_and(|test| same_constant(&value, test))
+    });
+    let default = cases.iter().position(|(test, _)| test.is_none());
+    let Some(start) = exact.or(default) else {
+        return Ok(None);
+    };
+    for (_, body) in &cases[start..] {
         match crate::execute::execute_in_place(body, registers) {
             Ok(value) => return Ok(Some(value)),
-            Err(crate::execute::VmError::MissingReturn) => {}
+            Err(crate::execute::VmError::MissingReturn) => continue,
             Err(crate::execute::VmError::Break(None)) => return Ok(None),
             Err(error) => return Err(error),
         }
