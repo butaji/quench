@@ -255,6 +255,11 @@ fn array_descriptor(values: &crate::value::ArrayData, key: &str) -> Option<Value
             .property(key)
             .map(|value| descriptor_object_with_flags(value, true, false, true));
     }
+    if values.is_arguments() && key == "Symbol.iterator" {
+        return values
+            .property(key)
+            .map(|value| descriptor_object_with_flags(value, true, false, true));
+    }
     if key == "length" {
         return Some(descriptor_object_with_flags(
             Value::Number(values.logical_len() as f64),
@@ -380,6 +385,7 @@ mod tests {
             kind: crate::ops::FunctionKind::Ordinary,
             strictness: crate::ops::FunctionStrictness::Sloppy,
             is_async: false,
+            mapped_arguments: true,
             captures: crate::environment::Environment::new(),
             properties: Rc::new(RefCell::new(vec![(
                 "custom".to_string(),

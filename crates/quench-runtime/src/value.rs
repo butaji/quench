@@ -237,6 +237,12 @@ impl ArrayData {
             .or_else(|| self.values.get(index).cloned())
     }
 
+    pub(crate) fn snapshot(&self) -> Vec<Value> {
+        (0..self.length)
+            .map(|index| self.get_index(index).unwrap_or(Value::Undefined))
+            .collect()
+    }
+
     pub(crate) fn map_index(&mut self, index: usize, binding: Rc<RefCell<Value>>) {
         self.mapped.resize(index.saturating_add(1), None);
         self.mapped[index] = Some(binding);
@@ -313,6 +319,7 @@ pub struct FunctionValue {
     pub strictness: FunctionStrictness,
     /// Whether invocation produces an async completion and Promise result.
     pub is_async: bool,
+    pub mapped_arguments: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]

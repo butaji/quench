@@ -38,6 +38,7 @@ pub(crate) fn execute_builtin(
                 receiver, arguments,
             ))
         }
+        ArrayIterator => return Some(Ok(array_iterator(receiver))),
         _ => return None,
     };
     Some(Ok(result))
@@ -147,11 +148,23 @@ pub(crate) fn property(values: &crate::value::ArrayData, key: &str) -> Value {
         "reduce" => crate::ops::Builtin::ArrayReduce,
         "reduceRight" => crate::ops::Builtin::ArrayReduceRight,
         "toLocaleString" => crate::ops::Builtin::ArrayToLocaleString,
+        "Symbol.iterator" => crate::ops::Builtin::ArrayIterator,
         "hasOwnProperty" => crate::ops::Builtin::ObjectHasOwnProperty,
         "propertyIsEnumerable" => crate::ops::Builtin::ObjectPropertyIsEnumerable,
         _ => return index(values, key),
     };
     Value::Builtin(method)
+}
+
+fn array_iterator(receiver: Option<&Value>) -> Value {
+    let values = match receiver {
+        Some(Value::Array(values)) => values.snapshot(),
+        _ => Vec::new(),
+    };
+    Value::Iterator(std::rc::Rc::new(crate::value::IteratorData {
+        values,
+        index: std::cell::RefCell::new(0),
+    }))
 }
 
 fn sort(receiver: Option<&Value>) -> Value {

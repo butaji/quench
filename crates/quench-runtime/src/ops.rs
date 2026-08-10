@@ -1,5 +1,3 @@
-//! Residual operations. These are the VM's physical input, not a second AST.
-
 pub use crate::ops_meta::{
     BinaryOp, Constant, FunctionKind, FunctionStrictness, HostCapabilityKind, HostCapabilityRef,
     RealmId, UnaryOp,
@@ -63,6 +61,7 @@ pub enum Op {
         captures: u16,
         strictness: FunctionStrictness,
         is_async: bool,
+        mapped_arguments: bool,
     },
     MakeFunctionWithKind {
         dst: u16,
@@ -72,6 +71,7 @@ pub enum Op {
         kind: FunctionKind,
         strictness: FunctionStrictness,
         is_async: bool,
+        mapped_arguments: bool,
     },
     Call {
         dst: u16,
@@ -378,6 +378,7 @@ pub enum Builtin {
     FunctionPrototypeToString,
     FunctionPrototypeValueOf,
     ArrayToLocaleString,
+    ArrayIterator,
     NumberToLocaleString,
     NumberToString,
     NumberValueOf,

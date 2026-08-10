@@ -7,13 +7,30 @@ pub(crate) fn descriptor_flag(target: &Value, key: &str, field: &str) -> Option<
 }
 
 fn array_flag(values: &crate::value::ArrayData, key: &str, field: &str) -> Option<bool> {
-    let Value::Object(descriptor) = values.descriptor(key)? else {
-        return None;
+    let Some(descriptor) = values.descriptor(key) else {
+        return argument_property_flag(values, key, field);
     };
+    let Value::Object(descriptor) = descriptor else { return None };
     descriptor
         .iter()
         .rev()
         .find_map(|(name, value)| (name == field).then_some(matches!(value, Value::Boolean(true))))
+}
+
+fn argument_property_flag(
+    values: &crate::value::ArrayData,
+    key: &str,
+    field: &str,
+) -> Option<bool> {
+    if !values.is_arguments() || !matches!(key, "length" | "callee" | "Symbol.iterator") {
+        return None;
+    }
+    Some(match field {
+        "enumerable" => false,
+        "configurable" => !values.is_strict_arguments() || key != "callee",
+        "writable" => !values.is_strict_arguments() || key != "callee",
+        _ => return None,
+    })
 }
 
 fn descriptor_flag_in(properties: &[(String, Value)], key: &str, field: &str) -> Option<bool> {

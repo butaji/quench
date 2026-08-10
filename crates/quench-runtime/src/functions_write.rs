@@ -12,14 +12,14 @@ pub(crate) fn write_op(registers: &mut Vec<crate::value::Value>, op: &Op) {
             captures,
             strictness,
             is_async,
-        } => {
-            write_ordinary(
-                registers,
-                (*dst, body, *params, *captures),
-                *strictness,
-                *is_async,
-            );
-        }
+            mapped_arguments,
+        } => write_ordinary(
+            registers,
+            (*dst, body, *params, *captures),
+            *strictness,
+            *is_async,
+            *mapped_arguments,
+        ),
         Op::MakeFunctionWithKind {
             dst,
             body,
@@ -28,6 +28,7 @@ pub(crate) fn write_op(registers: &mut Vec<crate::value::Value>, op: &Op) {
             kind,
             strictness,
             is_async,
+            mapped_arguments,
         } => write_kind(
             registers,
             (*dst, body, *params, *captures),
@@ -35,6 +36,7 @@ pub(crate) fn write_op(registers: &mut Vec<crate::value::Value>, op: &Op) {
                 kind: *kind,
                 strictness: *strictness,
                 is_async: *is_async,
+                mapped_arguments: *mapped_arguments,
             },
         ),
         _ => {}
@@ -55,6 +57,7 @@ fn write_ordinary(
     function: (u16, &[Op], u16, u16),
     strictness: crate::ops::FunctionStrictness,
     is_async: bool,
+    mapped_arguments: bool,
 ) {
     let (dst, body, params, captures) = function;
     crate::functions::write(
@@ -67,6 +70,7 @@ fn write_ordinary(
             kind: FunctionKind::Ordinary,
             strictness,
             is_async,
+            mapped_arguments,
         },
     );
 }

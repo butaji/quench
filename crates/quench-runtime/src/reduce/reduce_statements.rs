@@ -297,12 +297,14 @@ pub fn reduce_function_declaration(
         captures,
         strictness,
         function.r#async,
+        function.params.rest.is_none(),
     ));
-    ops.push(Op::StoreLocal {
-        slot,
-        src: register,
-    });
+    store_function(ops, slot, register);
     Ok(())
+}
+
+fn store_function(ops: &mut Vec<Op>, slot: u16, src: u16) {
+    ops.push(Op::StoreLocal { slot, src });
 }
 
 fn function_declaration_op(
@@ -312,6 +314,7 @@ fn function_declaration_op(
     captures: u16,
     strictness: crate::ops::FunctionStrictness,
     is_async: bool,
+    mapped_arguments: bool,
 ) -> Op {
     Op::MakeFunctionWithKind {
         dst,
@@ -321,6 +324,7 @@ fn function_declaration_op(
         kind: crate::ops::FunctionKind::Ordinary,
         strictness,
         is_async,
+        mapped_arguments,
     }
 }
 
