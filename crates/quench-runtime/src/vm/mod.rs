@@ -201,14 +201,7 @@ pub fn get_property(value: &Value, key: &str) -> Value {
     match value {
         Builtin(builtin) => builtin_property(*builtin, key),
         Array(values) => crate::arrays::property(values, key),
-        Object(properties) => properties
-            .iter()
-            .rev()
-            .find(|(name, _)| name == key)
-            .map_or_else(
-                || crate::builtins::property(crate::ops::Builtin::ObjectPrototype, key),
-                |(_, value)| value.clone(),
-            ),
+        Object(properties) => object_property(properties, key),
         String(value) => string_property(value, key),
         Number(value) => number_property(*value, key),
         Boolean(value) => boolean_property(*value, key),
@@ -226,6 +219,18 @@ pub fn get_property(value: &Value, key: &str) -> Value {
         Set(_) => crate::collections::set::property(key),
         _ => Value::Undefined,
     }
+}
+
+fn object_property(properties: &Rc<Vec<(String, Value)>>, key: &str) -> Value {
+    if let Some((_, value)) = properties.iter().rev().find(|(name, _)| name == key) {
+        return value.clone();
+    }
+    let prototype = if properties.iter().any(|(name, _)| name == "timeValue") {
+        crate::ops::Builtin::DatePrototype
+    } else {
+        crate::ops::Builtin::ObjectPrototype
+    };
+    crate::builtins::property(prototype, key)
 }
 
 fn run_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Value>, VmError> {
