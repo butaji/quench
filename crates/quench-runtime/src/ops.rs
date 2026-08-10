@@ -1,7 +1,4 @@
-pub use crate::ops_meta::{
-    BinaryOp, Constant, FunctionKind, FunctionStrictness, HostCapabilityKind, HostCapabilityRef,
-    RealmId, UnaryOp,
-};
+include!("ops_prelude.rs");
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Op {
@@ -482,6 +479,7 @@ pub enum Builtin {
     MapIterator,
     SetIterator,
     IteratorNext,
+    GeneratorNext,
     Error,
     ErrorPrototype,
     RangeError,

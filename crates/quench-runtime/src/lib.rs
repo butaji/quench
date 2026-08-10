@@ -31,6 +31,7 @@ pub mod facts;
 mod functions;
 mod functions_dynamic;
 mod functions_write;
+mod generator;
 mod globals;
 mod identifiers;
 mod intl;

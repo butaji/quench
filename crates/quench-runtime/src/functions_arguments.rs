@@ -67,3 +67,33 @@ pub(crate) fn is_constructible(function: &crate::value::FunctionValue) -> bool {
         | (FunctionKind::Ordinary, _, true) => false,
     }
 }
+
+pub(crate) fn execute(
+    function: &std::rc::Rc<crate::value::FunctionValue>,
+    this_value: &crate::value::Value,
+    arguments: &[crate::value::Value],
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    let this_value = crate::vm::bare_call_receiver(function, this_value);
+    if matches!(function.kind, FunctionKind::Generator) {
+        return Ok(crate::generator::create(function, &this_value, arguments));
+    }
+    let completion = execute_body(function, &this_value, arguments);
+    if function.is_async {
+        return Ok(crate::promise::from_async_completion(completion));
+    }
+    completion
+}
+
+pub(crate) fn execute_body(
+    function: &std::rc::Rc<crate::value::FunctionValue>,
+    this_value: &crate::value::Value,
+    arguments: &[crate::value::Value],
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    let (mut registers, environment) = build_registers(function, this_value, arguments);
+    crate::vm::execute_in_environment(
+        &function.body,
+        &mut registers,
+        &crate::vm::VmContext::default(),
+        environment,
+    )
+}

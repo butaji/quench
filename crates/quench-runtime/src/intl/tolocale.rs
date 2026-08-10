@@ -38,9 +38,12 @@ pub(crate) mod value {
                 | Value::Set(_),
             ) => "function".to_string(),
             Some(Value::BigInt(_)) => "[object BigInt]".to_string(),
-            Some(Value::HostCapability(_) | Value::Iterator(_) | Value::ObjectAlias(_)) => {
-                "[object Object]".to_string()
-            }
+            Some(
+                Value::HostCapability(_)
+                | Value::Iterator(_)
+                | Value::Generator(_)
+                | Value::ObjectAlias(_),
+            ) => "[object Object]".to_string(),
         }
     }
 
@@ -98,6 +101,7 @@ pub(crate) mod value {
                 | Value::Promise(_)
                 | Value::Map(_)
                 | Value::Set(_)
+                | Value::Generator(_)
                 | Value::BigInt(_),
             )
             | Some(Value::HostCapability(_))
@@ -187,6 +191,7 @@ pub(crate) mod value {
             | Value::Promise(_)
             | Value::Map(_)
             | Value::Set(_)
+            | Value::Generator(_)
             | Value::BigInt(_) => true,
             Value::HostCapability(_) | Value::Iterator(_) | Value::ObjectAlias(_) => true,
         }
@@ -223,7 +228,8 @@ pub(crate) mod value {
             | Value::Promise(_)
             | Value::Map(_)
             | Value::Set(_)
-            | Value::Iterator(_) => "object",
+            | Value::Iterator(_)
+            | Value::Generator(_) => "object",
             Value::ObjectAlias(_) => "object",
             Value::HostCapability(_) => "object",
         }
