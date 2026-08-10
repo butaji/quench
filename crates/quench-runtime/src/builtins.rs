@@ -182,12 +182,14 @@ pub(crate) fn array_join(receiver: Option<&Value>, arguments: &[Value]) -> Value
 }
 
 pub(crate) fn array_push(receiver: Option<&Value>, arguments: &[Value]) -> Value {
-    let Some(Value::Array(values)) = receiver else {
+    let Some(receiver @ Value::Array(values)) = receiver else {
         return Value::Number(f64::NAN);
     };
     let mut result = values.as_ref().clone();
     result.extend_from_slice(arguments);
-    Value::Number(result.len() as f64)
+    let length = result.len();
+    crate::locals::replace_value(receiver, &Value::Array(Rc::new(result)));
+    Value::Number(length as f64)
 }
 
 pub(crate) fn math_pow(arguments: &[Value]) -> Value {

@@ -14,7 +14,10 @@ fn early_dispatch(
 fn is_function_builtin(builtin: Builtin) -> bool {
     matches!(
         builtin,
-        Builtin::FunctionCall | Builtin::FunctionBind | Builtin::ArrayJoin
+        Builtin::FunctionCall
+            | Builtin::FunctionBind
+            | Builtin::ArrayJoin
+            | Builtin::ArrayPush
     )
 }
 
@@ -23,7 +26,6 @@ fn is_simple_builtin(builtin: Builtin) -> bool {
         builtin,
         Builtin::Boolean
             | Builtin::Eval
-            | Builtin::ReflectConstruct
             | Builtin::Escape
             | Builtin::IsFinite
             | Builtin::IsNaN
@@ -63,7 +65,7 @@ fn execute_simple_builtin(
     match builtin {
         Builtin::Function => crate::functions_dynamic::construct(arguments),
         Builtin::Boolean => Ok(Value::Boolean(arguments.first().is_some_and(is_truthy))),
-        Builtin::Eval | Builtin::ReflectConstruct => crate::reflect::builtin(builtin, arguments),
+        Builtin::Eval => crate::reflect::builtin(builtin, arguments),
         Builtin::Escape => Ok(crate::builtins::escape(arguments.first())),
         Builtin::IsFinite => Ok(Value::Boolean(is_finite(arguments.first()))),
         Builtin::IsNaN => Ok(Value::Boolean(to_number(arguments.first()).is_nan())),
