@@ -62,10 +62,13 @@ const experimentalStatus = Object.fromEntries(experimentalModules.map((name) => 
 }]));
 
 const nodeGlobals = JSON.parse(cp.execFileSync(process.execPath, ["-e", "process.stdout.write(JSON.stringify(Object.getOwnPropertyNames(globalThis).sort()))"], { encoding: "utf8" }));
+const quenchGlobalsCode = "process.stdout.write(JSON.stringify(Object.getOwnPropertyNames(globalThis).sort()))";
+const quenchGlobals = JSON.parse(cp.execFileSync(process.env.QUENCH_NODE_BIN, ["-e", quenchGlobalsCode], { encoding: "utf8" }).trim().split("\n").at(-1));
 const assignedGlobals = [...source.matchAll(/globalThis\.([A-Za-z_$][A-Za-z0-9_$]*)\s*(?:=|\|\|=|\?\?=)/g)].map((match) => match[1]);
 const globalAssignments = [...new Set(assignedGlobals)].sort();
 const assignedSet = new Set(globalAssignments);
-const sourceGlobalGaps = nodeGlobals.filter((name) => !assignedSet.has(name));
+const quenchGlobalSet = new Set(quenchGlobals);
+const sourceGlobalGaps = nodeGlobals.filter((name) => !assignedSet.has(name) && !quenchGlobalSet.has(name));
 
 const parallel = path.join(root, "tests/node/test/parallel");
 const fixtureFiles = fs.readdirSync(parallel).filter((name) => /\.(?:js|mjs|cjs)$/.test(name)).sort();
@@ -92,12 +95,12 @@ const report = {
   schema: 1,
   generatedAt: new Date().toISOString(),
   modules: { canonical: canonicalModules, registered: registeredModules, missing: canonicalModules.filter((name) => !registeredModules.includes(name)), experimental: experimentalStatus, runtimeAvailable: quenchBuiltinModules, runtimeMissing: runtimeMissingModules, runtimeStatus: quenchProbe, platformLimited: ownership.platformLimitedModules || {}, status: moduleStatus },
-  globals: { node: nodeGlobals, assignedByPolyfills: globalAssignments, sourceGaps: sourceGlobalGaps },
+  globals: { node: nodeGlobals, quench: quenchGlobals, assignedByPolyfills: globalAssignments, sourceGaps: sourceGlobalGaps },
   upstream: { parallelFixtures: fixtureFiles.length, prefixes: fixtureOwnership },
 };
 fs.writeFileSync(output, JSON.stringify(report, null, 2) + "\n");
 console.log(`modules=${canonicalModules.length} registered=${registeredModules.length} static_missing=${report.modules.missing.length} runtime_missing=${runtimeMissingModules.length}`);
-console.log(`node_globals=${nodeGlobals.length} polyfill_assignments=${globalAssignments.length}`);
+console.log(`node_globals=${nodeGlobals.length} quench_globals=${quenchGlobals.length} polyfill_assignments=${globalAssignments.length} source_gaps=${sourceGlobalGaps.length}`);
 console.log(`upstream_parallel_fixtures=${fixtureFiles.length} prefixes=${Object.keys(fixtureOwnership).length}`);
 console.log(`report=${output}`);
 NODE
