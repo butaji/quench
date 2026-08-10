@@ -27,6 +27,9 @@ fn reduce_primary(
         Expression::FunctionExpression(value) => {
             crate::functions::reduce_expression(value, ops, facts, next_register, locals)
         }
+        Expression::ClassExpression(value) => {
+            crate::classes::reduce_expression(value, ops, facts, next_register, locals)
+        }
         Expression::ArrowFunctionExpression(value) => {
             crate::functions::reduce_arrow(value, ops, facts, next_register, locals)
         }
@@ -51,7 +54,9 @@ fn reduce_secondary(
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
     match expression {
-        Expression::StaticMemberExpression(_) | Expression::ComputedMemberExpression(_) => {
+        Expression::StaticMemberExpression(_)
+        | Expression::ComputedMemberExpression(_)
+        | Expression::PrivateFieldExpression(_) => {
             crate::properties::reduce(expression, ops, facts, next_register, locals)
         }
         Expression::ConditionalExpression(value) => {
