@@ -10,42 +10,7 @@ use crate::{
     },
 };
 
-pub(crate) fn reduce_expression(
-    class: &Class<'_>,
-    ops: &mut Vec<Op>,
-    facts: &mut ProgramDb,
-    next: &mut u16,
-    locals: &HashMap<String, u16>,
-) -> Option<u16> {
-    let heritage = reduce_heritage(class, ops, facts, next, locals)?;
-    let (constructor, default_constructor) = reduce_constructor(class, ops, facts, next, locals)?;
-    set_class_name(class, constructor, ops);
-    let prototype = emit_object(ops, next, Vec::new());
-    configure_heritage(
-        heritage,
-        constructor,
-        prototype,
-        default_constructor,
-        ops,
-        next,
-    );
-    define_static_key(
-        ops,
-        next,
-        prototype,
-        "constructor",
-        constructor,
-        PropertyDefinitionKind::Data,
-    );
-    let static_fields = reduce_elements(class, prototype, constructor, ops, facts, next, locals)?;
-    ops.push(Op::SetProperty {
-        object: constructor,
-        key: "prototype".to_string(),
-        src: prototype,
-    });
-    ops.extend(static_fields);
-    Some(constructor)
-}
+include!("classes_private_scope.rs");
 include!("classes_name.rs");
 include!("classes_method_name.rs");
 

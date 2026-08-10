@@ -466,6 +466,7 @@ mod tests {
                 ("custom".to_string(), Value::Boolean(true)),
             ])),
             private_slots: Rc::new(RefCell::new(Vec::new())),
+            private_environment: crate::private_environment::PrivateEnvironment::default(),
             instance_fields: Rc::new(RefCell::new(Vec::new())),
         }));
         assert_eq!(

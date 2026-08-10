@@ -1,18 +1,13 @@
-use std::{cell::RefCell, rc::Rc};
-
 use crate::{
     execute::VmError,
-    facts::PrivateNameId,
     ops::Op,
-    value::{PrivateSlot, Value},
+    value::{PrivateName, PrivateSlot, PrivateSlots, Value},
 };
 
-type Slots = Rc<RefCell<Vec<(PrivateNameId, PrivateSlot)>>>;
-
-pub(crate) fn get(value: &Value, name: PrivateNameId) -> Result<Value, VmError> {
+pub(crate) fn get(value: &Value, name: &PrivateName) -> Result<Value, VmError> {
     let slots = slots(value)?;
     let slots = slots.borrow();
-    let Some((_, slot)) = slots.iter().find(|(id, _)| *id == name) else {
+    let Some((_, slot)) = slots.iter().find(|(id, _)| id == name) else {
         return Err(private_brand_error());
     };
     match slot {
@@ -21,10 +16,10 @@ pub(crate) fn get(value: &Value, name: PrivateNameId) -> Result<Value, VmError> 
     }
 }
 
-pub(crate) fn set(value: &Value, name: PrivateNameId, new_value: Value) -> Result<(), VmError> {
+pub(crate) fn set(value: &Value, name: &PrivateName, new_value: Value) -> Result<(), VmError> {
     let slots = slots(value)?;
     let mut slots = slots.borrow_mut();
-    let Some((_, PrivateSlot::Data(value))) = slots.iter_mut().find(|(id, _)| *id == name) else {
+    let Some((_, PrivateSlot::Data(value))) = slots.iter_mut().find(|(id, _)| id == name) else {
         return Err(private_brand_error());
     };
     *value = new_value;
@@ -32,10 +27,10 @@ pub(crate) fn set(value: &Value, name: PrivateNameId, new_value: Value) -> Resul
 }
 
 /// Defines an unforgeable data slot without exposing it as an ordinary key.
-pub(crate) fn define(value: &Value, name: PrivateNameId, initial: Value) -> Result<(), VmError> {
+pub(crate) fn define(value: &Value, name: PrivateName, initial: Value) -> Result<(), VmError> {
     let slots = slots(value)?;
     let mut slots = slots.borrow_mut();
-    if slots.iter().any(|(id, _)| *id == name) {
+    if slots.iter().any(|(id, _)| id == &name) {
         return Err(private_brand_error());
     }
     slots.push((name, PrivateSlot::Data(initial)));
@@ -47,7 +42,8 @@ pub(crate) fn execute_get(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmE
         return Err(VmError::MissingReturn);
     };
     let object = crate::execute::read_register(registers, *object)?;
-    let value = get(&object, *name)?;
+    let name = resolve(*name)?;
+    let value = get(&object, &name)?;
     crate::execute::write_value(registers, *dst, value);
     Ok(())
 }
@@ -58,7 +54,8 @@ pub(crate) fn execute_set(registers: &mut [Value], op: &Op) -> Result<(), VmErro
     };
     let object = crate::execute::read_register(registers, *object)?;
     let value = crate::execute::read_register(registers, *src)?;
-    set(&object, *name, value)
+    let name = resolve(*name)?;
+    set(&object, &name, value)
 }
 
 pub(crate) fn execute_define(registers: &mut [Value], op: &Op) -> Result<(), VmError> {
@@ -67,10 +64,14 @@ pub(crate) fn execute_define(registers: &mut [Value], op: &Op) -> Result<(), VmE
     };
     let object = crate::execute::read_register(registers, *object)?;
     let value = crate::execute::read_register(registers, *src)?;
-    define(&object, *name, value)
+    define(&object, resolve(*name)?, value)
 }
 
-fn slots(value: &Value) -> Result<Slots, VmError> {
+fn resolve(name: crate::facts::PrivateNameId) -> Result<PrivateName, VmError> {
+    crate::private_environment::resolve(name).ok_or_else(private_brand_error)
+}
+
+fn slots(value: &Value) -> Result<PrivateSlots, VmError> {
     match value {
         Value::BindingCell(cell) => slots(&cell.borrow()),
         Value::Function(function) => Ok(function.private_slots.clone()),
