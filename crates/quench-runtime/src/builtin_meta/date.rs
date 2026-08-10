@@ -17,6 +17,7 @@ pub fn date_prop(key: &str) -> Option<Builtin> {
         "getMinutes" => Some(DateGetMinutes),
         "getSeconds" => Some(DateGetSeconds),
         "getMilliseconds" => Some(DateGetMilliseconds),
+        "getTimezoneOffset" => Some(DateGetTimezoneOffset),
         _ => date_prop_utc(key),
     }
 }
@@ -77,6 +78,7 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
         DateGetMinutes => Some("Date.prototype.getMinutes"),
         DateGetSeconds => Some("Date.prototype.getSeconds"),
         DateGetMilliseconds => Some("Date.prototype.getMilliseconds"),
+        DateGetTimezoneOffset => Some("Date.prototype.getTimezoneOffset"),
         _ => fn_name_utc(b),
     }
 }
@@ -142,6 +144,7 @@ const fn fn_len_get_or_set(b: Builtin) -> Option<f64> {
         | DateGetMinutes
         | DateGetSeconds
         | DateGetMilliseconds
+        | DateGetTimezoneOffset
         | DateGetUTCFullYear
         | DateGetUTCMonth
         | DateGetUTCDate
@@ -186,6 +189,7 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
         DateGetMinutes => Some("getMinutes"),
         DateGetSeconds => Some("getSeconds"),
         DateGetMilliseconds => Some("getMilliseconds"),
+        DateGetTimezoneOffset => Some("getTimezoneOffset"),
         _ => short_name_utc_or_set(b),
     }
 }

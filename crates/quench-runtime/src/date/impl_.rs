@@ -40,6 +40,7 @@ fn dispatch_get(builtin: Builtin, receiver: Option<&Value>) -> Option<Value> {
         Builtin::DateGetMinutes => Some(date_get_minutes(receiver)),
         Builtin::DateGetSeconds => Some(date_get_seconds(receiver)),
         Builtin::DateGetMilliseconds => Some(date_get_milliseconds(receiver)),
+        Builtin::DateGetTimezoneOffset => Some(date_get_timezone_offset(receiver)),
         Builtin::DateGetUTCFullYear => Some(date_get_utc_full_year(receiver)),
         Builtin::DateGetUTCMonth => Some(date_get_utc_month(receiver)),
         Builtin::DateGetUTCDate => Some(date_get_utc_date(receiver)),
@@ -185,6 +186,14 @@ fn date_get_milliseconds(receiver: Option<&Value>) -> Value {
     chrono_utils::local_components(extract_time(receiver))
         .map(|(_, _, _, _, _, _, ms)| Value::Number(ms as f64))
         .unwrap_or(Value::Number(f64::NAN))
+}
+
+fn date_get_timezone_offset(receiver: Option<&Value>) -> Value {
+    if extract_time(receiver).is_nan() {
+        Value::Number(f64::NAN)
+    } else {
+        Value::Number(-f64::from(chrono_utils::local_tz_offset_minutes()))
+    }
 }
 
 fn date_get_utc_full_year(receiver: Option<&Value>) -> Value {
