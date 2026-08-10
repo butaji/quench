@@ -168,9 +168,9 @@ pub(crate) fn collect_iterable(value: Value) -> Result<Vec<Value>, crate::execut
     let iterator = open(value)?;
     collect(&iterator)
 }
-pub struct DelegationResult {
-    pub value: Value,
-    pub done: bool,
+pub enum DelegationResult {
+    Done(Value),
+    Ongoing { value: Value, passthrough: bool },
 }
 pub fn delegate_start(value: Value) -> Result<Value, crate::execute::VmError> {
     open(value)
@@ -201,10 +201,7 @@ pub fn delegate_next(
         }
     };
     let Some((iterator, next)) = protocol else {
-        return Ok(DelegationResult {
-            value: Value::Undefined,
-            done: true,
-        });
+        return Ok(DelegationResult::Done(Value::Undefined));
     };
     let result = call_with_arguments(&next, &iterator, std::slice::from_ref(&input))?;
     delegation_result(data, result)
@@ -214,17 +211,11 @@ pub fn delegate_return(
     input: Value,
 ) -> Result<DelegationResult, crate::execute::VmError> {
     let Some((data, iterator)) = delegation_target(record)? else {
-        return Ok(DelegationResult {
-            value: input,
-            done: true,
-        });
+        return Ok(DelegationResult::Done(input));
     };
     let Some(method) = get_return_method(&iterator)? else {
         mark_done(data);
-        return Ok(DelegationResult {
-            value: input,
-            done: true,
-        });
+        return Ok(DelegationResult::Done(input));
     };
     let result = call_with_arguments(&method, &iterator, std::slice::from_ref(&input))?;
     delegation_result(data, result)
@@ -237,11 +228,21 @@ pub fn delegate_throw(
         return Err(missing_throw_method());
     };
     let Some(method) = get_method(&iterator, "throw")? else {
-        let _ = delegate_return(record, Value::Undefined)?;
+        close_after_missing_throw(data, &iterator)?;
         return Err(missing_throw_method());
     };
     let result = call_with_arguments(&method, &iterator, std::slice::from_ref(&input))?;
     delegation_result(data, result)
+}
+fn close_after_missing_throw(
+    data: &IteratorData,
+    iterator: &Value,
+) -> Result<(), crate::execute::VmError> {
+    if let Some(method) = get_return_method(iterator)? {
+        let _ = call_with_arguments(&method, iterator, &[])?;
+    }
+    mark_done(data);
+    Ok(())
 }
 fn native_delegation_step(
     values: &[Value],
@@ -249,7 +250,14 @@ fn native_delegation_step(
     done: &mut bool,
 ) -> DelegationResult {
     let value = native_step(values, index, done).unwrap_or(Value::Undefined);
-    DelegationResult { value, done: *done }
+    if *done {
+        DelegationResult::Done(value)
+    } else {
+        DelegationResult::Ongoing {
+            value,
+            passthrough: false,
+        }
+    }
 }
 fn delegation_target(
     record: &Value,
@@ -271,11 +279,15 @@ fn delegation_result(
         return Err(not_iterable());
     }
     let done = crate::execute::is_truthy(&crate::execute::get_property_result(&result, "done")?);
-    let value = crate::execute::get_property_result(&result, "value")?;
-    if done {
-        mark_done(data);
+    if !done {
+        return Ok(DelegationResult::Ongoing {
+            value: result,
+            passthrough: true,
+        });
     }
-    Ok(DelegationResult { value, done })
+    let value = crate::execute::get_property_result(&result, "value")?;
+    mark_done(data);
+    Ok(DelegationResult::Done(value))
 }
 fn get_method(iterator: &Value, name: &str) -> Result<Option<Value>, crate::execute::VmError> {
     let method = crate::execute::get_property_result(iterator, name)?;
@@ -316,7 +328,6 @@ fn step_value(value: &Value) -> Result<Option<Value>, crate::execute::VmError> {
     let result = call(&next, &iterator)?;
     protocol_result(data, result)
 }
-
 fn native_step(values: &[Value], index: &mut usize, done: &mut bool) -> Option<Value> {
     if *done {
         return None;
@@ -340,7 +351,6 @@ fn protocol_result(
     }
     crate::execute::get_property_result(&result, "value").map(Some)
 }
-
 fn mark_done(data: &IteratorData) {
     match &mut *data.state.borrow_mut() {
         IteratorState::Native { done, .. } | IteratorState::Protocol { done, .. } => *done = true,
@@ -349,7 +359,6 @@ fn mark_done(data: &IteratorData) {
 fn call(callee: &Value, receiver: &Value) -> Result<Value, crate::execute::VmError> {
     call_with_arguments(callee, receiver, &[])
 }
-
 fn call_with_arguments(
     callee: &Value,
     receiver: &Value,
@@ -360,7 +369,6 @@ fn call_with_arguments(
         _ => crate::functions::execute_target(callee, receiver, arguments),
     }
 }
-
 fn iterable_values(value: Value) -> Result<Vec<Value>, crate::execute::VmError> {
     match value {
         Value::Array(values) => Ok(values.snapshot()),
@@ -371,7 +379,6 @@ fn iterable_values(value: Value) -> Result<Vec<Value>, crate::execute::VmError> 
         value => typed_values(value),
     }
 }
-
 macro_rules! number_values {
     ($data:expr) => {
         collect_typed(
@@ -381,7 +388,6 @@ macro_rules! number_values {
         )
     };
 }
-
 macro_rules! bigint_values {
     ($data:expr) => {
         collect_typed(
@@ -395,7 +401,6 @@ macro_rules! bigint_values {
         )
     };
 }
-
 fn typed_values(value: Value) -> Result<Vec<Value>, crate::execute::VmError> {
     match value {
         Value::Float64Array(data) => number_values!(data),
@@ -412,7 +417,6 @@ fn typed_values(value: Value) -> Result<Vec<Value>, crate::execute::VmError> {
         _ => Err(not_iterable()),
     }
 }
-
 fn collect_typed(
     length: usize,
     out_of_bounds: bool,
@@ -425,7 +429,6 @@ fn collect_typed(
         .map(|index| get(index).ok_or_else(not_iterable))
         .collect()
 }
-
 fn not_iterable() -> crate::execute::VmError {
     crate::value::error::throw_type_error("value is not iterable")
 }
@@ -477,7 +480,6 @@ pub(crate) fn make(values: Vec<Value>) -> Value {
         }),
     }))
 }
-
 fn make_protocol(iterator: Value, next: Value) -> Value {
     Value::Iterator(Rc::new(IteratorData {
         state: RefCell::new(IteratorState::Protocol {
@@ -487,11 +489,9 @@ fn make_protocol(iterator: Value, next: Value) -> Value {
         }),
     }))
 }
-
 fn empty() -> Value {
     make(Vec::new())
 }
-
 fn result(value: Value, done: bool) -> Value {
     Value::Object(Rc::new(vec![
         ("value".to_string(), value),
