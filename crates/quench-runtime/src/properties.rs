@@ -95,6 +95,12 @@ pub(crate) fn execute_set_property(
         ));
     }
     let value = crate::execute::read_register(registers, src)?.clone();
+    if let Some(setter) = crate::vm::array_accessor(&target, &key, "set") {
+        if !matches!(setter, crate::value::Value::Undefined) {
+            crate::functions::execute_target(&setter, &target, std::slice::from_ref(&value))?;
+        }
+        return Ok(());
+    }
     let result = crate::builtins::set_property(target.clone(), &key, value);
     crate::locals::replace_value(&target, &result);
     crate::vm::synchronize_global_object(registers, &target, &result);

@@ -127,7 +127,7 @@ pub(crate) mod value {
                 continue;
             }
             let result = crate::functions::execute_target(&method, object, &[])?;
-            if !matches!(result, Value::Object(_)) {
+            if !crate::value::is_object(&result) {
                 return Ok(to_number(Some(&result)));
             }
         }

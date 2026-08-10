@@ -26,6 +26,7 @@ pub(crate) fn get_prototype_of(value: Option<&Value>) -> Result<Value, VmError> 
         Value::Builtin(_) | Value::Function(_) | Value::BoundFunction(_) => {
             Value::Builtin(Builtin::FunctionPrototype)
         }
+        Value::Array(values) if values.is_arguments() => Value::Builtin(Builtin::ObjectPrototype),
         Value::Array(_) => Value::Builtin(Builtin::ArrayPrototype),
         Value::Object(_) => Value::Builtin(Builtin::ObjectPrototype),
         _ => Value::Null,
@@ -116,7 +117,9 @@ fn owns_property(receiver: &Value, key: &str) -> Result<bool, VmError> {
             .any(|(name, _)| name == key && !super::is_descriptor_key(name)),
         Value::Array(values) => {
             (!values.is_arguments() && key == "length")
-                || valid_index(key, values.len())
+                || key
+                    .parse::<usize>()
+                    .is_ok_and(|index| values.has_index(index))
                 || values.property(key).is_some()
                 || (values.is_strict_arguments() && key == "callee")
         }
