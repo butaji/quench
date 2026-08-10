@@ -64,11 +64,12 @@ fn reduce_units(units: &[SourceUnit<'_>]) -> Result<ResidualProgram, Vec<String>
         };
         let parsed = Parser::new(&allocator, source, unit.source_type).parse();
         reject_parse_errors(&parsed)?;
-        let analyzed = crate::semantic::analyze(&parsed.program)?;
-        totals.0 += analyzed.0;
-        totals.1 += analyzed.1;
+        let analysis = crate::semantic::analyze(&parsed.program)?;
+        totals.0 += analysis.scope_count;
+        totals.1 += analysis.symbol_count;
         let mut facts = ProgramDb {
             strict: unit.strict || has_strict_directive(&parsed.program),
+            private_names: analysis.private_names,
             ..ProgramDb::default()
         };
         last = state.append(
