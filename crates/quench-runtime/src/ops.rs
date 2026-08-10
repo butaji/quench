@@ -415,6 +415,7 @@ pub enum Builtin {
     URIError,
     AggregateError,
     Promise,
+    PromisePrototype,
     PromiseResolve,
     PromiseReject,
     PromiseThen,
