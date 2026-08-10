@@ -217,7 +217,7 @@ fn execute_array(registers: &mut Vec<Value>, dst: u16, elements: &[u16]) -> Resu
         .iter()
         .map(|index| read_register(registers, *index))
         .collect::<Result<Vec<_>, _>>()?;
-    write_value(registers, dst, Value::Array(Rc::new(values)));
+    write_value(registers, dst, Value::array(values));
     Ok(())
 }
 
