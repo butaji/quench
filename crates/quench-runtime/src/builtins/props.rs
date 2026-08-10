@@ -43,6 +43,9 @@ fn builtin_method(builtin: Builtin, key: &str) -> Option<Builtin> {
     }
     match (builtin, key) {
         (Array, "prototype") => Some(ArrayPrototype),
+        (ArrayBuffer, "isView") => Some(ArrayBufferIsView),
+        (Float64Array, "prototype") => Some(Float64ArrayPrototype),
+        (Float64ArrayPrototype, "constructor") => Some(Float64Array),
         (Function, "prototype") => Some(FunctionPrototype),
         (FunctionPrototype, "call") => Some(FunctionCall),
         (FunctionPrototype, "bind") => Some(FunctionBind),
@@ -164,6 +167,8 @@ fn builtin_length(builtin: Builtin) -> f64 {
     use Builtin::*;
     match builtin {
         Escape | Unescape | DateSetYear => 1.0,
+        ArrayBuffer => 1.0,
+        Float64Array => 3.0,
         DateNow => 0.0,
         RegExp => 2.0,
         DateParse => 1.0,
@@ -178,6 +183,9 @@ pub(crate) fn builtin_name(builtin: Builtin) -> &'static str {
         Escape => "escape",
         Unescape => "unescape",
         Array => "Array",
+        ArrayBuffer => "ArrayBuffer",
+        ArrayBufferIsView => "isView",
+        Float64Array => "Float64Array",
         Object => "Object",
         String => "String",
         Symbol => "Symbol",
