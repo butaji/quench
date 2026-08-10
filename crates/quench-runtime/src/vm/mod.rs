@@ -282,6 +282,7 @@ pub(crate) fn execute_host_capability(
     match kind {
         HostCapabilityKind::GetGlobal if arguments.is_empty() => current_global_value(),
         HostCapabilityKind::GetGlobal => Err(type_error("getGlobal expects no arguments")),
+        HostCapabilityKind::DetachArrayBuffer => vm_ops::detach_array_buffer(arguments),
         _ => Err(VmError::EvalError(
             "Host capability is unavailable".to_string(),
         )),
