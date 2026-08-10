@@ -157,6 +157,19 @@ pub fn reduce_expression(
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
+    if let Expression::AwaitExpression(await_expression) = expression {
+        let src = reduce_expression(
+            &await_expression.argument,
+            ops,
+            facts,
+            next_register,
+            locals,
+        )?;
+        let dst = *next_register;
+        *next_register = next_register.saturating_add(1);
+        ops.push(Op::Await { dst, src });
+        return Some(dst);
+    }
     if let Expression::ParenthesizedExpression(value) = expression {
         return transparent::reduce(value, ops, facts, next_register, locals);
     }
