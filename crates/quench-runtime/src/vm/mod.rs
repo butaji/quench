@@ -131,16 +131,15 @@ fn execute_simple_builtin(
         Builtin::Escape => Ok(crate::builtins::escape(arguments.first())),
         Builtin::IsFinite => Ok(Value::Boolean(is_finite(arguments.first()))),
         Builtin::IsNaN => Ok(Value::Boolean(to_number(arguments.first()).is_nan())),
-        Builtin::Number => Ok(Value::Number(to_number(arguments.first()))),
+        Builtin::Number => Ok(Value::Number(
+            crate::intl::tolocale::value::to_number_result(arguments.first())?,
+        )),
         Builtin::NumberToString => Ok(Value::String(to_string(arguments.first()))),
         Builtin::NumberValueOf => Ok(Value::Number(to_number(arguments.first()))),
         Builtin::ObjectPrototypeToString => Ok(crate::builtins::prototype_to_string(receiver)),
         Builtin::ObjectPrototypeValueOf => Ok(crate::builtins::prototype_value_of(receiver)),
-        Builtin::FunctionPrototypeToString => {
-            Ok(crate::builtins::function_prototype_to_string(receiver))
-        }
-        Builtin::FunctionPrototypeValueOf => {
-            Ok(crate::builtins::function_prototype_value_of(receiver))
+        Builtin::FunctionPrototypeToString | Builtin::FunctionPrototypeValueOf => {
+            function_prototype_builtin(builtin, receiver)
         }
         Builtin::NumberToFixed | Builtin::NumberToPrecision | Builtin::NumberToExponential => {
             crate::number_fmt::number_format(arguments.first(), arguments.get(1), builtin)
@@ -156,6 +155,21 @@ fn execute_simple_builtin(
         | Builtin::TypeError => Ok(crate::builtins::error(builtin, arguments)),
         Builtin::Date => {
             crate::date::execute(builtin, receiver, arguments).unwrap_or(Ok(Value::Undefined))
+        }
+        _ => Ok(Value::Undefined),
+    }
+}
+
+fn function_prototype_builtin(
+    builtin: Builtin,
+    receiver: Option<&Value>,
+) -> Result<Value, VmError> {
+    match builtin {
+        Builtin::FunctionPrototypeToString => {
+            Ok(crate::builtins::function_prototype_to_string(receiver))
+        }
+        Builtin::FunctionPrototypeValueOf => {
+            Ok(crate::builtins::function_prototype_value_of(receiver))
         }
         _ => Ok(Value::Undefined),
     }
