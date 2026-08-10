@@ -64,6 +64,7 @@ fn construct_builtin(
         crate::ops::Builtin::ArrayBuffer => construct_array_buffer(arguments),
         crate::ops::Builtin::Float64Array => construct_float64_array(arguments),
         crate::ops::Builtin::Float32Array => construct_float32_array(arguments),
+        crate::ops::Builtin::DataView => construct_data_view(arguments),
         crate::ops::Builtin::Object => Ok(crate::builtins::object(arguments)),
         crate::ops::Builtin::Number => construct_number(arguments),
         crate::ops::Builtin::Boolean => construct_boolean(arguments),
@@ -108,6 +109,36 @@ fn construct_array_buffer(arguments: &[Value]) -> Result<Value, crate::execute::
     Ok(Value::ArrayBuffer(Rc::new(
         crate::value::ArrayBufferData::new(length),
     )))
+}
+
+fn construct_data_view(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
+    let Some(Value::ArrayBuffer(buffer)) = arguments.first() else {
+        return Err(type_error("DataView buffer must be an ArrayBuffer"));
+    };
+    if *buffer.detached.borrow() {
+        return Err(type_error("Cannot use a detached ArrayBuffer"));
+    }
+    let offset = arguments.get(1).map_or(0.0, |value| {
+        crate::intl::tolocale::value::to_number(Some(value))
+    });
+    let offset = to_index(offset)?;
+    let buffer_length = buffer.byte_length();
+    if offset > buffer_length {
+        return Err(range_error("Invalid DataView byte offset"));
+    }
+    let available = buffer_length - offset;
+    let length = match arguments.get(2) {
+        Some(value) => to_index(crate::intl::tolocale::value::to_number(Some(value)))?,
+        None => available,
+    };
+    if length > available {
+        return Err(range_error("Invalid DataView byte length"));
+    }
+    Ok(Value::DataView(Rc::new(crate::value::DataViewData::new(
+        buffer.clone(),
+        offset,
+        length,
+    ))))
 }
 
 fn construct_float64_array(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
