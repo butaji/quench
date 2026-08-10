@@ -250,7 +250,7 @@ pub(crate) fn reduce_expression(
     ))
 }
 
-fn function_kind(function: &oxc::ast::ast::Function<'_>) -> FunctionKind {
+pub(crate) fn function_kind(function: &oxc::ast::ast::Function<'_>) -> FunctionKind {
     if function.generator {
         FunctionKind::Generator
     } else {
