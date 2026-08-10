@@ -18,6 +18,7 @@ pub(crate) fn execute_unary(
         UnaryOp::Plus => unary_plus(&value)?,
         UnaryOp::Minus => unary_minus(&value)?,
         UnaryOp::Not => Value::Boolean(!is_truthy(&value)),
+        UnaryOp::BitwiseNot => bitwise_not(&value)?,
         UnaryOp::Void => Value::Undefined,
         UnaryOp::Typeof => Value::String(type_of(&value).to_string()),
         UnaryOp::ToString => Value::String(to_string(Some(&value))),
@@ -342,6 +343,16 @@ fn unary_minus(value: &Value) -> Result<Value, VmError> {
     Ok(Value::Number(-crate::conversion::primitive_to_number(
         &value,
     )?))
+}
+
+fn bitwise_not(value: &Value) -> Result<Value, VmError> {
+    let value = crate::conversion::to_primitive(value, "number")?;
+    if let Some(value) = bigint_value(&value) {
+        let result = bigint::subtract("-1", value).map_err(bigint_error)?;
+        return Ok(Value::BigInt(result));
+    }
+    let number = crate::conversion::primitive_to_number(&value)?;
+    Ok(Value::Number(f64::from(!to_int32(number))))
 }
 
 fn has_bigint_operand(left: &Value, right: &Value) -> bool {

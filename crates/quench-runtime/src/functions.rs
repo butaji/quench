@@ -346,6 +346,7 @@ pub(super) fn make(
         params,
         captures,
         properties: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
+        instance_fields: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
         kind,
         strictness,
         is_async,
