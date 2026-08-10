@@ -2,14 +2,15 @@ fn run_op(
     registers: &mut Vec<Value>,
     op: &Op,
     _context: &VmContext,
-) -> Result<Option<Value>, VmError> {
+) -> Result<Option<crate::completion::Completion>, VmError> {
     if let Some(result) = run_simple_op(registers, op)? {
-        return Ok(result);
+        return Ok(result.map(crate::completion::Completion::Return));
     }
     if let Some(result) = run_control_op(registers, op)? {
-        return Ok(result);
+        return Ok(Some(result));
     }
     run_dispatch_op(registers, op)
+        .map(|value| value.map(crate::completion::Completion::Return))
 }
 
 fn run_simple_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Option<Value>>, VmError> {
@@ -37,7 +38,6 @@ fn run_simple_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Option<Va
             crate::functions::write_op(registers, op)
         }
         Call { .. } => run_call(registers, op)?,
-        Await { .. } => run_await(registers, op)?,
         Unary { dst, operator, src } => {
             vm_arithmetic::execute_unary(registers, *dst, *operator, *src)?
         }
@@ -47,21 +47,31 @@ fn run_simple_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Option<Va
     Ok(Some(None))
 }
 
-fn run_control_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Option<Value>>, VmError> {
+fn run_control_op(
+    registers: &mut Vec<Value>,
+    op: &Op,
+) -> Result<Option<crate::completion::Completion>, VmError> {
+    use crate::completion::Completion;
     use Op::*;
     match op {
-        ForIn { .. } => run_for_in(registers, op).map(Some),
+        ForIn { .. } => crate::loops::execute_for_in(registers, op).map(Some),
         ForOf { .. } => crate::loops::execute_for_of(registers, op).map(Some),
-        Branch { .. } => run_branch(registers, op).map(Some),
-        Try { .. } => run_try(registers, op).map(Some),
-        Loop { .. } | Switch { .. } | Conditional { .. } => {
-            run_loop_or_special(registers, op).map(Some)
-        }
-        Return { .. } | Throw { .. } => run_terminal(registers, op).map(Some).map(Some),
-        Break { label } => Err(VmError::Break(label.clone())),
-        Continue { label } => Err(VmError::Continue(label.clone())),
+        Branch { .. } => crate::branch::execute(registers, op).map(Some),
+        Try { .. } => crate::exceptions::execute(registers, op).map(Some),
+        Loop { .. } => crate::loops::execute(registers, op).map(Some),
+        Switch { .. } => crate::switch::execute(registers, op).map(Some),
+        Conditional { .. } => run_conditional(registers, op).map(return_completion),
+        Return { src } => read_register(registers, *src).map(Completion::Return).map(Some),
+        Throw { src } => read_register(registers, *src).map(Completion::Throw).map(Some),
+        Break { label } => Ok(Some(Completion::Break(label.clone()))),
+        Continue { label } => Ok(Some(Completion::Continue(label.clone()))),
+        Await { .. } => run_await_completion(registers, op),
         _ => Ok(None),
     }
+}
+
+fn return_completion(value: Option<Value>) -> Option<crate::completion::Completion> {
+    value.map(crate::completion::Completion::Return)
 }
 
 fn run_dispatch_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Value>, VmError> {
@@ -105,11 +115,20 @@ fn run_call(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
     Ok(())
 }
 
-fn run_await(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
+fn run_await_completion(
+    registers: &mut Vec<Value>,
+    op: &Op,
+) -> Result<Option<crate::completion::Completion>, VmError> {
+    use crate::completion::Completion;
     if let Op::Await { dst, src } = op {
-        vm_ops::execute_await(registers, *dst, *src)?;
+        return match vm_ops::execute_await(registers, *dst, *src) {
+            Ok(()) => Ok(None),
+            Err(VmError::Thrown(value)) => Ok(Some(Completion::Throw(value))),
+            Err(VmError::Suspended(promise)) => Ok(Some(Completion::Suspend(promise))),
+            Err(error) => Err(error),
+        };
     }
-    Ok(())
+    Ok(None)
 }
 
 fn run_binary(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
@@ -142,10 +161,6 @@ fn run_delete_property(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmErro
     crate::properties::execute_delete_property(registers, op)
 }
 
-fn run_for_in(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Value>, VmError> {
-    crate::loops::execute_for_in(registers, op)
-}
-
 fn run_method_or_construct(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
     use Op::*;
     match op {
@@ -156,37 +171,9 @@ fn run_method_or_construct(registers: &mut Vec<Value>, op: &Op) -> Result<(), Vm
     Ok(())
 }
 
-fn run_loop_or_special(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Value>, VmError> {
-    use Op::*;
-    match op {
-        Loop { .. } => crate::loops::execute(registers, op),
-        Switch { .. } => crate::switch::execute(registers, op),
-        Conditional { .. } => {
-            crate::conditional::execute(registers, op)?;
-            Ok(None)
-        }
-        _ => Ok(None),
-    }
-}
-
-fn run_terminal(registers: &[Value], op: &Op) -> Result<Value, VmError> {
-    execute_terminal(op, registers)
-}
-
-fn run_branch(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Value>, VmError> {
-    crate::branch::execute_or_continue(registers, op)
-}
-
-fn run_try(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Value>, VmError> {
-    crate::exceptions::execute(registers, op)
-}
-
-fn execute_terminal(op: &Op, registers: &[Value]) -> Result<Value, VmError> {
-    match op {
-        Op::Return { src } => read_register(registers, *src),
-        Op::Throw { src } => Err(VmError::Thrown(read_register(registers, *src)?)),
-        _ => Err(VmError::MissingReturn),
-    }
+fn run_conditional(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Value>, VmError> {
+    crate::conditional::execute(registers, op)?;
+    Ok(None)
 }
 
 fn render_thrown(value: &Value) -> String {

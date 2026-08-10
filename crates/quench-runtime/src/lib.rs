@@ -18,6 +18,7 @@ mod branch;
 mod builtin_meta;
 mod builtins;
 mod collections;
+mod completion;
 mod conditional;
 mod construct;
 mod control_flow;
