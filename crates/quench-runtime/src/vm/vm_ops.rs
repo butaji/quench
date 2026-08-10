@@ -95,7 +95,7 @@ fn invoke_callee(callee_value: &Value, arguments: &[Value]) -> Result<Value, VmE
         Value::BoundFunction(bound) => crate::functions::execute_bound(bound, arguments),
         Value::Builtin(builtin) => super::execute_builtin_with_receiver(*builtin, arguments, None),
         Value::Proxy(proxy) => execute_proxy_call(callee_value, proxy, arguments),
-        _ => Err(VmError::NotCallable),
+        _ => Err(super::not_callable()),
     }
 }
 
@@ -135,6 +135,9 @@ pub fn execute_builtin_tail(
             crate::proxy::proxy_is_extensible(arguments.first().ok_or(VmError::NotCallable)?)?
         }
         Builtin::ObjectKeys => crate::builtins::keys(arguments.first()),
+        Builtin::ObjectGetPrototypeOf => {
+            crate::builtins::object::get_prototype_of(arguments.first())?
+        }
         Builtin::ObjectHasOwnProperty | Builtin::ObjectGetOwnPropertyDescriptor => {
             crate::builtins::object::object_special(builtin, receiver, arguments)
         }
