@@ -414,6 +414,12 @@ pub enum Builtin {
     EvalError,
     URIError,
     AggregateError,
+    Promise,
+    PromiseResolve,
+    PromiseReject,
+    PromiseThen,
+    PromiseCatch,
+    PromiseFinally,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
