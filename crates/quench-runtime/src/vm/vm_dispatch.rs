@@ -106,6 +106,7 @@ fn run_property_op(registers: &mut Vec<Value>, op: &Op) -> Result<bool, VmError>
             | ResolveNameOrUndefined { .. }
             | SetName { .. }
             | SetFunctionName { .. }
+            | SetFunctionNameDynamic { .. }
     ) {
         return Ok(false);
     }
@@ -297,6 +298,9 @@ fn run_get_set_property(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmErr
         HasPropertyDynamic { .. } => crate::with_scope::execute_has_property(registers, op)?,
         ResolveName { .. } | SetName { .. } => crate::with_scope::execute_name(registers, op)?,
         SetFunctionName { .. } => crate::properties::execute_set_function_name(registers, op)?,
+        SetFunctionNameDynamic { .. } => {
+            crate::properties::execute_set_function_name_dynamic(registers, op)?
+        }
         ResolveNameOrUndefined { dst, name } => write_value(
             registers,
             *dst,
