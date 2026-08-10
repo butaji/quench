@@ -12,11 +12,17 @@ pub(crate) fn reduce(
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
 ) -> Result<Option<u16>, Vec<String>> {
+    let mut block_locals = locals.clone();
     let mut last = None;
     for statement in &block.body {
-        if let Some(value) =
-            reduce_statement(statement, ops, facts, next_register, next_slot, locals)?
-        {
+        if let Some(value) = reduce_statement(
+            statement,
+            ops,
+            facts,
+            next_register,
+            next_slot,
+            &mut block_locals,
+        )? {
             last = Some(value);
         }
     }

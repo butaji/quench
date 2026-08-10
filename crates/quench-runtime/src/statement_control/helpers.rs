@@ -163,6 +163,12 @@ fn reduce_labeled(
     )?;
     if wraps_loop {
         set_loop_label(&mut ops[start..], statement.label.name.to_string());
+    } else {
+        let body = ops.split_off(start);
+        ops.push(Op::Label {
+            name: statement.label.name.to_string(),
+            body,
+        });
     }
     Ok(result)
 }
