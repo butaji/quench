@@ -15,23 +15,38 @@ pub(crate) fn register_base(locals: &HashMap<String, u16>) -> u16 {
         .map_or(0, |slot| slot.saturating_add(1))
 }
 
-/// Reserve a local slot for each top-level function declaration.
+/// Reserve function-scoped bindings before reducing executable statements.
 pub(crate) fn predeclare_functions(
     statements: &[oxc::ast::ast::Statement<'_>],
     locals: &mut HashMap<String, u16>,
     next_slot: &mut u16,
 ) {
     for statement in statements {
-        let oxc::ast::ast::Statement::FunctionDeclaration(function) = statement else {
-            continue;
-        };
-        let Some(identifier) = function.id.as_ref() else {
-            continue;
-        };
-        if locals.contains_key(identifier.name.as_str()) {
-            continue;
+        match statement {
+            oxc::ast::ast::Statement::FunctionDeclaration(function) => {
+                if let Some(identifier) = function.id.as_ref() {
+                    reserve(identifier.name.as_str(), locals, next_slot);
+                }
+            }
+            oxc::ast::ast::Statement::VariableDeclaration(declaration)
+                if declaration.kind == oxc::ast::ast::VariableDeclarationKind::Var =>
+            {
+                for declarator in &declaration.declarations {
+                    if let oxc::ast::ast::BindingPatternKind::BindingIdentifier(identifier) =
+                        &declarator.id.kind
+                    {
+                        reserve(identifier.name.as_str(), locals, next_slot);
+                    }
+                }
+            }
+            _ => {}
         }
-        locals.insert(identifier.name.to_string(), *next_slot);
+    }
+}
+
+fn reserve(name: &str, locals: &mut HashMap<String, u16>, next_slot: &mut u16) {
+    if !locals.contains_key(name) {
+        locals.insert(name.to_string(), *next_slot);
         *next_slot = next_slot.saturating_add(1);
     }
 }
