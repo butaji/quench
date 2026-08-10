@@ -109,7 +109,6 @@ pub fn reduce_declaration(
         };
         let slot = *next_slot;
         *next_slot = next_slot.saturating_add(1);
-        locals.insert(identifier.name.to_string(), slot);
         let register = match declarator.init.as_ref() {
             Some(init) => reduce_expression(init, ops, facts, next_register, locals),
             None => Some(crate::reduce_support::emit_undefined(ops, next_register)),
@@ -117,6 +116,7 @@ pub fn reduce_declaration(
         let Some(register) = register else {
             return Err(vec!["Unsupported variable initializer".to_string()]);
         };
+        locals.insert(identifier.name.to_string(), slot);
         ops.push(Op::StoreLocal {
             slot,
             src: register,
@@ -315,8 +315,48 @@ pub fn reduce_atom(
     if let Expression::ArrayExpression(array) = expression {
         return arrays::reduce(array, ops, facts, next_register, locals);
     }
+    if let Expression::RegExpLiteral(regex) = expression {
+        return reduce_regexp_literal(regex, ops, next_register);
+    }
     if let Expression::Identifier(identifier) = expression {
         return identifiers::reduce(identifier, ops, facts, next_register, locals);
     }
     None
+}
+
+fn reduce_regexp_literal(
+    regex: &oxc::ast::ast::RegExpLiteral<'_>,
+    ops: &mut Vec<Op>,
+    next_register: &mut u16,
+) -> Option<u16> {
+    let raw = regex.raw.as_ref()?.as_str();
+    let separator = raw.rfind('/')?;
+    let pattern = &raw[1..separator];
+    let flags = &raw[separator + 1..];
+    let callee = *next_register;
+    *next_register = next_register.saturating_add(1);
+    ops.push(Op::MakeBuiltin {
+        dst: callee,
+        builtin: crate::ops::Builtin::RegExp,
+    });
+    let pattern_register = emit_string(ops, next_register, pattern);
+    let flags_register = emit_string(ops, next_register, flags);
+    let dst = *next_register;
+    *next_register = next_register.saturating_add(1);
+    ops.push(Op::Construct {
+        dst,
+        callee,
+        args: vec![pattern_register, flags_register],
+    });
+    Some(dst)
+}
+
+fn emit_string(ops: &mut Vec<Op>, next_register: &mut u16, value: &str) -> u16 {
+    let dst = *next_register;
+    *next_register = next_register.saturating_add(1);
+    ops.push(Op::Const {
+        dst,
+        value: crate::ops::Constant::String(value.to_string()),
+    });
+    dst
 }

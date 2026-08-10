@@ -157,7 +157,13 @@ fn normalize_reason(reason: &str) -> String {
     }
     let mut text = reason.to_string();
     if text.len() > 120 {
-        text.truncate(120);
+        let boundary = text
+            .char_indices()
+            .map(|(index, _)| index)
+            .take_while(|&index| index < 120)
+            .last()
+            .unwrap_or(0);
+        text.truncate(boundary);
         text.push('…');
     }
     text
