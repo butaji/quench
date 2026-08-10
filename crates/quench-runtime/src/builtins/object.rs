@@ -241,6 +241,15 @@ fn function_descriptor(function: &crate::value::FunctionValue, key: &str) -> Opt
             true,
         ));
     }
+    if let Some((_, metadata)) = function
+        .properties
+        .borrow()
+        .iter()
+        .rev()
+        .find(|(name, _)| name == &super::descriptor_key(key))
+    {
+        return Some(public_descriptor(metadata));
+    }
     let value = function
         .properties
         .borrow()
@@ -252,7 +261,6 @@ fn function_descriptor(function: &crate::value::FunctionValue, key: &str) -> Opt
     }
     Some(descriptor_object(&value))
 }
-
 fn object_descriptor(properties: &[(String, Value)], key: &str) -> Option<Value> {
     if let Some((_, metadata)) = properties
         .iter()
@@ -267,7 +275,6 @@ fn object_descriptor(properties: &[(String, Value)], key: &str) -> Option<Value>
         .find(|(name, _)| name == key)
         .map(|(_, value)| descriptor_object(value))
 }
-
 fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
     let property =
         super::callable_property(builtin, key).or_else(|| super::special_property(builtin, key))?;
@@ -279,7 +286,6 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
         property, writable, enumerable, true,
     ))
 }
-
 fn array_descriptor(values: &crate::value::ArrayData, key: &str) -> Option<Value> {
     if let Some(descriptor) = values.descriptor(key) {
         return Some(refresh_array_descriptor(values, key, descriptor));
@@ -310,7 +316,6 @@ fn array_descriptor(values: &crate::value::ArrayData, key: &str) -> Option<Value
         .and_then(|index| values.get_index(index))
         .map(|value| descriptor_object(&value))
 }
-
 fn refresh_array_descriptor(
     values: &crate::value::ArrayData,
     key: &str,
@@ -330,7 +335,6 @@ fn refresh_array_descriptor(
     }
     descriptor
 }
-
 fn strict_callee_descriptor() -> Value {
     let thrower = Value::Builtin(Builtin::TypeError);
     Value::Object(Rc::new(vec![
