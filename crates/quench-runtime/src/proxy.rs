@@ -5,7 +5,7 @@ use std::slice;
 
 use crate::{
     execute::VmError,
-    ops::Builtin,
+    ops::{Builtin, FunctionKind},
     value::{ProxyValue, Value},
 };
 
@@ -220,7 +220,10 @@ pub(crate) fn proxy_construct(
 
 fn is_constructible(value: &Value) -> bool {
     match value {
-        Value::Function(_) | Value::BoundFunction(_) | Value::Proxy(_) => true,
+        Value::Function(function) => {
+            !function.is_async && matches!(function.kind, FunctionKind::Ordinary)
+        }
+        Value::BoundFunction(_) | Value::Proxy(_) => true,
         Value::Builtin(builtin) => crate::builtin_meta::constructor_name(*builtin).is_some(),
         _ => false,
     }
