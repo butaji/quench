@@ -1,12 +1,13 @@
 globalThis.__nodeAssert.notDeepEqual =
   globalThis.__nodeAssert.notDeepStrictEqual;
 const __nodeAssertMatchExpectedFunction = (error, expected) => {
-  const isConstructor = expected === Array ||
+  const isConstructor =
+    expected === Array ||
     expected === Error ||
     expected.prototype instanceof Error;
   if (isConstructor && !(error instanceof expected)) {
     const assertion = new globalThis.__nodeAssert.AssertionError(
-      `The error is expected to be an instance of "${expected.name}". Received "${error.constructor.name}"\n\nError message:\n\n${error.message}`,
+      `The error is expected to be an instance of "${expected.name}". Received "${error.constructor.name}"\n\nError message:\n\n${error.message}`
     );
     assertion.generatedMessage = true;
     assertion.code = "ERR_ASSERTION";
@@ -30,11 +31,9 @@ const __nodeAssertMatchExpectedFunction = (error, expected) => {
 const __nodeAssertMatchExpectedRegExp = (error, expected) => {
   if (expected instanceof RegExp && !expected.test(String(error))) {
     const assertion = new globalThis.__nodeAssert.AssertionError(
-      `The input did not match the regular expression ${expected}. Input:\n\n'${
-        String(
-          error,
-        )
-      }'\n`,
+      `The input did not match the regular expression ${expected}. Input:\n\n'${String(
+        error
+      )}'\n`
     );
     assertion.code = "ERR_ASSERTION";
     assertion.operator = "throws";
@@ -45,17 +44,9 @@ const __nodeAssertMatchExpectedRegExp = (error, expected) => {
 };
 const __nodeAssertMatchExpectedObject = (error, expected) => {
   if (!expected || typeof expected !== "object") return;
-  for (
-    const key of [
-      "name",
-      "message",
-      "code",
-      "operator",
-      "actual",
-      "expected",
-      "generatedMessage",
-    ]
-  ) {
+  for (const key of "name message code operator actual expected generatedMessage".split(
+    " "
+  )) {
     if (!(key in expected)) continue;
     if (
       expected[key] instanceof RegExp
@@ -84,13 +75,14 @@ globalThis.__nodeAssert.throws = (fn, expected, message) => {
     __nodeAssertMatchExpected(error, expected);
   }
   if (!thrown) {
-    const label = typeof expected === "function"
-      ? ` (${expected.name})`
-      : typeof expected === "string"
-      ? `: ${expected}`
-      : ".";
+    const label =
+      typeof expected === "function"
+        ? ` (${expected.name})`
+        : typeof expected === "string"
+          ? `: ${expected}`
+          : ".";
     const assertion = new globalThis.__nodeAssert.AssertionError(
-      `Missing expected exception${label}${message ? `: ${message}` : ""}`,
+      `Missing expected exception${label}${message ? `: ${message}` : ""}`
     );
     assertion.code = "ERR_ASSERTION";
     assertion.operator = "throws";
@@ -114,14 +106,12 @@ globalThis.__nodeAssert.ifError = (error) => {
     } else if (error instanceof Error && error.name) rendered = error.name;
     else if (error && error.message !== undefined) rendered = error.message;
     else if (error && typeof error === "object") {
-      rendered = `{ ${
-        Object.keys(error)
-          .map((key) => `${key}: ${String(error[key])}`)
-          .join(", ")
-      } }`;
+      rendered = `{ ${Object.keys(error)
+        .map((key) => `${key}: ${String(error[key])}`)
+        .join(", ")} }`;
     } else rendered = String(error);
     const assertion = new globalThis.__nodeAssert.AssertionError(
-      `ifError got unwanted exception: ${rendered}`,
+      `ifError got unwanted exception: ${rendered}`
     );
     assertion.actual = error;
     assertion.expected = null;
@@ -141,7 +131,7 @@ globalThis.__nodeAssert.doesNotThrow = (fn, expected, message) => {
     const assertion = new globalThis.__nodeAssert.AssertionError(
       `Got unwanted exception${
         text ? `: ${text}` : "."
-      }\nActual message: "${error.message}"`,
+      }\nActual message: "${error.message}"`
     );
     assertion.code = "ERR_ASSERTION";
     assertion.operator = "doesNotThrow";
@@ -162,14 +152,14 @@ globalThis.__nodeAssert.rejects = (promiseOrFn, expected, message) => {
           input === undefined
             ? "undefined"
             : `an instance of ${input?.constructor?.name || typeof input}`
-        }.`,
+        }.`
       );
       error.code = "ERR_INVALID_RETURN_VALUE";
       return Promise.reject(error);
     }
     if (typeof input === "function") {
       const error = new TypeError(
-        'Expected instance of Promise to be returned from the "promiseFn" function but got a function.',
+        'Expected instance of Promise to be returned from the "promiseFn" function but got a function.'
       );
       error.code = "ERR_INVALID_RETURN_VALUE";
       return Promise.reject(error);
@@ -182,14 +172,14 @@ globalThis.__nodeAssert.rejects = (promiseOrFn, expected, message) => {
           typeof input === "string"
             ? `type string ('${input}')`
             : `an instance of ${input?.constructor?.name || typeof input}`
-        }`,
+        }`
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       return Promise.reject(error);
     }
     if (typeof input.catch !== "function") {
       const error = new TypeError(
-        'The "promiseFn" argument must be a function or an instance of Promise',
+        'The "promiseFn" argument must be a function or an instance of Promise'
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       return Promise.reject(error);
@@ -202,7 +192,7 @@ globalThis.__nodeAssert.rejects = (promiseOrFn, expected, message) => {
           typeof expected === "function"
             ? ` (${expected.name || "mustNotCall"})`
             : ""
-        }.`,
+        }.`
       );
       assertion.code = "ERR_ASSERTION";
       assertion.operator = "rejects";
@@ -218,7 +208,7 @@ globalThis.__nodeAssert.rejects = (promiseOrFn, expected, message) => {
         }
         if (valid !== true) {
           const assertion = new globalThis.__nodeAssert.AssertionError(
-            `The "validate" validation function is expected to return "true". Received '${valid}'\n\nCaught error:\n\n${error}`,
+            `The "validate" validation function is expected to return "true". Received '${valid}'\n\nCaught error:\n\n${error}`
           );
           assertion.code = "ERR_ASSERTION";
           assertion.operator = "rejects";
@@ -242,7 +232,7 @@ globalThis.__nodeAssert.rejects = (promiseOrFn, expected, message) => {
             message ||
               expected.message ||
               error?.message ||
-              "The input did not match",
+              "The input did not match"
           );
           assertion.code = "ERR_ASSERTION";
           assertion.operator = "rejects";
@@ -254,6 +244,6 @@ globalThis.__nodeAssert.rejects = (promiseOrFn, expected, message) => {
         }
       }
       return error;
-    },
+    }
   );
 };

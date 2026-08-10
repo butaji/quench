@@ -104,7 +104,7 @@ const __quenchNetSocket = class Socket extends globalThis.__nodeEventEmitter {
       },
       [Symbol.asyncIterator]() {
         return this;
-      },
+      }
     };
   }
   pause() {
@@ -148,7 +148,7 @@ const __quenchNetSocket = class Socket extends globalThis.__nodeEventEmitter {
   setTimeout(timeout, callback) {
     if (typeof timeout !== "number") {
       const error = new TypeError(
-        'The "timeout" argument must be of type number',
+        'The "timeout" argument must be of type number'
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
@@ -160,7 +160,7 @@ const __quenchNetSocket = class Socket extends globalThis.__nodeEventEmitter {
     }
     if (callback !== undefined && typeof callback !== "function") {
       const error = new TypeError(
-        'The "callback" argument must be of type function',
+        'The "callback" argument must be of type function'
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
@@ -212,7 +212,7 @@ const __quenchNetSocket = class Socket extends globalThis.__nodeEventEmitter {
     if (Array.isArray(_options)) {
       if (!_options[globalThis.__quenchNetNormalizedArgsSymbol]) {
         const error = new TypeError(
-          "The port or options argument must be specified",
+          "The port or options argument must be specified"
         );
         error.code = "ERR_MISSING_ARGS";
         throw error;
@@ -250,7 +250,7 @@ const __quenchNetSocket = class Socket extends globalThis.__nodeEventEmitter {
       (_options.localAddress !== undefined || _options.localPort !== undefined)
     ) {
       const error = new TypeError(
-        "localAddress and localPort cannot be used with a bound socket",
+        "localAddress and localPort cannot be used with a bound socket"
       );
       error.code = "ERR_INVALID_ARG_VALUE";
       throw error;
@@ -259,7 +259,7 @@ const __quenchNetSocket = class Socket extends globalThis.__nodeEventEmitter {
     if (
       localPort &&
       [...__quenchNetServers].some(
-        (server) => server.listening && server.address().port === localPort,
+        (server) => server.listening && server.address().port === localPort
       )
     ) {
       const error = new Error("address already in use");
@@ -273,9 +273,10 @@ const __quenchNetSocket = class Socket extends globalThis.__nodeEventEmitter {
       this.setKeepAlive(_options.keepAlive, _options.keepAliveInitialDelay);
     }
     const blockList = _options.blockList;
-    const blockAddress = _options.host === "localhost"
-      ? "127.0.0.1"
-      : _options.host || "127.0.0.1";
+    const blockAddress =
+      _options.host === "localhost"
+        ? "127.0.0.1"
+        : _options.host || "127.0.0.1";
     if (blockList?.check?.(blockAddress)) {
       const error = new Error(`Cannot connect to ${blockAddress}`);
       error.code = "ERR_IP_BLOCKED";
@@ -324,10 +325,10 @@ const __quenchNetSocket = class Socket extends globalThis.__nodeEventEmitter {
               candidate.address().address === this._resolvedAddress) &&
             ((!requestedPath &&
               (!requestedPort || candidate.address().port === requestedPort)) ||
-              (requestedPath && candidate._path === requestedPath)),
+              (requestedPath && candidate._path === requestedPath))
         );
         const httpServer = [
-          ...(globalThis.__quenchHttpServers?.values() || []),
+          ...(globalThis.__quenchHttpServers?.values() || [])
         ].find((candidate) => candidate.listening);
         if (!server && httpServer) {
           const serverSocket = new __quenchNetModule.Socket();
@@ -341,10 +342,12 @@ const __quenchNetSocket = class Socket extends globalThis.__nodeEventEmitter {
           return;
         }
         if (!server) {
-          const address = this._resolvedAddress || _options.host ||
+          const address =
+            this._resolvedAddress ||
+            _options.host ||
             (isIPv6(_options.family) ? "::1" : "127.0.0.1");
           const error = new Error(
-            `connect ECONNREFUSED ${address}:${requestedPort}`,
+            `connect ECONNREFUSED ${address}:${requestedPort}`
           );
           error.code = "ECONNREFUSED";
           error.address = address;
@@ -373,7 +376,7 @@ const __quenchNetSocket = class Socket extends globalThis.__nodeEventEmitter {
         if (server.keepAlive !== undefined) {
           serverSocket.setKeepAlive(
             server.keepAlive,
-            server.keepAliveInitialDelay,
+            server.keepAliveInitialDelay
           );
         }
         this._peer = serverSocket;
@@ -395,17 +398,19 @@ const __quenchNetSocket = class Socket extends globalThis.__nodeEventEmitter {
       callback = encoding;
       encoding = undefined;
     }
-    const length = typeof _data === "string"
-      ? ["latin1", "binary", "ascii"].includes(encoding)
-        ? _data.length
-        : NodeBuffer.byteLength(_data, encoding)
-      : _data?.byteLength || _data?.length || 0;
-    if (!this.destroyed) {
-      const bytes = typeof _data === "string"
+    const length =
+      typeof _data === "string"
         ? ["latin1", "binary", "ascii"].includes(encoding)
-          ? Array.from(_data, (value) => value.charCodeAt(0) & 0xff)
-          : Array.from(new TextEncoder().encode(_data))
-        : Array.from(new Uint8Array(_data.buffer || _data));
+          ? _data.length
+          : NodeBuffer.byteLength(_data, encoding)
+        : _data?.byteLength || _data?.length || 0;
+    if (!this.destroyed) {
+      const bytes =
+        typeof _data === "string"
+          ? ["latin1", "binary", "ascii"].includes(encoding)
+            ? Array.from(_data, (value) => value.charCodeAt(0) & 0xff)
+            : Array.from(new TextEncoder().encode(_data))
+          : Array.from(new Uint8Array(_data.buffer || _data));
       if (this._nativeId) {
         __quench_tcp_write(this._nativeId, bytes);
       } else if (!this._peer && bytes.length) {
@@ -428,9 +433,7 @@ const __quenchNetSocket = class Socket extends globalThis.__nodeEventEmitter {
     }
     if (length) this.bytesWritten += length;
     if (this.destroyed && typeof callback === "function") {
-      const error = new Error(
-        "Cannot call write after a stream was destroyed",
-      );
+      const error = new Error("Cannot call write after a stream was destroyed");
       error.code = "ERR_STREAM_DESTROYED";
       queueMicrotask(() => callback(error));
     } else {
@@ -438,7 +441,6 @@ const __quenchNetSocket = class Socket extends globalThis.__nodeEventEmitter {
     }
     return true;
   }
-
   end(_data, callback) {
     if (typeof _data === "function") {
       callback = _data;

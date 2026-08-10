@@ -26,11 +26,12 @@ const __nodeBufferFillRange = (length, start, end, encoding) => {
   if (typeof start !== "number" || typeof end !== "number") {
     const name = typeof start !== "number" ? "start" : "end";
     const value = name === "start" ? start : end;
-    const received = value !== null && typeof value === "object"
-      ? `an instance of ${value.constructor?.name || "Object"}`
-      : `type ${typeof value}`;
+    const received =
+      value !== null && typeof value === "object"
+        ? `an instance of ${value.constructor?.name || "Object"}`
+        : `type ${typeof value}`;
     const error = new TypeError(
-      `The "${name}" argument must be of type number. Received ${received}`,
+      `The "${name}" argument must be of type number. Received ${received}`
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -51,11 +52,9 @@ const __nodeBufferFillRange = (length, start, end, encoding) => {
 const __nodeBufferFillString = (value, encoding) => {
   if (encoding !== undefined && typeof encoding !== "string") {
     const error = new TypeError(
-      `The "encoding" argument must be of type string. Received type ${typeof encoding} (${
-        String(
-          encoding,
-        )
-      })`,
+      `The "encoding" argument must be of type string. Received type ${typeof encoding} (${String(
+        encoding
+      )})`
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -83,11 +82,9 @@ const __nodeBufferFillPattern = (value, encoding) => {
 const __nodeBufferCompareValidate = (target, values) => {
   if (!(target instanceof Uint8Array)) {
     const error = new TypeError(
-      `The "target" argument must be an instance of Buffer or Uint8Array.${
-        __nodeBufferConcatReceived(
-          target,
-        )
-      }`,
+      `The "target" argument must be an instance of Buffer or Uint8Array.${__nodeBufferConcatReceived(
+        target
+      )}`
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -111,7 +108,7 @@ const __nodeBufferCompareRange = (target, source, values) => {
     targetStart === undefined ? 0 : Math.trunc(targetStart),
     targetEnd === undefined ? target.length : Math.trunc(targetEnd),
     sourceStart === undefined ? 0 : Math.trunc(sourceStart),
-    sourceEnd === undefined ? source.length : Math.trunc(sourceEnd),
+    sourceEnd === undefined ? source.length : Math.trunc(sourceEnd)
   ];
   if (ranges[1] > target.length || ranges[3] > source.length) {
     const error = new RangeError("offset is out of range");
@@ -120,14 +117,16 @@ const __nodeBufferCompareRange = (target, source, values) => {
   }
   return [
     target.subarray(ranges[0], ranges[1]),
-    source.subarray(ranges[2], ranges[3]),
+    source.subarray(ranges[2], ranges[3])
   ];
 };
 const __nodeBufferStringRange = (length, start, end) => {
   const normalize = (value, fallback) => {
     const number = Math.trunc(Number(value));
     return Number.isNaN(number)
-      ? value === undefined ? fallback : 0
+      ? value === undefined
+        ? fallback
+        : 0
       : Math.max(0, Math.min(length, number));
   };
   return { start: normalize(start, 0), end: normalize(end, length) };
@@ -137,10 +136,12 @@ const __nodeBufferBase64String = (buffer, url) => {
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
   let result = "";
   for (let index = 0; index < buffer.length; index += 3) {
-    const n = (buffer[index] << 16) |
+    const n =
+      (buffer[index] << 16) |
       ((buffer[index + 1] || 0) << 8) |
       (buffer[index + 2] || 0);
-    result += alphabet[(n >> 18) & 63] +
+    result +=
+      alphabet[(n >> 18) & 63] +
       alphabet[(n >> 12) & 63] +
       (index + 1 < buffer.length ? alphabet[(n >> 6) & 63] : "=") +
       (index + 2 < buffer.length ? alphabet[n & 63] : "=");
@@ -167,7 +168,7 @@ const __nodeBufferEncodedString = (buffer, encoding) => {
   }
   if (encoding === "ascii") {
     return Array.from(buffer, (byte) => String.fromCharCode(byte & 0x7f)).join(
-      "",
+      ""
     );
   }
   if (["utf16le", "utf-16le", "ucs2", "ucs-2"].includes(encoding)) {
@@ -241,7 +242,7 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase01 {
       throw __nodeBufferCopyRangeError(
         "sourceStart",
         `>= 0 && <= ${this.length}`,
-        sourceStart,
+        sourceStart
       );
     }
     if (sourceEnd < 0) {
@@ -252,23 +253,23 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase01 {
       __nodeBufferCopyTarget(target),
       targetStart,
       sourceStart,
-      sourceEnd,
+      sourceEnd
     );
   }
   static concat(list, totalLength) {
     __nodeBufferConcatValidate(list, totalLength);
-    const length = list.length === 0
-      ? (totalLength ?? 0)
-      : __nodeBufferConcatLength(list, totalLength);
+    const length =
+      list.length === 0
+        ? (totalLength ?? 0)
+        : __nodeBufferConcatLength(list, totalLength);
     const output = new NodeBuffer(length);
     let offset = 0;
     list.forEach(
-      (item) => (offset = __nodeBufferConcatCopy(output, item, offset)),
+      (item) => (offset = __nodeBufferConcatCopy(output, item, offset))
     );
     Object.setPrototypeOf(output, globalThis.Buffer.prototype);
     return output;
   }
-
   fill(value = 0, start = 0, end, encoding = "utf8") {
     const length = this.byteLength;
     if (
@@ -276,7 +277,7 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase01 {
       this.length !== length
     ) {
       const error = new RangeError(
-        "Attempt to access memory outside buffer bounds",
+        "Attempt to access memory outside buffer bounds"
       );
       error.code = "ERR_BUFFER_OUT_OF_BOUNDS";
       throw error;
@@ -285,7 +286,7 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase01 {
       length,
       start,
       end,
-      encoding,
+      encoding
     ));
     const pattern = __nodeBufferFillPattern(value, encoding);
     if (pattern.length === 0) {
@@ -301,7 +302,6 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase01 {
     }
     return this;
   }
-
   toString(encoding = "utf8", start = 0, end = this.length) {
     encoding = String(encoding).toLowerCase();
     if (!NodeBuffer.isEncoding(encoding)) {
@@ -318,15 +318,12 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase01 {
     }
     return __nodeBufferEncodedString(this, encoding);
   }
-
   equals(other) {
     if (!(other instanceof Uint8Array)) {
       const error = new TypeError(
-        `The "otherBuffer" argument must be an instance of Buffer or Uint8Array.${
-          __nodeBufferConcatReceived(
-            other,
-          )
-        }`,
+        `The "otherBuffer" argument must be an instance of Buffer or Uint8Array.${__nodeBufferConcatReceived(
+          other
+        )}`
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
@@ -336,14 +333,12 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase01 {
       this.every((value, index) => value === other[index])
     );
   }
-
   compare(target, targetStart, targetEnd, sourceStart, sourceEnd) {
     const values = [targetStart, targetEnd, sourceStart, sourceEnd];
     __nodeBufferCompareValidate(target, values);
     const [left, right] = __nodeBufferCompareRange(target, this, values);
     return NodeBuffer.compare(right, left);
   }
-
   _swap(width) {
     if (this.length % width !== 0) {
       throw new Error(`Buffer size must be a multiple of ${width * 8}-bits`);
@@ -357,19 +352,15 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase01 {
     }
     return this;
   }
-
   swap16() {
     return NodeBuffer.prototype._swap.call(this, 2);
   }
-
   swap32() {
     return NodeBuffer.prototype._swap.call(this, 4);
   }
-
   swap64() {
     return NodeBuffer.prototype._swap.call(this, 8);
   }
-
   _readBigInt(offset, littleEndian, signed) {
     NodeBuffer.prototype._integerOffset.call(this, offset, 8);
     const view = new DataView(this.buffer, this.byteOffset, this.byteLength);
@@ -377,7 +368,6 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase01 {
       ? view.getBigInt64(offset, littleEndian)
       : view.getBigUint64(offset, littleEndian);
   }
-
   _writeBigInt(value, offset, littleEndian, signed) {
     NodeBuffer.prototype._integerOffset.call(this, offset, 8);
     if (typeof value !== "bigint") {
@@ -395,83 +385,71 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase01 {
     else view.setBigUint64(offset, value, littleEndian);
     return offset + 8;
   }
-
   readBigInt64LE(offset = 0) {
     return NodeBuffer.prototype._readBigInt.call(this, offset, true, true);
   }
-
   readBigInt64BE(offset = 0) {
     return NodeBuffer.prototype._readBigInt.call(this, offset, false, true);
   }
-
   readBigUInt64LE(offset = 0) {
     return NodeBuffer.prototype._readBigInt.call(this, offset, true, false);
   }
-
   readBigUInt64BE(offset = 0) {
     return NodeBuffer.prototype._readBigInt.call(this, offset, false, false);
   }
-
   writeBigInt64LE(value, offset = 0) {
     return NodeBuffer.prototype._writeBigInt.call(
       this,
       value,
       offset,
       true,
-      true,
+      true
     );
   }
-
   writeBigInt64BE(value, offset = 0) {
     return NodeBuffer.prototype._writeBigInt.call(
       this,
       value,
       offset,
       false,
-      true,
+      true
     );
   }
-
   writeBigUInt64LE(value, offset = 0) {
     return NodeBuffer.prototype._writeBigInt.call(
       this,
       value,
       offset,
       true,
-      false,
+      false
     );
   }
-
   writeBigUInt64BE(value, offset = 0) {
     return NodeBuffer.prototype._writeBigInt.call(
       this,
       value,
       offset,
       false,
-      false,
+      false
     );
   }
-
   toJSON() {
     return { type: "Buffer", data: Array.from(this) };
   }
-
   inspect() {
     const limit = Math.min(this.length, __nodeInspectMaxBytes);
-    const bytes = Array.from(
-      this.subarray(0, limit),
-      (byte) => byte.toString(16).padStart(2, "0"),
+    const bytes = Array.from(this.subarray(0, limit), (byte) =>
+      byte.toString(16).padStart(2, "0")
     );
     const label = this instanceof NodeBuffer ? "Buffer" : "Uint8Array";
     return `<${label} ${bytes.join(" ")}${
       limit < this.length
         ? ` ... ${this.length - limit} more byte${
-          this.length - limit === 1 ? "" : "s"
-        }`
+            this.length - limit === 1 ? "" : "s"
+          }`
         : ""
     }>`;
   }
-
   toLocaleString(...args) {
     return this.toString(...args);
   }

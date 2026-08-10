@@ -6,7 +6,7 @@ const __quenchCryptoDecryptFallback = (result) => {
       String(key).includes("Proc-Type")
     ) {
       throw new Error(
-        "error:07880109:common libcrypto routines::interrupted or cancelled",
+        "error:07880109:common libcrypto routines::interrupted or cancelled"
       );
     }
     return NodeBuffer.from(data);
@@ -19,7 +19,7 @@ const __quenchCryptoEncodedPair = (options) => {
   ) {
     return {
       publicKey: NodeBuffer.alloc(32),
-      privateKey: NodeBuffer.alloc(32),
+      privateKey: NodeBuffer.alloc(32)
     };
   }
   return __quenchEncodedPair();
@@ -27,12 +27,10 @@ const __quenchCryptoEncodedPair = (options) => {
 const __quenchFileUrlDrivePath = (input, converted) => {
   const href = typeof input === "string" ? input : input?.href;
   if (input?.protocol === "file:" && input.host && input.pathname) {
-    return `\\\\${input.host}${
-      decodeURIComponent(input.pathname).replace(
-        /\//g,
-        "\\",
-      )
-    }`;
+    return `\\\\${input.host}${decodeURIComponent(input.pathname).replace(
+      /\//g,
+      "\\"
+    )}`;
   }
   const unc = href?.match(/^file:\/\/([^/]+)(\/.*)$/);
   if (unc) {
@@ -51,12 +49,10 @@ const __quenchWindowsControlURL = (value, windows) => {
   const controlUNC = input.match(/^([^\\/#?]*)\\(.*)$/);
   if (!controlUNC || !/[\n\r\t]/.test(controlUNC[1])) return null;
   return {
-    href: `file://${controlUNC[1].replace(/[\n\r\t]/g, "")}/${
-      controlUNC[2].replace(
-        /\\/g,
-        "/",
-      )
-    }`,
+    href: `file://${controlUNC[1].replace(/[\n\r\t]/g, "")}/${controlUNC[2].replace(
+      /\\/g,
+      "/"
+    )}`
   };
 };
 const __nodeWindowsDriveURL = (value, windows) => {
@@ -83,7 +79,8 @@ const __nodeWindowsDriveURL = (value, windows) => {
 const __quenchValidateFileUrlHost = globalThis.__quenchValidateFileUrlHost;
 const __quenchValidateFileUrlPath = (input, options) => {
   const href = typeof input === "string" ? input : input?.href;
-  const invalid = /%2f/i.test(href || "") ||
+  const invalid =
+    /%2f/i.test(href || "") ||
     (options?.windows === true && /%5c/i.test(href || ""));
   if (!href || !invalid) return;
   const error = new TypeError("Invalid file URL path");
@@ -134,7 +131,8 @@ const __nodeWindowsUncTerminatorURL = (value, windows) => {
   const host = input.split(/[\\/#?]/)[0];
   const marker = input.slice(host.length);
   if (!/[#?/]/.test(marker)) return null;
-  const suffix = marker.match(/^[#?][^\\]*\\(.*)$/)?.[1] ||
+  const suffix =
+    marker.match(/^[#?][^\\]*\\(.*)$/)?.[1] ||
     marker.match(/^\/[^\\]*\\(.*)$/)?.[1];
   const path = `/${(suffix || "").replace(/\\/g, "/")}`;
   return { href: `file://${host}${path}` };
@@ -172,7 +170,7 @@ const __nodeUnbrandedHttpOptions = () => ({
   pathname: undefined,
   search: undefined,
   hash: undefined,
-  href: undefined,
+  href: undefined
 });
 const __nodeIsUnbrandedHttpValue = (value) =>
   value &&
@@ -188,7 +186,7 @@ const __nodeUrlToHttpOptions = (value) => {
   if (!value || typeof value !== "object") {
     const received = __nodeHttpArgumentType(value);
     const error = new TypeError(
-      `The "url" argument must be of type object. Received type ${received}`,
+      `The "url" argument must be of type object. Received type ${received}`
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -196,14 +194,12 @@ const __nodeUrlToHttpOptions = (value) => {
   const pathname = value.pathname;
   const search = value.search;
   const hrefAuth = value.href?.match(
-    /^[A-Za-z][A-Za-z0-9+.-]*:\/\/([^@]+)@/,
+    /^[A-Za-z][A-Za-z0-9+.-]*:\/\/([^@]+)@/
   )?.[1];
   const auth = value.username
-    ? `${decodeURIComponent(value.username)}:${
-      decodeURIComponent(
-        value.password,
-      )
-    }`
+    ? `${decodeURIComponent(value.username)}:${decodeURIComponent(
+        value.password
+      )}`
     : hrefAuth;
   return {
     protocol: value.protocol,
@@ -213,7 +209,7 @@ const __nodeUrlToHttpOptions = (value) => {
     path: pathname ? `${pathname}${search || ""}` : "",
     pathname,
     search,
-    hash: value.hash,
+    hash: value.hash
   };
 };
 globalThis.__nodeUrlToHttpOptions = __nodeUrlToHttpOptions;
@@ -225,11 +221,10 @@ globalThis.__nodeURL.revokeObjectURL = (value) => {
   }
   globalThis.__nodeBlobUrls?.delete(value);
 };
-// prettier-ignore
 globalThis.__nodeURL.createObjectURL = (value) => {
   if (!globalThis.Blob || !(value instanceof globalThis.Blob)) {
     const error = new TypeError(
-      'The "obj" argument must be an instance of Blob',
+      'The "obj" argument must be an instance of Blob'
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -243,19 +238,19 @@ globalThis.__nodeIsURL = (value) => value instanceof globalThis.__nodeURL;
 globalThis.__nodeLegacyProtocolRelativeParts = (input) =>
   input.startsWith("//") && !/@|:\d+\//.test(input)
     ? {
-      protocol: null,
-      slashes: null,
-      auth: null,
-      host: null,
-      port: null,
-      hostname: null,
-      hash: null,
-      search: null,
-      query: null,
-      pathname: input,
-      path: input,
-      href: input,
-    }
+        protocol: null,
+        slashes: null,
+        auth: null,
+        host: null,
+        port: null,
+        hostname: null,
+        hash: null,
+        search: null,
+        query: null,
+        pathname: input,
+        path: input,
+        href: input
+      }
     : null;
 globalThis.__nodeLegacyPathOnlyParts = (input) => ({
   protocol: null,
@@ -269,35 +264,33 @@ globalThis.__nodeLegacyPathOnlyParts = (input) => ({
   query: null,
   pathname: input,
   path: input,
-  href: input,
+  href: input
 });
 const __nodeLegacyUrlReceived = (value) => {
   if (value == null) return String(value);
   if (typeof value === "function") return `function ${value.name || ""}`;
   if (typeof value === "object") {
-    return `an instance of ${
-      Object.prototype.toString
-        .call(value)
-        .slice(8, -1)
-    }`;
+    return `an instance of ${Object.prototype.toString
+      .call(value)
+      .slice(8, -1)}`;
   }
   if (typeof value === "bigint") return `type bigint (${value}n)`;
   return `type ${typeof value} (${String(value)})`;
 };
 const __nodePrepareLegacyUrlInput = (value) => {
   let input = globalThis.__nodeLegacyUrlControlNormalize(
-    value.trim().replace(/^[\x00-\x1f]+|[\x00-\x1f]+$/g, ""),
+    value.trim().replace(/^[\x00-\x1f]+|[\x00-\x1f]+$/g, "")
   );
-  input = input.replace(
-    /^([^/]*\/\/[^/]*)/,
-    (authority) => authority.replace(/%0[9a-d]/gi, ""),
+  input = input.replace(/^([^/]*\/\/[^/]*)/, (authority) =>
+    authority.replace(/%0[9a-d]/gi, "")
   );
   if (!/^[a-z][a-z0-9+.-]*:/i.test(input)) return input;
   if (/^javascript:/i.test(input)) return input;
   const suffixIndex = input.search(/[?#]/);
   const head = suffixIndex < 0 ? input : input.slice(0, suffixIndex);
   const suffix = suffixIndex < 0 ? "" : input.slice(suffixIndex);
-  input = globalThis.__nodeLegacyPathNormalize(head) +
+  input =
+    globalThis.__nodeLegacyPathNormalize(head) +
     globalThis.__nodeLegacyQueryNormalize(suffix);
   input = input.replace(/^([a-z][a-z0-9+.-]*:\/\/[^/?#;]+);/i, "$1/;");
   input = input.replace(/^([^/?#]+):([?#])/, "$1$2");
@@ -305,14 +298,14 @@ const __nodePrepareLegacyUrlInput = (value) => {
   return input.replace(
     /^([a-z][a-z0-9+.-]*:\/\/)([^/@]*)@/i,
     (_, prefix, auth) =>
-      `${prefix}${auth.replace(/[" <]/g, encodeURIComponent)}@`,
+      `${prefix}${auth.replace(/[" <]/g, encodeURIComponent)}@`
   );
 };
 globalThis.__nodePrepareLegacyUrl = (value) => {
   if (typeof value !== "string") {
     const error = new TypeError(
       'The "url" argument must be of type string.' +
-        ` Received ${__nodeLegacyUrlReceived(value)}`,
+        ` Received ${__nodeLegacyUrlReceived(value)}`
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -333,6 +326,6 @@ globalThis.__nodePrepareLegacyUrl = (value) => {
   return {
     input,
     parsed: new globalThis.__nodeURL(input),
-    hadOuterWhitespace: value !== value.trim(),
+    hadOuterWhitespace: value !== value.trim()
   };
 };

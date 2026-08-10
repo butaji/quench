@@ -1,11 +1,9 @@
 NodeReadable.prototype.iterator = function (options = {}) {
   if (!options || typeof options !== "object") {
     const error = new TypeError(
-      `The "options" argument must be of type object. Received type ${typeof options} (${
-        String(
-          options,
-        )
-      })`,
+      `The "options" argument must be of type object. Received type ${typeof options} (${String(
+        options
+      )})`
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -18,11 +16,11 @@ NodeReadable.prototype.iterator = function (options = {}) {
       if (options.destroyOnReturn !== false) this.destroy();
       return result || { value, done: true };
     },
-    throw: (...args) => iterator.throw?.(...args),
+    throw: (...args) => iterator.throw?.(...args)
   };
 };
 NodeReadable.prototype[Symbol.asyncIterator] = function () {
-  const iterator = (async function* () {
+  const iterator = async function* () {
     while (true) {
       if (this._chunks && this._chunks.length) {
         const value = this._chunks.shift();
@@ -77,11 +75,10 @@ NodeReadable.prototype[Symbol.asyncIterator] = function () {
       }
       yield result.value;
     }
-  }).call(this);
+  }.call(this);
   iterator.stream = this;
   return iterator;
 };
-
 NodeReadable.prototype.isPaused = function () {
   return this._paused;
 };
@@ -89,9 +86,9 @@ Object.defineProperty(NodeReadable.prototype, "readableLength", {
   get() {
     return this._chunks.reduce(
       (length, chunk) => length + (chunk?.byteLength ?? chunk?.length ?? 1),
-      0,
+      0
     );
-  },
+  }
 });
 NodeReadable.prototype.setEncoding = function (encoding) {
   encoding = String(encoding).toLowerCase();

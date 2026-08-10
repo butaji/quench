@@ -1,13 +1,11 @@
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
-
 use rquickjs::{
     loader::{Loader, Resolver},
     Ctx, Error, Module, Result,
 };
-
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 fn package_entry(package_root: &Path, subpath: &str) -> Option<PathBuf> {
     if !subpath.is_empty() {
         return Some(package_root.join(subpath));
@@ -31,7 +29,6 @@ fn package_entry(package_root: &Path, subpath: &str) -> Option<PathBuf> {
         .unwrap_or("index.js");
     Some(package_root.join(entry))
 }
-
 fn package_resolution(base: &str, name: &str) -> Option<PathBuf> {
     let (package_name, subpath) = if let Some(rest) = name.strip_prefix('@') {
         let (scope, rest) = rest.split_once('/')?;
@@ -62,7 +59,6 @@ fn package_resolution(base: &str, name: &str) -> Option<PathBuf> {
     }
     None
 }
-
 fn is_package_module(path: &Path) -> bool {
     let mut directory = path.parent();
     while let Some(current) = directory {
@@ -76,10 +72,8 @@ fn is_package_module(path: &Path) -> bool {
     }
     false
 }
-
 #[derive(Debug, Default)]
 pub struct NodeResolver;
-
 impl Resolver for NodeResolver {
     fn resolve<'js>(&mut self, _ctx: &Ctx<'js>, base: &str, name: &str) -> Result<String> {
         if name.starts_with("node:") || name.starts_with("file:") {
@@ -104,12 +98,11 @@ impl Resolver for NodeResolver {
         Ok(name.to_owned())
     }
 }
-
 #[derive(Debug, Default)]
 pub struct NodeLoader;
-
 // This table is the data-driven ESM compatibility declaration; splitting its
 // arms would obscure the supported module surface without reducing behavior.
+#[rustfmt::skip]
 #[allow(clippy::too_many_lines)]
 fn builtin_source(name: &str) -> Option<String> {
     let builtin = name.strip_prefix("node:").unwrap_or(name);
@@ -121,168 +114,50 @@ fn builtin_source(name: &str) -> Option<String> {
     // unsupported named interop remains an ordinary module error.
     let names: &[&str] = match builtin {
         "path" => &[
-            "basename",
-            "delimiter",
-            "dirname",
-            "extname",
-            "format",
-            "isAbsolute",
-            "join",
-            "normalize",
-            "parse",
-            "posix",
-            "relative",
-            "resolve",
-            "sep",
-            "toNamespacedPath",
-            "win32",
-        ],
+    "basename", "delimiter", "dirname", "extname", "format", "isAbsolute", "join", "normalize",
+    "parse", "posix", "relative", "resolve", "sep", "toNamespacedPath", "win32",
+],
         "assert" => &[
-            "AssertionError",
-            "deepEqual",
-            "deepStrictEqual",
-            "doesNotMatch",
-            "doesNotReject",
-            "doesNotThrow",
-            "equal",
-            "fail",
-            "ifError",
-            "match",
-            "notDeepEqual",
-            "notDeepStrictEqual",
-            "notEqual",
-            "notStrictEqual",
-            "ok",
-            "rejects",
-            "strict",
-            "strictEqual",
-            "throws",
-        ],
+    "AssertionError", "deepEqual", "deepStrictEqual", "doesNotMatch", "doesNotReject", "doesNotThrow", "equal", "fail",
+    "ifError", "match", "notDeepEqual", "notDeepStrictEqual", "notEqual", "notStrictEqual", "ok", "rejects",
+    "strict", "strictEqual", "throws",
+],
         "events" => &[
-            "EventEmitter",
-            "EventEmitterAsyncResource",
-            "addAbortListener",
-            "captureRejectionSymbol",
-            "captureRejections",
-            "defaultMaxListeners",
-            "errorMonitor",
-            "getEventListeners",
-            "getMaxListeners",
-            "once",
-            "setMaxListeners",
-            "usingAsyncResource",
-        ],
+    "EventEmitter", "EventEmitterAsyncResource", "addAbortListener", "captureRejectionSymbol", "captureRejections", "defaultMaxListeners", "errorMonitor", "getEventListeners",
+    "getMaxListeners", "once", "setMaxListeners", "usingAsyncResource",
+],
         "stream" => &[
-            "Duplex",
-            "PassThrough",
-            "Readable",
-            "Stream",
-            "Transform",
-            "Writable",
-            "addAbortSignal",
-            "compose",
-            "destroy",
-            "duplexPair",
-            "finished",
-            "getDefaultHighWaterMark",
-            "isDisturbed",
-            "isErrored",
-            "isReadable",
-            "pipeline",
-            "promises",
-            "setDefaultHighWaterMark",
-        ],
+    "Duplex", "PassThrough", "Readable", "Stream", "Transform", "Writable", "addAbortSignal", "compose",
+    "destroy", "duplexPair", "finished", "getDefaultHighWaterMark", "isDisturbed", "isErrored", "isReadable", "pipeline",
+    "promises", "setDefaultHighWaterMark",
+],
         "fs" | "fs/promises" => &[
-            "access",
-            "appendFile",
-            "chmod",
-            "close",
-            "constants",
-            "copyFile",
-            "cp",
-            "cpSync",
-            "exists",
-            "mkdir",
-            "open",
-            "glob",
-            "globSync",
-            "readFile",
-            "readFileSync",
-            "mkdtemp",
-            "lstat",
-            "lstatSync",
-            "mkdirSync",
-            "readlinkSync",
-            "readdirSync",
-            "realpathSync",
-            "rmSync",
-            "statSync",
-            "symlinkSync",
-            "unlinkSync",
-            "utimesSync",
-            "writeFileSync",
-            "rename",
-            "rm",
-            "stat",
-            "unlink",
-            "writeFile",
-            "promises",
-        ],
+    "access", "appendFile", "chmod", "close", "constants", "copyFile", "cp", "cpSync",
+    "exists", "mkdir", "open", "glob", "globSync", "readFile", "readFileSync", "mkdtemp",
+    "lstat", "lstatSync", "mkdirSync", "readlinkSync", "readdirSync", "realpathSync", "rmSync", "statSync",
+    "symlinkSync", "unlinkSync", "utimesSync", "writeFileSync", "rename", "rm", "stat", "unlink",
+    "writeFile", "promises",
+],
         "test" => &[
-            "after",
-            "afterEach",
-            "before",
-            "beforeEach",
-            "describe",
-            "it",
-            "run",
-            "skip",
-            "test",
-            "todo",
-        ],
+    "after", "afterEach", "before", "beforeEach", "describe", "it", "run", "skip",
+    "test", "todo",
+],
         "module" => &[
-            "createRequire",
-            "builtinModules",
-            "isBuiltin",
-            "register",
-            "runMain",
-        ],
+    "createRequire", "builtinModules", "isBuiltin", "register", "runMain",
+],
         "timers/promises" => &["setTimeout", "setImmediate", "setInterval", "scheduler"],
         "util" => &["format", "inspect", "promisify", "types"],
         "v8" => &[
-            "deserialize",
-            "serialize",
-            "getHeapStatistics",
-            "setFlagsFromString",
-        ],
+    "deserialize", "serialize", "getHeapStatistics", "setFlagsFromString",
+],
         "url" => &[
-            "URL",
-            "URLSearchParams",
-            "domainToASCII",
-            "domainToUnicode",
-            "fileURLToPath",
-            "format",
-            "parse",
-            "pathToFileURL",
-            "resolve",
-            "urlToHttpOptions",
-        ],
+    "URL", "URLSearchParams", "domainToASCII", "domainToUnicode", "fileURLToPath", "format", "parse", "pathToFileURL",
+    "resolve", "urlToHttpOptions",
+],
         "net" => &[
-            "BlockList",
-            "Server",
-            "Socket",
-            "Stream",
-            "connect",
-            "createConnection",
-            "createServer",
-            "getDefaultAutoSelectFamily",
-            "getDefaultAutoSelectFamilyAttemptTimeout",
-            "isIP",
-            "isIPv4",
-            "isIPv6",
-            "setDefaultAutoSelectFamily",
-            "setDefaultAutoSelectFamilyAttemptTimeout",
-        ],
+    "BlockList", "Server", "Socket", "Stream", "connect", "createConnection", "createServer", "getDefaultAutoSelectFamily",
+    "getDefaultAutoSelectFamilyAttemptTimeout", "isIP", "isIPv4", "isIPv6", "setDefaultAutoSelectFamily", "setDefaultAutoSelectFamilyAttemptTimeout",
+],
         _ => &[],
     };
     let mut source = format!("const __m = globalThis.require({name:?});\nexport default __m;\n");
@@ -291,7 +166,6 @@ fn builtin_source(name: &str) -> Option<String> {
     }
     Some(source)
 }
-
 impl Loader for NodeLoader {
     #[allow(clippy::too_many_lines)]
     fn load<'js>(&mut self, ctx: &Ctx<'js>, name: &str) -> Result<Module<'js>> {

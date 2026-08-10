@@ -1,10 +1,9 @@
 globalThis.__nodeFs.WriteStream = globalThis.__nodeFs.createWriteStream;
 globalThis.__nodeFs.WriteStream.prototype = Object.create(
-  NodeWritable.prototype,
+  NodeWritable.prototype
 );
 globalThis.__nodeFs.WriteStream.prototype.constructor =
   globalThis.__nodeFs.WriteStream;
-
 // Node's experimental fast UTF-8 writer. Keep the implementation in JS and
 // reuse the existing filesystem surface; the host does not need a new stream
 // primitive for this API.
@@ -70,7 +69,7 @@ globalThis.__nodeFs.Utf8Stream = class Utf8Stream extends NodeEventEmitter {
       if (this._fs.fsyncSync && this.fsync) this._fs.fsyncSync(this.fd);
     } else if (this.path) {
       this._fs.writeFileSync(this.path, bytes, {
-        flag: this.append ? "a" : "w",
+        flag: this.append ? "a" : "w"
       });
     }
     this.emit("write", bytes.byteLength);
@@ -113,20 +112,21 @@ globalThis.__nodeFs.Utf8Stream = class Utf8Stream extends NodeEventEmitter {
         !this.sync &&
         typeof this._fs.write === "function"
       ) {
-        const pieces = this.contentMode === "buffer"
-          ? Array.from(
-            { length: Math.ceil(bytes.length / this.maxWrite) },
-            (_, i) =>
-              bytes.subarray(i * this.maxWrite, (i + 1) * this.maxWrite),
-          )
-          : Array.from(
-            { length: Math.ceil(String(bytes).length / this.maxWrite) },
-            (_, i) =>
-              String(bytes).slice(
-                i * this.maxWrite,
-                (i + 1) * this.maxWrite,
-              ),
-          );
+        const pieces =
+          this.contentMode === "buffer"
+            ? Array.from(
+                { length: Math.ceil(bytes.length / this.maxWrite) },
+                (_, i) =>
+                  bytes.subarray(i * this.maxWrite, (i + 1) * this.maxWrite)
+              )
+            : Array.from(
+                { length: Math.ceil(String(bytes).length / this.maxWrite) },
+                (_, i) =>
+                  String(bytes).slice(
+                    i * this.maxWrite,
+                    (i + 1) * this.maxWrite
+                  )
+              );
         if (pieces.length === 0) {
           const finishEmpty = (error) => {
             if (error) {
@@ -193,7 +193,7 @@ globalThis.__nodeFs.Utf8Stream = class Utf8Stream extends NodeEventEmitter {
               0,
               data.byteLength,
               null,
-              (error, written) => done(index, error, written),
+              (error, written) => done(index, error, written)
             );
           } catch (error) {
             done(index, error);

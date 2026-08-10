@@ -22,11 +22,9 @@ const __nodeBufferByteLength = (value, encoding) => {
     return value.byteLength;
   }
   const error = new TypeError(
-    `The "string" argument must be of type string or an instance of Buffer or ArrayBuffer.${
-      __nodeBufferFromReceived(
-        value,
-      )
-    }`,
+    `The "string" argument must be of type string or an instance of Buffer or ArrayBuffer.${__nodeBufferFromReceived(
+      value
+    )}`
   );
   error.code = "ERR_INVALID_ARG_TYPE";
   throw error;
@@ -75,7 +73,7 @@ const __nodeValidateUtf8Input = (value) => {
   }
   if (value instanceof Uint8Array) return value;
   const error = new TypeError(
-    'The "input" argument must be an instance of Uint8Array',
+    'The "input" argument must be an instance of Uint8Array'
   );
   error.code = "ERR_INVALID_ARG_TYPE";
   throw error;
@@ -83,7 +81,7 @@ const __nodeValidateUtf8Input = (value) => {
 const __nodeCopyBytesValidateView = (view, offset, length) => {
   if (!ArrayBuffer.isView(view)) {
     const error = new TypeError(
-      'The "view" argument must be an instance of TypedArray',
+      'The "view" argument must be an instance of TypedArray'
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -107,15 +105,14 @@ const __nodeCopyBytesRangeInvalid = (offset, length) =>
   length < 0;
 const __nodeCopyBytesRange = (view, offset, length) => {
   const elementSize = view.BYTES_PER_ELEMENT || 1;
-  const elementLength = view.length === undefined
-    ? view.byteLength
-    : view.length;
+  const elementLength =
+    view.length === undefined ? view.byteLength : view.length;
   if (length === undefined) {
     length = offset >= elementLength ? 0 : elementLength - offset;
   }
   if (__nodeCopyBytesRangeInvalid(offset, length)) {
     const error = new RangeError(
-      "The requested range is outside the bounds of the view",
+      "The requested range is outside the bounds of the view"
     );
     error.code = "ERR_OUT_OF_RANGE";
     throw error;
@@ -128,7 +125,7 @@ const __nodeCopyBytesOutput = (view, range) => {
   const bytes = new Uint8Array(
     view.buffer,
     view.byteOffset + range.byteOffset,
-    range.byteLength,
+    range.byteLength
   );
   const output = new NodeBuffer(range.byteLength);
   output.set(bytes);
@@ -314,12 +311,10 @@ class NodeBuffer extends Uint8Array {
     if (this === NodeBuffer.prototype) return undefined;
     return this.buffer;
   }
-
   get offset() {
     if (this === NodeBuffer.prototype) return undefined;
     return this.byteOffset;
   }
-
   static from(value, encoding, length) {
     encoding = __nodeBufferValidateEncoding(value, encoding);
     if (
@@ -334,11 +329,9 @@ class NodeBuffer extends Uint8Array {
     const output = __nodeBufferFromObject(value);
     if (output) return output;
     const error = new TypeError(
-      `The first argument must be of type string or an instance of Buffer, ArrayBuffer, or Array or an Array-like Object.${
-        __nodeBufferFromReceived(
-          value,
-        )
-      }`,
+      `The first argument must be of type string or an instance of Buffer, ArrayBuffer, or Array or an Array-like Object.${__nodeBufferFromReceived(
+        value
+      )}`
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -347,13 +340,13 @@ class NodeBuffer extends Uint8Array {
 NodeBuffer.prototype.toString = function toString(
   encoding = "utf8",
   start = 0,
-  end = this.length,
+  end = this.length
 ) {
   const first = Math.max(0, Math.trunc(Number(start)) || 0);
   const last = Math.min(this.length, Math.trunc(Number(end)) || 0);
   return __nodeBufferEncodedString(
     this.subarray(first, last),
-    String(encoding).toLowerCase(),
+    String(encoding).toLowerCase()
   );
 };
 NodeBuffer.concat = (list, totalLength) => {
@@ -366,8 +359,8 @@ NodeBuffer.concat = (list, totalLength) => {
   ) {
     throw new RangeError("The value of length is out of range");
   }
-  const length = totalLength ??
-    list.reduce((sum, item) => sum + item.byteLength, 0);
+  const length =
+    totalLength ?? list.reduce((sum, item) => sum + item.byteLength, 0);
   const output = new NodeBuffer(length);
   let offset = 0;
   for (const item of list) {
@@ -409,26 +402,15 @@ NodeBuffer.copyBytesFrom = (view, offset = 0, length) => {
   __nodeCopyBytesValidateView(view, offset, length);
   return __nodeCopyBytesOutput(
     view,
-    __nodeCopyBytesRange(view, offset, length),
+    __nodeCopyBytesRange(view, offset, length)
   );
 };
 NodeBuffer.isBuffer = (value) => value instanceof NodeBuffer;
 NodeBuffer.isEncoding = (encoding) => {
   if (typeof encoding !== "string") return false;
-  return [
-    "hex",
-    "utf8",
-    "utf-8",
-    "ascii",
-    "latin1",
-    "binary",
-    "base64",
-    "base64url",
-    "ucs2",
-    "ucs-2",
-    "utf16le",
-    "utf-16le",
-  ].includes(encoding.toLowerCase());
+  return "hex utf8 utf-8 ascii latin1 binary base64 base64url ucs2 ucs-2 utf16le utf-16le"
+    .split(" ")
+    .includes(encoding.toLowerCase());
 };
 NodeBuffer.isUtf8 = (value) =>
   __nodeIsValidUtf8(__nodeValidateUtf8Input(value));
@@ -436,14 +418,14 @@ NodeBuffer.byteLength = (value, encoding = "utf8") =>
   __nodeBufferByteLength(value, encoding);
 NodeBuffer.prototype.subarray = function subarray(
   begin = 0,
-  end = this.length,
+  end = this.length
 ) {
   const index = (value, fallback) => {
     const number = Math.trunc(Number(value));
     if (Number.isNaN(number)) return fallback;
     return Math.max(
       0,
-      Math.min(this.length, number < 0 ? this.length + number : number),
+      Math.min(this.length, number < 0 ? this.length + number : number)
     );
   };
   const start = index(begin, 0);
@@ -461,7 +443,7 @@ NodeBuffer.isAscii = (value) => {
   }
   if (!(value instanceof Uint8Array)) {
     const error = new TypeError(
-      'The "input" argument must be an instance of Uint8Array',
+      'The "input" argument must be an instance of Uint8Array'
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;

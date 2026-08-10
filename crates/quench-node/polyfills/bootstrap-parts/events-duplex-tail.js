@@ -3,29 +3,9 @@ class NodeDuplex extends NodeReadable {
     super(options);
     this.__nodeDuplex = true;
     const writable = new NodeWritable(options);
-    for (
-      const name of [
-        "closed",
-        "readableAborted",
-        "writableAborted",
-        "writable",
-        "writableObjectMode",
-        "writableHighWaterMark",
-        "writableLength",
-        "writableNeedDrain",
-        "_writableState",
-        "writableEnded",
-        "writableFinished",
-        "writableCorked",
-        "_autoDestroy",
-        "_corkedChunks",
-        "_writeQueue",
-        "_write",
-        "_final",
-        "_destroy",
-        "writableDefaultEncoding",
-      ]
-    ) {
+    for (const name of "closed readableAborted writableAborted writable writableObjectMode writableHighWaterMark writableLength writableNeedDrain _writableState writableEnded writableFinished writableCorked _autoDestroy _corkedChunks _writeQueue _write _final _destroy writableDefaultEncoding".split(
+      " "
+    )) {
       this[name] = writable[name];
     }
     this.allowHalfOpen = options.allowHalfOpen !== false;
@@ -54,20 +34,13 @@ const NodeDuplexCompat = function Duplex(options = {}) {
   return Reflect.construct(
     NodeDuplex,
     [options],
-    new.target || NodeDuplexCompat,
+    new.target || NodeDuplexCompat
   );
 };
 NodeDuplexCompat.prototype = NodeDuplex.prototype;
-for (
-  const method of [
-    "write",
-    "end",
-    "cork",
-    "uncork",
-    "setDefaultEncoding",
-    "__nodeProcessWrite",
-  ]
-) {
+for (const method of "write end cork uncork setDefaultEncoding __nodeProcessWrite".split(
+  " "
+)) {
   NodeDuplex.prototype[method] = NodeWritable.prototype[method];
 }
 const __nodeDuplexPair = (readable, writable) => {
@@ -78,15 +51,15 @@ const __nodeDuplexPair = (readable, writable) => {
     readable: Boolean(readable),
     writable: Boolean(writable),
     objectMode: Boolean(
-      readable?.readableObjectMode || readable?._readableState?.objectMode,
-    ),
+      readable?.readableObjectMode || readable?._readableState?.objectMode
+    )
   });
   duplex.readableObjectMode = Boolean(
-    readable?.readableObjectMode || readable?._readableState?.objectMode,
+    readable?.readableObjectMode || readable?._readableState?.objectMode
   );
   duplex._readableState.objectMode = duplex.readableObjectMode;
   duplex.writableObjectMode = Boolean(
-    writable?.writableObjectMode || writable?._writableState?.objectMode,
+    writable?.writableObjectMode || writable?._writableState?.objectMode
   );
   if (readable) {
     readable.on("data", (chunk) => duplex.push(chunk));
@@ -140,7 +113,7 @@ const __nodeDuplexFrom = (body) => {
           if (queue.length) return Promise.resolve(queue.shift());
           if (ended) return Promise.resolve({ done: true });
           return new Promise((resolve) => waiters.push(resolve));
-        },
+        }
       };
       const duplex = new NodeDuplex({ readable: true, writable: true });
       const pendingErrorHandler = () => {};
@@ -170,7 +143,7 @@ const __nodeDuplexFrom = (body) => {
     const result = body();
     if (result === undefined) {
       const error = new TypeError(
-        "The function must return a stream or iterable",
+        "The function must return a stream or iterable"
       );
       error.code = "ERR_INVALID_RETURN_VALUE";
       throw error;
@@ -180,7 +153,7 @@ const __nodeDuplexFrom = (body) => {
   if (body?.getReader || body?.getWriter) {
     return __nodeDuplexFromWeb({
       readable: body.getReader ? body : undefined,
-      writable: body.getWriter ? body : undefined,
+      writable: body.getWriter ? body : undefined
     });
   }
   if (
@@ -213,7 +186,7 @@ const __nodeDuplexFrom = (body) => {
     const duplex = new NodeDuplex({
       readable: true,
       writable: false,
-      objectMode: true,
+      objectMode: true
     });
     const pendingErrorHandler = () => {};
     pendingErrorHandler.__quenchInternal = true;
@@ -223,7 +196,7 @@ const __nodeDuplexFrom = (body) => {
         if (value !== undefined && value !== null) duplex.push(value);
         duplex.push(null);
       },
-      (error) => duplex.destroy(error),
+      (error) => duplex.destroy(error)
     );
     return duplex;
   }
@@ -249,36 +222,37 @@ const __nodeDuplexFromWeb = (pair = {}, options = {}) => {
         (error) => {
           this.__webReading = false;
           this.destroy(error);
-        },
+        }
       );
     },
     write(chunk, _encoding, callback) {
       Promise.resolve(this.__webWriter?.write(chunk)).then(
         () => callback(),
-        (error) => callback(error),
+        (error) => callback(error)
       );
     },
     final(callback) {
       Promise.resolve(this.__webWriter?.close?.()).then(
         () => callback(),
-        (error) => callback(error),
+        (error) => callback(error)
       );
     },
     destroy(error, callback) {
-      const reason = error ||
+      const reason =
+        error ||
         Object.assign(new Error("The operation was aborted"), {
-          name: "AbortError",
+          name: "AbortError"
         });
       Promise.all([
         this.__webReader?.cancel(error),
         !error && (this.writableFinished || this.writableEnded)
           ? this.__webWriter?.close?.()
-          : this.__webWriter?.abort?.(reason),
+          : this.__webWriter?.abort?.(reason)
       ]).then(
         () => callback(),
-        (destroyError) => callback(destroyError),
+        (destroyError) => callback(destroyError)
       );
-    },
+    }
   });
   if (readable?.getReader) duplex.__webReader = readable.getReader();
   if (writable?.getWriter) duplex.__webWriter = writable.getWriter();
@@ -298,7 +272,7 @@ const __nodeDuplexToWeb = (duplex) => {
       duplex.once("end", () => controller.close());
       duplex.once("error", (error) => controller.error?.(error));
       duplex.resume();
-    },
+    }
   });
   const writable = new WritableStream({
     write(chunk) {
@@ -313,7 +287,7 @@ const __nodeDuplexToWeb = (duplex) => {
     },
     abort(error) {
       duplex.destroy(error);
-    },
+    }
   });
   return { readable, writable };
 };
