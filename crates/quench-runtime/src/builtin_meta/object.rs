@@ -11,6 +11,7 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
         Builtin::ObjectIs => Some("Object.is"),
         Builtin::ObjectDefineProperty => Some("Object.defineProperty"),
         Builtin::ObjectGetOwnPropertyNames => Some("Object.getOwnPropertyNames"),
+        Builtin::ObjectGetOwnPropertySymbols => Some("Object.getOwnPropertySymbols"),
         _ => None,
     }
 }
@@ -20,7 +21,8 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         Builtin::ObjectHasOwnProperty
         | Builtin::ObjectPropertyIsEnumerable
         | Builtin::ObjectKeys
-        | Builtin::ObjectGetOwnPropertyNames => Some(1.0),
+        | Builtin::ObjectGetOwnPropertyNames
+        | Builtin::ObjectGetOwnPropertySymbols => Some(1.0),
         Builtin::ObjectGetOwnPropertyDescriptor | Builtin::ObjectIs => Some(2.0),
         Builtin::ObjectDefineProperty => Some(3.0),
         _ => None,
@@ -36,6 +38,7 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
         Builtin::ObjectIs => Some("is"),
         Builtin::ObjectDefineProperty => Some("defineProperty"),
         Builtin::ObjectGetOwnPropertyNames => Some("getOwnPropertyNames"),
+        Builtin::ObjectGetOwnPropertySymbols => Some("getOwnPropertySymbols"),
         _ => None,
     }
 }

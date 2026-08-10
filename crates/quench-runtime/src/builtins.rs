@@ -315,21 +315,7 @@ pub(crate) fn same_value_zero(left: &Value, right: &Value) -> bool {
 }
 
 pub(crate) fn keys(value: Option<&Value>) -> Value {
-    let keys = match value {
-        Some(Value::Object(properties)) => properties
-            .iter()
-            .filter(|(key, _)| !key.starts_with('\0') && !is_descriptor_key(key))
-            .map(|(key, _)| Value::String(key.clone()))
-            .collect(),
-        Some(Value::Array(values)) => (0..values.len())
-            .map(|index| Value::String(index.to_string()))
-            .collect(),
-        Some(Value::String(value)) => (0..value.chars().count())
-            .map(|index| Value::String(index.to_string()))
-            .collect(),
-        _ => Vec::new(),
-    };
-    Value::array(keys)
+    crate::own_keys::enumerable_names(value)
 }
 
 pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
@@ -353,11 +339,19 @@ pub(crate) fn define_property(arguments: &[Value]) -> Result<Value, crate::execu
     let Some(target) = arguments.first() else {
         return Ok(Value::Undefined);
     };
-    let key = arguments.get(1).map_or_else(String::new, value_to_string);
+    let key = crate::conversion::to_property_key(arguments.get(1).unwrap_or(&Value::Undefined))?;
     let Some(Value::Object(descriptor)) = arguments.get(2) else {
         return Ok(target.clone());
     };
-    let key_value = Value::String(key.clone());
+    define_own_property(target, &key, descriptor)
+}
+
+pub(crate) fn define_own_property(
+    target: &Value,
+    key: &str,
+    descriptor: &[(String, Value)],
+) -> Result<Value, crate::execute::VmError> {
+    let key_value = Value::String(key.to_string());
     let current = crate::builtins::object::descriptor(Some(target), Some(&key_value));
     validate_redefinition(&current, descriptor)?;
     let descriptor = complete_descriptor(descriptor, &current);
@@ -370,22 +364,28 @@ pub(crate) fn define_property(arguments: &[Value]) -> Result<Value, crate::execu
         .iter()
         .any(|(name, _)| matches!(name.as_str(), "get" | "set"));
     let mut result = if accessor {
-        define_accessor_placeholder(target.clone(), &key)
+        define_accessor_placeholder(target.clone(), key)
     } else {
-        define_property_value(target.clone(), &key, value)
+        define_property_value(target.clone(), key, value)
     };
     if let Value::Object(properties) = &mut result {
         let metadata = Value::Object(Rc::new(descriptor.clone()));
         let properties = Rc::make_mut(properties);
-        properties.retain(|(name, _)| name != &descriptor_key(&key));
-        properties.push((descriptor_key(&key), metadata));
+        properties.retain(|(name, _)| name != &descriptor_key(key));
+        properties.push((descriptor_key(key), metadata));
     }
-    define_array_descriptor(&mut result, &key, descriptor);
+    if let Value::Function(function) = &result {
+        let metadata = Value::Object(Rc::new(descriptor.clone()));
+        let mut properties = function.properties.borrow_mut();
+        properties.retain(|(name, _)| name != &descriptor_key(key));
+        properties.push((descriptor_key(key), metadata));
+    }
+    define_array_descriptor(&mut result, key, descriptor);
     Ok(result)
 }
 
 fn define_accessor_placeholder(target: Value, key: &str) -> Value {
-    if matches!(target, Value::Object(_)) {
+    if matches!(target, Value::Object(_) | Value::Function(_)) {
         return set_property(target, key, Value::Undefined);
     }
     target

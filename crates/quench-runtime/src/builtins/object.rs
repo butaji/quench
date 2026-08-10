@@ -70,6 +70,9 @@ pub(crate) fn execute_special(
             require_object_coercible(target)?;
             Ok(descriptor(target, key))
         }
+        Builtin::ObjectGetOwnPropertyNames => crate::own_keys::names(arguments.first()),
+        Builtin::ObjectGetOwnPropertySymbols => crate::own_keys::symbols(arguments.first()),
+        Builtin::ObjectKeys => Ok(crate::own_keys::enumerable_names(arguments.first())),
         _ => Ok(Value::Undefined),
     }
 }
@@ -202,25 +205,31 @@ pub(crate) fn descriptor(value: Option<&Value>, key: Option<&Value>) -> Value {
         Value::Array(values) => array_descriptor(values, &key),
         Value::String(value) => string_descriptor(value, &key),
         Value::Builtin(builtin) => builtin_descriptor(*builtin, &key),
-        Value::Function(function) if key == "length" => Some(Value::Object(Rc::new(vec![
-            (
-                "value".to_string(),
-                Value::Number(f64::from(function.params)),
-            ),
-            ("writable".to_string(), Value::Boolean(false)),
-            ("enumerable".to_string(), Value::Boolean(false)),
-            ("configurable".to_string(), Value::Boolean(true)),
-        ]))),
-        Value::Function(function) => function
-            .properties
-            .borrow()
-            .iter()
-            .rev()
-            .find(|(name, _)| name == &key)
-            .map(|(_, value)| descriptor_object(value)),
+        Value::Function(function) => function_descriptor(function, &key),
         _ => None,
     };
     descriptor.unwrap_or(Value::Undefined)
+}
+
+fn function_descriptor(function: &crate::value::FunctionValue, key: &str) -> Option<Value> {
+    if key == "length" {
+        return Some(descriptor_object_with_flags(
+            Value::Number(f64::from(function.params)),
+            false,
+            false,
+            true,
+        ));
+    }
+    let value = function
+        .properties
+        .borrow()
+        .iter()
+        .rev()
+        .find_map(|(name, value)| (name == key).then(|| value.clone()))?;
+    if key == "prototype" {
+        return Some(descriptor_object_with_flags(value, false, false, false));
+    }
+    Some(descriptor_object(&value))
 }
 
 fn object_descriptor(properties: &[(String, Value)], key: &str) -> Option<Value> {

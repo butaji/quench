@@ -4,7 +4,7 @@ use oxc::ast::ast::{Class, ClassElement, MethodDefinition, MethodDefinitionKind,
 
 use crate::{
     facts::ProgramDb,
-    ops::{Constant, FunctionKind, FunctionStrictness, Op},
+    ops::{Constant, FunctionKind, FunctionStrictness, Op, PropertyDefinitionKind},
 };
 
 pub(crate) fn reduce_expression(
@@ -15,9 +15,16 @@ pub(crate) fn reduce_expression(
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
     let constructor = reduce_constructor(class, ops, facts, next, locals)?;
-    let mut properties = reduce_instance_methods(class, ops, facts, next, locals)?;
-    properties.push(("constructor".to_string(), constructor));
-    let prototype = emit_object(ops, next, properties);
+    let prototype = emit_object(ops, next, Vec::new());
+    define_static_key(
+        ops,
+        next,
+        prototype,
+        "constructor",
+        constructor,
+        PropertyDefinitionKind::Data,
+    );
+    reduce_instance_methods(class, prototype, ops, facts, next, locals)?;
     ops.push(Op::SetProperty {
         object: constructor,
         key: "prototype".to_string(),
@@ -50,12 +57,12 @@ fn reduce_constructor(
 
 fn reduce_instance_methods(
     class: &Class<'_>,
+    prototype: u16,
     ops: &mut Vec<Op>,
     facts: &mut ProgramDb,
     next: &mut u16,
     locals: &HashMap<String, u16>,
-) -> Option<Vec<(String, u16)>> {
-    let mut properties = Vec::new();
+) -> Option<()> {
     for element in &class.body.body {
         let ClassElement::MethodDefinition(method) = element else {
             continue;
@@ -63,11 +70,11 @@ fn reduce_instance_methods(
         if method.r#static || method.kind == MethodDefinitionKind::Constructor {
             continue;
         }
-        let key = method_key(&method.key)?;
+        let key = reduce_method_key(method, ops, facts, next, locals)?;
         let value = reduce_method(method, ops, facts, next, locals)?;
-        push_method_property(&mut properties, method, key, value, ops, next);
+        define_method(ops, prototype, key, value, method.kind);
     }
-    Some(properties)
+    Some(())
 }
 
 fn reduce_static_methods(
@@ -85,38 +92,21 @@ fn reduce_static_methods(
         if !method.r#static {
             continue;
         }
-        let key = method_key(&method.key)?;
+        let key = reduce_method_key(method, ops, facts, next, locals)?;
         let value = reduce_method(method, ops, facts, next, locals)?;
-        set_static_method(ops, next, constructor, method, key, value);
+        define_method(ops, constructor, key, value, method.kind);
     }
     Some(())
 }
 
-fn set_static_method(
-    ops: &mut Vec<Op>,
-    next: &mut u16,
-    constructor: u16,
-    method: &MethodDefinition<'_>,
-    key: String,
-    value: u16,
-) {
-    if method.kind == MethodDefinitionKind::Get {
-        let descriptor = emit_getter_descriptor(ops, next, value);
-        let undefined = emit_undefined(ops, next);
-        set_property(ops, constructor, key.clone(), undefined);
-        set_property(
-            ops,
-            constructor,
-            crate::builtins::descriptor_key(&key),
-            descriptor,
-        );
-    } else {
-        set_property(ops, constructor, key, value);
-    }
-}
-
-fn set_property(ops: &mut Vec<Op>, object: u16, key: String, src: u16) {
-    ops.push(Op::SetProperty { object, key, src });
+fn define_method(ops: &mut Vec<Op>, object: u16, key: u16, value: u16, kind: MethodDefinitionKind) {
+    ops.push(Op::DefineProperty {
+        object,
+        key,
+        value,
+        kind: property_kind(kind),
+        enumerable: false,
+    });
 }
 
 fn reduce_method(
@@ -133,35 +123,32 @@ fn reduce_method(
     result
 }
 
-fn push_method_property(
-    properties: &mut Vec<(String, u16)>,
+fn reduce_method_key(
     method: &MethodDefinition<'_>,
-    key: String,
-    value: u16,
     ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
     next: &mut u16,
-) {
-    if method.kind == MethodDefinitionKind::Get {
-        let descriptor = emit_getter_descriptor(ops, next, value);
-        properties.push((key.clone(), emit_undefined(ops, next)));
-        properties.push((crate::builtins::descriptor_key(&key), descriptor));
-    } else {
-        properties.push((key, value));
+    locals: &HashMap<String, u16>,
+) -> Option<u16> {
+    if method.computed {
+        return crate::reduce::reduce_expression(
+            method.key.as_expression()?,
+            ops,
+            facts,
+            next,
+            locals,
+        );
     }
+    let key = method_key(&method.key)?;
+    Some(emit_string(ops, next, key))
 }
 
-fn emit_getter_descriptor(ops: &mut Vec<Op>, next: &mut u16, getter: u16) -> u16 {
-    let false_value = emit_boolean(ops, next, false);
-    let true_value = emit_boolean(ops, next, true);
-    emit_object(
-        ops,
-        next,
-        vec![
-            ("get".to_string(), getter),
-            ("enumerable".to_string(), false_value),
-            ("configurable".to_string(), true_value),
-        ],
-    )
+fn property_kind(kind: MethodDefinitionKind) -> PropertyDefinitionKind {
+    match kind {
+        MethodDefinitionKind::Get => PropertyDefinitionKind::Get,
+        MethodDefinitionKind::Set => PropertyDefinitionKind::Set,
+        _ => PropertyDefinitionKind::Data,
+    }
 }
 
 fn emit_default_constructor(ops: &mut Vec<Op>, next: &mut u16) -> u16 {
@@ -191,22 +178,31 @@ fn emit_object(ops: &mut Vec<Op>, next: &mut u16, properties: Vec<(String, u16)>
     dst
 }
 
-fn emit_undefined(ops: &mut Vec<Op>, next: &mut u16) -> u16 {
+fn emit_string(ops: &mut Vec<Op>, next: &mut u16, value: String) -> u16 {
     let dst = take_register(next);
     ops.push(Op::Const {
         dst,
-        value: Constant::Undefined,
+        value: Constant::String(value),
     });
     dst
 }
 
-fn emit_boolean(ops: &mut Vec<Op>, next: &mut u16, value: bool) -> u16 {
-    let dst = take_register(next);
-    ops.push(Op::Const {
-        dst,
-        value: Constant::Boolean(value),
+fn define_static_key(
+    ops: &mut Vec<Op>,
+    next: &mut u16,
+    object: u16,
+    key: &str,
+    value: u16,
+    kind: PropertyDefinitionKind,
+) {
+    let key = emit_string(ops, next, key.to_string());
+    ops.push(Op::DefineProperty {
+        object,
+        key,
+        value,
+        kind,
+        enumerable: false,
     });
-    dst
 }
 
 fn take_register(next: &mut u16) -> u16 {
