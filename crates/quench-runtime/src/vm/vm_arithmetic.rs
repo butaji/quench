@@ -79,6 +79,11 @@ fn evaluate_binary(
         BinaryOp::BitwiseOr => bitwise_numbers(left, right, |a, b| a | b)?,
         BinaryOp::BitwiseXor => bitwise_numbers(left, right, |a, b| a ^ b)?,
         BinaryOp::BitwiseAnd => bitwise_numbers(left, right, |a, b| a & b)?,
+        BinaryOp::ShiftLeft => bitwise_numbers(left, right, |a, b| a.wrapping_shl(shift_count(b)))?,
+        BinaryOp::ShiftRight => {
+            bitwise_numbers(left, right, |a, b| a.wrapping_shr(shift_count(b)))?
+        }
+        BinaryOp::ShiftRightZeroFill => Value::Number(shift_right_unsigned(left, right)),
         BinaryOp::Instanceof => Value::Boolean(matches!(
             (left, right),
             (Value::Object(_), Value::Function(_))
@@ -148,6 +153,18 @@ fn bitwise_numbers(
     let left = to_int32(to_number(Some(left)));
     let right = to_int32(to_number(Some(right)));
     Ok(Value::Number(f64::from(operation(left, right))))
+}
+
+/// Shift amount: the low 5 bits of the right operand, per ECMAScript.
+fn shift_count(right: i32) -> u32 {
+    (right as u32) & 31
+}
+
+/// ECMAScript unsigned right shift: ToUint32(left) >> (count & 31), as a number.
+fn shift_right_unsigned(left: &Value, right: &Value) -> f64 {
+    let left = to_int32(to_number(Some(left))) as u32;
+    let right = to_int32(to_number(Some(right)));
+    f64::from(left >> shift_count(right))
 }
 
 fn numeric_binary(left: f64, right: f64, operator: crate::ops::BinaryOp) -> f64 {
