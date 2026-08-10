@@ -116,14 +116,8 @@ pub(crate) fn reduce(
 }
 
 pub(crate) fn property(values: &crate::value::ArrayData, key: &str) -> Value {
-    if let Some(value) = values.property(key) {
+    if let Some(value) = direct_property(values, key) {
         return value;
-    }
-    if values.is_arguments() && key == "length" {
-        return Value::Undefined;
-    }
-    if key == "length" {
-        return Value::Number(values.logical_len() as f64);
     }
     let method = match key {
         "forEach" => crate::ops::Builtin::ArrayForEach,
@@ -154,6 +148,19 @@ pub(crate) fn property(values: &crate::value::ArrayData, key: &str) -> Value {
         _ => return index(values, key),
     };
     Value::Builtin(method)
+}
+
+fn direct_property(values: &crate::value::ArrayData, key: &str) -> Option<Value> {
+    if let Some(value) = values.property(key) {
+        return Some(value);
+    }
+    if values.is_arguments() && key == "length" {
+        return Some(Value::Undefined);
+    }
+    if values.is_arguments() && key == "constructor" {
+        return Some(Value::Builtin(crate::ops::Builtin::Object));
+    }
+    (key == "length").then(|| Value::Number(values.logical_len() as f64))
 }
 
 fn array_iterator(receiver: Option<&Value>) -> Value {
