@@ -11,6 +11,8 @@ use crate::{
 thread_local! {
     static MICROTASK_QUEUE: RefCell<VecDeque<Rc<PromiseData>>> =
         const { RefCell::new(VecDeque::new()) };
+    static THEN_RESULTS: RefCell<VecDeque<Rc<PromiseData>>> =
+        const { RefCell::new(VecDeque::new()) };
 }
 
 /// Drains all queued microtasks.
@@ -23,15 +25,52 @@ pub(crate) fn drain_microtasks() {
 fn process_promise(promise: &Rc<PromiseData>) {
     let state = promise.state.borrow().clone();
     let then_actions = std::mem::take(&mut *promise.then_actions.borrow_mut());
-    for (on_fulfilled, on_rejected) in &then_actions {
+    for (on_fulfilled, on_rejected) in then_actions {
+        let Some(result_promise) = THEN_RESULTS.with(|results| results.borrow_mut().pop_front())
+        else {
+            continue;
+        };
         let action = match &state {
             PromiseState::Fulfilled(_) => on_fulfilled,
             PromiseState::Rejected(_) => on_rejected,
             PromiseState::Pending => continue,
         };
-        if let Some(_handler) = action {
-            // Handler would be queued here for later execution
+        let value = match &state {
+            PromiseState::Fulfilled(value) | PromiseState::Rejected(value) => value.clone(),
+            PromiseState::Pending => continue,
+        };
+        let Some(handler) = action.filter(is_callable) else {
+            propagate_default(&result_promise, &state, value);
+            continue;
+        };
+        match crate::functions::execute_target(&handler, &Value::Undefined, &[value]) {
+            Ok(Value::Promise(next)) => adopt_promise(&result_promise, &next),
+            Ok(value) => resolve_promise(&result_promise, value),
+            Err(_) => reject_promise(&result_promise, Value::Undefined),
         }
+    }
+}
+
+fn is_callable(value: &Value) -> bool {
+    matches!(
+        value,
+        Value::Builtin(_) | Value::Function(_) | Value::BoundFunction(_) | Value::Proxy(_)
+    )
+}
+
+fn propagate_default(result: &Rc<PromiseData>, state: &PromiseState, value: Value) {
+    match state {
+        PromiseState::Fulfilled(_) => resolve_promise(result, value),
+        PromiseState::Rejected(_) => reject_promise(result, value),
+        PromiseState::Pending => {}
+    }
+}
+
+fn adopt_promise(result: &Rc<PromiseData>, next: &Rc<PromiseData>) {
+    match next.state.borrow().clone() {
+        PromiseState::Fulfilled(value) => resolve_promise(result, value),
+        PromiseState::Rejected(reason) => reject_promise(result, reason),
+        PromiseState::Pending => {}
     }
 }
 
@@ -139,14 +178,20 @@ pub fn promise_then(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
     let Some(Value::Promise(promise)) = receiver else {
         return Err(VmError::NotCallable);
     };
+    let result = new_promise();
+    let result_promise = match &result {
+        Value::Promise(promise) => Rc::clone(promise),
+        _ => return Err(VmError::NotCallable),
+    };
     promise
         .then_actions
         .borrow_mut()
         .push((maybe_handler(arguments, 0), maybe_handler(arguments, 1)));
+    THEN_RESULTS.with(|results| results.borrow_mut().push_back(result_promise));
     if !matches!(*promise.state.borrow(), PromiseState::Pending) {
         queue_promise(promise);
     }
-    Ok(new_promise())
+    Ok(result)
 }
 
 /// Execute Promise.prototype.catch.
