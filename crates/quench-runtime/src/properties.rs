@@ -178,9 +178,6 @@ pub(crate) fn prevent_extensions(
     let Some(target) = target else {
         return Err(crate::value::error::throw_type_error("Object expected"));
     };
-    if crate::vm::is_global_object(target) {
-        return Ok(target.clone());
-    }
     if matches!(target, crate::value::Value::Proxy(_)) {
         return crate::proxy::proxy_prevent_extensions(target);
     }
@@ -196,6 +193,10 @@ pub(crate) fn prevent_extensions(
     }
     let result = crate::value::Value::Object(std::rc::Rc::new(sealed));
     crate::locals::replace_value(target, &result);
+    if crate::vm::is_global_object(target) {
+        let mut registers = Vec::new();
+        crate::vm::synchronize_global_object(&mut registers, target, &result);
+    }
     Ok(result)
 }
 

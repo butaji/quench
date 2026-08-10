@@ -54,6 +54,7 @@ fn run_source(source: &str) -> Result<(), String> {
 }
 
 fn execute_program(program: &quench_runtime::reduce::ResidualProgram) -> Result<(), String> {
+    quench_runtime::builtins::reset_intrinsic_prototype_state();
     execute_with_context(&program.ops, host_context())
         .map(|_| ())
         .map_err(|error| format!("residual VM error: {}", error.render()))
