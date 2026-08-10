@@ -315,37 +315,10 @@ pub fn reduce_atom(
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
     if matches!(expression, Expression::ThisExpression(_)) {
-        if let Some(slot) = locals.get("this") {
-            let register = *next_register;
-            *next_register = next_register.saturating_add(1);
-            ops.push(Op::LoadLocal {
-                dst: register,
-                slot: *slot,
-            });
-            return Some(register);
-        }
-        if let Some(slot) = locals.get(SCRIPT_THIS_SLOT) {
-            let register = *next_register;
-            *next_register = next_register.saturating_add(1);
-            ops.push(Op::LoadLocal {
-                dst: register,
-                slot: *slot,
-            });
-            return Some(register);
-        }
-        return Some(crate::reduce_support::emit_undefined(ops, next_register));
+        return Some(reduce_this_atom(ops, next_register, locals));
     }
     if let Some(value) = reduce_literal(expression) {
-        let register = *next_register;
-        *next_register = next_register.saturating_add(1);
-        facts.constants.push(crate::facts::ConstantFact {
-            value: value.fact.clone(),
-        });
-        ops.push(Op::Const {
-            dst: register,
-            value: value.op,
-        });
-        return Some(register);
+        return Some(reduce_literal_atom(value, ops, facts, next_register));
     }
     if let Expression::ArrayExpression(array) = expression {
         return arrays::reduce(array, ops, facts, next_register, locals);
@@ -357,6 +330,46 @@ pub fn reduce_atom(
         return identifiers::reduce(identifier, ops, facts, next_register, locals);
     }
     None
+}
+
+fn reduce_this_atom(
+    ops: &mut Vec<Op>,
+    next_register: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> u16 {
+    if let Some(slot) = locals
+        .get("this")
+        .or_else(|| locals.get(SCRIPT_THIS_SLOT))
+        .copied()
+    {
+        return emit_load_local(ops, next_register, slot);
+    }
+    crate::reduce_support::emit_undefined(ops, next_register)
+}
+
+fn emit_load_local(ops: &mut Vec<Op>, next_register: &mut u16, slot: u16) -> u16 {
+    let dst = *next_register;
+    *next_register = next_register.saturating_add(1);
+    ops.push(Op::LoadLocal { dst, slot });
+    dst
+}
+
+fn reduce_literal_atom(
+    value: crate::literal::Literal,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+) -> u16 {
+    let dst = *next_register;
+    *next_register = next_register.saturating_add(1);
+    facts.constants.push(crate::facts::ConstantFact {
+        value: value.fact.clone(),
+    });
+    ops.push(Op::Const {
+        dst,
+        value: value.op,
+    });
+    dst
 }
 
 fn reduce_regexp_literal(
