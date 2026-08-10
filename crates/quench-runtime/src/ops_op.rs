@@ -22,6 +22,7 @@ pub struct AppendInstanceFieldOp {
     pub constructor: u16,
     pub key: InstanceFieldKeyOp,
     pub initializer: Option<InstanceFieldInitializerOp>,
+    pub is_static: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]

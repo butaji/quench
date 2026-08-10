@@ -36,12 +36,13 @@ pub(crate) fn reduce_expression(
         constructor,
         PropertyDefinitionKind::Data,
     );
-    reduce_elements(class, prototype, constructor, ops, facts, next, locals)?;
+    let static_fields = reduce_elements(class, prototype, constructor, ops, facts, next, locals)?;
     ops.push(Op::SetProperty {
         object: constructor,
         key: "prototype".to_string(),
         src: prototype,
     });
+    ops.extend(static_fields);
     Some(constructor)
 }
 
@@ -109,25 +110,76 @@ pub(crate) fn append_instance_field(
     registers: &[crate::value::Value],
     op: &Op,
 ) -> Result<(), crate::execute::VmError> {
-    let Op::AppendInstanceField(AppendInstanceFieldOp {
-        constructor,
-        key,
-        initializer,
-    }) = op
-    else {
+    let Op::AppendInstanceField(field) = op else {
         return Err(crate::execute::VmError::MissingReturn);
     };
-    let constructor = crate::execute::read_register(registers, *constructor)?;
+    if field.is_static {
+        return define_static_field(registers, field);
+    }
+    let constructor = crate::execute::read_register(registers, field.constructor)?;
     let crate::value::Value::Function(constructor) = constructor else {
         return Err(crate::execute::VmError::NotCallable);
     };
-    let key = instance_field_key(registers, key)?;
-    let initializer = instance_field_initializer(initializer.as_ref())?;
+    let key = instance_field_key(registers, &field.key)?;
+    let initializer = instance_field_initializer(field.initializer.as_ref())?;
     constructor
         .instance_fields
         .borrow_mut()
         .push(crate::value::InstanceFieldPlan { key, initializer });
     Ok(())
+}
+
+fn define_static_field(
+    registers: &[crate::value::Value],
+    field: &AppendInstanceFieldOp,
+) -> Result<(), crate::execute::VmError> {
+    let constructor = crate::execute::read_register(registers, field.constructor)?;
+    let key = field_key_value(registers, &field.key)?;
+    let initializer = instance_field_initializer(field.initializer.as_ref())?;
+    let value = field_initializer_value(&initializer, &constructor)?;
+    define_public_field(&constructor, &key, value)?;
+    Ok(())
+}
+
+fn field_key_value(
+    registers: &[crate::value::Value],
+    key: &InstanceFieldKeyOp,
+) -> Result<String, crate::execute::VmError> {
+    match key {
+        InstanceFieldKeyOp::Static(key) => Ok(key.clone()),
+        InstanceFieldKeyOp::Dynamic(src) => {
+            crate::conversion::to_property_key(&crate::execute::read_register(registers, *src)?)
+        }
+    }
+}
+
+fn field_initializer_value(
+    initializer: &crate::value::InstanceFieldInitializer,
+    receiver: &crate::value::Value,
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    match initializer {
+        crate::value::InstanceFieldInitializer::Undefined => Ok(crate::value::Value::Undefined),
+        crate::value::InstanceFieldInitializer::Callable(function) => {
+            crate::functions::execute(function, receiver, &[])
+        }
+    }
+}
+
+fn define_public_field(
+    target: &crate::value::Value,
+    key: &str,
+    value: crate::value::Value,
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    let descriptor = [
+        ("value".to_string(), value),
+        ("writable".to_string(), crate::value::Value::Boolean(true)),
+        ("enumerable".to_string(), crate::value::Value::Boolean(true)),
+        (
+            "configurable".to_string(),
+            crate::value::Value::Boolean(true),
+        ),
+    ];
+    crate::builtins::define_own_property(target, key, &descriptor)
 }
 
 fn instance_field_key(
@@ -194,7 +246,8 @@ fn reduce_elements(
     facts: &mut ProgramDb,
     next: &mut u16,
     locals: &HashMap<String, u16>,
-) -> Option<()> {
+) -> Option<Vec<Op>> {
+    let mut static_fields = Vec::new();
     for element in &class.body.body {
         match element {
             ClassElement::MethodDefinition(method) => {
@@ -203,12 +256,20 @@ fn reduce_elements(
             ClassElement::PropertyDefinition(field)
                 if !matches!(field.key, PropertyKey::PrivateIdentifier(_)) =>
             {
-                reduce_public_field(field, constructor, ops, facts, next, locals)?
+                reduce_public_field(
+                    field,
+                    constructor,
+                    ops,
+                    &mut static_fields,
+                    facts,
+                    next,
+                    locals,
+                )?
             }
             _ => {}
         }
     }
-    Some(())
+    Some(static_fields)
 }
 
 fn reduce_class_method(
@@ -238,23 +299,28 @@ fn reduce_public_field(
     field: &oxc::ast::ast::PropertyDefinition<'_>,
     constructor: u16,
     ops: &mut Vec<Op>,
+    static_fields: &mut Vec<Op>,
     facts: &mut ProgramDb,
     next: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<()> {
+    let is_static = field.r#static;
     let key = reduce_field_key(field, ops, facts, next, locals)?;
-    if field.r#static {
-        return Some(());
-    }
     let initializer = match field.value.as_ref() {
         Some(value) => Some(reduce_field_initializer(value, facts, locals)?),
         None => None,
     };
-    ops.push(Op::AppendInstanceField(AppendInstanceFieldOp {
+    let field = AppendInstanceFieldOp {
         constructor,
         key,
         initializer,
-    }));
+        is_static,
+    };
+    if is_static {
+        static_fields.push(Op::AppendInstanceField(field));
+    } else {
+        ops.push(Op::AppendInstanceField(field));
+    }
     Some(())
 }
 
