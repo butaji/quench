@@ -17,7 +17,7 @@ mod binding_patterns;
 mod blocks;
 mod branch;
 mod builtin_meta;
-mod builtins;
+pub mod builtins;
 mod classes;
 mod collections;
 mod completion;
