@@ -18,8 +18,7 @@ mod host_context;
 mod polyfill_codegen;
 mod polyfill_js;
 #[rustfmt::skip]
-static BOOTSTRAP_SOURCE: std::sync::LazyLock<String> =
-    std::sync::LazyLock::new(polyfill_js::build_bootstrap_source);
+const BOOTSTRAP_SOURCE: &str = polyfill_js::BOOTSTRAP_SOURCE;
 static MKDTEMP_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = cli_args().into_iter();
