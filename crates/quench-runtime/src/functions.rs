@@ -135,6 +135,7 @@ pub(super) fn reduce_function_ops(
     parameter_count: u16,
     locals: &HashMap<String, u16>,
     lexical_receiver: bool,
+    expression_body: bool,
 ) -> Option<(Vec<Op>, u16)> {
     let captures = capture_count(locals);
     let formal_parameters = parameters.clone();
@@ -154,12 +155,32 @@ pub(super) fn reduce_function_ops(
     let rest = rest_slot(&parameters, parameter_count, captures);
     let local_count = local_count.saturating_add(u16::from(rest.is_some()));
     let body_ops =
-        crate::reduce::reduce_statements_with_locals(statements, facts, parameters, local_count)
-            .ok()?;
+        reduce_selected_body(statements, facts, parameters, local_count, expression_body)?;
     Some((
         bind_rest(body_ops, rest, parameter_count, captures),
         captures,
     ))
+}
+
+fn reduce_selected_body(
+    statements: &[oxc::ast::ast::Statement<'_>],
+    facts: &mut ProgramDb,
+    parameters: HashMap<String, u16>,
+    local_count: u16,
+    expression_body: bool,
+) -> Option<Vec<Op>> {
+    if expression_body {
+        crate::reduce::reduce_expression_statements_with_locals(
+            statements,
+            facts,
+            parameters,
+            local_count,
+        )
+        .ok()
+    } else {
+        crate::reduce::reduce_statements_with_locals(statements, facts, parameters, local_count)
+            .ok()
+    }
 }
 
 fn emit_function_op(
@@ -200,6 +221,7 @@ pub(crate) fn reduce_expression(
         parameter_count,
         locals,
         false,
+        false,
     )?;
     Some(emit_function_op(
         ops,
@@ -234,6 +256,7 @@ pub(crate) fn reduce_arrow(
         parameter_count,
         locals,
         true,
+        function.expression,
     )?;
     Some(emit_function_op(
         ops,
@@ -347,8 +370,7 @@ pub(crate) fn execute(
     completion
 }
 
-/// Execute a constructor, returning both its result and the object bound to
-/// `this` after it ran (so `this.message = ...` mutations are preserved).
+/// Execute a constructor and return its result plus the final `this` value.
 pub(crate) fn execute_construct(
     function: &crate::value::FunctionValue,
     this_value: &crate::value::Value,

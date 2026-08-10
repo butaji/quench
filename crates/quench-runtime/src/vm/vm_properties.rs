@@ -36,18 +36,13 @@ pub fn get_property(value: &Value, key: &str) -> Value {
         Uint8ClampedArray(view) => uint8_clamped_array_property(view, key),
         DataView(view) => data_view_property(view, key),
         Object(properties) => object_property(properties, key),
+        ObjectAlias(alias) => object_alias_property(alias, key),
         String(value) => string_property(value, key),
         Number(value) => number_property(*value, key),
         Boolean(value) => boolean_property(*value, key),
         Function(function) if key == "length" => Value::Number(f64::from(function.params)),
         Function(_) if matches!(key, "call" | "bind") => bind_function_property(value, key),
-        Function(function) => function
-            .properties
-            .borrow()
-            .iter()
-            .rev()
-            .find(|(name, _)| name == key)
-            .map_or(Value::Undefined, |(_, value)| value.clone()),
+        Function(function) => function_property(function, key),
         BoundFunction(_) if matches!(key, "call" | "bind") => bind_function_property(value, key),
         Map(data) if key == "size" => Value::Number(data.keys.len() as f64),
         Map(_) => crate::collections::map::property(key),
@@ -58,6 +53,24 @@ pub fn get_property(value: &Value, key: &str) -> Value {
         HostCapability(capability) => host_capability_property(value, capability.descriptor, key),
         _ => Value::Undefined,
     }
+}
+
+fn object_alias_property(alias: &crate::value::ObjectAliasValue, key: &str) -> Value {
+    alias
+        .0
+        .borrow()
+        .upgrade()
+        .map_or(Value::Undefined, |object| object_property(&object, key))
+}
+
+fn function_property(function: &crate::value::FunctionValue, key: &str) -> Value {
+    function
+        .properties
+        .borrow()
+        .iter()
+        .rev()
+        .find(|(name, _)| name == key)
+        .map_or(Value::Undefined, |(_, value)| value.clone())
 }
 
 pub fn get_property_result(value: &Value, key: &str) -> Result<Value, VmError> {
@@ -407,6 +420,7 @@ fn global_builtin(key: &str) -> Option<Builtin> {
         "BigInt" => BigInt,
         "String" => String,
         "Date" => Date,
+        "JSON" => Json,
         "Map" => Map,
         "Set" => Set,
         "Error" => Error,

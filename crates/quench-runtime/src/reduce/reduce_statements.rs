@@ -137,6 +137,14 @@ pub fn reduce_statements_with_locals(
     ops.push(Op::Return { src: 0 });
     Ok(ops)
 }
+pub fn reduce_expression_statements_with_locals(
+    statements: &[Statement<'_>],
+    facts: &mut ProgramDb,
+    locals: HashMap<String, u16>,
+    next_slot: u16,
+) -> Result<Vec<Op>, Vec<String>> {
+    reduce_statements_opt(statements, facts, locals, next_slot, true, Vec::new(), 0)
+}
 /// Reduce statements without appending a terminal `Return`. Used for nested
 /// blocks whose control flow continues after the block (if/try/switch bodies).
 pub fn reduce_statements_no_tail(

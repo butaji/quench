@@ -19,6 +19,9 @@ fn special(builtin: Builtin, key: &str) -> Option<Value> {
     if builtin == Math {
         return crate::math::property(key).map(Value::Builtin);
     }
+    if builtin == Json && key == "stringify" {
+        return Some(Value::Builtin(JsonStringify));
+    }
     special_match(builtin, key)
 }
 
