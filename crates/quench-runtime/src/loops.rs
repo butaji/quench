@@ -137,7 +137,7 @@ pub(crate) fn reduce_for_in(
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
 ) -> Result<(), Vec<String>> {
-    let slot = for_in_slot(&statement.left, next_slot, locals)?;
+    let (slot, per_iteration) = for_in_slot(&statement.left, next_slot, locals)?;
     let object =
         crate::reduce::reduce_expression(&statement.right, ops, facts, next_register, locals)
             .ok_or_else(|| vec!["Unsupported for-in object".to_string()])?;
@@ -147,6 +147,7 @@ pub(crate) fn reduce_for_in(
         object,
         slot,
         body,
+        per_iteration,
     });
     Ok(())
 }
@@ -159,7 +160,7 @@ pub(crate) fn reduce_for_of(
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
 ) -> Result<(), Vec<String>> {
-    let slot = for_in_slot(&statement.left, next_slot, locals)?;
+    let (slot, per_iteration) = for_in_slot(&statement.left, next_slot, locals)?;
     let iterable =
         crate::reduce::reduce_expression(&statement.right, ops, facts, next_register, locals)
             .ok_or_else(|| vec!["Unsupported for-of iterable".to_string()])?;
@@ -169,6 +170,7 @@ pub(crate) fn reduce_for_of(
         iterable,
         slot,
         body,
+        per_iteration,
     });
     Ok(())
 }
@@ -177,8 +179,8 @@ fn for_in_slot(
     left: &oxc::ast::ast::ForStatementLeft<'_>,
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
-) -> Result<u16, Vec<String>> {
-    let name = match left {
+) -> Result<(u16, bool), Vec<String>> {
+    let (name, per_iteration) = match left {
         oxc::ast::ast::ForStatementLeft::VariableDeclaration(declaration) => {
             let Some(declarator) = declaration.declarations.first() else {
                 return Err(vec!["Missing for-in binding".to_string()]);
@@ -188,43 +190,47 @@ fn for_in_slot(
             else {
                 return Err(vec!["Unsupported for-in binding".to_string()]);
             };
-            identifier.name.to_string()
+            (
+                identifier.name.to_string(),
+                declaration.kind != oxc::ast::ast::VariableDeclarationKind::Var,
+            )
         }
         oxc::ast::ast::ForStatementLeft::AssignmentTargetIdentifier(identifier) => {
-            identifier.name.to_string()
+            (identifier.name.to_string(), false)
         }
         _ => return Err(vec!["Unsupported for-in binding".to_string()]),
     };
     if let Some(slot) = locals.get(&name) {
-        return Ok(*slot);
+        return Ok((*slot, per_iteration));
     }
     let slot = *next_slot;
     *next_slot = next_slot.saturating_add(1);
     locals.insert(name, slot);
-    Ok(slot)
+    Ok((slot, per_iteration))
 }
 
 pub(crate) fn execute_for_in(
     registers: &mut Vec<crate::value::Value>,
     op: &Op,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
-    let (label, slot, body, keys) = unpack_for_in(registers, op)?;
-    iterate_loop_keys(registers, label, slot, body, keys)
+    let (label, slot, body, per_iteration, keys) = unpack_for_in(registers, op)?;
+    iterate_loop_keys(registers, label, slot, body, per_iteration, keys)
 }
 
 pub(crate) fn execute_for_of(
     registers: &mut Vec<crate::value::Value>,
     op: &Op,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
-    let (label, slot, body, values) = unpack_for_of(registers, op)?;
-    iterate_loop_values(registers, label, slot, body, values)
+    let (label, slot, body, per_iteration, values) = unpack_for_of(registers, op)?;
+    iterate_loop_values(registers, label, slot, body, per_iteration, values)
 }
 
-type ForInLoopData<'a> = (&'a Option<String>, u16, &'a Vec<Op>, Vec<String>);
+type ForInLoopData<'a> = (&'a Option<String>, u16, &'a Vec<Op>, bool, Vec<String>);
 type ForOfLoopData<'a> = (
     &'a Option<String>,
     u16,
     &'a Vec<Op>,
+    bool,
     Vec<crate::value::Value>,
 );
 
@@ -237,12 +243,13 @@ fn unpack_for_in<'a>(
         object,
         slot,
         body,
+        per_iteration,
     } = op
     else {
         return Err(crate::execute::VmError::MissingReturn);
     };
     let keys = for_in_keys(crate::execute::read_register(registers, *object)?);
-    Ok((label, *slot, body, keys))
+    Ok((label, *slot, body, *per_iteration, keys))
 }
 
 fn for_in_keys(value: crate::value::Value) -> Vec<String> {
@@ -260,10 +267,12 @@ fn iterate_loop_keys(
     label: &Option<String>,
     slot: u16,
     body: &[Op],
+    per_iteration: bool,
     keys: Vec<String>,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
     for key in keys {
-        crate::locals::write(slot, crate::value::Value::String(key));
+        let value = crate::value::Value::String(key);
+        let _binding = bind_iteration(slot, value, per_iteration);
         match execute_loop_body(registers, label, body)? {
             LoopAction::Continue => {}
             LoopAction::Break => return Ok(crate::completion::Completion::Normal),
@@ -282,12 +291,13 @@ fn unpack_for_of<'a>(
         iterable,
         slot,
         body,
+        per_iteration,
     } = op
     else {
         return Err(crate::execute::VmError::MissingReturn);
     };
     let values = for_of_values(crate::execute::read_register(registers, *iterable)?)?;
-    Ok((label, *slot, body, values))
+    Ok((label, *slot, body, *per_iteration, values))
 }
 
 fn for_of_values(
@@ -313,10 +323,11 @@ fn iterate_loop_values(
     label: &Option<String>,
     slot: u16,
     body: &[Op],
+    per_iteration: bool,
     values: Vec<crate::value::Value>,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
     for value in values {
-        crate::locals::write(slot, value);
+        let _binding = bind_iteration(slot, value, per_iteration);
         match execute_loop_body(registers, label, body)? {
             LoopAction::Continue => {}
             LoopAction::Break => return Ok(crate::completion::Completion::Normal),
@@ -324,6 +335,19 @@ fn iterate_loop_values(
         }
     }
     Ok(crate::completion::Completion::Normal)
+}
+
+fn bind_iteration(
+    slot: u16,
+    value: crate::value::Value,
+    per_iteration: bool,
+) -> Option<crate::locals::IterationBinding> {
+    if per_iteration {
+        Some(crate::locals::IterationBinding::install(slot, value))
+    } else {
+        crate::locals::write(slot, value);
+        None
+    }
 }
 
 enum LoopAction {

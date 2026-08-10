@@ -53,8 +53,20 @@ pub enum Op {
         update: Vec<Op>,
         post_test: bool,
     },
-    ForIn { label: Option<String>, object: u16, slot: u16, body: Vec<Op> },
-    ForOf { label: Option<String>, iterable: u16, slot: u16, body: Vec<Op> },
+    ForIn {
+        label: Option<String>,
+        object: u16,
+        slot: u16,
+        body: Vec<Op>,
+        per_iteration: bool,
+    },
+    ForOf {
+        label: Option<String>,
+        iterable: u16,
+        slot: u16,
+        body: Vec<Op>,
+        per_iteration: bool,
+    },
     Switch { discriminant: u16, cases: Vec<(Option<Constant>, Vec<Op>)> },
     Conditional {
         dst: u16,
