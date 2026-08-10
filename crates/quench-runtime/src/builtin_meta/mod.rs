@@ -128,7 +128,7 @@ pub fn constructor_length(builtin: Builtin) -> Option<f64> {
         Builtin::IntlSegmenter => Some(2.0),
         Builtin::Math => None,
         Builtin::Number => Some(1.0),
-        Builtin::Object => Some(0.0),
+        Builtin::Object => Some(1.0),
         Builtin::RegExp => Some(2.0),
         Builtin::String => Some(1.0),
         Builtin::Symbol => Some(0.0),

@@ -280,10 +280,10 @@ fn construct_number(arguments: &[Value]) -> Result<Value, crate::execute::VmErro
     let value = arguments.first().map_or(0.0, |argument| {
         crate::intl::tolocale::value::to_number(Some(argument))
     });
-    Ok(Value::Object(std::rc::Rc::new(ObjectData::new(vec![(
-        "_value".to_string(),
+    Ok(boxed_primitive(
         Value::Number(value),
-    )]))))
+        crate::ops::Builtin::Number,
+    ))
 }
 
 fn construct_boolean(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
@@ -292,10 +292,7 @@ fn construct_boolean(arguments: &[Value]) -> Result<Value, crate::execute::VmErr
         arguments,
         None,
     )?;
-    Ok(Value::Object(std::rc::Rc::new(ObjectData::new(vec![(
-        "_value".to_string(),
-        value,
-    )]))))
+    Ok(boxed_primitive(value, crate::ops::Builtin::Boolean))
 }
 
 fn construct_string(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
@@ -304,10 +301,14 @@ fn construct_string(arguments: &[Value]) -> Result<Value, crate::execute::VmErro
         arguments,
         None,
     )?;
-    Ok(Value::Object(std::rc::Rc::new(ObjectData::new(vec![(
-        "_value".to_string(),
-        value,
-    )]))))
+    Ok(boxed_primitive(value, crate::ops::Builtin::String))
+}
+
+fn boxed_primitive(value: Value, constructor: crate::ops::Builtin) -> Value {
+    Value::Object(std::rc::Rc::new(ObjectData::new(vec![
+        ("_value".to_string(), value),
+        ("constructor".to_string(), Value::Builtin(constructor)),
+    ])))
 }
 
 fn construct_error(

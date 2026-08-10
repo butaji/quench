@@ -23,7 +23,11 @@ pub fn get_property(value: &Value, key: &str) -> Value {
     if let Value::BindingCell(cell) = value {
         return get_property(&cell.borrow(), key);
     }
-    get_property_value(value, key)
+    let direct = get_property_value(value, key);
+    if !matches!(direct, Value::Undefined) {
+        return direct;
+    }
+    primitive_prototype_property(value, key)
 }
 
 fn get_property_value(value: &Value, key: &str) -> Value {
@@ -63,6 +67,46 @@ fn get_property_value(value: &Value, key: &str) -> Value {
         HostCapability(capability) => host_capability_property(value, capability.descriptor, key),
         _ => Value::Undefined,
     }
+}
+
+/// Mirror of `conversion::is_symbol` for raw `&str` payloads.
+fn looks_like_symbol(value: &str) -> bool {
+    value.starts_with("Symbol.") && value.contains('\0')
+}
+
+/// Look up a property on the boxed prototype for a primitive value.
+///
+/// Returns the result when the prototype or its chain owns `key`; otherwise
+/// `Undefined`. Used to surface `constructor` and prototype methods for
+/// primitive values like `1`, `true`, and `null`-shaped access.
+fn primitive_prototype_property(value: &Value, key: &str) -> Value {
+    let prototype = match value {
+        Value::Number(_) => Some(Value::Builtin(Builtin::NumberPrototype)),
+        Value::Boolean(_) => Some(Value::Builtin(Builtin::BooleanPrototype)),
+        Value::String(value) if !looks_like_symbol(value) => {
+            Some(Value::Builtin(Builtin::StringPrototype))
+        }
+        Value::BigInt(_) => Some(Value::Builtin(Builtin::BigIntPrototype)),
+        _ => None,
+    };
+    let Some(prototype) = prototype else {
+        return Value::Undefined;
+    };
+    if key == "constructor" {
+        let builtin = match value {
+            Value::Number(_) => Some(Builtin::Number),
+            Value::Boolean(_) => Some(Builtin::Boolean),
+            Value::String(value) if !looks_like_symbol(value) => {
+                Some(Builtin::String)
+            }
+            Value::BigInt(_) => Some(Builtin::BigInt),
+            _ => None,
+        };
+        if let Some(builtin) = builtin {
+            return Value::Builtin(builtin);
+        }
+    }
+    get_property(&prototype, key)
 }
 
 fn generator_property(value: &Value, key: &str) -> Value {

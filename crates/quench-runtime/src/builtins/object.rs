@@ -91,11 +91,23 @@ fn create(arguments: &[Value]) -> Result<Value, VmError> {
     )]))))
 }
 pub(crate) fn set_prototype_of(arguments: &[Value]) -> Result<Value, VmError> {
-    let Some(target @ Value::Object(_)) = arguments.first() else {
+    let Some(target) = arguments.first() else {
         return Err(crate::value::error::throw_type_error(
             "Object.setPrototypeOf target must be an object",
         ));
     };
+    if !matches!(
+        target,
+        Value::Object(_)
+            | Value::Array(_)
+            | Value::ObjectAlias(_)
+            | Value::Function(_)
+            | Value::BoundFunction(_)
+    ) {
+        return Err(crate::value::error::throw_type_error(
+            "Object.setPrototypeOf target must be an object",
+        ));
+    }
     let prototype = arguments.get(1).cloned().unwrap_or(Value::Undefined);
     if !matches!(
         prototype,
@@ -113,7 +125,7 @@ fn has_own_target<'a>(
     receiver: Option<&'a Value>,
     arguments: &'a [Value],
 ) -> (Option<&'a Value>, Option<&'a Value>) {
-    if receiver.is_none() || matches!(receiver, Some(Value::Builtin(Builtin::Object))) {
+    if receiver.is_none() {
         return static_target(arguments);
     }
     (receiver, arguments.first())

@@ -126,13 +126,28 @@ fn prototype_chain_contains(value: &Value, expected: &Value) -> bool {
 }
 
 fn internal_prototype(value: &Value) -> Option<Value> {
-    let Value::Object(properties) = value else {
-        return None;
-    };
-    properties
-        .iter()
-        .rev()
-        .find_map(|(name, value)| (name == "\0prototype").then(|| value.clone()))
+    match value {
+        Value::Object(properties) => {
+            if let Some((_, prototype)) = properties
+                .iter()
+                .rev()
+                .find(|(name, _)| name == "\0prototype")
+            {
+                return Some(prototype.clone());
+            }
+            if crate::value::is_object(value) {
+                return Some(Value::Builtin(crate::ops::Builtin::ObjectPrototype));
+            }
+            None
+        }
+        Value::Array(values) => {
+            if values.is_arguments() {
+                return Some(Value::Builtin(crate::ops::Builtin::ObjectPrototype));
+            }
+            Some(Value::Builtin(crate::ops::Builtin::ArrayPrototype))
+        }
+        _ => None,
+    }
 }
 
 fn own_constructor(value: &Value) -> Option<Value> {

@@ -3,6 +3,9 @@ pub mod object;
 pub mod object_alias;
 pub mod props;
 
+mod array_like;
+use array_like::{array_like_length, array_like_value};
+
 use std::rc::Rc;
 
 use crate::{
@@ -103,31 +106,6 @@ pub(crate) fn array_map(
         mapped.push(crate::functions::execute_target(callback, this_arg, &args)?);
     }
     Ok(Value::array(mapped))
-}
-
-fn array_like_length(value: &Value) -> usize {
-    let length = match value {
-        Value::Array(values) => values.len() as f64,
-        Value::Object(properties) => properties
-            .iter()
-            .rev()
-            .find(|(key, _)| key == "length")
-            .map_or(0.0, |(_, value)| value_to_number(value)),
-        _ => 0.0,
-    };
-    length.max(0.0).min(usize::MAX as f64) as usize
-}
-
-fn array_like_value(value: &Value, index: usize) -> Value {
-    match value {
-        Value::Array(values) => values.get(index).cloned().unwrap_or(Value::Undefined),
-        Value::Object(properties) => properties
-            .iter()
-            .rev()
-            .find(|(key, _)| key == &index.to_string())
-            .map_or(Value::Undefined, |(_, value)| value.clone()),
-        _ => Value::Undefined,
-    }
 }
 
 pub(crate) fn array_for_each(
@@ -241,7 +219,10 @@ pub(crate) fn object(arguments: &[Value]) -> Value {
                 Value::Builtin(object::boxed_constructor(value)),
             ),
         ]))),
-        _ => Value::Object(Rc::new(ObjectData::new(Vec::new()))),
+        _ => Value::Object(Rc::new(ObjectData::new(vec![(
+            "constructor".to_string(),
+            Value::Builtin(Builtin::Object),
+        )]))),
     }
 }
 

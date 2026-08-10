@@ -1,5 +1,8 @@
 use crate::{ops::Builtin, value::Value};
 
+mod data_view_name;
+use data_view_name::data_view_name;
+
 /// Lookup a property on a builtin, checking intl first, then special, then callable.
 pub(crate) fn lookup(builtin: Builtin, key: &str) -> Value {
     if let Some(value) = crate::intl::property(builtin, key) {
@@ -302,6 +305,9 @@ fn builtin_method3(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Number, "isFinite") => Some(IsFinite),
         (Boolean, "prototype") => Some(BooleanPrototype),
         (BooleanPrototype, "valueOf") => Some(BoxedValueOf),
+        (BooleanPrototype, "toString") => Some(NumberToString),
+        (ObjectPrototype, "constructor") => Some(Object),
+        (ObjectPrototype, "toLocaleString") => Some(ObjectPrototypeToString),
         #[allow(unreachable_patterns)]
         (Symbol, "prototype") => Some(SymbolPrototype),
         (SymbolPrototype, "valueOf") => Some(BoxedValueOf),
@@ -334,6 +340,33 @@ pub(crate) fn callable(builtin: Builtin, key: &str) -> Option<Value> {
     }
 }
 
+pub(crate) fn is_builtin_deletable(builtin: Builtin, key: &str) -> bool {
+    if callable(builtin, key).is_some() {
+        return false;
+    }
+    if special_property(builtin, key).is_some() {
+        return false;
+    }
+    if builtin == Builtin::Number && is_number_constant_key(key) {
+        return false;
+    }
+    true
+}
+
+fn is_number_constant_key(key: &str) -> bool {
+    matches!(
+        key,
+        "EPSILON"
+            | "MAX_SAFE_INTEGER"
+            | "MAX_VALUE"
+            | "MIN_SAFE_INTEGER"
+            | "MIN_VALUE"
+            | "NaN"
+            | "NEGATIVE_INFINITY"
+            | "POSITIVE_INFINITY"
+    )
+}
+
 fn builtin_length(builtin: Builtin) -> f64 {
     use Builtin::*;
     if let Some(length) = data_view_length(builtin) {
@@ -342,6 +375,7 @@ fn builtin_length(builtin: Builtin) -> f64 {
     match builtin {
         Escape | Unescape | DateSetYear | GeneratorNext | GeneratorReturn | GeneratorThrow => 1.0,
         ArrayBuffer => 1.0,
+        Object => 1.0,
         Float64Array => 3.0,
         Float32Array => 3.0,
         Int8Array => 3.0,
@@ -447,32 +481,6 @@ fn error_name(builtin: Builtin) -> Option<&'static str> {
         EvalError => "EvalError",
         URIError => "URIError",
         AggregateError => "AggregateError",
-        _ => return None,
-    })
-}
-
-fn data_view_name(builtin: Builtin) -> Option<&'static str> {
-    use Builtin::*;
-    Some(match builtin {
-        DataView => "DataView",
-        DataViewGetInt8 => "getInt8",
-        DataViewGetUint8 => "getUint8",
-        DataViewGetInt16 => "getInt16",
-        DataViewGetUint16 => "getUint16",
-        DataViewGetInt32 => "getInt32",
-        DataViewGetUint32 => "getUint32",
-        DataViewGetFloat16 => "getFloat16",
-        DataViewGetFloat32 => "getFloat32",
-        DataViewGetFloat64 => "getFloat64",
-        DataViewSetInt8 => "setInt8",
-        DataViewSetUint8 => "setUint8",
-        DataViewSetInt16 => "setInt16",
-        DataViewSetUint16 => "setUint16",
-        DataViewSetInt32 => "setInt32",
-        DataViewSetUint32 => "setUint32",
-        DataViewSetFloat16 => "setFloat16",
-        DataViewSetFloat32 => "setFloat32",
-        DataViewSetFloat64 => "setFloat64",
         _ => return None,
     })
 }
