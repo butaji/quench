@@ -2,11 +2,33 @@ use crate::intl::tolocale::value::{is_finite, to_number, to_string};
 use crate::ops::{Builtin, Op};
 use crate::value::Value;
 use std::rc::Rc;
+use std::sync::Arc;
 
 mod vm_arithmetic;
 mod vm_ops;
 
 pub use crate::intl::tolocale::value::is_truthy;
+
+pub type OutputSink = Arc<dyn Fn(&str) + Send + Sync>;
+
+#[derive(Clone, Default)]
+pub struct VmContext {
+    output_sink: Option<OutputSink>,
+}
+
+impl VmContext {
+    pub fn with_output_sink(output_sink: OutputSink) -> Self {
+        Self {
+            output_sink: Some(output_sink),
+        }
+    }
+
+    pub fn emit_output(&self, text: &str) {
+        if let Some(output_sink) = &self.output_sink {
+            output_sink(text);
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum VmError {
@@ -29,16 +51,36 @@ impl VmError {
 }
 
 pub fn execute(ops: &[Op]) -> Result<Value, VmError> {
-    execute_with_registers(ops, Vec::new())
+    execute_with_context(ops, &VmContext::default())
 }
 
-pub fn execute_with_registers(ops: &[Op], mut registers: Vec<Value>) -> Result<Value, VmError> {
-    execute_in_place(ops, &mut registers)
+pub fn execute_with_registers(ops: &[Op], registers: Vec<Value>) -> Result<Value, VmError> {
+    execute_with_registers_context(ops, registers, &VmContext::default())
 }
 
 pub fn execute_in_place(ops: &[Op], registers: &mut Vec<Value>) -> Result<Value, VmError> {
+    execute_in_place_context(ops, registers, &VmContext::default())
+}
+
+pub fn execute_with_context(ops: &[Op], context: &VmContext) -> Result<Value, VmError> {
+    execute_with_registers_context(ops, Vec::new(), context)
+}
+
+pub fn execute_with_registers_context(
+    ops: &[Op],
+    mut registers: Vec<Value>,
+    context: &VmContext,
+) -> Result<Value, VmError> {
+    execute_in_place_context(ops, &mut registers, context)
+}
+
+pub fn execute_in_place_context(
+    ops: &[Op],
+    registers: &mut Vec<Value>,
+    context: &VmContext,
+) -> Result<Value, VmError> {
     for op in ops {
-        match run_op(registers, op)? {
+        match run_op(registers, op, context)? {
             None => {}
             Some(value) => return Ok(value),
         }
@@ -251,7 +293,11 @@ fn object_property(properties: &Rc<Vec<(String, Value)>>, key: &str) -> Value {
     crate::builtins::property(prototype, key)
 }
 
-fn run_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Value>, VmError> {
+fn run_op(
+    registers: &mut Vec<Value>,
+    op: &Op,
+    _context: &VmContext,
+) -> Result<Option<Value>, VmError> {
     if let Some(result) = run_simple_op(registers, op)? {
         return Ok(result);
     }
