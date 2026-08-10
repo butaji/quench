@@ -2,6 +2,7 @@
 pub enum Op {
     Const { dst: u16, value: Constant },
     StoreLocal { slot: u16, src: u16 },
+    DeclareEvalBinding { name: String, slot: u16 },
     ResolveBindingTarget { dst: u16, name: String },
     InitializeResolvedBinding { target: u16, slot: u16, name: String, src: u16 },
     LoadBinding { dst: u16, slot: u16, name: String },
@@ -55,6 +56,7 @@ pub enum Op {
         dst: u16,
         source: u16,
         strict: bool,
+        global: bool,
         bindings: Vec<(String, u16)>,
         forbidden_var_names: Vec<String>,
     },

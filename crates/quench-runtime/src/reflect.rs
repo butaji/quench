@@ -16,11 +16,19 @@ pub(crate) fn execute_eval(
     dst: u16,
     source: u16,
     strict: bool,
+    global: bool,
     bindings: &[(String, u16)],
     forbidden_var_names: &[String],
 ) -> Result<(), VmError> {
     let source = crate::execute::read_register(registers, source)?;
-    let value = evaluate_direct(&source, strict, bindings, forbidden_var_names, registers)?;
+    let value = evaluate_direct(
+        &source,
+        strict,
+        global,
+        bindings,
+        forbidden_var_names,
+        registers,
+    )?;
     crate::execute::write_value(registers, dst, value);
     Ok(())
 }
@@ -37,6 +45,7 @@ fn evaluate(value: &Value, strict: bool) -> Result<Value, VmError> {
 fn evaluate_direct(
     value: &Value,
     strict: bool,
+    global: bool,
     bindings: &[(String, u16)],
     forbidden_var_names: &[String],
     registers: &mut Vec<Value>,
@@ -44,9 +53,25 @@ fn evaluate_direct(
     let Value::String(source) = value else {
         return Ok(value.clone());
     };
-    let program = crate::reduce::reduce_eval_source(source, strict, bindings, forbidden_var_names)
-        .map_err(syntax_error)?;
+    let program =
+        crate::reduce::reduce_eval_source(source, strict, global, bindings, forbidden_var_names)
+            .map_err(syntax_error)?;
+    if program.facts.strict {
+        return execute_strict_eval(&program.ops, registers);
+    }
     crate::execute::execute_in_place(&program.ops, registers)
+}
+
+fn execute_strict_eval(
+    ops: &[crate::ops::Op],
+    registers: &mut Vec<Value>,
+) -> Result<Value, VmError> {
+    let count = u16::try_from(crate::locals::current().len())
+        .map_err(|_| VmError::EvalError("Too many eval bindings".to_string()))?;
+    let captures = crate::locals::capture(count);
+    let environment = crate::environment::Environment::child(&captures, Vec::new());
+    let _guard = crate::locals::EnvironmentGuard::install(environment);
+    crate::execute::execute_in_place(ops, registers)
 }
 
 fn syntax_error(errors: Vec<String>) -> VmError {

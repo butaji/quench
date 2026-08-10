@@ -3,7 +3,6 @@ use crate::{
     ops::{FunctionKind, FunctionStrictness, Op},
 };
 use std::collections::HashMap;
-
 #[derive(Clone, Copy)]
 pub(crate) struct FunctionMetadata {
     pub(crate) kind: FunctionKind,
@@ -31,8 +30,9 @@ pub(crate) fn reduce_body(
         .saturating_add(parameter_count)
         .saturating_add(if rest.is_some() { 3 } else { 2 });
     let next_slot = crate::reduce_support::register_base(&parameters).max(minimum);
-    let inherited = facts.strict;
+    let inherited = (facts.strict, facts.in_function);
     facts.strict = matches!(strictness, FunctionStrictness::Strict);
+    facts.in_function = true;
     let prefix = crate::function_parameters::prefix(formal, facts, &parameters, captures, true);
     let mut body_locals = parameters.clone();
     crate::reduce_support::shadow_function_bindings(
@@ -48,7 +48,7 @@ pub(crate) fn reduce_body(
         next_slot,
     );
     facts.eval_var_barrier = inherited_barrier;
-    facts.strict = inherited;
+    (facts.strict, facts.in_function) = inherited;
     let mut prefix =
         prefix.ok_or_else(|| vec!["Unsupported function parameter initialization".to_string()])?;
     prefix.extend((!prefix.is_empty()).then_some(Op::ParameterEnd));
@@ -116,7 +116,6 @@ fn extend_function_parameters(
     bindings.extend(parameters);
     bindings
 }
-
 pub(super) fn reduce_function_ops(
     statements: &[oxc::ast::ast::Statement<'_>],
     formal: &oxc::ast::ast::FormalParameters<'_>,
@@ -239,8 +238,9 @@ pub(crate) fn reduce_expression(
     let body = function.body.as_ref()?;
     let strictness = crate::reduce_support::function_strictness(body, facts.strict);
     let (parameters, parameter_count) = function_parameters(function).ok()?;
-    let inherited = facts.strict;
+    let inherited = (facts.strict, facts.in_function);
     facts.strict = matches!(strictness, FunctionStrictness::Strict);
+    facts.in_function = true;
     let reduced = reduce_function_ops(
         &body.statements,
         &function.params,
@@ -250,7 +250,7 @@ pub(crate) fn reduce_expression(
         locals,
         None,
     );
-    facts.strict = inherited;
+    (facts.strict, facts.in_function) = inherited;
     let (body_ops, captures) = reduced?;
     Some(emit_function_op(
         ops,
@@ -285,8 +285,9 @@ pub(crate) fn reduce_arrow(
     let strictness = crate::reduce_support::function_strictness(&function.body, facts.strict);
     let (parameters, parameter_count) =
         crate::function_parameters::bindings(&function.params).ok()?;
-    let inherited = facts.strict;
+    let inherited = (facts.strict, facts.in_function);
     facts.strict = matches!(strictness, FunctionStrictness::Strict);
+    facts.in_function = true;
     let reduced = reduce_function_ops(
         &function.body.statements,
         &function.params,
@@ -296,7 +297,7 @@ pub(crate) fn reduce_arrow(
         locals,
         Some(function.expression),
     );
-    facts.strict = inherited;
+    (facts.strict, facts.in_function) = inherited;
     let (body_ops, captures) = reduced?;
     Some(emit_function_op(
         ops,

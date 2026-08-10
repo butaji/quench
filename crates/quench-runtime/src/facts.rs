@@ -29,6 +29,7 @@ pub struct ProgramDb {
     pub scope_count: usize,
     pub symbol_count: usize,
     pub(crate) strict: bool,
+    pub(crate) in_function: bool,
     pub(crate) eval_var_barrier: Vec<String>,
 }
 

@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::value::Value;
 
@@ -6,6 +6,7 @@ use crate::value::Value;
 #[derive(Debug, Default, PartialEq)]
 pub struct Environment {
     slots: RefCell<Vec<Rc<RefCell<Value>>>>,
+    names: RefCell<Option<HashMap<String, Rc<RefCell<Value>>>>>,
     caller: Option<Rc<Self>>,
 }
 
@@ -23,6 +24,7 @@ impl Environment {
         let slots = source.iter().take(count).cloned().collect();
         Rc::new(Self {
             slots: RefCell::new(slots),
+            names: RefCell::new(environment.names.borrow().clone()),
             caller: None,
         })
     }
@@ -32,6 +34,7 @@ impl Environment {
         slots.extend(values.into_iter().map(|value| Rc::new(RefCell::new(value))));
         Rc::new(Self {
             slots: RefCell::new(slots),
+            names: RefCell::new(None),
             caller: crate::locals::is_installed().then(crate::locals::current),
         })
     }
@@ -58,6 +61,45 @@ impl Environment {
 
     pub(crate) fn slot(&self, slot: u16) -> Option<Rc<RefCell<Value>>> {
         self.slots.borrow().get(usize::from(slot)).cloned()
+    }
+
+    pub(crate) fn alias_name(&self, name: &str, slot: u16) {
+        let binding = self.ensure_slot(slot);
+        self.names
+            .borrow_mut()
+            .get_or_insert_with(HashMap::new)
+            .insert(name.to_string(), binding);
+    }
+
+    pub(crate) fn resolve_name(&self, name: &str) -> Option<Value> {
+        self.named_binding(name)
+            .map(|binding| binding.borrow().clone())
+    }
+
+    pub(crate) fn set_named(&self, name: &str, value: Value) -> bool {
+        let Some(binding) = self.named_binding(name) else {
+            return false;
+        };
+        *binding.borrow_mut() = value;
+        true
+    }
+
+    fn named_binding(&self, name: &str) -> Option<Rc<RefCell<Value>>> {
+        let binding = self
+            .names
+            .borrow()
+            .as_ref()
+            .and_then(|names| names.get(name).cloned());
+        binding.or_else(|| self.caller.as_ref()?.named_binding(name))
+    }
+
+    fn ensure_slot(&self, slot: u16) -> Rc<RefCell<Value>> {
+        let index = usize::from(slot);
+        let mut slots = self.slots.borrow_mut();
+        while slots.len() <= index {
+            slots.push(Rc::new(RefCell::new(Value::Undefined)));
+        }
+        slots[index].clone()
     }
 
     pub(crate) fn replace_slot(&self, slot: u16, value: Value) -> Rc<RefCell<Value>> {
