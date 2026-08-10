@@ -177,8 +177,7 @@ pub(crate) fn execute_for_in(
             Ok(value) => return Ok(Some(value)),
             Err(crate::execute::VmError::MissingReturn) => {}
             Err(crate::execute::VmError::Continue(continue_label))
-                if continue_matches(label, &continue_label) =>
-            {}
+                if continue_matches(label, &continue_label) => {}
             Err(crate::execute::VmError::Continue(continue_label)) => {
                 return Err(crate::execute::VmError::Continue(continue_label));
             }
@@ -216,8 +215,7 @@ pub(crate) fn execute(
             Ok(value) => return Ok(Some(value)),
             Err(crate::execute::VmError::MissingReturn) => {}
             Err(crate::execute::VmError::Continue(continue_label))
-                if continue_matches(label, &continue_label) =>
-            {}
+                if continue_matches(label, &continue_label) => {}
             Err(crate::execute::VmError::Continue(continue_label)) => {
                 return Err(crate::execute::VmError::Continue(continue_label));
             }
@@ -237,7 +235,10 @@ pub(crate) fn execute(
 }
 
 fn break_matches(loop_label: &Option<String>, break_label: &Option<String>) -> bool {
-    break_label.is_none() || loop_label == break_label
+    match break_label {
+        None => true,
+        Some(label) => loop_label.as_ref() == Some(label),
+    }
 }
 
 fn continue_matches(loop_label: &Option<String>, continue_label: &Option<String>) -> bool {
@@ -348,8 +349,8 @@ pub(crate) fn reduce_for(
         ops.extend(init);
         return Ok(());
     }
-    let Some((name, start, limit, step)) = static_bounds(statement)
-        .filter(|_| !contains_loop_control(&statement.body))
+    let Some((name, start, limit, step)) =
+        static_bounds(statement).filter(|_| !contains_loop_control(&statement.body))
     else {
         return reduce_dynamic_for(statement, ops, facts, next_register, next_slot, locals);
     };
@@ -375,6 +376,10 @@ fn contains_loop_control(statement: &Statement<'_>) -> bool {
                     .as_ref()
                     .is_some_and(contains_loop_control)
         }
+        Statement::ForStatement(_)
+        | Statement::WhileStatement(_)
+        | Statement::DoWhileStatement(_)
+        | Statement::ForInStatement(_) => true,
         _ => false,
     }
 }
