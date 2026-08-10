@@ -171,6 +171,7 @@ pub struct ArrayData {
     values: Vec<Value>,
     length: usize,
     properties: Vec<(String, Value)>,
+    descriptors: Vec<(String, Value)>,
     arguments: bool,
     strict_arguments: bool,
     mapped: Vec<Option<Rc<RefCell<Value>>>>,
@@ -183,6 +184,7 @@ impl ArrayData {
             values,
             length,
             properties: Vec::new(),
+            descriptors: Vec::new(),
             arguments: false,
             strict_arguments: false,
             mapped: Vec::new(),
@@ -240,6 +242,24 @@ impl ArrayData {
         self.mapped[index] = Some(binding);
     }
 
+    pub(crate) fn disconnect_index(&mut self, index: usize) {
+        if let Some(mapping) = self.mapped.get_mut(index) {
+            *mapping = None;
+        }
+    }
+
+    pub(crate) fn descriptor(&self, key: &str) -> Option<Value> {
+        self.descriptors
+            .iter()
+            .rev()
+            .find_map(|(name, value)| (name == key).then(|| value.clone()))
+    }
+
+    pub(crate) fn define_descriptor(&mut self, key: &str, descriptor: Value) {
+        self.descriptors.retain(|(name, _)| name != key);
+        self.descriptors.push((key.to_string(), descriptor));
+    }
+
     pub(crate) fn property(&self, key: &str) -> Option<Value> {
         self.properties
             .iter()
@@ -262,6 +282,10 @@ impl ArrayData {
 
     pub(crate) fn delete_property(&mut self, key: &str) {
         self.properties.retain(|(name, _)| name != key);
+        self.descriptors.retain(|(name, _)| name != key);
+        if let Ok(index) = key.parse::<usize>() {
+            self.disconnect_index(index);
+        }
     }
 }
 
