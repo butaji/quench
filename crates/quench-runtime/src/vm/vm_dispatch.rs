@@ -18,19 +18,14 @@ fn run_simple_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Option<Va
     if run_local_op(registers, op)? {
         return Ok(Some(None));
     }
+    if run_property_op(registers, op)? {
+        return Ok(Some(None));
+    }
     match op {
         Const { dst, value } => write_value(registers, *dst, value.into()),
         MakeArray { .. } => run_make_array(registers, op)?,
         MakeObject { .. } => run_make_object(registers, op)?,
         MakeBuiltin { .. } => run_make_builtin(registers, op),
-        GetProperty { .. }
-        | ResolveGlobal { .. }
-        | GetPropertyDynamic { .. }
-        | ToPropertyKey { .. }
-        | SetProperty { .. }
-        | SetPropertyDynamic { .. }
-        | DefineProperty { .. } => run_get_set_property(registers, op)?,
-        ResolveName { .. } | SetName { .. } => crate::with_scope::execute_name(registers, op)?,
         RequireObjectCoercible { .. }
         | GetIterator { .. }
         | IteratorStep { .. }
@@ -52,6 +47,27 @@ fn run_simple_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Option<Va
         _ => return Ok(None),
     }
     Ok(Some(None))
+}
+
+fn run_property_op(registers: &mut Vec<Value>, op: &Op) -> Result<bool, VmError> {
+    use Op::*;
+    if !matches!(
+        op,
+        GetProperty { .. }
+            | ResolveGlobal { .. }
+            | GetPropertyDynamic { .. }
+            | HasPropertyDynamic { .. }
+            | ToPropertyKey { .. }
+            | SetProperty { .. }
+            | SetPropertyDynamic { .. }
+            | DefineProperty { .. }
+            | ResolveName { .. }
+            | SetName { .. }
+    ) {
+        return Ok(false);
+    }
+    run_get_set_property(registers, op)?;
+    Ok(true)
 }
 
 fn run_class_heritage(registers: &[Value], op: &Op) -> Result<(), VmError> {
@@ -191,6 +207,8 @@ fn run_get_set_property(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmErr
         GetProperty { .. } => crate::properties::execute_get(registers, op)?,
         ResolveGlobal { .. } => crate::with_scope::execute_resolve_global(registers, op)?,
         GetPropertyDynamic { .. } => crate::properties::execute_get_dynamic(registers, op)?,
+        HasPropertyDynamic { .. } => crate::with_scope::execute_has_property(registers, op)?,
+        ResolveName { .. } | SetName { .. } => crate::with_scope::execute_name(registers, op)?,
         ToPropertyKey { dst, src } => {
             let value = crate::execute::read_register(registers, *src)?;
             let key = crate::conversion::to_property_key(&value)?;
