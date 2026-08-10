@@ -11,7 +11,7 @@ const duplex = Duplex({
   write(chunk, _encoding, callback) {
     assert.deepStrictEqual(chunk, dataToWrite);
     callback();
-  }
+  },
 });
 const { readable, writable } = Duplex.toWeb(duplex, { readableType: "bytes" });
 writable.getWriter().write(dataToWrite);

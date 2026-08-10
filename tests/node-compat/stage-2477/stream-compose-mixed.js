@@ -13,7 +13,7 @@ compose(
   new Transform({
     transform(chunk, _encoding, callback) {
       callback(null, chunk.toString().toUpperCase());
-    }
+    },
   }),
   async function* (source) {
     yield* source;
@@ -22,8 +22,8 @@ compose(
     write(chunk, _encoding, callback) {
       consumed += chunk;
       callback();
-    }
-  })
+    },
+  }),
 )
   .end("value")
   .on("finish", () => {
@@ -38,11 +38,11 @@ compose(
     objectMode: true,
     transform(_chunk, _encoding, callback) {
       callback(failure);
-    }
+    },
   }),
   async function* (source) {
     yield* source;
-  }
+  },
 )
   .end(true)
   .on("error", (error) => {

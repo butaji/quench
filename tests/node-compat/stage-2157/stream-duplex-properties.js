@@ -11,7 +11,7 @@ const second = Duplex({
   readableObjectMode: false,
   readableHighWaterMark: 10,
   writableObjectMode: true,
-  writableHighWaterMark: 100
+  writableHighWaterMark: 100,
 });
 assert.strictEqual(second.readableObjectMode, false);
 assert.strictEqual(second.writableObjectMode, true);

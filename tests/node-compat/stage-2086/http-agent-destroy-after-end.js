@@ -25,7 +25,7 @@ server.listen(0, () => {
           server.close();
         });
       });
-    }
+    },
   );
   request.end();
 });

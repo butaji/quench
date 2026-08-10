@@ -18,6 +18,6 @@ server.listen(0, () => {
         server.close();
         agent.destroy();
       });
-    }
+    },
   );
 });

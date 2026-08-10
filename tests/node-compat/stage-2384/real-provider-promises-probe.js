@@ -11,18 +11,18 @@ const provider = vfs.create(new vfs.RealFSProvider(root));
   await provider.promises.writeFile("/a.txt", "hello");
   assert.strictEqual(
     await provider.promises.readFile("/a.txt", "utf8"),
-    "hello"
+    "hello",
   );
   const stat = await provider.promises.stat("/a.txt");
   assert.strictEqual(stat.size, 5);
   assert.strictEqual((await provider.promises.lstat("/a.txt")).isFile(), true);
   await provider.promises.access("/a.txt");
   await assert.rejects(provider.promises.access("/missing.txt"), {
-    code: "ENOENT"
+    code: "ENOENT",
   });
   await provider.promises.mkdir("/d/sub", { recursive: true });
   assert.deepStrictEqual((await provider.promises.readdir("/d")).sort(), [
-    "sub"
+    "sub",
   ]);
   await provider.promises.rmdir("/d/sub");
   await provider.promises.writeFile("/old.txt", "x");
@@ -33,10 +33,10 @@ const provider = vfs.create(new vfs.RealFSProvider(root));
   await provider.promises.copyFile("/a.txt", "/copy.txt");
   assert.strictEqual(
     await provider.promises.readFile("/copy.txt", "utf8"),
-    "hello"
+    "hello",
   );
   await assert.rejects(provider.provider.open("/missing.txt", "r"), {
-    code: "ENOENT"
+    code: "ENOENT",
   });
 })().catch((error) => {
   console.error(error);

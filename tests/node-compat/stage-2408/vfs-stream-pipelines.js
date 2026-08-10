@@ -8,11 +8,11 @@ Promise.all([
     const filesystem = vfs.create();
     await pipeline(
       Readable.from([Buffer.from("hello"), Buffer.from(" world")]),
-      filesystem.createWriteStream("/out.txt")
+      filesystem.createWriteStream("/out.txt"),
     );
     assert.strictEqual(
       filesystem.readFileSync("/out.txt", "utf8"),
-      "hello world"
+      "hello world",
     );
   })(),
   (async () => {
@@ -20,11 +20,11 @@ Promise.all([
     filesystem.writeFileSync("/in.txt", "hello world");
     await pipeline(
       filesystem.createReadStream("/in.txt"),
-      filesystem.createWriteStream("/copied.txt")
+      filesystem.createWriteStream("/copied.txt"),
     );
     assert.strictEqual(
       filesystem.readFileSync("/copied.txt", "utf8"),
-      "hello world"
+      "hello world",
     );
   })(),
   (async () => {
@@ -32,11 +32,11 @@ Promise.all([
     filesystem.writeFileSync("/pad.txt", "AAAAAAAAAA");
     await pipeline(
       Readable.from([Buffer.from("XX")]),
-      filesystem.createWriteStream("/pad.txt", { start: 3, flags: "r+" })
+      filesystem.createWriteStream("/pad.txt", { start: 3, flags: "r+" }),
     );
     assert.strictEqual(
       filesystem.readFileSync("/pad.txt", "utf8"),
-      "AAAXXAAAAA"
+      "AAAXXAAAAA",
     );
-  })()
+  })(),
 ]).then(() => console.log("VFS concurrent pipelines passed"));

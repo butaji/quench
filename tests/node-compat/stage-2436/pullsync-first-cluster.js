@@ -23,7 +23,7 @@ const { compressGzipSync, decompressGzipSync } = require("zlib/iter");
   const compressed = await fs.promises.open(`${base}-gz`, "r");
   assert.strictEqual(
     textSync(compressed.pullSync(decompressGzipSync())),
-    "compress me ".repeat(100)
+    "compress me ".repeat(100),
   );
   await compressed.close();
   console.log("pullSync first cluster passed");

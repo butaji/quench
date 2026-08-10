@@ -5,7 +5,7 @@ assert.ok(Object.hasOwn(Duplex.prototype, "writableFinished"));
 const duplex = Duplex({
   write(_chunk, _encoding, callback) {
     callback();
-  }
+  },
 });
 assert.strictEqual(duplex.writableFinished, false);
 duplex.end("data", () => assert.strictEqual(duplex.writableFinished, true));

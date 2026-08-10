@@ -1,144 +1,137 @@
+let __quenchNetAutoSelectFamily = false;
+const __quenchNetNormalizedArgsSymbol =
+  (globalThis.__quenchNetNormalizedArgsSymbol ||= Symbol("normalizedArgs"));
+const __quenchNetFamilyTimeoutFlag = globalThis.__quench_argv?.find?.((value) =>
+  value.startsWith("--network-family-autoselection-attempt-timeout=")
+);
+let __quenchNetAutoSelectFamilyAttemptTimeout = __quenchNetFamilyTimeoutFlag
+  ? Math.max(
+    10,
+    Number(__quenchNetFamilyTimeoutFlag.split("=").pop()) * 5,
+  )
+  : 2500;
 const __quenchNetModule = {
+  _normalizeArgs(input) {
+    if (input?.[__quenchNetNormalizedArgsSymbol]) return input;
+    const args = [input?.[0] || {}, input?.[1] ?? null];
+    args[__quenchNetNormalizedArgsSymbol] = true;
+    return args;
+  },
   isIP,
   isIPv4,
   isIPv6,
-  getDefaultAutoSelectFamily: () => false,
-  setDefaultAutoSelectFamily: () => undefined,
-  getDefaultAutoSelectFamilyAttemptTimeout: () => 250,
+  getDefaultAutoSelectFamily: () => __quenchNetAutoSelectFamily,
+  setDefaultAutoSelectFamily: (value) => {
+    if (typeof value !== "boolean") {
+      const error = new TypeError(
+        'The "value" argument must be of type boolean',
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    __quenchNetAutoSelectFamily = value;
+  },
+  getDefaultAutoSelectFamilyAttemptTimeout: () =>
+    __quenchNetAutoSelectFamilyAttemptTimeout,
   Socket: __quenchNetSocket,
   createConnection: (options, callback) => {
     globalThis.__quenchValidateConnectionOptions(options);
+    if (options.autoSelectFamilyAttemptTimeout !== undefined) {
+      const value = options.autoSelectFamilyAttemptTimeout;
+      if (!Number.isInteger(value) || value <= 0) {
+        const error = new RangeError('The "value" argument is out of range');
+        error.code = "ERR_OUT_OF_RANGE";
+        throw error;
+      }
+    }
     const socket = new __quenchNetModule.Socket();
     socket._handle = { setKeepAlive: () => {} };
-    socket.connect(options, callback);
+    const connect = (resolvedOptions) =>
+      socket.connect(resolvedOptions, callback);
+    if (
+      typeof options.lookup === "function" &&
+      typeof options.host === "string" &&
+      !isIPv4(options.host) &&
+      !isIPv6(options.host)
+    ) {
+      const autoSelect = options.autoSelectFamily ??
+        __quenchNetAutoSelectFamily;
+      options.lookup(
+        options.host,
+        { all: Boolean(autoSelect), family: options.family },
+        (error, value, family) => {
+          if (error) {
+            queueMicrotask(() => socket.emit("error", error));
+            return;
+          }
+          const addresses = Array.isArray(value) ? value : [{
+            address: value,
+            family,
+          }];
+          if (autoSelect) {
+            socket.autoSelectFamilyAttemptedAddresses = addresses.map((entry) =>
+              `${entry.address}:${options.port}`
+            );
+          }
+          if (
+            options.blockList?.check?.(addresses[0]?.address) &&
+            addresses.every((entry) => options.blockList.check(entry.address))
+          ) {
+            const error = new Error(
+              `Cannot connect to ${addresses[0].address}`,
+            );
+            error.code = "ERR_IP_BLOCKED";
+            queueMicrotask(() => socket.emit("error", error));
+            return;
+          }
+          const selected = autoSelect
+            ? addresses.find((entry) =>
+              [...__quenchNetServers].some((server) =>
+                server.listening &&
+                server.address().address === entry.address &&
+                server.address().port === Number(options.port)
+              )
+            )
+            : addresses[0];
+          if (!selected) {
+            const noAddress = new AggregateError(
+              addresses.map((entry) => {
+                const error = new Error(
+                  `connect ECONNREFUSED ${entry.address}:${options.port}`,
+                );
+                error.code = "ECONNREFUSED";
+                return error;
+              }),
+              "All connection attempts failed",
+            );
+            socket.emit("error", noAddress);
+            return;
+          }
+          if (autoSelect) {
+            socket.autoSelectFamilyAttemptedAddresses = addresses.map((entry) =>
+              `${entry.address}:${options.port}`
+            );
+          }
+          connect({
+            ...options,
+            host: selected.address,
+            _resolvedAddress: true,
+          });
+        },
+      );
+    } else connect(options);
     if (__quenchNativeTransportRequested(options)) return socket;
     return socket;
   },
-  setDefaultAutoSelectFamilyAttemptTimeout: () => undefined,
-  BlockList: class BlockList {
-    [Symbol.toStringTag] = "BlockList";
-    constructor() {
-      this._v4 = new Map();
-      this._v6 = new Map();
-      this._v4Ranges = [];
-      this._v6Ranges = [];
-      this._v4Subnets = [];
-      this._v6Subnets = [];
-      this._rules = [];
+  setDefaultAutoSelectFamilyAttemptTimeout: (value) => {
+    if (!Number.isInteger(value) || value <= 0) {
+      const error = new RangeError('The "value" argument is out of range');
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
     }
-    get rules() {
-      return this._rules.slice().reverse();
-    }
-    [Symbol.for("nodejs.util.inspect.custom")](options) {
-      return this;
-    }
-    _checkType(type) {
-      if (typeof type !== "string") {
-        const e = new TypeError("Invalid type [ERR_INVALID_ARG_TYPE]");
-        e.code = "ERR_INVALID_ARG_TYPE";
-        throw e;
-      }
-      const lower = type.toLowerCase();
-      if (lower !== "ipv4" && lower !== "ipv6") {
-        const e = new TypeError(
-          `Invalid type '${type}' [ERR_INVALID_ARG_VALUE]`,
-        );
-        e.code = "ERR_INVALID_ARG_VALUE";
-        throw e;
-      }
-      return lower;
-    }
-    addAddress(address, type) {
-      const normalized = normalizeAddress(address);
-      const str = normalized.value;
-      const explicit = type !== undefined || normalized.explicit;
-      const resolvedType = resolveAddressType(
-        str,
-        type,
-        (value) => this._checkType(value),
-      );
-      if (resolvedType === "ipv4") {
-        const existing = this._v4.get(str);
-        this._v4.set(str, {
-          explicit: (existing && existing.explicit) || explicit,
-        });
-        this._rules.push(`Address: IPv4 ${str}`);
-      } else {
-        const existing = this._v6.get(str);
-        this._v6.set(str, {
-          explicit: (existing && existing.explicit) || explicit,
-        });
-        this._rules.push(`Address: IPv6 ${str}`);
-      }
-    }
-    addRange(start, end, type) {
-      start = normalizeRangeEndpoint(start, "start");
-      end = normalizeRangeEndpoint(end, "end");
-      let resolvedType = type;
-      if (resolvedType === undefined) {
-        resolvedType = isIPv4(start) ? "ipv4" : "ipv6";
-      } else {
-        resolvedType = this._checkType(resolvedType);
-      }
-      if (resolvedType === "ipv4") {
-        if (compareV4(start, end) > 0) {
-          const e = new TypeError(
-            'The value of "start" must be lower than "end" [ERR_INVALID_ARG_VALUE]',
-          );
-          e.code = "ERR_INVALID_ARG_VALUE";
-          throw e;
-        }
-        this._v4Ranges.push([start, end]);
-        this._rules.push(`Range: IPv4 ${start}-${end}`);
-      } else {
-        if (compareV6(start, end) > 0) {
-          const e = new TypeError(
-            'The value of "start" must be lower than "end" [ERR_INVALID_ARG_VALUE]',
-          );
-          e.code = "ERR_INVALID_ARG_VALUE";
-          throw e;
-        }
-        this._v6Ranges.push([start, end]);
-        this._rules.push(`Range: IPv6 ${start}-${end}`);
-      }
-    }
-    addSubnet(net, prefix, type) {
-      net = normalizeRangeEndpoint(net, "net");
-      if (typeof prefix !== "number") {
-        const e = new TypeError("Invalid prefix [ERR_INVALID_ARG_TYPE]");
-        e.code = "ERR_INVALID_ARG_TYPE";
-        throw e;
-      }
-      const resolvedType = resolveAddressType(
-        net,
-        type,
-        (value) => this._checkType(value),
-      );
-      const maxPrefix = resolvedType === "ipv4" ? 32 : 128;
-      if (!Number.isFinite(prefix) || prefix < 0 || prefix > maxPrefix) {
-        const e = new TypeError(
-          `Prefix must be between 0 and ${maxPrefix} [ERR_OUT_OF_RANGE]`,
-        );
-        e.code = "ERR_OUT_OF_RANGE";
-        throw e;
-      }
-      if (resolvedType === "ipv4") {
-        this._v4Subnets.push([net, prefix]);
-        this._rules.push(`Subnet: IPv4 ${net}/${prefix}`);
-      } else {
-        this._v6Subnets.push([net, prefix]);
-        this._rules.push(`Subnet: IPv6 ${net}/${prefix}`);
-      }
-    }
-    check(address, type) {
-      const { str, resolvedType, explicitType, inputKind } =
-        resolveBlockListCheck(address, type, (value) => this._checkType(value));
-      if (resolvedType === null) return false;
-      return resolvedType === "ipv4"
-        ? checkBlockListV4(this, str, explicitType, inputKind)
-        : checkBlockListV6(this, str, explicitType, inputKind);
-    }
+    __quenchNetAutoSelectFamilyAttemptTimeout = Math.max(10, value);
   },
+  BlockList: __quenchNetBlockList,
   SocketAddress: class SocketAddress {
     constructor(input) {
       this.address = input && input.address ? String(input.address) : "";
@@ -291,6 +284,8 @@ const __quenchNetModule = {
     server._nativeId = 0;
     server._nativeTransport = false;
     server._port = 0;
+    server._host = "127.0.0.1";
+    server._ipv6Only = options?.ipv6Only === true;
     server._path = undefined;
     server._handle = { close: () => {} };
     server.keepAlive = options?.keepAlive;
@@ -300,8 +295,8 @@ const __quenchNetModule = {
       if (!server.listening) return null;
       if (server._path !== undefined) return server._path;
       return {
-        address: "127.0.0.1",
-        family: "IPv4",
+        address: server._host,
+        family: isIPv6(server._host) ? "IPv6" : "IPv4",
         port: server._nativeTransport
           ? __quench_tcp_bound_port(server._nativeId)
           : server._port,
@@ -319,6 +314,25 @@ const __quenchNetModule = {
       const listenOptions = _port && typeof _port === "object"
         ? _port
         : { port: _port, host };
+      const requestedPortValue = listenOptions.port;
+      if (
+        requestedPortValue !== undefined &&
+        (typeof requestedPortValue !== "number" ||
+          !Number.isInteger(requestedPortValue) ||
+          requestedPortValue < 0 || requestedPortValue > 65535)
+      ) {
+        const error = new RangeError("Port should be >= 0 and < 65536");
+        error.code = "ERR_SOCKET_BAD_PORT";
+        throw error;
+      }
+      if (typeof _port === "string" && host === undefined) {
+        const error = new Error(`listen ${_port}: no such file or directory`);
+        error.code = "ENOENT";
+        error.syscall = "listen";
+        error.address = _port;
+        queueMicrotask(() => server.emit("error", error));
+        return server;
+      }
       const adoptedBound = _port?.constructor?.name === "BoundSocket"
         ? _port
         : undefined;
@@ -330,6 +344,7 @@ const __quenchNetModule = {
       }
       const requestedPort = Number(listenOptions.port || 0);
       const listenHost = listenOptions.host || "0.0.0.0";
+      const boundHost = listenHost === "0.0.0.0" ? "127.0.0.1" : listenHost;
       if (
         typeof listenHost === "string" &&
         isIPv4(listenHost) &&
@@ -348,7 +363,9 @@ const __quenchNetModule = {
           candidate.listening &&
           !candidate._nativeTransport &&
           requestedPort !== 0 &&
-          candidate.address().port === requestedPort,
+          candidate.address().port === requestedPort &&
+          (candidate.address().address === boundHost ||
+            isIPv4(candidate.address().address) === isIPv4(boundHost)),
       );
       if (occupied) {
         const error = new Error(
@@ -369,6 +386,8 @@ const __quenchNetModule = {
         server._port = Number(listenOptions.port) ||
           __quenchNextEphemeralPort++;
       }
+      server._host = boundHost;
+      server._ipv6Only = listenOptions.ipv6Only === true;
       server.listening = true;
       __quenchNetServers.add(server);
       queueMicrotask(() => {
@@ -450,5 +469,10 @@ globalThis.__quench_io_poll = () => {
     }
   }
 };
-globalThis.__quench_require_part_01 = (name, specifier) =>
-  name === "net" ? __quenchNetModule : undefined;
+globalThis.__quench_require_part_01 = (name, specifier) => {
+  if (name === "net") return __quenchNetModule;
+  if (name === "net/promises") return globalThis.__quenchNetPromisesModule;
+  if (name === "internal/net") {
+    return { normalizedArgsSymbol: __quenchNetNormalizedArgsSymbol };
+  }
+};

@@ -16,7 +16,7 @@ console.log(
   typeof writable._final,
   Object.getPrototypeOf(writable) === TestWritable.prototype,
   typeof TestWritable.prototype._final,
-  writable.constructor?.name
+  writable.constructor?.name,
 );
 assert.strictEqual(typeof writable._final, "function");
 writable.on("error", () => console.log("error observed"));

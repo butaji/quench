@@ -4,7 +4,7 @@ const vfs = require("node:vfs");
 const filesystem = vfs.create();
 filesystem.writeFileSync("/no-auto-close.txt", "content");
 const stream = filesystem.createReadStream("/no-auto-close.txt", {
-  autoClose: false
+  autoClose: false,
 });
 
 let ended = false;

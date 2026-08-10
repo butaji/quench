@@ -9,8 +9,9 @@
       eventsApi.setMaxListeners ||= () => undefined;
       const listenerCount = eventsApi.listenerCount;
       eventsApi.listenerCount = (target, event, listener) => {
-        if (target instanceof AbortSignal)
+        if (target instanceof AbortSignal) {
           return target.listenerCount?.(event) || 0;
+        }
         return listenerCount(target, event, listener);
       };
     }

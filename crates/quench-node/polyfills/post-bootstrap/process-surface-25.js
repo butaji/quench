@@ -21,7 +21,7 @@
       "tty_wrap",
       "udp_wrap",
       "uv",
-      "zlib"
+      "zlib",
     ]);
     globalThis.process.binding = (name) => {
       if (name === "util" && globalThis.__nodeUtil?.types) {
@@ -42,7 +42,7 @@
           isSet: types.isSet,
           isSetIterator: types.isSetIterator,
           isTypedArray: types.isTypedArray,
-          isUint8Array: types.isUint8Array
+          isUint8Array: types.isUint8Array,
         };
       }
       if (allowedInternalBindings.has(name)) return {};

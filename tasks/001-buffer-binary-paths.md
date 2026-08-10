@@ -1,5 +1,10 @@
 # Complete low-copy Buffer binary paths
 
+> Contract: This task is part of broad Node 24 compatibility across Linux
+> x86_64, Linux ARM64, macOS, and Windows. Native addons and Node-API are
+> excluded. Use the statuses and release gates in
+> [compatibility-contract.md](../docs/compatibility-contract.md).
+
 ## Contract alignment
 
 This task supports the Node 24 application-runtime contract on Linux x86_64;
@@ -37,3 +42,5 @@ Generic Buffer inspection now labels plain `Uint8Array` receivers correctly,
 covered by `tests/node-compat/stage-499`.
 Float read/write offsets now use Node-compatible validation messages and error
 codes, covered by `tests/node-compat/stage-500`.
+Invalid `Buffer.from()` received-value diagnostics and `ERR_INVALID_ARG_TYPE`
+are covered by `tests/node-compat/stage-1026`.

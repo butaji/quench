@@ -7,7 +7,7 @@ assert.strictEqual(request.hasHeader("X-TEST"), true);
 assert.deepStrictEqual(request.getHeaderNames(), ["x-test", "connection"]);
 assert.deepStrictEqual(request.getHeaders(), {
   "x-test": "one",
-  connection: "keep-alive"
+  connection: "keep-alive",
 });
 request.setHeader("X-Other", "two");
 assert.strictEqual(request.getHeader("x-other"), "two");

@@ -8,5 +8,5 @@ fs.promises.access(missing).then(
     assert.strictEqual(error.code, "ENOENT");
     assert.match(error.stack, /at async Object\.access/);
     console.log("fs promises access stack passed");
-  }
+  },
 );

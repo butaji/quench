@@ -21,6 +21,7 @@ mod host_context;
 const BOOTSTRAP_PARTS: &[&str] = &[
     include_str!("../polyfills/bootstrap-parts/timer-validation.js"),
     include_str!("../polyfills/bootstrap-parts/globals.js"),
+    include_str!("../polyfills/bootstrap-parts/globals-extra.js"),
     include_str!("../polyfills/bootstrap-parts/globals-tail.js"),
     include_str!("../polyfills/bootstrap-parts/fetch.js"),
     include_str!("../polyfills/bootstrap-parts/promises.js"),
@@ -40,7 +41,14 @@ const BOOTSTRAP_PARTS: &[&str] = &[
     include_str!("../polyfills/bootstrap-parts/api-tail-02.js"),
     include_str!("../polyfills/bootstrap-parts/path.js"),
     include_str!("../polyfills/bootstrap-parts/support.js"),
+    include_str!("../polyfills/bootstrap-parts/events-head.js"),
     include_str!("../polyfills/bootstrap-parts/events.js"),
+    include_str!("../polyfills/bootstrap-parts/events-readable-tail.js"),
+    include_str!("../polyfills/bootstrap-parts/events-writable-tail.js"),
+    include_str!("../polyfills/bootstrap-parts/events-duplex-tail.js"),
+    include_str!("../polyfills/bootstrap-parts/events-transform-tail.js"),
+    include_str!("../polyfills/bootstrap-parts/events-stream-tail.js"),
+    include_str!("../polyfills/bootstrap-parts/events-tail.js"),
     include_str!("../polyfills/bootstrap-parts/filesystem-validation.js"),
     include_str!("../polyfills/bootstrap-parts/filesystem-validation-tail.js"),
     include_str!("../polyfills/bootstrap-parts/file-descriptors.js"),
@@ -55,6 +63,7 @@ const BOOTSTRAP_PARTS: &[&str] = &[
     include_str!("../polyfills/bootstrap-parts/links-tail.js"),
     include_str!("../polyfills/bootstrap-parts/directory-options.js"),
     include_str!("../polyfills/bootstrap-parts/directory.js"),
+    include_str!("../polyfills/bootstrap-parts/streams.js"),
     include_str!("../polyfills/bootstrap-parts/stream-classes.js"),
     include_str!("../polyfills/bootstrap-parts/externalizable-strings.js"),
     include_str!("../polyfills/bootstrap-parts/open-validation.js"),
@@ -62,7 +71,6 @@ const BOOTSTRAP_PARTS: &[&str] = &[
     include_str!("../polyfills/bootstrap-parts/truncate-validation.js"),
     include_str!("../polyfills/bootstrap-parts/read-file.js"),
     include_str!("../polyfills/bootstrap-parts/internal-fs-binding.js"),
-    include_str!("../polyfills/bootstrap-parts/streams.js"),
     include_str!("../polyfills/bootstrap-parts/streams-tail.js"),
     include_str!("../polyfills/bootstrap-parts/writes.js"),
     include_str!("../polyfills/bootstrap-parts/writes-tail.js"),
@@ -77,12 +85,18 @@ const BOOTSTRAP_PARTS: &[&str] = &[
     include_str!("../polyfills/bootstrap-parts/crypto-validation.js"),
     include_str!("../polyfills/bootstrap-parts/crypto-head.js"),
     include_str!("../polyfills/bootstrap-parts/crypto.js"),
+    include_str!("../polyfills/bootstrap-parts/crypto-tail.js"),
     include_str!("../polyfills/bootstrap-parts/random.js"),
     include_str!("../polyfills/bootstrap-parts/crypto-hmac-validation.js"),
+    include_str!("../polyfills/bootstrap-parts/core-head.js"),
     include_str!("../polyfills/bootstrap-parts/core.js"),
+    include_str!("../polyfills/bootstrap-parts/core-tail.js"),
     include_str!("../polyfills/bootstrap-parts/network-head.js"),
     include_str!("../polyfills/bootstrap-parts/network-socket.js"),
+    include_str!("../polyfills/bootstrap-parts/network-socket-tail.js"),
+    include_str!("../polyfills/bootstrap-parts/network-blocklist.js"),
     include_str!("../polyfills/bootstrap-parts/network.js"),
+    include_str!("../polyfills/bootstrap-parts/network-promises-tail.js"),
     include_str!("../polyfills/bootstrap-parts/network-validation.js"),
     include_str!("../polyfills/bootstrap-parts/filesystem-internals.js"),
     include_str!("../polyfills/bootstrap-parts/cluster.js"),
@@ -182,27 +196,16 @@ const BOOTSTRAP_PARTS: &[&str] = &[
     include_str!("../polyfills/bootstrap-parts/target.js"),
     include_str!("../polyfills/bootstrap-parts/listeners.js"),
     include_str!("../polyfills/bootstrap-parts/introspection.js"),
+    include_str!("../polyfills/bootstrap-parts/vfs-head.js"),
     include_str!("../polyfills/bootstrap-parts/vfs.js"),
 ];
 static MKDTEMP_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut raw_args: Vec<String> = env::args().skip(1).collect();
-    // Fixture flags are Node CLI flags.  Quench consumes the fixture path
-    // itself, so experimental feature switches must not be mistaken for it;
-    // their compatibility behavior is selected by the JS polyfills.
-    raw_args.retain(|arg| {
-        !arg.starts_with("--")
-            || matches!(
-                arg.as_str(),
-                "--help" | "--stage" | "--test-dir" | "--reuse-dir" | "--eval"
-            )
-    });
-    let mut args = raw_args.into_iter();
+    let mut args = cli_args().into_iter();
     let mode = args.next();
     if mode.as_deref() == Some("--help") || mode.as_deref() == Some("-h") {
-        println!("quench-node [--stage N|--test-dir DIR|--reuse-dir DIR|-e CODE|SCRIPT]");
-        println!("  --reuse-dir reuses one rquickjs runtime with isolated contexts per script");
+        print_help();
         return Ok(());
     }
     if mode.as_deref() == Some("--stage") {
@@ -232,6 +235,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         None => run_source(""),
     }
+}
+
+fn cli_args() -> Vec<String> {
+    let mut args: Vec<String> = env::args().skip(1).collect();
+    // Fixture flags are Node CLI flags; experimental switches are selected by
+    // the JS polyfills and must not be mistaken for the fixture path.
+    args.retain(|arg| {
+        !arg.starts_with("--")
+            || matches!(
+                arg.as_str(),
+                "--help" | "--stage" | "--test-dir" | "--reuse-dir" | "--eval"
+            )
+    });
+    args
+}
+
+fn print_help() {
+    println!("quench-node [--stage N|--test-dir DIR|--reuse-dir DIR|-e CODE|SCRIPT]");
+    println!("  --reuse-dir reuses one rquickjs runtime with isolated contexts per script");
 }
 
 fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -271,6 +293,20 @@ fn run_source_with_runtime_at_path(
                 "__quench_script_filename",
                 filename.to_string_lossy().as_ref(),
             )?;
+            let script_name = filename.to_string_lossy().to_string();
+            let mut script_args = Vec::new();
+            let mut found_script = false;
+            for argument in env::args().skip(1) {
+                if found_script {
+                    if argument == "--" {
+                        continue;
+                    }
+                    script_args.push(argument);
+                } else if argument == script_name || argument == path.to_string_lossy() {
+                    found_script = true;
+                }
+            }
+            ctx.globals().set("__quench_script_args", script_args)?;
             Ok(())
         })?;
     }

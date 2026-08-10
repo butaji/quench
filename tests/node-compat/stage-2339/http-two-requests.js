@@ -16,7 +16,7 @@ server.listen(0, () => {
           let body = "";
           response.on("data", (chunk) => (body += chunk));
           response.on("end", () => resolve(body));
-        }
+        },
       );
       request.on("error", reject);
     });

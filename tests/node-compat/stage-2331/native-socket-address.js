@@ -12,7 +12,7 @@ server.listen(
       {
         host: "127.0.0.1",
         port: server.address().port,
-        __quenchNativeTransport: true
+        __quenchNativeTransport: true,
       },
       () => {
         assert.strictEqual(client.localAddress, "127.0.0.1");
@@ -22,11 +22,11 @@ server.listen(
         assert.deepStrictEqual(client.address(), {
           address: "127.0.0.1",
           family: "IPv4",
-          port: client.localPort
+          port: client.localPort,
         });
         client.destroy();
         server.close(() => console.log("native socket address passed"));
-      }
+      },
     );
-  }
+  },
 );

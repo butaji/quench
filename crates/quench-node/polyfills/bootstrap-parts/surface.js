@@ -1,6 +1,7 @@
 const __quenchChildProcessSurfaceRequire = globalThis.require;
-const __quenchChildProcessSurface =
-  __quenchChildProcessSurfaceRequire("child_process");
+const __quenchChildProcessSurface = __quenchChildProcessSurfaceRequire(
+  "child_process",
+);
 const __quenchOriginalSpawn = __quenchChildProcessSurface.spawn;
 const __quenchStream = () => {
   const stream = new globalThis.__nodeEventEmitter();
@@ -8,28 +9,28 @@ const __quenchStream = () => {
   stream.end = () => stream;
   return stream;
 };
+const __quenchSpawnOptions = (args) =>
+  Array.isArray(args[1]) ? args[2] || {} : args[1] || {};
+const __quenchSpawnArgs = (args, options) => {
+  if (!options.shell) return args[1] || [];
+  const suffix = Array.isArray(args[1]) && args[1].length
+    ? ` ${args[1].join(" ")}`
+    : "";
+  return ["-c", `${String(args[0])}${suffix}`];
+};
+const __quenchSpawnFile = (args, options) => {
+  if (!options.shell) return args[0];
+  return process.platform === "win32" ? "cmd.exe" : "/bin/sh";
+};
 __quenchChildProcessSurface.spawn = (...args) => {
   const child = __quenchOriginalSpawn(...args);
   child.connected = false;
   child.killed = false;
   child.exitCode = undefined;
   child.signalCode = null;
-  const spawnOptions = Array.isArray(args[1]) ? args[2] : args[1];
-  child.spawnargs = spawnOptions?.shell
-    ? [
-        "-c",
-        `${String(args[0])}${
-          Array.isArray(args[1]) && args[1].length
-            ? ` ${args[1].join(" ")}`
-            : ""
-        }`
-      ]
-    : args[1] || [];
-  child.spawnfile = spawnOptions?.shell
-    ? process.platform === "win32"
-      ? "cmd.exe"
-      : "/bin/sh"
-    : args[0];
+  const spawnOptions = __quenchSpawnOptions(args);
+  child.spawnargs = __quenchSpawnArgs(args, spawnOptions);
+  child.spawnfile = __quenchSpawnFile(args, spawnOptions);
   child.stdin ||= __quenchStream();
   child.stdout ||= __quenchStream();
   child.stderr ||= __quenchStream();

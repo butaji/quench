@@ -8,7 +8,7 @@ const readable = new Readable({
   destroy(error, callback) {
     destroyError = error;
     callback(error);
-  }
+  },
 });
 readable.on("error", (error) => assert.strictEqual(error, expected));
 readable.on("close", () => assert.strictEqual(readable.destroyed, true));

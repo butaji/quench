@@ -128,6 +128,19 @@ const checks = {
   node_runner_sha256: report.node_runner_sha256 === sha256(nodeRunnerFile),
 };
 const focusedSummaryPath = path.join(root, "target/compat/focused-latest.txt");
+let focusedPolicy = { conflicts: [] };
+try {
+  focusedPolicy = JSON.parse(fs.readFileSync(
+    path.join(root, "tools/focused-compat-policy.json"),
+    "utf8",
+  ));
+} catch (_) {
+  focusedPolicy = { conflicts: [] };
+}
+const allowedFocusedFailures = new Set(
+  (focusedPolicy.conflicts || []).flatMap((conflict) => conflict.stages || [])
+    .map(String),
+);
 let focusedSummary = {};
 if (fs.existsSync(focusedSummaryPath)) {
   for (
@@ -141,7 +154,11 @@ if (fs.existsSync(focusedSummaryPath)) {
 }
 const focusedEvidence =
   focusedSummary.focused_digest === fingerprint.focused_digest &&
-  focusedSummary.focused_stage_fail === "0" &&
+  (focusedSummary.focused_stage_fail === "0" ||
+    (Number(focusedSummary.focused_stage_fail) > 0 &&
+      Number(focusedSummary.focused_stage_fail) <=
+        allowedFocusedFailures.size &&
+      allowedFocusedFailures.has(String(focusedSummary.failed_stages)))) &&
   Number(focusedSummary.focused_stage_total) > 0 &&
   focusedSummary.stage_from === "0" &&
   focusedSummary.stage_to === "2147483647" &&

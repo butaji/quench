@@ -29,9 +29,11 @@ const __quenchGlobPattern = (pattern) => {
     ) {
       const end = pattern.indexOf(")", index);
       const alternatives = pattern.slice(index + 2, end).split("|");
-      source += `(?!${alternatives
-        .map(__quenchGlobPattern)
-        .join("|")}(?:/|$))[^/]*`;
+      source += `(?!${
+        alternatives
+          .map(__quenchGlobPattern)
+          .join("|")
+      }(?:/|$))[^/]*`;
       index = end + 1;
     } else if (pattern[index] === "[" && pattern.indexOf("]", index) > index) {
       const end = pattern.indexOf("]", index);
@@ -65,7 +67,7 @@ const __quenchGlobHiddenAllowed = (pattern, path) => {
       (part, index) =>
         !part.startsWith(".") ||
         patternParts[index]?.startsWith(".") ||
-        patternParts[index] === "**"
+        patternParts[index] === "**",
     );
 };
 const __quenchGlobMatches = (pattern, path) => {
@@ -75,7 +77,7 @@ const __quenchGlobMatches = (pattern, path) => {
     expression.test(path) ||
     (normalized.endsWith("/**") &&
       new RegExp(
-        `^${__quenchGlobPattern(normalized.slice(0, -3))}(?:/.*)?$`
+        `^${__quenchGlobPattern(normalized.slice(0, -3))}(?:/.*)?$`,
       ).test(path))
   );
 };
@@ -107,7 +109,7 @@ const __quenchGlobEntries = (pattern, options = {}) => {
     let entries;
     try {
       entries = globalThis.__nodeFs.readdirSync(directory, {
-        withFileTypes: true
+        withFileTypes: true,
       });
     } catch {
       return;
@@ -115,16 +117,15 @@ const __quenchGlobEntries = (pattern, options = {}) => {
     for (const entry of entries) {
       const childRelative = relative ? `${relative}/${entry.name}` : entry.name;
       const childPath = `${directory}/${entry.name}`;
-      const excluded =
-        typeof options.exclude === "function"
-          ? options.exclude(entry)
-          : Array.isArray(options.exclude) &&
-            options.exclude.some(
-              (item) =>
-                __quenchGlobMatches(item, childRelative) ||
-                (String(item).startsWith("/") &&
-                  __quenchGlobMatches(item, childPath))
-            );
+      const excluded = typeof options.exclude === "function"
+        ? options.exclude(entry)
+        : Array.isArray(options.exclude) &&
+          options.exclude.some(
+            (item) =>
+              __quenchGlobMatches(item, childRelative) ||
+              (String(item).startsWith("/") &&
+                __quenchGlobMatches(item, childPath)),
+          );
       if (
         !excluded &&
         expression.test(childRelative) &&
@@ -146,7 +147,7 @@ const __quenchGlobEntries = (pattern, options = {}) => {
   result.sort((left, right) => left.relative.localeCompare(right.relative));
   return result.map(({ entry, relative, path }) => ({
     entry,
-    value: options.withFileTypes === true ? entry : absolute ? path : relative
+    value: options.withFileTypes === true ? entry : absolute ? path : relative,
   }));
 };
 const __quenchGlob = async function* (pattern, options = {}) {
@@ -165,7 +166,7 @@ globalThis.require = (specifier) => {
   if (name === "fs/promises") {
     return Object.assign({}, __quenchOriginalRequireWithGlob(specifier), {
       glob: __quenchGlob,
-      globSync: __quenchGlobSync
+      globSync: __quenchGlobSync,
     });
   }
   if (name === "fs") {

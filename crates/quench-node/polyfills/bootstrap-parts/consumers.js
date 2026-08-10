@@ -38,7 +38,7 @@ const __quenchConsumerTextChunk = (chunk) => {
     return Buffer.from(chunk);
   }
   const error = new TypeError(
-    'The "chunk" argument must be of type string or an instance of Buffer or Uint8Array'
+    'The "chunk" argument must be of type string or an instance of Buffer or Uint8Array',
   );
   error.code = "ERR_INVALID_ARG_TYPE";
   throw error;
@@ -46,20 +46,20 @@ const __quenchConsumerTextChunk = (chunk) => {
 const __quenchStreamConsumers = {
   buffer: async (stream) =>
     Buffer.concat(
-      (await __quenchConsume(stream)).map(__quenchConsumerBinaryChunk)
+      (await __quenchConsume(stream)).map(__quenchConsumerBinaryChunk),
     ),
   arrayBuffer: async (stream) =>
     (await __quenchStreamConsumers.buffer(stream)).buffer,
   text: async (stream) =>
     Buffer.concat(
-      (await __quenchConsume(stream)).map(__quenchConsumerTextChunk)
+      (await __quenchConsume(stream)).map(__quenchConsumerTextChunk),
     ).toString(),
   json: async (stream) =>
     JSON.parse(await __quenchStreamConsumers.text(stream)),
   bytes: async (stream) =>
     new Uint8Array(await __quenchStreamConsumers.buffer(stream)),
   blob: async (stream) =>
-    new Blob([await __quenchStreamConsumers.buffer(stream)])
+    new Blob([await __quenchStreamConsumers.buffer(stream)]),
 };
 globalThis.require = (specifier) => {
   if (String(specifier).replace(/^node:/, "") === "stream/consumers") {

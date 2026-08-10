@@ -18,7 +18,7 @@ receiver.on("message", (message, remote) => {
         "listening",
         "message:ok",
         "receiver-close-callback",
-        "sender-close-callback"
+        "sender-close-callback",
       ]);
       console.log("dgram bind/send/close trace passed");
     });

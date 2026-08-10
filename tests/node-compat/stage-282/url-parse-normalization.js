@@ -15,8 +15,8 @@ assert.deepStrictEqual(
     query: null,
     pathname: "/",
     path: "/",
-    href: "http://USER:PW@www.example.com/"
-  })
+    href: "http://USER:PW@www.example.com/",
+  }),
 );
 
 const backslash = url.parse("http:\\\\evil-phisher\\foo.html");

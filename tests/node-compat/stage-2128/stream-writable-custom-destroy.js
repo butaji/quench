@@ -5,7 +5,7 @@ const expected = new Error("kaboom");
 const writable = new Writable({
   write(_chunk, _encoding, callback) {
     callback();
-  }
+  },
 });
 writable._destroy = (error, callback) => {
   assert.strictEqual(error, expected);

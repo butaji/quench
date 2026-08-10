@@ -14,7 +14,7 @@ const __quenchCallbackify = (fn) => {
         if (result && typeof result.then === "function") {
           result.then(
             (value) => callback(null, value),
-            (error) => callback(error)
+            (error) => callback(error),
           );
         } else callback(null, result);
       } catch (error) {
@@ -26,6 +26,6 @@ const __quenchCallbackify = (fn) => {
 globalThis.require = (specifier) =>
   String(specifier).replace(/^node:/, "") === "util"
     ? Object.assign({}, __quenchOriginalRequireWithCallbackify(specifier), {
-        callbackify: __quenchCallbackify
-      })
+      callbackify: __quenchCallbackify,
+    })
     : __quenchOriginalRequireWithCallbackify(specifier);

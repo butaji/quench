@@ -4,7 +4,7 @@ let controller;
 const stream = new ReadableStream({
   start(value) {
     controller = value;
-  }
+  },
 });
 
 const error = new Error("boom");

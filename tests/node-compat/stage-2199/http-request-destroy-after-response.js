@@ -14,7 +14,8 @@ server.listen(0, () => {
       server.close();
     });
   });
-  request.on("error", () =>
-    assert.fail("destroy after response should not emit error")
+  request.on(
+    "error",
+    () => assert.fail("destroy after response should not emit error"),
   );
 });

@@ -3,13 +3,13 @@ const http = require("http");
 
 assert.throws(() => new http.Agent({ maxTotalSockets: "test" }), {
   code: "ERR_INVALID_ARG_TYPE",
-  name: "TypeError"
+  name: "TypeError",
 });
 
 for (const value of [-1, 0, NaN]) {
   assert.throws(() => new http.Agent({ maxTotalSockets: value }), {
     code: "ERR_OUT_OF_RANGE",
-    name: "RangeError"
+    name: "RangeError",
   });
 }
 

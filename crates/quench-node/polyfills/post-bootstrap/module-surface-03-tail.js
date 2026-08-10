@@ -451,3 +451,17 @@ const __quenchSliceOptions = (options) => {
     throw error;
   }
 };
+const __quenchValidateZlibOptions = (options, allowZeroWindowBits = false) => {
+  const value = options?.windowBits;
+  if (
+    value !== undefined &&
+    (!Number.isInteger(value) || value > 15 ||
+      (value < 9 && !(allowZeroWindowBits && value === 0)))
+  ) {
+    const error = new RangeError(
+      `The value of "options.windowBits" is out of range. It must be >= 9 and <= 15. Received ${value}`,
+    );
+    error.code = "ERR_OUT_OF_RANGE";
+    throw error;
+  }
+};

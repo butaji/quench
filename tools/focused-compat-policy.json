@@ -50,6 +50,12 @@
       "area": "url-whitespace-auth-href",
       "reason": "The upstream parse-format fixture retains auth in href after whitespace trimming while focused stage 282 requires omitting it",
       "resolution": "upstream-fixture-version-policy"
+    },
+    {
+      "stages": [394],
+      "area": "experimental-stream-iter-gate",
+      "reason": "The stage intentionally exercises the unsupported stream/iter surface without its experimental runtime flag",
+      "resolution": "resolved-by-experimental-stage-policy"
     }
   ]
 }

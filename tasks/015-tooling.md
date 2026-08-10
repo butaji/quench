@@ -113,24 +113,24 @@ decomposed in subsequent slices.
 
 ## Status
 
-The data-first LOC strategy was applied to filesystem validation: the
-`__nodeFs` declaration remains the source of truth, while its final methods
-and prototype normalization live in the ordered
-`filesystem-validation-tail.js` adapter. The main declaration is now 498
-lines (down from 628). Representative filesystem stages 27, 73, 430, 431,
-868, 1257, 1259, 1847, 1848, 2001, and 2087 pass after the split.
+The data-first LOC strategy was applied to filesystem validation: the `__nodeFs`
+declaration remains the source of truth, while its final methods and prototype
+normalization live in the ordered `filesystem-validation-tail.js` adapter. The
+main declaration is now 498 lines (down from 628). Representative filesystem
+stages 27, 73, 430, 431, 868, 1257, 1259, 1847, 1848, 2001, and 2087 pass after
+the split.
 
 The same ordered-tail strategy now applies to the URL module surface:
 `module-surface-06.js` is 497 lines, and its require-wrapper installation is
 kept in `module-surface-06-tail.js` through scoped helper handoffs. URL stages
 282 and 2482 remain green after the extraction.
 
-The crypto fallback declarations were split at a top-level declaration
-boundary. `module-surface-13.js` is now 417 lines and the exact remaining
-crypto fallback declarations execute from `module-surface-13-tail.js` in the
-next bootstrap evaluation. Crypto stages 2553, 892, and 1403 plus the
-upstream PBKDF2 fixture pass; the broader upstream key-generation fixture
-retains an unrelated missing-exception failure.
+The crypto fallback declarations were split at a top-level declaration boundary.
+`module-surface-13.js` is now 417 lines and the exact remaining crypto fallback
+declarations execute from `module-surface-13-tail.js` in the next bootstrap
+evaluation. Crypto stages 2553, 892, and 1403 plus the upstream PBKDF2 fixture
+pass; the broader upstream key-generation fixture retains an unrelated
+missing-exception failure.
 
 The crypto key-object declarations were split after the complete
 `__quenchCryptoKeyObjectInvalidThis` helper. `module-surface-14.js` is now 407
@@ -143,10 +143,9 @@ file is now 349 lines and its 338-line tail executes in order. Rust tests and
 stages 2037, 2348, 2482, and 2498 pass after the extraction.
 
 The final module-surface declarations were split after the complete
-`__quenchResolvePath` declaration. `module-surface-final-01.js` is now 487
-lines and its ordered 102-line and 431-line tails execute before
-`global-surface.js`. Rust tests and
-stages 411, 529, 1164, and 1640 pass after the extraction.
+`__quenchResolvePath` declaration. `module-surface-final-01.js` is now 487 lines
+and its ordered 102-line and 431-line tails execute before `global-surface.js`.
+Rust tests and stages 411, 529, 1164, and 1640 pass after the extraction.
 
 The Buffer encoding bootstrap was split at an existing ordered tail: the main
 `encoding.js` file is now below the 500-line limit while `encoding-tail.js`
@@ -350,44 +349,66 @@ The filesystem links/stat/open-stream surface was split at the completed
 lines; representative filesystem stages 27, 73, 430, 431, 868, and 1257 pass.
 
 The dgram socket implementation was split into initialization helpers, the
-bind/send surface, and the socket/event surface. The files are now 47, 493,
-and 457 lines; dgram stages 764 through 768 and the quench-node Rust tests pass.
+bind/send surface, and the socket/event surface. The files are now 47, 493, and
+457 lines; dgram stages 764 through 768 and the quench-node Rust tests pass.
 
 The filesystem stream and promise helpers were split at the completed `mkdtemp`
 callback boundary. `streams.js` is now 468 lines and `streams-tail.js` is 243
 lines; representative stream stages 1879, 1882, 1883, 2452, and 2554 pass.
 
-The filesystem promise write/read and positioned-handle surface was split at
-the completed pull-iterator boundary. `writes.js` is now 453 lines and
+The filesystem promise write/read and positioned-handle surface was split at the
+completed pull-iterator boundary. `writes.js` is now 453 lines and
 `writes-tail.js` is 309 lines; filesystem write/read stages 1260 through 1264
 pass with the quench-node Rust tests.
 
-The global/process bootstrap was split before timer registration, preserving
-the initialization order for globals, process, and timer state. `globals.js`
-is now 454 lines and `globals-tail.js` is 417 lines; global stages 0 through 9
-pass with the quench-node Rust tests.
+The global/process bootstrap was split before timer registration, preserving the
+initialization order for globals, process, and timer state. `globals.js` is now
+454 lines and `globals-tail.js` is 417 lines; global stages 0 through 9 pass
+with the quench-node Rust tests.
 
 The querystring and URL bootstrap was split before the URLSearchParams class;
 the querystring surface remains initialized before the URL helpers. `colors.js`
 is now 321 lines and `colors-tail.js` is 463 lines; URL stages 2482, 2498, 282,
 411, and 529 pass with the quench-node Rust tests.
 
-The network bootstrap was split into address validators, the `Socket` class,
-and the remaining module/server surface. The resulting files are 300, 500,
-and 446 lines; network stages 2037, 2348, 2482, 2498, and 2554 pass with the
-quench-node Rust tests.
+The network bootstrap was split into address validators, the `Socket` class, and
+the remaining module/server surface. The resulting files are 300, 500, and 446
+lines; network stages 2037, 2348, 2482, 2498, and 2554 pass with the quench-node
+Rust tests.
 
 The API/assertion bootstrap was split into foundational globals, assertion
 methods, and two rejection/matching tails. The resulting files are 262, 452,
 255, and 253 lines; API stages 10 through 19 pass with the quench-node Rust
 tests.
 
-The Rust host context now keeps its TCP implementation in `host_context.rs`
-and includes the exported runtime macro from `host_context_macro.inc`; the
-Rust source file is 187 lines and the public macro behavior remains covered by
-the passing quench-node Rust tests.
+The Rust host context now keeps its TCP implementation in `host_context.rs` and
+includes the exported runtime macro from `host_context_macro.inc`; the Rust
+source file is 187 lines and the public macro behavior remains covered by the
+passing quench-node Rust tests.
 
 The writes-tail extraction retained the performance marks declaration but
 omitted the adjacent entries store. The entries store is now initialized in the
-performance bootstrap; performance stages 403 and 404, representative HTTP
-and stream stages, Rust tests, and application gates pass again.
+performance bootstrap; performance stages 403 and 404, representative HTTP and
+stream stages, Rust tests, and application gates pass again.
+
+The DOMException and navigator globals were extracted into
+`bootstrap-parts/globals-extra.js`; this brings `globals.js` below the 500-line
+size limit while preserving bootstrap order. The zlib validation tail was also
+moved from `module-surface-03.js` into its existing tail, reducing that file
+below the limit; focused console/zlib stages and all application gates pass. The
+remaining size-limit failures are isolated to `events.js`, `core.js`, `vfs.js`,
+and `cluster.js`.
+
+The crypto size boundary is now resolved: the lazy `__nodeCrypto` proxy was
+extracted to `bootstrap-parts/crypto-tail.js`, reducing `crypto.js` below the
+500-line limit while preserving crypto stages 2550, 2553, and 2564.
+
+The stream module-surface boundary is also below the limit: the generic
+`addAbortSignal` adapter now lives in `module-surface-03-tail-02.js`, reducing
+`module-surface-03.js` below 500 lines while preserving compose and pipeline
+stages 2479 and 2554.
+
+The compatibility report freshness checker now honors the explicit experimental
+stage policy for stage 394. A complete 4,682-fixture differential report
+therefore validates as current with the intentional experimental focused
+exception, and `tools/compat-queue.sh` emits the owned queue again.

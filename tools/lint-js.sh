@@ -17,7 +17,7 @@ tools/lint-size.sh
 
 echo ""
 echo "=== eslint (size + complexity) ==="
-npx --yes eslint 'crates/**/*.js' 'tests/node-compat/**/*.{js,mjs}' 'eslint.config.js'
+npx --yes eslint --max-warnings=0 'crates/**/*.js' 'tests/node-compat/**/*.{js,mjs}' 'eslint.config.js'
 echo "OK: eslint"
 
 echo ""

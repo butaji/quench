@@ -19,12 +19,18 @@ globalThis.require = (specifier) => {
       decompressGzip: () => __quenchZlibIterTransform(zlib.gunzipSync),
       compressGzipSync: () => __quenchZlibSyncIterTransform(zlib.gzipSync),
       decompressGzipSync: () => __quenchZlibSyncIterTransform(zlib.gunzipSync),
-      compressDeflateSync: () => __quenchZlibSyncIterTransform(zlib.deflateSync),
-      decompressDeflateSync: () => __quenchZlibSyncIterTransform(zlib.inflateSync),
-      compressBrotliSync: () => __quenchZlibSyncIterTransform(zlib.brotliCompressSync),
-      decompressBrotliSync: () => __quenchZlibSyncIterTransform(zlib.brotliDecompressSync),
-      compressZstdSync: () => __quenchZlibSyncIterTransform(zlib.zstdCompressSync),
-      decompressZstdSync: () => __quenchZlibSyncIterTransform(zlib.zstdDecompressSync),
+      compressDeflateSync: () =>
+        __quenchZlibSyncIterTransform(zlib.deflateSync),
+      decompressDeflateSync: () =>
+        __quenchZlibSyncIterTransform(zlib.inflateSync),
+      compressBrotliSync: () =>
+        __quenchZlibSyncIterTransform(zlib.brotliCompressSync),
+      decompressBrotliSync: () =>
+        __quenchZlibSyncIterTransform(zlib.brotliDecompressSync),
+      compressZstdSync: () =>
+        __quenchZlibSyncIterTransform(zlib.zstdCompressSync),
+      decompressZstdSync: () =>
+        __quenchZlibSyncIterTransform(zlib.zstdDecompressSync),
     };
   }
   return __quenchOriginalRequireWithZlibIter(specifier);

@@ -15,7 +15,8 @@ server.listen(0, () => {
     assert.match(output, /5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n/);
     server.close(() => console.log("http raw chunked response passed"));
   });
-  socket.on("connect", () =>
-    socket.end("GET /chunked HTTP/1.1\r\nHost: example.com\r\n\r\n")
+  socket.on(
+    "connect",
+    () => socket.end("GET /chunked HTTP/1.1\r\nHost: example.com\r\n\r\n"),
   );
 });

@@ -5,13 +5,13 @@ const cases = [
   [Readable, undefined, "AbortError"],
   [Readable, new Error("asd"), "Error"],
   [Writable, undefined, "AbortError"],
-  [Writable, new Error("asd"), "Error"]
+  [Writable, new Error("asd"), "Error"],
 ];
 
 for (const [Constructor, error, expectedName] of cases) {
   const stream = new Constructor({
     read() {},
-    write() {}
+    write() {},
   });
   const events = [];
   stream.on("error", (actual) => {

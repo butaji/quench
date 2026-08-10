@@ -5,7 +5,7 @@ const source = new ReadableStream({
     controller.enqueue("one");
     controller.enqueue("two");
     controller.close();
-  }
+  },
 });
 const [left, right] = source.tee();
 Promise.all([
@@ -15,7 +15,7 @@ Promise.all([
     assert.deepStrictEqual(await reader.read(), { value: "two", done: false });
     assert.deepStrictEqual(await reader.read(), {
       value: undefined,
-      done: true
+      done: true,
     });
   })(),
   (async () => {
@@ -24,7 +24,7 @@ Promise.all([
     assert.deepStrictEqual(await reader.read(), { value: "two", done: false });
     assert.deepStrictEqual(await reader.read(), {
       value: undefined,
-      done: true
+      done: true,
     });
-  })()
+  })(),
 ]).then(() => console.log("readable tee passed"));

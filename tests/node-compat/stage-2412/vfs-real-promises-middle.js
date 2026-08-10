@@ -12,15 +12,15 @@ const vfs = require("node:vfs");
     assert.strictEqual(stat.size, 5);
     assert.strictEqual(
       (await filesystem.promises.lstat("/a.txt")).isFile(),
-      true
+      true,
     );
     await filesystem.promises.access("/a.txt");
     await assert.rejects(filesystem.promises.access("/missing.txt"), {
-      code: "ENOENT"
+      code: "ENOENT",
     });
     await filesystem.promises.mkdir("/d/sub", { recursive: true });
     assert.deepStrictEqual((await filesystem.promises.readdir("/d")).sort(), [
-      "sub"
+      "sub",
     ]);
     await filesystem.promises.rmdir("/d/sub");
     await filesystem.promises.writeFile("/old.txt", "x");
@@ -30,10 +30,10 @@ const vfs = require("node:vfs");
     await filesystem.promises.copyFile("/a.txt", "/copy.txt");
     assert.strictEqual(
       await filesystem.promises.readFile("/copy.txt", "utf8"),
-      "hello"
+      "hello",
     );
     await assert.rejects(filesystem.provider.open("/missing.txt", "r"), {
-      code: "ENOENT"
+      code: "ENOENT",
     });
     console.log("real-provider promise middle sequence passed");
   } finally {

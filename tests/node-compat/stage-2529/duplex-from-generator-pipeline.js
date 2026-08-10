@@ -4,8 +4,9 @@ const { Duplex, pipeline } = require("stream");
 pipeline(
   ["a\nb\n"],
   Duplex.from(async function* (source) {
-    for await (const chunk of source)
+    for await (const chunk of source) {
       yield chunk.toString().replaceAll("\n", "");
+    }
   }),
   async function* (source) {
     let result = "";
@@ -14,5 +15,5 @@ pipeline(
   },
   (error) => {
     if (error) throw error;
-  }
+  },
 );

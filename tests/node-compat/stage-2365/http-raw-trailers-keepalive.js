@@ -19,7 +19,7 @@ server.listen(0, () => {
   });
   socket.on("connect", () => {
     socket.end(
-      "POST /first HTTP/1.1\r\nHost: example.com\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n0\r\nX-Check: yes\r\n\r\nGET /second HTTP/1.1\r\nHost: example.com\r\n\r\n"
+      "POST /first HTTP/1.1\r\nHost: example.com\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n0\r\nX-Check: yes\r\n\r\nGET /second HTTP/1.1\r\nHost: example.com\r\n\r\n",
     );
   });
 });

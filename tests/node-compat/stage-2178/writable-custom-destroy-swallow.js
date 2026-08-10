@@ -8,7 +8,7 @@ const writable = new Writable({
   destroy(error, callback) {
     if (error !== expected) throw new Error("wrong destroy error");
     callback();
-  }
+  },
 });
 
 writable.on("error", () => {

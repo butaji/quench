@@ -1,5 +1,10 @@
 # Global surface — every Node `globalThis` name
 
+> Contract: This task is part of broad Node 24 compatibility across Linux
+> x86_64, Linux ARM64, macOS, and Windows. Native addons and Node-API are
+> excluded. Use the statuses and release gates in
+> [compatibility-contract.md](../docs/compatibility-contract.md).
+
 ## Contract alignment
 
 This task supports the Node 24 application-runtime contract on Linux x86_64;
@@ -8,6 +13,9 @@ See `docs/authoritative-test-sources.md` for the Node, LLRT, Deno, WPT, and
 Test262 reference roles.
 
 ## Goal
+
+Make global names and installation rules declaration data consumed by one
+generated installer and generated surface checks.
 
 Every name that Node exposes on `globalThis` either exists in
 `crates/quench-node/polyfills/bootstrap.js` with Node-accurate behaviour or
@@ -118,6 +126,12 @@ The set of names Node attaches to `globalThis`, taken from the
 
 ## Status
 
-Partially done via tasks 001, 003, 005, 007, 008, 011. The remaining
-gaps (EventTarget, CustomEvent, MessageChannel/Port, BroadcastChannel,
-streams/web, navigator, fetch, DOMException) are the next slices.
+Complete for the supported Linux/macOS runtime surface via tasks 001, 003,
+005, 007, 008, and 011. EventTarget,
+CustomEvent, MessageChannel/Port, BroadcastChannel, and streams/web are
+covered by the existing focused stages. The navigator surface is covered by
+stage 2555, and the DOMException code table and string behavior are covered by
+stage 2556. The global fetch/request/response/body surface is covered by
+stages 2044, 2230–2232, and 2234. The remaining cross-platform global
+descriptor audit is covered by stage 1164; platform-specific omissions remain
+classified by the compatibility contract.

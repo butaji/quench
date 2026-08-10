@@ -15,23 +15,23 @@ const fs = require("fs");
     [],
     {},
     {
-      buffer: "bad"
+      buffer: "bad",
     },
-    new Date()
+    new Date(),
   ];
   for (const value of invalid) {
     await assert.rejects(handle.write(value, {}), {
-      code: "ERR_INVALID_ARG_TYPE"
+      code: "ERR_INVALID_ARG_TYPE",
     });
   }
   await assert.rejects(handle.write(Buffer.from("zyx"), { length: 5 }), {
-    code: "ERR_OUT_OF_RANGE"
+    code: "ERR_OUT_OF_RANGE",
   });
   await assert.rejects(handle.write(Buffer.from("zyx"), { offset: 5 }), {
-    code: "ERR_OUT_OF_RANGE"
+    code: "ERR_OUT_OF_RANGE",
   });
   await assert.rejects(handle.write(Buffer.from("zyx"), { offset: false }), {
-    code: "ERR_INVALID_ARG_TYPE"
+    code: "ERR_INVALID_ARG_TYPE",
   });
   await handle.close();
   fs.unlinkSync(path);

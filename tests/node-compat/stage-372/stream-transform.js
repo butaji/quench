@@ -5,7 +5,7 @@ const transform = new Transform({
   transform(chunk, _encoding, callback) {
     this.push(String(chunk).toUpperCase());
     callback();
-  }
+  },
 });
 transform.on("data", (value) => values.push(value));
 transform.write("hello", () => {

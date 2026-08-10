@@ -12,7 +12,7 @@ const duplex = Duplex({
     writes++;
     assert.deepStrictEqual(chunk, Buffer.from("world"));
     callback();
-  }
+  },
 });
 const { readable, writable } = Duplex.toWeb(duplex, { readableType: "bytes" });
 writable.getWriter().write(Buffer.from("world"));

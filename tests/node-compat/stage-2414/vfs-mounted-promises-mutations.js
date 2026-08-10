@@ -23,7 +23,7 @@ const vfs = require("node:vfs");
     await fs.promises.symlink("hello.txt", file("link.txt"));
     assert.strictEqual(
       await fs.promises.readlink(file("link.txt")),
-      "hello.txt"
+      "hello.txt",
     );
     await fs.promises.truncate(file("hello.txt"), 5);
     assert.strictEqual(fs.readFileSync(file("hello.txt"), "utf8"), "hello");

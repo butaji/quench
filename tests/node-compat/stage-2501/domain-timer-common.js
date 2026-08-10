@@ -13,7 +13,7 @@ d.on(
     assert.strictEqual(err.domainEmitter, undefined);
     assert.strictEqual(err.domainBound, undefined);
     assert.strictEqual(err.domainThrown, true);
-  })
+  }),
 );
 
 d.run(
@@ -22,7 +22,7 @@ d.run(
       common.mustCall(() => {
         throw new Error("foobar");
       }),
-      1
+      1,
     );
-  })
+  }),
 );

@@ -6,7 +6,7 @@ const __quenchRmValidateBoolean = (options, key) => {
     return;
   }
   const error = new TypeError(
-    `The "options.${key}" property must be of type boolean.`
+    `The "options.${key}" property must be of type boolean.`,
   );
   error.code = "ERR_INVALID_ARG_TYPE";
   throw error;
@@ -19,20 +19,20 @@ const __quenchRmValidateRange = (options, key) => {
     return;
   }
   const error = new RangeError(
-    `The value of "options.${key}" is out of range.`
+    `The value of "options.${key}" is out of range.`,
   );
   error.code = "ERR_OUT_OF_RANGE";
   throw error;
 };
 const __quenchInternalFsUtilsModule = {
-  vfsState: (globalThis.__quenchVfsState ||= { handlers: null }),
+  vfsState: globalThis.__quenchVfsState ||= { handlers: null },
   validateRmOptionsSync: function (_path, options) {
     if (
       arguments.length > 1 &&
       (options === null || typeof options !== "object")
     ) {
       const error = new TypeError(
-        'The "options" argument must be of type object.'
+        'The "options" argument must be of type object.',
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
@@ -46,7 +46,7 @@ const __quenchInternalFsUtilsModule = {
       retryDelay: value.retryDelay === undefined ? 100 : value.retryDelay,
       maxRetries: value.maxRetries === undefined ? 0 : value.maxRetries,
       recursive: value.recursive === true,
-      force: value.force === true
+      force: value.force === true,
     };
   },
   stringToFlags: (flags) => {
@@ -71,7 +71,7 @@ const __quenchInternalFsUtilsModule = {
       as: 1053761,
       sa: 1053761,
       "as+": 1053762,
-      "sa+": 1053762
+      "sa+": 1053762,
     };
     if (typeof flags !== "string" || values[flags] === undefined) {
       const error = new TypeError(`Unknown file open flag: ${flags}`);
@@ -79,5 +79,5 @@ const __quenchInternalFsUtilsModule = {
       throw error;
     }
     return values[flags];
-  }
+  },
 };

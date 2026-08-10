@@ -14,7 +14,9 @@ const vfs = require("node:vfs");
     assert.strictEqual((await fs.promises.stat(file)).isFile(), true);
     assert.strictEqual((await fs.promises.lstat(file)).isFile(), true);
     assert.ok(
-      (await fs.promises.readdir(path.join(mount, "src"))).includes("hello.txt")
+      (await fs.promises.readdir(path.join(mount, "src"))).includes(
+        "hello.txt",
+      ),
     );
     assert.strictEqual(await fs.promises.readFile(file, "utf8"), "hello world");
     assert.strictEqual(await fs.promises.realpath(file), file);

@@ -6,7 +6,7 @@ const socket = dgram.createSocket({
   type: "udp4",
   lookup(_host, _family, callback) {
     lookupCallback = callback;
-  }
+  },
 });
 let errors = 0;
 socket.on("error", () => errors++);

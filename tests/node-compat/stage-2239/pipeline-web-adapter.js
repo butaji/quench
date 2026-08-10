@@ -7,12 +7,12 @@ const values = [];
 const readable = new ReadableStream({
   start(value) {
     controller = value;
-  }
+  },
 });
 const writable = new WritableStream({
   write(value) {
     values.push(value);
-  }
+  },
 });
 
 pipeline(readable, writable, (error) => {

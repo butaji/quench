@@ -8,7 +8,7 @@ const naturals = () =>
     (async function* () {
       let value = 1;
       while (true) yield value++;
-    })()
+    })(),
   );
 
 (async () => {
@@ -18,19 +18,19 @@ const naturals = () =>
     [
       "sync chain",
       () => Readable.from([1, 2, 3]).drop(1).take(1).toArray(),
-      [2]
+      [2],
     ],
     ["async drop", () => fromAsync([1, 2, 3]).drop(2).toArray(), [3]],
     ["async take", () => fromAsync([1, 2, 3]).take(1).toArray(), [1]],
     ["infinite take", () => naturals().take(1).toArray(), [1]],
-    ["infinite chain", () => naturals().drop(1).take(1).toArray(), [2]]
+    ["infinite chain", () => naturals().drop(1).take(1).toArray(), [2]],
   ];
   for (const [name, operation, expected] of cases) {
     const actual = await Promise.race([
       operation(),
       new Promise((_, reject) =>
         setTimeout(() => reject(new Error(`${name} timeout`)), 100)
-      )
+      ),
     ]);
     assert.deepStrictEqual(actual, expected, name);
     console.log(`passed ${name}`);
@@ -38,7 +38,7 @@ const naturals = () =>
   const controller = new AbortController();
   const aborted = Readable.from([1, 2, 3])
     .take(1, {
-      signal: controller.signal
+      signal: controller.signal,
     })
     .toArray();
   controller.abort();
@@ -46,7 +46,7 @@ const naturals = () =>
   const alreadyAborted = AbortSignal.abort();
   await assert.rejects(
     Readable.from([1, 2, 3]).take(1, { signal: alreadyAborted }).toArray(),
-    { name: "AbortError" }
+    { name: "AbortError" },
   );
   console.log("passed abort cases");
 })();

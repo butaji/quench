@@ -3,9 +3,9 @@ const { finished } = require("stream");
 
 const emitterLike = {
   once() {},
-  emit() {}
+  emit() {},
 };
 
 assert.throws(() => finished(emitterLike, () => {}), {
-  code: "ERR_INVALID_ARG_TYPE"
+  code: "ERR_INVALID_ARG_TYPE",
 });

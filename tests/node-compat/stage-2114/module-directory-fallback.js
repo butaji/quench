@@ -8,11 +8,11 @@ fs.rmSync(root, { recursive: true, force: true });
 fs.mkdirSync(packageRoot, { recursive: true });
 fs.writeFileSync(
   path.join(packageRoot, "index.js"),
-  "module.exports = { legacy: true };"
+  "module.exports = { legacy: true };",
 );
 fs.writeFileSync(
   path.join(root, "entry.js"),
-  "module.exports = require('bare-package');"
+  "module.exports = require('bare-package');",
 );
 
 assert.deepStrictEqual(require(path.join(root, "entry.js")), { legacy: true });

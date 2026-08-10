@@ -30,7 +30,7 @@ globalThis.__quenchValidateConnectionOptions = (options) => {
   if (options && typeof options === "object" && !Array.isArray(options)) {
     if (options.path !== undefined) {
       if (typeof options.path !== "string") {
-        const error = new TypeError("The \"path\" argument must be a string");
+        const error = new TypeError('The "path" argument must be a string');
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
       }

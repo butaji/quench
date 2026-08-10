@@ -17,7 +17,7 @@ const vfs = require("node:vfs");
   {
     const { filesystem, mount } = mounted();
     const entries = await fs.promises.readdir(path.join(mount, "src"), {
-      encoding: "buffer"
+      encoding: "buffer",
     });
     assert.ok(entries.every(Buffer.isBuffer));
     filesystem.unmount();
@@ -42,7 +42,7 @@ const vfs = require("node:vfs");
   {
     const { filesystem, mount } = mounted();
     const result = await fs.promises.mkdtemp(path.join(mount, "src/tmp-"), {
-      encoding: "buffer"
+      encoding: "buffer",
     });
     assert.ok(Buffer.isBuffer(result));
     filesystem.unmount();

@@ -4,7 +4,7 @@ const { Writable } = require("stream");
 const first = new Writable({
   write(_chunk, _encoding, callback) {
     callback();
-  }
+  },
 });
 let firstClosed = false;
 first.on("close", () => {
@@ -17,7 +17,7 @@ const expected = new Error("kaboom");
 const second = new Writable({
   write(_chunk, _encoding, callback) {
     callback();
-  }
+  },
 });
 let secondError;
 second.on("error", (error) => {

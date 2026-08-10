@@ -1,5 +1,10 @@
 # Host (Rust) surface — the unsafe / OS-bound primitives
 
+> Contract: This task is part of broad Node 24 compatibility across Linux
+> x86_64, Linux ARM64, macOS, and Windows. Native addons and Node-API are
+> excluded. Use the statuses and release gates in
+> [compatibility-contract.md](../docs/compatibility-contract.md).
+
 ## Contract alignment
 
 This task supports the Node 24 application-runtime contract on Linux x86_64;
@@ -9,6 +14,10 @@ See `docs/authoritative-test-sources.md` for the Node, LLRT, Deno, WPT, and
 Test262 reference roles.
 
 ## Goal
+
+Keep the host boundary minimal by exposing generic primitives described by the
+shared IR. Do not add Rust implementations for behavior a generated adapter or
+handwritten JavaScript can express.
 
 `crates/quench-node/src/main.rs` (currently 466 lines) provides host
 callbacks as `globalThis.__quench_*` names. The principle is: keep the
@@ -77,6 +86,25 @@ The remaining host work, in dependency order. Each row is a slice.
   `SO_RCVBUF`, `SO_SNDBUF`.
 - `__quench_udp_socket` / `__quench_udp_send` / `__quench_udp_recv` /
   `__quench_udp_close`.
+
+The UDP host boundary is now implemented with nonblocking `UdpSocket`
+resources and verified by `tests/node-compat/stage-2565/udp-host-roundtrip.js`.
+The DNS lookup boundary is implemented with the platform resolver and verified
+by `tests/node-compat/stage-2566/dns-host-lookup.js`.
+- The reverse DNS boundary is implemented with libc `getnameinfo` for IPv4 and
+  IPv6 and verified by `tests/node-compat/stage-2568/dns-host-reverse.js`.
+- Public callback and promise `dns.lookupService()` now consume that reverse
+  lookup boundary; stage `tests/node-compat/stage-2569/dns-lookup-service-host.js`
+  verifies hostname and service results.
+- Public A/AAAA `dns.resolve()` and promise resolution now consume the forward
+  resolver; stage `tests/node-compat/stage-2570/dns-resolve-host.js` verifies
+  localhost records.
+- `dns.resolve4()` and `dns.resolve6()` callback/promise aliases are covered by
+  `tests/node-compat/stage-2571/dns-resolve4-resolve6.js`.
+- Public callback and promise `dns.reverse()` are covered by
+  `tests/node-compat/stage-2572/dns-reverse.js`.
+- Default DNS result-order APIs and per-Resolver state are covered by
+  `tests/node-compat/stage-2573/dns-result-order.js`.
 - `__quench_dns_lookup` — host → address. Use `getaddrinfo`.
 - `__quench_dns_reverse` — address → hostname. Use `getnameinfo`.
 

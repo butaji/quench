@@ -9,7 +9,7 @@ const pendingAbort = Readable.from([1, 2, 3]).reduce(
     return total + value;
   },
   0,
-  { signal: controller.signal }
+  { signal: controller.signal },
 );
 
 let completed = false;
@@ -21,13 +21,13 @@ Promise.all([
   assert.rejects(
     Readable.from([]).reduce((left, right) => left + right),
     {
-      code: "ERR_MISSING_ARGS"
-    }
+      code: "ERR_MISSING_ARGS",
+    },
   ),
   assert.rejects(Readable.from([]).reduce(1), {
-    code: "ERR_INVALID_ARG_TYPE"
+    code: "ERR_INVALID_ARG_TYPE",
   }),
-  assert.rejects(pendingAbort, { name: "AbortError" })
+  assert.rejects(pendingAbort, { name: "AbortError" }),
 ]).then(([sum, derivedSum]) => {
   assert.strictEqual(sum, 6);
   assert.strictEqual(derivedSum, 6);

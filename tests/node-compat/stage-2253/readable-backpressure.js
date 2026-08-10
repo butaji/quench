@@ -9,14 +9,14 @@ const readable = new Readable({
     reads++;
     if (reads > 3) return this.push(null);
     this.push(Buffer.alloc(8));
-  }
+  },
 });
 const writable = new Writable({
   highWaterMark: 1,
   write(_chunk, _encoding, callback) {
     writes++;
     setImmediate(callback);
-  }
+  },
 });
 readable.pipe(writable).on("finish", () => {
   assert.strictEqual(reads, 4);

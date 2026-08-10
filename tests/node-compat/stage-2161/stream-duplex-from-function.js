@@ -8,5 +8,5 @@ Duplex.from(async () => Promise.reject(error)).on("error", (received) => {
 });
 
 assert.throws(() => Duplex.from(() => {}), {
-  code: "ERR_INVALID_RETURN_VALUE"
+  code: "ERR_INVALID_RETURN_VALUE",
 });

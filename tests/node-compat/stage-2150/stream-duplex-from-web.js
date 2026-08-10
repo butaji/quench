@@ -4,12 +4,12 @@ const { Duplex } = require("stream");
 const readable = new ReadableStream({
   start(controller) {
     controller.enqueue(Buffer.from("hello"));
-  }
+  },
 });
 const writable = new WritableStream({
   write(chunk) {
     assert.deepStrictEqual(chunk, Buffer.from("world"));
-  }
+  },
 });
 const duplex = Duplex.fromWeb({ readable, writable });
 duplex.write(Buffer.from("world"));

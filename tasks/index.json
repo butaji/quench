@@ -3,6 +3,9 @@
   "description": "Broad Node 24 compatibility across Linux x86_64, Linux ARM64, macOS, and Windows, measured by applicable upstream fixtures and six representative application gates. Native addons and Node-API are excluded.",
   "contract": {
     "document": "docs/compatibility-contract.md",
+    "architecture": "docs/data-first-minimal-runtime.md",
+    "architecture_task": "000-data-first-minimal-loc.md",
+    "loc_objective": "minimum-maintainable-loc",
     "node": "24",
     "platforms": ["linux-x86_64", "linux-arm64", "macos", "windows"],
     "excluded": ["native-addons", "node-api", "typescript-execution", "package-installation"],
@@ -11,6 +14,12 @@
     "clean_runs_required": 2
   },
   "tasks": [
+    {
+      "id": "000",
+      "file": "000-data-first-minimal-loc.md",
+      "title": "Data-first minimal-LOC migration",
+      "status": "adopted"
+    },
     {
       "id": "001",
       "file": "001-buffer-binary-paths.md",
@@ -81,7 +90,7 @@
       "id": "012",
       "file": "012-global-surface.md",
       "title": "Global surface — every Node globalThis name",
-      "status": "in-progress"
+      "status": "complete"
     },
     {
       "id": "013",

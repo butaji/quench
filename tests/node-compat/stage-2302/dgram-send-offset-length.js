@@ -3,14 +3,16 @@ const dgram = require("dgram");
 
 const socket = dgram.createSocket("udp4");
 socket.connect(40000, "127.0.0.1", () => {
-  for (const [offset, length, message] of [
-    [6, 0, '"offset" is outside of buffer bounds'],
-    [0, 6, '"length" is outside of buffer bounds'],
-    [3, 4, '"length" is outside of buffer bounds']
-  ]) {
+  for (
+    const [offset, length, message] of [
+      [6, 0, '"offset" is outside of buffer bounds'],
+      [0, 6, '"length" is outside of buffer bounds'],
+      [3, 4, '"length" is outside of buffer bounds'],
+    ]
+  ) {
     assert.throws(() => socket.send("hello", offset, length), {
       code: "ERR_BUFFER_OUT_OF_BOUNDS",
-      message
+      message,
     });
   }
   socket.close();

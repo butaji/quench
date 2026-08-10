@@ -1,7 +1,7 @@
 {
   const __quenchEnvError = () => {
     const error = new TypeError(
-      'The "content" argument must be of type string'
+      'The "content" argument must be of type string',
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     return error;

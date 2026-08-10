@@ -1,4 +1,4 @@
-globalThis.__nodeFs.fstatSync = (fd) => {
+globalThis.__nodeFs.fstatSync = (fd, options = {}) => {
   if (typeof fd !== "number") {
     const error = new TypeError(
       `The "fd" argument must be of type number.${
@@ -10,10 +10,22 @@ globalThis.__nodeFs.fstatSync = (fd) => {
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
-  return globalThis.__nodeFs.statSync(globalThis.__nodeFdPaths[fd] || ".");
+  if (globalThis.__nodeFdPaths[fd] === undefined) {
+    const error = new Error("EBADF: bad file descriptor, fstat");
+    error.code = "EBADF";
+    error.syscall = "fstat";
+    throw error;
+  }
+  return globalThis.__nodeFs.statSync(
+    globalThis.__nodeFdPaths[fd],
+    options,
+  );
 };
 globalThis.__nodeFs.fstat = (fd, options, callback) => {
-  if (typeof options === "function") callback = options;
+  if (typeof options === "function") {
+    callback = options;
+    options = undefined;
+  }
   if (typeof fd !== "number") {
     const error = new TypeError('The "fd" argument must be of type number');
     error.code = "ERR_INVALID_ARG_TYPE";
@@ -25,7 +37,7 @@ globalThis.__nodeFs.fstat = (fd, options, callback) => {
   queueMicrotask(() => {
     let result;
     try {
-      result = globalThis.__nodeFs.fstatSync(fd);
+      result = globalThis.__nodeFs.fstatSync(fd, options);
     } catch (error) {
       callback(error);
       return;
@@ -102,7 +114,11 @@ const __nodeFsWriteStreamEnd = (
     }
   });
 };
-globalThis.__nodeFs.createWriteStream = (value, options = {}) => {
+globalThis.__nodeFs.createWriteStream = function (value, options = {}) {
+  const compatTarget = this !== globalThis.__nodeFs &&
+      this instanceof globalThis.__nodeFs.WriteStream
+    ? this
+    : null;
   const encoding = typeof options === "string"
     ? options
     : options && options.encoding;
@@ -113,7 +129,16 @@ globalThis.__nodeFs.createWriteStream = (value, options = {}) => {
     error.code = "ERR_INVALID_ARG_VALUE";
     throw error;
   }
-  const stream = new NodeWritable(options);
+  const stream = options.__target || compatTarget || new NodeWritable(options);
+  if (compatTarget && !compatTarget._events) {
+    Object.assign(
+      compatTarget,
+      new NodeWritable({
+        ...options,
+        __quenchCompatConstruct: true,
+      }),
+    );
+  }
   const fileHandle = options.fd && typeof options.fd === "object"
     ? options.fd
     : null;
@@ -122,6 +147,8 @@ globalThis.__nodeFs.createWriteStream = (value, options = {}) => {
     : nodeFsPath(value);
   const chunks = [];
   stream.path = path;
+  stream.flags = options.flags || "w";
+  stream.mode = options.mode;
   stream.fd = null;
   stream.bytesWritten = 0;
   stream.write = (chunk) => {
@@ -144,9 +171,64 @@ globalThis.__nodeFs.createWriteStream = (value, options = {}) => {
     );
     return stream;
   };
+  if ((options.__target || compatTarget) && typeof stream.open === "function") {
+    queueMicrotask(() => stream.open());
+  }
   return stream;
 };
 globalThis.__nodeFs.WriteStream = globalThis.__nodeFs.createWriteStream;
+globalThis.__nodeFs.WriteStream.prototype = Object.create(
+  NodeWritable.prototype,
+);
+globalThis.__nodeFs.WriteStream.prototype.constructor =
+  globalThis.__nodeFs.WriteStream;
+
+globalThis.__nodeFs.stat = (value, options, callback) => {
+  if (typeof options === "function") {
+    callback = options;
+    options = undefined;
+  }
+  if (typeof callback !== "function") {
+    const error = new TypeError(
+      'The "callback" argument must be of type function',
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  const path = nodeFsPath(value);
+  queueMicrotask(() => {
+    let result;
+    try {
+      result = globalThis.__nodeFs.statSync(path, options);
+    } catch (error) {
+      callback(error);
+      return;
+    }
+    callback(null, result);
+  });
+};
+globalThis.__nodeFs.lstat = (value, options, callback) => {
+  if (typeof options === "function") {
+    callback = options;
+    options = undefined;
+  }
+  if (typeof callback !== "function") {
+    const error = new TypeError(
+      'The "callback" argument must be of type function',
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  const path = nodeFsPath(value);
+  queueMicrotask(() => {
+    try {
+      callback(null, globalThis.__nodeFs.lstatSync(path, options));
+    } catch (error) {
+      callback(error);
+      return;
+    }
+  });
+};
 
 class __nodeFsUtf8Stream extends NodeWritable {
   constructor(options = {}) {

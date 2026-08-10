@@ -23,7 +23,7 @@ globalThis.__quenchResolveParsedOpaque = (r, f, t) => {
   if (dot) return r.parse(`${match[1]}:`);
   if (t.startsWith("/")) {
     return r.parse(
-      globalThis.__quenchNormalizeOpaqueRelative(match[1], "/", t)
+      globalThis.__quenchNormalizeOpaqueRelative(match[1], "/", t),
     );
   }
   if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(t)) return null;
@@ -73,27 +73,27 @@ globalThis.__quenchResolveParsedWebRelative = (r, f, t) => {
   const targetPath = t.split(/[?#]/)[0];
   const suffix = t.slice(targetPath.length);
   const normalized = globalThis.__quenchNormalizeAbsoluteTarget(
-    `${base}${targetPath}`
+    `${base}${targetPath}`,
   );
   const trailing = globalThis.__quenchParsedWebTrailing(targetPath, normalized);
   return r.parse(`${origin}${normalized}${trailing}${suffix}`);
 };
 globalThis.__quenchParsedWebTrailing = (target, normalized) =>
   (target.endsWith("/") || target === "." || target === "..") &&
-  !normalized.endsWith("/")
+    !normalized.endsWith("/")
     ? "/"
     : "";
 globalThis.__quenchParsedParameterBase = (path, target) => {
   const parameter = path.indexOf(";");
   return parameter >= 0 &&
-    path.slice(parameter).includes("/") &&
-    !target.startsWith("../")
+      path.slice(parameter).includes("/") &&
+      !target.startsWith("../")
     ? `${path}/`
     : null;
 };
 globalThis.__quenchResolveParsedAbsoluteOpaque = (r, f, t) =>
   /^[A-Za-z][A-Za-z0-9+.-]*:[^/]/.test(t) &&
-  !/^([A-Za-z][A-Za-z0-9+.-]*):[#.]/.test(t)
+    !/^([A-Za-z][A-Za-z0-9+.-]*):[#.]/.test(t)
     ? r.parse(t)
     : null;
 globalThis.__quenchResolveParsedSameSchemeOpaque = (r, f, t) => {
@@ -124,12 +124,12 @@ globalThis.__quenchResolveParsedFileFragment = (result, from, to) => {
     return result.parse(
       `${
         source.startsWith("file:///") ? `file:/${source.slice(8)}` : source
-      }${to}`
+      }${to}`,
     );
   }
   const path = globalThis.__quenchResolveParsedPath(
     from.pathname || source,
-    to
+    to,
   );
   const trailing = globalThis.__quenchParsedWebTrailing(to, path);
   return result.parse(`file:${path}${trailing}`);
@@ -171,8 +171,8 @@ globalThis.__quenchResolveParsedFragmentBase = (result, from, to) => {
     to === ""
       ? `${from.pathname}${from.hash}`
       : to.startsWith("#")
-        ? `${from.pathname}${to}`
-        : to
+      ? `${from.pathname}${to}`
+      : to,
   );
 };
 globalThis.__quenchResolveParsedAbsoluteTarget = (result, from, to) => {
@@ -192,7 +192,7 @@ globalThis.__quenchValidateFileUrlHost = (input, options) => {
     options?.windows !== true
   ) {
     throw Object.assign(new TypeError("File URL host must be empty"), {
-      code: "ERR_INVALID_FILE_URL_HOST"
+      code: "ERR_INVALID_FILE_URL_HOST",
     });
   }
 };
@@ -202,13 +202,14 @@ globalThis.__quenchPreserveEmptyQuery = (parsed, input) => {
   Object.assign(parsed, {
     search: "?",
     path: `${parsed.pathname || ""}?`,
-    href: `${parsed.href || ""}?`
+    href: `${parsed.href || ""}?`,
   });
 };
 globalThis.__quenchEncodeLegacyPath = (parsed) => {
   if (parsed.pathname) {
-    parsed.pathname = parsed.pathname.replace(/[" <>]/g, (value) =>
-      encodeURIComponent(value)
+    parsed.pathname = parsed.pathname.replace(
+      /[" <>]/g,
+      (value) => encodeURIComponent(value),
     );
   }
 };
@@ -227,8 +228,8 @@ globalThis.__quenchWhatwgFormat = (input) =>
     : input.searchParams &&
         input.href &&
         !Object.prototype.hasOwnProperty.call(input, "auth")
-      ? input.href
-      : null;
+    ? input.href
+    : null;
 globalThis.__quenchSpecialUrlProtocol = (protocol) =>
   /^(?:http|https|ftp|file):$/.test(protocol);
 globalThis.__quenchResolveStringFragmentOnly = (from, to) =>
@@ -249,11 +250,11 @@ globalThis.__nodeUrlEncode = (value) =>
   encodeURIComponent(
     String(value)
       .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, "\uFFFD")
-      .replace(/(^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "$1\uFFFD")
+      .replace(/(^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "$1\uFFFD"),
   ).replace(/~/g, "%7E");
 globalThis.__nodeInvalidThis = () => {
   const error = new TypeError(
-    'Value of "this" must be of type URLSearchParams'
+    'Value of "this" must be of type URLSearchParams',
   );
   error.code = "ERR_INVALID_THIS";
   throw error;
@@ -263,7 +264,7 @@ globalThis.__nodeURLFormEncode = (value) =>
     .__nodeUrlEncode(value)
     .replace(
       /[!'()]/g,
-      (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`
+      (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
     );
 globalThis.__nodeURLDecode = (value) => {
   try {
@@ -288,9 +289,9 @@ globalThis.__nodeURLSearchParams.prototype.toString =
           return globalThis.__nodeInvalidThis();
         }
         return __nodeURLSearchParamsToString.call(this);
-      }
+      },
     },
-    "toString"
+    "toString",
   ).value;
 globalThis.__nodeURLSearchParams.prototype.sort ||=
   Object.getOwnPropertyDescriptor(
@@ -300,27 +301,29 @@ globalThis.__nodeURLSearchParams.prototype.sort ||=
           return globalThis.__nodeInvalidThis();
         }
         this._pairs.sort(([left], [right]) => left.localeCompare(right));
-      }
+      },
     },
-    "sort"
+    "sort",
   ).value;
-for (const name of [
-  "append",
-  "delete",
-  "get",
-  "getAll",
-  "has",
-  "set",
-  "sort",
-  "toString"
-]) {
+for (
+  const name of [
+    "append",
+    "delete",
+    "get",
+    "getAll",
+    "has",
+    "set",
+    "sort",
+    "toString",
+  ]
+) {
   const descriptor = Object.getOwnPropertyDescriptor(
     globalThis.__nodeURLSearchParams.prototype,
-    name
+    name,
   );
   Object.defineProperty(globalThis.__nodeURLSearchParams.prototype, name, {
     ...descriptor,
-    enumerable: true
+    enumerable: true,
   });
 }
 for (const name of ["append", "delete", "get", "getAll", "has", "set"]) {
@@ -337,21 +340,21 @@ for (const name of ["append", "delete", "get", "getAll", "has", "set"]) {
           const error = new TypeError(
             `The ${label} argument${
               required === 2 ? "s" : ""
-            } must be specified`
+            } must be specified`,
           );
           error.code = "ERR_MISSING_ARGS";
           throw error;
         }
         return original.apply(this, args);
-      }
+      },
     },
-    name
+    name,
   ).value;
   Object.defineProperty(globalThis.__nodeURLSearchParams.prototype, name, {
     configurable: true,
     enumerable: true,
     value: method,
-    writable: true
+    writable: true,
   });
 }
 const __nodeURLSearchIterator = (values) => {
@@ -394,10 +397,10 @@ const __nodeURLSearchIteratorPrototype = {
       return `URLSearchParams Iterator {\n  ${rendered.join(",\n  ")} }`;
     }
     return `URLSearchParams Iterator { ${rendered.join(", ")} }`;
-  }
+  },
 };
 Object.defineProperty(__nodeURLSearchIteratorPrototype, Symbol.toStringTag, {
-  value: "URLSearchParams Iterator"
+  value: "URLSearchParams Iterator",
 });
 const __nodeURLSearchValidateThis = (value) => {
   if (!(value instanceof globalThis.__nodeURLSearchParams)) {
@@ -409,29 +412,29 @@ const __nodeURLSearchEntries = Object.getOwnPropertyDescriptor(
   {
     entries() {
       return __nodeURLSearchIterator(__nodeURLSearchValidateThis(this)._pairs);
-    }
+    },
   },
-  "entries"
+  "entries",
 ).value;
 const __nodeURLSearchKeys = Object.getOwnPropertyDescriptor(
   {
     keys() {
       return __nodeURLSearchIterator(
-        __nodeURLSearchValidateThis(this)._pairs.map(([key]) => key)
+        __nodeURLSearchValidateThis(this)._pairs.map(([key]) => key),
       );
-    }
+    },
   },
-  "keys"
+  "keys",
 ).value;
 const __nodeURLSearchValues = Object.getOwnPropertyDescriptor(
   {
     values() {
       return __nodeURLSearchIterator(
-        __nodeURLSearchValidateThis(this)._pairs.map(([, value]) => value)
+        __nodeURLSearchValidateThis(this)._pairs.map(([, value]) => value),
       );
-    }
+    },
   },
-  "values"
+  "values",
 ).value;
 globalThis.__nodeURLSearchParams.prototype.entries = __nodeURLSearchEntries;
 globalThis.__nodeURLSearchParams.prototype.keys = __nodeURLSearchKeys;
@@ -444,7 +447,7 @@ globalThis.__nodeURLSearchParams.prototype.forEach =
       forEach(callback, thisArg) {
         if (typeof callback !== "function") {
           const error = new TypeError(
-            "The callback argument must be a function"
+            "The callback argument must be a function",
           );
           error.code = "ERR_INVALID_ARG_TYPE";
           throw error;
@@ -452,9 +455,9 @@ globalThis.__nodeURLSearchParams.prototype.forEach =
         this._pairs.forEach(([key, value]) =>
           callback.call(thisArg, value, key, this)
         );
-      }
+      },
     },
-    "forEach"
+    "forEach",
   ).value;
 const __nodeURLSearchInspect = Object.getOwnPropertyDescriptor(
   {
@@ -464,19 +467,19 @@ const __nodeURLSearchInspect = Object.getOwnPropertyDescriptor(
       }
       if (depth < 0) return "[Object]";
       const values = this._pairs.map(
-        ([key, value]) => `'${key}' => '${value}'`
+        ([key, value]) => `'${key}' => '${value}'`,
       );
       if (!values.length) return "URLSearchParams {}";
       if (options.breakLength <= 1) {
         return `URLSearchParams {\n  ${values.join(",\n  ")} }`;
       }
       return `URLSearchParams { ${values.join(", ")} }`;
-    }
+    },
   },
-  "inspect"
+  "inspect",
 ).value;
 Object.defineProperty(__nodeURLSearchInspect, "name", {
-  value: "[nodejs.util.inspect.custom]"
+  value: "[nodejs.util.inspect.custom]",
 });
 globalThis.__nodeURLSearchParams.prototype[
   Symbol.for("nodejs.util.inspect.custom")

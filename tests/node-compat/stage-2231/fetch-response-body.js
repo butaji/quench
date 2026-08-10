@@ -1,6 +1,6 @@
 const response = new Response('{"ok":true}', {
   status: 201,
-  headers: { "content-type": "application/json" }
+  headers: { "content-type": "application/json" },
 });
 
 (async () => {

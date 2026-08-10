@@ -14,7 +14,7 @@ let mapCalls = 0;
 const mapped = Readable.from(
   (async function* () {
     while (true) yield 1;
-  })()
+  })(),
 ).map((value) => {
   mapCalls++;
   return value;
@@ -24,7 +24,7 @@ let filterCalls = 0;
 const filtered = Readable.from(
   (async function* () {
     while (true) yield 1;
-  })()
+  })(),
 ).filter((value) => {
   filterCalls++;
   return value === 1;
