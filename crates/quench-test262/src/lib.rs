@@ -25,6 +25,8 @@ pub struct TestMetadata {
     pub is_module: bool,
     /// Whether the test uses the asynchronous `$DONE` completion protocol.
     pub is_async: bool,
+    /// Whether the test must run without default or declared harness sources.
+    pub is_raw: bool,
     /// Whether the runner must prepend a strict directive.
     pub only_strict: bool,
     /// Harness files requested by the test, in declaration order.
@@ -47,6 +49,7 @@ impl TestMetadata {
                 let flags = list_after_colon(trimmed);
                 metadata.is_module = flags.iter().any(|flag| flag == "module");
                 metadata.is_async = flags.iter().any(|flag| flag == "async");
+                metadata.is_raw = flags.iter().any(|flag| flag == "raw");
                 metadata.only_strict = flags.iter().any(|flag| flag == "onlyStrict");
                 in_negative = false;
             } else if trimmed.starts_with("includes:") {
@@ -186,15 +189,17 @@ impl<H: Test262Host> Test262Runner<H> {
     {
         let metadata = TestMetadata::parse(source)?;
         let mut composed = String::new();
-        let mut includes = vec!["assert.js".to_string(), "sta.js".to_string()];
-        for include in &metadata.includes {
-            if !includes.contains(include) {
-                includes.push(include.clone());
+        if !metadata.is_raw {
+            let mut includes = vec!["assert.js".to_string(), "sta.js".to_string()];
+            for include in &metadata.includes {
+                if !includes.contains(include) {
+                    includes.push(include.clone());
+                }
             }
-        }
-        for include in &includes {
-            composed.push_str(&load(include)?);
-            composed.push('\n');
+            for include in &includes {
+                composed.push_str(&load(include)?);
+                composed.push('\n');
+            }
         }
         if metadata.only_strict {
             composed.push_str("\"use strict\";\n");
