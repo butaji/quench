@@ -57,6 +57,34 @@ pub fn get_property(value: &Value, key: &str) -> Value {
     }
 }
 
+pub fn get_property_result(value: &Value, key: &str) -> Result<Value, VmError> {
+    let Value::Object(properties) = value else {
+        return Ok(get_property(value, key));
+    };
+    let Some(getter) = accessor_getter(properties, key) else {
+        return Ok(get_property(value, key));
+    };
+    if matches!(getter, Value::Undefined) {
+        return Ok(Value::Undefined);
+    }
+    crate::functions::execute_target(&getter, value, &[])
+}
+
+fn accessor_getter(properties: &[(String, Value)], key: &str) -> Option<Value> {
+    let descriptor_key = crate::builtins::descriptor_key(key);
+    let (_, Value::Object(descriptor)) = properties
+        .iter()
+        .rev()
+        .find(|(name, _)| name == &descriptor_key)?
+    else {
+        return None;
+    };
+    descriptor
+        .iter()
+        .rev()
+        .find_map(|(name, value)| (name == "get").then(|| value.clone()))
+}
+
 fn host_capability_property(value: &Value, capability: HostCapabilityRef, key: &str) -> Value {
     let builtin = Builtin::HostCapability(capability.kind);
     let property = crate::builtins::property(builtin, key);
