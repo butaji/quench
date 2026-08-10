@@ -48,9 +48,26 @@ pub(crate) fn construct_value(
     target: &Value,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
+    construct_with_new_target(target, target, arguments)
+}
+
+pub(crate) fn construct_super(
+    target: &Value,
+    new_target: &std::rc::Rc<crate::value::FunctionValue>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let new_target = Value::Function(std::rc::Rc::clone(new_target));
+    construct_with_new_target(target, &new_target, arguments)
+}
+
+fn construct_with_new_target(
+    target: &Value,
+    new_target: &Value,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
     match target {
         Value::Builtin(builtin) => construct_builtin(*builtin, arguments),
-        Value::Function(function) => construct_function(function, target, arguments),
+        Value::Function(function) => construct_function(function, new_target, arguments),
         Value::BoundFunction(bound) => construct_bound(bound, target, arguments),
         _ => Err(crate::vm::not_callable()),
     }
@@ -304,8 +321,23 @@ fn construct_function(
     if !crate::functions::is_constructible(function) {
         return Err(crate::vm::not_callable());
     }
-    if let Some(super_constructor) = derived_constructor(function) {
-        return construct_value(&super_constructor, arguments);
+    if is_default_derived_constructor(function) {
+        let super_constructor = derived_constructor(function)?;
+        return construct_with_new_target(&super_constructor, target, arguments);
+    }
+    if derived_constructor(function).is_ok() {
+        let _context = crate::super_scope::Guard::install(function, &Value::Undefined);
+        let (result, final_this) =
+            crate::functions::execute_construct(function, &Value::Undefined, arguments)?;
+        if crate::value::is_object(&result) {
+            return Ok(result);
+        }
+        if crate::value::is_object(&final_this) {
+            return Ok(final_this);
+        }
+        return Err(crate::value::error::throw_reference_error(
+            "Derived constructor did not initialize this",
+        ));
     }
     let object = initialize_instance_fields(function, constructor_receiver(target))?;
     let (result, final_this) = crate::functions::execute_construct(function, &object, arguments)?;
@@ -318,12 +350,14 @@ fn construct_function(
     }
 }
 
-fn initialize_instance_fields(
+pub(crate) fn initialize_instance_fields(
     function: &crate::value::FunctionValue,
     mut receiver: Value,
 ) -> Result<Value, crate::execute::VmError> {
     for field in function.instance_fields.borrow().iter() {
+        let previous = receiver.clone();
         receiver = initialize_instance_field(field, receiver)?;
+        crate::locals::replace_value(&previous, &receiver);
     }
     Ok(receiver)
 }
@@ -359,13 +393,24 @@ fn define_instance_field(
     crate::builtins::define_own_property(&receiver, key, &descriptor)
 }
 
-fn derived_constructor(function: &crate::value::FunctionValue) -> Option<Value> {
+pub(crate) fn derived_constructor(
+    function: &crate::value::FunctionValue,
+) -> Result<Value, crate::execute::VmError> {
     function
         .properties
         .borrow()
         .iter()
         .rev()
         .find_map(|(name, value)| (name == "\0derived_constructor").then(|| value.clone()))
+        .ok_or_else(|| crate::value::error::throw_reference_error("super is unavailable"))
+}
+
+fn is_default_derived_constructor(function: &crate::value::FunctionValue) -> bool {
+    function
+        .properties
+        .borrow()
+        .iter()
+        .any(|(name, _)| name == "\0default_derived_constructor")
 }
 
 fn constructor_receiver(target: &Value) -> Value {

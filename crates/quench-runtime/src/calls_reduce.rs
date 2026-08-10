@@ -18,6 +18,9 @@ pub(crate) fn reduce_call(
     if is_direct_eval(call, locals) {
         return reduce_direct_eval(call, ops, facts, next, locals);
     }
+    if matches!(call.callee, Expression::Super(_)) {
+        return reduce_super_constructor_call(call, ops, facts, next, locals);
+    }
     if let Some(result) = crate::properties::reduce_method_call(call, ops, facts, next, locals) {
         return Some(result);
     }
@@ -30,6 +33,19 @@ pub(crate) fn reduce_call(
         args,
         spreads,
     });
+    Some(dst)
+}
+
+fn reduce_super_constructor_call(
+    call: &CallExpression<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<u16> {
+    let (args, spreads) = reduce_call_arguments(call, ops, facts, next, locals)?;
+    let dst = take_register(next);
+    ops.push(Op::CallSuperConstructor { dst, args, spreads });
     Some(dst)
 }
 
