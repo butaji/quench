@@ -18,6 +18,10 @@ pub(crate) fn delete_property(target: Value, key: &str) -> (Value, bool) {
         Value::Array(values) if key != "length" => (Value::Array(values), true),
         Value::Array(values) => (Value::Array(values), false),
         Value::Function(function) => delete_function_property(function, key),
+        Value::Builtin(builtin) => (
+            Value::Builtin(builtin),
+            crate::builtins::props::is_builtin_deletable(builtin, key),
+        ),
         value => (value, true),
     }
 }
