@@ -295,12 +295,22 @@ pub fn reduce_function_declaration(
         body_ops,
         parameter_count,
         captures,
-        strictness,
-        function.r#async,
-        function.params.rest.is_none(),
+        function_metadata(function, strictness),
     ));
     store_function(ops, slot, register);
     Ok(())
+}
+
+fn function_metadata(
+    function: &oxc::ast::ast::Function<'_>,
+    strictness: crate::ops::FunctionStrictness,
+) -> functions::FunctionMetadata {
+    functions::FunctionMetadata {
+        kind: functions::function_kind(function),
+        strictness,
+        is_async: function.r#async,
+        mapped_arguments: function.params.rest.is_none(),
+    }
 }
 
 fn store_function(ops: &mut Vec<Op>, slot: u16, src: u16) {
@@ -312,19 +322,17 @@ fn function_declaration_op(
     body: Vec<Op>,
     params: u16,
     captures: u16,
-    strictness: crate::ops::FunctionStrictness,
-    is_async: bool,
-    mapped_arguments: bool,
+    metadata: functions::FunctionMetadata,
 ) -> Op {
     Op::MakeFunctionWithKind {
         dst,
         body,
         params,
         captures,
-        kind: crate::ops::FunctionKind::Ordinary,
-        strictness,
-        is_async,
-        mapped_arguments,
+        kind: metadata.kind,
+        strictness: metadata.strictness,
+        is_async: metadata.is_async,
+        mapped_arguments: metadata.mapped_arguments,
     }
 }
 
