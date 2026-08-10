@@ -121,7 +121,22 @@ pub(crate) fn dynamic_property_key(
 ) -> Result<String, crate::execute::VmError> {
     match value {
         crate::value::Value::String(value) => Ok(value.clone()),
-        crate::value::Value::Number(value) => Ok(value.to_string()),
+        crate::value::Value::Number(value) => {
+            if value.is_nan() {
+                Ok("NaN".to_string())
+            } else if value.is_infinite() {
+                Ok(if value.is_sign_negative() {
+                    "-Infinity"
+                } else {
+                    "Infinity"
+                }
+                .to_string())
+            } else if *value == 0.0 {
+                Ok("0".to_string())
+            } else {
+                Ok(value.to_string())
+            }
+        }
         crate::value::Value::Boolean(value) => Ok(value.to_string()),
         crate::value::Value::Null => Ok("null".to_string()),
         crate::value::Value::Undefined => Ok("undefined".to_string()),
@@ -214,10 +229,12 @@ fn store_object_binding(
     ops: &mut Vec<Op>,
     locals: &HashMap<String, u16>,
 ) {
-    let Expression::Identifier(identifier) = expression else {
-        return;
+    let name = match expression {
+        Expression::Identifier(identifier) => identifier.name.as_str(),
+        Expression::ThisExpression(_) => "this",
+        _ => return,
     };
-    let Some(slot) = locals.get(identifier.name.as_str()) else {
+    let Some(slot) = locals.get(name) else {
         return;
     };
     ops.push(Op::StoreLocal {
