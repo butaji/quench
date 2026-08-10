@@ -64,8 +64,49 @@ impl Environment {
             let mut value = slot.borrow_mut();
             if same_identity(&value, old) {
                 *value = new.clone();
+            } else {
+                replace_nested(&mut value, old, new);
             }
         }
+    }
+}
+
+fn replace_nested(value: &mut Value, old: &Value, new: &Value) {
+    if !contains_nested(value, old) {
+        return;
+    }
+    let values = match value {
+        Value::Array(values) => Rc::make_mut(values),
+        Value::Object(values) => {
+            for (_, value) in Rc::make_mut(values) {
+                replace_alias(value, old, new);
+            }
+            return;
+        }
+        _ => return,
+    };
+    for value in values {
+        replace_alias(value, old, new);
+    }
+}
+
+fn contains_nested(value: &Value, target: &Value) -> bool {
+    match value {
+        Value::Array(values) => values
+            .iter()
+            .any(|value| same_identity(value, target) || contains_nested(value, target)),
+        Value::Object(values) => values
+            .iter()
+            .any(|(_, value)| same_identity(value, target) || contains_nested(value, target)),
+        _ => false,
+    }
+}
+
+fn replace_alias(value: &mut Value, old: &Value, new: &Value) {
+    if same_identity(value, old) {
+        *value = new.clone();
+    } else {
+        replace_nested(value, old, new);
     }
 }
 

@@ -51,7 +51,7 @@ pub(crate) fn construct_value(
     match target {
         Value::Builtin(builtin) => construct_builtin(*builtin, arguments),
         Value::Function(function) => construct_function(function, target, arguments),
-        _ => Err(crate::execute::VmError::NotCallable),
+        _ => Err(crate::vm::not_callable()),
     }
 }
 
@@ -63,6 +63,7 @@ fn construct_builtin(
         return construct_error(&builtin, arguments);
     }
     match builtin {
+        crate::ops::Builtin::Function => crate::functions_dynamic::construct(arguments),
         crate::ops::Builtin::Array => Ok(crate::builtins::array(arguments)),
         crate::ops::Builtin::ArrayBuffer => construct_array_buffer(arguments),
         crate::ops::Builtin::Float64Array => construct_float64_array(arguments),
@@ -82,18 +83,26 @@ fn construct_builtin(
         crate::ops::Builtin::Date => crate::date::execute(builtin, None, arguments)
             .unwrap_or_else(|| Ok(crate::builtins::object(arguments))),
         crate::ops::Builtin::RegExp => Ok(construct_regexp(arguments)),
-        crate::ops::Builtin::IntlNumberFormat
-        | crate::ops::Builtin::IntlDateTimeFormat
-        | crate::ops::Builtin::IntlCollator
-        | crate::ops::Builtin::IntlPluralRules
-        | crate::ops::Builtin::IntlListFormat
-        | crate::ops::Builtin::IntlRelativeTimeFormat
-        | crate::ops::Builtin::IntlSegmenter
-        | crate::ops::Builtin::IntlDisplayNames
-        | crate::ops::Builtin::IntlLocale => crate::intl::execute(builtin, arguments, None)
+        _ if is_intl_constructor(builtin) => crate::intl::execute(builtin, arguments, None)
             .unwrap_or_else(|| Ok(crate::builtins::object(arguments))),
-        _ => Err(crate::execute::VmError::NotCallable),
+        _ => Err(crate::vm::not_callable()),
     }
+}
+
+fn is_intl_constructor(builtin: crate::ops::Builtin) -> bool {
+    use crate::ops::Builtin;
+    matches!(
+        builtin,
+        Builtin::IntlNumberFormat
+            | Builtin::IntlDateTimeFormat
+            | Builtin::IntlCollator
+            | Builtin::IntlPluralRules
+            | Builtin::IntlListFormat
+            | Builtin::IntlRelativeTimeFormat
+            | Builtin::IntlSegmenter
+            | Builtin::IntlDisplayNames
+            | Builtin::IntlLocale
+    )
 }
 
 fn construct_regexp(arguments: &[Value]) -> Value {
@@ -125,9 +134,7 @@ fn is_error_builtin(builtin: crate::ops::Builtin) -> bool {
 }
 
 fn construct_promise(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
-    let executor = arguments
-        .first()
-        .ok_or(crate::execute::VmError::NotCallable)?;
+    let executor = arguments.first().ok_or_else(crate::vm::not_callable)?;
     crate::promise::construct_promise(executor)
 }
 
@@ -216,7 +223,7 @@ fn construct_function(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     if !crate::functions::is_constructible(function) {
-        return Err(crate::execute::VmError::NotCallable);
+        return Err(crate::vm::not_callable());
     }
     let object = Value::Object(std::rc::Rc::new(vec![(
         "constructor".to_string(),
