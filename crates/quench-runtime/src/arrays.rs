@@ -178,6 +178,9 @@ fn direct_property(values: &crate::value::ArrayData, key: &str) -> Option<Value>
     if values.is_arguments() && key == "constructor" {
         return Some(Value::Builtin(crate::ops::Builtin::Object));
     }
+    if key == "constructor" {
+        return Some(Value::Builtin(crate::ops::Builtin::Array));
+    }
     (key == "length").then(|| Value::Number(values.logical_len() as f64))
 }
 

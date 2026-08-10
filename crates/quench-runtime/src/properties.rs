@@ -283,7 +283,7 @@ fn own_keys(source: &crate::value::Value) -> Result<Vec<String>, crate::execute:
             .filter(|index| values.has_index(*index))
             .map(|index| index.to_string())
             .collect()),
-        crate::value::Value::String(value) => Ok((0..value.chars().count())
+        crate::value::Value::String(value) => Ok((0..crate::strings::utf16_len(value))
             .map(|index| index.to_string())
             .collect()),
         _ => {

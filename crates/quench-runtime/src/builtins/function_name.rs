@@ -57,6 +57,10 @@ fn define_function_name(function: &crate::value::FunctionValue, value: Value) {
     ])));
     let mut properties = function.properties.borrow_mut();
     properties.retain(|(name, _)| name != "name" && name != &descriptor_key("name"));
-    properties.push(("name".to_string(), value));
-    properties.push((descriptor_key("name"), descriptor));
+    let index = properties
+        .iter()
+        .position(|(name, _)| name == "prototype")
+        .unwrap_or(properties.len());
+    properties.insert(index, ("name".to_string(), value));
+    properties.insert(index + 1, (descriptor_key("name"), descriptor));
 }

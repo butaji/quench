@@ -134,6 +134,9 @@ pub enum Op {
         src: u16,
         strict: bool,
     },
+    CheckStrictName {
+        key: String,
+    },
     SetFunctionName {
         function: u16,
         name: String,
