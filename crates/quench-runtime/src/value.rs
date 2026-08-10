@@ -6,6 +6,17 @@ use crate::ops::{
     Builtin, Constant, FunctionKind, FunctionStrictness, HostCapabilityRef, Op, RealmId,
 };
 
+pub(crate) mod error {
+    use super::Value;
+
+    pub(crate) fn throw_type_error(message: &str) -> crate::execute::VmError {
+        crate::execute::VmError::Thrown(crate::builtins::error(
+            crate::ops::Builtin::TypeError,
+            &[Value::String(message.to_string())],
+        ))
+    }
+}
+
 /// Identity-bearing host capability kept outside the JavaScript value space.
 #[derive(Clone, Debug)]
 pub struct HostCapabilityValue {
@@ -159,12 +170,38 @@ pub enum Value {
 pub struct ArrayData {
     values: Vec<Value>,
     length: usize,
+    properties: Vec<(String, Value)>,
+    arguments: bool,
+    strict_arguments: bool,
+    mapped: Vec<Option<Rc<RefCell<Value>>>>,
 }
 
 impl ArrayData {
     pub fn new(values: Vec<Value>) -> Self {
         let length = values.len();
-        Self { values, length }
+        Self {
+            values,
+            length,
+            properties: Vec::new(),
+            arguments: false,
+            strict_arguments: false,
+            mapped: Vec::new(),
+        }
+    }
+
+    pub(crate) fn new_arguments(values: Vec<Value>, strict: bool) -> Self {
+        let mut data = Self::new(values);
+        data.arguments = true;
+        data.strict_arguments = strict;
+        data
+    }
+
+    pub(crate) fn is_arguments(&self) -> bool {
+        self.arguments
+    }
+
+    pub(crate) fn is_strict_arguments(&self) -> bool {
+        self.strict_arguments
     }
 
     pub fn logical_len(&self) -> usize {
@@ -177,6 +214,9 @@ impl ArrayData {
     }
 
     pub fn set_index(&mut self, index: usize, value: Value) {
+        if let Some(Some(binding)) = self.mapped.get(index) {
+            *binding.borrow_mut() = value.clone();
+        }
         self.values
             .resize(index.saturating_add(1), Value::Undefined);
         self.values[index] = value;
@@ -185,6 +225,43 @@ impl ArrayData {
 
     pub(crate) fn values_mut(&mut self) -> &mut [Value] {
         &mut self.values
+    }
+
+    pub(crate) fn get_index(&self, index: usize) -> Option<Value> {
+        self.mapped
+            .get(index)
+            .and_then(Option::as_ref)
+            .map(|binding| binding.borrow().clone())
+            .or_else(|| self.values.get(index).cloned())
+    }
+
+    pub(crate) fn map_index(&mut self, index: usize, binding: Rc<RefCell<Value>>) {
+        self.mapped.resize(index.saturating_add(1), None);
+        self.mapped[index] = Some(binding);
+    }
+
+    pub(crate) fn property(&self, key: &str) -> Option<Value> {
+        self.properties
+            .iter()
+            .rev()
+            .find_map(|(name, value)| (name == key).then(|| value.clone()))
+    }
+
+    pub(crate) fn set_property(&mut self, key: &str, value: Value) {
+        if let Some((_, current)) = self
+            .properties
+            .iter_mut()
+            .rev()
+            .find(|(name, _)| name == key)
+        {
+            *current = value;
+        } else {
+            self.properties.push((key.to_string(), value));
+        }
+    }
+
+    pub(crate) fn delete_property(&mut self, key: &str) {
+        self.properties.retain(|(name, _)| name != key);
     }
 }
 

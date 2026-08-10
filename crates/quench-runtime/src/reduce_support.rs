@@ -4,11 +4,13 @@ use std::collections::HashMap;
 
 pub(crate) fn function_strictness(
     body: &oxc::ast::ast::FunctionBody<'_>,
+    inherited: bool,
 ) -> crate::ops::FunctionStrictness {
-    if body
-        .directives
-        .iter()
-        .any(|directive| directive.directive.as_str() == "use strict")
+    if inherited
+        || body
+            .directives
+            .iter()
+            .any(|directive| directive.directive.as_str() == "use strict")
     {
         crate::ops::FunctionStrictness::Strict
     } else {

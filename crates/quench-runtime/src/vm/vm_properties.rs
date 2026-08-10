@@ -74,6 +74,11 @@ fn function_property(function: &crate::value::FunctionValue, key: &str) -> Value
 }
 
 pub fn get_property_result(value: &Value, key: &str) -> Result<Value, VmError> {
+    if matches!(value, Value::Array(values) if values.is_strict_arguments() && key == "callee") {
+        return Err(crate::value::error::throw_type_error(
+            "'callee' is unavailable on strict arguments",
+        ));
+    }
     let Value::Object(properties) = value else {
         return Ok(get_property(value, key));
     };
