@@ -79,6 +79,18 @@ pub fn new_promise() -> Value {
     Value::Promise(Rc::new(PromiseData::default()))
 }
 
+/// Convert an async function's completion into its result Promise.
+pub(crate) fn from_async_completion(completion: Result<Value, VmError>) -> Value {
+    let promise = Rc::new(PromiseData::default());
+    match completion {
+        Ok(value) => resolve_promise(&promise, value),
+        Err(VmError::Thrown(reason)) => reject_promise(&promise, reason),
+        Err(VmError::Suspended(_)) => {}
+        Err(_) => reject_promise(&promise, Value::Undefined),
+    }
+    Value::Promise(promise)
+}
+
 fn queue_promise(promise: &Rc<PromiseData>) {
     MICROTASK_QUEUE.with(|queue| queue.borrow_mut().push_back(Rc::clone(promise)));
 }

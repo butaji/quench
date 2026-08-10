@@ -268,7 +268,11 @@ pub(crate) fn execute(
     arguments: &[crate::value::Value],
 ) -> Result<crate::value::Value, crate::execute::VmError> {
     let registers = build_registers(function, this_value, arguments);
-    crate::execute::execute_with_registers(&function.body, registers)
+    let completion = crate::execute::execute_with_registers(&function.body, registers);
+    if function.is_async {
+        return Ok(crate::promise::from_async_completion(completion));
+    }
+    completion
 }
 
 /// Execute a constructor, returning both its result and the object bound to
