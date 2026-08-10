@@ -261,6 +261,8 @@ fn execute_simple_builtin(
                 Value::Float64Array(_)
                     | Value::Float32Array(_)
                     | Value::Int8Array(_)
+                    | Value::Int16Array(_)
+                    | Value::Uint16Array(_)
                     | Value::Int32Array(_)
                     | Value::Uint8Array(_)
                     | Value::Uint32Array(_)
@@ -530,6 +532,7 @@ pub fn get_property(value: &Value, key: &str) -> Value {
         Float32Array(view) => float32_array_property(view, key),
         Int8Array(view) => int8_array_property(view, key),
         Int16Array(view) => int16_array_property(view, key),
+        Uint16Array(view) => uint16_array_property(view, key),
         Int32Array(view) => int32_array_property(view, key),
         Uint8Array(view) => uint8_array_property(view, key),
         Uint32Array(view) => uint32_array_property(view, key),
@@ -644,6 +647,20 @@ fn int32_array_property(view: &crate::value::Int32ArrayData, key: &str) -> Value
             Value::Number(crate::value::Int32ArrayData::BYTES_PER_ELEMENT as f64)
         }
         _ => crate::builtins::property(Builtin::Int32ArrayPrototype, key),
+    }
+}
+
+fn uint16_array_property(view: &crate::value::Uint16ArrayData, key: &str) -> Value {
+    let detached = view.buffer.byte_length() == 0 && view.length != 0;
+    match key {
+        "buffer" => Value::ArrayBuffer(view.buffer.clone()),
+        "byteLength" => Value::Number(if detached { 0 } else { view.byte_length() } as f64),
+        "byteOffset" => Value::Number(if detached { 0 } else { view.byte_offset } as f64),
+        "length" => Value::Number(if detached { 0 } else { view.length } as f64),
+        "BYTES_PER_ELEMENT" => {
+            Value::Number(crate::value::Uint16ArrayData::BYTES_PER_ELEMENT as f64)
+        }
+        _ => crate::builtins::property(Builtin::Uint16ArrayPrototype, key),
     }
 }
 
@@ -953,6 +970,13 @@ fn builtin_property(builtin: crate::ops::Builtin, key: &str) -> Value {
         && key == "BYTES_PER_ELEMENT"
     {
         return Value::Number(crate::value::Int16ArrayData::BYTES_PER_ELEMENT as f64);
+    }
+    if matches!(
+        builtin,
+        Builtin::Uint16Array | Builtin::Uint16ArrayPrototype
+    ) && key == "BYTES_PER_ELEMENT"
+    {
+        return Value::Number(crate::value::Uint16ArrayData::BYTES_PER_ELEMENT as f64);
     }
     if matches!(builtin, Builtin::Int32Array | Builtin::Int32ArrayPrototype)
         && key == "BYTES_PER_ELEMENT"
