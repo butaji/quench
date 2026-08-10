@@ -350,6 +350,28 @@ pub fn reduce_statement(
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
 ) -> Result<Option<u16>, Vec<String>> {
+    if statement.is_module_declaration() {
+        super::reduce_module::reduce_module_declaration(
+            statement,
+            ops,
+            facts,
+            next_register,
+            next_slot,
+            locals,
+        )
+    } else {
+        reduce_plain_statement(statement, ops, facts, next_register, next_slot, locals)
+    }
+}
+
+fn reduce_plain_statement(
+    statement: &Statement<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    next_slot: &mut u16,
+    locals: &mut HashMap<String, u16>,
+) -> Result<Option<u16>, Vec<String>> {
     match statement {
         Statement::EmptyStatement(_) => Ok(None),
         Statement::BlockStatement(block) => {
@@ -360,19 +382,24 @@ pub fn reduce_statement(
         | Statement::ClassDeclaration(_) => {
             reduce_declaration_statement(statement, ops, facts, next_register, next_slot, locals)
         }
-        Statement::ReturnStatement(return_statement) => {
-            control_flow::reduce_return(return_statement, ops, facts, next_register, locals)
+        Statement::ReturnStatement(rs) => {
+            control_flow::reduce_return(rs, ops, facts, next_register, locals)
         }
-        Statement::ThrowStatement(statement) => {
-            control_flow::reduce_throw(statement, ops, facts, next_register, locals)
+        Statement::ThrowStatement(ts) => {
+            control_flow::reduce_throw(ts, ops, facts, next_register, locals)
         }
         Statement::ExpressionStatement(expression) => {
             reduce_expression_stmt(&expression.expression, ops, facts, next_register, locals)
                 .map(Some)
         }
-        statement => {
-            reduce_other_statement(statement, ops, facts, next_register, next_slot, locals)
-        }
+        statement => crate::statement_control::reduce(
+            statement,
+            ops,
+            facts,
+            next_register,
+            next_slot,
+            locals,
+        ),
     }
 }
 fn reduce_expression_stmt(
@@ -389,16 +416,6 @@ fn reduce_expression_stmt(
         next_register,
         locals,
     )
-}
-fn reduce_other_statement(
-    statement: &Statement<'_>,
-    ops: &mut Vec<Op>,
-    facts: &mut ProgramDb,
-    next_register: &mut u16,
-    next_slot: &mut u16,
-    locals: &mut HashMap<String, u16>,
-) -> Result<Option<u16>, Vec<String>> {
-    crate::statement_control::reduce(statement, ops, facts, next_register, next_slot, locals)
 }
 pub fn reduce_function_declaration(
     function: &oxc::ast::ast::Function<'_>,
@@ -427,7 +444,8 @@ pub fn reduce_function_declaration(
         captures,
         metadata,
     )?;
-    let register = take_register(next_register);
+    let register = *next_register;
+    *next_register = next_register.saturating_add(1);
     ops.push(function_declaration_op(
         register,
         body_ops,
@@ -436,7 +454,10 @@ pub fn reduce_function_declaration(
         metadata,
     ));
     name_function_declaration(ops, register, identifier.name.as_str());
-    store_function(ops, slot, register);
+    ops.push(Op::StoreLocal {
+        slot,
+        src: register,
+    });
     Ok(())
 }
 fn function_metadata(
@@ -451,9 +472,6 @@ fn function_metadata(
         mapped_arguments: crate::function_parameters::is_simple(&function.params),
     }
 }
-fn store_function(ops: &mut Vec<Op>, slot: u16, src: u16) {
-    ops.push(Op::StoreLocal { slot, src });
-}
 fn declaration_slot(name: &str, next_slot: &mut u16, locals: &mut HashMap<String, u16>) -> u16 {
     if let Some(slot) = locals.get(name) {
         return *slot;
@@ -463,21 +481,12 @@ fn declaration_slot(name: &str, next_slot: &mut u16, locals: &mut HashMap<String
     locals.insert(name.to_string(), slot);
     slot
 }
-fn take_register(next_register: &mut u16) -> u16 {
-    let register = *next_register;
-    *next_register = next_register.saturating_add(1);
-    register
-}
 fn function_locals(
     function: &oxc::ast::ast::Function<'_>,
     locals: &HashMap<String, u16>,
 ) -> Result<(HashMap<String, u16>, u16, u16), Vec<String>> {
     let (parameters, parameter_count) = crate::function_parameters::bindings(&function.params)?;
-    let captures = locals
-        .values()
-        .copied()
-        .max()
-        .map_or(0, |slot| slot.saturating_add(1));
+    let captures = locals.values().copied().max().map_or(0, |slot| slot + 1);
     let bindings =
         functions::function_bindings(parameters, parameter_count, captures, locals, false);
     Ok((bindings, parameter_count, captures))

@@ -2,6 +2,7 @@
 pub(crate) mod reduce_assignments;
 mod reduce_eval;
 pub mod reduce_expressions;
+mod reduce_module;
 mod reduce_scripts;
 pub mod reduce_statements;
 mod tagged_template;

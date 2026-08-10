@@ -18,9 +18,31 @@ pub(crate) fn set(properties: Rc<ObjectData>, key: &str, value: Value) -> Value 
         } else {
             values.push((key.to_string(), value));
         }
+        reattach_function_homes(&values, weak);
         ObjectData::with_private_slots(values, Rc::clone(&properties.private_slots))
     });
     Value::Object(object)
+}
+
+/// Re-anchor `\0home_object` aliases inside the clone's method values so `super`
+/// always resolves to the live prototype rather than a stale clone.
+fn reattach_function_homes(values: &[(String, Value)], new_home: &WeakObject) {
+    for (_, value) in values.iter() {
+        let Value::Function(function) = value else {
+            continue;
+        };
+        let mut properties = function.properties.borrow_mut();
+        let Some((_, home)) = properties
+            .iter_mut()
+            .rev()
+            .find(|(name, _)| name == "\0home_object")
+        else {
+            continue;
+        };
+        if matches!(home, Value::ObjectAlias(_)) {
+            *home = Value::ObjectAlias(ObjectAliasValue(Rc::new(RefCell::new(new_home.clone()))));
+        }
+    }
 }
 
 fn retarget_private_slots(slots: &PrivateSlots, old: &Rc<ObjectData>, new: &WeakObject) {
