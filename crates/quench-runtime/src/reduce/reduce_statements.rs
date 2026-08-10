@@ -29,6 +29,7 @@ pub fn reduce_eval_source(
     source: &str,
     inherited_strict: bool,
     bindings: &[(String, u16)],
+    forbidden_var_names: &[String],
 ) -> Result<ResidualProgram, Vec<String>> {
     let strict_source = inherited_strict.then(|| format!("\"use strict\";\n{source}"));
     let source = strict_source.as_deref().unwrap_or(source);
@@ -37,6 +38,7 @@ pub fn reduce_eval_source(
     validate_parse(&parsed)?;
     let (scope_count, symbol_count) = crate::semantic::analyze(&parsed.program)?;
     let strict = inherited_strict || has_strict_directive(&parsed.program);
+    validate_eval_var_names(&parsed.program, strict, forbidden_var_names)?;
     let mut facts = ProgramDb {
         strict,
         scope_count,
@@ -54,6 +56,24 @@ pub fn reduce_eval_source(
         true,
     )?;
     Ok(ResidualProgram { facts, ops })
+}
+
+fn validate_eval_var_names(
+    program: &oxc::ast::ast::Program<'_>,
+    strict: bool,
+    forbidden: &[String],
+) -> Result<(), Vec<String>> {
+    if strict {
+        return Ok(());
+    }
+    let names = crate::semantic_early::var_declared_names(program);
+    let conflict = names.iter().find(|name| forbidden.contains(name));
+    match conflict {
+        Some(name) => Err(vec![format!(
+            "SyntaxError: eval var declaration conflicts with lexical binding `{name}`"
+        )]),
+        None => Ok(()),
+    }
 }
 
 fn has_strict_directive(program: &oxc::ast::ast::Program<'_>) -> bool {
@@ -447,14 +467,6 @@ fn function_locals(
         "this".to_string(),
         captures.saturating_add(parameter_count).saturating_add(1),
     );
-    let formal_parameters = parameters.clone();
     bindings.extend(parameters);
-    if let Some(body) = &function.body {
-        crate::reduce_support::shadow_function_bindings(
-            &body.statements,
-            &mut bindings,
-            &formal_parameters,
-        );
-    }
     Ok((bindings, parameter_count, captures))
 }

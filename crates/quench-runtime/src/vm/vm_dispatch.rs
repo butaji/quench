@@ -34,12 +34,8 @@ fn run_simple_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Option<Va
         DeleteProperty { .. } => run_delete_property(registers, op)?,
         MakeFunction { .. } | MakeFunctionWithKind { .. } => crate::functions::write_op(registers, op),
         Call { .. } => run_call(registers, op)?,
-        Eval {
-            dst,
-            source,
-            strict,
-            bindings,
-        } => crate::reflect::execute_eval(registers, *dst, *source, *strict, bindings)?,
+        Eval { .. } => run_eval(registers, op)?,
+        ParameterEnd => {}
         Unary { dst, operator, src } => {
             vm_arithmetic::execute_unary(registers, *dst, *operator, *src)?
         }
@@ -47,6 +43,27 @@ fn run_simple_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Option<Va
         _ => return Ok(None),
     }
     Ok(Some(None))
+}
+
+fn run_eval(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
+    let Op::Eval {
+        dst,
+        source,
+        strict,
+        bindings,
+        forbidden_var_names,
+    } = op
+    else {
+        return Ok(());
+    };
+    crate::reflect::execute_eval(
+        registers,
+        *dst,
+        *source,
+        *strict,
+        bindings,
+        forbidden_var_names,
+    )
 }
 
 fn run_property_op(registers: &mut Vec<Value>, op: &Op) -> Result<bool, VmError> {

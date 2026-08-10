@@ -56,7 +56,9 @@ pub enum Op {
         source: u16,
         strict: bool,
         bindings: Vec<(String, u16)>,
+        forbidden_var_names: Vec<String>,
     },
+    ParameterEnd,
     CallMethod { dst: u16, object: u16, key: String, args: Vec<u16> },
     CallSuperMethod { dst: u16, key: String, args: Vec<u16> },
     /// Suspend async execution until the source completion settles.
