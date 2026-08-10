@@ -17,9 +17,10 @@ pub(crate) fn execute_eval(
     source: u16,
     strict: bool,
     bindings: &[(String, u16)],
+    forbidden_var_names: &[String],
 ) -> Result<(), VmError> {
     let source = crate::execute::read_register(registers, source)?;
-    let value = evaluate_direct(&source, strict, bindings, registers)?;
+    let value = evaluate_direct(&source, strict, bindings, forbidden_var_names, registers)?;
     crate::execute::write_value(registers, dst, value);
     Ok(())
 }
@@ -37,13 +38,14 @@ fn evaluate_direct(
     value: &Value,
     strict: bool,
     bindings: &[(String, u16)],
+    forbidden_var_names: &[String],
     registers: &mut Vec<Value>,
 ) -> Result<Value, VmError> {
     let Value::String(source) = value else {
         return Ok(value.clone());
     };
-    let program =
-        crate::reduce::reduce_eval_source(source, strict, bindings).map_err(syntax_error)?;
+    let program = crate::reduce::reduce_eval_source(source, strict, bindings, forbidden_var_names)
+        .map_err(syntax_error)?;
     crate::execute::execute_in_place(&program.ops, registers)
 }
 

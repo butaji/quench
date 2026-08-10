@@ -75,7 +75,7 @@ pub(crate) fn execute(
 ) -> Result<crate::value::Value, crate::execute::VmError> {
     let this_value = crate::vm::bare_call_receiver(function, this_value);
     if matches!(function.kind, FunctionKind::Generator) {
-        return Ok(crate::generator::create(function, &this_value, arguments));
+        return crate::generator::create(function, &this_value, arguments);
     }
     let completion = execute_body(function, &this_value, arguments);
     if function.is_async {

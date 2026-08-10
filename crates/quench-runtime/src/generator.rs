@@ -12,14 +12,60 @@ pub(crate) fn create(
     function: &Rc<crate::value::FunctionValue>,
     receiver: &Value,
     arguments: &[Value],
-) -> Value {
-    Value::Generator(Rc::new(GeneratorData {
+) -> Result<Value, VmError> {
+    let state = initialize_parameters(function, receiver, arguments)?;
+    let deferred_arguments = if state.is_none() {
+        arguments.to_vec()
+    } else {
+        Vec::new()
+    };
+    Ok(Value::Generator(Rc::new(GeneratorData {
         function: Rc::clone(function),
         receiver: receiver.clone(),
-        arguments: arguments.to_vec(),
+        arguments: deferred_arguments,
         done: RefCell::new(false),
-        state: RefCell::new(None),
+        state: RefCell::new(state),
+    })))
+}
+
+fn initialize_parameters(
+    function: &Rc<crate::value::FunctionValue>,
+    receiver: &Value,
+    arguments: &[Value],
+) -> Result<Option<GeneratorState>, VmError> {
+    let Some(marker) = function
+        .body
+        .iter()
+        .position(|op| matches!(op, Op::ParameterEnd))
+    else {
+        return Ok(None);
+    };
+    let (mut registers, environment) =
+        crate::functions::build_registers(function, receiver, arguments);
+    let _home = crate::super_scope::Guard::install(function, receiver);
+    let _with_scope = crate::with_scope::FunctionGuard::isolate();
+    let (completion, _) = crate::vm::execute_generator_step(
+        &function.body[..marker],
+        &mut registers,
+        Rc::clone(&environment),
+        0,
+    )?;
+    require_normal_parameter_completion(completion)?;
+    Ok(Some(GeneratorState {
+        registers,
+        environment,
+        pc: marker.saturating_add(1),
     }))
+}
+
+fn require_normal_parameter_completion(
+    completion: crate::completion::Completion,
+) -> Result<(), VmError> {
+    match completion {
+        crate::completion::Completion::Normal => Ok(()),
+        crate::completion::Completion::Throw(value) => Err(VmError::Thrown(value)),
+        _ => Err(VmError::MissingReturn),
+    }
 }
 
 pub(crate) fn next(receiver: Option<&Value>) -> Result<Value, VmError> {

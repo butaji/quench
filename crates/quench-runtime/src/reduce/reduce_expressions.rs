@@ -308,6 +308,7 @@ fn reduce_direct_eval(
         source,
         strict: facts.strict,
         bindings,
+        forbidden_var_names: facts.eval_var_barrier.clone(),
     });
     Some(dst)
 }
