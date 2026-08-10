@@ -73,22 +73,46 @@ pub(crate) fn array_map(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let Some(Value::Array(values)) = receiver else {
+    let Some(receiver) = receiver else {
         return Ok(Value::Array(Rc::new(Vec::new())));
     };
     let Some(callback) = arguments.first() else {
-        return Ok(Value::Array(values.clone()));
+        return Ok(Value::Array(Rc::new(Vec::new())));
     };
-    let mut mapped = Vec::with_capacity(values.len());
-    for (index, value) in values.iter().enumerate() {
-        let args = [value.clone(), Value::Number(index as f64), Value::Undefined];
-        mapped.push(crate::functions::execute_target(
-            callback,
-            &Value::Undefined,
-            &args,
-        )?);
+    let length = array_like_length(receiver);
+    let mut mapped = Vec::with_capacity(length);
+    for index in 0..length {
+        let value = array_like_value(receiver, index);
+        let args = [value, Value::Number(index as f64), receiver.clone()];
+        let this_arg = arguments.get(1).map_or(&Value::Undefined, |value| value);
+        mapped.push(crate::functions::execute_target(callback, this_arg, &args)?);
     }
     Ok(Value::Array(Rc::new(mapped)))
+}
+
+fn array_like_length(value: &Value) -> usize {
+    let length = match value {
+        Value::Array(values) => values.len() as f64,
+        Value::Object(properties) => properties
+            .iter()
+            .rev()
+            .find(|(key, _)| key == "length")
+            .map_or(0.0, |(_, value)| value_to_number(value)),
+        _ => 0.0,
+    };
+    length.max(0.0).min(usize::MAX as f64) as usize
+}
+
+fn array_like_value(value: &Value, index: usize) -> Value {
+    match value {
+        Value::Array(values) => values.get(index).cloned().unwrap_or(Value::Undefined),
+        Value::Object(properties) => properties
+            .iter()
+            .rev()
+            .find(|(key, _)| key == &index.to_string())
+            .map_or(Value::Undefined, |(_, value)| value.clone()),
+        _ => Value::Undefined,
+    }
 }
 
 pub(crate) fn array_for_each(
