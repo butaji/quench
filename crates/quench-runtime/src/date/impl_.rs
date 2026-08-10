@@ -2,7 +2,7 @@
 
 use std::rc::Rc;
 
-use chrono::Datelike;
+use chrono::{Datelike, Duration, NaiveDate};
 
 use crate::{execute::VmError, ops::Builtin, value::Value};
 
@@ -91,10 +91,41 @@ fn date_constructor(arguments: &[Value]) -> Value {
         let minute = helpers::arg_or(arguments.get(4), 0.0);
         let second = helpers::arg_or(arguments.get(5), 0.0);
         let ms_val = helpers::arg_or(arguments.get(6), 0.0);
-        DateValue::utc(year, month, day, hour, minute, second, ms_val).ms
+        local_date_ms(year, month, day, hour, minute, second, ms_val)
     };
     let props = vec![("timeValue".to_string(), Value::Number(ms))];
     Value::Object(Rc::new(props))
+}
+
+fn local_date_ms(
+    year: f64,
+    month: f64,
+    day: f64,
+    hour: f64,
+    minute: f64,
+    second: f64,
+    millisecond: f64,
+) -> f64 {
+    let month_index = year * 12.0 + month.trunc();
+    let normalized_year = (month_index / 12.0).floor() as i32;
+    let normalized_month = (month_index - f64::from(normalized_year) * 12.0) as u32 + 1;
+    let Some(date) = NaiveDate::from_ymd_opt(normalized_year, normalized_month, 1) else {
+        return f64::NAN;
+    };
+    let millis = millisecond.trunc() as i64;
+    let duration = Duration::days(day.trunc() as i64 - 1)
+        + Duration::hours(hour.trunc() as i64)
+        + Duration::minutes(minute.trunc() as i64)
+        + Duration::seconds(second.trunc() as i64)
+        + Duration::milliseconds(millis);
+    let Some(local) = date
+        .and_hms_opt(0, 0, 0)
+        .and_then(|dt| dt.checked_add_signed(duration))
+    else {
+        return f64::NAN;
+    };
+    let utc = local - Duration::minutes(i64::from(chrono_utils::local_tz_offset_minutes()));
+    chrono_utils::time_clip(utc.and_utc().timestamp_millis() as f64)
 }
 
 fn date_parse(arguments: &[Value]) -> Value {
