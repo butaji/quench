@@ -66,6 +66,7 @@ fn construct_builtin(
         crate::ops::Builtin::Float32Array => construct_float32_array(arguments),
         crate::ops::Builtin::Int8Array => construct_int8_array(arguments),
         crate::ops::Builtin::Uint8Array => construct_uint8_array(arguments),
+        crate::ops::Builtin::Uint8ClampedArray => construct_uint8_clamped_array(arguments),
         crate::ops::Builtin::DataView => construct_data_view(arguments),
         crate::ops::Builtin::Object => Ok(crate::builtins::object(arguments)),
         crate::ops::Builtin::Number => construct_number(arguments),
@@ -187,6 +188,18 @@ fn construct_uint8_array(arguments: &[Value]) -> Result<Value, crate::execute::V
     }
 }
 
+fn construct_uint8_clamped_array(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
+    match arguments.first() {
+        None | Some(Value::Undefined) => empty_uint8_clamped_array(),
+        Some(Value::ArrayBuffer(buffer)) => view_uint8_clamped_array(buffer, arguments),
+        Some(Value::Uint8ClampedArray(view)) => copy_uint8_clamped_array(view),
+        Some(Value::Array(values)) => values_uint8_clamped_array(values),
+        Some(_) => Err(type_error(
+            "Uint8ClampedArray source must be iterable or a buffer",
+        )),
+    }
+}
+
 fn empty_uint8_array() -> Result<Value, crate::execute::VmError> {
     let buffer = Rc::new(crate::value::ArrayBufferData::new(0));
     Ok(Value::Uint8Array(Rc::new(
@@ -204,6 +217,57 @@ fn values_uint8_array(values: &[Value]) -> Result<Value, crate::execute::VmError
         );
     }
     Ok(Value::Uint8Array(Rc::new(view)))
+}
+
+fn empty_uint8_clamped_array() -> Result<Value, crate::execute::VmError> {
+    let buffer = Rc::new(crate::value::ArrayBufferData::new(0));
+    Ok(Value::Uint8ClampedArray(Rc::new(
+        crate::value::Uint8ClampedArrayData::new(buffer, 0, 0),
+    )))
+}
+
+fn values_uint8_clamped_array(values: &[Value]) -> Result<Value, crate::execute::VmError> {
+    let buffer = Rc::new(crate::value::ArrayBufferData::new(values.len()));
+    let view = crate::value::Uint8ClampedArrayData::new(buffer, 0, values.len());
+    for (index, value) in values.iter().enumerate() {
+        view.set(index, crate::intl::tolocale::value::to_number(Some(value)));
+    }
+    Ok(Value::Uint8ClampedArray(Rc::new(view)))
+}
+
+fn copy_uint8_clamped_array(
+    source: &crate::value::Uint8ClampedArrayData,
+) -> Result<Value, crate::execute::VmError> {
+    let buffer = Rc::new(crate::value::ArrayBufferData::new(source.byte_length()));
+    let view = crate::value::Uint8ClampedArrayData::new(buffer, 0, source.length);
+    for index in 0..source.length {
+        view.set(index, f64::from(source.get(index).unwrap_or(0)));
+    }
+    Ok(Value::Uint8ClampedArray(Rc::new(view)))
+}
+
+fn view_uint8_clamped_array(
+    buffer: &Rc<crate::value::ArrayBufferData>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let offset = arguments.get(1).map_or(0.0, |value| {
+        crate::intl::tolocale::value::to_number(Some(value))
+    });
+    let offset = to_index(offset)?;
+    if offset > buffer.byte_length() {
+        return Err(range_error("Invalid Uint8ClampedArray byte offset"));
+    }
+    let available = buffer.byte_length() - offset;
+    let length = match arguments.get(2) {
+        Some(value) => to_index(crate::intl::tolocale::value::to_number(Some(value)))?,
+        None => available,
+    };
+    if length > available {
+        return Err(range_error("Invalid Uint8ClampedArray length"));
+    }
+    Ok(Value::Uint8ClampedArray(Rc::new(
+        crate::value::Uint8ClampedArrayData::new(buffer.clone(), offset, length),
+    )))
 }
 
 fn copy_uint8_array(
