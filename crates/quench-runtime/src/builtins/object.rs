@@ -3,8 +3,12 @@ use std::rc::Rc;
 use crate::{execute::VmError, ops::Builtin, value::Value};
 
 pub(crate) fn object_method(value: &Value, key: &str) -> Value {
-    if matches!(value, Value::Object(_) | Value::Array(_)) && key == "hasOwnProperty" {
-        return Value::Builtin(Builtin::ObjectHasOwnProperty);
+    if matches!(value, Value::Object(_) | Value::Array(_)) {
+        return match key {
+            "hasOwnProperty" => Value::Builtin(Builtin::ObjectHasOwnProperty),
+            "propertyIsEnumerable" => Value::Builtin(Builtin::ObjectPropertyIsEnumerable),
+            _ => Value::Undefined,
+        };
     }
     Value::Undefined
 }
