@@ -298,6 +298,10 @@ pub enum Op {
         object: u16,
         body: Vec<Op>,
     },
+    PrivateScope {
+        names: Vec<crate::facts::PrivateNameId>,
+        body: Vec<Op>,
+    },
     Try {
         body: Vec<Op>,
         handler: Option<Vec<Op>>,
