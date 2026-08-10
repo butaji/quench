@@ -6,6 +6,8 @@ use oxc::ast::ast::{
 
 use crate::{facts::ProgramDb, ops::Op};
 
+type HandlerResult = Result<(Option<Vec<Op>>, Option<u16>), Vec<String>>;
+
 pub(crate) fn reduce_return(
     statement: &ReturnStatement<'_>,
     ops: &mut Vec<Op>,
@@ -49,40 +51,9 @@ pub(crate) fn reduce_try(
     locals: &HashMap<String, u16>,
 ) -> Result<(), Vec<String>> {
     let (try_locals, next_slot) = hoisted_try_locals(statement, locals);
-    let body = crate::reduce::reduce_statements_no_tail(
-        &statement.block.body,
-        facts,
-        try_locals.clone(),
-        next_slot,
-    )?;
-    let handler = statement
-        .handler
-        .as_ref()
-        .map(|handler| {
-            let (handler_locals, catch_slot, handler_next_slot) =
-                handler_locals(handler, &try_locals);
-            crate::reduce::reduce_statements_no_tail(
-                &handler.body.body,
-                facts,
-                handler_locals,
-                handler_next_slot,
-            )
-            .map(|ops| (ops, catch_slot))
-        })
-        .transpose()?;
-    let (handler, catch_slot) = handler.map_or((None, None), |(ops, slot)| (Some(ops), slot));
-    let finalizer = statement
-        .finalizer
-        .as_ref()
-        .map(|finalizer| {
-            crate::reduce::reduce_statements_no_tail(
-                &finalizer.body,
-                facts,
-                try_locals.clone(),
-                next_slot,
-            )
-        })
-        .transpose()?;
+    let body = reduce_try_body(statement, facts, &try_locals, next_slot)?;
+    let (handler, catch_slot) = reduce_try_handler(statement, facts, &try_locals)?;
+    let finalizer = reduce_try_finalizer(statement, facts, &try_locals, next_slot)?;
     ops.push(Op::Try {
         body,
         handler,
@@ -90,6 +61,51 @@ pub(crate) fn reduce_try(
         catch_slot,
     });
     Ok(())
+}
+
+fn reduce_try_body(
+    statement: &oxc::ast::ast::TryStatement<'_>,
+    facts: &mut ProgramDb,
+    locals: &HashMap<String, u16>,
+    next_slot: u16,
+) -> Result<Vec<Op>, Vec<String>> {
+    crate::reduce::reduce_statements_no_tail(
+        &statement.block.body,
+        facts,
+        locals.clone(),
+        next_slot,
+    )
+}
+
+fn reduce_try_handler(
+    statement: &oxc::ast::ast::TryStatement<'_>,
+    facts: &mut ProgramDb,
+    try_locals: &HashMap<String, u16>,
+) -> HandlerResult {
+    let Some(handler) = statement.handler.as_ref() else {
+        return Ok((None, None));
+    };
+    let (handler_locals, catch_slot, next_slot) = handler_locals(handler, try_locals);
+    let ops = crate::reduce::reduce_statements_no_tail(
+        &handler.body.body,
+        facts,
+        handler_locals,
+        next_slot,
+    )?;
+    Ok((Some(ops), catch_slot))
+}
+
+fn reduce_try_finalizer(
+    statement: &oxc::ast::ast::TryStatement<'_>,
+    facts: &mut ProgramDb,
+    locals: &HashMap<String, u16>,
+    next_slot: u16,
+) -> Result<Option<Vec<Op>>, Vec<String>> {
+    let Some(finalizer) = statement.finalizer.as_ref() else {
+        return Ok(None);
+    };
+    crate::reduce::reduce_statements_no_tail(&finalizer.body, facts, locals.clone(), next_slot)
+        .map(Some)
 }
 
 fn handler_locals(
