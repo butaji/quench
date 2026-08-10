@@ -11,6 +11,7 @@ use oxc::{
 use std::collections::HashMap;
 const GLOBAL_THIS: &str = "globalThis";
 const SCRIPT_THIS_SLOT: &str = "\0script_this";
+include!("function_declaration_ops.rs");
 #[derive(Debug, PartialEq)]
 pub struct ResidualProgram {
     pub facts: ProgramDb,
@@ -433,6 +434,7 @@ pub fn reduce_function_declaration(
         captures,
         metadata,
     ));
+    name_function_declaration(ops, register, identifier.name.as_str());
     store_function(ops, slot, register);
     Ok(())
 }
@@ -450,25 +452,6 @@ fn function_metadata(
 }
 fn store_function(ops: &mut Vec<Op>, slot: u16, src: u16) {
     ops.push(Op::StoreLocal { slot, src });
-}
-fn function_declaration_op(
-    dst: u16,
-    body: Vec<Op>,
-    params: u16,
-    captures: u16,
-    metadata: functions::FunctionMetadata,
-) -> Op {
-    Op::MakeFunctionWithKind {
-        dst,
-        body,
-        params,
-        captures,
-        kind: metadata.kind,
-        length: metadata.length,
-        strictness: metadata.strictness,
-        is_async: metadata.is_async,
-        mapped_arguments: metadata.mapped_arguments,
-    }
 }
 fn declaration_slot(name: &str, next_slot: &mut u16, locals: &mut HashMap<String, u16>) -> u16 {
     if let Some(slot) = locals.get(name) {
