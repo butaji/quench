@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, rc::Rc};
 
 use crate::{facts::ProgramDb, ops::Op, value::Value};
 
@@ -49,48 +49,155 @@ pub(crate) fn construct_value(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     match target {
-        Value::Builtin(crate::ops::Builtin::Array) => Ok(crate::builtins::array(arguments)),
-        Value::Builtin(crate::ops::Builtin::Object) => Ok(crate::builtins::object(arguments)),
-        Value::Builtin(crate::ops::Builtin::Number) => construct_number(arguments),
-        Value::Builtin(crate::ops::Builtin::Boolean) => construct_boolean(arguments),
-        Value::Builtin(crate::ops::Builtin::Promise) => {
-            let executor = arguments
-                .first()
-                .ok_or(crate::execute::VmError::NotCallable)?;
-            crate::promise::construct_promise(executor)
-        }
-        Value::Builtin(crate::ops::Builtin::TypeError) => {
-            construct_error(&crate::ops::Builtin::TypeError, arguments)
-        }
-        Value::Builtin(
-            crate::ops::Builtin::Error
-            | crate::ops::Builtin::RangeError
-            | crate::ops::Builtin::ReferenceError
-            | crate::ops::Builtin::SyntaxError
-            | crate::ops::Builtin::EvalError
-            | crate::ops::Builtin::URIError
-            | crate::ops::Builtin::AggregateError,
-        ) => construct_error(target_builtin(target), arguments),
-        Value::Builtin(crate::ops::Builtin::Date) => {
-            crate::date::execute(crate::ops::Builtin::Date, None, arguments)
-                .unwrap_or_else(|| Ok(crate::builtins::object(arguments)))
-        }
-        Value::Builtin(crate::ops::Builtin::RegExp) => Ok(crate::builtins::object(arguments)),
-        Value::Builtin(
-            crate::ops::Builtin::IntlNumberFormat
-            | crate::ops::Builtin::IntlDateTimeFormat
-            | crate::ops::Builtin::IntlCollator
-            | crate::ops::Builtin::IntlPluralRules
-            | crate::ops::Builtin::IntlListFormat
-            | crate::ops::Builtin::IntlRelativeTimeFormat
-            | crate::ops::Builtin::IntlSegmenter
-            | crate::ops::Builtin::IntlDisplayNames
-            | crate::ops::Builtin::IntlLocale,
-        ) => crate::intl::execute(*target_builtin(target), arguments, None)
-            .unwrap_or_else(|| Ok(crate::builtins::object(arguments))),
+        Value::Builtin(builtin) => construct_builtin(*builtin, arguments),
         Value::Function(function) => construct_function(function, target, arguments),
         _ => Err(crate::execute::VmError::NotCallable),
     }
+}
+
+fn construct_builtin(
+    builtin: crate::ops::Builtin,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    match builtin {
+        crate::ops::Builtin::Array => Ok(crate::builtins::array(arguments)),
+        crate::ops::Builtin::ArrayBuffer => construct_array_buffer(arguments),
+        crate::ops::Builtin::Float64Array => construct_float64_array(arguments),
+        crate::ops::Builtin::Object => Ok(crate::builtins::object(arguments)),
+        crate::ops::Builtin::Number => construct_number(arguments),
+        crate::ops::Builtin::Boolean => construct_boolean(arguments),
+        crate::ops::Builtin::Promise => construct_promise(arguments),
+        crate::ops::Builtin::TypeError
+        | crate::ops::Builtin::Error
+        | crate::ops::Builtin::RangeError
+        | crate::ops::Builtin::ReferenceError
+        | crate::ops::Builtin::SyntaxError
+        | crate::ops::Builtin::EvalError
+        | crate::ops::Builtin::URIError
+        | crate::ops::Builtin::AggregateError => construct_error(&builtin, arguments),
+        crate::ops::Builtin::Date => crate::date::execute(builtin, None, arguments)
+            .unwrap_or_else(|| Ok(crate::builtins::object(arguments))),
+        crate::ops::Builtin::RegExp => Ok(crate::builtins::object(arguments)),
+        crate::ops::Builtin::IntlNumberFormat
+        | crate::ops::Builtin::IntlDateTimeFormat
+        | crate::ops::Builtin::IntlCollator
+        | crate::ops::Builtin::IntlPluralRules
+        | crate::ops::Builtin::IntlListFormat
+        | crate::ops::Builtin::IntlRelativeTimeFormat
+        | crate::ops::Builtin::IntlSegmenter
+        | crate::ops::Builtin::IntlDisplayNames
+        | crate::ops::Builtin::IntlLocale => crate::intl::execute(builtin, arguments, None)
+            .unwrap_or_else(|| Ok(crate::builtins::object(arguments))),
+        _ => Err(crate::execute::VmError::NotCallable),
+    }
+}
+
+fn construct_promise(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
+    let executor = arguments
+        .first()
+        .ok_or(crate::execute::VmError::NotCallable)?;
+    crate::promise::construct_promise(executor)
+}
+
+fn construct_array_buffer(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
+    let length = arguments.first().map_or(0.0, |value| {
+        crate::intl::tolocale::value::to_number(Some(value))
+    });
+    let length = to_index(length)?;
+    Ok(Value::ArrayBuffer(Rc::new(
+        crate::value::ArrayBufferData::new(length),
+    )))
+}
+
+fn construct_float64_array(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
+    match arguments.first() {
+        None | Some(Value::Undefined) => empty_float64_array(),
+        Some(Value::ArrayBuffer(buffer)) => view_float64_array(buffer, arguments),
+        Some(Value::Float64Array(view)) => copy_float64_array(view),
+        Some(Value::Array(values)) => values_float64_array(values),
+        Some(_) => Err(type_error(
+            "Float64Array source must be iterable or a buffer",
+        )),
+    }
+}
+
+fn empty_float64_array() -> Result<Value, crate::execute::VmError> {
+    let buffer = Rc::new(crate::value::ArrayBufferData::new(0));
+    Ok(Value::Float64Array(Rc::new(
+        crate::value::Float64ArrayData::new(buffer, 0, 0),
+    )))
+}
+
+fn values_float64_array(values: &[Value]) -> Result<Value, crate::execute::VmError> {
+    let buffer = Rc::new(crate::value::ArrayBufferData::new(
+        values.len() * crate::value::Float64ArrayData::BYTES_PER_ELEMENT,
+    ));
+    let view = crate::value::Float64ArrayData::new(buffer, 0, values.len());
+    for (index, value) in values.iter().enumerate() {
+        view.set(index, crate::intl::tolocale::value::to_number(Some(value)));
+    }
+    Ok(Value::Float64Array(Rc::new(view)))
+}
+
+fn copy_float64_array(
+    source: &crate::value::Float64ArrayData,
+) -> Result<Value, crate::execute::VmError> {
+    let buffer = Rc::new(crate::value::ArrayBufferData::new(source.byte_length()));
+    let view = crate::value::Float64ArrayData::new(buffer, 0, source.length);
+    for index in 0..source.length {
+        view.set(index, source.get(index).unwrap_or(f64::NAN));
+    }
+    Ok(Value::Float64Array(Rc::new(view)))
+}
+
+fn view_float64_array(
+    buffer: &Rc<crate::value::ArrayBufferData>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let offset = arguments.get(1).map_or(0.0, |value| {
+        crate::intl::tolocale::value::to_number(Some(value))
+    });
+    let offset = to_index(offset)?;
+    let element_size = crate::value::Float64ArrayData::BYTES_PER_ELEMENT;
+    if offset % element_size != 0 || offset > buffer.byte_length() {
+        return Err(range_error("Invalid Float64Array byte offset"));
+    }
+    let available = buffer.byte_length() - offset;
+    let length = match arguments.get(2) {
+        Some(value) => to_index(crate::intl::tolocale::value::to_number(Some(value)))?,
+        None => available / element_size,
+    };
+    if length > available / element_size {
+        return Err(range_error("Invalid Float64Array length"));
+    }
+    Ok(Value::Float64Array(Rc::new(
+        crate::value::Float64ArrayData::new(buffer.clone(), offset, length),
+    )))
+}
+
+fn to_index(value: f64) -> Result<usize, crate::execute::VmError> {
+    if value.is_nan() {
+        return Ok(0);
+    }
+    if !value.is_finite() || value < 0.0 {
+        return Err(range_error("Invalid typed-array length"));
+    }
+    usize::try_from(value.trunc() as u128)
+        .map_err(|_| range_error("Typed-array length is too large"))
+}
+
+fn type_error(message: &str) -> crate::execute::VmError {
+    crate::execute::VmError::Thrown(crate::builtins::error(
+        crate::ops::Builtin::TypeError,
+        &[Value::String(message.to_string())],
+    ))
+}
+
+fn range_error(message: &str) -> crate::execute::VmError {
+    crate::execute::VmError::Thrown(crate::builtins::error(
+        crate::ops::Builtin::RangeError,
+        &[Value::String(message.to_string())],
+    ))
 }
 
 fn construct_number(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
@@ -138,12 +245,5 @@ fn construct_function(
         Ok(final_this)
     } else {
         Ok(object)
-    }
-}
-
-fn target_builtin(target: &Value) -> &crate::ops::Builtin {
-    match target {
-        Value::Builtin(builtin) => builtin,
-        _ => &crate::ops::Builtin::Array,
     }
 }
