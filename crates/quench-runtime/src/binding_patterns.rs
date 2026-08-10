@@ -110,9 +110,14 @@ fn assign_array(
     let iterator = iterator_start(source, ops, next);
     let mut body = Vec::new();
     for element in &pattern.elements {
+        let place = element.as_ref().and_then(|element| {
+            crate::reduce::reduce_assignments::maybe_default_place(
+                element, &mut body, facts, next, locals,
+            )
+        });
         let value = iterator_step(iterator, &mut body, next);
         if let Some(element) = element {
-            assign_maybe_default(element, value, &mut body, facts, next, locals)?;
+            assign_prepared(element, place, value, &mut body, facts, next, locals)?;
         }
     }
     if let Some(rest) = &pattern.rest {
@@ -121,6 +126,33 @@ fn assign_array(
     }
     ops.push(Op::IteratorBinding { iterator, body });
     Some(())
+}
+
+fn assign_prepared(
+    target: &AssignmentTargetMaybeDefault<'_>,
+    place: Option<crate::reduce::reduce_assignments::Place>,
+    source: u16,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<()> {
+    let Some(place) = place else {
+        return assign_maybe_default(target, source, ops, facts, next, locals);
+    };
+    let value = match target {
+        AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(default) => default_value(
+            source,
+            &default.init,
+            assignment_name(&default.binding),
+            ops,
+            facts,
+            next,
+            locals,
+        )?,
+        _ => source,
+    };
+    crate::reduce::reduce_assignments::put(place, value, ops)
 }
 
 fn assign_object(
@@ -319,32 +351,7 @@ fn bind_array(
     Some(())
 }
 
-fn iterator_start(source: u16, ops: &mut Vec<Op>, next: &mut u16) -> u16 {
-    let iterator = take_register(next);
-    ops.push(Op::GetIterator {
-        dst: iterator,
-        iterable: source,
-    });
-    iterator
-}
-
-fn iterator_step(iterator: u16, ops: &mut Vec<Op>, next: &mut u16) -> u16 {
-    let value = take_register(next);
-    ops.push(Op::IteratorStep {
-        dst: value,
-        iterator,
-    });
-    value
-}
-
-fn iterator_rest(iterator: u16, ops: &mut Vec<Op>, next: &mut u16) -> u16 {
-    let value = take_register(next);
-    ops.push(Op::IteratorRest {
-        dst: value,
-        iterator,
-    });
-    value
-}
+include!("binding_pattern_iterator_ops.rs");
 
 fn bind_object(
     pattern: &oxc::ast::ast::ObjectPattern<'_>,
