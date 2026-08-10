@@ -1,6 +1,7 @@
 use crate::intl::tolocale::value::{is_finite, to_number, to_string};
 use crate::ops::{Builtin, Op};
 use crate::value::Value;
+use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -14,6 +15,27 @@ pub type OutputSink = Arc<dyn Fn(&str) + Send + Sync>;
 #[derive(Clone, Default)]
 pub struct VmContext {
     output_sink: Option<OutputSink>,
+}
+
+thread_local! {
+    static CURRENT_CONTEXT: RefCell<Option<VmContext>> = const { RefCell::new(None) };
+}
+
+struct ContextGuard {
+    previous: Option<VmContext>,
+}
+
+impl ContextGuard {
+    fn install(context: &VmContext) -> Self {
+        let previous = CURRENT_CONTEXT.with(|current| current.replace(Some(context.clone())));
+        Self { previous }
+    }
+}
+
+impl Drop for ContextGuard {
+    fn drop(&mut self) {
+        CURRENT_CONTEXT.with(|current| current.replace(self.previous.take()));
+    }
 }
 
 impl VmContext {
@@ -79,6 +101,7 @@ pub fn execute_in_place_context(
     registers: &mut Vec<Value>,
     context: &VmContext,
 ) -> Result<Value, VmError> {
+    let _context_guard = ContextGuard::install(context);
     for op in ops {
         match run_op(registers, op, context)? {
             None => {}
@@ -93,6 +116,9 @@ pub fn execute_builtin_with_receiver(
     arguments: &[Value],
     receiver: Option<&Value>,
 ) -> Result<Value, VmError> {
+    if builtin == Builtin::Print {
+        return execute_print(arguments);
+    }
     if matches!(
         builtin,
         Builtin::ObjectHasOwnProperty | Builtin::ObjectGetOwnPropertyDescriptor
@@ -109,6 +135,19 @@ pub fn execute_builtin_with_receiver(
         _ if is_simple_builtin(builtin) => execute_simple_builtin(builtin, arguments, receiver),
         _ => vm_ops::execute_builtin_tail(builtin, arguments, receiver),
     }
+}
+
+fn execute_print(arguments: &[Value]) -> Result<Value, VmError> {
+    let text = arguments
+        .iter()
+        .map(|value| to_string(Some(value)))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let context = CURRENT_CONTEXT.with(|current| current.borrow().clone());
+    if let Some(context) = context {
+        context.emit_output(&text);
+    }
+    Ok(Value::Undefined)
 }
 
 fn early_dispatch(
