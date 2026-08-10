@@ -25,6 +25,13 @@ pub(crate) fn reduce_literal(expression: &Expression<'_>) -> Option<Literal> {
             fact: FactConstant::Null,
             op: Constant::Null,
         }),
+        Expression::BigIntLiteral(bigint) => {
+            let value = bigint_value(bigint)?;
+            Some(Literal {
+                fact: FactConstant::BigInt(value.clone()),
+                op: Constant::BigInt(value),
+            })
+        }
         Expression::TemplateLiteral(template) if template.expressions.is_empty() => {
             let value = template.quasis.first()?.value.cooked.as_ref()?.to_string();
             Some(Literal {
@@ -34,6 +41,18 @@ pub(crate) fn reduce_literal(expression: &Expression<'_>) -> Option<Literal> {
         }
         _ => None,
     }
+}
+
+/// Decimal string of a BigInt literal, normalizing all supported radices.
+fn bigint_value(bigint: &oxc::ast::ast::BigIntLiteral<'_>) -> Option<String> {
+    let raw = bigint.raw.as_str().trim_end_matches('n').replace('_', "");
+    let (radix, digits) = match raw.as_bytes() {
+        [b'0', b'x' | b'X', digits @ ..] => (16, digits),
+        [b'0', b'b' | b'B', digits @ ..] => (2, digits),
+        [b'0', b'o' | b'O', digits @ ..] => (8, digits),
+        _ => (10, raw.as_bytes()),
+    };
+    num_bigint::BigUint::parse_bytes(digits, radix).map(|value| value.to_str_radix(10))
 }
 
 pub(crate) fn reduce_operator(operator: BinaryOperator) -> Option<crate::ops::BinaryOp> {
@@ -55,6 +74,9 @@ pub(crate) fn reduce_operator(operator: BinaryOperator) -> Option<crate::ops::Bi
         BinaryOperator::BitwiseOR => crate::ops::BinaryOp::BitwiseOr,
         BinaryOperator::BitwiseXOR => crate::ops::BinaryOp::BitwiseXor,
         BinaryOperator::BitwiseAnd => crate::ops::BinaryOp::BitwiseAnd,
+        BinaryOperator::ShiftLeft => crate::ops::BinaryOp::ShiftLeft,
+        BinaryOperator::ShiftRight => crate::ops::BinaryOp::ShiftRight,
+        BinaryOperator::ShiftRightZeroFill => crate::ops::BinaryOp::ShiftRightZeroFill,
         BinaryOperator::Instanceof => crate::ops::BinaryOp::Instanceof,
         _ => return None,
     })
