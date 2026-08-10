@@ -294,6 +294,7 @@ fn is_data_view_builtin(builtin: Builtin) -> bool {
             | Builtin::DataViewGetUint16
             | Builtin::DataViewGetInt32
             | Builtin::DataViewGetUint32
+            | Builtin::DataViewGetFloat16
             | Builtin::DataViewGetFloat32
             | Builtin::DataViewGetFloat64
             | Builtin::DataViewSetInt8
@@ -302,6 +303,7 @@ fn is_data_view_builtin(builtin: Builtin) -> bool {
             | Builtin::DataViewSetUint16
             | Builtin::DataViewSetInt32
             | Builtin::DataViewSetUint32
+            | Builtin::DataViewSetFloat16
             | Builtin::DataViewSetFloat32
             | Builtin::DataViewSetFloat64
     )
@@ -360,6 +362,7 @@ fn execute_data_view_wide_get(
         Builtin::DataViewGetUint16 => view.get_uint16(offset, little_endian).map(|v| v as f64),
         Builtin::DataViewGetInt32 => view.get_int32(offset, little_endian).map(|v| v as f64),
         Builtin::DataViewGetUint32 => view.get_uint32(offset, little_endian).map(|v| v as f64),
+        Builtin::DataViewGetFloat16 => view.get_float16(offset, little_endian),
         Builtin::DataViewGetFloat32 => view.get_float32(offset, little_endian).map(|v| v as f64),
         Builtin::DataViewGetFloat64 => view.get_float64(offset, little_endian),
         _ => return Err(VmError::NotCallable),
@@ -376,6 +379,7 @@ fn is_data_view_setter(builtin: Builtin) -> bool {
             | Builtin::DataViewSetUint16
             | Builtin::DataViewSetInt32
             | Builtin::DataViewSetUint32
+            | Builtin::DataViewSetFloat16
             | Builtin::DataViewSetFloat32
             | Builtin::DataViewSetFloat64
     )
@@ -396,6 +400,7 @@ fn execute_data_view_set(
         Builtin::DataViewSetUint16 => view.set_uint16(offset, to_u16(number), little_endian),
         Builtin::DataViewSetInt32 => view.set_int32(offset, to_i32(number), little_endian),
         Builtin::DataViewSetUint32 => view.set_uint32(offset, to_u32(number), little_endian),
+        Builtin::DataViewSetFloat16 => view.set_float16(offset, number, little_endian),
         Builtin::DataViewSetFloat32 => view.set_float32(offset, number as f32, little_endian),
         Builtin::DataViewSetFloat64 => view.set_float64(offset, number, little_endian),
         _ => return Err(VmError::NotCallable),
