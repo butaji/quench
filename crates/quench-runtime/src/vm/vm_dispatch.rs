@@ -168,6 +168,8 @@ fn run_control_op(
         Label { .. } => crate::statement_control::execute_label(registers, op).map(Some),
         With { .. } => crate::with_scope::execute(registers, op).map(Some),
         Try { .. } => crate::exceptions::execute(registers, op).map(Some),
+        IteratorBinding { .. } => crate::collections::iterator::execute_binding(registers, op)
+            .map(Some),
         Loop { .. } => crate::loops::execute(registers, op).map(Some),
         Switch { .. } => crate::switch::execute(registers, op).map(Some),
         Conditional { .. } => run_conditional(registers, op).map(return_completion),

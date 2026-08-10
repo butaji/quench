@@ -49,7 +49,7 @@ fn get_property_value(value: &Value, key: &str) -> Value {
         Number(value) => number_property(*value, key),
         Boolean(value) => boolean_property(*value, key),
         Function(function) if key == "length" => Value::Number(f64::from(function.params)),
-        Function(_) if matches!(key, "call" | "bind") => bind_function_property(value, key),
+        Function(_) if matches!(key, "apply" | "call" | "bind") => bind_function_property(value, key),
         Function(function) => function_property(function, key),
         BoundFunction(bound) => bound_function_property(value, bound, key),
         Map(data) if key == "size" => Value::Number(data.keys.len() as f64),
@@ -161,7 +161,7 @@ fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
     if matches!(key, "prototype" | "constructor") {
         return property;
     }
-    if builtin != Builtin::FunctionPrototype && matches!(key, "call" | "bind") {
+    if builtin != Builtin::FunctionPrototype && matches!(key, "apply" | "call" | "bind") {
         return bind_method(value, property);
     }
     property
@@ -169,6 +169,7 @@ fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
 
 fn bind_function_property(value: &Value, key: &str) -> Value {
     let builtin = match key {
+        "apply" => Builtin::FunctionApply,
         "call" => Builtin::FunctionCall,
         "bind" => Builtin::FunctionBind,
         _ => return Value::Undefined,
@@ -181,7 +182,7 @@ fn bound_function_property(
     bound: &crate::value::BoundFunctionValue,
     key: &str,
 ) -> Value {
-    if matches!(key, "call" | "bind") {
+    if matches!(key, "apply" | "call" | "bind") {
         bind_function_property(value, key)
     } else if realm::is_intrinsic(bound) {
         get_property(&bound.target, key)

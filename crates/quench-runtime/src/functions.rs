@@ -459,15 +459,7 @@ fn bind_function_target(
     receiver: Option<&crate::value::Value>,
     arguments: &[crate::value::Value],
 ) -> Result<crate::value::Value, crate::execute::VmError> {
-    if !matches!(
-        receiver,
-        Some(
-            crate::value::Value::Builtin(_)
-                | crate::value::Value::Function(_)
-                | crate::value::Value::BoundFunction(_)
-                | crate::value::Value::Proxy(_)
-        )
-    ) {
+    if !receiver.is_some_and(crate::conversion::is_callable) {
         return Err(crate::execute::VmError::NotCallable);
     }
     let target = arguments
@@ -489,6 +481,9 @@ pub(crate) fn function_builtin(
 ) -> Result<crate::value::Value, crate::execute::VmError> {
     match builtin {
         crate::ops::Builtin::FunctionCall => execute_function_call(receiver, arguments),
+        crate::ops::Builtin::FunctionApply => {
+            crate::vm::execute_function_apply(receiver, arguments)
+        }
         crate::ops::Builtin::FunctionBind => bind_function_target(receiver, arguments),
         crate::ops::Builtin::ArrayJoin => Ok(crate::builtins::array_join(receiver, arguments)),
         crate::ops::Builtin::ArrayPush => Ok(crate::builtins::array_push(receiver, arguments)),

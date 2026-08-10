@@ -88,6 +88,7 @@ pub enum Op {
     /// Suspend async execution until the source completion settles.
     Await { dst: u16, src: u16 },
     Yield { src: u16 },
+    YieldStar { dst: u16, source: u16, iterator: u16 },
     Construct { dst: u16, callee: u16, args: Vec<u16> },
     Branch { condition: u16, then_ops: Vec<Op>, else_ops: Vec<Op> },
     Label { name: String, body: Vec<Op> },
@@ -98,6 +99,8 @@ pub enum Op {
         finalizer: Option<Vec<Op>>,
         catch_slot: Option<u16>,
     },
+    /// Execute a binding pattern and close its iterator with the body's exact completion.
+    IteratorBinding { iterator: u16, body: Vec<Op> },
     Loop {
         label: Option<String>,
         init: Vec<Op>,
