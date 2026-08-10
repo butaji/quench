@@ -194,6 +194,8 @@ pub enum Builtin {
     Float32ArrayPrototype,
     Int8Array,
     Int8ArrayPrototype,
+    Uint8Array,
+    Uint8ArrayPrototype,
     DataView,
     DataViewPrototype,
     DataViewGetInt8,
