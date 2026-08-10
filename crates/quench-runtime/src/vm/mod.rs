@@ -189,6 +189,7 @@ fn is_simple_builtin(builtin: Builtin) -> bool {
             | Builtin::NumberToFixed
             | Builtin::NumberToPrecision
             | Builtin::NumberToExponential
+            | Builtin::ArrayBufferIsView
             | Builtin::Object
             | Builtin::Date
             | Builtin::Error
@@ -216,6 +217,10 @@ fn execute_simple_builtin(
         Builtin::Number => Ok(Value::Number(
             crate::intl::tolocale::value::to_number_result(arguments.first())?,
         )),
+        Builtin::ArrayBufferIsView => Ok(Value::Boolean(matches!(
+            arguments.first(),
+            Some(Value::Float64Array(_))
+        ))),
         Builtin::NumberToString => Ok(Value::String(to_string(arguments.first()))),
         Builtin::NumberValueOf => Ok(Value::Number(to_number(arguments.first()))),
         Builtin::ObjectPrototypeToString => Ok(crate::builtins::prototype_to_string(receiver)),
@@ -283,6 +288,8 @@ pub fn get_property(value: &Value, key: &str) -> Value {
     match value {
         Builtin(builtin) => builtin_property(*builtin, key),
         Array(values) => crate::arrays::property(values, key),
+        ArrayBuffer(buffer) => array_buffer_property(buffer, key),
+        Float64Array(view) => float64_array_property(view, key),
         Object(properties) => object_property(properties, key),
         String(value) => string_property(value, key),
         Number(value) => number_property(*value, key),
@@ -318,6 +325,27 @@ fn promise_property(value: &Value, key: &str) -> Value {
         receiver: value.clone(),
         arguments: Vec::new(),
     }))
+}
+
+fn array_buffer_property(buffer: &crate::value::ArrayBufferData, key: &str) -> Value {
+    match key {
+        "byteLength" => Value::Number(buffer.byte_length() as f64),
+        _ => crate::builtins::property(Builtin::ArrayBuffer, key),
+    }
+}
+
+fn float64_array_property(view: &crate::value::Float64ArrayData, key: &str) -> Value {
+    let detached = view.buffer.byte_length() == 0 && view.length != 0;
+    match key {
+        "buffer" => Value::ArrayBuffer(view.buffer.clone()),
+        "byteLength" => Value::Number(if detached { 0 } else { view.byte_length() } as f64),
+        "byteOffset" => Value::Number(if detached { 0 } else { view.byte_offset } as f64),
+        "length" => Value::Number(if detached { 0 } else { view.length } as f64),
+        "BYTES_PER_ELEMENT" => {
+            Value::Number(crate::value::Float64ArrayData::BYTES_PER_ELEMENT as f64)
+        }
+        _ => crate::builtins::property(Builtin::Float64ArrayPrototype, key),
+    }
 }
 
 fn object_property(properties: &Rc<Vec<(String, Value)>>, key: &str) -> Value {
@@ -551,6 +579,13 @@ fn execute_object(
 fn builtin_property(builtin: crate::ops::Builtin, key: &str) -> Value {
     if builtin == Builtin::Object && key == "hasOwn" {
         return Value::Builtin(Builtin::ObjectHasOwnProperty);
+    }
+    if matches!(
+        builtin,
+        Builtin::Float64Array | Builtin::Float64ArrayPrototype
+    ) && key == "BYTES_PER_ELEMENT"
+    {
+        return Value::Number(crate::value::Float64ArrayData::BYTES_PER_ELEMENT as f64);
     }
     let value = crate::builtins::property(builtin, key);
     if let Value::Builtin(symbol) = value {
