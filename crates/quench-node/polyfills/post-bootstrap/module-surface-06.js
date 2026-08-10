@@ -296,20 +296,11 @@
           .map((pair) => pair.map(String).join("' => '"))
           .join("', '")}' }`
       : "URLSearchParams {}";
-    const fields = [
-      `href: '${receiver.href}'`,
-      `origin: '${receiver.origin}'`,
-      `protocol: '${receiver.protocol}'`,
-      `username: '${receiver.username}'`,
-      `password: '${receiver.password}'`,
-      `host: '${receiver.host}'`,
-      `hostname: '${receiver.hostname}'`,
-      `port: '${receiver.port}'`,
-      `pathname: '${receiver.pathname}'`,
-      `search: '${receiver.search}'`,
-      `searchParams: ${params}`,
-      `hash: '${receiver.hash}'`
-    ];
+    const fields =
+      "href origin protocol username password host hostname port pathname search hash"
+        .split(" ")
+        .map((property) => `${property}: '${receiver[property]}'`);
+    fields.splice(10, 0, `searchParams: ${params}`);
     const name =
       receiver.constructor.name === "NodeURL"
         ? "URL"

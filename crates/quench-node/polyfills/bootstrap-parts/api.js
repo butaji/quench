@@ -11,7 +11,7 @@ globalThis.__nodeAssert.AssertionError = class AssertionError extends Error {
 const __nodeAssertionFailure = (message) => {
   if (message instanceof Error) throw message;
   const error = new globalThis.__nodeAssert.AssertionError(
-    message || "Assertion failed",
+    message || "Assertion failed"
   );
   error.code = "ERR_ASSERTION";
   error.diff = "simple";
@@ -19,7 +19,7 @@ const __nodeAssertionFailure = (message) => {
 };
 const __nodeAssertMissingArgs = () => {
   const error = new TypeError(
-    'The "actual" and "expected" arguments must be specified',
+    'The "actual" and "expected" arguments must be specified'
   );
   error.code = "ERR_MISSING_ARGS";
   throw error;
@@ -40,24 +40,25 @@ const __nodeAssertStringDiff = (actual, expected) => {
       "+ actual - expected",
       "",
       ...render(actual, "+"),
-      ...render(expected, "-"),
+      ...render(expected, "-")
     ].join("\n") + "\n"
   );
 };
 globalThis.__nodeAssert.strictEqual = (actual, expected, message) => {
   if (!Object.is(actual, expected)) {
-    const detail = actual instanceof Error && expected instanceof Error
-      ? `Expected "actual" to be reference-equal to "expected":\n+ actual - expected\n\n+ [${actual.name}: ${actual.message}]\n- [${expected.name}: ${expected.message}]\n`
-      : actual &&
-          expected &&
-          typeof actual === "object" &&
-          typeof expected === "object"
-      ? `Expected "actual" to be reference-equal to "expected":\n+ actual\n- expected\n`
-      : typeof actual === "string" && typeof expected === "string"
-      ? actual.includes("\n") || expected.includes("\n")
-        ? __nodeAssertStringDiff(actual, expected)
-        : `Expected values to be strictly equal:\n+ actual - expected\n\n+ '${actual}'\n- '${expected}'\n`
-      : `${actual} !== ${expected}`;
+    const detail =
+      actual instanceof Error && expected instanceof Error
+        ? `Expected "actual" to be reference-equal to "expected":\n+ actual - expected\n\n+ [${actual.name}: ${actual.message}]\n- [${expected.name}: ${expected.message}]\n`
+        : actual &&
+            expected &&
+            typeof actual === "object" &&
+            typeof expected === "object"
+          ? `Expected "actual" to be reference-equal to "expected":\n+ actual\n- expected\n`
+          : typeof actual === "string" && typeof expected === "string"
+            ? actual.includes("\n") || expected.includes("\n")
+              ? __nodeAssertStringDiff(actual, expected)
+              : `Expected values to be strictly equal:\n+ actual - expected\n\n+ '${actual}'\n- '${expected}'\n`
+            : `${actual} !== ${expected}`;
     const error = new globalThis.__nodeAssert.AssertionError(message || detail);
     error.code = "ERR_ASSERTION";
     error.operator = "strictEqual";
@@ -74,11 +75,12 @@ globalThis.__nodeAssert.equal = (actual, expected, message) => {
 };
 globalThis.__nodeAssert.notStrictEqual = (actual, expected, message) => {
   if (Object.is(actual, expected)) {
-    const rendered = typeof actual === "string" && actual.length > 20
-      ? `\n\n'${actual}'`
-      : ` ${actual}`;
+    const rendered =
+      typeof actual === "string" && actual.length > 20
+        ? `\n\n'${actual}'`
+        : ` ${actual}`;
     const error = new globalThis.__nodeAssert.AssertionError(
-      message || `Expected "actual" to be strictly unequal to:${rendered}`,
+      message || `Expected "actual" to be strictly unequal to:${rendered}`
     );
     error.code = "ERR_ASSERTION";
     error.operator = "notStrictEqual";
@@ -91,7 +93,7 @@ globalThis.__nodeAssert.notStrictEqual = (actual, expected, message) => {
 globalThis.__nodeAssert.notEqual = (actual, expected, message) => {
   if (actual == expected) {
     const error = new globalThis.__nodeAssert.AssertionError(
-      message || `${actual} != ${expected}`,
+      message || `${actual} != ${expected}`
     );
     error.operator = "!=";
     throw error;
@@ -102,7 +104,7 @@ globalThis.__nodeAssert.fail = (message) => {
   if (message instanceof Error) throw message;
   const generatedMessage = message === undefined;
   const error = new globalThis.__nodeAssert.AssertionError(
-    generatedMessage ? "Failed" : String(message),
+    generatedMessage ? "Failed" : String(message)
   );
   error.code = "ERR_ASSERTION";
   error.operator = "fail";
@@ -110,33 +112,6 @@ globalThis.__nodeAssert.fail = (message) => {
   error.expected = undefined;
   error.generatedMessage = generatedMessage;
   throw error;
-};
-const __nodeAssertNormalizeView = (value, seen) => {
-  const values = [];
-  let length = 0;
-  try {
-    length = value.length || 0;
-  } catch (_) {}
-  for (let index = 0; index < length; index++) {
-    values.push(__nodeAssertNormalize(value[index], seen));
-  }
-  return globalThis.__nodeAssertSkipPrototype
-    ? { values }
-    : { constructor: value.constructor.name, values };
-};
-const __nodeAssertNormalizeObject = (value, seen) => {
-  const normalized = {};
-  if (
-    !globalThis.__nodeAssertSkipPrototype &&
-    Object.getPrototypeOf(value) !== null &&
-    value.constructor !== Object
-  ) {
-    normalized.__nodeConstructor = value.constructor?.name || "Object";
-  }
-  for (const key of Object.keys(value).sort()) {
-    normalized[key] = __nodeAssertNormalize(value[key], seen);
-  }
-  return normalized;
 };
 const __nodeAssertNormalize = (value, seen = new WeakSet(), loose = false) => {
   if (value === undefined) return { __nodeUndefined: true };
@@ -158,7 +133,7 @@ const __nodeAssertNormalize = (value, seen = new WeakSet(), loose = false) => {
     try {
       return {
         constructor: "Date",
-        value: new Date(Date.prototype.getTime.call(value)).toISOString(),
+        value: new Date(Date.prototype.getTime.call(value)).toISOString()
       };
     } catch (_) {
       // Objects with Date.prototype are intentionally not real Dates.
@@ -180,7 +155,7 @@ const __nodeAssertNormalize = (value, seen = new WeakSet(), loose = false) => {
     const normalized = {
       constructor: value.constructor.name,
       name: value.name,
-      message: value.message,
+      message: value.message
     };
     if ("cause" in value) {
       normalized.cause = __nodeAssertNormalize(value.cause, seen, loose);
@@ -217,7 +192,7 @@ const __nodeAssertCauseLines = (cause, prefix) => {
     !(cause instanceof Error)
   ) {
     const entries = Object.keys(cause).map(
-      (key) => `${prefix}    ${key}: ${__nodeAssertInspect(cause[key])}`,
+      (key) => `${prefix}    ${key}: ${__nodeAssertInspect(cause[key])}`
     );
     return [`${prefix}  [cause]: {`, ...entries, `${prefix}  }`];
   }
@@ -229,7 +204,7 @@ const __nodeAssertErrorLines = (error, prefix) => {
   return [
     `${prefix}${label} {`,
     ...__nodeAssertCauseLines(error.cause, prefix),
-    `${prefix}}`,
+    `${prefix}}`
   ];
 };
 const __nodeAssertErrorDiff = (actual, expected) => {
@@ -244,7 +219,7 @@ const __nodeAssertErrorDiff = (actual, expected) => {
       `  ${__nodeAssertErrorLabel(actual)} {`,
       ...__nodeAssertCauseLines(actual.cause, "+ "),
       ...__nodeAssertCauseLines(expected.cause, "- "),
-      "  }",
+      "  }"
     ].join("\n");
   }
   const lines = [];
@@ -263,7 +238,7 @@ const __nodeAssertDateLabel = (value) => {
 };
 const __nodeAssertObjectDiff = (actual, expected) => {
   const keys = [
-    ...new Set([...Object.keys(actual), ...Object.keys(expected)]),
+    ...new Set([...Object.keys(actual), ...Object.keys(expected)])
   ].sort();
   const lines = ["  {"];
   for (const key of keys) {
@@ -274,7 +249,7 @@ const __nodeAssertObjectDiff = (actual, expected) => {
     }
     if (
       JSON.stringify(__nodeAssertNormalize(actual[key])) !==
-        JSON.stringify(__nodeAssertNormalize(expected[key]))
+      JSON.stringify(__nodeAssertNormalize(expected[key]))
     ) {
       lines.push(`+   ${key}: ${__nodeAssertInspect(actual[key])}`);
     }
@@ -285,7 +260,7 @@ const __nodeAssertObjectDiff = (actual, expected) => {
       lines.push(`-   ${key}: ${__nodeAssertInspect(expected[key])}`);
     } else if (
       JSON.stringify(__nodeAssertNormalize(actual[key])) !==
-        JSON.stringify(__nodeAssertNormalize(expected[key]))
+      JSON.stringify(__nodeAssertNormalize(expected[key]))
     ) {
       lines.push(`-   ${key}: ${__nodeAssertInspect(expected[key])}`);
     }
@@ -296,30 +271,24 @@ const __nodeAssertObjectDiff = (actual, expected) => {
 globalThis.__nodeAssert.deepStrictEqual = (actual, expected, message) => {
   if (
     JSON.stringify(__nodeAssertNormalize(actual)) !==
-      JSON.stringify(__nodeAssertNormalize(expected))
+    JSON.stringify(__nodeAssertNormalize(expected))
   ) {
     let detail = "values differ";
     if (actual instanceof Error && expected instanceof Error) {
-      detail =
-        `Expected values to be strictly deep-equal:\n+ actual - expected\n\n${
-          __nodeAssertErrorDiff(
-            actual,
-            expected,
-          )
-        }`;
+      detail = `Expected values to be strictly deep-equal:\n+ actual - expected\n\n${__nodeAssertErrorDiff(
+        actual,
+        expected
+      )}`;
     } else if (actual instanceof Date || expected instanceof Date) {
-      detail =
-        `Expected values to be strictly deep-equal:\n+ actual - expected\n\n+ ${
-          __nodeAssertDateLabel(
-            actual,
-          )
-        }\n- ${__nodeAssertDateLabel(expected)}\n`;
+      detail = `Expected values to be strictly deep-equal:\n+ actual - expected\n\n+ ${__nodeAssertDateLabel(
+        actual
+      )}\n- ${__nodeAssertDateLabel(expected)}\n`;
     } else if (Array.isArray(actual) && Array.isArray(expected)) {
       const lines = [
         "Expected values to be strictly deep-equal:",
         "+ actual - expected",
         "",
-        "  [",
+        "  ["
       ];
       const length = Math.max(actual.length, expected.length);
       for (let index = 0; index < length; index++) {
@@ -343,21 +312,20 @@ globalThis.__nodeAssert.deepStrictEqual = (actual, expected, message) => {
       lines.push("  ]", "");
       detail = lines.join("\n");
     }
-    const customDetail = message &&
-        actual &&
-        expected &&
-        typeof actual === "object" &&
-        typeof expected === "object"
-      ? `${message}\n+ actual - expected\n\n${
-        __nodeAssertObjectDiff(
-          actual,
-          expected,
-        )
-      }\n`
-      : message;
+    const customDetail =
+      message &&
+      actual &&
+      expected &&
+      typeof actual === "object" &&
+      typeof expected === "object"
+        ? `${message}\n+ actual - expected\n\n${__nodeAssertObjectDiff(
+            actual,
+            expected
+          )}\n`
+        : message;
     const renderedDetail = detail.endsWith("\n") ? detail : `${detail}\n`;
     const error = new globalThis.__nodeAssert.AssertionError(
-      customDetail || renderedDetail,
+      customDetail || renderedDetail
     );
     error.code = "ERR_ASSERTION";
     error.operator = "deepStrictEqual";
@@ -370,17 +338,18 @@ globalThis.__nodeAssert.deepStrictEqual = (actual, expected, message) => {
 globalThis.__nodeAssert.deepEqual = (actual, expected, message) => {
   if (
     JSON.stringify(__nodeAssertNormalize(actual, new WeakSet(), true)) ===
-      JSON.stringify(__nodeAssertNormalize(expected, new WeakSet(), true))
+    JSON.stringify(__nodeAssertNormalize(expected, new WeakSet(), true))
   ) {
     return;
   }
-  const detail = typeof actual === "string" && typeof expected === "string"
-    ? `Expected values to be loosely deep-equal:\n\n'${
-      actual.endsWith("\n") ? actual.slice(0, -1) : actual
-    }'\n\nshould loosely deep-equal\n\n'${
-      expected.endsWith("\n") ? expected.slice(0, -1) : expected
-    }'`
-    : message || "values differ";
+  const detail =
+    typeof actual === "string" && typeof expected === "string"
+      ? `Expected values to be loosely deep-equal:\n\n'${
+          actual.endsWith("\n") ? actual.slice(0, -1) : actual
+        }'\n\nshould loosely deep-equal\n\n'${
+          expected.endsWith("\n") ? expected.slice(0, -1) : expected
+        }'`
+      : message || "values differ";
   const error = new globalThis.__nodeAssert.AssertionError(detail);
   error.code = "ERR_ASSERTION";
   error.operator = "deepEqual";
@@ -396,18 +365,16 @@ const __nodeAssertPartialEqual = (actual, expected) => {
     if (actual.length === expected.length) {
       return (
         JSON.stringify(__nodeAssertNormalize(actual)) ===
-          JSON.stringify(__nodeAssertNormalize(expected))
+        JSON.stringify(__nodeAssertNormalize(expected))
       );
     }
     for (let index = 0; index < (expected.length || 0); index++) {
       const left = actual[index];
       const right = expected[index];
-      if (
-        !(
-          Object.is(left, right) ||
-          (Number.isNaN(left) && Number.isNaN(right))
-        )
-      ) {
+      if (!(
+        Object.is(left, right) ||
+        (Number.isNaN(left) && Number.isNaN(right))
+      )) {
         return false;
       }
     }
@@ -426,13 +393,13 @@ const __nodeAssertPartialEqual = (actual, expected) => {
   }
   return (
     JSON.stringify(__nodeAssertNormalize(actual)) ===
-      JSON.stringify(__nodeAssertNormalize(expected))
+    JSON.stringify(__nodeAssertNormalize(expected))
   );
 };
 globalThis.__nodeAssert.partialDeepStrictEqual = (
   actual,
   expected,
-  message,
+  message
 ) => {
   if (__nodeAssertPartialEqual(actual, expected)) return;
   if (
@@ -451,7 +418,7 @@ globalThis.__nodeAssert.partialDeepStrictEqual = (
 globalThis.__nodeAssert.notDeepStrictEqual = (actual, expected, message) => {
   if (
     JSON.stringify(__nodeAssertNormalize(actual)) ===
-      JSON.stringify(__nodeAssertNormalize(expected))
+    JSON.stringify(__nodeAssertNormalize(expected))
   ) {
     __nodeAssertionFailure(message || "values are deeply equal");
   }
