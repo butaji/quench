@@ -4,10 +4,35 @@
 //! through the [`Test262Host`] boundary. Engine implementation details remain
 //! outside this crate.
 
-use std::path::Path;
+use std::{collections::HashMap, path::Path};
 
 pub mod runtime_host;
 pub use runtime_host::RuntimeHost;
+
+/// Exact harness sources cached by filename to avoid repeated filesystem I/O.
+pub struct HarnessCache {
+    root: std::path::PathBuf,
+    sources: HashMap<String, String>,
+}
+
+impl HarnessCache {
+    pub fn new(root: std::path::PathBuf) -> Self {
+        Self {
+            root,
+            sources: HashMap::new(),
+        }
+    }
+
+    pub fn load(&mut self, name: &str) -> Result<String, String> {
+        if let Some(source) = self.sources.get(name) {
+            return Ok(source.clone());
+        }
+        let source = std::fs::read_to_string(self.root.join(name))
+            .map_err(|error| format!("harness {name}: {error}"))?;
+        self.sources.insert(name.to_string(), source.clone());
+        Ok(source)
+    }
+}
 
 /// Engine-facing execution contract for an external conformance runner.
 pub trait Test262Host: Send {
