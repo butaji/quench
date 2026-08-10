@@ -74,7 +74,7 @@ fn execute_simple_builtin(
     }
     match builtin {
         Builtin::Boolean => Ok(Value::Boolean(arguments.first().is_some_and(is_truthy))),
-        Builtin::Eval => crate::reflect::builtin(builtin, arguments),
+        Builtin::Eval => crate::reflect::builtin(builtin, arguments, receiver),
         Builtin::Escape => Ok(crate::builtins::escape(arguments.first())),
         Builtin::IsFinite => Ok(Value::Boolean(is_finite(arguments.first()))),
         Builtin::IsNaN => Ok(Value::Boolean(to_number(arguments.first()).is_nan())),
@@ -98,6 +98,13 @@ fn execute_simple_builtin(
         }
         _ => Ok(Value::Undefined),
     }
+}
+
+pub(crate) fn realm_id_for_intrinsic_receiver(receiver: Option<&Value>) -> Option<RealmId> {
+    let Some(Value::HostCapability(token)) = receiver else {
+        return None;
+    };
+    realm::id_for_token(token)
 }
 
 fn explicit_number(value: Option<&Value>) -> Result<f64, VmError> {
