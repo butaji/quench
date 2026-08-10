@@ -30,17 +30,39 @@ pub(crate) fn reduce_delete(
     if let Some(result) = reduce_eval_delete(expression, ops, facts, next_register) {
         return Some(result);
     }
-    let Expression::ComputedMemberExpression(member) = expression else {
+    if !is_member_expression(expression) {
         return Some(emit_constant(
             ops,
             next_register,
             !matches!(expression, Expression::Identifier(_)),
         ));
+    }
+    let (object, key) = match expression {
+        Expression::ComputedMemberExpression(member) => (
+            crate::reduce::reduce_expression(&member.object, ops, facts, next_register, locals)?,
+            crate::reduce::reduce_expression(
+                &member.expression,
+                ops,
+                facts,
+                next_register,
+                locals,
+            )?,
+        ),
+        Expression::StaticMemberExpression(member) => {
+            reduce_static_delete_member(member, ops, facts, next_register, locals)?
+        }
+        _ => return None,
     };
-    let object =
-        crate::reduce::reduce_expression(&member.object, ops, facts, next_register, locals)?;
-    let key =
-        crate::reduce::reduce_expression(&member.expression, ops, facts, next_register, locals)?;
+    push_delete_property(ops, facts, next_register, object, key)
+}
+
+fn push_delete_property(
+    ops: &mut Vec<Op>,
+    facts: &ProgramDb,
+    next_register: &mut u16,
+    object: u16,
+    key: u16,
+) -> Option<u16> {
     let dst = *next_register;
     *next_register = next_register.saturating_add(1);
     ops.push(Op::DeleteProperty {
@@ -50,6 +72,34 @@ pub(crate) fn reduce_delete(
         strict: facts.strict,
     });
     Some(dst)
+}
+
+fn is_member_expression(expression: &Expression<'_>) -> bool {
+    matches!(
+        expression,
+        Expression::ComputedMemberExpression(_)
+            | Expression::StaticMemberExpression(_)
+            | Expression::PrivateFieldExpression(_)
+    )
+}
+
+fn reduce_static_delete_member(
+    member: &oxc::ast::ast::StaticMemberExpression<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<(u16, u16)> {
+    let name = member.property.name.to_string();
+    let object =
+        crate::reduce::reduce_expression(&member.object, ops, facts, next_register, locals)?;
+    let key = *next_register;
+    *next_register = next_register.saturating_add(1);
+    ops.push(Op::Const {
+        dst: key,
+        value: Constant::String(name),
+    });
+    Some((object, key))
 }
 
 fn reduce_eval_delete(
