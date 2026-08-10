@@ -1,5 +1,7 @@
 //! Adapter from the runner contract to the residual runtime.
 
+use std::sync::OnceLock;
+
 use quench_runtime::ops::{HostCapabilityKind, RealmId};
 use quench_runtime::reduce::{
     reduce_module_source, reduce_module_with_harness, reduce_script_sources, reduce_source,
@@ -52,28 +54,29 @@ fn run_source(source: &str) -> Result<(), String> {
 }
 
 fn execute_program(program: &quench_runtime::reduce::ResidualProgram) -> Result<(), String> {
-    execute_with_context(&program.ops, &host_context())
+    execute_with_context(&program.ops, host_context())
         .map(|_| ())
         .map_err(|error| format!("residual VM error: {}", error.render()))
 }
 
 fn run_module_source(source: &str) -> Result<(), String> {
     let program = reduce_module_source(source).map_err(|errors| errors.join("; "))?;
-    execute_with_context(&program.ops, &host_context())
+    execute_with_context(&program.ops, host_context())
         .map(|_| ())
         .map_err(|error| format!("residual VM error: {}", error.render()))
 }
 
-fn host_context() -> VmContext {
-    VmContext::for_realm(
-        RealmId::ROOT,
-        [
-            HostCapabilityKind::GetGlobal,
-            HostCapabilityKind::CreateRealm,
-            HostCapabilityKind::EvalScript,
-            HostCapabilityKind::DetachArrayBuffer,
-        ]
-        .into_iter()
-        .collect(),
-    )
+fn host_context() -> &'static VmContext {
+    static CONTEXT: OnceLock<VmContext> = OnceLock::new();
+    CONTEXT.get_or_init(|| {
+        VmContext::for_realm(
+            RealmId::ROOT,
+            vec![
+                HostCapabilityKind::GetGlobal,
+                HostCapabilityKind::CreateRealm,
+                HostCapabilityKind::EvalScript,
+                HostCapabilityKind::DetachArrayBuffer,
+            ],
+        )
+    })
 }
