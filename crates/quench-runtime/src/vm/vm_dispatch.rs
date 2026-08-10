@@ -95,6 +95,7 @@ fn run_property_op(registers: &mut Vec<Value>, op: &Op) -> Result<bool, VmError>
         GetProperty { .. }
             | GetPrivate { .. }
             | GetSuperProperty { .. }
+            | GetSuperPropertyDynamic { .. }
             | ResolveGlobal { .. }
             | GetPropertyDynamic { .. }
             | HasPropertyDynamic { .. }
@@ -103,6 +104,8 @@ fn run_property_op(registers: &mut Vec<Value>, op: &Op) -> Result<bool, VmError>
             | SetPrivate { .. }
             | DefinePrivate { .. }
             | SetPropertyDynamic { .. }
+            | SetSuperProperty { .. }
+            | SetSuperPropertyDynamic { .. }
             | DefineProperty { .. }
             | CopyDataProperties { .. }
             | ResolveName { .. }
@@ -298,7 +301,9 @@ fn run_get_set_property(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmErr
     match op {
         GetProperty { .. } => crate::properties::execute_get(registers, op)?,
         GetPrivate { .. } => crate::private_slots::execute_get(registers, op)?,
-        GetSuperProperty { .. } => crate::super_scope::execute_get(registers, op)?,
+        GetSuperProperty { .. } | GetSuperPropertyDynamic { .. } => {
+            crate::super_scope::execute_get(registers, op)?
+        }
         ResolveGlobal { .. } => crate::with_scope::execute_resolve_global(registers, op)?,
         GetPropertyDynamic { .. } => crate::properties::execute_get_dynamic(registers, op)?,
         HasPropertyDynamic { .. } => crate::with_scope::execute_has_property(registers, op)?,
@@ -309,11 +314,9 @@ fn run_get_set_property(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmErr
         SetFunctionNameDynamic { .. } => {
             crate::properties::execute_set_function_name_dynamic(registers, op)?
         }
-        ResolveNameOrUndefined { dst, name } => write_value(
-            registers,
-            *dst,
-            crate::locals::resolve_name_or_undefined(name)?,
-        ),
+        ResolveNameOrUndefined { dst, name } => {
+            write_value(registers, *dst, crate::locals::resolve_name_or_undefined(name)?)
+        }
         ToPropertyKey { dst, src } => {
             let value = crate::execute::read_register(registers, *src)?;
             let key = crate::conversion::to_property_key(&value)?;
@@ -321,6 +324,9 @@ fn run_get_set_property(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmErr
         }
         SetProperty { .. } | SetPropertyDynamic { .. } => {
             crate::properties::execute_set_property(registers, op)?
+        }
+        SetSuperProperty { .. } | SetSuperPropertyDynamic { .. } => {
+            crate::super_scope::execute_set(registers, op)?
         }
         SetPrivate { .. } => crate::private_slots::execute_set(registers, op)?,
         DefinePrivate { .. } => crate::private_slots::execute_define(registers, op)?,
@@ -428,38 +434,23 @@ fn builtin_property(builtin: crate::ops::Builtin, key: &str) -> Value {
 }
 
 fn typed_array_element_size(builtin: Builtin) -> Option<f64> {
+    use Builtin::*;
     Some(match builtin {
-        Builtin::Float64Array | Builtin::Float64ArrayPrototype => {
-            crate::value::Float64ArrayData::BYTES_PER_ELEMENT as f64
-        }
-        Builtin::Float32Array | Builtin::Float32ArrayPrototype => {
-            crate::value::Float32ArrayData::BYTES_PER_ELEMENT as f64
-        }
-        Builtin::Int8Array | Builtin::Int8ArrayPrototype => {
-            crate::value::Int8ArrayData::BYTES_PER_ELEMENT as f64
-        }
-        Builtin::Int16Array | Builtin::Int16ArrayPrototype => {
-            crate::value::Int16ArrayData::BYTES_PER_ELEMENT as f64
-        }
-        Builtin::Uint16Array | Builtin::Uint16ArrayPrototype => {
-            crate::value::Uint16ArrayData::BYTES_PER_ELEMENT as f64
-        }
-        Builtin::Int32Array | Builtin::Int32ArrayPrototype => {
-            crate::value::Int32ArrayData::BYTES_PER_ELEMENT as f64
-        }
-        Builtin::Uint8Array | Builtin::Uint8ArrayPrototype => {
-            crate::value::Uint8ArrayData::BYTES_PER_ELEMENT as f64
-        }
-        Builtin::Uint32Array | Builtin::Uint32ArrayPrototype => {
-            crate::value::Uint32ArrayData::BYTES_PER_ELEMENT as f64
-        }
-        Builtin::Uint8ClampedArray | Builtin::Uint8ClampedArrayPrototype => {
+        Float64Array | Float64ArrayPrototype => crate::value::Float64ArrayData::BYTES_PER_ELEMENT as f64,
+        Float32Array | Float32ArrayPrototype => crate::value::Float32ArrayData::BYTES_PER_ELEMENT as f64,
+        Int8Array | Int8ArrayPrototype => crate::value::Int8ArrayData::BYTES_PER_ELEMENT as f64,
+        Int16Array | Int16ArrayPrototype => crate::value::Int16ArrayData::BYTES_PER_ELEMENT as f64,
+        Uint16Array | Uint16ArrayPrototype => crate::value::Uint16ArrayData::BYTES_PER_ELEMENT as f64,
+        Int32Array | Int32ArrayPrototype => crate::value::Int32ArrayData::BYTES_PER_ELEMENT as f64,
+        Uint8Array | Uint8ArrayPrototype => crate::value::Uint8ArrayData::BYTES_PER_ELEMENT as f64,
+        Uint32Array | Uint32ArrayPrototype => crate::value::Uint32ArrayData::BYTES_PER_ELEMENT as f64,
+        Uint8ClampedArray | Uint8ClampedArrayPrototype => {
             crate::value::Uint8ClampedArrayData::BYTES_PER_ELEMENT as f64
         }
-        Builtin::BigInt64Array | Builtin::BigInt64ArrayPrototype => {
+        BigInt64Array | BigInt64ArrayPrototype => {
             crate::value::BigInt64ArrayData::BYTES_PER_ELEMENT as f64
         }
-        Builtin::BigUint64Array | Builtin::BigUint64ArrayPrototype => {
+        BigUint64Array | BigUint64ArrayPrototype => {
             crate::value::BigUint64ArrayData::BYTES_PER_ELEMENT as f64
         }
         _ => return None,
