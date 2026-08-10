@@ -10,4 +10,5 @@ pub(crate) enum Completion {
     Break(Option<String>),
     Continue(Option<String>),
     Suspend(Rc<PromiseData>),
+    Yield(Value),
 }

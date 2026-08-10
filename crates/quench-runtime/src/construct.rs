@@ -263,8 +263,8 @@ fn construct_function(
 
 fn constructor_receiver(target: &Value) -> Value {
     let prototype = crate::execute::get_property(target, "prototype");
-    Value::Object(std::rc::Rc::new(vec![
-        ("\0prototype".to_string(), prototype),
-        ("constructor".to_string(), target.clone()),
-    ]))
+    Value::Object(std::rc::Rc::new(vec![(
+        "\0prototype".to_string(),
+        prototype,
+    )]))
 }

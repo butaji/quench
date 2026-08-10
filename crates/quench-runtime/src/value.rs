@@ -121,6 +121,14 @@ pub struct GeneratorData {
     pub receiver: Value,
     pub arguments: Vec<Value>,
     pub done: RefCell<bool>,
+    pub state: RefCell<Option<GeneratorState>>,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct GeneratorState {
+    pub registers: Vec<Value>,
+    pub environment: Rc<crate::environment::Environment>,
+    pub pc: usize,
 }
 
 pub type ObjectProperties = Vec<(String, Value)>;

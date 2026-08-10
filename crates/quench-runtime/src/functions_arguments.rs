@@ -1,4 +1,4 @@
-fn build_registers(
+pub(crate) fn build_registers(
     function: &std::rc::Rc<crate::value::FunctionValue>,
     this_value: &crate::value::Value,
     arguments: &[crate::value::Value],
@@ -89,6 +89,7 @@ pub(crate) fn execute_body(
     this_value: &crate::value::Value,
     arguments: &[crate::value::Value],
 ) -> Result<crate::value::Value, crate::execute::VmError> {
+    let _home = crate::super_scope::Guard::install(function, this_value);
     let (mut registers, environment) = build_registers(function, this_value, arguments);
     crate::vm::execute_in_environment(
         &function.body,

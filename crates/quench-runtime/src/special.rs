@@ -74,6 +74,9 @@ fn reduce_secondary(
         Expression::UpdateExpression(value) => {
             crate::loops::reduce_update(value, ops, facts, next_register, locals)
         }
+        Expression::YieldExpression(value) => {
+            crate::generator::reduce_yield(value, ops, facts, next_register, locals)
+        }
         Expression::AssignmentExpression(value) => {
             crate::reduce::reduce_assignment(value, ops, facts, next_register, locals)
         }
