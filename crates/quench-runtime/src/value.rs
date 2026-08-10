@@ -15,18 +15,28 @@ pub enum PromiseState {
 /// Heap-allocated Promise data.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PromiseData {
-    pub state: PromiseState,
-    pub result: Option<Value>,
-    pub then_actions: Vec<(Option<Value>, Option<Value>)>,
+    pub state: RefCell<PromiseState>,
+    pub result: RefCell<Option<Value>>,
+    pub then_actions: RefCell<Vec<(Option<Value>, Option<Value>)>>,
+}
+
+impl PromiseData {
+    pub fn new(state: PromiseState) -> Self {
+        let result = match &state {
+            PromiseState::Pending => None,
+            PromiseState::Fulfilled(value) | PromiseState::Rejected(value) => Some(value.clone()),
+        };
+        Self {
+            state: RefCell::new(state),
+            result: RefCell::new(result),
+            then_actions: RefCell::new(Vec::new()),
+        }
+    }
 }
 
 impl Default for PromiseData {
     fn default() -> Self {
-        Self {
-            state: PromiseState::Pending,
-            result: None,
-            then_actions: Vec::new(),
-        }
+        Self::new(PromiseState::Pending)
     }
 }
 
