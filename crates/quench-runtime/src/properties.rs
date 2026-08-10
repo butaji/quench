@@ -15,6 +15,9 @@ pub(crate) fn reduce(
         Expression::StaticMemberExpression(member) => {
             (&member.object, member.property.name.to_string())
         }
+        Expression::PrivateFieldExpression(member) => {
+            (&member.object, format!("#{}", member.field.name))
+        }
         Expression::ComputedMemberExpression(member) => {
             let object = crate::reduce::reduce_expression(
                 &member.object,
@@ -34,6 +37,17 @@ pub(crate) fn reduce(
         }
         _ => return None,
     };
+    emit_get(object, key, ops, facts, next_register, locals)
+}
+
+fn emit_get(
+    object: &Expression<'_>,
+    key: String,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<u16> {
     let object = crate::reduce::reduce_expression(object, ops, facts, next_register, locals)?;
     let register = *next_register;
     *next_register = next_register.saturating_add(1);

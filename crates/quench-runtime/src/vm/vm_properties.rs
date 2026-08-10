@@ -67,6 +67,14 @@ fn object_alias_property(alias: &crate::value::ObjectAliasValue, key: &str) -> V
         .map_or(Value::Undefined, |object| object_property(&object, key))
 }
 
+fn object_prototype_property(properties: &[(String, Value)], key: &str) -> Value {
+    properties
+        .iter()
+        .rev()
+        .find_map(|(name, value)| (name == "\0prototype").then_some(value))
+        .map_or(Value::Undefined, |prototype| get_property(prototype, key))
+}
+
 fn function_property(function: &crate::value::FunctionValue, key: &str) -> Value {
     function
         .properties
@@ -89,10 +97,12 @@ pub fn get_property_result(value: &Value, key: &str) -> Result<Value, VmError> {
         }
         return crate::functions::execute_target(&getter, value, &[]);
     }
-    let Value::Object(properties) = value else {
-        return Ok(get_property(value, key));
+    let getter = match value {
+        Value::Object(properties) => accessor_getter(properties, key),
+        Value::Function(function) => accessor_getter(&function.properties.borrow(), key),
+        _ => None,
     };
-    let Some(getter) = accessor_getter(properties, key) else {
+    let Some(getter) = getter else {
         return Ok(get_property(value, key));
     };
     if matches!(getter, Value::Undefined) {
@@ -114,17 +124,28 @@ pub(crate) fn array_accessor(value: &Value, key: &str, field: &str) -> Option<Va
 
 fn accessor_getter(properties: &[(String, Value)], key: &str) -> Option<Value> {
     let descriptor_key = crate::builtins::descriptor_key(key);
-    let (_, Value::Object(descriptor)) = properties
+    let descriptor = properties
         .iter()
         .rev()
-        .find(|(name, _)| name == &descriptor_key)?
-    else {
-        return None;
+        .find_map(|(name, value)| (name == &descriptor_key).then_some(value));
+    let Some(Value::Object(descriptor)) = descriptor else {
+        return inherited_accessor(properties, key);
     };
     descriptor
         .iter()
         .rev()
         .find_map(|(name, value)| (name == "get").then(|| value.clone()))
+}
+
+fn inherited_accessor(properties: &[(String, Value)], key: &str) -> Option<Value> {
+    let prototype = properties
+        .iter()
+        .rev()
+        .find_map(|(name, value)| (name == "\0prototype").then_some(value))?;
+    let Value::Object(properties) = prototype else {
+        return None;
+    };
+    accessor_getter(properties, key)
 }
 
 fn host_capability_property(value: &Value, capability: HostCapabilityRef, key: &str) -> Value {
@@ -366,6 +387,10 @@ fn object_property(properties: &Rc<Vec<(String, Value)>>, key: &str) -> Value {
             .is_some_and(|candidate| Rc::ptr_eq(candidate, properties))
     }) {
         return global_property(properties, key);
+    }
+    let inherited = object_prototype_property(properties, key);
+    if !matches!(inherited, Value::Undefined) {
+        return inherited;
     }
     let prototype = object_prototype(properties);
     bind_method(

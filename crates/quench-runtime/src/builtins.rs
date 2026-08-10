@@ -318,7 +318,7 @@ pub(crate) fn keys(value: Option<&Value>) -> Value {
     let keys = match value {
         Some(Value::Object(properties)) => properties
             .iter()
-            .filter(|(key, _)| !is_descriptor_key(key))
+            .filter(|(key, _)| !key.starts_with('\0') && !is_descriptor_key(key))
             .map(|(key, _)| Value::String(key.clone()))
             .collect(),
         Some(Value::Array(values)) => (0..values.len())

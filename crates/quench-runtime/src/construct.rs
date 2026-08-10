@@ -248,10 +248,7 @@ fn construct_function(
     if !crate::functions::is_constructible(function) {
         return Err(crate::vm::not_callable());
     }
-    let object = Value::Object(std::rc::Rc::new(vec![(
-        "constructor".to_string(),
-        target.clone(),
-    )]));
+    let object = constructor_receiver(target);
     let (result, final_this) = crate::functions::execute_construct(function, &object, arguments)?;
     if crate::value::is_object(&result) {
         Ok(result)
@@ -260,4 +257,12 @@ fn construct_function(
     } else {
         Ok(object)
     }
+}
+
+fn constructor_receiver(target: &Value) -> Value {
+    let prototype = crate::execute::get_property(target, "prototype");
+    Value::Object(std::rc::Rc::new(vec![
+        ("\0prototype".to_string(), prototype),
+        ("constructor".to_string(), target.clone()),
+    ]))
 }

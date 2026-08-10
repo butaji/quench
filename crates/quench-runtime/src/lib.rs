@@ -17,6 +17,7 @@ mod blocks;
 mod branch;
 mod builtin_meta;
 mod builtins;
+mod classes;
 mod collections;
 mod completion;
 mod conditional;

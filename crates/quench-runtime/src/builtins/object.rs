@@ -28,7 +28,11 @@ pub(crate) fn get_prototype_of(value: Option<&Value>) -> Result<Value, VmError> 
         }
         Value::Array(values) if values.is_arguments() => Value::Builtin(Builtin::ObjectPrototype),
         Value::Array(_) => Value::Builtin(Builtin::ArrayPrototype),
-        Value::Object(_) => Value::Builtin(Builtin::ObjectPrototype),
+        Value::Object(properties) => properties
+            .iter()
+            .rev()
+            .find_map(|(name, value)| (name == "\0prototype").then(|| value.clone()))
+            .unwrap_or(Value::Builtin(Builtin::ObjectPrototype)),
         _ => Value::Null,
     })
 }
