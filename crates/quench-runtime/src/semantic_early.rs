@@ -13,8 +13,12 @@ pub(crate) fn var_declared_names(program: &oxc::ast::ast::Program<'_>) -> Vec<St
 }
 
 pub(crate) fn lexically_declared_names(program: &oxc::ast::ast::Program<'_>) -> Vec<String> {
+    lexically_declared_names_in(&program.body)
+}
+
+pub(crate) fn lexically_declared_names_in(statements: &[Statement<'_>]) -> Vec<String> {
     let mut names = BTreeSet::new();
-    for statement in &program.body {
+    for statement in statements {
         collect_top_level_lexical_name(statement, &mut names);
     }
     names.into_iter().collect()
