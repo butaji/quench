@@ -386,11 +386,30 @@ impl Value {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum InstanceFieldKey {
+    Static(Rc<str>),
+    Dynamic(Value),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum InstanceFieldInitializer {
+    Undefined,
+    Callable(Rc<FunctionValue>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct InstanceFieldPlan {
+    pub key: InstanceFieldKey,
+    pub initializer: InstanceFieldInitializer,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct FunctionValue {
     pub body: Vec<Op>,
     pub params: u16,
     pub captures: Rc<crate::environment::Environment>,
     pub properties: Rc<RefCell<Vec<(String, Value)>>>,
+    pub instance_fields: Rc<RefCell<Vec<InstanceFieldPlan>>>,
     pub kind: FunctionKind,
     pub strictness: FunctionStrictness,
     /// Whether invocation produces an async completion and Promise result.

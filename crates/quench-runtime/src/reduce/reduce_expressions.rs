@@ -240,6 +240,7 @@ pub fn reduce_unary(
         UnaryOperator::UnaryPlus => crate::ops::UnaryOp::Plus,
         UnaryOperator::UnaryNegation => crate::ops::UnaryOp::Minus,
         UnaryOperator::LogicalNot => crate::ops::UnaryOp::Not,
+        UnaryOperator::BitwiseNot => crate::ops::UnaryOp::BitwiseNot,
         UnaryOperator::Void => crate::ops::UnaryOp::Void,
         UnaryOperator::Typeof => crate::ops::UnaryOp::Typeof,
         _ => return None,

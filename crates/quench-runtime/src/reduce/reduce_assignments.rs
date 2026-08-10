@@ -4,11 +4,13 @@ use oxc::ast::ast::{AssignmentOperator, AssignmentTarget, Expression};
 
 use crate::{facts::ProgramDb, literal::reduce_operator, ops::Op};
 
+#[derive(Clone)]
 pub(crate) enum PlaceKey {
     Static(String),
     Dynamic(u16),
 }
 
+#[derive(Clone)]
 pub(crate) enum Place {
     Local {
         slot: u16,
@@ -43,6 +45,9 @@ pub fn reduce_assignment(
         return Some(value);
     }
     let mut place = reduce_place(&assignment.left, ops, facts, next, locals)?;
+    if assignment.operator.is_logical() {
+        return crate::logical::reduce_assignment(assignment, place, ops, facts, next, locals);
+    }
     let lhs = if assignment.operator == AssignmentOperator::Assign {
         None
     } else {
