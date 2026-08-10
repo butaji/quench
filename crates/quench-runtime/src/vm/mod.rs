@@ -53,9 +53,7 @@ pub fn execute_builtin_with_receiver(
 ) -> Result<Value, VmError> {
     if matches!(
         builtin,
-        Builtin::ObjectHasOwnProperty
-            | Builtin::ObjectGetOwnPropertyDescriptor
-            | Builtin::ObjectDefineProperty
+        Builtin::ObjectHasOwnProperty | Builtin::ObjectGetOwnPropertyDescriptor
     ) {
         return crate::builtins::object::execute_special(builtin, receiver, arguments);
     }
