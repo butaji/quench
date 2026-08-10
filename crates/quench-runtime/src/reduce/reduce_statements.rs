@@ -23,7 +23,7 @@ pub struct ResidualProgram {
     pub ops: Vec<Op>,
 }
 pub fn reduce_source(source: &str) -> Result<ResidualProgram, Vec<String>> {
-    reduce_source_with_type(source, SourceType::default())
+    reduce_source_with_type(source, SourceType::cjs())
 }
 pub fn reduce_module_source(source: &str) -> Result<ResidualProgram, Vec<String>> {
     reduce_source_with_type(source, SourceType::mjs())
