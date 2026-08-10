@@ -42,20 +42,20 @@ pub(crate) fn reduce_body(
     )
 }
 
-pub(crate) fn reduce_expression(
-    function: &oxc::ast::ast::Function<'_>,
-    ops: &mut Vec<Op>,
-    facts: &mut ProgramDb,
-    next_register: &mut u16,
-    locals: &HashMap<String, u16>,
-) -> Option<u16> {
-    let body = function.body.as_ref()?;
-    let (mut parameters, parameter_count) = function_parameters(function).ok()?;
-    let captures = locals
+fn capture_count(locals: &HashMap<String, u16>) -> u16 {
+    locals
         .values()
         .copied()
         .max()
-        .map_or(0, |slot| slot.saturating_add(1));
+        .map_or(0, |slot| slot.saturating_add(1))
+}
+
+fn extend_function_parameters(
+    mut parameters: HashMap<String, u16>,
+    parameter_count: u16,
+    captures: u16,
+    locals: &HashMap<String, u16>,
+) -> HashMap<String, u16> {
     for slot in parameters.values_mut() {
         *slot = slot.saturating_add(captures);
     }
@@ -68,22 +68,61 @@ pub(crate) fn reduce_expression(
         captures.saturating_add(parameter_count).saturating_add(1),
     );
     parameters.extend(locals.iter().map(|(name, slot)| (name.clone(), *slot)));
-    let body_ops = crate::reduce::reduce_statements_with_locals(
-        &body.statements,
-        facts,
-        parameters,
-        captures.saturating_add(parameter_count).saturating_add(2),
-    )
-    .ok()?;
+    parameters
+}
+
+fn reduce_function_ops(
+    statements: &[oxc::ast::ast::Statement<'_>],
+    facts: &mut ProgramDb,
+    parameters: HashMap<String, u16>,
+    parameter_count: u16,
+    locals: &HashMap<String, u16>,
+) -> Option<(Vec<Op>, u16)> {
+    let captures = capture_count(locals);
+    let parameters = extend_function_parameters(parameters, parameter_count, captures, locals);
+    let local_count = captures.saturating_add(parameter_count).saturating_add(2);
+    let body_ops =
+        crate::reduce::reduce_statements_with_locals(statements, facts, parameters, local_count)
+            .ok()?;
+    Some((body_ops, captures))
+}
+
+fn emit_function_op(
+    ops: &mut Vec<Op>,
+    next_register: &mut u16,
+    body: Vec<Op>,
+    params: u16,
+    captures: u16,
+) -> u16 {
     let register = *next_register;
     *next_register = next_register.saturating_add(1);
     ops.push(Op::MakeFunction {
         dst: register,
-        body: body_ops,
-        params: parameter_count,
+        body,
+        params,
         captures,
     });
-    Some(register)
+    register
+}
+
+pub(crate) fn reduce_expression(
+    function: &oxc::ast::ast::Function<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<u16> {
+    let body = function.body.as_ref()?;
+    let (parameters, parameter_count) = function_parameters(function).ok()?;
+    let (body_ops, captures) =
+        reduce_function_ops(&body.statements, facts, parameters, parameter_count, locals)?;
+    Some(emit_function_op(
+        ops,
+        next_register,
+        body_ops,
+        parameter_count,
+        captures,
+    ))
 }
 
 pub(crate) fn reduce_arrow(
@@ -93,40 +132,21 @@ pub(crate) fn reduce_arrow(
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
-    let (mut parameters, parameter_count) = parameters(&function.params).ok()?;
-    let captures = locals
-        .values()
-        .copied()
-        .max()
-        .map_or(0, |slot| slot.saturating_add(1));
-    for slot in parameters.values_mut() {
-        *slot = slot.saturating_add(captures);
-    }
-    parameters.insert(
-        "arguments".to_string(),
-        captures.saturating_add(parameter_count),
-    );
-    parameters.insert(
-        "this".to_string(),
-        captures.saturating_add(parameter_count).saturating_add(1),
-    );
-    parameters.extend(locals.iter().map(|(name, slot)| (name.clone(), *slot)));
-    let body_ops = crate::reduce::reduce_statements_with_locals(
+    let (parameters, parameter_count) = parameters(&function.params).ok()?;
+    let (body_ops, captures) = reduce_function_ops(
         &function.body.statements,
         facts,
         parameters,
-        captures.saturating_add(parameter_count).saturating_add(2),
-    )
-    .ok()?;
-    let register = *next_register;
-    *next_register = next_register.saturating_add(1);
-    ops.push(Op::MakeFunction {
-        dst: register,
-        body: body_ops,
-        params: parameter_count,
+        parameter_count,
+        locals,
+    )?;
+    Some(emit_function_op(
+        ops,
+        next_register,
+        body_ops,
+        parameter_count,
         captures,
-    });
-    Some(register)
+    ))
 }
 
 pub(crate) fn make(
@@ -268,43 +288,53 @@ pub(crate) fn execute_target(
     }
 }
 
+fn execute_function_call(
+    receiver: Option<&crate::value::Value>,
+    arguments: &[crate::value::Value],
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    let receiver = receiver.ok_or(crate::execute::VmError::NotCallable)?;
+    let this = arguments
+        .first()
+        .cloned()
+        .unwrap_or(crate::value::Value::Undefined);
+    execute_target(receiver, &this, &arguments[1..])
+}
+
+fn bind_function_target(
+    receiver: Option<&crate::value::Value>,
+    arguments: &[crate::value::Value],
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    if !matches!(
+        receiver,
+        Some(
+            crate::value::Value::Builtin(_)
+                | crate::value::Value::Function(_)
+                | crate::value::Value::BoundFunction(_)
+                | crate::value::Value::Proxy(_)
+        )
+    ) {
+        return Err(crate::execute::VmError::NotCallable);
+    }
+    let target = arguments
+        .first()
+        .ok_or(crate::execute::VmError::NotCallable)?;
+    Ok(crate::value::Value::BoundFunction(std::rc::Rc::new(
+        crate::value::BoundFunctionValue {
+            target: receiver.cloned().unwrap_or(crate::value::Value::Undefined),
+            receiver: target.clone(),
+            arguments: arguments[1..].to_vec(),
+        },
+    )))
+}
+
 pub(crate) fn function_builtin(
     builtin: crate::ops::Builtin,
     receiver: Option<&crate::value::Value>,
     arguments: &[crate::value::Value],
 ) -> Result<crate::value::Value, crate::execute::VmError> {
     match builtin {
-        crate::ops::Builtin::FunctionCall => {
-            let receiver = receiver.ok_or(crate::execute::VmError::NotCallable)?;
-            let this = arguments
-                .first()
-                .cloned()
-                .unwrap_or(crate::value::Value::Undefined);
-            execute_target(receiver, &this, &arguments[1..])
-        }
-        crate::ops::Builtin::FunctionBind => {
-            if !matches!(
-                receiver,
-                Some(
-                    crate::value::Value::Builtin(_)
-                        | crate::value::Value::Function(_)
-                        | crate::value::Value::BoundFunction(_)
-                        | crate::value::Value::Proxy(_)
-                )
-            ) {
-                return Err(crate::execute::VmError::NotCallable);
-            }
-            let target = arguments
-                .first()
-                .ok_or(crate::execute::VmError::NotCallable)?;
-            Ok(crate::value::Value::BoundFunction(std::rc::Rc::new(
-                crate::value::BoundFunctionValue {
-                    target: receiver.cloned().unwrap_or(crate::value::Value::Undefined),
-                    receiver: target.clone(),
-                    arguments: arguments[1..].to_vec(),
-                },
-            )))
-        }
+        crate::ops::Builtin::FunctionCall => execute_function_call(receiver, arguments),
+        crate::ops::Builtin::FunctionBind => bind_function_target(receiver, arguments),
         crate::ops::Builtin::ArrayJoin => Ok(crate::builtins::array_join(receiver, arguments)),
         crate::ops::Builtin::ArrayPush => Ok(crate::builtins::array_push(receiver, arguments)),
         crate::ops::Builtin::ObjectPropertyIsEnumerable => Ok(
