@@ -269,6 +269,9 @@ pub fn execute_builtin_with_receiver(
     ) {
         return crate::builtins::object::execute_special(builtin, receiver, arguments);
     }
+    if builtin == Builtin::ObjectDefineProperty {
+        return Ok(crate::builtins::define_property(arguments));
+    }
     if let Some(result) = early_dispatch(builtin, receiver, arguments) {
         return result;
     }
