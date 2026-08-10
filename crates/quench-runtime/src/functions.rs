@@ -371,7 +371,7 @@ pub(crate) fn reduce_expression(
             is_async: function.r#async,
             mapped_arguments: crate::function_parameters::is_simple(&function.params),
         },
-        function.id.is_some(),
+        function.id.as_ref().map(|id| id.name.as_str()),
     ))
 }
 
