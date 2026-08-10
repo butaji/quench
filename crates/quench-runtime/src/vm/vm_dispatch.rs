@@ -17,7 +17,7 @@ fn run_simple_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Option<Va
     match op {
         Const { dst, value } => write_value(registers, *dst, value.into()),
         StoreLocal { slot, src } => crate::locals::store(registers, *slot, *src)?,
-        LoadLocal { dst, slot } => copy_register(registers, *dst, *slot)?,
+        LoadLocal { dst, slot } => crate::locals::load(registers, *dst, *slot),
         MakeArray { .. } => run_make_array(registers, op)?,
         MakeObject { .. } => run_make_object(registers, op)?,
         MakeBuiltin { dst, builtin } => write_value(

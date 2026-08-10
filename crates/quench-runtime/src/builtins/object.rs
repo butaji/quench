@@ -136,29 +136,11 @@ pub(crate) fn descriptor(value: Option<&Value>, key: Option<&Value>) -> Value {
     let (Some(value), Some(key)) = (value, key.map(value_to_string)) else {
         return Value::Undefined;
     };
-    descriptor_property(value, &key)
-        .map_or(Value::Undefined, |property| descriptor_object(&property))
-}
-
-fn descriptor_property(value: &Value, key: &str) -> Option<Value> {
-    match value {
-        Value::Object(properties) => {
-            if let Some((_, metadata)) = properties
-                .iter()
-                .rev()
-                .find(|(name, _)| name == &super::descriptor_key(key))
-            {
-                return Some(metadata.clone());
-            }
-            properties
-                .iter()
-                .rev()
-                .find(|(name, _)| name == key)
-                .map(|(_, value)| value.clone())
-        }
-        Value::Array(values) => array_descriptor(values, key),
-        Value::String(value) => string_descriptor(value, key),
-        Value::Builtin(builtin) => builtin_descriptor(*builtin, key),
+    let descriptor = match value {
+        Value::Object(properties) => object_descriptor(properties, &key),
+        Value::Array(values) => array_descriptor(values, &key),
+        Value::String(value) => string_descriptor(value, &key),
+        Value::Builtin(builtin) => builtin_descriptor(*builtin, &key),
         Value::Function(function) if key == "length" => Some(Value::Object(Rc::new(vec![
             (
                 "value".to_string(),
@@ -173,10 +155,26 @@ fn descriptor_property(value: &Value, key: &str) -> Option<Value> {
             .borrow()
             .iter()
             .rev()
-            .find(|(name, _)| name == key)
-            .map(|(_, value)| value.clone()),
+            .find(|(name, _)| name == &key)
+            .map(|(_, value)| descriptor_object(value)),
         _ => None,
+    };
+    descriptor.unwrap_or(Value::Undefined)
+}
+
+fn object_descriptor(properties: &[(String, Value)], key: &str) -> Option<Value> {
+    if let Some((_, metadata)) = properties
+        .iter()
+        .rev()
+        .find(|(name, _)| name == &super::descriptor_key(key))
+    {
+        return Some(metadata.clone());
     }
+    properties
+        .iter()
+        .rev()
+        .find(|(name, _)| name == key)
+        .map(|(_, value)| descriptor_object(value))
 }
 
 fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
@@ -203,6 +201,7 @@ fn array_descriptor(values: &[Value], key: &str) -> Option<Value> {
     key.parse::<usize>()
         .ok()
         .and_then(|index| values.get(index).cloned())
+        .map(|value| descriptor_object(&value))
 }
 
 fn string_descriptor(value: &str, key: &str) -> Option<Value> {
@@ -286,7 +285,7 @@ mod tests {
             kind: crate::ops::FunctionKind::Ordinary,
             strictness: crate::ops::FunctionStrictness::Sloppy,
             is_async: false,
-            captures: Rc::new(RefCell::new(Vec::new())),
+            captures: crate::environment::Environment::new(),
             properties: Rc::new(RefCell::new(vec![(
                 "custom".to_string(),
                 Value::Boolean(true),

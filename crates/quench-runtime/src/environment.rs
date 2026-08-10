@@ -1,0 +1,69 @@
+use std::{cell::RefCell, rc::Rc};
+
+use crate::value::Value;
+
+/// Shared indexed lexical bindings. Captured prefixes share their slot cells.
+#[derive(Debug, Default, PartialEq)]
+pub struct Environment {
+    slots: RefCell<Vec<Rc<RefCell<Value>>>>,
+}
+
+impl Environment {
+    pub(crate) fn new() -> Rc<Self> {
+        Rc::new(Self::default())
+    }
+
+    pub(crate) fn capture(environment: &Rc<Self>, count: u16) -> Rc<Self> {
+        let count = usize::from(count);
+        let mut source = environment.slots.borrow_mut();
+        while source.len() < count {
+            source.push(Rc::new(RefCell::new(Value::Undefined)));
+        }
+        let slots = source.iter().take(count).cloned().collect();
+        Rc::new(Self {
+            slots: RefCell::new(slots),
+        })
+    }
+
+    pub(crate) fn child(captures: &Rc<Self>, values: Vec<Value>) -> Rc<Self> {
+        let mut slots = captures.slots.borrow().clone();
+        slots.extend(values.into_iter().map(|value| Rc::new(RefCell::new(value))));
+        Rc::new(Self {
+            slots: RefCell::new(slots),
+        })
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.slots.borrow().len()
+    }
+
+    pub(crate) fn get(&self, slot: u16) -> Value {
+        self.slots
+            .borrow()
+            .get(usize::from(slot))
+            .map_or(Value::Undefined, |value| value.borrow().clone())
+    }
+
+    pub(crate) fn set(&self, slot: u16, value: Value) {
+        let index = usize::from(slot);
+        let mut slots = self.slots.borrow_mut();
+        while slots.len() <= index {
+            slots.push(Rc::new(RefCell::new(Value::Undefined)));
+        }
+        *slots[index].borrow_mut() = value;
+    }
+
+    pub(crate) fn replace_object(&self, old: &Value, new: &Value) {
+        let (Value::Object(old), Value::Object(new)) = (old, new) else {
+            return;
+        };
+        for slot in self.slots.borrow().iter() {
+            let mut value = slot.borrow_mut();
+            if let Value::Object(object) = &*value {
+                if Rc::ptr_eq(object, old) {
+                    *value = Value::Object(new.clone());
+                }
+            }
+        }
+    }
+}

@@ -138,7 +138,11 @@ pub fn execute_with_registers_context(
     mut registers: Vec<Value>,
     context: &VmContext,
 ) -> Result<Value, VmError> {
-    execute_in_place_context(ops, &mut registers, context)
+    let environment = crate::environment::Environment::child(
+        &crate::environment::Environment::new(),
+        registers.clone(),
+    );
+    execute_in_environment(ops, &mut registers, context, environment)
 }
 
 pub fn execute_in_place_context(
@@ -146,8 +150,29 @@ pub fn execute_in_place_context(
     registers: &mut Vec<Value>,
     context: &VmContext,
 ) -> Result<Value, VmError> {
+    if crate::locals::is_installed() {
+        return run_ops(ops, registers, context);
+    }
+    let environment = crate::environment::Environment::child(
+        &crate::environment::Environment::new(),
+        registers.clone(),
+    );
+    execute_in_environment(ops, registers, context, environment)
+}
+
+pub(crate) fn execute_in_environment(
+    ops: &[Op],
+    registers: &mut Vec<Value>,
+    context: &VmContext,
+    environment: Rc<crate::environment::Environment>,
+) -> Result<Value, VmError> {
     let _context_guard = ContextGuard::install(context);
     let _global_guard = GlobalObjectGuard::install();
+    let _environment_guard = crate::locals::EnvironmentGuard::install(environment);
+    run_ops(ops, registers, context)
+}
+
+fn run_ops(ops: &[Op], registers: &mut Vec<Value>, context: &VmContext) -> Result<Value, VmError> {
     for op in ops {
         match run_op(registers, op, context)? {
             None => {}

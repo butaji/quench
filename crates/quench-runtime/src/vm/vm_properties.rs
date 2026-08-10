@@ -71,7 +71,7 @@ fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
     if matches!(key, "prototype" | "constructor") {
         return property;
     }
-    if matches!(key, "call" | "bind") {
+    if builtin != Builtin::FunctionPrototype && matches!(key, "call" | "bind") {
         return bind_method(value, property);
     }
     property
@@ -335,4 +335,3 @@ fn global_builtin(key: &str) -> Option<Builtin> {
         _ => return None,
     })
 }
-
