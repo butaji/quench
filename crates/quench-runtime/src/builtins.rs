@@ -219,6 +219,7 @@ pub(crate) fn object(arguments: &[Value]) -> Value {
         | Some(Value::DataView(_))
         | Some(Value::Float32Array(_))
         | Some(Value::Float64Array(_))
+        | Some(Value::Int16Array(_))
         | Some(Value::Int8Array(_))
         | Some(Value::Int32Array(_))
         | Some(Value::Uint8Array(_))
@@ -275,6 +276,7 @@ pub(crate) fn same_value(left: Option<&Value>, right: Option<&Value>) -> bool {
         (Value::DataView(left), Value::DataView(right)) => Rc::ptr_eq(left, right),
         (Value::Float32Array(left), Value::Float32Array(right)) => Rc::ptr_eq(left, right),
         (Value::Float64Array(left), Value::Float64Array(right)) => Rc::ptr_eq(left, right),
+        (Value::Int16Array(left), Value::Int16Array(right)) => Rc::ptr_eq(left, right),
         (Value::Int8Array(left), Value::Int8Array(right)) => Rc::ptr_eq(left, right),
         (Value::Int32Array(left), Value::Int32Array(right)) => Rc::ptr_eq(left, right),
         (Value::Uint8Array(left), Value::Uint8Array(right)) => Rc::ptr_eq(left, right),
@@ -385,6 +387,7 @@ pub(crate) fn prototype_to_string(receiver: Option<&Value>) -> Value {
         Some(Value::DataView(_)) => "DataView",
         Some(Value::Float32Array(_)) => "Float32Array",
         Some(Value::Float64Array(_)) => "Float64Array",
+        Some(Value::Int16Array(_)) => "Int16Array",
         Some(Value::Int8Array(_)) => "Int8Array",
         Some(Value::Int32Array(_)) => "Int32Array",
         Some(Value::Uint8Array(_)) => "Uint8Array",
