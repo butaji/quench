@@ -85,68 +85,6 @@ globalThis.require = (specifier) => {
         error.code = "ERR_METHOD_NOT_IMPLEMENTED";
         throw error;
       }
-      readSync() {
-        return this.__stub();
-      }
-      writeSync() {
-        return this.__stub();
-      }
-      readFileSync() {
-        return this.__stub();
-      }
-      writeFileSync() {
-        return this.__stub();
-      }
-      statSync() {
-        return this.__stub();
-      }
-      truncateSync() {
-        return this.__stub();
-      }
-      read() {
-        return Promise.reject().catch(() => this.__stub());
-      }
-      write() {
-        return Promise.reject().catch(() => this.__stub());
-      }
-      readFile() {
-        return Promise.reject().catch(() => this.__stub());
-      }
-      writeFile() {
-        return Promise.reject().catch(() => this.__stub());
-      }
-      stat() {
-        return Promise.reject().catch(() => this.__stub());
-      }
-      truncate() {
-        return Promise.reject().catch(() => this.__stub());
-      }
-      readv() {
-        return Promise.reject().catch(() => this.__stub());
-      }
-      writev() {
-        return Promise.reject().catch(() => this.__stub());
-      }
-      appendFile() {
-        return Promise.reject().catch(() => this.__stub());
-      }
-      readableWebStream() {
-        return this.__stub();
-      }
-      readLines() {
-        return this.__stub();
-      }
-      createReadStream() {
-        return this.__stub();
-      }
-      createWriteStream() {
-        return this.__stub();
-      }
-      async chmod() {}
-      async chown() {}
-      async utimes() {}
-      async datasync() {}
-      async sync() {}
       closeSync() {
         this.closed = true;
       }
@@ -154,6 +92,35 @@ globalThis.require = (specifier) => {
         this.closed = true;
       }
     }
+    const defineHandleMethods = (names, implementation) => {
+      for (const name of names.split(" ")) {
+        const method = implementation();
+        Object.defineProperty(method, "name", {
+          configurable: true,
+          value: name
+        });
+        VirtualFileHandle.prototype[name] = method;
+      }
+    };
+    defineHandleMethods(
+      "readSync writeSync readFileSync writeFileSync statSync truncateSync readableWebStream readLines createReadStream createWriteStream",
+      function () {
+        return function () {
+          return this.__stub();
+        };
+      }
+    );
+    defineHandleMethods(
+      "read write readFile writeFile stat truncate readv writev appendFile",
+      function () {
+        return function () {
+          return Promise.reject().catch(() => this.__stub());
+        };
+      }
+    );
+    defineHandleMethods("chmod chown utimes datasync sync", function () {
+      return async function () {};
+    });
     Symbol.asyncDispose ||= Symbol("Symbol.asyncDispose");
     VirtualFileHandle.prototype[Symbol.asyncDispose] =
       VirtualFileHandle.prototype.close;

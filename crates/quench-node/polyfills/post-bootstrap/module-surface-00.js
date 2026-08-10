@@ -15,18 +15,15 @@
     moduleApi.isBuiltin ||= (name) =>
       builtins.has(String(name).replace(/^node:/, ""));
     moduleApi.createRequire ||= () => globalThis.require;
-    moduleApi.findSourceMap ||= () => undefined;
-    moduleApi.syncBuiltinESMExports ||= () => undefined;
-    moduleApi.register ||= () => undefined;
+    for (const name of "findSourceMap syncBuiltinESMExports register runMain findPackageJSON setSourceMapsSupport flushCompileCache getCompileCacheDir".split(
+      " "
+    )) {
+      moduleApi[name] ||= () => undefined;
+    }
     moduleApi.registerHooks ||= () => ({});
-    moduleApi.runMain ||= () => undefined;
-    moduleApi.findPackageJSON ||= () => undefined;
     moduleApi.getSourceMapsSupport ||= () => ({});
-    moduleApi.setSourceMapsSupport ||= () => undefined;
     moduleApi.stripTypeScriptTypes ||= (source) => String(source);
     moduleApi.enableCompileCache ||= () => ({});
-    moduleApi.flushCompileCache ||= () => undefined;
-    moduleApi.getCompileCacheDir ||= () => undefined;
     moduleApi.constants ||= {
       compileCacheStatus: {
         FAILED: 0,

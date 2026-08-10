@@ -123,19 +123,18 @@
     globalThis.process.stdin.readable ??= true;
     globalThis.process.stdin.readableEnded ??= false;
     globalThis.process.stdin.readableFlowing ??= null;
-    globalThis.process.stdin.pause ||= () => globalThis.process.stdin;
-    globalThis.process.stdin.resume ||= () => globalThis.process.stdin;
-    globalThis.process.stdin.setEncoding ||= () => globalThis.process.stdin;
+    for (const name of "pause resume setEncoding unshift".split(" ")) {
+      globalThis.process.stdin[name] ||= () => globalThis.process.stdin;
+    }
     globalThis.process.stdin.readableHighWaterMark ??= 65536;
     globalThis.process.stdin.readableLength ??= 0;
     globalThis.process.stdin.readableObjectMode ??= false;
     globalThis.process.stdin.read ||= () => null;
-    globalThis.process.stdin.unshift ||= () => globalThis.process.stdin;
     globalThis.process.stdin.isPaused ||= () => false;
     const stdin = globalThis.process.stdin;
-    stdin.destroy ||= () => stdin;
-    stdin.ref ||= () => stdin;
-    stdin.unref ||= () => stdin;
+    for (const name of "destroy ref unref unpipe wrap close".split(" ")) {
+      stdin[name] ||= () => stdin;
+    }
     stdin.fd ??= 0;
     stdin.destroyed ??= false;
     stdin.readableEncoding ??= null;
@@ -145,9 +144,6 @@
     stdin.autoClose ??= false;
     stdin.bytesRead ??= 0;
     stdin.pipe ||= (destination) => destination;
-    stdin.unpipe ||= () => stdin;
-    stdin.wrap ||= () => stdin;
-    stdin.close ||= () => stdin;
     stdin.pending ??= false;
     stdin[Symbol.asyncDispose] ||= async () => undefined;
     if (stdin.constructor.name !== "ReadStream") {
@@ -161,21 +157,16 @@
     globalThis.process.stdout[Symbol.asyncDispose] ||= dispose;
     globalThis.process.stderr[Symbol.asyncDispose] ||= dispose;
     globalThis.process.getgroups ||= () => [0];
-    globalThis.process.initgroups ||= () => undefined;
-    globalThis.process.setgroups ||= () => undefined;
-    globalThis.process.setegid ||= () => undefined;
-    globalThis.process.seteuid ||= () => undefined;
+    for (const name of "initgroups setgroups setegid seteuid emitWarning abort execve reallyExit ref unref".split(
+      " "
+    )) {
+      globalThis.process[name] ||= () => undefined;
+    }
     globalThis.process.getegid ||= () => 0;
     globalThis.process.geteuid ||= () => 0;
-    globalThis.process.emitWarning ||= () => undefined;
     globalThis.process._getActiveHandles ||= () => [];
     globalThis.process._getActiveRequests ||= () => [];
     globalThis.process.kill ||= () => true;
-    globalThis.process.abort ||= () => undefined;
-    globalThis.process.execve ||= () => undefined;
-    globalThis.process.reallyExit ||= () => undefined;
-    globalThis.process.ref ||= () => undefined;
-    globalThis.process.unref ||= () => undefined;
     if (
       globalThis.process.allowedNodeEnvironmentFlags instanceof Set &&
       globalThis.process.allowedNodeEnvironmentFlags.size === 0
@@ -200,5 +191,63 @@
     report.signal ??= "SIGUSR2";
     report.getReport ||= () => ({});
     report.writeReport ||= () => undefined;
+    let captureCallback = null;
+    globalThis.process.setUncaughtExceptionCaptureCallback ||= (callback) => {
+      captureCallback = callback;
+    };
+    globalThis.process.hasUncaughtExceptionCaptureCallback ||= () =>
+      captureCallback !== null;
+    globalThis.process._rawDebug ||= (...args) => {
+      let message = String(args.shift() ?? "");
+      for (const value of args) message = message.replace("%s", String(value));
+      globalThis.process.stderr?.write?.(`${message}\n`);
+    };
+    for (const name of "_debugProcess _debugEnd _startProfilerIdleNotifier _stopProfilerIdleNotifier _tickCallback".split(
+      " "
+    )) {
+      globalThis.process[name] ||= () => undefined;
+    }
+    globalThis.process.openStdin ||= () => globalThis.process.stdin;
+    globalThis.process.constrainedMemory ||= () => Number.MAX_SAFE_INTEGER;
+    globalThis.process.threadCpuUsage ||= (previous) => {
+      if (
+        previous !== undefined &&
+        (typeof previous !== "object" ||
+          previous === null ||
+          Array.isArray(previous))
+      ) {
+        throw Object.assign(
+          new TypeError("The prevValue argument must be an object"),
+          { code: "ERR_INVALID_ARG_TYPE" }
+        );
+      }
+      return { user: 0, system: 0 };
+    };
+    const features = (globalThis.process.features ||= {});
+    features.cached_builtins ??= true;
+    features.debug ??= false;
+    features.ipv6 ??= true;
+    features.openssl_is_boringssl ??= false;
+    features.quic ??= false;
+    features.require_module ??= true;
+    features.tls ??= true;
+    features.tls_alpn ??= true;
+    features.tls_ocsp ??= true;
+    features.tls_sni ??= true;
+    features.typescript ??= "strip";
+    features.uv ??= true;
+    const usage = (globalThis.process.resourceUsage ||= () => ({}));
+    const sample = usage();
+    for (const name of "ipcReceived ipcSent sharedMemorySize signalsCount swappedOut unsharedDataSize unsharedStackSize".split(
+      " "
+    )) {
+      sample[name] ??= 0;
+    }
+    const memory = globalThis.process.memoryUsage();
+    for (const name of "arrayBuffers external heapTotal heapUsed rss".split(
+      " "
+    )) {
+      memory[name] ??= 0;
+    }
   }
 }
