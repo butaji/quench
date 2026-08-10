@@ -467,12 +467,15 @@ impl Value {
 pub enum InstanceFieldKey {
     Static(Rc<str>),
     Dynamic(Value),
+    Private(crate::facts::PrivateNameId),
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum InstanceFieldInitializer {
     Undefined,
     Callable(Rc<FunctionValue>),
+    /// A value stored directly (private methods), not produced by an executable.
+    Value(Value),
 }
 
 #[derive(Debug, Clone, PartialEq)]

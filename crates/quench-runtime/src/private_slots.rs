@@ -75,6 +75,13 @@ fn slots(value: &Value) -> Result<PrivateSlots, VmError> {
     match value {
         Value::BindingCell(cell) => slots(&cell.borrow()),
         Value::Function(function) => Ok(function.private_slots.clone()),
+        Value::Object(object) => Ok(object.private_slots.clone()),
+        Value::ObjectAlias(alias) => alias
+            .0
+            .borrow()
+            .upgrade()
+            .map(|object| object.private_slots.clone())
+            .ok_or_else(private_brand_error),
         _ => Err(private_brand_error()),
     }
 }
