@@ -219,13 +219,6 @@ pub(crate) mod value {
         }) as i32
     }
 
-    pub(crate) fn to_uint32(value: f64) -> u32 {
-        if !value.is_finite() || value == 0.0 {
-            return 0;
-        }
-        value.trunc().rem_euclid(4_294_967_296.0) as u32
-    }
-
     pub(crate) fn loose_equal(left: &Value, right: &Value) -> bool {
         if std::mem::discriminant(left) == std::mem::discriminant(right) {
             return strict_equal(left, right);
