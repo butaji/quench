@@ -360,20 +360,34 @@ pub(crate) fn execute(
         test,
         body,
         update,
+        post_test,
     } = op
     else {
         return Err(crate::execute::VmError::MissingReturn);
     };
     run_fragment(init, registers)?;
-    while crate::execute::is_truthy(&crate::execute::execute_in_place(test, registers)?) {
+    loop {
+        if !post_test && !loop_test(test, registers)? {
+            break;
+        }
         match execute_loop_body(registers, label, body)? {
             LoopAction::Continue => {}
             LoopAction::Break => break,
             LoopAction::Propagate(completion) => return Ok(completion),
         }
         run_fragment(update, registers)?;
+        if *post_test && !loop_test(test, registers)? {
+            break;
+        }
     }
     Ok(crate::completion::Completion::Normal)
+}
+
+fn loop_test(
+    test: &[Op],
+    registers: &mut Vec<crate::value::Value>,
+) -> Result<bool, crate::execute::VmError> {
+    crate::execute::execute_in_place(test, registers).map(|value| crate::execute::is_truthy(&value))
 }
 
 fn break_matches(loop_label: &Option<String>, break_label: &Option<String>) -> bool {
@@ -427,6 +441,7 @@ pub(crate) fn reduce_while(
         test,
         body,
         update: Vec::new(),
+        post_test: false,
     });
     Ok(())
 }
@@ -448,32 +463,14 @@ pub(crate) fn reduce_do_while(
         next_slot,
         locals,
     )?;
-    let condition =
-        crate::reduce::reduce_expression(&statement.test, &mut body, facts, next_register, locals)
-            .ok_or_else(|| vec!["Unsupported do-while condition".to_string()])?;
-    body.push(Op::Branch {
-        condition,
-        then_ops: Vec::new(),
-        else_ops: vec![Op::Break { label: None }],
-    });
+    let test = reduce_fragment(Some(&statement.test), ops, facts, next_register, locals)?;
     ops.push(Op::Loop {
         label: None,
         init: Vec::new(),
-        test: always_true(next_register),
+        test,
         body,
         update: Vec::new(),
+        post_test: true,
     });
     Ok(())
-}
-
-fn always_true(next_register: &mut u16) -> Vec<Op> {
-    let register = *next_register;
-    *next_register = next_register.saturating_add(1);
-    vec![
-        Op::Const {
-            dst: register,
-            value: Constant::Boolean(true),
-        },
-        Op::Return { src: register },
-    ]
 }
