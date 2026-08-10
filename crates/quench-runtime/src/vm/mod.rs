@@ -206,13 +206,15 @@ pub fn get_property(value: &Value, key: &str) -> Value {
             .rev()
             .find(|(name, _)| name == key)
             .map_or_else(
-                || crate::builtins::object::object_method(value, key),
+                || crate::builtins::property(crate::ops::Builtin::ObjectPrototype, key),
                 |(_, value)| value.clone(),
             ),
         String(value) => string_property(value, key),
         Number(value) => number_property(*value, key),
         Boolean(value) => boolean_property(*value, key),
         Function(function) if key == "length" => Value::Number(f64::from(function.params)),
+        Function(_) if key == "call" => Value::Builtin(crate::ops::Builtin::FunctionCall),
+        Function(_) if key == "bind" => Value::Builtin(crate::ops::Builtin::FunctionBind),
         Function(function) => function
             .properties
             .borrow()

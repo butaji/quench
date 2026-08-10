@@ -2,11 +2,6 @@
 
 use super::{resolve_locales, runtime_error, to_string_value};
 use crate::{execute::VmError, ops::Builtin, value::Value};
-
-/// Value coercion helpers extracted from `execute.rs` to keep that file under
-/// the lint line limit. These are pure JS semantics (type conversion,
-/// stringification, comparison coercions). Re-exported from `execute.rs` so
-/// the call sites keep their short names.
 pub(crate) mod value {
     use crate::value::Value;
     pub(crate) fn to_string(value: Option<&Value>) -> String {
@@ -15,7 +10,7 @@ pub(crate) mod value {
             Some(Value::Null) => "null".to_string(),
             Some(Value::Boolean(value)) => value.to_string(),
             Some(Value::Number(value)) => value.to_string(),
-            Some(Value::String(value)) => value.clone(),
+            Some(Value::String(value)) => symbol_string(value),
             Some(Value::Array(values)) => values
                 .iter()
                 .map(|value| match value {
@@ -36,6 +31,19 @@ pub(crate) mod value {
             ) => "function".to_string(),
             Some(Value::BigInt(_)) => "[object BigInt]".to_string(),
         }
+    }
+
+    fn symbol_string(value: &str) -> String {
+        let Some((symbol, _identity)) = value.split_once('\0') else {
+            return value.to_string();
+        };
+        if let Some(description) = symbol.strip_prefix("Symbol.for.") {
+            return format!("Symbol({description})");
+        }
+        if let Some(description) = symbol.strip_prefix("Symbol.") {
+            return format!("Symbol({description})");
+        }
+        value.to_string()
     }
     pub(crate) fn to_number(value: Option<&Value>) -> f64 {
         match value {
@@ -213,8 +221,6 @@ pub(crate) mod symbol {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static SYMBOL_COUNTER: AtomicU64 = AtomicU64::new(0);
-    /// Dispatch helper used by `execute_builtin_with_receiver` for the
-    /// `Symbol*` family. Returns `None` for builtins this module does not own.
     pub(crate) fn dispatch(
         builtin: Builtin,
         arguments: &[Value],
@@ -291,8 +297,6 @@ pub(crate) fn array_to_locale_string(
     Ok(Value::String(parts.join(",")))
 }
 
-/// Dispatch helper used by `execute_builtin_with_receiver` for the
-/// `toLocale*` family. Returns `None` for builtins this module does not own.
 pub(crate) fn dispatch(
     builtin: Builtin,
     receiver: Option<&Value>,
@@ -318,7 +322,6 @@ fn element_to_locale_string(value: &Value, locales: &[String], options: Option<&
     }
 }
 
-/// `Number.prototype.toLocaleString`.
 pub(crate) fn number_to_locale_string(
     receiver: Option<&Value>,
     arguments: &[Value],
@@ -371,7 +374,6 @@ fn number_resolved(locale: String, options: Option<&Value>) -> Vec<(String, Valu
     properties
 }
 
-/// `String.prototype.toLocaleLowerCase` / `toLocaleUpperCase`.
 pub(crate) fn string_to_locale_case(
     receiver: Option<&Value>,
     upper: bool,
@@ -387,7 +389,6 @@ pub(crate) fn string_to_locale_case(
     Ok(Value::String(result))
 }
 
-/// `Date.prototype.toLocaleString` / `toLocaleDateString` / `toLocaleTimeString`.
 pub(crate) fn date_to_locale_string(
     kind: DateLocaleKind,
     arguments: &[Value],
@@ -405,9 +406,7 @@ pub(crate) enum DateLocaleKind {
 impl DateLocaleKind {
     fn default(&self) -> &'static str {
         match self {
-            DateLocaleKind::String => "Invalid Date",
-            DateLocaleKind::Date => "Invalid Date",
-            DateLocaleKind::Time => "Invalid Date",
+            DateLocaleKind::String | DateLocaleKind::Date | DateLocaleKind::Time => "Invalid Date",
         }
     }
 }
