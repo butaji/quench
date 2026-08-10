@@ -20,25 +20,49 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError
         .iter()
         .map(|index| read_register(registers, *index))
         .collect::<Result<Vec<_>, _>>()?;
-    let value = match callee {
-        Value::Builtin(builtin) => {
-            execute_builtin_with_receiver(builtin, &arguments, Some(&receiver))?
-        }
-        Value::Function(function) => crate::functions::execute(&function, &receiver, &arguments)?,
-        Value::Undefined if matches!(receiver, Value::Builtin(_) | Value::Function(_)) => {
-            // Fallback: when callee is undefined, call the receiver directly.
-            // This handles `toString.call(x)` where toString is a Builtin/Function
-            // without an explicit `call` property.
-            match &receiver {
-                Value::Builtin(builtin) => {
-                    execute_builtin_with_receiver(*builtin, &arguments, Some(&receiver))?
-                }
-                Value::Function(function) => crate::functions::execute(function, &receiver, &arguments)?,
-                _ => return Err(VmError::NotCallable),
-            }
-        }
-        _ => return Err(VmError::NotCallable),
-    };
+    let value = execute_callee(callee, &receiver, &arguments, args, registers)?;
     write_value(registers, *dst, value);
     Ok(())
+}
+
+fn execute_callee(
+    callee: Value,
+    receiver: &Value,
+    arguments: &[Value],
+    args: &[u16],
+    registers: &mut Vec<Value>,
+) -> Result<Value, VmError> {
+    let value = match callee {
+        Value::Builtin(crate::ops::Builtin::String) => {
+            execute_builtin_with_receiver(crate::ops::Builtin::String, arguments, None)?
+        }
+        Value::Builtin(crate::ops::Builtin::ObjectDefineProperty) => {
+            let value = crate::builtins::define_property(arguments);
+            if let Some(target) = args.first() {
+                write_value(registers, *target, value.clone());
+            }
+            value
+        }
+        Value::Builtin(builtin) => {
+            execute_builtin_with_receiver(builtin, arguments, Some(receiver))?
+        }
+        Value::Function(function) => crate::functions::execute(&function, receiver, arguments)?,
+        Value::BoundFunction(bound) => crate::functions::execute_bound(&bound, arguments)?,
+        Value::Undefined => execute_fallback(receiver, arguments)?,
+        _ => return Err(VmError::NotCallable),
+    };
+    Ok(value)
+}
+
+fn execute_fallback(receiver: &Value, arguments: &[Value]) -> Result<Value, VmError> {
+    let this_arg = arguments.first().unwrap_or(&Value::Undefined);
+    let call_arguments = arguments.get(1..).unwrap_or_default();
+    match receiver {
+        Value::Builtin(builtin) => {
+            execute_builtin_with_receiver(*builtin, call_arguments, Some(this_arg))
+        }
+        Value::Function(function) => crate::functions::execute(function, this_arg, call_arguments),
+        Value::BoundFunction(bound) => crate::functions::execute_bound(bound, call_arguments),
+        _ => Err(VmError::NotCallable),
+    }
 }
