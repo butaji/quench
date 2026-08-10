@@ -9,13 +9,14 @@ pub(crate) fn write_op(registers: &mut Vec<crate::value::Value>, op: &Op) {
             dst,
             body,
             params,
+            length,
             captures,
             strictness,
             is_async,
             mapped_arguments,
         } => write_ordinary(
             registers,
-            (*dst, body, *params, *captures),
+            (*dst, body, *params, *length, *captures),
             *strictness,
             *is_async,
             *mapped_arguments,
@@ -24,23 +25,44 @@ pub(crate) fn write_op(registers: &mut Vec<crate::value::Value>, op: &Op) {
             dst,
             body,
             params,
+            length,
             captures,
             kind,
             strictness,
             is_async,
             mapped_arguments,
-        } => write_kind(
+        } => write_non_ordinary(
             registers,
             (*dst, body, *params, *captures),
-            FunctionMetadata {
-                kind: *kind,
-                strictness: *strictness,
-                is_async: *is_async,
-                mapped_arguments: *mapped_arguments,
-            },
+            (*kind, *length, *strictness, *is_async, *mapped_arguments),
         ),
         _ => {}
     }
+}
+
+fn write_non_ordinary(
+    registers: &mut Vec<crate::value::Value>,
+    function: (u16, &[Op], u16, u16),
+    metadata: (
+        crate::ops::FunctionKind,
+        u16,
+        crate::ops::FunctionStrictness,
+        bool,
+        bool,
+    ),
+) {
+    let (kind, length, strictness, is_async, mapped_arguments) = metadata;
+    write_kind(
+        registers,
+        function,
+        FunctionMetadata {
+            kind,
+            length,
+            strictness,
+            is_async,
+            mapped_arguments,
+        },
+    );
 }
 
 fn write_kind(
@@ -54,12 +76,12 @@ fn write_kind(
 
 fn write_ordinary(
     registers: &mut Vec<crate::value::Value>,
-    function: (u16, &[Op], u16, u16),
+    function: (u16, &[Op], u16, u16, u16),
     strictness: crate::ops::FunctionStrictness,
     is_async: bool,
     mapped_arguments: bool,
 ) {
-    let (dst, body, params, captures) = function;
+    let (dst, body, params, length, captures) = function;
     crate::functions::write(
         registers,
         dst,
@@ -71,6 +93,7 @@ fn write_ordinary(
             strictness,
             is_async,
             mapped_arguments,
+            length,
         },
     );
 }

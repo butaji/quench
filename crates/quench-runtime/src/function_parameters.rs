@@ -32,6 +32,14 @@ pub(crate) fn is_simple(formal: &FormalParameters<'_>) -> bool {
             .all(|item| matches!(item.pattern.kind, BindingPatternKind::BindingIdentifier(_)))
 }
 
+pub(crate) fn expected_argument_count(formal: &FormalParameters<'_>) -> u16 {
+    formal
+        .items
+        .iter()
+        .position(|item| matches!(item.pattern.kind, BindingPatternKind::AssignmentPattern(_)))
+        .unwrap_or(formal.items.len()) as u16
+}
+
 pub(crate) fn prefix(
     formal: &FormalParameters<'_>,
     facts: &mut ProgramDb,
