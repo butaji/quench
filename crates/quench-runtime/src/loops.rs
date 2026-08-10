@@ -2,7 +2,8 @@ use std::collections::HashMap;
 
 use oxc::{
     ast::ast::{
-        Expression, ForInStatement, ForStatement, ForStatementInit, Statement, WhileStatement,
+        DoWhileStatement, Expression, ForInStatement, ForStatement, ForStatementInit, Statement,
+        WhileStatement,
     },
     syntax::operator::BinaryOperator,
 };
@@ -238,6 +239,52 @@ pub(crate) fn reduce_while(
         update: Vec::new(),
     });
     Ok(())
+}
+
+pub(crate) fn reduce_do_while(
+    statement: &DoWhileStatement<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    next_slot: &mut u16,
+    locals: &mut HashMap<String, u16>,
+) -> Result<(), Vec<String>> {
+    let mut body = Vec::new();
+    reduce_body(
+        &statement.body,
+        &mut body,
+        facts,
+        next_register,
+        next_slot,
+        locals,
+    )?;
+    let condition =
+        crate::reduce::reduce_expression(&statement.test, &mut body, facts, next_register, locals)
+            .ok_or_else(|| vec!["Unsupported do-while condition".to_string()])?;
+    body.push(Op::Branch {
+        condition,
+        then_ops: Vec::new(),
+        else_ops: vec![Op::Break],
+    });
+    ops.push(Op::Loop {
+        init: Vec::new(),
+        test: always_true(next_register),
+        body,
+        update: Vec::new(),
+    });
+    Ok(())
+}
+
+fn always_true(next_register: &mut u16) -> Vec<Op> {
+    let register = *next_register;
+    *next_register = next_register.saturating_add(1);
+    vec![
+        Op::Const {
+            dst: register,
+            value: Constant::Boolean(true),
+        },
+        Op::Return { src: register },
+    ]
 }
 
 pub(crate) fn reduce_for(
