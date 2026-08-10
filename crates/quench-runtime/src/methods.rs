@@ -56,6 +56,9 @@ fn execute_callee(
             );
             value
         }
+        Value::Builtin(crate::ops::Builtin::ObjectSetPrototypeOf) => {
+            execute_mutating_object_builtin(arguments, args, registers)?
+        }
         Value::Builtin(builtin) => {
             execute_builtin_with_receiver(builtin, arguments, Some(receiver))?
         }
@@ -64,5 +67,16 @@ fn execute_callee(
         Value::Undefined => return Err(crate::vm::not_callable()),
         _ => return Err(crate::vm::not_callable()),
     };
+    Ok(value)
+}
+
+fn execute_mutating_object_builtin(
+    arguments: &[Value],
+    args: &[u16],
+    registers: &mut Vec<Value>,
+) -> Result<Value, VmError> {
+    let target = arguments.first().cloned().unwrap_or(Value::Undefined);
+    let value = crate::builtins::object::set_prototype_of(arguments)?;
+    crate::properties::propagate_updated_object(registers, args.first().copied(), &target, &value);
     Ok(value)
 }

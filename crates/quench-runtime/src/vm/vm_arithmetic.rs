@@ -101,14 +101,46 @@ fn instanceof(value: &Value, constructor: &Value) -> bool {
     ) {
         return true;
     }
+    let prototype = crate::execute::get_property(constructor, "prototype");
+    if crate::value::is_object(&prototype) && prototype_chain_contains(value, &prototype) {
+        return true;
+    }
+    own_constructor(value)
+        .is_some_and(|value| crate::builtins::same_value(Some(&value), Some(constructor)))
+}
+
+fn prototype_chain_contains(value: &Value, expected: &Value) -> bool {
+    let mut current = internal_prototype(value);
+    for _ in 0..1_024 {
+        let Some(prototype) = current else {
+            return false;
+        };
+        if crate::builtins::same_value(Some(&prototype), Some(expected)) {
+            return true;
+        }
+        current = internal_prototype(&prototype);
+    }
+    false
+}
+
+fn internal_prototype(value: &Value) -> Option<Value> {
     let Value::Object(properties) = value else {
-        return false;
+        return None;
     };
     properties
         .iter()
         .rev()
-        .find(|(name, _)| name == "constructor")
-        .is_some_and(|(_, value)| crate::builtins::same_value(Some(value), Some(constructor)))
+        .find_map(|(name, value)| (name == "\0prototype").then(|| value.clone()))
+}
+
+fn own_constructor(value: &Value) -> Option<Value> {
+    let Value::Object(properties) = value else {
+        return None;
+    };
+    properties
+        .iter()
+        .rev()
+        .find_map(|(name, value)| (name == "constructor").then(|| value.clone()))
 }
 
 fn special_binary(

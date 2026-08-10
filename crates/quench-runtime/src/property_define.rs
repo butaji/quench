@@ -16,6 +16,7 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &crate::ops::Op) -> Result
     let value = crate::execute::read_register(registers, *value)?;
     let descriptor = descriptor(*kind, value, *enumerable);
     let result = crate::builtins::define_own_property(&target, &key, &descriptor)?;
+    crate::super_scope::attach_home_objects(&result);
     crate::locals::replace_value(&target, &result);
     crate::vm::synchronize_global_object(registers, &target, &result);
     crate::execute::write_value(registers, *object, result);

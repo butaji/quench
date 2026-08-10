@@ -407,6 +407,9 @@ pub(crate) fn reduce_method_call(
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
+    if let Some(result) = reduce_super_method_call(call, ops, facts, next_register, locals) {
+        return Some(result);
+    }
     let (object, key) = match &call.callee {
         Expression::StaticMemberExpression(member) => {
             (&member.object, member.property.name.to_string())
@@ -418,16 +421,7 @@ pub(crate) fn reduce_method_call(
         _ => return None,
     };
     let object = crate::reduce::reduce_expression(object, ops, facts, next_register, locals)?;
-    let mut args = Vec::new();
-    for argument in &call.arguments {
-        args.push(crate::reduce::reduce_expression(
-            argument.as_expression()?,
-            ops,
-            facts,
-            next_register,
-            locals,
-        )?);
-    }
+    let args = reduce_call_arguments(call, ops, facts, next_register, locals)?;
     let dst = *next_register;
     *next_register = next_register.saturating_add(1);
     ops.push(Op::CallMethod {
@@ -437,6 +431,45 @@ pub(crate) fn reduce_method_call(
         args,
     });
     Some(dst)
+}
+
+fn reduce_super_method_call(
+    call: &oxc::ast::ast::CallExpression<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<u16> {
+    let Expression::StaticMemberExpression(member) = &call.callee else {
+        return None;
+    };
+    if !matches!(member.object, Expression::Super(_)) {
+        return None;
+    }
+    let args = reduce_call_arguments(call, ops, facts, next, locals)?;
+    let dst = *next;
+    *next = next.saturating_add(1);
+    ops.push(Op::CallSuperMethod {
+        dst,
+        key: member.property.name.to_string(),
+        args,
+    });
+    Some(dst)
+}
+
+fn reduce_call_arguments(
+    call: &oxc::ast::ast::CallExpression<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<Vec<u16>> {
+    call.arguments
+        .iter()
+        .map(|argument| {
+            crate::reduce::reduce_expression(argument.as_expression()?, ops, facts, next, locals)
+        })
+        .collect()
 }
 
 fn computed_method_key(expression: &Expression<'_>) -> Option<String> {
