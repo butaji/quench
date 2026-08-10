@@ -4,7 +4,7 @@ use crate::{
     control_flow,
     facts::ProgramDb,
     functions,
-    ops::{Builtin, Op},
+    ops::{Builtin, FunctionStrictness, Op},
     statements::reduce_declaration as reduce_declaration_statement,
 };
 use oxc::{
@@ -271,6 +271,21 @@ pub fn reduce_function_declaration(
         params: parameter_count,
         captures,
         kind: crate::ops::FunctionKind::Ordinary,
+        strictness: function
+            .body
+            .as_ref()
+            .map(|body| {
+                if body
+                    .directives
+                    .iter()
+                    .any(|directive| directive.directive.as_str() == "use strict")
+                {
+                    FunctionStrictness::Strict
+                } else {
+                    FunctionStrictness::Sloppy
+                }
+            })
+            .unwrap_or(FunctionStrictness::Sloppy),
         is_async: function.r#async,
     });
     ops.push(Op::StoreLocal {
