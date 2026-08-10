@@ -15,14 +15,7 @@ pub(crate) mod value {
             Some(Value::Boolean(value)) => value.to_string(),
             Some(Value::Number(value)) => value.to_string(),
             Some(Value::String(value)) => symbol_string(value),
-            Some(Value::Array(values)) => values
-                .iter()
-                .map(|value| match value {
-                    Value::Null | Value::Undefined => String::new(),
-                    _ => to_string(Some(value)),
-                })
-                .collect::<Vec<_>>()
-                .join(","),
+            Some(Value::Array(values)) => array_to_string(values),
             Some(Value::Object(_)) => "[object Object]".to_string(),
             Some(Value::ArrayBuffer(_)) => "[object ArrayBuffer]".to_string(),
             Some(Value::DataView(_)) => "[object DataView]".to_string(),
@@ -45,8 +38,21 @@ pub(crate) mod value {
                 | Value::Set(_),
             ) => "function".to_string(),
             Some(Value::BigInt(_)) => "[object BigInt]".to_string(),
-            Some(Value::HostCapability(_) | Value::Iterator(_)) => "[object Object]".to_string(),
+            Some(Value::HostCapability(_) | Value::Iterator(_) | Value::ObjectAlias(_)) => {
+                "[object Object]".to_string()
+            }
         }
+    }
+
+    fn array_to_string(values: &[Value]) -> String {
+        values
+            .iter()
+            .map(|value| match value {
+                Value::Null | Value::Undefined => String::new(),
+                _ => to_string(Some(value)),
+            })
+            .collect::<Vec<_>>()
+            .join(",")
     }
 
     fn symbol_string(value: &str) -> String {
@@ -96,6 +102,7 @@ pub(crate) mod value {
             )
             | Some(Value::HostCapability(_))
             | Some(Value::Iterator(_)) => f64::NAN,
+            Some(Value::ObjectAlias(_)) => f64::NAN,
         }
     }
     pub(crate) fn to_number_result(value: Option<&Value>) -> Result<f64, crate::execute::VmError> {
@@ -181,7 +188,7 @@ pub(crate) mod value {
             | Value::Map(_)
             | Value::Set(_)
             | Value::BigInt(_) => true,
-            Value::HostCapability(_) | Value::Iterator(_) => true,
+            Value::HostCapability(_) | Value::Iterator(_) | Value::ObjectAlias(_) => true,
         }
     }
 
@@ -217,6 +224,7 @@ pub(crate) mod value {
             | Value::Map(_)
             | Value::Set(_)
             | Value::Iterator(_) => "object",
+            Value::ObjectAlias(_) => "object",
             Value::HostCapability(_) => "object",
         }
     }
@@ -258,41 +266,7 @@ pub(crate) mod value {
         )
     }
     pub(crate) fn strict_equal(left: &Value, right: &Value) -> bool {
-        match (left, right) {
-            (Value::Array(left), Value::Array(right)) => std::rc::Rc::ptr_eq(left, right),
-            (Value::Object(left), Value::Object(right)) => std::rc::Rc::ptr_eq(left, right),
-            (Value::ArrayBuffer(left), Value::ArrayBuffer(right)) => {
-                std::rc::Rc::ptr_eq(left, right)
-            }
-            (Value::DataView(left), Value::DataView(right)) => std::rc::Rc::ptr_eq(left, right),
-            (Value::Float32Array(left), Value::Float32Array(right)) => {
-                std::rc::Rc::ptr_eq(left, right)
-            }
-            (Value::Float64Array(left), Value::Float64Array(right)) => {
-                std::rc::Rc::ptr_eq(left, right)
-            }
-            (Value::Int16Array(left), Value::Int16Array(right)) => std::rc::Rc::ptr_eq(left, right),
-            (Value::Int8Array(left), Value::Int8Array(right)) => std::rc::Rc::ptr_eq(left, right),
-            (Value::Int32Array(left), Value::Int32Array(right)) => std::rc::Rc::ptr_eq(left, right),
-            (Value::Uint16Array(left), Value::Uint16Array(right)) => {
-                std::rc::Rc::ptr_eq(left, right)
-            }
-            (Value::Uint32Array(left), Value::Uint32Array(right)) => {
-                std::rc::Rc::ptr_eq(left, right)
-            }
-            (Value::Uint8Array(left), Value::Uint8Array(right)) => std::rc::Rc::ptr_eq(left, right),
-            (Value::Uint8ClampedArray(left), Value::Uint8ClampedArray(right)) => {
-                std::rc::Rc::ptr_eq(left, right)
-            }
-            (Value::Function(left), Value::Function(right)) => std::rc::Rc::ptr_eq(left, right),
-            (Value::Number(left), Value::Number(right)) => left == right,
-            (Value::Boolean(left), Value::Boolean(right)) => left == right,
-            (Value::String(left), Value::String(right)) => left == right,
-            (Value::BigInt(left), Value::BigInt(right)) => left == right,
-            (Value::Builtin(left), Value::Builtin(right)) => left == right,
-            (Value::Null, Value::Null) | (Value::Undefined, Value::Undefined) => true,
-            _ => false,
-        }
+        crate::equality::strict_equal(left, right)
     }
 }
 

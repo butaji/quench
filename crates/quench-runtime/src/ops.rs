@@ -349,6 +349,8 @@ pub enum Builtin {
     DateGetYear,
     DateSetYear,
     Reflect,
+    Json,
+    JsonStringify,
     ReflectConstruct,
     RegExp,
     RegExpPrototype,
