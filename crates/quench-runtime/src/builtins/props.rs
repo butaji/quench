@@ -41,6 +41,9 @@ fn builtin_method(builtin: Builtin, key: &str) -> Option<Builtin> {
     if builtin == Array && key == "isArray" {
         return Some(ArrayIsArray);
     }
+    if builtin == Array && key == "from" {
+        return Some(ArrayFrom);
+    }
     if builtin == StringPrototype {
         return crate::strings::property_method(key);
     }
@@ -165,15 +168,16 @@ fn typed_array_constructor_property(builtin: Builtin, key: &str) -> Option<Built
     })
 }
 
-fn host_capability_method(kind: crate::ops::HostCapabilityKind, key: &str) -> Option<Builtin> {
+fn host_capability_method(_kind: crate::ops::HostCapabilityKind, key: &str) -> Option<Builtin> {
     use crate::ops::HostCapabilityKind::*;
-    let expected = match kind {
-        GetGlobal => "global",
-        CreateRealm => "createRealm",
-        EvalScript => "evalScript",
-        DetachArrayBuffer => "detachArrayBuffer",
+    let kind = match key {
+        "global" => GetGlobal,
+        "createRealm" => CreateRealm,
+        "evalScript" => EvalScript,
+        "detachArrayBuffer" => DetachArrayBuffer,
+        _ => return None,
     };
-    (key == expected).then_some(Builtin::HostCapability(kind))
+    Some(Builtin::HostCapability(kind))
 }
 
 fn data_view_method(key: &str) -> Option<Builtin> {

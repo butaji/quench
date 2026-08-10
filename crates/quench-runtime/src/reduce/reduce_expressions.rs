@@ -245,7 +245,9 @@ pub fn reduce_unary(
     let src = if operator == crate::ops::UnaryOp::Typeof
         && matches!(
             &unary.argument,
-            Expression::Identifier(identifier) if !locals.contains_key(identifier.name.as_str())
+            Expression::Identifier(identifier)
+                if !locals.contains_key(identifier.name.as_str())
+                    && !crate::globals::is_defined(identifier.name.as_str())
         ) {
         crate::reduce_support::emit_undefined(ops, next_register)
     } else {

@@ -33,6 +33,10 @@ pub(crate) fn reduce(
     Some(register)
 }
 
+pub(crate) fn is_defined(name: &str) -> bool {
+    name == "$262" || builtin(name).is_some() || global_constant(name).is_some()
+}
+
 fn global_constant(name: &str) -> Option<(FactConstant, Constant)> {
     Some(match name {
         "undefined" => (FactConstant::Undefined, Constant::Undefined),

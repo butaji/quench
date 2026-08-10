@@ -51,8 +51,27 @@ pub(crate) fn construct_value(
     match target {
         Value::Builtin(builtin) => construct_builtin(*builtin, arguments),
         Value::Function(function) => construct_function(function, target, arguments),
+        Value::BoundFunction(bound) => construct_bound(bound, target, arguments),
         _ => Err(crate::vm::not_callable()),
     }
+}
+
+fn construct_bound(
+    bound: &crate::value::BoundFunctionValue,
+    target: &Value,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let Value::Builtin(builtin) = &bound.target else {
+        return Err(crate::vm::not_callable());
+    };
+    let mut combined = bound.arguments.clone();
+    combined.extend_from_slice(arguments);
+    let value = construct_builtin(*builtin, &combined)?;
+    Ok(crate::builtins::set_property(
+        value,
+        "constructor",
+        target.clone(),
+    ))
 }
 
 fn construct_builtin(

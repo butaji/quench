@@ -13,6 +13,7 @@ pub(crate) fn execute_builtin(
     let result = match builtin {
         Array => return Some(Ok(crate::builtins::array(arguments))),
         ArrayIsArray => return Some(Ok(crate::builtins::is_array(arguments.first()))),
+        ArrayFrom => return Some(Ok(from(arguments.first()))),
         ArrayMap => return Some(crate::builtins::array_map(receiver, arguments)),
         ArrayFilter => return Some(crate::builtins::array_filter(receiver, arguments)),
         ArraySome => return Some(some(receiver, arguments)),
@@ -40,6 +41,22 @@ pub(crate) fn execute_builtin(
         _ => return None,
     };
     Some(Ok(result))
+}
+
+fn from(value: Option<&Value>) -> Value {
+    let values = match value {
+        Some(Value::Array(values)) => values.to_vec(),
+        Some(Value::Set(data)) => data.values.iter().cloned().collect(),
+        Some(Value::Map(data)) => data
+            .keys
+            .iter()
+            .zip(&data.values)
+            .map(|(key, value)| Value::array(vec![key.clone(), value.clone()]))
+            .collect(),
+        Some(Value::Iterator(data)) => data.values.clone(),
+        _ => Vec::new(),
+    };
+    Value::array(values)
 }
 
 fn splice(receiver: Option<&Value>, arguments: &[Value]) -> Value {
