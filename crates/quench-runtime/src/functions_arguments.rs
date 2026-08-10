@@ -81,6 +81,10 @@ pub(crate) fn execute_construct(
 ) -> Result<(crate::value::Value, crate::value::Value), crate::execute::VmError> {
     let captures = function.captures.len() as u16;
     let (mut registers, environment) = build_registers(function, this_value, arguments);
+    let this_slot = captures.saturating_add(function.params).saturating_add(1);
+    if is_derived_constructor(function) {
+        environment.mark_uninitialized(this_slot);
+    }
     environment.set(
         captures.saturating_add(function.params).saturating_add(2),
         crate::value::Value::Function(std::rc::Rc::clone(function)),
@@ -91,8 +95,16 @@ pub(crate) fn execute_construct(
         &crate::vm::VmContext::default(),
         std::rc::Rc::clone(&environment),
     )?;
-    let final_this = environment.get(captures.saturating_add(function.params).saturating_add(1));
+    let final_this = environment.get(this_slot);
     Ok((result, final_this))
+}
+
+fn is_derived_constructor(function: &crate::value::FunctionValue) -> bool {
+    function
+        .properties
+        .borrow()
+        .iter()
+        .any(|(name, _)| name == "\0derived_constructor")
 }
 
 fn arguments_object(
@@ -245,7 +257,11 @@ pub(crate) fn execute(
     this_value: &crate::value::Value,
     arguments: &[crate::value::Value],
 ) -> Result<crate::value::Value, crate::execute::VmError> {
-    let frame = CallFrame::new(std::rc::Rc::clone(function), this_value.clone(), arguments.to_vec());
+    let frame = CallFrame::new(
+        std::rc::Rc::clone(function),
+        this_value.clone(),
+        arguments.to_vec(),
+    );
     if matches!(function.kind, FunctionKind::Generator) {
         return crate::generator::create(function, &frame.receiver, arguments);
     }
@@ -319,18 +335,18 @@ fn execute_frame_completion(
 fn resolve_tail_target(
     request: crate::completion::TailCallRequest,
 ) -> Result<TailTarget, crate::execute::VmError> {
-    let (target, receiver, arguments) = flatten_bound_target(
-        request.callee,
-        request.receiver,
-        request.arguments,
-    );
+    let (target, receiver, arguments) =
+        flatten_bound_target(request.callee, request.receiver, request.arguments);
     match target {
-        crate::value::Value::Function(function) => resolve_function_target(function, receiver, arguments),
+        crate::value::Value::Function(function) => {
+            resolve_function_target(function, receiver, arguments)
+        }
         crate::value::Value::Builtin(builtin) => {
             execute_builtin_target(builtin, Some(&receiver), &arguments).map(TailTarget::Value)
         }
-        crate::value::Value::Proxy(_) => crate::proxy::proxy_apply(&target, &receiver, &arguments)
-            .map(TailTarget::Value),
+        crate::value::Value::Proxy(_) => {
+            crate::proxy::proxy_apply(&target, &receiver, &arguments).map(TailTarget::Value)
+        }
         _ => Err(crate::execute::VmError::NotCallable),
     }
 }
@@ -339,7 +355,11 @@ fn flatten_bound_target(
     mut target: crate::value::Value,
     mut receiver: crate::value::Value,
     mut arguments: Vec<crate::value::Value>,
-) -> (crate::value::Value, crate::value::Value, Vec<crate::value::Value>) {
+) -> (
+    crate::value::Value,
+    crate::value::Value,
+    Vec<crate::value::Value>,
+) {
     while let crate::value::Value::BoundFunction(bound) = target {
         let mut combined = bound.arguments.clone();
         combined.append(&mut arguments);
