@@ -8,13 +8,23 @@ mod vm_ops;
 
 pub use crate::intl::tolocale::value::is_truthy;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum VmError {
     RegisterOutOfBounds(u16),
     MissingReturn,
+    Break,
     NotCallable,
     EvalError(String),
-    Thrown,
+    Thrown(Value),
+}
+
+impl VmError {
+    pub fn render(&self) -> String {
+        match self {
+            VmError::Thrown(value) => render_thrown(value),
+            other => format!("{other:?}"),
+        }
+    }
 }
 
 pub fn execute(ops: &[Op]) -> Result<Value, VmError> {
@@ -207,18 +217,21 @@ fn run_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Value>, VmError>
         GetProperty { .. } | GetPropertyDynamic { .. } => run_get_set_property(registers, op)?,
         SetProperty { .. } | SetPropertyDynamic { .. } => run_get_set_property(registers, op)?,
         DeleteProperty { .. } => run_delete_property(registers, op)?,
-        ForIn { .. } => run_for_in(registers, op)?,
+        ForIn { .. } => return run_for_in(registers, op),
         MakeFunction { .. } => crate::functions::write_op(registers, op),
         Call { .. } => run_call(registers, op)?,
         Branch { .. } => return run_branch(registers, op),
         Try { .. } => return run_try(registers, op),
         CallMethod { .. } | Construct { .. } => run_method_or_construct(registers, op)?,
-        Loop { .. } | Switch { .. } | Conditional { .. } => run_loop_or_special(registers, op)?,
+        Loop { .. } | Switch { .. } | Conditional { .. } => {
+            return run_loop_or_special(registers, op)
+        }
         Unary { dst, operator, src } => {
             vm_arithmetic::execute_unary(registers, *dst, *operator, *src)?
         }
         Binary { .. } => run_binary(registers, op)?,
         Return { .. } | Throw { .. } => return run_terminal(registers, op).map(Some),
+        Break => return Err(VmError::Break),
     }
     Ok(None)
 }
@@ -280,7 +293,7 @@ fn run_delete_property(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmErro
     crate::properties::execute_delete_property(registers, op)
 }
 
-fn run_for_in(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
+fn run_for_in(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Value>, VmError> {
     crate::loops::execute_for_in(registers, op)
 }
 
@@ -294,15 +307,17 @@ fn run_method_or_construct(registers: &mut Vec<Value>, op: &Op) -> Result<(), Vm
     Ok(())
 }
 
-fn run_loop_or_special(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
+fn run_loop_or_special(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Value>, VmError> {
     use Op::*;
     match op {
-        Loop { .. } => crate::loops::execute(registers, op)?,
-        Switch { .. } => crate::switch::execute(registers, op)?,
-        Conditional { .. } => crate::conditional::execute(registers, op)?,
-        _ => {}
+        Loop { .. } => crate::loops::execute(registers, op),
+        Switch { .. } => crate::switch::execute(registers, op),
+        Conditional { .. } => {
+            crate::conditional::execute(registers, op)?;
+            Ok(None)
+        }
+        _ => Ok(None),
     }
-    Ok(())
 }
 
 fn run_terminal(registers: &[Value], op: &Op) -> Result<Value, VmError> {
@@ -320,9 +335,32 @@ fn run_try(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Value>, VmError
 fn execute_terminal(op: &Op, registers: &[Value]) -> Result<Value, VmError> {
     match op {
         Op::Return { src } => read_register(registers, *src),
-        Op::Throw { .. } => Err(VmError::Thrown),
+        Op::Throw { src } => Err(VmError::Thrown(read_register(registers, *src)?)),
         _ => Err(VmError::MissingReturn),
     }
+}
+
+fn render_thrown(value: &Value) -> String {
+    if let Value::Object(properties) = value {
+        let name = property_string(properties, "name");
+        let message = property_string(properties, "message");
+        match (name, message) {
+            (Some(name), Some(message)) => format!("{name}: {message}"),
+            (Some(name), None) => name,
+            (None, Some(message)) => message,
+            (None, None) => "[object Object]".to_string(),
+        }
+    } else {
+        to_string(Some(value))
+    }
+}
+
+fn property_string(properties: &[(String, Value)], key: &str) -> Option<String> {
+    properties
+        .iter()
+        .rev()
+        .find(|(name, _)| name == key)
+        .map(|(_, value)| to_string(Some(value)))
 }
 
 fn execute_array(registers: &mut Vec<Value>, dst: u16, elements: &[u16]) -> Result<(), VmError> {
