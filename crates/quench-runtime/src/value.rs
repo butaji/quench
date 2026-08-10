@@ -53,6 +53,86 @@ pub struct SetData {
     pub values: VecDeque<Value>,
 }
 
+/// Shared byte storage for ArrayBuffer and typed-array views.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArrayBufferData {
+    pub bytes: Rc<RefCell<Vec<u8>>>,
+    pub detached: Rc<RefCell<bool>>,
+}
+
+impl ArrayBufferData {
+    pub fn new(byte_length: usize) -> Self {
+        Self {
+            bytes: Rc::new(RefCell::new(vec![0; byte_length])),
+            detached: Rc::new(RefCell::new(false)),
+        }
+    }
+
+    pub fn byte_length(&self) -> usize {
+        if *self.detached.borrow() {
+            0
+        } else {
+            self.bytes.borrow().len()
+        }
+    }
+
+    pub fn detach(&self) {
+        *self.detached.borrow_mut() = true;
+        self.bytes.borrow_mut().clear();
+    }
+}
+
+/// A Float64Array view over shared ArrayBuffer bytes.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Float64ArrayData {
+    pub buffer: Rc<ArrayBufferData>,
+    pub byte_offset: usize,
+    pub length: usize,
+}
+
+impl Float64ArrayData {
+    pub const BYTES_PER_ELEMENT: usize = std::mem::size_of::<f64>();
+
+    pub fn new(buffer: Rc<ArrayBufferData>, byte_offset: usize, length: usize) -> Self {
+        Self {
+            buffer,
+            byte_offset,
+            length,
+        }
+    }
+
+    pub fn byte_length(&self) -> usize {
+        self.length * Self::BYTES_PER_ELEMENT
+    }
+
+    pub fn get(&self, index: usize) -> Option<f64> {
+        if index >= self.length || self.buffer.byte_length() < self.byte_offset + self.byte_length()
+        {
+            return None;
+        }
+        let start = self.byte_offset + index * Self::BYTES_PER_ELEMENT;
+        let end = start + Self::BYTES_PER_ELEMENT;
+        let bytes = self.buffer.bytes.borrow();
+        let data: [u8; Self::BYTES_PER_ELEMENT] = bytes.get(start..end)?.try_into().ok()?;
+        Some(f64::from_ne_bytes(data))
+    }
+
+    pub fn set(&self, index: usize, value: f64) -> bool {
+        if index >= self.length || self.buffer.byte_length() < self.byte_offset + self.byte_length()
+        {
+            return false;
+        }
+        let start = self.byte_offset + index * Self::BYTES_PER_ELEMENT;
+        let end = start + Self::BYTES_PER_ELEMENT;
+        let mut bytes = self.buffer.bytes.borrow_mut();
+        let Some(destination) = bytes.get_mut(start..end) else {
+            return false;
+        };
+        destination.copy_from_slice(&value.to_ne_bytes());
+        true
+    }
+}
+
 /// A Proxy value wrapping a target and handler.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProxyValue {

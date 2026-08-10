@@ -154,6 +154,10 @@ pub enum FunctionKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Builtin {
     Array,
+    ArrayBuffer,
+    ArrayBufferIsView,
+    Float64Array,
+    Float64ArrayPrototype,
     ArrayIsArray,
     ArrayMap,
     ArrayFilter,
