@@ -213,6 +213,16 @@ pub fn get_property(value: &Value, key: &str) -> Value {
 }
 
 fn run_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Value>, VmError> {
+    if let Some(result) = run_simple_op(registers, op)? {
+        return Ok(result);
+    }
+    if let Some(result) = run_control_op(registers, op)? {
+        return Ok(result);
+    }
+    run_dispatch_op(registers, op)
+}
+
+fn run_simple_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Option<Value>>, VmError> {
     use Op::*;
     match op {
         Const { dst, value } => write_value(registers, *dst, value.into()),
@@ -221,26 +231,44 @@ fn run_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Value>, VmError>
         MakeArray { .. } => run_make_array(registers, op)?,
         MakeObject { .. } => run_make_object(registers, op)?,
         MakeBuiltin { dst, builtin } => write_value(registers, *dst, Value::Builtin(*builtin)),
-        GetProperty { .. } | GetPropertyDynamic { .. } => run_get_set_property(registers, op)?,
-        SetProperty { .. } | SetPropertyDynamic { .. } => run_get_set_property(registers, op)?,
+        GetProperty { .. }
+        | GetPropertyDynamic { .. }
+        | SetProperty { .. }
+        | SetPropertyDynamic { .. } => run_get_set_property(registers, op)?,
         DeleteProperty { .. } => run_delete_property(registers, op)?,
-        ForIn { .. } => return run_for_in(registers, op),
-        ForOf { .. } => return crate::loops::execute_for_of(registers, op),
         MakeFunction { .. } => crate::functions::write_op(registers, op),
         Call { .. } => run_call(registers, op)?,
-        Branch { .. } => return run_branch(registers, op),
-        Try { .. } => return run_try(registers, op),
-        CallMethod { .. } | Construct { .. } => run_method_or_construct(registers, op)?,
-        Loop { .. } | Switch { .. } | Conditional { .. } => {
-            return run_loop_or_special(registers, op)
-        }
         Unary { dst, operator, src } => {
             vm_arithmetic::execute_unary(registers, *dst, *operator, *src)?
         }
         Binary { .. } => run_binary(registers, op)?,
-        Return { .. } | Throw { .. } => return run_terminal(registers, op).map(Some),
-        Break { label } => return Err(VmError::Break(label.clone())),
-        Continue { label } => return Err(VmError::Continue(label.clone())),
+        _ => return Ok(None),
+    }
+    Ok(Some(None))
+}
+
+fn run_control_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Option<Value>>, VmError> {
+    use Op::*;
+    match op {
+        ForIn { .. } => run_for_in(registers, op).map(Some),
+        ForOf { .. } => crate::loops::execute_for_of(registers, op).map(Some),
+        Branch { .. } => run_branch(registers, op).map(Some),
+        Try { .. } => run_try(registers, op).map(Some),
+        Loop { .. } | Switch { .. } | Conditional { .. } => {
+            run_loop_or_special(registers, op).map(Some)
+        }
+        Return { .. } | Throw { .. } => run_terminal(registers, op).map(Some).map(Some),
+        Break { label } => Err(VmError::Break(label.clone())),
+        Continue { label } => Err(VmError::Continue(label.clone())),
+        _ => Ok(None),
+    }
+}
+
+fn run_dispatch_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Value>, VmError> {
+    use Op::*;
+    match op {
+        CallMethod { .. } | Construct { .. } => run_method_or_construct(registers, op)?,
+        _ => {}
     }
     Ok(None)
 }
