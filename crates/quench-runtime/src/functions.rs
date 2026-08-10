@@ -198,29 +198,23 @@ pub(crate) fn write(
 }
 
 pub(crate) fn write_op(registers: &mut Vec<crate::value::Value>, op: &Op) {
-    match op {
+    let (dst, body, params, captures, kind) = match op {
         Op::MakeFunction {
             dst,
             body,
             params,
             captures,
-        } => write(
-            registers,
-            *dst,
-            body,
-            *params,
-            *captures,
-            FunctionKind::Ordinary,
-        ),
+        } => (dst, body, params, captures, FunctionKind::Ordinary),
         Op::MakeFunctionWithKind {
             dst,
             body,
             params,
             captures,
             kind,
-        } => write(registers, *dst, body, *params, *captures, *kind),
-        _ => {}
-    }
+        } => (dst, body, params, captures, *kind),
+        _ => return,
+    };
+    write(registers, *dst, body, *params, *captures, kind);
 }
 
 fn build_registers(
