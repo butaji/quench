@@ -155,9 +155,26 @@ struct GlobalObjectGuard {
     previous: Option<ObjectProperties>,
 }
 
+pub(crate) fn current_global_object() -> Value {
+    GLOBAL_OBJECT
+        .with(|global| {
+            global
+                .borrow()
+                .as_ref()
+                .map(|object| Value::Object(object.clone()))
+        })
+        .unwrap_or(Value::Undefined)
+}
+
 impl GlobalObjectGuard {
     fn install() -> Self {
-        let previous = GLOBAL_OBJECT.with(|global| global.replace(None));
+        let previous = GLOBAL_OBJECT.with(|global| {
+            let previous = global.borrow().clone();
+            if previous.is_none() {
+                global.replace(None);
+            }
+            previous
+        });
         Self { previous }
     }
 }
@@ -248,6 +265,7 @@ fn is_simple_builtin(builtin: Builtin) -> bool {
             | Builtin::ObjectPrototypeValueOf
             | Builtin::FunctionPrototypeToString
             | Builtin::FunctionPrototypeValueOf
+            | Builtin::Function
             | Builtin::NumberToFixed
             | Builtin::NumberToPrecision
             | Builtin::NumberToExponential
@@ -271,6 +289,7 @@ fn execute_simple_builtin(
     receiver: Option<&Value>,
 ) -> Result<Value, VmError> {
     match builtin {
+        Builtin::Function => crate::functions::dynamic_constructor(arguments),
         Builtin::Boolean => Ok(Value::Boolean(arguments.first().is_some_and(is_truthy))),
         Builtin::Eval | Builtin::ReflectConstruct => crate::reflect::builtin(builtin, arguments),
         Builtin::Escape => Ok(crate::builtins::escape(arguments.first())),
