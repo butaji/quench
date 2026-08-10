@@ -93,6 +93,7 @@ for stage in $(find "$root/tests/node-compat" -mindepth 2 -type f \( -name '*.js
   if ([ "$stage" -ge 169 ] && [ "$stage" -le 174 ]) ||
     ([ "$stage" -ge 1879 ] && [ "$stage" -le 1898 ]) ||
     ([ "$stage" -ge 2014 ] && [ "$stage" -le 2015 ]) ||
+    ([ "$stage" -ge 2401 ] && [ "$stage" -le 2405 ]) ||
     ([ "$stage" -ge 2434 ] && [ "$stage" -le 2436 ]) ||
     ([ "$stage" -ge 2522 ] && [ "$stage" -le 2528 ]) ||
     [ "$stage" -eq 394 ]; then
