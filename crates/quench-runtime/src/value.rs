@@ -82,6 +82,36 @@ impl ArrayBufferData {
     }
 }
 
+/// A DataView over shared ArrayBuffer bytes.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DataViewData {
+    pub buffer: Rc<ArrayBufferData>,
+    pub byte_offset: usize,
+    pub byte_length: usize,
+}
+
+impl DataViewData {
+    pub fn new(buffer: Rc<ArrayBufferData>, byte_offset: usize, byte_length: usize) -> Self {
+        Self {
+            buffer,
+            byte_offset,
+            byte_length,
+        }
+    }
+
+    pub fn byte_length(&self) -> usize {
+        if self.buffer.byte_length() < self.byte_offset + self.byte_length {
+            0
+        } else {
+            self.byte_length
+        }
+    }
+
+    pub fn is_detached(&self) -> bool {
+        *self.buffer.detached.borrow()
+    }
+}
+
 /// A Float64Array view over shared ArrayBuffer bytes.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Float64ArrayData {
@@ -203,6 +233,7 @@ pub enum Value {
     ArrayBuffer(Rc<ArrayBufferData>),
     Float64Array(Rc<Float64ArrayData>),
     Float32Array(Rc<Float32ArrayData>),
+    DataView(Rc<DataViewData>),
     Builtin(Builtin),
     Function(Rc<FunctionValue>),
     BoundFunction(Rc<BoundFunctionValue>),
