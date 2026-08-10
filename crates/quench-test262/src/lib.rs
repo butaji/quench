@@ -188,23 +188,7 @@ impl<H: Test262Host> Test262Runner<H> {
         F: FnMut(&str) -> Result<String, String>,
     {
         let metadata = TestMetadata::parse(source)?;
-        let mut composed = String::new();
-        if !metadata.is_raw {
-            let mut includes = vec!["assert.js".to_string(), "sta.js".to_string()];
-            for include in &metadata.includes {
-                if !includes.contains(include) {
-                    includes.push(include.clone());
-                }
-            }
-            for include in &includes {
-                composed.push_str(&load(include)?);
-                composed.push('\n');
-            }
-        }
-        if metadata.only_strict {
-            composed.push_str("\"use strict\";\n");
-        }
-        composed.push_str(source);
+        let composed = compose_harness(source, &metadata, &mut load)?;
         Ok(apply_negative_expectation(
             self.dispatch(&composed, metadata.is_module),
             &metadata,
@@ -291,6 +275,43 @@ impl<H: Test262Host> Test262Runner<H> {
             self.run_script(source)
         }
     }
+}
+
+fn compose_harness<F>(source: &str, metadata: &TestMetadata, load: &mut F) -> Result<String, String>
+where
+    F: FnMut(&str) -> Result<String, String>,
+{
+    let mut composed = String::new();
+    if !metadata.is_raw {
+        load_harness_file(&mut composed, load, "assert.js")?;
+        load_harness_file(&mut composed, load, "sta.js")?;
+        if metadata.is_async {
+            load_harness_file(&mut composed, load, "doneprintHandle.js")?;
+        }
+        for include in &metadata.includes {
+            if !is_default_harness_binding(include) {
+                load_harness_file(&mut composed, load, include)?;
+            }
+        }
+    }
+    if metadata.only_strict {
+        composed.push_str("\"use strict\";\n");
+    }
+    composed.push_str(source);
+    Ok(composed)
+}
+
+fn is_default_harness_binding(include: &str) -> bool {
+    matches!(include, "assert.js" | "sta.js")
+}
+
+fn load_harness_file<F>(composed: &mut String, load: &mut F, name: &str) -> Result<(), String>
+where
+    F: FnMut(&str) -> Result<String, String>,
+{
+    composed.push_str(&load(name)?);
+    composed.push('\n');
+    Ok(())
 }
 
 fn apply_negative_expectation(outcome: TestOutcome, metadata: &TestMetadata) -> TestOutcome {
