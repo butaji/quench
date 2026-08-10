@@ -3,6 +3,7 @@ use crate::bigint;
 use crate::intl::tolocale::value::{
     is_truthy, loose_equal, strict_equal, to_int32, to_number, to_string, type_of,
 };
+use crate::ops::Builtin;
 use crate::value::Value;
 
 use super::{read_register, write_value, VmError};
@@ -16,10 +17,10 @@ pub(crate) fn execute_unary(
     use crate::ops::UnaryOp;
     let value = read_register(registers, src)?;
     let result = match operator {
-        UnaryOp::Plus => numeric_unary(&value, |n| n)?,
+        UnaryOp::Plus => unary_plus(&value)?,
         UnaryOp::Minus => {
-            if let Value::BigInt(ref s) = value {
-                Value::BigInt(bigint::negate(s))
+            if let Some(s) = bigint_value(&value) {
+                Value::BigInt(bigint::negate(s).map_err(bigint_error)?)
             } else {
                 numeric_unary(&value, |n| -n)?
             }
@@ -57,7 +58,10 @@ fn evaluate_binary(
     operator: crate::ops::BinaryOp,
 ) -> Result<Value, VmError> {
     use crate::ops::BinaryOp;
-    if matches!(left, Value::BigInt(_)) || matches!(right, Value::BigInt(_)) {
+    if operator == BinaryOp::Add && has_string_operand(left, right) {
+        return Ok(arithmetic_value(left, right, operator));
+    }
+    if is_bigint_arithmetic(operator) && has_bigint_operand(left, right) {
         return bigint_binary(left, right, operator);
     }
     Ok(match operator {
@@ -91,34 +95,33 @@ fn bigint_binary(
     operator: crate::ops::BinaryOp,
 ) -> Result<Value, VmError> {
     use crate::ops::BinaryOp;
-    let left_s = bigint_str(left);
-    let right_s = bigint_str(right);
+    let (Some(left_s), Some(right_s)) = (bigint_value(left), bigint_value(right)) else {
+        return Err(type_error("Cannot mix BigInt and other types"));
+    };
     Ok(match operator {
-        BinaryOp::Add => Value::BigInt(bigint::add(&left_s, &right_s)),
-        BinaryOp::Subtract => Value::BigInt(bigint::subtract(&left_s, &right_s)),
-        BinaryOp::Multiply => Value::BigInt(bigint::multiply(&left_s, &right_s)),
-        BinaryOp::Divide => Value::BigInt(bigint::divide(&left_s, &right_s)),
-        BinaryOp::Remainder => Value::BigInt(bigint::remainder(&left_s, &right_s)),
+        BinaryOp::Add => Value::BigInt(bigint::add(left_s, right_s).map_err(bigint_error)?),
+        BinaryOp::Subtract => {
+            Value::BigInt(bigint::subtract(left_s, right_s).map_err(bigint_error)?)
+        }
+        BinaryOp::Multiply => {
+            Value::BigInt(bigint::multiply(left_s, right_s).map_err(bigint_error)?)
+        }
+        BinaryOp::Divide => Value::BigInt(bigint::divide(left_s, right_s).map_err(bigint_error)?),
+        BinaryOp::Remainder => {
+            Value::BigInt(bigint::remainder(left_s, right_s).map_err(bigint_error)?)
+        }
+        BinaryOp::Exponentiate => {
+            Value::BigInt(bigint::exponentiate(left_s, right_s).map_err(bigint_error)?)
+        }
         _ => Value::Undefined,
     })
-}
-
-fn bigint_str(value: &Value) -> String {
-    match value {
-        Value::BigInt(s) => s.clone(),
-        _ => to_number(Some(value)).trunc().to_string(),
-    }
 }
 
 fn arithmetic_value(left: &Value, right: &Value, operator: crate::ops::BinaryOp) -> Value {
     if operator == crate::ops::BinaryOp::Add
         && (matches!(left, Value::String(_)) || matches!(right, Value::String(_)))
     {
-        return Value::String(format!(
-            "{}{}",
-            to_string(Some(left)),
-            to_string(Some(right))
-        ));
+        return Value::String(format!("{}{}", add_string(left), add_string(right)));
     }
     let left = to_number(Some(left));
     let right = to_number(Some(right));
@@ -144,6 +147,80 @@ fn numeric_binary(left: f64, right: f64, operator: crate::ops::BinaryOp) -> f64 
         crate::ops::BinaryOp::Remainder => left % right,
         crate::ops::BinaryOp::Exponentiate => left.powf(right),
         _ => 0.0,
+    }
+}
+
+fn unary_plus(value: &Value) -> Result<Value, VmError> {
+    if bigint_value(value).is_some() {
+        return Err(type_error("Cannot convert BigInt value to number"));
+    }
+    numeric_unary(value, |n| n)
+}
+
+fn has_string_operand(left: &Value, right: &Value) -> bool {
+    matches!(left, Value::String(_)) || matches!(right, Value::String(_))
+}
+
+fn has_bigint_operand(left: &Value, right: &Value) -> bool {
+    bigint_value(left).is_some() || bigint_value(right).is_some()
+}
+
+fn is_bigint_arithmetic(operator: crate::ops::BinaryOp) -> bool {
+    matches!(
+        operator,
+        crate::ops::BinaryOp::Add
+            | crate::ops::BinaryOp::Subtract
+            | crate::ops::BinaryOp::Multiply
+            | crate::ops::BinaryOp::Divide
+            | crate::ops::BinaryOp::Remainder
+            | crate::ops::BinaryOp::Exponentiate
+    )
+}
+
+fn bigint_error(error: bigint::Error) -> VmError {
+    match error {
+        bigint::Error::DivisionByZero => range_error("Division by zero"),
+        bigint::Error::NegativeExponent => range_error("Exponent must be positive"),
+        bigint::Error::ExponentTooLarge => range_error("Maximum BigInt size exceeded"),
+        bigint::Error::InvalidDecimal => type_error("Invalid BigInt value"),
+    }
+}
+
+fn type_error(message: &str) -> VmError {
+    VmError::Thrown(crate::builtins::error(
+        Builtin::TypeError,
+        &[Value::String(message.to_string())],
+    ))
+}
+
+fn range_error(message: &str) -> VmError {
+    VmError::Thrown(crate::builtins::error(
+        Builtin::RangeError,
+        &[Value::String(message.to_string())],
+    ))
+}
+
+fn add_string(value: &Value) -> String {
+    bigint_value(value)
+        .map(str::to_string)
+        .unwrap_or_else(|| to_string(Some(value)))
+}
+
+fn bigint_value(value: &Value) -> Option<&str> {
+    match value {
+        Value::BigInt(value) => Some(value.as_str()),
+        Value::Object(properties) => properties.iter().find_map(bigint_slot),
+        _ => None,
+    }
+}
+
+fn bigint_slot((key, value): &(String, Value)) -> Option<&str> {
+    if key != "_value" {
+        return None;
+    }
+    match value {
+        Value::BigInt(value) => Some(value.as_str()),
+        _ => None,
     }
 }
 
