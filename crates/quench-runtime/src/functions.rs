@@ -361,25 +361,6 @@ pub(crate) fn write_op(registers: &mut Vec<crate::value::Value>, op: &Op) {
 
 include!("functions_arguments.rs");
 
-pub(crate) fn execute(
-    function: &std::rc::Rc<crate::value::FunctionValue>,
-    this_value: &crate::value::Value,
-    arguments: &[crate::value::Value],
-) -> Result<crate::value::Value, crate::execute::VmError> {
-    let this_value = crate::vm::bare_call_receiver(function, this_value);
-    let (mut registers, environment) = build_registers(function, &this_value, arguments);
-    let completion = crate::vm::execute_in_environment(
-        &function.body,
-        &mut registers,
-        &crate::vm::VmContext::default(),
-        environment,
-    );
-    if function.is_async {
-        return Ok(crate::promise::from_async_completion(completion));
-    }
-    completion
-}
-
 /// Execute a constructor and return its result plus the final `this` value.
 pub(crate) fn execute_construct(
     function: &std::rc::Rc<crate::value::FunctionValue>,
