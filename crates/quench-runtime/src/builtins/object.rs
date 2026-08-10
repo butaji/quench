@@ -11,11 +11,16 @@ pub(crate) fn execute_special(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
-    let (target, key) = target_and_key(receiver, arguments);
     match builtin {
-        Builtin::ObjectHasOwnProperty => has_own_property_result(target, key),
-        Builtin::ObjectPropertyIsEnumerable => Ok(object_property_is_enumerable(target, arguments)),
+        Builtin::ObjectHasOwnProperty => {
+            let (target, key) = has_own_target(receiver, arguments);
+            has_own_property_result(target, key)
+        }
+        Builtin::ObjectPropertyIsEnumerable => {
+            Ok(object_property_is_enumerable(receiver, arguments))
+        }
         Builtin::ObjectGetOwnPropertyDescriptor => {
+            let (target, key) = static_target(arguments);
             require_object_coercible(target)?;
             Ok(descriptor(target, key))
         }
@@ -23,14 +28,18 @@ pub(crate) fn execute_special(
     }
 }
 
-fn target_and_key<'a>(
+fn has_own_target<'a>(
     receiver: Option<&'a Value>,
     arguments: &'a [Value],
 ) -> (Option<&'a Value>, Option<&'a Value>) {
-    receiver.map_or_else(
-        || (arguments.first(), arguments.get(1)),
-        |value| (Some(value), arguments.first()),
-    )
+    if receiver.is_none() || matches!(receiver, Some(Value::Builtin(Builtin::Object))) {
+        return static_target(arguments);
+    }
+    (receiver, arguments.first())
+}
+
+fn static_target(arguments: &[Value]) -> (Option<&Value>, Option<&Value>) {
+    (arguments.first(), arguments.get(1))
 }
 
 fn has_own_property_result(
