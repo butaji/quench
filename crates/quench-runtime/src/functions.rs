@@ -269,6 +269,9 @@ pub(crate) fn execute_bound(
         ),
         crate::value::Value::Function(function) => execute(function, &bound.receiver, &combined),
         crate::value::Value::BoundFunction(next) => execute_bound(next, &combined),
+        crate::value::Value::Proxy(_) => {
+            crate::proxy::proxy_apply(&bound.target, &bound.receiver, &combined)
+        }
         _ => Err(crate::execute::VmError::NotCallable),
     }
 }
@@ -297,7 +300,7 @@ fn execute_function_call(
         .first()
         .cloned()
         .unwrap_or(crate::value::Value::Undefined);
-    execute_target(receiver, &this, &arguments[1..])
+    execute_target(receiver, &this, arguments.get(1..).unwrap_or_default())
 }
 
 fn bind_function_target(
