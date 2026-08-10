@@ -119,6 +119,7 @@ pub enum Builtin {
     ArrayReduceRight,
     ArrayForEach,
     FunctionCall,
+    FunctionApply,
     Boolean,
     Print,
     Eval,
