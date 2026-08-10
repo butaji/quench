@@ -259,6 +259,7 @@ pub enum Builtin {
     DateGetMinutes,
     DateGetSeconds,
     DateGetMilliseconds,
+    DateGetTimezoneOffset,
     DateGetUTCFullYear,
     DateGetUTCMonth,
     DateGetUTCDate,
