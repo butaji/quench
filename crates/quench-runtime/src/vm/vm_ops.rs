@@ -1,5 +1,5 @@
 //! VM op execution dispatch (call, builtin tail, unary, binary).
-use crate::intl::tolocale::value::{parse_float, parse_int, to_string};
+use crate::intl::tolocale::value::{parse_float, parse_int};
 use crate::ops::HostCapabilityKind;
 use crate::value::Value;
 
@@ -156,7 +156,9 @@ pub fn execute_builtin_tail(
         }
         Builtin::ParseFloat => Value::Number(parse_float(arguments.first())),
         Builtin::ParseInt => Value::Number(parse_int(arguments)),
-        Builtin::String => Value::String(to_string(arguments.first())),
+        Builtin::String => Value::String(crate::conversion::to_string(
+            arguments.first().unwrap_or(&Value::Undefined),
+        )?),
         Builtin::Unescape => crate::builtins::unescape(arguments.first()),
         Builtin::MathPow => crate::builtins::math_pow(arguments),
         _ => Value::Undefined,
