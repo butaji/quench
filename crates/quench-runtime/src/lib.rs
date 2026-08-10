@@ -29,6 +29,7 @@ mod equality;
 mod exceptions;
 pub mod execute;
 pub mod facts;
+mod function_parameters;
 mod functions;
 mod functions_dynamic;
 mod functions_write;

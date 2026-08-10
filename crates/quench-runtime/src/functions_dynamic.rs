@@ -32,12 +32,12 @@ fn reduce_dynamic(source: &str) -> Result<Value, VmError> {
     };
     let (ops, _) = crate::functions::reduce_function_ops(
         &body.statements,
+        &function.params,
         &mut facts,
         parameters,
         count,
         &HashMap::new(),
-        false,
-        false,
+        None,
     )
     .ok_or_else(|| invalid("Unsupported function source"))?;
     let value = dynamic_value(&ops, count, strictness);
