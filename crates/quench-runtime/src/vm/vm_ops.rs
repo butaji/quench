@@ -137,6 +137,18 @@ pub fn execute_host_capability(
     super::execute_host_capability(kind, receiver, arguments)
 }
 
+pub fn detach_array_buffer(arguments: &[Value]) -> Result<Value, VmError> {
+    match arguments.first() {
+        Some(Value::ArrayBuffer(buffer)) => {
+            buffer.detach();
+            Ok(Value::Undefined)
+        }
+        _ => Err(super::type_error(
+            "detachArrayBuffer requires an ArrayBuffer",
+        )),
+    }
+}
+
 fn early_dispatch(
     builtin: crate::ops::Builtin,
     receiver: Option<&Value>,
