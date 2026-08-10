@@ -60,7 +60,9 @@ fn require_object_coercible(receiver: Option<&Value>) -> Result<&Value, VmError>
 
 fn owns_property(receiver: &Value, key: &str) -> Result<bool, VmError> {
     Ok(match receiver {
-        Value::Object(properties) => properties.iter().any(|(name, _)| name == key),
+        Value::Object(properties) => properties
+            .iter()
+            .any(|(name, _)| name == key && !super::is_descriptor_key(name)),
         Value::Array(values) => key == "length" || valid_index(key, values.len()),
         Value::String(value) => key == "length" || valid_index(key, value.chars().count()),
         Value::Builtin(builtin) => builtin_owns_property(*builtin, key),
@@ -125,11 +127,20 @@ pub(crate) fn descriptor(value: Option<&Value>, key: Option<&Value>) -> Value {
         return Value::Undefined;
     };
     let property = match value {
-        Value::Object(properties) => properties
-            .iter()
-            .rev()
-            .find(|(name, _)| name == &key)
-            .map(|(_, value)| value.clone()),
+        Value::Object(properties) => {
+            if let Some((_, metadata)) = properties
+                .iter()
+                .rev()
+                .find(|(name, _)| name == &super::descriptor_key(&key))
+            {
+                return metadata.clone();
+            }
+            properties
+                .iter()
+                .rev()
+                .find(|(name, _)| name == &key)
+                .map(|(_, value)| value.clone())
+        }
         Value::Array(values) => array_descriptor(values, &key),
         Value::String(value) => string_descriptor(value, &key),
         Value::Builtin(builtin) => {
