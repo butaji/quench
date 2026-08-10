@@ -349,16 +349,17 @@ pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
     }
 }
 
-pub(crate) fn define_property(arguments: &[Value]) -> Value {
+pub(crate) fn define_property(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
     let Some(target) = arguments.first() else {
-        return Value::Undefined;
+        return Ok(Value::Undefined);
     };
     let key = arguments.get(1).map_or_else(String::new, value_to_string);
     let Some(Value::Object(descriptor)) = arguments.get(2) else {
-        return target.clone();
+        return Ok(target.clone());
     };
     let key_value = Value::String(key.clone());
     let current = crate::builtins::object::descriptor(Some(target), Some(&key_value));
+    validate_redefinition(&current, descriptor)?;
     let descriptor = complete_descriptor(descriptor, &current);
     let value = descriptor
         .iter()
@@ -380,7 +381,7 @@ pub(crate) fn define_property(arguments: &[Value]) -> Value {
         properties.push((descriptor_key(&key), metadata));
     }
     define_array_descriptor(&mut result, &key, descriptor);
-    result
+    Ok(result)
 }
 
 fn define_accessor_placeholder(target: Value, key: &str) -> Value {

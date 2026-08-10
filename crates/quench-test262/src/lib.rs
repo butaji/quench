@@ -16,6 +16,17 @@ pub trait Test262Host: Send {
 
     /// Execute a complete ES module source.
     fn run_module_script(&mut self, source: &str) -> Result<(), String>;
+
+    /// Execute harness scripts, then one test script in the same realm.
+    fn run_harnessed_script(
+        &mut self,
+        harness: &[String],
+        source: &str,
+        strict: bool,
+    ) -> Result<(), String>;
+
+    /// Execute harness scripts, then one module in the same realm.
+    fn run_harnessed_module(&mut self, harness: &[String], source: &str) -> Result<(), String>;
 }
 
 /// Runner metadata needed before dispatching one test.
@@ -173,7 +184,7 @@ impl<H: Test262Host> Test262Runner<H> {
     pub fn run_test(&mut self, source: &str) -> Result<TestOutcome, String> {
         let metadata = TestMetadata::parse(source)?;
         Ok(apply_negative_expectation(
-            self.dispatch(source, metadata.is_module),
+            self.dispatch_test(&[], source, &metadata),
             &metadata,
         ))
     }
@@ -188,9 +199,9 @@ impl<H: Test262Host> Test262Runner<H> {
         F: FnMut(&str) -> Result<String, String>,
     {
         let metadata = TestMetadata::parse(source)?;
-        let composed = compose_harness(source, &metadata, &mut load)?;
+        let harness = load_harness(&metadata, &mut load)?;
         Ok(apply_negative_expectation(
-            self.dispatch(&composed, metadata.is_module),
+            self.dispatch_test(&harness, source, &metadata),
             &metadata,
         ))
     }
@@ -268,49 +279,51 @@ impl<H: Test262Host> Test262Runner<H> {
         Ok(report)
     }
 
-    fn dispatch(&mut self, source: &str, is_module: bool) -> TestOutcome {
-        if is_module {
-            self.run_module_script(source)
-        } else {
-            self.run_script(source)
+    fn dispatch_test(
+        &mut self,
+        harness: &[String],
+        source: &str,
+        metadata: &TestMetadata,
+    ) -> TestOutcome {
+        if metadata.is_module {
+            return map_result(self.host.run_harnessed_module(harness, source));
         }
+        map_result(
+            self.host
+                .run_harnessed_script(harness, source, metadata.only_strict),
+        )
     }
 }
 
-fn compose_harness<F>(source: &str, metadata: &TestMetadata, load: &mut F) -> Result<String, String>
+fn load_harness<F>(metadata: &TestMetadata, load: &mut F) -> Result<Vec<String>, String>
 where
     F: FnMut(&str) -> Result<String, String>,
 {
-    let mut composed = String::new();
+    let mut harness = Vec::new();
     if !metadata.is_raw {
-        load_harness_file(&mut composed, load, "assert.js")?;
-        load_harness_file(&mut composed, load, "sta.js")?;
+        load_harness_file(&mut harness, load, "assert.js")?;
+        load_harness_file(&mut harness, load, "sta.js")?;
         if metadata.is_async {
-            load_harness_file(&mut composed, load, "doneprintHandle.js")?;
+            load_harness_file(&mut harness, load, "doneprintHandle.js")?;
         }
         for include in &metadata.includes {
             if !is_default_harness_binding(include) {
-                load_harness_file(&mut composed, load, include)?;
+                load_harness_file(&mut harness, load, include)?;
             }
         }
     }
-    if metadata.only_strict {
-        composed.push_str("\"use strict\";\n");
-    }
-    composed.push_str(source);
-    Ok(composed)
+    Ok(harness)
 }
 
 fn is_default_harness_binding(include: &str) -> bool {
     matches!(include, "assert.js" | "sta.js")
 }
 
-fn load_harness_file<F>(composed: &mut String, load: &mut F, name: &str) -> Result<(), String>
+fn load_harness_file<F>(harness: &mut Vec<String>, load: &mut F, name: &str) -> Result<(), String>
 where
     F: FnMut(&str) -> Result<String, String>,
 {
-    composed.push_str(&load(name)?);
-    composed.push('\n');
+    harness.push(load(name)?);
     Ok(())
 }
 

@@ -129,31 +129,50 @@ fn reserve(name: &str, locals: &mut HashMap<String, u16>, next_slot: &mut u16) {
     }
 }
 
-/// Mirror a script-level function declaration onto the actual script global.
-pub(crate) fn mirror_script_function(
+/// Mirror script `var` and function bindings onto the actual script global.
+pub(crate) fn mirror_script_bindings(
     statement: &oxc::ast::ast::Statement<'_>,
     locals: &HashMap<String, u16>,
     ops: &mut Vec<Op>,
     next_register: &mut u16,
 ) {
-    let oxc::ast::ast::Statement::FunctionDeclaration(function) = statement else {
-        return;
-    };
-    let Some(identifier) = function.id.as_ref() else {
-        return;
-    };
-    let (Some(global_slot), Some(function_slot)) = (
-        locals.get(SCRIPT_THIS_SLOT),
-        locals.get(identifier.name.as_str()),
-    ) else {
+    match statement {
+        oxc::ast::ast::Statement::FunctionDeclaration(function) => {
+            if let Some(identifier) = &function.id {
+                mirror_binding(identifier.name.as_str(), locals, ops, next_register);
+            }
+        }
+        oxc::ast::ast::Statement::VariableDeclaration(declaration)
+            if declaration.kind == oxc::ast::ast::VariableDeclarationKind::Var =>
+        {
+            for declarator in &declaration.declarations {
+                if let oxc::ast::ast::BindingPatternKind::BindingIdentifier(identifier) =
+                    &declarator.id.kind
+                {
+                    mirror_binding(identifier.name.as_str(), locals, ops, next_register);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn mirror_binding(
+    name: &str,
+    locals: &HashMap<String, u16>,
+    ops: &mut Vec<Op>,
+    next_register: &mut u16,
+) {
+    let (Some(global_slot), Some(value_slot)) = (locals.get(SCRIPT_THIS_SLOT), locals.get(name))
+    else {
         return;
     };
     let global = load_local(ops, next_register, *global_slot);
-    let function = load_local(ops, next_register, *function_slot);
+    let value = load_local(ops, next_register, *value_slot);
     ops.push(Op::SetProperty {
         object: global,
-        key: identifier.name.to_string(),
-        src: function,
+        key: name.to_string(),
+        src: value,
     });
 }
 

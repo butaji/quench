@@ -139,12 +139,23 @@ pub(crate) fn execute_delete_property(
     registers: &mut Vec<crate::value::Value>,
     op: &Op,
 ) -> Result<(), crate::execute::VmError> {
-    let Op::DeleteProperty { dst, object, key } = op else {
+    let Op::DeleteProperty {
+        dst,
+        object,
+        key,
+        strict,
+    } = op
+    else {
         return Err(crate::execute::VmError::MissingReturn);
     };
     let target = crate::execute::read_register(registers, *object)?.clone();
     let key = dynamic_property_key(&crate::execute::read_register(registers, *key)?)?;
     let (result, deleted) = crate::builtins::delete_property(target.clone(), &key);
+    if !deleted && *strict {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot delete non-configurable property",
+        ));
+    }
     crate::locals::replace_value(&target, &result);
     crate::vm::synchronize_global_object(registers, &target, &result);
     crate::execute::write_value(registers, *object, result);
@@ -408,6 +419,28 @@ pub(crate) fn execute_get(
     )?;
     crate::execute::write_value(registers, *dst, value);
     Ok(())
+}
+
+pub(crate) fn execute_resolve_global(
+    registers: &mut Vec<crate::value::Value>,
+    op: &crate::ops::Op,
+) -> Result<(), crate::execute::VmError> {
+    let crate::ops::Op::ResolveGlobal { dst, object, key } = op else {
+        return Err(crate::execute::VmError::MissingReturn);
+    };
+    let target = crate::execute::read_register(registers, *object)?;
+    let value = crate::execute::get_property_result(&target, key)?;
+    if matches!(value, crate::value::Value::Undefined) && !has_own_key(&target, key) {
+        return Err(crate::value::error::throw_reference_error(&format!(
+            "{key} is not defined"
+        )));
+    }
+    crate::execute::write_value(registers, *dst, value);
+    Ok(())
+}
+
+fn has_own_key(value: &crate::value::Value, key: &str) -> bool {
+    matches!(value, crate::value::Value::Object(properties) if properties.iter().any(|(name, _)| name == key))
 }
 
 pub(crate) fn reduce_method_call(
