@@ -156,15 +156,12 @@ fn owns_property(receiver: &Value, key: &str) -> Result<bool, VmError> {
         }
         Value::String(value) => key == "length" || valid_index(key, value.chars().count()),
         Value::Builtin(builtin) => builtin_owns_property(*builtin, key),
-        Value::Function(function) => {
-            matches!(key, "length" | "prototype")
-                || function
-                    .properties
-                    .borrow()
-                    .iter()
-                    .rev()
-                    .any(|(name, _)| name == key)
-        }
+        Value::Function(function) => function
+            .properties
+            .borrow()
+            .iter()
+            .rev()
+            .any(|(name, _)| name == key),
         Value::Proxy(_) => {
             crate::proxy::proxy_get_own_property_descriptor(receiver, key)? != Value::Undefined
         }
@@ -234,14 +231,6 @@ pub(crate) fn descriptor(value: Option<&Value>, key: Option<&Value>) -> Value {
 }
 
 fn function_descriptor(function: &crate::value::FunctionValue, key: &str) -> Option<Value> {
-    if key == "length" {
-        return Some(descriptor_object_with_flags(
-            Value::Number(f64::from(function.params)),
-            false,
-            false,
-            true,
-        ));
-    }
     if let Some((_, metadata)) = function
         .properties
         .borrow()

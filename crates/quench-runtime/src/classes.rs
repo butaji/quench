@@ -210,11 +210,15 @@ fn instance_field_initializer(
     let value = crate::functions::make(
         &initializer.body,
         0,
+        0,
         crate::locals::capture(initializer.captures),
-        FunctionKind::Ordinary,
-        FunctionStrictness::Strict,
-        false,
-        false,
+        crate::functions::FunctionMetadata {
+            kind: FunctionKind::Ordinary,
+            length: 0,
+            strictness: FunctionStrictness::Strict,
+            is_async: false,
+            mapped_arguments: false,
+        },
     );
     let crate::value::Value::Function(function) = value else {
         return Err(crate::execute::VmError::NotCallable);
@@ -435,6 +439,7 @@ fn emit_default_constructor(ops: &mut Vec<Op>, next: &mut u16) -> u16 {
         params: 0,
         captures: 0,
         kind: FunctionKind::Ordinary,
+        length: 0,
         strictness: FunctionStrictness::Strict,
         is_async: false,
         mapped_arguments: false,

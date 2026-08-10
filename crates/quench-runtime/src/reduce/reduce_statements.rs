@@ -434,6 +434,7 @@ fn function_metadata(
 ) -> functions::FunctionMetadata {
     functions::FunctionMetadata {
         kind: functions::function_kind(function),
+        length: crate::function_parameters::expected_argument_count(&function.params),
         strictness,
         is_async: function.r#async,
         mapped_arguments: crate::function_parameters::is_simple(&function.params),
@@ -455,6 +456,7 @@ fn function_declaration_op(
         params,
         captures,
         kind: metadata.kind,
+        length: metadata.length,
         strictness: metadata.strictness,
         is_async: metadata.is_async,
         mapped_arguments: metadata.mapped_arguments,
