@@ -72,6 +72,12 @@ fn is_package_module(path: &Path) -> bool {
     }
     false
 }
+fn set_module_url<'js>(module: &Module<'js>, path: &Path) -> Result<()> {
+    let absolute = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    module
+        .meta()?
+        .set("url", format!("file://{}", absolute.display()))
+}
 #[derive(Debug, Default)]
 pub struct NodeResolver;
 impl Resolver for NodeResolver {
@@ -162,10 +168,7 @@ impl Loader for NodeLoader {
                 "export const createRequire = __m.createRequire;\nexport const getPort = () => __c.PORT;\n",
             );
             let module = Module::declare(ctx.clone(), name, source)?;
-            let absolute = fs::canonicalize(path).unwrap_or_else(|_| PathBuf::from(path));
-            module
-                .meta()?
-                .set("url", format!("file://{}", absolute.display()))?;
+            set_module_url(&module, Path::new(path))?;
             return Ok(module);
         }
         let path = PathBuf::from(path);
@@ -173,10 +176,7 @@ impl Loader for NodeLoader {
         if extension == Some("js") && is_package_module(&path) {
             let bytes = fs::read(&path)?;
             let module = Module::declare(ctx.clone(), name, bytes)?;
-            let absolute = fs::canonicalize(&path).unwrap_or(path.clone());
-            module
-                .meta()?
-                .set("url", format!("file://{}", absolute.display()))?;
+            set_module_url(&module, &path)?;
             return Ok(module);
         }
         if matches!(extension, Some("js") | Some("cjs")) {
@@ -221,10 +221,7 @@ impl Loader for NodeLoader {
         }
         let bytes = fs::read(&path)?;
         let module = Module::declare(ctx.clone(), name, bytes)?;
-        let absolute = fs::canonicalize(&path).unwrap_or(path.clone());
-        module
-            .meta()?
-            .set("url", format!("file://{}", absolute.display()))?;
+        set_module_url(&module, &path)?;
         Ok(module)
     }
 }

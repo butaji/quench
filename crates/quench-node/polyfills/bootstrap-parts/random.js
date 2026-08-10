@@ -224,39 +224,24 @@ const __quenchWebCryptoUsages = (usages) => {
   const unique = new Set(Array.isArray(usages) ? usages : []);
   return __quenchWebCryptoUsageOrder.filter((usage) => unique.has(usage));
 };
-class __quenchWebCryptoKey {
-  get type() {
-    if (!__quenchWebCryptoKeyBrand.has(this)) {
-      throw Object.assign(new TypeError("Illegal invocation"), {
-        code: "ERR_INVALID_THIS"
-      });
+class __quenchWebCryptoKey {}
+for (const [name, copy] of [
+  ["type", false],
+  ["extractable", false],
+  ["algorithm", false],
+  ["usages", true]
+]) {
+  Object.defineProperty(__quenchWebCryptoKey.prototype, name, {
+    get() {
+      if (!__quenchWebCryptoKeyBrand.has(this)) {
+        throw Object.assign(new TypeError("Illegal invocation"), {
+          code: "ERR_INVALID_THIS"
+        });
+      }
+      const value = __quenchWebCryptoKeyData.get(this)[name];
+      return copy ? [...value] : value;
     }
-    return __quenchWebCryptoKeyData.get(this).type;
-  }
-  get extractable() {
-    if (!__quenchWebCryptoKeyBrand.has(this)) {
-      throw Object.assign(new TypeError("Illegal invocation"), {
-        code: "ERR_INVALID_THIS"
-      });
-    }
-    return __quenchWebCryptoKeyData.get(this).extractable;
-  }
-  get algorithm() {
-    if (!__quenchWebCryptoKeyBrand.has(this)) {
-      throw Object.assign(new TypeError("Illegal invocation"), {
-        code: "ERR_INVALID_THIS"
-      });
-    }
-    return __quenchWebCryptoKeyData.get(this).algorithm;
-  }
-  get usages() {
-    if (!__quenchWebCryptoKeyBrand.has(this)) {
-      throw Object.assign(new TypeError("Illegal invocation"), {
-        code: "ERR_INVALID_THIS"
-      });
-    }
-    return [...__quenchWebCryptoKeyData.get(this).usages];
-  }
+  });
 }
 globalThis.__quenchCloneWebCryptoKey = (source) => {
   if (!__quenchWebCryptoKeyBrand.has(source)) return undefined;

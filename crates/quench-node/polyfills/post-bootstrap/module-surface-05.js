@@ -1,4 +1,30 @@
 {
+  const __quenchInheritsError = (message) => {
+    const error = new TypeError(message);
+    error.code = "ERR_INVALID_ARG_TYPE";
+    return error;
+  };
+  const __quenchValidateInherits = (constructor, superConstructor) => {
+    if (typeof constructor !== "function") {
+      throw __quenchInheritsError(
+        `The "ctor" argument must be of type function. Received ${constructor}`
+      );
+    }
+    if (superConstructor == null) {
+      throw __quenchInheritsError(
+        `The "superCtor" argument must be of type function. Received ${superConstructor}`
+      );
+    }
+    if (
+      typeof superConstructor !== "function" ||
+      !superConstructor.prototype ||
+      typeof superConstructor.prototype !== "object"
+    ) {
+      throw __quenchInheritsError(
+        'The "superCtor.prototype" property must be of type object. Received undefined'
+      );
+    }
+  };
   const __quenchEnvError = () => {
     const error = new TypeError(
       'The "content" argument must be of type string'
@@ -57,14 +83,32 @@
       }
       if (normalized === "util") {
         result.parseEnv ||= __quenchParseEnv;
+        result.inherits ||= (constructor, superConstructor) => {
+          __quenchValidateInherits(constructor, superConstructor);
+          Object.setPrototypeOf(
+            constructor.prototype,
+            superConstructor.prototype
+          );
+          Object.defineProperty(constructor.prototype, "constructor", {
+            value: constructor,
+            writable: true,
+            configurable: true
+          });
+          Object.defineProperty(constructor, "super_", {
+            value: superConstructor,
+            writable: true,
+            configurable: true
+          });
+          return constructor;
+        };
+        result.MIMEType ||= function MIMEType() {};
+        result.isDeepStrictEqual ||= (left, right) => left === right;
       }
       if (normalized === "console") {
         result.createTask ||= () => ({});
-        result.dir ||= () => undefined;
-        result.time ||= () => undefined;
-        result.timeEnd ||= () => undefined;
-        result.assert ||= () => undefined;
-        result.table ||= () => undefined;
+        for (const name of "dir time timeEnd assert table".split(" ")) {
+          result[name] ||= () => undefined;
+        }
       }
       if (normalized === "dgram") {
         result = Object.assign({}, result);
