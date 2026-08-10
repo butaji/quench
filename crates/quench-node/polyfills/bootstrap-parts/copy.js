@@ -30,11 +30,7 @@ const __nodeBufferFillRange = (length, start, end, encoding) => {
       value !== null && typeof value === "object"
         ? `an instance of ${value.constructor?.name || "Object"}`
         : `type ${typeof value}`;
-    const error = new TypeError(
-      `The "${name}" argument must be of type number. Received ${received}`
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError(`The "${name}" argument must be of type number. Received ${received}`), { code: "ERR_INVALID_ARG_TYPE" });
   }
   const toIndex = (input, fallback) => {
     const number = Math.trunc(Number(input));
@@ -43,9 +39,7 @@ const __nodeBufferFillRange = (length, start, end, encoding) => {
   start = toIndex(start, 0);
   end = toIndex(end, length);
   if (__nodeBufferFillRangeInvalid(start, end, length)) {
-    const error = new RangeError("The value is out of range");
-    error.code = "ERR_OUT_OF_RANGE";
-    throw error;
+    throw Object.assign(new RangeError("The value is out of range"), { code: "ERR_OUT_OF_RANGE" });
   }
   return { start, end, encoding };
 };
@@ -63,9 +57,7 @@ const __nodeBufferFillString = (value, encoding) => {
     String(encoding).toLowerCase() === "hex" &&
     (value.length % 2 || !/^[0-9a-f]*$/i.test(value))
   ) {
-    const error = new TypeError('The "value" argument is invalid');
-    error.code = "ERR_INVALID_ARG_VALUE";
-    throw error;
+    throw Object.assign(new TypeError('The "value" argument is invalid'), { code: "ERR_INVALID_ARG_VALUE" });
   }
   return NodeBuffer.from(value, encoding);
 };
@@ -91,14 +83,10 @@ const __nodeBufferCompareValidate = (target, values) => {
   }
   for (const value of values) {
     if (value !== undefined && typeof value !== "number") {
-      const error = new TypeError("offset arguments must be numbers");
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError("offset arguments must be numbers"), { code: "ERR_INVALID_ARG_TYPE" });
     }
     if (value !== undefined && (!Number.isFinite(value) || value < 0)) {
-      const error = new RangeError("offset is out of range");
-      error.code = "ERR_OUT_OF_RANGE";
-      throw error;
+      throw Object.assign(new RangeError("offset is out of range"), { code: "ERR_OUT_OF_RANGE" });
     }
   }
 };
@@ -111,9 +99,7 @@ const __nodeBufferCompareRange = (target, source, values) => {
     sourceEnd === undefined ? source.length : Math.trunc(sourceEnd)
   ];
   if (ranges[1] > target.length || ranges[3] > source.length) {
-    const error = new RangeError("offset is out of range");
-    error.code = "ERR_OUT_OF_RANGE";
-    throw error;
+    throw Object.assign(new RangeError("offset is out of range"), { code: "ERR_OUT_OF_RANGE" });
   }
   return [
     target.subarray(ranges[0], ranges[1]),
@@ -276,11 +262,7 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase01 {
       Object.prototype.hasOwnProperty.call(this, "length") &&
       this.length !== length
     ) {
-      const error = new RangeError(
-        "Attempt to access memory outside buffer bounds"
-      );
-      error.code = "ERR_BUFFER_OUT_OF_BOUNDS";
-      throw error;
+      throw Object.assign(new RangeError("Attempt to access memory outside buffer bounds"), { code: "ERR_BUFFER_OUT_OF_BOUNDS" });
     }
     ({ start, end, encoding } = __nodeBufferFillRange(
       length,
@@ -291,9 +273,7 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase01 {
     const pattern = __nodeBufferFillPattern(value, encoding);
     if (pattern.length === 0) {
       if (ArrayBuffer.isView(value)) {
-        const error = new TypeError('The "value" argument is invalid');
-        error.code = "ERR_INVALID_ARG_VALUE";
-        throw error;
+        throw Object.assign(new TypeError('The "value" argument is invalid'), { code: "ERR_INVALID_ARG_VALUE" });
       }
       return this;
     }
@@ -305,9 +285,7 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase01 {
   toString(encoding = "utf8", start = 0, end = this.length) {
     encoding = String(encoding).toLowerCase();
     if (!NodeBuffer.isEncoding(encoding)) {
-      const error = new TypeError(`Unknown encoding: ${encoding}`);
-      error.code = "ERR_UNKNOWN_ENCODING";
-      throw error;
+      throw Object.assign(new TypeError(`Unknown encoding: ${encoding}`), { code: "ERR_UNKNOWN_ENCODING" });
     }
     if (start !== 0 || end !== this.length) {
       const range = __nodeBufferStringRange(this.length, start, end);
@@ -376,9 +354,7 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase01 {
     const min = signed ? -(1n << 63n) : 0n;
     const max = signed ? (1n << 63n) - 1n : (1n << 64n) - 1n;
     if (value < min || value > max) {
-      const error = new RangeError('The value of "value" is out of range');
-      error.code = "ERR_OUT_OF_RANGE";
-      throw error;
+      throw Object.assign(new RangeError('The value of "value" is out of range'), { code: "ERR_OUT_OF_RANGE" });
     }
     const view = new DataView(this.buffer, this.byteOffset, this.byteLength);
     if (signed) view.setBigInt64(offset, value, littleEndian);

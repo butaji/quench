@@ -5,18 +5,10 @@ const __nodeCryptoValidatePbkdf2Types = (password, salt) => {
     (typeof SharedArrayBuffer !== "undefined" &&
       value instanceof SharedArrayBuffer);
   if (typeof password !== "string" && !isBinary(password)) {
-    const error = new TypeError(
-      'The "password" argument must be of type string or an instance of Buffer',
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "password" argument must be of type string or an instance of Buffer'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   if (typeof salt !== "string" && !isBinary(salt)) {
-    const error = new TypeError(
-      'The "salt" argument must be of type string or an instance of Buffer',
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "salt" argument must be of type string or an instance of Buffer'), { code: "ERR_INVALID_ARG_TYPE" });
   }
 };
 const __nodeCryptoKeylenReceived = (keylen) => {
@@ -47,9 +39,7 @@ const __nodeCryptoValidatePbkdf2Numbers = (iterations, keylen) => {
     iterations <= 0 ||
     iterations > 0x7fffffff
   ) {
-    const error = new RangeError('The value of "iterations" is out of range');
-    error.code = "ERR_OUT_OF_RANGE";
-    throw error;
+    throw Object.assign(new RangeError('The value of "iterations" is out of range'), { code: "ERR_OUT_OF_RANGE" });
   }
   if (typeof keylen !== "number") {
     const error = new TypeError(
@@ -63,10 +53,6 @@ const __nodeCryptoValidatePbkdf2Numbers = (iterations, keylen) => {
     throw error;
   }
   if (!Number.isInteger(keylen) || keylen < 0 || keylen > 0x7fffffff) {
-    const error = new RangeError(
-      `The value of "keylen" is out of range. It must be an integer. Received ${keylen}`,
-    );
-    error.code = "ERR_OUT_OF_RANGE";
-    throw error;
+    throw Object.assign(new RangeError(`The value of "keylen" is out of range. It must be an integer. Received ${keylen}`), { code: "ERR_OUT_OF_RANGE" });
   }
 };

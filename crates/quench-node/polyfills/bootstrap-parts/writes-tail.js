@@ -114,9 +114,7 @@ let __nodePriority = 0;
 const __nodeValidatePriorityPid = (pid) => {
   if (pid === undefined) return;
   if (typeof pid !== "number") {
-    const error = new TypeError('The "pid" argument must be of type number.');
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "pid" argument must be of type number.'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   if (pid === -1) {
     const error = new Error(
@@ -127,9 +125,7 @@ const __nodeValidatePriorityPid = (pid) => {
     throw error;
   }
   if (!Number.isSafeInteger(pid) || pid < 0 || pid > 2 ** 32 - 1) {
-    const error = new RangeError('The value of "pid" is out of range.');
-    error.code = "ERR_OUT_OF_RANGE";
-    throw error;
+    throw Object.assign(new RangeError('The value of "pid" is out of range.'), { code: "ERR_OUT_OF_RANGE" });
   }
   if (pid === 0 || pid === globalThis.process.pid) return;
   const error = new Error(
@@ -140,16 +136,10 @@ const __nodeValidatePriorityPid = (pid) => {
 };
 const __nodeValidatePriorityValue = (priority) => {
   if (typeof priority !== "number") {
-    const error = new TypeError(
-      'The "priority" argument must be of type number.'
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "priority" argument must be of type number.'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   if (!Number.isSafeInteger(priority) || priority < -20 || priority > 19) {
-    const error = new RangeError('The value of "priority" is out of range.');
-    error.code = "ERR_OUT_OF_RANGE";
-    throw error;
+    throw Object.assign(new RangeError('The value of "priority" is out of range.'), { code: "ERR_OUT_OF_RANGE" });
   }
 };
 const __nodeStartedAt = Date.now();

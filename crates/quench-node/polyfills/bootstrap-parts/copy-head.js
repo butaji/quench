@@ -30,18 +30,10 @@ const __nodeBufferCopyRangeError = (name, rule, value) => {
 };
 const __nodeBufferCopyValidate = (source, target) => {
   if (!(source instanceof Uint8Array)) {
-    const error = new TypeError(
-      "Method Buffer.prototype.copy called on incompatible receiver",
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError("Method Buffer.prototype.copy called on incompatible receiver"), { code: "ERR_INVALID_ARG_TYPE" });
   }
   if (!ArrayBuffer.isView(target)) {
-    const error = new TypeError(
-      'The "target" argument must be an instance of Uint8Array',
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "target" argument must be an instance of Uint8Array'), { code: "ERR_INVALID_ARG_TYPE" });
   }
 };
 const __nodeBufferConcatReceived = (value) => {
@@ -88,8 +80,6 @@ const __nodeBufferConcatValidate = (list, totalLength) => {
     const message = Number.isInteger(totalLength)
       ? `The value of "length" is out of range. It must be >= 0 && <= 9007199254740991. Received ${totalLength}`
       : `The value of "length" is out of range. It must be an integer. Received ${totalLength}`;
-    const error = new RangeError(message);
-    error.code = "ERR_OUT_OF_RANGE";
-    throw error;
+    throw Object.assign(new RangeError(message), { code: "ERR_OUT_OF_RANGE" });
   }
 };

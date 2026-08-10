@@ -1,11 +1,7 @@
 const __NodeBufferBase03 = NodeBuffer;
 const __nodeValidateVariableByteLength = (byteLength) => {
   if (typeof byteLength !== "number") {
-    const error = new TypeError(
-      'The "byteLength" argument must be of type number'
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "byteLength" argument must be of type number'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   if (!Number.isInteger(byteLength) || byteLength < 1 || byteLength > 6) {
     const integerMessage =
@@ -14,9 +10,7 @@ const __nodeValidateVariableByteLength = (byteLength) => {
     const message = integerMessage
       ? `The value of "byteLength" is out of range. It must be an integer. Received ${byteLength}`
       : `The value of "byteLength" is out of range. It must be >= 1 and <= 6. Received ${byteLength}`;
-    const error = new RangeError(message);
-    error.code = "ERR_OUT_OF_RANGE";
-    throw error;
+    throw Object.assign(new RangeError(message), { code: "ERR_OUT_OF_RANGE" });
   }
 };
 const __nodeValidateVariableValue = (value, min, max) => {
@@ -32,11 +26,7 @@ const __nodeValidateVariableValue = (value, min, max) => {
       bits > 32
         ? String(value).replace(/(\d)(?=(\d\d\d)+(?!\d))/g, "$1_")
         : value;
-    const error = new RangeError(
-      `The value of "value" is out of range. It must be >= ${min} and ${bound}. Received ${received}`
-    );
-    error.code = "ERR_OUT_OF_RANGE";
-    throw error;
+    throw Object.assign(new RangeError(`The value of "value" is out of range. It must be >= ${min} and ${bound}. Received ${received}`), { code: "ERR_OUT_OF_RANGE" });
   }
 };
 const __nodeValidateVariableOffset = (offset, length, byteLength) => {
@@ -55,9 +45,7 @@ const __nodeValidateVariableOffset = (offset, length, byteLength) => {
         : `The value of "offset" is out of range. It must be >= 0 and <= ${
             length - byteLength
           }. Received ${offset}`;
-    const error = new RangeError(message);
-    error.code = "ERR_OUT_OF_RANGE";
-    throw error;
+    throw Object.assign(new RangeError(message), { code: "ERR_OUT_OF_RANGE" });
   }
 };
 NodeBuffer = class NodeBuffer extends __NodeBufferBase03 {

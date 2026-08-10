@@ -17,11 +17,7 @@ class __QuenchVirtualFileSystem {
       options?.emitExperimentalWarning !== undefined &&
       typeof options.emitExperimentalWarning !== "boolean"
     ) {
-      const error = new TypeError(
-        'The "options.emitExperimentalWarning" property must be of type boolean'
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError('The "options.emitExperimentalWarning" property must be of type boolean'), { code: "ERR_INVALID_ARG_TYPE" });
     }
     this.provider = provider || new __QuenchMemoryProvider();
     this.readonly = false;
@@ -463,9 +459,7 @@ class __QuenchVirtualFileSystem {
   accessSync(path, mode = 0) {
     const requested = mode == null ? 0 : Number(mode);
     if (!Number.isInteger(requested) || requested < 0 || requested > 7) {
-      const error = new RangeError('The value of "mode" is out of range');
-      error.code = "ERR_OUT_OF_RANGE";
-      throw error;
+      throw Object.assign(new RangeError('The value of "mode" is out of range'), { code: "ERR_OUT_OF_RANGE" });
     }
     if (this.__isReal()) {
       return globalThis.__nodeFs.accessSync(this.__realPath(path), mode);
@@ -834,9 +828,7 @@ class __QuenchVirtualFileSystem {
       encoding !== "buffer" &&
       !globalThis.Buffer.isEncoding(encoding)
     ) {
-      const error = new TypeError(`Unknown encoding: ${encoding}`);
-      error.code = "ERR_UNKNOWN_ENCODING";
-      throw error;
+      throw Object.assign(new TypeError(`Unknown encoding: ${encoding}`), { code: "ERR_UNKNOWN_ENCODING" });
     }
     const key = typeof path === "number" ? this.__fds.get(path) : path;
     const entry = this.__entry(key);
@@ -1182,23 +1174,17 @@ class __QuenchVirtualFileSystem {
   }
   createReadStream(path, options = {}) {
     if (options.start !== undefined && Number(options.start) < 0) {
-      const error = new RangeError("start out of range");
-      error.code = "ERR_OUT_OF_RANGE";
-      throw error;
+      throw Object.assign(new RangeError("start out of range"), { code: "ERR_OUT_OF_RANGE" });
     }
     if (options.end !== undefined && Number(options.end) < 0) {
-      const error = new RangeError("end out of range");
-      error.code = "ERR_OUT_OF_RANGE";
-      throw error;
+      throw Object.assign(new RangeError("end out of range"), { code: "ERR_OUT_OF_RANGE" });
     }
     if (
       options.start !== undefined &&
       options.end !== undefined &&
       Number(options.start) > Number(options.end)
     ) {
-      const error = new RangeError("start out of range");
-      error.code = "ERR_OUT_OF_RANGE";
-      throw error;
+      throw Object.assign(new RangeError("start out of range"), { code: "ERR_OUT_OF_RANGE" });
     }
     const stream = new globalThis.__nodeStream.Readable({
       highWaterMark: options.highWaterMark,

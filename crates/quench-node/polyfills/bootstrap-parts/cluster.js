@@ -4,25 +4,19 @@ const __quenchRequireStreamIter = () => {
   const normalizeOptions = (options) => {
     if (options === undefined) return {};
     if (!options || typeof options !== "object") {
-      const error = new TypeError("options must be an object");
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError("options must be an object"), { code: "ERR_INVALID_ARG_TYPE" });
     }
     if (
       options.limit !== undefined &&
       (!Number.isInteger(options.limit) || options.limit < 0)
     ) {
-      const error = new RangeError("limit must be a non-negative integer");
-      error.code = "ERR_OUT_OF_RANGE";
-      throw error;
+      throw Object.assign(new RangeError("limit must be a non-negative integer"), { code: "ERR_OUT_OF_RANGE" });
     }
     if (
       options.signal !== undefined &&
       (!options.signal || typeof options.signal !== "object")
     ) {
-      const error = new TypeError("signal must be an AbortSignal");
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError("signal must be an AbortSignal"), { code: "ERR_INVALID_ARG_TYPE" });
     }
     return options;
   };
@@ -97,9 +91,7 @@ const __quenchRequireStreamIter = () => {
       for (const item of value) yield* normalizeSyncValue(item);
       return;
     }
-    const error = new TypeError("source values must be streamable");
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError("source values must be streamable"), { code: "ERR_INVALID_ARG_TYPE" });
   };
   const sourceSync = function* (source) {
     if (
@@ -115,9 +107,7 @@ const __quenchRequireStreamIter = () => {
       return;
     }
     if (!source?.[Symbol.iterator]) {
-      const error = new TypeError("source must be a synchronous iterable");
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError("source must be a synchronous iterable"), { code: "ERR_INVALID_ARG_TYPE" });
     }
     let batch = [];
     for (const value of source) {
@@ -158,9 +148,7 @@ const __quenchRequireStreamIter = () => {
       for (const chunk of normalizeChunk(next.value)) {
         total += chunk.byteLength;
         if (options.limit !== undefined && total > options.limit) {
-          const error = new RangeError("stream exceeded the configured limit");
-          error.code = "ERR_OUT_OF_RANGE";
-          throw error;
+          throw Object.assign(new RangeError("stream exceeded the configured limit"), { code: "ERR_OUT_OF_RANGE" });
         }
         chunks.push(chunk);
       }
@@ -175,9 +163,7 @@ const __quenchRequireStreamIter = () => {
       for (const chunk of normalizeChunk(value)) {
         total += chunk.byteLength;
         if (options.limit !== undefined && total > options.limit) {
-          const error = new RangeError("stream exceeded the configured limit");
-          error.code = "ERR_OUT_OF_RANGE";
-          throw error;
+          throw Object.assign(new RangeError("stream exceeded the configured limit"), { code: "ERR_OUT_OF_RANGE" });
         }
         chunks.push(chunk);
       }
@@ -209,9 +195,7 @@ const __quenchRequireStreamIter = () => {
       for (const item of batch) {
         total += item?.byteLength ?? NodeBuffer.byteLength(String(item));
         if (options.limit !== undefined && total > options.limit) {
-          const error = new RangeError("stream exceeded the configured limit");
-          error.code = "ERR_OUT_OF_RANGE";
-          throw error;
+          throw Object.assign(new RangeError("stream exceeded the configured limit"), { code: "ERR_OUT_OF_RANGE" });
         }
         values.push(item);
       }
@@ -226,9 +210,7 @@ const __quenchRequireStreamIter = () => {
       for (const item of batch) {
         total += item?.byteLength ?? NodeBuffer.byteLength(String(item));
         if (options.limit !== undefined && total > options.limit) {
-          const error = new RangeError("stream exceeded the configured limit");
-          error.code = "ERR_OUT_OF_RANGE";
-          throw error;
+          throw Object.assign(new RangeError("stream exceeded the configured limit"), { code: "ERR_OUT_OF_RANGE" });
         }
         values.push(item);
       }
@@ -244,9 +226,7 @@ const __quenchRequireStreamIter = () => {
       for (const chunk of normalizeChunk(value)) {
         total += chunk.byteLength;
         if (options.limit !== undefined && total > options.limit) {
-          const error = new RangeError("stream exceeded the configured limit");
-          error.code = "ERR_OUT_OF_RANGE";
-          throw error;
+          throw Object.assign(new RangeError("stream exceeded the configured limit"), { code: "ERR_OUT_OF_RANGE" });
         }
         chunks.push(chunk);
       }
@@ -260,9 +240,7 @@ const __quenchRequireStreamIter = () => {
   const decoderEncoding = (options) => {
     const encoding = options.encoding || "utf-8";
     if (typeof encoding !== "string") {
-      const error = new TypeError("encoding must be a string");
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError("encoding must be a string"), { code: "ERR_INVALID_ARG_TYPE" });
     }
     const normalized = encoding.toLowerCase();
     if (
@@ -270,9 +248,7 @@ const __quenchRequireStreamIter = () => {
         .split(" ")
         .includes(normalized)
     ) {
-      const error = new RangeError(`Unknown encoding: ${encoding}`);
-      error.code = "ERR_ENCODING_NOT_SUPPORTED";
-      throw error;
+      throw Object.assign(new RangeError(`Unknown encoding: ${encoding}`), { code: "ERR_ENCODING_NOT_SUPPORTED" });
     }
     return normalized === "latin1" ||
       normalized === "iso-8859-1" ||
@@ -838,31 +814,23 @@ const __quenchRequireStreamIter = () => {
   const validateReadableOptions = (options) => {
     if (options === undefined) return {};
     if (!options || typeof options !== "object" || Array.isArray(options)) {
-      const error = new TypeError("options must be an object");
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError("options must be an object"), { code: "ERR_INVALID_ARG_TYPE" });
     }
     const highWaterMark = options.highWaterMark;
     if (highWaterMark !== undefined && typeof highWaterMark !== "number") {
-      const error = new TypeError("highWaterMark must be a number");
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError("highWaterMark must be a number"), { code: "ERR_INVALID_ARG_TYPE" });
     }
     if (
       highWaterMark !== undefined &&
       (!Number.isInteger(highWaterMark) || highWaterMark < 0)
     ) {
-      const error = new RangeError("highWaterMark must be non-negative");
-      error.code = "ERR_OUT_OF_RANGE";
-      throw error;
+      throw Object.assign(new RangeError("highWaterMark must be non-negative"), { code: "ERR_OUT_OF_RANGE" });
     }
     if (
       options.signal !== undefined &&
       typeof options.signal?.addEventListener !== "function"
     ) {
-      const error = new TypeError("signal must be an AbortSignal");
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError("signal must be an AbortSignal"), { code: "ERR_INVALID_ARG_TYPE" });
     }
     return options;
   };
@@ -873,9 +841,7 @@ const __quenchRequireStreamIter = () => {
       typeof source === "string" ||
       (!source?.[Symbol.iterator] && !source?.[Symbol.asyncIterator])
     ) {
-      const error = new TypeError("source must be iterable");
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError("source must be iterable"), { code: "ERR_INVALID_ARG_TYPE" });
     }
   };
   const toReadable = (source, options) => {
@@ -910,11 +876,7 @@ const __quenchRequireStreamIter = () => {
       if (source && typeof source[protocol] === "function") {
         const result = source[protocol](options);
         if (!result || typeof result !== "object") {
-          const error = new TypeError(
-            "The broadcast protocol must return an object"
-          );
-          error.code = "ERR_INVALID_RETURN_VALUE";
-          throw error;
+          throw Object.assign(new TypeError("The broadcast protocol must return an object"), { code: "ERR_INVALID_RETURN_VALUE" });
         }
         return result;
       }
@@ -943,9 +905,7 @@ const __quenchRequireStreamIter = () => {
   const writableCache = new WeakMap();
   const fromWritable = (writable, options = {}) => {
     if (!writable || typeof writable.write !== "function") {
-      const error = new TypeError("writable must be a Writable stream");
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError("writable must be a Writable stream"), { code: "ERR_INVALID_ARG_TYPE" });
     }
     if (writable.writableObjectMode) {
       const error = new Error("fromWritable does not support object mode");
@@ -953,17 +913,13 @@ const __quenchRequireStreamIter = () => {
       throw error;
     }
     if (options === null || typeof options !== "object") {
-      const error = new TypeError("options must be an object");
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError("options must be an object"), { code: "ERR_INVALID_ARG_TYPE" });
     }
     if (
       options.backpressure !== undefined &&
       !["wait", "drop-newest"].includes(options.backpressure)
     ) {
-      const error = new TypeError("invalid backpressure option");
-      error.code = "ERR_INVALID_ARG_VALUE";
-      throw error;
+      throw Object.assign(new TypeError("invalid backpressure option"), { code: "ERR_INVALID_ARG_VALUE" });
     }
     const state = writableCache.get(writable) || { ended: false };
     writableCache.set(writable, state);
@@ -991,9 +947,7 @@ const __quenchRequireStreamIter = () => {
       },
       writev(chunks) {
         if (!Array.isArray(chunks)) {
-          const error = new TypeError("chunks must be an array");
-          error.code = "ERR_INVALID_ARG_TYPE";
-          throw error;
+          throw Object.assign(new TypeError("chunks must be an array"), { code: "ERR_INVALID_ARG_TYPE" });
         }
         for (const chunk of chunks) {
           if (!(
@@ -1001,9 +955,7 @@ const __quenchRequireStreamIter = () => {
             ArrayBuffer.isView(chunk) ||
             chunk instanceof ArrayBuffer
           )) {
-            const error = new TypeError("chunk must be a string or buffer");
-            error.code = "ERR_INVALID_ARG_TYPE";
-            throw error;
+            throw Object.assign(new TypeError("chunk must be a string or buffer"), { code: "ERR_INVALID_ARG_TYPE" });
           }
         }
         return Promise.all(chunks.map((chunk) => this.write(chunk)));
@@ -1131,9 +1083,7 @@ const __quenchRequireStreamIter = () => {
           typeof source?.[toStreamable] !== "function" &&
           typeof source?.[Symbol.iterator] !== "function")
       ) {
-        const error = new TypeError("input must be a synchronous streamable");
-        error.code = "ERR_INVALID_ARG_TYPE";
-        throw error;
+        throw Object.assign(new TypeError("input must be a synchronous streamable"), { code: "ERR_INVALID_ARG_TYPE" });
       }
       return { [Symbol.iterator]: () => fromSyncSource(source) };
     },
@@ -1517,9 +1467,7 @@ Object.assign(__quenchInternalFsUtilsModule, {
       "sa+": 1053762
     };
     if (typeof flags !== "string" || values[flags] === undefined) {
-      const error = new TypeError(`Unknown file open flag: ${flags}`);
-      error.code = "ERR_INVALID_ARG_VALUE";
-      throw error;
+      throw Object.assign(new TypeError(`Unknown file open flag: ${flags}`), { code: "ERR_INVALID_ARG_VALUE" });
     }
     return values[flags];
   }

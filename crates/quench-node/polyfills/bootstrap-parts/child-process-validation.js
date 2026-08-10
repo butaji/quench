@@ -5,14 +5,10 @@ const __quenchSpawnValidationChildProcess = __quenchSpawnValidationRequire(
 const __quenchSpawnValidated = __quenchSpawnValidationChildProcess.spawn;
 const __quenchValidateSpawnCommand = (command) => {
   if (typeof command !== "string") {
-    const error = new TypeError("The file argument must be of type string");
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError("The file argument must be of type string"), { code: "ERR_INVALID_ARG_TYPE" });
   }
   if (command.length === 0) {
-    const error = new TypeError("The file argument must not be empty");
-    error.code = "ERR_INVALID_ARG_VALUE";
-    throw error;
+    throw Object.assign(new TypeError("The file argument must not be empty"), { code: "ERR_INVALID_ARG_VALUE" });
   }
 };
 const __quenchValidateSpawnArgs = (options) => {
@@ -20,9 +16,7 @@ const __quenchValidateSpawnArgs = (options) => {
     options !== undefined && options !== null &&
     !Array.isArray(options) && typeof options !== "object"
   ) {
-    const error = new TypeError("The args argument must be an array");
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError("The args argument must be an array"), { code: "ERR_INVALID_ARG_TYPE" });
   }
 };
 const __quenchValidateSpawnOptions = (third, options) => {
@@ -30,9 +24,7 @@ const __quenchValidateSpawnOptions = (third, options) => {
     third !== undefined &&
     (third === null || typeof third !== "object" || Array.isArray(third))
   ) {
-    const error = new TypeError("The options argument must be an object");
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError("The options argument must be an object"), { code: "ERR_INVALID_ARG_TYPE" });
   }
   __quenchValidateSpawnIds(__quenchSpawnChildOptions(third, options));
 };
@@ -48,9 +40,7 @@ const __quenchValidateSpawnIds = (childOptions) => {
       childOptions?.[field] !== undefined &&
       (!Number.isSafeInteger(childOptions[field]) || childOptions[field] < 0)
     ) {
-      const error = new RangeError(`The ${field} option is out of range`);
-      error.code = "ERR_OUT_OF_RANGE";
-      throw error;
+      throw Object.assign(new RangeError(`The ${field} option is out of range`), { code: "ERR_OUT_OF_RANGE" });
     }
   }
 };

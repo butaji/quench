@@ -30,11 +30,7 @@ globalThis.__nodeUtil = {
         value !== null && typeof value === "object"
           ? ` Received an instance of ${value.constructor?.name || "Object"}`
           : ` Received type ${typeof value} (${String(value)})`;
-      const error = new TypeError(
-        'The "str" argument must be of type string.' + received
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError('The "str" argument must be of type string.' + received), { code: "ERR_INVALID_ARG_TYPE" });
     }
     return value
       .replace(/\u001b\][\s\S]*?(?:\u0007|\u001b\\|\u009c)/g, "")

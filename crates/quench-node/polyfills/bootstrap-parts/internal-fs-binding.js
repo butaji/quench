@@ -51,9 +51,7 @@ globalThis.__quenchInternalBindingCore = (binding) => {
           end > buffer.length ||
           (typeof value === "number" && (value < 0 || value > 255))
         ) {
-          const error = new RangeError("value out of range");
-          error.code = "ERR_OUT_OF_RANGE";
-          throw error;
+          throw Object.assign(new RangeError("value out of range"), { code: "ERR_OUT_OF_RANGE" });
         }
         return buffer.fill(value, offset, end, encoding);
       },

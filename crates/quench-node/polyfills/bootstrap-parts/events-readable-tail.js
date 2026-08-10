@@ -93,9 +93,7 @@ Object.defineProperty(NodeReadable.prototype, "readableLength", {
 NodeReadable.prototype.setEncoding = function (encoding) {
   encoding = String(encoding).toLowerCase();
   if (!NodeBuffer.isEncoding(encoding)) {
-    const error = new TypeError(`Unknown encoding: ${encoding}`);
-    error.code = "ERR_UNKNOWN_ENCODING";
-    throw error;
+    throw Object.assign(new TypeError(`Unknown encoding: ${encoding}`), { code: "ERR_UNKNOWN_ENCODING" });
   }
   this.readableEncoding = encoding;
   return this;

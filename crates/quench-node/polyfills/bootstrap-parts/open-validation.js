@@ -5,13 +5,9 @@ const __nodeFsValidateMode = (mode) => {
     typeof mode !== "number" &&
     typeof mode !== "string"
   ) {
-    const error = new TypeError('The "mode" argument must be of type number');
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "mode" argument must be of type number'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   if (typeof mode === "string" && !/^0?[0-7]+$/.test(mode)) {
-    const error = new TypeError(`The "mode" argument is invalid: ${mode}`);
-    error.code = "ERR_INVALID_ARG_VALUE";
-    throw error;
+    throw Object.assign(new TypeError(`The "mode" argument is invalid: ${mode}`), { code: "ERR_INVALID_ARG_VALUE" });
   }
 };

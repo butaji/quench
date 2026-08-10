@@ -22,11 +22,7 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase04 {
     if (value < min || value > max) {
       const bits = signed ? 63 : 64;
       const received = String(value).replace(/(\d)(?=(\d\d\d)+(?!\d))/g, "$1_");
-      const error = new RangeError(
-        `The value of "value" is out of range. It must be >= ${min}n and < 2n ** ${bits}n. Received ${received}n`,
-      );
-      error.code = "ERR_OUT_OF_RANGE";
-      throw error;
+      throw Object.assign(new RangeError(`The value of "value" is out of range. It must be >= ${min}n and < 2n ** ${bits}n. Received ${received}n`), { code: "ERR_OUT_OF_RANGE" });
     }
     const view = new DataView(this.buffer, this.byteOffset, this.byteLength);
     if (signed) view.setBigInt64(offset, value, littleEndian);

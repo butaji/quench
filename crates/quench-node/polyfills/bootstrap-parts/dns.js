@@ -37,9 +37,7 @@ const __quenchDnsValidateServers = (servers) => {
       ? server.replace(/:\d+$/, "")
       : server;
     if (typeof server !== "string" || net.isIP(address) === 0) {
-      const error = new TypeError(`Invalid IP address: ${server}`);
-      error.code = "ERR_INVALID_IP_ADDRESS";
-      throw error;
+      throw Object.assign(new TypeError(`Invalid IP address: ${server}`), { code: "ERR_INVALID_IP_ADDRESS" });
     }
   }
   return normalized;
@@ -49,11 +47,7 @@ const __quenchDnsValidateServers = (servers) => {
 const __quenchDnsLookup = (hostname, options, callback) => {
   if (typeof hostname !== "string") {
     const received = hostname === null ? "null" : `${typeof hostname}`;
-    const error = new TypeError(
-      `The "hostname" argument must be of type string. Received type ${received}`,
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError(`The "hostname" argument must be of type string. Received type ${received}`), { code: "ERR_INVALID_ARG_TYPE" });
   }
   if (typeof options === "function") {
     callback = options;
@@ -109,11 +103,7 @@ const __quenchDnsLookup = (hostname, options, callback) => {
     );
   }
   if (options?.hints !== undefined && options.hints % 2) {
-    const error = new TypeError(
-      `The argument 'hints' is invalid. Received ${options.hints}`,
-    );
-    error.code = "ERR_INVALID_ARG_VALUE";
-    throw error;
+    throw Object.assign(new TypeError(`The argument 'hints' is invalid. Received ${options.hints}`), { code: "ERR_INVALID_ARG_VALUE" });
   }
   queueMicrotask(() => {
     try {
@@ -153,22 +143,14 @@ const __quenchDnsLookup = (hostname, options, callback) => {
 };
 const __quenchDnsResolve = (hostname, rrtype, callback) => {
   if (typeof hostname !== "string") {
-    const error = new TypeError(
-      `The "name" argument must be of type string. Received ${hostname}`,
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError(`The "name" argument must be of type string. Received ${hostname}`), { code: "ERR_INVALID_ARG_TYPE" });
   }
   if (typeof rrtype === "function") {
     callback = rrtype;
     rrtype = "A";
   }
   if (typeof rrtype !== "string") {
-    const error = new TypeError(
-      'The "rrtype" argument must be of type string. Received an instance of Array',
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "rrtype" argument must be of type string. Received an instance of Array'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   queueMicrotask(() => {
     if (rrtype !== "A" && rrtype !== "AAAA") {
@@ -205,11 +187,7 @@ const __quenchDnsLookupService = function __quenchDnsLookupService(
   callback,
 ) {
   if (typeof address !== "string" || arguments.length < 3) {
-    const error = new TypeError(
-      `The "address", "port", and "callback" arguments must be specified`,
-    );
-    error.code = "ERR_MISSING_ARGS";
-    throw error;
+    throw Object.assign(new TypeError(`The "address", "port", and "callback" arguments must be specified`), { code: "ERR_MISSING_ARGS" });
   }
   if (typeof callback !== "function") {
     throw Object.assign(

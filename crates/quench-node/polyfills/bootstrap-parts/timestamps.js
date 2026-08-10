@@ -17,16 +17,10 @@ const __nodeFsSetLinkTimes = (value, atime, mtime) => {
 };
 const __nodeFsSetFdTimes = (fd, atime, mtime) => {
   if (typeof fd !== "number") {
-    const error = new TypeError('The "fd" argument must be of type number');
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "fd" argument must be of type number'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   if (!Number.isInteger(fd) || fd < 0) {
-    const error = new RangeError(
-      'The value of "fd" is out of range. It must be >= 0 && <= 2147483647. Received -1'
-    );
-    error.code = "ERR_OUT_OF_RANGE";
-    throw error;
+    throw Object.assign(new RangeError('The value of "fd" is out of range. It must be >= 0 && <= 2147483647. Received -1'), { code: "ERR_OUT_OF_RANGE" });
   }
   __nodeFsSetTimes(globalThis.__nodeFdPaths[fd], atime, mtime);
 };

@@ -1,9 +1,7 @@
 const __nodeFsValidateAccessMode = (mode) => {
   if (mode === undefined) return;
   if (typeof mode !== "number") {
-    const error = new TypeError('The "mode" argument must be of type number');
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "mode" argument must be of type number'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   if (
     !Number.isFinite(mode) ||
@@ -11,18 +9,12 @@ const __nodeFsValidateAccessMode = (mode) => {
     mode < 0 ||
     mode > 7
   ) {
-    const error = new RangeError('The value of "mode" is out of range');
-    error.code = "ERR_OUT_OF_RANGE";
-    throw error;
+    throw Object.assign(new RangeError('The value of "mode" is out of range'), { code: "ERR_OUT_OF_RANGE" });
   }
 };
 globalThis.__nodeFsExists = (value, callback) => {
   if (typeof callback !== "function") {
-    const error = new TypeError(
-      'The "callback" argument must be of type function',
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "callback" argument must be of type function'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   let exists = false;
   try {

@@ -11,18 +11,12 @@ const __nodeBufferValidateIntegerValue = (value, min, max) => {
     value < min ||
     value > max
   ) {
-    const error = new RangeError(
-      `The value of "value" is out of range. It must be >= ${min} and <= ${max}. Received ${value}`
-    );
-    error.code = "ERR_OUT_OF_RANGE";
-    throw error;
+    throw Object.assign(new RangeError(`The value of "value" is out of range. It must be >= ${min} and <= ${max}. Received ${value}`), { code: "ERR_OUT_OF_RANGE" });
   }
 };
 const __nodeBufferValidateDoubleOffset = (length, offset) => {
   if (typeof offset !== "number") {
-    const error = new TypeError('The "offset" argument must be of type number');
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "offset" argument must be of type number'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   if (!Number.isInteger(offset)) {
     const message =
@@ -31,25 +25,15 @@ const __nodeBufferValidateDoubleOffset = (length, offset) => {
         : `The value of "offset" is out of range. It must be >= 0 and <= ${
             length - 8
           }. Received ${offset}`;
-    const error = new RangeError(message);
-    error.code = "ERR_OUT_OF_RANGE";
-    throw error;
+    throw Object.assign(new RangeError(message), { code: "ERR_OUT_OF_RANGE" });
   }
   if (offset < 0 || offset + 8 > length) {
     if (offset >= 0 && length < 8) {
-      const error = new RangeError(
-        "Attempt to access memory outside buffer bounds"
-      );
-      error.code = "ERR_BUFFER_OUT_OF_BOUNDS";
-      throw error;
+      throw Object.assign(new RangeError("Attempt to access memory outside buffer bounds"), { code: "ERR_BUFFER_OUT_OF_BOUNDS" });
     }
-    const error = new RangeError(
-      `The value of "offset" is out of range. It must be >= 0 and <= ${
+    throw Object.assign(new RangeError(`The value of "offset" is out of range. It must be >= 0 and <= ${
         length - 8
-      }. Received ${offset}`
-    );
-    error.code = "ERR_OUT_OF_RANGE";
-    throw error;
+      }. Received ${offset}`), { code: "ERR_OUT_OF_RANGE" });
   }
 };
 const __nodeBufferSearchNeedle = (value, encoding) =>
@@ -98,11 +82,7 @@ const __nodeBufferSearchAligned = (encoding, start) =>
 const __nodeBufferWriteArguments = (offset, length, encoding) => {
   if (typeof offset === "string") {
     if (length !== undefined) {
-      const error = new TypeError(
-        'The "offset" argument must be of type number'
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError('The "offset" argument must be of type number'), { code: "ERR_INVALID_ARG_TYPE" });
     }
     return { offset: 0, length: undefined, encoding: offset };
   }
@@ -113,9 +93,7 @@ const __nodeBufferWriteArguments = (offset, length, encoding) => {
 };
 const __nodeBufferWriteValidate = (buffer, offset, encoding) => {
   if (typeof encoding !== "string" || !NodeBuffer.isEncoding(encoding)) {
-    const error = new TypeError(`Unknown encoding: ${encoding}`);
-    error.code = "ERR_UNKNOWN_ENCODING";
-    throw error;
+    throw Object.assign(new TypeError(`Unknown encoding: ${encoding}`), { code: "ERR_UNKNOWN_ENCODING" });
   }
   if (
     typeof offset !== "number" ||
@@ -123,11 +101,7 @@ const __nodeBufferWriteValidate = (buffer, offset, encoding) => {
     offset < 0 ||
     offset > buffer.length
   ) {
-    const error = new RangeError(
-      `The value of "offset" is out of range. It must be >= 0 && <= ${buffer.length}. Received ${offset}`
-    );
-    error.code = "ERR_OUT_OF_RANGE";
-    throw error;
+    throw Object.assign(new RangeError(`The value of "offset" is out of range. It must be >= 0 && <= ${buffer.length}. Received ${offset}`), { code: "ERR_OUT_OF_RANGE" });
   }
 };
 const __nodeBufferWriteUtf8Count = (value, encoding, count) => {
@@ -241,11 +215,7 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase02 {
   }
   _readDouble(offset, littleEndian) {
     if (typeof offset !== "number") {
-      const error = new TypeError(
-        'The "offset" argument must be of type number'
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError('The "offset" argument must be of type number'), { code: "ERR_INVALID_ARG_TYPE" });
     }
     if (!Number.isInteger(offset)) {
       const message =
@@ -254,25 +224,15 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase02 {
           : `The value of "offset" is out of range. It must be >= 0 and <= ${
               this.length - 8
             }. Received ${offset}`;
-      const error = new RangeError(message);
-      error.code = "ERR_OUT_OF_RANGE";
-      throw error;
+      throw Object.assign(new RangeError(message), { code: "ERR_OUT_OF_RANGE" });
     }
     if (offset < 0 || offset + 8 > this.length) {
       if (offset >= 0 && this.length < 8) {
-        const error = new RangeError(
-          "Attempt to access memory outside buffer bounds"
-        );
-        error.code = "ERR_BUFFER_OUT_OF_BOUNDS";
-        throw error;
+        throw Object.assign(new RangeError("Attempt to access memory outside buffer bounds"), { code: "ERR_BUFFER_OUT_OF_BOUNDS" });
       }
-      const error = new RangeError(
-        `The value of "offset" is out of range. It must be >= 0 and <= ${
+      throw Object.assign(new RangeError(`The value of "offset" is out of range. It must be >= 0 and <= ${
           this.length - 8
-        }. Received ${offset}`
-      );
-      error.code = "ERR_OUT_OF_RANGE";
-      throw error;
+        }. Received ${offset}`), { code: "ERR_OUT_OF_RANGE" });
     }
     return new DataView(
       this.buffer,
@@ -282,42 +242,26 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase02 {
   }
   _integerOffset(offset, size) {
     if (typeof offset !== "number") {
-      const error = new TypeError(
-        'The "offset" argument must be of type number'
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError('The "offset" argument must be of type number'), { code: "ERR_INVALID_ARG_TYPE" });
     }
     if (!Number.isInteger(offset)) {
       const message =
         Number.isNaN(offset) || Number.isFinite(offset)
           ? `The value of "offset" is out of range. It must be an integer. Received ${offset}`
           : 'The value of "offset" is out of range';
-      const error = new RangeError(message);
-      error.code = "ERR_OUT_OF_RANGE";
-      throw error;
+      throw Object.assign(new RangeError(message), { code: "ERR_OUT_OF_RANGE" });
     }
     if (offset < 0) {
-      const error = new RangeError('The value of "offset" is out of range');
-      error.code = "ERR_OUT_OF_RANGE";
-      throw error;
+      throw Object.assign(new RangeError('The value of "offset" is out of range'), { code: "ERR_OUT_OF_RANGE" });
     }
     if (offset + size > this.length) {
-      const error = new RangeError(
-        "Attempt to access memory outside buffer bounds"
-      );
-      error.code = "ERR_BUFFER_OUT_OF_BOUNDS";
-      throw error;
+      throw Object.assign(new RangeError("Attempt to access memory outside buffer bounds"), { code: "ERR_BUFFER_OUT_OF_BOUNDS" });
     }
     return offset;
   }
   _floatOffset(offset, size) {
     if (typeof offset !== "number") {
-      const error = new TypeError(
-        'The "offset" argument must be of type number'
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError('The "offset" argument must be of type number'), { code: "ERR_INVALID_ARG_TYPE" });
     }
     if (offset === Infinity || offset === -Infinity) {
       throw __nodeBufferFloatRangeError(
@@ -339,11 +283,7 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase02 {
       );
     }
     if (this.length < size) {
-      const error = new RangeError(
-        "Attempt to access memory outside buffer bounds"
-      );
-      error.code = "ERR_BUFFER_OUT_OF_BOUNDS";
-      throw error;
+      throw Object.assign(new RangeError("Attempt to access memory outside buffer bounds"), { code: "ERR_BUFFER_OUT_OF_BOUNDS" });
     }
     return offset;
   }

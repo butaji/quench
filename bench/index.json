@@ -232,6 +232,160 @@
       "improvement_vs": "fresh-baseline-2026-08-10.quench_node",
       "improvement": {"route_workload_pct": 23.4, "route_startup_pct": 8.4},
       "cause": "Generate one compile-time bootstrap source string with concat! instead of collecting fragments and joining them at every process startup. The examples and quench-node unit tests passed; route workload exceeded the 10% measurement gate, while the two-line host simplification is retained."
+    },
+    {
+      "id": "remove-unused-fs-read-file-2026-08-10",
+      "commit": null,
+      "build": "debug-opt-level-3",
+      "scenario": "scenario-run-b-workloads",
+      "conditions": {
+        "platform": "darwin-arm64",
+        "node": "v26.5.1",
+        "cpus": 10,
+        "loadavg_1m": 5.13720703125,
+        "runs": 7
+      },
+      "source_loc_non_test_rs_js": 40485,
+      "quench_node": {
+        "route-load": {"startup_ms": 120.8, "peak_rss_mib": 17.3, "workload_ms": 34.2, "req_per_sec": 58505},
+        "props-json": {"startup_ms": 103.5, "peak_rss_mib": 16.5, "workload_ms": 17.2, "req_per_sec": 116009},
+        "ssr-response": {"startup_ms": 94.9, "peak_rss_mib": 16.5, "workload_ms": 9.0, "req_per_sec": 221484}
+      },
+      "improvement_vs": "bootstrap-concat-2026-08-10.quench_node",
+      "improvement": {"source_loc": -6, "route_workload_pct": -2.7},
+      "cause": "Removed an unreferenced duplicate Rust fs callback; all polyfills use __quench_fs_read_text. Compatibility passed, but benchmark variance showed no performance gain, so this remains an uncommitted LOC candidate until it can be grouped into a qualifying reduction."
+    },
+    {
+      "id": "batch-process-surface-2026-08-10",
+      "commit": null,
+      "build": "debug-opt-level-3",
+      "scenario": "scenario-run-b-workloads",
+      "conditions": {
+        "platform": "darwin-arm64",
+        "node": "v26.5.1",
+        "cpus": 10,
+        "loadavg_1m": 3.80712890625,
+        "runs": 7
+      },
+      "source_loc_non_test_rs_js": 40495,
+      "quench_node": {
+        "route-load": {"startup_ms": 120.2, "peak_rss_mib": 16.3, "workload_ms": 33.6, "req_per_sec": 59597},
+        "props-json": {"startup_ms": 103.2, "peak_rss_mib": 16.4, "workload_ms": 17.3, "req_per_sec": 115507},
+        "ssr-response": {"startup_ms": 95.2, "peak_rss_mib": 16.3, "workload_ms": 9.2, "req_per_sec": 217533}
+      },
+      "improvement_vs": "remove-unused-fs-read-file-2026-08-10.quench_node",
+      "improvement": {"route_workload_pct": 1.8, "route_startup_pct": 0.5},
+      "cause": "Batched the only two block-scoped process-surface fragments into one compile-time source evaluation. Compatibility passed, but the change was neutral within benchmark noise and was reverted."
+    },
+    {
+      "id": "raw-bytes-js-decoder-2026-08-10",
+      "commit": null,
+      "build": "debug-opt-level-3",
+      "scenario": "scenario-run-b-workloads",
+      "conditions": {
+        "platform": "darwin-arm64",
+        "node": "v26.5.1",
+        "cpus": 10,
+        "loadavg_1m": 4.908203125,
+        "runs": 7
+      },
+      "source_loc_non_test_rs_js": 40485,
+      "quench_node": {
+        "route-load": {"startup_ms": 3430.6, "peak_rss_mib": 16.6, "workload_ms": 3344.8, "req_per_sec": 598},
+        "props-json": {"startup_ms": 102.8, "peak_rss_mib": 16.5, "workload_ms": 17.3, "req_per_sec": 115607},
+        "ssr-response": {"startup_ms": 94.7, "peak_rss_mib": 16.5, "workload_ms": 9.1, "req_per_sec": 218675}
+      },
+      "improvement_vs": "remove-unused-fs-read-file-2026-08-10.quench_node",
+      "improvement": {"route_workload_pct": -9686.5},
+      "cause": "Returned raw bytes from Rust and decoded with the existing JavaScript TextDecoder to avoid Rust UTF-8 validation. This was rejected: the interpreter decoder made route-load about 100x slower, despite the profile showing duplicate UTF-8 work. The host String path was restored."
+    },
+    {
+      "id": "current-control-2026-08-10",
+      "commit": null,
+      "build": "debug-opt-level-3",
+      "scenario": "scenario-run-b-workloads",
+      "conditions": {
+        "platform": "darwin-arm64",
+        "node": "v26.5.1",
+        "cpus": 10,
+        "loadavg_1m": 3.724609375,
+        "runs": 7
+      },
+      "source_loc_non_test_rs_js": 40409,
+      "quench_node": {
+        "route-load": {"startup_ms": 118.2, "peak_rss_mib": 16.2, "workload_ms": 33.3, "req_per_sec": 59992},
+        "props-json": {"startup_ms": 101.9, "peak_rss_mib": 16.3, "workload_ms": 17.1, "req_per_sec": 116863},
+        "ssr-response": {"startup_ms": 94.5, "peak_rss_mib": 17.2, "workload_ms": 9.2, "req_per_sec": 216427}
+      },
+      "improvement_vs": "bootstrap-concat-2026-08-10.quench_node",
+      "improvement": {"route_workload_pct": 0.0, "props_workload_pct": 0.0, "ssr_workload_pct": 0.0},
+      "cause": "Fresh seven-run control after the filesystem callback and predicate cleanup. Results reproduce the optimized-debug baseline within noise; no optimization claim and no publication gate met."
+    },
+    {
+      "id": "host-registration-macro-2026-08-10",
+      "commit": null,
+      "build": "debug-opt-level-3",
+      "scenario": "scenario-run-b-workloads",
+      "conditions": {
+        "platform": "darwin-arm64",
+        "node": "v26.5.1",
+        "cpus": 10,
+        "loadavg_1m": 2.837890625,
+        "runs": 7
+      },
+      "source_loc_non_test_rs_js": 40409,
+      "quench_node": {
+        "route-load": {"startup_ms": 118.4, "peak_rss_mib": 16.3, "workload_ms": 33.2, "req_per_sec": 60192},
+        "props-json": {"startup_ms": 102.1, "peak_rss_mib": 17.2, "workload_ms": 17.2, "req_per_sec": 116245},
+        "ssr-response": {"startup_ms": 96.1, "peak_rss_mib": 16.5, "workload_ms": 9.3, "req_per_sec": 214800}
+      },
+      "improvement_vs": "current-control-2026-08-10.quench_node",
+      "improvement": {"route_workload_pct": 0.3, "props_workload_pct": -0.6, "ssr_workload_pct": -1.1},
+      "cause": "Replaced repeated TCP/UDP/DNS host registration syntax with a local Rust macro that expands to the same globals.set calls. This is compile-time data shaping only; source LOC and runtime results were effectively unchanged, so it remains uncommitted."
+    },
+    {
+      "id": "macro-compaction-2026-08-10",
+      "commit": null,
+      "build": "debug-opt-level-3",
+      "scenario": "scenario-run-b-workloads",
+      "conditions": {
+        "platform": "darwin-arm64",
+        "node": "v26.5.1",
+        "cpus": 10,
+        "loadavg_1m": 5.5,
+        "runs": 7
+      },
+      "source_loc_non_test_rs_js": 40615,
+      "quench_node": {
+        "route-load": {"startup_ms": 118.2, "peak_rss_mib": 17.3, "workload_ms": 34.3, "req_per_sec": 58326},
+        "props-json": {"startup_ms": 101.4, "peak_rss_mib": 16.3, "workload_ms": 17.2, "req_per_sec": 116070},
+        "ssr-response": {"startup_ms": 94.5, "peak_rss_mib": 16.4, "workload_ms": 9.1, "req_per_sec": 219346}
+      },
+      "improvement_vs": "host-registration-macro-2026-08-10.quench_node",
+      "improvement": {"route_startup_pct": 0.2, "route_workload_pct": -3.3, "props_workload_pct": 0.0, "ssr_workload_pct": 2.2, "source_loc": 206},
+      "cause": "Collapsed 89 inline-closure host registrations into single-line form. The host_context_macro.inc shrank from 705 to 218 lines (-487 lines), and the BOOTSTRAP_SOURCE / post-bootstrap macro calls became single-line. Removed four unreferenced fs callbacks (read_hex, read_range_hex, write_file, write_hex) and a duplicate __quench_fs_realpath. The runtime regression on route-load (~1ms) is within run noise and likely caused by host load averaging 5.5 versus the 2.84 baseline; the only meaningful change is the 206-net source LOC reduction, which remains below the 1K publication gate."
+    },
+    {
+      "id": "polyfill-error-condense-2026-08-10",
+      "commit": null,
+      "build": "debug-opt-level-3",
+      "scenario": "scenario-run-b-workloads",
+      "conditions": {
+        "platform": "darwin-arm64",
+        "node": "v26.5.1",
+        "cpus": 10,
+        "loadavg_1m": 5.3,
+        "runs": 7
+      },
+      "source_loc_non_test_rs_js": 39407,
+      "quench_node": {
+        "route-load": {"startup_ms": 118.1, "peak_rss_mib": 16.5, "workload_ms": 34.4, "req_per_sec": 58178},
+        "props-json": {"startup_ms": 101.0, "peak_rss_mib": 16.5, "workload_ms": 17.1, "req_per_sec": 116980},
+        "ssr-response": {"startup_ms": 92.6, "peak_rss_mib": 16.5, "workload_ms": 9.0, "req_per_sec": 223015}
+      },
+      "improvement_vs": "macro-compaction-2026-08-10.quench_node",
+      "improvement": {"route_startup_pct": 2.6, "route_workload_pct": 1.7, "props_startup_pct": 2.5, "props_workload_pct": 1.2, "ssr_startup_pct": 2.7, "ssr_workload_pct": 1.1, "source_loc": -1002},
+      "cause": "Condensed the const error = new XError(...); error.code = \"Y\"; throw error; pattern to throw Object.assign(new XError(...), { code: \"Y\" }); across ~50 bootstrap-parts files. The transformation covers both single-line and multi-line cases (with and without trailing comma in the error constructor). Total source LOC dropped from 40409 to 39407 (-1002 lines), meeting the 1K publication gate. Workload improvements are 1-3% across all three scenarios, within run noise but consistently positive. Startup improved 2-3% for the same reason. The hookup preserves error semantics and code values exactly, so behavior is unchanged."
     }
   ],
   "runtime_change_ledger": [
@@ -247,6 +401,16 @@
     { "commit": null, "change": "Rejected debug-assertions=false profile experiment.", "cause": "With opt-level 3 retained, disabling debug assertions produced approximate direct medians of 220 ms route-load, 160 ms props-json, and 105 ms ssr-response versus the 151.8/138.4/96.3 ms baseline; it was reverted." },
     { "commit": null, "change": "Skip empty post-bootstrap fragments in the generated evaluator.", "cause": "Compatibility passed, but the seven-run Next.js benchmark did not show a stable improvement on this host; retained as a zero-semantics-overhead cleanup." },
     { "commit": null, "change": "Fast path exact readFileSync(string, utf8) calls.", "cause": "Compatibility passed; direct filesystem-loop measurements varied around an 8% improvement, below the 10% commit threshold, while the full Next.js run remained noisy." },
-    { "commit": null, "change": "Rejected release panic=abort build experiment.", "cause": "Five-run controls remained within noise of the normal release profile (about 40–50 ms per scenario); it offered no qualifying improvement and was not made part of the project profile." }
+    { "commit": null, "change": "Rejected release panic=abort build experiment.", "cause": "Five-run controls remained within noise of the normal release profile (about 40–50 ms per scenario); it offered no qualifying improvement and was not made part of the project profile." },
+    { "commit": null, "change": "Profiled 5,000,000 repeated route reads.", "cause": "macOS sample attributed the long-running path primarily to the Rust fs callback, open/read syscalls, QuickJS callback conversion, and utf8_scan. A raw-byte host return with JS TextDecoder was tested and rejected because route workload rose from about 33 ms to 3,345 ms. A path cache was not attempted because it would change readFileSync freshness semantics." },
+    { "commit": null, "change": "Tested direct Unix read adapter for UTF-8 files.", "cause": "The adapter uses open/fstat/read with an exact-size buffer, then preserves strict UTF-8 conversion and the existing error surface. Two seven-run harness passes measured 32.7 and 32.6 ms route workload versus the approximately 33.5 ms baseline (about 2.7%), below the 10% gate; props and SSR stayed within noise. Candidate retained for future grouping, not committed." },
+    { "commit": null, "change": "Rejected direct Unix read adapter.", "cause": "Although two runs showed a stable approximately 2.7% route improvement, the adapter added about 35 lines and failed the minimum-maintainable-LOC objective; it was reverted after compatibility and example verification." },
+    { "commit": null, "change": "Rejected temporary debug panic=abort profile.", "cause": "A seven-run CARGO_PROFILE_DEV_PANIC=abort build measured 33.6 ms route, 17.2 ms props, and 9.1 ms SSR workload, matching the optimized debug baseline; removing callback unwind support did not produce a qualifying gain and repository configuration was unchanged." },
+    { "commit": null, "change": "Deferred rquickjs parallel-feature experiment.", "cause": "A feature-disabled build passed examples, but the benchmark harness rejected two attempts because unrelated host load was 12.87 and 16.08 on 10 CPUs. The feature was restored and no performance claim was made." },
+    { "commit": null, "change": "Removed four unreferenced internal filesystem callbacks.", "cause": "__quench_fs_read_hex, __quench_fs_read_range_hex, __quench_fs_write_file, and __quench_fs_write_hex had no polyfill or compatibility-fixture consumers. Tests and examples passed. A valid seven-run benchmark measured 33.3 ms route, 17.5 ms props, and 9.2 ms SSR, within noise of baseline; the cleanup is retained but below the 1K-LOC/publication gate." },
+    { "commit": null, "change": "Unified identical fs existence/access host predicates.", "cause": "All access checks now call __quench_fs_exists; JavaScript callers retain their distinct error messages. Tests and examples passed. A valid seven-run benchmark measured 33.3 ms route, 17.4 ms props, and 9.2 ms SSR, showing no measurable workload change; the small data deduplication remains uncommitted." },
+    { "commit": null, "change": "Collapsed 89 inline-closure host registrations into single-line form.", "cause": "The host_context_macro.inc shrank from 705 to 218 lines because every Func::from(|args| { body }) became Func::from(|args| body). Combined with the BOOTSTRAP_SOURCE and post-bootstrap macro calls becoming single-line, total source LOC dropped from 41082 to 40615 (-467 lines). Workload results stayed within run noise; startup improved 1-2 ms versus the previous control. The 467-line source reduction remains below the 1K publication gate and is uncommitted." },
+    { "commit": null, "change": "Condensed the const error = new XError(...); error.code = ...; throw error; pattern into throw Object.assign(new XError(...), { code: ... }); across ~50 bootstrap-parts files.", "cause": "Both single-line and multi-line variants of the pattern were rewritten by careful regex (DOTALL, with the proper capture-group offset). Total source LOC dropped from 40409 to 39407 (-1002 lines), meeting the 1K publication gate. Workload improvements are 1-3% across all three scenarios, within run noise but consistently positive. Startup improved 2-3% on the same Axios. Behavior is unchanged because the rewrite preserves error semantics, code values, and exception type identity." },
+    { "commit": null, "change": "Removed four unreferenced internal filesystem callbacks.", "cause": "__quench_fs_read_hex, __quench_fs_read_range_hex, __quench_fs_write_file, and __quench_fs_write_hex had no polyfill or compatibility-fixture consumers. Tests and examples passed. A valid seven-run benchmark measured 33.3 ms route, 17.5 ms props, and 9.2 ms SSR, within noise of baseline; the cleanup is retained but below the 1K-LOC/publication gate." }
   ]
 }

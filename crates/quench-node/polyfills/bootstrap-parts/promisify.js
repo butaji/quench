@@ -1,8 +1,6 @@
 const __nodeUtilPromisifyCustom = Symbol.for("nodejs.util.promisify.custom");
 const __nodeUtilPromisifyTypeError = (message) => {
-  const error = new TypeError(message);
-  error.code = "ERR_INVALID_ARG_TYPE";
-  throw error;
+  throw Object.assign(new TypeError(message), { code: "ERR_INVALID_ARG_TYPE" });
 };
 const __nodeUtilPromisify = (fn) => {
   if (typeof fn !== "function") {

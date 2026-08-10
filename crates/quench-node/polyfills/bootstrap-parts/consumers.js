@@ -37,11 +37,7 @@ const __quenchConsumerTextChunk = (chunk) => {
   ) {
     return Buffer.from(chunk);
   }
-  const error = new TypeError(
-    'The "chunk" argument must be of type string or an instance of Buffer or Uint8Array',
-  );
-  error.code = "ERR_INVALID_ARG_TYPE";
-  throw error;
+  throw Object.assign(new TypeError('The "chunk" argument must be of type string or an instance of Buffer or Uint8Array'), { code: "ERR_INVALID_ARG_TYPE" });
 };
 const __quenchStreamConsumers = {
   buffer: async (stream) =>

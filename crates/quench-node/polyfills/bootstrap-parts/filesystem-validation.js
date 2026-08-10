@@ -155,9 +155,7 @@ const __nodeFsReadWithBuffer = (bytes, options, encoding) => {
       ? options.buffer(buffer.length)
       : options.buffer;
   if (!(target instanceof Uint8Array)) {
-    const error = new TypeError('The "buffer" option must return a Buffer');
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "buffer" option must return a Buffer'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   target.set(buffer.subarray(0, target.length));
   return encoding
@@ -192,11 +190,7 @@ const __nodeFsFlush = (path) => {
 };
 const __nodeFsValidateFlush = (options) => {
   if (options?.flush !== undefined && typeof options.flush !== "boolean") {
-    const error = new TypeError(
-      'The "options.flush" property must be of type boolean'
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "options.flush" property must be of type boolean'), { code: "ERR_INVALID_ARG_TYPE" });
   }
 };
 const __nodeFsWriteFinalize = (path, options, result) => {
@@ -310,22 +304,14 @@ Object.assign(globalThis.__nodeFs, {
       !(prefix instanceof Uint8Array) &&
       !(prefix instanceof globalThis.__nodeURL)
     ) {
-      const error = new TypeError(
-        'The "prefix" argument must be of type string or an instance of Buffer or URL'
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError('The "prefix" argument must be of type string or an instance of Buffer or URL'), { code: "ERR_INVALID_ARG_TYPE" });
     }
     if (
       options !== undefined &&
       typeof options !== "string" &&
       (typeof options !== "object" || options === null)
     ) {
-      const error = new TypeError(
-        'The "options" argument must be a string or an object'
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError('The "options" argument must be a string or an object'), { code: "ERR_INVALID_ARG_TYPE" });
     }
     const path = globalThis.__quench_fs_mkdtemp(nodePathValue(prefix));
     globalThis.__nodeModes[path] = 0o700 & ~process.umask();
@@ -385,11 +371,7 @@ Object.assign(globalThis.__nodeFs, {
     const encoding =
       typeof options === "string" ? options : options && options.encoding;
     if (encoding !== undefined && !NodeBuffer.isEncoding(encoding)) {
-      const error = new TypeError(
-        `The argument 'encoding' is invalid. Received '${encoding}'`
-      );
-      error.code = "ERR_INVALID_ARG_VALUE";
-      throw error;
+      throw Object.assign(new TypeError(`The argument 'encoding' is invalid. Received '${encoding}'`), { code: "ERR_INVALID_ARG_VALUE" });
     }
     const path =
       typeof value === "number"

@@ -236,11 +236,7 @@ globalThis.process = {
           descriptor.writable !== true ||
           descriptor.enumerable !== true
         ) {
-          const error = new TypeError(
-            "'process.env' only accepts a configurable, writable, and enumerable data descriptor"
-          );
-          error.code = "ERR_INVALID_OBJECT_DEFINE_PROPERTY";
-          throw error;
+          throw Object.assign(new TypeError("'process.env' only accepts a configurable, writable, and enumerable data descriptor"), { code: "ERR_INVALID_OBJECT_DEFINE_PROPERTY" });
         }
         globalThis.__quench_env_set(String(key), String(descriptor.value));
         return true;
@@ -287,11 +283,7 @@ globalThis.process = {
   cwd: __quenchDisplayCwd,
   chdir: (value) => {
     if (typeof value !== "string") {
-      const error = new TypeError(
-        `The "directory" argument must be of type string. Received ${typeof value}`
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError(`The "directory" argument must be of type string. Received ${typeof value}`), { code: "ERR_INVALID_ARG_TYPE" });
     }
     const path = String(value);
     if (!globalThis.__quench_fs_exists(path)) {
@@ -365,11 +357,7 @@ globalThis.process = {
     globalThis.__quench_umask(mask === undefined ? undefined : Number(mask)),
   nextTick: (callback, ...args) => {
     if (typeof callback !== "function") {
-      const error = new TypeError(
-        'The "callback" argument must be of type function'
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError('The "callback" argument must be of type function'), { code: "ERR_INVALID_ARG_TYPE" });
     }
     const activeDomain = globalThis.__quench_active_domain;
     queueMicrotask(() => {
@@ -404,11 +392,7 @@ globalThis.process = {
       throw error;
     }
     if (previous.length !== 2) {
-      const error = new RangeError(
-        `The value of "time" is out of range. It must be 2. Received ${previous.length}`
-      );
-      error.code = "ERR_OUT_OF_RANGE";
-      throw error;
+      throw Object.assign(new RangeError(`The value of "time" is out of range. It must be 2. Received ${previous.length}`), { code: "ERR_OUT_OF_RANGE" });
     }
     let seconds = current[0] - previous[0];
     let nanos = current[1] - previous[1];

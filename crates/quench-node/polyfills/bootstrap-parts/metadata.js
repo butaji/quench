@@ -80,11 +80,7 @@ globalThis.__nodeFs.access = (value, mode, callback) => {
   }
   __nodeFsValidateAccessMode(mode);
   if (typeof value === "number") {
-    const error = new TypeError(
-      'The "path" argument must be of type string or an instance of Buffer or URL',
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "path" argument must be of type string or an instance of Buffer or URL'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   const path = nodeFsPath(value);
   queueMicrotask(() => {
@@ -99,11 +95,7 @@ globalThis.__nodeFs.access = (value, mode, callback) => {
 };
 globalThis.__nodeFs.fsync = (fd, callback) => {
   if (typeof fd !== "number") {
-    const error = new TypeError(
-      `The "fd" argument must be of type number. Received ${fd}`,
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError(`The "fd" argument must be of type number. Received ${fd}`), { code: "ERR_INVALID_ARG_TYPE" });
   }
   if (typeof callback !== "function") {
     throw new TypeError('The "callback" argument must be of type function');
@@ -119,9 +111,7 @@ globalThis.__nodeFs.fsync = (fd, callback) => {
 };
 globalThis.__nodeFs.fdatasync = (fd, callback) => {
   if (typeof fd !== "number") {
-    const error = new TypeError('The "fd" argument must be of type number');
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "fd" argument must be of type number'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   if (typeof callback !== "function") {
     throw new TypeError('The "callback" argument must be of type function');
@@ -195,18 +185,10 @@ const __nodeFsAsyncReadOffsetOptions = (buffer, offset, callback) => {
 };
 const __nodeFsValidateAsyncReadBuffer = (buffer, length) => {
   if (!(buffer instanceof Uint8Array)) {
-    const error = new TypeError(
-      'The "buffer" argument must be an instance of Buffer, TypedArray, or DataView',
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "buffer" argument must be an instance of Buffer, TypedArray, or DataView'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   if (buffer.length === 0 && Number(length) > 0) {
-    const error = new TypeError(
-      "The argument 'buffer' is empty and cannot be written.",
-    );
-    error.code = "ERR_INVALID_ARG_VALUE";
-    throw error;
+    throw Object.assign(new TypeError("The argument 'buffer' is empty and cannot be written."), { code: "ERR_INVALID_ARG_VALUE" });
   }
 };
 const __nodeFsValidateAsyncReadRange = (offset, length) => {
@@ -216,9 +198,7 @@ const __nodeFsValidateAsyncReadRange = (offset, length) => {
     !Number.isInteger(length) ||
     length < 0
   ) {
-    const error = new RangeError("The read range is out of range");
-    error.code = "ERR_OUT_OF_RANGE";
-    throw error;
+    throw Object.assign(new RangeError("The read range is out of range"), { code: "ERR_OUT_OF_RANGE" });
   }
 };
 const __nodeFsValidateAsyncReadPosition = (position) => {
@@ -228,11 +208,7 @@ const __nodeFsValidateAsyncReadPosition = (position) => {
     typeof position !== "number" &&
     typeof position !== "bigint"
   ) {
-    const error = new TypeError(
-      'The "position" argument must be of type number or bigint',
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "position" argument must be of type number or bigint'), { code: "ERR_INVALID_ARG_TYPE" });
   }
 };
 const __nodeFsValidateAsyncRead = (
@@ -244,21 +220,13 @@ const __nodeFsValidateAsyncRead = (
   callback,
 ) => {
   if (typeof fd !== "number") {
-    const error = new TypeError(
-      `The "fd" argument must be of type number. Received ${fd}`,
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError(`The "fd" argument must be of type number. Received ${fd}`), { code: "ERR_INVALID_ARG_TYPE" });
   }
   __nodeFsValidateAsyncReadBuffer(buffer, length);
   __nodeFsValidateAsyncReadRange(offset, length);
   __nodeFsValidateAsyncReadPosition(position);
   if (typeof callback !== "function") {
-    const error = new TypeError(
-      'The "callback" argument must be of type function',
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "callback" argument must be of type function'), { code: "ERR_INVALID_ARG_TYPE" });
   }
 };
 globalThis.__nodeFs.read = (fd, buffer, offset, length, position, callback) => {
@@ -297,11 +265,7 @@ globalThis.__nodeFs.readv = (fd, buffers, position, callback) => {
     !Array.isArray(buffers) ||
     buffers.some((buffer) => !(buffer instanceof Uint8Array))
   ) {
-    const error = new TypeError(
-      'The "buffers" argument must be an array of Buffer or Uint8Array',
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "buffers" argument must be an array of Buffer or Uint8Array'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   queueMicrotask(() => {
     try {
@@ -443,11 +407,7 @@ const __nodeFsValidateSymlink = (target, link, type, callback) => {
     (typeof target !== "string" && !(target instanceof Uint8Array)) ||
     (typeof link !== "string" && !(link instanceof Uint8Array))
   ) {
-    const error = new TypeError(
-      'The "target" and "path" arguments must be strings or Buffer',
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "target" and "path" arguments must be strings or Buffer'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   if (
     type !== undefined &&
@@ -455,9 +415,7 @@ const __nodeFsValidateSymlink = (target, link, type, callback) => {
     type !== "dir" &&
     type !== "junction"
   ) {
-    const error = new TypeError('The "type" argument is invalid');
-    error.code = "ERR_INVALID_ARG_VALUE";
-    throw error;
+    throw Object.assign(new TypeError('The "type" argument is invalid'), { code: "ERR_INVALID_ARG_VALUE" });
   }
 };
 globalThis.__nodeFs.symlink = (target, link, type, callback) => {

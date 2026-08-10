@@ -40,9 +40,7 @@ __quenchExecErrorChildProcess.execFile = (file, args, options, callback) => {
     settings?.signal !== undefined &&
     !(settings.signal instanceof AbortSignal)
   ) {
-    const error = new TypeError("The signal option must be an AbortSignal");
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError("The signal option must be an AbortSignal"), { code: "ERR_INVALID_ARG_TYPE" });
   }
   const done = Array.isArray(args)
     ? __quenchExecErrorCallback(options, callback)

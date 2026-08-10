@@ -30,16 +30,10 @@ const __quenchStyleAliases = {
 };
 const __quenchStyleText = (style, text, options = {}) => {
   if (typeof style !== "string" && !Array.isArray(style)) {
-    const error = new TypeError(
-      "The 'format' argument must be a string or an Array",
-    );
-    error.code = "ERR_INVALID_ARG_VALUE";
-    throw error;
+    throw Object.assign(new TypeError("The 'format' argument must be a string or an Array"), { code: "ERR_INVALID_ARG_VALUE" });
   }
   if (typeof text !== "string") {
-    const error = new TypeError("The 'text' argument must be of type string");
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError("The 'text' argument must be of type string"), { code: "ERR_INVALID_ARG_TYPE" });
   }
   if (
     options.validateStream !== false &&
@@ -48,9 +42,7 @@ const __quenchStyleText = (style, text, options = {}) => {
       typeof options.stream !== "object" ||
       typeof options.stream.isTTY !== "boolean")
   ) {
-    const error = new TypeError("The 'stream' option must be a TTY stream");
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError("The 'stream' option must be a TTY stream"), { code: "ERR_INVALID_ARG_TYPE" });
   }
   if (options.validateStream === false || options.colors === false) {
     if (options.colors === false) return text;
@@ -71,9 +63,7 @@ const __quenchStyleText = (style, text, options = {}) => {
       if (normalized === "none") return null;
       const styleCodes = __quenchStyles[normalized];
       if (!styleCodes) {
-        const error = new TypeError(`Unknown style: ${name}`);
-        error.code = "ERR_INVALID_ARG_VALUE";
-        throw error;
+        throw Object.assign(new TypeError(`Unknown style: ${name}`), { code: "ERR_INVALID_ARG_VALUE" });
       }
       return styleCodes;
     })

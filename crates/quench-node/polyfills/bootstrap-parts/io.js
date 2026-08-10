@@ -1,15 +1,9 @@
 const __nodeFsValidateWriteBuffer = (fd, buffer, offset, length) => {
   if (typeof fd !== "number") {
-    const error = new TypeError('The "fd" argument must be of type number');
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "fd" argument must be of type number'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   if (!(buffer instanceof Uint8Array)) {
-    const error = new TypeError(
-      'The "buffer" argument must be an instance of Buffer, TypedArray, or DataView'
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "buffer" argument must be an instance of Buffer, TypedArray, or DataView'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   if (
     !Number.isInteger(offset) ||
@@ -17,9 +11,7 @@ const __nodeFsValidateWriteBuffer = (fd, buffer, offset, length) => {
     !Number.isInteger(length) ||
     length < 0
   ) {
-    const error = new RangeError("The write range is out of range");
-    error.code = "ERR_OUT_OF_RANGE";
-    throw error;
+    throw Object.assign(new RangeError("The write range is out of range"), { code: "ERR_OUT_OF_RANGE" });
   }
 };
 const __nodeFsWriteDescriptor = (fd, buffer, offset, length, position) => {
@@ -60,11 +52,7 @@ const __nodeFsAppendData = (data, options) => {
     !(data instanceof NodeBuffer) &&
     !(data instanceof Uint8Array)
   ) {
-    const error = new TypeError(
-      'The "data" argument must be of type string or an instance of Buffer'
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "data" argument must be of type string or an instance of Buffer'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   return typeof data === "string"
     ? NodeBuffer.from(data, options?.encoding || "utf8")
@@ -129,11 +117,7 @@ const __nodeFsReadNormalize = (buffer, offset, length, position) => {
 };
 const __nodeFsReadArguments = (fd, buffer, offset, length, position) => {
   if (typeof fd !== "number") {
-    const error = new TypeError(
-      `The "fd" argument must be of type number. Received ${fd}`
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError(`The "fd" argument must be of type number. Received ${fd}`), { code: "ERR_INVALID_ARG_TYPE" });
   }
   if (!(buffer instanceof Uint8Array)) {
     const error = new TypeError(
@@ -238,14 +222,10 @@ Object.assign(globalThis.__nodeFs, {
   },
   fsyncSync: (fd) => {
     if (typeof fd !== "number") {
-      const error = new TypeError('The "fd" argument must be of type number');
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError('The "fd" argument must be of type number'), { code: "ERR_INVALID_ARG_TYPE" });
     }
     if (!Number.isInteger(fd) || fd < 0) {
-      const error = new RangeError('The value of "fd" is out of range');
-      error.code = "ERR_OUT_OF_RANGE";
-      throw error;
+      throw Object.assign(new RangeError('The value of "fd" is out of range'), { code: "ERR_OUT_OF_RANGE" });
     }
   },
   fdatasyncSync: (fd) => globalThis.__nodeFs.fsyncSync(fd),
@@ -255,19 +235,13 @@ Object.assign(globalThis.__nodeFs, {
     ),
   readvSync: (fd, buffers, position = null) => {
     if (typeof fd !== "number") {
-      const error = new TypeError('The "fd" argument must be of type number');
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError('The "fd" argument must be of type number'), { code: "ERR_INVALID_ARG_TYPE" });
     }
     if (
       !Array.isArray(buffers) ||
       buffers.some((buffer) => !(buffer instanceof Uint8Array))
     ) {
-      const error = new TypeError(
-        'The "buffers" argument must be an array of Buffer or Uint8Array'
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError('The "buffers" argument must be an array of Buffer or Uint8Array'), { code: "ERR_INVALID_ARG_TYPE" });
     }
     let total = 0;
     let at = position === null || position === undefined ? 0 : Number(position);
@@ -291,11 +265,7 @@ Object.assign(globalThis.__nodeFs, {
     if (typeof buffer === "string") {
       position = offset;
       if (length === "hex" && buffer.length % 2 !== 0) {
-        const error = new TypeError(
-          `'encoding' is invalid for data of length ${buffer.length}`
-        );
-        error.code = "ERR_INVALID_ARG_VALUE";
-        throw error;
+        throw Object.assign(new TypeError(`'encoding' is invalid for data of length ${buffer.length}`), { code: "ERR_INVALID_ARG_VALUE" });
       }
       buffer = NodeBuffer.from(
         buffer,
@@ -315,11 +285,7 @@ Object.assign(globalThis.__nodeFs, {
       !Array.isArray(buffers) ||
       buffers.some((buffer) => !(buffer instanceof Uint8Array))
     ) {
-      const error = new TypeError(
-        'The "buffers" argument must be an array of Buffer or Uint8Array'
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError('The "buffers" argument must be an array of Buffer or Uint8Array'), { code: "ERR_INVALID_ARG_TYPE" });
     }
     return globalThis.__nodeFs.writeSync(fd, NodeBuffer.concat(buffers));
   },
@@ -327,14 +293,10 @@ Object.assign(globalThis.__nodeFs, {
     const source = __nodeFsCopyPath(from, "src");
     const destination = __nodeFsCopyPath(to, "dest");
     if (typeof mode !== "number") {
-      const error = new TypeError('The "mode" argument must be of type number');
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError('The "mode" argument must be of type number'), { code: "ERR_INVALID_ARG_TYPE" });
     }
     if ((mode & ~7) !== 0) {
-      const error = new RangeError('The value of "mode" is out of range');
-      error.code = "ERR_OUT_OF_RANGE";
-      throw error;
+      throw Object.assign(new RangeError('The value of "mode" is out of range'), { code: "ERR_OUT_OF_RANGE" });
     }
     const trackedMode = globalThis.__nodeModes?.[destination];
     if (trackedMode !== undefined && (trackedMode & 0o222) === 0) {
@@ -369,11 +331,7 @@ Object.assign(globalThis.__nodeFs, {
       encoding !== "buffer" &&
       !NodeBuffer.isEncoding(encoding)
     ) {
-      const error = new TypeError(
-        `The argument 'encoding' is invalid. Received '${encoding}'`
-      );
-      error.code = "ERR_INVALID_ARG_VALUE";
-      throw error;
+      throw Object.assign(new TypeError(`The argument 'encoding' is invalid. Received '${encoding}'`), { code: "ERR_INVALID_ARG_VALUE" });
     }
     const path = __nodeFsAppendPath(value);
     const bytes = __nodeFsAppendData(data, options);
@@ -389,11 +347,7 @@ Object.assign(globalThis.__nodeFs, {
   accessSync: (value, mode) => {
     __nodeFsValidateAccessMode(mode);
     if (typeof value === "number") {
-      const error = new TypeError(
-        'The "path" argument must be of type string or an instance of Buffer or URL'
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError('The "path" argument must be of type string or an instance of Buffer or URL'), { code: "ERR_INVALID_ARG_TYPE" });
     }
     const path = nodeFsPath(value);
     if (!globalThis.__quench_fs_access(path)) {
@@ -427,11 +381,7 @@ Object.assign(globalThis.__nodeFs, {
       encoding !== "buffer" &&
       !NodeBuffer.isEncoding(encoding)
     ) {
-      const error = new TypeError(
-        `The argument 'encoding' is invalid. Received '${encoding}'`
-      );
-      error.code = "ERR_INVALID_ARG_VALUE";
-      throw error;
+      throw Object.assign(new TypeError(`The argument 'encoding' is invalid. Received '${encoding}'`), { code: "ERR_INVALID_ARG_VALUE" });
     }
     let result;
     try {

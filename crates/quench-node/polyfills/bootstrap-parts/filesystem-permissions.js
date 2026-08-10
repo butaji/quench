@@ -1,28 +1,16 @@
 const nodeMode = (mode) => {
   if (typeof mode !== "number" && typeof mode !== "string") {
-    const error = new TypeError('The "mode" argument must be of type number');
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "mode" argument must be of type number'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   const value = typeof mode === "string" ? parseInt(mode, 8) : Number(mode);
   if (typeof mode === "string" && !/^0?[0-7]+$/.test(mode)) {
-    const error = new TypeError(`The "mode" argument is invalid: ${mode}`);
-    error.code = "ERR_INVALID_ARG_VALUE";
-    throw error;
+    throw Object.assign(new TypeError(`The "mode" argument is invalid: ${mode}`), { code: "ERR_INVALID_ARG_VALUE" });
   }
   if (!Number.isFinite(value) || !Number.isInteger(value)) {
-    const error = new RangeError(
-      `The value of "mode" is out of range. It must be an integer. Received ${mode}`,
-    );
-    error.code = "ERR_OUT_OF_RANGE";
-    throw error;
+    throw Object.assign(new RangeError(`The value of "mode" is out of range. It must be an integer. Received ${mode}`), { code: "ERR_OUT_OF_RANGE" });
   }
   if (value < 0 || value > 0xffffffff) {
-    const error = new RangeError(
-      `The value of "mode" is out of range. It must be >= 0 && <= 4294967295. Received ${mode}`,
-    );
-    error.code = "ERR_OUT_OF_RANGE";
-    throw error;
+    throw Object.assign(new RangeError(`The value of "mode" is out of range. It must be >= 0 && <= 4294967295. Received ${mode}`), { code: "ERR_OUT_OF_RANGE" });
   }
   return value;
 };
@@ -35,18 +23,10 @@ const nodeFd = (fd) => {
     throw error;
   }
   if (!Number.isInteger(fd)) {
-    const error = new RangeError(
-      `The value of "fd" is out of range. It must be an integer. Received ${fd}`,
-    );
-    error.code = "ERR_OUT_OF_RANGE";
-    throw error;
+    throw Object.assign(new RangeError(`The value of "fd" is out of range. It must be an integer. Received ${fd}`), { code: "ERR_OUT_OF_RANGE" });
   }
   if (fd < 0 || fd > 0x7fffffff) {
-    const error = new RangeError(
-      `The value of "fd" is out of range. It must be >= 0 && <= 2147483647. Received ${fd}`,
-    );
-    error.code = "ERR_OUT_OF_RANGE";
-    throw error;
+    throw Object.assign(new RangeError(`The value of "fd" is out of range. It must be >= 0 && <= 2147483647. Received ${fd}`), { code: "ERR_OUT_OF_RANGE" });
   }
 };
 globalThis.__nodeFs.fchmodSync = (fd, mode) => {
@@ -80,36 +60,20 @@ globalThis.__nodeFs.lchmod = (value, mode, callback) => {
     mode = 0o666;
   }
   if (typeof callback !== "function") {
-    const error = new TypeError(
-      'The "callback" argument must be of type function',
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "callback" argument must be of type function'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   globalThis.__nodeFs.lchmodSync(value, mode);
   queueMicrotask(() => callback(null));
 };
 const nodeOwner = (owner, name) => {
   if (typeof owner !== "number") {
-    const error = new TypeError(
-      `The "${name}" argument must be of type number`,
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError(`The "${name}" argument must be of type number`), { code: "ERR_INVALID_ARG_TYPE" });
   }
   if (!Number.isFinite(owner) || !Number.isInteger(owner)) {
-    const error = new RangeError(
-      `The value of "${name}" is out of range. It must be an integer. Received ${owner}`,
-    );
-    error.code = "ERR_OUT_OF_RANGE";
-    throw error;
+    throw Object.assign(new RangeError(`The value of "${name}" is out of range. It must be an integer. Received ${owner}`), { code: "ERR_OUT_OF_RANGE" });
   }
   if (owner < -1 || owner > 0xffffffff) {
-    const error = new RangeError(
-      `The value of "${name}" is out of range. It must be >= -1 && <= 4294967295. Received ${owner}`,
-    );
-    error.code = "ERR_OUT_OF_RANGE";
-    throw error;
+    throw Object.assign(new RangeError(`The value of "${name}" is out of range. It must be >= -1 && <= 4294967295. Received ${owner}`), { code: "ERR_OUT_OF_RANGE" });
   }
 };
 globalThis.__nodeFs.lchownSync = (value, uid, gid) => {
@@ -121,11 +85,7 @@ globalThis.__nodeFs.lchown = (value, uid, gid, callback) => {
   nodeOwner(uid, "uid");
   nodeOwner(gid, "gid");
   if (typeof callback !== "function") {
-    const error = new TypeError(
-      'The "callback" argument must be of type function',
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "callback" argument must be of type function'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   globalThis.__nodeFs.lchownSync(value, uid, gid);
   queueMicrotask(() => callback(null));
@@ -144,11 +104,7 @@ globalThis.__nodeFs.fchown = (fd, uid, gid, callback) => {
   nodeOwner(uid, "uid");
   nodeOwner(gid, "gid");
   if (typeof callback !== "function") {
-    const error = new TypeError(
-      'The "callback" argument must be of type function',
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "callback" argument must be of type function'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   queueMicrotask(() => callback(null));
 };

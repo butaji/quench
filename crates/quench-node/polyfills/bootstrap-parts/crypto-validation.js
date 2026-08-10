@@ -28,11 +28,7 @@ const __nodeCryptoAssertDigestOpen = (finalized) => {
 };
 const __nodeCryptoValidateStringEncoding = (value, encoding) => {
   if (encoding === "hex" && value.length % 2) {
-    const error = new TypeError(
-      `The argument 'encoding' is invalid for data of length ${value.length}. Received 'hex'`
-    );
-    error.code = "ERR_INVALID_ARG_VALUE";
-    throw error;
+    throw Object.assign(new TypeError(`The argument 'encoding' is invalid for data of length ${value.length}. Received 'hex'`), { code: "ERR_INVALID_ARG_VALUE" });
   }
 };
 const __nodeCryptoSetPrototype = (value, constructor) =>
@@ -127,7 +123,5 @@ const __nodeCryptoHmacDigest = (algorithm, inner, outer, chunks, encoding) => {
   ) {
     return result.toString(encoding);
   }
-  const error = new TypeError(`Unknown encoding: ${encoding}`);
-  error.code = "ERR_UNKNOWN_ENCODING";
-  throw error;
+  throw Object.assign(new TypeError(`Unknown encoding: ${encoding}`), { code: "ERR_UNKNOWN_ENCODING" });
 };
