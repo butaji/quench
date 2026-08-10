@@ -178,6 +178,26 @@ pub(crate) fn reduce_assignment(
     Some(value)
 }
 
+pub(crate) fn reduce_global_assignment(
+    name: &str,
+    assignment: &oxc::ast::ast::AssignmentExpression<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<u16> {
+    let global_slot = *locals.get("globalThis")?;
+    let object = load_local(ops, next_register, global_slot);
+    let value =
+        crate::reduce::reduce_expression(&assignment.right, ops, facts, next_register, locals)?;
+    ops.push(Op::SetProperty {
+        object,
+        key: name.to_string(),
+        src: value,
+    });
+    Some(value)
+}
+
 fn reduce_property_value(
     assignment: &oxc::ast::ast::AssignmentExpression<'_>,
     object: u16,
@@ -224,6 +244,13 @@ fn allocate_property_get(
         object,
         key: key.to_string(),
     });
+    dst
+}
+
+fn load_local(ops: &mut Vec<Op>, next_register: &mut u16, slot: u16) -> u16 {
+    let dst = *next_register;
+    *next_register = next_register.saturating_add(1);
+    ops.push(Op::LoadLocal { dst, slot });
     dst
 }
 
