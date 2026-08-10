@@ -328,7 +328,7 @@ pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
         {
             Value::Object(properties)
         }
-        Value::Object(properties) => object_alias::set(properties, key, value),
+        Value::Object(properties) => set_object_property(properties, key, value),
         Value::Array(values) if array_descriptor_flag(&values, key, "writable") == Some(false) => {
             Value::Array(values)
         }
@@ -336,6 +336,22 @@ pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
         Value::Function(function) => set_function_property(function, key, value),
         other => other,
     }
+}
+
+fn set_object_property(properties: Rc<Vec<(String, Value)>>, key: &str, value: Value) -> Value {
+    let cell = properties
+        .iter()
+        .rev()
+        .find_map(|(name, current)| (name == key).then_some(current))
+        .and_then(|current| match current {
+            Value::BindingCell(cell) => Some(Rc::clone(cell)),
+            _ => None,
+        });
+    let Some(cell) = cell else {
+        return object_alias::set(properties, key, value);
+    };
+    *cell.borrow_mut() = value;
+    Value::Object(properties)
 }
 
 pub(crate) fn define_property(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
@@ -446,6 +462,7 @@ pub(crate) fn prototype_to_string(receiver: Option<&Value>) -> Value {
         Some(Value::Map(_)) => "Map",
         Some(Value::Set(_)) => "Set",
         Some(Value::Generator(_)) => "Generator",
+        Some(Value::BindingCell(cell)) => return prototype_to_string(Some(&cell.borrow())),
         Some(Value::HostCapability(_) | Value::Iterator(_) | Value::ObjectAlias(_)) => "Object",
     };
     Value::String(format!("[object {tag}]"))
