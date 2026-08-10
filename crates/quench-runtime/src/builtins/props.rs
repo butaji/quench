@@ -41,6 +41,9 @@ fn builtin_method(builtin: Builtin, key: &str) -> Option<Builtin> {
     if builtin == StringPrototype {
         return crate::strings::property_method(key);
     }
+    if builtin == DataViewPrototype {
+        return data_view_method(key);
+    }
     match (builtin, key) {
         (Array, "prototype") => Some(ArrayPrototype),
         (ArrayBuffer, "isView") => Some(ArrayBufferIsView),
@@ -75,6 +78,29 @@ fn builtin_method(builtin: Builtin, key: &str) -> Option<Builtin> {
         (RegExpPrototype, "test") => Some(RegExpTest),
         (RegExpPrototype, "exec") => Some(RegExpExec),
         _ => builtin_method2(builtin, key),
+    }
+}
+
+fn data_view_method(key: &str) -> Option<Builtin> {
+    use Builtin::*;
+    match key {
+        "getInt8" => Some(DataViewGetInt8),
+        "getUint8" => Some(DataViewGetUint8),
+        "getInt16" => Some(DataViewGetInt16),
+        "getUint16" => Some(DataViewGetUint16),
+        "getInt32" => Some(DataViewGetInt32),
+        "getUint32" => Some(DataViewGetUint32),
+        "getFloat32" => Some(DataViewGetFloat32),
+        "getFloat64" => Some(DataViewGetFloat64),
+        "setInt8" => Some(DataViewSetInt8),
+        "setUint8" => Some(DataViewSetUint8),
+        "setInt16" => Some(DataViewSetInt16),
+        "setUint16" => Some(DataViewSetUint16),
+        "setInt32" => Some(DataViewSetInt32),
+        "setUint32" => Some(DataViewSetUint32),
+        "setFloat32" => Some(DataViewSetFloat32),
+        "setFloat64" => Some(DataViewSetFloat64),
+        _ => None,
     }
 }
 
@@ -175,6 +201,12 @@ fn builtin_length(builtin: Builtin) -> f64 {
         Float64Array => 3.0,
         Float32Array => 3.0,
         DataView => 3.0,
+        DataViewGetInt8 | DataViewGetUint8 => 1.0,
+        DataViewGetInt16 | DataViewGetUint16 | DataViewGetInt32 | DataViewGetUint32
+        | DataViewGetFloat32 | DataViewGetFloat64 => 2.0,
+        DataViewSetInt8 | DataViewSetUint8 => 2.0,
+        DataViewSetInt16 | DataViewSetUint16 | DataViewSetInt32 | DataViewSetUint32
+        | DataViewSetFloat32 | DataViewSetFloat64 => 3.0,
         DateNow => 0.0,
         RegExp => 2.0,
         DateParse => 1.0,
@@ -194,6 +226,22 @@ pub(crate) fn builtin_name(builtin: Builtin) -> &'static str {
         Float64Array => "Float64Array",
         Float32Array => "Float32Array",
         DataView => "DataView",
+        DataViewGetInt8 => "getInt8",
+        DataViewGetUint8 => "getUint8",
+        DataViewGetInt16 => "getInt16",
+        DataViewGetUint16 => "getUint16",
+        DataViewGetInt32 => "getInt32",
+        DataViewGetUint32 => "getUint32",
+        DataViewGetFloat32 => "getFloat32",
+        DataViewGetFloat64 => "getFloat64",
+        DataViewSetInt8 => "setInt8",
+        DataViewSetUint8 => "setUint8",
+        DataViewSetInt16 => "setInt16",
+        DataViewSetUint16 => "setUint16",
+        DataViewSetInt32 => "setInt32",
+        DataViewSetUint32 => "setUint32",
+        DataViewSetFloat32 => "setFloat32",
+        DataViewSetFloat64 => "setFloat64",
         Object => "Object",
         String => "String",
         Symbol => "Symbol",
