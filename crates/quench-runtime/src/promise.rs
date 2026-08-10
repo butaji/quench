@@ -77,10 +77,48 @@ pub fn promise_resolve(_arguments: &[Value]) -> Value {
     Value::Promise(Rc::new(PromiseData::new(PromiseState::Fulfilled(value))))
 }
 
+fn resolve_receiver(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(Value::Promise(promise)) = receiver else {
+        return Ok(promise_resolve(arguments));
+    };
+    resolve_promise(
+        promise,
+        arguments.first().cloned().unwrap_or(Value::Undefined),
+    );
+    Ok(Value::Undefined)
+}
+
 /// Execute Promise.reject.
 pub fn promise_reject(_arguments: &[Value]) -> Value {
     let reason = _arguments.first().cloned().unwrap_or(Value::Undefined);
     Value::Promise(Rc::new(PromiseData::new(PromiseState::Rejected(reason))))
+}
+
+fn reject_receiver(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(Value::Promise(promise)) = receiver else {
+        return Ok(promise_reject(arguments));
+    };
+    reject_promise(
+        promise,
+        arguments.first().cloned().unwrap_or(Value::Undefined),
+    );
+    Ok(Value::Undefined)
+}
+
+pub(crate) fn construct_promise(executor: &Value) -> Result<Value, VmError> {
+    let promise = new_promise();
+    let resolve = Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
+        target: Value::Builtin(Builtin::PromiseResolve),
+        receiver: promise.clone(),
+        arguments: Vec::new(),
+    }));
+    let reject = Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
+        target: Value::Builtin(Builtin::PromiseReject),
+        receiver: promise.clone(),
+        arguments: Vec::new(),
+    }));
+    crate::functions::execute_target(executor, &Value::Undefined, &[resolve, reject])?;
+    Ok(promise)
 }
 
 fn maybe_handler(arguments: &[Value], index: usize) -> Option<Value> {
@@ -123,8 +161,8 @@ pub fn execute_builtin(
 ) -> Option<Result<Value, VmError>> {
     let result = match builtin {
         Builtin::Promise => Ok(new_promise()),
-        Builtin::PromiseResolve => Ok(promise_resolve(arguments)),
-        Builtin::PromiseReject => Ok(promise_reject(arguments)),
+        Builtin::PromiseResolve => resolve_receiver(receiver, arguments),
+        Builtin::PromiseReject => reject_receiver(receiver, arguments),
         Builtin::PromiseThen => promise_then(receiver, arguments),
         Builtin::PromiseCatch => promise_catch(receiver, arguments),
         Builtin::PromiseFinally => promise_finally(receiver, arguments),
