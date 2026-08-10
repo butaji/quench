@@ -40,7 +40,8 @@ pub(crate) fn bind(
             store_identifier(identifier.name.as_str(), source, ops, next, locals)
         }
         BindingPatternKind::AssignmentPattern(pattern) => {
-            let value = default_value(source, &pattern.right, ops, facts, next, locals)?;
+            let name = direct_name(&pattern.left);
+            let value = default_value(source, &pattern.right, name, ops, facts, next, locals)?;
             bind(&pattern.left, value, ops, facts, next, locals)
         }
         BindingPatternKind::ArrayPattern(pattern) => {
@@ -83,7 +84,15 @@ fn assign_maybe_default(
     let (target, value) = match target {
         AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(default) => (
             &default.binding,
-            default_value(source, &default.init, ops, facts, next, locals)?,
+            default_value(
+                source,
+                &default.init,
+                assignment_name(&default.binding),
+                ops,
+                facts,
+                next,
+                locals,
+            )?,
         ),
         _ => (target.as_assignment_target()?, source),
     };
@@ -166,7 +175,7 @@ fn assign_identifier_property(
     let excluded = emit_const(ops, next, Constant::String(name.to_string()));
     let value = get_property(ReducedKey::Static(name.to_string()), source, ops, next);
     let value = match &property.init {
-        Some(init) => default_value(value, init, ops, facts, next, locals)?,
+        Some(init) => default_value(value, init, Some(name), ops, facts, next, locals)?,
         None => value,
     };
     crate::reduce::reduce_assignments::put(place, value, ops)?;
@@ -222,9 +231,15 @@ fn assignment_default(
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
     match target {
-        AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(default) => {
-            default_value(source, &default.init, ops, facts, next, locals)
-        }
+        AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(default) => default_value(
+            source,
+            &default.init,
+            assignment_name(&default.binding),
+            ops,
+            facts,
+            next,
+            locals,
+        ),
         _ => Some(source),
     }
 }
@@ -278,44 +293,7 @@ fn store_identifier(
     Some(())
 }
 
-fn default_value(
-    source: u16,
-    fallback: &Expression<'_>,
-    ops: &mut Vec<Op>,
-    facts: &mut ProgramDb,
-    next: &mut u16,
-    locals: &HashMap<String, u16>,
-) -> Option<u16> {
-    let undefined = emit_const(ops, next, Constant::Undefined);
-    let condition = take_register(next);
-    ops.push(Op::Binary {
-        dst: condition,
-        operator: BinaryOp::StrictEqual,
-        lhs: source,
-        rhs: undefined,
-    });
-    let consequent = fallback_ops(fallback, facts, next, locals)?;
-    let dst = take_register(next);
-    ops.push(Op::Conditional {
-        dst,
-        condition,
-        consequent,
-        alternate: vec![Op::Return { src: source }],
-    });
-    Some(dst)
-}
-
-fn fallback_ops(
-    fallback: &Expression<'_>,
-    facts: &mut ProgramDb,
-    next: &mut u16,
-    locals: &HashMap<String, u16>,
-) -> Option<Vec<Op>> {
-    let mut ops = Vec::new();
-    let value = crate::reduce::reduce_expression(fallback, &mut ops, facts, next, locals)?;
-    ops.push(Op::Return { src: value });
-    Some(ops)
-}
+include!("binding_pattern_names.rs");
 
 fn bind_array(
     pattern: &oxc::ast::ast::ArrayPattern<'_>,
@@ -437,9 +415,15 @@ fn bind_resolved(
     locals: &HashMap<String, u16>,
 ) -> Option<()> {
     let value = match &pattern.kind {
-        BindingPatternKind::AssignmentPattern(pattern) => {
-            default_value(source, &pattern.right, ops, facts, next, locals)?
-        }
+        BindingPatternKind::AssignmentPattern(pattern) => default_value(
+            source,
+            &pattern.right,
+            direct_name(&pattern.left),
+            ops,
+            facts,
+            next,
+            locals,
+        )?,
         BindingPatternKind::BindingIdentifier(_) => source,
         _ => return None,
     };
