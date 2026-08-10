@@ -95,6 +95,7 @@ fn data_view_method(key: &str) -> Option<Builtin> {
         "getUint16" => Some(DataViewGetUint16),
         "getInt32" => Some(DataViewGetInt32),
         "getUint32" => Some(DataViewGetUint32),
+        "getFloat16" => Some(DataViewGetFloat16),
         "getFloat32" => Some(DataViewGetFloat32),
         "getFloat64" => Some(DataViewGetFloat64),
         "setInt8" => Some(DataViewSetInt8),
@@ -103,6 +104,7 @@ fn data_view_method(key: &str) -> Option<Builtin> {
         "setUint16" => Some(DataViewSetUint16),
         "setInt32" => Some(DataViewSetInt32),
         "setUint32" => Some(DataViewSetUint32),
+        "setFloat16" => Some(DataViewSetFloat16),
         "setFloat32" => Some(DataViewSetFloat32),
         "setFloat64" => Some(DataViewSetFloat64),
         _ => None,
@@ -222,10 +224,10 @@ fn data_view_length(builtin: Builtin) -> Option<f64> {
     match builtin {
         DataViewGetInt8 | DataViewGetUint8 => Some(1.0),
         DataViewGetInt16 | DataViewGetUint16 | DataViewGetInt32 | DataViewGetUint32
-        | DataViewGetFloat32 | DataViewGetFloat64 => Some(2.0),
+        | DataViewGetFloat16 | DataViewGetFloat32 | DataViewGetFloat64 => Some(2.0),
         DataViewSetInt8 | DataViewSetUint8 => Some(2.0),
         DataViewSetInt16 | DataViewSetUint16 | DataViewSetInt32 | DataViewSetUint32
-        | DataViewSetFloat32 | DataViewSetFloat64 => Some(3.0),
+        | DataViewSetFloat16 | DataViewSetFloat32 | DataViewSetFloat64 => Some(3.0),
         _ => None,
     }
 }
@@ -247,6 +249,7 @@ pub(crate) fn builtin_name(builtin: Builtin) -> &'static str {
         DataViewGetUint16 => "getUint16",
         DataViewGetInt32 => "getInt32",
         DataViewGetUint32 => "getUint32",
+        DataViewGetFloat16 => "getFloat16",
         DataViewGetFloat32 => "getFloat32",
         DataViewGetFloat64 => "getFloat64",
         DataViewSetInt8 => "setInt8",
@@ -255,6 +258,7 @@ pub(crate) fn builtin_name(builtin: Builtin) -> &'static str {
         DataViewSetUint16 => "setUint16",
         DataViewSetInt32 => "setInt32",
         DataViewSetUint32 => "setUint32",
+        DataViewSetFloat16 => "setFloat16",
         DataViewSetFloat32 => "setFloat32",
         DataViewSetFloat64 => "setFloat64",
         Object => "Object",
