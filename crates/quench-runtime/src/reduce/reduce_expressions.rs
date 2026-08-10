@@ -15,6 +15,8 @@ use oxc::{
     syntax::operator::UnaryOperator,
 };
 use std::collections::HashMap;
+
+const SCRIPT_THIS_SLOT: &str = "\0script_this";
 pub fn reduce_if_statement(
     statement: &oxc::ast::ast::IfStatement<'_>,
     ops: &mut Vec<Op>,
@@ -314,6 +316,15 @@ pub fn reduce_atom(
 ) -> Option<u16> {
     if matches!(expression, Expression::ThisExpression(_)) {
         if let Some(slot) = locals.get("this") {
+            let register = *next_register;
+            *next_register = next_register.saturating_add(1);
+            ops.push(Op::LoadLocal {
+                dst: register,
+                slot: *slot,
+            });
+            return Some(register);
+        }
+        if let Some(slot) = locals.get(SCRIPT_THIS_SLOT) {
             let register = *next_register;
             *next_register = next_register.saturating_add(1);
             ops.push(Op::LoadLocal {

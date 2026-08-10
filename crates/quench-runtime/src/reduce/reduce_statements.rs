@@ -10,6 +10,9 @@ use oxc::{
     span::SourceType,
 };
 use std::collections::HashMap;
+
+const GLOBAL_THIS: &str = "globalThis";
+const SCRIPT_THIS_SLOT: &str = "\0script_this";
 #[derive(Debug, PartialEq)]
 pub struct ResidualProgram {
     pub facts: ProgramDb,
@@ -39,7 +42,7 @@ pub fn reduce_source_with_type(
                 .collect());
         }
         let (scope_count, symbol_count) = crate::semantic::analyze(&parsed.program)?;
-        let ops = reduce_statements(&parsed.program.body, &mut ProgramDb::default())?;
+        let ops = reduce_statements(&parsed.program.body, source_type, &mut ProgramDb::default())?;
         (scope_count, symbol_count, ops)
     };
     let facts = ProgramDb {
@@ -51,9 +54,37 @@ pub fn reduce_source_with_type(
 }
 fn reduce_statements(
     statements: &[Statement<'_>],
+    source_type: SourceType,
     facts: &mut ProgramDb,
 ) -> Result<Vec<Op>, Vec<String>> {
-    reduce_statements_with_locals(statements, facts, HashMap::new(), 0)
+    let mut locals = HashMap::new();
+    let mut ops = Vec::new();
+    let mut next_slot: u16 = 0;
+    let mut next_register: u16 = 0;
+    let global_slot = next_slot;
+    next_slot = next_slot.saturating_add(1);
+    locals.insert(GLOBAL_THIS.to_string(), global_slot);
+    if !source_type.is_module() {
+        locals.insert(SCRIPT_THIS_SLOT.to_string(), global_slot);
+    }
+    ops.push(Op::MakeObject {
+        dst: next_register,
+        properties: Vec::new(),
+    });
+    ops.push(Op::StoreLocal {
+        slot: global_slot,
+        src: next_register,
+    });
+    next_register = next_register.saturating_add(1);
+    reduce_statements_opt(
+        statements,
+        facts,
+        locals,
+        next_slot,
+        true,
+        ops,
+        next_register,
+    )
 }
 pub fn reduce_statements_with_locals(
     statements: &[Statement<'_>],
@@ -61,7 +92,7 @@ pub fn reduce_statements_with_locals(
     locals: HashMap<String, u16>,
     next_slot: u16,
 ) -> Result<Vec<Op>, Vec<String>> {
-    reduce_statements_opt(statements, facts, locals, next_slot, true)
+    reduce_statements_opt(statements, facts, locals, next_slot, true, Vec::new(), 0)
 }
 /// Reduce statements without appending a terminal `Return`. Used for nested
 /// blocks whose control flow continues after the block (if/try/switch bodies).
@@ -71,7 +102,7 @@ pub fn reduce_statements_no_tail(
     locals: HashMap<String, u16>,
     next_slot: u16,
 ) -> Result<Vec<Op>, Vec<String>> {
-    reduce_statements_opt(statements, facts, locals, next_slot, false)
+    reduce_statements_opt(statements, facts, locals, next_slot, false, Vec::new(), 0)
 }
 fn reduce_statements_opt(
     statements: &[Statement<'_>],
@@ -79,10 +110,11 @@ fn reduce_statements_opt(
     mut locals: HashMap<String, u16>,
     mut next_slot: u16,
     tail: bool,
+    mut ops: Vec<Op>,
+    mut next_register: u16,
 ) -> Result<Vec<Op>, Vec<String>> {
     crate::reduce_support::predeclare_functions(statements, &mut locals, &mut next_slot);
-    let mut ops = Vec::new();
-    let mut next_register = crate::reduce_support::register_base(&locals);
+    next_register = next_register.max(crate::reduce_support::register_base(&locals));
     let mut last_value = None;
     for statement in statements {
         if let Some(value) = reduce_statement(
