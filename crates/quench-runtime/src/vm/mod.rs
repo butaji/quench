@@ -547,7 +547,7 @@ pub fn read_register(registers: &[Value], index: u16) -> Result<Value, VmError> 
 pub fn get_property(value: &Value, key: &str) -> Value {
     use Value::*;
     match value {
-        Builtin(builtin) => builtin_property(*builtin, key),
+        Builtin(builtin) => bind_callable_property(value, *builtin, key),
         Array(values) => crate::arrays::property(values, key),
         ArrayBuffer(buffer) => array_buffer_property(buffer, key),
         Float64Array(view) => float64_array_property(view, key),
@@ -565,8 +565,7 @@ pub fn get_property(value: &Value, key: &str) -> Value {
         Number(value) => number_property(*value, key),
         Boolean(value) => boolean_property(*value, key),
         Function(function) if key == "length" => Value::Number(f64::from(function.params)),
-        Function(_) if key == "call" => Value::Builtin(crate::ops::Builtin::FunctionCall),
-        Function(_) if key == "bind" => Value::Builtin(crate::ops::Builtin::FunctionBind),
+        Function(_) if matches!(key, "call" | "bind") => bind_function_property(value, key),
         Function(function) => function
             .properties
             .borrow()
@@ -579,6 +578,34 @@ pub fn get_property(value: &Value, key: &str) -> Value {
         Promise(_) => promise_property(value, key),
         _ => Value::Undefined,
     }
+}
+
+fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
+    let property = builtin_property(builtin, key);
+    bind_method(value, property)
+}
+
+fn bind_function_property(value: &Value, key: &str) -> Value {
+    let builtin = match key {
+        "call" => Builtin::FunctionCall,
+        "bind" => Builtin::FunctionBind,
+        _ => return Value::Undefined,
+    };
+    bind_method(value, Value::Builtin(builtin))
+}
+
+fn bind_method(receiver: &Value, property: Value) -> Value {
+    let Value::Builtin(builtin) = property else {
+        return property;
+    };
+    if !matches!(builtin, Builtin::FunctionCall | Builtin::FunctionBind) {
+        return Value::Builtin(builtin);
+    }
+    Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
+        target: Value::Builtin(builtin),
+        receiver: receiver.clone(),
+        arguments: Vec::new(),
+    }))
 }
 
 fn promise_property(value: &Value, key: &str) -> Value {
