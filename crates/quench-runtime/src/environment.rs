@@ -6,6 +6,7 @@ use crate::value::Value;
 #[derive(Debug, Default, PartialEq)]
 pub struct Environment {
     slots: RefCell<Vec<Rc<RefCell<Value>>>>,
+    caller: Option<Rc<Self>>,
 }
 
 impl Environment {
@@ -22,6 +23,7 @@ impl Environment {
         let slots = source.iter().take(count).cloned().collect();
         Rc::new(Self {
             slots: RefCell::new(slots),
+            caller: None,
         })
     }
 
@@ -30,6 +32,7 @@ impl Environment {
         slots.extend(values.into_iter().map(|value| Rc::new(RefCell::new(value))));
         Rc::new(Self {
             slots: RefCell::new(slots),
+            caller: crate::locals::is_installed().then(crate::locals::current),
         })
     }
 
@@ -54,6 +57,9 @@ impl Environment {
     }
 
     pub(crate) fn replace_object(&self, old: &Value, new: &Value) {
+        if let Some(caller) = &self.caller {
+            caller.replace_object(old, new);
+        }
         let (Value::Object(old), Value::Object(new)) = (old, new) else {
             return;
         };
