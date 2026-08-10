@@ -20,6 +20,13 @@ fn strictness(body: &oxc::ast::ast::FunctionBody<'_>) -> FunctionStrictness {
     }
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct FunctionMetadata {
+    kind: FunctionKind,
+    strictness: FunctionStrictness,
+    is_async: bool,
+}
+
 pub(crate) fn function_parameters(
     function: &oxc::ast::ast::Function<'_>,
 ) -> Result<(HashMap<String, u16>, u16), Vec<String>> {
@@ -109,9 +116,7 @@ fn emit_function_op(
     body: Vec<Op>,
     params: u16,
     captures: u16,
-    kind: FunctionKind,
-    strictness: FunctionStrictness,
-    is_async: bool,
+    metadata: FunctionMetadata,
 ) -> u16 {
     let register = *next_register;
     *next_register = next_register.saturating_add(1);
@@ -120,9 +125,9 @@ fn emit_function_op(
         body,
         params,
         captures,
-        kind,
-        strictness,
-        is_async,
+        kind: metadata.kind,
+        strictness: metadata.strictness,
+        is_async: metadata.is_async,
     });
     register
 }
@@ -144,9 +149,11 @@ pub(crate) fn reduce_expression(
         body_ops,
         parameter_count,
         captures,
-        FunctionKind::Ordinary,
-        strictness(body),
-        function.r#async,
+        FunctionMetadata {
+            kind: FunctionKind::Ordinary,
+            strictness: strictness(body),
+            is_async: function.r#async,
+        },
     ))
 }
 
@@ -171,9 +178,11 @@ pub(crate) fn reduce_arrow(
         body_ops,
         parameter_count,
         captures,
-        FunctionKind::Arrow,
-        FunctionStrictness::Sloppy,
-        function.r#async,
+        FunctionMetadata {
+            kind: FunctionKind::Arrow,
+            strictness: FunctionStrictness::Sloppy,
+            is_async: function.r#async,
+        },
     ))
 }
 
@@ -285,9 +294,7 @@ pub(crate) fn write(
     body: &[Op],
     params: u16,
     captures: u16,
-    kind: FunctionKind,
-    strictness: FunctionStrictness,
-    is_async: bool,
+    metadata: FunctionMetadata,
 ) {
     let mut values = registers
         .iter()
@@ -295,8 +302,15 @@ pub(crate) fn write(
         .cloned()
         .collect::<Vec<_>>();
     values.resize(usize::from(captures), crate::value::Value::Undefined);
-    let value = make(body, params, values, kind, strictness, is_async);
-    if matches!(kind, FunctionKind::Ordinary) {
+    let value = make(
+        body,
+        params,
+        values,
+        metadata.kind,
+        metadata.strictness,
+        metadata.is_async,
+    );
+    if matches!(metadata.kind, FunctionKind::Ordinary) {
         if let crate::value::Value::Function(function) = &value {
             function.properties.borrow_mut().push((
                 "\0ordinary_function".to_string(),
@@ -308,7 +322,7 @@ pub(crate) fn write(
 }
 
 pub(crate) fn write_op(registers: &mut Vec<crate::value::Value>, op: &Op) {
-    let (dst, body, params, captures, kind, strictness, is_async) = match op {
+    let (dst, body, params, captures, metadata) = match op {
         Op::MakeFunction {
             dst,
             body,
@@ -321,9 +335,11 @@ pub(crate) fn write_op(registers: &mut Vec<crate::value::Value>, op: &Op) {
             body,
             params,
             captures,
-            FunctionKind::Ordinary,
-            *strictness,
-            is_async,
+            FunctionMetadata {
+                kind: FunctionKind::Ordinary,
+                strictness: *strictness,
+                is_async: *is_async,
+            },
         ),
         Op::MakeFunctionWithKind {
             dst,
@@ -333,12 +349,20 @@ pub(crate) fn write_op(registers: &mut Vec<crate::value::Value>, op: &Op) {
             kind,
             strictness,
             is_async,
-        } => (dst, body, params, captures, *kind, *strictness, is_async),
+        } => (
+            dst,
+            body,
+            params,
+            captures,
+            FunctionMetadata {
+                kind: *kind,
+                strictness: *strictness,
+                is_async: *is_async,
+            },
+        ),
         _ => return,
     };
-    write(
-        registers, *dst, body, *params, *captures, kind, strictness, *is_async,
-    );
+    write(registers, *dst, body, *params, *captures, metadata);
 }
 
 fn build_registers(
