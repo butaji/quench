@@ -12,11 +12,9 @@ pub(crate) fn boxed_constructor(value: &Value) -> Builtin {
         _ => Builtin::Object,
     }
 }
-
 pub(crate) fn has_own_property(receiver: Option<&Value>, key: Option<&Value>) -> Value {
     has_own_property_result(receiver, key).unwrap_or(Value::Boolean(false))
 }
-
 pub(crate) fn get_prototype_of(value: Option<&Value>) -> Result<Value, VmError> {
     let value = require_object_coercible(value)?;
     Ok(match value {
@@ -36,7 +34,6 @@ pub(crate) fn get_prototype_of(value: Option<&Value>) -> Result<Value, VmError> 
         _ => Value::Null,
     })
 }
-
 fn is_typed_array_constructor(builtin: Builtin) -> bool {
     matches!(
         builtin,
@@ -51,7 +48,6 @@ fn is_typed_array_constructor(builtin: Builtin) -> bool {
             | Builtin::Uint8ClampedArray
     )
 }
-
 pub(crate) fn execute_special(
     builtin: Builtin,
     receiver: Option<&Value>,
@@ -73,11 +69,23 @@ pub(crate) fn execute_special(
         Builtin::ObjectGetOwnPropertyNames => crate::own_keys::names(arguments.first()),
         Builtin::ObjectGetOwnPropertySymbols => crate::own_keys::symbols(arguments.first()),
         Builtin::ObjectKeys => Ok(crate::own_keys::enumerable_names(arguments.first())),
+        Builtin::ObjectCreate => create(arguments),
         Builtin::ObjectSetPrototypeOf => set_prototype_of(arguments),
         _ => Ok(Value::Undefined),
     }
 }
-
+fn create(arguments: &[Value]) -> Result<Value, VmError> {
+    let prototype = arguments.first().cloned().unwrap_or(Value::Undefined);
+    if !matches!(prototype, Value::Null) && !crate::value::is_object(&prototype) {
+        return Err(crate::value::error::throw_type_error(
+            "Object prototype must be an object or null",
+        ));
+    }
+    Ok(Value::Object(Rc::new(vec![(
+        "\0prototype".to_string(),
+        prototype,
+    )])))
+}
 pub(crate) fn set_prototype_of(arguments: &[Value]) -> Result<Value, VmError> {
     let Some(target @ Value::Object(_)) = arguments.first() else {
         return Err(crate::value::error::throw_type_error(
@@ -97,7 +105,6 @@ pub(crate) fn set_prototype_of(arguments: &[Value]) -> Result<Value, VmError> {
     crate::super_scope::attach_home_objects(&result);
     Ok(result)
 }
-
 fn has_own_target<'a>(
     receiver: Option<&'a Value>,
     arguments: &'a [Value],
@@ -107,11 +114,9 @@ fn has_own_target<'a>(
     }
     (receiver, arguments.first())
 }
-
 fn static_target(arguments: &[Value]) -> (Option<&Value>, Option<&Value>) {
     (arguments.first(), arguments.get(1))
 }
-
 fn has_own_property_result(
     receiver: Option<&Value>,
     key: Option<&Value>,
@@ -123,7 +128,6 @@ fn has_own_property_result(
     let receiver = require_object_coercible(receiver)?;
     Ok(Value::Boolean(owns_property(receiver, &key)?))
 }
-
 fn require_object_coercible(receiver: Option<&Value>) -> Result<&Value, VmError> {
     match receiver {
         Some(Value::Null) | Some(Value::Undefined) | None => {
@@ -137,7 +141,6 @@ fn require_object_coercible(receiver: Option<&Value>) -> Result<&Value, VmError>
         Some(value) => Ok(value),
     }
 }
-
 fn owns_property(receiver: &Value, key: &str) -> Result<bool, VmError> {
     Ok(match receiver {
         Value::Object(properties) => properties
@@ -168,13 +171,11 @@ fn owns_property(receiver: &Value, key: &str) -> Result<bool, VmError> {
         _ => false,
     })
 }
-
 fn builtin_owns_property(builtin: Builtin, key: &str) -> bool {
     (builtin == Builtin::Object && key == "hasOwn")
         || super::callable_property(builtin, key).is_some()
         || super::special_property(builtin, key).is_some()
 }
-
 fn valid_index(key: &str, len: usize) -> bool {
     key.parse::<usize>().is_ok_and(|index| index < len)
 }
