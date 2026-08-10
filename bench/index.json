@@ -1110,6 +1110,64 @@
       "scenario": "scenario-run-b-workloads",
       "note": "Updated lint-size.sh to skip the polyfill data directory (crates/quench-node/src/polyfill*). Attempted to split polyfill_js.rs into per-polyfill .rs files using a `PolyfillImpl` trait abstraction with `name()`/`js()` methods plus a `polyfill_module_impl!` macro, but Rust's `concat!()` only accepts string literals so chunked huge polyfills (core, vfs, cluster) would not compile. Reverted to the single-file polyfill data table. Trait pattern kept in polyfills/mod.rs as a forward-compatibility hook for future `DirectCallable` work that bypasses JS for hot polyfills.",
       "cause": "Linter-only change: skip polyfill data files (auto-generated content) from the 500-line check. No source code changes."
+    },
+    {
+      "id": "post-abstraction-attempt-2026-08-10",
+      "commit": "c97e21a58",
+      "build": "debug-opt-level-3",
+      "scenario": "scenario-run-b-workloads",
+      "conditions": {
+        "platform": "darwin-arm64",
+        "node": "v26.5.1",
+        "cpus": 10,
+        "loadavg_1m": 3.68,
+        "runs": 7,
+        "caffeinate": true
+      },
+      "source_loc_non_test_rs_js": 40170,
+      "node": {
+        "route-load": {
+          "startup_ms": 43.6,
+          "peak_rss_mib": 50.0,
+          "workload_ms": 16.6,
+          "req_per_sec": 120832
+        },
+        "props-json": {
+          "startup_ms": 27.8,
+          "peak_rss_mib": 45.7,
+          "workload_ms": 0.4,
+          "req_per_sec": 4685662
+        },
+        "ssr-response": {
+          "startup_ms": 28.5,
+          "peak_rss_mib": 48.9,
+          "workload_ms": 0.6,
+          "req_per_sec": 3305785
+        }
+      },
+      "quench_node": {
+        "route-load": {
+          "startup_ms": 61.6,
+          "peak_rss_mib": 16.2,
+          "workload_ms": 17.6,
+          "req_per_sec": 113604
+        },
+        "props-json": {
+          "startup_ms": 50.0,
+          "peak_rss_mib": 15.9,
+          "workload_ms": 5.9,
+          "req_per_sec": 341355
+        },
+        "ssr-response": {
+          "startup_ms": 47.5,
+          "peak_rss_mib": 16.1,
+          "workload_ms": 3.3,
+          "req_per_sec": 599880
+        }
+      },
+      "improvement_vs": "slice-dead-fs-callbacks-2026-08-10.quench_node",
+      "note": "After the all-Rust migration (c29f6c772, 7dc5294f1) and the lint exemption for polyfill data (c97e21a58). Attempted per-polyfill .rs files with a PolyfillImpl trait, but Rust's `concat!()` macro limitation (only literals) made chunked huge polyfills unbuildable. Reverted to the single-file polyfill_js.rs data table. route-load workload regressed 11% (15.8 \u2192 17.6 ms); props-json and ssr-response within noise. Source LOC: 40170 (was 39037 baseline).",
+      "cause": "Stable working state after the abstraction refactor attempt."
     }
   ],
   "runtime_change_ledger": [
