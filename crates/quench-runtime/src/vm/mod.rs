@@ -1,5 +1,7 @@
 use crate::intl::tolocale::value::{is_finite, to_number, to_string};
-use crate::ops::{Builtin, HostCapabilityKind, HostCapabilityRef, Op, RealmId};
+use crate::ops::{
+    Builtin, FunctionKind, FunctionStrictness, HostCapabilityKind, HostCapabilityRef, Op, RealmId,
+};
 use crate::value::Value;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -164,6 +166,20 @@ pub(crate) fn current_global_object() -> Value {
                 .map(|object| Value::Object(object.clone()))
         })
         .unwrap_or(Value::Undefined)
+}
+
+pub(crate) fn bare_call_receiver(
+    function: &crate::value::FunctionValue,
+    this_value: &Value,
+) -> Value {
+    if matches!(this_value, Value::Undefined)
+        && matches!(function.kind, FunctionKind::Ordinary)
+        && matches!(function.strictness, FunctionStrictness::Sloppy)
+    {
+        current_global_object()
+    } else {
+        this_value.clone()
+    }
 }
 
 impl GlobalObjectGuard {

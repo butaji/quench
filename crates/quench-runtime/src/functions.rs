@@ -399,15 +399,7 @@ pub(crate) fn execute(
     this_value: &crate::value::Value,
     arguments: &[crate::value::Value],
 ) -> Result<crate::value::Value, crate::execute::VmError> {
-    let this_value = if matches!(this_value, crate::value::Value::Undefined)
-        && function.properties.borrow().iter().any(|(key, value)| {
-            matches!(key.as_str(), "\0dynamic_function" | "\0ordinary_function")
-                && matches!(value, crate::value::Value::Boolean(true))
-        }) {
-        crate::vm::current_global_object()
-    } else {
-        this_value.clone()
-    };
+    let this_value = crate::vm::bare_call_receiver(function, this_value);
     let registers = build_registers(function, &this_value, arguments);
     let completion = crate::execute::execute_with_registers(&function.body, registers);
     if function.is_async {
