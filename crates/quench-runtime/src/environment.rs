@@ -56,20 +56,23 @@ impl Environment {
         *slots[index].borrow_mut() = value;
     }
 
-    pub(crate) fn replace_object(&self, old: &Value, new: &Value) {
+    pub(crate) fn replace_value(&self, old: &Value, new: &Value) {
         if let Some(caller) = &self.caller {
-            caller.replace_object(old, new);
+            caller.replace_value(old, new);
         }
-        let (Value::Object(old), Value::Object(new)) = (old, new) else {
-            return;
-        };
         for slot in self.slots.borrow().iter() {
             let mut value = slot.borrow_mut();
-            if let Value::Object(object) = &*value {
-                if Rc::ptr_eq(object, old) {
-                    *value = Value::Object(new.clone());
-                }
+            if same_identity(&value, old) {
+                *value = new.clone();
             }
         }
+    }
+}
+
+fn same_identity(left: &Value, right: &Value) -> bool {
+    match (left, right) {
+        (Value::Object(left), Value::Object(right)) => Rc::ptr_eq(left, right),
+        (Value::Array(left), Value::Array(right)) => Rc::ptr_eq(left, right),
+        _ => false,
     }
 }

@@ -51,6 +51,6 @@ pub(crate) fn capture(count: u16) -> Rc<Environment> {
     Environment::capture(&current(), count)
 }
 
-pub(crate) fn replace_object(old: &Value, new: &Value) {
-    current().replace_object(old, new);
+pub(crate) fn replace_value(old: &Value, new: &Value) {
+    current().replace_value(old, new);
 }
