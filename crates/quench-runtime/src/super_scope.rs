@@ -65,25 +65,61 @@ pub(crate) fn is_strict() -> bool {
 }
 
 pub(crate) fn execute_get(registers: &mut Vec<Value>, op: &crate::ops::Op) -> Result<(), VmError> {
-    let crate::ops::Op::GetSuperProperty { dst, key } = op else {
-        return Err(VmError::MissingReturn);
-    };
-    let context = current()?;
-    let prototype = crate::execute::get_property(&context.home, "\0prototype");
-    let value = get_with_receiver(&prototype, key, &context.receiver)?;
-    crate::execute::write_value(registers, *dst, value);
-    Ok(())
+    match op {
+        crate::ops::Op::GetSuperProperty { dst, key } => {
+            let context = current()?;
+            let prototype = require_super_base(&context.home)?;
+            let value = get_with_receiver(&prototype, key, &context.receiver)?;
+            crate::execute::write_value(registers, *dst, value);
+            Ok(())
+        }
+        crate::ops::Op::GetSuperPropertyDynamic { dst, key } => {
+            let context = current()?;
+            let prototype = require_super_base(&context.home)?;
+            let key_value = crate::execute::read_register(registers, *key)?;
+            let key_string = crate::properties::dynamic_property_key(&key_value)?;
+            let value = get_with_receiver(&prototype, &key_string, &context.receiver)?;
+            crate::execute::write_value(registers, *dst, value);
+            Ok(())
+        }
+        _ => Err(VmError::MissingReturn),
+    }
+}
+
+pub(crate) fn execute_set(registers: &mut [Value], op: &crate::ops::Op) -> Result<(), VmError> {
+    match op {
+        crate::ops::Op::SetSuperProperty { key, src } => {
+            let context = current()?;
+            let prototype = require_super_base(&context.home)?;
+            let value = crate::execute::read_register(registers, *src)?.clone();
+            put_with_receiver(&prototype, key, value, &context.receiver)?;
+            Ok(())
+        }
+        crate::ops::Op::SetSuperPropertyDynamic { key, src } => {
+            let context = current()?;
+            let prototype = require_super_base(&context.home)?;
+            let key_value = crate::execute::read_register(registers, *key)?;
+            let key_string = crate::properties::dynamic_property_key(&key_value)?;
+            let value = crate::execute::read_register(registers, *src)?.clone();
+            put_with_receiver(&prototype, &key_string, value, &context.receiver)?;
+            Ok(())
+        }
+        _ => Err(VmError::MissingReturn),
+    }
 }
 
 pub(crate) fn execute_call(registers: &mut Vec<Value>, op: &crate::ops::Op) -> Result<(), VmError> {
-    if matches!(op, crate::ops::Op::GetSuperProperty { .. }) {
+    if matches!(
+        op,
+        crate::ops::Op::GetSuperProperty { .. } | crate::ops::Op::GetSuperPropertyDynamic { .. }
+    ) {
         return execute_get(registers, op);
     }
     let crate::ops::Op::CallSuperMethod { dst, key, args } = op else {
         return Err(VmError::MissingReturn);
     };
     let context = current()?;
-    let prototype = crate::execute::get_property(&context.home, "\0prototype");
+    let prototype = require_super_base(&context.home)?;
     let callee = get_with_receiver(&prototype, key, &context.receiver)?;
     let arguments = args
         .iter()
@@ -157,6 +193,52 @@ fn get_with_receiver(target: &Value, key: &str, receiver: &Value) -> Result<Valu
         return Ok(Value::Undefined);
     }
     crate::functions::execute_target(&getter, receiver, &[])
+}
+
+fn put_with_receiver(
+    target: &Value,
+    key: &str,
+    value: Value,
+    receiver: &Value,
+) -> Result<(), VmError> {
+    if matches!(target, Value::Proxy(_)) {
+        crate::proxy::proxy_set(target, key, &value, Some(receiver))?;
+        return Ok(());
+    }
+    if let Some(setter) = crate::property_define::accessor(target, key, "set") {
+        if matches!(setter, Value::Undefined) {
+            return strict_write_failure();
+        }
+        crate::functions::execute_target(&setter, receiver, std::slice::from_ref(&value))?;
+        return Ok(());
+    }
+    if crate::builtins::descriptor_flag(target, key, "writable") == Some(false) {
+        return strict_write_failure();
+    }
+    let result = crate::builtins::set_property(target.clone(), key, value);
+    crate::locals::replace_value(target, &result);
+    Ok(())
+}
+
+fn strict_write_failure() -> Result<(), VmError> {
+    if is_strict() {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot assign to read-only property",
+        ));
+    }
+    Ok(())
+}
+
+/// Read the [[HomeObject]][[Prototype]] for `super`. Throws TypeError when
+/// the home's prototype is null/undefined (Spec: RequireObjectCoercible).
+fn require_super_base(home: &Value) -> Result<Value, VmError> {
+    let prototype = crate::execute::get_property(home, "\0prototype");
+    match prototype {
+        Value::Null | Value::Undefined => Err(crate::value::error::throw_type_error(
+            "Super has no prototype",
+        )),
+        _ => Ok(prototype),
+    }
 }
 
 pub(crate) fn attach_home_objects(value: &Value) {

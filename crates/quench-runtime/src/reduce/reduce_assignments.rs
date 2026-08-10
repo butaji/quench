@@ -339,8 +339,8 @@ pub(crate) fn get(place: &Place, ops: &mut Vec<Op>, next: &mut u16) -> Option<u1
             key: key.clone(),
         }),
         Place::Super {
-            key: PlaceKey::Dynamic(_),
-        } => return None,
+            key: PlaceKey::Dynamic(key),
+        } => ops.push(Op::GetSuperPropertyDynamic { dst, key: *key }),
     }
     Some(dst)
 }
@@ -383,9 +383,16 @@ pub(crate) fn put(place: Place, value: u16, ops: &mut Vec<Op>) -> Option<()> {
             name,
             src: value,
         }),
-        Place::Super { .. } => return None,
+        Place::Super { key } => emit_super_put(ops, key, value),
     }
     Some(())
+}
+
+fn emit_super_put(ops: &mut Vec<Op>, key: PlaceKey, value: u16) {
+    match key {
+        PlaceKey::Static(key) => ops.push(Op::SetSuperProperty { key, src: value }),
+        PlaceKey::Dynamic(key) => ops.push(Op::SetSuperPropertyDynamic { key, src: value }),
+    }
 }
 
 fn emit_property_put(ops: &mut Vec<Op>, object: u16, key: PlaceKey, value: u16) {

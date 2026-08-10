@@ -161,21 +161,78 @@ pub fn reduce_expression(
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
-    if let Expression::TaggedTemplateExpression(tagged) = expression {
-        return super::tagged_template::reduce(tagged, ops, facts, next_register, locals);
-    }
-    if let Expression::AwaitExpression(await_expression) = expression {
-        return reduce_await(await_expression, ops, facts, next_register, locals);
-    }
-    if let Expression::ParenthesizedExpression(value) = expression {
-        return transparent::reduce(value, ops, facts, next_register, locals);
+    match expression {
+        Expression::TaggedTemplateExpression(tagged) => {
+            return super::tagged_template::reduce(tagged, ops, facts, next_register, locals);
+        }
+        Expression::AwaitExpression(await_expression) => {
+            return reduce_await(await_expression, ops, facts, next_register, locals);
+        }
+        Expression::ImportExpression(import) => {
+            return reduce_import_expression(import, ops, facts, next_register, locals);
+        }
+        Expression::ParenthesizedExpression(value) => {
+            return transparent::reduce(value, ops, facts, next_register, locals);
+        }
+        _ => {}
     }
     if let Some(value) = special::reduce(expression, ops, facts, next_register, locals) {
         return Some(value);
     }
-    if let Some(register) = reduce_atom(expression, ops, facts, next_register, locals) {
-        return Some(register);
+    reduce_atom(expression, ops, facts, next_register, locals)
+        .or_else(|| reduce_binary(expression, ops, facts, next_register, locals))
+}
+
+fn reduce_await(
+    expression: &oxc::ast::ast::AwaitExpression<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<u16> {
+    let src = reduce_expression(&expression.argument, ops, facts, next_register, locals)?;
+    let dst = take_register(next_register);
+    ops.push(Op::Await { dst, src });
+    Some(dst)
+}
+
+fn reduce_import_expression(
+    import: &oxc::ast::ast::ImportExpression<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<u16> {
+    // Dynamic imports have no module graph in this runtime, so eagerly
+    // evaluate the specifier/options for side effects and return undefined.
+    reduce_expression(&import.source, ops, facts, next_register, locals)?;
+    for argument in &import.arguments {
+        reduce_expression(argument, ops, facts, next_register, locals)?;
     }
+    Some(crate::reduce_support::emit_undefined(ops, next_register))
+}
+
+fn reduce_in(
+    binary: &oxc::ast::ast::BinaryExpression<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<u16> {
+    let key = reduce_expression(&binary.left, ops, facts, next_register, locals)?;
+    let object = reduce_expression(&binary.right, ops, facts, next_register, locals)?;
+    let dst = take_register(next_register);
+    ops.push(Op::HasPropertyDynamic { dst, object, key });
+    Some(dst)
+}
+
+fn reduce_binary(
+    expression: &Expression<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<u16> {
     let Expression::BinaryExpression(binary) = expression else {
         return None;
     };
@@ -192,33 +249,6 @@ pub fn reduce_expression(
         lhs,
         rhs,
     });
-    Some(dst)
-}
-
-fn reduce_await(
-    expression: &oxc::ast::ast::AwaitExpression<'_>,
-    ops: &mut Vec<Op>,
-    facts: &mut ProgramDb,
-    next_register: &mut u16,
-    locals: &HashMap<String, u16>,
-) -> Option<u16> {
-    let src = reduce_expression(&expression.argument, ops, facts, next_register, locals)?;
-    let dst = take_register(next_register);
-    ops.push(Op::Await { dst, src });
-    Some(dst)
-}
-
-fn reduce_in(
-    binary: &oxc::ast::ast::BinaryExpression<'_>,
-    ops: &mut Vec<Op>,
-    facts: &mut ProgramDb,
-    next_register: &mut u16,
-    locals: &HashMap<String, u16>,
-) -> Option<u16> {
-    let key = reduce_expression(&binary.left, ops, facts, next_register, locals)?;
-    let object = reduce_expression(&binary.right, ops, facts, next_register, locals)?;
-    let dst = take_register(next_register);
-    ops.push(Op::HasPropertyDynamic { dst, object, key });
     Some(dst)
 }
 
