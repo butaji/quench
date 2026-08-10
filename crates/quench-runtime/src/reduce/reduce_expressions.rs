@@ -108,6 +108,9 @@ pub fn reduce_declaration(
 ) -> Result<(), Vec<String>> {
     for declarator in &declaration.declarations {
         allocate_pattern_slots(&declarator.id, declaration.kind, next_slot, locals);
+        if declaration.kind == VariableDeclarationKind::Var && declarator.init.is_none() {
+            continue;
+        }
         let register = match declarator.init.as_ref() {
             Some(init) => reduce_expression(init, ops, facts, next_register, locals),
             None => Some(crate::reduce_support::emit_undefined(ops, next_register)),
@@ -307,6 +310,7 @@ fn reduce_direct_eval(
         dst,
         source,
         strict: facts.strict,
+        global: !facts.in_function,
         bindings,
         forbidden_var_names: facts.eval_var_barrier.clone(),
     });
