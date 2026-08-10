@@ -20,6 +20,9 @@ pub(crate) mod value {
                 .collect::<Vec<_>>()
                 .join(","),
             Some(Value::Object(_)) => "[object Object]".to_string(),
+            Some(Value::ArrayBuffer(_)) => "[object ArrayBuffer]".to_string(),
+            Some(Value::Float32Array(_)) => "[object Float32Array]".to_string(),
+            Some(Value::Float64Array(_)) => "[object Float64Array]".to_string(),
             Some(
                 Value::Function(_)
                 | Value::BoundFunction(_)
@@ -58,6 +61,9 @@ pub(crate) mod value {
                 .map_or(f64::NAN, |value| to_number(Some(value))),
             Some(
                 Value::Array(_)
+                | Value::ArrayBuffer(_)
+                | Value::Float32Array(_)
+                | Value::Float64Array(_)
                 | Value::Function(_)
                 | Value::BoundFunction(_)
                 | Value::Builtin(_)
@@ -132,6 +138,9 @@ pub(crate) mod value {
             Value::String(value) => !value.is_empty(),
             Value::Null | Value::Undefined => false,
             Value::Array(_)
+            | Value::ArrayBuffer(_)
+            | Value::Float32Array(_)
+            | Value::Float64Array(_)
             | Value::Object(_)
             | Value::Builtin(_)
             | Value::Function(_)
@@ -147,7 +156,12 @@ pub(crate) mod value {
     pub(crate) fn type_of(value: &Value) -> &'static str {
         match value {
             Value::Undefined => "undefined",
-            Value::Null | Value::Array(_) | Value::Object(_) => "object",
+            Value::Null
+            | Value::Array(_)
+            | Value::ArrayBuffer(_)
+            | Value::Float32Array(_)
+            | Value::Float64Array(_)
+            | Value::Object(_) => "object",
             Value::Boolean(_) => "boolean",
             Value::Number(_) => "number",
             Value::String(value)
@@ -202,6 +216,15 @@ pub(crate) mod value {
         match (left, right) {
             (Value::Array(left), Value::Array(right)) => std::rc::Rc::ptr_eq(left, right),
             (Value::Object(left), Value::Object(right)) => std::rc::Rc::ptr_eq(left, right),
+            (Value::ArrayBuffer(left), Value::ArrayBuffer(right)) => {
+                std::rc::Rc::ptr_eq(left, right)
+            }
+            (Value::Float32Array(left), Value::Float32Array(right)) => {
+                std::rc::Rc::ptr_eq(left, right)
+            }
+            (Value::Float64Array(left), Value::Float64Array(right)) => {
+                std::rc::Rc::ptr_eq(left, right)
+            }
             (Value::Function(left), Value::Function(right)) => std::rc::Rc::ptr_eq(left, right),
             (Value::Number(left), Value::Number(right)) => left == right,
             (Value::Boolean(left), Value::Boolean(right)) => left == right,
