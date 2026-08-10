@@ -69,6 +69,7 @@ fn builtin(name: &str) -> Option<crate::ops::Builtin> {
         "URIError" => Some(crate::ops::Builtin::URIError),
         "AggregateError" => Some(crate::ops::Builtin::AggregateError),
         "Date" => Some(crate::ops::Builtin::Date),
+        "Promise" => Some(crate::ops::Builtin::Promise),
         "Reflect" => Some(crate::ops::Builtin::Reflect),
         "RegExp" => Some(crate::ops::Builtin::RegExp),
         "Intl" => Some(crate::ops::Builtin::Intl),
