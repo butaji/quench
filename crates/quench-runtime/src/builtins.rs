@@ -217,6 +217,10 @@ pub(crate) fn delete_property(target: Value, key: &str) -> Value {
                 .cloned()
                 .collect(),
         )),
+        Value::Array(mut values) if values.is_arguments() => {
+            Rc::make_mut(&mut values).delete_property(key);
+            Value::Array(values)
+        }
         Value::Array(values) if key != "length" => Value::Array(values),
         value => value,
     }
@@ -392,11 +396,16 @@ include!("builtins_descriptor.rs");
 
 fn set_array_property(mut values: Rc<crate::value::ArrayData>, key: &str, value: Value) -> Value {
     if key == "length" {
+        if values.is_arguments() {
+            Rc::make_mut(&mut values).set_property(key, value);
+            return Value::Array(values);
+        }
         let length = value_to_number(&value).max(0.0) as usize;
         Rc::make_mut(&mut values).set_length(length);
         return Value::Array(values);
     }
     let Ok(index) = key.parse::<usize>() else {
+        Rc::make_mut(&mut values).set_property(key, value);
         return Value::Array(values);
     };
     Rc::make_mut(&mut values).set_index(index, value);
@@ -462,7 +471,6 @@ pub(crate) fn prototype_value_of(receiver: Option<&Value>) -> Value {
     }
 }
 
-/// Implement `Function.prototype.toString`.
 pub(crate) fn function_prototype_to_string(receiver: Option<&Value>) -> Value {
     match receiver {
         Some(Value::Builtin(b)) => Value::String(format!(
@@ -476,11 +484,9 @@ pub(crate) fn function_prototype_to_string(receiver: Option<&Value>) -> Value {
     }
 }
 
-/// Implement `Function.prototype.valueOf`.
 pub(crate) fn function_prototype_value_of(receiver: Option<&Value>) -> Value {
     prototype_value_of(receiver)
 }
-
 fn value_to_string(value: &Value) -> String {
     use Value::*;
     match value {
