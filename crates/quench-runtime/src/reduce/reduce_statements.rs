@@ -313,14 +313,15 @@ fn function_locals(
     for slot in parameters.values_mut() {
         *slot = slot.saturating_add(captures);
     }
-    parameters.insert(
+    let mut bindings = locals.clone();
+    bindings.insert(
         "arguments".to_string(),
         captures.saturating_add(parameter_count),
     );
-    parameters.insert(
+    bindings.insert(
         "this".to_string(),
         captures.saturating_add(parameter_count).saturating_add(1),
     );
-    parameters.extend(locals.iter().map(|(name, slot)| (name.clone(), *slot)));
-    Ok((parameters, parameter_count, captures))
+    bindings.extend(parameters);
+    Ok((bindings, parameter_count, captures))
 }
