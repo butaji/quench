@@ -22,6 +22,7 @@ pub struct ResidualProgram {
     pub facts: ProgramDb,
     pub ops: Vec<Op>,
 }
+
 pub fn reduce_source(source: &str) -> Result<ResidualProgram, Vec<String>> {
     reduce_source_with_type(source, SourceType::cjs())
 }
@@ -71,36 +72,89 @@ fn reduce_statements(
     source_type: SourceType,
     facts: &mut ProgramDb,
 ) -> Result<Vec<Op>, Vec<String>> {
-    let mut locals = HashMap::new();
-    let mut ops = Vec::new();
-    let mut next_slot: u16 = 0;
-    let mut next_register: u16 = 0;
-    let global_slot = next_slot;
-    next_slot = next_slot.saturating_add(1);
-    locals.insert(GLOBAL_THIS.to_string(), global_slot);
-    if !source_type.is_module() {
-        locals.insert(SCRIPT_THIS_SLOT.to_string(), global_slot);
+    let mut state = StatementReducer::new(source_type);
+    let last = state.append(statements, facts, true)?;
+    crate::reduce_support::finish_program(state.ops, last)
+}
+
+pub(super) struct StatementReducer {
+    locals: HashMap<String, u16>,
+    pub(super) ops: Vec<Op>,
+    next_slot: u16,
+    next_register: u16,
+}
+
+impl StatementReducer {
+    pub(super) fn new(source_type: SourceType) -> Self {
+        let mut locals = HashMap::from([(GLOBAL_THIS.to_string(), 0)]);
+        if !source_type.is_module() {
+            locals.insert(SCRIPT_THIS_SLOT.to_string(), 0);
+        }
+        let mut ops = Vec::new();
+        let mut next_register = 0;
+        let properties = global_properties(&mut ops, &mut next_register);
+        ops.push(Op::MakeObject {
+            dst: next_register,
+            properties,
+        });
+        ops.push(Op::StoreLocal {
+            slot: 0,
+            src: next_register,
+        });
+        next_register = next_register.saturating_add(1);
+        Self {
+            locals,
+            ops,
+            next_slot: 1,
+            next_register,
+        }
     }
-    let global_properties = global_properties(&mut ops, &mut next_register);
-    let global_register = next_register;
-    ops.push(Op::MakeObject {
-        dst: global_register,
-        properties: global_properties,
-    });
-    ops.push(Op::StoreLocal {
-        slot: global_slot,
-        src: global_register,
-    });
-    next_register = global_register.saturating_add(1);
-    reduce_statements_opt(
-        statements,
+
+    pub(super) fn append(
+        &mut self,
+        statements: &[Statement<'_>],
+        facts: &mut ProgramDb,
+        program_scope: bool,
+    ) -> Result<Option<u16>, Vec<String>> {
+        crate::reduce_support::predeclare_functions(
+            statements,
+            &mut self.locals,
+            &mut self.next_slot,
+        );
+        self.next_register = self
+            .next_register
+            .max(crate::reduce_support::register_base(&self.locals));
+        let mut last = None;
+        for statement in statements {
+            last = reduce_state_statement(self, statement, facts, program_scope)?.or(last);
+        }
+        Ok(last)
+    }
+}
+
+fn reduce_state_statement(
+    state: &mut StatementReducer,
+    statement: &Statement<'_>,
+    facts: &mut ProgramDb,
+    program_scope: bool,
+) -> Result<Option<u16>, Vec<String>> {
+    let value = reduce_statement(
+        statement,
+        &mut state.ops,
         facts,
-        locals,
-        next_slot,
-        true,
-        ops,
-        next_register,
-    )
+        &mut state.next_register,
+        &mut state.next_slot,
+        &mut state.locals,
+    )?;
+    if program_scope {
+        crate::reduce_support::mirror_script_bindings(
+            statement,
+            &state.locals,
+            &mut state.ops,
+            &mut state.next_register,
+        );
+    }
+    Ok(value)
 }
 
 fn global_properties(ops: &mut Vec<Op>, next_register: &mut u16) -> Vec<(String, u16)> {
@@ -190,7 +244,7 @@ fn reduce_statements_opt(
             last_value = Some(value);
         }
         if program_scope {
-            crate::reduce_support::mirror_script_function(
+            crate::reduce_support::mirror_script_bindings(
                 statement,
                 &locals,
                 &mut ops,
