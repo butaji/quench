@@ -112,7 +112,7 @@ pub(crate) fn execute_set_property(
     if crate::vm::is_global_object(&target) && crate::with_scope::set_if_bound(&key, &value) {
         return Ok(());
     }
-    if let Some(setter) = crate::vm::array_accessor(&target, &key, "set") {
+    if let Some(setter) = crate::property_define::accessor(&target, &key, "set") {
         if !matches!(setter, crate::value::Value::Undefined) {
             crate::functions::execute_target(&setter, &target, std::slice::from_ref(&value))?;
         }
@@ -177,31 +177,7 @@ fn property_key(value: &crate::ops::Constant) -> Option<String> {
 pub(crate) fn dynamic_property_key(
     value: &crate::value::Value,
 ) -> Result<String, crate::execute::VmError> {
-    match value {
-        crate::value::Value::String(value) => Ok(value.clone()),
-        crate::value::Value::Number(value) => {
-            if value.is_nan() {
-                Ok("NaN".to_string())
-            } else if value.is_infinite() {
-                Ok(if value.is_sign_negative() {
-                    "-Infinity"
-                } else {
-                    "Infinity"
-                }
-                .to_string())
-            } else if *value == 0.0 {
-                Ok("0".to_string())
-            } else {
-                Ok(value.to_string())
-            }
-        }
-        crate::value::Value::Boolean(value) => Ok(value.to_string()),
-        crate::value::Value::Null => Ok("null".to_string()),
-        crate::value::Value::Undefined => Ok("undefined".to_string()),
-        _ => Err(crate::execute::VmError::EvalError(
-            "unsupported property key".to_string(),
-        )),
-    }
+    crate::conversion::to_property_key(value)
 }
 
 pub(crate) fn reduce_assignment(

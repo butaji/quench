@@ -109,11 +109,7 @@ pub fn get_property_result(value: &Value, key: &str) -> Result<Value, VmError> {
         }
         return crate::functions::execute_target(&getter, value, &[]);
     }
-    let getter = match value {
-        Value::Object(properties) => accessor_getter(properties, key),
-        Value::Function(function) => accessor_getter(&function.properties.borrow(), key),
-        _ => None,
-    };
+    let getter = crate::property_define::accessor(value, key, "get");
     let Some(getter) = getter else {
         return Ok(get_property(value, key));
     };
@@ -132,32 +128,6 @@ pub(crate) fn array_accessor(value: &Value, key: &str, field: &str) -> Option<Va
         .iter()
         .rev()
         .find_map(|(name, value)| (name == field).then(|| value.clone()))
-}
-
-fn accessor_getter(properties: &[(String, Value)], key: &str) -> Option<Value> {
-    let descriptor_key = crate::builtins::descriptor_key(key);
-    let descriptor = properties
-        .iter()
-        .rev()
-        .find_map(|(name, value)| (name == &descriptor_key).then_some(value));
-    let Some(Value::Object(descriptor)) = descriptor else {
-        return inherited_accessor(properties, key);
-    };
-    descriptor
-        .iter()
-        .rev()
-        .find_map(|(name, value)| (name == "get").then(|| value.clone()))
-}
-
-fn inherited_accessor(properties: &[(String, Value)], key: &str) -> Option<Value> {
-    let prototype = properties
-        .iter()
-        .rev()
-        .find_map(|(name, value)| (name == "\0prototype").then_some(value))?;
-    let Value::Object(properties) = prototype else {
-        return None;
-    };
-    accessor_getter(properties, key)
 }
 
 fn host_capability_property(value: &Value, capability: HostCapabilityRef, key: &str) -> Value {

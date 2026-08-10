@@ -244,7 +244,9 @@ fn builtin_method2(builtin: Builtin, key: &str) -> Option<Builtin> {
     match (builtin, key) {
         (Object, "defineProperty") => Some(ObjectDefineProperty),
         (Object, "getOwnPropertyDescriptor") => Some(ObjectGetOwnPropertyDescriptor),
+        (Object, "keys") => Some(ObjectKeys),
         (Object, "getOwnPropertyNames") => Some(ObjectGetOwnPropertyNames),
+        (Object, "getOwnPropertySymbols") => Some(ObjectGetOwnPropertySymbols),
         (Object, "create") => Some(ObjectCreate),
         (Object, "freeze") => Some(ObjectFreeze),
         (Object, "seal") => Some(ObjectSeal),

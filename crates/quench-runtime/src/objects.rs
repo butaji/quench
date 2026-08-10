@@ -1,8 +1,11 @@
 use std::collections::HashMap;
 
-use oxc::ast::ast::{ObjectExpression, ObjectPropertyKind, PropertyKey};
+use oxc::ast::ast::{ObjectExpression, ObjectPropertyKind, PropertyKey, PropertyKind};
 
-use crate::{facts::ProgramDb, ops::Op};
+use crate::{
+    facts::ProgramDb,
+    ops::{Op, PropertyDefinitionKind},
+};
 
 pub(crate) fn reduce(
     object: &ObjectExpression<'_>,
@@ -11,23 +14,66 @@ pub(crate) fn reduce(
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
-    let mut properties = Vec::new();
+    let object_register = take_register(next_register);
+    ops.push(Op::MakeObject {
+        dst: object_register,
+        properties: Vec::new(),
+    });
     for property in &object.properties {
         let ObjectPropertyKind::ObjectProperty(property) = property else {
             return None;
         };
-        let key = property_key(&property.key)?;
+        let key = reduce_key(property, ops, facts, next_register, locals)?;
         let value =
             crate::reduce::reduce_expression(&property.value, ops, facts, next_register, locals)?;
-        properties.push((key, value));
+        ops.push(Op::DefineProperty {
+            object: object_register,
+            key,
+            value,
+            kind: definition_kind(property.kind),
+            enumerable: true,
+        });
     }
-    let register = *next_register;
-    *next_register = next_register.saturating_add(1);
-    ops.push(Op::MakeObject {
+    Some(object_register)
+}
+
+fn reduce_key(
+    property: &oxc::ast::ast::ObjectProperty<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<u16> {
+    if property.computed {
+        return crate::reduce::reduce_expression(
+            property.key.as_expression()?,
+            ops,
+            facts,
+            next,
+            locals,
+        );
+    }
+    let key = property_key(&property.key)?;
+    let register = take_register(next);
+    ops.push(Op::Const {
         dst: register,
-        properties,
+        value: crate::ops::Constant::String(key),
     });
     Some(register)
+}
+
+fn definition_kind(kind: PropertyKind) -> PropertyDefinitionKind {
+    match kind {
+        PropertyKind::Init => PropertyDefinitionKind::Data,
+        PropertyKind::Get => PropertyDefinitionKind::Get,
+        PropertyKind::Set => PropertyDefinitionKind::Set,
+    }
+}
+
+fn take_register(next: &mut u16) -> u16 {
+    let register = *next;
+    *next = next.saturating_add(1);
+    register
 }
 
 fn property_key(key: &PropertyKey<'_>) -> Option<String> {

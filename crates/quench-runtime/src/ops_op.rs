@@ -11,6 +11,13 @@ pub enum Op {
     GetPropertyDynamic { dst: u16, object: u16, key: u16 },
     SetProperty { object: u16, key: String, src: u16 },
     SetPropertyDynamic { object: u16, key: u16, src: u16 },
+    DefineProperty {
+        object: u16,
+        key: u16,
+        value: u16,
+        kind: PropertyDefinitionKind,
+        enumerable: bool,
+    },
     DeleteProperty { dst: u16, object: u16, key: u16, strict: bool },
     MakeFunction {
         dst: u16,
