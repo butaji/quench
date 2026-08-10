@@ -52,6 +52,7 @@ pub enum Op {
         src: u16,
     },
     DeleteProperty {
+        dst: u16,
         object: u16,
         key: u16,
     },
