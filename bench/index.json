@@ -1,0 +1,94 @@
+{
+  "schema": "quench-node.bench.v1",
+  "source": "/tmp/nextjs/my-app/bench.cjs",
+  "workloads": {
+    "route-load": "Read and inspect the generated Next.js route source 2000 times.",
+    "props-json": "Serialize representative page props 2000 times.",
+    "ssr-response": "Assemble representative SSR HTML responses 2000 times."
+  },
+  "measurement": {
+    "runs": 7,
+    "startup": "Process wall time including quench-node bootstrap.",
+    "peak_rss": "Peak resident set size from /usr/bin/time.",
+    "workload": "In-process workload duration.",
+    "req_per_sec": "requests / workload seconds; synthetic, not a Next.js HTTP server.",
+    "next_server_boundary": "Next.js SWC/Turbopack and next dev are Node-only in this comparison."
+  },
+  "snapshots": [
+    {
+      "id": "initial-smoke",
+      "commit": null,
+      "build": "debug",
+      "scenario": "shared-route-workload",
+      "node": { "startup_ms": 35.7, "peak_rss_mib": 46.9, "workload_ms": 8.5 },
+      "quench_node": { "startup_ms": 114.0, "peak_rss_mib": 17.8, "workload_ms": 26.9 }
+    },
+    {
+      "id": "scenario-run-a",
+      "commit": "c2d64e3ce",
+      "build": "debug",
+      "node": {
+        "route-load": { "startup_ms": 43.8, "peak_rss_mib": 49.9, "workload_ms": 15.8, "req_per_sec": 126705 },
+        "props-json": { "startup_ms": 28.0, "peak_rss_mib": 45.8, "workload_ms": 0.4, "req_per_sec": 4587598 },
+        "ssr-response": { "startup_ms": 28.8, "peak_rss_mib": 45.9, "workload_ms": 0.6, "req_per_sec": 3584229 }
+      },
+      "quench_node": {
+        "route-load": { "startup_ms": 127.2, "peak_rss_mib": 18.5, "workload_ms": 39.9, "req_per_sec": 50096 },
+        "props-json": { "startup_ms": 103.7, "peak_rss_mib": 17.8, "workload_ms": 17.1, "req_per_sec": 117144 },
+        "ssr-response": { "startup_ms": 96.2, "peak_rss_mib": 18.5, "workload_ms": 9.2, "req_per_sec": 217699 }
+      }
+    },
+    {
+      "id": "scenario-run-b",
+      "commit": "c2d64e3ce",
+      "build": "debug",
+      "node": {
+        "route-load": { "startup_ms": 67.8, "peak_rss_mib": 50.0, "workload_ms": 20.1, "req_per_sec": 99594 },
+        "props-json": { "startup_ms": 45.3, "peak_rss_mib": 45.8, "workload_ms": 0.4, "req_per_sec": 4463449 },
+        "ssr-response": { "startup_ms": 35.7, "peak_rss_mib": 45.9, "workload_ms": 0.6, "req_per_sec": 3575419 }
+      },
+      "quench_node": {
+        "route-load": { "startup_ms": 270.3, "peak_rss_mib": 18.6, "workload_ms": 124.8, "req_per_sec": 16032 },
+        "props-json": { "startup_ms": 122.5, "peak_rss_mib": 18.6, "workload_ms": 17.4, "req_per_sec": 115121 },
+        "ssr-response": { "startup_ms": 98.4, "peak_rss_mib": 18.5, "workload_ms": 9.3, "req_per_sec": 216053 }
+      }
+    },
+    {
+      "id": "release-run",
+      "commit": null,
+      "build": "release",
+      "scenario": "scenario-run-b-workloads",
+      "quench_node": {
+        "route-load": { "startup_ms": 63.4, "workload_ms": 18.9, "req_per_sec": 105787 },
+        "props-json": { "startup_ms": 50.0, "workload_ms": 6.1, "req_per_sec": 327761 },
+        "ssr-response": { "startup_ms": 46.9, "workload_ms": 3.3, "req_per_sec": 602773 }
+      },
+      "note": "RSS was not collected in this direct release spot-check; do not compare it to the debug RSS rows."
+    },
+    {
+      "id": "dev-opt-level-2",
+      "commit": null,
+      "build": "debug-opt-level-2",
+      "node": {
+        "route-load": { "startup_ms": 64.6, "peak_rss_mib": 49.9, "workload_ms": 24.0, "req_per_sec": 83305 },
+        "props-json": { "startup_ms": 37.9, "peak_rss_mib": 45.9, "workload_ms": 0.4, "req_per_sec": 4635445 },
+        "ssr-response": { "startup_ms": 41.1, "peak_rss_mib": 45.9, "workload_ms": 0.6, "req_per_sec": 3577280 }
+      },
+      "quench_node": {
+        "route-load": { "startup_ms": 150.5, "peak_rss_mib": 18.7, "workload_ms": 45.2, "req_per_sec": 44279 },
+        "props-json": { "startup_ms": 121.6, "peak_rss_mib": 18.5, "workload_ms": 17.6, "req_per_sec": 113552 },
+        "ssr-response": { "startup_ms": 110.8, "peak_rss_mib": 18.6, "workload_ms": 9.3, "req_per_sec": 214638 }
+      },
+      "improvement_vs": "scenario-run-b.quench_node.route-load",
+      "improvement": { "startup_pct": 44.3, "workload_pct": 63.8 }
+    }
+  ],
+  "runtime_change_ledger": [
+    { "commit": "c1518030b", "change": "Poll ESM entry promises so timers and I/O progress." },
+    { "commit": "1980092dc", "change": "Propagate experimental stream/iter flags through the host boundary." },
+    { "commit": "0495f2a83", "change": "Preserve unknown builtin-loader errors." },
+    { "commit": "d9731014f", "change": "Reject nonrecursive directory removal of directories." },
+    { "commit": "37e3d03b6", "change": "Stop differential heartbeat after reports complete." },
+    { "commit": "c2d64e3ce", "change": "Consolidate compatibility work and generated-run cleanup; no runtime claim." }
+  ]
+}
