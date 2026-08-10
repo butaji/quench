@@ -5,18 +5,19 @@ const __quenchCryptoConstructors = (result) => {
     result[name] ||= function Constructor() {};
   }
 };
+const __quenchCryptoUpdate = () =>
+  function update() {
+    return this;
+  };
 const __quenchCryptoSignFallback = (result) => {
-  result.Sign = function Sign(...args) {
-    return result.createSign(...args);
-  };
-  result.Verify = function Verify(...args) {
-    return result.createVerify(...args);
-  };
+  for (const [name, target] of [
+    ["Sign", "createSign"],
+    ["Verify", "createVerify"]
+  ])
+    result[name] = (...args) => result[target](...args);
   result.createSign ||= () => {
     const signer = {
-      update() {
-        return this;
-      },
+      update: __quenchCryptoUpdate(),
       sign(key) {
         __quenchCryptoSignMetadataFallback(key);
         if (
@@ -41,9 +42,7 @@ const __quenchCryptoSignFallback = (result) => {
   };
   result.createVerify ||= () => {
     const verifier = {
-      update() {
-        return this;
-      },
+      update: __quenchCryptoUpdate(),
       verify() {
         return true;
       }

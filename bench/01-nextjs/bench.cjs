@@ -1,7 +1,7 @@
 const { spawnSync } = require('node:child_process')
 const os = require('node:os')
 
-const quench = '/Users/admin/Code/GitHub/quench-node/target/debug/quench-node'
+const quench = process.env.QUENCH_BIN || '/Users/admin/Code/GitHub/quench-node/target/debug/quench-node'
 const runs = 7
 const scenarios = ['route-load', 'props-json', 'ssr-response']
 

@@ -9,7 +9,6 @@ const __quenchDgramTypeDetail = (value) => {
   if (value === null) return " Received null";
   if (value === undefined) return " Received undefined";
   if (typeof value === "string") return ` Received type string ('${value}')`;
-  if (typeof value === "boolean") return ` Received type boolean (${value})`;
   if (typeof value === "number") return ` Received type number (${value})`;
   if (typeof value === "boolean") return ` Received type boolean (${value})`;
   if (typeof value === "bigint") return ` Received type bigint (${value}n)`;
@@ -22,7 +21,7 @@ const __quenchDgramTypeDetail = (value) => {
 const __quenchDgramBufferError = (type, code, message) => {
   const syscall = `uv_${type}_buffer_size`;
   const error = new Error(
-    `Could not get or set buffer size: ${syscall} returned ${code} (${message})`,
+    `Could not get or set buffer size: ${syscall} returned ${code} (${message})`
   );
   error.name = "SystemError";
   error.code = "ERR_SOCKET_BUFFER_SIZE";
@@ -33,7 +32,7 @@ const __quenchDgramBufferError = (type, code, message) => {
     get: () => errorErrno,
     set: (value) => {
       errorErrno = value;
-    },
+    }
   });
   let errorSyscall = syscall;
   Object.defineProperty(error, "syscall", {
@@ -41,7 +40,7 @@ const __quenchDgramBufferError = (type, code, message) => {
     get: () => errorSyscall,
     set: (value) => {
       errorSyscall = value;
-    },
+    }
   });
   return error;
 };

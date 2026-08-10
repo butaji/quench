@@ -118,6 +118,98 @@
         "ssr-response": { "startup_ms": 96.3, "peak_rss_mib": 18.3, "workload_ms": 9.2, "req_per_sec": 217533 }
       },
       "cause": "Fresh baseline after verifying the repository build; no runtime change was retained this turn."
+    },
+    {
+      "id": "fresh-baseline-2026-08-10",
+      "commit": null,
+      "build": "debug-opt-level-3",
+      "scenario": "scenario-run-b-workloads",
+      "conditions": {
+        "platform": "darwin-arm64",
+        "node": "v26.5.1",
+        "cpus": 10,
+        "loadavg_1m": 7.49267578125,
+        "runs": 7
+      },
+      "source_loc_non_test_rs_js": 40491,
+      "node": {
+        "route-load": {"startup_ms": 44.7, "peak_rss_mib": 50.1, "workload_ms": 16.8, "req_per_sec": 118892},
+        "props-json": {"startup_ms": 29.1, "peak_rss_mib": 46.0, "workload_ms": 0.4, "req_per_sec": 4548897},
+        "ssr-response": {"startup_ms": 28.4, "peak_rss_mib": 45.9, "workload_ms": 0.6, "req_per_sec": 3563735}
+      },
+      "quench_node": {
+        "route-load": {"startup_ms": 129.4, "peak_rss_mib": 17.3, "workload_ms": 43.5, "req_per_sec": 45928},
+        "props-json": {"startup_ms": 102.6, "peak_rss_mib": 17.3, "workload_ms": 17.3, "req_per_sec": 115480},
+        "ssr-response": {"startup_ms": 103.0, "peak_rss_mib": 17.4, "workload_ms": 9.4, "req_per_sec": 211775}
+      },
+      "cause": "Baseline after the existing data-first polyfill reductions; no benchmark-specific optimization was applied in this measurement."
+    },
+    {
+      "id": "candidate-fs-string-fast-path-2026-08-10",
+      "commit": null,
+      "build": "debug-opt-level-3",
+      "scenario": "scenario-run-b-workloads",
+      "conditions": {
+        "platform": "darwin-arm64",
+        "node": "v26.5.1",
+        "cpus": 10,
+        "loadavg_1m": 7.64794921875,
+        "runs": 7
+      },
+      "source_loc_non_test_rs_js": 40493,
+      "quench_node": {
+        "route-load": {"startup_ms": 127.5, "peak_rss_mib": 18.3, "workload_ms": 41.5, "req_per_sec": 48229},
+        "props-json": {"startup_ms": 102.6, "peak_rss_mib": 18.4, "workload_ms": 17.3, "req_per_sec": 115841},
+        "ssr-response": {"startup_ms": 127.9, "peak_rss_mib": 18.4, "workload_ms": 12.8, "req_per_sec": 156863}
+      },
+      "improvement_vs": "fresh-baseline-2026-08-10.quench_node.route-load",
+      "improvement": {"route_workload_pct": 4.6},
+      "cause": "Bypass redundant path string conversion for non-empty string readFileSync calls; fd, Buffer, URL, and empty-string validation still use the full validator. The result is below the 10% commit threshold and remains an uncommitted candidate."
+    },
+    {
+      "id": "release-control-2026-08-10",
+      "commit": null,
+      "build": "release",
+      "scenario": "scenario-run-b-workloads",
+      "conditions": {
+        "platform": "darwin-arm64",
+        "node": "v26.5.1",
+        "cpus": 10,
+        "loadavg_1m": 7.935546875,
+        "runs": 7
+      },
+      "source_loc_non_test_rs_js": 40493,
+      "quench_node": {
+        "route-load": {"startup_ms": 74.3, "peak_rss_mib": 16.5, "workload_ms": 24.2, "req_per_sec": 82590},
+        "props-json": {"startup_ms": 56.6, "peak_rss_mib": 16.8, "workload_ms": 5.9, "req_per_sec": 336474},
+        "ssr-response": {"startup_ms": 54.8, "peak_rss_mib": 16.5, "workload_ms": 3.4, "req_per_sec": 588755}
+      },
+      "improvement_vs": "candidate-fs-string-fast-path-2026-08-10.quench_node",
+      "improvement": {"route_workload_pct": 41.2, "props_workload_pct": 65.9, "ssr_workload_pct": 71.9},
+      "cause": "Release-profile control measured with the same seven-run harness through QUENCH_BIN; this isolates Rust build optimization from source-level changes and is not attributed to the polyfill edits."
+    },
+    {
+      "id": "release-native-control-2026-08-10",
+      "commit": null,
+      "build": "release-target-cpu-native",
+      "scenario": "scenario-run-b-workloads",
+      "conditions": {
+        "platform": "darwin-arm64",
+        "node": "v26.5.1",
+        "cpus": 10,
+        "loadavg_1m": 7.185546875,
+        "runs": 7,
+        "rustflags": "-C target-cpu=native"
+      },
+      "source_loc_non_test_rs_js": 40493,
+      "quench_node": {
+        "route-load": {"startup_ms": 65.8, "peak_rss_mib": 17.0, "workload_ms": 21.0, "req_per_sec": 95215},
+        "props-json": {"startup_ms": 50.9, "peak_rss_mib": 17.0, "workload_ms": 6.0, "req_per_sec": 331840},
+        "ssr-response": {"startup_ms": 47.6, "peak_rss_mib": 17.0, "workload_ms": 3.3, "req_per_sec": 600420}
+      },
+      "improvement_vs": "release-control-2026-08-10.quench_node",
+      "improvement": {"route_workload_pct": 13.2},
+      "cause": "CPU-specific release control using RUSTFLAGS=-C target-cpu=native. Route improved beyond the 10% threshold, but JSON and SSR did not; portability prevents making this the default profile."
     }
   ],
   "runtime_change_ledger": [
@@ -130,6 +222,9 @@
     { "commit": null, "change": "Rejected thin LTO experiment.", "cause": "It increased route workload from 40.0 ms to 81.1 ms and props workload from 17.3 ms to 59.6 ms; it was reverted and not committed." },
     { "commit": null, "change": "Rejected debug-info removal experiment.", "cause": "It changed route startup from 127.9 ms to 127.0 ms and route workload from 40.0 ms to 39.9 ms; the sub-1% differences were within run noise and it was reverted." },
     { "commit": null, "change": "Rejected post-bootstrap concatenation experiment.", "cause": "A single eval reduced checked-in host boilerplate but failed compatibility: separate evals preserve cross-fragment top-level lexical bindings, and concatenation caused redeclaration/initialization exceptions even with per-fragment block wrappers. No runtime change was retained." },
-    { "commit": null, "change": "Rejected debug-assertions=false profile experiment.", "cause": "With opt-level 3 retained, disabling debug assertions produced approximate direct medians of 220 ms route-load, 160 ms props-json, and 105 ms ssr-response versus the 151.8/138.4/96.3 ms baseline; it was reverted." }
+    { "commit": null, "change": "Rejected debug-assertions=false profile experiment.", "cause": "With opt-level 3 retained, disabling debug assertions produced approximate direct medians of 220 ms route-load, 160 ms props-json, and 105 ms ssr-response versus the 151.8/138.4/96.3 ms baseline; it was reverted." },
+    { "commit": null, "change": "Skip empty post-bootstrap fragments in the generated evaluator.", "cause": "Compatibility passed, but the seven-run Next.js benchmark did not show a stable improvement on this host; retained as a zero-semantics-overhead cleanup." },
+    { "commit": null, "change": "Fast path exact readFileSync(string, utf8) calls.", "cause": "Compatibility passed; direct filesystem-loop measurements varied around an 8% improvement, below the 10% commit threshold, while the full Next.js run remained noisy." },
+    { "commit": null, "change": "Rejected release panic=abort build experiment.", "cause": "Five-run controls remained within noise of the normal release profile (about 40–50 ms per scenario); it offered no qualifying improvement and was not made part of the project profile." }
   ]
 }

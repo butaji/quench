@@ -1,3 +1,16 @@
+const __quenchClusterFallbacks = (result) => {
+  result.isPrimary ??= true;
+  result.isWorker ??= false;
+  result.worker ??= undefined;
+  result.workers ||= {};
+  result.settings ||= {};
+  result.fork ||= () => undefined;
+  result.setupPrimary ||= () => undefined;
+  result.disconnect ||= () => undefined;
+  result.schedulingPolicy ??= 2;
+  result.Worker ||= function Worker() {};
+  return result;
+};
 const __quenchDomainFallbacks = (result) => {
   const makeDomain = () => ({
     add: () => undefined,
@@ -40,6 +53,7 @@ const __quenchSysFallbacks = (result) => {
 };
 const __quenchApplyModuleSurface29 = (name, result) => {
   const normalized = String(name).replace(/^node:/, "");
+  if (normalized === "cluster") __quenchClusterFallbacks(result);
   if (normalized === "domain") __quenchDomainFallbacks(result);
   if (normalized === "http2") __quenchHttp2Fallbacks(result);
   if (normalized === "sys") __quenchSysFallbacks(result);

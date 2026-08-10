@@ -1,4 +1,16 @@
 #[macro_export]
+macro_rules! quench_eval_post_bootstrap {
+    ($ctx:expr; $($name:literal),* $(,)?) => {
+        $(
+            let source = include_str!(concat!("../polyfills/post-bootstrap/", $name, ".js"));
+            if !source.is_empty() {
+                $ctx.eval::<(), _>(source.as_bytes())?;
+            }
+        )*
+    };
+}
+
+#[macro_export]
 macro_rules! run_host_context {
     ($context:expr, $source:expr) => {
     $context.with(|ctx| -> rquickjs::Result<()> {
@@ -606,81 +618,9 @@ macro_rules! run_host_context {
                 .and_then(|flags| flags.split_whitespace().find_map(|flag| flag.strip_prefix("--title=")))
         });
         ctx.globals().set("__quench_cli_title", cli_title)?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/process-surface-00.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/process-surface-01.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/process-surface-02.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/process-surface-03.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/process-surface-04.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/process-surface-05.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/process-surface-06.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/process-surface-07.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/process-surface-08.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/process-surface-09.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/process-surface-10.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/process-surface-11.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/process-surface-12.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/process-surface-13.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/process-surface-14.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/process-surface-15.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/process-surface-16.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/process-surface-17.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/process-surface-18.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/process-surface-19.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/process-surface-20.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/process-surface-21.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/process-surface-22.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/process-surface-23.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/process-surface-24.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/process-surface-25.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/process-surface-26.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/process-surface-27.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/process-surface-28.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/process-surface-29.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/process-surface-30.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/process-surface-31.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/process-surface-32.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/process-surface-33.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-00.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-01.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-02.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-03.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-03-tail.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-03-tail-02.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-04.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-05.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-06.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-06-tail.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-07.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-08.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-09.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-10.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-11.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-11-tail.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-11-final.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-12.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-12-tail.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-13.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-13-tail.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-14.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-14-tail.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-15.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-15-tail.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-16.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-17.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-18.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-19.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-20.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-21.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-22.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-23.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-24.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-25.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-26.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-27.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-28.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-29.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-local-loader.js").as_bytes())?;
-        ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-final-00.js").as_bytes())?;
+        quench_eval_post_bootstrap!(ctx;
+            "process-surface-00", "process-surface-01", "process-surface-02", "process-surface-03", "process-surface-04", "process-surface-05", "process-surface-06", "process-surface-07", "process-surface-08", "process-surface-09", "process-surface-10", "process-surface-11", "process-surface-12", "process-surface-13", "process-surface-14", "process-surface-15", "process-surface-16", "process-surface-17", "process-surface-18", "process-surface-19", "process-surface-20", "process-surface-21", "process-surface-22", "process-surface-23", "process-surface-24", "process-surface-25", "process-surface-26", "process-surface-27", "process-surface-28", "process-surface-29", "process-surface-30", "process-surface-31", "process-surface-32", "process-surface-33", "module-surface-00", "module-surface-01", "module-surface-02", "module-surface-03", "module-surface-03-tail", "module-surface-03-tail-02", "module-surface-04", "module-surface-05", "module-surface-06", "module-surface-06-tail", "module-surface-07", "module-surface-08", "module-surface-09", "module-surface-10", "module-surface-11", "module-surface-11-tail", "module-surface-11-final", "module-surface-12", "module-surface-12-tail", "module-surface-13", "module-surface-13-tail", "module-surface-14", "module-surface-14-tail", "module-surface-15", "module-surface-15-tail", "module-surface-16", "module-surface-17", "module-surface-18", "module-surface-19", "module-surface-20", "module-surface-21", "module-surface-22", "module-surface-23", "module-surface-24", "module-surface-25", "module-surface-26", "module-surface-27", "module-surface-28", "module-surface-29", "module-local-loader", "module-surface-final-00",
+        );
         ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-final-01.js").as_bytes())?; ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-final-01-tail-02.js").as_bytes())?; ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-final-01-tail.js").as_bytes())?; ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/global-surface.js").as_bytes())?; ctx.globals().set("__nodeOsInitialized", false)?; ctx.globals().set("__quench_script_source", $source)?; let filename = ctx.globals().get::<_, String>("__quench_script_filename").unwrap_or_else(|_| "quench-entry.js".into()); let evaluation = if filename.ends_with(".mjs") { let meta_url = format!("file://{}", filename); rquickjs::Module::declare(ctx.clone(), filename, $source.as_bytes()).and_then(|module| { let meta = module.meta()?; meta.set("url", meta_url)?; let (_, promise) = module.eval()?; ctx.globals().set("__quench_entry_promise", promise)?; ctx.eval::<(), _>(b"Promise.resolve(globalThis.__quench_entry_promise).then(() => { globalThis.__quench_entry_done = true; globalThis.__quench_work_generation = (globalThis.__quench_work_generation || 0) + 1; }, error => { globalThis.__quench_entry_error = String(error); globalThis.__quench_entry_done = true; globalThis.__quench_work_generation = (globalThis.__quench_work_generation || 0) + 1; });") }) } else { let wrapped = format!("try {{\nconst __quenchEntryModule = globalThis.module;\n(function (exports, require, module, __filename, __dirname) {{\n{}\n}}).call(__quenchEntryModule.exports, __quenchEntryModule.exports, globalThis.require, __quenchEntryModule, globalThis.__filename, globalThis.__dirname);\n}} catch (error) {{ globalThis.__quench_last_error = error && error.stack ? `${{error.name}}: ${{error.message}}\\n${{error.stack}}` : String(error); throw error; }}", $source); ctx.eval::<(), _>(wrapped.as_bytes()) }; if let Err(error) = evaluation {
             let forced_exit = ctx.globals().get::<_, bool>("__quench_force_exit").unwrap_or(false);
             if !forced_exit {

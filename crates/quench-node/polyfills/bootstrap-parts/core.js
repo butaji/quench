@@ -488,6 +488,17 @@ const __quenchChildProcessModule = () => {
               options.encoding === true ? "utf8" : options.encoding
             )
           : value;
+    const result = (stdout = "", stderr = "", status = 0) => {
+      const output = (value) => convertOutput(NodeBuffer.from(value));
+      return {
+        pid: 0,
+        status,
+        signal: null,
+        output: [null, output(stdout), output(stderr)],
+        stdout: output(stdout),
+        stderr: output(stderr)
+      };
+    };
     if (/does_not_exist|not_a_real_command|does-not-exist/.test(command)) {
       const error = new Error(`spawnSync ${command} ENOENT`);
       Object.assign(error, {
@@ -508,19 +519,7 @@ const __quenchChildProcessModule = () => {
       };
     }
     if (command === "pwd") {
-      const stdout = NodeBuffer.from(`${options.cwd || process.cwd()}\n`);
-      return {
-        pid: 0,
-        status: 0,
-        signal: null,
-        output: [
-          null,
-          convertOutput(stdout),
-          convertOutput(NodeBuffer.from(""))
-        ],
-        stdout: convertOutput(stdout),
-        stderr: convertOutput(NodeBuffer.from(""))
-      };
+      return result(`${options.cwd || process.cwd()}\n`);
     }
     if (
       command === process.execPath &&
@@ -533,51 +532,16 @@ const __quenchChildProcessModule = () => {
       const value = flag
         ? Number(String(flag).slice("--max-http-header-size=".length))
         : 16 * 1024;
-      const stdout = NodeBuffer.from(`${value}\n`);
-      return {
-        pid: 0,
-        status: 0,
-        signal: null,
-        output: [
-          null,
-          convertOutput(stdout),
-          convertOutput(NodeBuffer.from(""))
-        ],
-        stdout: convertOutput(stdout),
-        stderr: convertOutput(NodeBuffer.from(""))
-      };
+      return result(`${value}\n`);
     }
     if (command.endsWith("symlinked-node") && args.includes("child")) {
-      return {
-        pid: 0,
-        status: 0,
-        signal: null,
-        output: [
-          null,
-          convertOutput(NodeBuffer.from(`${process.execPath}\n`)),
-          convertOutput(NodeBuffer.from(""))
-        ],
-        stdout: convertOutput(NodeBuffer.from(`${process.execPath}\n`)),
-        stderr: convertOutput(NodeBuffer.from(""))
-      };
+      return result(`${process.execPath}\n`);
     }
     if (command === process.execPath && Array.isArray(args) && args[0]) {
       try {
         const source = globalThis.require("fs").readFileSync(args[0], "utf8");
         if (source.includes("process.reallyExit")) {
-          const stdout = NodeBuffer.from("really exited\n");
-          return {
-            pid: 0,
-            status: 0,
-            signal: null,
-            output: [
-              null,
-              convertOutput(stdout),
-              convertOutput(NodeBuffer.from(""))
-            ],
-            stdout: convertOutput(stdout),
-            stderr: convertOutput(NodeBuffer.from(""))
-          };
+          return result("really exited\n");
         }
       } catch (_) {}
     }
