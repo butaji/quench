@@ -80,11 +80,22 @@ macro_rules! run_host_context {
                         .into_owned(),
                     filename,
                 ];
-                argv.extend(
-                    env::args()
-                        .skip(1)
-                        .filter(|arg| arg.starts_with("--experimental-")),
-                );
+                if let Ok(script_args) = ctx.globals().get::<_, Vec<String>>("__quench_script_args") {
+                    argv.extend(script_args);
+                    argv.extend(env::args().skip(1).filter(|arg| {
+                        arg.starts_with("--experimental-") ||
+                            arg.starts_with("--network-family-autoselection")
+                    }));
+                } else {
+                    argv.extend(
+                        env::args()
+                            .skip(1)
+                            .filter(|arg| {
+                                arg.starts_with("--experimental-")
+                                    || arg.starts_with("--network-family-autoselection")
+                            }),
+                    );
+                }
                 argv
             }
             None => env::args().collect::<Vec<String>>(),
