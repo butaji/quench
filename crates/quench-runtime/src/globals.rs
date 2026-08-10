@@ -32,6 +32,31 @@ pub(crate) fn is_defined(name: &str) -> bool {
     name == "$262" || builtin(name).is_some() || global_constant(name).is_some()
 }
 
+pub(crate) fn script_properties(ops: &mut Vec<Op>, next_register: &mut u16) -> Vec<(String, u16)> {
+    let names = [
+        "Object",
+        "Function",
+        "Array",
+        "Promise",
+        "RegExp",
+        "Date",
+        "Error",
+        "TypeError",
+        "RangeError",
+        "ReferenceError",
+        "SyntaxError",
+        "EvalError",
+        "URIError",
+    ];
+    names
+        .into_iter()
+        .filter_map(|name| {
+            let register = emit_builtin(ops, next_register, builtin(name)?);
+            Some((name.to_string(), register))
+        })
+        .collect()
+}
+
 fn global_constant(name: &str) -> Option<(FactConstant, Constant)> {
     Some(match name {
         "undefined" => (FactConstant::Undefined, Constant::Undefined),

@@ -276,6 +276,7 @@ fn completion_result(completion: crate::completion::Completion) -> Result<Value,
 
 struct GlobalObjectGuard {
     previous: Option<ObjectProperties>,
+    restore: bool,
 }
 
 pub(crate) fn current_global_object() -> Value {
@@ -347,13 +348,18 @@ impl GlobalObjectGuard {
             }
             previous
         });
-        Self { previous }
+        Self {
+            restore: previous.is_none(),
+            previous,
+        }
     }
 }
 
 impl Drop for GlobalObjectGuard {
     fn drop(&mut self) {
-        GLOBAL_OBJECT.with(|global| global.replace(self.previous.take()));
+        if self.restore {
+            GLOBAL_OBJECT.with(|global| global.replace(self.previous.take()));
+        }
     }
 }
 

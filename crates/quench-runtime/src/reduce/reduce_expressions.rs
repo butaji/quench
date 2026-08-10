@@ -8,10 +8,7 @@ use crate::{
     properties, special, transparent,
 };
 use oxc::{
-    ast::ast::{
-        Argument, AssignmentOperator, AssignmentTarget, Expression, Statement,
-        VariableDeclarationKind,
-    },
+    ast::ast::{Argument, Expression, Statement, VariableDeclarationKind},
     syntax::operator::UnaryOperator,
 };
 use std::collections::HashMap;
@@ -344,54 +341,6 @@ fn reduce_call_arguments(
         }
     }
     Some((args, spreads))
-}
-pub fn reduce_assignment(
-    assignment: &oxc::ast::ast::AssignmentExpression<'_>,
-    ops: &mut Vec<Op>,
-    facts: &mut ProgramDb,
-    next_register: &mut u16,
-    locals: &HashMap<String, u16>,
-) -> Option<u16> {
-    let AssignmentTarget::AssignmentTargetIdentifier(identifier) = &assignment.left else {
-        return properties::reduce_assignment(assignment, ops, facts, next_register, locals);
-    };
-    let Some(slot) = locals.get(identifier.name.as_str()).copied() else {
-        return properties::reduce_global_assignment(
-            identifier.name.as_str(),
-            assignment,
-            ops,
-            facts,
-            next_register,
-            locals,
-        );
-    };
-    let rhs = reduce_expression(&assignment.right, ops, facts, next_register, locals)?;
-    let value = reduce_assignment_value(assignment.operator, slot, rhs, ops, next_register)?;
-    ops.push(Op::StoreLocal { slot, src: value });
-    Some(value)
-}
-
-fn reduce_assignment_value(
-    assignment: AssignmentOperator,
-    slot: u16,
-    rhs: u16,
-    ops: &mut Vec<Op>,
-    next_register: &mut u16,
-) -> Option<u16> {
-    if assignment == AssignmentOperator::Assign {
-        return Some(rhs);
-    }
-    let lhs = take_register(next_register);
-    ops.push(Op::LoadLocal { dst: lhs, slot });
-    let dst = take_register(next_register);
-    let operator = reduce_operator(assignment.to_binary_operator()?)?;
-    ops.push(Op::Binary {
-        dst,
-        operator,
-        lhs,
-        rhs,
-    });
-    Some(dst)
 }
 pub fn reduce_atom(
     expression: &Expression<'_>,
