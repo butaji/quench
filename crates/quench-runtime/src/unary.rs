@@ -4,6 +4,22 @@ use oxc::ast::ast::Expression;
 
 use crate::{facts::ProgramDb, ops::Constant, ops::Op};
 
+pub(crate) fn is_unresolved_identifier(
+    expression: &Expression<'_>,
+    locals: &HashMap<String, u16>,
+) -> bool {
+    match expression {
+        Expression::Identifier(identifier) => {
+            !locals.contains_key(identifier.name.as_str())
+                && !crate::globals::is_defined(identifier.name.as_str())
+        }
+        Expression::ParenthesizedExpression(parenthesized) => {
+            is_unresolved_identifier(&parenthesized.expression, locals)
+        }
+        _ => false,
+    }
+}
+
 pub(crate) fn reduce_delete(
     expression: &Expression<'_>,
     ops: &mut Vec<Op>,

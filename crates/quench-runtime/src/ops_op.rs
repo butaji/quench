@@ -2,6 +2,7 @@
 pub enum Op {
     Const { dst: u16, value: Constant },
     StoreLocal { slot: u16, src: u16 },
+    MarkUninitialized { slot: u16 },
     DeclareEvalBinding { name: String, slot: u16 },
     ResolveBindingTarget { dst: u16, name: String },
     InitializeResolvedBinding { target: u16, slot: u16, name: String, src: u16 },

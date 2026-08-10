@@ -99,7 +99,8 @@ fn run_local_op(registers: &mut Vec<Value>, op: &Op) -> Result<bool, VmError> {
     use Op::*;
     match op {
         StoreLocal { slot, src } => crate::locals::store(registers, *slot, *src)?,
-        LoadLocal { dst, slot } => crate::locals::load(registers, *dst, *slot),
+        MarkUninitialized { slot } => crate::locals::mark_uninitialized(*slot),
+        LoadLocal { dst, slot } => crate::locals::load(registers, *dst, *slot)?,
         LoadBinding { dst, slot, name } => crate::locals::load_binding(registers, *dst, *slot, name)?,
         ResolveBindingTarget { dst, name } => crate::locals::resolve_target(registers, *dst, name)?,
         InitializeResolvedBinding { target, slot, name, src } => {
