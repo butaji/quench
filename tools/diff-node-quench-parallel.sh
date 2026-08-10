@@ -125,6 +125,9 @@ if [ "$heartbeat_seconds" -gt 0 ]; then
     rate=$(node -e 'const completed = Number(process.argv[1]); const elapsed = Number(process.argv[2]); console.log(elapsed > 0 ? (completed / elapsed).toFixed(2) : "0.00");' "$completed" "$elapsed")
     printf 'progress completed=%s/%s failed_workers=%s elapsed_seconds=%s fixtures_per_second=%s\n' \
       "$completed" "$expected" "$failed" "$elapsed" "$rate" >&2
+    if [ "$completed" -ge "$expected" ] && [ "$failed" -eq 0 ]; then
+      break
+    fi
     sleep "$heartbeat_seconds"
   done
 fi
