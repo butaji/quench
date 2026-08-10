@@ -1,13 +1,9 @@
 const __quenchVmContexts = new WeakSet();
 const __quenchVmTypeError = (message) => {
-  const error = new TypeError(message);
-  error.code = "ERR_INVALID_ARG_TYPE";
-  throw error;
+  throw Object.assign(new TypeError(message), { code: "ERR_INVALID_ARG_TYPE" });
 };
 const __quenchVmRangeError = (message) => {
-  const error = new RangeError(message);
-  error.code = "ERR_OUT_OF_RANGE";
-  throw error;
+  throw Object.assign(new RangeError(message), { code: "ERR_OUT_OF_RANGE" });
 };
 const __quenchVmInvalidTypeSuffix = (value) =>
   value === null

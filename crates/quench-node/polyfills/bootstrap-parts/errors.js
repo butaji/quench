@@ -20,11 +20,7 @@ const __nodeUtilGetSystemErrorName = (errorNumber) => {
     throw error;
   }
   if (!Number.isInteger(errorNumber) || errorNumber >= 0) {
-    const error = new RangeError(
-      `The value of "err" is out of range. It must be a negative integer. Received ${errorNumber}`,
-    );
-    error.code = "ERR_OUT_OF_RANGE";
-    throw error;
+    throw Object.assign(new RangeError(`The value of "err" is out of range. It must be a negative integer. Received ${errorNumber}`), { code: "ERR_OUT_OF_RANGE" });
   }
   return (
     __nodeSystemErrorNames.get(errorNumber) ||

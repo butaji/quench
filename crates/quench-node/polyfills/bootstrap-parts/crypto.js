@@ -6,16 +6,10 @@ const __nodeCryptoValidatePbkdf2Digest = (digest) => {
         : digest === null
           ? "null"
           : typeof digest;
-    const error = new TypeError(
-      `The "digest" argument must be of type string. Received ${received}`
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError(`The "digest" argument must be of type string. Received ${received}`), { code: "ERR_INVALID_ARG_TYPE" });
   }
   if (digest.toLowerCase() !== "sha256") {
-    const error = new TypeError(`Invalid digest: ${digest}`);
-    error.code = "ERR_CRYPTO_INVALID_DIGEST";
-    throw error;
+    throw Object.assign(new TypeError(`Invalid digest: ${digest}`), { code: "ERR_CRYPTO_INVALID_DIGEST" });
   }
 };
 const __nodeCryptoValidatePbkdf2 = (
@@ -74,18 +68,10 @@ const __nodeCryptoApi = {
   getCurves: () => ["secp384r1"],
   timingSafeEqual: (left, right) => {
     if (!(left instanceof Uint8Array) || !(right instanceof Uint8Array)) {
-      const error = new TypeError(
-        'The "buf1" and "buf2" arguments must be instances of Buffer or Uint8Array'
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError('The "buf1" and "buf2" arguments must be instances of Buffer or Uint8Array'), { code: "ERR_INVALID_ARG_TYPE" });
     }
     if (left.length !== right.length) {
-      const error = new RangeError(
-        "Input buffers must have the same byte length"
-      );
-      error.code = "ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH";
-      throw error;
+      throw Object.assign(new RangeError("Input buffers must have the same byte length"), { code: "ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH" });
     }
     let difference = 0;
     for (let index = 0; index < left.length; index++) {
@@ -134,16 +120,10 @@ const __nodeCryptoApi = {
   randomUUID: () => globalThis.__quench_random_uuid(),
   randomBytes: (size, callback) => {
     if (!Number.isInteger(size) || size < 0 || size > 0x7fffffff) {
-      const error = new RangeError('The "size" argument is out of range');
-      error.code = "ERR_OUT_OF_RANGE";
-      throw error;
+      throw Object.assign(new RangeError('The "size" argument is out of range'), { code: "ERR_OUT_OF_RANGE" });
     }
     if (callback !== undefined && typeof callback !== "function") {
-      const error = new TypeError(
-        'The "callback" argument must be of type function'
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError('The "callback" argument must be of type function'), { code: "ERR_INVALID_ARG_TYPE" });
     }
     const output = NodeBuffer.from(globalThis.__quench_random_bytes(size));
     if (typeof callback === "function") {
@@ -154,11 +134,7 @@ const __nodeCryptoApi = {
   pseudoRandomBytes: (...args) => __nodeCryptoRandomBytes(...args),
   randomFillSync: (buffer, offset = 0, size = buffer.length - offset) => {
     if (!ArrayBuffer.isView(buffer)) {
-      const error = new TypeError(
-        'The "buffer" argument must be an instance of ArrayBufferView'
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError('The "buffer" argument must be an instance of ArrayBufferView'), { code: "ERR_INVALID_ARG_TYPE" });
     }
     if (
       !Number.isSafeInteger(offset) ||
@@ -167,9 +143,7 @@ const __nodeCryptoApi = {
       size < 0 ||
       offset + size > buffer.byteLength
     ) {
-      const error = new RangeError('The value of "offset" is out of range');
-      error.code = "ERR_OUT_OF_RANGE";
-      throw error;
+      throw Object.assign(new RangeError('The value of "offset" is out of range'), { code: "ERR_OUT_OF_RANGE" });
     }
     const bytes = globalThis.__quench_random_bytes(Number(size));
     buffer.set(bytes, offset);
@@ -215,11 +189,7 @@ const __nodeCryptoApi = {
       digest = undefined;
     }
     if (typeof callback !== "function") {
-      const error = new TypeError(
-        'The "callback" argument must be of type function'
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError('The "callback" argument must be of type function'), { code: "ERR_INVALID_ARG_TYPE" });
     }
     __nodeCryptoValidatePbkdf2(password, salt, iterations, keylen, digest);
     let result;

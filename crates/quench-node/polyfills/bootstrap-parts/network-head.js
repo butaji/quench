@@ -22,14 +22,10 @@ const __quenchDeliverPendingWrites = (socket, writes) => {
 };
 const __quenchSetTypeOfService = (socket, value) => {
   if (typeof value !== "number" || Number.isNaN(value)) {
-    const error = new TypeError('The "tos" argument must be of type number');
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "tos" argument must be of type number'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   if (!Number.isInteger(value) || value < 0 || value > 255) {
-    const error = new RangeError('The value of "tos" is out of range');
-    error.code = "ERR_OUT_OF_RANGE";
-    throw error;
+    throw Object.assign(new RangeError('The value of "tos" is out of range'), { code: "ERR_OUT_OF_RANGE" });
   }
   socket._typeOfService = value;
   return socket;
@@ -230,24 +226,18 @@ const normalizeAddress = (address, label = "address") => {
       explicit: address.family !== undefined
     };
   }
-  const error = new TypeError(`Invalid ${label}`);
-  error.code = "ERR_INVALID_ARG_TYPE";
-  throw error;
+  throw Object.assign(new TypeError(`Invalid ${label}`), { code: "ERR_INVALID_ARG_TYPE" });
 };
 const normalizeRangeEndpoint = (value, label) => {
   if (typeof value === "string") return value;
   if (value && typeof value.address === "string") return value.address;
-  const error = new TypeError(`Invalid ${label}`);
-  error.code = "ERR_INVALID_ARG_TYPE";
-  throw error;
+  throw Object.assign(new TypeError(`Invalid ${label}`), { code: "ERR_INVALID_ARG_TYPE" });
 };
 const resolveAddressType = (value, type, checkType) => {
   if (type !== undefined) return checkType(type);
   const resolved = isIPv4(value) ? "ipv4" : isIPv6(value) ? "ipv6" : null;
   if (resolved) return resolved;
-  const error = new TypeError("Invalid address");
-  error.code = "ERR_INVALID_ARG_VALUE";
-  throw error;
+  throw Object.assign(new TypeError("Invalid address"), { code: "ERR_INVALID_ARG_VALUE" });
 };
 const checkBlockListEntry = (entries, str, explicitType, inputKind) => {
   if (!entries.has(str)) return false;

@@ -1,15 +1,9 @@
 const __quenchValidatePort = (value) => {
   if (typeof value !== "number" && typeof value !== "string") {
-    const error = new TypeError(
-      'The "options.port" property must be a number or string',
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "options.port" property must be a number or string'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   if (typeof value === "string" && value.trim() === "") {
-    const error = new RangeError("Port should be >= 0 and < 65536.");
-    error.code = "ERR_SOCKET_BAD_PORT";
-    throw error;
+    throw Object.assign(new RangeError("Port should be >= 0 and < 65536."), { code: "ERR_SOCKET_BAD_PORT" });
   }
   const port = Number(value);
   if (
@@ -18,11 +12,7 @@ const __quenchValidatePort = (value) => {
     port < 0 ||
     port > 65535
   ) {
-    const error = new RangeError(
-      `Port should be >= 0 and < 65536. Received ${value}.`,
-    );
-    error.code = "ERR_SOCKET_BAD_PORT";
-    throw error;
+    throw Object.assign(new RangeError(`Port should be >= 0 and < 65536. Received ${value}.`), { code: "ERR_SOCKET_BAD_PORT" });
   }
   return port;
 };
@@ -30,18 +20,12 @@ globalThis.__quenchValidateConnectionOptions = (options) => {
   if (options && typeof options === "object" && !Array.isArray(options)) {
     if (options.path !== undefined) {
       if (typeof options.path !== "string") {
-        const error = new TypeError('The "path" argument must be a string');
-        error.code = "ERR_INVALID_ARG_TYPE";
-        throw error;
+        throw Object.assign(new TypeError('The "path" argument must be a string'), { code: "ERR_INVALID_ARG_TYPE" });
       }
       return;
     }
     if (options.hints !== undefined) {
-      const error = new TypeError(
-        `The argument 'hints' is invalid. Received ${options.hints}`,
-      );
-      error.code = "ERR_INVALID_ARG_VALUE";
-      throw error;
+      throw Object.assign(new TypeError(`The argument 'hints' is invalid. Received ${options.hints}`), { code: "ERR_INVALID_ARG_VALUE" });
     }
     return __quenchValidatePort(options.port);
   }

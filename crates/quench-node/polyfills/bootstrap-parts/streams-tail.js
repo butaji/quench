@@ -10,11 +10,7 @@ globalThis.__nodeFs.writeFile = (value, data, options, callback) => {
     ? options
     : options && options.encoding;
   if (encoding !== undefined && !NodeBuffer.isEncoding(encoding)) {
-    const error = new TypeError(
-      `The argument 'encoding' is invalid. Received '${encoding}'`,
-    );
-    error.code = "ERR_INVALID_ARG_VALUE";
-    throw error;
+    throw Object.assign(new TypeError(`The argument 'encoding' is invalid. Received '${encoding}'`), { code: "ERR_INVALID_ARG_VALUE" });
   }
   if (options && options.signal) {
     queueMicrotask(() => {
@@ -69,9 +65,7 @@ const __nodeFsPromisedRead = (fd, buffer, offset, length, position) => {
     position,
   );
   if (target.length === 0 && Number(size) > 0) {
-    const error = new TypeError("The buffer is empty");
-    error.code = "ERR_INVALID_ARG_VALUE";
-    throw error;
+    throw Object.assign(new TypeError("The buffer is empty"), { code: "ERR_INVALID_ARG_VALUE" });
   }
   const bytesRead = globalThis.__nodeFs.readSync(
     fd,
@@ -178,11 +172,7 @@ globalThis.__nodeFs.promises = {
   statfs: (value, options) =>
     Promise.resolve().then(() => {
       if (value === undefined || value === null) {
-        const error = new TypeError(
-          'The "path" argument must be of type string or an instance of Buffer or URL',
-        );
-        error.code = "ERR_INVALID_ARG_TYPE";
-        throw error;
+        throw Object.assign(new TypeError('The "path" argument must be of type string or an instance of Buffer or URL'), { code: "ERR_INVALID_ARG_TYPE" });
       }
       return globalThis.__nodeFs.statfsSync(value, options);
     }),

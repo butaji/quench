@@ -12,17 +12,13 @@ const __quenchChannel = (name) => {
     },
     subscribe: (callback) => {
       if (typeof callback !== "function") {
-        const error = new TypeError("The subscription must be a function");
-        error.code = "ERR_INVALID_ARG_TYPE";
-        throw error;
+        throw Object.assign(new TypeError("The subscription must be a function"), { code: "ERR_INVALID_ARG_TYPE" });
       }
       subscribers.add(callback);
     },
     unsubscribe: (callback) => {
       if (typeof callback !== "function") {
-        const error = new TypeError("The subscription must be a function");
-        error.code = "ERR_INVALID_ARG_TYPE";
-        throw error;
+        throw Object.assign(new TypeError("The subscription must be a function"), { code: "ERR_INVALID_ARG_TYPE" });
       }
       return subscribers.delete(callback);
     },
@@ -150,11 +146,7 @@ const __quenchDiagnostics = {
             channels?.[name] !== undefined &&
             !(channels[name] instanceof __QuenchChannelClass)
           ) {
-            const error = new TypeError(
-              `The "nameOrChannels.${name}" property must be an instance of Channel`
-            );
-            error.code = "ERR_INVALID_ARG_TYPE";
-            throw error;
+            throw Object.assign(new TypeError(`The "nameOrChannels.${name}" property must be an instance of Channel`), { code: "ERR_INVALID_ARG_TYPE" });
           }
         }
         if (!channels || Object.keys(channels).length === 0) {
@@ -233,11 +225,7 @@ const __quenchDiagnostics = {
       const callbackIndex = position < 0 ? args.length + position : position;
       const callback = args[callbackIndex];
       if (typeof callback !== "function") {
-        const error = new TypeError(
-          'The "callback" argument must be of type function'
-        );
-        error.code = "ERR_INVALID_ARG_TYPE";
-        throw error;
+        throw Object.assign(new TypeError('The "callback" argument must be of type function'), { code: "ERR_INVALID_ARG_TYPE" });
       }
       args[callbackIndex] = (...callbackArgs) => {
         const asyncScope = this.asyncStart?.withStoreScope(context);
@@ -268,11 +256,7 @@ const __quenchDiagnostics = {
     new __quenchDiagnostics.BoundedChannel(nameOrChannels),
   tracingChannel: (name) => {
     if (typeof name !== "string" && (!name || typeof name !== "object")) {
-      const error = new TypeError(
-        'The "nameOrChannels" argument must be of type string or an instance of TracingChannel or Object'
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError('The "nameOrChannels" argument must be of type string or an instance of TracingChannel or Object'), { code: "ERR_INVALID_ARG_TYPE" });
     }
     return new __quenchDiagnostics.TracingChannel(name);
   }

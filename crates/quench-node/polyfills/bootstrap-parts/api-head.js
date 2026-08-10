@@ -221,9 +221,7 @@ class NodeTextDecoder {
 globalThis.TextDecoder = NodeTextDecoder;
 const nodePathFromURL = (value) => {
   if (value.protocol !== "file:") {
-    const error = new TypeError("The URL must use the file: protocol");
-    error.code = "ERR_INVALID_URL_SCHEME";
-    throw error;
+    throw Object.assign(new TypeError("The URL must use the file: protocol"), { code: "ERR_INVALID_URL_SCHEME" });
   }
   return globalThis.__nodeUrlModule.fileURLToPath(value);
 };

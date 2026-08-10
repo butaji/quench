@@ -63,9 +63,7 @@ const __nodeQuerystringEscape = (value) => {
     const code = input.charCodeAt(index);
     if (code >= 0xd800 && code <= 0xdbff) {
       if (index + 1 === input.length) {
-        const error = new URIError("URI malformed");
-        error.code = "ERR_INVALID_URI";
-        throw error;
+        throw Object.assign(new URIError("URI malformed"), { code: "ERR_INVALID_URI" });
       }
       const next = input.charCodeAt(index + 1);
       if (next >= 0xdc00 && next <= 0xdfff) {
@@ -85,9 +83,7 @@ const __nodeQuerystringEscape = (value) => {
   try {
     return encodeURIComponent(normalized);
   } catch (_) {
-    const error = new URIError("URI malformed");
-    error.code = "ERR_INVALID_URI";
-    throw error;
+    throw Object.assign(new URIError("URI malformed"), { code: "ERR_INVALID_URI" });
   }
 };
 const __nodeQuerystringDecodeByte = (input, index, decodeSpaces) => {

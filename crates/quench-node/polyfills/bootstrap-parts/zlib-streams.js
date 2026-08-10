@@ -2,39 +2,29 @@ const __quenchOriginalRequireWithZlibStreams = globalThis.require;
 const __quenchValidateFlushKind = (stream, kind) => {
   if (kind === undefined || Number.isNaN(kind)) return undefined;
   if (typeof kind !== "number") {
-    const error = new TypeError('The "kind" argument must be of type number');
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "kind" argument must be of type number'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   if (
     !Number.isInteger(kind) ||
     (stream.__flushKinds && !stream.__flushKinds.includes(kind))
   ) {
-    const error = new RangeError('The value of "kind" is out of range');
-    error.code = "ERR_OUT_OF_RANGE";
-    throw error;
+    throw Object.assign(new RangeError('The value of "kind" is out of range'), { code: "ERR_OUT_OF_RANGE" });
   }
   return kind;
 };
 const __quenchValidateZlibParams = (level, strategy) => {
   if (typeof level !== "number") {
-    const error = new TypeError('The "level" argument must be of type number');
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "level" argument must be of type number'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   if (!Number.isFinite(level) || level < -1 || level > 9) {
-    const error = new RangeError('The value of "level" is out of range');
-    error.code = "ERR_OUT_OF_RANGE";
-    throw error;
+    throw Object.assign(new RangeError('The value of "level" is out of range'), { code: "ERR_OUT_OF_RANGE" });
   }
   if (
     strategy !== undefined &&
     (typeof strategy !== "number" || !Number.isFinite(strategy) ||
       strategy < 0 || strategy > 4)
   ) {
-    const error = new TypeError('The "strategy" argument is invalid');
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "strategy" argument is invalid'), { code: "ERR_INVALID_ARG_TYPE" });
   }
 };
 const __quenchZlibStreamEvents = (stream, listeners, method) => ({
@@ -87,9 +77,7 @@ const __quenchZlibStreamControls = (stream, method) => ({
   _outOffset: 0,
   _processChunk(input) {
     if (this._outOffset > this._chunkSize) {
-      const error = new RangeError('The value of "offset" is out of range');
-      error.code = "ERR_OUT_OF_RANGE";
-      throw error;
+      throw Object.assign(new RangeError('The value of "offset" is out of range'), { code: "ERR_OUT_OF_RANGE" });
     }
     return method(input);
   },
@@ -144,11 +132,7 @@ const __quenchValidateFlushOptions = (options) => {
 };
 const __quenchValidateCompressionWindowBits = (options) => {
   if (options?.windowBits === 0) {
-    const error = new RangeError(
-      'The value of "options.windowBits" is out of range. It must be >= 9 and <= 15. Received 0',
-    );
-    error.code = "ERR_OUT_OF_RANGE";
-    throw error;
+    throw Object.assign(new RangeError('The value of "options.windowBits" is out of range. It must be >= 9 and <= 15. Received 0'), { code: "ERR_OUT_OF_RANGE" });
   }
 };
 const __quenchCreateZlibStream = (

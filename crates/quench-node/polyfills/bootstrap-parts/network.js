@@ -23,11 +23,7 @@ const __quenchNetModule = {
   getDefaultAutoSelectFamily: () => __quenchNetAutoSelectFamily,
   setDefaultAutoSelectFamily: (value) => {
     if (typeof value !== "boolean") {
-      const error = new TypeError(
-        'The "value" argument must be of type boolean',
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError('The "value" argument must be of type boolean'), { code: "ERR_INVALID_ARG_TYPE" });
     }
     __quenchNetAutoSelectFamily = value;
   },
@@ -39,9 +35,7 @@ const __quenchNetModule = {
     if (options.autoSelectFamilyAttemptTimeout !== undefined) {
       const value = options.autoSelectFamilyAttemptTimeout;
       if (!Number.isInteger(value) || value <= 0) {
-        const error = new RangeError('The "value" argument is out of range');
-        error.code = "ERR_OUT_OF_RANGE";
-        throw error;
+        throw Object.assign(new RangeError('The "value" argument is out of range'), { code: "ERR_OUT_OF_RANGE" });
       }
     }
     const socket = new __quenchNetModule.Socket();
@@ -125,9 +119,7 @@ const __quenchNetModule = {
   },
   setDefaultAutoSelectFamilyAttemptTimeout: (value) => {
     if (!Number.isInteger(value) || value <= 0) {
-      const error = new RangeError('The "value" argument is out of range');
-      error.code = "ERR_OUT_OF_RANGE";
-      throw error;
+      throw Object.assign(new RangeError('The "value" argument is out of range'), { code: "ERR_OUT_OF_RANGE" });
     }
     __quenchNetAutoSelectFamilyAttemptTimeout = Math.max(10, value);
   },
@@ -145,21 +137,15 @@ const __quenchNetModule = {
   BoundSocket: class BoundSocket {
     constructor(options = {}) {
       if (!options || typeof options !== "object" || Array.isArray(options)) {
-        const error = new TypeError("options must be an object");
-        error.code = "ERR_INVALID_ARG_TYPE";
-        throw error;
+        throw Object.assign(new TypeError("options must be an object"), { code: "ERR_INVALID_ARG_TYPE" });
       }
       const host = options.host ?? (options.ipv6Only ? "::" : "0.0.0.0");
       if (options.path !== undefined) {
         if (typeof options.path !== "string") {
-          const error = new TypeError("path must be a string");
-          error.code = "ERR_INVALID_ARG_TYPE";
-          throw error;
+          throw Object.assign(new TypeError("path must be a string"), { code: "ERR_INVALID_ARG_TYPE" });
         }
         if (options.path.startsWith("\0") && process.platform !== "linux") {
-          const error = new TypeError("abstract socket paths are Linux-only");
-          error.code = "ERR_INVALID_ARG_VALUE";
-          throw error;
+          throw Object.assign(new TypeError("abstract socket paths are Linux-only"), { code: "ERR_INVALID_ARG_VALUE" });
         }
         if (
           options.host !== undefined ||
@@ -167,11 +153,7 @@ const __quenchNetModule = {
           options.ipv6Only !== undefined ||
           options.reusePort !== undefined
         ) {
-          const error = new TypeError(
-            "path cannot be combined with TCP options",
-          );
-          error.code = "ERR_INVALID_ARG_VALUE";
-          throw error;
+          throw Object.assign(new TypeError("path cannot be combined with TCP options"), { code: "ERR_INVALID_ARG_VALUE" });
         }
         if (options.path.includes("nope/")) {
           const error = new Error("No such file or directory");
@@ -200,14 +182,10 @@ const __quenchNetModule = {
         return;
       }
       if (typeof host !== "string") {
-        const error = new TypeError("host must be a string");
-        error.code = "ERR_INVALID_ARG_TYPE";
-        throw error;
+        throw Object.assign(new TypeError("host must be a string"), { code: "ERR_INVALID_ARG_TYPE" });
       }
       if (!isIPv4(host) && !isIPv6(host) && host !== "0.0.0.0") {
-        const error = new TypeError("host must be an IPv4 address");
-        error.code = "ERR_INVALID_ARG_VALUE";
-        throw error;
+        throw Object.assign(new TypeError("host must be an IPv4 address"), { code: "ERR_INVALID_ARG_VALUE" });
       }
       if (host.startsWith("192.0.2.")) {
         const error = new Error("Cannot assign requested address");
@@ -321,9 +299,7 @@ const __quenchNetModule = {
           !Number.isInteger(requestedPortValue) ||
           requestedPortValue < 0 || requestedPortValue > 65535)
       ) {
-        const error = new RangeError("Port should be >= 0 and < 65536");
-        error.code = "ERR_SOCKET_BAD_PORT";
-        throw error;
+        throw Object.assign(new RangeError("Port should be >= 0 and < 65536"), { code: "ERR_SOCKET_BAD_PORT" });
       }
       if (typeof _port === "string" && host === undefined) {
         const error = new Error(`listen ${_port}: no such file or directory`);

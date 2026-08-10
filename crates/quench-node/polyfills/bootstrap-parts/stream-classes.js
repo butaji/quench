@@ -51,9 +51,7 @@ globalThis.__nodeFs.Utf8Stream = class Utf8Stream extends NodeEventEmitter {
   _asBuffer(value) {
     if (this.contentMode === "buffer") return NodeBuffer.from(value);
     if (typeof value !== "string") {
-      const error = new TypeError("data must be a string");
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError("data must be a string"), { code: "ERR_INVALID_ARG_TYPE" });
     }
     return NodeBuffer.from(value, "utf8");
   }

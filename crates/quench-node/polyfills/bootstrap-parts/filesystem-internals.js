@@ -5,11 +5,7 @@ const __quenchRmValidateBoolean = (options, key) => {
   ) {
     return;
   }
-  const error = new TypeError(
-    `The "options.${key}" property must be of type boolean.`,
-  );
-  error.code = "ERR_INVALID_ARG_TYPE";
-  throw error;
+  throw Object.assign(new TypeError(`The "options.${key}" property must be of type boolean.`), { code: "ERR_INVALID_ARG_TYPE" });
 };
 const __quenchRmValidateRange = (options, key) => {
   if (
@@ -18,11 +14,7 @@ const __quenchRmValidateRange = (options, key) => {
   ) {
     return;
   }
-  const error = new RangeError(
-    `The value of "options.${key}" is out of range.`,
-  );
-  error.code = "ERR_OUT_OF_RANGE";
-  throw error;
+  throw Object.assign(new RangeError(`The value of "options.${key}" is out of range.`), { code: "ERR_OUT_OF_RANGE" });
 };
 const __quenchInternalFsUtilsModule = {
   vfsState: globalThis.__quenchVfsState ||= { handlers: null },
@@ -31,11 +23,7 @@ const __quenchInternalFsUtilsModule = {
       arguments.length > 1 &&
       (options === null || typeof options !== "object")
     ) {
-      const error = new TypeError(
-        'The "options" argument must be of type object.',
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError('The "options" argument must be of type object.'), { code: "ERR_INVALID_ARG_TYPE" });
     }
     const value = options || {};
     __quenchRmValidateBoolean(value, "recursive");
@@ -74,9 +62,7 @@ const __quenchInternalFsUtilsModule = {
       "sa+": 1053762,
     };
     if (typeof flags !== "string" || values[flags] === undefined) {
-      const error = new TypeError(`Unknown file open flag: ${flags}`);
-      error.code = "ERR_INVALID_ARG_VALUE";
-      throw error;
+      throw Object.assign(new TypeError(`Unknown file open flag: ${flags}`), { code: "ERR_INVALID_ARG_VALUE" });
     }
     return values[flags];
   },

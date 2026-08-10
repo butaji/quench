@@ -70,9 +70,7 @@ const __quenchValidateZlibCallbackInput = (input) => {
       !(input instanceof ArrayBuffer) &&
       !ArrayBuffer.isView(input))
   ) {
-    const error = new TypeError("Invalid zlib input");
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError("Invalid zlib input"), { code: "ERR_INVALID_ARG_TYPE" });
   }
 };
 const __quenchValidateCrc32 = (input, seed) => {
@@ -81,16 +79,10 @@ const __quenchValidateCrc32 = (input, seed) => {
     !(input instanceof Uint8Array) &&
     !(input instanceof ArrayBuffer)
   ) {
-    const error = new TypeError(
-      'The "data" argument must be of type string or an instance of Buffer or Uint8Array',
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "data" argument must be of type string or an instance of Buffer or Uint8Array'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   if (typeof seed !== "number" || !Number.isInteger(seed)) {
-    const error = new TypeError('The "crc" argument must be of type number');
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "crc" argument must be of type number'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   return typeof input === "string"
     ? new TextEncoder().encode(input)
@@ -117,13 +109,9 @@ const __quenchZlibCallback = (method, Engine) => (input, options, callback) => {
   // Node validates input synchronously before checking the callback.
   __quenchValidateZlibCallbackInput(input);
   if (typeof callback !== "function") {
-    const error = new TypeError(
-      `The "callback" argument must be of type function. Received ${
+    throw Object.assign(new TypeError(`The "callback" argument must be of type function. Received ${
         callback === undefined ? "undefined" : typeof callback
-      }`,
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+      }`), { code: "ERR_INVALID_ARG_TYPE" });
   }
   queueMicrotask(() => {
     try {

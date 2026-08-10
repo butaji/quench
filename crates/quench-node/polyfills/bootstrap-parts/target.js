@@ -286,11 +286,7 @@ globalThis.MessagePort ||= class MessagePort extends EventTarget {
       (transferList === null ||
         typeof transferList[Symbol.iterator] !== "function")
     ) {
-      const error = new TypeError(
-        "Optional transferList argument must be an iterable",
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError("Optional transferList argument must be an iterable"), { code: "ERR_INVALID_ARG_TYPE" });
     }
     if (transferList?.some((item) => __nodeUntransferableBuffers.has(item))) {
       const error = new DOMException(
@@ -426,18 +422,10 @@ const __quenchEventsTargetValid = (target) =>
   target instanceof AbortSignal;
 const __quenchValidateEventLimit = (limit) => {
   if (typeof limit !== "number") {
-    const error = new TypeError(
-      "The setMaxListeners argument must be a number [ERR_INVALID_ARG_TYPE]",
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError("The setMaxListeners argument must be a number [ERR_INVALID_ARG_TYPE]"), { code: "ERR_INVALID_ARG_TYPE" });
   }
   if (Number.isNaN(limit) || limit < 0) {
-    const error = new RangeError(
-      "The value of setMaxListeners is out of range [ERR_OUT_OF_RANGE]",
-    );
-    error.code = "ERR_OUT_OF_RANGE";
-    throw error;
+    throw Object.assign(new RangeError("The value of setMaxListeners is out of range [ERR_OUT_OF_RANGE]"), { code: "ERR_OUT_OF_RANGE" });
   }
 };
 const __quenchEventsRequire = (value) => {
@@ -448,11 +436,7 @@ const __quenchEventsRequire = (value) => {
   __quenchEventsModule.defaultMaxListeners = 10;
   __quenchEventsModule.getMaxListeners = (target) => {
     if (!__quenchEventsTargetValid(target)) {
-      const error = new TypeError(
-        "The eventTarget argument must be an instance of EventEmitter or EventTarget [ERR_INVALID_ARG_TYPE]",
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError("The eventTarget argument must be an instance of EventEmitter or EventTarget [ERR_INVALID_ARG_TYPE]"), { code: "ERR_INVALID_ARG_TYPE" });
     }
     if (target instanceof AbortSignal) return 0;
     return limits.get(target) ?? 10;
@@ -461,11 +445,7 @@ const __quenchEventsRequire = (value) => {
     __quenchValidateEventLimit(limit);
     for (const target of targets) {
       if (!__quenchEventsTargetValid(target)) {
-        const error = new TypeError(
-          "The eventTargets argument must be an instance of EventEmitter or EventTarget [ERR_INVALID_ARG_TYPE]",
-        );
-        error.code = "ERR_INVALID_ARG_TYPE";
-        throw error;
+        throw Object.assign(new TypeError("The eventTargets argument must be an instance of EventEmitter or EventTarget [ERR_INVALID_ARG_TYPE]"), { code: "ERR_INVALID_ARG_TYPE" });
       }
       limits.set(target, limit);
     }

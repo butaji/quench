@@ -142,11 +142,7 @@ const __nodeDuplexFrom = (body) => {
     }
     const result = body();
     if (result === undefined) {
-      const error = new TypeError(
-        "The function must return a stream or iterable"
-      );
-      error.code = "ERR_INVALID_RETURN_VALUE";
-      throw error;
+      throw Object.assign(new TypeError("The function must return a stream or iterable"), { code: "ERR_INVALID_RETURN_VALUE" });
     }
     return __nodeDuplexFrom(result);
   }

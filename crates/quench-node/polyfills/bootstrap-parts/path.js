@@ -83,11 +83,7 @@ const __nodeGlobSegment = (value, pattern) => {
 };
 const __nodeGlobMatch = (path, pattern) => {
   if (typeof path !== "string" || typeof pattern !== "string") {
-    const error = new TypeError(
-      'The "path" and "pattern" arguments must be of type string',
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "path" and "pattern" arguments must be of type string'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   const paths = __nodeGlobNormalize(path).split("/");
   const patterns = __nodeGlobNormalize(pattern).split("/");
@@ -228,9 +224,7 @@ globalThis.__nodePath = {
   },
   parse: (value) => {
     if (typeof value !== "string") {
-      const error = new TypeError('The "path" argument must be of type string');
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError('The "path" argument must be of type string'), { code: "ERR_INVALID_ARG_TYPE" });
     }
     const input = String(value);
     const trimmed = input.replace(/\/+$/, "") ||

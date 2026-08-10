@@ -11,11 +11,7 @@ globalThis.__validateTruncateLength = (length) => {
     throw error;
   }
   if (!Number.isInteger(length)) {
-    const error = new RangeError(
-      `The value of "len" is out of range. It must be an integer. Received ${length}`,
-    );
-    error.code = "ERR_OUT_OF_RANGE";
-    throw error;
+    throw Object.assign(new RangeError(`The value of "len" is out of range. It must be an integer. Received ${length}`), { code: "ERR_OUT_OF_RANGE" });
   }
 };
 globalThis.__truncateMissingPath = (path, callback) => {

@@ -64,20 +64,14 @@ Object.defineProperty(NodeReadableCompat, "from", {
 const __nodePipeline = (...args) => {
   const callback = args.pop();
   if (args.length === 0 || typeof callback !== "function") {
-    const error = new TypeError("The pipeline callback must be a function");
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError("The pipeline callback must be a function"), { code: "ERR_INVALID_ARG_TYPE" });
   }
   const streams = [];
   for (let index = 0; index < args.length; index++) {
     const stream = args[index];
     if (typeof stream === "function") {
       if (index > 0 && stream.constructor?.name === "GeneratorFunction") {
-        const error = new TypeError(
-          "The function must return an async iterable or stream",
-        );
-        error.code = "ERR_INVALID_RETURN_VALUE";
-        throw error;
+        throw Object.assign(new TypeError("The function must return an async iterable or stream"), { code: "ERR_INVALID_RETURN_VALUE" });
       }
       if (stream.constructor?.name === "AsyncGeneratorFunction") {
         streams.push(NodeDuplex.from(stream));
@@ -85,11 +79,7 @@ const __nodePipeline = (...args) => {
       }
       const result = stream(streams[index - 1]);
       if (result === undefined) {
-        const error = new TypeError(
-          "The function must return a stream or iterable",
-        );
-        error.code = "ERR_INVALID_RETURN_VALUE";
-        throw error;
+        throw Object.assign(new TypeError("The function must return a stream or iterable"), { code: "ERR_INVALID_RETURN_VALUE" });
       }
       streams.push(NodeDuplex.from(result));
       continue;
@@ -107,9 +97,7 @@ const __nodePipeline = (...args) => {
     streams.push(stream);
   }
   if (streams.length < 2) {
-    const error = new TypeError("The pipeline requires at least two streams");
-    error.code = "ERR_MISSING_ARGS";
-    throw error;
+    throw Object.assign(new TypeError("The pipeline requires at least two streams"), { code: "ERR_MISSING_ARGS" });
   }
   let settled = false;
   const complete = (error) => {

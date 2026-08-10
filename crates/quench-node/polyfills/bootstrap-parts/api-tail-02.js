@@ -27,18 +27,10 @@ globalThis.__nodeAssert.doesNotReject = (promiseOrFn, message) =>
         throw error;
       }
       if (typeof input === "function") {
-        const error = new TypeError(
-          'Expected instance of Promise to be returned from the "promiseFn" function but got a function.'
-        );
-        error.code = "ERR_INVALID_RETURN_VALUE";
-        throw error;
+        throw Object.assign(new TypeError('Expected instance of Promise to be returned from the "promiseFn" function but got a function.'), { code: "ERR_INVALID_RETURN_VALUE" });
       }
       if (typeof input.catch !== "function") {
-        const error = new TypeError(
-          'The "promiseFn" argument must be a function or an instance of Promise'
-        );
-        error.code = "ERR_INVALID_ARG_TYPE";
-        throw error;
+        throw Object.assign(new TypeError('The "promiseFn" argument must be a function or an instance of Promise'), { code: "ERR_INVALID_ARG_TYPE" });
       }
       return input;
     })
@@ -71,11 +63,7 @@ globalThis.__nodeAssert.match = (value, expression) => {
       typeof expression === "string"
         ? ` Received type string ('${expression}')`
         : ` Received ${expression}`;
-    const error = new TypeError(
-      `The "regexp" argument must be an instance of RegExp.${received}`
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError(`The "regexp" argument must be an instance of RegExp.${received}`), { code: "ERR_INVALID_ARG_TYPE" });
   }
   if (!expression.test(String(value))) {
     throw new Error("Value did not match expression");
@@ -87,11 +75,7 @@ globalThis.__nodeAssert.doesNotMatch = (value, expression) => {
       typeof expression === "string"
         ? ` Received type string ('${expression}')`
         : ` Received ${expression}`;
-    const error = new TypeError(
-      `The "regexp" argument must be an instance of RegExp.${received}`
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError(`The "regexp" argument must be an instance of RegExp.${received}`), { code: "ERR_INVALID_ARG_TYPE" });
   }
   if (expression.test(String(value))) {
     throw new Error("Value matched expression");
@@ -106,11 +90,7 @@ globalThis.__nodeAssert.Assert = class Assert {
       options.diff !== undefined &&
       !["simple", "full"].includes(options.diff)
     ) {
-      const error = new TypeError(
-        `The property 'options.diff' must be one of: 'simple', 'full'. Received '${options.diff}'`
-      );
-      error.code = "ERR_INVALID_ARG_VALUE";
-      throw error;
+      throw Object.assign(new TypeError(`The property 'options.diff' must be one of: 'simple', 'full'. Received '${options.diff}'`), { code: "ERR_INVALID_ARG_VALUE" });
     }
     this.diff = options?.diff || "simple";
     this.AssertionError = globalThis.__nodeAssert.AssertionError;
@@ -210,11 +190,7 @@ globalThis.__nodeAssert.Assert = class Assert {
 const __nodeAssertClass = globalThis.__nodeAssert.Assert;
 globalThis.__nodeAssert.Assert = function Assert(options) {
   if (!new.target) {
-    const error = new TypeError(
-      "Class constructor Assert cannot be invoked without 'new'"
-    );
-    error.code = "ERR_CONSTRUCT_CALL_REQUIRED";
-    throw error;
+    throw Object.assign(new TypeError("Class constructor Assert cannot be invoked without 'new'"), { code: "ERR_CONSTRUCT_CALL_REQUIRED" });
   }
   return Reflect.construct(__nodeAssertClass, [options], new.target);
 };
@@ -222,9 +198,7 @@ globalThis.__nodeAssert.Assert.prototype = __nodeAssertClass.prototype;
 globalThis.__nodeAssert.strict = globalThis.__nodeAssert;
 const __nodePathArg = (value) => {
   if (typeof value !== "string") {
-    const error = new TypeError('The "path" argument must be of type string');
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "path" argument must be of type string'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   return value;
 };

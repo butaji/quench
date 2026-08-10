@@ -22,9 +22,7 @@ globalThis.__nodeFs.fstat = (fd, options, callback) => {
     options = undefined;
   }
   if (typeof fd !== "number") {
-    const error = new TypeError('The "fd" argument must be of type number');
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "fd" argument must be of type number'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   if (typeof callback !== "function") {
     throw new TypeError('The "callback" argument must be of type function');
@@ -52,11 +50,7 @@ globalThis.__nodeFs.close = (fd, callback) => {
     throw error;
   }
   if (typeof callback !== "function") {
-    const error = new TypeError(
-      'The "callback" argument must be of type function'
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "callback" argument must be of type function'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   try {
     globalThis.__nodeFs.closeSync(fd);
@@ -116,11 +110,7 @@ globalThis.__nodeFs.createWriteStream = function (value, options = {}) {
   const encoding =
     typeof options === "string" ? options : options && options.encoding;
   if (encoding !== undefined && !NodeBuffer.isEncoding(encoding)) {
-    const error = new TypeError(
-      `The argument 'encoding' is invalid. Received '${encoding}'`
-    );
-    error.code = "ERR_INVALID_ARG_VALUE";
-    throw error;
+    throw Object.assign(new TypeError(`The argument 'encoding' is invalid. Received '${encoding}'`), { code: "ERR_INVALID_ARG_VALUE" });
   }
   const stream = options.__target || compatTarget || new NodeWritable(options);
   if (compatTarget && !compatTarget._events) {
@@ -181,11 +171,7 @@ globalThis.__nodeFs.stat = (value, options, callback) => {
     options = undefined;
   }
   if (typeof callback !== "function") {
-    const error = new TypeError(
-      'The "callback" argument must be of type function'
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "callback" argument must be of type function'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   const path = nodeFsPath(value);
   queueMicrotask(() => {
@@ -205,11 +191,7 @@ globalThis.__nodeFs.lstat = (value, options, callback) => {
     options = undefined;
   }
   if (typeof callback !== "function") {
-    const error = new TypeError(
-      'The "callback" argument must be of type function'
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "callback" argument must be of type function'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   const path = nodeFsPath(value);
   queueMicrotask(() => {
@@ -225,11 +207,7 @@ class __nodeFsUtf8Stream extends NodeWritable {
   constructor(options = {}) {
     super({ ...options, autoDestroy: false });
     if (options == null || typeof options !== "object") {
-      const error = new TypeError(
-        'The "options" argument must be of type object'
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError('The "options" argument must be of type object'), { code: "ERR_INVALID_ARG_TYPE" });
     }
     this.sync = options.sync === true;
     this.minLength = options.minLength ?? 4096;
@@ -245,9 +223,7 @@ class __nodeFsUtf8Stream extends NodeWritable {
   _open() {
     if (this.fd !== null) return;
     if (this.path === undefined) {
-      const error = new TypeError('The "dest" or "fd" option is required');
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError('The "dest" or "fd" option is required'), { code: "ERR_INVALID_ARG_TYPE" });
     }
     this.fd = globalThis.__nodeFs.openSync(this.path, "w");
   }
