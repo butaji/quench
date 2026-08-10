@@ -20,6 +20,22 @@ impl Environment {
         Rc::new(Self::default())
     }
 
+    /// Create a fresh declarative record whose name resolution continues in
+    /// `outer` without sharing its indexed slots.
+    pub(crate) fn with_outer(outer: Option<&Rc<Self>>, values: Vec<Value>) -> Rc<Self> {
+        Rc::new(Self {
+            slots: RefCell::new(
+                values
+                    .into_iter()
+                    .map(|value| Rc::new(RefCell::new(value)))
+                    .collect(),
+            ),
+            names: RefCell::new(None),
+            uninitialized: RefCell::new(None),
+            caller: outer.map(Rc::clone),
+        })
+    }
+
     pub(crate) fn capture(environment: &Rc<Self>, count: u16) -> Rc<Self> {
         let count = usize::from(count);
         let mut source = environment.slots.borrow_mut();
@@ -38,12 +54,13 @@ impl Environment {
     pub(crate) fn child(captures: &Rc<Self>, values: Vec<Value>) -> Rc<Self> {
         let mut slots = captures.slots.borrow().clone();
         slots.extend(values.into_iter().map(|value| Rc::new(RefCell::new(value))));
-        Rc::new(Self {
-            slots: RefCell::new(slots),
-            names: RefCell::new(None),
-            uninitialized: RefCell::new(captures.uninitialized.borrow().clone()),
-            caller: crate::locals::is_installed().then(crate::locals::current),
-        })
+        let caller = crate::locals::is_installed().then(crate::locals::current);
+        let environment = Self::with_outer(caller.as_ref(), Vec::new());
+        environment.slots.replace(slots);
+        environment
+            .uninitialized
+            .replace(captures.uninitialized.borrow().clone());
+        environment
     }
 
     pub(crate) fn len(&self) -> usize {
@@ -85,6 +102,13 @@ impl Environment {
     pub(crate) fn alias_name(&self, name: &str, slot: u16) {
         let binding = self.ensure_slot(slot);
         self.insert_alias(name, binding);
+    }
+
+    pub(crate) fn has_own_name(&self, name: &str) -> bool {
+        self.names
+            .borrow()
+            .as_ref()
+            .is_some_and(|names| names.contains_key(name))
     }
 
     pub(crate) fn alias_caller_name(&self, name: &str, slot: u16) -> bool {
