@@ -49,6 +49,10 @@ pub fn get_property(value: &Value, key: &str) -> Value {
         Set(data) if key == "size" => Value::Number(data.values.len() as f64),
         Set(_) => crate::collections::set::property(key),
         Iterator(_) => crate::collections::iterator::property(key),
+        Generator(_) if key == "next" => bind_method(
+            value,
+            Value::Builtin(crate::ops::Builtin::GeneratorNext),
+        ),
         Promise(_) => promise_property(value, key),
         HostCapability(capability) => host_capability_property(value, capability.descriptor, key),
         _ => Value::Undefined,
