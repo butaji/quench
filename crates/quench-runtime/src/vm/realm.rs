@@ -63,6 +63,28 @@ pub(super) fn global(id: RealmId) -> Option<Value> {
     state(id).map(|state| Value::Object(state.global.borrow().clone()))
 }
 
+pub(super) fn initialize_current_global(global: ObjectProperties) {
+    let initialized = super::GLOBAL_OBJECT.with(|slot| {
+        if slot.borrow().is_some() {
+            return false;
+        }
+        slot.replace(Some(global.clone()));
+        true
+    });
+    if !initialized {
+        return;
+    }
+    let realm = super::CURRENT_CONTEXT.with(|context| {
+        context
+            .borrow()
+            .as_ref()
+            .map_or(RealmId::ROOT, VmContext::realm)
+    });
+    if let Some(state) = state(realm) {
+        state.global.replace(global);
+    }
+}
+
 pub(super) fn context(id: RealmId) -> Option<VmContext> {
     state(id).map(|state| state.context.clone())
 }
