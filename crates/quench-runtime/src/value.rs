@@ -954,6 +954,8 @@ pub struct FunctionValue {
     pub params: u16,
     pub captures: Rc<RefCell<Vec<Value>>>,
     pub properties: Rc<RefCell<Vec<(String, Value)>>>,
+    /// Whether invocation produces an async completion and Promise result.
+    pub is_async: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]

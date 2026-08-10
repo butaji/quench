@@ -55,6 +55,7 @@ pub enum Op {
         body: Vec<Op>,
         params: u16,
         captures: u16,
+        is_async: bool,
     },
     MakeFunctionWithKind {
         dst: u16,
@@ -62,6 +63,7 @@ pub enum Op {
         params: u16,
         captures: u16,
         kind: FunctionKind,
+        is_async: bool,
     },
     Call {
         dst: u16,
@@ -74,6 +76,11 @@ pub enum Op {
         object: u16,
         key: String,
         args: Vec<u16>,
+    },
+    /// Suspend async execution until the source completion settles.
+    Await {
+        dst: u16,
+        src: u16,
     },
     Construct {
         dst: u16,
