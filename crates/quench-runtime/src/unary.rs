@@ -12,7 +12,11 @@ pub(crate) fn reduce_delete(
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
     let Expression::ComputedMemberExpression(member) = expression else {
-        return Some(emit_constant(ops, next_register));
+        return Some(emit_constant(
+            ops,
+            next_register,
+            !matches!(expression, Expression::Identifier(_)),
+        ));
     };
     let object =
         crate::reduce::reduce_expression(&member.object, ops, facts, next_register, locals)?;
@@ -24,12 +28,12 @@ pub(crate) fn reduce_delete(
     Some(dst)
 }
 
-fn emit_constant(ops: &mut Vec<Op>, next_register: &mut u16) -> u16 {
+fn emit_constant(ops: &mut Vec<Op>, next_register: &mut u16, value: bool) -> u16 {
     let dst = *next_register;
     *next_register = next_register.saturating_add(1);
     ops.push(Op::Const {
         dst,
-        value: Constant::Boolean(true),
+        value: Constant::Boolean(value),
     });
     dst
 }
