@@ -1,4 +1,4 @@
-fn to_uint8(value: f64) -> u8 {
+pub(crate) fn to_uint8(value: f64) -> u8 {
     if !value.is_finite() || value == 0.0 {
         return 0;
     }
@@ -175,7 +175,7 @@ fn view_int32_array(
     )))
 }
 
-fn to_int8(value: f64) -> i8 {
+pub(crate) fn to_int8(value: f64) -> i8 {
     if !value.is_finite() || value == 0.0 {
         return 0;
     }
@@ -187,7 +187,7 @@ fn to_int8(value: f64) -> i8 {
     }) as i8
 }
 
-fn to_int16(value: f64) -> i16 {
+pub(crate) fn to_int16(value: f64) -> i16 {
     if !value.is_finite() || value == 0.0 {
         return 0;
     }
@@ -199,7 +199,7 @@ fn to_int16(value: f64) -> i16 {
     }) as i16
 }
 
-fn to_int32(value: f64) -> i32 {
+pub(crate) fn to_int32(value: f64) -> i32 {
     if !value.is_finite() || value == 0.0 {
         return 0;
     }
@@ -211,14 +211,14 @@ fn to_int32(value: f64) -> i32 {
     }) as i32
 }
 
-fn to_uint32(value: f64) -> u32 {
+pub(crate) fn to_uint32(value: f64) -> u32 {
     if !value.is_finite() || value == 0.0 {
         return 0;
     }
     value.trunc().rem_euclid(4_294_967_296.0) as u32
 }
 
-fn to_uint16(value: f64) -> u16 {
+pub(crate) fn to_uint16(value: f64) -> u16 {
     if !value.is_finite() || value == 0.0 {
         return 0;
     }

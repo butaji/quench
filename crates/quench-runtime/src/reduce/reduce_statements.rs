@@ -4,7 +4,7 @@ use crate::{
     control_flow,
     facts::ProgramDb,
     functions,
-    ops::{Builtin, FunctionStrictness, Op},
+    ops::{Builtin, Op},
     statements::reduce_declaration as reduce_declaration_statement,
 };
 use oxc::{
@@ -263,7 +263,7 @@ pub fn reduce_function_declaration(
         params: parameter_count,
         captures,
         kind: crate::ops::FunctionKind::Ordinary,
-        strictness: function_strictness(body),
+        strictness: crate::reduce_support::function_strictness(body),
         is_async: function.r#async,
     });
     ops.push(Op::StoreLocal {
@@ -289,17 +289,6 @@ fn take_register(next_register: &mut u16) -> u16 {
     register
 }
 
-fn function_strictness(body: &oxc::ast::ast::FunctionBody<'_>) -> FunctionStrictness {
-    let strict = body
-        .directives
-        .iter()
-        .any(|directive| directive.directive.as_str() == "use strict");
-    if strict {
-        FunctionStrictness::Strict
-    } else {
-        FunctionStrictness::Sloppy
-    }
-}
 fn function_locals(
     function: &oxc::ast::ast::Function<'_>,
     locals: &HashMap<String, u16>,
@@ -322,6 +311,14 @@ fn function_locals(
         "this".to_string(),
         captures.saturating_add(parameter_count).saturating_add(1),
     );
+    let formal_parameters = parameters.clone();
     bindings.extend(parameters);
+    if let Some(body) = &function.body {
+        crate::reduce_support::shadow_function_bindings(
+            &body.statements,
+            &mut bindings,
+            &formal_parameters,
+        );
+    }
     Ok((bindings, parameter_count, captures))
 }

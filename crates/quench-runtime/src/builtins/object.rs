@@ -6,6 +6,36 @@ pub(crate) fn has_own_property(receiver: Option<&Value>, key: Option<&Value>) ->
     has_own_property_result(receiver, key).unwrap_or(Value::Boolean(false))
 }
 
+pub(crate) fn get_prototype_of(value: Option<&Value>) -> Result<Value, VmError> {
+    let value = require_object_coercible(value)?;
+    Ok(match value {
+        Value::Builtin(builtin) if is_typed_array_constructor(*builtin) => {
+            Value::Builtin(Builtin::TypedArray)
+        }
+        Value::Builtin(_) | Value::Function(_) | Value::BoundFunction(_) => {
+            Value::Builtin(Builtin::FunctionPrototype)
+        }
+        Value::Array(_) => Value::Builtin(Builtin::ArrayPrototype),
+        Value::Object(_) => Value::Builtin(Builtin::ObjectPrototype),
+        _ => Value::Null,
+    })
+}
+
+fn is_typed_array_constructor(builtin: Builtin) -> bool {
+    matches!(
+        builtin,
+        Builtin::Float64Array
+            | Builtin::Float32Array
+            | Builtin::Int8Array
+            | Builtin::Int16Array
+            | Builtin::Int32Array
+            | Builtin::Uint8Array
+            | Builtin::Uint16Array
+            | Builtin::Uint32Array
+            | Builtin::Uint8ClampedArray
+    )
+}
+
 pub(crate) fn execute_special(
     builtin: Builtin,
     receiver: Option<&Value>,

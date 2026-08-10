@@ -163,6 +163,7 @@ pub enum Op {
 pub enum Builtin {
     HostCapability(HostCapabilityKind),
     Array,
+    TypedArray,
     ArrayBuffer,
     ArrayBufferIsView,
     Float64Array,
@@ -353,6 +354,8 @@ pub enum Builtin {
     RegExpExec,
     ObjectPrototype,
     ArrayPush,
+    ArraySplice,
+    TypedArrayFill,
     ObjectDefineProperty,
     ObjectGetOwnPropertyNames,
     ObjectPropertyIsEnumerable,

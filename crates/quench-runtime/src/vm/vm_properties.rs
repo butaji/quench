@@ -149,6 +149,9 @@ fn array_buffer_property(buffer: &crate::value::ArrayBufferData, key: &str) -> V
 }
 
 fn float64_array_property(view: &crate::value::Float64ArrayData, key: &str) -> Value {
+    if let Some(value) = typed_index(key, |index| view.get(index)) {
+        return value;
+    }
     let detached = view.buffer.byte_length() == 0 && view.length != 0;
     match key {
         "buffer" => Value::ArrayBuffer(view.buffer.clone()),
@@ -163,6 +166,9 @@ fn float64_array_property(view: &crate::value::Float64ArrayData, key: &str) -> V
 }
 
 fn float32_array_property(view: &crate::value::Float32ArrayData, key: &str) -> Value {
+    if let Some(value) = typed_index(key, |index| view.get(index).map(f64::from)) {
+        return value;
+    }
     let detached = view.buffer.byte_length() == 0 && view.length != 0;
     match key {
         "buffer" => Value::ArrayBuffer(view.buffer.clone()),
@@ -177,6 +183,9 @@ fn float32_array_property(view: &crate::value::Float32ArrayData, key: &str) -> V
 }
 
 fn int8_array_property(view: &crate::value::Int8ArrayData, key: &str) -> Value {
+    if let Some(value) = typed_index(key, |index| view.get(index).map(f64::from)) {
+        return value;
+    }
     let detached = view.buffer.byte_length() == 0 && view.length != 0;
     match key {
         "buffer" => Value::ArrayBuffer(view.buffer.clone()),
@@ -189,6 +198,9 @@ fn int8_array_property(view: &crate::value::Int8ArrayData, key: &str) -> Value {
 }
 
 fn int16_array_property(view: &crate::value::Int16ArrayData, key: &str) -> Value {
+    if let Some(value) = typed_index(key, |index| view.get(index).map(f64::from)) {
+        return value;
+    }
     let detached = view.buffer.byte_length() == 0 && view.length != 0;
     match key {
         "buffer" => Value::ArrayBuffer(view.buffer.clone()),
@@ -203,6 +215,9 @@ fn int16_array_property(view: &crate::value::Int16ArrayData, key: &str) -> Value
 }
 
 fn int32_array_property(view: &crate::value::Int32ArrayData, key: &str) -> Value {
+    if let Some(value) = typed_index(key, |index| view.get(index).map(f64::from)) {
+        return value;
+    }
     let detached = view.buffer.byte_length() == 0 && view.length != 0;
     match key {
         "buffer" => Value::ArrayBuffer(view.buffer.clone()),
@@ -217,6 +232,9 @@ fn int32_array_property(view: &crate::value::Int32ArrayData, key: &str) -> Value
 }
 
 fn uint16_array_property(view: &crate::value::Uint16ArrayData, key: &str) -> Value {
+    if let Some(value) = typed_index(key, |index| view.get(index).map(f64::from)) {
+        return value;
+    }
     let detached = view.buffer.byte_length() == 0 && view.length != 0;
     match key {
         "buffer" => Value::ArrayBuffer(view.buffer.clone()),
@@ -231,6 +249,9 @@ fn uint16_array_property(view: &crate::value::Uint16ArrayData, key: &str) -> Val
 }
 
 fn uint8_array_property(view: &crate::value::Uint8ArrayData, key: &str) -> Value {
+    if let Some(value) = typed_index(key, |index| view.get(index).map(f64::from)) {
+        return value;
+    }
     let detached = view.buffer.byte_length() == 0 && view.length != 0;
     match key {
         "buffer" => Value::ArrayBuffer(view.buffer.clone()),
@@ -245,6 +266,9 @@ fn uint8_array_property(view: &crate::value::Uint8ArrayData, key: &str) -> Value
 }
 
 fn uint32_array_property(view: &crate::value::Uint32ArrayData, key: &str) -> Value {
+    if let Some(value) = typed_index(key, |index| view.get(index).map(f64::from)) {
+        return value;
+    }
     let detached = view.buffer.byte_length() == 0 && view.length != 0;
     match key {
         "buffer" => Value::ArrayBuffer(view.buffer.clone()),
@@ -259,6 +283,9 @@ fn uint32_array_property(view: &crate::value::Uint32ArrayData, key: &str) -> Val
 }
 
 fn uint8_clamped_array_property(view: &crate::value::Uint8ClampedArrayData, key: &str) -> Value {
+    if let Some(value) = typed_index(key, |index| view.get(index).map(f64::from)) {
+        return value;
+    }
     let detached = view.buffer.byte_length() == 0 && view.length != 0;
     match key {
         "buffer" => Value::ArrayBuffer(view.buffer.clone()),
@@ -270,6 +297,11 @@ fn uint8_clamped_array_property(view: &crate::value::Uint8ClampedArrayData, key:
         }
         _ => crate::builtins::property(Builtin::Uint8ClampedArrayPrototype, key),
     }
+}
+
+fn typed_index(key: &str, get: impl FnOnce(usize) -> Option<f64>) -> Option<Value> {
+    let index = key.parse().ok()?;
+    Some(get(index).map_or(Value::Undefined, Value::Number))
 }
 
 fn data_view_property(view: &crate::value::DataViewData, key: &str) -> Value {

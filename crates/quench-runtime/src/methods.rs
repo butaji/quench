@@ -55,7 +55,7 @@ fn execute_callee(
         Value::Function(function) => crate::functions::execute(&function, receiver, arguments)?,
         Value::BoundFunction(bound) => crate::functions::execute_bound(&bound, arguments)?,
         Value::Undefined => execute_fallback(receiver, arguments)?,
-        _ => return Err(VmError::NotCallable),
+        _ => return Err(crate::vm::not_callable()),
     };
     Ok(value)
 }
@@ -69,6 +69,6 @@ fn execute_fallback(receiver: &Value, arguments: &[Value]) -> Result<Value, VmEr
         }
         Value::Function(function) => crate::functions::execute(function, this_arg, call_arguments),
         Value::BoundFunction(bound) => crate::functions::execute_bound(bound, call_arguments),
-        _ => Err(VmError::NotCallable),
+        _ => Err(crate::vm::not_callable()),
     }
 }

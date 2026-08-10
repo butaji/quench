@@ -59,6 +59,7 @@ mod strings;
 mod switch;
 mod templates;
 mod transparent;
+mod typed_array_ops;
 mod unary;
 pub mod value;
 pub mod vm;
