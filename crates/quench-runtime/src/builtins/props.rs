@@ -64,6 +64,7 @@ fn builtin_method2(builtin: Builtin, key: &str) -> Option<Builtin> {
     use Builtin::*;
     match (builtin, key) {
         (Object, "defineProperty") => Some(ObjectDefineProperty),
+        (Object, "getOwnPropertyDescriptor") => Some(ObjectGetOwnPropertyDescriptor),
         (Object, "getOwnPropertyNames") => Some(ObjectGetOwnPropertyNames),
         (Object, "create") => Some(ObjectCreate),
         (Object, "freeze") => Some(ObjectFreeze),
@@ -84,6 +85,12 @@ fn builtin_method3(builtin: Builtin, key: &str) -> Option<Builtin> {
     use Builtin::*;
     match (builtin, key) {
         (Number, "prototype") => Some(NumberPrototype),
+        (NumberPrototype, "toLocaleString") => Some(NumberToLocaleString),
+        (NumberPrototype, "toString") => Some(NumberToString),
+        (NumberPrototype, "valueOf") => Some(NumberValueOf),
+        (NumberPrototype, "toFixed") => Some(NumberToFixed),
+        (NumberPrototype, "toPrecision") => Some(NumberToPrecision),
+        (NumberPrototype, "toExponential") => Some(NumberToExponential),
         (Number, "isNaN") => Some(IsNaN),
         (Number, "isFinite") => Some(IsFinite),
         (Boolean, "prototype") => Some(BooleanPrototype),
