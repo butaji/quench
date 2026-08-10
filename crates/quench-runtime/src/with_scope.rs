@@ -70,6 +70,7 @@ pub(crate) fn execute_name(registers: &mut Vec<Value>, op: &Op) -> Result<(), Vm
     match op {
         Op::ResolveName { dst, key } => resolve_name(registers, *dst, key),
         Op::SetName { key, src, strict } => set_name(registers, key, *src, *strict),
+        Op::CheckStrictName { key } => check_strict_name(key),
         _ => Err(VmError::MissingReturn),
     }
 }
@@ -107,6 +108,18 @@ fn set_name(registers: &mut Vec<Value>, key: &str, src: u16, strict: bool) -> Re
     let updated = crate::builtins::set_property(global.clone(), key, value);
     crate::vm::synchronize_global_object(registers, &global, &updated);
     Ok(())
+}
+
+fn check_strict_name(key: &str) -> Result<(), VmError> {
+    if binding_target(key)?.is_some()
+        || crate::locals::resolve_name(key).is_some()
+        || has_property(&crate::vm::current_global_object(), key)?
+    {
+        return Ok(());
+    }
+    Err(crate::value::error::throw_reference_error(&format!(
+        "{key} is not defined"
+    )))
 }
 
 fn resolve(key: &str) -> Result<Option<Value>, VmError> {

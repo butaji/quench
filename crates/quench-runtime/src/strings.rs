@@ -1,5 +1,63 @@
 use crate::value::Value;
 
+/// The ECMAScript length of `s`: its count of UTF-16 code units.
+pub(crate) fn utf16_len(s: &str) -> usize {
+    s.encode_utf16().count()
+}
+
+/// The UTF-16 code unit at `index`, if any.
+pub(crate) fn utf16_code_unit(s: &str, index: usize) -> Option<u16> {
+    s.encode_utf16().nth(index)
+}
+
+/// The code point starting at UTF-16 code-unit `index`, folding a surrogate
+/// pair into a single code point and otherwise yielding the lone code unit.
+pub(crate) fn code_point_at_utf16(s: &str, index: usize) -> Option<u32> {
+    let units: Vec<u16> = s.encode_utf16().collect();
+    units.get(index).map(|_| code_point(&units, index))
+}
+
+/// The character (code point) at UTF-16 code-unit `index`, as a string.
+pub(crate) fn char_at_utf16(s: &str, index: usize) -> Option<String> {
+    let units: Vec<u16> = s.encode_utf16().collect();
+    let unit = *units.get(index)?;
+    let code = code_point(&units, index);
+    if is_surrogate(code) {
+        Some(String::from_utf16_lossy(&[unit]))
+    } else {
+        Some(char::from_u32(code).unwrap().to_string())
+    }
+}
+
+/// Converts a byte offset into `s` to a UTF-16 code-unit offset.
+fn byte_to_utf16(s: &str, byte: usize) -> usize {
+    s.get(..byte)
+        .map_or(0, |prefix| prefix.encode_utf16().count())
+}
+
+/// The code point beginning at `index` within `units`, folding a valid
+/// surrogate pair and otherwise yielding the lone code unit.
+fn code_point(units: &[u16], index: usize) -> u32 {
+    let unit = units[index];
+    if index + 1 < units.len() && is_high_surrogate(unit) && is_low_surrogate(units[index + 1]) {
+        0x1_0000 + (((unit - 0xD800) as u32) << 10) + (units[index + 1] - 0xDC00) as u32
+    } else {
+        unit as u32
+    }
+}
+
+fn is_high_surrogate(unit: u16) -> bool {
+    (0xD800..0xDC00).contains(&unit)
+}
+
+fn is_low_surrogate(unit: u16) -> bool {
+    (0xDC00..0xE000).contains(&unit)
+}
+
+fn is_surrogate(code: u32) -> bool {
+    (0xD800..0xE000).contains(&code)
+}
+
 pub(crate) fn property_method(key: &str) -> Option<crate::ops::Builtin> {
     match key {
         "includes" => Some(crate::ops::Builtin::StringIncludes),
@@ -133,12 +191,7 @@ pub(crate) fn char_at(receiver: Option<&Value>, arguments: &[Value]) -> Value {
         return Value::String(String::new());
     };
     let index = arguments.first().and_then(number).unwrap_or(0.0).max(0.0) as usize;
-    Value::String(
-        value
-            .chars()
-            .nth(index)
-            .map_or_else(String::new, |c| c.to_string()),
-    )
+    Value::String(char_at_utf16(value, index).unwrap_or_default())
 }
 
 pub(crate) fn char_code_at(receiver: Option<&Value>, arguments: &[Value]) -> Value {
@@ -146,12 +199,7 @@ pub(crate) fn char_code_at(receiver: Option<&Value>, arguments: &[Value]) -> Val
         return Value::Number(f64::NAN);
     };
     let index = arguments.first().and_then(number).unwrap_or(0.0).max(0.0) as usize;
-    value
-        .chars()
-        .nth(index)
-        .map_or(Value::Number(f64::NAN), |value| {
-            Value::Number(value as u32 as f64)
-        })
+    utf16_code_unit(value, index).map_or(Value::Number(f64::NAN), |unit| Value::Number(unit as f64))
 }
 
 pub(crate) fn index_of(receiver: Option<&Value>, arguments: &[Value]) -> Value {
@@ -159,7 +207,11 @@ pub(crate) fn index_of(receiver: Option<&Value>, arguments: &[Value]) -> Value {
         return Value::Number(-1.0);
     };
     let search = argument(arguments);
-    Value::Number(value.find(&search).map_or(-1.0, |index| index as f64))
+    Value::Number(
+        value
+            .find(&search)
+            .map_or(-1.0, |byte| byte_to_utf16(value, byte) as f64),
+    )
 }
 
 pub(crate) fn last_index_of(receiver: Option<&Value>, arguments: &[Value]) -> Value {
@@ -167,41 +219,39 @@ pub(crate) fn last_index_of(receiver: Option<&Value>, arguments: &[Value]) -> Va
         return Value::Number(-1.0);
     };
     let search = argument(arguments);
-    Value::Number(value.rfind(&search).map_or(-1.0, |index| index as f64))
+    Value::Number(
+        value
+            .rfind(&search)
+            .map_or(-1.0, |byte| byte_to_utf16(value, byte) as f64),
+    )
 }
 
 pub(crate) fn slice(receiver: Option<&Value>, arguments: &[Value]) -> Value {
     let Some(Value::String(value)) = receiver else {
         return Value::String(String::new());
     };
-    let chars: Vec<char> = value.chars().collect();
-    let length = chars.len() as isize;
+    let units: Vec<u16> = value.encode_utf16().collect();
+    let length = units.len() as isize;
     let start = string_index(arguments.first(), length);
     let end = arguments
         .get(1)
         .map_or(length, |value| string_index(Some(value), length));
-    Value::String(
-        chars[start.min(end) as usize..end.max(start) as usize]
-            .iter()
-            .collect(),
-    )
+    let range = start.min(end) as usize..end.max(start) as usize;
+    Value::String(String::from_utf16_lossy(&units[range]))
 }
 
 pub(crate) fn substring(receiver: Option<&Value>, arguments: &[Value]) -> Value {
     let Some(Value::String(value)) = receiver else {
         return Value::String(String::new());
     };
-    let chars: Vec<char> = value.chars().collect();
-    let length = chars.len() as isize;
+    let units: Vec<u16> = value.encode_utf16().collect();
+    let length = units.len() as isize;
     let start = substring_index(arguments.first(), length);
     let end = arguments
         .get(1)
         .map_or(length, |value| substring_index(Some(value), length));
-    Value::String(
-        chars[start.min(end) as usize..end.max(start) as usize]
-            .iter()
-            .collect(),
-    )
+    let range = start.min(end) as usize..end.max(start) as usize;
+    Value::String(String::from_utf16_lossy(&units[range]))
 }
 
 fn string_index(value: Option<&Value>, length: isize) -> isize {
@@ -240,8 +290,8 @@ pub(crate) fn split(receiver: Option<&Value>, arguments: &[Value]) -> Value {
     let separator = arguments.first().map_or_else(String::new, to_string);
     let values = if separator.is_empty() {
         value
-            .chars()
-            .map(|c| Value::String(c.to_string()))
+            .encode_utf16()
+            .map(|unit| Value::String(String::from_utf16_lossy(&[unit])))
             .collect()
     } else {
         value
@@ -266,8 +316,9 @@ fn pad(receiver: Option<&Value>, arguments: &[Value], start: bool) -> Value {
     };
     let target = arguments.first().and_then(number).unwrap_or(0.0).max(0.0) as usize;
     let fill = arguments.get(1).map_or_else(|| " ".to_string(), to_string);
-    let count = target.saturating_sub(value.chars().count());
-    let padding: String = fill.chars().cycle().take(count).collect();
+    let count = target.saturating_sub(utf16_len(value));
+    let padding_units: Vec<u16> = fill.encode_utf16().cycle().take(count).collect();
+    let padding = String::from_utf16_lossy(&padding_units);
     if start {
         Value::String(format!("{padding}{value}"))
     } else {
@@ -294,10 +345,7 @@ pub(crate) fn code_point_at(receiver: Option<&Value>, arguments: &[Value]) -> Va
         return Value::Undefined;
     };
     let index = arguments.first().and_then(number).unwrap_or(0.0).max(0.0) as usize;
-    value
-        .chars()
-        .nth(index)
-        .map_or(Value::Undefined, |value| Value::Number(value as u32 as f64))
+    code_point_at_utf16(value, index).map_or(Value::Undefined, |code| Value::Number(code as f64))
 }
 
 pub(crate) fn to_string_value(receiver: Option<&Value>) -> Value {
