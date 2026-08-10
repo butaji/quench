@@ -15,13 +15,11 @@ use std::{
 use walkdir::WalkDir;
 mod esm;
 mod host_context;
-macro_rules! bootstrap_source {
-    ($($name:literal),* $(,)?) => {
-        concat!($(include_str!(concat!("../polyfills/bootstrap-parts/", $name, ".js")), "\n"),*)
-    };
-}
+mod polyfill_codegen;
+mod polyfill_js;
 #[rustfmt::skip]
-const BOOTSTRAP_SOURCE: &str = bootstrap_source!("timer-validation", "globals", "globals-extra", "globals-tail", "fetch", "promises", "validation", "arraybuffer", "encoding", "encoding-tail", "pool", "copy-head", "copy", "buffer-validation", "views", "allocation", "api-head", "api", "api-tail", "api-tail-02", "path", "support", "events-head", "events", "events-readable-tail", "events-writable-tail", "events-duplex-tail", "events-transform-tail", "events-stream-tail", "events-tail", "filesystem-validation", "filesystem-validation-tail", "file-descriptors", "filesystem-access-validation", "io", "io-tail", "metadata", "metadata-tail", "filesystem-permissions", "timestamps", "links", "links-tail", "directory-options", "directory", "streams", "stream-classes", "externalizable-strings", "open-validation", "write-validation", "truncate-validation", "read-file", "internal-fs-binding", "streams-tail", "writes", "writes-tail", "performance", "formatting-tail", "formatting", "promisify", "errors", "colors", "colors-tail", "format", "crypto-validation", "crypto-head", "crypto", "crypto-tail", "random", "crypto-hmac-validation", "core-head", "core", "core-tail", "network-head", "network-socket", "network-socket-tail", "network-blocklist", "network", "network-promises-tail", "network-validation", "filesystem-internals", "cluster", "tcp-binding", "context", "compile", "compression-tail", "compression", "compression-tail-02", "dispatch", "zlib", "decoder", "utf8", "codecs", "tls", "tty", "zlib-streams", "iterators", "types", "stream-promises", "web-streams", "web-streams-require", "web-streams-blob", "consumers", "punycode", "module", "channel", "domain", "readline-promises", "repl", "constants", "strict", "sys", "trace-events", "wasi", "inspector", "args", "text", "callbackify", "abort", "console", "url", "v8", "os", "metrics", "filesystem-constants", "passthrough", "report", "glob", "dns", "dgram-head", "dgram", "dgram-tail", "membership", "https", "http2", "reporters", "sqlite", "util", "cluster-runtime", "cluster-api", "worker", "policy", "setup", "defaults", "alias", "workers", "cleanup", "process", "child-process", "shared", "surface", "lifecycle", "child-process-events", "child-process-spawn-errors", "child-process-exec-errors", "sync", "exec", "child-process-validation", "constructor", "fork", "child-process-streams", "output", "references", "child-process-encoding", "state", "send", "fork-send", "exit", "disposal", "unlink", "flags", "probe", "ppid", "maps", "ref", "target", "listeners", "introspection", "vfs-head", "vfs");
+static BOOTSTRAP_SOURCE: std::sync::LazyLock<String> =
+    std::sync::LazyLock::new(polyfill_js::build_bootstrap_source);
 static MKDTEMP_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = cli_args().into_iter();
