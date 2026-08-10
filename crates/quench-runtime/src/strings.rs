@@ -95,34 +95,34 @@ pub(crate) fn execute_builtin(
     arguments: &[Value],
 ) -> Option<Result<Value, crate::execute::VmError>> {
     let result = match builtin {
-        crate::ops::Builtin::StringFromCharCode => from_char_code(arguments),
-        crate::ops::Builtin::StringIncludes => includes(receiver, arguments),
-        crate::ops::Builtin::StringStartsWith => starts_with(receiver, arguments),
-        crate::ops::Builtin::StringEndsWith => ends_with(receiver, arguments),
-        crate::ops::Builtin::StringRepeat => repeat(receiver, arguments),
-        crate::ops::Builtin::StringTrim => trim(receiver),
-        crate::ops::Builtin::StringToLowerCase => to_lower_case(receiver),
-        crate::ops::Builtin::StringToUpperCase => to_upper_case(receiver),
-        crate::ops::Builtin::StringCharAt => char_at(receiver, arguments),
-        crate::ops::Builtin::StringCharCodeAt => char_code_at(receiver, arguments),
-        crate::ops::Builtin::StringIndexOf => index_of(receiver, arguments),
-        crate::ops::Builtin::StringLastIndexOf => last_index_of(receiver, arguments),
-        crate::ops::Builtin::StringSlice => slice(receiver, arguments),
-        crate::ops::Builtin::StringSubstring => substring(receiver, arguments),
-        crate::ops::Builtin::StringConcat => concat(receiver, arguments),
-        crate::ops::Builtin::StringSplit => split(receiver, arguments),
-        crate::ops::Builtin::StringPadStart => pad_start(receiver, arguments),
-        crate::ops::Builtin::StringPadEnd => pad_end(receiver, arguments),
-        crate::ops::Builtin::StringTrimStart => trim_start(receiver),
-        crate::ops::Builtin::StringTrimEnd => trim_end(receiver),
-        crate::ops::Builtin::StringCodePointAt => code_point_at(receiver, arguments),
-        crate::ops::Builtin::StringToString => to_string_value(receiver),
+        crate::ops::Builtin::StringFromCharCode => Ok(from_char_code(arguments)),
+        crate::ops::Builtin::StringIncludes => Ok(includes(receiver, arguments)),
+        crate::ops::Builtin::StringStartsWith => Ok(starts_with(receiver, arguments)),
+        crate::ops::Builtin::StringEndsWith => Ok(ends_with(receiver, arguments)),
+        crate::ops::Builtin::StringRepeat => Ok(repeat(receiver, arguments)),
+        crate::ops::Builtin::StringTrim => Ok(trim(receiver)),
+        crate::ops::Builtin::StringToLowerCase => Ok(to_lower_case(receiver)),
+        crate::ops::Builtin::StringToUpperCase => Ok(to_upper_case(receiver)),
+        crate::ops::Builtin::StringCharAt => Ok(char_at(receiver, arguments)),
+        crate::ops::Builtin::StringCharCodeAt => Ok(char_code_at(receiver, arguments)),
+        crate::ops::Builtin::StringIndexOf => Ok(index_of(receiver, arguments)),
+        crate::ops::Builtin::StringLastIndexOf => Ok(last_index_of(receiver, arguments)),
+        crate::ops::Builtin::StringSlice => Ok(slice(receiver, arguments)),
+        crate::ops::Builtin::StringSubstring => Ok(substring(receiver, arguments)),
+        crate::ops::Builtin::StringConcat => Ok(concat(receiver, arguments)),
+        crate::ops::Builtin::StringSplit => Ok(split(receiver, arguments)),
+        crate::ops::Builtin::StringPadStart => Ok(pad_start(receiver, arguments)),
+        crate::ops::Builtin::StringPadEnd => Ok(pad_end(receiver, arguments)),
+        crate::ops::Builtin::StringTrimStart => Ok(trim_start(receiver)),
+        crate::ops::Builtin::StringTrimEnd => Ok(trim_end(receiver)),
+        crate::ops::Builtin::StringCodePointAt => Ok(code_point_at(receiver, arguments)),
+        crate::ops::Builtin::StringToString => Ok(to_string_value(receiver)),
         crate::ops::Builtin::StringReplace => replace(receiver, arguments, false),
         crate::ops::Builtin::StringReplaceAll => replace(receiver, arguments, true),
-        crate::ops::Builtin::StringSearch => search(receiver, arguments),
+        crate::ops::Builtin::StringSearch => Ok(search(receiver, arguments)),
         _ => return None,
     };
-    Some(Ok(result))
+    Some(result)
 }
 
 fn from_char_code(arguments: &[Value]) -> Value {
@@ -352,18 +352,65 @@ pub(crate) fn to_string_value(receiver: Option<&Value>) -> Value {
     Value::String(receiver.map_or_else(String::new, to_string))
 }
 
-pub(crate) fn replace(receiver: Option<&Value>, arguments: &[Value], all: bool) -> Value {
+pub(crate) fn replace(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+    all: bool,
+) -> Result<Value, crate::execute::VmError> {
     let Some(Value::String(value)) = receiver else {
-        return Value::String(String::new());
+        return Ok(Value::String(String::new()));
     };
     let pattern = arguments.first().map_or_else(String::new, to_string);
-    let replacement = arguments.get(1).map_or_else(String::new, to_string);
-    let result = if all {
-        value.replace(&pattern, &replacement)
-    } else {
-        value.replacen(&pattern, &replacement, 1)
+    let Some(replacement) = arguments.get(1) else {
+        let result = if all {
+            value.replace(&pattern, "")
+        } else {
+            value.replacen(&pattern, "", 1)
+        };
+        return Ok(Value::String(result));
     };
-    Value::String(result)
+    let result = if crate::conversion::is_callable(replacement) {
+        apply_callable_replacement(value, pattern, replacement, all)?
+    } else {
+        let template = to_string(replacement);
+        if all {
+            value.replace(&pattern, &template)
+        } else {
+            value.replacen(&pattern, &template, 1)
+        }
+    };
+    Ok(Value::String(result))
+}
+
+fn apply_callable_replacement(
+    value: &str,
+    pattern: String,
+    replacement: &Value,
+    all: bool,
+) -> Result<String, crate::execute::VmError> {
+    let mut result = String::new();
+    let mut rest = value;
+    while let Some(index) = rest.find(&pattern) {
+        let matched = rest[..index + pattern.len()].to_string();
+        let suffix_start = index + pattern.len();
+        let offset = value.len() - rest.len() + index;
+        let callback_args = [
+            Value::String(matched.clone()),
+            Value::Number(offset as f64),
+            Value::String(value.to_string()),
+        ];
+        let replaced =
+            crate::functions::execute_target(replacement, &Value::Undefined, &callback_args)?;
+        result.push_str(&matched[..index]);
+        result.push_str(&to_string(&replaced));
+        rest = &rest[suffix_start..];
+        if !all {
+            result.push_str(rest);
+            return Ok(result);
+        }
+    }
+    result.push_str(rest);
+    Ok(result)
 }
 
 pub(crate) fn search(receiver: Option<&Value>, arguments: &[Value]) -> Value {

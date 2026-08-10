@@ -1,7 +1,7 @@
 include!("ops_prelude.rs");
 include!("ops_op.rs");
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Builtin {
     HostCapability(HostCapabilityKind),
     Array,
@@ -208,6 +208,7 @@ pub enum Builtin {
     RegExpPrototype,
     RegExpTest,
     RegExpExec,
+    RegExpPrototypeToString,
     ObjectPrototype,
     ArrayPush,
     ArraySplice,

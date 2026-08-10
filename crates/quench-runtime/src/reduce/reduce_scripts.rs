@@ -64,6 +64,7 @@ fn reduce_units(units: &[SourceUnit<'_>]) -> Result<ResidualProgram, Vec<String>
         };
         let parsed = Parser::new(&allocator, source, unit.source_type).parse();
         reject_parse_errors(&parsed)?;
+        crate::reduce_support::validate_program(&parsed.program)?;
         let analysis = crate::semantic::analyze(&parsed.program)?;
         totals.0 += analysis.scope_count;
         totals.1 += analysis.symbol_count;

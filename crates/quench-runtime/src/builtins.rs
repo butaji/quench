@@ -4,7 +4,9 @@ pub mod object_alias;
 pub mod props;
 
 mod array_like;
+mod intrinsic_overrides;
 use array_like::{array_like_length, array_like_value};
+use intrinsic_overrides as overrides;
 
 use std::rc::Rc;
 
@@ -21,6 +23,14 @@ pub(crate) fn descriptor_key(key: &str) -> String {
 
 pub(crate) fn is_descriptor_key(key: &str) -> bool {
     key.starts_with(DESCRIPTOR_PREFIX)
+}
+
+pub(crate) fn read_intrinsic_override(builtin: Builtin, key: &str) -> Option<Value> {
+    overrides::read(builtin, key)
+}
+
+pub(crate) fn write_intrinsic_override(builtin: Builtin, key: &str, descriptor: Value) {
+    overrides::write(builtin, key, descriptor)
 }
 
 pub(crate) fn property(builtin: Builtin, key: &str) -> Value {
@@ -356,24 +366,35 @@ pub(crate) fn define_own_property(
     } else {
         define_property_value(target.clone(), key, value)
     };
-    if let Value::Object(properties) = &mut result {
-        let metadata = Value::Object(Rc::new(ObjectData::new(descriptor.clone())));
-        let properties = Rc::make_mut(properties);
-        properties.retain(|(name, _)| name != &descriptor_key(key));
-        properties.push((descriptor_key(key), metadata));
-    }
-    if let Value::Function(function) = &result {
-        let metadata = Value::Object(Rc::new(ObjectData::new(descriptor.clone())));
-        let mut properties = function.properties.borrow_mut();
-        properties.retain(|(name, _)| name != &descriptor_key(key));
-        properties.push((descriptor_key(key), metadata));
-    }
+    store_descriptor_metadata(&mut result, key, &descriptor);
     define_array_descriptor(&mut result, key, descriptor);
     Ok(result)
 }
 
+fn store_descriptor_metadata(result: &mut Value, key: &str, descriptor: &[(String, Value)]) {
+    let metadata = Value::Object(Rc::new(ObjectData::new(descriptor.to_vec())));
+    let descriptor_key = descriptor_key(key);
+    match result {
+        Value::Object(properties) => {
+            let properties = Rc::make_mut(properties);
+            properties.retain(|(name, _)| name != &descriptor_key);
+            properties.push((descriptor_key, metadata));
+        }
+        Value::Function(function) => {
+            let mut properties = function.properties.borrow_mut();
+            properties.retain(|(name, _)| name != &descriptor_key);
+            properties.push((descriptor_key, metadata));
+        }
+        Value::Builtin(builtin) => write_intrinsic_override(*builtin, key, metadata),
+        _ => {}
+    }
+}
+
 fn define_accessor_placeholder(target: Value, key: &str) -> Value {
-    if matches!(target, Value::Object(_) | Value::Function(_)) {
+    if matches!(
+        target,
+        Value::Object(_) | Value::Function(_) | Value::Builtin(_)
+    ) {
         return set_property(target, key, Value::Undefined);
     }
     target

@@ -52,6 +52,7 @@ pub(crate) fn reduce_eval_source_in_context(
     let allocator = Allocator::default();
     let parsed = Parser::new(&allocator, source, SourceType::cjs()).parse();
     crate::reduce_support::validate_parse(&parsed)?;
+    crate::reduce_support::validate_program(&parsed.program)?;
     let analysis = crate::semantic::analyze_eval(&parsed.program, grammar)?;
     let strict = inherited_strict || crate::reduce_support::has_strict_directive(&parsed.program);
     crate::reduce_support::validate_eval_var_names(&parsed.program, strict, forbidden_var_names)?;
