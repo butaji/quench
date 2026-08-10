@@ -12,6 +12,25 @@ pub(crate) fn reduce(
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
 ) -> Result<Option<u16>, Vec<String>> {
+    let barrier_len = facts.eval_var_barrier.len();
+    facts
+        .eval_var_barrier
+        .extend(crate::semantic_early::lexically_declared_names_in(
+            &block.body,
+        ));
+    let result = reduce_body(block, ops, facts, next_register, next_slot, locals);
+    facts.eval_var_barrier.truncate(barrier_len);
+    result
+}
+
+fn reduce_body(
+    block: &BlockStatement<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    next_slot: &mut u16,
+    locals: &mut HashMap<String, u16>,
+) -> Result<Option<u16>, Vec<String>> {
     let mut block_locals = locals.clone();
     let mut last = None;
     for statement in &block.body {

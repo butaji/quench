@@ -69,12 +69,50 @@ impl Environment {
         self.slots.borrow().get(usize::from(slot)).cloned()
     }
 
+    pub(crate) fn slot_cell(&self, slot: u16) -> Rc<RefCell<Value>> {
+        self.ensure_slot(slot)
+    }
+
+    pub(crate) fn install_slot_cell(&self, slot: u16, cell: Rc<RefCell<Value>>) {
+        let index = usize::from(slot);
+        let mut slots = self.slots.borrow_mut();
+        while slots.len() <= index {
+            slots.push(Rc::new(RefCell::new(Value::Undefined)));
+        }
+        slots[index] = cell;
+    }
+
     pub(crate) fn alias_name(&self, name: &str, slot: u16) {
         let binding = self.ensure_slot(slot);
+        self.insert_alias(name, binding);
+    }
+
+    pub(crate) fn alias_caller_name(&self, name: &str, slot: u16) -> bool {
+        let Some(caller) = &self.caller else {
+            return false;
+        };
+        let binding = self.ensure_slot(slot);
+        caller.insert_alias(name, binding);
+        true
+    }
+
+    pub(crate) fn delete_caller_name(&self, name: &str, slot: u16) -> bool {
+        let (Some(caller), Some(binding)) = (&self.caller, self.slot(slot)) else {
+            return false;
+        };
+        let removed = caller.remove_own_alias(name, &binding);
+        if removed {
+            self.shared_tdz().borrow_mut().insert(slot);
+        }
+        removed
+    }
+
+    fn insert_alias(&self, name: &str, binding: Rc<RefCell<Value>>) {
         self.names
             .borrow_mut()
             .get_or_insert_with(HashMap::new)
             .insert(name.to_string(), binding);
+        self.shared_tdz();
     }
 
     pub(crate) fn resolve_name(&self, name: &str) -> Option<Value> {
@@ -96,6 +134,17 @@ impl Environment {
         self.caller
             .as_ref()
             .is_some_and(|caller| caller.set_named(name, value))
+    }
+
+    pub(crate) fn delete_named(&self, name: &str, slot: u16) -> bool {
+        let Some(slot_binding) = self.slot(slot) else {
+            return false;
+        };
+        let removed = self.remove_own_alias(name, &slot_binding);
+        if removed {
+            self.shared_tdz().borrow_mut().insert(slot);
+        }
+        removed
     }
 
     pub(crate) fn mark_uninitialized(&self, slot: u16) {
@@ -147,6 +196,29 @@ impl Environment {
         let slots = Rc::new(RefCell::new(HashSet::new()));
         *state = Some(Rc::clone(&slots));
         slots
+    }
+
+    fn shared_tdz(&self) -> Rc<RefCell<HashSet<u16>>> {
+        let mut state = self.uninitialized.borrow_mut();
+        let slots = state.get_or_insert_with(|| Rc::new(RefCell::new(HashSet::new())));
+        Rc::clone(slots)
+    }
+
+    fn remove_own_alias(&self, name: &str, slot: &Rc<RefCell<Value>>) -> bool {
+        let mut names = self.names.borrow_mut();
+        let Some(bindings) = names.as_mut() else {
+            return false;
+        };
+        let matches = bindings
+            .get(name)
+            .is_some_and(|binding| Rc::ptr_eq(binding, slot));
+        if matches {
+            bindings.remove(name);
+        }
+        if bindings.is_empty() {
+            *names = None;
+        }
+        matches
     }
 
     fn initialize_binding(&self, binding: &Rc<RefCell<Value>>) {

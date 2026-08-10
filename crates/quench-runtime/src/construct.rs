@@ -94,6 +94,7 @@ fn construct_builtin(
         crate::ops::Builtin::Object => Ok(crate::builtins::object(arguments)),
         crate::ops::Builtin::Number => construct_number(arguments),
         crate::ops::Builtin::Boolean => construct_boolean(arguments),
+        crate::ops::Builtin::String => construct_string(arguments),
         crate::ops::Builtin::Promise => construct_promise(arguments),
         crate::ops::Builtin::Proxy => crate::proxy::proxy_new(arguments),
         crate::ops::Builtin::Map | crate::ops::Builtin::Set => {
@@ -267,6 +268,18 @@ fn construct_number(arguments: &[Value]) -> Result<Value, crate::execute::VmErro
 fn construct_boolean(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
     let value = crate::execute::execute_builtin_with_receiver(
         crate::ops::Builtin::Boolean,
+        arguments,
+        None,
+    )?;
+    Ok(Value::Object(std::rc::Rc::new(vec![(
+        "_value".to_string(),
+        value,
+    )])))
+}
+
+fn construct_string(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
+    let value = crate::execute::execute_builtin_with_receiver(
+        crate::ops::Builtin::String,
         arguments,
         None,
     )?;

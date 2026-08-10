@@ -3,20 +3,28 @@
 use super::{resolve_locales, runtime_error, to_string_value};
 use crate::{execute::VmError, ops::Builtin, value::Value};
 
+mod date_kind;
+pub(crate) use date_kind::DateLocaleKind;
+
 #[path = "tolocale_number.rs"]
 mod number;
 
 pub(crate) mod value {
     use crate::value::Value;
     pub(crate) fn to_string(value: Option<&Value>) -> String {
+        if let Some(Value::BindingCell(value)) = value {
+            return to_string(Some(&value.borrow()));
+        }
+        to_string_value(value)
+    }
+    fn to_string_value(value: Option<&Value>) -> String {
         match value {
             None | Some(Value::Undefined) => "undefined".to_string(),
-            Some(Value::Null) => "null".to_string(),
+            Some(value @ (Value::Null | Value::Object(_))) => object_string(value),
             Some(Value::Boolean(value)) => value.to_string(),
             Some(Value::Number(value)) => value.to_string(),
             Some(Value::String(value)) => symbol_string(value),
             Some(Value::Array(values)) => array_to_string(values),
-            Some(Value::Object(_)) => "[object Object]".to_string(),
             Some(Value::ArrayBuffer(_)) => "[object ArrayBuffer]".to_string(),
             Some(Value::DataView(_)) => "[object DataView]".to_string(),
             Some(Value::Float32Array(_)) => "[object Float32Array]".to_string(),
@@ -46,6 +54,14 @@ pub(crate) mod value {
                 | Value::Generator(_)
                 | Value::ObjectAlias(_),
             ) => "[object Object]".to_string(),
+            Some(Value::BindingCell(value)) => to_string(Some(&value.borrow())),
+        }
+    }
+
+    fn object_string(value: &Value) -> String {
+        match value {
+            Value::Null => "null".to_string(),
+            _ => "[object Object]".to_string(),
         }
     }
 
@@ -74,6 +90,7 @@ pub(crate) mod value {
     }
     pub(crate) fn to_number(value: Option<&Value>) -> f64 {
         match value {
+            Some(Value::BindingCell(value)) => to_number(Some(&value.borrow())),
             None | Some(Value::Undefined) => f64::NAN,
             Some(Value::Null) => 0.0,
             Some(Value::Boolean(value)) => f64::from(*value),
@@ -174,6 +191,7 @@ pub(crate) mod value {
     }
     pub fn is_truthy(value: &Value) -> bool {
         match value {
+            Value::BindingCell(value) => is_truthy(&value.borrow()),
             Value::Boolean(value) => *value,
             Value::Number(value) => *value != 0.0 && !value.is_nan(),
             Value::String(value) => !value.is_empty(),
@@ -208,6 +226,7 @@ pub(crate) mod value {
 
     pub(crate) fn type_of(value: &Value) -> &'static str {
         match value {
+            Value::BindingCell(value) => type_of(&value.borrow()),
             Value::Undefined => "undefined",
             Value::Null
             | Value::Array(_)
@@ -469,18 +488,4 @@ pub(crate) fn date_to_locale_string(
 ) -> Result<Value, VmError> {
     let _ = arguments;
     Ok(Value::String(kind.default().to_string()))
-}
-
-pub(crate) enum DateLocaleKind {
-    String,
-    Date,
-    Time,
-}
-
-impl DateLocaleKind {
-    fn default(&self) -> &'static str {
-        match self {
-            DateLocaleKind::String | DateLocaleKind::Date | DateLocaleKind::Time => "Invalid Date",
-        }
-    }
 }
