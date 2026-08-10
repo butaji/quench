@@ -21,6 +21,7 @@ pub(crate) fn reduce(
                     | Statement::WhileStatement(_)
                     | Statement::DoWhileStatement(_)
                     | Statement::ForInStatement(_)
+                    | Statement::ForOfStatement(_)
             );
             let result = crate::reduce::reduce_statement(
                 &statement.body,
@@ -32,8 +33,11 @@ pub(crate) fn reduce(
             )?;
             if wraps_loop {
                 let label = Some(statement.label.name.to_string());
-                if let Some(Op::Loop { label: slot, .. } | Op::ForIn { label: slot, .. }) =
-                    ops[start..].last_mut()
+                if let Some(
+                    Op::Loop { label: slot, .. }
+                    | Op::ForIn { label: slot, .. }
+                    | Op::ForOf { label: slot, .. },
+                ) = ops[start..].last_mut()
                 {
                     *slot = label;
                 }
@@ -62,6 +66,10 @@ pub(crate) fn reduce(
         }
         Statement::ForInStatement(statement) => {
             crate::loops::reduce_for_in(statement, ops, facts, next_register, next_slot, locals)
+                .map(|_| None)
+        }
+        Statement::ForOfStatement(statement) => {
+            crate::loops::reduce_for_of(statement, ops, facts, next_register, next_slot, locals)
                 .map(|_| None)
         }
         Statement::TryStatement(statement) => {

@@ -97,6 +97,12 @@ pub enum Op {
         slot: u16,
         body: Vec<Op>,
     },
+    ForOf {
+        label: Option<String>,
+        iterable: u16,
+        slot: u16,
+        body: Vec<Op>,
+    },
     Switch {
         discriminant: u16,
         cases: Vec<(Option<Constant>, Vec<Op>)>,

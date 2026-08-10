@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use oxc::{
     ast::ast::{
-        DoWhileStatement, Expression, ForInStatement, ForStatement, ForStatementInit, Statement,
-        WhileStatement,
+        DoWhileStatement, Expression, ForInStatement, ForOfStatement, ForStatement,
+        ForStatementInit, Statement, WhileStatement,
     },
     syntax::operator::BinaryOperator,
 };
@@ -121,6 +121,28 @@ pub(crate) fn reduce_for_in(
     Ok(())
 }
 
+pub(crate) fn reduce_for_of(
+    statement: &ForOfStatement<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    next_slot: &mut u16,
+    locals: &mut HashMap<String, u16>,
+) -> Result<(), Vec<String>> {
+    let slot = for_in_slot(&statement.left, next_slot, locals)?;
+    let iterable =
+        crate::reduce::reduce_expression(&statement.right, ops, facts, next_register, locals)
+            .ok_or_else(|| vec!["Unsupported for-of iterable".to_string()])?;
+    let body = crate::branch::reduce(&statement.body, facts, locals)?;
+    ops.push(Op::ForOf {
+        label: None,
+        iterable,
+        slot,
+        body,
+    });
+    Ok(())
+}
+
 fn for_in_slot(
     left: &oxc::ast::ast::ForStatementLeft<'_>,
     next_slot: &mut u16,
@@ -187,6 +209,59 @@ pub(crate) fn execute_for_in(
                 if break_matches(label, &break_label) =>
             {
                 return Ok(None)
+            }
+            Err(crate::execute::VmError::Break(break_label)) => {
+                return Err(crate::execute::VmError::Break(break_label));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(None)
+}
+
+pub(crate) fn execute_for_of(
+    registers: &mut Vec<crate::value::Value>,
+    op: &Op,
+) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
+    let Op::ForOf {
+        label,
+        iterable,
+        slot,
+        body,
+    } = op
+    else {
+        return Err(crate::execute::VmError::MissingReturn);
+    };
+    let value = crate::execute::read_register(registers, *iterable)?;
+    let values: Vec<crate::value::Value> = match value {
+        crate::value::Value::Array(values) => values.iter().cloned().collect(),
+        crate::value::Value::String(value) => value
+            .chars()
+            .map(|character| crate::value::Value::String(character.to_string()))
+            .collect(),
+        _ => {
+            return Err(crate::execute::VmError::Thrown(crate::builtins::error(
+                crate::ops::Builtin::TypeError,
+                &[crate::value::Value::String(
+                    "value is not iterable".to_string(),
+                )],
+            )))
+        }
+    };
+    for value in values {
+        crate::execute::write_value(registers, *slot, value);
+        match crate::execute::execute_in_place(body, registers) {
+            Ok(value) => return Ok(Some(value)),
+            Err(crate::execute::VmError::MissingReturn) => {}
+            Err(crate::execute::VmError::Continue(continue_label))
+                if continue_matches(label, &continue_label) => {}
+            Err(crate::execute::VmError::Continue(continue_label)) => {
+                return Err(crate::execute::VmError::Continue(continue_label));
+            }
+            Err(crate::execute::VmError::Break(break_label))
+                if break_matches(label, &break_label) =>
+            {
+                return Ok(None);
             }
             Err(crate::execute::VmError::Break(break_label)) => {
                 return Err(crate::execute::VmError::Break(break_label));
