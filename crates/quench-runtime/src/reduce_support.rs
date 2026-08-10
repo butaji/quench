@@ -72,12 +72,20 @@ pub(crate) enum EvalBehavior {
     Global,
 }
 
+pub(crate) type EvalBindings = (
+    HashMap<String, u16>,
+    u16,
+    Vec<Op>,
+    EvalBehavior,
+    Vec<(String, u16)>,
+);
+
 pub(crate) fn eval_bindings(
     program: &oxc::ast::ast::Program<'_>,
     bindings: &[(String, u16)],
     strict: bool,
     global: bool,
-) -> (HashMap<String, u16>, u16, Vec<Op>, EvalBehavior) {
+) -> EvalBindings {
     let mut locals = bindings.iter().cloned().collect::<HashMap<_, _>>();
     let mut next_slot = register_base(&locals);
     let names = crate::semantic_early::var_declared_names(program);
@@ -94,7 +102,12 @@ pub(crate) fn eval_bindings(
     } else {
         EvalBehavior::Local
     };
-    let mut prefix = eval_binding_prefix(&declared, strict, global);
+    let deletable = if !strict && !global {
+        declared
+    } else {
+        Vec::new()
+    };
+    let mut prefix = eval_binding_prefix(&deletable);
     let lexical_names = crate::semantic_early::lexically_declared_names(program);
     let lexical = shadow_names(&lexical_names, &mut locals, &mut next_slot);
     prefix.extend(
@@ -102,7 +115,7 @@ pub(crate) fn eval_bindings(
             .into_iter()
             .map(|(_, slot)| Op::MarkUninitialized { slot }),
     );
-    (locals, next_slot, prefix, behavior)
+    (locals, next_slot, prefix, behavior, deletable)
 }
 
 fn shadow_names(
@@ -124,10 +137,7 @@ fn shadow_names(
         .collect()
 }
 
-fn eval_binding_prefix(declared: &[(String, u16)], strict: bool, global: bool) -> Vec<Op> {
-    if strict || global {
-        return Vec::new();
-    }
+fn eval_binding_prefix(declared: &[(String, u16)]) -> Vec<Op> {
     declared
         .iter()
         .map(|(name, slot)| Op::DeclareEvalBinding {
@@ -172,6 +182,14 @@ pub(crate) fn shadow_function_bindings(
 fn declared_names(statement: &oxc::ast::ast::Statement<'_>) -> Vec<String> {
     let mut names = Vec::new();
     collect_declared_names(statement, &mut names);
+    names
+}
+
+pub(crate) fn declared_names_in(statements: &[oxc::ast::ast::Statement<'_>]) -> Vec<String> {
+    let mut names = Vec::new();
+    collect_statement_names(statements, &mut names);
+    names.sort_unstable();
+    names.dedup();
     names
 }
 
@@ -245,12 +263,12 @@ pub(crate) fn mirror_script_bindings(
     statement: &oxc::ast::ast::Statement<'_>,
     locals: &HashMap<String, u16>,
     ops: &mut Vec<Op>,
-    next_register: &mut u16,
+    _next_register: &mut u16,
 ) {
     match statement {
         oxc::ast::ast::Statement::FunctionDeclaration(function) => {
             if let Some(identifier) = &function.id {
-                mirror_binding(identifier.name.as_str(), locals, ops, next_register);
+                create_global_binding(identifier.name.as_str(), locals, ops, true);
             }
         }
         oxc::ast::ast::Statement::VariableDeclaration(declaration)
@@ -260,7 +278,7 @@ pub(crate) fn mirror_script_bindings(
                 if let oxc::ast::ast::BindingPatternKind::BindingIdentifier(identifier) =
                     &declarator.id.kind
                 {
-                    mirror_binding(identifier.name.as_str(), locals, ops, next_register);
+                    create_global_binding(identifier.name.as_str(), locals, ops, false);
                 }
             }
         }
@@ -268,33 +286,30 @@ pub(crate) fn mirror_script_bindings(
     }
 }
 
-fn mirror_binding(
+fn create_global_binding(
     name: &str,
     locals: &HashMap<String, u16>,
     ops: &mut Vec<Op>,
-    next_register: &mut u16,
+    function: bool,
 ) {
-    let (Some(global_slot), Some(value_slot)) = (locals.get(SCRIPT_THIS_SLOT), locals.get(name))
-    else {
+    if !locals.contains_key(SCRIPT_THIS_SLOT) {
         return;
+    }
+    let Some(slot) = locals.get(name) else { return };
+    let op = if function {
+        Op::CreateGlobalFunction {
+            name: name.to_string(),
+            slot: *slot,
+            deletable: false,
+        }
+    } else {
+        Op::CreateGlobalVar {
+            name: name.to_string(),
+            slot: *slot,
+            deletable: false,
+        }
     };
-    let global = load_local(ops, next_register, *global_slot);
-    let value = load_local(ops, next_register, *value_slot);
-    ops.push(Op::SetProperty {
-        object: global,
-        key: name.to_string(),
-        src: value,
-    });
-}
-
-fn load_local(ops: &mut Vec<Op>, next_register: &mut u16, slot: u16) -> u16 {
-    let register = *next_register;
-    *next_register = next_register.saturating_add(1);
-    ops.push(Op::LoadLocal {
-        dst: register,
-        slot,
-    });
-    register
+    ops.push(op);
 }
 
 /// Append a terminal `Return`, either the last expression value or `undefined`.

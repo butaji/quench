@@ -31,6 +31,7 @@ pub struct ProgramDb {
     pub(crate) strict: bool,
     pub(crate) in_function: bool,
     pub(crate) eval_var_barrier: Vec<String>,
+    pub(crate) eval_deletable: Vec<(String, u16)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -212,11 +212,14 @@ pub(crate) fn execute_indirect_eval(ops: &[Op]) -> Result<Value, VmError> {
         .with(|current| current.borrow().clone())
         .unwrap_or_default();
     let global = current_global_object();
+    let caller = crate::locals::current();
     let environment = crate::environment::Environment::new();
-    environment.set(0, global);
+    environment.set(0, global.clone());
     let mut registers = Vec::new();
     let _with_scope = crate::with_scope::FunctionGuard::isolate();
-    execute_in_environment(ops, &mut registers, &context, environment)
+    let result = execute_in_environment(ops, &mut registers, &context, environment);
+    caller.replace_value(&global, &current_global_object());
+    result
 }
 pub(crate) fn execute_generator_step(
     ops: &[Op],
@@ -289,51 +292,7 @@ struct GlobalObjectGuard {
     restore: bool,
 }
 
-pub(crate) fn current_global_object() -> Value {
-    GLOBAL_OBJECT
-        .with(|global| {
-            global
-                .borrow()
-                .as_ref()
-                .map(|object| Value::Object(object.clone()))
-        })
-        .unwrap_or(Value::Undefined)
-}
-
-pub(crate) fn is_global_object(value: &Value) -> bool {
-    let Value::Object(object) = value else {
-        return false;
-    };
-    GLOBAL_OBJECT.with(|global| {
-        global
-            .borrow()
-            .as_ref()
-            .is_some_and(|global| Rc::ptr_eq(global, object))
-    })
-}
-
-pub(crate) fn synchronize_global_object(registers: &mut Vec<Value>, old: &Value, new: &Value) {
-    let (Value::Object(old_object), Value::Object(new_object)) = (old, new) else {
-        return;
-    };
-    let is_global = GLOBAL_OBJECT.with(|global| {
-        global
-            .borrow()
-            .as_ref()
-            .is_some_and(|object| Rc::ptr_eq(object, old_object))
-    });
-    if !is_global {
-        return;
-    }
-    GLOBAL_OBJECT.with(|global| global.replace(Some(new_object.clone())));
-    for register in registers {
-        if let Value::Object(object) = register {
-            if Rc::ptr_eq(object, old_object) {
-                *object = new_object.clone();
-            }
-        }
-    }
-}
+include!("vm_global.rs");
 
 pub(crate) fn bare_call_receiver(
     function: &crate::value::FunctionValue,

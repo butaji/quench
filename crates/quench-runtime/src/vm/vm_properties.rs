@@ -20,6 +20,13 @@ pub fn read_register(registers: &[Value], index: u16) -> Result<Value, VmError> 
 }
 
 pub fn get_property(value: &Value, key: &str) -> Value {
+    if let Value::BindingCell(cell) = value {
+        return get_property(&cell.borrow(), key);
+    }
+    get_property_value(value, key)
+}
+
+fn get_property_value(value: &Value, key: &str) -> Value {
     use Value::*;
     match value {
         Builtin(builtin) => bind_callable_property(value, *builtin, key),
@@ -82,13 +89,20 @@ fn function_property(function: &crate::value::FunctionValue, key: &str) -> Value
     }
     let properties = function.properties.borrow();
     if let Some((_, value)) = properties.iter().rev().find(|(name, _)| name == key) {
-        return value.clone();
+        return property_value(value);
     }
     properties
         .iter()
         .rev()
-        .find_map(|(name, value)| (name == "\0prototype").then(|| value.clone()))
+        .find_map(|(name, value)| (name == "\0prototype").then(|| property_value(value)))
         .map_or(Value::Undefined, |prototype| get_property(&prototype, key))
+}
+
+fn property_value(value: &Value) -> Value {
+    match value {
+        Value::BindingCell(cell) => property_value(&cell.borrow()),
+        value => value.clone(),
+    }
 }
 
 fn function_constructor(function: &crate::value::FunctionValue) -> Builtin {
@@ -375,7 +389,7 @@ fn data_view_property(view: &crate::value::DataViewData, key: &str) -> Value {
 
 fn object_property(properties: &Rc<Vec<(String, Value)>>, key: &str) -> Value {
     if let Some((_, value)) = properties.iter().rev().find(|(name, _)| name == key) {
-        return value.clone();
+        return property_value(value);
     }
     if GLOBAL_OBJECT.with(|global| {
         global
