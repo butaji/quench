@@ -84,7 +84,7 @@ fn call_primitive(method: &Value, receiver: &Value, arguments: &[Value]) -> Resu
     Ok(result)
 }
 
-fn is_callable(value: &Value) -> bool {
+pub(crate) fn is_callable(value: &Value) -> bool {
     matches!(
         value,
         Value::Builtin(_) | Value::Function(_) | Value::BoundFunction(_) | Value::Proxy(_)

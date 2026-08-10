@@ -15,26 +15,26 @@ fn run_op(
 
 fn run_simple_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Option<Value>>, VmError> {
     use Op::*;
+    if run_local_op(registers, op)? {
+        return Ok(Some(None));
+    }
     match op {
         Const { dst, value } => write_value(registers, *dst, value.into()),
-        StoreLocal { slot, src } => crate::locals::store(registers, *slot, *src)?,
-        LoadLocal { dst, slot } => crate::locals::load(registers, *dst, *slot),
         MakeArray { .. } => run_make_array(registers, op)?,
         MakeObject { .. } => run_make_object(registers, op)?,
-        MakeBuiltin { dst, builtin } => write_value(
-            registers,
-            *dst,
-            match builtin {
-                Builtin::HostCapability(kind) => current_host_capability(*kind),
-                _ => Value::Builtin(*builtin),
-            },
-        ),
+        MakeBuiltin { .. } => run_make_builtin(registers, op),
         GetProperty { .. }
         | ResolveGlobal { .. }
         | GetPropertyDynamic { .. }
+        | ToPropertyKey { .. }
         | SetProperty { .. }
         | SetPropertyDynamic { .. }
         | DefineProperty { .. } => run_get_set_property(registers, op)?,
+        RequireObjectCoercible { .. }
+        | GetIterator { .. }
+        | IteratorStep { .. }
+        | IteratorRest { .. } => crate::collections::iterator::execute(registers, op)?,
+        ValidateClassHeritage { .. } => run_class_heritage(registers, op)?,
         DeleteProperty { .. } => run_delete_property(registers, op)?,
         MakeFunction { .. } | MakeFunctionWithKind { .. } => crate::functions::write_op(registers, op),
         Call { .. } => run_call(registers, op)?,
@@ -51,6 +51,35 @@ fn run_simple_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Option<Va
         _ => return Ok(None),
     }
     Ok(Some(None))
+}
+
+fn run_class_heritage(registers: &[Value], op: &Op) -> Result<(), VmError> {
+    let Op::ValidateClassHeritage { src } = op else { return Ok(()) };
+    crate::classes::validate_heritage(&crate::execute::read_register(registers, *src)?)
+}
+
+fn run_local_op(registers: &mut Vec<Value>, op: &Op) -> Result<bool, VmError> {
+    use Op::*;
+    match op {
+        StoreLocal { slot, src } => crate::locals::store(registers, *slot, *src)?,
+        LoadLocal { dst, slot } => crate::locals::load(registers, *dst, *slot),
+        LoadBinding { dst, slot, name } => crate::locals::load_binding(registers, *dst, *slot, name)?,
+        ResolveBindingTarget { dst, name } => crate::locals::resolve_target(registers, *dst, name)?,
+        InitializeResolvedBinding { target, slot, name, src } => {
+            crate::locals::initialize_resolved(registers, *target, *slot, name, *src)?
+        }
+        _ => return Ok(false),
+    }
+    Ok(true)
+}
+
+fn run_make_builtin(registers: &mut Vec<Value>, op: &Op) {
+    let Op::MakeBuiltin { dst, builtin } = op else { return };
+    let value = match builtin {
+        Builtin::HostCapability(kind) => current_host_capability(*kind),
+        _ => Value::Builtin(*builtin),
+    };
+    write_value(registers, *dst, value);
 }
 
 fn run_control_op(
@@ -161,6 +190,11 @@ fn run_get_set_property(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmErr
         GetProperty { .. } => crate::properties::execute_get(registers, op)?,
         ResolveGlobal { .. } => crate::with_scope::execute_resolve_global(registers, op)?,
         GetPropertyDynamic { .. } => crate::properties::execute_get_dynamic(registers, op)?,
+        ToPropertyKey { dst, src } => {
+            let value = crate::execute::read_register(registers, *src)?;
+            let key = crate::conversion::to_property_key(&value)?;
+            crate::execute::write_value(registers, *dst, crate::value::Value::String(key));
+        }
         SetProperty { .. } | SetPropertyDynamic { .. } => {
             crate::properties::execute_set_property(registers, op)?
         }
@@ -281,6 +315,12 @@ fn typed_array_element_size(builtin: Builtin) -> Option<f64> {
         }
         Builtin::Uint8ClampedArray | Builtin::Uint8ClampedArrayPrototype => {
             crate::value::Uint8ClampedArrayData::BYTES_PER_ELEMENT as f64
+        }
+        Builtin::BigInt64Array | Builtin::BigInt64ArrayPrototype => {
+            crate::value::BigInt64ArrayData::BYTES_PER_ELEMENT as f64
+        }
+        Builtin::BigUint64Array | Builtin::BigUint64ArrayPrototype => {
+            crate::value::BigUint64ArrayData::BYTES_PER_ELEMENT as f64
         }
         _ => return None,
     })

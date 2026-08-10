@@ -17,12 +17,20 @@ impl Int32ArrayData {
         }
     }
 
+    pub fn logical_len(&self) -> usize {
+        if self.length == usize::MAX {
+            self.buffer.byte_length().saturating_sub(self.byte_offset) / Self::BYTES_PER_ELEMENT
+        } else {
+            self.length
+        }
+    }
+
     pub fn byte_length(&self) -> usize {
-        self.length * Self::BYTES_PER_ELEMENT
+        self.logical_len() * Self::BYTES_PER_ELEMENT
     }
 
     pub fn get(&self, index: usize) -> Option<i32> {
-        if index >= self.length || self.is_out_of_bounds() {
+        if index >= self.logical_len() || self.is_out_of_bounds() {
             return None;
         }
         let start = self.byte_offset + index * Self::BYTES_PER_ELEMENT;
@@ -33,7 +41,7 @@ impl Int32ArrayData {
     }
 
     pub fn set(&self, index: usize, value: i32) -> bool {
-        if index >= self.length || self.is_out_of_bounds() {
+        if index >= self.logical_len() || self.is_out_of_bounds() {
             return false;
         }
         let start = self.byte_offset + index * Self::BYTES_PER_ELEMENT;
@@ -70,12 +78,20 @@ impl Uint32ArrayData {
         }
     }
 
+    pub fn logical_len(&self) -> usize {
+        if self.length == usize::MAX {
+            self.buffer.byte_length().saturating_sub(self.byte_offset) / Self::BYTES_PER_ELEMENT
+        } else {
+            self.length
+        }
+    }
+
     pub fn byte_length(&self) -> usize {
-        self.length * Self::BYTES_PER_ELEMENT
+        self.logical_len() * Self::BYTES_PER_ELEMENT
     }
 
     pub fn get(&self, index: usize) -> Option<u32> {
-        if index >= self.length || self.is_out_of_bounds() {
+        if index >= self.logical_len() || self.is_out_of_bounds() {
             return None;
         }
         let start = self.byte_offset + index * Self::BYTES_PER_ELEMENT;
@@ -86,7 +102,7 @@ impl Uint32ArrayData {
     }
 
     pub fn set(&self, index: usize, value: u32) -> bool {
-        if index >= self.length || self.is_out_of_bounds() {
+        if index >= self.logical_len() || self.is_out_of_bounds() {
             return false;
         }
         let start = self.byte_offset + index * Self::BYTES_PER_ELEMENT;
@@ -103,6 +119,74 @@ impl Uint32ArrayData {
         self.buffer.byte_length() < self.byte_offset + self.byte_length()
     }
 }
+
+macro_rules! define_bigint_array {
+    ($name:ident, $element:ty) => {
+        #[derive(Debug, Clone, PartialEq)]
+        pub struct $name {
+            pub buffer: Rc<ArrayBufferData>,
+            pub byte_offset: usize,
+            pub length: usize,
+        }
+
+        impl $name {
+            pub const BYTES_PER_ELEMENT: usize = 8;
+
+            pub fn new(buffer: Rc<ArrayBufferData>, byte_offset: usize, length: usize) -> Self {
+                Self {
+                    buffer,
+                    byte_offset,
+                    length,
+                }
+            }
+
+            pub fn logical_len(&self) -> usize {
+        if self.length == usize::MAX {
+            self.buffer.byte_length().saturating_sub(self.byte_offset) / Self::BYTES_PER_ELEMENT
+        } else {
+            self.length
+        }
+    }
+
+    pub fn byte_length(&self) -> usize {
+                self.logical_len() * Self::BYTES_PER_ELEMENT
+            }
+
+            pub fn get(&self, index: usize) -> Option<$element> {
+                if index >= self.logical_len() || self.is_out_of_bounds() {
+                    return None;
+                }
+                let start = self.byte_offset + index * Self::BYTES_PER_ELEMENT;
+                let end = start + Self::BYTES_PER_ELEMENT;
+                let bytes = self.buffer.bytes.borrow();
+                let data: [u8; Self::BYTES_PER_ELEMENT] =
+                    bytes.get(start..end)?.try_into().ok()?;
+                Some(<$element>::from_ne_bytes(data))
+            }
+
+            pub fn set(&self, index: usize, value: $element) -> bool {
+                if index >= self.logical_len() || self.is_out_of_bounds() {
+                    return false;
+                }
+                let start = self.byte_offset + index * Self::BYTES_PER_ELEMENT;
+                let end = start + Self::BYTES_PER_ELEMENT;
+                let mut bytes = self.buffer.bytes.borrow_mut();
+                let Some(destination) = bytes.get_mut(start..end) else {
+                    return false;
+                };
+                destination.copy_from_slice(&value.to_ne_bytes());
+                true
+            }
+
+            fn is_out_of_bounds(&self) -> bool {
+                self.buffer.byte_length() < self.byte_offset + self.byte_length()
+            }
+        }
+    };
+}
+
+define_bigint_array!(BigInt64ArrayData, i64);
+define_bigint_array!(BigUint64ArrayData, u64);
 
 /// An unsigned 8-bit integer view over shared ArrayBuffer bytes.
 #[derive(Debug, Clone, PartialEq)]
@@ -131,12 +215,20 @@ impl Uint8ClampedArrayData {
         }
     }
 
+    pub fn logical_len(&self) -> usize {
+        if self.length == usize::MAX {
+            self.buffer.byte_length().saturating_sub(self.byte_offset) / Self::BYTES_PER_ELEMENT
+        } else {
+            self.length
+        }
+    }
+
     pub fn byte_length(&self) -> usize {
-        self.length * Self::BYTES_PER_ELEMENT
+        self.logical_len() * Self::BYTES_PER_ELEMENT
     }
 
     pub fn get(&self, index: usize) -> Option<u8> {
-        if index >= self.length || self.is_out_of_bounds() {
+        if index >= self.logical_len() || self.is_out_of_bounds() {
             return None;
         }
         let offset = self.byte_offset + index;
@@ -144,7 +236,7 @@ impl Uint8ClampedArrayData {
     }
 
     pub fn set(&self, index: usize, value: f64) -> bool {
-        if index >= self.length || self.is_out_of_bounds() {
+        if index >= self.logical_len() || self.is_out_of_bounds() {
             return false;
         }
         let offset = self.byte_offset + index;
@@ -192,12 +284,20 @@ impl Uint8ArrayData {
         }
     }
 
+    pub fn logical_len(&self) -> usize {
+        if self.length == usize::MAX {
+            self.buffer.byte_length().saturating_sub(self.byte_offset) / Self::BYTES_PER_ELEMENT
+        } else {
+            self.length
+        }
+    }
+
     pub fn byte_length(&self) -> usize {
-        self.length * Self::BYTES_PER_ELEMENT
+        self.logical_len() * Self::BYTES_PER_ELEMENT
     }
 
     pub fn get(&self, index: usize) -> Option<u8> {
-        if index >= self.length || self.is_out_of_bounds() {
+        if index >= self.logical_len() || self.is_out_of_bounds() {
             return None;
         }
         let offset = self.byte_offset + index;
@@ -205,7 +305,7 @@ impl Uint8ArrayData {
     }
 
     pub fn set(&self, index: usize, value: u8) -> bool {
-        if index >= self.length || self.is_out_of_bounds() {
+        if index >= self.logical_len() || self.is_out_of_bounds() {
             return false;
         }
         let offset = self.byte_offset + index;
@@ -221,4 +321,3 @@ impl Uint8ArrayData {
         self.buffer.byte_length() < self.byte_offset + self.byte_length()
     }
 }
-

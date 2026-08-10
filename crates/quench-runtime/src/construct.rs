@@ -84,23 +84,18 @@ fn construct_builtin(
     if let Some(result) = crate::functions_dynamic::construct_builtin(builtin, arguments) {
         return result;
     }
+    if let Some(result) = construct_typed_builtin(builtin, arguments) {
+        return result;
+    }
     match builtin {
         crate::ops::Builtin::Array => Ok(crate::builtins::array(arguments)),
         crate::ops::Builtin::ArrayBuffer => construct_array_buffer(arguments),
-        crate::ops::Builtin::Float64Array => construct_float64_array(arguments),
-        crate::ops::Builtin::Float32Array => construct_float32_array(arguments),
-        crate::ops::Builtin::Int8Array => construct_int8_array(arguments),
-        crate::ops::Builtin::Int16Array => construct_int16_array(arguments),
-        crate::ops::Builtin::Int32Array => construct_int32_array(arguments),
-        crate::ops::Builtin::Uint8Array => construct_uint8_array(arguments),
-        crate::ops::Builtin::Uint16Array => construct_uint16_array(arguments),
-        crate::ops::Builtin::Uint32Array => construct_uint32_array(arguments),
-        crate::ops::Builtin::Uint8ClampedArray => construct_uint8_clamped_array(arguments),
         crate::ops::Builtin::DataView => construct_data_view(arguments),
         crate::ops::Builtin::Object => Ok(crate::builtins::object(arguments)),
         crate::ops::Builtin::Number => construct_number(arguments),
         crate::ops::Builtin::Boolean => construct_boolean(arguments),
         crate::ops::Builtin::Promise => construct_promise(arguments),
+        crate::ops::Builtin::Proxy => crate::proxy::proxy_new(arguments),
         crate::ops::Builtin::Map | crate::ops::Builtin::Set => {
             crate::collections::execute_builtin(builtin, None, arguments)
                 .unwrap_or_else(|| Err(crate::vm::not_callable()))
@@ -112,6 +107,27 @@ fn construct_builtin(
             .unwrap_or_else(|| Ok(crate::builtins::object(arguments))),
         _ => Err(crate::vm::not_callable()),
     }
+}
+
+fn construct_typed_builtin(
+    builtin: crate::ops::Builtin,
+    arguments: &[Value],
+) -> Option<Result<Value, crate::execute::VmError>> {
+    use crate::ops::Builtin::*;
+    Some(match builtin {
+        Float64Array => construct_float64_array(arguments),
+        Float32Array => construct_float32_array(arguments),
+        Int8Array => construct_int8_array(arguments),
+        Int16Array => construct_int16_array(arguments),
+        Int32Array => construct_int32_array(arguments),
+        Uint8Array => construct_uint8_array(arguments),
+        Uint16Array => construct_uint16_array(arguments),
+        Uint32Array => construct_uint32_array(arguments),
+        Uint8ClampedArray => construct_uint8_clamped_array(arguments),
+        BigInt64Array => construct_bigint64_array(arguments),
+        BigUint64Array => construct_biguint64_array(arguments),
+        _ => return None,
+    })
 }
 
 fn is_intl_constructor(builtin: crate::ops::Builtin) -> bool {
@@ -168,9 +184,33 @@ fn construct_array_buffer(arguments: &[Value]) -> Result<Value, crate::execute::
         crate::intl::tolocale::value::to_number(Some(value))
     });
     let length = to_index(length)?;
-    Ok(Value::ArrayBuffer(Rc::new(
-        crate::value::ArrayBufferData::new(length),
-    )))
+    let buffer = match arguments.get(1) {
+        Some(options) => resizable_array_buffer(length, options)?,
+        None => crate::value::ArrayBufferData::new(length),
+    };
+    Ok(Value::ArrayBuffer(Rc::new(buffer)))
+}
+
+fn resizable_array_buffer(
+    length: usize,
+    options: &Value,
+) -> Result<crate::value::ArrayBufferData, crate::execute::VmError> {
+    let maximum = crate::execute::get_property(options, "maxByteLength");
+    let maximum = to_index(crate::intl::tolocale::value::to_number(Some(&maximum)))?;
+    if maximum < length {
+        return Err(range_error("maxByteLength is smaller than byteLength"));
+    }
+    Ok(crate::value::ArrayBufferData::new_resizable(
+        length, maximum,
+    ))
+}
+
+fn view_length(buffer: &crate::value::ArrayBufferData, fixed_length: usize) -> usize {
+    if buffer.max_byte_length.is_some() {
+        usize::MAX
+    } else {
+        fixed_length
+    }
 }
 
 fn construct_data_view(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
@@ -205,6 +245,7 @@ fn construct_data_view(arguments: &[Value]) -> Result<Value, crate::execute::VmE
 
 include!("construct_typed_low.rs");
 include!("construct_typed_high.rs");
+include!("construct_typed_bigint.rs");
 
 fn range_error(message: &str) -> crate::execute::VmError {
     crate::execute::VmError::Thrown(crate::builtins::error(
@@ -250,6 +291,9 @@ fn construct_function(
     if !crate::functions::is_constructible(function) {
         return Err(crate::vm::not_callable());
     }
+    if let Some(super_constructor) = derived_constructor(function) {
+        return construct_value(&super_constructor, arguments);
+    }
     let object = constructor_receiver(target);
     let (result, final_this) = crate::functions::execute_construct(function, &object, arguments)?;
     if crate::value::is_object(&result) {
@@ -259,6 +303,15 @@ fn construct_function(
     } else {
         Ok(object)
     }
+}
+
+fn derived_constructor(function: &crate::value::FunctionValue) -> Option<Value> {
+    function
+        .properties
+        .borrow()
+        .iter()
+        .rev()
+        .find_map(|(name, value)| (name == "\0derived_constructor").then(|| value.clone()))
 }
 
 fn constructor_receiver(target: &Value) -> Value {

@@ -32,6 +32,7 @@ fn is_simple_builtin(builtin: Builtin) -> bool {
             | Builtin::IsFinite
             | Builtin::IsNaN
             | Builtin::Number
+            | Builtin::BigInt
             | Builtin::NumberToString
             | Builtin::NumberValueOf
             | Builtin::BoxedValueOf
@@ -77,9 +78,8 @@ fn execute_simple_builtin(
         Builtin::Escape => Ok(crate::builtins::escape(arguments.first())),
         Builtin::IsFinite => Ok(Value::Boolean(is_finite(arguments.first()))),
         Builtin::IsNaN => Ok(Value::Boolean(to_number(arguments.first()).is_nan())),
-        Builtin::Number => Ok(Value::Number(
-            crate::intl::tolocale::value::to_number_result(arguments.first())?,
-        )),
+        Builtin::Number => Ok(Value::Number(explicit_number(arguments.first())?)),
+        Builtin::BigInt => explicit_bigint(arguments.first()),
         Builtin::ArrayBufferIsView => Ok(Value::Boolean(is_array_buffer_view(arguments.first()))),
         Builtin::NumberToString => Ok(Value::String(to_string(arguments.first()))),
         Builtin::NumberValueOf => Ok(Value::Number(to_number(arguments.first()))),
@@ -98,6 +98,28 @@ fn execute_simple_builtin(
         }
         _ => Ok(Value::Undefined),
     }
+}
+
+fn explicit_number(value: Option<&Value>) -> Result<f64, VmError> {
+    if let Some(Value::BigInt(value)) = value {
+        return Ok(value.parse().unwrap_or(f64::NAN));
+    }
+    crate::intl::tolocale::value::to_number_result(value)
+}
+
+fn explicit_bigint(value: Option<&Value>) -> Result<Value, VmError> {
+    let raw = match value {
+        Some(Value::BigInt(value)) => return Ok(Value::BigInt(value.clone())),
+        Some(Value::Number(value)) if value.is_finite() && value.fract() == 0.0 => {
+            format!("{value:.0}")
+        }
+        Some(Value::String(value)) => value.clone(),
+        _ => return Err(crate::value::error::throw_type_error("Cannot convert value to BigInt")),
+    };
+    let value = raw
+        .parse::<num_bigint::BigInt>()
+        .map_err(|_| crate::value::error::throw_type_error("Invalid BigInt value"))?;
+    Ok(Value::BigInt(value.to_string()))
 }
 
 fn boxed_value(receiver: Option<&Value>) -> Value {

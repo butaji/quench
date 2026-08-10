@@ -28,6 +28,8 @@ pub(crate) mod value {
             Some(Value::Uint32Array(_)) => "[object Uint32Array]".to_string(),
             Some(Value::Uint8Array(_)) => "[object Uint8Array]".to_string(),
             Some(Value::Uint8ClampedArray(_)) => "[object Uint8ClampedArray]".to_string(),
+            Some(Value::BigInt64Array(_)) => "[object BigInt64Array]".to_string(),
+            Some(Value::BigUint64Array(_)) => "[object BigUint64Array]".to_string(),
             Some(
                 Value::Function(_)
                 | Value::BoundFunction(_)
@@ -77,10 +79,7 @@ pub(crate) mod value {
             Some(Value::Boolean(value)) => f64::from(*value),
             Some(Value::Number(value)) => *value,
             Some(Value::String(value)) => parse_number(value),
-            Some(Value::Object(properties)) => properties
-                .iter()
-                .find_map(|(key, value)| (key == "_value").then_some(value))
-                .map_or(f64::NAN, |value| to_number(Some(value))),
+            Some(Value::Object(properties)) => boxed_number(properties),
             Some(
                 Value::Array(_)
                 | Value::ArrayBuffer(_)
@@ -94,6 +93,8 @@ pub(crate) mod value {
                 | Value::Uint32Array(_)
                 | Value::Uint8Array(_)
                 | Value::Uint8ClampedArray(_)
+                | Value::BigInt64Array(_)
+                | Value::BigUint64Array(_)
                 | Value::Function(_)
                 | Value::BoundFunction(_)
                 | Value::Builtin(_)
@@ -102,12 +103,18 @@ pub(crate) mod value {
                 | Value::Map(_)
                 | Value::Set(_)
                 | Value::Generator(_)
-                | Value::BigInt(_),
+                | Value::BigInt(_)
+                | Value::ObjectAlias(_),
             )
             | Some(Value::HostCapability(_))
             | Some(Value::Iterator(_)) => f64::NAN,
-            Some(Value::ObjectAlias(_)) => f64::NAN,
         }
+    }
+    fn boxed_number(properties: &[(String, Value)]) -> f64 {
+        properties
+            .iter()
+            .find_map(|(key, value)| (key == "_value").then_some(value))
+            .map_or(f64::NAN, |value| to_number(Some(value)))
     }
     pub(crate) fn to_number_result(value: Option<&Value>) -> Result<f64, crate::execute::VmError> {
         let Some(object @ Value::Object(_)) = value else {
@@ -183,6 +190,8 @@ pub(crate) mod value {
             | Value::Uint32Array(_)
             | Value::Uint8Array(_)
             | Value::Uint8ClampedArray(_)
+            | Value::BigInt64Array(_)
+            | Value::BigUint64Array(_)
             | Value::Object(_)
             | Value::Builtin(_)
             | Value::Function(_)
@@ -213,6 +222,8 @@ pub(crate) mod value {
             | Value::Uint32Array(_)
             | Value::Uint8Array(_)
             | Value::Uint8ClampedArray(_)
+            | Value::BigInt64Array(_)
+            | Value::BigUint64Array(_)
             | Value::Object(_) => "object",
             Value::Boolean(_) => "boolean",
             Value::Number(_) => "number",

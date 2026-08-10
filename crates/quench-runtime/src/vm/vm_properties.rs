@@ -34,6 +34,7 @@ pub fn get_property(value: &Value, key: &str) -> Value {
         Uint8Array(view) => uint8_array_property(view, key),
         Uint32Array(view) => uint32_array_property(view, key),
         Uint8ClampedArray(view) => uint8_clamped_array_property(view, key),
+        BigInt64Array(_) | BigUint64Array(_) => vm_typed_bigint::property(value, key),
         DataView(view) => data_view_property(view, key),
         Object(properties) => object_property(properties, key),
         ObjectAlias(alias) => object_alias_property(alias, key),
@@ -79,13 +80,15 @@ fn function_property(function: &crate::value::FunctionValue, key: &str) -> Value
     if key == "constructor" {
         return Value::Builtin(function_constructor(function));
     }
-    function
-        .properties
-        .borrow()
+    let properties = function.properties.borrow();
+    if let Some((_, value)) = properties.iter().rev().find(|(name, _)| name == key) {
+        return value.clone();
+    }
+    properties
         .iter()
         .rev()
-        .find(|(name, _)| name == key)
-        .map_or(Value::Undefined, |(_, value)| value.clone())
+        .find_map(|(name, value)| (name == "\0prototype").then(|| value.clone()))
+        .map_or(Value::Undefined, |prototype| get_property(&prototype, key))
 }
 
 fn function_constructor(function: &crate::value::FunctionValue) -> Builtin {
@@ -189,6 +192,9 @@ fn promise_property(value: &Value, key: &str) -> Value {
 fn array_buffer_property(buffer: &crate::value::ArrayBufferData, key: &str) -> Value {
     match key {
         "byteLength" => Value::Number(buffer.byte_length() as f64),
+        "maxByteLength" => Value::Number(buffer.max_byte_length.unwrap_or(buffer.byte_length()) as f64),
+        "resizable" => Value::Boolean(buffer.max_byte_length.is_some()),
+        "resize" => Value::Builtin(Builtin::ArrayBufferResize),
         _ => crate::builtins::property(Builtin::ArrayBuffer, key),
     }
 }
@@ -197,12 +203,13 @@ fn float64_array_property(view: &crate::value::Float64ArrayData, key: &str) -> V
     if let Some(value) = typed_index(key, |index| view.get(index)) {
         return value;
     }
-    let detached = view.buffer.byte_length() == 0 && view.length != 0;
+    let detached = view.length != usize::MAX
+        && view.buffer.byte_length() < view.byte_offset.saturating_add(view.byte_length());
     match key {
         "buffer" => Value::ArrayBuffer(view.buffer.clone()),
         "byteLength" => Value::Number(if detached { 0 } else { view.byte_length() } as f64),
         "byteOffset" => Value::Number(if detached { 0 } else { view.byte_offset } as f64),
-        "length" => Value::Number(if detached { 0 } else { view.length } as f64),
+        "length" => Value::Number(if detached { 0 } else { view.logical_len() } as f64),
         "BYTES_PER_ELEMENT" => {
             Value::Number(crate::value::Float64ArrayData::BYTES_PER_ELEMENT as f64)
         }
@@ -214,12 +221,13 @@ fn float32_array_property(view: &crate::value::Float32ArrayData, key: &str) -> V
     if let Some(value) = typed_index(key, |index| view.get(index).map(f64::from)) {
         return value;
     }
-    let detached = view.buffer.byte_length() == 0 && view.length != 0;
+    let detached = view.length != usize::MAX
+        && view.buffer.byte_length() < view.byte_offset.saturating_add(view.byte_length());
     match key {
         "buffer" => Value::ArrayBuffer(view.buffer.clone()),
         "byteLength" => Value::Number(if detached { 0 } else { view.byte_length() } as f64),
         "byteOffset" => Value::Number(if detached { 0 } else { view.byte_offset } as f64),
-        "length" => Value::Number(if detached { 0 } else { view.length } as f64),
+        "length" => Value::Number(if detached { 0 } else { view.logical_len() } as f64),
         "BYTES_PER_ELEMENT" => {
             Value::Number(crate::value::Float32ArrayData::BYTES_PER_ELEMENT as f64)
         }
@@ -231,12 +239,13 @@ fn int8_array_property(view: &crate::value::Int8ArrayData, key: &str) -> Value {
     if let Some(value) = typed_index(key, |index| view.get(index).map(f64::from)) {
         return value;
     }
-    let detached = view.buffer.byte_length() == 0 && view.length != 0;
+    let detached = view.length != usize::MAX
+        && view.buffer.byte_length() < view.byte_offset.saturating_add(view.byte_length());
     match key {
         "buffer" => Value::ArrayBuffer(view.buffer.clone()),
         "byteLength" => Value::Number(if detached { 0 } else { view.byte_length() } as f64),
         "byteOffset" => Value::Number(if detached { 0 } else { view.byte_offset } as f64),
-        "length" => Value::Number(if detached { 0 } else { view.length } as f64),
+        "length" => Value::Number(if detached { 0 } else { view.logical_len() } as f64),
         "BYTES_PER_ELEMENT" => Value::Number(crate::value::Int8ArrayData::BYTES_PER_ELEMENT as f64),
         _ => crate::builtins::property(Builtin::Int8ArrayPrototype, key),
     }
@@ -246,12 +255,13 @@ fn int16_array_property(view: &crate::value::Int16ArrayData, key: &str) -> Value
     if let Some(value) = typed_index(key, |index| view.get(index).map(f64::from)) {
         return value;
     }
-    let detached = view.buffer.byte_length() == 0 && view.length != 0;
+    let detached = view.length != usize::MAX
+        && view.buffer.byte_length() < view.byte_offset.saturating_add(view.byte_length());
     match key {
         "buffer" => Value::ArrayBuffer(view.buffer.clone()),
         "byteLength" => Value::Number(if detached { 0 } else { view.byte_length() } as f64),
         "byteOffset" => Value::Number(if detached { 0 } else { view.byte_offset } as f64),
-        "length" => Value::Number(if detached { 0 } else { view.length } as f64),
+        "length" => Value::Number(if detached { 0 } else { view.logical_len() } as f64),
         "BYTES_PER_ELEMENT" => {
             Value::Number(crate::value::Int16ArrayData::BYTES_PER_ELEMENT as f64)
         }
@@ -263,12 +273,13 @@ fn int32_array_property(view: &crate::value::Int32ArrayData, key: &str) -> Value
     if let Some(value) = typed_index(key, |index| view.get(index).map(f64::from)) {
         return value;
     }
-    let detached = view.buffer.byte_length() == 0 && view.length != 0;
+    let detached = view.length != usize::MAX
+        && view.buffer.byte_length() < view.byte_offset.saturating_add(view.byte_length());
     match key {
         "buffer" => Value::ArrayBuffer(view.buffer.clone()),
         "byteLength" => Value::Number(if detached { 0 } else { view.byte_length() } as f64),
         "byteOffset" => Value::Number(if detached { 0 } else { view.byte_offset } as f64),
-        "length" => Value::Number(if detached { 0 } else { view.length } as f64),
+        "length" => Value::Number(if detached { 0 } else { view.logical_len() } as f64),
         "BYTES_PER_ELEMENT" => {
             Value::Number(crate::value::Int32ArrayData::BYTES_PER_ELEMENT as f64)
         }
@@ -280,12 +291,13 @@ fn uint16_array_property(view: &crate::value::Uint16ArrayData, key: &str) -> Val
     if let Some(value) = typed_index(key, |index| view.get(index).map(f64::from)) {
         return value;
     }
-    let detached = view.buffer.byte_length() == 0 && view.length != 0;
+    let detached = view.length != usize::MAX
+        && view.buffer.byte_length() < view.byte_offset.saturating_add(view.byte_length());
     match key {
         "buffer" => Value::ArrayBuffer(view.buffer.clone()),
         "byteLength" => Value::Number(if detached { 0 } else { view.byte_length() } as f64),
         "byteOffset" => Value::Number(if detached { 0 } else { view.byte_offset } as f64),
-        "length" => Value::Number(if detached { 0 } else { view.length } as f64),
+        "length" => Value::Number(if detached { 0 } else { view.logical_len() } as f64),
         "BYTES_PER_ELEMENT" => {
             Value::Number(crate::value::Uint16ArrayData::BYTES_PER_ELEMENT as f64)
         }
@@ -297,12 +309,13 @@ fn uint8_array_property(view: &crate::value::Uint8ArrayData, key: &str) -> Value
     if let Some(value) = typed_index(key, |index| view.get(index).map(f64::from)) {
         return value;
     }
-    let detached = view.buffer.byte_length() == 0 && view.length != 0;
+    let detached = view.length != usize::MAX
+        && view.buffer.byte_length() < view.byte_offset.saturating_add(view.byte_length());
     match key {
         "buffer" => Value::ArrayBuffer(view.buffer.clone()),
         "byteLength" => Value::Number(if detached { 0 } else { view.byte_length() } as f64),
         "byteOffset" => Value::Number(if detached { 0 } else { view.byte_offset } as f64),
-        "length" => Value::Number(if detached { 0 } else { view.length } as f64),
+        "length" => Value::Number(if detached { 0 } else { view.logical_len() } as f64),
         "BYTES_PER_ELEMENT" => {
             Value::Number(crate::value::Uint8ArrayData::BYTES_PER_ELEMENT as f64)
         }
@@ -314,12 +327,13 @@ fn uint32_array_property(view: &crate::value::Uint32ArrayData, key: &str) -> Val
     if let Some(value) = typed_index(key, |index| view.get(index).map(f64::from)) {
         return value;
     }
-    let detached = view.buffer.byte_length() == 0 && view.length != 0;
+    let detached = view.length != usize::MAX
+        && view.buffer.byte_length() < view.byte_offset.saturating_add(view.byte_length());
     match key {
         "buffer" => Value::ArrayBuffer(view.buffer.clone()),
         "byteLength" => Value::Number(if detached { 0 } else { view.byte_length() } as f64),
         "byteOffset" => Value::Number(if detached { 0 } else { view.byte_offset } as f64),
-        "length" => Value::Number(if detached { 0 } else { view.length } as f64),
+        "length" => Value::Number(if detached { 0 } else { view.logical_len() } as f64),
         "BYTES_PER_ELEMENT" => {
             Value::Number(crate::value::Uint32ArrayData::BYTES_PER_ELEMENT as f64)
         }
@@ -331,12 +345,13 @@ fn uint8_clamped_array_property(view: &crate::value::Uint8ClampedArrayData, key:
     if let Some(value) = typed_index(key, |index| view.get(index).map(f64::from)) {
         return value;
     }
-    let detached = view.buffer.byte_length() == 0 && view.length != 0;
+    let detached = view.length != usize::MAX
+        && view.buffer.byte_length() < view.byte_offset.saturating_add(view.byte_length());
     match key {
         "buffer" => Value::ArrayBuffer(view.buffer.clone()),
         "byteLength" => Value::Number(if detached { 0 } else { view.byte_length() } as f64),
         "byteOffset" => Value::Number(if detached { 0 } else { view.byte_offset } as f64),
-        "length" => Value::Number(if detached { 0 } else { view.length } as f64),
+        "length" => Value::Number(if detached { 0 } else { view.logical_len() } as f64),
         "BYTES_PER_ELEMENT" => {
             Value::Number(crate::value::Uint8ClampedArrayData::BYTES_PER_ELEMENT as f64)
         }

@@ -134,9 +134,9 @@ fn view_uint16_array(
     let available = buffer.byte_length() - offset;
     let length = match arguments.get(2) {
         Some(value) => to_index(crate::intl::tolocale::value::to_number(Some(value)))?,
-        None => available / element_size,
+        None => view_length(buffer, available / element_size),
     };
-    if length > available / element_size {
+    if arguments.get(2).is_some() && length > available / element_size {
         return Err(range_error("Invalid Uint16Array length"));
     }
     Ok(Value::Uint16Array(Rc::new(
@@ -192,9 +192,9 @@ fn view_uint32_array(
     let available = buffer.byte_length() - offset;
     let length = match arguments.get(2) {
         Some(value) => to_index(crate::intl::tolocale::value::to_number(Some(value)))?,
-        None => available / element_size,
+        None => view_length(buffer, available / element_size),
     };
-    if length > available / element_size {
+    if arguments.get(2).is_some() && length > available / element_size {
         return Err(range_error("Invalid Uint32Array length"));
     }
     Ok(Value::Uint32Array(Rc::new(
@@ -274,9 +274,9 @@ fn view_uint8_clamped_array(
     let available = buffer.byte_length() - offset;
     let length = match arguments.get(2) {
         Some(value) => to_index(crate::intl::tolocale::value::to_number(Some(value)))?,
-        None => available,
+        None => view_length(buffer, available),
     };
-    if length > available {
+    if arguments.get(2).is_some() && length > available {
         return Err(range_error("Invalid Uint8ClampedArray length"));
     }
     Ok(Value::Uint8ClampedArray(Rc::new(
@@ -309,9 +309,9 @@ fn view_uint8_array(
     let available = buffer.byte_length() - offset;
     let length = match arguments.get(2) {
         Some(value) => to_index(crate::intl::tolocale::value::to_number(Some(value)))?,
-        None => available,
+        None => view_length(buffer, available),
     };
-    if length > available {
+    if arguments.get(2).is_some() && length > available {
         return Err(range_error("Invalid Uint8Array length"));
     }
     Ok(Value::Uint8Array(Rc::new(

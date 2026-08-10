@@ -319,6 +319,9 @@ pub(crate) fn keys(value: Option<&Value>) -> Value {
 }
 
 pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
+    if let Some(result) = crate::typed_array_ops::set_property(&target, key, &value) {
+        return result.unwrap_or(target);
+    }
     match target {
         Value::Object(properties)
             if descriptor_flag_in(&properties, key, "writable") == Some(false) =>
@@ -433,6 +436,8 @@ pub(crate) fn prototype_to_string(receiver: Option<&Value>) -> Value {
         Some(Value::Uint8Array(_)) => "Uint8Array",
         Some(Value::Uint8ClampedArray(_)) => "Uint8ClampedArray",
         Some(Value::Uint32Array(_)) => "Uint32Array",
+        Some(Value::BigInt64Array(_)) => "BigInt64Array",
+        Some(Value::BigUint64Array(_)) => "BigUint64Array",
         Some(Value::Function(_)) => "Function",
         Some(Value::BoundFunction(_)) => "Function",
         Some(Value::Builtin(_)) => "Function",

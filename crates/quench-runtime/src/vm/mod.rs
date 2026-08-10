@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 mod vm_arithmetic;
 mod vm_ops;
+mod vm_typed_bigint;
 
 pub use crate::intl::tolocale::value::is_truthy;
 

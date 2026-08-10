@@ -9,7 +9,7 @@ use crate::{
 };
 use oxc::{
     ast::ast::{
-        Argument, AssignmentOperator, AssignmentTarget, BindingPatternKind, Expression, Statement,
+        Argument, AssignmentOperator, AssignmentTarget, Expression, Statement,
         VariableDeclarationKind,
     },
     syntax::operator::UnaryOperator,
@@ -110,15 +110,7 @@ pub fn reduce_declaration(
     locals: &mut HashMap<String, u16>,
 ) -> Result<(), Vec<String>> {
     for declarator in &declaration.declarations {
-        let BindingPatternKind::BindingIdentifier(identifier) = &declarator.id.kind else {
-            return Err(vec!["Unsupported binding pattern".to_string()]);
-        };
-        let slot = declaration_slot(
-            declaration.kind,
-            identifier.name.as_str(),
-            next_slot,
-            locals,
-        );
+        allocate_pattern_slots(&declarator.id, declaration.kind, next_slot, locals);
         let register = match declarator.init.as_ref() {
             Some(init) => reduce_expression(init, ops, facts, next_register, locals),
             None => Some(crate::reduce_support::emit_undefined(ops, next_register)),
@@ -126,13 +118,22 @@ pub fn reduce_declaration(
         let Some(register) = register else {
             return Err(vec!["Unsupported variable initializer".to_string()]);
         };
-        locals.insert(identifier.name.to_string(), slot);
-        ops.push(Op::StoreLocal {
-            slot,
-            src: register,
-        });
+        crate::binding_patterns::bind(&declarator.id, register, ops, facts, next_register, locals)
+            .ok_or_else(|| vec!["Unsupported binding pattern".to_string()])?;
     }
     Ok(())
+}
+
+fn allocate_pattern_slots(
+    pattern: &oxc::ast::ast::BindingPattern<'_>,
+    kind: VariableDeclarationKind,
+    next_slot: &mut u16,
+    locals: &mut HashMap<String, u16>,
+) {
+    for name in crate::binding_patterns::names(pattern) {
+        let slot = declaration_slot(kind, &name, next_slot, locals);
+        locals.insert(name, slot);
+    }
 }
 
 fn declaration_slot(
