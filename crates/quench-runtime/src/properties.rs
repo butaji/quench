@@ -95,6 +95,20 @@ pub(crate) fn execute_set_property(
     Ok(())
 }
 
+pub(crate) fn propagate_updated_object(
+    registers: &mut Vec<crate::value::Value>,
+    owner: u16,
+    argument: Option<u16>,
+    old: &crate::value::Value,
+    new: &crate::value::Value,
+) {
+    crate::vm::synchronize_global_object(registers, old, new);
+    crate::execute::write_value(registers, owner, new.clone());
+    if let Some(argument) = argument {
+        crate::execute::write_value(registers, argument, new.clone());
+    }
+}
+
 pub(crate) fn execute_delete_property(
     registers: &mut Vec<crate::value::Value>,
     op: &Op,
