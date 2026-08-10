@@ -19,6 +19,7 @@ pub(crate) fn reduce_expression(
 ) -> Option<u16> {
     let heritage = reduce_heritage(class, ops, facts, next, locals)?;
     let (constructor, default_constructor) = reduce_constructor(class, ops, facts, next, locals)?;
+    set_class_name(class, constructor, ops);
     let prototype = emit_object(ops, next, Vec::new());
     configure_heritage(
         heritage,
@@ -45,6 +46,8 @@ pub(crate) fn reduce_expression(
     ops.extend(static_fields);
     Some(constructor)
 }
+
+include!("classes_name.rs");
 
 fn reduce_heritage(
     class: &Class<'_>,
