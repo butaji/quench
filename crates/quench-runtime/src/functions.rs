@@ -444,11 +444,9 @@ pub(crate) fn execute_bound(
     let mut combined = bound.arguments.clone();
     combined.extend_from_slice(arguments);
     match &bound.target {
-        crate::value::Value::Builtin(builtin) => crate::execute::execute_builtin_with_receiver(
-            *builtin,
-            &combined,
-            Some(&bound.receiver),
-        ),
+        crate::value::Value::Builtin(builtin) => {
+            execute_builtin_target(*builtin, Some(&bound.receiver), &combined)
+        }
         crate::value::Value::Function(function) => execute(function, &bound.receiver, &combined),
         crate::value::Value::BoundFunction(next) => execute_bound(next, &combined),
         crate::value::Value::Proxy(_) => {
@@ -465,12 +463,23 @@ pub(crate) fn execute_target(
 ) -> Result<crate::value::Value, crate::execute::VmError> {
     match target {
         crate::value::Value::Builtin(builtin) => {
-            crate::execute::execute_builtin_with_receiver(*builtin, arguments, Some(receiver))
+            execute_builtin_target(*builtin, Some(receiver), arguments)
         }
         crate::value::Value::Function(function) => execute(function, receiver, arguments),
         crate::value::Value::BoundFunction(bound) => execute_bound(bound, arguments),
         _ => Err(crate::execute::VmError::NotCallable),
     }
+}
+
+fn execute_builtin_target(
+    builtin: crate::ops::Builtin,
+    receiver: Option<&crate::value::Value>,
+    arguments: &[crate::value::Value],
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    if let crate::ops::Builtin::HostCapability(kind) = builtin {
+        return crate::vm::execute_host_capability(kind, receiver, arguments);
+    }
+    crate::execute::execute_builtin_with_receiver(builtin, arguments, receiver)
 }
 
 fn execute_function_call(
