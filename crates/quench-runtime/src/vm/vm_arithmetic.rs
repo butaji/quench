@@ -58,11 +58,8 @@ fn evaluate_binary(
     operator: crate::ops::BinaryOp,
 ) -> Result<Value, VmError> {
     use crate::ops::BinaryOp;
-    if operator == BinaryOp::Add && has_string_operand(left, right) {
-        return Ok(arithmetic_value(left, right, operator));
-    }
-    if is_bigint_arithmetic(operator) && has_bigint_operand(left, right) {
-        return bigint_binary(left, right, operator);
+    if let Some(result) = special_binary(left, right, operator)? {
+        return Ok(result);
     }
     Ok(match operator {
         BinaryOp::Add
@@ -87,6 +84,21 @@ fn evaluate_binary(
             (Value::Object(_), Value::Function(_))
         )),
     })
+}
+
+fn special_binary(
+    left: &Value,
+    right: &Value,
+    operator: crate::ops::BinaryOp,
+) -> Result<Option<Value>, VmError> {
+    use crate::ops::BinaryOp;
+    if operator == BinaryOp::Add && has_string_operand(left, right) {
+        return Ok(Some(arithmetic_value(left, right, operator)));
+    }
+    if is_bigint_arithmetic(operator) && has_bigint_operand(left, right) {
+        return bigint_binary(left, right, operator).map(Some);
+    }
+    Ok(None)
 }
 
 fn bigint_binary(
