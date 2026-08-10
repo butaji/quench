@@ -211,10 +211,8 @@ fn run_make_array(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
 fn run_make_object(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
     if let Op::MakeObject { dst, properties } = op {
         execute_object(registers, *dst, properties)?;
-        if GLOBAL_OBJECT.with(|global| global.borrow().is_none()) {
-            if let Value::Object(object) = read_register(registers, *dst)? {
-                GLOBAL_OBJECT.with(|global| global.replace(Some(object)));
-            }
+        if let Value::Object(object) = read_register(registers, *dst)? {
+            realm::initialize_current_global(object);
         }
     }
     Ok(())
