@@ -17,8 +17,22 @@ pub(crate) fn delete_property(target: Value, key: &str) -> (Value, bool) {
         }
         Value::Array(values) if key != "length" => (Value::Array(values), true),
         Value::Array(values) => (Value::Array(values), false),
+        Value::Function(function) => delete_function_property(function, key),
         value => (value, true),
     }
+}
+
+fn delete_function_property(function: Rc<crate::value::FunctionValue>, key: &str) -> (Value, bool) {
+    let configurable = descriptor_flag_in(&function.properties.borrow(), key, "configurable");
+    if configurable == Some(false) {
+        return (Value::Function(function), false);
+    }
+    let metadata = descriptor_key(key);
+    function
+        .properties
+        .borrow_mut()
+        .retain(|(name, _)| name != key && name != &metadata);
+    (Value::Function(function), true)
 }
 
 fn delete_object_property(properties: Rc<Vec<(String, Value)>>, key: &str) -> Value {
