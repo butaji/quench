@@ -1800,88 +1800,27 @@ const __quenchVfsCallback = (vfs, callback, operation) => {
     }
   });
 };
-__QuenchVirtualFileSystem.prototype.stat = function (path, options, callback) {
-  if (typeof options === "function") {
-    callback = options;
-    options = {};
-  }
-  __quenchVfsCallback(this, callback, () => this.statSync(path, options));
+const __quenchVfsDefineCallback = (name, defaults = []) => {
+  __QuenchVirtualFileSystem.prototype[name] = function (...args) {
+    const callback = args.pop();
+    if (args.at(-1) === undefined) args[args.length - 1] = defaults[0];
+    __quenchVfsCallback(this, callback, () => this[`${name}Sync`](...args));
+  };
 };
-__QuenchVirtualFileSystem.prototype.lstat = function (path, options, callback) {
-  if (typeof options === "function") {
-    callback = options;
-    options = {};
-  }
-  __quenchVfsCallback(this, callback, () => this.lstatSync(path, options));
-};
-__QuenchVirtualFileSystem.prototype.readdir = function (
-  path,
-  options,
-  callback
-) {
-  if (typeof options === "function") {
-    callback = options;
-    options = {};
-  }
-  __quenchVfsCallback(this, callback, () => this.readdirSync(path, options));
-};
-__QuenchVirtualFileSystem.prototype.realpath = function (
-  path,
-  options,
-  callback
-) {
-  if (typeof options === "function") {
-    callback = options;
-    options = {};
-  }
-  __quenchVfsCallback(this, callback, () => this.realpathSync(path, options));
-};
-__QuenchVirtualFileSystem.prototype.access = function (path, mode, callback) {
-  if (typeof mode === "function") {
-    callback = mode;
-    mode = 0;
-  }
-  __quenchVfsCallback(this, callback, () => this.accessSync(path, mode));
-};
-__QuenchVirtualFileSystem.prototype.rm = function (path, options, callback) {
-  if (typeof options === "function") {
-    callback = options;
-    options = {};
-  }
-  __quenchVfsCallback(this, callback, () => this.rmSync(path, options));
-};
-__QuenchVirtualFileSystem.prototype.truncate = function (
-  path,
-  length,
-  callback
-) {
-  if (typeof length === "function") {
-    callback = length;
-    length = 0;
-  }
-  __quenchVfsCallback(this, callback, () => this.truncateSync(path, length));
-};
-__QuenchVirtualFileSystem.prototype.link = function (source, target, callback) {
-  __quenchVfsCallback(this, callback, () => this.linkSync(source, target));
-};
-__QuenchVirtualFileSystem.prototype.symlink = function (
-  target,
-  path,
-  callback
-) {
-  __quenchVfsCallback(this, callback, () => this.symlinkSync(target, path));
-};
-__QuenchVirtualFileSystem.prototype.readlink = function (
-  path,
-  options,
-  callback
-) {
-  if (typeof options === "function") {
-    callback = options;
-    options = {};
-  }
-  __quenchVfsCallback(this, callback, () => this.readlinkSync(path, options));
-};
+for (const [name, defaults] of [
+  ["stat", [{}]],
+  ["lstat", [{}]],
+  ["readdir", [{}]],
+  ["realpath", [{}]],
+  ["access", [0]],
+  ["rm", [{}]],
+  ["truncate", [0]],
+  ["link"],
+  ["symlink"],
+  ["readlink", [{}]]
+]) {
+  __quenchVfsDefineCallback(name, defaults);
+}
 __QuenchVirtualFileSystem.prototype.open = function (
   path,
   flags,

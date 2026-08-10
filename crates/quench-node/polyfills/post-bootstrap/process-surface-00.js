@@ -19,13 +19,14 @@
     const originalClearInterval = globalThis.clearInterval;
     const originalSetImmediate = globalThis.setImmediate;
     const originalClearImmediate = globalThis.clearImmediate;
+    const validateTimerCallback = (callback) => {
+      if (typeof callback !== "function") {
+        throw new TypeError('The "callback" argument must be of type function');
+      }
+    };
     if (typeof originalSetTimeout === "function") {
       globalThis.setTimeout = (callback, delay, ...args) => {
-        if (typeof callback !== "function") {
-          throw new TypeError(
-            'The "callback" argument must be of type function'
-          );
-        }
+        validateTimerCallback(callback);
         let timer;
         const wrappedCallback = (...callbackArgs) => {
           try {
@@ -45,11 +46,7 @@
     }
     if (typeof originalSetInterval === "function") {
       globalThis.setInterval = (callback, delay, ...args) => {
-        if (typeof callback !== "function") {
-          throw new TypeError(
-            'The "callback" argument must be of type function'
-          );
-        }
+        validateTimerCallback(callback);
         const timer = originalSetInterval(callback, delay, ...args);
         activeTimers.set(timer, "Timeout");
         return timer;
@@ -61,11 +58,7 @@
     }
     if (typeof originalSetImmediate === "function") {
       globalThis.setImmediate = (callback, ...args) => {
-        if (typeof callback !== "function") {
-          throw new TypeError(
-            'The "callback" argument must be of type function'
-          );
-        }
+        validateTimerCallback(callback);
         let timer;
         const wrappedCallback = (...callbackArgs) => {
           activeTimers.delete(timer);

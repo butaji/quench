@@ -61,135 +61,6 @@ const __nodeValidateVariableOffset = (offset, length, byteLength) => {
   }
 };
 NodeBuffer = class NodeBuffer extends __NodeBufferBase03 {
-  writeUInt16BE(value, offset = 0) {
-    return NodeBuffer.prototype._writeInteger.call(
-      this,
-      value,
-      offset,
-      2,
-      false,
-      false
-    );
-  }
-  writeUInt32LE(value, offset = 0) {
-    return NodeBuffer.prototype._writeInteger.call(
-      this,
-      value,
-      offset,
-      4,
-      true,
-      false
-    );
-  }
-  writeUInt32BE(value, offset = 0) {
-    return NodeBuffer.prototype._writeInteger.call(
-      this,
-      value,
-      offset,
-      4,
-      false,
-      false
-    );
-  }
-  readInt8(offset = 0) {
-    return NodeBuffer.prototype._readInteger.call(this, offset, 1, false, true);
-  }
-  readInt16LE(offset = 0) {
-    return NodeBuffer.prototype._readInteger.call(this, offset, 2, true, true);
-  }
-  readInt16BE(offset = 0) {
-    return NodeBuffer.prototype._readInteger.call(this, offset, 2, false, true);
-  }
-  readInt32LE(offset = 0) {
-    return NodeBuffer.prototype._readInteger.call(this, offset, 4, true, true);
-  }
-  readInt32BE(offset = 0) {
-    return NodeBuffer.prototype._readInteger.call(this, offset, 4, false, true);
-  }
-  writeInt8(value, offset = 0) {
-    return NodeBuffer.prototype._writeInteger.call(
-      this,
-      value,
-      offset,
-      1,
-      false,
-      true
-    );
-  }
-  writeInt16LE(value, offset = 0) {
-    return NodeBuffer.prototype._writeInteger.call(
-      this,
-      value,
-      offset,
-      2,
-      true,
-      true
-    );
-  }
-  writeInt16BE(value, offset = 0) {
-    return NodeBuffer.prototype._writeInteger.call(
-      this,
-      value,
-      offset,
-      2,
-      false,
-      true
-    );
-  }
-  writeInt32LE(value, offset = 0) {
-    return NodeBuffer.prototype._writeInteger.call(
-      this,
-      value,
-      offset,
-      4,
-      true,
-      true
-    );
-  }
-  writeInt32BE(value, offset = 0) {
-    return NodeBuffer.prototype._writeInteger.call(
-      this,
-      value,
-      offset,
-      4,
-      false,
-      true
-    );
-  }
-  readFloatLE(offset = 0) {
-    NodeBuffer.prototype._floatOffset.call(this, offset, 4);
-    return new DataView(
-      this.buffer,
-      this.byteOffset,
-      this.byteLength
-    ).getFloat32(offset, true);
-  }
-  readFloatBE(offset = 0) {
-    NodeBuffer.prototype._floatOffset.call(this, offset, 4);
-    return new DataView(
-      this.buffer,
-      this.byteOffset,
-      this.byteLength
-    ).getFloat32(offset, false);
-  }
-  writeFloatLE(value, offset = 0) {
-    NodeBuffer.prototype._floatOffset.call(this, offset, 4);
-    new DataView(this.buffer, this.byteOffset, this.byteLength).setFloat32(
-      offset,
-      value,
-      true
-    );
-    return offset + 4;
-  }
-  writeFloatBE(value, offset = 0) {
-    NodeBuffer.prototype._floatOffset.call(this, offset, 4);
-    new DataView(this.buffer, this.byteOffset, this.byteLength).setFloat32(
-      offset,
-      value,
-      false
-    );
-    return offset + 4;
-  }
   readUIntLE(offset, byteLength) {
     NodeBuffer.prototype._validateVariableInteger.call(
       this,
@@ -302,3 +173,57 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase03 {
     __nodeValidateVariableValue(value, min, max);
   }
 };
+for (const [name, write, byteLength, littleEndian, signed] of [
+  ["writeUInt16BE", true, 2, false, false],
+  ["writeUInt32LE", true, 4, true, false],
+  ["writeUInt32BE", true, 4, false, false],
+  ["readInt8", false, 1, false, true],
+  ["readInt16LE", false, 2, true, true],
+  ["readInt16BE", false, 2, false, true],
+  ["readInt32LE", false, 4, true, true],
+  ["readInt32BE", false, 4, false, true],
+  ["writeInt8", true, 1, false, true],
+  ["writeInt16LE", true, 2, true, true],
+  ["writeInt16BE", true, 2, false, true],
+  ["writeInt32LE", true, 4, true, true],
+  ["writeInt32BE", true, 4, false, true]
+]) {
+  const method = function (value, offset = 0) {
+    return NodeBuffer.prototype[write ? "_writeInteger" : "_readInteger"].call(
+      this,
+      ...(write ? [value, offset] : [value ?? 0]),
+      byteLength,
+      littleEndian,
+      signed
+    );
+  };
+  Object.defineProperty(method, "name", { value: name });
+  Object.defineProperty(NodeBuffer.prototype, name, {
+    configurable: true,
+    writable: true,
+    value: method
+  });
+}
+for (const [name, write, littleEndian] of [
+  ["readFloatLE", false, true],
+  ["readFloatBE", false, false],
+  ["writeFloatLE", true, true],
+  ["writeFloatBE", true, false]
+]) {
+  const method = function (value, offset = 0) {
+    if (!write) offset = value ?? 0;
+    NodeBuffer.prototype._floatOffset.call(this, offset, 4);
+    const view = new DataView(this.buffer, this.byteOffset, this.byteLength);
+    if (write) {
+      view.setFloat32(offset, value, littleEndian);
+      return offset + 4;
+    }
+    return view.getFloat32(offset, littleEndian);
+  };
+  Object.defineProperty(method, "name", { value: name });
+  Object.defineProperty(NodeBuffer.prototype, name, {
+    configurable: true,
+    writable: true,
+    value: method
+  });
+}

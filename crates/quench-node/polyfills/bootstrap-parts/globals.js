@@ -121,27 +121,18 @@ globalThis.__nodeFormat = (args) =>
     })
     .join(" ");
 globalThis.console = globalThis.console || {};
+const __nodeConsoleWrite = (line) => {
+  if (globalThis.process?.stdout?.write) {
+    globalThis.process.stdout.write(line + "\n");
+  } else globalThis.__quench_console_write(line);
+};
 for (const method of ["log", "info", "warn", "error", "debug"]) {
   globalThis.console[method] = (...args) => {
-    const line = globalThis.__nodeFormat(args);
-    if (
-      globalThis.process &&
-      globalThis.process.stdout &&
-      globalThis.process.stdout.write
-    ) {
-      globalThis.process.stdout.write(line + "\n");
-    } else globalThis.__quench_console_write(line);
+    __nodeConsoleWrite(globalThis.__nodeFormat(args));
   };
 }
 globalThis.console.dir = (value) => {
-  const line = globalThis.__nodeFormat([value]);
-  if (
-    globalThis.process &&
-    globalThis.process.stdout &&
-    globalThis.process.stdout.write
-  ) {
-    globalThis.process.stdout.write(line + "\n");
-  } else globalThis.__quench_console_write(line);
+  __nodeConsoleWrite(globalThis.__nodeFormat([value]));
 };
 globalThis.console.assert = (condition, ...args) => {
   if (!condition) globalThis.console.error(...args);
@@ -149,20 +140,13 @@ globalThis.console.assert = (condition, ...args) => {
 const consoleTimers = {};
 const consoleCounts = {};
 globalThis.console.count = (label = "default") => {
-  if (typeof label === "symbol" || typeof label === "Symbol") {
+  if (typeof label === "symbol") {
     const e = new TypeError("Count label must be a string");
     e.code = "ERR_INVALID_ARG_TYPE";
     throw e;
   }
   consoleCounts[label] = (consoleCounts[label] || 0) + 1;
-  const line = `${label}: ${consoleCounts[label]}`;
-  if (
-    globalThis.process &&
-    globalThis.process.stdout &&
-    globalThis.process.stdout.write
-  ) {
-    globalThis.process.stdout.write(line + "\n");
-  } else globalThis.__quench_console_write(line);
+  __nodeConsoleWrite(`${label}: ${consoleCounts[label]}`);
 };
 globalThis.console.countReset = (label = "default") => {
   consoleCounts[label] = 0;

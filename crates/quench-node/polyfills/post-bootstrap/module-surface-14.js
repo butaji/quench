@@ -263,34 +263,35 @@ const __quenchEcdhConvertKey = (key, curve) => {
   }
   return NodeBuffer.from(key);
 };
-const __quenchCryptoCipherPrototypes = (result) => {
-  for (const [factory, constructor] of [
-    ["createCipheriv", "Cipheriv"],
-    ["createDecipheriv", "Decipheriv"]
-  ]) {
+const __quenchCryptoInstallPrototypes = (
+  result,
+  factories,
+  prepare = (args) => args
+) => {
+  for (const [factory, constructor] of factories) {
     const create = result[factory];
     if (typeof create !== "function") continue;
     result[factory] = (...args) => {
-      const value = create(...__quenchCryptoKeyInput(args));
+      const value = create(...prepare(args));
       __nodeCryptoSetPrototype(value, result[constructor]);
       return value;
     };
   }
 };
-const __quenchCryptoSigningPrototypes = (result) => {
-  for (const [factory, constructor] of [
+const __quenchCryptoCipherPrototypes = (result) =>
+  __quenchCryptoInstallPrototypes(
+    result,
+    [
+      ["createCipheriv", "Cipheriv"],
+      ["createDecipheriv", "Decipheriv"]
+    ],
+    __quenchCryptoKeyInput
+  );
+const __quenchCryptoSigningPrototypes = (result) =>
+  __quenchCryptoInstallPrototypes(result, [
     ["createSign", "Sign"],
     ["createVerify", "Verify"]
-  ]) {
-    const create = result[factory];
-    if (typeof create !== "function") continue;
-    result[factory] = (...args) => {
-      const value = create(...args);
-      __nodeCryptoSetPrototype(value, result[constructor]);
-      return value;
-    };
-  }
-};
+  ]);
 const __quenchCryptoDecipherFallback = (result) => {
   const decipher = result.createDecipheriv || result.createCipheriv;
   result.createDecipheriv = (...args) =>
