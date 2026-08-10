@@ -65,6 +65,10 @@ pub(crate) mod value {
         let Some(object @ Value::Object(_)) = value else {
             return Ok(to_number(value));
         };
+        let boxed = crate::execute::get_property(object, "_value");
+        if !matches!(boxed, Value::Undefined) {
+            return Ok(to_number(Some(&boxed)));
+        }
         for key in ["valueOf", "toString"] {
             let method = crate::execute::get_property(object, key);
             if key == "toString" && matches!(method, Value::Undefined) {
@@ -82,9 +86,6 @@ pub(crate) mod value {
             if !matches!(result, Value::Object(_)) {
                 return Ok(to_number(Some(&result)));
             }
-        }
-        if let Value::Number(value) = crate::execute::get_property(object, "_value") {
-            return Ok(value);
         }
         Err(crate::execute::VmError::NotCallable)
     }
