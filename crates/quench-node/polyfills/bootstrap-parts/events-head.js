@@ -74,11 +74,6 @@ globalThis.__nodeEventEmitter.on = async function* (emitter, event, options) {
     emitter.off(event, listener);
   }
 };
-const __nodeReadablePushError = (message, code) => {
-  const error = new Error(message);
-  error.code = code;
-  throw error;
-};
 const __nodeReadableEmitClose = (stream) => {
   if (stream._closeEmitted) return;
   stream._closeEmitted = true;

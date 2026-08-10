@@ -12,18 +12,6 @@ const __quenchCryptoDecryptFallback = (result) => {
     return NodeBuffer.from(data);
   };
 };
-const __quenchCryptoEncodedPair = (options) => {
-  if (
-    options.publicKeyEncoding?.format === "raw-public" ||
-    options.privateKeyEncoding?.format === "raw-private"
-  ) {
-    return {
-      publicKey: NodeBuffer.alloc(32),
-      privateKey: NodeBuffer.alloc(32)
-    };
-  }
-  return __quenchEncodedPair();
-};
 const __quenchFileUrlDrivePath = (input, converted) => {
   const href = typeof input === "string" ? input : input?.href;
   if (input?.protocol === "file:" && input.host && input.pathname) {

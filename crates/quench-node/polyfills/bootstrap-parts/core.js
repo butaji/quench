@@ -167,17 +167,15 @@ class __quenchChildProcessClass extends globalThis.__nodeEventEmitter {
     this.stderr = new globalThis.__nodeEventEmitter();
     this.stdin.end = () => this.stdin;
     this.stdin.write = () => true;
+    for (const name of ["stdout", "stderr"]) {
+      const stream = this[name];
+      stream.setEncoding = () => stream;
+      stream.destroy = () => {
+        stream.destroyed = true;
+        return stream;
+      };
+    }
     this.stdout.read = () => null;
-    this.stdout.setEncoding = () => this.stdout;
-    this.stdout.destroy = () => {
-      this.stdout.destroyed = true;
-      return this.stdout;
-    };
-    this.stderr.setEncoding = () => this.stderr;
-    this.stderr.destroy = () => {
-      this.stderr.destroyed = true;
-      return this.stderr;
-    };
   }
   spawn(options) {
     if (!options || typeof options !== "object" || Array.isArray(options)) {

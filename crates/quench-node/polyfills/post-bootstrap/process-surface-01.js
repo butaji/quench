@@ -64,94 +64,61 @@
     const uncork = function () {
       return this;
     };
-    globalThis.process.stdout ||= {};
-    globalThis.process.stdout.fd ??= 1;
-    globalThis.process.stdout._isStdio ??= true;
-    globalThis.process.stdout.destroyed ??= false;
-    globalThis.process.stdout.writable ??= true;
-    globalThis.process.stdout.writableEnded ??= false;
-    globalThis.process.stdout.writableFinished ??= false;
-    globalThis.process.stdout.writableNeedDrain ??= false;
-    globalThis.process.stdout.writableHighWaterMark ??= 16384;
-    globalThis.process.stdout.readable ??= false;
-    globalThis.process.stdout.readableEnded ??= true;
-    globalThis.process.stdout.readableFlowing ??= null;
-    globalThis.process.stdout.readableHighWaterMark ??= 65536;
-    globalThis.process.stdout.readableLength ??= 0;
-    globalThis.process.stdout.bytesWritten ??= 0;
-    globalThis.process.stdout.writableCorked ??= 0;
-    globalThis.process.stdout.pending ??= false;
-    globalThis.process.stdout.writableObjectMode ??= false;
-    globalThis.process.stdout.readableObjectMode ??= false;
-    globalThis.process.stdout.write ||= write;
-    globalThis.process.stdout.on ||= on;
-    globalThis.process.stdout.addListener ||= on;
-    globalThis.process.stdout.prependListener ||= on;
-    globalThis.process.stdout.once ||= once;
-    globalThis.process.stdout.prependOnceListener ||= once;
-    globalThis.process.stdout.removeListener ||= removeListener;
-    globalThis.process.stdout.off ||= removeListener;
-    globalThis.process.stdout.emit ||= emit;
-    globalThis.process.stdout.listenerCount ||= listenerCount;
-    globalThis.process.stdout.eventNames ||= eventNames;
-    globalThis.process.stdout.rawListeners ||= rawListeners;
-    globalThis.process.stdout.listeners ||= listeners;
-    globalThis.process.stdout.getMaxListeners ||= getMaxListeners;
-    globalThis.process.stdout.setMaxListeners ||= setMaxListeners;
-    globalThis.process.stdout[Symbol.asyncIterator] ||= asyncIterator;
-    globalThis.process.stdout.destroy ||= destroy;
-    globalThis.process.stdout.destroySoon ||= destroySoon;
-    globalThis.process.stdout.ref ||= ref;
-    globalThis.process.stdout.unref ||= unref;
-    globalThis.process.stdout.setDefaultEncoding ||= setDefaultEncoding;
-    globalThis.process.stdout.setEncoding ||= setEncoding;
-    globalThis.process.stdout.end ||= end;
-    globalThis.process.stdout.cork ||= cork;
-    globalThis.process.stdout.uncork ||= uncork;
-    globalThis.process.stderr ||= {};
-    globalThis.process.stderr.fd ??= 2;
-    globalThis.process.stderr._isStdio ??= true;
-    globalThis.process.stderr.destroyed ??= false;
-    globalThis.process.stderr.writable ??= true;
-    globalThis.process.stderr.writableEnded ??= false;
-    globalThis.process.stderr.writableFinished ??= false;
-    globalThis.process.stderr.writableNeedDrain ??= false;
-    globalThis.process.stderr.writableHighWaterMark ??= 16384;
-    globalThis.process.stderr.readable ??= false;
-    globalThis.process.stderr.readableEnded ??= true;
-    globalThis.process.stderr.readableFlowing ??= null;
-    globalThis.process.stderr.readableHighWaterMark ??= 65536;
-    globalThis.process.stderr.readableLength ??= 0;
-    globalThis.process.stderr.bytesWritten ??= 0;
-    globalThis.process.stderr.writableCorked ??= 0;
-    globalThis.process.stderr.pending ??= false;
-    globalThis.process.stderr.writableObjectMode ??= false;
-    globalThis.process.stderr.readableObjectMode ??= false;
-    globalThis.process.stderr.write ||= write;
-    globalThis.process.stderr.on ||= on;
-    globalThis.process.stderr.addListener ||= on;
-    globalThis.process.stderr.prependListener ||= on;
-    globalThis.process.stderr.once ||= once;
-    globalThis.process.stderr.prependOnceListener ||= once;
-    globalThis.process.stderr.removeListener ||= removeListener;
-    globalThis.process.stderr.off ||= removeListener;
-    globalThis.process.stderr.emit ||= emit;
-    globalThis.process.stderr.listenerCount ||= listenerCount;
-    globalThis.process.stderr.eventNames ||= eventNames;
-    globalThis.process.stderr.rawListeners ||= rawListeners;
-    globalThis.process.stderr.listeners ||= listeners;
-    globalThis.process.stderr.getMaxListeners ||= getMaxListeners;
-    globalThis.process.stderr.setMaxListeners ||= setMaxListeners;
-    globalThis.process.stderr[Symbol.asyncIterator] ||= asyncIterator;
-    globalThis.process.stderr.destroy ||= destroy;
-    globalThis.process.stderr.destroySoon ||= destroySoon;
-    globalThis.process.stderr.ref ||= ref;
-    globalThis.process.stderr.unref ||= unref;
-    globalThis.process.stderr.setDefaultEncoding ||= setDefaultEncoding;
-    globalThis.process.stderr.setEncoding ||= setEncoding;
-    globalThis.process.stderr.end ||= end;
-    globalThis.process.stderr.cork ||= cork;
-    globalThis.process.stderr.uncork ||= uncork;
+    const configure = (stream) => {
+      stream.write ||= write;
+      stream.on ||= on;
+      stream.addListener ||= on;
+      stream.prependListener ||= on;
+      stream.once ||= once;
+      stream.prependOnceListener ||= once;
+      stream.removeListener ||= removeListener;
+      stream.off ||= removeListener;
+      stream.emit ||= emit;
+      stream.listenerCount ||= listenerCount;
+      stream.eventNames ||= eventNames;
+      stream.rawListeners ||= rawListeners;
+      stream.listeners ||= listeners;
+      stream.getMaxListeners ||= getMaxListeners;
+      stream.setMaxListeners ||= setMaxListeners;
+      stream[Symbol.asyncIterator] ||= asyncIterator;
+      stream.destroy ||= destroy;
+      stream.destroySoon ||= destroySoon;
+      stream.ref ||= ref;
+      stream.unref ||= unref;
+      stream.setDefaultEncoding ||= setDefaultEncoding;
+      stream.setEncoding ||= setEncoding;
+      stream.end ||= end;
+      stream.cork ||= cork;
+      stream.uncork ||= uncork;
+    };
+    const configureStream = (stream, fd) => {
+      stream.fd ??= fd;
+      stream._isStdio ??= true;
+      stream.destroyed ??= false;
+      stream.writable ??= true;
+      stream.writableEnded ??= false;
+      stream.writableFinished ??= false;
+      stream.writableNeedDrain ??= false;
+      stream.writableHighWaterMark ??= 16384;
+      stream.readable ??= false;
+      stream.readableEnded ??= true;
+      stream.readableFlowing ??= null;
+      stream.readableHighWaterMark ??= 65536;
+      stream.readableLength ??= 0;
+      stream.bytesWritten ??= 0;
+      stream.writableCorked ??= 0;
+      stream.pending ??= false;
+      stream.writableObjectMode ??= false;
+      stream.readableObjectMode ??= false;
+      configure(stream);
+    };
+    for (const [name, fd] of [
+      ["stdout", 1],
+      ["stderr", 2]
+    ]) {
+      globalThis.process[name] ||= {};
+      configureStream(globalThis.process[name], fd);
+    }
     globalThis.process.stdin ||= new globalThis.__nodeEventEmitter();
     globalThis.process.stdin.readable ??= true;
     globalThis.process.stdin.readableEnded ??= false;
@@ -159,5 +126,79 @@
     globalThis.process.stdin.pause ||= () => globalThis.process.stdin;
     globalThis.process.stdin.resume ||= () => globalThis.process.stdin;
     globalThis.process.stdin.setEncoding ||= () => globalThis.process.stdin;
+    globalThis.process.stdin.readableHighWaterMark ??= 65536;
+    globalThis.process.stdin.readableLength ??= 0;
+    globalThis.process.stdin.readableObjectMode ??= false;
+    globalThis.process.stdin.read ||= () => null;
+    globalThis.process.stdin.unshift ||= () => globalThis.process.stdin;
+    globalThis.process.stdin.isPaused ||= () => false;
+    const stdin = globalThis.process.stdin;
+    stdin.destroy ||= () => stdin;
+    stdin.ref ||= () => stdin;
+    stdin.unref ||= () => stdin;
+    stdin.fd ??= 0;
+    stdin.destroyed ??= false;
+    stdin.readableEncoding ??= null;
+    stdin.closed ??= false;
+    stdin.errored ??= null;
+    stdin.readableAborted ??= false;
+    stdin.autoClose ??= false;
+    stdin.bytesRead ??= 0;
+    stdin.pipe ||= (destination) => destination;
+    stdin.unpipe ||= () => stdin;
+    stdin.wrap ||= () => stdin;
+    stdin.close ||= () => stdin;
+    stdin.pending ??= false;
+    stdin[Symbol.asyncDispose] ||= async () => undefined;
+    if (stdin.constructor.name !== "ReadStream") {
+      Object.defineProperty(stdin, "constructor", {
+        value: function ReadStream() {},
+        configurable: true
+      });
+    }
+    stdin.end ??= null;
+    const dispose = async () => undefined;
+    globalThis.process.stdout[Symbol.asyncDispose] ||= dispose;
+    globalThis.process.stderr[Symbol.asyncDispose] ||= dispose;
+    globalThis.process.getgroups ||= () => [0];
+    globalThis.process.initgroups ||= () => undefined;
+    globalThis.process.setgroups ||= () => undefined;
+    globalThis.process.setegid ||= () => undefined;
+    globalThis.process.seteuid ||= () => undefined;
+    globalThis.process.getegid ||= () => 0;
+    globalThis.process.geteuid ||= () => 0;
+    globalThis.process.emitWarning ||= () => undefined;
+    globalThis.process._getActiveHandles ||= () => [];
+    globalThis.process._getActiveRequests ||= () => [];
+    globalThis.process.kill ||= () => true;
+    globalThis.process.abort ||= () => undefined;
+    globalThis.process.execve ||= () => undefined;
+    globalThis.process.reallyExit ||= () => undefined;
+    globalThis.process.ref ||= () => undefined;
+    globalThis.process.unref ||= () => undefined;
+    if (
+      globalThis.process.allowedNodeEnvironmentFlags instanceof Set &&
+      globalThis.process.allowedNodeEnvironmentFlags.size === 0
+    ) {
+      globalThis.process.allowedNodeEnvironmentFlags.add("--no-warnings");
+    }
+    if (globalThis.process.hrtime) {
+      globalThis.process.hrtime.bigint ||= () => BigInt(Date.now()) * 1000000n;
+    }
+    const config = (globalThis.process.config ||= {});
+    config.variables ||= {};
+    config.target_defaults ||= {};
+    const report = (globalThis.process.report ||= {});
+    report.compact ??= false;
+    report.directory ??= "";
+    report.excludeEnv ??= false;
+    report.excludeNetwork ??= false;
+    report.filename ??= "";
+    report.reportOnFatalError ??= false;
+    report.reportOnSignal ??= false;
+    report.reportOnUncaughtException ??= false;
+    report.signal ??= "SIGUSR2";
+    report.getReport ||= () => ({});
+    report.writeReport ||= () => undefined;
   }
 }

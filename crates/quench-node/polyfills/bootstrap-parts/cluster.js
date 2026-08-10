@@ -1425,12 +1425,6 @@ __quenchNodeTestModule.describe = (_name, callback) =>
 __quenchNodeTestModule.suite = __quenchNodeTestModule.describe;
 __quenchNodeTestModule.it = __quenchNodeTestModule.describe;
 __quenchNodeTestModule.test = __quenchNodeTestModule;
-const __quenchDebugBinding = () => ({
-  getGenericUsageCount: (name) =>
-    name.includes("Uninitialized")
-      ? __nodeAllocatorCounts.uninitialized
-      : __nodeAllocatorCounts.zeroFilled
-});
 const __quenchInternalBindingModule = {
   internalBinding: (binding) => {
     const coreBinding = globalThis.__quenchInternalBindingCore(binding);

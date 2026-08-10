@@ -73,30 +73,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 fn cli_args() -> Vec<String> {
     let mut args: Vec<String> = env::args().skip(1).collect();
+    let fixture_flags = ["--help", "--stage", "--test-dir", "--reuse-dir", "--eval"];
     // Fixture flags are Node CLI flags; experimental switches are selected by
     // the JS polyfills and must not be mistaken for the fixture path.
-    args.retain(|arg| {
-        !arg.starts_with("--")
-            || matches!(
-                arg.as_str(),
-                "--help" | "--stage" | "--test-dir" | "--reuse-dir" | "--eval"
-            )
-    });
+    args.retain(|arg| !arg.starts_with("--") || fixture_flags.contains(&arg.as_str()));
     args
 }
 fn print_help() {
-    println!("quench-node [--stage N|--test-dir DIR|--reuse-dir DIR|-e CODE|SCRIPT]");
-    println!("  --reuse-dir reuses one rquickjs runtime with isolated contexts per script");
+    println!("quench-node [--stage N|--test-dir DIR|--reuse-dir DIR|-e CODE|SCRIPT]\n  --reuse-dir reuses one rquickjs runtime with isolated contexts per script");
 }
 fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
     let runtime = Runtime::new()?;
-    run_source_with_runtime(source, &runtime)
-}
-fn run_source_with_runtime(
-    source: &str,
-    runtime: &Runtime,
-) -> Result<(), Box<dyn std::error::Error>> {
-    run_source_with_runtime_at_path(source, runtime, None)
+    run_source_with_runtime_at_path(source, &runtime, None)
 }
 fn run_source_with_runtime_at_path(
     source: &str,
@@ -160,37 +148,28 @@ fn run_directory(dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     if dir.is_file() {
         return run_single_file(dir);
     }
-    let mut failed = 0;
-    let mut total = 0;
-    for entry in WalkDir::new(dir).into_iter().filter_map(Result::ok) {
-        if entry.file_type().is_file()
-            && entry
-                .path()
-                .extension()
-                .is_some_and(|e| e == "js" || e == "mjs")
-        {
-            total += 1;
-            let source = fs::read_to_string(entry.path())?;
-            match run_source_with_runtime_at_path(&source, &Runtime::new()?, Some(entry.path())) {
-                Ok(()) => println!("ok {}", entry.path().display()),
-                Err(error) => {
-                    failed += 1;
-                    eprintln!("not ok {}: {error:?}", entry.path().display());
-                }
-            }
-        }
-    }
-    println!("{total} tests, {} passed, {failed} failed", total - failed);
-    if total == 0 {
-        Err("Node test harness found no JavaScript tests".into())
-    } else if failed == 0 {
-        Ok(())
-    } else {
-        Err("Node test harness failures".into())
-    }
+    run_directory_with_runtime(
+        dir,
+        false,
+        "Node test harness found no JavaScript tests",
+        "Node test harness failures",
+    )
 }
 fn run_directory_reuse(dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    let runtime = Runtime::new()?;
+    run_directory_with_runtime(
+        dir,
+        true,
+        "Node reusable harness found no JavaScript tests",
+        "Node reusable harness failures",
+    )
+}
+fn run_directory_with_runtime(
+    dir: &PathBuf,
+    reuse: bool,
+    empty_error: &str,
+    failure_error: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let shared_runtime = reuse.then(Runtime::new).transpose()?;
     let mut failed = 0;
     let mut total = 0;
     for entry in WalkDir::new(dir).into_iter().filter_map(Result::ok) {
@@ -202,7 +181,15 @@ fn run_directory_reuse(dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>> 
         {
             total += 1;
             let source = fs::read_to_string(entry.path())?;
-            match run_source_with_runtime_at_path(&source, &runtime, Some(entry.path())) {
+            let result = match shared_runtime.as_ref() {
+                Some(runtime) => {
+                    run_source_with_runtime_at_path(&source, runtime, Some(entry.path()))
+                }
+                None => {
+                    run_source_with_runtime_at_path(&source, &Runtime::new()?, Some(entry.path()))
+                }
+            };
+            match result {
                 Ok(()) => println!("ok {}", entry.path().display()),
                 Err(error) => {
                     failed += 1;
@@ -213,11 +200,11 @@ fn run_directory_reuse(dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>> 
     }
     println!("{total} tests, {} passed, {failed} failed", total - failed);
     if total == 0 {
-        Err("Node reusable harness found no JavaScript tests".into())
+        Err(empty_error.into())
     } else if failed == 0 {
         Ok(())
     } else {
-        Err("Node reusable harness failures".into())
+        Err(failure_error.into())
     }
 }
 #[cfg(test)]

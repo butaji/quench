@@ -100,6 +100,9 @@ impl Resolver for NodeResolver {
 }
 #[derive(Debug, Default)]
 pub struct NodeLoader;
+macro_rules! export_names {
+    ($($name:ident)*) => { &[$(stringify!($name)),*] };
+}
 // This table is the data-driven ESM compatibility declaration; splitting its
 // arms would obscure the supported module surface without reducing behavior.
 #[rustfmt::skip]
@@ -113,52 +116,19 @@ fn builtin_source(name: &str) -> Option<String> {
     // named exports cover the common surface used by upstream smoke fixtures;
     // unsupported named interop remains an ordinary module error.
     let names: &[&str] = match builtin {
-        "path" => &[
-    "basename", "delimiter", "dirname", "extname", "format", "isAbsolute", "join", "normalize",
-    "parse", "posix", "relative", "resolve", "sep", "toNamespacedPath", "win32",
-],
-        "assert" => &[
-    "AssertionError", "deepEqual", "deepStrictEqual", "doesNotMatch", "doesNotReject", "doesNotThrow", "equal", "fail",
-    "ifError", "match", "notDeepEqual", "notDeepStrictEqual", "notEqual", "notStrictEqual", "ok", "rejects",
-    "strict", "strictEqual", "throws",
-],
-        "events" => &[
-    "EventEmitter", "EventEmitterAsyncResource", "addAbortListener", "captureRejectionSymbol", "captureRejections", "defaultMaxListeners", "errorMonitor", "getEventListeners",
-    "getMaxListeners", "once", "setMaxListeners", "usingAsyncResource",
-],
-        "stream" => &[
-    "Duplex", "PassThrough", "Readable", "Stream", "Transform", "Writable", "addAbortSignal", "compose",
-    "destroy", "duplexPair", "finished", "getDefaultHighWaterMark", "isDisturbed", "isErrored", "isReadable", "pipeline",
-    "promises", "setDefaultHighWaterMark",
-],
-        "fs" | "fs/promises" => &[
-    "access", "appendFile", "chmod", "close", "constants", "copyFile", "cp", "cpSync",
-    "exists", "mkdir", "open", "glob", "globSync", "readFile", "readFileSync", "mkdtemp",
-    "lstat", "lstatSync", "mkdirSync", "readlinkSync", "readdirSync", "realpathSync", "rmSync", "statSync",
-    "symlinkSync", "unlinkSync", "utimesSync", "writeFileSync", "rename", "rm", "stat", "unlink",
-    "writeFile", "promises",
-],
-        "test" => &[
-    "after", "afterEach", "before", "beforeEach", "describe", "it", "run", "skip",
-    "test", "todo",
-],
-        "module" => &[
-    "createRequire", "builtinModules", "isBuiltin", "register", "runMain",
-],
-        "timers/promises" => &["setTimeout", "setImmediate", "setInterval", "scheduler"],
-        "util" => &["format", "inspect", "promisify", "types"],
-        "v8" => &[
-    "deserialize", "serialize", "getHeapStatistics", "setFlagsFromString",
-],
-        "url" => &[
-    "URL", "URLSearchParams", "domainToASCII", "domainToUnicode", "fileURLToPath", "format", "parse", "pathToFileURL",
-    "resolve", "urlToHttpOptions",
-],
-        "net" => &[
-    "BlockList", "Server", "Socket", "Stream", "connect", "createConnection", "createServer", "getDefaultAutoSelectFamily",
-    "getDefaultAutoSelectFamilyAttemptTimeout", "isIP", "isIPv4", "isIPv6", "setDefaultAutoSelectFamily", "setDefaultAutoSelectFamilyAttemptTimeout",
-],
-        _ => &[],
+        "path" => export_names!(basename delimiter dirname extname format isAbsolute join normalize parse posix relative resolve sep toNamespacedPath win32),
+        "assert" => export_names!(AssertionError deepEqual deepStrictEqual doesNotMatch doesNotReject doesNotThrow equal fail ifError match notDeepEqual notDeepStrictEqual notEqual notStrictEqual ok rejects strict strictEqual throws),
+        "events" => export_names!(EventEmitter EventEmitterAsyncResource addAbortListener captureRejectionSymbol captureRejections defaultMaxListeners errorMonitor getEventListeners getMaxListeners once setMaxListeners usingAsyncResource),
+        "stream" => export_names!(Duplex PassThrough Readable Stream Transform Writable addAbortSignal compose destroy duplexPair finished getDefaultHighWaterMark isDisturbed isErrored isReadable pipeline promises setDefaultHighWaterMark),
+        "fs" | "fs/promises" => export_names!(access appendFile chmod close constants copyFile cp cpSync exists mkdir open glob globSync readFile readFileSync mkdtemp lstat lstatSync mkdirSync readlinkSync readdirSync realpathSync rmSync statSync symlinkSync unlinkSync utimesSync writeFileSync rename rm stat unlink writeFile promises),
+        "test" => export_names!(after afterEach before beforeEach describe it run skip test todo),
+        "module" => export_names!(createRequire builtinModules isBuiltin register runMain),
+        "timers/promises" => export_names!(setTimeout setImmediate setInterval scheduler),
+        "util" => export_names!(format inspect promisify types),
+        "v8" => export_names!(deserialize serialize getHeapStatistics setFlagsFromString),
+        "url" => export_names!(URL URLSearchParams domainToASCII domainToUnicode fileURLToPath format parse pathToFileURL resolve urlToHttpOptions),
+        "net" => export_names!(BlockList Server Socket Stream connect createConnection createServer getDefaultAutoSelectFamily getDefaultAutoSelectFamilyAttemptTimeout isIP isIPv4 isIPv6 setDefaultAutoSelectFamily setDefaultAutoSelectFamilyAttemptTimeout),
+        _ => export_names!(),
     };
     let mut source = format!("const __m = globalThis.require({name:?});\nexport default __m;\n");
     for export in names {
@@ -170,23 +140,9 @@ impl Loader for NodeLoader {
     #[allow(clippy::too_many_lines)]
     fn load<'js>(&mut self, ctx: &Ctx<'js>, name: &str) -> Result<Module<'js>> {
         if name.starts_with("node:")
-            || matches!(
-                name,
-                "module"
-                    | "assert"
-                    | "events"
-                    | "stream"
-                    | "fs"
-                    | "fs/promises"
-                    | "path"
-                    | "test"
-                    | "timers/promises"
-                    | "url"
-                    | "net"
-                    | "process"
-                    | "util"
-                    | "v8"
-            )
+            || "module assert events stream fs fs/promises path test timers/promises url net process util v8"
+                .split_whitespace()
+                .any(|builtin| builtin == name)
         {
             return builtin_source(name)
                 .map(|source| Module::declare(ctx.clone(), name, source))
@@ -195,13 +151,15 @@ impl Loader for NodeLoader {
         let path = name.strip_prefix("file:").unwrap_or(name);
         if path.ends_with("/common/index.mjs") {
             let common_js = Path::new(path).with_file_name("index.js");
-            let source = format!(
-                "const __c = globalThis.require({:?});\nconst __m = globalThis.require(\"module\");\nexport default __c;\nexport const allowGlobals = __c.allowGlobals;\nexport const buildType = __c.buildType;\nexport const canCreateSymLink = __c.canCreateSymLink;\nexport const childShouldThrowAndAbort = __c.childShouldThrowAndAbort;\nexport const createRequire = __m.createRequire;\nexport const enoughTestMem = __c.enoughTestMem;\nexport const escapePOSIXShell = __c.escapePOSIXShell;\nexport const expectsError = __c.expectsError;\nexport const expectWarning = __c.expectWarning;\nexport const getArrayBufferViews = __c.getArrayBufferViews;\nexport const getBufferSources = __c.getBufferSources;\nexport const getPort = () => __c.PORT;\nexport const getTTYfd = __c.getTTYfd;\nexport const hasCrypto = __c.hasCrypto;\nexport const hasQuic = __c.hasQuic;\nexport const hasInspector = __c.hasInspector;\nexport const hasSQLite = __c.hasSQLite;\nexport const hasFFI = __c.hasFFI;\nexport const hasLocalStorage = __c.hasLocalStorage;\nexport const hasIntl = __c.hasIntl;\nexport const hasTemporal = __c.hasTemporal;\nexport const hasIPv6 = __c.hasIPv6;\nexport const isAIX = __c.isAIX;\nexport const isAlive = __c.isAlive;\nexport const isFreeBSD = __c.isFreeBSD;\nexport const isIBMi = __c.isIBMi;\nexport const isInsideDirWithUnusualChars = __c.isInsideDirWithUnusualChars;\nexport const isLinux = __c.isLinux;\nexport const isOpenBSD = __c.isOpenBSD;\nexport const isMacOS = __c.isMacOS;\nexport const isRiscv64 = __c.isRiscv64;\nexport const isSunOS = __c.isSunOS;\nexport const isWindows = __c.isWindows;\nexport const localIPv6Hosts = __c.localIPv6Hosts;\nexport const mustCall = __c.mustCall;\nexport const mustCallAtLeast = __c.mustCallAtLeast;\nexport const mustNotCall = __c.mustNotCall;\nexport const mustNotMutateObjectDeep = __c.mustNotMutateObjectDeep;\nexport const mustSucceed = __c.mustSucceed;\nexport const nodeProcessAborted = __c.nodeProcessAborted;\nexport const parseTestMetadata = __c.parseTestMetadata;\nexport const PIPE = __c.PIPE;\nexport const platformTimeout = __c.platformTimeout;\nexport const printSkipMessage = __c.printSkipMessage;\nexport const runWithInvalidFD = __c.runWithInvalidFD;\nexport const skip = __c.skip;\nexport const skipIf32Bits = __c.skipIf32Bits;\nexport const skipIfEslintMissing = __c.skipIfEslintMissing;\nexport const skipIfInspectorDisabled = __c.skipIfInspectorDisabled;\nexport const skipIfSQLiteMissing = __c.skipIfSQLiteMissing;\nexport const spawnPromisified = __c.spawnPromisified;\nexport const sleepSync = __c.sleepSync;\n",
+            let mut source = format!(
+                "const __c = globalThis.require({:?});\nconst __m = globalThis.require(\"module\");\nexport default __c;\n",
                 common_js.to_string_lossy()
             );
-            let source = source.replace(
-                "export const hasCrypto = __c.hasCrypto;\n",
-                "export const hasCrypto = __c.hasCrypto;\nexport const hasDtls = __c.hasDtls;\n",
+            for export in "allowGlobals buildType canCreateSymLink childShouldThrowAndAbort enoughTestMem escapePOSIXShell expectsError expectWarning getArrayBufferViews getBufferSources getTTYfd hasCrypto hasDtls hasQuic hasInspector hasSQLite hasFFI hasLocalStorage hasIntl hasTemporal hasIPv6 isAIX isAlive isFreeBSD isIBMi isInsideDirWithUnusualChars isLinux isOpenBSD isMacOS isRiscv64 isSunOS isWindows localIPv6Hosts mustCall mustCallAtLeast mustNotCall mustNotMutateObjectDeep mustSucceed nodeProcessAborted parseTestMetadata PIPE platformTimeout printSkipMessage runWithInvalidFD skip skipIf32Bits skipIfEslintMissing skipIfInspectorDisabled skipIfSQLiteMissing spawnPromisified sleepSync".split_whitespace() {
+                source.push_str(&format!("export const {export} = __c.{export};\n"));
+            }
+            source.push_str(
+                "export const createRequire = __m.createRequire;\nexport const getPort = () => __c.PORT;\n",
             );
             let module = Module::declare(ctx.clone(), name, source)?;
             let absolute = fs::canonicalize(path).unwrap_or_else(|_| PathBuf::from(path));

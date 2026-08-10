@@ -247,18 +247,8 @@ globalThis.__nodeStats.prototype.isFile = function () {
 globalThis.__nodeStats.prototype.isDirectory = function () {
   return this._directory;
 };
-globalThis.__nodeStats.prototype.isSocket = function () {
-  return false;
-};
-globalThis.__nodeStats.prototype.isBlockDevice = function () {
-  return false;
-};
-globalThis.__nodeStats.prototype.isCharacterDevice = function () {
-  return false;
-};
-globalThis.__nodeStats.prototype.isFIFO = function () {
-  return false;
-};
+for (const name of ["isSocket", "isBlockDevice", "isCharacterDevice", "isFIFO"])
+  globalThis.__nodeStats.prototype[name] = () => false;
 globalThis.__nodeStats.prototype.isSymbolicLink = function () {
   return this._symlink === true;
 };
