@@ -5,6 +5,16 @@ use std::rc::Rc;
 
 use crate::{ops::Builtin, value::Value};
 
+const DESCRIPTOR_PREFIX: &str = "\0quench:descriptor:\0";
+
+pub(crate) fn descriptor_key(key: &str) -> String {
+    format!("{DESCRIPTOR_PREFIX}{key}")
+}
+
+pub(crate) fn is_descriptor_key(key: &str) -> bool {
+    key.starts_with(DESCRIPTOR_PREFIX)
+}
+
 pub(crate) fn property(builtin: Builtin, key: &str) -> Value {
     props::lookup(builtin, key)
 }
@@ -296,6 +306,7 @@ pub(crate) fn keys(value: Option<&Value>) -> Value {
     let keys = match value {
         Some(Value::Object(properties)) => properties
             .iter()
+            .filter(|(key, _)| !is_descriptor_key(key))
             .map(|(key, _)| Value::String(key.clone()))
             .collect(),
         Some(Value::Array(values)) => (0..values.len())
@@ -335,15 +346,22 @@ pub(crate) fn define_property(arguments: &[Value]) -> Value {
         return Value::Undefined;
     };
     let key = arguments.get(1).map_or_else(String::new, value_to_string);
-    let value = match arguments.get(2) {
-        Some(Value::Object(properties)) => properties
-            .iter()
-            .rev()
-            .find(|(name, _)| name == "value")
-            .map_or(Value::Undefined, |(_, value)| value.clone()),
-        _ => Value::Undefined,
+    let Some(Value::Object(descriptor)) = arguments.get(2) else {
+        return target.clone();
     };
-    set_property(target.clone(), &key, value)
+    let value = descriptor
+        .iter()
+        .rev()
+        .find(|(name, _)| name == "value")
+        .map_or(Value::Undefined, |(_, value)| value.clone());
+    let mut result = set_property(target.clone(), &key, value);
+    if let Value::Object(properties) = &mut result {
+        let metadata = Value::Object(Rc::new((**descriptor).clone()));
+        let properties = Rc::make_mut(properties);
+        properties.retain(|(name, _)| name != &descriptor_key(&key));
+        properties.push((descriptor_key(&key), metadata));
+    }
+    result
 }
 
 fn set_array_property(values: Rc<Vec<Value>>, key: &str, value: Value) -> Value {
