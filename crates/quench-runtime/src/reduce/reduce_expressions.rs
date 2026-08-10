@@ -10,6 +10,7 @@ use crate::{
 use oxc::{
     ast::ast::{
         Argument, AssignmentOperator, AssignmentTarget, BindingPatternKind, Expression, Statement,
+        VariableDeclarationKind,
     },
     syntax::operator::UnaryOperator,
 };
@@ -110,8 +111,12 @@ pub fn reduce_declaration(
         let BindingPatternKind::BindingIdentifier(identifier) = &declarator.id.kind else {
             return Err(vec!["Unsupported binding pattern".to_string()]);
         };
-        let slot = *next_slot;
-        *next_slot = next_slot.saturating_add(1);
+        let slot = declaration_slot(
+            declaration.kind,
+            identifier.name.as_str(),
+            next_slot,
+            locals,
+        );
         let register = match declarator.init.as_ref() {
             Some(init) => reduce_expression(init, ops, facts, next_register, locals),
             None => Some(crate::reduce_support::emit_undefined(ops, next_register)),
@@ -126,6 +131,22 @@ pub fn reduce_declaration(
         });
     }
     Ok(())
+}
+
+fn declaration_slot(
+    kind: VariableDeclarationKind,
+    name: &str,
+    next_slot: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> u16 {
+    if kind == VariableDeclarationKind::Var {
+        if let Some(slot) = locals.get(name) {
+            return *slot;
+        }
+    }
+    let slot = *next_slot;
+    *next_slot = next_slot.saturating_add(1);
+    slot
 }
 pub fn reduce_expression(
     expression: &Expression<'_>,

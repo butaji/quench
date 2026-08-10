@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-use oxc::ast::ast::{ReturnStatement, ThrowStatement};
+use oxc::ast::ast::{
+    CatchClause, ReturnStatement, Statement, ThrowStatement, VariableDeclarationKind,
+};
 
 use crate::{facts::ProgramDb, ops::Op};
 
@@ -46,15 +48,26 @@ pub(crate) fn reduce_try(
     facts: &mut crate::facts::ProgramDb,
     locals: &HashMap<String, u16>,
 ) -> Result<(), Vec<String>> {
-    let body =
-        crate::reduce::reduce_statements_no_tail(&statement.block.body, facts, locals.clone(), 0)?;
+    let (try_locals, next_slot) = hoisted_try_locals(statement, locals);
+    let body = crate::reduce::reduce_statements_no_tail(
+        &statement.block.body,
+        facts,
+        try_locals.clone(),
+        next_slot,
+    )?;
     let handler = statement
         .handler
         .as_ref()
         .map(|handler| {
-            let (handler_locals, catch_slot) = handler_locals(handler, locals);
-            crate::reduce::reduce_statements_no_tail(&handler.body.body, facts, handler_locals, 0)
-                .map(|ops| (ops, catch_slot))
+            let (handler_locals, catch_slot, handler_next_slot) =
+                handler_locals(handler, &try_locals);
+            crate::reduce::reduce_statements_no_tail(
+                &handler.body.body,
+                facts,
+                handler_locals,
+                handler_next_slot,
+            )
+            .map(|ops| (ops, catch_slot))
         })
         .transpose()?;
     let (handler, catch_slot) = handler.map_or((None, None), |(ops, slot)| (Some(ops), slot));
@@ -62,7 +75,12 @@ pub(crate) fn reduce_try(
         .finalizer
         .as_ref()
         .map(|finalizer| {
-            crate::reduce::reduce_statements_no_tail(&finalizer.body, facts, locals.clone(), 0)
+            crate::reduce::reduce_statements_no_tail(
+                &finalizer.body,
+                facts,
+                try_locals.clone(),
+                next_slot,
+            )
         })
         .transpose()?;
     ops.push(Op::Try {
@@ -75,24 +93,21 @@ pub(crate) fn reduce_try(
 }
 
 fn handler_locals(
-    handler: &oxc::ast::ast::CatchClause<'_>,
+    handler: &CatchClause<'_>,
     locals: &HashMap<String, u16>,
-) -> (HashMap<String, u16>, Option<u16>) {
+) -> (HashMap<String, u16>, Option<u16>, u16) {
     let mut result = locals.clone();
+    let next_slot = crate::reduce_support::register_base(&result);
     let Some(parameter) = handler.param.as_ref() else {
-        return (result, None);
+        return (result, None, next_slot);
     };
     let oxc::ast::ast::BindingPatternKind::BindingIdentifier(identifier) = &parameter.pattern.kind
     else {
-        return (result, None);
+        return (result, None, next_slot);
     };
-    let slot = result
-        .values()
-        .copied()
-        .max()
-        .map_or(0, |value| value.saturating_add(1));
+    let slot = next_slot;
     result.insert(identifier.name.to_string(), slot);
-    (result, Some(slot))
+    (result, Some(slot), slot.saturating_add(1))
 }
 
 pub(crate) fn reduce_try_statement(
@@ -102,4 +117,152 @@ pub(crate) fn reduce_try_statement(
     locals: &HashMap<String, u16>,
 ) -> Result<Option<u16>, Vec<String>> {
     reduce_try(statement, ops, facts, locals).map(|_| None)
+}
+
+fn hoisted_try_locals(
+    statement: &oxc::ast::ast::TryStatement<'_>,
+    locals: &HashMap<String, u16>,
+) -> (HashMap<String, u16>, u16) {
+    let mut result = locals.clone();
+    let mut next_slot = crate::reduce_support::register_base(&result);
+    collect_statements_into(&statement.block.body, &mut result, &mut next_slot);
+    if let Some(handler) = &statement.handler {
+        collect_statements_into(&handler.body.body, &mut result, &mut next_slot);
+    }
+    if let Some(finalizer) = &statement.finalizer {
+        collect_statements_into(&finalizer.body, &mut result, &mut next_slot);
+    }
+    (result, next_slot)
+}
+
+fn collect_statements_into(
+    statements: &[Statement<'_>],
+    locals: &mut HashMap<String, u16>,
+    next_slot: &mut u16,
+) {
+    for statement in statements {
+        collect_statement_vars(statement, locals, next_slot);
+    }
+}
+
+fn collect_statement_vars(
+    statement: &Statement<'_>,
+    locals: &mut HashMap<String, u16>,
+    next_slot: &mut u16,
+) {
+    match statement {
+        Statement::VariableDeclaration(declaration) => {
+            collect_var_declaration(declaration, locals, next_slot);
+        }
+        Statement::BlockStatement(block) => collect_statements_into(&block.body, locals, next_slot),
+        Statement::IfStatement(statement) => {
+            collect_statement_vars(&statement.consequent, locals, next_slot);
+            if let Some(alternate) = &statement.alternate {
+                collect_statement_vars(alternate, locals, next_slot);
+            }
+        }
+        Statement::LabeledStatement(_)
+        | Statement::WhileStatement(_)
+        | Statement::DoWhileStatement(_)
+        | Statement::ForStatement(_)
+        | Statement::ForInStatement(_)
+        | Statement::ForOfStatement(_) => collect_nested_body_vars(statement, locals, next_slot),
+        Statement::SwitchStatement(statement) => {
+            for case in &statement.cases {
+                collect_statements_into(&case.consequent, locals, next_slot);
+            }
+        }
+        Statement::TryStatement(statement) => collect_try_parts(statement, locals, next_slot),
+        _ => {}
+    }
+}
+
+fn collect_nested_body_vars(
+    statement: &Statement<'_>,
+    locals: &mut HashMap<String, u16>,
+    next_slot: &mut u16,
+) {
+    match statement {
+        Statement::LabeledStatement(statement) => {
+            collect_statement_vars(&statement.body, locals, next_slot);
+        }
+        Statement::WhileStatement(statement) => {
+            collect_statement_vars(&statement.body, locals, next_slot);
+        }
+        Statement::DoWhileStatement(statement) => {
+            collect_statement_vars(&statement.body, locals, next_slot);
+        }
+        Statement::ForStatement(statement) => {
+            if let Some(init) = &statement.init {
+                collect_for_init_vars(init, locals, next_slot);
+            }
+            collect_statement_vars(&statement.body, locals, next_slot);
+        }
+        Statement::ForInStatement(statement) => {
+            collect_for_left_vars(&statement.left, locals, next_slot);
+            collect_statement_vars(&statement.body, locals, next_slot);
+        }
+        Statement::ForOfStatement(statement) => {
+            collect_for_left_vars(&statement.left, locals, next_slot);
+            collect_statement_vars(&statement.body, locals, next_slot);
+        }
+        _ => {}
+    }
+}
+
+fn collect_try_parts(
+    statement: &oxc::ast::ast::TryStatement<'_>,
+    locals: &mut HashMap<String, u16>,
+    next_slot: &mut u16,
+) {
+    collect_statements_into(&statement.block.body, locals, next_slot);
+    if let Some(handler) = &statement.handler {
+        collect_statements_into(&handler.body.body, locals, next_slot);
+    }
+    if let Some(finalizer) = &statement.finalizer {
+        collect_statements_into(&finalizer.body, locals, next_slot);
+    }
+}
+
+fn collect_for_init_vars(
+    init: &oxc::ast::ast::ForStatementInit<'_>,
+    locals: &mut HashMap<String, u16>,
+    next_slot: &mut u16,
+) {
+    if let oxc::ast::ast::ForStatementInit::VariableDeclaration(declaration) = init {
+        collect_var_declaration(declaration, locals, next_slot);
+    }
+}
+
+fn collect_for_left_vars(
+    left: &oxc::ast::ast::ForStatementLeft<'_>,
+    locals: &mut HashMap<String, u16>,
+    next_slot: &mut u16,
+) {
+    if let oxc::ast::ast::ForStatementLeft::VariableDeclaration(declaration) = left {
+        collect_var_declaration(declaration, locals, next_slot);
+    }
+}
+
+fn collect_var_declaration(
+    declaration: &oxc::ast::ast::VariableDeclaration<'_>,
+    locals: &mut HashMap<String, u16>,
+    next_slot: &mut u16,
+) {
+    if declaration.kind != VariableDeclarationKind::Var {
+        return;
+    }
+    for declarator in &declaration.declarations {
+        if let Some(identifier) = declarator.id.get_binding_identifier() {
+            insert_hoisted_var(identifier.name.as_str(), locals, next_slot);
+        }
+    }
+}
+
+fn insert_hoisted_var(name: &str, locals: &mut HashMap<String, u16>, next_slot: &mut u16) {
+    if locals.contains_key(name) {
+        return;
+    }
+    locals.insert(name.to_string(), *next_slot);
+    *next_slot = next_slot.saturating_add(1);
 }
