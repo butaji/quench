@@ -31,6 +31,17 @@ pub(crate) fn set(value: &Value, name: PrivateNameId, new_value: Value) -> Resul
     Ok(())
 }
 
+/// Defines an unforgeable data slot without exposing it as an ordinary key.
+pub(crate) fn define(value: &Value, name: PrivateNameId, initial: Value) -> Result<(), VmError> {
+    let slots = slots(value)?;
+    let mut slots = slots.borrow_mut();
+    if slots.iter().any(|(id, _)| *id == name) {
+        return Err(private_brand_error());
+    }
+    slots.push((name, PrivateSlot::Data(initial)));
+    Ok(())
+}
+
 pub(crate) fn execute_get(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
     let Op::GetPrivate { dst, object, name } = op else {
         return Err(VmError::MissingReturn);
@@ -48,6 +59,15 @@ pub(crate) fn execute_set(registers: &mut [Value], op: &Op) -> Result<(), VmErro
     let object = crate::execute::read_register(registers, *object)?;
     let value = crate::execute::read_register(registers, *src)?;
     set(&object, *name, value)
+}
+
+pub(crate) fn execute_define(registers: &mut [Value], op: &Op) -> Result<(), VmError> {
+    let Op::DefinePrivate { object, name, src } = op else {
+        return Err(VmError::MissingReturn);
+    };
+    let object = crate::execute::read_register(registers, *object)?;
+    let value = crate::execute::read_register(registers, *src)?;
+    define(&object, *name, value)
 }
 
 fn slots(value: &Value) -> Result<Slots, VmError> {

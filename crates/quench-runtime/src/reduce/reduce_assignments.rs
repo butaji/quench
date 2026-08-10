@@ -24,6 +24,10 @@ pub(crate) enum Place {
         key: PlaceKey,
         origin: Option<u16>,
     },
+    Private {
+        object: u16,
+        name: crate::facts::PrivateNameId,
+    },
     Super {
         key: PlaceKey,
     },
@@ -113,9 +117,9 @@ fn reduce_place(
             next,
             locals,
         ),
-        AssignmentTarget::PrivateFieldExpression(member) => member_place(
+        AssignmentTarget::PrivateFieldExpression(member) => private_place(
             &member.object,
-            PlaceKey::Static(format!("#{}", member.field.name)),
+            facts.private_name(member.field.span)?,
             ops,
             facts,
             next,
@@ -196,9 +200,9 @@ pub(crate) fn reduce_simple_place(
             next,
             locals,
         ),
-        oxc::ast::ast::SimpleAssignmentTarget::PrivateFieldExpression(member) => member_place(
+        oxc::ast::ast::SimpleAssignmentTarget::PrivateFieldExpression(member) => private_place(
             &member.object,
-            PlaceKey::Static(format!("#{}", member.field.name)),
+            facts.private_name(member.field.span)?,
             ops,
             facts,
             next,
@@ -261,6 +265,18 @@ fn member_place(
     finish_member_place(expression, object, key, locals)
 }
 
+fn private_place(
+    expression: &Expression<'_>,
+    name: crate::facts::PrivateNameId,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<Place> {
+    let object = crate::reduce::reduce_expression(expression, ops, facts, next, locals)?;
+    Some(Place::Private { object, name })
+}
+
 fn reduce_member_object(
     expression: &Expression<'_>,
     ops: &mut Vec<Op>,
@@ -308,6 +324,11 @@ pub(crate) fn get(place: &Place, ops: &mut Vec<Op>, next: &mut u16) -> Option<u1
             key: name.clone(),
         }),
         Place::Property { object, key, .. } => emit_property_get(ops, dst, *object, key),
+        Place::Private { object, name } => ops.push(Op::GetPrivate {
+            dst,
+            object: *object,
+            name: *name,
+        }),
         Place::Super {
             key: PlaceKey::Static(key),
         } => ops.push(Op::GetSuperProperty {
@@ -354,6 +375,11 @@ pub(crate) fn put(place: Place, value: u16, ops: &mut Vec<Op>) -> Option<()> {
                 ops.push(Op::StoreLocal { slot, src: object });
             }
         }
+        Place::Private { object, name } => ops.push(Op::SetPrivate {
+            object,
+            name,
+            src: value,
+        }),
         Place::Super { .. } => return None,
     }
     Some(())
