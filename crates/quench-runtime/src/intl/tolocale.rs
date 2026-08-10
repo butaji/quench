@@ -47,9 +47,12 @@ pub(crate) mod value {
             Some(Value::Boolean(value)) => f64::from(*value),
             Some(Value::Number(value)) => *value,
             Some(Value::String(value)) => parse_number(value),
+            Some(Value::Object(properties)) => properties
+                .iter()
+                .find_map(|(key, value)| (key == "_value").then_some(value))
+                .map_or(f64::NAN, |value| to_number(Some(value))),
             Some(
                 Value::Array(_)
-                | Value::Object(_)
                 | Value::Function(_)
                 | Value::BoundFunction(_)
                 | Value::Builtin(_)
