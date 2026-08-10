@@ -172,7 +172,7 @@ pub(crate) fn proxy_apply(
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
         if let Some(trap) = get_handler_trap(proxy, "apply") {
-            let args_array = Value::Array(Rc::new(arguments.to_vec()));
+            let args_array = Value::array(arguments.to_vec());
             return call_trap(&trap, &[target.clone(), this_arg.clone(), args_array], None);
         }
     }
@@ -206,7 +206,7 @@ pub(crate) fn proxy_construct(
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
         if let Some(trap) = get_handler_trap(proxy, "construct") {
-            let args_array = Value::Array(Rc::new(arguments.to_vec()));
+            let args_array = Value::array(arguments.to_vec());
             let new_target = new_target.unwrap_or(target);
             return call_trap(
                 &trap,
@@ -447,7 +447,7 @@ fn extract_array_arg(arguments: &[Value], index: usize) -> Vec<Value> {
         .get(index)
         .and_then(|v| {
             if let Value::Array(arr) = v {
-                Some(arr.as_ref().clone())
+                Some(arr.to_vec())
             } else {
                 None
             }

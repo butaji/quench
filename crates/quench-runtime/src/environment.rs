@@ -85,7 +85,7 @@ fn replace_nested(value: &mut Value, old: &Value, new: &Value) {
         }
         _ => return,
     };
-    for value in values {
+    for value in values.values_mut() {
         replace_alias(value, old, new);
     }
 }
