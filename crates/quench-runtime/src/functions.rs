@@ -1,14 +1,13 @@
 use std::{collections::HashMap, convert::TryFrom};
 
 use oxc::ast::ast::BindingPatternKind;
-use oxc::{allocator::Allocator, parser::Parser, span::SourceType};
 
 use crate::{
     facts::ProgramDb,
     ops::{FunctionKind, FunctionStrictness, Op},
 };
 
-fn strictness(body: &oxc::ast::ast::FunctionBody<'_>) -> FunctionStrictness {
+pub(super) fn strictness(body: &oxc::ast::ast::FunctionBody<'_>) -> FunctionStrictness {
     if body
         .directives
         .iter()
@@ -27,7 +26,7 @@ pub(crate) struct FunctionMetadata {
     is_async: bool,
 }
 
-pub(crate) fn function_parameters(
+pub(super) fn function_parameters(
     function: &oxc::ast::ast::Function<'_>,
 ) -> Result<(HashMap<String, u16>, u16), Vec<String>> {
     parameters(&function.params)
@@ -94,7 +93,7 @@ fn extend_function_parameters(
     parameters
 }
 
-fn reduce_function_ops(
+pub(super) fn reduce_function_ops(
     statements: &[oxc::ast::ast::Statement<'_>],
     facts: &mut ProgramDb,
     parameters: HashMap<String, u16>,
@@ -190,7 +189,7 @@ pub(crate) fn reduce_arrow(
     ))
 }
 
-pub(crate) fn make(
+pub(super) fn make(
     body: &[Op],
     params: u16,
     captures: Vec<crate::value::Value>,
@@ -223,73 +222,7 @@ pub(crate) fn make(
 pub(crate) fn dynamic_constructor(
     arguments: &[crate::value::Value],
 ) -> Result<crate::value::Value, crate::execute::VmError> {
-    let body = arguments
-        .last()
-        .map(|value| crate::intl::tolocale::value::to_string(Some(value)))
-        .unwrap_or_default();
-    let parameters = arguments
-        .get(..arguments.len().saturating_sub(1))
-        .unwrap_or_default()
-        .iter()
-        .map(|value| crate::intl::tolocale::value::to_string(Some(value)))
-        .collect::<Vec<_>>()
-        .join(",");
-    let source = format!("function anonymous({parameters}){{{body}}}");
-    let allocator = Allocator::default();
-    let parsed = Parser::new(&allocator, &source, SourceType::default()).parse();
-    if parsed.panicked || !parsed.errors.is_empty() {
-        return Err(crate::execute::VmError::EvalError(
-            "Invalid function source".to_string(),
-        ));
-    }
-    let Some(oxc::ast::ast::Statement::FunctionDeclaration(function)) = parsed.program.body.first()
-    else {
-        return Err(crate::execute::VmError::EvalError(
-            "Invalid function source".to_string(),
-        ));
-    };
-    let (parameter_map, parameter_count) = function_parameters(function).map_err(|_| {
-        crate::execute::VmError::EvalError("Invalid function parameters".to_string())
-    })?;
-    let (body_ops, captures) = reduce_function_ops(
-        &function
-            .body
-            .as_ref()
-            .ok_or(crate::execute::VmError::EvalError(
-                "Invalid function source".to_string(),
-            ))?
-            .statements,
-        &mut ProgramDb::default(),
-        parameter_map,
-        parameter_count,
-        &HashMap::new(),
-    )
-    .ok_or(crate::execute::VmError::EvalError(
-        "Unsupported function source".to_string(),
-    ))?;
-    let value = make(
-        &body_ops,
-        parameter_count,
-        Vec::new(),
-        FunctionKind::Ordinary,
-        strictness(
-            function
-                .body
-                .as_ref()
-                .ok_or(crate::execute::VmError::EvalError(
-                    "Invalid function source".to_string(),
-                ))?,
-        ),
-        false,
-    );
-    if let crate::value::Value::Function(function) = &value {
-        function.properties.borrow_mut().push((
-            "\0dynamic_function".to_string(),
-            crate::value::Value::Boolean(true),
-        ));
-        let _ = captures;
-    }
-    Ok(value)
+    crate::functions_dynamic::construct(arguments)
 }
 
 pub(crate) fn write(
@@ -326,7 +259,7 @@ pub(crate) fn write(
 }
 
 pub(crate) fn write_op(registers: &mut Vec<crate::value::Value>, op: &Op) {
-    let (dst, body, params, captures, metadata) = match op {
+    match op {
         Op::MakeFunction {
             dst,
             body,
@@ -334,16 +267,14 @@ pub(crate) fn write_op(registers: &mut Vec<crate::value::Value>, op: &Op) {
             captures,
             strictness,
             is_async,
-        } => (
-            dst,
+        } => write_ordinary(
+            registers,
+            *dst,
             body,
-            params,
-            captures,
-            FunctionMetadata {
-                kind: FunctionKind::Ordinary,
-                strictness: *strictness,
-                is_async: *is_async,
-            },
+            *params,
+            *captures,
+            *strictness,
+            *is_async,
         ),
         Op::MakeFunctionWithKind {
             dst,
@@ -353,20 +284,43 @@ pub(crate) fn write_op(registers: &mut Vec<crate::value::Value>, op: &Op) {
             kind,
             strictness,
             is_async,
-        } => (
-            dst,
-            body,
-            params,
-            captures,
+        } => write_kind(
+            registers,
+            (*dst, body, *params, *captures),
             FunctionMetadata {
                 kind: *kind,
                 strictness: *strictness,
                 is_async: *is_async,
             },
         ),
-        _ => return,
+        _ => {}
+    }
+}
+
+fn write_kind(
+    registers: &mut Vec<crate::value::Value>,
+    function: (u16, &[Op], u16, u16),
+    metadata: FunctionMetadata,
+) {
+    let (dst, body, params, captures) = function;
+    write(registers, dst, body, params, captures, metadata);
+}
+
+fn write_ordinary(
+    registers: &mut Vec<crate::value::Value>,
+    dst: u16,
+    body: &[Op],
+    params: u16,
+    captures: u16,
+    strictness: FunctionStrictness,
+    is_async: bool,
+) {
+    let metadata = FunctionMetadata {
+        kind: FunctionKind::Ordinary,
+        strictness,
+        is_async,
     };
-    write(registers, *dst, body, *params, *captures, metadata);
+    write(registers, dst, body, params, captures, metadata);
 }
 
 fn build_registers(

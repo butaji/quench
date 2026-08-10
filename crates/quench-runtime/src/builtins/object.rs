@@ -127,47 +127,47 @@ pub(crate) fn descriptor(value: Option<&Value>, key: Option<&Value>) -> Value {
     let (Some(value), Some(key)) = (value, key.map(value_to_string)) else {
         return Value::Undefined;
     };
-    let property = match value {
+    descriptor_property(value, &key)
+        .map_or(Value::Undefined, |property| descriptor_object(&property))
+}
+
+fn descriptor_property(value: &Value, key: &str) -> Option<Value> {
+    match value {
         Value::Object(properties) => {
             if let Some((_, metadata)) = properties
                 .iter()
                 .rev()
-                .find(|(name, _)| name == &super::descriptor_key(&key))
+                .find(|(name, _)| name == &super::descriptor_key(key))
             {
-                return metadata.clone();
+                return Some(metadata.clone());
             }
             properties
                 .iter()
                 .rev()
-                .find(|(name, _)| name == &key)
+                .find(|(name, _)| name == key)
                 .map(|(_, value)| value.clone())
         }
-        Value::Array(values) => array_descriptor(values, &key),
-        Value::String(value) => string_descriptor(value, &key),
-        Value::Builtin(builtin) => {
-            return builtin_descriptor(*builtin, &key).unwrap_or(Value::Undefined);
-        }
-        Value::Function(function) if key == "length" => {
-            return Value::Object(Rc::new(vec![
-                (
-                    "value".to_string(),
-                    Value::Number(f64::from(function.params)),
-                ),
-                ("writable".to_string(), Value::Boolean(false)),
-                ("enumerable".to_string(), Value::Boolean(false)),
-                ("configurable".to_string(), Value::Boolean(true)),
-            ]));
-        }
+        Value::Array(values) => array_descriptor(values, key),
+        Value::String(value) => string_descriptor(value, key),
+        Value::Builtin(builtin) => builtin_descriptor(*builtin, key),
+        Value::Function(function) if key == "length" => Some(Value::Object(Rc::new(vec![
+            (
+                "value".to_string(),
+                Value::Number(f64::from(function.params)),
+            ),
+            ("writable".to_string(), Value::Boolean(false)),
+            ("enumerable".to_string(), Value::Boolean(false)),
+            ("configurable".to_string(), Value::Boolean(true)),
+        ]))),
         Value::Function(function) => function
             .properties
             .borrow()
             .iter()
             .rev()
-            .find(|(name, _)| name == &key)
+            .find(|(name, _)| name == key)
             .map(|(_, value)| value.clone()),
         _ => None,
-    };
-    property.map_or(Value::Undefined, |property| descriptor_object(&property))
+    }
 }
 
 fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {

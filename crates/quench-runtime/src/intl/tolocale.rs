@@ -2,6 +2,10 @@
 
 use super::{resolve_locales, runtime_error, to_string_value};
 use crate::{execute::VmError, ops::Builtin, value::Value};
+
+#[path = "tolocale_number.rs"]
+mod number;
+
 pub(crate) mod value {
     use crate::value::Value;
     pub(crate) fn to_string(value: Option<&Value>) -> String {
@@ -481,92 +485,5 @@ impl DateLocaleKind {
         match self {
             DateLocaleKind::String | DateLocaleKind::Date | DateLocaleKind::Time => "Invalid Date",
         }
-    }
-}
-
-pub(crate) mod number {
-    use super::super::{slot_bool, slot_number};
-    use crate::value::Value;
-
-    pub(crate) fn format_resolved(number: f64, slots: &[(String, Value)]) -> String {
-        let max_fraction = slot_number(slots, "maximumFractionDigits").unwrap_or(3.0) as usize;
-        let min_fraction = slot_number(slots, "minimumFractionDigits").unwrap_or(0.0) as usize;
-        let use_grouping = slot_bool(slots, "useGrouping").unwrap_or(true);
-        let mut text = format_fixed(number, max_fraction);
-        if use_grouping {
-            text = group(text);
-        }
-        text = pad_minimum(text, min_fraction);
-        text
-    }
-    fn format_fixed(number: f64, max_fraction: usize) -> String {
-        if number.is_nan() {
-            return "NaN".to_string();
-        }
-        if number.is_infinite() {
-            return if number.is_sign_negative() {
-                "-Infinity".to_string()
-            } else {
-                "Infinity".to_string()
-            };
-        }
-        let mut text = format!("{:.*}", max_fraction, number);
-        if text.contains('.') {
-            while text.ends_with('0') {
-                text.pop();
-            }
-            if text.ends_with('.') {
-                text.pop();
-            }
-        }
-        text
-    }
-
-    fn group(text: String) -> String {
-        let (sign, rest) = match text.strip_prefix('-') {
-            Some(rest) => ("-", rest.to_string()),
-            None => ("", text),
-        };
-        let (integer, fraction) = match rest.split_once('.') {
-            Some((integer, fraction)) => (integer.to_string(), Some(fraction.to_string())),
-            None => (rest, None),
-        };
-        let mut grouped = String::new();
-        let chars: Vec<char> = integer.chars().collect();
-        for (index, character) in chars.iter().enumerate() {
-            if index > 0 && (chars.len() - index) % 3 == 0 {
-                grouped.push(',');
-            }
-            grouped.push(*character);
-        }
-        let mut result = format!("{sign}{grouped}");
-        if let Some(fraction) = fraction {
-            result.push('.');
-            result.push_str(&fraction);
-        }
-        result
-    }
-
-    fn pad_minimum(text: String, min_fraction: usize) -> String {
-        if min_fraction == 0 {
-            return text;
-        }
-        let (sign, rest) = match text.strip_prefix('-') {
-            Some(rest) => ("-", rest.to_string()),
-            None => ("", text),
-        };
-        let fraction_digits = rest
-            .split_once('.')
-            .map_or(0, |(_, fraction)| fraction.len());
-        let mut result = format!("{sign}{rest}");
-        if fraction_digits < min_fraction {
-            if !rest.contains('.') {
-                result.push('.');
-            }
-            for _ in fraction_digits..min_fraction {
-                result.push('0');
-            }
-        }
-        result
     }
 }

@@ -67,7 +67,10 @@ fn reduce_cases(
     Ok(cases)
 }
 
-pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<(), crate::execute::VmError> {
+pub(crate) fn execute(
+    registers: &mut Vec<Value>,
+    op: &Op,
+) -> Result<Option<Value>, crate::execute::VmError> {
     let Op::Switch {
         discriminant,
         cases,
@@ -80,9 +83,13 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<(), crate::
         test.as_ref()
             .map_or(true, |test| same_constant(&value, test))
     }) {
-        crate::execute::execute_in_place(body, registers)?;
+        match crate::execute::execute_in_place(body, registers) {
+            Ok(value) => return Ok(Some(value)),
+            Err(crate::execute::VmError::MissingReturn) => {}
+            Err(error) => return Err(error),
+        }
     }
-    Ok(())
+    Ok(None)
 }
 
 fn same_constant(value: &Value, constant: &Constant) -> bool {

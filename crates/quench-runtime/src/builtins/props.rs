@@ -52,27 +52,12 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
     if let HostCapability(kind) = builtin {
         return host_capability_method(kind, key);
     }
+    if let Some(method) = typed_array_constructor_property(builtin, key) {
+        return Some(method);
+    }
     match (builtin, key) {
         (Array, "prototype") => Some(ArrayPrototype),
         (ArrayBuffer, "isView") => Some(ArrayBufferIsView),
-        (Float64Array, "prototype") => Some(Float64ArrayPrototype),
-        (Float64ArrayPrototype, "constructor") => Some(Float64Array),
-        (Float32Array, "prototype") => Some(Float32ArrayPrototype),
-        (Float32ArrayPrototype, "constructor") => Some(Float32Array),
-        (Int8Array, "prototype") => Some(Int8ArrayPrototype),
-        (Int8ArrayPrototype, "constructor") => Some(Int8Array),
-        (Int16Array, "prototype") => Some(Int16ArrayPrototype),
-        (Int16ArrayPrototype, "constructor") => Some(Int16Array),
-        (Uint16Array, "prototype") => Some(Uint16ArrayPrototype),
-        (Uint16ArrayPrototype, "constructor") => Some(Uint16Array),
-        (Int32Array, "prototype") => Some(Int32ArrayPrototype),
-        (Int32ArrayPrototype, "constructor") => Some(Int32Array),
-        (Uint8Array, "prototype") => Some(Uint8ArrayPrototype),
-        (Uint8ArrayPrototype, "constructor") => Some(Uint8Array),
-        (Uint32Array, "prototype") => Some(Uint32ArrayPrototype),
-        (Uint32ArrayPrototype, "constructor") => Some(Uint32Array),
-        (Uint8ClampedArray, "prototype") => Some(Uint8ClampedArrayPrototype),
-        (Uint8ClampedArrayPrototype, "constructor") => Some(Uint8ClampedArray),
         (DataView, "prototype") => Some(DataViewPrototype),
         (DataViewPrototype, "constructor") => Some(DataView),
         (Function, "prototype") => Some(FunctionPrototype),
@@ -101,6 +86,31 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
         (RegExpPrototype, "exec") => Some(RegExpExec),
         _ => builtin_method2(builtin, key),
     }
+}
+
+fn typed_array_constructor_property(builtin: Builtin, key: &str) -> Option<Builtin> {
+    use Builtin::*;
+    Some(match (builtin, key) {
+        (Float64Array, "prototype") => Float64ArrayPrototype,
+        (Float64ArrayPrototype, "constructor") => Float64Array,
+        (Float32Array, "prototype") => Float32ArrayPrototype,
+        (Float32ArrayPrototype, "constructor") => Float32Array,
+        (Int8Array, "prototype") => Int8ArrayPrototype,
+        (Int8ArrayPrototype, "constructor") => Int8Array,
+        (Int16Array, "prototype") => Int16ArrayPrototype,
+        (Int16ArrayPrototype, "constructor") => Int16Array,
+        (Uint16Array, "prototype") => Uint16ArrayPrototype,
+        (Uint16ArrayPrototype, "constructor") => Uint16Array,
+        (Int32Array, "prototype") => Int32ArrayPrototype,
+        (Int32ArrayPrototype, "constructor") => Int32Array,
+        (Uint8Array, "prototype") => Uint8ArrayPrototype,
+        (Uint8ArrayPrototype, "constructor") => Uint8Array,
+        (Uint32Array, "prototype") => Uint32ArrayPrototype,
+        (Uint32ArrayPrototype, "constructor") => Uint32Array,
+        (Uint8ClampedArray, "prototype") => Uint8ClampedArrayPrototype,
+        (Uint8ClampedArrayPrototype, "constructor") => Uint8ClampedArray,
+        _ => return None,
+    })
 }
 
 fn host_capability_method(kind: crate::ops::HostCapabilityKind, key: &str) -> Option<Builtin> {
@@ -270,6 +280,12 @@ fn data_view_length(builtin: Builtin) -> Option<f64> {
 
 pub(crate) fn builtin_name(builtin: Builtin) -> &'static str {
     use Builtin::*;
+    if let Some(name) = data_view_name(builtin) {
+        return name;
+    }
+    if let Some(name) = error_name(builtin) {
+        return name;
+    }
     match builtin {
         Escape => "escape",
         Unescape => "unescape",
@@ -285,6 +301,38 @@ pub(crate) fn builtin_name(builtin: Builtin) -> &'static str {
         Uint8Array => "Uint8Array",
         Uint32Array => "Uint32Array",
         Uint8ClampedArray => "Uint8ClampedArray",
+        Object => "Object",
+        String => "String",
+        Symbol => "Symbol",
+        Number => "Number",
+        Date => "Date",
+        DateGetYear => "getYear",
+        DateSetYear => "setYear",
+        RegExp => "RegExp",
+        RegExpTest => "test",
+        RegExpExec => "exec",
+        _ => "",
+    }
+}
+
+fn error_name(builtin: Builtin) -> Option<&'static str> {
+    use Builtin::*;
+    Some(match builtin {
+        Error => "Error",
+        TypeError => "TypeError",
+        RangeError => "RangeError",
+        ReferenceError => "ReferenceError",
+        SyntaxError => "SyntaxError",
+        EvalError => "EvalError",
+        URIError => "URIError",
+        AggregateError => "AggregateError",
+        _ => return None,
+    })
+}
+
+fn data_view_name(builtin: Builtin) -> Option<&'static str> {
+    use Builtin::*;
+    Some(match builtin {
         DataView => "DataView",
         DataViewGetInt8 => "getInt8",
         DataViewGetUint8 => "getUint8",
@@ -304,24 +352,6 @@ pub(crate) fn builtin_name(builtin: Builtin) -> &'static str {
         DataViewSetFloat16 => "setFloat16",
         DataViewSetFloat32 => "setFloat32",
         DataViewSetFloat64 => "setFloat64",
-        Object => "Object",
-        String => "String",
-        Symbol => "Symbol",
-        Number => "Number",
-        Date => "Date",
-        DateGetYear => "getYear",
-        DateSetYear => "setYear",
-        RegExp => "RegExp",
-        RegExpTest => "test",
-        RegExpExec => "exec",
-        Error => "Error",
-        TypeError => "TypeError",
-        RangeError => "RangeError",
-        ReferenceError => "ReferenceError",
-        SyntaxError => "SyntaxError",
-        EvalError => "EvalError",
-        URIError => "URIError",
-        AggregateError => "AggregateError",
-        _ => "",
-    }
+        _ => return None,
+    })
 }
