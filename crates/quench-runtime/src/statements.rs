@@ -59,7 +59,7 @@ fn reduce_class(
     locals.insert(identifier.name.to_string(), slot);
     let register = *next_register;
     *next_register = next_register.saturating_add(1);
-    ops.push(Op::MakeFunction {
+    ops.push(Op::MakeFunctionWithKind {
         dst: register,
         body: vec![
             Op::Const {
@@ -70,6 +70,7 @@ fn reduce_class(
         ],
         params: 0,
         captures: 0,
+        kind: crate::ops::FunctionKind::Ordinary,
     });
     ops.push(Op::StoreLocal {
         slot,
