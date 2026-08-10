@@ -55,7 +55,7 @@ pub fn reduce_assignment(
         Some(get(&place, ops, next)?)
     };
     let rhs = crate::reduce::reduce_expression(&assignment.right, ops, facts, next, locals)?;
-    infer_assignment_name(assignment, rhs, ops, next);
+    infer_assignment_name(assignment, rhs, ops);
     let value = assignment_value(assignment.operator, lhs, rhs, ops, next)?;
     put(place, value, ops)?;
     Some(value)
@@ -65,7 +65,6 @@ fn infer_assignment_name(
     assignment: &oxc::ast::ast::AssignmentExpression<'_>,
     value: u16,
     ops: &mut Vec<Op>,
-    next: &mut u16,
 ) {
     if assignment.operator != AssignmentOperator::Assign
         || !crate::binding_patterns::anonymous_function_definition(&assignment.right)
@@ -75,15 +74,9 @@ fn infer_assignment_name(
     let AssignmentTarget::AssignmentTargetIdentifier(identifier) = &assignment.left else {
         return;
     };
-    let name = take_register(next);
-    ops.push(Op::Const {
-        dst: name,
-        value: crate::ops::Constant::String(identifier.name.to_string()),
-    });
-    ops.push(Op::SetProperty {
-        object: value,
-        key: "name".to_string(),
-        src: name,
+    ops.push(Op::SetFunctionName {
+        function: value,
+        name: identifier.name.to_string(),
     });
 }
 

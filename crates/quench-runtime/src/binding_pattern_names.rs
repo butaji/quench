@@ -37,11 +37,9 @@ fn fallback_ops(
     let value = crate::reduce::reduce_expression(fallback, &mut ops, facts, next, locals)?;
     if anonymous_function_definition(fallback) {
         if let Some(name) = name {
-            let name = emit_const(&mut ops, next, Constant::String(name.to_string()));
-            ops.push(Op::SetProperty {
-                object: value,
-                key: "name".to_string(),
-                src: name,
+            ops.push(Op::SetFunctionName {
+                function: value,
+                name: name.to_string(),
             });
         }
     }

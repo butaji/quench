@@ -81,12 +81,7 @@ fn keys(target: &Value, symbols: bool) -> Vec<String> {
 }
 
 fn function_keys(function: &crate::value::FunctionValue, symbols: bool) -> Vec<String> {
-    if symbols {
-        return ordered(&function.properties.borrow(), true);
-    }
-    let mut properties = vec![("name".to_string(), Value::Undefined)];
-    properties.extend(function.properties.borrow().iter().cloned());
-    ordered(&properties, false)
+    ordered(&function.properties.borrow(), symbols)
 }
 
 fn ordered(properties: &[(String, Value)], symbols: bool) -> Vec<String> {

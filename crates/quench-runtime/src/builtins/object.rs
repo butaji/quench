@@ -461,10 +461,10 @@ mod tests {
             is_async: false,
             mapped_arguments: true,
             captures: crate::environment::Environment::new(),
-            properties: Rc::new(RefCell::new(vec![(
-                "custom".to_string(),
-                Value::Boolean(true),
-            )])),
+            properties: Rc::new(RefCell::new(vec![
+                ("length".to_string(), Value::Number(2.0)),
+                ("custom".to_string(), Value::Boolean(true)),
+            ])),
             instance_fields: Rc::new(RefCell::new(Vec::new())),
         }));
         assert_eq!(

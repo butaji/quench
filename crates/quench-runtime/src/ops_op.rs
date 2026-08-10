@@ -125,6 +125,10 @@ pub enum Op {
         src: u16,
         strict: bool,
     },
+    SetFunctionName {
+        function: u16,
+        name: String,
+    },
     GetPropertyDynamic {
         dst: u16,
         object: u16,
