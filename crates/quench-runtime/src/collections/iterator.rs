@@ -1,6 +1,5 @@
-use std::{cell::RefCell, rc::Rc};
-
 use crate::value::{IteratorData, IteratorState, Value};
+use std::{cell::RefCell, rc::Rc};
 
 pub(crate) fn execute(
     registers: &mut Vec<Value>,
@@ -25,7 +24,87 @@ pub(crate) fn execute(
     }
     Ok(())
 }
-
+pub(crate) fn execute_binding(
+    registers: &mut Vec<Value>,
+    op: &crate::ops::Op,
+) -> Result<crate::completion::Completion, crate::execute::VmError> {
+    let crate::ops::Op::IteratorBinding { iterator, body } = op else {
+        return Err(crate::execute::VmError::MissingReturn);
+    };
+    let iterator = read(registers, *iterator)?;
+    let completion = crate::execute::execute_completion_in_place(body, registers)?;
+    close(iterator, completion)
+}
+fn close(
+    record: Value,
+    completion: crate::completion::Completion,
+) -> Result<crate::completion::Completion, crate::execute::VmError> {
+    let Some(iterator) = close_target(&record)? else {
+        return Ok(completion);
+    };
+    let method = match get_return_method(&iterator) {
+        Ok(method) => method,
+        Err(error) => return close_error(completion, error),
+    };
+    let Some(method) = method else {
+        return Ok(completion);
+    };
+    let result = call(&method, &iterator);
+    finish_close(completion, result)
+}
+fn close_target(record: &Value) -> Result<Option<Value>, crate::execute::VmError> {
+    let Value::Iterator(data) = record else {
+        return Err(not_iterable());
+    };
+    let state = data.state.borrow();
+    match &*state {
+        IteratorState::Native { done: true, .. }
+        | IteratorState::Protocol { done: true, .. }
+        | IteratorState::Native { .. } => Ok(None),
+        IteratorState::Protocol { iterator, .. } => Ok(Some(iterator.clone())),
+    }
+}
+fn get_return_method(iterator: &Value) -> Result<Option<Value>, crate::execute::VmError> {
+    let method = crate::execute::get_property_result(iterator, "return")?;
+    if matches!(method, Value::Null | Value::Undefined) {
+        return Ok(None);
+    }
+    if !crate::conversion::is_callable(&method) {
+        return Err(crate::vm::not_callable());
+    }
+    Ok(Some(method))
+}
+fn finish_close(
+    completion: crate::completion::Completion,
+    result: Result<Value, crate::execute::VmError>,
+) -> Result<crate::completion::Completion, crate::execute::VmError> {
+    let result = match result {
+        Ok(result) => result,
+        Err(error) => return close_error(completion, error),
+    };
+    if matches!(completion, crate::completion::Completion::Throw(_)) {
+        return Ok(completion);
+    }
+    if !crate::value::is_object(&result) {
+        return close_error(completion, close_result_error());
+    }
+    Ok(completion)
+}
+fn close_error(
+    completion: crate::completion::Completion,
+    error: crate::execute::VmError,
+) -> Result<crate::completion::Completion, crate::execute::VmError> {
+    if matches!(completion, crate::completion::Completion::Throw(_)) {
+        return Ok(completion);
+    }
+    match error {
+        crate::execute::VmError::Thrown(value) => Ok(crate::completion::Completion::Throw(value)),
+        error => Err(error),
+    }
+}
+fn close_result_error() -> crate::execute::VmError {
+    crate::value::error::throw_type_error("iterator return result is not an object")
+}
 fn read(registers: &[Value], index: u16) -> Result<Value, crate::execute::VmError> {
     crate::execute::read_register(registers, index)
 }
@@ -89,7 +168,128 @@ pub(crate) fn collect_iterable(value: Value) -> Result<Vec<Value>, crate::execut
     let iterator = open(value)?;
     collect(&iterator)
 }
-
+pub struct DelegationResult {
+    pub value: Value,
+    pub done: bool,
+}
+pub fn delegate_start(value: Value) -> Result<Value, crate::execute::VmError> {
+    open(value)
+}
+pub fn delegate_next(
+    record: &Value,
+    input: Value,
+) -> Result<DelegationResult, crate::execute::VmError> {
+    let Value::Iterator(data) = record else {
+        return Err(not_iterable());
+    };
+    let protocol = {
+        let mut state = data.state.borrow_mut();
+        match &mut *state {
+            IteratorState::Native {
+                values,
+                index,
+                done,
+            } => {
+                return Ok(native_delegation_step(values, index, done));
+            }
+            IteratorState::Protocol {
+                iterator,
+                next,
+                done,
+            } if !*done => Some((iterator.clone(), next.clone())),
+            IteratorState::Protocol { .. } => None,
+        }
+    };
+    let Some((iterator, next)) = protocol else {
+        return Ok(DelegationResult {
+            value: Value::Undefined,
+            done: true,
+        });
+    };
+    let result = call_with_arguments(&next, &iterator, std::slice::from_ref(&input))?;
+    delegation_result(data, result)
+}
+pub fn delegate_return(
+    record: &Value,
+    input: Value,
+) -> Result<DelegationResult, crate::execute::VmError> {
+    let Some((data, iterator)) = delegation_target(record)? else {
+        return Ok(DelegationResult {
+            value: input,
+            done: true,
+        });
+    };
+    let Some(method) = get_return_method(&iterator)? else {
+        mark_done(data);
+        return Ok(DelegationResult {
+            value: input,
+            done: true,
+        });
+    };
+    let result = call_with_arguments(&method, &iterator, std::slice::from_ref(&input))?;
+    delegation_result(data, result)
+}
+pub fn delegate_throw(
+    record: &Value,
+    input: Value,
+) -> Result<DelegationResult, crate::execute::VmError> {
+    let Some((data, iterator)) = delegation_target(record)? else {
+        return Err(missing_throw_method());
+    };
+    let Some(method) = get_method(&iterator, "throw")? else {
+        let _ = delegate_return(record, Value::Undefined)?;
+        return Err(missing_throw_method());
+    };
+    let result = call_with_arguments(&method, &iterator, std::slice::from_ref(&input))?;
+    delegation_result(data, result)
+}
+fn native_delegation_step(
+    values: &[Value],
+    index: &mut usize,
+    done: &mut bool,
+) -> DelegationResult {
+    let value = native_step(values, index, done).unwrap_or(Value::Undefined);
+    DelegationResult { value, done: *done }
+}
+fn delegation_target(
+    record: &Value,
+) -> Result<Option<(&IteratorData, Value)>, crate::execute::VmError> {
+    let Value::Iterator(data) = record else {
+        return Err(not_iterable());
+    };
+    let iterator = match &*data.state.borrow() {
+        IteratorState::Protocol { iterator, .. } => Some(iterator.clone()),
+        IteratorState::Native { .. } => None,
+    };
+    Ok(iterator.map(|iterator| (data.as_ref(), iterator)))
+}
+fn delegation_result(
+    data: &IteratorData,
+    result: Value,
+) -> Result<DelegationResult, crate::execute::VmError> {
+    if !crate::value::is_object(&result) {
+        return Err(not_iterable());
+    }
+    let done = crate::execute::is_truthy(&crate::execute::get_property_result(&result, "done")?);
+    let value = crate::execute::get_property_result(&result, "value")?;
+    if done {
+        mark_done(data);
+    }
+    Ok(DelegationResult { value, done })
+}
+fn get_method(iterator: &Value, name: &str) -> Result<Option<Value>, crate::execute::VmError> {
+    let method = crate::execute::get_property_result(iterator, name)?;
+    if matches!(method, Value::Null | Value::Undefined) {
+        return Ok(None);
+    }
+    if !crate::conversion::is_callable(&method) {
+        return Err(crate::vm::not_callable());
+    }
+    Ok(Some(method))
+}
+fn missing_throw_method() -> crate::execute::VmError {
+    crate::value::error::throw_type_error("delegated iterator has no throw method")
+}
 fn step_value(value: &Value) -> Result<Option<Value>, crate::execute::VmError> {
     let Value::Iterator(data) = value else {
         return Err(not_iterable());
@@ -126,7 +326,6 @@ fn native_step(values: &[Value], index: &mut usize, done: &mut bool) -> Option<V
     *done = value.is_none();
     value
 }
-
 fn protocol_result(
     data: &IteratorData,
     result: Value,
@@ -147,11 +346,18 @@ fn mark_done(data: &IteratorData) {
         IteratorState::Native { done, .. } | IteratorState::Protocol { done, .. } => *done = true,
     }
 }
-
 fn call(callee: &Value, receiver: &Value) -> Result<Value, crate::execute::VmError> {
+    call_with_arguments(callee, receiver, &[])
+}
+
+fn call_with_arguments(
+    callee: &Value,
+    receiver: &Value,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
     match callee {
-        Value::Proxy(_) => crate::proxy::proxy_apply(callee, receiver, &[]),
-        _ => crate::functions::execute_target(callee, receiver, &[]),
+        Value::Proxy(_) => crate::proxy::proxy_apply(callee, receiver, arguments),
+        _ => crate::functions::execute_target(callee, receiver, arguments),
     }
 }
 

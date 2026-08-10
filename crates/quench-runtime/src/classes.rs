@@ -33,13 +33,12 @@ pub(crate) fn reduce_expression(
         constructor,
         PropertyDefinitionKind::Data,
     );
-    reduce_instance_methods(class, prototype, ops, facts, next, locals)?;
+    reduce_methods(class, prototype, constructor, ops, facts, next, locals)?;
     ops.push(Op::SetProperty {
         object: constructor,
         key: "prototype".to_string(),
         src: prototype,
     });
-    reduce_static_methods(class, constructor, ops, facts, next, locals)?;
     Some(constructor)
 }
 
@@ -124,30 +123,9 @@ fn reduce_constructor(
     }
 }
 
-fn reduce_instance_methods(
+fn reduce_methods(
     class: &Class<'_>,
     prototype: u16,
-    ops: &mut Vec<Op>,
-    facts: &mut ProgramDb,
-    next: &mut u16,
-    locals: &HashMap<String, u16>,
-) -> Option<()> {
-    for element in &class.body.body {
-        let ClassElement::MethodDefinition(method) = element else {
-            continue;
-        };
-        if method.r#static || method.kind == MethodDefinitionKind::Constructor {
-            continue;
-        }
-        let key = reduce_method_key(method, ops, facts, next, locals)?;
-        let value = reduce_method(method, ops, facts, next, locals)?;
-        define_method(ops, prototype, key, value, method.kind);
-    }
-    Some(())
-}
-
-fn reduce_static_methods(
-    class: &Class<'_>,
     constructor: u16,
     ops: &mut Vec<Op>,
     facts: &mut ProgramDb,
@@ -158,12 +136,17 @@ fn reduce_static_methods(
         let ClassElement::MethodDefinition(method) = element else {
             continue;
         };
-        if !method.r#static {
+        if method.kind == MethodDefinitionKind::Constructor {
             continue;
         }
         let key = reduce_method_key(method, ops, facts, next, locals)?;
         let value = reduce_method(method, ops, facts, next, locals)?;
-        define_method(ops, constructor, key, value, method.kind);
+        let target = if method.r#static {
+            constructor
+        } else {
+            prototype
+        };
+        define_method(ops, target, key, value, method.kind);
     }
     Some(())
 }
@@ -200,13 +183,16 @@ fn reduce_method_key(
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
     if method.computed {
-        return crate::reduce::reduce_expression(
+        let src = crate::reduce::reduce_expression(
             method.key.as_expression()?,
             ops,
             facts,
             next,
             locals,
-        );
+        )?;
+        let dst = take_register(next);
+        ops.push(Op::ToPropertyKey { dst, src });
+        return Some(dst);
     }
     let key = method_key(&method.key)?;
     Some(emit_string(ops, next, key))

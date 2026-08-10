@@ -270,6 +270,23 @@ pub(crate) fn execute_generator_step(
     let _global_guard = GlobalObjectGuard::install();
     let _environment_guard = crate::locals::EnvironmentGuard::install(environment);
     for (offset, op) in ops[pc..].iter().enumerate() {
+        if matches!(op, Op::YieldStar { .. }) {
+            let completion = crate::generator::execute_yield_star(
+                registers,
+                op,
+                crate::completion::Completion::Normal,
+            )?;
+            if let Some(completion) = completion {
+                let next = pc
+                    + offset
+                    + usize::from(!matches!(
+                        completion,
+                        crate::completion::Completion::Yield(_)
+                    ));
+                return Ok((completion, next));
+            }
+            continue;
+        }
         match run_op(registers, op, &context)? {
             None | Some(crate::completion::Completion::Normal) => {}
             Some(completion) => return Ok((completion, pc + offset + 1)),
@@ -358,7 +375,7 @@ pub fn execute_builtin_with_receiver(
     receiver: Option<&Value>,
 ) -> Result<Value, VmError> {
     if builtin == Builtin::GeneratorNext {
-        return crate::generator::next(receiver);
+        return crate::generator::next(receiver, arguments);
     }
     if builtin == Builtin::Print {
         return execute_print(arguments);
