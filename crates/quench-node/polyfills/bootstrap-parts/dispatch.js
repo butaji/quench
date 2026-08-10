@@ -7,6 +7,15 @@ const __quenchRequireParts = [
 globalThis.require = (specifier) => {
   const rawName = String(specifier);
   const name = rawName.startsWith("node:") ? rawName.slice(5) : rawName;
+  if (
+    name === "stream/iter" &&
+    !globalThis.__quench_argv?.includes?.("--experimental-stream-iter")
+  ) {
+    throw Object.assign(
+      new Error("No such built-in module: node:stream/iter"),
+      { code: "ERR_UNKNOWN_BUILTIN_MODULE" }
+    );
+  }
   if (name === "internal/vfs/stats" && globalThis.__quenchVfsStatsHelpers) {
     return globalThis.__quenchVfsStatsHelpers;
   }
