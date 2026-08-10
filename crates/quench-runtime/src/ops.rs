@@ -221,6 +221,7 @@ pub enum Builtin {
     ArrayForEach,
     FunctionCall,
     Boolean,
+    Print,
     Eval,
     Escape,
     IsFinite,
