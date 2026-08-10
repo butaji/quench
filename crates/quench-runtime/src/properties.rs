@@ -166,13 +166,9 @@ pub(crate) fn reduce_assignment(
         }
     }
     let (object_expression, key) = assignment_target(&assignment.left)?;
-    if assignment.operator != oxc::syntax::operator::AssignmentOperator::Assign {
-        return None;
-    }
     let object =
         crate::reduce::reduce_expression(object_expression, ops, facts, next_register, locals)?;
-    let value =
-        crate::reduce::reduce_expression(&assignment.right, ops, facts, next_register, locals)?;
+    let value = reduce_property_value(assignment, object, &key, ops, facts, next_register, locals)?;
     ops.push(Op::SetProperty {
         object,
         key,
@@ -180,6 +176,55 @@ pub(crate) fn reduce_assignment(
     });
     store_object_binding(object_expression, object, ops, locals);
     Some(value)
+}
+
+fn reduce_property_value(
+    assignment: &oxc::ast::ast::AssignmentExpression<'_>,
+    object: u16,
+    key: &str,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<u16> {
+    if assignment.operator == oxc::syntax::operator::AssignmentOperator::Assign {
+        return crate::reduce::reduce_expression(
+            &assignment.right,
+            ops,
+            facts,
+            next_register,
+            locals,
+        );
+    }
+    let lhs = allocate_property_get(object, key, ops, next_register);
+    let rhs =
+        crate::reduce::reduce_expression(&assignment.right, ops, facts, next_register, locals)?;
+    let operator = assignment.operator.to_binary_operator()?;
+    let dst = *next_register;
+    *next_register = next_register.saturating_add(1);
+    ops.push(Op::Binary {
+        dst,
+        operator: crate::literal::reduce_operator(operator)?,
+        lhs,
+        rhs,
+    });
+    Some(dst)
+}
+
+fn allocate_property_get(
+    object: u16,
+    key: &str,
+    ops: &mut Vec<Op>,
+    next_register: &mut u16,
+) -> u16 {
+    let dst = *next_register;
+    *next_register = next_register.saturating_add(1);
+    ops.push(Op::GetProperty {
+        dst,
+        object,
+        key: key.to_string(),
+    });
+    dst
 }
 
 fn assignment_target<'a>(
@@ -205,15 +250,12 @@ fn reduce_dynamic_assignment(
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
-    if assignment.operator != oxc::syntax::operator::AssignmentOperator::Assign {
-        return None;
-    }
     let object =
         crate::reduce::reduce_expression(&member.object, ops, facts, next_register, locals)?;
     let key =
         crate::reduce::reduce_expression(&member.expression, ops, facts, next_register, locals)?;
     let value =
-        crate::reduce::reduce_expression(&assignment.right, ops, facts, next_register, locals)?;
+        reduce_dynamic_property_value(assignment, object, key, ops, facts, next_register, locals)?;
     ops.push(Op::SetPropertyDynamic {
         object,
         key,
@@ -221,6 +263,45 @@ fn reduce_dynamic_assignment(
     });
     store_object_binding(&member.object, object, ops, locals);
     Some(value)
+}
+
+fn reduce_dynamic_property_value(
+    assignment: &oxc::ast::ast::AssignmentExpression<'_>,
+    object: u16,
+    key: u16,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<u16> {
+    if assignment.operator == oxc::syntax::operator::AssignmentOperator::Assign {
+        return crate::reduce::reduce_expression(
+            &assignment.right,
+            ops,
+            facts,
+            next_register,
+            locals,
+        );
+    }
+    let lhs = *next_register;
+    *next_register = next_register.saturating_add(1);
+    ops.push(Op::GetPropertyDynamic {
+        dst: lhs,
+        object,
+        key,
+    });
+    let rhs =
+        crate::reduce::reduce_expression(&assignment.right, ops, facts, next_register, locals)?;
+    let operator = assignment.operator.to_binary_operator()?;
+    let dst = *next_register;
+    *next_register = next_register.saturating_add(1);
+    ops.push(Op::Binary {
+        dst,
+        operator: crate::literal::reduce_operator(operator)?,
+        lhs,
+        rhs,
+    });
+    Some(dst)
 }
 
 fn store_object_binding(
