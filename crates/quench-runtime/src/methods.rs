@@ -20,14 +20,13 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError
         .iter()
         .map(|index| read_register(registers, *index))
         .collect::<Result<Vec<_>, _>>()?;
-    let value = execute_callee(callee, *object, &receiver, &arguments, args, registers)?;
+    let value = execute_callee(callee, &receiver, &arguments, args, registers)?;
     write_value(registers, *dst, value);
     Ok(())
 }
 
 fn execute_callee(
     callee: Value,
-    owner: u16,
     receiver: &Value,
     arguments: &[Value],
     args: &[u16],
@@ -38,12 +37,12 @@ fn execute_callee(
             execute_builtin_with_receiver(crate::ops::Builtin::String, arguments, None)?
         }
         Value::Builtin(crate::ops::Builtin::ObjectDefineProperty) => {
+            let target = arguments.first().cloned().unwrap_or(Value::Undefined);
             let value = crate::builtins::define_property(arguments);
             crate::properties::propagate_updated_object(
                 registers,
-                owner,
                 args.first().copied(),
-                receiver,
+                &target,
                 &value,
             );
             value

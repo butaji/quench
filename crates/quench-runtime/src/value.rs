@@ -137,7 +137,7 @@ pub enum Value {
 pub struct FunctionValue {
     pub body: Vec<Op>,
     pub params: u16,
-    pub captures: Rc<RefCell<Vec<Value>>>,
+    pub captures: Rc<crate::environment::Environment>,
     pub properties: Rc<RefCell<Vec<(String, Value)>>>,
     pub kind: FunctionKind,
     pub strictness: FunctionStrictness,

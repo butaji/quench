@@ -349,6 +349,7 @@ pub(crate) fn define_property(arguments: &[Value]) -> Value {
     let Some(Value::Object(descriptor)) = arguments.get(2) else {
         return target.clone();
     };
+    let descriptor = complete_descriptor(descriptor);
     let value = descriptor
         .iter()
         .rev()
@@ -356,12 +357,38 @@ pub(crate) fn define_property(arguments: &[Value]) -> Value {
         .map_or(Value::Undefined, |(_, value)| value.clone());
     let mut result = set_property(target.clone(), &key, value);
     if let Value::Object(properties) = &mut result {
-        let metadata = Value::Object(Rc::new((**descriptor).clone()));
+        let metadata = Value::Object(Rc::new(descriptor));
         let properties = Rc::make_mut(properties);
         properties.retain(|(name, _)| name != &descriptor_key(&key));
         properties.push((descriptor_key(&key), metadata));
     }
     result
+}
+
+fn complete_descriptor(descriptor: &[(String, Value)]) -> Vec<(String, Value)> {
+    let accessor = descriptor
+        .iter()
+        .any(|(name, _)| matches!(name.as_str(), "get" | "set"));
+    let fields = if accessor {
+        ["get", "set", "enumerable", "configurable"]
+    } else {
+        ["value", "writable", "enumerable", "configurable"]
+    };
+    fields
+        .into_iter()
+        .map(|name| {
+            let default = match name {
+                "writable" | "enumerable" | "configurable" => Value::Boolean(false),
+                _ => Value::Undefined,
+            };
+            let value = descriptor
+                .iter()
+                .rev()
+                .find(|(field, _)| field == name)
+                .map_or(default, |(_, value)| value.clone());
+            (name.to_string(), value)
+        })
+        .collect()
 }
 
 fn set_array_property(values: Rc<Vec<Value>>, key: &str, value: Value) -> Value {

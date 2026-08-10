@@ -38,6 +38,9 @@ fn builtin_method(builtin: Builtin, key: &str) -> Option<Builtin> {
     if builtin == ArrayPrototype {
         return array_method(key);
     }
+    if builtin == Array && key == "isArray" {
+        return Some(ArrayIsArray);
+    }
     if builtin == StringPrototype {
         return crate::strings::property_method(key);
     }

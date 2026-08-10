@@ -17,7 +17,7 @@
 //! - **Continuations**: the full call-stack used to suspend and resume execution.
 //!   A `Continuation` holds the active frames and the current program counter.
 
-use std::{cell::RefCell, rc::Rc};
+use std::rc::Rc;
 
 use crate::{ops::Op, value::Value};
 
@@ -63,7 +63,7 @@ pub struct Frame {
     pub registers: Vec<Value>,
     pub ops: Vec<Op>,
     pub pc: usize,
-    pub captures: Rc<RefCell<Vec<Value>>>,
+    pub captures: Rc<crate::environment::Environment>,
     pub param_count: u16,
 }
 
@@ -73,7 +73,7 @@ impl Default for Frame {
             registers: Vec::new(),
             ops: Vec::new(),
             pc: 0,
-            captures: Rc::new(RefCell::new(Vec::new())),
+            captures: crate::environment::Environment::new(),
             param_count: 0,
         }
     }

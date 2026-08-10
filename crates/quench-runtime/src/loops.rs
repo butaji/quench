@@ -259,7 +259,7 @@ fn iterate_loop_keys(
     keys: Vec<String>,
 ) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
     for key in keys {
-        crate::execute::write_value(registers, slot, crate::value::Value::String(key));
+        crate::locals::write(slot, crate::value::Value::String(key));
         if let Some(result) = execute_loop_body(registers, label, body)? {
             return Ok(result);
         }
@@ -310,7 +310,7 @@ fn iterate_loop_values(
     values: Vec<crate::value::Value>,
 ) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
     for value in values {
-        crate::execute::write_value(registers, slot, value);
+        crate::locals::write(slot, value);
         if let Some(result) = execute_loop_body(registers, label, body)? {
             return Ok(result);
         }

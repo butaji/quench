@@ -22,6 +22,7 @@ mod conditional;
 mod construct;
 mod control_flow;
 pub mod date;
+mod environment;
 mod exceptions;
 pub mod execute;
 pub mod facts;
