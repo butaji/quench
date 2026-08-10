@@ -22,8 +22,50 @@ pub(crate) fn execute_special(
     match builtin {
         Builtin::ObjectHasOwnProperty => has_own_property_result(target, key),
         Builtin::ObjectGetOwnPropertyDescriptor => Ok(descriptor(target, key)),
+        Builtin::ObjectDefineProperty => define_property(target, key, arguments.get(2)),
         _ => Ok(Value::Undefined),
     }
+}
+
+fn define_property(
+    target: Option<&Value>,
+    key: Option<&Value>,
+    descriptor: Option<&Value>,
+) -> Result<Value, VmError> {
+    let target = require_object_coercible(target)?;
+    let key = key.map(value_to_string).unwrap_or_default();
+    let descriptor = descriptor.unwrap_or(&Value::Undefined);
+    if let Value::Proxy(_) = target {
+        return crate::proxy::proxy_define_property(target, &key, descriptor);
+    }
+    let value = descriptor_value(descriptor)?;
+    Ok(crate::builtins::set_property(target.clone(), &key, value))
+}
+
+fn descriptor_value(descriptor: &Value) -> Result<Value, VmError> {
+    let Value::Object(properties) = descriptor else {
+        return Err(VmError::Thrown(crate::builtins::error(
+            Builtin::TypeError,
+            &[Value::String(
+                "Property description must be an object".to_string(),
+            )],
+        )));
+    };
+    let mut value = None;
+    for (name, candidate) in properties.iter().rev() {
+        if name == "value" && value.is_none() {
+            value = Some(candidate.clone());
+        }
+        if matches!(name.as_str(), "get" | "set") {
+            return Err(VmError::Thrown(crate::builtins::error(
+                Builtin::TypeError,
+                &[Value::String(
+                    "Accessor descriptors are unsupported".to_string(),
+                )],
+            )));
+        }
+    }
+    Ok(value.unwrap_or(Value::Undefined))
 }
 
 fn target_and_key<'a>(
