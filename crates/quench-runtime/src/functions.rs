@@ -192,7 +192,7 @@ pub(crate) fn reduce_arrow(
 pub(super) fn make(
     body: &[Op],
     params: u16,
-    captures: Vec<crate::value::Value>,
+    captures: std::rc::Rc<crate::environment::Environment>,
     kind: FunctionKind,
     strictness: FunctionStrictness,
     is_async: bool,
@@ -200,7 +200,7 @@ pub(super) fn make(
     let value = crate::value::Value::Function(std::rc::Rc::new(crate::value::FunctionValue {
         body: body.to_vec(),
         params,
-        captures: std::rc::Rc::new(std::cell::RefCell::new(captures)),
+        captures,
         properties: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
         kind,
         strictness,
@@ -233,16 +233,10 @@ pub(crate) fn write(
     captures: u16,
     metadata: FunctionMetadata,
 ) {
-    let mut values = registers
-        .iter()
-        .take(usize::from(captures))
-        .cloned()
-        .collect::<Vec<_>>();
-    values.resize(usize::from(captures), crate::value::Value::Undefined);
     let value = make(
         body,
         params,
-        values,
+        crate::locals::capture(captures),
         metadata.kind,
         metadata.strictness,
         metadata.is_async,
@@ -327,29 +321,20 @@ fn build_registers(
     function: &crate::value::FunctionValue,
     this_value: &crate::value::Value,
     arguments: &[crate::value::Value],
-) -> Vec<crate::value::Value> {
+) -> (
+    Vec<crate::value::Value>,
+    std::rc::Rc<crate::environment::Environment>,
+) {
     let original_arguments = arguments.to_vec();
     let mut parameters = arguments.to_vec();
     parameters.resize(usize::from(function.params), crate::value::Value::Undefined);
     parameters.truncate(usize::from(function.params));
-    let mut registers = function.captures.borrow().clone();
-    registers.extend(parameters);
-    let base = function.captures.borrow().len() as u16;
-    crate::execute::write_value(
-        &mut registers,
-        base + function.params,
-        crate::value::Value::Array(std::rc::Rc::new(original_arguments)),
-    );
-    crate::execute::write_value(
-        &mut registers,
-        base + function.params + 1,
-        this_value.clone(),
-    );
-    registers.resize(
-        registers.len().saturating_add(32),
-        crate::value::Value::Undefined,
-    );
-    registers
+    parameters.push(crate::value::Value::Array(std::rc::Rc::new(
+        original_arguments,
+    )));
+    parameters.push(this_value.clone());
+    let environment = crate::environment::Environment::child(&function.captures, parameters);
+    (vec![crate::value::Value::Undefined; 32], environment)
 }
 
 pub(crate) fn execute(
@@ -358,8 +343,13 @@ pub(crate) fn execute(
     arguments: &[crate::value::Value],
 ) -> Result<crate::value::Value, crate::execute::VmError> {
     let this_value = crate::vm::bare_call_receiver(function, this_value);
-    let registers = build_registers(function, &this_value, arguments);
-    let completion = crate::execute::execute_with_registers(&function.body, registers);
+    let (mut registers, environment) = build_registers(function, &this_value, arguments);
+    let completion = crate::vm::execute_in_environment(
+        &function.body,
+        &mut registers,
+        &crate::vm::VmContext::default(),
+        environment,
+    );
     if function.is_async {
         return Ok(crate::promise::from_async_completion(completion));
     }
@@ -373,11 +363,15 @@ pub(crate) fn execute_construct(
     this_value: &crate::value::Value,
     arguments: &[crate::value::Value],
 ) -> Result<(crate::value::Value, crate::value::Value), crate::execute::VmError> {
-    let this_slot = function.captures.borrow().len() as u16 + function.params + 1;
-    let mut registers = build_registers(function, this_value, arguments);
-    let result = crate::execute::execute_in_place(&function.body, &mut registers)?;
-    let final_this = crate::execute::read_register(&registers, this_slot)
-        .unwrap_or(crate::value::Value::Undefined);
+    let this_slot = function.captures.len() as u16 + function.params + 1;
+    let (mut registers, environment) = build_registers(function, this_value, arguments);
+    let result = crate::vm::execute_in_environment(
+        &function.body,
+        &mut registers,
+        &crate::vm::VmContext::default(),
+        environment.clone(),
+    )?;
+    let final_this = environment.get(this_slot);
     Ok((result, final_this))
 }
 

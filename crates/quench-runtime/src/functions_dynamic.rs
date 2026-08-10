@@ -32,7 +32,7 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let value = crate::functions::make(
         &ops,
         count,
-        Vec::new(),
+        crate::environment::Environment::new(),
         FunctionKind::Ordinary,
         crate::functions::strictness(body),
         false,
