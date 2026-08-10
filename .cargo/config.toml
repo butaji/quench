@@ -4,6 +4,17 @@ rustflags = ["-D", "warnings"]
 
 [profile.dev]
 opt-level = 0
+debug = 1
+split-debuginfo = "unpacked"
+incremental = true
+codegen-units = 256
+
+[profile.test]
+opt-level = 0
+debug = 1
+split-debuginfo = "unpacked"
+incremental = true
+codegen-units = 256
 
 [profile.release]
 opt-level = 3
