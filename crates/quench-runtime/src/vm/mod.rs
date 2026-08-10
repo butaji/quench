@@ -13,14 +13,12 @@ mod vm_typed_bigint;
 pub use crate::intl::tolocale::value::is_truthy;
 pub type OutputSink = Arc<dyn Fn(&str) + Send + Sync>;
 type ObjectProperties = Rc<Vec<(String, Value)>>;
-
 #[derive(Clone)]
 pub struct VmContext {
     output_sink: Option<OutputSink>,
     realm: RealmId,
     capabilities: Vec<HostCapabilityRef>,
 }
-
 impl Default for VmContext {
     fn default() -> Self {
         Self {
@@ -30,23 +28,19 @@ impl Default for VmContext {
         }
     }
 }
-
 thread_local! {
     static CURRENT_CONTEXT: RefCell<Option<VmContext>> = const { RefCell::new(None) };
     static GLOBAL_OBJECT: RefCell<Option<ObjectProperties>> = const { RefCell::new(None) };
 }
-
 struct ContextGuard {
     previous: Option<VmContext>,
 }
-
 impl ContextGuard {
     fn install(context: &VmContext) -> Self {
         let previous = CURRENT_CONTEXT.with(|current| current.replace(Some(context.clone())));
         Self { previous }
     }
 }
-
 impl Drop for ContextGuard {
     fn drop(&mut self) {
         CURRENT_CONTEXT.with(|current| current.replace(self.previous.take()));
@@ -281,7 +275,13 @@ pub(crate) fn execute_generator_step(
             }
             continue;
         }
-        match run_op(registers, op, &context)? {
+        let result = match run_op(registers, op, &context) {
+            Err(VmError::Yield(value)) => {
+                return Ok((crate::completion::Completion::Yield(value), pc + offset + 1));
+            }
+            result => result?,
+        };
+        match result {
             None | Some(crate::completion::Completion::Normal) => {}
             Some(completion) => return Ok((completion, pc + offset + 1)),
         }
