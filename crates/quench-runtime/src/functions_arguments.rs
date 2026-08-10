@@ -1,3 +1,46 @@
+fn reduce_body_statements(
+    body: &oxc::ast::ast::FunctionBody<'_>,
+    formal: &oxc::ast::ast::FormalParameters<'_>,
+    facts: &mut ProgramDb,
+    parameters: &std::collections::HashMap<String, u16>,
+    next_slot: u16,
+) -> Result<Vec<Op>, Vec<String>> {
+    let formal = crate::function_parameters::bindings(formal)?.0;
+    let mut locals = parameters.clone();
+    crate::reduce_support::shadow_function_bindings(&body.statements, &mut locals, &formal);
+    let barrier = std::mem::take(&mut facts.eval_var_barrier);
+    let reduced =
+        crate::reduce::reduce_statements_with_locals(&body.statements, facts, locals, next_slot);
+    facts.eval_var_barrier = barrier;
+    reduced
+}
+
+fn emit_function_expression(
+    ops: &mut Vec<Op>,
+    next: &mut u16,
+    body: Vec<Op>,
+    params: u16,
+    captures: u16,
+    metadata: FunctionMetadata,
+    named: bool,
+) -> u16 {
+    let function = emit_function_op(ops, next, body, params, captures, metadata);
+    if named {
+        let marker = *next;
+        *next = next.saturating_add(1);
+        ops.push(Op::Const {
+            dst: marker,
+            value: crate::ops::Constant::Boolean(true),
+        });
+        ops.push(Op::SetProperty {
+            object: function,
+            key: FUNCTION_SELF.to_string(),
+            src: marker,
+        });
+    }
+    function
+}
+
 pub(crate) fn build_registers(
     function: &std::rc::Rc<crate::value::FunctionValue>,
     this_value: &crate::value::Value,
@@ -14,6 +57,14 @@ pub(crate) fn build_registers(
     parameters.push(this_value.clone());
     if !matches!(function.kind, FunctionKind::Arrow) {
         parameters.push(crate::value::Value::Undefined);
+        if function
+            .properties
+            .borrow()
+            .iter()
+            .any(|(name, _)| name == FUNCTION_SELF)
+        {
+            parameters.push(crate::value::Value::Function(std::rc::Rc::clone(function)));
+        }
     }
     let environment = crate::environment::Environment::child(&function.captures, parameters);
     let arguments = arguments_object(function, original_arguments, &environment);
@@ -90,6 +141,102 @@ pub(crate) fn is_constructible(function: &crate::value::FunctionValue) -> bool {
         (FunctionKind::Arrow, _, _)
         | (FunctionKind::Generator, _, _)
         | (FunctionKind::Ordinary, _, true) => false,
+    }
+}
+
+pub(crate) fn execute_bound(
+    bound: &crate::value::BoundFunctionValue,
+    arguments: &[crate::value::Value],
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    let mut combined = bound.arguments.clone();
+    combined.extend_from_slice(arguments);
+    match &bound.target {
+        crate::value::Value::Builtin(builtin) => {
+            execute_builtin_target(*builtin, Some(&bound.receiver), &combined)
+        }
+        crate::value::Value::Function(function) => execute(function, &bound.receiver, &combined),
+        crate::value::Value::BoundFunction(next) => execute_bound(next, &combined),
+        crate::value::Value::Proxy(_) => {
+            crate::proxy::proxy_apply(&bound.target, &bound.receiver, &combined)
+        }
+        _ => Err(crate::execute::VmError::NotCallable),
+    }
+}
+
+pub(crate) fn execute_target(
+    target: &crate::value::Value,
+    receiver: &crate::value::Value,
+    arguments: &[crate::value::Value],
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    match target {
+        crate::value::Value::Builtin(builtin) => {
+            execute_builtin_target(*builtin, Some(receiver), arguments)
+        }
+        crate::value::Value::Function(function) => execute(function, receiver, arguments),
+        crate::value::Value::BoundFunction(bound) => execute_bound(bound, arguments),
+        _ => Err(crate::execute::VmError::NotCallable),
+    }
+}
+
+fn execute_builtin_target(
+    builtin: crate::ops::Builtin,
+    receiver: Option<&crate::value::Value>,
+    arguments: &[crate::value::Value],
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    if let crate::ops::Builtin::HostCapability(kind) = builtin {
+        return crate::vm::execute_host_capability(kind, receiver, arguments);
+    }
+    crate::execute::execute_builtin_with_receiver(builtin, arguments, receiver)
+}
+
+fn execute_function_call(
+    receiver: Option<&crate::value::Value>,
+    arguments: &[crate::value::Value],
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    let receiver = receiver.ok_or(crate::execute::VmError::NotCallable)?;
+    let this = arguments
+        .first()
+        .cloned()
+        .unwrap_or(crate::value::Value::Undefined);
+    execute_target(receiver, &this, arguments.get(1..).unwrap_or_default())
+}
+
+fn bind_function_target(
+    receiver: Option<&crate::value::Value>,
+    arguments: &[crate::value::Value],
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    if !receiver.is_some_and(crate::conversion::is_callable) {
+        return Err(crate::execute::VmError::NotCallable);
+    }
+    let target = arguments
+        .first()
+        .ok_or(crate::execute::VmError::NotCallable)?;
+    Ok(crate::value::Value::BoundFunction(std::rc::Rc::new(
+        crate::value::BoundFunctionValue {
+            target: receiver.cloned().unwrap_or(crate::value::Value::Undefined),
+            receiver: target.clone(),
+            arguments: arguments[1..].to_vec(),
+        },
+    )))
+}
+
+pub(crate) fn function_builtin(
+    builtin: crate::ops::Builtin,
+    receiver: Option<&crate::value::Value>,
+    arguments: &[crate::value::Value],
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    match builtin {
+        crate::ops::Builtin::FunctionCall => execute_function_call(receiver, arguments),
+        crate::ops::Builtin::FunctionApply => {
+            crate::vm::execute_function_apply(receiver, arguments)
+        }
+        crate::ops::Builtin::FunctionBind => bind_function_target(receiver, arguments),
+        crate::ops::Builtin::ArrayJoin => Ok(crate::builtins::array_join(receiver, arguments)),
+        crate::ops::Builtin::ArrayPush => Ok(crate::builtins::array_push(receiver, arguments)),
+        crate::ops::Builtin::ObjectPropertyIsEnumerable => Ok(
+            crate::builtins::object::object_property_is_enumerable(receiver, arguments),
+        ),
+        _ => Err(crate::execute::VmError::NotCallable),
     }
 }
 
