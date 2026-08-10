@@ -158,6 +158,8 @@ pub enum Builtin {
     ArrayBufferIsView,
     Float64Array,
     Float64ArrayPrototype,
+    Float32Array,
+    Float32ArrayPrototype,
     ArrayIsArray,
     ArrayMap,
     ArrayFilter,
