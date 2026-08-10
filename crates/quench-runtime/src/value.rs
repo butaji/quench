@@ -155,6 +155,38 @@ pub struct GeneratorState {
 pub type ObjectProperties = Vec<(String, Value)>;
 pub type WeakObject = std::rc::Weak<ObjectProperties>;
 
+/// A private name capability created for one evaluation of a class definition.
+///
+/// The source id identifies the OXC fact that introduced the name. Its identity
+/// is the actual private-name key: evaluating the same class definition twice
+/// deliberately creates distinct keys.
+#[derive(Clone, Debug)]
+pub(crate) struct PrivateName {
+    source: PrivateNameId,
+    identity: Rc<()>,
+}
+
+impl PrivateName {
+    pub(crate) fn new(source: PrivateNameId) -> Self {
+        Self {
+            source,
+            identity: Rc::new(()),
+        }
+    }
+
+    pub(crate) fn same_identity(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.identity, &other.identity)
+    }
+}
+
+impl PartialEq for PrivateName {
+    fn eq(&self, other: &Self) -> bool {
+        self.source == other.source && self.same_identity(other)
+    }
+}
+
+impl Eq for PrivateName {}
+
 #[derive(Debug, Clone)]
 pub struct ObjectAliasValue(pub Rc<RefCell<WeakObject>>);
 
@@ -414,13 +446,16 @@ pub enum PrivateSlot {
     },
 }
 
+pub(crate) type PrivateSlots = Rc<RefCell<Vec<(PrivateName, PrivateSlot)>>>;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionValue {
     pub body: Vec<Op>,
     pub params: u16,
     pub captures: Rc<crate::environment::Environment>,
     pub properties: Rc<RefCell<Vec<(String, Value)>>>,
-    pub private_slots: Rc<RefCell<Vec<(PrivateNameId, PrivateSlot)>>>,
+    pub(crate) private_slots: PrivateSlots,
+    pub(crate) private_environment: crate::private_environment::PrivateEnvironment,
     pub instance_fields: Rc<RefCell<Vec<InstanceFieldPlan>>>,
     pub kind: FunctionKind,
     pub strictness: FunctionStrictness,

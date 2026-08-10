@@ -324,6 +324,9 @@ fn execute_frame_value(frame: &CallFrame) -> Result<crate::value::Value, crate::
 fn execute_frame_completion(
     frame: &CallFrame,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
+    let _private_environment = crate::private_environment::Guard::install_environment(
+        frame.function.private_environment.clone(),
+    );
     let _home = crate::super_scope::Guard::install(&frame.function, &frame.receiver);
     let _with_scope = crate::with_scope::FunctionGuard::isolate();
     let (mut registers, environment) =
