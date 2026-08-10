@@ -97,6 +97,7 @@ fn emit_function_op(
     params: u16,
     captures: u16,
     kind: FunctionKind,
+    is_async: bool,
 ) -> u16 {
     let register = *next_register;
     *next_register = next_register.saturating_add(1);
@@ -106,6 +107,7 @@ fn emit_function_op(
         params,
         captures,
         kind,
+        is_async,
     });
     register
 }
@@ -128,6 +130,7 @@ pub(crate) fn reduce_expression(
         parameter_count,
         captures,
         FunctionKind::Ordinary,
+        function.r#async,
     ))
 }
 
@@ -153,6 +156,7 @@ pub(crate) fn reduce_arrow(
         parameter_count,
         captures,
         FunctionKind::Arrow,
+        function.r#async,
     ))
 }
 
@@ -160,12 +164,14 @@ pub(crate) fn make(
     body: &[Op],
     params: u16,
     captures: Vec<crate::value::Value>,
+    is_async: bool,
 ) -> crate::value::Value {
     let value = crate::value::Value::Function(std::rc::Rc::new(crate::value::FunctionValue {
         body: body.to_vec(),
         params,
         captures: std::rc::Rc::new(std::cell::RefCell::new(captures)),
         properties: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
+        is_async,
     }));
     let prototype = crate::value::Value::Object(std::rc::Rc::new(vec![(
         "constructor".to_string(),
@@ -187,6 +193,7 @@ pub(crate) fn write(
     params: u16,
     captures: u16,
     _kind: FunctionKind,
+    is_async: bool,
 ) {
     let mut values = registers
         .iter()
@@ -194,27 +201,36 @@ pub(crate) fn write(
         .cloned()
         .collect::<Vec<_>>();
     values.resize(usize::from(captures), crate::value::Value::Undefined);
-    crate::execute::write_value(registers, dst, make(body, params, values));
+    crate::execute::write_value(registers, dst, make(body, params, values, is_async));
 }
 
 pub(crate) fn write_op(registers: &mut Vec<crate::value::Value>, op: &Op) {
-    let (dst, body, params, captures, kind) = match op {
+    let (dst, body, params, captures, kind, is_async) = match op {
         Op::MakeFunction {
             dst,
             body,
             params,
             captures,
-        } => (dst, body, params, captures, FunctionKind::Ordinary),
+            is_async,
+        } => (
+            dst,
+            body,
+            params,
+            captures,
+            FunctionKind::Ordinary,
+            is_async,
+        ),
         Op::MakeFunctionWithKind {
             dst,
             body,
             params,
             captures,
             kind,
-        } => (dst, body, params, captures, *kind),
+            is_async,
+        } => (dst, body, params, captures, *kind, is_async),
         _ => return,
     };
-    write(registers, *dst, body, *params, *captures, kind);
+    write(registers, *dst, body, *params, *captures, kind, *is_async);
 }
 
 fn build_registers(
