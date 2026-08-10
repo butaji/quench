@@ -39,6 +39,11 @@ pub enum Op {
         kind: PropertyDefinitionKind,
         enumerable: bool,
     },
+    CopyDataProperties {
+        target: u16,
+        source: u16,
+        excluded: Vec<u16>,
+    },
     DeleteProperty { dst: u16, object: u16, key: u16, strict: bool },
     MakeFunction {
         dst: u16,
