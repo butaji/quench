@@ -51,7 +51,6 @@ pub(crate) fn bind(
         }
     }
 }
-
 pub(crate) fn assign_target(
     target: &AssignmentTarget<'_>,
     source: u16,
@@ -378,8 +377,10 @@ fn bind_object(
     locals: &HashMap<String, u16>,
 ) -> Option<()> {
     ops.push(Op::RequireObjectCoercible { src: source });
+    let mut excluded = Vec::with_capacity(pattern.properties.len());
     for property in &pattern.properties {
         let key = reduce_key(&property.key, ops, facts, next, locals)?;
+        excluded.push(reduced_key_register(&key, ops, next));
         let resolved = pre_resolve(&property.value, ops, next, locals)?;
         let value = get_property(key, source, ops, next);
         match resolved {
@@ -389,7 +390,11 @@ fn bind_object(
             None => bind(&property.value, value, ops, facts, next, locals)?,
         }
     }
-    pattern.rest.is_none().then_some(())
+    let Some(rest) = pattern.rest.as_deref() else {
+        return Some(());
+    };
+    let value = crate::reduce::reduce_assignments::emit_object_rest(source, excluded, ops, next);
+    bind(&rest.argument, value, ops, facts, next, locals)
 }
 
 fn pre_resolve(
