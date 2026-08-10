@@ -26,6 +26,7 @@ pub(crate) mod value {
             Some(Value::Float64Array(_)) => "[object Float64Array]".to_string(),
             Some(Value::Int8Array(_)) => "[object Int8Array]".to_string(),
             Some(Value::Uint8Array(_)) => "[object Uint8Array]".to_string(),
+            Some(Value::Uint8ClampedArray(_)) => "[object Uint8ClampedArray]".to_string(),
             Some(
                 Value::Function(_)
                 | Value::BoundFunction(_)
@@ -70,6 +71,7 @@ pub(crate) mod value {
                 | Value::Float64Array(_)
                 | Value::Int8Array(_)
                 | Value::Uint8Array(_)
+                | Value::Uint8ClampedArray(_)
                 | Value::Function(_)
                 | Value::BoundFunction(_)
                 | Value::Builtin(_)
@@ -150,6 +152,7 @@ pub(crate) mod value {
             | Value::Float64Array(_)
             | Value::Int8Array(_)
             | Value::Uint8Array(_)
+            | Value::Uint8ClampedArray(_)
             | Value::Object(_)
             | Value::Builtin(_)
             | Value::Function(_)
@@ -173,6 +176,7 @@ pub(crate) mod value {
             | Value::Float64Array(_)
             | Value::Int8Array(_)
             | Value::Uint8Array(_)
+            | Value::Uint8ClampedArray(_)
             | Value::Object(_) => "object",
             Value::Boolean(_) => "boolean",
             Value::Number(_) => "number",
@@ -240,6 +244,9 @@ pub(crate) mod value {
             }
             (Value::Int8Array(left), Value::Int8Array(right)) => std::rc::Rc::ptr_eq(left, right),
             (Value::Uint8Array(left), Value::Uint8Array(right)) => std::rc::Rc::ptr_eq(left, right),
+            (Value::Uint8ClampedArray(left), Value::Uint8ClampedArray(right)) => {
+                std::rc::Rc::ptr_eq(left, right)
+            }
             (Value::Function(left), Value::Function(right)) => std::rc::Rc::ptr_eq(left, right),
             (Value::Number(left), Value::Number(right)) => left == right,
             (Value::Boolean(left), Value::Boolean(right)) => left == right,
