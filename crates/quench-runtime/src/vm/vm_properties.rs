@@ -51,7 +51,7 @@ fn get_property_value(value: &Value, key: &str) -> Value {
         Function(function) if key == "length" => Value::Number(f64::from(function.params)),
         Function(_) if matches!(key, "call" | "bind") => bind_function_property(value, key),
         Function(function) => function_property(function, key),
-        BoundFunction(_) if matches!(key, "call" | "bind") => bind_function_property(value, key),
+        BoundFunction(bound) => bound_function_property(value, bound, key),
         Map(data) if key == "size" => Value::Number(data.keys.len() as f64),
         Map(_) => crate::collections::map::property(key),
         Set(data) if key == "size" => Value::Number(data.values.len() as f64),
@@ -174,6 +174,20 @@ fn bind_function_property(value: &Value, key: &str) -> Value {
         _ => return Value::Undefined,
     };
     bind_method(value, Value::Builtin(builtin))
+}
+
+fn bound_function_property(
+    value: &Value,
+    bound: &crate::value::BoundFunctionValue,
+    key: &str,
+) -> Value {
+    if matches!(key, "call" | "bind") {
+        bind_function_property(value, key)
+    } else if realm::is_intrinsic(bound) {
+        get_property(&bound.target, key)
+    } else {
+        Value::Undefined
+    }
 }
 
 fn bind_method(receiver: &Value, property: Value) -> Value {
@@ -391,13 +405,16 @@ fn object_property(properties: &Rc<Vec<(String, Value)>>, key: &str) -> Value {
     if let Some((_, value)) = properties.iter().rev().find(|(name, _)| name == key) {
         return property_value(value);
     }
+    if let Some(realm) = realm::id_for_global(properties) {
+        return global_property(properties, key, Some(realm));
+    }
     if GLOBAL_OBJECT.with(|global| {
         global
             .borrow()
             .as_ref()
             .is_some_and(|candidate| Rc::ptr_eq(candidate, properties))
     }) {
-        return global_property(properties, key);
+        return global_property(properties, key, None);
     }
     let inherited = object_prototype_property(properties, key);
     if !matches!(inherited, Value::Undefined) {
@@ -432,16 +449,29 @@ fn object_prototype(properties: &[(String, Value)]) -> Builtin {
     }
 }
 
-fn global_property(properties: &Rc<Vec<(String, Value)>>, key: &str) -> Value {
+fn global_property(
+    properties: &Rc<Vec<(String, Value)>>,
+    key: &str,
+    realm: Option<RealmId>,
+) -> Value {
     if key == "globalThis" {
         return Value::Object(properties.clone());
     }
     if key == "$262" {
+        if let Some(realm) = realm {
+            return realm::host_capability(realm, HostCapabilityKind::GetGlobal)
+                .unwrap_or(Value::Undefined);
+        }
         return current_host_capability(HostCapabilityKind::GetGlobal);
     }
-    global_builtin(key).map_or_else(
+    realm::global_builtin(key).map_or_else(
         || crate::builtins::property(Builtin::ObjectPrototype, key),
-        Value::Builtin,
+        |builtin| {
+            realm.map_or_else(
+                || Value::Builtin(builtin),
+                |realm| realm::intrinsic(realm, builtin).unwrap_or(Value::Undefined),
+            )
+        },
     )
 }
 
@@ -455,43 +485,4 @@ fn current_host_capability(kind: HostCapabilityKind) -> Value {
     Value::HostCapability(Rc::new(crate::value::HostCapabilityValue::new(
         HostCapabilityRef { realm, kind },
     )))
-}
-
-fn global_builtin(key: &str) -> Option<Builtin> {
-    use Builtin::*;
-    Some(match key {
-        "Array" => Array,
-        "ArrayBuffer" => ArrayBuffer,
-        "DataView" => DataView,
-        "Float32Array" => Float32Array,
-        "Float64Array" => Float64Array,
-        "Int8Array" => Int8Array,
-        "Int16Array" => Int16Array,
-        "Int32Array" => Int32Array,
-        "Uint8Array" => Uint8Array,
-        "Uint8ClampedArray" => Uint8ClampedArray,
-        "Uint16Array" => Uint16Array,
-        "Uint32Array" => Uint32Array,
-        "Object" => Object,
-        "Function" => Function,
-        "Promise" => Promise,
-        "RegExp" => RegExp,
-        "Symbol" => Symbol,
-        "Number" => Number,
-        "Boolean" => Boolean,
-        "BigInt" => BigInt,
-        "String" => String,
-        "Date" => Date,
-        "JSON" => Json,
-        "Map" => Map,
-        "Set" => Set,
-        "Error" => Error,
-        "TypeError" => TypeError,
-        "RangeError" => RangeError,
-        "ReferenceError" => ReferenceError,
-        "SyntaxError" => SyntaxError,
-        "EvalError" => EvalError,
-        "URIError" => URIError,
-        _ => return None,
-    })
 }

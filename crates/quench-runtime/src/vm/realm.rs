@@ -1,0 +1,241 @@
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
+
+use crate::{
+    ops::{Builtin, HostCapabilityKind, HostCapabilityRef, Op, RealmId},
+    value::{HostCapabilityValue, Value},
+};
+
+use super::{ObjectProperties, VmContext, VmError};
+
+struct RealmState {
+    id: RealmId,
+    global: RefCell<ObjectProperties>,
+    context: VmContext,
+    token: Rc<HostCapabilityValue>,
+    intrinsics: RefCell<Vec<(Builtin, Value)>>,
+}
+
+struct ExecutionGuard {
+    state: Rc<RealmState>,
+    previous: Option<ObjectProperties>,
+}
+
+thread_local! {
+    static REALMS: RefCell<Vec<Option<Rc<RealmState>>>> = const { RefCell::new(Vec::new()) };
+    static NEXT_REALM: Cell<u64> = const { Cell::new(1) };
+}
+
+pub(super) fn create(parent: &VmContext) -> RealmId {
+    let id = NEXT_REALM.with(|next| {
+        let id = next.get();
+        next.set(id.saturating_add(1));
+        RealmId::new(id)
+    });
+    let state = Rc::new(RealmState {
+        id,
+        global: RefCell::new(Rc::new(Vec::new())),
+        context: child_context(parent, id),
+        token: Rc::new(HostCapabilityValue::new(HostCapabilityRef {
+            realm: id,
+            kind: HostCapabilityKind::GetGlobal,
+        })),
+        intrinsics: RefCell::new(Vec::new()),
+    });
+    register(state);
+    id
+}
+
+pub(super) fn register_global(token: &HostCapabilityValue, global: ObjectProperties) -> bool {
+    let Some(state) = state(token.realm()) else {
+        return false;
+    };
+    if !state.token.same_identity(token) {
+        return false;
+    }
+    state.global.replace(global);
+    true
+}
+
+pub(super) fn global(id: RealmId) -> Option<Value> {
+    state(id).map(|state| Value::Object(state.global.borrow().clone()))
+}
+
+pub(super) fn context(id: RealmId) -> Option<VmContext> {
+    state(id).map(|state| state.context.clone())
+}
+
+pub(super) fn token(id: RealmId) -> Option<Rc<HostCapabilityValue>> {
+    state(id).map(|state| Rc::clone(&state.token))
+}
+
+pub(super) fn host_capability(id: RealmId, kind: HostCapabilityKind) -> Option<Value> {
+    state(id)?;
+    Some(Value::HostCapability(Rc::new(HostCapabilityValue::new(
+        HostCapabilityRef { realm: id, kind },
+    ))))
+}
+
+pub(super) fn id_for_token(token: &HostCapabilityValue) -> Option<RealmId> {
+    let state = state(token.realm())?;
+    state.token.same_identity(token).then_some(state.id)
+}
+
+pub(super) fn execute(id: RealmId, ops: &[Op]) -> Result<Value, VmError> {
+    let state = state(id).ok_or_else(missing_realm)?;
+    let context = state.context.clone();
+    let global = Value::Object(state.global.borrow().clone());
+    let caller = crate::locals::current();
+    let environment = crate::environment::Environment::new();
+    environment.set(0, global.clone());
+    let mut registers = Vec::new();
+    let result = {
+        let _context = super::ContextGuard::install(&context);
+        let _realm = ExecutionGuard::install(Rc::clone(&state));
+        let _environment = crate::locals::EnvironmentGuard::install(environment);
+        let _with_scope = crate::with_scope::FunctionGuard::isolate();
+        super::run_ops(ops, &mut registers, &context)
+    };
+    caller.replace_value(&global, &Value::Object(state.global.borrow().clone()));
+    result
+}
+
+pub(super) fn id_for_global(global: &ObjectProperties) -> Option<RealmId> {
+    REALMS.with(|realms| {
+        realms
+            .borrow()
+            .iter()
+            .flatten()
+            .find_map(|state| Rc::ptr_eq(&state.global.borrow(), global).then_some(state.id))
+    })
+}
+
+pub(super) fn intrinsic(id: RealmId, builtin: Builtin) -> Option<Value> {
+    let state = state(id)?;
+    if let Some(value) = cached_intrinsic(&state, builtin) {
+        return Some(value);
+    }
+    let value = Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
+        target: Value::Builtin(builtin),
+        receiver: Value::HostCapability(Rc::clone(&state.token)),
+        arguments: Vec::new(),
+    }));
+    state.intrinsics.borrow_mut().push((builtin, value.clone()));
+    Some(value)
+}
+
+pub(super) fn global_builtin(key: &str) -> Option<Builtin> {
+    use Builtin::*;
+    Some(match key {
+        "Array" => Array,
+        "ArrayBuffer" => ArrayBuffer,
+        "DataView" => DataView,
+        "Float32Array" => Float32Array,
+        "Float64Array" => Float64Array,
+        "Int8Array" => Int8Array,
+        "Int16Array" => Int16Array,
+        "Int32Array" => Int32Array,
+        "Uint8Array" => Uint8Array,
+        "Uint8ClampedArray" => Uint8ClampedArray,
+        "Uint16Array" => Uint16Array,
+        "Uint32Array" => Uint32Array,
+        "Object" => Object,
+        "Function" => Function,
+        "Promise" => Promise,
+        "RegExp" => RegExp,
+        "Symbol" => Symbol,
+        "Number" => Number,
+        "Boolean" => Boolean,
+        "BigInt" => BigInt,
+        "String" => String,
+        "Date" => Date,
+        "eval" => Eval,
+        "JSON" => Json,
+        "Map" => Map,
+        "Set" => Set,
+        "Error" => Error,
+        "TypeError" => TypeError,
+        "RangeError" => RangeError,
+        "ReferenceError" => ReferenceError,
+        "SyntaxError" => SyntaxError,
+        "EvalError" => EvalError,
+        "URIError" => URIError,
+        _ => return None,
+    })
+}
+
+pub(super) fn is_intrinsic(bound: &crate::value::BoundFunctionValue) -> bool {
+    let Value::HostCapability(token) = &bound.receiver else {
+        return false;
+    };
+    let Some(state) = state(token.realm()) else {
+        return false;
+    };
+    state.token.same_identity(token)
+        && state.intrinsics.borrow().iter().any(|(_, value)| {
+            matches!(value, Value::BoundFunction(value) if std::ptr::eq(value.as_ref(), bound))
+        })
+}
+
+fn cached_intrinsic(state: &RealmState, builtin: Builtin) -> Option<Value> {
+    state
+        .intrinsics
+        .borrow()
+        .iter()
+        .find_map(|(candidate, value)| (*candidate == builtin).then(|| value.clone()))
+}
+
+impl ExecutionGuard {
+    fn install(state: Rc<RealmState>) -> Self {
+        let global = state.global.borrow().clone();
+        let previous = super::GLOBAL_OBJECT.with(|slot| slot.replace(Some(global)));
+        Self { state, previous }
+    }
+}
+
+impl Drop for ExecutionGuard {
+    fn drop(&mut self) {
+        let current = super::GLOBAL_OBJECT.with(|slot| slot.replace(self.previous.take()));
+        if let Some(current) = current {
+            self.state.global.replace(current);
+        }
+    }
+}
+
+fn missing_realm() -> VmError {
+    VmError::EvalError("Realm is unavailable".to_string())
+}
+
+fn child_context(parent: &VmContext, realm: RealmId) -> VmContext {
+    let capabilities = parent
+        .capabilities
+        .iter()
+        .map(|capability| HostCapabilityRef {
+            realm,
+            kind: capability.kind,
+        })
+        .collect();
+    VmContext {
+        output_sink: parent.output_sink.clone(),
+        realm,
+        capabilities,
+    }
+}
+
+fn register(state: Rc<RealmState>) {
+    let Some(index) = usize::try_from(state.id.get()).ok() else {
+        return;
+    };
+    REALMS.with(|realms| {
+        let mut realms = realms.borrow_mut();
+        realms.resize_with(index.saturating_add(1), || None);
+        realms[index] = Some(state);
+    });
+}
+
+fn state(id: RealmId) -> Option<Rc<RealmState>> {
+    let index = usize::try_from(id.get()).ok()?;
+    REALMS.with(|realms| realms.borrow().get(index).and_then(Clone::clone))
+}

@@ -5,9 +5,9 @@ use crate::ops::{
 use crate::value::Value;
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
+mod realm;
 mod vm_arithmetic;
 mod vm_ops;
 mod vm_typed_bigint;
@@ -16,7 +16,6 @@ pub use crate::intl::tolocale::value::is_truthy;
 
 pub type OutputSink = Arc<dyn Fn(&str) + Send + Sync>;
 type ObjectProperties = Rc<Vec<(String, Value)>>;
-static NEXT_REALM: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone)]
 pub struct VmContext {
@@ -211,6 +210,9 @@ pub(crate) fn execute_indirect_eval(ops: &[Op]) -> Result<Value, VmError> {
     let context = CURRENT_CONTEXT
         .with(|current| current.borrow().clone())
         .unwrap_or_default();
+    if realm::context(context.realm()).is_some() {
+        return execute_indirect_eval_in_realm(context.realm(), ops);
+    }
     let global = current_global_object();
     let caller = crate::locals::current();
     let environment = crate::environment::Environment::new();
@@ -220,6 +222,12 @@ pub(crate) fn execute_indirect_eval(ops: &[Op]) -> Result<Value, VmError> {
     let result = execute_in_environment(ops, &mut registers, &context, environment);
     caller.replace_value(&global, &current_global_object());
     result
+}
+pub(crate) fn execute_indirect_eval_in_realm(
+    realm_id: RealmId,
+    ops: &[Op],
+) -> Result<Value, VmError> {
+    realm::execute(realm_id, ops)
 }
 pub(crate) fn execute_generator_step(
     ops: &[Op],
@@ -414,19 +422,27 @@ pub(crate) fn execute_host_capability(
 }
 
 fn create_realm_value() -> Value {
-    let realm = RealmId::new(NEXT_REALM.fetch_add(1, Ordering::Relaxed));
-    let capability = Value::HostCapability(Rc::new(crate::value::HostCapabilityValue::new(
-        HostCapabilityRef {
-            realm,
-            kind: HostCapabilityKind::GetGlobal,
-        },
-    )));
+    let parent = CURRENT_CONTEXT
+        .with(|context| context.borrow().clone())
+        .unwrap_or_default();
+    let realm = realm::create(&parent);
+    let Some(context) = realm::context(realm) else {
+        return Value::Undefined;
+    };
+    let Some(token) = realm::token(context.realm()) else {
+        return Value::Undefined;
+    };
+    let capability = Value::HostCapability(Rc::clone(&token));
     let constructor = Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
         target: Value::Builtin(Builtin::TypeError),
         receiver: capability,
         arguments: Vec::new(),
     }));
-    let global = Value::Object(Rc::new(vec![("TypeError".to_string(), constructor)]));
+    let properties = Rc::new(vec![("TypeError".to_string(), constructor)]);
+    if realm::id_for_token(&token).is_none() || !realm::register_global(&token, properties) {
+        return Value::Undefined;
+    }
+    let global = realm::global(realm).unwrap_or(Value::Undefined);
     Value::Object(Rc::new(vec![("global".to_string(), global)]))
 }
 

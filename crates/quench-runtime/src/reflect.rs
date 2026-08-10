@@ -4,11 +4,13 @@ use crate::value::Value;
 pub(crate) fn builtin(
     _builtin: crate::ops::Builtin,
     arguments: &[Value],
+    receiver: Option<&Value>,
 ) -> Result<Value, VmError> {
     let Some(value) = arguments.first() else {
         return Ok(Value::Undefined);
     };
-    evaluate(value, false)
+    let realm = crate::vm::realm_id_for_intrinsic_receiver(receiver);
+    evaluate(value, false, realm)
 }
 
 pub(crate) fn execute_eval(
@@ -26,7 +28,11 @@ pub(crate) fn execute_eval(
     Ok(())
 }
 
-fn evaluate(value: &Value, strict: bool) -> Result<Value, VmError> {
+fn evaluate(
+    value: &Value,
+    strict: bool,
+    realm: Option<crate::ops::RealmId>,
+) -> Result<Value, VmError> {
     let Value::String(source) = value else {
         return Ok(value.clone());
     };
@@ -36,7 +42,10 @@ fn evaluate(value: &Value, strict: bool) -> Result<Value, VmError> {
     ];
     let program = crate::reduce::reduce_eval_source(source, strict, true, &bindings, &[])
         .map_err(syntax_error)?;
-    crate::vm::execute_indirect_eval(&program.ops)
+    match realm {
+        Some(realm) => crate::vm::execute_indirect_eval_in_realm(realm, &program.ops),
+        None => crate::vm::execute_indirect_eval(&program.ops),
+    }
 }
 
 fn evaluate_direct(
