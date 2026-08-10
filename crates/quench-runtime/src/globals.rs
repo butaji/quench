@@ -50,6 +50,7 @@ fn builtin(name: &str) -> Option<crate::ops::Builtin> {
         "Float64Array" => Some(crate::ops::Builtin::Float64Array),
         "Float32Array" => Some(crate::ops::Builtin::Float32Array),
         "Int8Array" => Some(crate::ops::Builtin::Int8Array),
+        "Uint8Array" => Some(crate::ops::Builtin::Uint8Array),
         "DataView" => Some(crate::ops::Builtin::DataView),
         "Boolean" => Some(crate::ops::Builtin::Boolean),
         "eval" => Some(crate::ops::Builtin::Eval),
