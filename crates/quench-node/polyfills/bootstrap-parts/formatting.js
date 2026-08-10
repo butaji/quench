@@ -26,11 +26,12 @@ globalThis.__nodeUtil = {
   },
   stripVTControlCharacters: (value) => {
     if (typeof value !== "string") {
-      const received = value !== null && typeof value === "object"
-        ? ` Received an instance of ${value.constructor?.name || "Object"}`
-        : ` Received type ${typeof value} (${String(value)})`;
+      const received =
+        value !== null && typeof value === "object"
+          ? ` Received an instance of ${value.constructor?.name || "Object"}`
+          : ` Received type ${typeof value} (${String(value)})`;
       const error = new TypeError(
-        'The "str" argument must be of type string.' + received,
+        'The "str" argument must be of type string.' + received
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
@@ -39,19 +40,19 @@ globalThis.__nodeUtil = {
       .replace(/\u001b\][\s\S]*?(?:\u0007|\u001b\\|\u009c)/g, "")
       .replace(
         /[\u001b\u009b][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[-a-zA-Z\d\/#&.:=?%@~_]+)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g,
-        "",
+        ""
       );
   },
-  promisify: (fn) => (...args) =>
-    new Promise((resolve, reject) =>
-      fn(
-        ...args,
-        (error, ...values) =>
+  promisify:
+    (fn) =>
+    (...args) =>
+      new Promise((resolve, reject) =>
+        fn(...args, (error, ...values) =>
           error
             ? reject(error)
-            : resolve(values.length > 1 ? values : values[0]),
-      )
-    ),
+            : resolve(values.length > 1 ? values : values[0])
+        )
+      ),
   format: (...args) => {
     if (!args.length) return "";
     if (typeof args[0] !== "string") {
@@ -83,7 +84,7 @@ globalThis.__nodeUtil = {
       options = {
         showHidden: options,
         depth: depth === undefined ? 2 : depth,
-        colors: colors === true,
+        colors: colors === true
       };
     } else if (typeof options === "number") options = { depth: options };
     if (value instanceof Date) return value.toISOString();
@@ -95,37 +96,36 @@ globalThis.__nodeUtil = {
     if (typeof value === "function") return __nodeUtilInspectFunction(value);
     if (value instanceof Error) return __nodeUtilInspectError(value);
     if (value instanceof NodeBuffer) return __nodeUtilInspectBuffer(value);
-    // prettier-ignore
     if (
-      value && typeof value === "object" &&
+      value &&
+      typeof value === "object" &&
       Object.keys(value).some((key) =>
         ["URL", "NodeURL"].includes(value[key]?.constructor?.name)
       )
     ) {
-      return `{ ${
-        Object.keys(value).map((key) => `${key}: URL {}`).join(", ")
-      } }`;
+      return `{ ${Object.keys(value)
+        .map((key) => `${key}: URL {}`)
+        .join(", ")} }`;
     }
-    // prettier-ignore
     if (options.depth === 0 && value && typeof value === "object") {
-      return `{ ${
-        Object.keys(value).map((key) =>
-          `${key}: ${
-            value[key] && typeof value[key] === "object"
-              ? `${value[key].constructor.name} {}`
-              : String(value[key])
-          }`
-        ).join(", ")
-      } }`;
+      return `{ ${Object.keys(value)
+        .map(
+          (key) =>
+            `${key}: ${
+              value[key] && typeof value[key] === "object"
+                ? `${value[key].constructor.name} {}`
+                : String(value[key])
+            }`
+        )
+        .join(", ")} }`;
     }
-    // prettier-ignore
     if (
       value &&
       typeof value[Symbol.for("nodejs.util.inspect.custom")] === "function"
     ) {
       return value[Symbol.for("nodejs.util.inspect.custom")](
         options.depth ?? 2,
-        options,
+        options
       );
     }
     if (value && typeof value === "object") {
@@ -144,7 +144,6 @@ globalThis.__nodeUtil = {
       });
       return `{${entries.length ? ` ${entries.join(", ")} ` : ""}}`;
     }
-    // prettier-ignore
     try {
       return JSON.stringify(value);
     } catch (_) {
@@ -153,7 +152,7 @@ globalThis.__nodeUtil = {
   },
   getCallSites: () => [
     { scriptName: "", lineNumber: 0 },
-    { scriptName: "", lineNumber: 0 },
+    { scriptName: "", lineNumber: 0 }
   ],
   types: {
     isDate: (value) => value instanceof Date,
@@ -265,8 +264,8 @@ globalThis.__nodeUtil = {
     isModuleNamespaceObject: (value) => __nodeModuleNamespaces.has(value),
     isCryptoKey: (value) =>
       globalThis.__quenchWebCryptoKeyBrand?.has(value) === true,
-    isKeyObject: () => false,
-  },
+    isKeyObject: () => false
+  }
 };
 globalThis.__nodeUtil.inspect.defaultOptions = { numericSeparator: false };
 globalThis.__nodeUtil.inspect.custom = Symbol.for("nodejs.util.inspect.custom");

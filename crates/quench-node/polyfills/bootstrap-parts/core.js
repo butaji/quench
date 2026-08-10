@@ -5,22 +5,22 @@ const __quenchCoreStaticModules = new Map([
   [
     "internal/vfs/providers/memory",
     () => ({
-      MemoryProvider: globalThis.__nodeVfs.MemoryProvider,
-    }),
+      MemoryProvider: globalThis.__nodeVfs.MemoryProvider
+    })
   ],
   [
     "node:internal/vfs/providers/memory",
     () => ({
-      MemoryProvider: globalThis.__nodeVfs.MemoryProvider,
-    }),
+      MemoryProvider: globalThis.__nodeVfs.MemoryProvider
+    })
   ],
   [
     "internal/vfs/fd",
     () => ({
       getVirtualFd(fd) {
         return globalThis.__quenchVfsFdHandles?.get(fd);
-      },
-    }),
+      }
+    })
   ],
   ["internal/vfs/router", () => globalThis.require("internal/vfs/router")],
   [
@@ -33,7 +33,7 @@ const __quenchCoreStaticModules = new Map([
           warnedExperimentalFeatures.add(feature);
           globalThis.process.emitWarning(
             `${feature} is an experimental feature. This feature could change at any time`,
-            { name: "ExperimentalWarning" },
+            { name: "ExperimentalWarning" }
           );
         },
         pendingDeprecate: (...args) =>
@@ -50,9 +50,9 @@ const __quenchCoreStaticModules = new Map([
           ) {
             throw new RangeError('The value of "msec" is out of range');
           }
-        },
+        }
       };
-    },
+    }
   ],
   ["assert", () => globalThis.__nodeAssert],
   ["path", () => globalThis.__nodePath],
@@ -67,19 +67,20 @@ const __quenchCoreStaticModules = new Map([
     "events",
     () => {
       const EventEmitterAsyncResource = class
-        extends globalThis.__nodeEventEmitter {
+        extends globalThis.__nodeEventEmitter
+      {
         constructor(options = {}) {
           super(options);
           const { AsyncResource } = globalThis.require("async_hooks");
           this.asyncResource = new AsyncResource(
             options.name || "EventEmitterAsyncResource",
-            options,
+            options
           );
         }
         emit(event, ...args) {
           return this.asyncResource.runInAsyncScope(
             () => super.emit(event, ...args),
-            this,
+            this
           );
         }
         emitDestroy() {
@@ -91,9 +92,9 @@ const __quenchCoreStaticModules = new Map([
         EventEmitter: globalThis.__nodeEventEmitter,
         EventEmitterAsyncResource,
         once: __quenchEventsOnce,
-        on: globalThis.__nodeEventEmitter.on,
+        on: globalThis.__nodeEventEmitter.on
       };
-    },
+    }
   ],
   [
     "sea",
@@ -118,10 +119,10 @@ const __quenchCoreStaticModules = new Map([
         const error = new Error("SEA snapshots are unavailable");
         error.code = "ERR_NOT_SUPPORTED";
         throw error;
-      },
-    }),
+      }
+    })
   ],
-  ["async_hooks", () => __quenchAsyncHooksModule],
+  ["async_hooks", () => __quenchAsyncHooksModule]
 ]);
 const __quenchRequireCoreBase = (name) => {
   if (name === "os") {
@@ -151,7 +152,7 @@ const __quenchValidateChildMessage = (message) => {
   }
   if (typeof message === "symbol") {
     const error = new TypeError(
-      'The "message" argument must be one of type string, object, number, or boolean. Received type symbol (Symbol())',
+      'The "message" argument must be one of type string, object, number, or boolean. Received type symbol (Symbol())'
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -182,13 +183,11 @@ class __quenchChildProcessClass extends globalThis.__nodeEventEmitter {
     if (!options || typeof options !== "object" || Array.isArray(options)) {
       throw Object.assign(
         new TypeError(
-          `The "options" argument must be of type object.${
-            globalThis.__nodeCommon.invalidArgTypeHelper(
-              options,
-            )
-          }`,
+          `The "options" argument must be of type object.${globalThis.__nodeCommon.invalidArgTypeHelper(
+            options
+          )}`
         ),
-        { code: "ERR_INVALID_ARG_TYPE" },
+        { code: "ERR_INVALID_ARG_TYPE" }
       );
     }
     if (
@@ -197,37 +196,31 @@ class __quenchChildProcessClass extends globalThis.__nodeEventEmitter {
     ) {
       throw Object.assign(
         new TypeError(
-          `The "options.file" property must be of type string.${
-            globalThis.__nodeCommon.invalidArgTypeHelper(
-              options.file,
-            )
-          }`,
+          `The "options.file" property must be of type string.${globalThis.__nodeCommon.invalidArgTypeHelper(
+            options.file
+          )}`
         ),
-        { code: "ERR_INVALID_ARG_TYPE" },
+        { code: "ERR_INVALID_ARG_TYPE" }
       );
     }
     if (options.envPairs !== undefined && !Array.isArray(options.envPairs)) {
       throw Object.assign(
         new TypeError(
-          `The "options.envPairs" property must be an instance of Array.${
-            globalThis.__nodeCommon.invalidArgTypeHelper(
-              options.envPairs,
-            )
-          }`,
+          `The "options.envPairs" property must be an instance of Array.${globalThis.__nodeCommon.invalidArgTypeHelper(
+            options.envPairs
+          )}`
         ),
-        { code: "ERR_INVALID_ARG_TYPE" },
+        { code: "ERR_INVALID_ARG_TYPE" }
       );
     }
     if (options.args !== undefined && !Array.isArray(options.args)) {
       throw Object.assign(
         new TypeError(
-          `The "options.args" property must be an instance of Array.${
-            globalThis.__nodeCommon.invalidArgTypeHelper(
-              options.args,
-            )
-          }`,
+          `The "options.args" property must be an instance of Array.${globalThis.__nodeCommon.invalidArgTypeHelper(
+            options.args
+          )}`
         ),
-        { code: "ERR_INVALID_ARG_TYPE" },
+        { code: "ERR_INVALID_ARG_TYPE" }
       );
     }
     this.pid = 0;
@@ -240,7 +233,7 @@ class __quenchChildProcessClass extends globalThis.__nodeEventEmitter {
   kill(signal) {
     if (signal && signal !== "SIGTERM" && signal !== "SIGKILL") {
       throw Object.assign(new TypeError(`Unknown signal: ${signal}`), {
-        code: "ERR_UNKNOWN_SIGNAL",
+        code: "ERR_UNKNOWN_SIGNAL"
       });
     }
     this.emit("close", null, signal || "SIGTERM");
@@ -253,11 +246,10 @@ class __quenchChildProcessClass extends globalThis.__nodeEventEmitter {
 const __quenchSpawnChild = (_command, args = [], options = {}) => {
   if (typeof _command !== "string" || _command.length === 0) {
     const error = new TypeError(
-      'The "file" argument must be a non-empty string',
+      'The "file" argument must be a non-empty string'
     );
-    error.code = _command === ""
-      ? "ERR_INVALID_ARG_VALUE"
-      : "ERR_INVALID_ARG_TYPE";
+    error.code =
+      _command === "" ? "ERR_INVALID_ARG_VALUE" : "ERR_INVALID_ARG_TYPE";
     throw error;
   }
   if (args === null) args = [];
@@ -281,7 +273,9 @@ const __quenchSpawnChild = (_command, args = [], options = {}) => {
   }
   const child = new __quenchChildProcessClass();
   child.spawnfile = options.shell
-    ? process.platform === "win32" ? "cmd.exe" : "/bin/sh"
+    ? process.platform === "win32"
+      ? "cmd.exe"
+      : "/bin/sh"
     : String(_command);
   child.spawnargs = options.shell
     ? ["-c", `${String(_command)}${args.length ? ` ${args.join(" ")}` : ""}`]
@@ -306,10 +300,11 @@ const __quenchSpawnChild = (_command, args = [], options = {}) => {
   let signalScript = false;
   if (args.includes("--do-test") && script) {
     try {
-      signalScript = globalThis
-        .require("fs")
-        .readFileSync(script, "utf8")
-        .includes("process.kill(process.pid, 'SIGINT')") ||
+      signalScript =
+        globalThis
+          .require("fs")
+          .readFileSync(script, "utf8")
+          .includes("process.kill(process.pid, 'SIGINT')") ||
         globalThis
           .require("fs")
           .readFileSync(script, "utf8")
@@ -319,10 +314,11 @@ const __quenchSpawnChild = (_command, args = [], options = {}) => {
   let ipcScript = false;
   if (Array.isArray(options.stdio) && options.stdio.includes("ipc") && script) {
     try {
-      ipcScript = globalThis
-        .require("fs")
-        .readFileSync(script, "utf8")
-        .includes("process.on('message'") ||
+      ipcScript =
+        globalThis
+          .require("fs")
+          .readFileSync(script, "utf8")
+          .includes("process.on('message'") ||
         globalThis
           .require("fs")
           .readFileSync(script, "utf8")
@@ -333,10 +329,10 @@ const __quenchSpawnChild = (_command, args = [], options = {}) => {
     ? String(args[args.indexOf("-e") + 1] || "")
     : "";
   const streamIterRequire = evalSource.match(
-    /require\(["'](node:)?stream\/iter["']\)/,
+    /require\(["'](node:)?stream\/iter["']\)/
   );
-  const streamIterDisabled = streamIterRequire &&
-    !args.includes("--experimental-stream-iter");
+  const streamIterDisabled =
+    streamIterRequire && !args.includes("--experimental-stream-iter");
   const streamIterError = streamIterDisabled
     ? streamIterRequire[1]
       ? "No such built-in module: node:stream/iter\n"
@@ -346,26 +342,26 @@ const __quenchSpawnChild = (_command, args = [], options = {}) => {
   const code = signalScript
     ? null
     : processExitCaseScript && /^\d+$/.test(String(args[1] ?? ""))
-    ? ([42, 42, 0, 1, 99, 0, 97, 98, 0, 7, 6][Number(args[1])] ?? 1)
-    : (rawDebugScript || exitZeroScript || execArgvScript) &&
-        args.includes("child")
-    ? 0
-    : streamIterDisabled
-    ? 1
-    : args.includes("-e")
-    ? 0
-    : args.includes("you-are-the-child")
-    ? 0
-    : script.endsWith("exit.js")
-    ? Number(args[1] || 0)
-    : options.shell &&
-        /does-not-exist|hopefully_you_dont_have/.test(
-          String(_command),
-        )
-    ? 127
-    : String(_command).endsWith("echo")
-    ? 0
-    : 1;
+      ? ([42, 42, 0, 1, 99, 0, 97, 98, 0, 7, 6][Number(args[1])] ?? 1)
+      : (rawDebugScript || exitZeroScript || execArgvScript) &&
+          args.includes("child")
+        ? 0
+        : streamIterDisabled
+          ? 1
+          : args.includes("-e")
+            ? 0
+            : args.includes("you-are-the-child")
+              ? 0
+              : script.endsWith("exit.js")
+                ? Number(args[1] || 0)
+                : options.shell &&
+                    /does-not-exist|hopefully_you_dont_have/.test(
+                      String(_command)
+                    )
+                  ? 127
+                  : String(_command).endsWith("echo")
+                    ? 0
+                    : 1;
   let sends = 0;
   child.send = (...values) => {
     __quenchValidateChildMessage(values[0]);
@@ -399,7 +395,7 @@ const __quenchSpawnChild = (_command, args = [], options = {}) => {
     if (child.__quenchAbort) {
       child.__quenchAbortSignal?.removeEventListener?.(
         "abort",
-        child.__quenchAbortListener,
+        child.__quenchAbortListener
       );
       const abortError = new Error("The operation was aborted");
       abortError.name = "AbortError";
@@ -415,7 +411,7 @@ const __quenchSpawnChild = (_command, args = [], options = {}) => {
     if (child.__quenchTimeoutSignal) {
       child.__quenchAbortSignal?.removeEventListener?.(
         "abort",
-        child.__quenchAbortListener,
+        child.__quenchAbortListener
       );
       const signal = child.__quenchTimeoutSignal;
       child.emit("exit", null, signal);
@@ -450,7 +446,7 @@ const __quenchSpawnChild = (_command, args = [], options = {}) => {
         const source = globalThis.require("fs").readFileSync(script, "utf8");
         if (
           /process\.stdout\.write\s*\(\s*process\.argv\s*\[\s*0\s*\]\s*\)/.test(
-            source,
+            source
           )
         ) {
           child.stdout.emit("data", NodeBuffer.from(process.execPath));
@@ -487,11 +483,13 @@ const __quenchChildProcessModule = () => {
   const spawnSync = (command, args = [], options = {}) => {
     command = String(command || "");
     const convertOutput = (value) =>
-      options.encoding === "buffer" ? value : options.encoding
-        ? value.toString(
-          options.encoding === true ? "utf8" : options.encoding,
-        )
-        : value;
+      options.encoding === "buffer"
+        ? value
+        : options.encoding
+          ? value.toString(
+              options.encoding === true ? "utf8" : options.encoding
+            )
+          : value;
     if (/does_not_exist|not_a_real_command|does-not-exist/.test(command)) {
       const error = new Error(`spawnSync ${command} ENOENT`);
       Object.assign(error, {
@@ -499,7 +497,7 @@ const __quenchChildProcessModule = () => {
         errno: -2,
         syscall: `spawnSync ${command}`,
         path: command,
-        spawnargs: Array.isArray(args) ? args : [],
+        spawnargs: Array.isArray(args) ? args : []
       });
       return {
         pid: 0,
@@ -508,7 +506,7 @@ const __quenchChildProcessModule = () => {
         output: [null, null, null],
         stdout: undefined,
         stderr: undefined,
-        error,
+        error
       };
     }
     if (command === "pwd") {
@@ -520,10 +518,10 @@ const __quenchChildProcessModule = () => {
         output: [
           null,
           convertOutput(stdout),
-          convertOutput(NodeBuffer.from("")),
+          convertOutput(NodeBuffer.from(""))
         ],
         stdout: convertOutput(stdout),
-        stderr: convertOutput(NodeBuffer.from("")),
+        stderr: convertOutput(NodeBuffer.from(""))
       };
     }
     if (
@@ -545,10 +543,10 @@ const __quenchChildProcessModule = () => {
         output: [
           null,
           convertOutput(stdout),
-          convertOutput(NodeBuffer.from("")),
+          convertOutput(NodeBuffer.from(""))
         ],
         stdout: convertOutput(stdout),
-        stderr: convertOutput(NodeBuffer.from("")),
+        stderr: convertOutput(NodeBuffer.from(""))
       };
     }
     if (command.endsWith("symlinked-node") && args.includes("child")) {
@@ -559,10 +557,10 @@ const __quenchChildProcessModule = () => {
         output: [
           null,
           convertOutput(NodeBuffer.from(`${process.execPath}\n`)),
-          convertOutput(NodeBuffer.from("")),
+          convertOutput(NodeBuffer.from(""))
         ],
         stdout: convertOutput(NodeBuffer.from(`${process.execPath}\n`)),
-        stderr: convertOutput(NodeBuffer.from("")),
+        stderr: convertOutput(NodeBuffer.from(""))
       };
     }
     if (command === process.execPath && Array.isArray(args) && args[0]) {
@@ -577,10 +575,10 @@ const __quenchChildProcessModule = () => {
             output: [
               null,
               convertOutput(stdout),
-              convertOutput(NodeBuffer.from("")),
+              convertOutput(NodeBuffer.from(""))
             ],
             stdout: convertOutput(stdout),
-            stderr: convertOutput(NodeBuffer.from("")),
+            stderr: convertOutput(NodeBuffer.from(""))
           };
         }
       } catch (_) {}
@@ -591,14 +589,14 @@ const __quenchChildProcessModule = () => {
         (value) =>
           typeof value === "string" &&
           value.includes("process.mainModule") &&
-          value.includes("vm.runInNewContext"),
+          value.includes("vm.runInNewContext")
       );
     if (source) {
       const main = source.match(
-        /process\.mainModule\s*=\s*\{\s*filename:\s*("[^"]+")/,
+        /process\.mainModule\s*=\s*\{\s*filename:\s*("[^"]+")/
       )?.[1];
       const callSite = source.match(
-        /vm\.runInNewContext[\s\S]*?filename:\s*("[^"]+")/,
+        /vm\.runInNewContext[\s\S]*?filename:\s*("[^"]+")/
       )?.[1];
       const mainPath = main ? JSON.parse(main) : "";
       const callPath = callSite ? JSON.parse(callSite) : "";
@@ -611,7 +609,7 @@ const __quenchChildProcessModule = () => {
         status: 0,
         signal: null,
         stdout: convertOutput(NodeBuffer.from("")),
-        stderr: convertOutput(NodeBuffer.from(stderr)),
+        stderr: convertOutput(NodeBuffer.from(stderr))
       };
     }
     globalThis.__nodeCompileCacheRuns++;
@@ -623,10 +621,10 @@ const __quenchChildProcessModule = () => {
       output: [
         null,
         convertOutput(NodeBuffer.from("")),
-        convertOutput(NodeBuffer.from(message)),
+        convertOutput(NodeBuffer.from(message))
       ],
       stdout: convertOutput(NodeBuffer.from("")),
-      stderr: convertOutput(NodeBuffer.from(message)),
+      stderr: convertOutput(NodeBuffer.from(message))
     };
   };
   const childProcess = {
@@ -643,7 +641,7 @@ const __quenchChildProcessModule = () => {
           !Number.isFinite(options.timeout))
       ) {
         const error = new TypeError(
-          'ERR_INVALID_ARG_TYPE: The "timeout" option must be a number',
+          'ERR_INVALID_ARG_TYPE: The "timeout" option must be a number'
         );
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
@@ -707,7 +705,7 @@ const __quenchChildProcessModule = () => {
       }
       if (callback !== undefined && typeof callback !== "function") {
         const error = new TypeError(
-          'The "callback" argument must be a function',
+          'The "callback" argument must be a function'
         );
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
@@ -722,7 +720,7 @@ const __quenchChildProcessModule = () => {
       const child = __quenchSpawnChild(file, args, options);
       return options?.encoding ? "" : NodeBuffer.from("");
     },
-    spawnSync,
+    spawnSync
   };
   globalThis.__nodeRequireChildProcess = childProcess;
   return childProcess;
@@ -736,7 +734,7 @@ globalThis.__quench_require_part_00 = (name, specifier) => {
   const base = __quenchRequireCoreBase(
     normalizedName.startsWith("node:")
       ? normalizedName.slice(5)
-      : normalizedName,
+      : normalizedName
   );
   if (base !== undefined) return base;
 };
@@ -762,15 +760,15 @@ let __quenchHttpModule;
             const values = Array.isArray(current)
               ? current
               : current === undefined
-              ? []
-              : [current];
+                ? []
+                : [current];
             values.push(String(value));
             this._entries.set(name, values);
             return;
           }
           this._entries.set(
             name,
-            current === undefined ? String(value) : `${current}, ${value}`,
+            current === undefined ? String(value) : `${current}, ${value}`
           );
         }
         set(key, value) {
@@ -793,14 +791,14 @@ let __quenchHttpModule;
           const source = input instanceof Request ? input : null;
           this.url = String(source?.url || input || "");
           this.method = String(
-            init.method || source?.method || "GET",
+            init.method || source?.method || "GET"
           ).toUpperCase();
           this.headers = new globalThis.Headers(
-            init.headers || source?.headers,
+            init.headers || source?.headers
           );
           this.body = init.body ?? source?.body ?? null;
-          this.signal = init.signal || source?.signal ||
-            new AbortController().signal;
+          this.signal =
+            init.signal || source?.signal || new AbortController().signal;
           this.bodyUsed = false;
         }
         async text() {
@@ -849,7 +847,7 @@ let __quenchHttpModule;
           return new Response(this.body, {
             status: this.status,
             statusText: this.statusText,
-            headers: this.headers,
+            headers: this.headers
           });
         }
       };
@@ -857,7 +855,7 @@ let __quenchHttpModule;
     const servers = new Map();
     globalThis.__quenchHttpServers = servers;
     globalThis.__nodeHttpConnectionsCheckingInterval ||= Symbol(
-      "kConnectionsCheckingInterval",
+      "kConnectionsCheckingInterval"
     );
     const attachHttpSignal = (value) => {
       const controller = new AbortController();
@@ -948,7 +946,7 @@ let __quenchHttpModule;
             hostname: parsed.hostname,
             port: parsed.port || 80,
             path: `${parsed.pathname}${parsed.search}`,
-            method: "GET",
+            method: "GET"
           };
         }
         if (
@@ -963,7 +961,7 @@ let __quenchHttpModule;
             options.path || "/",
             callback,
             { ...options, method: options.method || "GET" },
-            server,
+            server
           );
         }
         this.path = options.path || "/";
@@ -1031,8 +1029,8 @@ let __quenchHttpModule;
               socket.__timeoutTimer = undefined;
               if (socket.destroyed) return;
               socket.destroyed = true;
-              const pool = socket.__quenchAgent?.freeSockets
-                ?.[socket.__quenchAgentName];
+              const pool =
+                socket.__quenchAgent?.freeSockets?.[socket.__quenchAgentName];
               if (pool) {
                 const index = pool.indexOf(socket);
                 if (index !== -1) pool.splice(index, 1);
@@ -1065,7 +1063,7 @@ let __quenchHttpModule;
           this.destroyed = true;
           this.__quenchAgent?.removeSocket?.(this, {
             host: "localhost",
-            port: this.__quenchAgentName?.split(":")[1] || "",
+            port: this.__quenchAgentName?.split(":")[1] || ""
           });
           this.emit("close");
           if (
@@ -1090,13 +1088,13 @@ let __quenchHttpModule;
         },
         uncork() {
           this.writableCorked = Math.max(0, this.writableCorked - 1);
-        },
+        }
       });
       response.socket = socket;
       socket._handle = {
         close(callback) {
           if (typeof callback === "function") queueMicrotask(callback);
-        },
+        }
       };
       response.setTimeout = (msecs) => {
         response.timeout = msecs;
@@ -1119,14 +1117,14 @@ let __quenchHttpModule;
       };
       Object.defineProperty(response, "writableCorked", {
         enumerable: true,
-        get: () => socket.writableCorked,
+        get: () => socket.writableCorked
       });
       response.statusCode = 200;
       response.statusMessage = "OK";
       response.setHeader = (key, value) => {
         if (response.headersSent) {
           const error = new Error(
-            "Cannot set headers after they are sent to the client",
+            "Cannot set headers after they are sent to the client"
           );
           error.code = "ERR_HTTP_HEADERS_SENT";
           throw error;
@@ -1139,33 +1137,19 @@ let __quenchHttpModule;
         ) {
           response.__invalidContentLength = true;
         }
-        const nonRepeatable = new Set([
-          "content-type",
-          "user-agent",
-          "referer",
-          "host",
-          "authorization",
-          "proxy-authorization",
-          "if-modified-since",
-          "if-unmodified-since",
-          "from",
-          "location",
-          "max-forwards",
-          "retry-after",
-          "etag",
-          "last-modified",
-          "server",
-          "age",
-          "expires",
-        ]);
+        const nonRepeatable = new Set(
+          "content-type user-agent referer host authorization proxy-authorization if-modified-since if-unmodified-since from location max-forwards retry-after etag last-modified server age expires".split(
+            " "
+          )
+        );
         const normalizedValue =
           normalizedKey === "set-cookie" && Array.isArray(value)
             ? value.map(String)
             : Array.isArray(value) && nonRepeatable.has(normalizedKey)
-            ? String(value[0])
-            : Array.isArray(value)
-            ? value.map(String).join(", ")
-            : String(value);
+              ? String(value[0])
+              : Array.isArray(value)
+                ? value.map(String).join(", ")
+                : String(value);
         if (
           response.__joinDuplicateHeaders &&
           response.headers[normalizedKey] !== undefined &&
@@ -1183,7 +1167,7 @@ let __quenchHttpModule;
       response.setHeaders = (headers) => {
         if (response.headersSent) {
           const error = new Error(
-            "Cannot set headers after they are sent to the client",
+            "Cannot set headers after they are sent to the client"
           );
           error.code = "ERR_HTTP_HEADERS_SENT";
           throw error;
@@ -1193,7 +1177,7 @@ let __quenchHttpModule;
           !(headers instanceof Map || headers instanceof globalThis.Headers)
         ) {
           const error = new TypeError(
-            'The "headers" argument must be an instance of Headers or Map',
+            'The "headers" argument must be an instance of Headers or Map'
           );
           error.code = "ERR_INVALID_ARG_TYPE";
           throw error;
@@ -1210,7 +1194,7 @@ let __quenchHttpModule;
       response.removeHeader = (key) => {
         if (response.headersSent) {
           const error = new Error(
-            "Cannot remove headers after they are sent to the client",
+            "Cannot remove headers after they are sent to the client"
           );
           error.code = "ERR_HTTP_HEADERS_SENT";
           throw error;
@@ -1226,22 +1210,25 @@ let __quenchHttpModule;
         ) {
           const renderedStatusCode =
             statusCode !== null && typeof statusCode === "object"
-              ? Array.isArray(statusCode) ? "[]" : "{}"
+              ? Array.isArray(statusCode)
+                ? "[]"
+                : "{}"
               : String(statusCode);
           const error = new RangeError(
-            `Invalid status code: ${renderedStatusCode}`,
+            `Invalid status code: ${renderedStatusCode}`
           );
           error.code = "ERR_HTTP_INVALID_STATUS_CODE";
           throw error;
         }
         response.statusCode = statusCode;
-        response.statusMessage = {
-          200: "OK",
-          302: "Found",
-          400: "Bad Request",
-          404: "Not Found",
-          500: "Internal Server Error",
-        }[statusCode] || response.statusMessage;
+        response.statusMessage =
+          {
+            200: "OK",
+            302: "Found",
+            400: "Bad Request",
+            404: "Not Found",
+            500: "Internal Server Error"
+          }[statusCode] || response.statusMessage;
         if (Array.isArray(headers)) {
           for (let index = 0; index + 1 < headers.length; index += 2) {
             response.setHeader(headers[index], headers[index + 1]);
@@ -1274,7 +1261,7 @@ let __quenchHttpModule;
       response.addTrailers = (trailers) => {
         if (trailers === null || typeof trailers !== "object") {
           const error = new TypeError(
-            "The trailers argument must be an object",
+            "The trailers argument must be an object"
           );
           error.code = "ERR_INVALID_ARG_TYPE";
           throw error;
@@ -1303,7 +1290,7 @@ let __quenchHttpModule;
           statusCode: 103,
           statusMessage: "Early Hints",
           headers,
-          httpVersion: "1.1",
+          httpVersion: "1.1"
         });
         if (typeof callback === "function") queueMicrotask(callback);
         return response;
@@ -1333,7 +1320,7 @@ let __quenchHttpModule;
             { 100: "Continue", 102: "Processing", 103: "Early Hints" }[code] ||
             "",
           headers: infoHeaders,
-          rawHeaders,
+          rawHeaders
         });
         if (typeof callback === "function") queueMicrotask(callback);
         return response;
@@ -1348,15 +1335,14 @@ let __quenchHttpModule;
         if (response.listenerCount("readable")) response.emit("readable");
         response.emit(
           "data",
-          response._encoding ? value.toString(response._encoding) : value,
+          response._encoding ? value.toString(response._encoding) : value
         );
       };
       response.write = (chunk = "", encoding, callback) => {
         if (typeof encoding === "function") callback = encoding;
         response.headersSent = true;
-        const value = chunk instanceof NodeBuffer
-          ? chunk
-          : NodeBuffer.from(String(chunk));
+        const value =
+          chunk instanceof NodeBuffer ? chunk : NodeBuffer.from(String(chunk));
         response.writableLength += value.length ? value.length + 5 : 0;
         response.headers.connection ||= "keep-alive";
         response.headers["transfer-encoding"] ||= "chunked";
@@ -1370,16 +1356,17 @@ let __quenchHttpModule;
               .join("\r\n");
             response.__rawHeadersSent = true;
             response.socket.write(
-              `HTTP/1.1 ${response.statusCode} ${response.statusMessage}\r\n${headers}\r\n\r\n`,
+              `HTTP/1.1 ${response.statusCode} ${response.statusMessage}\r\n${headers}\r\n\r\n`
             );
           }
-          const payload = response.headers["transfer-encoding"] === "chunked"
-            ? NodeBuffer.concat([
-              NodeBuffer.from(`${value.length.toString(16)}\r\n`),
-              value,
-              NodeBuffer.from("\r\n"),
-            ])
-            : value;
+          const payload =
+            response.headers["transfer-encoding"] === "chunked"
+              ? NodeBuffer.concat([
+                  NodeBuffer.from(`${value.length.toString(16)}\r\n`),
+                  value,
+                  NodeBuffer.from("\r\n")
+                ])
+              : value;
           return response.socket.write(payload, callback);
         }
         queueMicrotask(() => {
@@ -1397,13 +1384,14 @@ let __quenchHttpModule;
         response.finished = true;
         response.writableEnded = true;
         response.writableLength = 0;
-        const assignedSocket = response.__socketCloseListener &&
+        const assignedSocket =
+          response.__socketCloseListener &&
           typeof response.socket?.write === "function";
         response.writableFinished = !assignedSocket;
-        const value = body instanceof NodeBuffer
-          ? body
-          : NodeBuffer.from(String(body));
-        const bodyForbidden = response.statusCode === 204 ||
+        const value =
+          body instanceof NodeBuffer ? body : NodeBuffer.from(String(body));
+        const bodyForbidden =
+          response.statusCode === 204 ||
           response.statusCode === 304 ||
           response.req?.method === "HEAD";
         if (bodyForbidden) {
@@ -1443,7 +1431,7 @@ let __quenchHttpModule;
               .join("\r\n");
             response.__rawHeadersSent = true;
             response.socket.write(
-              `HTTP/1.1 ${response.statusCode} ${response.statusMessage}\r\n${headers}\r\n\r\n`,
+              `HTTP/1.1 ${response.statusCode} ${response.statusMessage}\r\n${headers}\r\n\r\n`
             );
           }
           let writes = output.length ? 2 : 1;
@@ -1462,13 +1450,14 @@ let __quenchHttpModule;
             if (!response.socket.__quenchRawHttp) queueMicrotask(complete);
           };
           if (output.length) {
-            const payload = response.headers["transfer-encoding"] === "chunked"
-              ? NodeBuffer.concat([
-                NodeBuffer.from(`${output.length.toString(16)}\r\n`),
-                output,
-                NodeBuffer.from("\r\n"),
-              ])
-              : output;
+            const payload =
+              response.headers["transfer-encoding"] === "chunked"
+                ? NodeBuffer.concat([
+                    NodeBuffer.from(`${output.length.toString(16)}\r\n`),
+                    output,
+                    NodeBuffer.from("\r\n")
+                  ])
+                : output;
             writeAndComplete(payload);
           }
           let terminator = NodeBuffer.alloc(0);
@@ -1477,7 +1466,7 @@ let __quenchHttpModule;
               .map(([key, value]) => `${key}: ${value}`)
               .join("\r\n");
             terminator = NodeBuffer.from(
-              trailerLines ? `0\r\n${trailerLines}\r\n\r\n` : "0\r\n\r\n",
+              trailerLines ? `0\r\n${trailerLines}\r\n\r\n` : "0\r\n\r\n"
             );
           }
           writeAndComplete(terminator);
@@ -1532,9 +1521,10 @@ let __quenchHttpModule;
       }
       write(chunk, encoding, callback) {
         if (typeof encoding === "function") callback = encoding;
-        const value = chunk instanceof NodeBuffer
-          ? chunk.length
-          : NodeBuffer.byteLength(String(chunk), encoding);
+        const value =
+          chunk instanceof NodeBuffer
+            ? chunk.length
+            : NodeBuffer.byteLength(String(chunk), encoding);
         this.writableLength += value;
         if (typeof callback === "function") queueMicrotask(callback);
         return true;
@@ -1606,18 +1596,18 @@ let __quenchHttpModule;
       new NodeServerResponse({
         method: "GET",
         httpVersionMajor: 1,
-        httpVersionMinor: 1,
+        httpVersionMinor: 1
       });
     const makeRequest = (
       handler,
       pathname,
       callback,
       options = {},
-      context,
+      context
     ) => {
       if (typeof pathname === "string" && /[^\u0021-\u00ff]/.test(pathname)) {
         const error = new TypeError(
-          "Request path contains unescaped characters",
+          "Request path contains unescaped characters"
         );
         error.code = "ERR_UNESCAPED_CHARACTERS";
         throw error;
@@ -1628,11 +1618,12 @@ let __quenchHttpModule;
         typeof options.method !== "string"
       ) {
         const value = options.method;
-        const received = value !== null && typeof value === "object"
-          ? `an instance of ${value.constructor?.name || "Object"}`
-          : `type ${typeof value} (${String(value)})`;
+        const received =
+          value !== null && typeof value === "object"
+            ? `an instance of ${value.constructor?.name || "Object"}`
+            : `type ${typeof value} (${String(value)})`;
         const error = new TypeError(
-          `The "options.method" property must be of type string. Received ${received}`,
+          `The "options.method" property must be of type string. Received ${received}`
         );
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
@@ -1650,16 +1641,17 @@ let __quenchHttpModule;
         if (request.__signalAbortListener) {
           options.signal?.removeEventListener(
             "abort",
-            request.__signalAbortListener,
+            request.__signalAbortListener
           );
           request.__signalAbortListener = undefined;
         }
-        const failure = error ||
+        const failure =
+          error ||
           (request.__responseEmitted
             ? undefined
             : Object.assign(new Error("socket hang up"), {
-              code: "ECONNRESET",
-            }));
+                code: "ECONNRESET"
+              }));
         queueMicrotask(() => {
           if (failure) request.emit("error", failure);
           if (!request.__closeEmitted) {
@@ -1672,7 +1664,7 @@ let __quenchHttpModule;
       if (options.signal instanceof AbortSignal) {
         const abortError = Object.assign(
           new Error("The operation was aborted"),
-          { code: "ABORT_ERR", name: "AbortError" },
+          { code: "ABORT_ERR", name: "AbortError" }
         );
         if (options.signal.aborted) {
           request.destroy(abortError);
@@ -1681,20 +1673,19 @@ let __quenchHttpModule;
           options.signal.addEventListener(
             "abort",
             request.__signalAbortListener,
-            { once: true },
+            { once: true }
           );
         }
       }
       request.agent = options.agent || globalAgent;
       request.url = pathname || "/";
       request.path = request.url;
-      request.protocol = context?.constructor?.name === "NodeHttpServer"
-        ? "http:"
-        : "http:";
+      request.protocol =
+        context?.constructor?.name === "NodeHttpServer" ? "http:" : "http:";
       const optionHostname = Object.prototype.hasOwnProperty.call(
-          options,
-          "hostname",
-        )
+        options,
+        "hostname"
+      )
         ? options.hostname
         : undefined;
       const optionHost = Object.prototype.hasOwnProperty.call(options, "host")
@@ -1731,7 +1722,7 @@ let __quenchHttpModule;
           this.writable = false;
           queueMicrotask(() => this.emit("close"));
           return this;
-        },
+        }
       });
       if (options.timeout !== undefined) {
         request.socket.setTimeout(options.timeout);
@@ -1760,7 +1751,7 @@ let __quenchHttpModule;
         Array.isArray(options.headers.host)
       ) {
         const error = new TypeError(
-          'The "host" header must be a string [ERR_INVALID_ARG_TYPE]',
+          'The "host" header must be a string [ERR_INVALID_ARG_TYPE]'
         );
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
@@ -1773,9 +1764,10 @@ let __quenchHttpModule;
           const normalized = Array.isArray(value)
             ? value.join(String(name).toLowerCase() === "cookie" ? "; " : ", ")
             : value;
-          request.headers[key] = request.headers[key] && key === "cookie"
-            ? `${request.headers[key]}; ${normalized}`
-            : normalized;
+          request.headers[key] =
+            request.headers[key] && key === "cookie"
+              ? `${request.headers[key]}; ${normalized}`
+              : normalized;
           request.rawHeaders.push(String(name), String(value));
         }
       } else if (options.headers && typeof options.headers === "object") {
@@ -1797,11 +1789,9 @@ let __quenchHttpModule;
         !Array.isArray(options.headers) &&
         !request.headers.authorization
       ) {
-        request.headers.authorization = `Basic ${
-          NodeBuffer.from(
-            String(options.auth),
-          ).toString("base64")
-        }`;
+        request.headers.authorization = `Basic ${NodeBuffer.from(
+          String(options.auth)
+        ).toString("base64")}`;
       }
       request.setHeader = (name, value) => {
         request.headers[String(name).toLowerCase()] = value;
@@ -1814,7 +1804,7 @@ let __quenchHttpModule;
       request.hasHeader = (name) =>
         Object.prototype.hasOwnProperty.call(
           request.headers,
-          String(name).toLowerCase(),
+          String(name).toLowerCase()
         );
       request.flushHeaders = () => request;
       request.setNoDelay = (noDelay = true) => {
@@ -1846,18 +1836,16 @@ let __quenchHttpModule;
       request.setTimeout = (msecs, callback) => {
         if (typeof msecs !== "number") {
           const error = new TypeError(
-            `The "msecs" argument must be of type number. Received type ${typeof msecs}`,
+            `The "msecs" argument must be of type number. Received type ${typeof msecs}`
           );
           error.code = "ERR_INVALID_ARG_TYPE";
           throw error;
         }
         if (!Number.isFinite(msecs) || msecs < 0) {
           const error = new RangeError(
-            `The value of "msecs" is out of range. It must be a non-negative finite number. Received ${
-              String(
-                msecs,
-              )
-            }`,
+            `The value of "msecs" is out of range. It must be a non-negative finite number. Received ${String(
+              msecs
+            )}`
           );
           error.code = "ERR_OUT_OF_RANGE";
           throw error;
@@ -1891,9 +1879,8 @@ let __quenchHttpModule;
       };
       request.write = (chunk, encoding, callback) => {
         if (typeof encoding === "function") callback = encoding;
-        const value = chunk instanceof NodeBuffer
-          ? chunk.toString()
-          : String(chunk);
+        const value =
+          chunk instanceof NodeBuffer ? chunk.toString() : String(chunk);
         (request._bodyChunks ||= []).push(value);
         request._body = `${request._body || ""}${value}`;
         request._wroteChunk = true;
@@ -1912,22 +1899,23 @@ let __quenchHttpModule;
       let agentSocketListed = false;
       let agentWaiter;
       if (agentName && request.agent) {
-        const active = request.agent.__quenchActiveRequests ||
+        const active =
+          request.agent.__quenchActiveRequests ||
           (request.agent.__quenchActiveRequests = Object.create(null));
         const activeCount = active[agentName] || 0;
         const totalActive = request.agent.totalSocketCount || 0;
-        const hostLimitReached = Number.isFinite(request.agent.maxSockets) &&
+        const hostLimitReached =
+          Number.isFinite(request.agent.maxSockets) &&
           activeCount >= request.agent.maxSockets;
         const totalLimitReached =
           Number.isFinite(request.agent.maxTotalSockets) &&
           totalActive >= request.agent.maxTotalSockets;
-        if (
-          hostLimitReached || totalLimitReached
-        ) {
+        if (hostLimitReached || totalLimitReached) {
           (request.agent.requests[agentName] ||= []).push(request);
           const wait = new Promise((resolve) => {
             if (hostLimitReached) {
-              const waiters = request.agent.__quenchAgentWaiters ||
+              const waiters =
+                request.agent.__quenchAgentWaiters ||
                 (request.agent.__quenchAgentWaiters = Object.create(null));
               (waiters[agentName] ||= []).push(resolve);
             } else {
@@ -1949,9 +1937,8 @@ let __quenchHttpModule;
       if (agentName) {
         const pool = request.agent.freeSockets?.[agentName];
         while (pool?.length && !reusableSocket) {
-          const candidate = request.agent.scheduling === "fifo"
-            ? pool.shift()
-            : pool.pop();
+          const candidate =
+            request.agent.scheduling === "fifo" ? pool.shift() : pool.pop();
           if (!candidate.destroyed) reusableSocket = candidate;
         }
       }
@@ -1990,7 +1977,7 @@ let __quenchHttpModule;
           request.agent.removeSocket(response.socket, options);
           request.agent.totalSocketCount = Math.max(
             0,
-            (request.agent.totalSocketCount || 1) - 1,
+            (request.agent.totalSocketCount || 1) - 1
           );
           if (!request.agent.keepAlive) {
             request.agent.emit("free", response.socket, options);
@@ -2026,7 +2013,8 @@ let __quenchHttpModule;
             (request.agent.totalSocketCount || 0) + 1;
         }
         if (request.aborted) return;
-        const customAgentConnection = request.agent &&
+        const customAgentConnection =
+          request.agent &&
           typeof request.agent.createConnection === "function" &&
           request.agent.createConnection !==
             __quenchDefaultHttpCreateConnection;
@@ -2039,7 +2027,7 @@ let __quenchHttpModule;
                 request.destroyed = true;
                 request.emit("error", error);
                 request.emit("close");
-              },
+              }
             );
             if (connection && typeof connection.on === "function") {
               request.socket = connection;
@@ -2047,9 +2035,10 @@ let __quenchHttpModule;
               let raw = "";
               let delivered = false;
               connection.on("data", (chunk) => {
-                raw += chunk instanceof NodeBuffer
-                  ? chunk.toString()
-                  : String(chunk);
+                raw +=
+                  chunk instanceof NodeBuffer
+                    ? chunk.toString()
+                    : String(chunk);
                 if (delivered || !raw.includes("\r\n\r\n")) return;
                 const body = raw.slice(raw.indexOf("\r\n\r\n") + 4);
                 const match = body.match(/^([0-9a-f]+)\r\n([\s\S]*)/i);
@@ -2093,7 +2082,7 @@ let __quenchHttpModule;
           request.headers["content-length"] === undefined
         ) {
           request.headers["content-length"] = String(
-            (request._body || "").length,
+            (request._body || "").length
           );
         }
         const serverRequest = new NodeIncomingMessage();
@@ -2162,7 +2151,7 @@ let __quenchHttpModule;
               const value = response.headers[name];
               if (typeof value === "string") {
                 response.headers[name] = value.split(
-                  name === "cookie" ? "; " : ", ",
+                  name === "cookie" ? "; " : ", "
                 )[0];
               }
             }
@@ -2212,9 +2201,8 @@ let __quenchHttpModule;
           callback = encoding;
         }
         if (chunk !== undefined) {
-          const value = chunk instanceof NodeBuffer
-            ? chunk.toString()
-            : String(chunk);
+          const value =
+            chunk instanceof NodeBuffer ? chunk.toString() : String(chunk);
           (request._bodyChunks ||= []).push(value);
           request._body = `${request._body || ""}${value}`;
         }
@@ -2260,9 +2248,10 @@ let __quenchHttpModule;
           }
         }
         if (values.length > 1) {
-          request.headers[name] = context?.joinDuplicateHeaders === false
-            ? values[0]
-            : values.join(name === "cookie" ? "; " : ", ");
+          request.headers[name] =
+            context?.joinDuplicateHeaders === false
+              ? values[0]
+              : values.join(name === "cookie" ? "; " : ", ");
         }
         if (values.length === 1 && request.headers[name] === undefined) {
           request.headers[name] = values[0];
@@ -2306,7 +2295,7 @@ let __quenchHttpModule;
     const validateHttpServerInteger = (value, name) => {
       if (typeof value !== "number") {
         const error = new TypeError(
-          `The "${name}" argument must be of type number`,
+          `The "${name}" argument must be of type number`
         );
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
@@ -2332,7 +2321,7 @@ let __quenchHttpModule;
           options = {};
         } else if (typeof options !== "object" || Array.isArray(options)) {
           const error = new TypeError(
-            'The "options" argument must be of type object',
+            'The "options" argument must be of type object'
           );
           error.code = "ERR_INVALID_ARG_TYPE";
           throw error;
@@ -2340,12 +2329,12 @@ let __quenchHttpModule;
         const requestTimeout = httpServerOptionInteger(
           options,
           "requestTimeout",
-          300000,
+          300000
         );
         const headersTimeout = httpServerOptionInteger(
           options,
           "headersTimeout",
-          Math.min(60000, requestTimeout),
+          Math.min(60000, requestTimeout)
         );
         if (
           requestTimeout > 0 &&
@@ -2353,7 +2342,7 @@ let __quenchHttpModule;
           headersTimeout > requestTimeout
         ) {
           const error = new RangeError(
-            'The value of "headersTimeout" is out of range',
+            'The value of "headersTimeout" is out of range'
           );
           error.code = "ERR_OUT_OF_RANGE";
           throw error;
@@ -2368,17 +2357,17 @@ let __quenchHttpModule;
         this.keepAliveTimeout = httpServerOptionInteger(
           options,
           "keepAliveTimeout",
-          5000,
+          5000
         );
         this.keepAliveTimeoutBuffer = httpServerOptionInteger(
           options,
           "keepAliveTimeoutBuffer",
-          1000,
+          1000
         );
         this.connectionsCheckingInterval = httpServerOptionInteger(
           options,
           "connectionsCheckingInterval",
-          30000,
+          30000
         );
         this.highWaterMark = options.highWaterMark ?? 65536;
         this.httpAllowHalfOpen = false;
@@ -2386,7 +2375,7 @@ let __quenchHttpModule;
         this.maxHeadersCount = null;
         this.maxRequestsPerSocket = 0;
         this[globalThis.__nodeHttpConnectionsCheckingInterval] = {
-          _destroyed: false,
+          _destroyed: false
         };
         this.__quenchRawConnection = (socket) => {
           socket.__quenchRawHttp = true;
@@ -2421,7 +2410,7 @@ let __quenchHttpModule;
                   if (lineEnd < 0) return;
                   const size = parseInt(
                     pending.slice(cursor, lineEnd).split(";", 1)[0],
-                    16,
+                    16
                   );
                   if (!Number.isFinite(size)) return;
                   const chunkStart = lineEnd + 2;
@@ -2435,11 +2424,9 @@ let __quenchHttpModule;
                     } else {
                       const trailerEnd = pending.indexOf("\r\n\r\n", cursor);
                       if (trailerEnd < 0) return;
-                      for (
-                        const trailer of pending
-                          .slice(cursor, trailerEnd)
-                          .split("\r\n")
-                      ) {
+                      for (const trailer of pending
+                        .slice(cursor, trailerEnd)
+                        .split("\r\n")) {
                         const separator = trailer.indexOf(":");
                         if (separator > 0) {
                           trailers[trailer.slice(0, separator).toLowerCase()] =
@@ -2503,13 +2490,14 @@ let __quenchHttpModule;
           callback = host;
           host = "127.0.0.1";
         }
-        const numericPort = typeof port === "number" && port !== 0
-          ? port
-          : 40000 + Math.floor(Math.random() * 5000);
+        const numericPort =
+          typeof port === "number" && port !== 0
+            ? port
+            : 40000 + Math.floor(Math.random() * 5000);
         const existing = servers.get(String(numericPort));
         if (existing && existing !== this) {
           const error = new Error(
-            `listen EADDRINUSE: address already in use :::${numericPort}`,
+            `listen EADDRINUSE: address already in use :::${numericPort}`
           );
           error.code = "EADDRINUSE";
           error.errno = -98;
@@ -2536,7 +2524,7 @@ let __quenchHttpModule;
           address: String(host || "127.0.0.1"),
           addressType: 4,
           fd: undefined,
-          port: numericPort,
+          port: numericPort
         });
         queueMicrotask(() => this.emit("listening"));
         return this;
@@ -2547,7 +2535,7 @@ let __quenchHttpModule;
       address() {
         return {
           port: this._port || 40123,
-          address: this._address || "127.0.0.1",
+          address: this._address || "127.0.0.1"
         };
       }
       unref() {
@@ -2564,16 +2552,14 @@ let __quenchHttpModule;
             this.__quenchRefedHandle = false;
             globalThis.__quenchRefedHandles = Math.max(
               0,
-              (globalThis.__quenchRefedHandles || 0) - 1,
+              (globalThis.__quenchRefedHandles || 0) - 1
             );
           }
         }
         if (closingPort !== undefined && globalThis.__nodeHttpGlobalAgent) {
-          for (
-            const sockets of Object.values(
-              globalThis.__nodeHttpGlobalAgent.freeSockets || {},
-            )
-          ) {
+          for (const sockets of Object.values(
+            globalThis.__nodeHttpGlobalAgent.freeSockets || {}
+          )) {
             for (const socket of [...sockets]) {
               if (socket.__quenchServerPort === closingPort) socket.destroy?.();
             }
@@ -2587,8 +2573,8 @@ let __quenchHttpModule;
               wasListening
                 ? undefined
                 : Object.assign(new Error("Server is not running."), {
-                  code: "ERR_SERVER_NOT_RUNNING",
-                }),
+                    code: "ERR_SERVER_NOT_RUNNING"
+                  })
             ]);
           });
         }
@@ -2622,11 +2608,12 @@ let __quenchHttpModule;
           maxTotalSockets !== undefined &&
           typeof maxTotalSockets !== "number"
         ) {
-          const received = typeof maxTotalSockets === "string"
-            ? `string ('${maxTotalSockets}')`
-            : `${typeof maxTotalSockets} (${String(maxTotalSockets)})`;
+          const received =
+            typeof maxTotalSockets === "string"
+              ? `string ('${maxTotalSockets}')`
+              : `${typeof maxTotalSockets} (${String(maxTotalSockets)})`;
           const error = new TypeError(
-            `The "maxTotalSockets" argument must be of type number. Received type ${received}`,
+            `The "maxTotalSockets" argument must be of type number. Received type ${received}`
           );
           error.code = "ERR_INVALID_ARG_TYPE";
           throw error;
@@ -2637,7 +2624,7 @@ let __quenchHttpModule;
           (Number.isNaN(maxTotalSockets) || maxTotalSockets <= 0)
         ) {
           const error = new RangeError(
-            'The "maxTotalSockets" argument must be greater than 0',
+            'The "maxTotalSockets" argument must be greater than 0'
           );
           error.code = "ERR_OUT_OF_RANGE";
           throw error;
@@ -2650,8 +2637,8 @@ let __quenchHttpModule;
         this.keepAliveMsecs = options.keepAliveMsecs ?? 1000;
         this.agentKeepAliveTimeoutBuffer =
           typeof options.agentKeepAliveTimeoutBuffer === "number" &&
-            Number.isFinite(options.agentKeepAliveTimeoutBuffer) &&
-            options.agentKeepAliveTimeoutBuffer >= 0
+          Number.isFinite(options.agentKeepAliveTimeoutBuffer) &&
+          options.agentKeepAliveTimeoutBuffer >= 0
             ? options.agentKeepAliveTimeoutBuffer
             : 1000;
         this.defaultPort = 80;
@@ -2664,7 +2651,7 @@ let __quenchHttpModule;
         if (this.scheduling !== "fifo" && this.scheduling !== "lifo") {
           const error = new TypeError(
             "The argument 'scheduling' must be one of: 'fifo', 'lifo'. " +
-              `Received '${this.scheduling}'`,
+              `Received '${this.scheduling}'`
           );
           error.code = "ERR_INVALID_ARG_VALUE";
           throw error;
@@ -2688,13 +2675,11 @@ let __quenchHttpModule;
             }
             return;
           }
-
           const message = socket._httpMessage;
           if (!message?.shouldKeepAlive || !this.keepAlive) {
             socket.destroy?.();
             return;
           }
-
           const freeSockets = this.freeSockets[name] || [];
           const activeCount = this.sockets[name]?.length || 0;
           const socketCount = freeSockets.length + activeCount;
@@ -2707,7 +2692,6 @@ let __quenchHttpModule;
             socket.destroy?.();
             return;
           }
-
           this.freeSockets[name] = freeSockets;
           socket.__quenchAgent = this;
           socket.__quenchAgentName = name;
@@ -2730,8 +2714,8 @@ let __quenchHttpModule;
       addRequest(request, options) {
         const name = this.getName(options || request);
         const pool = this.freeSockets[name];
-        const socket = pool &&
-          (this.scheduling === "fifo" ? pool.shift() : pool.pop());
+        const socket =
+          pool && (this.scheduling === "fifo" ? pool.shift() : pool.pop());
         if (socket) {
           request.reusedSocket = true;
           request.socket = socket;
@@ -2776,12 +2760,12 @@ let __quenchHttpModule;
           requestCount: 0,
           freeSockets: {},
           sockets: {},
-          requests: {},
+          requests: {}
         };
       }
       createConnection() {
         const error = new Error(
-          "HTTP transport is not supported by quench-node",
+          "HTTP transport is not supported by quench-node"
         );
         error.code = "ENOTSUP";
         throw error;
@@ -2791,13 +2775,13 @@ let __quenchHttpModule;
         socket?.unref?.();
         let agentTimeout = this.options.timeout || 0;
         let canKeepSocketAlive = true;
-        const keepAliveHint = socket?._httpMessage?.res?.headers
-          ?.["keep-alive"];
+        const keepAliveHint =
+          socket?._httpMessage?.res?.headers?.["keep-alive"];
         const hint = /timeout=(\d+)/.exec(keepAliveHint || "")?.[1];
         if (hint) {
           const serverHintTimeout = Math.max(
             0,
-            Number.parseInt(hint, 10) * 1000 - this.agentKeepAliveTimeoutBuffer,
+            Number.parseInt(hint, 10) * 1000 - this.agentKeepAliveTimeoutBuffer
           );
           if (serverHintTimeout === 0) canKeepSocketAlive = false;
           else if (serverHintTimeout < agentTimeout) {
@@ -2875,7 +2859,7 @@ let __quenchHttpModule;
             /[^\u0021-\u00ff]/.test(requestOptions.path)
           ) {
             const error = new TypeError(
-              "Request path contains unescaped characters",
+              "Request path contains unescaped characters"
             );
             error.code = "ERR_UNESCAPED_CHARACTERS";
             throw error;
@@ -2891,7 +2875,7 @@ let __quenchHttpModule;
           `${url.pathname}${url.search}`,
           callback,
           requestOptions,
-          server,
+          server
         );
         if (requestOptions.timeout !== undefined) {
           request.setTimeout(requestOptions.timeout);
@@ -2907,7 +2891,7 @@ let __quenchHttpModule;
             hostname: target.hostname,
             port: target.port || (target.protocol === "https:" ? 443 : 80),
             path: `${target.pathname}${target.search}`,
-            headers: target.headers || extra.headers,
+            headers: target.headers || extra.headers
           };
           target = `http://${options.hostname}:${options.port}${options.path}`;
         }
@@ -2927,11 +2911,12 @@ let __quenchHttpModule;
               value !== null &&
               typeof value !== "string"
             ) {
-              const received = value && typeof value === "object"
-                ? `an instance of ${value.constructor?.name || "Object"}`
-                : `type ${typeof value} (${String(value)})`;
+              const received =
+                value && typeof value === "object"
+                  ? `an instance of ${value.constructor?.name || "Object"}`
+                  : `type ${typeof value} (${String(value)})`;
               const error = new TypeError(
-                `The "options.${name}" property must be of type string or one of undefined or null. Received ${received}`,
+                `The "options.${name}" property must be of type string or one of undefined or null. Received ${received}`
               );
               error.code = "ERR_INVALID_ARG_TYPE";
               throw error;
@@ -2942,7 +2927,7 @@ let __quenchHttpModule;
             /[^\u0021-\u00ff]/.test(options.path)
           ) {
             const error = new TypeError(
-              "Request path contains unescaped characters",
+              "Request path contains unescaped characters"
             );
             error.code = "ERR_UNESCAPED_CHARACTERS";
             throw error;
@@ -2953,19 +2938,20 @@ let __quenchHttpModule;
             !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(options.method)
           ) {
             const error = new TypeError(
-              `Method must be a valid HTTP token ["${String(options.method)}"]`,
+              `Method must be a valid HTTP token ["${String(options.method)}"]`
             );
             error.code = "ERR_INVALID_HTTP_TOKEN";
             throw error;
           }
-          const effectivePort = options.port ??
+          const effectivePort =
+            options.port ??
             options.defaultPort ??
             options.agent?.defaultPort ??
             80;
           const hostname = Object.prototype.hasOwnProperty.call(
-              options,
-              "hostname",
-            )
+            options,
+            "hostname"
+          )
             ? options.hostname
             : undefined;
           const host = Object.prototype.hasOwnProperty.call(options, "host")
@@ -2979,8 +2965,7 @@ let __quenchHttpModule;
             typeof options.timeout !== "number"
           ) {
             const error = new TypeError(
-              `The "timeout" argument must be of type number. Received type ${typeof options
-                .timeout}`,
+              `The "timeout" argument must be of type number. Received type ${typeof options.timeout}`
             );
             error.code = "ERR_INVALID_ARG_TYPE";
             throw error;
@@ -2993,11 +2978,11 @@ let __quenchHttpModule;
           `${url.pathname}${url.search}`,
           callback,
           options || {},
-          server,
+          server
         );
         if (options?.timeout !== undefined) request.setTimeout(options.timeout);
         return request;
-      },
+      }
     };
     globalThis.__nodeHttp = http;
     __quenchHttpModule = http;

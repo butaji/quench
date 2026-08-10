@@ -5,8 +5,8 @@ class NodeReadable extends NodeEventEmitter {
     this.closed = false;
     this.readable = true;
     this.readableAborted = false;
-    this.readableObjectMode = options.readableObjectMode ??
-      options.objectMode === true;
+    this.readableObjectMode =
+      options.readableObjectMode ?? options.objectMode === true;
     this._paused = false;
     this.readableFlowing = null;
     this.readableEnded = false;
@@ -45,17 +45,17 @@ class NodeReadable extends NodeEventEmitter {
       awaitDrainWriters: null,
       pipes: [],
       errorEmitted: false,
-      errored: null,
+      errored: null
     };
     Object.defineProperty(this._readableState, "length", {
       configurable: true,
       enumerable: true,
-      get: () => this.readableLength,
+      get: () => this.readableLength
     });
     this.errored = null;
     if (typeof options.read === "function") this._read = options.read;
-    this.readableHighWaterMark = options.readableHighWaterMark ??
-      options.highWaterMark ?? 16 * 1024;
+    this.readableHighWaterMark =
+      options.readableHighWaterMark ?? options.highWaterMark ?? 16 * 1024;
     if (this._autoDestroy && !options.__quenchCompatConstruct) {
       const autoDestroyErrorListener = () => {
         if (!this.destroyed) this.destroy();
@@ -113,8 +113,8 @@ class NodeReadable extends NodeEventEmitter {
       return this;
     }
     this.destroyed = true;
-    this.readableAborted = !this.readableEnded ||
-      (this._ended && !this.listenerCount("end"));
+    this.readableAborted =
+      !this.readableEnded || (this._ended && !this.listenerCount("end"));
     this.readable = false;
     const hasError = error !== undefined && error !== null;
     if (this._destroy && !this._destroying) {
@@ -168,7 +168,7 @@ class NodeReadable extends NodeEventEmitter {
     const stream = new NodeReadable({
       ...options,
       signal: undefined,
-      objectMode: options.objectMode !== false,
+      objectMode: options.objectMode !== false
     });
     const asyncIterator = iterable?.[Symbol.asyncIterator]?.();
     if (asyncIterator) {
@@ -258,9 +258,10 @@ class NodeReadable extends NodeEventEmitter {
     };
     if (signal?.addEventListener) {
       const abort = () => {
-        const error = signal.reason ||
+        const error =
+          signal.reason ||
           Object.assign(new Error("The operation was aborted"), {
-            name: "AbortError",
+            name: "AbortError"
           });
         stream.errored = error;
         stream._readableState.errored = error;
@@ -282,7 +283,7 @@ class NodeReadable extends NodeEventEmitter {
       this._readableState.awaitDrainWriters = new Set(
         this._readableState.awaitDrainWriters
           ? [this._readableState.awaitDrainWriters]
-          : [],
+          : []
       );
     }
     this.on("data", (chunk) => {
@@ -291,7 +292,7 @@ class NodeReadable extends NodeEventEmitter {
         if (this._readableState.pipes.length > 1) {
           if (!(waiting instanceof Set)) {
             this._readableState.awaitDrainWriters = new Set(
-              waiting ? [waiting] : [],
+              waiting ? [waiting] : []
             );
           }
           this._readableState.awaitDrainWriters.add(destination);
@@ -300,7 +301,7 @@ class NodeReadable extends NodeEventEmitter {
         } else if (waiting !== destination && !waiting.has?.(destination)) {
           this._readableState.awaitDrainWriters = new Set([
             ...(waiting instanceof Set ? waiting : [waiting]),
-            destination,
+            destination
           ]);
         }
         this.pause();
@@ -467,11 +468,10 @@ class NodeReadable extends NodeEventEmitter {
     }
     return __nodeReadableFinishRead(this, chunk);
   }
-
   [Symbol.for("Stream.toAsyncStreamable")]() {
     return {
       stream: this,
-      [Symbol.asyncIterator]: () => this[Symbol.asyncIterator](),
+      [Symbol.asyncIterator]: () => this[Symbol.asyncIterator]()
     };
   }
 }
@@ -481,6 +481,6 @@ Object.defineProperty(NodeReadable.prototype, "readableDidRead", {
   configurable: true,
   get() {
     return this._readableState?.dataEmitted === true;
-  },
+  }
 });
 NodeReadable.prototype.destroyed = false;

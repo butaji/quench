@@ -14,8 +14,8 @@ const __quenchFetchResponse = (response, resolve, reject, cleanup) => {
       new globalThis.Response(chunks.map(String).join(""), {
         status: response.statusCode,
         statusText: response.statusMessage,
-        headers: response.headers,
-      }),
+        headers: response.headers
+      })
     );
   });
   response.once("error", (error) => {
@@ -30,10 +30,8 @@ const __quenchFetchSend = (http, options, request, signal, cleanup, reject) => {
     cleanup();
     reject(__quenchFetchAbortError(signal.reason));
   };
-  requestHandle = http.request(
-    options,
-    (response) =>
-      __quenchFetchResponse(response, options.resolve, reject, cleanup),
+  requestHandle = http.request(options, (response) =>
+    __quenchFetchResponse(response, options.resolve, reject, cleanup)
   );
   requestHandle.once("error", (error) => {
     cleanup();
@@ -43,7 +41,6 @@ const __quenchFetchSend = (http, options, request, signal, cleanup, reject) => {
   if (request.body != null) requestHandle.write(request.body);
   requestHandle.end();
 };
-
 Object.defineProperty(globalThis, "fetch", {
   value: (input, init = {}) => {
     const request = new globalThis.Request(input, init);
@@ -60,7 +57,7 @@ Object.defineProperty(globalThis, "fetch", {
         port: target.port || undefined,
         path: `${target.pathname || "/"}${target.search}`,
         method: request.method,
-        headers: Object.fromEntries(request.headers),
+        headers: Object.fromEntries(request.headers)
       };
       const cleanup = () => {};
       options.resolve = resolve;
@@ -74,5 +71,5 @@ Object.defineProperty(globalThis, "fetch", {
   },
   configurable: true,
   writable: true,
-  enumerable: false,
+  enumerable: false
 });
