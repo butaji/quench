@@ -93,6 +93,7 @@ fn run_property_op(registers: &mut Vec<Value>, op: &Op) -> Result<bool, VmError>
     if !matches!(
         op,
         GetProperty { .. }
+            | GetPrivate { .. }
             | GetSuperProperty { .. }
             | ResolveGlobal { .. }
             | GetPropertyDynamic { .. }
@@ -292,6 +293,7 @@ fn run_get_set_property(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmErr
     use Op::*;
     match op {
         GetProperty { .. } => crate::properties::execute_get(registers, op)?,
+        GetPrivate { .. } => crate::private_slots::execute_get(registers, op)?,
         GetSuperProperty { .. } => crate::super_scope::execute_get(registers, op)?,
         ResolveGlobal { .. } => crate::with_scope::execute_resolve_global(registers, op)?,
         GetPropertyDynamic { .. } => crate::properties::execute_get_dynamic(registers, op)?,
@@ -314,6 +316,7 @@ fn run_get_set_property(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmErr
         SetProperty { .. } | SetPropertyDynamic { .. } => {
             crate::properties::execute_set_property(registers, op)?
         }
+        SetPrivate { .. } => crate::private_slots::execute_set(registers, op)?,
         DefineProperty { .. } => crate::property_define::execute(registers, op)?,
         CopyDataProperties { .. } => {
             crate::properties::execute_copy_data_properties(registers, op)?

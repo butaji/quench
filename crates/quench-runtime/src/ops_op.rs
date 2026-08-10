@@ -103,6 +103,11 @@ pub enum Op {
         object: u16,
         key: String,
     },
+    GetPrivate {
+        dst: u16,
+        object: u16,
+        name: crate::facts::PrivateNameId,
+    },
     GetSuperProperty {
         dst: u16,
         key: String,
@@ -170,6 +175,11 @@ pub enum Op {
     SetProperty {
         object: u16,
         key: String,
+        src: u16,
+    },
+    SetPrivate {
+        object: u16,
+        name: crate::facts::PrivateNameId,
         src: u16,
     },
     SetPropertyDynamic {

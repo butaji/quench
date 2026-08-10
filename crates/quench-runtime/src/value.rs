@@ -2,8 +2,9 @@
 
 use std::{cell::RefCell, collections::VecDeque, rc::Rc};
 
-use crate::ops::{
-    Builtin, Constant, FunctionKind, FunctionStrictness, HostCapabilityRef, Op, RealmId,
+use crate::{
+    facts::PrivateNameId,
+    ops::{Builtin, Constant, FunctionKind, FunctionStrictness, HostCapabilityRef, Op, RealmId},
 };
 
 pub(crate) mod error {
@@ -403,12 +404,23 @@ pub struct InstanceFieldPlan {
     pub initializer: InstanceFieldInitializer,
 }
 
+/// An unforgeable private element stored outside ordinary property keys.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PrivateSlot {
+    Data(Value),
+    Accessor {
+        get: Option<Value>,
+        set: Option<Value>,
+    },
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionValue {
     pub body: Vec<Op>,
     pub params: u16,
     pub captures: Rc<crate::environment::Environment>,
     pub properties: Rc<RefCell<Vec<(String, Value)>>>,
+    pub private_slots: Rc<RefCell<Vec<(PrivateNameId, PrivateSlot)>>>,
     pub instance_fields: Rc<RefCell<Vec<InstanceFieldPlan>>>,
     pub kind: FunctionKind,
     pub strictness: FunctionStrictness,
