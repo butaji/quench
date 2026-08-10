@@ -983,7 +983,14 @@ fn run_simple_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Option<Va
         LoadLocal { dst, slot } => copy_register(registers, *dst, *slot)?,
         MakeArray { .. } => run_make_array(registers, op)?,
         MakeObject { .. } => run_make_object(registers, op)?,
-        MakeBuiltin { dst, builtin } => write_value(registers, *dst, Value::Builtin(*builtin)),
+        MakeBuiltin { dst, builtin } => write_value(
+            registers,
+            *dst,
+            match builtin {
+                Builtin::HostCapability(kind) => current_host_capability(*kind),
+                _ => Value::Builtin(*builtin),
+            },
+        ),
         GetProperty { .. }
         | GetPropertyDynamic { .. }
         | SetProperty { .. }
