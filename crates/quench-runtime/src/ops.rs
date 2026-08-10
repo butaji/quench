@@ -201,6 +201,7 @@ pub struct HostCapabilityRef {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Builtin {
+    HostCapability(HostCapabilityKind),
     Array,
     ArrayBuffer,
     ArrayBufferIsView,

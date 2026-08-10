@@ -944,6 +944,7 @@ pub enum Value {
     BoundFunction(Rc<BoundFunctionValue>),
     Proxy(Rc<ProxyValue>),
     Promise(Rc<PromiseData>),
+    HostCapability(Rc<HostCapabilityValue>),
     Map(Rc<MapData>),
     Set(Rc<SetData>),
     Null,
