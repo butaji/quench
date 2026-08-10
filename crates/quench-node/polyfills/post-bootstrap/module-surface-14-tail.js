@@ -25,7 +25,7 @@ Object.defineProperties(__quenchKeyObject.prototype, {
     configurable: true,
     get() {
       return __quenchCryptoKeyObjectData.get(this)?.source;
-    },
+    }
   },
   dhParams: {
     configurable: true,
@@ -35,12 +35,12 @@ Object.defineProperties(__quenchKeyObject.prototype, {
     set(value) {
       const data = __quenchCryptoKeyObjectData.get(this);
       if (data) data.dhParams = value;
-    },
-  },
+    }
+  }
 });
 Object.defineProperty(__quenchKeyObject.prototype, "type", {
   configurable: true,
-  get: Object.getOwnPropertyDescriptor(__quenchKeyObject.prototype, "type").get,
+  get: Object.getOwnPropertyDescriptor(__quenchKeyObject.prototype, "type").get
 });
 Object.defineProperties(__quenchKeyObject.prototype, {
   symmetricKeySize: {
@@ -53,9 +53,14 @@ Object.defineProperties(__quenchKeyObject.prototype, {
         __quenchCryptoKeyObjectInvalidThis();
       }
       return __quenchCryptoKeyObjectData.get(this).size;
-    },
-  },
-  asymmetricKeyType: {
+    }
+  }
+});
+for (const [name, field] of [
+  ["asymmetricKeyType", "asymmetricType"],
+  ["asymmetricKeyDetails", "details"]
+])
+  Object.defineProperty(__quenchKeyObject.prototype, name, {
     configurable: true,
     get() {
       if (
@@ -64,46 +69,31 @@ Object.defineProperties(__quenchKeyObject.prototype, {
       ) {
         __quenchCryptoKeyObjectInvalidThis();
       }
-      return __quenchCryptoKeyObjectData.get(this).asymmetricType;
-    },
-  },
-  asymmetricKeyDetails: {
-    configurable: true,
-    get() {
-      if (
-        !__quenchCryptoKeyObjectBrand.has(this) ||
-        __quenchCryptoKeyObjectData.get(this).type === "secret"
-      ) {
-        __quenchCryptoKeyObjectInvalidThis();
-      }
-      return __quenchCryptoKeyObjectData.get(this).details;
-    },
-  },
-});
-Object.defineProperties(__quenchAsymmetricKeyObject.prototype, {
-  asymmetricKeyType: Object.getOwnPropertyDescriptor(
-    __quenchKeyObject.prototype,
-    "asymmetricKeyType",
-  ),
-  asymmetricKeyDetails: Object.getOwnPropertyDescriptor(
-    __quenchKeyObject.prototype,
-    "asymmetricKeyDetails",
-  ),
-});
+      return __quenchCryptoKeyObjectData.get(this)[field];
+    }
+  });
+for (const name of ["asymmetricKeyType", "asymmetricKeyDetails"])
+  Object.defineProperty(
+    __quenchAsymmetricKeyObject.prototype,
+    name,
+    Object.getOwnPropertyDescriptor(__quenchKeyObject.prototype, name)
+  );
 const __quenchCreateKeyObject = (type, source, exportValue) => {
-  const prototype = type === "secret"
-    ? __quenchKeyObject.prototype
-    : __quenchAsymmetricKeyObject.prototype;
+  const prototype =
+    type === "secret"
+      ? __quenchKeyObject.prototype
+      : __quenchAsymmetricKeyObject.prototype;
   const key = Object.create(prototype);
   __quenchCryptoKeyObjectData.set(key, {
     type,
     source,
     exportValue: () => exportValue,
-    size: type === "secret"
-      ? NodeBuffer.from(source?.key || source).byteLength
-      : undefined,
+    size:
+      type === "secret"
+        ? NodeBuffer.from(source?.key || source).byteLength
+        : undefined,
     asymmetricType: type === "private" || type === "public" ? "rsa" : undefined,
-    details: type === "private" || type === "public" ? {} : undefined,
+    details: type === "private" || type === "public" ? {} : undefined
   });
   __quenchCryptoKeyObjectBrand.add(key);
   return key;
@@ -111,16 +101,14 @@ const __quenchCreateKeyObject = (type, source, exportValue) => {
 const __quenchEncodedKey = (label, size, cipher) => {
   const header = `-----BEGIN ${label}-----\n`;
   const encryption = cipher
-    ? `Proc-Type: 4,ENCRYPTED\nDEK-Info: ${
-      String(
-        cipher,
-      ).toUpperCase()
-    },0000000000000000\n\n`
+    ? `Proc-Type: 4,ENCRYPTED\nDEK-Info: ${String(
+        cipher
+      ).toUpperCase()},0000000000000000\n\n`
     : "";
   const footer = `\n-----END ${label}-----`;
   const bodySize = Math.max(
     1,
-    size - header.length - encryption.length - footer.length - 1,
+    size - header.length - encryption.length - footer.length - 1
   );
   const body = "A"
     .repeat(bodySize)
@@ -132,34 +120,36 @@ const __quenchEncodedPair = (options = {}, algorithm = "rsa") => {
   const publicType = options.publicKeyEncoding?.type;
   const publicFormat = options.publicKeyEncoding?.format;
   const publicLabel = publicType === "spki" ? "PUBLIC KEY" : "RSA PUBLIC KEY";
-  const publicSize = algorithm === "dsa"
-    ? 1194
-    : publicType === "pkcs1"
-    ? 74
-    : 162;
+  const publicSize =
+    algorithm === "dsa" ? 1194 : publicType === "pkcs1" ? 74 : 162;
   const privateEncoding = options.privateKeyEncoding;
-  const privateLabel = privateEncoding?.type === "sec1"
-    ? "EC PRIVATE KEY"
-    : privateEncoding?.type === "pkcs1"
-    ? "RSA PRIVATE KEY"
-    : "PRIVATE KEY";
+  const privateLabel =
+    privateEncoding?.type === "sec1"
+      ? "EC PRIVATE KEY"
+      : privateEncoding?.type === "pkcs1"
+        ? "RSA PRIVATE KEY"
+        : "PRIVATE KEY";
   const privateValue = __quenchEncodedKey(
     privateLabel,
     algorithm === "dsa" ? 721 : 512,
     privateEncoding?.cipher ||
       (privateEncoding?.format === "pem" && privateEncoding?.passphrase
-        ? privateEncoding.type === "sec1" ? "AES-128-CBC" : "AES-256-CBC"
-        : undefined),
+        ? privateEncoding.type === "sec1"
+          ? "AES-128-CBC"
+          : "AES-256-CBC"
+        : undefined)
   );
   const publicValue = __quenchEncodedKey(publicLabel, publicSize);
   return {
-    publicKey: publicFormat === "raw-public" || publicFormat === "der"
-      ? NodeBuffer.from(publicValue)
-      : publicValue,
-    privateKey: privateEncoding?.format === "der" ||
-        privateEncoding?.format === "raw-private"
-      ? NodeBuffer.from(privateValue)
-      : privateValue,
+    publicKey:
+      publicFormat === "raw-public" || publicFormat === "der"
+        ? NodeBuffer.from(publicValue)
+        : publicValue,
+    privateKey:
+      privateEncoding?.format === "der" ||
+      privateEncoding?.format === "raw-private"
+        ? NodeBuffer.from(privateValue)
+        : privateValue
   };
 };
 const __quenchCryptoKeyObjectFallback = (result) => {
@@ -176,9 +166,9 @@ const __quenchCryptoKeyObjectFallback = (result) => {
     ) {
       throw Object.assign(
         new TypeError(
-          "The key argument must be an instance of Buffer, TypedArray, or DataView",
+          "The key argument must be an instance of Buffer, TypedArray, or DataView"
         ),
-        { code: "ERR_INVALID_ARG_TYPE" },
+        { code: "ERR_INVALID_ARG_TYPE" }
       );
     }
     if (
@@ -190,8 +180,8 @@ const __quenchCryptoKeyObjectFallback = (result) => {
       throw Object.assign(
         new TypeError("Invalid raw public key for private key"),
         {
-          code: "ERR_INVALID_ARG_VALUE",
-        },
+          code: "ERR_INVALID_ARG_VALUE"
+        }
       );
     }
     return descriptor;
@@ -201,7 +191,7 @@ const __quenchCryptoKeyObjectFallback = (result) => {
       __quenchCreateKeyObject(
         "private",
         key,
-        createPrivate(validateRawKeyInput(key, "private")),
+        createPrivate(validateRawKeyInput(key, "private"))
       );
   }
   if (createPublic) {
@@ -209,7 +199,7 @@ const __quenchCryptoKeyObjectFallback = (result) => {
       __quenchCreateKeyObject(
         "public",
         key,
-        createPublic(validateRawKeyInput(key, "public")),
+        createPublic(validateRawKeyInput(key, "public"))
       );
   }
   const generatePair = result.generateKeyPairSync;
@@ -218,11 +208,11 @@ const __quenchCryptoKeyObjectFallback = (result) => {
       const requestedOptions = options && {
         ...options,
         publicKeyEncoding: options.publicKeyEncoding && {
-          ...options.publicKeyEncoding,
+          ...options.publicKeyEncoding
         },
         privateKeyEncoding: options.privateKeyEncoding && {
-          ...options.privateKeyEncoding,
-        },
+          ...options.privateKeyEncoding
+        }
       };
       const pair = generatePair(algorithm, options);
       if (options?.publicKeyEncoding || options?.privateKeyEncoding) {
@@ -230,17 +220,17 @@ const __quenchCryptoKeyObjectFallback = (result) => {
       }
       const details = {
         modulusLength: options?.modulusLength,
-        publicExponent: options?.publicExponent ?? 65537n,
+        publicExponent: options?.publicExponent ?? 65537n
       };
       const privateKey = __quenchCreateKeyObject(
         "private",
         pair.privateKey,
-        pair.privateKey,
+        pair.privateKey
       );
       const publicKey = __quenchCreateKeyObject(
         "public",
         pair.publicKey,
-        pair.publicKey,
+        pair.publicKey
       );
       __quenchCryptoKeyObjectData.get(privateKey).details = details;
       __quenchCryptoKeyObjectData.get(publicKey).details = { ...details };
@@ -249,7 +239,7 @@ const __quenchCryptoKeyObjectFallback = (result) => {
       __quenchCryptoKeyObjectData.get(publicKey).dhParams = { ...dhParams };
       return {
         privateKey,
-        publicKey,
+        publicKey
       };
     };
     // The bootstrap surface installs a callable placeholder for

@@ -1,3 +1,9 @@
+const __quenchVfsAsync = (name) =>
+  function (...args) {
+    return Promise.resolve().then(() => this[name](...args));
+  };
+const __quenchVfsResolved = () => Promise.resolve();
+
 class __QuenchVirtualFileSystem {
   constructor(provider, options) {
     if (
@@ -288,23 +294,17 @@ class __QuenchVirtualFileSystem {
         check();
         return vfs.readFileSync(key, options);
       },
-      readFile(options) {
-        return Promise.resolve().then(() => this.readFileSync(options));
-      },
+      readFile: __quenchVfsAsync("readFileSync"),
       writeFileSync(data) {
         check(true);
         vfs.writeFileSync(key, data);
       },
-      writeFile(data) {
-        return Promise.resolve().then(() => this.writeFileSync(data));
-      },
+      writeFile: __quenchVfsAsync("writeFileSync"),
       statSync() {
         check();
         return vfs.statSync(key);
       },
-      stat() {
-        return Promise.resolve().then(() => this.statSync());
-      },
+      stat: __quenchVfsAsync("statSync"),
       readSync(buffer, offset = 0, length = buffer.length - offset, at = null) {
         check();
         const source = vfs.readFileSync(key);
@@ -396,9 +396,7 @@ class __QuenchVirtualFileSystem {
         globalThis.Buffer.from(data).subarray(0, size).copy(out);
         vfs.writeFileSync(key, out);
       },
-      truncate(length) {
-        return Promise.resolve().then(() => this.truncateSync(length));
-      },
+      truncate: __quenchVfsAsync("truncateSync"),
       closeSync() {
         closed = true;
       },
@@ -406,21 +404,11 @@ class __QuenchVirtualFileSystem {
         closed = true;
         return Promise.resolve();
       },
-      chmod() {
-        return Promise.resolve();
-      },
-      chown() {
-        return Promise.resolve();
-      },
-      utimes() {
-        return Promise.resolve();
-      },
-      datasync() {
-        return Promise.resolve();
-      },
-      sync() {
-        return Promise.resolve();
-      },
+      chmod: __quenchVfsResolved,
+      chown: __quenchVfsResolved,
+      utimes: __quenchVfsResolved,
+      datasync: __quenchVfsResolved,
+      sync: __quenchVfsResolved,
       readableWebStream() {
         const e = new Error("Method not implemented");
         e.code = "ERR_METHOD_NOT_IMPLEMENTED";
@@ -1948,6 +1936,16 @@ const __quenchVfsRelative = (vfs, path) => {
   const key = __quenchVfsPath(path);
   return key === vfs.mountPoint ? "/" : key.slice(vfs.mountPoint.length);
 };
+const __quenchVfsMountResult = (name, vfs, result) => {
+  const mountedName = name.replace(/Sync$/, "");
+  if (mountedName === "mkdtemp" || mountedName === "realpath") {
+    if (typeof result === "string") return `${vfs.mountPoint}${result}`;
+    if (globalThis.Buffer.isBuffer(result)) {
+      return globalThis.Buffer.from(`${vfs.mountPoint}${result.toString()}`);
+    }
+  }
+  return result;
+};
 const __quenchVfsWrapFs = (name, fallback) => {
   const original = globalThis.__nodeFs?.[name];
   if (typeof original !== "function") return;
@@ -2004,23 +2002,7 @@ const __quenchVfsWrapFs = (name, fallback) => {
           args[0] = __quenchVfsRelative(vfs, args[0]);
         }
         const result = vfs[name](__quenchVfsRelative(vfs, path), ...args);
-        if (name === "mkdtempSync" && typeof result === "string") {
-          return `${vfs.mountPoint}${result}`;
-        }
-        if (name === "mkdtempSync" && globalThis.Buffer.isBuffer(result)) {
-          return globalThis.Buffer.from(
-            `${vfs.mountPoint}${result.toString()}`
-          );
-        }
-        if (name === "realpathSync" && typeof result === "string") {
-          return `${vfs.mountPoint}${result}`;
-        }
-        if (name === "realpathSync" && globalThis.Buffer.isBuffer(result)) {
-          return globalThis.Buffer.from(
-            `${vfs.mountPoint}${result.toString()}`
-          );
-        }
-        return result;
+        return __quenchVfsMountResult(name, vfs, result);
       }
     }
     return original.call(this, path, ...args);
@@ -2077,17 +2059,7 @@ const __quenchVfsWrapAsyncFs = (name, syncName = `${name}Sync`) => {
           );
         }
         const result = vfs[syncName](target, ...args);
-        if (name === "mkdtemp" && typeof result === "string") {
-          return `${vfs.mountPoint}${result}`;
-        }
-        if (name === "realpath" && typeof result === "string") {
-          return `${vfs.mountPoint}${result}`;
-        }
-        if (name === "realpath" && globalThis.Buffer.isBuffer(result)) {
-          return globalThis.Buffer.from(
-            `${vfs.mountPoint}${result.toString()}`
-          );
-        }
+        result = __quenchVfsMountResult(name, vfs, result);
         if (name === "readdir" && args[0]?.encoding === "buffer") {
           return result.map((item) => globalThis.Buffer.from(item));
         }

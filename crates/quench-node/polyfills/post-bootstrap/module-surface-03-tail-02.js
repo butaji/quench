@@ -180,24 +180,7 @@ const __quenchReadableSlice = (stream, operations) => {
   };
 };
 const __quenchAddSliceMethods = (prototype) => {
-  prototype.drop ||= function (count, options) {
-    __quenchSliceOptions(options);
-    return __quenchReadableSlice(this, {
-      drop: __quenchSliceCount(count),
-      take: Infinity,
-      operations: [],
-      signal: options?.signal
-    });
-  };
-  prototype.take ||= function (count, options) {
-    __quenchSliceOptions(options);
-    return __quenchReadableSlice(this, {
-      drop: 0,
-      take: __quenchSliceCount(count),
-      operations: [],
-      signal: options?.signal
-    });
-  };
+  __quenchAddSliceBounds(prototype);
   const slice = (stream) =>
     __quenchReadableSlice(stream, {
       drop: 0,
@@ -223,28 +206,30 @@ const __quenchAddSliceMethods = (prototype) => {
       return __quenchPredicateReadable(this, predicate, options, name);
     };
 };
+const __quenchAddSliceBounds = (prototype) => {
+  prototype.drop ||= function (count, options) {
+    __quenchSliceOptions(options);
+    return __quenchReadableSlice(this, {
+      drop: __quenchSliceCount(count),
+      take: Infinity,
+      operations: [],
+      signal: options?.signal
+    });
+  };
+  prototype.take ||= function (count, options) {
+    __quenchSliceOptions(options);
+    return __quenchReadableSlice(this, {
+      drop: 0,
+      take: __quenchSliceCount(count),
+      operations: [],
+      signal: options?.signal
+    });
+  };
+};
 const __quenchAddReadableSlices = (result) => {
   for (const name of ["Readable", "Duplex", "Transform", "PassThrough"]) {
     const prototype = result[name]?.prototype;
     if (!prototype) continue;
-    prototype.drop ||= function (count, options) {
-      __quenchSliceOptions(options);
-      return __quenchReadableSlice(this, {
-        drop: __quenchSliceCount(count),
-        take: Infinity,
-        operations: [],
-        signal: options?.signal
-      });
-    };
-    prototype.take ||= function (count, options) {
-      __quenchSliceOptions(options);
-      return __quenchReadableSlice(this, {
-        drop: 0,
-        take: __quenchSliceCount(count),
-        operations: [],
-        signal: options?.signal
-      });
-    };
     __quenchAddSliceMethods(prototype);
   }
 };

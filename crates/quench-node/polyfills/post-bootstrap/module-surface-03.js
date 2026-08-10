@@ -95,7 +95,7 @@ const __quenchComposeStageValues = async (stages, initialValues) => {
       const value = await output;
       if (value !== undefined) {
         const error = new TypeError(
-          "ERR_INVALID_RETURN_VALUE: terminal stream function must return undefined",
+          "ERR_INVALID_RETURN_VALUE: terminal stream function must return undefined"
         );
         error.code = "ERR_INVALID_RETURN_VALUE";
         throw error;
@@ -109,7 +109,7 @@ const __quenchComposeStreams = (streams, result) => {
   if (streams.length === 0) {
     throw __quenchComposeArgumentError(
       "The streams argument must contain at least one stream",
-      "ERR_MISSING_ARGS",
+      "ERR_MISSING_ARGS"
     );
   }
   streams = streams.map((stage) => {
@@ -126,7 +126,7 @@ const __quenchComposeStreams = (streams, result) => {
     if ((index < streams.length - 1 && !readable) || (index > 0 && !writable)) {
       throw __quenchComposeArgumentError(
         `stream at index ${index} cannot be composed at this position`,
-        "ERR_INVALID_ARG_VALUE",
+        "ERR_INVALID_ARG_VALUE"
       );
     }
   }
@@ -140,7 +140,7 @@ const __quenchComposeStreams = (streams, result) => {
             for (const value of values) outputStream.push(value);
           })
           .then(() => callback(), callback);
-      },
+      }
     });
     composed.__quenchFunctionCompose = true;
     composed.writable = __quenchComposeWritable(streams[0]);
@@ -198,7 +198,7 @@ const __quenchComposeStreams = (streams, result) => {
           for await (const value of source) values.push(value);
           const output = await __quenchComposeStageValues(
             streams.slice(1),
-            values,
+            values
           );
           for (const value of output) composed.push(value);
           if (composed.readable !== false) composed.push(null);
@@ -233,7 +233,7 @@ const __quenchComposeStreams = (streams, result) => {
     readableObjectMode: last.readableObjectMode === true,
     transform(chunk, encoding, callback) {
       first.write(chunk, encoding, callback);
-    },
+    }
   });
   composed.writableObjectMode = first.writableObjectMode === true;
   composed.readableObjectMode = last.readableObjectMode === true;
@@ -280,14 +280,14 @@ const __quenchValidatePipeline = (pipeline, args) => {
   const callback = args[args.length - 1];
   if (args.length === 0) {
     const error = new TypeError(
-      "ERR_INVALID_ARG_TYPE: The last argument must be of type function",
+      "ERR_INVALID_ARG_TYPE: The last argument must be of type function"
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
   if (args.length < 3) {
     const error = new TypeError(
-      "ERR_MISSING_ARGS: The pipeline requires at least two streams",
+      "ERR_MISSING_ARGS: The pipeline requires at least two streams"
     );
     error.code = "ERR_MISSING_ARGS";
     throw error;
@@ -306,9 +306,9 @@ const __quenchValidatePipeline = (pipeline, args) => {
     return duplex.fromWeb(
       {
         readable: readable ? stream : undefined,
-        writable: writable ? stream : undefined,
+        writable: writable ? stream : undefined
       },
-      { objectMode: true },
+      { objectMode: true }
     );
   });
   const result = pipeline(...streams, args[args.length - 1]);
@@ -337,7 +337,7 @@ const __quenchValidateFinishedStream = (stream, options, callback) => {
     typeof stream.once === "function"
   ) {
     const error = new TypeError(
-      "The stream argument must be a readable stream",
+      "The stream argument must be a readable stream"
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -392,10 +392,12 @@ const __quenchFinishedStream = (stream, options, callback) => {
     return () => undefined;
   }
   let active = true;
-  const watchReadable = options.readable !== false &&
+  const watchReadable =
+    options.readable !== false &&
     stream.readable !== false &&
     (stream.readable === true || Boolean(stream._readableState));
-  const watchWritable = options.writable !== false &&
+  const watchWritable =
+    options.writable !== false &&
     stream.writable !== false &&
     (stream.writable === true || Boolean(stream._writableState));
   let finishSeen = !watchWritable || stream.writableFinished === true;
@@ -425,8 +427,8 @@ const __quenchFinishedStream = (stream, options, callback) => {
       complete(
         stream.errored ||
           Object.assign(new Error("Premature close"), {
-            code: "ERR_STREAM_PREMATURE_CLOSE",
-          }),
+            code: "ERR_STREAM_PREMATURE_CLOSE"
+          })
       )
     );
     return () => {
@@ -436,9 +438,10 @@ const __quenchFinishedStream = (stream, options, callback) => {
   const signal = options?.signal;
   if (signal) {
     const abort = () => {
-      const error = signal.reason ||
+      const error =
+        signal.reason ||
         Object.assign(new Error("The operation was aborted"), {
-          name: "AbortError",
+          name: "AbortError"
         });
       complete(error);
     };

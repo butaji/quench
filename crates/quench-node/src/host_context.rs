@@ -3,7 +3,7 @@ use std::{
     ffi::CStr,
     io::{ErrorKind, Read, Write},
     net::{IpAddr, Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs, UdpSocket},
-    sync::{Mutex, OnceLock},
+    sync::{Mutex, MutexGuard, OnceLock},
 };
 enum QuenchTcpResource {
     Listener(TcpListener),
@@ -14,6 +14,11 @@ static QUENCH_TCP_RESOURCES: OnceLock<Mutex<HashMap<u32, QuenchTcpResource>>> = 
 static QUENCH_TCP_NEXT_ID: OnceLock<Mutex<u32>> = OnceLock::new();
 fn quench_tcp_resources() -> &'static Mutex<HashMap<u32, QuenchTcpResource>> {
     QUENCH_TCP_RESOURCES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+fn quench_tcp_resources_lock() -> MutexGuard<'static, HashMap<u32, QuenchTcpResource>> {
+    quench_tcp_resources()
+        .lock()
+        .expect("tcp resource mutex poisoned")
 }
 fn quench_tcp_id() -> u32 {
     let mut next = QUENCH_TCP_NEXT_ID
@@ -26,10 +31,7 @@ fn quench_tcp_id() -> u32 {
 }
 fn quench_tcp_insert(resource: QuenchTcpResource) -> u32 {
     let id = quench_tcp_id();
-    quench_tcp_resources()
-        .lock()
-        .expect("tcp resource mutex poisoned")
-        .insert(id, resource);
+    quench_tcp_resources_lock().insert(id, resource);
     id
 }
 pub(crate) fn quench_tcp_bind(host: String, port: u16) -> rquickjs::Result<u32> {
@@ -41,9 +43,7 @@ pub(crate) fn quench_tcp_bind(host: String, port: u16) -> rquickjs::Result<u32> 
     Ok(quench_tcp_insert(QuenchTcpResource::Listener(listener)))
 }
 pub(crate) fn quench_tcp_bound_port(id: u32) -> rquickjs::Result<u16> {
-    let resources = quench_tcp_resources()
-        .lock()
-        .expect("tcp resource mutex poisoned");
+    let resources = quench_tcp_resources_lock();
     match resources.get(&id) {
         Some(QuenchTcpResource::Listener(listener)) => listener
             .local_addr()
@@ -53,9 +53,7 @@ pub(crate) fn quench_tcp_bound_port(id: u32) -> rquickjs::Result<u16> {
     }
 }
 pub(crate) fn quench_tcp_local_port(id: u32) -> rquickjs::Result<u16> {
-    let resources = quench_tcp_resources()
-        .lock()
-        .expect("tcp resource mutex poisoned");
+    let resources = quench_tcp_resources_lock();
     match resources.get(&id) {
         Some(QuenchTcpResource::Stream(stream)) => stream
             .local_addr()
@@ -65,9 +63,7 @@ pub(crate) fn quench_tcp_local_port(id: u32) -> rquickjs::Result<u16> {
     }
 }
 pub(crate) fn quench_tcp_peer_port(id: u32) -> rquickjs::Result<u16> {
-    let resources = quench_tcp_resources()
-        .lock()
-        .expect("tcp resource mutex poisoned");
+    let resources = quench_tcp_resources_lock();
     match resources.get(&id) {
         Some(QuenchTcpResource::Stream(stream)) => stream
             .peer_addr()
@@ -77,9 +73,7 @@ pub(crate) fn quench_tcp_peer_port(id: u32) -> rquickjs::Result<u16> {
     }
 }
 pub(crate) fn quench_tcp_accept(id: u32) -> rquickjs::Result<u32> {
-    let resources = quench_tcp_resources()
-        .lock()
-        .expect("tcp resource mutex poisoned");
+    let resources = quench_tcp_resources_lock();
     let listener = match resources.get(&id) {
         Some(QuenchTcpResource::Listener(listener)) => listener,
         _ => return Err(rquickjs::Error::new_from_js("tcp", "not a listener")),
@@ -105,9 +99,7 @@ pub(crate) fn quench_tcp_connect(host: String, port: u16) -> rquickjs::Result<u3
     Ok(quench_tcp_insert(QuenchTcpResource::Stream(stream)))
 }
 pub(crate) fn quench_tcp_read(id: u32) -> rquickjs::Result<Vec<u8>> {
-    let mut resources = quench_tcp_resources()
-        .lock()
-        .expect("tcp resource mutex poisoned");
+    let mut resources = quench_tcp_resources_lock();
     let stream = match resources.get_mut(&id) {
         Some(QuenchTcpResource::Stream(stream)) => stream,
         _ => return Err(rquickjs::Error::new_from_js("tcp", "not a stream")),
@@ -123,9 +115,7 @@ pub(crate) fn quench_tcp_read(id: u32) -> rquickjs::Result<Vec<u8>> {
     }
 }
 pub(crate) fn quench_tcp_readable(id: u32) -> rquickjs::Result<i32> {
-    let resources = quench_tcp_resources()
-        .lock()
-        .expect("tcp resource mutex poisoned");
+    let resources = quench_tcp_resources_lock();
     let stream = match resources.get(&id) {
         Some(QuenchTcpResource::Stream(stream)) => stream,
         _ => return Err(rquickjs::Error::new_from_js("tcp", "not a stream")),
@@ -139,9 +129,7 @@ pub(crate) fn quench_tcp_readable(id: u32) -> rquickjs::Result<i32> {
     }
 }
 pub(crate) fn quench_tcp_write(id: u32, data: Vec<u8>) -> rquickjs::Result<u32> {
-    let mut resources = quench_tcp_resources()
-        .lock()
-        .expect("tcp resource mutex poisoned");
+    let mut resources = quench_tcp_resources_lock();
     let stream = match resources.get_mut(&id) {
         Some(QuenchTcpResource::Stream(stream)) => stream,
         _ => return Err(rquickjs::Error::new_from_js("tcp", "not a stream")),
@@ -152,9 +140,7 @@ pub(crate) fn quench_tcp_write(id: u32, data: Vec<u8>) -> rquickjs::Result<u32> 
         .map_err(|_| rquickjs::Error::new_from_js("tcp", "write failed"))
 }
 pub(crate) fn quench_tcp_shutdown(id: u32) -> rquickjs::Result<()> {
-    let resources = quench_tcp_resources()
-        .lock()
-        .expect("tcp resource mutex poisoned");
+    let resources = quench_tcp_resources_lock();
     let stream = match resources.get(&id) {
         Some(QuenchTcpResource::Stream(stream)) => stream,
         _ => return Err(rquickjs::Error::new_from_js("tcp", "not a stream")),

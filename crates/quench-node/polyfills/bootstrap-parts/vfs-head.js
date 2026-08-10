@@ -38,95 +38,8 @@ class __QuenchVirtualProvider {
     }
     return this.__notImplemented();
   }
-  openSync() {
-    return this.__notImplemented();
-  }
-  statSync() {
-    return this.__notImplemented();
-  }
-  readdirSync() {
-    return this.__notImplemented();
-  }
-  mkdirSync() {
-    return this.__writeCheck();
-  }
-  rmdirSync() {
-    return this.__writeCheck();
-  }
-  unlinkSync() {
-    return this.__writeCheck();
-  }
-  renameSync() {
-    return this.__writeCheck();
-  }
-  linkSync() {
-    return this.__writeCheck();
-  }
-  readlinkSync() {
-    return this.__notImplemented();
-  }
-  symlinkSync() {
-    return this.__writeCheck();
-  }
-  watch() {
-    return this.__notImplemented();
-  }
-  watchAsync() {
-    return this.__notImplemented();
-  }
-  watchFile() {
-    return this.__notImplemented();
-  }
-  unwatchFile() {
-    return this.__notImplemented();
-  }
   async open() {
     return this.__notImplemented();
-  }
-  async stat() {
-    return this.__notImplemented();
-  }
-  async readdir() {
-    return this.__notImplemented();
-  }
-  async mkdir() {
-    return this.__writeCheck();
-  }
-  async rmdir() {
-    return this.__writeCheck();
-  }
-  async unlink() {
-    return this.__writeCheck();
-  }
-  async rename() {
-    return this.__writeCheck();
-  }
-  async link() {
-    return this.__writeCheck();
-  }
-  async readlink() {
-    return this.__notImplemented();
-  }
-  async symlink() {
-    return this.__writeCheck();
-  }
-  copyFileSync() {
-    return this.__writeCheck();
-  }
-  writeFileSync() {
-    return this.__writeCheck();
-  }
-  appendFileSync() {
-    return this.__writeCheck();
-  }
-  async copyFile() {
-    return this.__writeCheck();
-  }
-  async writeFile() {
-    return this.__writeCheck();
-  }
-  async appendFile() {
-    return this.__writeCheck();
   }
   lstatSync(path) {
     return this.statSync(path);
@@ -138,6 +51,51 @@ class __QuenchVirtualProvider {
     return Promise.resolve(this.existsSync(path));
   }
 }
+const __quenchVfsMethods = (names, implementation) => {
+  for (const name of names.split(" ")) {
+    const method = implementation();
+    Object.defineProperty(method, "name", { configurable: true, value: name });
+    Object.defineProperty(__QuenchVirtualProvider.prototype, name, {
+      configurable: true,
+      writable: true,
+      value: method
+    });
+  }
+};
+__quenchVfsMethods(
+  "openSync statSync readdirSync readlinkSync watch watchAsync watchFile unwatchFile",
+  function () {
+    return function () {
+      return this.__notImplemented();
+    };
+  }
+);
+__quenchVfsMethods(
+  "mkdirSync rmdirSync unlinkSync renameSync linkSync symlinkSync",
+  function () {
+    return function () {
+      return this.__writeCheck();
+    };
+  }
+);
+__quenchVfsMethods("stat readdir readlink", function () {
+  return async function () {
+    return this.__notImplemented();
+  };
+});
+__quenchVfsMethods("copyFileSync writeFileSync appendFileSync", function () {
+  return function () {
+    return this.__writeCheck();
+  };
+});
+__quenchVfsMethods(
+  "mkdir rmdir unlink rename link symlink copyFile writeFile appendFile",
+  function () {
+    return async function () {
+      return this.__writeCheck();
+    };
+  }
+);
 class __QuenchMemoryProvider extends __QuenchVirtualProvider {
   constructor() {
     super();
