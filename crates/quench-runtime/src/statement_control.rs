@@ -13,14 +13,34 @@ pub(crate) fn reduce(
     locals: &mut HashMap<String, u16>,
 ) -> Result<Option<u16>, Vec<String>> {
     match statement {
-        Statement::LabeledStatement(statement) => crate::reduce::reduce_statement(
-            &statement.body,
-            ops,
-            facts,
-            next_register,
-            next_slot,
-            locals,
-        ),
+        Statement::LabeledStatement(statement) => {
+            let start = ops.len();
+            let wraps_loop = matches!(
+                &statement.body,
+                Statement::ForStatement(_)
+                    | Statement::WhileStatement(_)
+                    | Statement::DoWhileStatement(_)
+                    | Statement::ForInStatement(_)
+            );
+            let result = crate::reduce::reduce_statement(
+                &statement.body,
+                ops,
+                facts,
+                next_register,
+                next_slot,
+                locals,
+            )?;
+            if wraps_loop {
+                let label = Some(statement.label.name.to_string());
+                if let Some(
+                    Op::Loop { label: slot, .. } | Op::ForIn { label: slot, .. },
+                ) = ops[start..].last_mut()
+                {
+                    *slot = label;
+                }
+            }
+            Ok(result)
+        }
         Statement::IfStatement(statement) => crate::reduce::reduce_if_statement(
             statement,
             ops,
@@ -51,8 +71,9 @@ pub(crate) fn reduce(
         Statement::SwitchStatement(statement) => {
             crate::switch::reduce(statement, ops, facts, next_register, locals).map(|_| None)
         }
-        Statement::BreakStatement(_) => {
-            ops.push(Op::Break);
+        Statement::BreakStatement(statement) => {
+            let label = statement.label.as_ref().map(|label| label.name.to_string());
+            ops.push(Op::Break { label });
             Ok(None)
         }
         Statement::ContinueStatement(_) => {
