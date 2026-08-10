@@ -1,3 +1,30 @@
+const __nodeFsStatsBigInt = (stats, options) => {
+  if (options?.bigint !== true) return stats;
+  for (
+    const name of [
+      "dev",
+      "mode",
+      "nlink",
+      "uid",
+      "gid",
+      "rdev",
+      "blksize",
+      "ino",
+      "size",
+      "blocks",
+      "atimeMs",
+      "mtimeMs",
+      "ctimeMs",
+      "birthtimeMs",
+    ]
+  ) stats[name] = BigInt(Math.trunc(Number(stats[name]) || 0));
+  for (const name of ["atime", "mtime", "ctime", "birthtime"]) {
+    stats[`${name}Ns`] = BigInt(
+      Math.trunc(Number(stats[`${name}Ms`]) * 1_000_000),
+    );
+  }
+  return stats;
+};
 Object.assign(globalThis.__nodeFs, {
   fstatSync: (fd) => {
     if (typeof fd !== "number" || globalThis.__nodeFdPaths[fd] === undefined) {
@@ -91,15 +118,32 @@ Object.assign(globalThis.__nodeFs, {
       return dirent;
     });
   },
-  rmdirSync: (value) => {
+  rmdirSync: (value, options = {}) => {
+    if (options?.recursive === true) {
+      const error = new TypeError(
+        "The recursive option is no longer supported for fs.rmdir",
+      );
+      error.code = "ERR_INVALID_ARG_VALUE";
+      throw error;
+    }
+    const path = nodeFsPath(value);
     try {
-      return globalThis.__quench_fs_remove_dir(String(value));
+      return globalThis.__quench_fs_remove_dir(path);
     } catch (error) {
       const message = String(error?.message || error);
-      if (message.startsWith("EACCES:")) {
-        error.code = "EACCES";
+      const code = message.startsWith("EACCES:")
+        ? "EACCES"
+        : message.includes("Not a directory")
+        ? "ENOTDIR"
+        : message.includes("No such file")
+        ? "ENOENT"
+        : message.includes("Directory not empty")
+        ? "ENOTEMPTY"
+        : undefined;
+      if (code) {
+        error.code = code;
         error.syscall = "rmdir";
-        error.path = String(value);
+        error.path = path;
       }
       throw error;
     }

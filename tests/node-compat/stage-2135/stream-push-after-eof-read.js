@@ -6,7 +6,7 @@ const readable = new Readable({
   read() {
     this.push(null);
     this.push("late");
-  }
+  },
 });
 
 readable.on("error", (error) => {

@@ -10,7 +10,7 @@ const source = new Readable({
   read() {
     if (missing--) this.push({});
     else this.push(null);
-  }
+  },
 });
 
 const through = source
@@ -37,7 +37,7 @@ const wrapper = new Readable({
         wrapper.push(data);
       }
     });
-  }
+  },
 });
 
 wrapper.on("end", () => {
@@ -50,6 +50,6 @@ process.on("beforeExit", () => {
   assert.deepStrictEqual(
     actual,
     { forwarded: 8, ended: true },
-    JSON.stringify(actual)
+    JSON.stringify(actual),
   );
 });

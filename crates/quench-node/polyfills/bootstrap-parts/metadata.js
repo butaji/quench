@@ -7,13 +7,12 @@ globalThis.__nodeFs.truncate = (value, length = 0, callback) => {
   if (typeof callback !== "function") {
     throw Object.assign(
       new TypeError('The "callback" argument must be of type function'),
-      { code: "ERR_INVALID_ARG_TYPE" }
+      { code: "ERR_INVALID_ARG_TYPE" },
     );
   }
-  const path =
-    typeof value === "number"
-      ? globalThis.__nodeFdPaths[value]
-      : nodeFsPath(value);
+  const path = typeof value === "number"
+    ? globalThis.__nodeFdPaths[value]
+    : nodeFsPath(value);
   if (__truncateMissingPath(path, callback)) return;
   queueMicrotask(() => {
     try {
@@ -24,7 +23,7 @@ globalThis.__nodeFs.truncate = (value, length = 0, callback) => {
         String(error.message).includes("no such file")
       ) {
         const missing = new Error(
-          `ENOENT: no such file or directory, open '${path}'`
+          `ENOENT: no such file or directory, open '${path}'`,
         );
         missing.code = "ENOENT";
         missing.path = path;
@@ -46,7 +45,7 @@ globalThis.__nodeFs.ftruncate = (fd, length = 0, callback) => {
   __validateTruncateLength(length);
   if (typeof fd !== "number") {
     const error = new TypeError(
-      `The "fd" argument must be of type number.${__nodeInvalidArgSuffix(fd)}`
+      `The "fd" argument must be of type number.${__nodeInvalidArgSuffix(fd)}`,
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -54,7 +53,7 @@ globalThis.__nodeFs.ftruncate = (fd, length = 0, callback) => {
   if (typeof callback !== "function") {
     throw Object.assign(
       new TypeError('The "callback" argument must be of type function'),
-      { code: "ERR_INVALID_ARG_TYPE" }
+      { code: "ERR_INVALID_ARG_TYPE" },
     );
   }
   queueMicrotask(() => {
@@ -76,13 +75,13 @@ globalThis.__nodeFs.access = (value, mode, callback) => {
   if (typeof callback !== "function") {
     throw Object.assign(
       new TypeError('The "callback" argument must be of type function'),
-      { code: "ERR_INVALID_ARG_TYPE" }
+      { code: "ERR_INVALID_ARG_TYPE" },
     );
   }
   __nodeFsValidateAccessMode(mode);
   if (typeof value === "number") {
     const error = new TypeError(
-      'The "path" argument must be of type string or an instance of Buffer or URL'
+      'The "path" argument must be of type string or an instance of Buffer or URL',
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -101,7 +100,7 @@ globalThis.__nodeFs.access = (value, mode, callback) => {
 globalThis.__nodeFs.fsync = (fd, callback) => {
   if (typeof fd !== "number") {
     const error = new TypeError(
-      `The "fd" argument must be of type number. Received ${fd}`
+      `The "fd" argument must be of type number. Received ${fd}`,
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -141,7 +140,7 @@ const __nodeFsAsyncReadOptions = (
   offset,
   length,
   position,
-  callback
+  callback,
 ) => {
   if (__nodeFsAsyncReadUsesDefaultBuffer(buffer)) {
     return __nodeFsAsyncReadDefault(buffer);
@@ -156,7 +155,7 @@ const __nodeFsAsyncReadOptions = (
       offset: 0,
       length: buffer.length,
       position: null,
-      callback: offset
+      callback: offset,
     };
   }
   if (typeof offset === "object" || offset === null || offset === undefined) {
@@ -173,43 +172,38 @@ const __nodeFsAsyncReadDefault = (callback) => {
 };
 const __nodeFsAsyncReadBufferOptions = (buffer, callback) => {
   const options = buffer;
-  const target =
-    options.buffer === undefined
-      ? NodeBuffer.alloc(
-          options.length === undefined ? 16384 : Number(options.length)
-        )
-      : options.buffer;
+  const target = options.buffer === undefined
+    ? NodeBuffer.alloc(
+      options.length === undefined ? 16384 : Number(options.length),
+    )
+    : options.buffer;
   const offset = options.offset == null ? 0 : Number(options.offset);
-  const length =
-    options.length === undefined
-      ? target === null
-        ? 0
-        : target.length - offset
-      : Number(options.length);
+  const length = options.length === undefined
+    ? target === null ? 0 : target.length - offset
+    : Number(options.length);
   const position = options.position === undefined ? null : options.position;
   return { buffer: target, offset, length, position, callback };
 };
 const __nodeFsAsyncReadOffsetOptions = (buffer, offset, callback) => {
   const options = offset || {};
   const start = Number(options.offset || 0);
-  const length =
-    options.length === undefined
-      ? buffer.length - start
-      : Number(options.length);
+  const length = options.length === undefined
+    ? buffer.length - start
+    : Number(options.length);
   const position = options.position === undefined ? null : options.position;
   return { buffer, offset: start, length, position, callback };
 };
 const __nodeFsValidateAsyncReadBuffer = (buffer, length) => {
   if (!(buffer instanceof Uint8Array)) {
     const error = new TypeError(
-      'The "buffer" argument must be an instance of Buffer, TypedArray, or DataView'
+      'The "buffer" argument must be an instance of Buffer, TypedArray, or DataView',
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
   if (buffer.length === 0 && Number(length) > 0) {
     const error = new TypeError(
-      "The argument 'buffer' is empty and cannot be written."
+      "The argument 'buffer' is empty and cannot be written.",
     );
     error.code = "ERR_INVALID_ARG_VALUE";
     throw error;
@@ -235,7 +229,7 @@ const __nodeFsValidateAsyncReadPosition = (position) => {
     typeof position !== "bigint"
   ) {
     const error = new TypeError(
-      'The "position" argument must be of type number or bigint'
+      'The "position" argument must be of type number or bigint',
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -247,11 +241,11 @@ const __nodeFsValidateAsyncRead = (
   offset,
   length,
   position,
-  callback
+  callback,
 ) => {
   if (typeof fd !== "number") {
     const error = new TypeError(
-      `The "fd" argument must be of type number. Received ${fd}`
+      `The "fd" argument must be of type number. Received ${fd}`,
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -261,7 +255,7 @@ const __nodeFsValidateAsyncRead = (
   __nodeFsValidateAsyncReadPosition(position);
   if (typeof callback !== "function") {
     const error = new TypeError(
-      'The "callback" argument must be of type function'
+      'The "callback" argument must be of type function',
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -273,7 +267,7 @@ globalThis.__nodeFs.read = (fd, buffer, offset, length, position, callback) => {
     offset,
     length,
     position,
-    callback
+    callback,
   ));
   __nodeFsValidateAsyncRead(fd, buffer, offset, length, position, callback);
   queueMicrotask(() => {
@@ -283,7 +277,7 @@ globalThis.__nodeFs.read = (fd, buffer, offset, length, position, callback) => {
         buffer,
         offset,
         length,
-        position
+        position,
       );
       callback(null, count, buffer);
     } catch (error) {
@@ -304,7 +298,7 @@ globalThis.__nodeFs.readv = (fd, buffers, position, callback) => {
     buffers.some((buffer) => !(buffer instanceof Uint8Array))
   ) {
     const error = new TypeError(
-      'The "buffers" argument must be an array of Buffer or Uint8Array'
+      'The "buffers" argument must be an array of Buffer or Uint8Array',
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -314,7 +308,7 @@ globalThis.__nodeFs.readv = (fd, buffers, position, callback) => {
       callback(
         null,
         globalThis.__nodeFs.readvSync(fd, buffers, position),
-        buffers
+        buffers,
       );
     } catch (error) {
       callback(error);
@@ -324,12 +318,11 @@ globalThis.__nodeFs.readv = (fd, buffers, position, callback) => {
 const __nodeFsWriteObjectOptions = (options, callback) => ({
   buffer: options.buffer,
   offset: options.offset || 0,
-  length:
-    options.length === undefined
-      ? options.buffer && options.buffer.length - (options.offset || 0)
-      : options.length,
+  length: options.length === undefined
+    ? options.buffer && options.buffer.length - (options.offset || 0)
+    : options.length,
   position: options.position,
-  callback
+  callback,
 });
 const __nodeFsWriteOptions = (buffer, offset, length, position, callback) => {
   if (typeof offset === "function") {
@@ -349,7 +342,7 @@ const __nodeFsWriteOptions = (buffer, offset, length, position, callback) => {
     offset,
     length,
     position: typeof position === "function" ? null : position,
-    callback: typeof position === "function" ? position : callback
+    callback: typeof position === "function" ? position : callback,
   };
 };
 globalThis.__nodeFs.write = (
@@ -358,14 +351,14 @@ globalThis.__nodeFs.write = (
   offset,
   length,
   position,
-  callback
+  callback,
 ) => {
   ({ buffer, offset, length, position, callback } = __nodeFsWriteOptions(
     buffer,
     offset,
     length,
     position,
-    callback
+    callback,
   ));
   __nodeFsValidateWrite(fd, buffer, callback);
   queueMicrotask(() => {
@@ -373,7 +366,7 @@ globalThis.__nodeFs.write = (
       callback(
         null,
         globalThis.__nodeFs.writeSync(fd, buffer, offset, length, position),
-        buffer
+        buffer,
       );
     } catch (error) {
       callback(error);
@@ -395,7 +388,7 @@ globalThis.__nodeFs.writev = (fd, buffers, position, callback) => {
       callback(
         null,
         globalThis.__nodeFs.writevSync(fd, buffers, position),
-        buffers
+        buffers,
       );
     } catch (error) {
       callback(error);
@@ -416,7 +409,7 @@ globalThis.__nodeFs.statfsSync = (value, options = {}) => {
     bfree: 1,
     bavail: 1,
     files: 1,
-    ffree: 1
+    ffree: 1,
   };
   if (options && options.bigint) {
     Object.keys(values).forEach((key) => {
@@ -451,7 +444,7 @@ const __nodeFsValidateSymlink = (target, link, type, callback) => {
     (typeof link !== "string" && !(link instanceof Uint8Array))
   ) {
     const error = new TypeError(
-      'The "target" and "path" arguments must be strings or Buffer'
+      'The "target" and "path" arguments must be strings or Buffer',
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;

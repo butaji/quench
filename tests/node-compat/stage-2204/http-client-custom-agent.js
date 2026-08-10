@@ -7,21 +7,21 @@ class Agent extends http.Agent {
     const socket = new Duplex({
       read() {
         this.push(
-          "HTTP/1.1 200 OK\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n"
+          "HTTP/1.1 200 OK\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n",
         );
         this.push("b\\r\\nhello world\\r\\n0\\r\\n\\r\\n");
         this.push(null);
       },
       write(_chunk, _encoding, callback) {
         callback();
-      }
+      },
     });
     let once = false;
     socket._read = function () {
       if (once) return this.push(null);
       once = true;
       this.push(
-        "HTTP/1.1 200 OK\\\\r\\\\nTransfer-Encoding: chunked\\\\r\\\\n\\\\r\\\\n"
+        "HTTP/1.1 200 OK\\\\r\\\\nTransfer-Encoding: chunked\\\\r\\\\n\\\\r\\\\n",
       );
       this.push("b\\\\r\\\\nhello world\\\\r\\\\n0\\\\r\\\\n\\\\r\\\\n");
     };

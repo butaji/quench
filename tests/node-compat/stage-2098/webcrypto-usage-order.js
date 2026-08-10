@@ -11,9 +11,9 @@ assertUsages(
     "verify",
     "sign",
     "verify",
-    "sign"
+    "sign",
   ]),
-  ["sign", "verify"]
+  ["sign", "verify"],
 );
 
 assertUsages(
@@ -22,9 +22,9 @@ assertUsages(
     new Uint8Array(16),
     { name: "AES-GCM" },
     true,
-    ["decrypt", "encrypt", "decrypt"]
+    ["decrypt", "encrypt", "decrypt"],
   ),
-  ["encrypt", "decrypt"]
+  ["encrypt", "decrypt"],
 );
 
 console.log("webcrypto usage order passed");

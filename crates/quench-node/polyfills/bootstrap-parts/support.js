@@ -232,18 +232,23 @@ class NodeEventEmitter {
       this.domain.emit("error", error);
       return true;
     }
-    values.slice().filter((listener) => typeof listener === "function").forEach((listener) => {
-      const result = Reflect.apply(listener, this, args);
-      if (this.captureRejections && result?.then) {
-        result.catch((error) => setImmediate(() => {
-          if (this._captureRejectionHandled) return;
-          this._captureRejectionHandled = true;
-          const rejection = this[Symbol.for("nodejs.rejection")];
-          if (typeof rejection === "function") rejection.call(this, error, event, ...args);
-          else this.emit("error", error);
-        }));
-      }
-    });
+    values.slice().filter((listener) => typeof listener === "function").forEach(
+      (listener) => {
+        const result = Reflect.apply(listener, this, args);
+        if (this.captureRejections && result?.then) {
+          result.catch((error) =>
+            setImmediate(() => {
+              if (this._captureRejectionHandled) return;
+              this._captureRejectionHandled = true;
+              const rejection = this[Symbol.for("nodejs.rejection")];
+              if (typeof rejection === "function") {
+                rejection.call(this, error, event, ...args);
+              } else this.emit("error", error);
+            })
+          );
+        }
+      },
+    );
     return values.length > 0;
   }
   removeListener(event, listener) {

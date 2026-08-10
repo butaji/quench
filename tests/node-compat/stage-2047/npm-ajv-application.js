@@ -7,9 +7,9 @@ const validate = ajv.compile({
   required: ["name", "count"],
   properties: {
     name: { type: "string" },
-    count: { type: "integer", minimum: 1 }
+    count: { type: "integer", minimum: 1 },
   },
-  additionalProperties: false
+  additionalProperties: false,
 });
 
 assert.strictEqual(validate({ name: "quench", count: 1 }), true);

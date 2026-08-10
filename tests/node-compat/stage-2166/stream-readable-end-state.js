@@ -6,8 +6,8 @@ const duplex = Duplex.from({
     start(controller) {
       controller.enqueue("foo");
       controller.close();
-    }
-  })
+    },
+  }),
 });
 duplex.on("end", () => {
   assert.strictEqual(duplex.readable, false);

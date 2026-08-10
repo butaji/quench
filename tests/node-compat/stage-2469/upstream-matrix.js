@@ -35,7 +35,6 @@ const runPredicates = async () => {
     await delay();
     assert.strictEqual(stream.destroyed, true);
   }
-
 };
 
 const runAbortValidation = async () => {

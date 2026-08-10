@@ -17,6 +17,6 @@ receiver.bind(0, () => {
 
 const invalid = dgram.createSocket("udp4");
 assert.throws(() => invalid.send(Buffer.from("x"), 40000, 1), {
-  code: "ERR_INVALID_ARG_TYPE"
+  code: "ERR_INVALID_ARG_TYPE",
 });
 invalid.close();

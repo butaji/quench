@@ -4,7 +4,7 @@ const path = require("path");
 
 const file = path.join(
   process.cwd(),
-  "tests/node/test/.tmp.0/access-portable.txt"
+  "tests/node/test/.tmp.0/access-portable.txt",
 );
 fs.writeFileSync(file, "ok");
 fs.accessSync(file, fs.constants.R_OK);

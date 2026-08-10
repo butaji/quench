@@ -10,14 +10,14 @@ const readable = new Readable({
     reads++;
     if (reads > 3) return this.push(null);
     this.push(Buffer.alloc(8));
-  }, 4)
+  }, 4),
 });
 const writable = new Writable({
   highWaterMark: 1,
   write: common.mustCall(function (_chunk, _encoding, callback) {
     writes++;
     setImmediate(callback);
-  }, 3)
+  }, 3),
 });
 
 writable.on(
@@ -26,6 +26,6 @@ writable.on(
     assert.strictEqual(reads, 4);
     assert.strictEqual(writes, 3);
     console.log("readable backpressure mustCall passed");
-  })
+  }),
 );
 readable.pipe(writable);

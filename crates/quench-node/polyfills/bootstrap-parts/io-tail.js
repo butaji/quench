@@ -1,10 +1,11 @@
 Object.assign(globalThis.__nodeFs, {
   readlinkSync: (value, options) => {
-    const encoding =
-      typeof options === "string" ? options : options && options.encoding;
+    const encoding = typeof options === "string"
+      ? options
+      : options && options.encoding;
     if (encoding !== undefined && !NodeBuffer.isEncoding(encoding)) {
       const error = new TypeError(
-        `The argument 'encoding' is invalid. Received '${encoding}'`
+        `The argument 'encoding' is invalid. Received '${encoding}'`,
       );
       error.code = "ERR_INVALID_ARG_VALUE";
       throw error;
@@ -13,19 +14,19 @@ Object.assign(globalThis.__nodeFs, {
     return encoding === "buffer"
       ? NodeBuffer.from(result)
       : encoding
-        ? NodeBuffer.from(result).toString(encoding)
-        : result;
+      ? NodeBuffer.from(result).toString(encoding)
+      : result;
   },
   chmodSync: (value, mode) => {
     const path = __nodeFsPathOnly(value);
     try {
       globalThis.__quench_fs_chmod(
         path,
-        typeof mode === "string" ? parseInt(mode, 8) : Number(mode)
+        typeof mode === "string" ? parseInt(mode, 8) : Number(mode),
       );
     } catch (cause) {
       const error = new Error(
-        `ENOENT: no such file or directory, chmod '${path}'`
+        `ENOENT: no such file or directory, chmod '${path}'`,
       );
       error.code = "ENOENT";
       error.syscall = "chmod";
@@ -33,8 +34,9 @@ Object.assign(globalThis.__nodeFs, {
       error.cause = cause;
       throw error;
     }
-    globalThis.__nodeModes[path] =
-      typeof mode === "string" ? parseInt(mode, 8) : Number(mode);
+    globalThis.__nodeModes[path] = typeof mode === "string"
+      ? parseInt(mode, 8)
+      : Number(mode);
   },
   symlinkSync: (target, link, type) => {
     if (
@@ -42,7 +44,7 @@ Object.assign(globalThis.__nodeFs, {
       (typeof link !== "string" && !(link instanceof Uint8Array))
     ) {
       const error = new TypeError(
-        'The "target" and "path" arguments must be strings or Buffer'
+        'The "target" and "path" arguments must be strings or Buffer',
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
@@ -52,7 +54,10 @@ Object.assign(globalThis.__nodeFs, {
       error.code = "ERR_INVALID_ARG_VALUE";
       throw error;
     }
-    return globalThis.__quench_fs_symlink(nodeFsPath(target), nodeFsPath(link));
+    const targetPath = typeof target === "string"
+      ? target
+      : NodeBuffer.from(target).toString();
+    return globalThis.__quench_fs_symlink(targetPath, nodeFsPath(link));
   },
   linkSync: (existing, link) => {
     if (
@@ -60,11 +65,11 @@ Object.assign(globalThis.__nodeFs, {
       (typeof link !== "string" && !(link instanceof Uint8Array))
     ) {
       const error = new TypeError(
-        'The "path" argument must be of type string or an instance of Buffer or URL'
+        'The "path" argument must be of type string or an instance of Buffer or URL',
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
     return globalThis.__quench_fs_link(nodeFsPath(existing), nodeFsPath(link));
-  }
+  },
 });

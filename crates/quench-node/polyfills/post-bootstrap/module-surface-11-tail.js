@@ -1,13 +1,15 @@
-for (const symbol of [
-  Symbol.iterator,
-  Symbol.for("nodejs.util.inspect.custom")
-]) {
+for (
+  const symbol of [
+    Symbol.iterator,
+    Symbol.for("nodejs.util.inspect.custom"),
+  ]
+) {
   const descriptor = Object.getOwnPropertyDescriptor(
     globalThis.__nodeURLSearchParams.prototype,
-    symbol
+    symbol,
   );
   Object.defineProperty(globalThis.__nodeURLSearchParams.prototype, symbol, {
     ...descriptor,
-    enumerable: false
+    enumerable: false,
   });
 }

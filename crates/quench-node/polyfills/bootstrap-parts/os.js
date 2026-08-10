@@ -11,7 +11,7 @@ const __quenchOsFallback = {
           env.TMP ||
           env.TEMP ||
           globalThis.__quench_tmpdir ||
-          "/tmp"
+          "/tmp",
       ).replace(/\/$/, "") || "/"
     );
   },
@@ -21,7 +21,7 @@ const __quenchOsFallback = {
       gid: 0,
       username: "unknown",
       homedir: __quenchOsFallback.homedir(),
-      shell: "/bin/sh"
+      shell: "/bin/sh",
     };
     if (options.encoding === "buffer") {
       for (const key of ["username", "homedir", "shell"]) {
@@ -29,19 +29,19 @@ const __quenchOsFallback = {
       }
     }
     return value;
-  }
+  },
 };
 globalThis.__quenchInternalOsBinding = {
   getHomeDirectory: (context) => {
     context.value = globalThis.__quench_homedir || "/";
-  }
+  },
 };
 const __quenchOsHomeDirectory = () => {
   const context = {};
   globalThis.__quenchInternalOsBinding.getHomeDirectory(context);
   if (context.syscall) {
     throw new Error(
-      `A system error occurred: ${context.syscall} returned ${context.code} (${context.message})`
+      `A system error occurred: ${context.syscall} returned ${context.code} (${context.message})`,
     );
   }
   return context.value;

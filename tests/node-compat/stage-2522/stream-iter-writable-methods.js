@@ -5,7 +5,7 @@ const { fromWritable, ondrain } = require("stream/iter");
 const writable = new Writable({
   write(_chunk, _encoding, callback) {
     callback();
-  }
+  },
 });
 const writer = fromWritable(writable);
 assert.strictEqual(writer.writeSync(new Uint8Array(1)), false);

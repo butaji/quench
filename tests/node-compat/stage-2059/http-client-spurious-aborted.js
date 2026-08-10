@@ -6,7 +6,7 @@ const server = http.createServer((req, res) => {
   res.writeHead(200, {
     "Content-Type": "text/plain",
     Connection: "close",
-    "Content-Length": 50
+    "Content-Length": 50,
   });
   res.write("aaaaaaaaaabbbbbbbbbbccccccccccdddddddddd");
   process.nextTick(() => res.socket.destroy());
@@ -20,7 +20,7 @@ server.listen(0, () => {
     const writable = new Writable({
       write(chunk, encoding, callback) {
         callback();
-      }
+      },
     });
     res.on("aborted", () => {
       aborted = true;

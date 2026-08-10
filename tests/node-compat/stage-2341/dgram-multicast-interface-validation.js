@@ -7,7 +7,7 @@ socket.bind(0, () => {
   assert.throws(() => socket.setMulticastInterface("224.0.0.2"), /EINVAL/);
   assert.throws(
     () => socket.setMulticastInterface("239.255.255.255"),
-    /EINVAL/
+    /EINVAL/,
   );
   socket.close(() =>
     console.log("dgram multicast interface validation passed")

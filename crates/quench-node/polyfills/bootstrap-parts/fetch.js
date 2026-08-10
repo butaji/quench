@@ -10,11 +10,13 @@ const __quenchFetchResponse = (response, resolve, reject, cleanup) => {
   response.on("data", (chunk) => chunks.push(chunk));
   response.once("end", () => {
     cleanup();
-    resolve(new globalThis.Response(chunks.map(String).join(""), {
-      status: response.statusCode,
-      statusText: response.statusMessage,
-      headers: response.headers,
-    }));
+    resolve(
+      new globalThis.Response(chunks.map(String).join(""), {
+        status: response.statusCode,
+        statusText: response.statusMessage,
+        headers: response.headers,
+      }),
+    );
   });
   response.once("error", (error) => {
     cleanup();
@@ -28,8 +30,11 @@ const __quenchFetchSend = (http, options, request, signal, cleanup, reject) => {
     cleanup();
     reject(__quenchFetchAbortError(signal.reason));
   };
-  requestHandle = http.request(options, (response) =>
-    __quenchFetchResponse(response, options.resolve, reject, cleanup));
+  requestHandle = http.request(
+    options,
+    (response) =>
+      __quenchFetchResponse(response, options.resolve, reject, cleanup),
+  );
   requestHandle.once("error", (error) => {
     cleanup();
     reject(error);

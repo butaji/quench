@@ -6,15 +6,15 @@ const vfs = require("node:vfs");
   filesystem.writeFileSync("/file.txt", "original");
   assert.strictEqual(
     filesystem.readFileSync("/file.txt", { flag: "w+" }).length,
-    0
+    0,
   );
   assert.strictEqual(
     filesystem.readFileSync("/new.txt", { flag: "a+" }).length,
-    0
+    0,
   );
   assert.throws(
     () => filesystem.readFileSync("/file.txt", { encoding: "bogus" }),
-    { code: "ERR_UNKNOWN_ENCODING" }
+    { code: "ERR_UNKNOWN_ENCODING" },
   );
   filesystem.mkdirSync("/dir");
   assert.throws(() => filesystem.rmSync("/dir"), { code: "EISDIR" });

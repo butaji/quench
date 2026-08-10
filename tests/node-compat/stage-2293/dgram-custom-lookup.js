@@ -9,7 +9,7 @@ const socket = dgram.createSocket({
     assert.strictEqual(host, "example.invalid");
     assert.strictEqual(family, 4);
     callback(null, "127.0.0.1", 4);
-  }
+  },
 });
 socket.bind(0, "example.invalid", () => {
   assert.strictEqual(called, true);

@@ -142,6 +142,7 @@ const __quenchComposeStreams = (streams, result) => {
           .then(() => callback(), callback);
       },
     });
+    composed.__quenchFunctionCompose = true;
     composed.writable = __quenchComposeWritable(streams[0]);
     composed.readable = __quenchComposeReadable(streams[streams.length - 1]);
     const write = composed.write;
@@ -182,6 +183,7 @@ const __quenchComposeStreams = (streams, result) => {
         encoding = undefined;
       }
       endRequested = true;
+      this.__quenchComposeEndRequested = true;
       endCallback = callback;
       if (chunk !== undefined) this.write(chunk, encoding);
       if (pendingWrites === 0) finalize();
@@ -211,6 +213,18 @@ const __quenchComposeStreams = (streams, result) => {
   }
   const first = streams[0];
   const last = streams[streams.length - 1];
+  if (
+    last.readable === false &&
+    last.__quenchFunctionCompose &&
+    !last.__quenchComposeEndRequested
+  ) {
+    last.once?.("close", () => {
+      if (!last.writableFinished && !last.errored) {
+        last.writableFinished = true;
+        last.emit("finish");
+      }
+    });
+  }
   for (let index = 0; index < streams.length - 1; index++) {
     streams[index].pipe(streams[index + 1]);
   }
@@ -260,6 +274,9 @@ const __quenchMakeCallableConstructor = (Constructor) => {
   return callable;
 };
 const __quenchValidatePipeline = (pipeline, args) => {
+  if (args.length === 2 && Array.isArray(args[0])) {
+    args = [...args[0], args[1]];
+  }
   const callback = args[args.length - 1];
   if (args.length === 0) {
     const error = new TypeError(
@@ -268,11 +285,16 @@ const __quenchValidatePipeline = (pipeline, args) => {
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
-  if (args.length < 3 || typeof callback !== "function") {
+  if (args.length < 3) {
     const error = new TypeError(
       "ERR_MISSING_ARGS: The pipeline requires at least two streams",
     );
     error.code = "ERR_MISSING_ARGS";
+    throw error;
+  }
+  if (typeof callback !== "function") {
+    const error = new TypeError("The last argument must be a function");
+    error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
   const streams = args.slice(0, -1).map((stream) => {
@@ -455,45 +477,4 @@ const __quenchFinishedStream = (stream, options, callback) => {
     active = false;
     abortCleanup?.();
   };
-};
-const __quenchAddAbortSignal = (signal, stream) => {
-  if (!signal || typeof signal !== "object") {
-    const error = new TypeError(
-      "ERR_INVALID_ARG_TYPE: The signal argument must be an AbortSignal",
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
-  }
-  if (!stream || typeof stream !== "object") {
-    const error = new TypeError(
-      "ERR_INVALID_ARG_TYPE: The stream argument must be a stream",
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
-  }
-  const abort = () => {
-    const error = new Error("The operation was aborted");
-    error.name = "AbortError";
-    error.code = "ABORT_ERR";
-    if (typeof stream._errorStream === "function") stream._errorStream(error);
-    else stream.destroy?.(error);
-  };
-  if (signal.aborted) abort();
-  else signal.addEventListener?.("abort", abort, { once: true });
-  return stream;
-};
-const __quenchValidateZlibOptions = (options, allowZeroWindowBits = false) => {
-  const value = options?.windowBits;
-  if (
-    value !== undefined &&
-    (!Number.isInteger(value) ||
-      value > 15 ||
-      (value < 9 && !(allowZeroWindowBits && value === 0)))
-  ) {
-    const error = new RangeError(
-      `The value of "options.windowBits" is out of range. It must be >= 9 and <= 15. Received ${value}`,
-    );
-    error.code = "ERR_OUT_OF_RANGE";
-    throw error;
-  }
 };

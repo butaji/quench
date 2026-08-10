@@ -12,7 +12,7 @@ fs.writeFileSync(path.join(root, "entry.js"), "module.exports = true;");
 const entry = require(path.join(root, "entry.js"));
 assert.strictEqual(
   require.resolve(path.join(root, "entry.js")),
-  fs.realpathSync(path.join(root, "entry.js"))
+  fs.realpathSync(path.join(root, "entry.js")),
 );
 assert.strictEqual(typeof require.resolve.paths("resolve-package"), "object");
 assert.ok(Array.isArray(require.resolve.paths("resolve-package")));

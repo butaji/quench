@@ -4,13 +4,13 @@ const { Readable } = require("stream");
 const readable = new Readable({
   read() {
     destination.emit("error", new Error("fail"));
-  }
+  },
 });
 const destination = new Readable({
   autoDestroy: true,
   destroy(_error, callback) {
     callback();
-  }
+  },
 });
 readable.pipe(destination);
 

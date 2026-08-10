@@ -5,17 +5,17 @@ const __quenchSetupWithCumulativeSettings =
 const __quenchClusterInitialSettings = (current) =>
   Object.keys(current).length === 0
     ? {
-        args: globalThis.process?.argv?.slice(2) || [],
-        exec: globalThis.process?.argv?.[1],
-        execArgv: globalThis.process?.execArgv || [],
-        silent: false
-      }
+      args: globalThis.process?.argv?.slice(2) || [],
+      exec: globalThis.process?.argv?.[1],
+      execArgv: globalThis.process?.execArgv || [],
+      silent: false,
+    }
     : {};
 __quenchClusterDefaults.setupPrimary = (options = {}) => {
   const current = __quenchClusterDefaults.settings || {};
   return __quenchSetupWithCumulativeSettings({
     ...__quenchClusterInitialSettings(current),
     ...current,
-    ...options
+    ...options,
   });
 };

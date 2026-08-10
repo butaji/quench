@@ -6,7 +6,7 @@ Object.defineProperty(Object.prototype, "hostname", {
   configurable: true,
   get() {
     throw new Error("inherited hostname was accessed");
-  }
+  },
 });
 
 assert.doesNotThrow(() => {

@@ -12,12 +12,12 @@ const readable = new Readable({
       "paused",
       this.isPaused(),
       "buffer",
-      this.readableLength
+      this.readableLength,
     );
     if (reads === 3) return this.push(null);
     this.push(Buffer.alloc(65500));
     for (let i = 0; i < 40; i++) this.push(Buffer.alloc(1024));
-  }
+  },
 });
 const writable = new Writable({
   highWaterMark: 16 * 1024,
@@ -28,7 +28,7 @@ const writable = new Writable({
       callback();
       console.log("callback", writes, "needDrain", this.writableNeedDrain);
     });
-  }
+  },
 });
 readable.on("pause", () => console.log("pause"));
 readable.on("resume", () => console.log("resume"));

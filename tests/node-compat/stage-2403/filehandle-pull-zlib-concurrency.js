@@ -13,13 +13,13 @@ const jobs = ["aaabbbcccddd", "bbbccc", "0123456789"].map(
     try {
       const compressed = handle.pull(compressGzip(), {
         start: 0,
-        limit: value.length
+        limit: value.length,
       });
       assert.strictEqual(await text(pull(compressed, decompressGzip())), value);
     } finally {
       await handle.close();
     }
-  }
+  },
 );
 
 Promise.all(jobs).then(() =>

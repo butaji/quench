@@ -12,7 +12,7 @@ __quenchPpidFixtureProcess.spawnSync = (command, args = [], options) => {
       status: 0,
       signal: null,
       stdout: NodeBuffer.from(String(process.pid) + "\n"),
-      stderr: NodeBuffer.from("")
+      stderr: NodeBuffer.from(""),
     };
   }
   return __quenchPpidFixtureOriginal(command, args, options);

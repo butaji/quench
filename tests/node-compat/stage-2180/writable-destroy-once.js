@@ -4,7 +4,7 @@ const first = new Error("kaboom 1");
 const writable = new Writable({
   write(_chunk, _encoding, callback) {
     callback();
-  }
+  },
 });
 let errors = 0;
 let ticked = false;

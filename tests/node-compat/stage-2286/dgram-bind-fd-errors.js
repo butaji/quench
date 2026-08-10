@@ -6,7 +6,7 @@ const socket = dgram.createSocket("udp4");
 socket.bind(() => {
   const other = dgram.createSocket("udp4");
   assert.throws(() => other.bind({ fd: socket[kStateSymbol].handle.fd }), {
-    code: "EEXIST"
+    code: "EEXIST",
   });
   socket.close();
   other.close();

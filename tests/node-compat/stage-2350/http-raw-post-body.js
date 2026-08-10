@@ -26,7 +26,7 @@ server.listen(0, () => {
   });
   socket.on("connect", () => {
     socket.write(
-      "POST /body HTTP/1.1\r\nHost: example.com\r\nContent-Length: 5\r\n\r\nhello"
+      "POST /body HTTP/1.1\r\nHost: example.com\r\nContent-Length: 5\r\n\r\nhello",
     );
   });
 });

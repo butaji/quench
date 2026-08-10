@@ -2,7 +2,10 @@
 
 Node-compatible JavaScript runtime built in Rust on top of
 [rquickjs](https://github.com/DelSkayn/rquickjs), with readable JavaScript
-polyfills and a staged compatibility harness.
+polyfills and a staged compatibility harness. Its implementation strategy is
+data-first: compact API declarations generate repetitive wrappers, registration,
+validation, and tests; handwritten code is reserved for irreducible behavior.
+See [`docs/data-first-minimal-runtime.md`](docs/data-first-minimal-runtime.md).
 
 ## Quick start
 
@@ -14,6 +17,8 @@ tools/compat-inventory.sh target/compat/inventory.json
 tools/diff-node-quench.sh tests/node/test/parallel/test-url-format.js
 tools/diff-node-quench-parallel.sh tests/node/test/parallel
 tools/compat-queue.sh target/compat/diff-url.json
+tools/compat-goal-audit.sh
+tools/check-application-stages.sh
 tools/check-focused-stages.sh
 tools/check-focused-policy.sh
 tools/check-all-tests.sh
@@ -23,6 +28,17 @@ Feature-gated `stream/iter` stages are run with:
 ```sh
 cargo run -p quench-node -- --experimental-stream-iter --stage 169
 ````
+
+Runnable application examples are in [`examples/`](examples/). They can be
+executed directly with the runtime:
+
+```sh
+cargo run -p quench-node -- examples/cli-summary.js
+cargo run -p quench-node -- examples/crypto-file-summary.js
+cargo run -p quench-node -- examples/http-loopback.js
+cargo run -p quench-node -- examples/stream-summary.js
+tools/run-examples.sh
+```
 
 Node 24 is the compatibility target, initially on Linux x86_64. The Node test
 suite is tracked as the `tests/node` submodule. Compatibility stages live under
@@ -39,7 +55,9 @@ Test262, with Node's suite as the primary oracle.
 
 The repository contains only the `quench-node` crate, its polyfills, the Node
 test submodule, compatibility stages, and the small harness needed to run them.
-Polyfills are intentionally kept readable and uncompressed.
+Declarations and exceptional polyfills are intentionally readable. Mechanical
+duplication should be generated and removed, with minimum maintainable LOC as
+the primary implementation objective.
 
 `tools/compat-coverage.sh` reports the current fixture and upstream-test
 inventory. It deliberately reports Node API coverage as `unmeasured`: a count of
@@ -60,7 +78,11 @@ their parallel runner is separate from nextest's Rust test process model. For
 the empirical test-file percentage requested during development, run
 `tools/measure-node-tests.sh [directory]`. It builds once and executes each
 JavaScript file individually, reporting passed, failed, skipped, and the
-resulting file pass rate.
+resulting file pass rate. `tools/compat-goal-audit.sh` joins task status,
+focused metrics, API inventory, and differential evidence into a ranked,
+machine-readable next-action report. `tools/check-application-stages.sh` runs
+the maintained real-application gates without requiring a full focused-stage
+sweep.
 
 ## Faster compatibility workflow
 

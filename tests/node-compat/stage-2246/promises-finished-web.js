@@ -14,8 +14,8 @@ assert.rejects(
     new ReadableStream({
       start(controller) {
         controller.error(new Error("boom"));
-      }
-    })
+      },
+    }),
   ),
-  /boom/
+  /boom/,
 );

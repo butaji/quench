@@ -3,7 +3,7 @@ globalThis.__quenchInternalFsBinding = {
   readdir: (path) => {
     const names = globalThis.__nodeFs.readdirSync(path);
     return [names, names.map(() => 1)];
-  }
+  },
 };
 globalThis.__quenchInternalFallbackBinding = { fstat: () => undefined };
 globalThis.__quenchDgramUdpFds = new Set();
@@ -21,7 +21,7 @@ globalThis.__quenchDgramUDPClass = class UDP {
     this._address = {
       address,
       port: port || __quenchDgramNextHandlePort++,
-      family: address.includes(":") ? "IPv6" : "IPv4"
+      family: address.includes(":") ? "IPv6" : "IPv4",
     };
     globalThis.__quenchDgramUdpFds.add(this.fd);
     globalThis.__quenchDgramUdpHandleInfo.set(this.fd, this._address);
@@ -56,12 +56,12 @@ globalThis.__quenchInternalBindingCore = (binding) => {
           throw error;
         }
         return buffer.fill(value, offset, end, encoding);
-      }
+      },
     };
   }
   if (binding === "fs") {
     return Object.assign(globalThis.__quenchInternalFsBinding, {
-      fstat: (fd) => globalThis.__nodeFs.fstatSync(fd)
+      fstat: (fd) => globalThis.__nodeFs.fstatSync(fd),
     });
   }
   if (binding === "udp_wrap") return { UDP: globalThis.__quenchDgramUDPClass };
@@ -71,7 +71,7 @@ globalThis.__quenchInternalBindingCore = (binding) => {
       getGenericUsageCount: (name) =>
         name.includes("Uninitialized")
           ? __nodeAllocatorCounts.uninitialized
-          : __nodeAllocatorCounts.zeroFilled
+          : __nodeAllocatorCounts.zeroFilled,
     };
   }
 };

@@ -3,12 +3,12 @@ const { compose, PassThrough, Readable, Writable } = require("stream");
 
 assert.throws(() => compose(), { code: "ERR_MISSING_ARGS" });
 assert.throws(() => compose(new Writable(), new PassThrough()), {
-  code: "ERR_INVALID_ARG_VALUE"
+  code: "ERR_INVALID_ARG_VALUE",
 });
 assert.throws(
   () =>
     compose(new PassThrough(), new Readable({ read() {} }), new PassThrough()),
-  { code: "ERR_INVALID_ARG_VALUE" }
+  { code: "ERR_INVALID_ARG_VALUE" },
 );
 
 assert.doesNotThrow(() =>
@@ -24,7 +24,7 @@ assert.doesNotThrow(() =>
     new Writable({
       write(_chunk, _encoding, callback) {
         callback();
-      }
-    })
+      },
+    }),
   )
 );

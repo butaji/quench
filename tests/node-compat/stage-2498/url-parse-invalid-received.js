@@ -8,15 +8,15 @@ for (const value of values) {
   assert.throws(() => parse(value), {
     code: "ERR_INVALID_ARG_TYPE",
     name: "TypeError",
-    message: `The "url" argument must be of type string.${suffix}`
+    message: `The "url" argument must be of type string.${suffix}`,
   });
 }
 
 assert.strictEqual(
   common.invalidArgTypeHelper(() => {}),
-  " Received function "
+  " Received function ",
 );
 assert.strictEqual(
   common.invalidArgTypeHelper(1n),
-  " Received type bigint (1n)"
+  " Received type bigint (1n)",
 );

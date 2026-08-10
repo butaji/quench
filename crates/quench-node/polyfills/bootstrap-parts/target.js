@@ -63,9 +63,11 @@ globalThis.CustomEvent ||= class CustomEvent extends Event {
     }
     if (options === null || typeof options !== "object") {
       const error = new TypeError(
-        `The "options" argument must be of type object. Received type ${typeof options} (${String(
-          options
-        )})`
+        `The "options" argument must be of type object. Received type ${typeof options} (${
+          String(
+            options,
+          )
+        })`,
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
@@ -73,7 +75,7 @@ globalThis.CustomEvent ||= class CustomEvent extends Event {
     super(type, options);
     Object.defineProperty(this, "detail", {
       value: options.detail === undefined ? null : options.detail,
-      enumerable: true
+      enumerable: true,
     });
   }
   get [Symbol.toStringTag]() {
@@ -87,19 +89,18 @@ globalThis.NodeEventTarget ||= class NodeEventTarget extends EventTarget {
   }
   addListener(name, listener, options, nodeStyle = true) {
     const owner = this;
-    const callback =
-      typeof listener === "function"
-        ? function (event) {
-            return listener.call(owner, event);
-          }
-        : function (event) {
-            return listener.handleEvent.call(listener, event);
-          };
+    const callback = typeof listener === "function"
+      ? function (event) {
+        return listener.call(owner, event);
+      }
+      : function (event) {
+        return listener.handleEvent.call(listener, event);
+      };
     (this._nodeListeners[name] ||= []).push({
       listener,
       callback,
       once: Boolean(options?.once),
-      nodeStyle
+      nodeStyle,
     });
     super.addEventListener(name, callback, options);
     return this;
@@ -172,8 +173,9 @@ globalThis.MessageEvent ||= class MessageEvent extends Event {
     super(type, options);
     this.data = options.data === undefined ? null : options.data;
     this.origin = options.origin === undefined ? "" : String(options.origin);
-    this.lastEventId =
-      options.lastEventId === undefined ? "" : String(options.lastEventId);
+    this.lastEventId = options.lastEventId === undefined
+      ? ""
+      : String(options.lastEventId);
     if (
       options.source !== undefined &&
       options.source !== null &&
@@ -184,9 +186,11 @@ globalThis.MessageEvent ||= class MessageEvent extends Event {
       )
     ) {
       throw new TypeError(
-        `MessageEvent constructor: Expected eventInitDict.source ("${String(
-          options.source
-        )}") to be an instance of MessagePort.`
+        `MessageEvent constructor: Expected eventInitDict.source ("${
+          String(
+            options.source,
+          )
+        }") to be an instance of MessagePort.`,
       );
     }
     this.source = options.source === undefined ? null : options.source;
@@ -197,9 +201,11 @@ globalThis.MessageEvent ||= class MessageEvent extends Event {
         typeof options.ports[Symbol.iterator] !== "function"
       ) {
         throw new TypeError(
-          `MessageEvent constructor: eventInitDict.ports (${String(
-            options.ports
-          )}) is not iterable.`
+          `MessageEvent constructor: eventInitDict.ports (${
+            String(
+              options.ports,
+            )
+          }) is not iterable.`,
         );
       }
       this.ports = [...options.ports];
@@ -209,11 +215,11 @@ globalThis.MessageEvent ||= class MessageEvent extends Event {
             !(
               port instanceof MessagePort ||
               typeof port?.postMessage === "function"
-            )
+            ),
         )
       ) {
         throw new TypeError(
-          "MessageEvent constructor: Expected eventInitDict.ports to contain MessagePort instances."
+          "MessageEvent constructor: Expected eventInitDict.ports to contain MessagePort instances.",
         );
       }
     }
@@ -281,7 +287,7 @@ globalThis.MessagePort ||= class MessagePort extends EventTarget {
         typeof transferList[Symbol.iterator] !== "function")
     ) {
       const error = new TypeError(
-        "Optional transferList argument must be an iterable"
+        "Optional transferList argument must be an iterable",
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
@@ -289,7 +295,7 @@ globalThis.MessagePort ||= class MessagePort extends EventTarget {
     if (transferList?.some((item) => __nodeUntransferableBuffers.has(item))) {
       const error = new DOMException(
         "ArrayBuffer is not transferable",
-        "DataCloneError"
+        "DataCloneError",
       );
       error.code = 25;
       throw error;
@@ -332,7 +338,7 @@ EventTarget.prototype.addEventListener = function (name, listener, options) {
     event._quenchPassive = false;
   };
   let listeners = __quenchPassiveListeners.get(this);
-  if (!listeners) __quenchPassiveListeners.set(this, (listeners = new Map()));
+  if (!listeners) __quenchPassiveListeners.set(this, listeners = new Map());
   listeners.set(listener, wrapper);
   return __quenchEventTargetAdd.call(this, name, wrapper, options);
 };
@@ -347,7 +353,7 @@ EventTarget.prototype.dispatchEvent = function (event) {
   try {
     Object.defineProperty(event, "eventPhase", {
       value: 2,
-      configurable: true
+      configurable: true,
     });
   } catch (_) {}
   event._quenchPath = [this];
@@ -383,7 +389,7 @@ if (globalThis.Event) {
       set(value) {
         this._quenchCancelBubble = Boolean(value);
       },
-      configurable: true
+      configurable: true,
     });
   } catch (_) {}
   Event.prototype.stopPropagation ||= function () {
@@ -407,7 +413,7 @@ if (globalThis.AbortSignal && !AbortSignal.prototype.__quenchEventArgument) {
       type,
       (event) =>
         listener.call(this, event || { stopImmediatePropagation() {} }),
-      options
+      options,
     );
   };
   AbortSignal.prototype.__quenchEventArgument = true;
@@ -421,14 +427,14 @@ const __quenchEventsTargetValid = (target) =>
 const __quenchValidateEventLimit = (limit) => {
   if (typeof limit !== "number") {
     const error = new TypeError(
-      "The setMaxListeners argument must be a number [ERR_INVALID_ARG_TYPE]"
+      "The setMaxListeners argument must be a number [ERR_INVALID_ARG_TYPE]",
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
   if (Number.isNaN(limit) || limit < 0) {
     const error = new RangeError(
-      "The value of setMaxListeners is out of range [ERR_OUT_OF_RANGE]"
+      "The value of setMaxListeners is out of range [ERR_OUT_OF_RANGE]",
     );
     error.code = "ERR_OUT_OF_RANGE";
     throw error;
@@ -443,7 +449,7 @@ const __quenchEventsRequire = (value) => {
   __quenchEventsModule.getMaxListeners = (target) => {
     if (!__quenchEventsTargetValid(target)) {
       const error = new TypeError(
-        "The eventTarget argument must be an instance of EventEmitter or EventTarget [ERR_INVALID_ARG_TYPE]"
+        "The eventTarget argument must be an instance of EventEmitter or EventTarget [ERR_INVALID_ARG_TYPE]",
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
@@ -456,7 +462,7 @@ const __quenchEventsRequire = (value) => {
     for (const target of targets) {
       if (!__quenchEventsTargetValid(target)) {
         const error = new TypeError(
-          "The eventTargets argument must be an instance of EventEmitter or EventTarget [ERR_INVALID_ARG_TYPE]"
+          "The eventTargets argument must be an instance of EventEmitter or EventTarget [ERR_INVALID_ARG_TYPE]",
         );
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
@@ -474,7 +480,7 @@ const __quenchEventsRequire = (value) => {
       __quenchEventsModule,
       target,
       event,
-      listener
+      listener,
     );
   };
   return __quenchEventsModule;

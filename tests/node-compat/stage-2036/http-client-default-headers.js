@@ -8,12 +8,12 @@ const expected = {
   OPTIONS: ["host", "connection"],
   POST: ["host", "connection", "content-length"],
   PUT: ["host", "connection", "content-length"],
-  TRACE: ["host", "connection"]
+  TRACE: ["host", "connection"],
 };
 const server = http.createServer((request, response) => {
   assert.deepStrictEqual(
     Object.keys(request.headers).sort(),
-    expected[request.method].sort()
+    expected[request.method].sort(),
   );
   response.end();
 });
@@ -26,8 +26,8 @@ server.listen(0, () => {
           const request = http.request({ method, port: server.address().port });
           request.once("response", resolve);
           request.end();
-        })
-    )
+        }),
+    ),
   ).then(() => server.close());
 });
 

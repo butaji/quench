@@ -9,7 +9,7 @@ server.listen(() => {
   const address = server.address();
   fetch(`http://127.0.0.1:${address.port}/hello?x=1`, {
     method: "POST",
-    body: "body"
+    body: "body",
   }).then(async (response) => {
     if (response.status !== 200) throw new Error("wrong status");
     if (response.headers.get("content-type") !== "text/plain") {

@@ -2,14 +2,14 @@ const __quenchOriginalRequireWithConsole = globalThis.require;
 class __quenchConsole {
   constructor(
     stdout = globalThis.process?.stdout,
-    stderr = globalThis.process?.stderr
+    stderr = globalThis.process?.stderr,
   ) {
     this._stdout = stdout;
     this._stderr = stderr;
   }
   log(...args) {
     this._stdout?.write?.(
-      `${globalThis.__nodeUtil?.format?.(...args) ?? args.join(" ")}\n`
+      `${globalThis.__nodeUtil?.format?.(...args) ?? args.join(" ")}\n`,
     );
   }
   info(...args) {
@@ -17,17 +17,20 @@ class __quenchConsole {
   }
   warn(...args) {
     this._stderr?.write?.(
-      `${globalThis.__nodeUtil?.format?.(...args) ?? args.join(" ")}\n`
+      `${globalThis.__nodeUtil?.format?.(...args) ?? args.join(" ")}\n`,
     );
   }
   error(...args) {
     this.warn(...args);
   }
+  dir(value) {
+    this.log(value);
+  }
   table(value) {
     this.log(
       Array.isArray(value)
         ? value.map((item) => JSON.stringify(item)).join("\n")
-        : JSON.stringify(value)
+        : JSON.stringify(value),
     );
   }
   trace(...args) {
@@ -47,7 +50,12 @@ const __quenchConsoleModule = {
   log: (...args) => globalThis.console.log(...args),
   info: (...args) => globalThis.console.info(...args),
   warn: (...args) => globalThis.console.warn(...args),
-  error: (...args) => globalThis.console.error(...args)
+  error: (...args) => globalThis.console.error(...args),
+  dir: (...args) => globalThis.console.dir?.(...args),
+  createTask: (name) => ({
+    name: String(name || ""),
+    run: (callback, ...args) => callback(...args),
+  }),
 };
 for (const name of ["log", "info", "warn", "error"]) {
   const original = globalThis.console?.[name];
@@ -55,7 +63,7 @@ for (const name of ["log", "info", "warn", "error"]) {
   globalThis.console[name] = (...args) =>
     original.call(
       globalThis.console,
-      globalThis.__nodeUtil?.format?.(...args) ?? args.join(" ")
+      globalThis.__nodeUtil?.format?.(...args) ?? args.join(" "),
     );
 }
 for (const name of ["time", "timeEnd", "timeLog"]) {
@@ -70,8 +78,8 @@ for (const name of ["time", "timeEnd", "timeLog"]) {
     }
     if (name === "timeEnd") globalThis.console._times.delete(text);
     const safeLabel = ["__proto__", "constructor", "hasOwnProperty"].includes(
-      text
-    )
+        text,
+      )
       ? `__quench_${text}`
       : label;
     return original.call(globalThis.console, safeLabel, ...args);
@@ -85,12 +93,13 @@ globalThis.console.assert = (condition, ...args) => {
   let used = 1;
   const text = String(originalDetail);
   const placeholder = text.indexOf("%s");
-  let detail =
-    placeholder >= 0
-      ? `${text.slice(0, placeholder)}${String(args[used++])}${text.slice(
-          placeholder + 2
-        )}`
-      : text;
+  let detail = placeholder >= 0
+    ? `${text.slice(0, placeholder)}${String(args[used++])}${
+      text.slice(
+        placeholder + 2,
+      )
+    }`
+    : text;
   if (used < args.length) detail += ` ${args.slice(used).join(" ")}`;
   const message = detail ? `Assertion failed: ${detail}` : "Assertion failed";
   globalThis.process?.stderr?.write?.(`${message}\n`);

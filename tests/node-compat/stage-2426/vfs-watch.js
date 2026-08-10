@@ -7,7 +7,7 @@ const vfs = require("node:vfs");
   filesystem.writeFileSync("/file.txt", "a");
   const watcher = filesystem.watch("/file.txt", {
     interval: 5,
-    encoding: "buffer"
+    encoding: "buffer",
   });
   const changed = once(watcher, "change");
   filesystem.writeFileSync("/file.txt", "changed");
