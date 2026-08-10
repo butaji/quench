@@ -22,7 +22,14 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError
         .iter()
         .map(|index| read_register(registers, *index))
         .collect::<Result<Vec<_>, _>>()?;
+    let propagates = matches!(
+        callee,
+        Value::Builtin(crate::ops::Builtin::MapSet | crate::ops::Builtin::SetAdd)
+    );
     let value = execute_callee(callee, &receiver, &arguments, args, registers)?;
+    if propagates {
+        crate::properties::propagate_updated_object(registers, Some(*object), &receiver, &value);
+    }
     write_value(registers, *dst, value);
     Ok(())
 }

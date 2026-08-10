@@ -67,7 +67,7 @@ fn reduce_secondary(
             crate::construct::reduce(value, ops, facts, next_register, locals)
         }
         Expression::UpdateExpression(value) => {
-            crate::loops::reduce_update(value, ops, next_register, locals)
+            crate::loops::reduce_update(value, ops, facts, next_register, locals)
         }
         Expression::AssignmentExpression(value) => {
             crate::reduce::reduce_assignment(value, ops, facts, next_register, locals)
