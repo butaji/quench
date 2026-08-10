@@ -151,6 +151,38 @@ pub enum FunctionKind {
     Arrow,
 }
 
+/// Opaque identity for a host realm.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct RealmId(u64);
+
+impl RealmId {
+    pub const ROOT: Self = Self(0);
+
+    pub const fn new(id: u64) -> Self {
+        Self(id)
+    }
+
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
+/// Host capabilities that may be attached to a particular realm.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum HostCapabilityKind {
+    GetGlobal,
+    CreateRealm,
+    EvalScript,
+    DetachArrayBuffer,
+}
+
+/// Non-JavaScript capability descriptor; exposure is owned by the host.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct HostCapabilityRef {
+    pub realm: RealmId,
+    pub kind: HostCapabilityKind,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Builtin {
     Array,

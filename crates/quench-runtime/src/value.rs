@@ -2,7 +2,43 @@
 
 use std::{cell::RefCell, collections::VecDeque, rc::Rc};
 
-use crate::ops::{Builtin, Constant, Op};
+use crate::ops::{Builtin, Constant, HostCapabilityRef, Op, RealmId};
+
+/// Identity-bearing host capability kept outside the JavaScript value space.
+#[derive(Clone, Debug)]
+pub struct HostCapabilityValue {
+    pub descriptor: HostCapabilityRef,
+    identity: Rc<()>,
+}
+
+impl HostCapabilityValue {
+    pub fn new(descriptor: HostCapabilityRef) -> Self {
+        Self {
+            descriptor,
+            identity: Rc::new(()),
+        }
+    }
+
+    pub fn realm(&self) -> RealmId {
+        self.descriptor.realm
+    }
+
+    pub fn same_realm(&self, other: &Self) -> bool {
+        self.realm() == other.realm()
+    }
+
+    pub fn same_identity(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.identity, &other.identity)
+    }
+}
+
+impl PartialEq for HostCapabilityValue {
+    fn eq(&self, other: &Self) -> bool {
+        self.descriptor == other.descriptor && self.same_identity(other)
+    }
+}
+
+impl Eq for HostCapabilityValue {}
 
 /// Promise state: pending, fulfilled, or rejected.
 #[derive(Debug, Clone, PartialEq)]
