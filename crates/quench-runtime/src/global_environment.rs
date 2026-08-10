@@ -13,7 +13,7 @@ struct Descriptor {
 pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
     match op {
         Op::CheckGlobalFunction { name } => check_function(name),
-        Op::CheckGlobalVar { name } => check_var(name),
+        Op::CheckGlobalVar { name, is_lexical } => check_var(name, *is_lexical),
         Op::CreateGlobalFunction {
             name,
             slot,
@@ -23,35 +23,69 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError
             name,
             slot,
             deletable,
-        } => create_var(registers, name, *slot, *deletable),
+            is_lexical,
+        } => create_var(registers, name, *slot, *deletable, *is_lexical),
         _ => Ok(()),
     }
 }
 
 fn check_function(name: &str) -> Result<(), VmError> {
-    check_lexical_declaration(name)?;
-    let Some(descriptor) = own_descriptor(name) else {
-        return Ok(());
-    };
-    let compatible =
-        descriptor.configurable || descriptor.data && descriptor.writable && descriptor.enumerable;
-    if compatible {
+    if let Some(descriptor) = own_descriptor(name) {
+        let compatible = descriptor.configurable
+            || descriptor.data && descriptor.writable && descriptor.enumerable;
+        if !compatible {
+            return Err(crate::value::error::throw_type_error(&format!(
+                "Cannot declare global function '{name}'"
+            )));
+        }
+    } else if !is_global_extensible() {
+        return Err(crate::value::error::throw_type_error(&format!(
+            "Cannot declare global function '{name}' on non-extensible object"
+        )));
+    }
+    Ok(())
+}
+
+fn check_var(name: &str, is_lexical: bool) -> Result<(), VmError> {
+    // The reducer conflates var and lexical declarations under CheckGlobalVar.
+    // Lexical declarations (let/const/class) must throw SyntaxError on existing
+    // or restricted bindings, while var declarations must throw TypeError on
+    // non-configurable or non-extensible globals.
+    if is_lexical {
+        check_lexical_declaration(name)?;
         Ok(())
-    } else {
+    } else if let Some(descriptor) = own_descriptor(name) {
+        if !descriptor.configurable {
+            return Err(crate::value::error::throw_type_error(&format!(
+                "Cannot declare global var '{name}'"
+            )));
+        }
+        Ok(())
+    } else if !is_global_extensible() {
         Err(crate::value::error::throw_type_error(&format!(
-            "Cannot declare global function '{name}'"
+            "Cannot declare global var '{name}' on non-extensible object"
         )))
+    } else {
+        Ok(())
     }
 }
 
-fn check_var(name: &str) -> Result<(), VmError> {
-    check_lexical_declaration(name)?;
-    // The current global representation is always extensible.
-    Ok(())
+fn is_global_extensible() -> bool {
+    let global = crate::vm::current_global_object();
+    let value = crate::properties::is_extensible_value(Some(&global));
+    matches!(value, Ok(Value::Boolean(true)))
 }
 
 fn check_lexical_declaration(name: &str) -> Result<(), VmError> {
     if !crate::locals::global_has_own_name(name) {
+        if has_restricted_global(name) {
+            return Err(VmError::Thrown(crate::builtins::error(
+                crate::ops::Builtin::SyntaxError,
+                &[Value::String(format!(
+                    "Global lexical binding '{name}' is restricted"
+                ))],
+            )));
+        }
         return Ok(());
     }
     Err(VmError::Thrown(crate::builtins::error(
@@ -62,17 +96,32 @@ fn check_lexical_declaration(name: &str) -> Result<(), VmError> {
     )))
 }
 
+fn has_restricted_global(name: &str) -> bool {
+    let Some(descriptor) = own_descriptor(name) else {
+        return false;
+    };
+    !descriptor.configurable
+}
+
 fn create_var(
     registers: &mut Vec<Value>,
     name: &str,
     slot: u16,
-    deletable: bool,
+    _deletable: bool,
+    is_lexical: bool,
 ) -> Result<(), VmError> {
+    // Per spec, lexical declarations (let/const/class) do not create
+    // properties on the global object.
+    if is_lexical {
+        return Ok(());
+    }
     let current = own_descriptor(name);
     let cell = binding_cell(name, slot, current.as_ref().map(|value| &value.value));
+    // Per spec, global var bindings are non-configurable.
     let descriptor = match current {
+        Some(current) if !current.configurable => value_descriptor(cell),
         Some(current) => descriptor_with_flags(cell, &current),
-        None => data_descriptor(cell, true, true, deletable),
+        None => data_descriptor(cell, true, true, false),
     };
     define_global(registers, name, descriptor)
 }
@@ -81,14 +130,16 @@ fn create_function(
     registers: &mut Vec<Value>,
     name: &str,
     slot: u16,
-    deletable: bool,
+    _deletable: bool,
 ) -> Result<(), VmError> {
     let current = own_descriptor(name);
     let value = crate::locals::slot_cell(slot).borrow().clone();
     let cell = binding_cell(name, slot, Some(&value));
+    // Per spec, global function bindings are non-configurable.
     let descriptor = match current {
         Some(current) if !current.configurable => value_descriptor(cell),
-        _ => data_descriptor(cell, true, true, deletable),
+        Some(current) => descriptor_with_flags(cell, &current),
+        None => data_descriptor(cell, true, true, false),
     };
     define_global(registers, name, descriptor)
 }

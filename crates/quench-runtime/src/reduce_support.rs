@@ -33,14 +33,49 @@ pub(crate) fn validate_parse(parsed: &oxc::parser::ParserReturn<'_>) -> Result<(
     if parsed.panicked {
         return Err(vec!["SyntaxError: OXC parser rejected source".to_string()]);
     }
-    if parsed.errors.is_empty() {
-        return Ok(());
+    if !parsed.errors.is_empty() {
+        return Err(parsed
+            .errors
+            .iter()
+            .map(|error| format!("SyntaxError: {error}"))
+            .collect());
     }
-    Err(parsed
-        .errors
-        .iter()
-        .map(|error| format!("SyntaxError: {error}"))
-        .collect())
+    validate_program(&parsed.program)
+}
+
+struct RegexpLiteralValidator<'a> {
+    errors: Vec<String>,
+    marker: std::marker::PhantomData<&'a ()>,
+}
+
+impl<'a> oxc::ast::visit::Visit<'a> for RegexpLiteralValidator<'a> {
+    fn visit_reg_exp_literal(&mut self, literal: &oxc::ast::ast::RegExpLiteral<'a>) {
+        if let Some(raw) = literal.raw.as_ref() {
+            let text = raw.as_str();
+            if let Some(separator) = text.rfind('/') {
+                let pattern = &text[1..separator];
+                if let Err(error) = crate::regexp::validate_literal(pattern) {
+                    self.errors.push(error);
+                }
+                if let Err(error) = crate::regexp::validate_pattern(pattern) {
+                    self.errors.push(error);
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn validate_program(program: &oxc::ast::ast::Program<'_>) -> Result<(), Vec<String>> {
+    let mut validator = RegexpLiteralValidator {
+        errors: Vec::new(),
+        marker: std::marker::PhantomData,
+    };
+    oxc::ast::visit::walk::walk_program(&mut validator, program);
+    if validator.errors.is_empty() {
+        Ok(())
+    } else {
+        Err(validator.errors)
+    }
 }
 
 /// Highest allocated local slot plus one, used as the next register base.
@@ -78,6 +113,10 @@ pub(crate) fn instantiate_script_declarations(
     }
     for statement in statements {
         for name in script_lexical_names(statement) {
+            ops.push(Op::CheckGlobalVar {
+                name: name.clone(),
+                is_lexical: true,
+            });
             let slot = *next_slot;
             *next_slot = next_slot.saturating_add(1);
             locals.insert(name.clone(), slot);
@@ -379,6 +418,7 @@ fn create_global_binding(
             name: name.to_string(),
             slot: *slot,
             deletable: false,
+            is_lexical: false,
         }
     };
     ops.push(op);

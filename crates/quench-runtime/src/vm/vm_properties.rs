@@ -96,9 +96,7 @@ fn primitive_prototype_property(value: &Value, key: &str) -> Value {
         let builtin = match value {
             Value::Number(_) => Some(Builtin::Number),
             Value::Boolean(_) => Some(Builtin::Boolean),
-            Value::String(value) if !looks_like_symbol(value) => {
-                Some(Builtin::String)
-            }
+            Value::String(value) if !looks_like_symbol(value) => Some(Builtin::String),
             Value::BigInt(_) => Some(Builtin::BigInt),
             _ => None,
         };
@@ -174,7 +172,7 @@ pub fn get_property_result(value: &Value, key: &str) -> Result<Value, VmError> {
         if matches!(getter, Value::Undefined) {
             return Ok(Value::Undefined);
         }
-        return crate::functions::execute_target(&getter, value, &[]);
+        return invoke_accessor(&getter, value);
     }
     let getter = crate::property_define::accessor(value, key, "get");
     let Some(getter) = getter else {
@@ -183,7 +181,21 @@ pub fn get_property_result(value: &Value, key: &str) -> Result<Value, VmError> {
     if matches!(getter, Value::Undefined) {
         return Ok(Value::Undefined);
     }
-    crate::functions::execute_target(&getter, value, &[])
+    invoke_accessor(&getter, value)
+}
+
+/// Invoke a getter using the receiver as `this`. The getter's own
+/// `OrdinaryCallEvaluate` semantics handle ToObject coercion for sloppy
+/// functions; strict functions keep the receiver as-is.
+fn invoke_accessor(getter: &Value, receiver: &Value) -> Result<Value, VmError> {
+    match getter {
+        Value::Function(function) => crate::functions::execute(function, receiver, &[]),
+        Value::BoundFunction(bound) => crate::functions::execute_bound(bound, &[]),
+        Value::Builtin(builtin) => {
+            crate::vm::execute_builtin_with_receiver(*builtin, &[], Some(receiver))
+        }
+        _ => Err(crate::vm::not_callable()),
+    }
 }
 
 pub(crate) fn array_accessor(value: &Value, key: &str, field: &str) -> Option<Value> {
