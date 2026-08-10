@@ -254,20 +254,35 @@ pub(crate) fn proxy_is_extensible(target: &Value) -> Result<Value, VmError> {
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
         if let Some(trap) = get_handler_trap(proxy, "isExtensible") {
-            return call_trap(&trap, slice::from_ref(target), None);
+            return call_trap(&trap, slice::from_ref(&proxy.target), None);
         }
     }
-    Ok(Value::Boolean(true))
+    require_reflect_object(target)?;
+    Ok(Value::Boolean(crate::properties::object_is_extensible(
+        target,
+    )))
 }
 
 pub(crate) fn proxy_prevent_extensions(target: &Value) -> Result<Value, VmError> {
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
         if let Some(trap) = get_handler_trap(proxy, "preventExtensions") {
-            return call_trap(&trap, slice::from_ref(target), None);
+            return call_trap(&trap, slice::from_ref(&proxy.target), None);
         }
+        return Ok(Value::Boolean(true));
     }
+    require_reflect_object(target)?;
+    let _ = crate::properties::prevent_extensions(Some(target))?;
     Ok(Value::Boolean(true))
+}
+
+fn require_reflect_object(target: &Value) -> Result<(), VmError> {
+    if crate::value::is_object(target) {
+        return Ok(());
+    }
+    Err(crate::value::error::throw_type_error(
+        "Reflect target must be an object",
+    ))
 }
 
 pub(crate) fn proxy_get_own_property_descriptor(
