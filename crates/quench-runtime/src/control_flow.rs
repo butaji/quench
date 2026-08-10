@@ -32,6 +32,9 @@ pub(crate) fn reduce_return(
 }
 
 fn promote_tail_call(ops: &mut Vec<Op>, returned: u16) -> bool {
+    if promote_conditional_tail(ops, returned) {
+        return true;
+    }
     let Some(Op::Call {
         dst,
         callee,
@@ -52,6 +55,68 @@ fn promote_tail_call(ops: &mut Vec<Op>, returned: u16) -> bool {
     let _ = ops.pop();
     ops.push(tail_call);
     true
+}
+
+fn promote_conditional_tail(ops: &mut Vec<Op>, returned: u16) -> bool {
+    if !matches!(ops.last(), Some(Op::Conditional { dst, .. }) if *dst == returned) {
+        return false;
+    }
+    let Some(Op::Conditional {
+        dst,
+        consequent,
+        alternate,
+        condition,
+    }) = ops.pop()
+    else {
+        return false;
+    };
+    if !branch_completes(&consequent) || !branch_completes(&alternate) {
+        restore_conditional(ops, dst, condition, consequent, alternate);
+        return false;
+    }
+    let mut consequent = consequent;
+    let mut alternate = alternate;
+    let promoted = promote_branch_tail(&mut consequent) | promote_branch_tail(&mut alternate);
+    if promoted {
+        ops.push(Op::Branch {
+            condition,
+            then_ops: consequent,
+            else_ops: alternate,
+        });
+    } else {
+        restore_conditional(ops, dst, condition, consequent, alternate);
+    }
+    promoted
+}
+
+fn restore_conditional(
+    ops: &mut Vec<Op>,
+    dst: u16,
+    condition: u16,
+    consequent: Vec<Op>,
+    alternate: Vec<Op>,
+) {
+    ops.push(Op::Conditional {
+        dst,
+        condition,
+        consequent,
+        alternate,
+    });
+}
+
+fn branch_completes(ops: &[Op]) -> bool {
+    matches!(ops.last(), Some(Op::Return { .. } | Op::TailCall { .. }))
+}
+
+fn promote_branch_tail(ops: &mut Vec<Op>) -> bool {
+    let Some(Op::Return { src }) = ops.pop() else {
+        return false;
+    };
+    if promote_tail_call(ops, src) {
+        return true;
+    }
+    ops.push(Op::Return { src });
+    false
 }
 
 pub(crate) fn reduce_throw(
