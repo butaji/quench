@@ -81,6 +81,23 @@
       },
       "improvement_vs": "scenario-run-b.quench_node.route-load",
       "improvement": { "startup_pct": 44.3, "workload_pct": 63.8 }
+    },
+    {
+      "id": "dev-opt-level-3",
+      "commit": null,
+      "build": "debug-opt-level-3",
+      "node": {
+        "route-load": { "startup_ms": 43.9, "peak_rss_mib": 50.0, "workload_ms": 15.6, "req_per_sec": 128379 },
+        "props-json": { "startup_ms": 28.5, "peak_rss_mib": 45.8, "workload_ms": 0.4, "req_per_sec": 4536011 },
+        "ssr-response": { "startup_ms": 28.0, "peak_rss_mib": 45.8, "workload_ms": 0.6, "req_per_sec": 3545050 }
+      },
+      "quench_node": {
+        "route-load": { "startup_ms": 127.9, "peak_rss_mib": 18.5, "workload_ms": 40.0, "req_per_sec": 50039 },
+        "props-json": { "startup_ms": 104.7, "peak_rss_mib": 18.5, "workload_ms": 17.3, "req_per_sec": 115500 },
+        "ssr-response": { "startup_ms": 96.6, "peak_rss_mib": 18.5, "workload_ms": 9.3, "req_per_sec": 216146 }
+      },
+      "improvement_vs": "dev-opt-level-2.quench_node",
+      "improvement": { "route_startup_pct": 15.0, "route_workload_pct": 11.5 }
     }
   ],
   "runtime_change_ledger": [
