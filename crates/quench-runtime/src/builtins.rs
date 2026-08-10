@@ -221,6 +221,7 @@ pub(crate) fn object(arguments: &[Value]) -> Value {
         | Some(Value::Float64Array(_))
         | Some(Value::Int8Array(_))
         | Some(Value::Uint8Array(_))
+        | Some(Value::Uint8ClampedArray(_))
         | Some(Value::Object(_))
         | Some(Value::Function(_))
         | Some(Value::Builtin(_)) => arguments[0].clone(),
@@ -275,6 +276,9 @@ pub(crate) fn same_value(left: Option<&Value>, right: Option<&Value>) -> bool {
         (Value::Float64Array(left), Value::Float64Array(right)) => Rc::ptr_eq(left, right),
         (Value::Int8Array(left), Value::Int8Array(right)) => Rc::ptr_eq(left, right),
         (Value::Uint8Array(left), Value::Uint8Array(right)) => Rc::ptr_eq(left, right),
+        (Value::Uint8ClampedArray(left), Value::Uint8ClampedArray(right)) => {
+            Rc::ptr_eq(left, right)
+        }
         (Value::Function(left), Value::Function(right)) => Rc::ptr_eq(left, right),
         _ => left == right,
     }
@@ -381,6 +385,7 @@ pub(crate) fn prototype_to_string(receiver: Option<&Value>) -> Value {
         Some(Value::Float64Array(_)) => "Float64Array",
         Some(Value::Int8Array(_)) => "Int8Array",
         Some(Value::Uint8Array(_)) => "Uint8Array",
+        Some(Value::Uint8ClampedArray(_)) => "Uint8ClampedArray",
         Some(Value::Function(_)) => "Function",
         Some(Value::BoundFunction(_)) => "Function",
         Some(Value::Builtin(_)) => "Function",
