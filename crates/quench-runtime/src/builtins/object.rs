@@ -471,6 +471,7 @@ mod tests {
                 "custom".to_string(),
                 Value::Boolean(true),
             )])),
+            instance_fields: Rc::new(RefCell::new(Vec::new())),
         }));
         assert_eq!(
             execute_special(
