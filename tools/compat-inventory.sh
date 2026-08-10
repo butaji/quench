@@ -68,7 +68,8 @@ const assignedGlobals = [...source.matchAll(/globalThis\.([A-Za-z_$][A-Za-z0-9_$
 const globalAssignments = [...new Set(assignedGlobals)].sort();
 const assignedSet = new Set(globalAssignments);
 const quenchGlobalSet = new Set(quenchGlobals);
-const sourceGlobalGaps = nodeGlobals.filter((name) => !assignedSet.has(name) && !quenchGlobalSet.has(name));
+const moduleGlobalNames = new Set([...canonicalModules, ...canonicalModules.map((name) => `node:${name}`), "__dirname", "__filename", "exports", "module", "require"]);
+const sourceGlobalGaps = nodeGlobals.filter((name) => !moduleGlobalNames.has(name) && !assignedSet.has(name) && !quenchGlobalSet.has(name));
 
 const parallel = path.join(root, "tests/node/test/parallel");
 const fixtureFiles = fs.readdirSync(parallel).filter((name) => /\.(?:js|mjs|cjs)$/.test(name)).sort();
