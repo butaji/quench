@@ -71,6 +71,7 @@ fn reduce_class(
         params: 0,
         captures: 0,
         kind: crate::ops::FunctionKind::Ordinary,
+        is_async: false,
     });
     ops.push(Op::StoreLocal {
         slot,
