@@ -220,11 +220,12 @@ pub fn reduce_function_declaration(
     let body_ops = functions::reduce_body(body, facts, parameters, parameter_count, captures)?;
     let register = *next_register;
     *next_register = next_register.saturating_add(1);
-    ops.push(Op::MakeFunction {
+    ops.push(Op::MakeFunctionWithKind {
         dst: register,
         body: body_ops,
         params: parameter_count,
         captures,
+        kind: crate::ops::FunctionKind::Ordinary,
     });
     ops.push(Op::StoreLocal {
         slot,
