@@ -120,6 +120,7 @@ pub enum Op {
         src: u16,
     },
     Break,
+    Continue,
     Throw {
         src: u16,
     },

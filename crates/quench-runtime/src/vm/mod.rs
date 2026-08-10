@@ -13,6 +13,7 @@ pub enum VmError {
     RegisterOutOfBounds(u16),
     MissingReturn,
     Break,
+    Continue,
     NotCallable,
     EvalError(String),
     Thrown(Value),
@@ -232,6 +233,7 @@ fn run_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Value>, VmError>
         Binary { .. } => run_binary(registers, op)?,
         Return { .. } | Throw { .. } => return run_terminal(registers, op).map(Some),
         Break => return Err(VmError::Break),
+        Continue => return Err(VmError::Continue),
     }
     Ok(None)
 }
