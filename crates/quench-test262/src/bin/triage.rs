@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
-    env,
+    env::{self, ArgsOs},
+    ffi::OsString,
     path::{Path, PathBuf},
     process::ExitCode,
     sync::{
@@ -20,22 +21,32 @@ struct RunReport {
     failures: Vec<(PathBuf, String)>,
 }
 
+struct Args {
+    target: PathBuf,
+    limit: usize,
+    threads: usize,
+    filters: Vec<String>,
+}
+
 fn main() -> ExitCode {
-    let Some(target) = env::args_os().nth(1).map(PathBuf::from) else {
-        eprintln!("usage: triage <test-subdir> [limit] [threads]");
-        return ExitCode::from(2);
+    let args = match parse_args(env::args_os()) {
+        Ok(args) => args,
+        Err(error) => return fail(&error),
     };
-    let limit = arg(2).unwrap_or(1_000_000);
-    let threads =
-        arg(3).unwrap_or_else(|| thread::available_parallelism().map_or(1, |count| count.get()));
     let root = test262_root();
-    let base = root.join("test").join(&target);
-    let files = match discover_js_files(&base) {
+    let base = root.join("test").join(&args.target);
+    let discovered = match discover_js_files(&base) {
         Ok(files) => files,
         Err(error) => return fail(&format!("discover: {error}")),
     };
-    let threads = threads.max(1).min(files.len().max(1));
-    let (passed, failed, failures) = run_parallel(&root, files, limit, threads);
+    let discovered_count = discovered.len();
+    let files = select_files(discovered, &base, &args.filters);
+    if files.is_empty() {
+        return fail("no tests matched the requested filters");
+    }
+    println!("selected={} discovered={discovered_count}", files.len());
+    let threads = args.threads.max(1).min(files.len());
+    let (passed, failed, failures) = run_parallel(&root, files, args.limit, threads);
     let buckets = bucket_failures(failures);
     print_report(passed, failed, &buckets);
     if failed == 0 {
@@ -45,10 +56,70 @@ fn main() -> ExitCode {
     }
 }
 
-fn arg(index: usize) -> Option<usize> {
-    env::args()
-        .nth(index)
-        .and_then(|value| value.parse::<usize>().ok())
+fn parse_args(mut values: ArgsOs) -> Result<Args, String> {
+    let _binary = values.next();
+    let target = values.next().ok_or_else(usage)?;
+    let mut positionals = Vec::new();
+    let mut filters = Vec::new();
+    while let Some(value) = values.next() {
+        if value == "--filter" {
+            filters.push(filter_value(values.next())?);
+        } else if value.to_string_lossy().starts_with("--") {
+            return Err(format!("unknown option: {}", value.to_string_lossy()));
+        } else {
+            positionals.push(value);
+        }
+    }
+    if positionals.len() > 2 {
+        return Err(usage());
+    }
+    Ok(Args {
+        target: PathBuf::from(target),
+        limit: positional(&positionals, 0)?.unwrap_or(1_000_000),
+        threads: positional(&positionals, 1)?.unwrap_or_else(default_threads),
+        filters,
+    })
+}
+
+fn usage() -> String {
+    "usage: triage <test-subdir> [limit] [threads] [--filter <substring>]...".to_string()
+}
+
+fn filter_value(value: Option<OsString>) -> Result<String, String> {
+    let value = value.ok_or_else(|| "--filter requires a value".to_string())?;
+    let value = value.to_string_lossy().into_owned();
+    (!value.is_empty())
+        .then_some(value)
+        .ok_or_else(|| "--filter requires a non-empty value".to_string())
+}
+
+fn positional(values: &[OsString], index: usize) -> Result<Option<usize>, String> {
+    values
+        .get(index)
+        .map(|value| {
+            value
+                .to_string_lossy()
+                .parse()
+                .map_err(|_| format!("invalid numeric argument: {}", value.to_string_lossy()))
+        })
+        .transpose()
+}
+
+fn default_threads() -> usize {
+    thread::available_parallelism().map_or(1, |count| count.get())
+}
+
+fn select_files(files: Vec<PathBuf>, base: &Path, filters: &[String]) -> Vec<PathBuf> {
+    if filters.is_empty() {
+        return files;
+    }
+    files
+        .into_iter()
+        .filter(|path| {
+            let relative = path.strip_prefix(base).unwrap_or(path).to_string_lossy();
+            filters.iter().any(|filter| relative.contains(filter))
+        })
+        .collect()
 }
 
 /// Run the files across `threads` independent runners and merge the results.

@@ -298,6 +298,7 @@ fn completion_result(completion: crate::completion::Completion) -> Result<Value,
 struct GlobalObjectGuard {
     previous: Option<ObjectProperties>,
     restore: bool,
+    realm: Option<RealmId>,
 }
 
 include!("vm_global.rs");
@@ -313,30 +314,6 @@ pub(crate) fn bare_call_receiver(
         current_global_object()
     } else {
         this_value.clone()
-    }
-}
-
-impl GlobalObjectGuard {
-    fn install() -> Self {
-        let previous = GLOBAL_OBJECT.with(|global| {
-            let previous = global.borrow().clone();
-            if previous.is_none() {
-                global.replace(None);
-            }
-            previous
-        });
-        Self {
-            restore: previous.is_none(),
-            previous,
-        }
-    }
-}
-
-impl Drop for GlobalObjectGuard {
-    fn drop(&mut self) {
-        if self.restore {
-            GLOBAL_OBJECT.with(|global| global.replace(self.previous.take()));
-        }
     }
 }
 
@@ -447,13 +424,10 @@ fn create_realm_value() -> Value {
 }
 
 fn current_global_value() -> Result<Value, VmError> {
-    GLOBAL_OBJECT.with(|global| {
-        global
-            .borrow()
-            .clone()
-            .map(Value::Object)
-            .ok_or_else(|| VmError::EvalError("Global object is unavailable".to_string()))
-    })
+    let global = current_global_object();
+    (!matches!(global, Value::Undefined))
+        .then_some(global)
+        .ok_or_else(|| VmError::EvalError("Global object is unavailable".to_string()))
 }
 
 fn execute_print(arguments: &[Value]) -> Result<Value, VmError> {
