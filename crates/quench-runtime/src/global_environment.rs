@@ -120,7 +120,8 @@ fn raw_binding_cell(name: &str) -> Option<Rc<RefCell<Value>>> {
 fn own_descriptor(name: &str) -> Option<Descriptor> {
     let global = crate::vm::current_global_object();
     let descriptor =
-        crate::builtins::object::descriptor(Some(&global), Some(&Value::String(name.to_string())));
+        crate::builtins::object::descriptor(Some(&global), Some(&Value::String(name.to_string())))
+            .unwrap_or(Value::Undefined);
     let Value::Object(fields) = descriptor else {
         return immutable_descriptor(name);
     };

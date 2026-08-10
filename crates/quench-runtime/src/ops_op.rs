@@ -9,6 +9,7 @@ pub enum ArrayElement {
 pub enum InstanceFieldKeyOp {
     Static(String),
     Dynamic(u16),
+    Private(crate::facts::PrivateNameId),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -23,6 +24,9 @@ pub struct AppendInstanceFieldOp {
     pub key: InstanceFieldKeyOp,
     pub initializer: Option<InstanceFieldInitializerOp>,
     pub is_static: bool,
+    /// Register holding the element value directly (private methods), bypassing
+    /// an initializer executable.
+    pub value: Option<u16>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

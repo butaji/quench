@@ -82,6 +82,9 @@ pub(crate) fn append_instance_field(
     let Op::AppendInstanceField(field) = op else {
         return Err(crate::execute::VmError::MissingReturn);
     };
+    if let InstanceFieldKeyOp::Private(id) = &field.key {
+        return append_private_field(registers, field, *id);
+    }
     if field.is_static {
         return define_static_field(registers, field);
     }
@@ -96,6 +99,52 @@ pub(crate) fn append_instance_field(
         .borrow_mut()
         .push(crate::value::InstanceFieldPlan { key, initializer });
     Ok(())
+}
+fn append_private_field(
+    registers: &[crate::value::Value],
+    field: &AppendInstanceFieldOp,
+    id: crate::facts::PrivateNameId,
+) -> Result<(), crate::execute::VmError> {
+    let constructor = crate::execute::read_register(registers, field.constructor)?;
+    let crate::value::Value::Function(function) = &constructor else {
+        return Err(crate::execute::VmError::NotCallable);
+    };
+    if field.is_static {
+        let value = private_field_value(registers, field, &constructor)?;
+        let name = crate::private_environment::resolve(id).ok_or_else(|| {
+            crate::value::error::throw_type_error(
+                "Private field access on an object without the required brand",
+            )
+        })?;
+        return crate::private_slots::define(&constructor, name, value);
+    }
+    let initializer = match field.value {
+        Some(value) => crate::value::InstanceFieldInitializer::Value(
+            crate::execute::read_register(registers, value)?,
+        ),
+        None => instance_field_initializer(field.initializer.as_ref())?,
+    };
+    function
+        .instance_fields
+        .borrow_mut()
+        .push(crate::value::InstanceFieldPlan {
+            key: crate::value::InstanceFieldKey::Private(id),
+            initializer,
+        });
+    Ok(())
+}
+fn private_field_value(
+    registers: &[crate::value::Value],
+    field: &AppendInstanceFieldOp,
+    receiver: &crate::value::Value,
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    match field.value {
+        Some(value) => crate::execute::read_register(registers, value),
+        None => {
+            let initializer = instance_field_initializer(field.initializer.as_ref())?;
+            field_initializer_value(&initializer, receiver)
+        }
+    }
 }
 fn define_static_field(
     registers: &[crate::value::Value],
@@ -117,6 +166,7 @@ fn field_key_value(
         InstanceFieldKeyOp::Dynamic(src) => {
             crate::conversion::to_property_key(&crate::execute::read_register(registers, *src)?)
         }
+        InstanceFieldKeyOp::Private(_) => Err(crate::execute::VmError::MissingReturn),
     }
 }
 
@@ -129,6 +179,7 @@ fn field_initializer_value(
         crate::value::InstanceFieldInitializer::Callable(function) => {
             crate::functions::execute(function, receiver, &[])
         }
+        crate::value::InstanceFieldInitializer::Value(value) => Ok(value.clone()),
     }
 }
 
@@ -160,6 +211,7 @@ fn instance_field_key(
         InstanceFieldKeyOp::Dynamic(src) => {
             crate::value::InstanceFieldKey::Dynamic(crate::execute::read_register(registers, *src)?)
         }
+        InstanceFieldKeyOp::Private(id) => crate::value::InstanceFieldKey::Private(*id),
     })
 }
 
@@ -237,6 +289,11 @@ fn reduce_elements(
                     locals,
                 )?
             }
+            ClassElement::PropertyDefinition(field)
+                if matches!(field.key, PropertyKey::PrivateIdentifier(_)) =>
+            {
+                reduce_private_field(field, constructor, ops, &mut static_fields, facts, locals)?
+            }
             _ => {}
         }
     }
@@ -255,18 +312,24 @@ fn reduce_class_method(
     if method.kind == MethodDefinitionKind::Constructor {
         return Some(());
     }
-    if method.r#static && method.kind == MethodDefinitionKind::Method {
-        if let PropertyKey::PrivateIdentifier(name) = &method.key {
+    if let PropertyKey::PrivateIdentifier(name) = &method.key {
+        if !matches!(
+            method.kind,
+            MethodDefinitionKind::Get | MethodDefinitionKind::Set
+        ) {
             let value = reduce_method(method, ops, facts, next, locals)?;
             ops.push(Op::SetFunctionName {
                 function: value,
                 name: format!("#{}", name.name),
             });
-            ops.push(Op::DefinePrivate {
-                object: constructor,
-                name: facts.private_name(name.span)?,
-                src: value,
-            });
+            let key = facts.private_name(name.span)?;
+            ops.push(Op::AppendInstanceField(AppendInstanceFieldOp {
+                constructor,
+                key: InstanceFieldKeyOp::Private(key),
+                initializer: None,
+                is_static: method.r#static,
+                value: Some(value),
+            }));
             return Some(());
         }
     }
@@ -302,8 +365,39 @@ fn reduce_public_field(
         key,
         initializer,
         is_static,
+        value: None,
     };
     if is_static {
+        static_fields.push(Op::AppendInstanceField(field));
+    } else {
+        ops.push(Op::AppendInstanceField(field));
+    }
+    Some(())
+}
+
+fn reduce_private_field(
+    field: &oxc::ast::ast::PropertyDefinition<'_>,
+    constructor: u16,
+    ops: &mut Vec<Op>,
+    static_fields: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    locals: &HashMap<String, u16>,
+) -> Option<()> {
+    let oxc::ast::ast::PropertyKey::PrivateIdentifier(name) = &field.key else {
+        return None;
+    };
+    let initializer = match field.value.as_ref() {
+        Some(value) => Some(reduce_field_initializer(value, facts, locals)?),
+        None => None,
+    };
+    let field = AppendInstanceFieldOp {
+        constructor,
+        key: InstanceFieldKeyOp::Private(facts.private_name(name.span)?),
+        initializer,
+        is_static: field.r#static,
+        value: None,
+    };
+    if field.is_static {
         static_fields.push(Op::AppendInstanceField(field));
     } else {
         ops.push(Op::AppendInstanceField(field));

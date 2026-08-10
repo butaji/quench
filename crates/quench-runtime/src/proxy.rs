@@ -299,10 +299,7 @@ pub(crate) fn proxy_get_own_property_descriptor(
             );
         }
     }
-    Ok(crate::builtins::object::descriptor(
-        Some(target),
-        Some(&Value::String(prop.to_string())),
-    ))
+    crate::builtins::object::descriptor(Some(target), Some(&Value::String(prop.to_string())))
 }
 
 pub(crate) fn proxy_define_property(
