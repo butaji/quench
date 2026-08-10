@@ -8,7 +8,7 @@ const readable = new Readable({
     if (reads > 3) return this.push(null);
     this.push(Buffer.alloc(32));
     this.push(Buffer.alloc(8));
-  }
+  },
 });
 const writable = new Writable({
   highWaterMark: 16,
@@ -18,7 +18,7 @@ const writable = new Writable({
       events.push("callback");
       callback();
     });
-  }
+  },
 });
 for (const name of ["pause", "resume", "drain", "end"]) {
   readable.on(name, () => events.push(`readable:${name}`));

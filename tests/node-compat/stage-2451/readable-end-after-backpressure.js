@@ -17,7 +17,7 @@ const source = new Readable({
     }
     source.push({});
     source.push(null);
-  }
+  },
 });
 
 const destination = new Writable({
@@ -26,7 +26,7 @@ const destination = new Writable({
   write(_chunk, _encoding, callback) {
     writes++;
     setImmediate(callback);
-  }
+  },
 });
 
 source.on("end", () => {
@@ -42,6 +42,6 @@ process.on("beforeExit", () => {
   assert.deepStrictEqual(
     actual,
     { reads: 18, writes: 18, ended: true, finished: true },
-    JSON.stringify(actual)
+    JSON.stringify(actual),
   );
 });

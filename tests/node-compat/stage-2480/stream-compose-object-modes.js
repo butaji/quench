@@ -8,8 +8,8 @@ const objects = compose(
     readableObjectMode: true,
     transform(chunk, _encoding, callback) {
       callback(null, { value: chunk.toString() });
-    }
-  })
+    },
+  }),
 );
 assert.strictEqual(objects.writableObjectMode, false);
 assert.strictEqual(objects.readableObjectMode, true);
@@ -23,8 +23,8 @@ const bytes = compose(
     readableObjectMode: false,
     transform(chunk, _encoding, callback) {
       callback(null, chunk.value);
-    }
-  })
+    },
+  }),
 );
 assert.strictEqual(bytes.writableObjectMode, true);
 assert.strictEqual(bytes.readableObjectMode, false);
@@ -36,14 +36,14 @@ Promise.all([objects.toArray(), bytes.toArray()]).then(
   ([objectValues, buffers]) => {
     assert.deepStrictEqual(objectValues, [
       { value: "first" },
-      { value: "second" }
+      { value: "second" },
     ]);
     assert.deepStrictEqual(buffers, [
       Buffer.from("first"),
-      Buffer.from("second")
+      Buffer.from("second"),
     ]);
     completed = true;
-  }
+  },
 );
 
 process.on("beforeExit", () => {

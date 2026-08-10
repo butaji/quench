@@ -10,7 +10,7 @@ const vfs = require("node:vfs");
   const filesystem = vfs.create(new vfs.RealFSProvider(root));
   await filesystem.promises.access("/present.txt");
   await assert.rejects(filesystem.promises.access("/missing.txt"), {
-    code: "ENOENT"
+    code: "ENOENT",
   });
   console.log("real provider access passed");
 })();

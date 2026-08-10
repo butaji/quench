@@ -12,7 +12,7 @@ const source = Readable.from(
     await pending;
     reached = true;
     yield 2;
-  })()
+  })(),
 );
 
 source

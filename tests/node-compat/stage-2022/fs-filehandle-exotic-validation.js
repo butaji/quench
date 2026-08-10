@@ -23,14 +23,14 @@ const fs = require("fs");
     {
       toString() {
         return "amObject";
-      }
+      },
     },
     { [Symbol.toPrimitive]: () => "amObject" },
-    Promise.resolve(new Uint8Array(1))
+    Promise.resolve(new Uint8Array(1)),
   ];
   for (const value of invalid) {
     await assert.rejects(handle.write(value, {}), {
-      code: "ERR_INVALID_ARG_TYPE"
+      code: "ERR_INVALID_ARG_TYPE",
     });
   }
   await handle.close();

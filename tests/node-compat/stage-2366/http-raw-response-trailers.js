@@ -17,7 +17,8 @@ server.listen(0, () => {
     assert.match(output, /4\r\nbody\r\n0\r\nX-Check: yes\r\n\r\n/);
     server.close(() => console.log("http raw response trailers passed"));
   });
-  socket.on("connect", () =>
-    socket.end("GET /trailers HTTP/1.1\r\nHost: example.com\r\n\r\n")
+  socket.on(
+    "connect",
+    () => socket.end("GET /trailers HTTP/1.1\r\nHost: example.com\r\n\r\n"),
   );
 });

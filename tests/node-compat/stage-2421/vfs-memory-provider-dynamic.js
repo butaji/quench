@@ -4,12 +4,11 @@ const { MemoryProvider } = require("internal/vfs/providers/memory");
 
 (async () => {
   const provider = new MemoryProvider();
-  const root =
-    provider[
-      Object.getOwnPropertySymbols(provider).find(
-        (symbol) => symbol.description === "kRoot"
-      )
-    ];
+  const root = provider[
+    Object.getOwnPropertySymbols(provider).find(
+      (symbol) => symbol.description === "kRoot",
+    )
+  ];
   root.children.set("lazy", {
     type: 1,
     mode: 0o755,
@@ -17,35 +16,35 @@ const { MemoryProvider } = require("internal/vfs/providers/memory");
     populated: false,
     populate(scoped) {
       scoped.addFile("hello.txt", "hello");
-    }
+    },
   });
   root.children.set("dynamic.txt", {
     type: 0,
     mode: 0o644,
-    contentProvider: () => "dynamic"
+    contentProvider: () => "dynamic",
   });
   root.children.set("async.txt", {
     type: 0,
     mode: 0o644,
-    contentProvider: async () => "async"
+    contentProvider: async () => "async",
   });
 
   const filesystem = vfs.create(provider);
   assert.deepStrictEqual(filesystem.readdirSync("/lazy"), ["hello.txt"]);
   assert.strictEqual(
     filesystem.readFileSync("/lazy/hello.txt", "utf8"),
-    "hello"
+    "hello",
   );
   assert.strictEqual(
     filesystem.readFileSync("/dynamic.txt", "utf8"),
-    "dynamic"
+    "dynamic",
   );
   assert.throws(() => filesystem.readFileSync("/async.txt"), {
-    code: "ERR_INVALID_STATE"
+    code: "ERR_INVALID_STATE",
   });
   assert.strictEqual(
     await filesystem.promises.readFile("/async.txt", "utf8"),
-    "async"
+    "async",
   );
   console.log("dynamic memory provider passed");
 })();

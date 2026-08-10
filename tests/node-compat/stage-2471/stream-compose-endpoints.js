@@ -10,7 +10,7 @@ const sourceToSink = compose(
   },
   async function (source) {
     for await (const _value of source);
-  }
+  },
 );
 assert.strictEqual(sourceToSink.writable, false);
 assert.strictEqual(sourceToSink.readable, false);
@@ -27,7 +27,7 @@ const readable = compose(
   })(),
   async function* (source) {
     yield* source;
-  }
+  },
 );
 assert.strictEqual(readable.writable, false);
 assert.strictEqual(readable.readable, true);

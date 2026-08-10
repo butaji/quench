@@ -13,7 +13,7 @@ portPromise.then((port) => {
         const sockets = Object.values(http.globalAgent.freeSockets).flat();
         assert.strictEqual(
           sockets.some((socket) => socket.__quenchServerPort === port),
-          false
+          false,
         );
       });
     });

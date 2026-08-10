@@ -4,17 +4,17 @@ const path = require("path");
 
 const source = path.join(
   process.cwd(),
-  "tests/node/test/fixtures/copy/kitchen-sink"
+  "tests/node/test/fixtures/copy/kitchen-sink",
 );
 const destination = path.join(
   process.cwd(),
-  "tests/node/test/.tmp.0/cp-async-filter"
+  "tests/node/test/.tmp.0/cp-async-filter",
 );
 assert.throws(
   () =>
     fs.cpSync(source, destination, {
       recursive: true,
-      filter: async () => true
+      filter: async () => true,
     }),
-  { code: "ERR_INVALID_RETURN_VALUE" }
+  { code: "ERR_INVALID_RETURN_VALUE" },
 );

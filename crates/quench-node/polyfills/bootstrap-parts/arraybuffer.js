@@ -2,7 +2,7 @@ const __nodeBufferIsArrayBuffer = (value) => {
   try {
     Object.getOwnPropertyDescriptor(
       ArrayBuffer.prototype,
-      "byteLength"
+      "byteLength",
     ).get.call(value);
     return true;
   } catch {

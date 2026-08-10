@@ -4,7 +4,7 @@ const { Writable } = require("stream");
 const writable = new Writable({
   write(_chunk, _encoding, callback) {
     callback();
-  }
+  },
 });
 let closed = false;
 writable._destroy = (_error, callback) => callback();

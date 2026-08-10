@@ -493,6 +493,6 @@ Object.assign(globalThis.__nodeFs, {
     if (file) stats.size = globalThis.__quench_fs_read_bytes(path).length;
     stats.mode = globalThis.__nodeModes[path] ||
       (file ? 0o666 & ~process.umask() : 0);
-    return stats;
+    return __nodeFsStatsBigInt(stats, options);
   },
 });

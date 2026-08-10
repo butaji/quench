@@ -7,7 +7,7 @@ server.once("close", () => events.push("close"));
 server.listen(0, () => {
   assert.strictEqual(
     server.close(() => events.push("callback")),
-    server
+    server,
   );
   queueMicrotask(() => {
     assert.deepStrictEqual(events, ["close", "callback"]);

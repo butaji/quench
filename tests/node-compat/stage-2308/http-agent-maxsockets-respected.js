@@ -8,14 +8,14 @@ const agent = new http.Agent({
   keepAlive: true,
   keepAliveMsecs: 1000,
   maxSockets,
-  maxFreeSockets: 2
+  maxFreeSockets: 2,
 });
 let serverCalls = 0;
 const server = http.createServer(
   common.mustCall((_request, response) => {
     serverCalls++;
     response.end("hello world");
-  }, 6)
+  }, 6),
 );
 const countdown = new Countdown(6, () => server.close());
 
@@ -25,7 +25,7 @@ server.listen(
     for (let index = 0; index < 6; index++) {
       const request = http.get(
         { host: "localhost", port: server.address().port, agent, path: "/1" },
-        common.mustCall(() => {})
+        common.mustCall(() => {}),
       );
       request.on(
         "response",
@@ -34,10 +34,10 @@ server.listen(
           const sockets = agent.sockets[Object.keys(agent.sockets)[0]] || [];
           assert.ok(sockets.length <= maxSockets);
           countdown.dec();
-        })
+        }),
       );
     }
-  })
+  }),
 );
 
 process.on("exit", () => {

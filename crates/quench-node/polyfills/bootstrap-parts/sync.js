@@ -1,11 +1,12 @@
 const __quenchSpawnSyncErrorRequire = globalThis.require;
-const __quenchSpawnSyncErrorChildProcess =
-  __quenchSpawnSyncErrorRequire("child_process");
+const __quenchSpawnSyncErrorChildProcess = __quenchSpawnSyncErrorRequire(
+  "child_process",
+);
 const __quenchOriginalSpawnSync = __quenchSpawnSyncErrorChildProcess.spawnSync;
 __quenchSpawnSyncErrorChildProcess.spawnSync = (
   command,
   args = [],
-  options
+  options,
 ) => {
   if (/not_a_real_command|does-not-exist/.test(String(command))) {
     const error = new Error("spawn " + String(command) + " ENOENT");
@@ -14,7 +15,7 @@ __quenchSpawnSyncErrorChildProcess.spawnSync = (
       errno: -2,
       syscall: `spawnSync ${String(command)}`,
       path: String(command),
-      spawnargs: Array.isArray(args) ? args : []
+      spawnargs: Array.isArray(args) ? args : [],
     });
     return {
       pid: 0,
@@ -23,7 +24,7 @@ __quenchSpawnSyncErrorChildProcess.spawnSync = (
       output: [],
       stdout: undefined,
       stderr: undefined,
-      error
+      error,
     };
   }
   return __quenchOriginalSpawnSync(command, args, options);

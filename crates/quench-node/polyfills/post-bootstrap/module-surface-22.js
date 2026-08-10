@@ -5,7 +5,7 @@ const __quenchReadlineInterface = (options = {}) => {
     cursor: 0,
     on(event, listener) {
       (listeners.get(event) || listeners.set(event, []).get(event)).push(
-        listener
+        listener,
       );
       return interfaceObject;
     },
@@ -20,7 +20,7 @@ const __quenchReadlineInterface = (options = {}) => {
     write(data) {
       interfaceObject.cursor += String(data).length;
       return interfaceObject;
-    }
+    },
   };
   const emitLines = (final) => {
     const parts = buffer.split(/\r?\n/);
@@ -57,21 +57,21 @@ const __quenchReadlineInterface = (options = {}) => {
                 listeners?.once?.("line", resolve)
               );
             },
-            close: () => options?.input?.pause?.()
+            close: () => options?.input?.pause?.(),
           };
         };
         return normalized === "readline/promises"
           ? { Interface, createInterface }
           : {
-              createInterface,
-              emitKeypressEvents: () => undefined,
-              cursorTo: () => undefined,
-              moveCursor: () => undefined,
-              clearLine: () => undefined,
-              Interface,
-              ReadStream: function ReadStream() {},
-              WriteStream: function WriteStream() {}
-            };
+            createInterface,
+            emitKeypressEvents: () => undefined,
+            cursorTo: () => undefined,
+            moveCursor: () => undefined,
+            clearLine: () => undefined,
+            Interface,
+            ReadStream: function ReadStream() {},
+            WriteStream: function WriteStream() {},
+          };
       }
       return originalRequire(name);
     };

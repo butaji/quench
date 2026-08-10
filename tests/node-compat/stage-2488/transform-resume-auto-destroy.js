@@ -10,7 +10,7 @@ const transform = new Transform({
   destroy(error, callback) {
     events.push("destroy");
     callback(error);
-  }
+  },
 });
 
 transform.end("discarded output");

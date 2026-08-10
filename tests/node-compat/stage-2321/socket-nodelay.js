@@ -3,7 +3,7 @@ const net = require("net");
 
 const calls = [];
 const socket = new net.Socket({
-  handle: { setNoDelay: (value) => calls.push(value) }
+  handle: { setNoDelay: (value) => calls.push(value) },
 });
 assert.strictEqual(socket.setNoDelay(), socket);
 socket.setNoDelay(true);

@@ -1,6 +1,6 @@
 const __nodeURLSearchTag = Object.getOwnPropertyDescriptor(
   globalThis.__nodeURLSearchParams.prototype,
-  Symbol.toStringTag
+  Symbol.toStringTag,
 );
 if (!__nodeURLSearchTag || __nodeURLSearchTag.configurable) {
   Object.defineProperty(
@@ -9,8 +9,8 @@ if (!__nodeURLSearchTag || __nodeURLSearchTag.configurable) {
     {
       configurable: true,
       enumerable: false,
-      value: "URLSearchParams"
-    }
+      value: "URLSearchParams",
+    },
   );
 }
 Object.defineProperty(globalThis.__nodeURLSearchParams.prototype, "size", {
@@ -20,10 +20,10 @@ Object.defineProperty(globalThis.__nodeURLSearchParams.prototype, "size", {
     {
       get size() {
         return this._pairs.length;
-      }
+      },
     },
-    "size"
-  ).get
+    "size",
+  ).get,
 });
 for (const name of ["append", "set", "delete", "sort"]) {
   const original = globalThis.__nodeURLSearchParams.prototype[name];
@@ -36,8 +36,8 @@ for (const name of ["append", "set", "delete", "sort"]) {
             this.__nodeURLOwner._search = this.toString() ? `?${this}` : "";
           }
           return result;
-        }
+        },
       },
-      name
+      name,
     ).value;
 }

@@ -1,6 +1,7 @@
 const __quenchExecEncodingRequire = globalThis.require;
-const __quenchExecEncodingChildProcess =
-  __quenchExecEncodingRequire("child_process");
+const __quenchExecEncodingChildProcess = __quenchExecEncodingRequire(
+  "child_process",
+);
 const __quenchExecEncodingOriginal = __quenchExecEncodingChildProcess.exec;
 __quenchExecEncodingChildProcess.exec = (command, options, callback) => {
   const settings = options && typeof options === "object" ? options : {};
@@ -20,6 +21,6 @@ __quenchExecEncodingChildProcess.exec = (command, options, callback) => {
         stderr = Buffer.from(stderr || "");
       }
       done(error, stdout, stderr);
-    }
+    },
   );
 };

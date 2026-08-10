@@ -4,7 +4,7 @@ const assert = require("assert");
   const key = await crypto.subtle.generateKey(
     { name: "HMAC", hash: "SHA-256" },
     true,
-    ["sign", "verify"]
+    ["sign", "verify"],
   );
   key.type;
   key.extractable;

@@ -9,7 +9,7 @@ const duplex = Duplex({
   write(chunk, _encoding, callback) {
     written = chunk;
     callback();
-  }
+  },
 });
 duplex.on("data", (chunk) => {
   read = chunk;

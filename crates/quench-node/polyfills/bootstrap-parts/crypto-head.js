@@ -6,14 +6,14 @@ const __nodeCryptoValidatePbkdf2Types = (password, salt) => {
       value instanceof SharedArrayBuffer);
   if (typeof password !== "string" && !isBinary(password)) {
     const error = new TypeError(
-      'The "password" argument must be of type string or an instance of Buffer'
+      'The "password" argument must be of type string or an instance of Buffer',
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
   if (typeof salt !== "string" && !isBinary(salt)) {
     const error = new TypeError(
-      'The "salt" argument must be of type string or an instance of Buffer'
+      'The "salt" argument must be of type string or an instance of Buffer',
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -33,9 +33,11 @@ const __nodeCryptoNumberReceived = (value) => {
 const __nodeCryptoValidatePbkdf2Numbers = (iterations, keylen) => {
   if (typeof iterations !== "number") {
     const error = new TypeError(
-      `The "iterations" argument must be of type number.${__nodeCryptoNumberReceived(
-        iterations
-      )}`
+      `The "iterations" argument must be of type number.${
+        __nodeCryptoNumberReceived(
+          iterations,
+        )
+      }`,
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -51,16 +53,18 @@ const __nodeCryptoValidatePbkdf2Numbers = (iterations, keylen) => {
   }
   if (typeof keylen !== "number") {
     const error = new TypeError(
-      `The "keylen" argument must be of type number.${__nodeCryptoKeylenReceived(
-        keylen
-      )}`
+      `The "keylen" argument must be of type number.${
+        __nodeCryptoKeylenReceived(
+          keylen,
+        )
+      }`,
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
   if (!Number.isInteger(keylen) || keylen < 0 || keylen > 0x7fffffff) {
     const error = new RangeError(
-      `The value of "keylen" is out of range. It must be an integer. Received ${keylen}`
+      `The value of "keylen" is out of range. It must be an integer. Received ${keylen}`,
     );
     error.code = "ERR_OUT_OF_RANGE";
     throw error;

@@ -11,7 +11,7 @@ try {
   process.setuid("nobody");
 } catch (_) {}
 assert.throws(() => fs.accessSync(path, fs.constants.W_OK), {
-  code: "EACCES"
+  code: "EACCES",
 });
 
 fs.access(path, fs.constants.W_OK, (error) => {

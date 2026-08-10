@@ -8,7 +8,7 @@ const source = (async function* () {
 const upper = new Transform({
   transform(chunk, _encoding, callback) {
     callback(null, chunk.toString().toUpperCase());
-  }
+  },
 });
 
 let output = "";

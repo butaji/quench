@@ -92,7 +92,10 @@ globalThis.__nodeFs.appendFile = (value, data, options, callback) => {
   });
 };
 globalThis.__nodeFs.rmdir = (value, options, callback) => {
-  if (typeof options === "function") callback = options;
+  if (typeof options === "function") {
+    callback = options;
+    options = undefined;
+  }
   if (typeof callback !== "function") {
     const error = new TypeError(
       'The "callback" argument must be of type function',
@@ -101,10 +104,17 @@ globalThis.__nodeFs.rmdir = (value, options, callback) => {
     error.toString = () => `TypeError [ERR_INVALID_ARG_TYPE]: ${error.message}`;
     throw error;
   }
+  if (options?.recursive === true) {
+    const error = new TypeError(
+      "The recursive option is no longer supported for fs.rmdir",
+    );
+    error.code = "ERR_INVALID_ARG_VALUE";
+    throw error;
+  }
   const path = nodeFsPath(value);
   queueMicrotask(() => {
     try {
-      globalThis.__nodeFs.rmdirSync(path);
+      globalThis.__nodeFs.rmdirSync(path, options);
     } catch (error) {
       callback(error);
       return;
@@ -113,21 +123,16 @@ globalThis.__nodeFs.rmdir = (value, options, callback) => {
   });
 };
 globalThis.__nodeFs.rm = (value, options, callback) => {
-  if (typeof options === "function") callback = options;
+  if (typeof options === "function") {
+    callback = options;
+    options = undefined;
+  }
   if (typeof callback !== "function") {
     throw new TypeError('The "callback" argument must be of type function');
   }
   const path = nodeFsPath(value).replace(/^\.\/test\//, "tests/node/test/");
   queueMicrotask(() => {
     try {
-      if (
-        !(options && options.recursive) &&
-        globalThis.__nodeFs.readdirSync(path).length === 0
-      ) {
-        globalThis.__nodeFs.rmdirSync(path);
-        callback(null);
-        return;
-      }
       globalThis.__nodeFs.rmSync(path, { ...(options || {}), __async: true });
     } catch (error) {
       callback(error);
@@ -414,12 +419,40 @@ globalThis.__nodeFs.opendir = (value, options, callback) => {
     }
   });
 };
-globalThis.__nodeFs.lstatSync = (value) => {
+const __nodeStatsWithBigInt = (stats, options) => {
+  if (options?.bigint !== true) return stats;
+  for (
+    const name of [
+      "dev",
+      "mode",
+      "nlink",
+      "uid",
+      "gid",
+      "rdev",
+      "blksize",
+      "ino",
+      "size",
+      "blocks",
+      "atimeMs",
+      "mtimeMs",
+      "ctimeMs",
+      "birthtimeMs",
+    ]
+  ) stats[name] = BigInt(Math.trunc(Number(stats[name]) || 0));
+  for (const name of ["atime", "mtime", "ctime", "birthtime"]) {
+    stats[`${name}Ns`] = BigInt(
+      Math.trunc(Number(stats[`${name}Ms`]) * 1_000_000),
+    );
+  }
+  return stats;
+};
+globalThis.__nodeFs.lstatSync = (value, options = {}) => {
   const path = nodeFsPath(value);
   let kind;
   try {
     kind = globalThis.__quench_fs_link_kind(path);
   } catch (_) {
+    if (options?.throwIfNoEntry === false) return undefined;
     const error = new Error(
       `ENOENT: no such file or directory, lstat '${path}'`,
     );
@@ -442,51 +475,5 @@ globalThis.__nodeFs.lstatSync = (value) => {
   }
   stats._symlink = kind === "symlink";
   stats.mode = globalThis.__nodeModes[path] || 0;
-  return stats;
-};
-globalThis.__nodeFs.stat = (value, options, callback) => {
-  if (typeof options === "function") {
-    callback = options;
-    options = undefined;
-  }
-  if (typeof callback !== "function") {
-    const error = new TypeError(
-      'The "callback" argument must be of type function',
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
-  }
-  const path = nodeFsPath(value);
-  queueMicrotask(() => {
-    let result;
-    try {
-      result = globalThis.__nodeFs.statSync(path, options);
-    } catch (error) {
-      callback(error);
-      return;
-    }
-    callback(null, result);
-  });
-};
-globalThis.__nodeFs.lstat = (value, options, callback) => {
-  if (typeof options === "function") {
-    callback = options;
-    options = undefined;
-  }
-  if (typeof callback !== "function") {
-    const error = new TypeError(
-      'The "callback" argument must be of type function',
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
-  }
-  const path = nodeFsPath(value);
-  queueMicrotask(() => {
-    try {
-      callback(null, globalThis.__nodeFs.lstatSync(path));
-    } catch (error) {
-      callback(error);
-      return;
-    }
-  });
+  return __nodeStatsWithBigInt(stats, options);
 };

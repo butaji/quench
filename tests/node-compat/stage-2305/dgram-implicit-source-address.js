@@ -6,7 +6,7 @@ const blockList = new net.BlockList();
 blockList.addAddress("127.0.0.1");
 const receiver = dgram.createSocket({
   type: "udp4",
-  receiveBlockList: blockList
+  receiveBlockList: blockList,
 });
 receiver.on("message", () => assert.fail("blocked packet delivered"));
 receiver.bind(0, "127.0.0.1", () => {

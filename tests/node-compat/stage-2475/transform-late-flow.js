@@ -4,12 +4,12 @@ const { compose, Transform } = require("stream");
 const duplicate = new Transform({
   transform(chunk, _encoding, callback) {
     callback(null, chunk.toString() + chunk.toString());
-  }
+  },
 });
 const upper = new Transform({
   transform(chunk, _encoding, callback) {
     callback(null, chunk.toString().toUpperCase());
-  }
+  },
 });
 
 let output = "";

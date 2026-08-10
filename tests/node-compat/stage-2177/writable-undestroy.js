@@ -7,7 +7,7 @@ const writable = new Writable({
     finals++;
     callback();
   },
-  autoDestroy: true
+  autoDestroy: true,
 });
 
 writable.end();

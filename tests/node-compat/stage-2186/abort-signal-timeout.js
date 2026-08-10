@@ -2,7 +2,7 @@ const { once } = require("events");
 
 const signal = AbortSignal.any([
   AbortSignal.timeout(10),
-  AbortSignal.timeout(100)
+  AbortSignal.timeout(100),
 ]);
 setTimeout(() => {}, 30);
 once(signal, "abort").then(([event]) => {

@@ -8,7 +8,7 @@ const destination = pipeline(
   (error) => {
     assert.strictEqual(error, undefined);
     called++;
-  }
+  },
 );
 
 assert(destination instanceof PassThrough);

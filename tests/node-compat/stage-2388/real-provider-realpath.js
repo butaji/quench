@@ -11,5 +11,5 @@ const provider = vfs.create(new vfs.RealFSProvider(root));
 assert.strictEqual(provider.realpathSync("/file.txt"), "/file.txt");
 assert.strictEqual(
   provider.realpathSync("/file.txt", { encoding: "buffer" }).toString(),
-  "/file.txt"
+  "/file.txt",
 );

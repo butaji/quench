@@ -15,7 +15,7 @@ const vfs = require("node:vfs");
   assert.strictEqual(event.value.eventType, "change");
   assert.deepStrictEqual(await iter.throw(new Error("close")), {
     done: true,
-    value: undefined
+    value: undefined,
   });
   console.log("watch promises and mkdir symlink passed");
 })();

@@ -20,13 +20,13 @@ assert.strictEqual(bounded.end.name, "tracing:focused:end");
 const events = [];
 const handlers = {
   start: (value) => events.push(["start", value]),
-  end: (value) => events.push(["end", value])
+  end: (value) => events.push(["end", value]),
 };
 bounded.subscribe(handlers);
 const context = { value: 1 };
 bounded.run(context, () => events.push(["body", context]));
 assert.deepStrictEqual(
   events.map(([name]) => name),
-  ["start", "body", "end"]
+  ["start", "body", "end"],
 );
 assert.strictEqual(bounded.unsubscribe(handlers), true);

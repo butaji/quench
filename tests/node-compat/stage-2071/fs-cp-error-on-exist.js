@@ -4,18 +4,18 @@ const path = require("path");
 
 const source = path.join(
   process.cwd(),
-  "tests/node/test/fixtures/copy/kitchen-sink"
+  "tests/node/test/fixtures/copy/kitchen-sink",
 );
 const destination = path.join(
   process.cwd(),
-  "tests/node/test/.tmp.0/cp-existing"
+  "tests/node/test/.tmp.0/cp-existing",
 );
 fs.mkdirSync(destination, { recursive: true });
 assert.rejects(
   fs.promises.cp(source, destination, {
     errorOnExist: true,
     force: false,
-    recursive: true
+    recursive: true,
   }),
-  { code: "ERR_FS_CP_EEXIST" }
+  { code: "ERR_FS_CP_EEXIST" },
 );

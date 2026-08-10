@@ -17,14 +17,14 @@ server.listen(
       {
         host: "127.0.0.1",
         port: address.port,
-        __quenchNativeTransport: true
+        __quenchNativeTransport: true,
       },
-      () => client.write("ping")
+      () => client.write("ping"),
     );
     client.on("data", (chunk) => {
       assert.strictEqual(chunk.toString(), "pong");
       client.destroy();
       server.close(() => console.log("native net loopback passed"));
     });
-  }
+  },
 );

@@ -8,6 +8,6 @@ const server = net.createServer(
     assert.strictEqual(socket._keepAliveDelay, 3);
     socket.destroy();
     server.close(() => console.log("server keepalive defaults passed"));
-  }
+  },
 );
 server.listen(0, () => net.createConnection(server.address().port));

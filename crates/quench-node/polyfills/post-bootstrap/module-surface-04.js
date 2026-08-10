@@ -7,12 +7,12 @@
   const __quenchValidateInherits = (constructor, superConstructor) => {
     if (typeof constructor !== "function") {
       throw __quenchInheritsError(
-        `The "ctor" argument must be of type function. Received ${constructor}`
+        `The "ctor" argument must be of type function. Received ${constructor}`,
       );
     }
     if (superConstructor == null) {
       throw __quenchInheritsError(
-        `The "superCtor" argument must be of type function. Received ${superConstructor}`
+        `The "superCtor" argument must be of type function. Received ${superConstructor}`,
       );
     }
     if (
@@ -21,7 +21,7 @@
       typeof superConstructor.prototype !== "object"
     ) {
       throw __quenchInheritsError(
-        'The "superCtor.prototype" property must be of type object. Received undefined'
+        'The "superCtor.prototype" property must be of type object. Received undefined',
       );
     }
   };
@@ -34,17 +34,17 @@
           __quenchValidateInherits(constructor, superConstructor);
           Object.setPrototypeOf(
             constructor.prototype,
-            superConstructor.prototype
+            superConstructor.prototype,
           );
           Object.defineProperty(constructor.prototype, "constructor", {
             value: constructor,
             writable: true,
-            configurable: true
+            configurable: true,
           });
           Object.defineProperty(constructor, "super_", {
             value: superConstructor,
             writable: true,
-            configurable: true
+            configurable: true,
           });
           return constructor;
         };

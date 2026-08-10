@@ -15,7 +15,7 @@ assert.deepStrictEqual(
     hostname: null,
     hash: null,
     search: null,
-    query: null
-  })
+    query: null,
+  }),
 );
 console.log("protocol-relative legacy URL parsing passed");

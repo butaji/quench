@@ -21,7 +21,7 @@ const { toWritable } = require("stream/iter");
     },
     fail(error) {
       assert.strictEqual(error.message, "boom");
-    }
+    },
   };
   const writable = toWritable(writer);
   await new Promise((resolve, reject) =>
@@ -36,7 +36,7 @@ const { toWritable } = require("stream/iter");
   const failing = toWritable({
     write() {
       throw new Error("write failed");
-    }
+    },
   });
   await new Promise((resolve) =>
     failing.write("x", (error) => {
@@ -51,7 +51,7 @@ const { toWritable } = require("stream/iter");
     },
     fail(error) {
       assert.strictEqual(error.message, "boom");
-    }
+    },
   });
   destroyable.on("error", () => {});
   destroyable.destroy(new Error("boom"));

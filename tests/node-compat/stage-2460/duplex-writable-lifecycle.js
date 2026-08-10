@@ -14,7 +14,7 @@ const duplex = new Duplex({
   final(callback) {
     events.push("final");
     callback();
-  }
+  },
 });
 
 duplex.on("end", () => events.push("end"));

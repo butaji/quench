@@ -10,6 +10,32 @@ let __quenchNextEphemeralPort = 40000;
 const __quenchBoundPorts = new Set();
 const __quenchBoundPaths = new Set();
 const __quenchNativeSockets = new Set();
+const __quenchDeliverPendingWrites = (socket, writes) => {
+  for (const chunk of writes) {
+    const delivered = NodeBuffer.from(chunk);
+    if (socket._paused || socket.listenerCount("data") === 0) {
+      socket._pendingData.push(delivered);
+    } else {
+      queueMicrotask(() => socket.emit("data", delivered));
+    }
+  }
+};
+const __quenchSetTypeOfService = (socket, value) => {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    const error = new TypeError(
+      'The "tos" argument must be of type number',
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  if (!Number.isInteger(value) || value < 0 || value > 255) {
+    const error = new RangeError('The value of "tos" is out of range');
+    error.code = "ERR_OUT_OF_RANGE";
+    throw error;
+  }
+  socket._typeOfService = value;
+  return socket;
+};
 const isIPv4 = (input) => {
   if (input == null) return false;
   if (typeof input !== "string") {

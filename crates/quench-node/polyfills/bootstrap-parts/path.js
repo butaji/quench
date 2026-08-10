@@ -7,7 +7,7 @@ const __nodePathFormatParts = (parts) => {
   if (!parts || typeof parts !== "object" || Array.isArray(parts)) {
     const error = new TypeError(
       'The "pathObject" argument must be of type object.' +
-        (globalThis.__nodeCommon?.invalidArgTypeHelper?.(parts) || "")
+        (globalThis.__nodeCommon?.invalidArgTypeHelper?.(parts) || ""),
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -32,7 +32,7 @@ const __nodeWindowsParts = (base, root, dir) => {
     dir,
     base,
     ext,
-    name: ext ? base.slice(0, -ext.length) : base
+    name: ext ? base.slice(0, -ext.length) : base,
   };
 };
 const __nodeWindowsKeepSeparator = (trimmed, root, index, trailing) => {
@@ -49,7 +49,7 @@ const __nodeWindowsDir = (trimmed, root, index, trailing) => {
     trimmed,
     root,
     index,
-    trailing
+    trailing,
   );
   return trimmed.slice(0, index + (keepSeparator ? 1 : 0)) || root;
 };
@@ -84,7 +84,7 @@ const __nodeGlobSegment = (value, pattern) => {
 const __nodeGlobMatch = (path, pattern) => {
   if (typeof path !== "string" || typeof pattern !== "string") {
     const error = new TypeError(
-      'The "path" and "pattern" arguments must be of type string'
+      'The "path" and "pattern" arguments must be of type string',
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -102,7 +102,7 @@ const __nodeGlobMatch = (path, pattern) => {
         if (
           __nodeGlobMatch(
             paths.slice(index).join("/"),
-            patterns.slice(patternIndex).join("/")
+            patterns.slice(patternIndex).join("/"),
           )
         ) {
           return true;
@@ -164,8 +164,8 @@ globalThis.__nodePath = {
       resolved = resolved
         ? resolved + "/" + part.replace(/^\/+/, "")
         : part.startsWith("/")
-          ? part
-          : globalThis.__quench_cwd_get() + "/" + part;
+        ? part
+        : globalThis.__quench_cwd_get() + "/" + part;
       trailing = part.endsWith("/") && !part.endsWith("\\");
     }
     const out = globalThis.__nodePath.normalize(resolved);
@@ -233,22 +233,21 @@ globalThis.__nodePath = {
       throw error;
     }
     const input = String(value);
-    const trimmed =
-      input.replace(/\/+$/, "") || (input.startsWith("/") ? "/" : "");
+    const trimmed = input.replace(/\/+$/, "") ||
+      (input.startsWith("/") ? "/" : "");
     const base = globalThis.__nodePath.basename(trimmed);
-    const dir =
-      input.endsWith("/") && trimmed === "."
-        ? "."
-        : input.includes("/")
-          ? globalThis.__nodePath.dirname(trimmed)
-          : "";
+    const dir = input.endsWith("/") && trimmed === "."
+      ? "."
+      : input.includes("/")
+      ? globalThis.__nodePath.dirname(trimmed)
+      : "";
     const ext = globalThis.__nodePath.extname(base);
     return {
       root: input.startsWith("/") ? "/" : "",
       dir,
       base,
       ext,
-      name: ext ? base.slice(0, -ext.length) : base
+      name: ext ? base.slice(0, -ext.length) : base,
     };
   },
   format: (parts) => {
@@ -265,7 +264,7 @@ globalThis.__nodePath = {
   },
   toNamespacedPath(value) {
     return value;
-  }
+  },
 };
 globalThis.__nodePath.posix = globalThis.__nodePath;
 const __nodeWinPath = {
@@ -308,7 +307,7 @@ const __nodeWinPath = {
     const toPath = __nodeWinPath.normalize(toInput);
     if (
       __nodeWindowsRelativeRoot(fromInput) !==
-      __nodeWindowsRelativeRoot(toInput)
+        __nodeWindowsRelativeRoot(toInput)
     ) {
       return toInput;
     }
@@ -351,11 +350,10 @@ const __nodeWinPath = {
     const input = __nodePathArg(value);
     if (/^[A-Za-z]:$/.test(input) || /^[A-Za-z]:[\\/]+$/.test(input)) return "";
     if (/^[A-Za-z]:[^\\]/.test(input)) return input.slice(2);
-    const base =
-      input
-        .replace(/[\\/]+$/, "")
-        .split(/[\\/]/)
-        .pop() || "";
+    const base = input
+      .replace(/[\\/]+$/, "")
+      .split(/[\\/]/)
+      .pop() || "";
     if (suffix !== undefined) {
       const end = __nodePathArg(suffix);
       return end && base.endsWith(end) ? base.slice(0, -end.length) : base;
@@ -386,12 +384,12 @@ const __nodeWinPath = {
   matchesGlob(path, pattern) {
     return __nodeGlobMatch(
       __nodePathArg(path).replace(/[\\/]/g, "/"),
-      __nodePathArg(pattern).replace(/[\\/]/g, "/")
+      __nodePathArg(pattern).replace(/[\\/]/g, "/"),
     );
   },
   toNamespacedPath(value) {
     return __nodeWindowsNamespacedPath(value);
-  }
+  },
 };
 __nodeWinPath.posix = globalThis.__nodePath;
 __nodeWinPath.win32 = __nodeWinPath;

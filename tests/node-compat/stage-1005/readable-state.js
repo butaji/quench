@@ -6,7 +6,7 @@ test("readable state activates lazily", async () => {
     read() {
       called = true;
       this.push(null);
-    }
+    },
   });
   if (readable._readableState.reading) {
     throw new Error("stream started reading early");

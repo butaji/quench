@@ -26,7 +26,7 @@ const stream = Readable.from([2, 0, 1, 3]).map(
     finishOrder.push(value);
     return value;
   },
-  { concurrency: 2 }
+  { concurrency: 2 },
 );
 
 let output;
@@ -42,7 +42,7 @@ const aborted = Readable.from([1, 2, 3, 4]).filter(
     abortCalls++;
     await once(signal, "abort");
   },
-  { concurrency: 2, signal: controller.signal }
+  { concurrency: 2, signal: controller.signal },
 );
 assert
   .rejects(aborted.toArray(), { name: "AbortError" })

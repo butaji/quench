@@ -9,7 +9,7 @@ const writable = new Writable({
   },
   destroy(_error, callback) {
     callback();
-  }
+  },
 });
 writable.write("hello");
 writable.write("world");

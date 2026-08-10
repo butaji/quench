@@ -42,7 +42,9 @@ const __readFileValidatePath = (value) => {
 const __readFileValidateOptions = (options) => {
   const encoding = typeof options === "string" ? options : options?.encoding;
   if (encoding !== undefined && !NodeBuffer.isEncoding(encoding)) {
-    const error = new TypeError(`The argument 'encoding' is invalid. Received '${encoding}'`);
+    const error = new TypeError(
+      `The argument 'encoding' is invalid. Received '${encoding}'`,
+    );
     error.code = "ERR_INVALID_ARG_VALUE";
     throw error;
   }
