@@ -17,7 +17,10 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<Completion,
     else {
         return Err(VmError::MissingReturn);
     };
-    let body_completion = execute_completion_in_place(body, registers)?;
+    let body_completion = execute_try_body(body, registers)?;
+    if matches!(body_completion, Completion::Yield(_)) {
+        return Ok(body_completion);
+    }
     let completion = match body_completion {
         Completion::Throw(value) => match handler {
             Some(ops) => {
@@ -35,6 +38,24 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<Completion,
         }
     }
     Ok(completion)
+}
+
+fn execute_try_body(ops: &[Op], registers: &mut Vec<Value>) -> Result<Completion, VmError> {
+    for op in ops {
+        if matches!(op, Op::YieldStar { .. }) {
+            if let Some(completion) =
+                crate::generator::execute_yield_star(registers, op, Completion::Normal)?
+            {
+                return Ok(completion);
+            }
+            continue;
+        }
+        match execute_completion_in_place(std::slice::from_ref(op), registers)? {
+            Completion::Normal => {}
+            completion => return Ok(completion),
+        }
+    }
+    Ok(Completion::Normal)
 }
 
 fn bind_caught(value: Value, catch_slot: Option<u16>, registers: &mut Vec<Value>) {
