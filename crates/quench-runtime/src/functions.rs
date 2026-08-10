@@ -2,7 +2,10 @@ use std::{collections::HashMap, convert::TryFrom};
 
 use oxc::ast::ast::BindingPatternKind;
 
-use crate::{facts::ProgramDb, ops::Op};
+use crate::{
+    facts::ProgramDb,
+    ops::{FunctionKind, Op},
+};
 
 pub(crate) fn function_parameters(
     function: &oxc::ast::ast::Function<'_>,
@@ -93,14 +96,16 @@ fn emit_function_op(
     body: Vec<Op>,
     params: u16,
     captures: u16,
+    kind: FunctionKind,
 ) -> u16 {
     let register = *next_register;
     *next_register = next_register.saturating_add(1);
-    ops.push(Op::MakeFunction {
+    ops.push(Op::MakeFunctionWithKind {
         dst: register,
         body,
         params,
         captures,
+        kind,
     });
     register
 }
@@ -122,6 +127,7 @@ pub(crate) fn reduce_expression(
         body_ops,
         parameter_count,
         captures,
+        FunctionKind::Ordinary,
     ))
 }
 
@@ -146,6 +152,7 @@ pub(crate) fn reduce_arrow(
         body_ops,
         parameter_count,
         captures,
+        FunctionKind::Arrow,
     ))
 }
 
@@ -179,6 +186,7 @@ pub(crate) fn write(
     body: &[Op],
     params: u16,
     captures: u16,
+    _kind: FunctionKind,
 ) {
     let mut values = registers
         .iter()
@@ -190,16 +198,29 @@ pub(crate) fn write(
 }
 
 pub(crate) fn write_op(registers: &mut Vec<crate::value::Value>, op: &Op) {
-    let Op::MakeFunction {
-        dst,
-        body,
-        params,
-        captures,
-    } = op
-    else {
-        return;
-    };
-    write(registers, *dst, body, *params, *captures);
+    match op {
+        Op::MakeFunction {
+            dst,
+            body,
+            params,
+            captures,
+        } => write(
+            registers,
+            *dst,
+            body,
+            *params,
+            *captures,
+            FunctionKind::Ordinary,
+        ),
+        Op::MakeFunctionWithKind {
+            dst,
+            body,
+            params,
+            captures,
+            kind,
+        } => write(registers, *dst, body, *params, *captures, *kind),
+        _ => {}
+    }
 }
 
 fn build_registers(
