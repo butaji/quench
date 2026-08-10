@@ -127,9 +127,7 @@ pub(crate) fn descriptor(value: Option<&Value>, key: Option<&Value>) -> Value {
             .map(|(_, value)| value.clone()),
         Value::Array(values) => array_descriptor(values, &key),
         Value::String(value) => string_descriptor(value, &key),
-        Value::Builtin(builtin) if matches!(key.as_str(), "length" | "name") => {
-            return super::callable_property(*builtin, &key).unwrap_or(Value::Undefined);
-        }
+        Value::Builtin(builtin) => builtin_descriptor(*builtin, &key),
         Value::Function(function) if key == "length" => {
             return Value::Object(Rc::new(vec![
                 (
@@ -141,9 +139,20 @@ pub(crate) fn descriptor(value: Option<&Value>, key: Option<&Value>) -> Value {
                 ("configurable".to_string(), Value::Boolean(true)),
             ]));
         }
+        Value::Function(function) => function
+            .properties
+            .borrow()
+            .iter()
+            .rev()
+            .find(|(name, _)| name == &key)
+            .map(|(_, value)| value.clone()),
         _ => None,
     };
     property.map_or(Value::Undefined, |property| descriptor_object(&property))
+}
+
+fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
+    super::callable_property(builtin, key).or_else(|| super::special_property(builtin, key))
 }
 
 fn array_descriptor(values: &[Value], key: &str) -> Option<Value> {
