@@ -42,6 +42,7 @@ fn builtin_method(builtin: Builtin, key: &str) -> Option<Builtin> {
         return crate::strings::property_method(key);
     }
     match (builtin, key) {
+        (Array, "prototype") => Some(ArrayPrototype),
         (Function, "prototype") => Some(FunctionPrototype),
         (FunctionPrototype, "call") => Some(FunctionCall),
         (FunctionPrototype, "bind") => Some(FunctionBind),
@@ -145,6 +146,7 @@ pub(crate) fn special_property(builtin: Builtin, key: &str) -> Option<Value> {
 
 pub(crate) fn callable(builtin: Builtin, key: &str) -> Option<Value> {
     match key {
+        "call" => Some(Value::Builtin(Builtin::FunctionCall)),
         "length" => Some(Value::Number(builtin_length(builtin))),
         "name" => Some(Value::String(builtin_name(builtin).to_string())),
         _ => None,
