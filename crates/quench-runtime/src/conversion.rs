@@ -38,14 +38,36 @@ fn normalize_exponent(value: String) -> String {
 }
 
 pub(crate) fn to_primitive(value: &Value, hint: &str) -> Result<Value, VmError> {
-    if !crate::value::is_object(value) {
+    if !crate::value::is_object(value) || is_symbol(value) {
         return Ok(value.clone());
     }
     let exotic = crate::execute::get_property_result(value, "Symbol.toPrimitive")?;
-    if !matches!(exotic, Value::Undefined) {
+    if !matches!(exotic, Value::Undefined | Value::Null) {
         return call_primitive(&exotic, value, &[Value::String(hint.to_string())]);
     }
     ordinary_to_primitive(value, hint)
+}
+
+pub(crate) fn to_number(value: &Value) -> Result<f64, VmError> {
+    let primitive = to_primitive(value, "number")?;
+    primitive_to_number(&primitive)
+}
+
+pub(crate) fn primitive_to_number(value: &Value) -> Result<f64, VmError> {
+    if is_symbol(value) || matches!(value, Value::BigInt(_)) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot convert value to number",
+        ));
+    }
+    Ok(crate::intl::tolocale::value::to_number(Some(value)))
+}
+
+pub(crate) fn is_symbol(value: &Value) -> bool {
+    match value {
+        Value::String(value) => value.starts_with("Symbol.") && value.contains('\0'),
+        Value::Builtin(builtin) => crate::intl::tolocale::symbol::name(*builtin).is_some(),
+        _ => false,
+    }
 }
 
 fn ordinary_to_primitive(value: &Value, hint: &str) -> Result<Value, VmError> {
@@ -56,6 +78,16 @@ fn ordinary_to_primitive(value: &Value, hint: &str) -> Result<Value, VmError> {
     };
     for name in methods {
         let method = crate::execute::get_property_result(value, name)?;
+        let owns_method = crate::builtins::object::has_own_property(
+            Some(value),
+            Some(&Value::String(name.to_string())),
+        ) == Value::Boolean(true);
+        if matches!(method, Value::Undefined) && !owns_method {
+            if name == "toString" {
+                return Ok(crate::builtins::prototype_to_string(Some(value)));
+            }
+            continue;
+        }
         if !is_callable(&method) {
             continue;
         }

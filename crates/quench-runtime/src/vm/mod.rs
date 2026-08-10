@@ -192,7 +192,23 @@ fn execute_completion_in_place_context(
     let _context_guard = ContextGuard::install(context);
     let _global_guard = GlobalObjectGuard::install();
     let _environment_guard = crate::locals::EnvironmentGuard::install(environment);
-    run_ops_completion(ops, registers, context)
+    preserve_frame_completion(run_ops_completion(ops, registers, context)?)
+}
+
+fn preserve_frame_completion(
+    completion: crate::completion::Completion,
+) -> Result<crate::completion::Completion, VmError> {
+    use crate::completion::Completion;
+    Ok(match completion {
+        Completion::TailCall(request) => tail_call_completion(request),
+        completion => completion,
+    })
+}
+
+fn tail_call_completion(
+    request: crate::completion::TailCallRequest,
+) -> crate::completion::Completion {
+    crate::completion::Completion::TailCall(request)
 }
 
 pub(crate) fn execute_in_environment(
@@ -201,10 +217,24 @@ pub(crate) fn execute_in_environment(
     context: &VmContext,
     environment: Rc<crate::environment::Environment>,
 ) -> Result<Value, VmError> {
+    completion_result(execute_frame_completion(
+        ops,
+        registers,
+        context,
+        environment,
+    )?)
+}
+
+pub(crate) fn execute_frame_completion(
+    ops: &[Op],
+    registers: &mut Vec<Value>,
+    context: &VmContext,
+    environment: Rc<crate::environment::Environment>,
+) -> Result<crate::completion::Completion, VmError> {
     let _context_guard = ContextGuard::install(context);
     let _global_guard = GlobalObjectGuard::install();
     let _environment_guard = crate::locals::EnvironmentGuard::install(environment);
-    run_ops(ops, registers, context)
+    run_ops_completion(ops, registers, context)
 }
 pub(crate) fn execute_indirect_eval(ops: &[Op]) -> Result<Value, VmError> {
     let context = CURRENT_CONTEXT
@@ -282,11 +312,16 @@ fn error_completion(error: VmError) -> Result<crate::completion::Completion, VmE
     }
 }
 
-fn completion_result(completion: crate::completion::Completion) -> Result<Value, VmError> {
+pub(crate) fn completion_result(
+    completion: crate::completion::Completion,
+) -> Result<Value, VmError> {
     use crate::completion::Completion;
     match completion {
         Completion::Normal => Err(VmError::MissingReturn),
         Completion::Return(value) => Ok(value),
+        Completion::TailCall(_) => Err(VmError::EvalError(
+            "Unconsumed tail-call completion".to_string(),
+        )),
         Completion::Throw(value) => Err(VmError::Thrown(value)),
         Completion::Break(label) => Err(VmError::Break(label)),
         Completion::Continue(label) => Err(VmError::Continue(label)),

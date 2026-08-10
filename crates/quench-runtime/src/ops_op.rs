@@ -60,6 +60,7 @@ pub enum Op {
         mapped_arguments: bool,
     },
     Call { dst: u16, callee: u16, args: Vec<u16>, spreads: Vec<bool> },
+    TailCall { callee: u16, args: Vec<u16>, spreads: Vec<bool> },
     Eval {
         dst: u16,
         source: u16,
