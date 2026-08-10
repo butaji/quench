@@ -114,7 +114,12 @@ fn owns_property(receiver: &Value, key: &str) -> Result<bool, VmError> {
         Value::Object(properties) => properties
             .iter()
             .any(|(name, _)| name == key && !super::is_descriptor_key(name)),
-        Value::Array(values) => key == "length" || valid_index(key, values.len()),
+        Value::Array(values) => {
+            (!values.is_arguments() && key == "length")
+                || valid_index(key, values.len())
+                || values.property(key).is_some()
+                || (values.is_strict_arguments() && key == "callee")
+        }
         Value::String(value) => key == "length" || valid_index(key, value.chars().count()),
         Value::Builtin(builtin) => builtin_owns_property(*builtin, key),
         Value::Function(function) => {
@@ -239,6 +244,14 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
 }
 
 fn array_descriptor(values: &crate::value::ArrayData, key: &str) -> Option<Value> {
+    if values.is_strict_arguments() && key == "callee" {
+        return Some(strict_callee_descriptor());
+    }
+    if values.is_arguments() && matches!(key, "length" | "callee") {
+        return values
+            .property(key)
+            .map(|value| descriptor_object_with_flags(value, true, false, true));
+    }
     if key == "length" {
         return Some(descriptor_object_with_flags(
             Value::Number(values.logical_len() as f64),
@@ -249,8 +262,18 @@ fn array_descriptor(values: &crate::value::ArrayData, key: &str) -> Option<Value
     }
     key.parse::<usize>()
         .ok()
-        .and_then(|index| values.get(index).cloned())
+        .and_then(|index| values.get_index(index))
         .map(|value| descriptor_object(&value))
+}
+
+fn strict_callee_descriptor() -> Value {
+    let thrower = Value::Builtin(Builtin::TypeError);
+    Value::Object(Rc::new(vec![
+        ("get".to_string(), thrower.clone()),
+        ("set".to_string(), thrower),
+        ("enumerable".to_string(), Value::Boolean(false)),
+        ("configurable".to_string(), Value::Boolean(false)),
+    ]))
 }
 
 fn string_descriptor(value: &str, key: &str) -> Option<Value> {

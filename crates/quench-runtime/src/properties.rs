@@ -88,6 +88,12 @@ pub(crate) fn execute_set_property(
         _ => return Err(crate::execute::VmError::MissingReturn),
     };
     let target = crate::execute::read_register(registers, object)?.clone();
+    if matches!(&target, crate::value::Value::Array(values) if values.is_strict_arguments() && key == "callee")
+    {
+        return Err(crate::value::error::throw_type_error(
+            "'callee' is unavailable on strict arguments",
+        ));
+    }
     let value = crate::execute::read_register(registers, src)?.clone();
     let result = crate::builtins::set_property(target.clone(), &key, value);
     crate::locals::replace_value(&target, &result);

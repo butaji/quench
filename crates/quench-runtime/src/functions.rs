@@ -49,17 +49,22 @@ pub(crate) fn reduce_body(
     parameters: HashMap<String, u16>,
     parameter_count: u16,
     captures: u16,
+    strictness: FunctionStrictness,
 ) -> Result<Vec<Op>, Vec<String>> {
     let rest = rest_slot(&parameters, parameter_count, captures);
     let next_slot = captures
         .saturating_add(parameter_count)
         .saturating_add(if rest.is_some() { 3 } else { 2 });
-    let body = crate::reduce::reduce_statements_with_locals(
+    let inherited = facts.strict;
+    facts.strict = matches!(strictness, FunctionStrictness::Strict);
+    let reduced = crate::reduce::reduce_statements_with_locals(
         &body.statements,
         facts,
         parameters,
         next_slot,
-    )?;
+    );
+    facts.strict = inherited;
+    let body = reduced?;
     Ok(bind_rest(body, rest, parameter_count, captures))
 }
 
@@ -213,8 +218,11 @@ pub(crate) fn reduce_expression(
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
     let body = function.body.as_ref()?;
+    let strictness = crate::reduce_support::function_strictness(body, facts.strict);
     let (parameters, parameter_count) = function_parameters(function).ok()?;
-    let (body_ops, captures) = reduce_function_ops(
+    let inherited = facts.strict;
+    facts.strict = matches!(strictness, FunctionStrictness::Strict);
+    let reduced = reduce_function_ops(
         &body.statements,
         facts,
         parameters,
@@ -222,7 +230,9 @@ pub(crate) fn reduce_expression(
         locals,
         false,
         false,
-    )?;
+    );
+    facts.strict = inherited;
+    let (body_ops, captures) = reduced?;
     Some(emit_function_op(
         ops,
         next_register,
@@ -235,7 +245,7 @@ pub(crate) fn reduce_expression(
             } else {
                 FunctionKind::Ordinary
             },
-            strictness: crate::reduce_support::function_strictness(body),
+            strictness,
             is_async: function.r#async,
         },
     ))
@@ -248,8 +258,11 @@ pub(crate) fn reduce_arrow(
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
+    let strictness = crate::reduce_support::function_strictness(&function.body, facts.strict);
     let (parameters, parameter_count) = parameters(&function.params).ok()?;
-    let (body_ops, captures) = reduce_function_ops(
+    let inherited = facts.strict;
+    facts.strict = matches!(strictness, FunctionStrictness::Strict);
+    let reduced = reduce_function_ops(
         &function.body.statements,
         facts,
         parameters,
@@ -257,7 +270,9 @@ pub(crate) fn reduce_arrow(
         locals,
         true,
         function.expression,
-    )?;
+    );
+    facts.strict = inherited;
+    let (body_ops, captures) = reduced?;
     Some(emit_function_op(
         ops,
         next_register,
@@ -266,7 +281,7 @@ pub(crate) fn reduce_arrow(
         captures,
         FunctionMetadata {
             kind: FunctionKind::Arrow,
-            strictness: FunctionStrictness::Sloppy,
+            strictness,
             is_async: function.r#async,
         },
     ))
@@ -333,26 +348,10 @@ pub(crate) fn write_op(registers: &mut Vec<crate::value::Value>, op: &Op) {
     crate::functions_write::write_op(registers, op);
 }
 
-fn build_registers(
-    function: &crate::value::FunctionValue,
-    this_value: &crate::value::Value,
-    arguments: &[crate::value::Value],
-) -> (
-    Vec<crate::value::Value>,
-    std::rc::Rc<crate::environment::Environment>,
-) {
-    let original_arguments = arguments.to_vec();
-    let mut parameters = arguments.to_vec();
-    parameters.resize(usize::from(function.params), crate::value::Value::Undefined);
-    parameters.truncate(usize::from(function.params));
-    parameters.push(crate::value::Value::array(original_arguments));
-    parameters.push(this_value.clone());
-    let environment = crate::environment::Environment::child(&function.captures, parameters);
-    (vec![crate::value::Value::Undefined; 32], environment)
-}
+include!("functions_arguments.rs");
 
 pub(crate) fn execute(
-    function: &crate::value::FunctionValue,
+    function: &std::rc::Rc<crate::value::FunctionValue>,
     this_value: &crate::value::Value,
     arguments: &[crate::value::Value],
 ) -> Result<crate::value::Value, crate::execute::VmError> {
@@ -372,7 +371,7 @@ pub(crate) fn execute(
 
 /// Execute a constructor and return its result plus the final `this` value.
 pub(crate) fn execute_construct(
-    function: &crate::value::FunctionValue,
+    function: &std::rc::Rc<crate::value::FunctionValue>,
     this_value: &crate::value::Value,
     arguments: &[crate::value::Value],
 ) -> Result<(crate::value::Value, crate::value::Value), crate::execute::VmError> {

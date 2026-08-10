@@ -56,6 +56,10 @@ impl Environment {
         *slots[index].borrow_mut() = value;
     }
 
+    pub(crate) fn slot(&self, slot: u16) -> Option<Rc<RefCell<Value>>> {
+        self.slots.borrow().get(usize::from(slot)).cloned()
+    }
+
     pub(crate) fn replace_value(&self, old: &Value, new: &Value) {
         if let Some(caller) = &self.caller {
             caller.replace_value(old, new);
