@@ -2,7 +2,11 @@ use std::collections::HashMap;
 
 use oxc::ast::ast::{ArrayExpression, ArrayExpressionElement};
 
-use crate::{facts::ProgramDb, ops::Op, value::Value};
+use crate::{
+    facts::ProgramDb,
+    ops::{ArrayElement, Op},
+    value::Value,
+};
 
 pub(crate) fn execute_builtin(
     builtin: crate::ops::Builtin,
@@ -13,7 +17,7 @@ pub(crate) fn execute_builtin(
     let result = match builtin {
         Array => return Some(Ok(crate::builtins::array(arguments))),
         ArrayIsArray => return Some(Ok(crate::builtins::is_array(arguments.first()))),
-        ArrayFrom => return Some(Ok(from(arguments.first()))),
+        ArrayFrom => return Some(from(arguments.first())),
         ArrayMap => return Some(crate::builtins::array_map(receiver, arguments)),
         ArrayFilter => return Some(crate::builtins::array_filter(receiver, arguments)),
         ArraySome => return Some(some(receiver, arguments)),
@@ -44,7 +48,7 @@ pub(crate) fn execute_builtin(
     Some(Ok(result))
 }
 
-fn from(value: Option<&Value>) -> Value {
+fn from(value: Option<&Value>) -> Result<Value, crate::execute::VmError> {
     let values = match value {
         Some(Value::Array(values)) => values.to_vec(),
         Some(Value::Set(data)) => data.values.iter().cloned().collect(),
@@ -54,10 +58,10 @@ fn from(value: Option<&Value>) -> Value {
             .zip(&data.values)
             .map(|(key, value)| Value::array(vec![key.clone(), value.clone()]))
             .collect(),
-        Some(Value::Iterator(data)) => data.values.clone(),
+        Some(value @ Value::Iterator(_)) => crate::collections::iterator::collect(value)?,
         _ => Vec::new(),
     };
-    Value::array(values)
+    Ok(Value::array(values))
 }
 
 fn splice(receiver: Option<&Value>, arguments: &[Value]) -> Value {
@@ -91,28 +95,42 @@ pub(crate) fn reduce(
 ) -> Option<u16> {
     let mut elements = Vec::new();
     for element in &array.elements {
-        let register = match element {
-            ArrayExpressionElement::Elision(_) => {
-                crate::reduce_support::emit_undefined(ops, next_register)
-            }
-            ArrayExpressionElement::SpreadElement(_) => return None,
-            _ => crate::reduce::reduce_expression(
-                element.as_expression()?,
-                ops,
-                facts,
-                next_register,
-                locals,
-            )?,
-        };
-        elements.push(register);
+        elements.push(reduce_element(element, ops, facts, next_register, locals)?);
     }
     let register = *next_register;
     *next_register = next_register.saturating_add(1);
-    ops.push(Op::MakeArray {
-        dst: register,
-        elements,
-    });
+    emit_array(ops, register, elements);
     Some(register)
+}
+fn reduce_element(
+    element: &ArrayExpressionElement<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<ArrayElement> {
+    match element {
+        ArrayExpressionElement::Elision(_) => Some(ArrayElement::Elision),
+        ArrayExpressionElement::SpreadElement(spread) => {
+            crate::reduce::reduce_expression(&spread.argument, ops, facts, next, locals)
+                .map(ArrayElement::Spread)
+        }
+        _ => crate::reduce::reduce_expression(element.as_expression()?, ops, facts, next, locals)
+            .map(ArrayElement::Value),
+    }
+}
+fn emit_array(ops: &mut Vec<Op>, dst: u16, elements: Vec<ArrayElement>) {
+    let dense = elements
+        .iter()
+        .map(|element| match element {
+            ArrayElement::Value(register) => Some(*register),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>();
+    match dense {
+        Some(elements) => ops.push(Op::MakeArray { dst, elements }),
+        None => ops.push(Op::BuildArray { dst, elements }),
+    }
 }
 
 pub(crate) fn property(values: &crate::value::ArrayData, key: &str) -> Value {
@@ -168,10 +186,7 @@ fn array_iterator(receiver: Option<&Value>) -> Value {
         Some(Value::Array(values)) => values.snapshot(),
         _ => Vec::new(),
     };
-    Value::Iterator(std::rc::Rc::new(crate::value::IteratorData {
-        values,
-        index: std::cell::RefCell::new(0),
-    }))
+    crate::collections::iterator::make(values)
 }
 
 fn sort(receiver: Option<&Value>) -> Value {

@@ -1,6 +1,6 @@
 use std::{cell::RefCell, rc::Rc};
 
-use crate::value::{IteratorData, Value};
+use crate::value::{IteratorData, IteratorState, Value};
 
 pub(crate) fn execute(
     registers: &mut Vec<Value>,
@@ -40,28 +40,119 @@ fn require_object_coercible(value: Value) -> Result<(), crate::execute::VmError>
 }
 
 fn open(value: Value) -> Result<Value, crate::execute::VmError> {
-    let values = iterable_values(value)?;
-    Ok(make(values))
+    if matches!(value, Value::Iterator(_)) {
+        return Ok(value);
+    }
+    let method = crate::execute::get_property_result(&value, "Symbol.iterator")?;
+    if matches!(method, Value::Undefined) {
+        if matches!(value, Value::Generator(_)) {
+            return open_self_iterator(value);
+        }
+        return iterable_values(value).map(make);
+    }
+    let iterator = call(&method, &value)?;
+    if !crate::value::is_object(&iterator) {
+        return Err(not_iterable());
+    }
+    let next = crate::execute::get_property_result(&iterator, "next")?;
+    if !crate::conversion::is_callable(&next) {
+        return Err(not_iterable());
+    }
+    Ok(make_protocol(iterator, next))
+}
+
+fn open_self_iterator(iterator: Value) -> Result<Value, crate::execute::VmError> {
+    let next = crate::execute::get_property_result(&iterator, "next")?;
+    if !crate::conversion::is_callable(&next) {
+        return Err(not_iterable());
+    }
+    Ok(make_protocol(iterator, next))
 }
 
 fn step(value: Value) -> Result<Value, crate::execute::VmError> {
-    let Value::Iterator(data) = value else {
-        return Err(not_iterable());
-    };
-    let mut index = data.index.borrow_mut();
-    let value = data.values.get(*index).cloned().unwrap_or(Value::Undefined);
-    *index = index.saturating_add(1);
-    Ok(value)
+    Ok(step_value(&value)?.unwrap_or(Value::Undefined))
 }
 
 fn rest(value: Value) -> Result<Value, crate::execute::VmError> {
+    collect_iterable(value).map(Value::array)
+}
+
+pub(crate) fn collect(value: &Value) -> Result<Vec<Value>, crate::execute::VmError> {
+    let mut values = Vec::new();
+    while let Some(value) = step_value(value)? {
+        values.push(value);
+    }
+    Ok(values)
+}
+
+pub(crate) fn collect_iterable(value: Value) -> Result<Vec<Value>, crate::execute::VmError> {
+    let iterator = open(value)?;
+    collect(&iterator)
+}
+
+fn step_value(value: &Value) -> Result<Option<Value>, crate::execute::VmError> {
     let Value::Iterator(data) = value else {
         return Err(not_iterable());
     };
-    let mut index = data.index.borrow_mut();
-    let values = data.values.get(*index..).unwrap_or_default().to_vec();
-    *index = data.values.len();
-    Ok(Value::array(values))
+    let protocol = {
+        let mut state = data.state.borrow_mut();
+        match &mut *state {
+            IteratorState::Native {
+                values,
+                index,
+                done,
+            } => return Ok(native_step(values, index, done)),
+            IteratorState::Protocol {
+                iterator,
+                next,
+                done,
+            } if !*done => Some((iterator.clone(), next.clone())),
+            IteratorState::Protocol { .. } => None,
+        }
+    };
+    let Some((iterator, next)) = protocol else {
+        return Ok(None);
+    };
+    let result = call(&next, &iterator)?;
+    protocol_result(data, result)
+}
+
+fn native_step(values: &[Value], index: &mut usize, done: &mut bool) -> Option<Value> {
+    if *done {
+        return None;
+    }
+    let value = values.get(*index).cloned();
+    *index = index.saturating_add(1);
+    *done = value.is_none();
+    value
+}
+
+fn protocol_result(
+    data: &IteratorData,
+    result: Value,
+) -> Result<Option<Value>, crate::execute::VmError> {
+    if !crate::value::is_object(&result) {
+        return Err(not_iterable());
+    }
+    let done = crate::execute::get_property_result(&result, "done")?;
+    if crate::execute::is_truthy(&done) {
+        mark_done(data);
+        return Ok(None);
+    }
+    crate::execute::get_property_result(&result, "value").map(Some)
+}
+
+fn mark_done(data: &IteratorData) {
+    match &mut *data.state.borrow_mut() {
+        IteratorState::Native { done, .. } | IteratorState::Protocol { done, .. } => *done = true,
+    }
+}
+
+fn call(callee: &Value, receiver: &Value) -> Result<Value, crate::execute::VmError> {
+    match callee {
+        Value::Proxy(_) => crate::proxy::proxy_apply(callee, receiver, &[]),
+        _ => crate::functions::execute_target(callee, receiver, &[]),
+    }
 }
 
 fn iterable_values(value: Value) -> Result<Vec<Value>, crate::execute::VmError> {
@@ -71,7 +162,6 @@ fn iterable_values(value: Value) -> Result<Vec<Value>, crate::execute::VmError> 
             .chars()
             .map(|character| Value::String(character.to_string()))
             .collect()),
-        Value::Iterator(data) => Ok(data.values.clone()),
         value => typed_values(value),
     }
 }
@@ -155,16 +245,14 @@ pub(crate) fn from_set(receiver: Option<&Value>) -> Value {
 }
 
 pub(crate) fn next(receiver: Option<&Value>) -> Value {
-    let Some(Value::Iterator(data)) = receiver else {
+    let Some(iterator @ Value::Iterator(_)) = receiver else {
         return result(Value::Undefined, true);
     };
-    let mut index = data.index.borrow_mut();
-    let value = data.values.get(*index).cloned();
-    if value.is_some() {
-        *index += 1;
+    match step_value(iterator) {
+        Ok(Some(value)) => result(value, false),
+        Ok(None) => result(Value::Undefined, true),
+        Err(_) => result(Value::Undefined, true),
     }
-    let done = value.is_none();
-    result(value.unwrap_or(Value::Undefined), done)
 }
 
 pub(crate) fn property(key: &str) -> Value {
@@ -174,10 +262,23 @@ pub(crate) fn property(key: &str) -> Value {
     }
 }
 
-fn make(values: Vec<Value>) -> Value {
+pub(crate) fn make(values: Vec<Value>) -> Value {
     Value::Iterator(Rc::new(IteratorData {
-        values,
-        index: RefCell::new(0),
+        state: RefCell::new(IteratorState::Native {
+            values,
+            index: 0,
+            done: false,
+        }),
+    }))
+}
+
+fn make_protocol(iterator: Value, next: Value) -> Value {
+    Value::Iterator(Rc::new(IteratorData {
+        state: RefCell::new(IteratorState::Protocol {
+            iterator,
+            next,
+            done: false,
+        }),
     }))
 }
 

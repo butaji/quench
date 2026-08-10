@@ -118,8 +118,21 @@ pub struct SetData {
 
 #[derive(Debug, PartialEq)]
 pub struct IteratorData {
-    pub values: Vec<Value>,
-    pub index: RefCell<usize>,
+    pub state: RefCell<IteratorState>,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum IteratorState {
+    Native {
+        values: Vec<Value>,
+        index: usize,
+        done: bool,
+    },
+    Protocol {
+        iterator: Value,
+        next: Value,
+        done: bool,
+    },
 }
 
 #[derive(Debug, PartialEq)]
