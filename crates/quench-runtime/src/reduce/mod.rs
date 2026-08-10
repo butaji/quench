@@ -11,7 +11,7 @@ pub use reduce_expressions::{
 };
 pub use reduce_scripts::{reduce_module_with_harness, reduce_script_sources, ScriptSource};
 pub use reduce_statements::{
-    reduce_expression_statements_with_locals, reduce_function_declaration, reduce_module_source,
-    reduce_source, reduce_source_with_type, reduce_statement, reduce_statements_no_tail,
-    reduce_statements_with_locals, ResidualProgram,
+    reduce_eval_source, reduce_expression_statements_with_locals, reduce_function_declaration,
+    reduce_module_source, reduce_source, reduce_source_with_type, reduce_statement,
+    reduce_statements_no_tail, reduce_statements_with_locals, ResidualProgram,
 };

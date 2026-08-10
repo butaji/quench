@@ -32,13 +32,19 @@ pub enum Op {
         mapped_arguments: bool,
     },
     Call { dst: u16, callee: u16, args: Vec<u16>, spreads: Vec<bool> },
-    Eval { dst: u16, source: u16, strict: bool },
+    Eval {
+        dst: u16,
+        source: u16,
+        strict: bool,
+        bindings: Vec<(String, u16)>,
+    },
     CallMethod { dst: u16, object: u16, key: String, args: Vec<u16> },
     /// Suspend async execution until the source completion settles.
     Await { dst: u16, src: u16 },
     Construct { dst: u16, callee: u16, args: Vec<u16> },
     Branch { condition: u16, then_ops: Vec<Op>, else_ops: Vec<Op> },
     Label { name: String, body: Vec<Op> },
+    With { object: u16, body: Vec<Op> },
     Try {
         body: Vec<Op>,
         handler: Option<Vec<Op>>,

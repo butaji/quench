@@ -76,6 +76,9 @@ fn object_prototype_property(properties: &[(String, Value)], key: &str) -> Value
 }
 
 fn function_property(function: &crate::value::FunctionValue, key: &str) -> Value {
+    if key == "constructor" {
+        return Value::Builtin(function_constructor(function));
+    }
     function
         .properties
         .borrow()
@@ -83,6 +86,15 @@ fn function_property(function: &crate::value::FunctionValue, key: &str) -> Value
         .rev()
         .find(|(name, _)| name == key)
         .map_or(Value::Undefined, |(_, value)| value.clone())
+}
+
+fn function_constructor(function: &crate::value::FunctionValue) -> Builtin {
+    match (function.kind, function.is_async) {
+        (crate::ops::FunctionKind::Generator, true) => Builtin::AsyncGeneratorFunction,
+        (crate::ops::FunctionKind::Generator, false) => Builtin::GeneratorFunction,
+        (_, true) => Builtin::AsyncFunction,
+        (_, false) => Builtin::Function,
+    }
 }
 
 pub fn get_property_result(value: &Value, key: &str) -> Result<Value, VmError> {

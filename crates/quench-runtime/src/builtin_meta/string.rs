@@ -4,6 +4,7 @@ use crate::ops::Builtin;
 
 pub const fn fn_name(b: Builtin) -> Option<&'static str> {
     match b {
+        Builtin::StringFromCharCode => Some("String.fromCharCode"),
         Builtin::StringIncludes => Some("String.prototype.includes"),
         Builtin::StringStartsWith => Some("String.prototype.startsWith"),
         Builtin::StringEndsWith => Some("String.prototype.endsWith"),
@@ -36,6 +37,7 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
 
 pub const fn fn_len(b: Builtin) -> Option<f64> {
     match b {
+        Builtin::StringFromCharCode => Some(1.0),
         Builtin::StringRepeat
         | Builtin::StringTrim
         | Builtin::StringToLowerCase
@@ -66,6 +68,7 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
 
 pub const fn short_name(b: Builtin) -> Option<&'static str> {
     match b {
+        Builtin::StringFromCharCode => Some("fromCharCode"),
         Builtin::StringIncludes => Some("includes"),
         Builtin::StringStartsWith => Some("startsWith"),
         Builtin::StringEndsWith => Some("endsWith"),

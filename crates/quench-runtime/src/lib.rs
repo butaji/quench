@@ -71,3 +71,4 @@ mod typed_array_ops;
 mod unary;
 pub mod value;
 pub mod vm;
+mod with_scope;

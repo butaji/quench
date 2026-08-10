@@ -29,6 +29,55 @@ pub fn reduce_source(source: &str) -> Result<ResidualProgram, Vec<String>> {
 pub fn reduce_module_source(source: &str) -> Result<ResidualProgram, Vec<String>> {
     reduce_source_with_type(source, SourceType::mjs())
 }
+pub fn reduce_eval_source(
+    source: &str,
+    inherited_strict: bool,
+    bindings: &[(String, u16)],
+) -> Result<ResidualProgram, Vec<String>> {
+    let strict_source = inherited_strict.then(|| format!("\"use strict\";\n{source}"));
+    let source = strict_source.as_deref().unwrap_or(source);
+    let allocator = Allocator::default();
+    let parsed = Parser::new(&allocator, source, SourceType::cjs()).parse();
+    validate_parse(&parsed)?;
+    let (scope_count, symbol_count) = crate::semantic::analyze(&parsed.program)?;
+    let strict = inherited_strict || has_strict_directive(&parsed.program);
+    let mut facts = ProgramDb {
+        strict,
+        scope_count,
+        symbol_count,
+        ..ProgramDb::default()
+    };
+    let locals = bindings.iter().cloned().collect::<HashMap<_, _>>();
+    let next_slot = crate::reduce_support::register_base(&locals);
+    let ops = reduce_expression_statements_with_locals(
+        &parsed.program.body,
+        &mut facts,
+        locals,
+        next_slot,
+    )?;
+    Ok(ResidualProgram { facts, ops })
+}
+
+fn has_strict_directive(program: &oxc::ast::ast::Program<'_>) -> bool {
+    program
+        .directives
+        .iter()
+        .any(|directive| directive.directive.as_str() == "use strict")
+}
+
+fn validate_parse(parsed: &oxc::parser::ParserReturn<'_>) -> Result<(), Vec<String>> {
+    if parsed.panicked {
+        return Err(vec!["SyntaxError: OXC parser rejected source".to_string()]);
+    }
+    if parsed.errors.is_empty() {
+        return Ok(());
+    }
+    Err(parsed
+        .errors
+        .iter()
+        .map(|error| format!("SyntaxError: {error}"))
+        .collect())
+}
 pub fn reduce_source_with_type(
     source: &str,
     source_type: SourceType,

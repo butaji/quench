@@ -40,6 +40,9 @@ fn is_simple_builtin(builtin: Builtin) -> bool {
             | Builtin::FunctionPrototypeToString
             | Builtin::FunctionPrototypeValueOf
             | Builtin::Function
+            | Builtin::AsyncFunction
+            | Builtin::GeneratorFunction
+            | Builtin::AsyncGeneratorFunction
             | Builtin::NumberToFixed
             | Builtin::NumberToPrecision
             | Builtin::NumberToExponential
@@ -65,8 +68,10 @@ fn execute_simple_builtin(
     if is_error_constructor(builtin) {
         return Ok(crate::builtins::error(builtin, arguments));
     }
+    if let Some(result) = crate::functions_dynamic::construct_builtin(builtin, arguments) {
+        return result;
+    }
     match builtin {
-        Builtin::Function => crate::functions_dynamic::construct(arguments),
         Builtin::Boolean => Ok(Value::Boolean(arguments.first().is_some_and(is_truthy))),
         Builtin::Eval => crate::reflect::builtin(builtin, arguments),
         Builtin::Escape => Ok(crate::builtins::escape(arguments.first())),
@@ -78,10 +83,7 @@ fn execute_simple_builtin(
         Builtin::ArrayBufferIsView => Ok(Value::Boolean(is_array_buffer_view(arguments.first()))),
         Builtin::NumberToString => Ok(Value::String(to_string(arguments.first()))),
         Builtin::NumberValueOf => Ok(Value::Number(to_number(arguments.first()))),
-        Builtin::BoxedValueOf => Ok(receiver.map_or(Value::Undefined, |value| match value {
-            Value::Object(_) => crate::execute::get_property(value, "_value"),
-            _ => value.clone(),
-        })),
+        Builtin::BoxedValueOf => Ok(boxed_value(receiver)),
         Builtin::ObjectPrototypeToString => Ok(crate::builtins::prototype_to_string(receiver)),
         Builtin::ObjectPrototypeValueOf => Ok(crate::builtins::prototype_value_of(receiver)),
         Builtin::FunctionPrototypeToString | Builtin::FunctionPrototypeValueOf => {
@@ -96,6 +98,13 @@ fn execute_simple_builtin(
         }
         _ => Ok(Value::Undefined),
     }
+}
+
+fn boxed_value(receiver: Option<&Value>) -> Value {
+    receiver.map_or(Value::Undefined, |value| match value {
+        Value::Object(_) => crate::execute::get_property(value, "_value"),
+        _ => value.clone(),
+    })
 }
 
 fn is_error_constructor(builtin: Builtin) -> bool {
