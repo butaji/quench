@@ -178,7 +178,9 @@ pub fn execute_builtin_with_receiver(
     }
     if matches!(
         builtin,
-        Builtin::ObjectHasOwnProperty | Builtin::ObjectGetOwnPropertyDescriptor
+        Builtin::ObjectHasOwnProperty
+            | Builtin::ObjectGetOwnPropertyDescriptor
+            | Builtin::ObjectPropertyIsEnumerable
     ) {
         return crate::builtins::object::execute_special(builtin, receiver, arguments);
     }
@@ -782,7 +784,10 @@ fn object_property(properties: &Rc<Vec<(String, Value)>>, key: &str) -> Value {
     } else {
         crate::ops::Builtin::ObjectPrototype
     };
-    crate::builtins::property(prototype, key)
+    bind_method(
+        &Value::Object(properties.clone()),
+        crate::builtins::property(prototype, key),
+    )
 }
 
 fn global_property(properties: &Rc<Vec<(String, Value)>>, key: &str) -> Value {
