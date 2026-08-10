@@ -77,20 +77,24 @@ fn extend_function_parameters(
     parameter_count: u16,
     captures: u16,
     locals: &HashMap<String, u16>,
+    lexical_receiver: bool,
 ) -> HashMap<String, u16> {
     for slot in parameters.values_mut() {
         *slot = slot.saturating_add(captures);
     }
-    parameters.insert(
-        "arguments".to_string(),
-        captures.saturating_add(parameter_count),
-    );
-    parameters.insert(
-        "this".to_string(),
-        captures.saturating_add(parameter_count).saturating_add(1),
-    );
-    parameters.extend(locals.iter().map(|(name, slot)| (name.clone(), *slot)));
-    parameters
+    let mut bindings = locals.clone();
+    if !lexical_receiver {
+        bindings.insert(
+            "arguments".to_string(),
+            captures.saturating_add(parameter_count),
+        );
+        bindings.insert(
+            "this".to_string(),
+            captures.saturating_add(parameter_count).saturating_add(1),
+        );
+    }
+    bindings.extend(parameters);
+    bindings
 }
 
 pub(super) fn reduce_function_ops(
@@ -99,9 +103,16 @@ pub(super) fn reduce_function_ops(
     parameters: HashMap<String, u16>,
     parameter_count: u16,
     locals: &HashMap<String, u16>,
+    lexical_receiver: bool,
 ) -> Option<(Vec<Op>, u16)> {
     let captures = capture_count(locals);
-    let parameters = extend_function_parameters(parameters, parameter_count, captures, locals);
+    let parameters = extend_function_parameters(
+        parameters,
+        parameter_count,
+        captures,
+        locals,
+        lexical_receiver,
+    );
     let local_count = captures.saturating_add(parameter_count).saturating_add(2);
     let body_ops =
         crate::reduce::reduce_statements_with_locals(statements, facts, parameters, local_count)
@@ -140,8 +151,14 @@ pub(crate) fn reduce_expression(
 ) -> Option<u16> {
     let body = function.body.as_ref()?;
     let (parameters, parameter_count) = function_parameters(function).ok()?;
-    let (body_ops, captures) =
-        reduce_function_ops(&body.statements, facts, parameters, parameter_count, locals)?;
+    let (body_ops, captures) = reduce_function_ops(
+        &body.statements,
+        facts,
+        parameters,
+        parameter_count,
+        locals,
+        false,
+    )?;
     Some(emit_function_op(
         ops,
         next_register,
@@ -174,6 +191,7 @@ pub(crate) fn reduce_arrow(
         parameters,
         parameter_count,
         locals,
+        true,
     )?;
     Some(emit_function_op(
         ops,
@@ -217,12 +235,6 @@ pub(super) fn make(
             .push(("prototype".to_string(), prototype));
     }
     value
-}
-
-pub(crate) fn dynamic_constructor(
-    arguments: &[crate::value::Value],
-) -> Result<crate::value::Value, crate::execute::VmError> {
-    crate::functions_dynamic::construct(arguments)
 }
 
 pub(crate) fn write(

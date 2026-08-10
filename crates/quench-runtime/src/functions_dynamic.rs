@@ -27,6 +27,7 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
         parameters,
         count,
         &HashMap::new(),
+        false,
     )
     .ok_or_else(|| invalid("Unsupported function source"))?;
     let value = crate::functions::make(
