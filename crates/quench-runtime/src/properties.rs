@@ -4,6 +4,8 @@ use oxc::ast::ast::Expression;
 
 use crate::{facts::ProgramDb, literal::reduce_literal, ops::Op};
 
+const NON_EXTENSIBLE: &str = "\0quench:non_extensible";
+
 pub(crate) fn reduce(
     expression: &Expression<'_>,
     ops: &mut Vec<Op>,
@@ -113,6 +115,9 @@ pub(crate) fn execute_set_property(
     };
     let target = crate::execute::read_register(registers, object)?.clone();
     reject_restricted_property_write(&target, &key)?;
+    if rejects_new_property(&target, &key) {
+        return strict_write_failure();
+    }
     let value = crate::execute::read_register(registers, src)?.clone();
     if crate::vm::is_global_object(&target) && crate::with_scope::set_if_bound(&key, &value)? {
         return Ok(());
@@ -132,6 +137,57 @@ pub(crate) fn execute_set_property(
     crate::vm::synchronize_global_object(registers, &target, &result);
     crate::execute::write_value(registers, object, result);
     Ok(())
+}
+
+fn rejects_new_property(target: &crate::value::Value, key: &str) -> bool {
+    let crate::value::Value::Object(properties) = target else {
+        return false;
+    };
+    properties.iter().any(|(name, _)| name == NON_EXTENSIBLE)
+        && !properties.iter().any(|(name, _)| name == key)
+}
+
+pub(crate) fn object_is_extensible(target: &crate::value::Value) -> bool {
+    match target {
+        crate::value::Value::Object(properties) => {
+            !properties.iter().any(|(name, _)| name == NON_EXTENSIBLE)
+        }
+        value => crate::value::is_object(value),
+    }
+}
+
+pub(crate) fn is_extensible_value(
+    target: Option<&crate::value::Value>,
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    let target = target.ok_or(crate::execute::VmError::NotCallable)?;
+    Ok(crate::value::Value::Boolean(object_is_extensible(target)))
+}
+
+pub(crate) fn prevent_extensions(
+    target: Option<&crate::value::Value>,
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    let Some(target) = target else {
+        return Err(crate::value::error::throw_type_error("Object expected"));
+    };
+    if crate::vm::is_global_object(target) {
+        return Ok(target.clone());
+    }
+    if matches!(target, crate::value::Value::Proxy(_)) {
+        return crate::proxy::proxy_prevent_extensions(target);
+    }
+    let crate::value::Value::Object(properties) = target else {
+        return Ok(target.clone());
+    };
+    let mut sealed = properties.as_ref().clone();
+    if !sealed.iter().any(|(name, _)| name == NON_EXTENSIBLE) {
+        sealed.push((
+            NON_EXTENSIBLE.to_string(),
+            crate::value::Value::Boolean(true),
+        ));
+    }
+    let result = crate::value::Value::Object(std::rc::Rc::new(sealed));
+    crate::locals::replace_value(target, &result);
+    Ok(result)
 }
 
 fn reject_restricted_property_write(
