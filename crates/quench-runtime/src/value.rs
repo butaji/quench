@@ -2,7 +2,9 @@
 
 use std::{cell::RefCell, collections::VecDeque, rc::Rc};
 
-use crate::ops::{Builtin, Constant, HostCapabilityRef, Op, RealmId};
+use crate::ops::{
+    Builtin, Constant, FunctionKind, FunctionStrictness, HostCapabilityRef, Op, RealmId,
+};
 
 /// Identity-bearing host capability kept outside the JavaScript value space.
 #[derive(Clone, Debug)]
@@ -954,6 +956,8 @@ pub struct FunctionValue {
     pub params: u16,
     pub captures: Rc<RefCell<Vec<Value>>>,
     pub properties: Rc<RefCell<Vec<(String, Value)>>>,
+    pub kind: FunctionKind,
+    pub strictness: FunctionStrictness,
     /// Whether invocation produces an async completion and Promise result.
     pub is_async: bool,
 }
