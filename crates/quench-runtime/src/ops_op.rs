@@ -182,6 +182,11 @@ pub enum Op {
         name: crate::facts::PrivateNameId,
         src: u16,
     },
+    DefinePrivate {
+        object: u16,
+        name: crate::facts::PrivateNameId,
+        src: u16,
+    },
     SetPropertyDynamic {
         object: u16,
         key: u16,
