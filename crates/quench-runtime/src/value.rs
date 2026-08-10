@@ -526,6 +526,60 @@ impl Float64ArrayData {
     }
 }
 
+/// A signed 8-bit integer view over shared ArrayBuffer bytes.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Int8ArrayData {
+    pub buffer: Rc<ArrayBufferData>,
+    pub byte_offset: usize,
+    pub length: usize,
+}
+
+impl Int8ArrayData {
+    pub const BYTES_PER_ELEMENT: usize = std::mem::size_of::<i8>();
+
+    pub fn new(buffer: Rc<ArrayBufferData>, byte_offset: usize, length: usize) -> Self {
+        Self {
+            buffer,
+            byte_offset,
+            length,
+        }
+    }
+
+    pub fn byte_length(&self) -> usize {
+        self.length * Self::BYTES_PER_ELEMENT
+    }
+
+    pub fn get(&self, index: usize) -> Option<i8> {
+        if index >= self.length || self.is_out_of_bounds() {
+            return None;
+        }
+        let offset = self.byte_offset + index;
+        self.buffer
+            .bytes
+            .borrow()
+            .get(offset)
+            .copied()
+            .map(|byte| i8::from_ne_bytes([byte]))
+    }
+
+    pub fn set(&self, index: usize, value: i8) -> bool {
+        if index >= self.length || self.is_out_of_bounds() {
+            return false;
+        }
+        let offset = self.byte_offset + index;
+        let mut bytes = self.buffer.bytes.borrow_mut();
+        let Some(byte) = bytes.get_mut(offset) else {
+            return false;
+        };
+        *byte = value.to_ne_bytes()[0];
+        true
+    }
+
+    fn is_out_of_bounds(&self) -> bool {
+        self.buffer.byte_length() < self.byte_offset + self.byte_length()
+    }
+}
+
 /// A Proxy value wrapping a target and handler.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProxyValue {
@@ -545,6 +599,7 @@ pub enum Value {
     ArrayBuffer(Rc<ArrayBufferData>),
     Float64Array(Rc<Float64ArrayData>),
     Float32Array(Rc<Float32ArrayData>),
+    Int8Array(Rc<Int8ArrayData>),
     DataView(Rc<DataViewData>),
     Builtin(Builtin),
     Function(Rc<FunctionValue>),
