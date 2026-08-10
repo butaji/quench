@@ -56,6 +56,7 @@ pub enum Op {
     },
     CheckGlobalVar {
         name: String,
+        is_lexical: bool,
     },
     CreateGlobalFunction {
         name: String,
@@ -66,6 +67,7 @@ pub enum Op {
         name: String,
         slot: u16,
         deletable: bool,
+        is_lexical: bool,
     },
     ResolveBindingTarget {
         dst: u16,

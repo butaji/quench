@@ -47,8 +47,9 @@ pub(super) fn instantiate_functions(
     let selected = selected_functions(statements);
     let winners = selected_function_names(&selected);
     let variables = global_variable_names(statements, &winners);
+    let lexical = lexical_variable_names(statements);
     if behavior == EvalBehavior::Global {
-        emit_global_checks(&selected, &variables, ops);
+        emit_global_checks(&selected, &variables, &lexical, ops);
     }
     for statement in selected {
         let Statement::FunctionDeclaration(function) = statement else {
@@ -67,7 +68,7 @@ pub(super) fn instantiate_functions(
         }
     }
     if behavior == EvalBehavior::Global {
-        emit_global_vars(&variables, locals, ops);
+        emit_global_vars(&variables, &lexical, locals, ops);
     }
     Ok(())
 }
@@ -91,7 +92,30 @@ fn global_variable_names(statements: &[Statement<'_>], winners: &HashSet<String>
         .collect()
 }
 
-fn emit_global_checks(functions: &[&Statement<'_>], variables: &[String], ops: &mut Vec<Op>) {
+fn lexical_variable_names(statements: &[Statement<'_>]) -> Vec<String> {
+    let mut names = Vec::new();
+    for statement in statements {
+        if let Statement::VariableDeclaration(declaration) = statement {
+            if declaration.kind != oxc::ast::ast::VariableDeclarationKind::Var {
+                for declarator in &declaration.declarations {
+                    names.extend(crate::binding_patterns::names(&declarator.id));
+                }
+            }
+        } else if let Statement::ClassDeclaration(class) = statement {
+            if let Some(id) = &class.id {
+                names.push(id.name.to_string());
+            }
+        }
+    }
+    names
+}
+
+fn emit_global_checks(
+    functions: &[&Statement<'_>],
+    variables: &[String],
+    lexical: &[String],
+    ops: &mut Vec<Op>,
+) {
     for statement in functions.iter().rev() {
         let Statement::FunctionDeclaration(function) = statement else {
             continue;
@@ -102,8 +126,21 @@ fn emit_global_checks(functions: &[&Statement<'_>], variables: &[String], ops: &
             });
         }
     }
+    let lexical_set: std::collections::HashSet<&String> = lexical.iter().collect();
+    let seen: std::collections::HashSet<&String> = variables.iter().collect();
     for name in variables {
-        ops.push(Op::CheckGlobalVar { name: name.clone() });
+        ops.push(Op::CheckGlobalVar {
+            name: name.clone(),
+            is_lexical: lexical_set.contains(name),
+        });
+    }
+    for name in lexical {
+        if !seen.contains(name) {
+            ops.push(Op::CheckGlobalVar {
+                name: name.clone(),
+                is_lexical: true,
+            });
+        }
     }
 }
 
@@ -125,14 +162,34 @@ fn emit_global_function(
     });
 }
 
-fn emit_global_vars(names: &[String], locals: &HashMap<String, u16>, ops: &mut Vec<Op>) {
+fn emit_global_vars(
+    names: &[String],
+    lexical: &[String],
+    locals: &HashMap<String, u16>,
+    ops: &mut Vec<Op>,
+) {
+    let lexical_set: std::collections::HashSet<&String> = lexical.iter().collect();
+    let seen: std::collections::HashSet<&String> = names.iter().collect();
     for name in names {
         if let Some(slot) = locals.get(name) {
             ops.push(Op::CreateGlobalVar {
                 name: name.clone(),
                 slot: *slot,
                 deletable: true,
+                is_lexical: lexical_set.contains(name),
             });
+        }
+    }
+    for name in lexical {
+        if !seen.contains(name) {
+            if let Some(slot) = locals.get(name) {
+                ops.push(Op::CreateGlobalVar {
+                    name: name.clone(),
+                    slot: *slot,
+                    deletable: true,
+                    is_lexical: true,
+                });
+            }
         }
     }
 }
