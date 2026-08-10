@@ -119,15 +119,16 @@ pub(crate) fn execute_delete_property(
     registers: &mut Vec<crate::value::Value>,
     op: &Op,
 ) -> Result<(), crate::execute::VmError> {
-    let Op::DeleteProperty { object, key } = op else {
+    let Op::DeleteProperty { dst, object, key } = op else {
         return Err(crate::execute::VmError::MissingReturn);
     };
     let target = crate::execute::read_register(registers, *object)?.clone();
     let key = dynamic_property_key(&crate::execute::read_register(registers, *key)?)?;
-    let result = crate::builtins::delete_property(target.clone(), &key);
+    let (result, deleted) = crate::builtins::delete_property(target.clone(), &key);
     crate::locals::replace_value(&target, &result);
     crate::vm::synchronize_global_object(registers, &target, &result);
     crate::execute::write_value(registers, *object, result);
+    crate::execute::write_value(registers, *dst, crate::value::Value::Boolean(deleted));
     Ok(())
 }
 

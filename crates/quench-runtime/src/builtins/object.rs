@@ -244,6 +244,9 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
 }
 
 fn array_descriptor(values: &crate::value::ArrayData, key: &str) -> Option<Value> {
+    if let Some(descriptor) = values.descriptor(key) {
+        return Some(refresh_array_descriptor(values, key, descriptor));
+    }
     if values.is_strict_arguments() && key == "callee" {
         return Some(strict_callee_descriptor());
     }
@@ -264,6 +267,26 @@ fn array_descriptor(values: &crate::value::ArrayData, key: &str) -> Option<Value
         .ok()
         .and_then(|index| values.get_index(index))
         .map(|value| descriptor_object(&value))
+}
+
+fn refresh_array_descriptor(
+    values: &crate::value::ArrayData,
+    key: &str,
+    mut descriptor: Value,
+) -> Value {
+    let (Ok(index), Value::Object(properties)) = (key.parse::<usize>(), &mut descriptor) else {
+        return descriptor;
+    };
+    let Some(value) = values.get_index(index) else {
+        return descriptor;
+    };
+    if let Some((_, current)) = Rc::make_mut(properties)
+        .iter_mut()
+        .find(|(name, _)| name == "value")
+    {
+        *current = value;
+    }
+    descriptor
 }
 
 fn strict_callee_descriptor() -> Value {

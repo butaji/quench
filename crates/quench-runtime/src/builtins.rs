@@ -203,26 +203,35 @@ pub(crate) fn is_array(value: Option<&Value>) -> Value {
     Value::Boolean(matches!(value, Some(Value::Array(_))))
 }
 
-pub(crate) fn delete_property(target: Value, key: &str) -> Value {
+pub(crate) fn delete_property(target: Value, key: &str) -> (Value, bool) {
     match target {
         Value::Object(properties)
             if descriptor_flag_in(&properties, key, "configurable") == Some(false) =>
         {
-            Value::Object(properties)
+            (Value::Object(properties), false)
         }
-        Value::Object(properties) => Value::Object(Rc::new(
-            properties
-                .iter()
-                .filter(|(name, _)| name != key && name != &descriptor_key(key))
-                .cloned()
-                .collect(),
-        )),
+        Value::Object(properties) => (
+            Value::Object(Rc::new(
+                properties
+                    .iter()
+                    .filter(|(name, _)| name != key && name != &descriptor_key(key))
+                    .cloned()
+                    .collect(),
+            )),
+            true,
+        ),
+        Value::Array(values)
+            if array_descriptor_flag(&values, key, "configurable") == Some(false) =>
+        {
+            (Value::Array(values), false)
+        }
         Value::Array(mut values) if values.is_arguments() => {
             Rc::make_mut(&mut values).delete_property(key);
-            Value::Array(values)
+            (Value::Array(values), true)
         }
-        Value::Array(values) if key != "length" => Value::Array(values),
-        value => value,
+        Value::Array(values) if key != "length" => (Value::Array(values), true),
+        Value::Array(values) => (Value::Array(values), false),
+        value => (value, true),
     }
 }
 
@@ -362,6 +371,9 @@ pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
             Value::Object(properties)
         }
         Value::Object(properties) => object_alias::set(properties, key, value),
+        Value::Array(values) if array_descriptor_flag(&values, key, "writable") == Some(false) => {
+            Value::Array(values)
+        }
         Value::Array(values) => set_array_property(values, key, value),
         Value::Function(function) => set_function_property(function, key, value),
         other => other,
@@ -376,7 +388,9 @@ pub(crate) fn define_property(arguments: &[Value]) -> Value {
     let Some(Value::Object(descriptor)) = arguments.get(2) else {
         return target.clone();
     };
-    let descriptor = complete_descriptor(descriptor);
+    let key_value = Value::String(key.clone());
+    let current = crate::builtins::object::descriptor(Some(target), Some(&key_value));
+    let descriptor = complete_descriptor(descriptor, &current);
     let value = descriptor
         .iter()
         .rev()
@@ -384,33 +398,17 @@ pub(crate) fn define_property(arguments: &[Value]) -> Value {
         .map_or(Value::Undefined, |(_, value)| value.clone());
     let mut result = set_property(target.clone(), &key, value);
     if let Value::Object(properties) = &mut result {
-        let metadata = Value::Object(Rc::new(descriptor));
+        let metadata = Value::Object(Rc::new(descriptor.clone()));
         let properties = Rc::make_mut(properties);
         properties.retain(|(name, _)| name != &descriptor_key(&key));
         properties.push((descriptor_key(&key), metadata));
     }
+    define_array_descriptor(&mut result, &key, descriptor);
     result
 }
 
+include!("builtins_array.rs");
 include!("builtins_descriptor.rs");
-
-fn set_array_property(mut values: Rc<crate::value::ArrayData>, key: &str, value: Value) -> Value {
-    if key == "length" {
-        if values.is_arguments() {
-            Rc::make_mut(&mut values).set_property(key, value);
-            return Value::Array(values);
-        }
-        let length = value_to_number(&value).max(0.0) as usize;
-        Rc::make_mut(&mut values).set_length(length);
-        return Value::Array(values);
-    }
-    let Ok(index) = key.parse::<usize>() else {
-        Rc::make_mut(&mut values).set_property(key, value);
-        return Value::Array(values);
-    };
-    Rc::make_mut(&mut values).set_index(index, value);
-    Value::Array(values)
-}
 
 fn set_function_property(
     function: Rc<crate::value::FunctionValue>,

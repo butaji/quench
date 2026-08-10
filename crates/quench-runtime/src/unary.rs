@@ -18,8 +18,10 @@ pub(crate) fn reduce_delete(
         crate::reduce::reduce_expression(&member.object, ops, facts, next_register, locals)?;
     let key =
         crate::reduce::reduce_expression(&member.expression, ops, facts, next_register, locals)?;
-    ops.push(Op::DeleteProperty { object, key });
-    Some(emit_constant(ops, next_register))
+    let dst = *next_register;
+    *next_register = next_register.saturating_add(1);
+    ops.push(Op::DeleteProperty { dst, object, key });
+    Some(dst)
 }
 
 fn emit_constant(ops: &mut Vec<Op>, next_register: &mut u16) -> u16 {
