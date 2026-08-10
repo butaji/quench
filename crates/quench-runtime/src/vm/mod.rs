@@ -290,6 +290,7 @@ pub fn get_property(value: &Value, key: &str) -> Value {
         Array(values) => crate::arrays::property(values, key),
         ArrayBuffer(buffer) => array_buffer_property(buffer, key),
         Float64Array(view) => float64_array_property(view, key),
+        Float32Array(view) => float32_array_property(view, key),
         Object(properties) => object_property(properties, key),
         String(value) => string_property(value, key),
         Number(value) => number_property(*value, key),
@@ -345,6 +346,20 @@ fn float64_array_property(view: &crate::value::Float64ArrayData, key: &str) -> V
             Value::Number(crate::value::Float64ArrayData::BYTES_PER_ELEMENT as f64)
         }
         _ => crate::builtins::property(Builtin::Float64ArrayPrototype, key),
+    }
+}
+
+fn float32_array_property(view: &crate::value::Float32ArrayData, key: &str) -> Value {
+    let detached = view.buffer.byte_length() == 0 && view.length != 0;
+    match key {
+        "buffer" => Value::ArrayBuffer(view.buffer.clone()),
+        "byteLength" => Value::Number(if detached { 0 } else { view.byte_length() } as f64),
+        "byteOffset" => Value::Number(if detached { 0 } else { view.byte_offset } as f64),
+        "length" => Value::Number(if detached { 0 } else { view.length } as f64),
+        "BYTES_PER_ELEMENT" => {
+            Value::Number(crate::value::Float32ArrayData::BYTES_PER_ELEMENT as f64)
+        }
+        _ => crate::builtins::property(Builtin::Float32ArrayPrototype, key),
     }
 }
 
