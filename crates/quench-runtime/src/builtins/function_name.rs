@@ -9,6 +9,48 @@ pub(crate) fn set_function_name(
     Ok(())
 }
 
+pub(crate) fn set_dynamic_function_name(
+    value: &Value,
+    key: &Value,
+    prefix: Option<&str>,
+) -> Result<(), crate::execute::VmError> {
+    let name = dynamic_function_name(key, prefix)?;
+    set_function_name(value, &name)
+}
+
+fn dynamic_function_name(
+    key: &Value,
+    prefix: Option<&str>,
+) -> Result<String, crate::execute::VmError> {
+    let key = function_name_key(key)?;
+    Ok(prefix.map_or(key.clone(), |prefix| format!("{prefix} {key}")))
+}
+
+fn function_name_key(key: &Value) -> Result<String, crate::execute::VmError> {
+    if crate::conversion::is_symbol(key) {
+        return Ok(format!("[{}]", symbol_description(key)));
+    }
+    crate::conversion::to_property_key(key)
+}
+
+fn symbol_description(key: &Value) -> String {
+    let Value::String(key) = key else {
+        return match key {
+            Value::Builtin(builtin) => crate::intl::tolocale::symbol::name(*builtin)
+                .map_or_else(String::new, str::to_string),
+            _ => String::new(),
+        };
+    };
+    let description = key
+        .strip_prefix("Symbol.for.")
+        .or_else(|| key.strip_prefix("Symbol."))
+        .map_or(key.as_str(), |description| description);
+    description
+        .split('\0')
+        .next()
+        .map_or_else(String::new, str::to_string)
+}
+
 fn define_function_name(function: &crate::value::FunctionValue, value: Value) {
     let descriptor = Value::Object(Rc::new(vec![
         ("value".to_string(), value.clone()),
