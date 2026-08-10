@@ -63,6 +63,7 @@ fn construct_builtin(
         crate::ops::Builtin::Array => Ok(crate::builtins::array(arguments)),
         crate::ops::Builtin::ArrayBuffer => construct_array_buffer(arguments),
         crate::ops::Builtin::Float64Array => construct_float64_array(arguments),
+        crate::ops::Builtin::Float32Array => construct_float32_array(arguments),
         crate::ops::Builtin::Object => Ok(crate::builtins::object(arguments)),
         crate::ops::Builtin::Number => construct_number(arguments),
         crate::ops::Builtin::Boolean => construct_boolean(arguments),
@@ -119,6 +120,75 @@ fn construct_float64_array(arguments: &[Value]) -> Result<Value, crate::execute:
             "Float64Array source must be iterable or a buffer",
         )),
     }
+}
+
+fn construct_float32_array(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
+    match arguments.first() {
+        None | Some(Value::Undefined) => empty_float32_array(),
+        Some(Value::ArrayBuffer(buffer)) => view_float32_array(buffer, arguments),
+        Some(Value::Float32Array(view)) => copy_float32_array(view),
+        Some(Value::Array(values)) => values_float32_array(values),
+        Some(_) => Err(type_error(
+            "Float32Array source must be iterable or a buffer",
+        )),
+    }
+}
+
+fn empty_float32_array() -> Result<Value, crate::execute::VmError> {
+    let buffer = Rc::new(crate::value::ArrayBufferData::new(0));
+    Ok(Value::Float32Array(Rc::new(
+        crate::value::Float32ArrayData::new(buffer, 0, 0),
+    )))
+}
+
+fn values_float32_array(values: &[Value]) -> Result<Value, crate::execute::VmError> {
+    let buffer = Rc::new(crate::value::ArrayBufferData::new(
+        values.len() * crate::value::Float32ArrayData::BYTES_PER_ELEMENT,
+    ));
+    let view = crate::value::Float32ArrayData::new(buffer, 0, values.len());
+    for (index, value) in values.iter().enumerate() {
+        view.set(
+            index,
+            crate::intl::tolocale::value::to_number(Some(value)) as f32,
+        );
+    }
+    Ok(Value::Float32Array(Rc::new(view)))
+}
+
+fn copy_float32_array(
+    source: &crate::value::Float32ArrayData,
+) -> Result<Value, crate::execute::VmError> {
+    let buffer = Rc::new(crate::value::ArrayBufferData::new(source.byte_length()));
+    let view = crate::value::Float32ArrayData::new(buffer, 0, source.length);
+    for index in 0..source.length {
+        view.set(index, source.get(index).unwrap_or(f32::NAN));
+    }
+    Ok(Value::Float32Array(Rc::new(view)))
+}
+
+fn view_float32_array(
+    buffer: &Rc<crate::value::ArrayBufferData>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let offset = arguments.get(1).map_or(0.0, |value| {
+        crate::intl::tolocale::value::to_number(Some(value))
+    });
+    let offset = to_index(offset)?;
+    let element_size = crate::value::Float32ArrayData::BYTES_PER_ELEMENT;
+    if offset % element_size != 0 || offset > buffer.byte_length() {
+        return Err(range_error("Invalid Float32Array byte offset"));
+    }
+    let available = buffer.byte_length() - offset;
+    let length = match arguments.get(2) {
+        Some(value) => to_index(crate::intl::tolocale::value::to_number(Some(value)))?,
+        None => available / element_size,
+    };
+    if length > available / element_size {
+        return Err(range_error("Invalid Float32Array length"));
+    }
+    Ok(Value::Float32Array(Rc::new(
+        crate::value::Float32ArrayData::new(buffer.clone(), offset, length),
+    )))
 }
 
 fn empty_float64_array() -> Result<Value, crate::execute::VmError> {
