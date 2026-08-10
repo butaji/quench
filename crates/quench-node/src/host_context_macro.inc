@@ -121,10 +121,10 @@ macro_rules! run_host_context {
         ctx.globals().set("__quench_fs_link", Func::from(|source: String, destination: String| -> rquickjs::Result<()> { fs::hard_link(source, destination).map_err(|_| rquickjs::Error::new_from_js("fs", "link failed")) }))?;
         ctx.globals().set("__quench_fs_readlink", Func::from(|path: String| -> rquickjs::Result<String> { std::fs::read_link(path).map(|value| value.to_string_lossy().into_owned()).map_err(|_| rquickjs::Error::new_from_js("fs", "readlinkSync failed")) }))?;
         ctx.globals().set("__quench_host_timer_scheduler", true)?;
-        ctx.eval::<(), _>(BOOTSTRAP_SOURCE.as_str().as_bytes()).map_err(|error| { eprintln!("Bootstrap JavaScript exception: {error:?}"); error })?;
+        ctx.eval::<(), _>(BOOTSTRAP_SOURCE.as_bytes()).map_err(|error| { eprintln!("Bootstrap JavaScript exception: {error:?}"); error })?;
         let cli_title = $source.lines().find_map(|line| { line.trim().strip_prefix("// Flags:").and_then(|flags| flags.split_whitespace().find_map(|flag| flag.strip_prefix("--title="))) });
         ctx.globals().set("__quench_cli_title", cli_title)?;
-        for (_name, source) in $crate::polyfill_js::post_bootstrap_fragments() {
+        for (_name, source) in $crate::polyfill_js::POST_BOOTSTRAP {
             if !source.is_empty() {
                 ctx.eval::<(), _>(source.as_bytes())?;
             }
@@ -157,7 +157,7 @@ const __quenchEntryModule = globalThis.module;
                 return Err(rquickjs::Error::new_from_js("async", "exception"));
             }
         }
-        ctx.eval::<(), _>($crate::polyfill_js::PB_GLOBAL_SURFACE.as_bytes()).map_err(|error| { eprintln!("Final global surface failure: {error:?}"); error })?;
+        ctx.eval::<(), _>($crate::polyfill_js::POST_BOOTSTRAP[78].1.as_bytes()).map_err(|error| { eprintln!("Final global surface failure: {error:?}"); error })?;
         if !ctx.globals().get::<_, bool>("__quench_force_exit").unwrap_or(false) {
             loop {
                 let pending_timer = ctx.eval::<i64, _>(b"typeof globalThis.__quench_timer_next_delay === 'function' ? globalThis.__quench_timer_next_delay() : -1")?;
