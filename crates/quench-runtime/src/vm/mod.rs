@@ -51,6 +51,12 @@ pub fn execute_builtin_with_receiver(
     arguments: &[Value],
     receiver: Option<&Value>,
 ) -> Result<Value, VmError> {
+    if matches!(
+        builtin,
+        Builtin::ObjectHasOwnProperty | Builtin::ObjectGetOwnPropertyDescriptor
+    ) {
+        return crate::builtins::object::execute_special(builtin, receiver, arguments);
+    }
     if let Some(result) = early_dispatch(builtin, receiver, arguments) {
         return result;
     }
@@ -389,6 +395,9 @@ fn execute_object(
 }
 
 fn builtin_property(builtin: crate::ops::Builtin, key: &str) -> Value {
+    if builtin == Builtin::Object && key == "hasOwn" {
+        return Value::Builtin(Builtin::ObjectHasOwnProperty);
+    }
     let value = crate::builtins::property(builtin, key);
     if let Value::Builtin(symbol) = value {
         if let Some(name) = crate::intl::tolocale::symbol::name(symbol) {
