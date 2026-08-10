@@ -176,7 +176,12 @@ pub(crate) fn execute_for_in(
         match crate::execute::execute_in_place(body, registers) {
             Ok(value) => return Ok(Some(value)),
             Err(crate::execute::VmError::MissingReturn) => {}
-            Err(crate::execute::VmError::Continue) => {}
+            Err(crate::execute::VmError::Continue(continue_label))
+                if continue_matches(label, &continue_label) =>
+            {}
+            Err(crate::execute::VmError::Continue(continue_label)) => {
+                return Err(crate::execute::VmError::Continue(continue_label));
+            }
             Err(crate::execute::VmError::Break(break_label))
                 if break_matches(label, &break_label) =>
             {
@@ -210,7 +215,12 @@ pub(crate) fn execute(
         match crate::execute::execute_in_place(body, registers) {
             Ok(value) => return Ok(Some(value)),
             Err(crate::execute::VmError::MissingReturn) => {}
-            Err(crate::execute::VmError::Continue) => {}
+            Err(crate::execute::VmError::Continue(continue_label))
+                if continue_matches(label, &continue_label) =>
+            {}
+            Err(crate::execute::VmError::Continue(continue_label)) => {
+                return Err(crate::execute::VmError::Continue(continue_label));
+            }
             Err(crate::execute::VmError::Break(break_label))
                 if break_matches(label, &break_label) =>
             {
@@ -228,6 +238,10 @@ pub(crate) fn execute(
 
 fn break_matches(loop_label: &Option<String>, break_label: &Option<String>) -> bool {
     break_label.is_none() || loop_label == break_label
+}
+
+fn continue_matches(loop_label: &Option<String>, continue_label: &Option<String>) -> bool {
+    continue_label.is_none() || loop_label == continue_label
 }
 
 /// Run a loop fragment. An empty fragment (no init/update, e.g. a `while`
@@ -334,7 +348,9 @@ pub(crate) fn reduce_for(
         ops.extend(init);
         return Ok(());
     }
-    let Some((name, start, limit, step)) = static_bounds(statement) else {
+    let Some((name, start, limit, step)) = static_bounds(statement)
+        .filter(|_| !contains_loop_control(&statement.body))
+    else {
         return reduce_dynamic_for(statement, ops, facts, next_register, next_slot, locals);
     };
     reduce_static_for(
@@ -346,6 +362,21 @@ pub(crate) fn reduce_for(
         next_slot,
         locals,
     )
+}
+
+fn contains_loop_control(statement: &Statement<'_>) -> bool {
+    match statement {
+        Statement::BreakStatement(_) | Statement::ContinueStatement(_) => true,
+        Statement::BlockStatement(block) => block.body.iter().any(contains_loop_control),
+        Statement::IfStatement(if_statement) => {
+            contains_loop_control(&if_statement.consequent)
+                || if_statement
+                    .alternate
+                    .as_ref()
+                    .is_some_and(contains_loop_control)
+        }
+        _ => false,
+    }
 }
 
 fn is_literal_false(expression: Option<&Expression<'_>>) -> bool {
