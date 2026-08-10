@@ -61,7 +61,7 @@ fn execute_simple_builtin(
         return Ok(crate::builtins::error(builtin, arguments));
     }
     match builtin {
-        Builtin::Function => crate::functions::dynamic_constructor(arguments),
+        Builtin::Function => crate::functions_dynamic::construct(arguments),
         Builtin::Boolean => Ok(Value::Boolean(arguments.first().is_some_and(is_truthy))),
         Builtin::Eval | Builtin::ReflectConstruct => crate::reflect::builtin(builtin, arguments),
         Builtin::Escape => Ok(crate::builtins::escape(arguments.first())),
