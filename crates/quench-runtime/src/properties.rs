@@ -90,7 +90,7 @@ pub(crate) fn execute_set_property(
     let target = crate::execute::read_register(registers, object)?.clone();
     let value = crate::execute::read_register(registers, src)?.clone();
     let result = crate::builtins::set_property(target.clone(), &key, value);
-    crate::locals::replace_object(&target, &result);
+    crate::locals::replace_value(&target, &result);
     crate::vm::synchronize_global_object(registers, &target, &result);
     crate::execute::write_value(registers, object, result);
     Ok(())
@@ -102,7 +102,7 @@ pub(crate) fn propagate_updated_object(
     old: &crate::value::Value,
     new: &crate::value::Value,
 ) {
-    crate::locals::replace_object(old, new);
+    crate::locals::replace_value(old, new);
     crate::vm::synchronize_global_object(registers, old, new);
     if let Some(argument) = argument {
         crate::execute::write_value(registers, argument, new.clone());
@@ -119,7 +119,7 @@ pub(crate) fn execute_delete_property(
     let target = crate::execute::read_register(registers, *object)?.clone();
     let key = dynamic_property_key(&crate::execute::read_register(registers, *key)?)?;
     let result = crate::builtins::delete_property(target.clone(), &key);
-    crate::locals::replace_object(&target, &result);
+    crate::locals::replace_value(&target, &result);
     crate::vm::synchronize_global_object(registers, &target, &result);
     crate::execute::write_value(registers, *object, result);
     Ok(())
