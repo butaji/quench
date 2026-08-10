@@ -96,12 +96,14 @@ pub enum VmError {
     NotCallable,
     EvalError(String),
     Thrown(Value),
+    Suspended(Rc<crate::value::PromiseData>),
 }
 
 impl VmError {
     pub fn render(&self) -> String {
         match self {
             VmError::Thrown(value) => render_thrown(value),
+            VmError::Suspended(_) => "Suspended".to_string(),
             other => format!("{other:?}"),
         }
     }
@@ -759,6 +761,7 @@ fn run_simple_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Option<Va
             crate::functions::write_op(registers, op)
         }
         Call { .. } => run_call(registers, op)?,
+        Await { .. } => run_await(registers, op)?,
         Unary { dst, operator, src } => {
             vm_arithmetic::execute_unary(registers, *dst, *operator, *src)?
         }
@@ -817,6 +820,13 @@ fn run_call(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
     } = op
     {
         vm_ops::execute_call(registers, *dst, *callee, args, spreads)?;
+    }
+    Ok(())
+}
+
+fn run_await(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
+    if let Op::Await { dst, src } = op {
+        vm_ops::execute_await(registers, *dst, *src)?;
     }
     Ok(())
 }
