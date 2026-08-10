@@ -1,4 +1,5 @@
 pub mod object;
+pub mod object_alias;
 pub mod props;
 
 use std::rc::Rc;
@@ -300,6 +301,12 @@ pub(crate) fn same_value(left: Option<&Value>, right: Option<&Value>) -> bool {
     match (left, right) {
         (Value::Array(left), Value::Array(right)) => Rc::ptr_eq(left, right),
         (Value::Object(left), Value::Object(right)) => Rc::ptr_eq(left, right),
+        (Value::ObjectAlias(left), Value::Object(right))
+        | (Value::Object(right), Value::ObjectAlias(left)) => left
+            .0
+            .borrow()
+            .upgrade()
+            .is_some_and(|left| Rc::ptr_eq(&left, right)),
         (Value::ArrayBuffer(left), Value::ArrayBuffer(right)) => Rc::ptr_eq(left, right),
         (Value::DataView(left), Value::DataView(right)) => Rc::ptr_eq(left, right),
         (Value::Float32Array(left), Value::Float32Array(right)) => Rc::ptr_eq(left, right),
@@ -350,19 +357,7 @@ pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
         {
             Value::Object(properties)
         }
-        Value::Object(mut properties) => {
-            {
-                let properties = Rc::make_mut(&mut properties);
-                if let Some((_, current)) =
-                    properties.iter_mut().rev().find(|(name, _)| name == key)
-                {
-                    *current = value;
-                } else {
-                    properties.push((key.to_string(), value));
-                }
-            }
-            Value::Object(properties)
-        }
+        Value::Object(properties) => object_alias::set(properties, key, value),
         Value::Array(values) => set_array_property(values, key, value),
         Value::Function(function) => set_function_property(function, key, value),
         other => other,
@@ -454,7 +449,7 @@ pub(crate) fn prototype_to_string(receiver: Option<&Value>) -> Value {
         Some(Value::Promise(_)) => "Promise",
         Some(Value::Map(_)) => "Map",
         Some(Value::Set(_)) => "Set",
-        Some(Value::HostCapability(_) | Value::Iterator(_)) => "Object",
+        Some(Value::HostCapability(_) | Value::Iterator(_) | Value::ObjectAlias(_)) => "Object",
     };
     Value::String(format!("[object {tag}]"))
 }

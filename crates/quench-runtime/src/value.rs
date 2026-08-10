@@ -97,6 +97,20 @@ pub struct IteratorData {
     pub index: RefCell<usize>,
 }
 
+pub type ObjectProperties = Vec<(String, Value)>;
+pub type WeakObject = std::rc::Weak<ObjectProperties>;
+
+#[derive(Debug, Clone)]
+pub struct ObjectAliasValue(pub Rc<RefCell<WeakObject>>);
+
+impl PartialEq for ObjectAliasValue {
+    fn eq(&self, other: &Self) -> bool {
+        let left = self.0.borrow();
+        let right = other.0.borrow();
+        left.ptr_eq(&right)
+    }
+}
+
 include!("value_buffer.rs");
 include!("value_typed_small.rs");
 include!("value_typed_large.rs");
@@ -116,6 +130,7 @@ pub enum Value {
     BigInt(String),
     Array(Rc<ArrayData>),
     Object(Rc<Vec<(String, Value)>>),
+    ObjectAlias(ObjectAliasValue),
     ArrayBuffer(Rc<ArrayBufferData>),
     Float64Array(Rc<Float64ArrayData>),
     Float32Array(Rc<Float32ArrayData>),

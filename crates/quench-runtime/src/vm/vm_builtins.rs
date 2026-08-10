@@ -4,6 +4,7 @@ fn early_dispatch(
     arguments: &[Value],
 ) -> Option<Result<Value, VmError>> {
     crate::intl::tolocale::symbol::dispatch(builtin, arguments, receiver)
+        .or_else(|| crate::json::execute(builtin, arguments))
         .or_else(|| crate::typed_array_ops::execute(builtin, receiver, arguments))
         .or_else(|| crate::arrays::execute_builtin(builtin, receiver, arguments))
         .or_else(|| crate::intl::tolocale::dispatch(builtin, receiver, arguments))

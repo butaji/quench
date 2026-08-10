@@ -117,6 +117,7 @@ fn builtin_core(name: &str) -> Option<crate::ops::Builtin> {
         "Promise" => Some(crate::ops::Builtin::Promise),
         "print" => Some(crate::ops::Builtin::Print),
         "Reflect" => Some(crate::ops::Builtin::Reflect),
+        "JSON" => Some(crate::ops::Builtin::Json),
         "RegExp" => Some(crate::ops::Builtin::RegExp),
         "Intl" => Some(crate::ops::Builtin::Intl),
         _ => None,

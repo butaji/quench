@@ -79,8 +79,8 @@ fn replace_nested(value: &mut Value, old: &Value, new: &Value) {
     let values = match value {
         Value::Array(values) => Rc::make_mut(values),
         Value::Object(values) => {
-            for (_, value) in Rc::make_mut(values) {
-                replace_alias(value, old, new);
+            for (_, value) in values.iter() {
+                retarget_nested_alias(value, old, new);
             }
             return;
         }
@@ -91,8 +91,30 @@ fn replace_nested(value: &mut Value, old: &Value, new: &Value) {
     }
 }
 
+fn retarget_nested_alias(value: &Value, old: &Value, new: &Value) {
+    match value {
+        Value::ObjectAlias(alias) if alias_targets(alias, old) => {
+            if let Value::Object(object) = new {
+                *alias.0.borrow_mut() = Rc::downgrade(object);
+            }
+        }
+        Value::Array(values) => {
+            for value in values.iter() {
+                retarget_nested_alias(value, old, new);
+            }
+        }
+        Value::Object(values) => {
+            for (_, value) in values.iter() {
+                retarget_nested_alias(value, old, new);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn contains_nested(value: &Value, target: &Value) -> bool {
     match value {
+        Value::ObjectAlias(alias) => alias_targets(alias, target),
         Value::Array(values) => values
             .iter()
             .any(|value| same_identity(value, target) || contains_nested(value, target)),
@@ -104,11 +126,30 @@ fn contains_nested(value: &Value, target: &Value) -> bool {
 }
 
 fn replace_alias(value: &mut Value, old: &Value, new: &Value) {
+    if let Value::ObjectAlias(alias) = value {
+        if alias_targets(alias, old) {
+            if let Value::Object(object) = new {
+                *alias.0.borrow_mut() = Rc::downgrade(object);
+                return;
+            }
+        }
+    }
     if same_identity(value, old) {
         *value = new.clone();
     } else {
         replace_nested(value, old, new);
     }
+}
+
+fn alias_targets(alias: &crate::value::ObjectAliasValue, target: &Value) -> bool {
+    let Value::Object(target) = target else {
+        return false;
+    };
+    alias
+        .0
+        .borrow()
+        .upgrade()
+        .is_some_and(|object| Rc::ptr_eq(&object, target))
 }
 
 fn same_identity(left: &Value, right: &Value) -> bool {
