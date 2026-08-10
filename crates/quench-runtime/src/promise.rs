@@ -78,14 +78,17 @@ pub fn promise_resolve(_arguments: &[Value]) -> Value {
 }
 
 fn resolve_receiver(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let Some(Value::Promise(promise)) = receiver else {
-        return Ok(promise_resolve(arguments));
-    };
-    resolve_promise(
-        promise,
-        arguments.first().cloned().unwrap_or(Value::Undefined),
-    );
-    Ok(Value::Undefined)
+    match receiver {
+        Some(Value::Promise(promise)) => {
+            resolve_promise(
+                promise,
+                arguments.first().cloned().unwrap_or(Value::Undefined),
+            );
+            Ok(Value::Undefined)
+        }
+        Some(_) => Err(VmError::NotCallable),
+        None => Ok(promise_resolve(arguments)),
+    }
 }
 
 /// Execute Promise.reject.
@@ -95,14 +98,17 @@ pub fn promise_reject(_arguments: &[Value]) -> Value {
 }
 
 fn reject_receiver(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let Some(Value::Promise(promise)) = receiver else {
-        return Ok(promise_reject(arguments));
-    };
-    reject_promise(
-        promise,
-        arguments.first().cloned().unwrap_or(Value::Undefined),
-    );
-    Ok(Value::Undefined)
+    match receiver {
+        Some(Value::Promise(promise)) => {
+            reject_promise(
+                promise,
+                arguments.first().cloned().unwrap_or(Value::Undefined),
+            );
+            Ok(Value::Undefined)
+        }
+        Some(_) => Err(VmError::NotCallable),
+        None => Ok(promise_reject(arguments)),
+    }
 }
 
 pub(crate) fn construct_promise(executor: &Value) -> Result<Value, VmError> {
@@ -130,26 +136,33 @@ fn maybe_handler(arguments: &[Value], index: usize) -> Option<Value> {
 
 /// Execute Promise.prototype.then.
 pub fn promise_then(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    if let Some(Value::Promise(promise)) = receiver {
-        promise
-            .then_actions
-            .borrow_mut()
-            .push((maybe_handler(arguments, 0), maybe_handler(arguments, 1)));
-        if !matches!(*promise.state.borrow(), PromiseState::Pending) {
-            queue_promise(promise);
-        }
+    let Some(Value::Promise(promise)) = receiver else {
+        return Err(VmError::NotCallable);
+    };
+    promise
+        .then_actions
+        .borrow_mut()
+        .push((maybe_handler(arguments, 0), maybe_handler(arguments, 1)));
+    if !matches!(*promise.state.borrow(), PromiseState::Pending) {
+        queue_promise(promise);
     }
     Ok(new_promise())
 }
 
 /// Execute Promise.prototype.catch.
-pub fn promise_catch(_receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+pub fn promise_catch(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    if !matches!(receiver, Some(Value::Promise(_))) {
+        return Err(VmError::NotCallable);
+    }
     let _on_rejected = arguments.first().cloned().unwrap_or(Value::Undefined);
     Ok(new_promise())
 }
 
 /// Execute Promise.prototype.finally.
-pub fn promise_finally(_receiver: Option<&Value>, _arguments: &[Value]) -> Result<Value, VmError> {
+pub fn promise_finally(receiver: Option<&Value>, _arguments: &[Value]) -> Result<Value, VmError> {
+    if !matches!(receiver, Some(Value::Promise(_))) {
+        return Err(VmError::NotCallable);
+    }
     Ok(Value::Undefined)
 }
 
