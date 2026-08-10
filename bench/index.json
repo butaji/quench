@@ -210,6 +210,28 @@
       "improvement_vs": "release-control-2026-08-10.quench_node",
       "improvement": {"route_workload_pct": 13.2},
       "cause": "CPU-specific release control using RUSTFLAGS=-C target-cpu=native. Route improved beyond the 10% threshold, but JSON and SSR did not; portability prevents making this the default profile."
+    },
+    {
+      "id": "bootstrap-concat-2026-08-10",
+      "commit": null,
+      "build": "debug-opt-level-3",
+      "scenario": "scenario-run-b-workloads",
+      "conditions": {
+        "platform": "darwin-arm64",
+        "node": "v26.5.1",
+        "cpus": 10,
+        "loadavg_1m": 3.40673828125,
+        "runs": 7
+      },
+      "source_loc_non_test_rs_js": 40491,
+      "quench_node": {
+        "route-load": {"startup_ms": 118.7, "peak_rss_mib": 16.5, "workload_ms": 33.3, "req_per_sec": 60074},
+        "props-json": {"startup_ms": 102.1, "peak_rss_mib": 16.5, "workload_ms": 17.1, "req_per_sec": 116911},
+        "ssr-response": {"startup_ms": 93.9, "peak_rss_mib": 16.5, "workload_ms": 9.0, "req_per_sec": 222891}
+      },
+      "improvement_vs": "fresh-baseline-2026-08-10.quench_node",
+      "improvement": {"route_workload_pct": 23.4, "route_startup_pct": 8.4},
+      "cause": "Generate one compile-time bootstrap source string with concat! instead of collecting fragments and joining them at every process startup. The examples and quench-node unit tests passed; route workload exceeded the 10% measurement gate, while the two-line host simplification is retained."
     }
   ],
   "runtime_change_ledger": [
