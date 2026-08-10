@@ -277,14 +277,31 @@ fn execute_data_view_builtin(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
-    let Some(Value::DataView(view)) = receiver else {
-        return Err(type_error(
-            "DataView method called on incompatible receiver",
-        ));
-    };
+    let view = data_view_receiver(receiver)?;
     let offset = data_view_offset(arguments.first())?;
     let endian_argument = if is_data_view_setter(builtin) { 2 } else { 1 };
     let little_endian = arguments.get(endian_argument).is_some_and(is_truthy);
+    if !is_data_view_setter(builtin) {
+        return execute_data_view_get(builtin, view, offset, little_endian);
+    }
+    execute_data_view_set(builtin, view, offset, little_endian, arguments)
+}
+
+fn data_view_receiver(receiver: Option<&Value>) -> Result<&crate::value::DataViewData, VmError> {
+    match receiver {
+        Some(Value::DataView(view)) => Ok(view),
+        _ => Err(type_error(
+            "DataView method called on incompatible receiver",
+        )),
+    }
+}
+
+fn execute_data_view_get(
+    builtin: Builtin,
+    view: &crate::value::DataViewData,
+    offset: usize,
+    little_endian: bool,
+) -> Result<Value, VmError> {
     let result = match builtin {
         Builtin::DataViewGetInt8 => {
             Value::Number(view.get_int8(offset).map_err(data_view_error)? as f64)
@@ -292,33 +309,27 @@ fn execute_data_view_builtin(
         Builtin::DataViewGetUint8 => {
             Value::Number(view.get_uint8(offset).map_err(data_view_error)? as f64)
         }
-        Builtin::DataViewGetInt16 => Value::Number(
-            view.get_int16(offset, little_endian)
-                .map_err(data_view_error)? as f64,
-        ),
-        Builtin::DataViewGetUint16 => Value::Number(
-            view.get_uint16(offset, little_endian)
-                .map_err(data_view_error)? as f64,
-        ),
-        Builtin::DataViewGetInt32 => Value::Number(
-            view.get_int32(offset, little_endian)
-                .map_err(data_view_error)? as f64,
-        ),
-        Builtin::DataViewGetUint32 => Value::Number(
-            view.get_uint32(offset, little_endian)
-                .map_err(data_view_error)? as f64,
-        ),
-        Builtin::DataViewGetFloat32 => Value::Number(
-            view.get_float32(offset, little_endian)
-                .map_err(data_view_error)? as f64,
-        ),
-        Builtin::DataViewGetFloat64 => Value::Number(
-            view.get_float64(offset, little_endian)
-                .map_err(data_view_error)?,
-        ),
-        _ => return execute_data_view_set(builtin, view, offset, little_endian, arguments),
+        _ => return execute_data_view_wide_get(builtin, view, offset, little_endian),
     };
     Ok(result)
+}
+
+fn execute_data_view_wide_get(
+    builtin: Builtin,
+    view: &crate::value::DataViewData,
+    offset: usize,
+    little_endian: bool,
+) -> Result<Value, VmError> {
+    let value = match builtin {
+        Builtin::DataViewGetInt16 => view.get_int16(offset, little_endian).map(|v| v as f64),
+        Builtin::DataViewGetUint16 => view.get_uint16(offset, little_endian).map(|v| v as f64),
+        Builtin::DataViewGetInt32 => view.get_int32(offset, little_endian).map(|v| v as f64),
+        Builtin::DataViewGetUint32 => view.get_uint32(offset, little_endian).map(|v| v as f64),
+        Builtin::DataViewGetFloat32 => view.get_float32(offset, little_endian).map(|v| v as f64),
+        Builtin::DataViewGetFloat64 => view.get_float64(offset, little_endian),
+        _ => return Err(VmError::NotCallable),
+    };
+    value.map(Value::Number).map_err(data_view_error)
 }
 
 fn is_data_view_setter(builtin: Builtin) -> bool {
