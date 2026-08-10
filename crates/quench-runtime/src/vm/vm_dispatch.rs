@@ -9,8 +9,7 @@ fn run_op(
     if let Some(result) = run_control_op(registers, op)? {
         return Ok(Some(result));
     }
-    run_dispatch_op(registers, op)
-        .map(|value| value.map(crate::completion::Completion::Return))
+    run_dispatch_op(registers, op).map(|value| value.map(crate::completion::Completion::Return))
 }
 
 fn run_simple_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Option<Value>>, VmError> {
@@ -35,7 +34,9 @@ fn run_simple_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Option<Va
         | IteratorRest { .. } => crate::collections::iterator::execute(registers, op)?,
         ValidateClassHeritage { .. } => run_class_heritage(registers, op)?,
         DeleteProperty { .. } => run_delete_property(registers, op)?,
-        MakeFunction { .. } | MakeFunctionWithKind { .. } => crate::functions::write_op(registers, op),
+        MakeFunction { .. } | MakeFunctionWithKind { .. } => {
+            crate::functions::write_op(registers, op)
+        }
         Call { .. } => run_call(registers, op)?,
         Eval { .. } => run_eval(registers, op)?,
         DeclareEvalBinding { name, slot } => crate::locals::alias_name(name, *slot),
@@ -91,6 +92,7 @@ fn run_property_op(registers: &mut Vec<Value>, op: &Op) -> Result<bool, VmError>
     if !matches!(
         op,
         GetProperty { .. }
+            | GetSuperProperty { .. }
             | ResolveGlobal { .. }
             | GetPropertyDynamic { .. }
             | HasPropertyDynamic { .. }
@@ -99,6 +101,7 @@ fn run_property_op(registers: &mut Vec<Value>, op: &Op) -> Result<bool, VmError>
             | SetPropertyDynamic { .. }
             | DefineProperty { .. }
             | ResolveName { .. }
+            | ResolveNameOrUndefined { .. }
             | SetName { .. }
     ) {
         return Ok(false);
@@ -108,7 +111,9 @@ fn run_property_op(registers: &mut Vec<Value>, op: &Op) -> Result<bool, VmError>
 }
 
 fn run_class_heritage(registers: &[Value], op: &Op) -> Result<(), VmError> {
-    let Op::ValidateClassHeritage { src } = op else { return Ok(()) };
+    let Op::ValidateClassHeritage { src } = op else {
+        return Ok(());
+    };
     crate::classes::validate_heritage(&crate::execute::read_register(registers, *src)?)
 }
 
@@ -123,18 +128,25 @@ fn run_local_op(registers: &mut Vec<Value>, op: &Op) -> Result<bool, VmError> {
             Value::Boolean(crate::locals::delete_named(name, *slot)),
         ),
         LoadLocal { dst, slot } => crate::locals::load(registers, *dst, *slot)?,
-        LoadBinding { dst, slot, name } => crate::locals::load_binding(registers, *dst, *slot, name)?,
-        ResolveBindingTarget { dst, name } => crate::locals::resolve_target(registers, *dst, name)?,
-        InitializeResolvedBinding { target, slot, name, src } => {
-            crate::locals::initialize_resolved(registers, *target, *slot, name, *src)?
+        LoadBinding { dst, slot, name } => {
+            crate::locals::load_binding(registers, *dst, *slot, name)?
         }
+        ResolveBindingTarget { dst, name } => crate::locals::resolve_target(registers, *dst, name)?,
+        InitializeResolvedBinding {
+            target,
+            slot,
+            name,
+            src,
+        } => crate::locals::initialize_resolved(registers, *target, *slot, name, *src)?,
         _ => return Ok(false),
     }
     Ok(true)
 }
 
 fn run_make_builtin(registers: &mut Vec<Value>, op: &Op) {
-    let Op::MakeBuiltin { dst, builtin } = op else { return };
+    let Op::MakeBuiltin { dst, builtin } = op else {
+        return;
+    };
     let value = match builtin {
         Builtin::HostCapability(kind) => current_host_capability(*kind),
         _ => Value::Builtin(*builtin),
@@ -158,12 +170,18 @@ fn run_control_op(
         Loop { .. } => crate::loops::execute(registers, op).map(Some),
         Switch { .. } => crate::switch::execute(registers, op).map(Some),
         Conditional { .. } => run_conditional(registers, op).map(return_completion),
-        Return { src } => read_register(registers, *src).map(Completion::Return).map(Some),
-        Throw { src } => read_register(registers, *src).map(Completion::Throw).map(Some),
+        Return { src } => read_register(registers, *src)
+            .map(Completion::Return)
+            .map(Some),
+        Throw { src } => read_register(registers, *src)
+            .map(Completion::Throw)
+            .map(Some),
         Break { label } => Ok(Some(Completion::Break(label.clone()))),
         Continue { label } => Ok(Some(Completion::Continue(label.clone()))),
         Await { .. } => run_await_completion(registers, op),
-        Yield { src } => read_register(registers, *src).map(Completion::Yield).map(Some),
+        Yield { src } => read_register(registers, *src)
+            .map(Completion::Yield)
+            .map(Some),
         _ => Ok(None),
     }
 }
@@ -248,10 +266,16 @@ fn run_get_set_property(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmErr
     use Op::*;
     match op {
         GetProperty { .. } => crate::properties::execute_get(registers, op)?,
+        GetSuperProperty { .. } => crate::super_scope::execute_get(registers, op)?,
         ResolveGlobal { .. } => crate::with_scope::execute_resolve_global(registers, op)?,
         GetPropertyDynamic { .. } => crate::properties::execute_get_dynamic(registers, op)?,
         HasPropertyDynamic { .. } => crate::with_scope::execute_has_property(registers, op)?,
         ResolveName { .. } | SetName { .. } => crate::with_scope::execute_name(registers, op)?,
+        ResolveNameOrUndefined { dst, name } => write_value(
+            registers,
+            *dst,
+            crate::locals::resolve_name_or_undefined(name)?,
+        ),
         ToPropertyKey { dst, src } => {
             let value = crate::execute::read_register(registers, *src)?;
             let key = crate::conversion::to_property_key(&value)?;

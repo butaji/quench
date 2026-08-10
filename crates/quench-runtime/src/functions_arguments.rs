@@ -12,11 +12,36 @@ pub(crate) fn build_registers(
     parameters.truncate(usize::from(function.params));
     parameters.push(crate::value::Value::Undefined);
     parameters.push(this_value.clone());
+    if !matches!(function.kind, FunctionKind::Arrow) {
+        parameters.push(crate::value::Value::Undefined);
+    }
     let environment = crate::environment::Environment::child(&function.captures, parameters);
     let arguments = arguments_object(function, original_arguments, &environment);
     let arguments_slot = function.captures.len() as u16 + function.params;
     environment.set(arguments_slot, arguments);
     (vec![crate::value::Value::Undefined; 32], environment)
+}
+
+/// Execute a constructor and return its result plus the final `this` value.
+pub(crate) fn execute_construct(
+    function: &std::rc::Rc<crate::value::FunctionValue>,
+    this_value: &crate::value::Value,
+    arguments: &[crate::value::Value],
+) -> Result<(crate::value::Value, crate::value::Value), crate::execute::VmError> {
+    let captures = function.captures.len() as u16;
+    let (mut registers, environment) = build_registers(function, this_value, arguments);
+    environment.set(
+        captures.saturating_add(function.params).saturating_add(2),
+        crate::value::Value::Function(std::rc::Rc::clone(function)),
+    );
+    let result = crate::vm::execute_in_environment(
+        &function.body,
+        &mut registers,
+        &crate::vm::VmContext::default(),
+        std::rc::Rc::clone(&environment),
+    )?;
+    let final_this = environment.get(captures.saturating_add(function.params).saturating_add(1));
+    Ok((result, final_this))
 }
 
 fn arguments_object(
