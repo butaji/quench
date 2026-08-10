@@ -27,6 +27,7 @@ pub(crate) mod value {
             Some(Value::Int16Array(_)) => "[object Int16Array]".to_string(),
             Some(Value::Int8Array(_)) => "[object Int8Array]".to_string(),
             Some(Value::Int32Array(_)) => "[object Int32Array]".to_string(),
+            Some(Value::Uint32Array(_)) => "[object Uint32Array]".to_string(),
             Some(Value::Uint8Array(_)) => "[object Uint8Array]".to_string(),
             Some(Value::Uint8ClampedArray(_)) => "[object Uint8ClampedArray]".to_string(),
             Some(
@@ -74,6 +75,7 @@ pub(crate) mod value {
                 | Value::Int16Array(_)
                 | Value::Int8Array(_)
                 | Value::Int32Array(_)
+                | Value::Uint32Array(_)
                 | Value::Uint8Array(_)
                 | Value::Uint8ClampedArray(_)
                 | Value::Function(_)
@@ -157,6 +159,7 @@ pub(crate) mod value {
             | Value::Int16Array(_)
             | Value::Int8Array(_)
             | Value::Int32Array(_)
+            | Value::Uint32Array(_)
             | Value::Uint8Array(_)
             | Value::Uint8ClampedArray(_)
             | Value::Object(_)
@@ -183,6 +186,7 @@ pub(crate) mod value {
             | Value::Int16Array(_)
             | Value::Int8Array(_)
             | Value::Int32Array(_)
+            | Value::Uint32Array(_)
             | Value::Uint8Array(_)
             | Value::Uint8ClampedArray(_)
             | Value::Object(_) => "object",
@@ -213,6 +217,13 @@ pub(crate) mod value {
         } else {
             wrapped
         }) as i32
+    }
+
+    pub(crate) fn to_uint32(value: f64) -> u32 {
+        if !value.is_finite() || value == 0.0 {
+            return 0;
+        }
+        value.trunc().rem_euclid(4_294_967_296.0) as u32
     }
 
     pub(crate) fn loose_equal(left: &Value, right: &Value) -> bool {
@@ -253,6 +264,9 @@ pub(crate) mod value {
             (Value::Int16Array(left), Value::Int16Array(right)) => std::rc::Rc::ptr_eq(left, right),
             (Value::Int8Array(left), Value::Int8Array(right)) => std::rc::Rc::ptr_eq(left, right),
             (Value::Int32Array(left), Value::Int32Array(right)) => std::rc::Rc::ptr_eq(left, right),
+            (Value::Uint32Array(left), Value::Uint32Array(right)) => {
+                std::rc::Rc::ptr_eq(left, right)
+            }
             (Value::Uint8Array(left), Value::Uint8Array(right)) => std::rc::Rc::ptr_eq(left, right),
             (Value::Uint8ClampedArray(left), Value::Uint8ClampedArray(right)) => {
                 std::rc::Rc::ptr_eq(left, right)
