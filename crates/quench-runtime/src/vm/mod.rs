@@ -168,6 +168,29 @@ pub(crate) fn current_global_object() -> Value {
         .unwrap_or(Value::Undefined)
 }
 
+pub(crate) fn synchronize_global_object(registers: &mut Vec<Value>, old: &Value, new: &Value) {
+    let (Value::Object(old_object), Value::Object(new_object)) = (old, new) else {
+        return;
+    };
+    let is_global = GLOBAL_OBJECT.with(|global| {
+        global
+            .borrow()
+            .as_ref()
+            .is_some_and(|object| Rc::ptr_eq(object, old_object))
+    });
+    if !is_global {
+        return;
+    }
+    GLOBAL_OBJECT.with(|global| global.replace(Some(new_object.clone())));
+    for register in registers {
+        if let Value::Object(object) = register {
+            if Rc::ptr_eq(object, old_object) {
+                *object = new_object.clone();
+            }
+        }
+    }
+}
+
 pub(crate) fn bare_call_receiver(
     function: &crate::value::FunctionValue,
     this_value: &Value,
