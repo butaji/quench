@@ -1,7 +1,7 @@
-use crate::{execute::VmError, ops::Op, value::Value};
+use crate::{completion::Completion, execute::VmError, ops::Op, value::Value};
 use std::collections::HashMap;
 
-pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<Value, VmError> {
+pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<Completion, VmError> {
     let Op::Branch {
         condition,
         then_ops,
@@ -16,18 +16,7 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<Value, VmEr
     } else {
         else_ops
     };
-    crate::execute::execute_in_place(selected, registers)
-}
-
-pub(crate) fn execute_or_continue(
-    registers: &mut Vec<Value>,
-    op: &Op,
-) -> Result<Option<Value>, VmError> {
-    match execute(registers, op) {
-        Ok(value) => Ok(Some(value)),
-        Err(VmError::MissingReturn) => Ok(None),
-        Err(error) => Err(error),
-    }
+    crate::execute::execute_completion_in_place(selected, registers)
 }
 
 pub(crate) fn reduce(
