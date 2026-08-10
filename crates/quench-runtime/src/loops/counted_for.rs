@@ -81,9 +81,15 @@ pub(super) fn reduce_body(
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
 ) -> Result<(), Vec<String>> {
+    let mut block_locals = locals.clone();
     let statements = match statement {
         Statement::BlockStatement(block) => &block.body,
         _ => std::slice::from_ref(statement),
+    };
+    let locals = if matches!(statement, Statement::BlockStatement(_)) {
+        &mut block_locals
+    } else {
+        locals
     };
     for statement in statements {
         crate::reduce::reduce_statement(statement, ops, facts, next_register, next_slot, locals)?;
@@ -202,6 +208,7 @@ fn reduce_dynamic_for(
         test,
         body,
         update,
+        post_test: false,
     });
     Ok(())
 }
