@@ -41,6 +41,7 @@ fn builtin_method(builtin: Builtin, key: &str) -> Option<Builtin> {
         (FunctionPrototype, "bind") => Some(FunctionBind),
         (FunctionCall, "bind") => Some(FunctionBind),
         (ArrayPrototype, "join") => Some(ArrayJoin),
+        (ArrayPrototype, "map") => Some(ArrayMap),
         (ArrayPrototype, "push") => Some(ArrayPush),
         (Object, "prototype") => Some(ObjectPrototype),
         (ObjectPrototype, "hasOwnProperty") => Some(ObjectHasOwnProperty),
