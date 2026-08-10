@@ -395,7 +395,7 @@ pub(crate) fn reduce_method_call(
             (&member.object, member.property.name.to_string())
         }
         Expression::ComputedMemberExpression(member) => {
-            let key = property_key(&reduce_literal(&member.expression)?.op)?;
+            let key = computed_method_key(&member.expression)?;
             (&member.object, key)
         }
         _ => return None,
@@ -420,4 +420,18 @@ pub(crate) fn reduce_method_call(
         args,
     });
     Some(dst)
+}
+
+fn computed_method_key(expression: &Expression<'_>) -> Option<String> {
+    if let Some(literal) = reduce_literal(expression) {
+        return property_key(&literal.op);
+    }
+    let Expression::StaticMemberExpression(member) = expression else {
+        return None;
+    };
+    let Expression::Identifier(object) = &member.object else {
+        return None;
+    };
+    (object.name == "Symbol" && member.property.name == "iterator")
+        .then(|| "Symbol.iterator".to_string())
 }

@@ -49,8 +49,11 @@ pub fn get_property(value: &Value, key: &str) -> Value {
             .find(|(name, _)| name == key)
             .map_or(Value::Undefined, |(_, value)| value.clone()),
         BoundFunction(_) if matches!(key, "call" | "bind") => bind_function_property(value, key),
+        Map(data) if key == "size" => Value::Number(data.keys.len() as f64),
         Map(_) => crate::collections::map::property(key),
+        Set(data) if key == "size" => Value::Number(data.values.len() as f64),
         Set(_) => crate::collections::set::property(key),
+        Iterator(_) => crate::collections::iterator::property(key),
         Promise(_) => promise_property(value, key),
         HostCapability(capability) => host_capability_property(value, capability.descriptor, key),
         _ => Value::Undefined,
