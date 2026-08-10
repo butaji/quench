@@ -112,26 +112,52 @@ pub(crate) fn execute_set_property(
         _ => return Err(crate::execute::VmError::MissingReturn),
     };
     let target = crate::execute::read_register(registers, object)?.clone();
+    reject_restricted_property_write(&target, &key)?;
+    let value = crate::execute::read_register(registers, src)?.clone();
+    if crate::vm::is_global_object(&target) && crate::with_scope::set_if_bound(&key, &value)? {
+        return Ok(());
+    }
+    if let Some(setter) = crate::property_define::accessor(&target, &key, "set") {
+        if matches!(setter, crate::value::Value::Undefined) {
+            return strict_write_failure();
+        }
+        crate::functions::execute_target(&setter, &target, std::slice::from_ref(&value))?;
+        return Ok(());
+    }
+    if crate::builtins::descriptor_flag(&target, &key, "writable") == Some(false) {
+        return strict_write_failure();
+    }
+    let result = crate::builtins::set_property(target.clone(), &key, value);
+    crate::locals::replace_value(&target, &result);
+    crate::vm::synchronize_global_object(registers, &target, &result);
+    crate::execute::write_value(registers, object, result);
+    Ok(())
+}
+
+fn reject_restricted_property_write(
+    target: &crate::value::Value,
+    key: &str,
+) -> Result<(), crate::execute::VmError> {
     if matches!(&target, crate::value::Value::Array(values) if values.is_strict_arguments() && key == "callee")
     {
         return Err(crate::value::error::throw_type_error(
             "'callee' is unavailable on strict arguments",
         ));
     }
-    let value = crate::execute::read_register(registers, src)?.clone();
-    if crate::vm::is_global_object(&target) && crate::with_scope::set_if_bound(&key, &value)? {
-        return Ok(());
+    if crate::vm::has_restricted_function_property(target, key) {
+        return Err(crate::value::error::throw_type_error(
+            "'caller' and 'arguments' are unavailable on this function",
+        ));
     }
-    if let Some(setter) = crate::property_define::accessor(&target, &key, "set") {
-        if !matches!(setter, crate::value::Value::Undefined) {
-            crate::functions::execute_target(&setter, &target, std::slice::from_ref(&value))?;
-        }
-        return Ok(());
+    Ok(())
+}
+
+fn strict_write_failure() -> Result<(), crate::execute::VmError> {
+    if crate::super_scope::is_strict() {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot assign to read-only property",
+        ));
     }
-    let result = crate::builtins::set_property(target.clone(), &key, value);
-    crate::locals::replace_value(&target, &result);
-    crate::vm::synchronize_global_object(registers, &target, &result);
-    crate::execute::write_value(registers, object, result);
     Ok(())
 }
 
