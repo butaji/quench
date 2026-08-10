@@ -534,6 +534,59 @@ pub struct Int8ArrayData {
     pub length: usize,
 }
 
+/// A signed 16-bit integer view over shared ArrayBuffer bytes.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Int16ArrayData {
+    pub buffer: Rc<ArrayBufferData>,
+    pub byte_offset: usize,
+    pub length: usize,
+}
+
+impl Int16ArrayData {
+    pub const BYTES_PER_ELEMENT: usize = std::mem::size_of::<i16>();
+
+    pub fn new(buffer: Rc<ArrayBufferData>, byte_offset: usize, length: usize) -> Self {
+        Self {
+            buffer,
+            byte_offset,
+            length,
+        }
+    }
+
+    pub fn byte_length(&self) -> usize {
+        self.length * Self::BYTES_PER_ELEMENT
+    }
+
+    pub fn get(&self, index: usize) -> Option<i16> {
+        if index >= self.length || self.is_out_of_bounds() {
+            return None;
+        }
+        let start = self.byte_offset + index * Self::BYTES_PER_ELEMENT;
+        let end = start + Self::BYTES_PER_ELEMENT;
+        let bytes = self.buffer.bytes.borrow();
+        let data: [u8; Self::BYTES_PER_ELEMENT] = bytes.get(start..end)?.try_into().ok()?;
+        Some(i16::from_ne_bytes(data))
+    }
+
+    pub fn set(&self, index: usize, value: i16) -> bool {
+        if index >= self.length || self.is_out_of_bounds() {
+            return false;
+        }
+        let start = self.byte_offset + index * Self::BYTES_PER_ELEMENT;
+        let end = start + Self::BYTES_PER_ELEMENT;
+        let mut bytes = self.buffer.bytes.borrow_mut();
+        let Some(destination) = bytes.get_mut(start..end) else {
+            return false;
+        };
+        destination.copy_from_slice(&value.to_ne_bytes());
+        true
+    }
+
+    fn is_out_of_bounds(&self) -> bool {
+        self.buffer.byte_length() < self.byte_offset + self.byte_length()
+    }
+}
+
 impl Int8ArrayData {
     pub const BYTES_PER_ELEMENT: usize = std::mem::size_of::<i8>();
 
@@ -771,6 +824,7 @@ pub enum Value {
     Float64Array(Rc<Float64ArrayData>),
     Float32Array(Rc<Float32ArrayData>),
     Int8Array(Rc<Int8ArrayData>),
+    Int16Array(Rc<Int16ArrayData>),
     Int32Array(Rc<Int32ArrayData>),
     Uint8Array(Rc<Uint8ArrayData>),
     Uint8ClampedArray(Rc<Uint8ClampedArrayData>),
