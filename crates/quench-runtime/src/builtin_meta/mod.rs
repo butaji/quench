@@ -31,6 +31,9 @@ pub fn constructor_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::Boolean => Some("Boolean"),
         Builtin::Date => Some("Date"),
         Builtin::Function => Some("Function"),
+        Builtin::AsyncFunction => Some("AsyncFunction"),
+        Builtin::GeneratorFunction => Some("GeneratorFunction"),
+        Builtin::AsyncGeneratorFunction => Some("AsyncGeneratorFunction"),
         Builtin::Intl => Some("Intl"),
         Builtin::IntlCollator => Some("Intl.Collator"),
         Builtin::IntlDateTimeFormat => Some("Intl.DateTimeFormat"),
@@ -70,6 +73,9 @@ pub fn prototype(builtin: Builtin) -> Option<Builtin> {
         Builtin::Boolean => Some(Builtin::ObjectPrototype),
         Builtin::Date => Some(Builtin::DatePrototype),
         Builtin::Function => Some(Builtin::FunctionPrototype),
+        Builtin::AsyncFunction | Builtin::GeneratorFunction | Builtin::AsyncGeneratorFunction => {
+            Some(Builtin::FunctionPrototype)
+        }
         Builtin::Number => Some(Builtin::ObjectPrototype),
         Builtin::Object => Some(Builtin::ObjectPrototype),
         Builtin::RegExp => Some(Builtin::RegExpPrototype),
@@ -107,6 +113,9 @@ pub fn constructor_length(builtin: Builtin) -> Option<f64> {
         Builtin::Boolean => Some(1.0),
         Builtin::Date => Some(7.0),
         Builtin::Function => Some(1.0),
+        Builtin::AsyncFunction | Builtin::GeneratorFunction | Builtin::AsyncGeneratorFunction => {
+            Some(1.0)
+        }
         Builtin::Intl => Some(0.0),
         Builtin::IntlCollator => Some(0.0),
         Builtin::IntlDateTimeFormat => Some(2.0),

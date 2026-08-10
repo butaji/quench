@@ -16,6 +16,9 @@ pub(crate) fn reduce(
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
 ) -> ReduceResult {
+    if let Statement::WithStatement(with_statement) = statement {
+        return reduce_with(with_statement, ops, facts, next_register, next_slot, locals);
+    }
     if let Some(result) = helpers::reduce_labeled_or_conditional(
         statement,
         ops,
@@ -37,6 +40,30 @@ pub(crate) fn reduce(
         return result;
     }
     helpers::unsupported_statement(statement)
+}
+
+fn reduce_with(
+    statement: &oxc::ast::ast::WithStatement<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    next_slot: &mut u16,
+    locals: &mut HashMap<String, u16>,
+) -> ReduceResult {
+    let object =
+        crate::reduce::reduce_expression(&statement.object, ops, facts, next_register, locals)
+            .ok_or_else(|| vec!["Unsupported with object".to_string()])?;
+    let mut body = Vec::new();
+    crate::reduce::reduce_statement(
+        &statement.body,
+        &mut body,
+        facts,
+        next_register,
+        next_slot,
+        locals,
+    )?;
+    ops.push(Op::With { object, body });
+    Ok(None)
 }
 
 pub(crate) fn execute_label(
