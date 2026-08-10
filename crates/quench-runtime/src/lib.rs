@@ -58,6 +58,7 @@ mod reduce_support;
 mod reflect;
 pub mod regexp;
 mod semantic;
+mod semantic_early;
 mod sequences;
 mod special;
 mod statement_control;

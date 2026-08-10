@@ -1,6 +1,7 @@
 use oxc::semantic::SemanticBuilder;
 
 pub(crate) fn analyze(program: &oxc::ast::ast::Program<'_>) -> Result<(usize, usize), Vec<String>> {
+    crate::semantic_early::validate(program)?;
     let semantic = SemanticBuilder::new()
         .with_check_syntax_error(true)
         .build(program);
