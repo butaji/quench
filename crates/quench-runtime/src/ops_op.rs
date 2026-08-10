@@ -129,6 +129,11 @@ pub enum Op {
         function: u16,
         name: String,
     },
+    SetFunctionNameDynamic {
+        function: u16,
+        key: u16,
+        prefix: Option<String>,
+    },
     GetPropertyDynamic {
         dst: u16,
         object: u16,
