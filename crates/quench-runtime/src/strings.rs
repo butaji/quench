@@ -37,6 +37,7 @@ pub(crate) fn execute_builtin(
     arguments: &[Value],
 ) -> Option<Result<Value, crate::execute::VmError>> {
     let result = match builtin {
+        crate::ops::Builtin::StringFromCharCode => from_char_code(arguments),
         crate::ops::Builtin::StringIncludes => includes(receiver, arguments),
         crate::ops::Builtin::StringStartsWith => starts_with(receiver, arguments),
         crate::ops::Builtin::StringEndsWith => ends_with(receiver, arguments),
@@ -64,6 +65,17 @@ pub(crate) fn execute_builtin(
         _ => return None,
     };
     Some(Ok(result))
+}
+
+fn from_char_code(arguments: &[Value]) -> Value {
+    let units = arguments
+        .iter()
+        .map(|value| {
+            let number = crate::intl::tolocale::value::to_number(Some(value));
+            crate::construct::to_uint16(number)
+        })
+        .collect::<Vec<_>>();
+    Value::String(String::from_utf16_lossy(&units))
 }
 
 pub(crate) fn includes(receiver: Option<&Value>, arguments: &[Value]) -> Value {

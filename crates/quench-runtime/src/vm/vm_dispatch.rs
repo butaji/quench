@@ -43,7 +43,8 @@ fn run_simple_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Option<Va
             dst,
             source,
             strict,
-        } => crate::reflect::execute_eval(registers, *dst, *source, *strict)?,
+            bindings,
+        } => crate::reflect::execute_eval(registers, *dst, *source, *strict, bindings)?,
         Unary { dst, operator, src } => {
             vm_arithmetic::execute_unary(registers, *dst, *operator, *src)?
         }
@@ -64,6 +65,7 @@ fn run_control_op(
         ForOf { .. } => crate::loops::execute_for_of(registers, op).map(Some),
         Branch { .. } => crate::branch::execute(registers, op).map(Some),
         Label { .. } => crate::statement_control::execute_label(registers, op).map(Some),
+        With { .. } => crate::with_scope::execute(registers, op).map(Some),
         Try { .. } => crate::exceptions::execute(registers, op).map(Some),
         Loop { .. } => crate::loops::execute(registers, op).map(Some),
         Switch { .. } => crate::switch::execute(registers, op).map(Some),
@@ -155,7 +157,7 @@ fn run_get_set_property(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmErr
     use Op::*;
     match op {
         GetProperty { .. } => crate::properties::execute_get(registers, op)?,
-        ResolveGlobal { .. } => crate::properties::execute_resolve_global(registers, op)?,
+        ResolveGlobal { .. } => crate::with_scope::execute_resolve_global(registers, op)?,
         GetPropertyDynamic { .. } => crate::properties::execute_get_dynamic(registers, op)?,
         SetProperty { .. } | SetPropertyDynamic { .. } => {
             crate::properties::execute_set_property(registers, op)?

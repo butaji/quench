@@ -198,7 +198,7 @@ fn reduce_dynamic_for(
     let init = reduce_for_init(statement, facts, next_register, next_slot, locals)?;
     let test = super::reduce_fragment(statement.test.as_ref(), ops, facts, next_register, locals)?;
     let var_names = body_var_names(&statement.body);
-    propagate_body_vars(locals, &var_names);
+    propagate_body_vars(locals, next_slot, &var_names);
     let body = reduce_body_fragment(statement, ops, facts, next_register, next_slot, locals)?;
     let update =
         super::reduce_fragment(statement.update.as_ref(), ops, facts, next_register, locals)?;
@@ -255,9 +255,12 @@ fn collect_body_vars(statement: &Statement<'_>, names: &mut Vec<String>) {
     }
 }
 
-fn propagate_body_vars(locals: &mut HashMap<String, u16>, names: &[String]) {
+fn propagate_body_vars(locals: &mut HashMap<String, u16>, next_slot: &mut u16, names: &[String]) {
     for name in names {
-        locals.entry(name.clone()).or_insert(0);
+        if !locals.contains_key(name) {
+            locals.insert(name.clone(), *next_slot);
+            *next_slot = next_slot.saturating_add(1);
+        }
     }
 }
 

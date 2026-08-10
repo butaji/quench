@@ -109,6 +109,9 @@ pub(crate) fn execute_set_property(
         ));
     }
     let value = crate::execute::read_register(registers, src)?.clone();
+    if crate::vm::is_global_object(&target) && crate::with_scope::set_if_bound(&key, &value) {
+        return Ok(());
+    }
     if let Some(setter) = crate::vm::array_accessor(&target, &key, "set") {
         if !matches!(setter, crate::value::Value::Undefined) {
             crate::functions::execute_target(&setter, &target, std::slice::from_ref(&value))?;
@@ -419,28 +422,6 @@ pub(crate) fn execute_get(
     )?;
     crate::execute::write_value(registers, *dst, value);
     Ok(())
-}
-
-pub(crate) fn execute_resolve_global(
-    registers: &mut Vec<crate::value::Value>,
-    op: &crate::ops::Op,
-) -> Result<(), crate::execute::VmError> {
-    let crate::ops::Op::ResolveGlobal { dst, object, key } = op else {
-        return Err(crate::execute::VmError::MissingReturn);
-    };
-    let target = crate::execute::read_register(registers, *object)?;
-    let value = crate::execute::get_property_result(&target, key)?;
-    if matches!(value, crate::value::Value::Undefined) && !has_own_key(&target, key) {
-        return Err(crate::value::error::throw_reference_error(&format!(
-            "{key} is not defined"
-        )));
-    }
-    crate::execute::write_value(registers, *dst, value);
-    Ok(())
-}
-
-fn has_own_key(value: &crate::value::Value, key: &str) -> bool {
-    matches!(value, crate::value::Value::Object(properties) if properties.iter().any(|(name, _)| name == key))
 }
 
 pub(crate) fn reduce_method_call(
