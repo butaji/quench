@@ -132,7 +132,9 @@ pub(crate) fn descriptor(value: Option<&Value>, key: Option<&Value>) -> Value {
             .map(|(_, value)| value.clone()),
         Value::Array(values) => array_descriptor(values, &key),
         Value::String(value) => string_descriptor(value, &key),
-        Value::Builtin(builtin) => builtin_descriptor(*builtin, &key),
+        Value::Builtin(builtin) => {
+            return builtin_descriptor(*builtin, &key).unwrap_or(Value::Undefined);
+        }
         Value::Function(function) if key == "length" => {
             return Value::Object(Rc::new(vec![
                 (
@@ -157,12 +159,25 @@ pub(crate) fn descriptor(value: Option<&Value>, key: Option<&Value>) -> Value {
 }
 
 fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
-    super::callable_property(builtin, key).or_else(|| super::special_property(builtin, key))
+    let property =
+        super::callable_property(builtin, key).or_else(|| super::special_property(builtin, key))?;
+    let (writable, enumerable) = match key {
+        "length" | "name" => (false, false),
+        _ => (true, false),
+    };
+    Some(descriptor_object_with_flags(
+        property, writable, enumerable, true,
+    ))
 }
 
 fn array_descriptor(values: &[Value], key: &str) -> Option<Value> {
     if key == "length" {
-        return None;
+        return Some(descriptor_object_with_flags(
+            Value::Number(values.len() as f64),
+            true,
+            false,
+            false,
+        ));
     }
     key.parse::<usize>()
         .ok()
@@ -173,15 +188,26 @@ fn string_descriptor(value: &str, key: &str) -> Option<Value> {
     value
         .chars()
         .nth(key.parse::<usize>().ok()?)
-        .map(|character| Value::String(character.to_string()))
+        .map(|character| {
+            descriptor_object_with_flags(Value::String(character.to_string()), false, true, false)
+        })
 }
 
 fn descriptor_object(value: &Value) -> Value {
+    descriptor_object_with_flags(value.clone(), true, true, true)
+}
+
+fn descriptor_object_with_flags(
+    value: Value,
+    writable: bool,
+    enumerable: bool,
+    configurable: bool,
+) -> Value {
     Value::Object(Rc::new(vec![
-        ("value".to_string(), value.clone()),
-        ("writable".to_string(), Value::Boolean(true)),
-        ("enumerable".to_string(), Value::Boolean(true)),
-        ("configurable".to_string(), Value::Boolean(true)),
+        ("value".to_string(), value),
+        ("writable".to_string(), Value::Boolean(writable)),
+        ("enumerable".to_string(), Value::Boolean(enumerable)),
+        ("configurable".to_string(), Value::Boolean(configurable)),
     ]))
 }
 
