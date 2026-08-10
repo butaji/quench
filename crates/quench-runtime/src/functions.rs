@@ -7,18 +7,6 @@ use crate::{
     ops::{FunctionKind, FunctionStrictness, Op},
 };
 
-pub(super) fn strictness(body: &oxc::ast::ast::FunctionBody<'_>) -> FunctionStrictness {
-    if body
-        .directives
-        .iter()
-        .any(|directive| directive.directive.as_str() == "use strict")
-    {
-        FunctionStrictness::Strict
-    } else {
-        FunctionStrictness::Sloppy
-    }
-}
-
 #[derive(Clone, Copy)]
 pub(crate) struct FunctionMetadata {
     kind: FunctionKind,
@@ -106,12 +94,18 @@ pub(super) fn reduce_function_ops(
     lexical_receiver: bool,
 ) -> Option<(Vec<Op>, u16)> {
     let captures = capture_count(locals);
-    let parameters = extend_function_parameters(
+    let formal_parameters = parameters.clone();
+    let mut parameters = extend_function_parameters(
         parameters,
         parameter_count,
         captures,
         locals,
         lexical_receiver,
+    );
+    crate::reduce_support::shadow_function_bindings(
+        statements,
+        &mut parameters,
+        &formal_parameters,
     );
     let local_count = captures.saturating_add(parameter_count).saturating_add(2);
     let body_ops =
@@ -171,7 +165,7 @@ pub(crate) fn reduce_expression(
             } else {
                 FunctionKind::Ordinary
             },
-            strictness: strictness(body),
+            strictness: crate::reduce_support::function_strictness(body),
             is_async: function.r#async,
         },
     ))

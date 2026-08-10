@@ -107,6 +107,13 @@ pub enum VmError {
     Suspended(Rc<crate::value::PromiseData>),
 }
 
+pub(crate) fn not_callable() -> VmError {
+    VmError::Thrown(crate::builtins::error(
+        Builtin::TypeError,
+        &[Value::String("value is not callable".to_string())],
+    ))
+}
+
 impl VmError {
     pub fn render(&self) -> String {
         match self {

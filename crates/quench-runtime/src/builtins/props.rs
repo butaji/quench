@@ -55,7 +55,7 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
     if let HostCapability(kind) = builtin {
         return host_capability_method(kind, key);
     }
-    if let Some(method) = typed_array_constructor_property(builtin, key) {
+    if let Some(method) = typed_array_property(builtin, key) {
         return Some(method);
     }
     match (builtin, key) {
@@ -89,6 +89,28 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
         (RegExpPrototype, "exec") => Some(RegExpExec),
         _ => builtin_method2(builtin, key),
     }
+}
+
+fn typed_array_property(builtin: Builtin, key: &str) -> Option<Builtin> {
+    typed_array_constructor_property(builtin, key).or_else(|| {
+        (is_typed_array_prototype(builtin) && key == "fill").then_some(Builtin::TypedArrayFill)
+    })
+}
+
+fn is_typed_array_prototype(builtin: Builtin) -> bool {
+    use Builtin::*;
+    matches!(
+        builtin,
+        Float64ArrayPrototype
+            | Float32ArrayPrototype
+            | Int8ArrayPrototype
+            | Int16ArrayPrototype
+            | Int32ArrayPrototype
+            | Uint8ArrayPrototype
+            | Uint16ArrayPrototype
+            | Uint32ArrayPrototype
+            | Uint8ClampedArrayPrototype
+    )
 }
 
 fn typed_array_constructor_property(builtin: Builtin, key: &str) -> Option<Builtin> {
@@ -175,6 +197,7 @@ fn array_method(key: &str) -> Option<Builtin> {
         "reduceRight" => Some(ArrayReduceRight),
         "toLocaleString" => Some(ArrayToLocaleString),
         "push" => Some(ArrayPush),
+        "splice" => Some(ArraySplice),
         _ => None,
     }
 }
@@ -293,6 +316,7 @@ pub(crate) fn builtin_name(builtin: Builtin) -> &'static str {
         Escape => "escape",
         Unescape => "unescape",
         Array => "Array",
+        TypedArray => "TypedArray",
         ArrayBuffer => "ArrayBuffer",
         ArrayBufferIsView => "isView",
         Float64Array => "Float64Array",

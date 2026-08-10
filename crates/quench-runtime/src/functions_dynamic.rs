@@ -35,7 +35,7 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
         count,
         crate::environment::Environment::new(),
         FunctionKind::Ordinary,
-        crate::functions::strictness(body),
+        crate::reduce_support::function_strictness(body),
         false,
     );
     mark_dynamic(&value);

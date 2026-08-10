@@ -2,6 +2,20 @@
 
 use std::collections::HashMap;
 
+pub(crate) fn function_strictness(
+    body: &oxc::ast::ast::FunctionBody<'_>,
+) -> crate::ops::FunctionStrictness {
+    if body
+        .directives
+        .iter()
+        .any(|directive| directive.directive.as_str() == "use strict")
+    {
+        crate::ops::FunctionStrictness::Strict
+    } else {
+        crate::ops::FunctionStrictness::Sloppy
+    }
+}
+
 use crate::ops::{Constant, Op};
 
 const SCRIPT_THIS_SLOT: &str = "\0script_this";
@@ -22,24 +36,86 @@ pub(crate) fn predeclare_functions(
     next_slot: &mut u16,
 ) {
     for statement in statements {
-        match statement {
-            oxc::ast::ast::Statement::FunctionDeclaration(function) => {
-                if let Some(identifier) = function.id.as_ref() {
-                    reserve(identifier.name.as_str(), locals, next_slot);
-                }
+        for name in declared_names(statement) {
+            reserve(&name, locals, next_slot);
+        }
+    }
+}
+
+pub(crate) fn shadow_function_bindings(
+    statements: &[oxc::ast::ast::Statement<'_>],
+    locals: &mut HashMap<String, u16>,
+    parameters: &HashMap<String, u16>,
+) {
+    for statement in statements {
+        for name in declared_names(statement) {
+            if !parameters.contains_key(&name) {
+                locals.remove(&name);
             }
-            oxc::ast::ast::Statement::VariableDeclaration(declaration)
-                if declaration.kind == oxc::ast::ast::VariableDeclarationKind::Var =>
+        }
+    }
+}
+
+fn declared_names(statement: &oxc::ast::ast::Statement<'_>) -> Vec<String> {
+    let mut names = Vec::new();
+    collect_declared_names(statement, &mut names);
+    names
+}
+
+fn collect_declared_names(statement: &oxc::ast::ast::Statement<'_>, names: &mut Vec<String>) {
+    match statement {
+        oxc::ast::ast::Statement::FunctionDeclaration(function) => {
+            if let Some(identifier) = &function.id {
+                names.push(identifier.name.to_string());
+            }
+        }
+        oxc::ast::ast::Statement::VariableDeclaration(declaration)
+            if declaration.kind == oxc::ast::ast::VariableDeclarationKind::Var =>
+        {
+            collect_declaration_names(declaration, names);
+        }
+        oxc::ast::ast::Statement::BlockStatement(block) => {
+            collect_statement_names(&block.body, names);
+        }
+        oxc::ast::ast::Statement::ForStatement(statement) => {
+            if let Some(oxc::ast::ast::ForStatementInit::VariableDeclaration(declaration)) =
+                &statement.init
             {
-                for declarator in &declaration.declarations {
-                    if let oxc::ast::ast::BindingPatternKind::BindingIdentifier(identifier) =
-                        &declarator.id.kind
-                    {
-                        reserve(identifier.name.as_str(), locals, next_slot);
-                    }
-                }
+                collect_declaration_names(declaration, names);
             }
-            _ => {}
+            collect_declared_names(&statement.body, names);
+        }
+        oxc::ast::ast::Statement::IfStatement(statement) => {
+            collect_declared_names(&statement.consequent, names);
+            if let Some(alternate) = &statement.alternate {
+                collect_declared_names(alternate, names);
+            }
+        }
+        oxc::ast::ast::Statement::WhileStatement(statement) => {
+            collect_declared_names(&statement.body, names);
+        }
+        oxc::ast::ast::Statement::DoWhileStatement(statement) => {
+            collect_declared_names(&statement.body, names);
+        }
+        _ => {}
+    }
+}
+
+fn collect_statement_names(statements: &[oxc::ast::ast::Statement<'_>], names: &mut Vec<String>) {
+    for statement in statements {
+        collect_declared_names(statement, names);
+    }
+}
+
+fn collect_declaration_names(
+    declaration: &oxc::ast::ast::VariableDeclaration<'_>,
+    names: &mut Vec<String>,
+) {
+    for declarator in &declaration.declarations {
+        if let oxc::ast::ast::BindingPatternKind::BindingIdentifier(identifier) =
+            &declarator.id.kind
+        {
+            names.push(identifier.name.to_string());
         }
     }
 }
