@@ -150,7 +150,11 @@ pub(crate) fn reduce_expression(
         parameter_count,
         captures,
         FunctionMetadata {
-            kind: FunctionKind::Ordinary,
+            kind: if function.generator {
+                FunctionKind::Generator
+            } else {
+                FunctionKind::Ordinary
+            },
             strictness: strictness(body),
             is_async: function.r#async,
         },
@@ -427,7 +431,9 @@ pub(crate) fn is_constructible(function: &crate::value::FunctionValue) -> bool {
     match (function.kind, function.strictness, function.is_async) {
         (FunctionKind::Ordinary, FunctionStrictness::Sloppy, false)
         | (FunctionKind::Ordinary, FunctionStrictness::Strict, false) => true,
-        (FunctionKind::Arrow, _, _) | (FunctionKind::Ordinary, _, true) => false,
+        (FunctionKind::Arrow, _, _)
+        | (FunctionKind::Generator, _, _)
+        | (FunctionKind::Ordinary, _, true) => false,
     }
 }
 
