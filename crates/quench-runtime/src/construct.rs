@@ -54,11 +54,10 @@ pub(crate) fn construct_value(
         Value::Builtin(crate::ops::Builtin::Number) => construct_number(arguments),
         Value::Builtin(crate::ops::Builtin::Boolean) => construct_boolean(arguments),
         Value::Builtin(crate::ops::Builtin::Promise) => {
-            crate::execute::execute_builtin_with_receiver(
-                crate::ops::Builtin::Promise,
-                arguments,
-                None,
-            )
+            let executor = arguments
+                .first()
+                .ok_or(crate::execute::VmError::NotCallable)?;
+            crate::promise::construct_promise(executor)
         }
         Value::Builtin(crate::ops::Builtin::TypeError) => {
             construct_error(&crate::ops::Builtin::TypeError, arguments)
