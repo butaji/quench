@@ -340,7 +340,7 @@ fn builtin_length(builtin: Builtin) -> f64 {
         return length;
     }
     match builtin {
-        Escape | Unescape | DateSetYear => 1.0,
+        Escape | Unescape | DateSetYear | GeneratorNext | GeneratorReturn | GeneratorThrow => 1.0,
         ArrayBuffer => 1.0,
         Float64Array => 3.0,
         Float32Array => 3.0,
@@ -382,24 +382,18 @@ pub(crate) fn builtin_name(builtin: Builtin) -> &'static str {
     if let Some(name) = error_name(builtin) {
         return name;
     }
+    if let Some(name) = generator_name(builtin) {
+        return name;
+    }
+    if let Some(name) = typed_array_name(builtin) {
+        return name;
+    }
     match builtin {
         Escape => "escape",
         Unescape => "unescape",
         Array => "Array",
-        TypedArray => "TypedArray",
         ArrayBuffer => "ArrayBuffer",
         ArrayBufferIsView => "isView",
-        Float64Array => "Float64Array",
-        Float32Array => "Float32Array",
-        Int8Array => "Int8Array",
-        Int16Array => "Int16Array",
-        Uint16Array => "Uint16Array",
-        Int32Array => "Int32Array",
-        Uint8Array => "Uint8Array",
-        Uint32Array => "Uint32Array",
-        Uint8ClampedArray => "Uint8ClampedArray",
-        BigInt64Array => "BigInt64Array",
-        BigUint64Array => "BigUint64Array",
         Object => "Object",
         String => "String",
         Symbol => "Symbol",
@@ -412,6 +406,34 @@ pub(crate) fn builtin_name(builtin: Builtin) -> &'static str {
         RegExpExec => "exec",
         _ => "",
     }
+}
+
+fn typed_array_name(builtin: Builtin) -> Option<&'static str> {
+    use Builtin::*;
+    Some(match builtin {
+        TypedArray => "TypedArray",
+        Float64Array => "Float64Array",
+        Float32Array => "Float32Array",
+        Int8Array => "Int8Array",
+        Int16Array => "Int16Array",
+        Uint16Array => "Uint16Array",
+        Int32Array => "Int32Array",
+        Uint8Array => "Uint8Array",
+        Uint32Array => "Uint32Array",
+        Uint8ClampedArray => "Uint8ClampedArray",
+        BigInt64Array => "BigInt64Array",
+        BigUint64Array => "BigUint64Array",
+        _ => return None,
+    })
+}
+
+fn generator_name(builtin: Builtin) -> Option<&'static str> {
+    Some(match builtin {
+        Builtin::GeneratorNext => "next",
+        Builtin::GeneratorReturn => "return",
+        Builtin::GeneratorThrow => "throw",
+        _ => return None,
+    })
 }
 
 fn error_name(builtin: Builtin) -> Option<&'static str> {

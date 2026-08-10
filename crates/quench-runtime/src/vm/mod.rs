@@ -6,14 +6,11 @@ use crate::value::Value;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
-
 mod realm;
 mod vm_arithmetic;
 mod vm_ops;
 mod vm_typed_bigint;
-
 pub use crate::intl::tolocale::value::is_truthy;
-
 pub type OutputSink = Arc<dyn Fn(&str) + Send + Sync>;
 type ObjectProperties = Rc<Vec<(String, Value)>>;
 
@@ -264,6 +261,7 @@ pub(crate) fn execute_generator_step(
     registers: &mut Vec<Value>,
     environment: Rc<crate::environment::Environment>,
     pc: usize,
+    resume: crate::completion::Completion,
 ) -> Result<(crate::completion::Completion, usize), VmError> {
     let context = VmContext::default();
     let _context_guard = ContextGuard::install(&context);
@@ -271,11 +269,7 @@ pub(crate) fn execute_generator_step(
     let _environment_guard = crate::locals::EnvironmentGuard::install(environment);
     for (offset, op) in ops[pc..].iter().enumerate() {
         if matches!(op, Op::YieldStar { .. }) {
-            let completion = crate::generator::execute_yield_star(
-                registers,
-                op,
-                crate::completion::Completion::Normal,
-            )?;
+            let completion = crate::generator::execute_yield_star(registers, op, resume.clone())?;
             if let Some(completion) = completion {
                 let next = pc
                     + offset
@@ -376,6 +370,12 @@ pub fn execute_builtin_with_receiver(
 ) -> Result<Value, VmError> {
     if builtin == Builtin::GeneratorNext {
         return crate::generator::next(receiver, arguments);
+    }
+    if builtin == Builtin::GeneratorReturn {
+        return crate::generator::return_(receiver, arguments);
+    }
+    if builtin == Builtin::GeneratorThrow {
+        return crate::generator::throw(receiver, arguments);
     }
     if builtin == Builtin::Print {
         return execute_print(arguments);
