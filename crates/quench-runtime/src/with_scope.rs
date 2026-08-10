@@ -57,7 +57,7 @@ pub(crate) fn execute_resolve_global(registers: &mut Vec<Value>, op: &Op) -> Res
         Some(value) => value,
         None => crate::execute::get_property_result(&target, key)?,
     };
-    if matches!(value, Value::Undefined) && !has_key(&target, key)? {
+    if matches!(value, Value::Undefined) && !has_property(&target, key)? {
         return Err(crate::value::error::throw_reference_error(&format!(
             "{key} is not defined"
         )));
@@ -80,7 +80,7 @@ fn resolve_name(registers: &mut Vec<Value>, dst: u16, key: &str) -> Result<(), V
         Some(value) => value,
         None => crate::execute::get_property_result(&global, key)?,
     };
-    if matches!(value, Value::Undefined) && !has_key(&global, key)? {
+    if matches!(value, Value::Undefined) && !has_property(&global, key)? {
         return Err(crate::value::error::throw_reference_error(&format!(
             "{key} is not defined"
         )));
@@ -95,7 +95,7 @@ fn set_name(registers: &mut Vec<Value>, key: &str, src: u16, strict: bool) -> Re
         return Ok(());
     }
     let global = crate::vm::current_global_object();
-    if strict && !has_key(&global, key)? {
+    if strict && !has_property(&global, key)? {
         return Err(crate::value::error::throw_reference_error(&format!(
             "{key} is not defined"
         )));
@@ -122,7 +122,7 @@ pub(crate) fn resolve_binding(key: &str) -> Result<Option<Value>, VmError> {
 pub(crate) fn binding_target(key: &str) -> Result<Option<Value>, VmError> {
     let objects = OBJECTS.with(|objects| objects.borrow().clone());
     for object in objects.iter().rev() {
-        if has_key(object, key)? {
+        if has_property(object, key)? {
             return Ok(Some(object.clone()));
         }
     }
@@ -132,7 +132,7 @@ pub(crate) fn binding_target(key: &str) -> Result<Option<Value>, VmError> {
 pub(crate) fn set_if_bound(key: &str, value: &Value) -> Result<bool, VmError> {
     let objects = OBJECTS.with(|objects| objects.borrow().clone());
     for (index, object) in objects.iter().enumerate().rev() {
-        if has_key(object, key)? {
+        if has_property(object, key)? {
             let updated = crate::proxy::proxy_set(object, key, value, None)?;
             OBJECTS.with(|objects| objects.borrow_mut()[index] = updated);
             return Ok(true);
@@ -141,18 +141,46 @@ pub(crate) fn set_if_bound(key: &str, value: &Value) -> Result<bool, VmError> {
     Ok(false)
 }
 
-fn has_key(value: &Value, key: &str) -> Result<bool, VmError> {
-    if matches!(value, Value::Proxy(_)) {
-        return Ok(crate::proxy::proxy_has(value, key)? == Value::Boolean(true));
+pub(crate) fn has_property(value: &Value, key: &str) -> Result<bool, VmError> {
+    if let Value::ObjectAlias(alias) = value {
+        let Some(object) = alias.0.borrow().upgrade().map(Value::Object) else {
+            return Ok(false);
+        };
+        return has_property(&object, key);
+    }
+    if let Value::Proxy(proxy) = value {
+        let trapped = crate::proxy::get_handler_trap(proxy, "has").is_some();
+        let result = crate::proxy::proxy_has(value, key)?;
+        if trapped {
+            return Ok(crate::execute::is_truthy(&result));
+        }
+        return has_property(&proxy.target, key);
     }
     let key_value = Value::String(key.to_string());
     let own = crate::builtins::object::has_own_property(Some(value), Some(&key_value));
     if own == Value::Boolean(true) {
         return Ok(true);
     }
-    let prototype = crate::execute::get_property(value, "\0prototype");
-    if crate::value::is_object(&prototype) {
-        return has_key(&prototype, key);
+    let prototype = crate::builtins::object::get_prototype_of(Some(value))?;
+    if !matches!(prototype, Value::Null) && prototype != *value {
+        return has_property(&prototype, key);
     }
     Ok(false)
+}
+
+pub(crate) fn execute_has_property(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
+    let Op::HasPropertyDynamic { dst, object, key } = op else {
+        return Err(VmError::MissingReturn);
+    };
+    let object = crate::execute::read_register(registers, *object)?;
+    if !crate::value::is_object(&object) {
+        return Err(crate::value::error::throw_type_error(
+            "right-hand side of 'in' is not an object",
+        ));
+    }
+    let key = crate::execute::read_register(registers, *key)?;
+    let key = crate::conversion::to_property_key(&key)?;
+    let result = Value::Boolean(has_property(&object, &key)?);
+    crate::execute::write_value(registers, *dst, result);
+    Ok(())
 }

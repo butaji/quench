@@ -212,7 +212,7 @@ fn reduce_in(
     let key = reduce_expression(&binary.left, ops, facts, next_register, locals)?;
     let object = reduce_expression(&binary.right, ops, facts, next_register, locals)?;
     let dst = take_register(next_register);
-    ops.push(Op::GetPropertyDynamic { dst, object, key });
+    ops.push(Op::HasPropertyDynamic { dst, object, key });
     Some(dst)
 }
 

@@ -14,6 +14,7 @@ pub enum Op {
     ResolveName { dst: u16, key: String },
     SetName { key: String, src: u16, strict: bool },
     GetPropertyDynamic { dst: u16, object: u16, key: u16 },
+    HasPropertyDynamic { dst: u16, object: u16, key: u16 },
     ToPropertyKey { dst: u16, src: u16 },
     RequireObjectCoercible { src: u16 },
     GetIterator { dst: u16, iterable: u16 },
