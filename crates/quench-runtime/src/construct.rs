@@ -1,6 +1,10 @@
 use std::{collections::HashMap, rc::Rc};
 
-use crate::{facts::ProgramDb, ops::Op, value::Value};
+use crate::{
+    facts::ProgramDb,
+    ops::Op,
+    value::{ObjectData, Value},
+};
 
 pub(crate) fn reduce(
     expression: &oxc::ast::ast::NewExpression<'_>,
@@ -171,11 +175,11 @@ fn construct_regexp(arguments: &[Value]) -> Value {
     let flags = arguments.get(1).map_or_else(String::new, |value| {
         crate::intl::tolocale::value::to_string(Some(value))
     });
-    Value::Object(Rc::new(vec![
+    Value::Object(Rc::new(ObjectData::new(vec![
         ("source".to_string(), Value::String(source)),
         ("flags".to_string(), Value::String(flags)),
         ("lastIndex".to_string(), Value::Number(0.0)),
-    ]))
+    ])))
 }
 
 fn is_error_builtin(builtin: crate::ops::Builtin) -> bool {
@@ -276,10 +280,10 @@ fn construct_number(arguments: &[Value]) -> Result<Value, crate::execute::VmErro
     let value = arguments.first().map_or(0.0, |argument| {
         crate::intl::tolocale::value::to_number(Some(argument))
     });
-    Ok(Value::Object(std::rc::Rc::new(vec![(
+    Ok(Value::Object(std::rc::Rc::new(ObjectData::new(vec![(
         "_value".to_string(),
         Value::Number(value),
-    )])))
+    )]))))
 }
 
 fn construct_boolean(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
@@ -288,10 +292,10 @@ fn construct_boolean(arguments: &[Value]) -> Result<Value, crate::execute::VmErr
         arguments,
         None,
     )?;
-    Ok(Value::Object(std::rc::Rc::new(vec![(
+    Ok(Value::Object(std::rc::Rc::new(ObjectData::new(vec![(
         "_value".to_string(),
         value,
-    )])))
+    )]))))
 }
 
 fn construct_string(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
@@ -300,10 +304,10 @@ fn construct_string(arguments: &[Value]) -> Result<Value, crate::execute::VmErro
         arguments,
         None,
     )?;
-    Ok(Value::Object(std::rc::Rc::new(vec![(
+    Ok(Value::Object(std::rc::Rc::new(ObjectData::new(vec![(
         "_value".to_string(),
         value,
-    )])))
+    )]))))
 }
 
 fn construct_error(
@@ -415,8 +419,8 @@ fn is_default_derived_constructor(function: &crate::value::FunctionValue) -> boo
 
 fn constructor_receiver(target: &Value) -> Value {
     let prototype = crate::execute::get_property(target, "prototype");
-    Value::Object(std::rc::Rc::new(vec![(
+    Value::Object(std::rc::Rc::new(ObjectData::new(vec![(
         "\0prototype".to_string(),
         prototype,
-    )]))
+    )])))
 }

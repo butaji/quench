@@ -116,7 +116,9 @@ fn build_match_result(
         };
         result.push((i.to_string(), val));
     }
-    Ok(Value::Object(Rc::new(result)))
+    Ok(Value::Object(Rc::new(crate::value::ObjectData::new(
+        result,
+    ))))
 }
 
 fn argument_string(arguments: &[Value]) -> String {

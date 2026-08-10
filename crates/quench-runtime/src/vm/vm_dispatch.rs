@@ -393,7 +393,11 @@ fn execute_object(
         .iter()
         .map(|(key, index)| Ok((key.clone(), read_register(registers, *index)?)))
         .collect::<Result<Vec<_>, VmError>>()?;
-    write_value(registers, dst, Value::Object(Rc::new(values)));
+    write_value(
+        registers,
+        dst,
+        Value::Object(Rc::new(crate::value::ObjectData::new(values))),
+    );
     Ok(())
 }
 
