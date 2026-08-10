@@ -48,6 +48,7 @@ pub(crate) fn reduce_expression(
 }
 
 include!("classes_name.rs");
+include!("classes_method_name.rs");
 
 fn reduce_heritage(
     class: &Class<'_>,
@@ -298,6 +299,7 @@ fn reduce_class_method(
     }
     let key = reduce_method_key(method, ops, facts, next, locals)?;
     let value = reduce_method(method, ops, facts, next, locals)?;
+    set_method_name(ops, method, value, key)?;
     let target = if method.r#static {
         constructor
     } else {
@@ -487,14 +489,4 @@ fn take_register(next: &mut u16) -> u16 {
     let register = *next;
     *next = next.saturating_add(1);
     register
-}
-
-fn method_key(key: &PropertyKey<'_>) -> Option<String> {
-    match key {
-        PropertyKey::StaticIdentifier(key) => Some(key.name.to_string()),
-        PropertyKey::PrivateIdentifier(key) => Some(format!("#{}", key.name)),
-        PropertyKey::StringLiteral(key) => Some(key.value.to_string()),
-        PropertyKey::NumericLiteral(key) => Some(key.value.to_string()),
-        _ => None,
-    }
 }
