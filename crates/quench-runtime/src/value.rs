@@ -166,6 +166,19 @@ pub enum Value {
     Undefined,
 }
 
+pub(crate) fn is_object(value: &Value) -> bool {
+    !matches!(
+        value,
+        Value::Number(_)
+            | Value::Boolean(_)
+            | Value::String(_)
+            | Value::BigInt(_)
+            | Value::Null
+            | Value::Undefined
+            | Value::HostCapability(_)
+    )
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ArrayData {
     values: Vec<Value>,
@@ -175,6 +188,7 @@ pub struct ArrayData {
     arguments: bool,
     strict_arguments: bool,
     mapped: Vec<Option<Rc<RefCell<Value>>>>,
+    deleted: Vec<bool>,
 }
 
 impl ArrayData {
@@ -188,6 +202,7 @@ impl ArrayData {
             arguments: false,
             strict_arguments: false,
             mapped: Vec::new(),
+            deleted: Vec::new(),
         }
     }
 
@@ -222,6 +237,8 @@ impl ArrayData {
         self.values
             .resize(index.saturating_add(1), Value::Undefined);
         self.values[index] = value;
+        self.deleted.resize(index.saturating_add(1), false);
+        self.deleted[index] = false;
         self.length = self.length.max(index.saturating_add(1));
     }
 
@@ -230,11 +247,18 @@ impl ArrayData {
     }
 
     pub(crate) fn get_index(&self, index: usize) -> Option<Value> {
+        if self.deleted.get(index) == Some(&true) {
+            return None;
+        }
         self.mapped
             .get(index)
             .and_then(Option::as_ref)
             .map(|binding| binding.borrow().clone())
             .or_else(|| self.values.get(index).cloned())
+    }
+
+    pub(crate) fn has_index(&self, index: usize) -> bool {
+        index < self.length && self.deleted.get(index) != Some(&true)
     }
 
     pub(crate) fn snapshot(&self) -> Vec<Value> {
@@ -291,6 +315,8 @@ impl ArrayData {
         self.descriptors.retain(|(name, _)| name != key);
         if let Ok(index) = key.parse::<usize>() {
             self.disconnect_index(index);
+            self.deleted.resize(index.saturating_add(1), false);
+            self.deleted[index] = true;
         }
     }
 }

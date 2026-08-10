@@ -79,6 +79,12 @@ pub fn get_property_result(value: &Value, key: &str) -> Result<Value, VmError> {
             "'callee' is unavailable on strict arguments",
         ));
     }
+    if let Some(getter) = array_accessor(value, key, "get") {
+        if matches!(getter, Value::Undefined) {
+            return Ok(Value::Undefined);
+        }
+        return crate::functions::execute_target(&getter, value, &[]);
+    }
     let Value::Object(properties) = value else {
         return Ok(get_property(value, key));
     };
@@ -89,6 +95,17 @@ pub fn get_property_result(value: &Value, key: &str) -> Result<Value, VmError> {
         return Ok(Value::Undefined);
     }
     crate::functions::execute_target(&getter, value, &[])
+}
+
+pub(crate) fn array_accessor(value: &Value, key: &str, field: &str) -> Option<Value> {
+    let Value::Array(values) = value else { return None };
+    let Value::Object(descriptor) = values.descriptor(key)? else {
+        return None;
+    };
+    descriptor
+        .iter()
+        .rev()
+        .find_map(|(name, value)| (name == field).then(|| value.clone()))
 }
 
 fn accessor_getter(properties: &[(String, Value)], key: &str) -> Option<Value> {

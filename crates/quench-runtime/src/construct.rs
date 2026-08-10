@@ -253,9 +253,9 @@ fn construct_function(
         target.clone(),
     )]));
     let (result, final_this) = crate::functions::execute_construct(function, &object, arguments)?;
-    if matches!(result, Value::Object(_)) {
+    if crate::value::is_object(&result) {
         Ok(result)
-    } else if matches!(final_this, Value::Object(_)) {
+    } else if crate::value::is_object(&final_this) {
         Ok(final_this)
     } else {
         Ok(object)
