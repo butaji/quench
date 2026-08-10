@@ -115,6 +115,9 @@ fn resume(generator: &GeneratorData, resume: Resume) -> Result<Value, VmError> {
     if let Some(completion) = resume_suspended_try(generator, state, completion.clone())? {
         return complete_step(generator, state, completion);
     }
+    if let Some(completion) = resume_suspended_conditional(generator, state, completion.clone())? {
+        return complete_step(generator, state, completion);
+    }
     let _home = crate::super_scope::Guard::install(&generator.function, &generator.receiver);
     let _with_scope = crate::with_scope::FunctionGuard::isolate();
     let (completion, pc) = crate::vm::execute_generator_step(
@@ -170,10 +173,51 @@ fn is_suspended(generator: &GeneratorData, state: &GeneratorState) -> bool {
         return true;
     }
     let Some(Op::YieldStar { iterator, .. }) = generator.function.body.get(state.pc) else {
-        return suspended_try(generator, state).is_some();
+        return suspended_try(generator, state).is_some()
+            || suspended_conditional(generator, state).is_some();
     };
     crate::execute::read_register(&state.registers, *iterator)
         .is_ok_and(|value| !matches!(value, Value::Undefined))
+}
+
+fn suspended_conditional<'a>(
+    generator: &'a GeneratorData,
+    state: &GeneratorState,
+) -> Option<(&'a Op, &'a [Op])> {
+    let Op::Conditional {
+        condition,
+        consequent,
+        alternate,
+        ..
+    } = generator.function.body.get(state.pc.checked_sub(1)?)?
+    else {
+        return None;
+    };
+    let test = crate::execute::read_register(&state.registers, *condition).ok()?;
+    let branch = if crate::execute::is_truthy(&test) {
+        consequent
+    } else {
+        alternate
+    };
+    let index = branch
+        .iter()
+        .position(|op| matches!(op, Op::Yield { .. }))?;
+    Some((&branch[index], &branch[index + 1..]))
+}
+
+fn resume_suspended_conditional(
+    generator: &GeneratorData,
+    state: &mut GeneratorState,
+    resume: crate::completion::Completion,
+) -> Result<Option<crate::completion::Completion>, VmError> {
+    let Some((_, suffix)) = suspended_conditional(generator, state) else {
+        return Ok(None);
+    };
+    if !matches!(resume, crate::completion::Completion::Normal) {
+        return Ok(Some(resume));
+    }
+    let completion = crate::execute::execute_completion_in_place(suffix, &mut state.registers)?;
+    Ok(Some(completion))
 }
 
 fn suspended_try<'a>(
@@ -270,6 +314,9 @@ fn install_resume_input(generator: &GeneratorData, state: &mut GeneratorState, i
         return;
     };
     let Some(Op::Yield { src }) = generator.function.body.get(index) else {
+        if let Some((Op::Yield { src }, _)) = suspended_conditional(generator, state) {
+            crate::execute::write_value(&mut state.registers, *src, input);
+        }
         return;
     };
     crate::execute::write_value(&mut state.registers, *src, input);
