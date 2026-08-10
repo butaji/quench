@@ -423,6 +423,7 @@ pub(crate) fn prototype_to_string(receiver: Option<&Value>) -> Value {
         Some(Value::Promise(_)) => "Promise",
         Some(Value::Map(_)) => "Map",
         Some(Value::Set(_)) => "Set",
+        Some(Value::HostCapability(_)) => "Object",
     };
     Value::String(format!("[object {tag}]"))
 }
