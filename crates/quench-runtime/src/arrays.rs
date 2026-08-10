@@ -137,6 +137,9 @@ pub(crate) fn property(values: &crate::value::ArrayData, key: &str) -> Value {
     if let Some(value) = direct_property(values, key) {
         return value;
     }
+    if iterator_symbol_removed(key) {
+        return Value::Undefined;
+    }
     let method = match key {
         "forEach" => crate::ops::Builtin::ArrayForEach,
         "map" => crate::ops::Builtin::ArrayMap,
@@ -182,6 +185,14 @@ fn direct_property(values: &crate::value::ArrayData, key: &str) -> Option<Value>
         return Some(Value::Builtin(crate::ops::Builtin::Array));
     }
     (key == "length").then(|| Value::Number(values.logical_len() as f64))
+}
+
+fn iterator_symbol_removed(key: &str) -> bool {
+    key == "Symbol.iterator"
+        && crate::builtins::builtin_prototype_property_is_removed(
+            crate::ops::Builtin::ArrayPrototype,
+            "Symbol.iterator",
+        )
 }
 
 fn array_iterator(receiver: Option<&Value>) -> Value {
