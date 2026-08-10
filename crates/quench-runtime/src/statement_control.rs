@@ -4,6 +4,10 @@ use oxc::ast::ast::Statement;
 
 use crate::{facts::ProgramDb, ops::Op};
 
+mod helpers;
+
+type ReduceResult = Result<Option<u16>, Vec<String>>;
+
 pub(crate) fn reduce(
     statement: &Statement<'_>,
     ops: &mut Vec<Op>,
@@ -11,85 +15,26 @@ pub(crate) fn reduce(
     next_register: &mut u16,
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
-) -> Result<Option<u16>, Vec<String>> {
-    match statement {
-        Statement::LabeledStatement(statement) => {
-            let start = ops.len();
-            let wraps_loop = matches!(
-                &statement.body,
-                Statement::ForStatement(_)
-                    | Statement::WhileStatement(_)
-                    | Statement::DoWhileStatement(_)
-                    | Statement::ForInStatement(_)
-                    | Statement::ForOfStatement(_)
-            );
-            let result = crate::reduce::reduce_statement(
-                &statement.body,
-                ops,
-                facts,
-                next_register,
-                next_slot,
-                locals,
-            )?;
-            if wraps_loop {
-                let label = Some(statement.label.name.to_string());
-                if let Some(
-                    Op::Loop { label: slot, .. }
-                    | Op::ForIn { label: slot, .. }
-                    | Op::ForOf { label: slot, .. },
-                ) = ops[start..].last_mut()
-                {
-                    *slot = label;
-                }
-            }
-            Ok(result)
-        }
-        Statement::IfStatement(statement) => crate::reduce::reduce_if_statement(
-            statement,
-            ops,
-            facts,
-            next_register,
-            next_slot,
-            locals,
-        ),
-        Statement::ForStatement(statement) => {
-            crate::loops::reduce_for(statement, ops, facts, next_register, next_slot, locals)
-                .map(|_| None)
-        }
-        Statement::WhileStatement(statement) => {
-            crate::loops::reduce_while(statement, ops, facts, next_register, next_slot, locals)
-                .map(|_| None)
-        }
-        Statement::DoWhileStatement(statement) => {
-            crate::loops::reduce_do_while(statement, ops, facts, next_register, next_slot, locals)
-                .map(|_| None)
-        }
-        Statement::ForInStatement(statement) => {
-            crate::loops::reduce_for_in(statement, ops, facts, next_register, next_slot, locals)
-                .map(|_| None)
-        }
-        Statement::ForOfStatement(statement) => {
-            crate::loops::reduce_for_of(statement, ops, facts, next_register, next_slot, locals)
-                .map(|_| None)
-        }
-        Statement::TryStatement(statement) => {
-            crate::control_flow::reduce_try_statement(statement, ops, facts, locals)
-        }
-        Statement::SwitchStatement(statement) => {
-            crate::switch::reduce(statement, ops, facts, next_register, locals).map(|_| None)
-        }
-        Statement::BreakStatement(statement) => {
-            let label = statement.label.as_ref().map(|label| label.name.to_string());
-            ops.push(Op::Break { label });
-            Ok(None)
-        }
-        Statement::ContinueStatement(statement) => {
-            let label = statement.label.as_ref().map(|label| label.name.to_string());
-            ops.push(Op::Continue { label });
-            Ok(None)
-        }
-        _ => Err(vec![format!(
-            "Unsupported executable statement: {statement:?}"
-        )]),
+) -> ReduceResult {
+    if let Some(result) = helpers::reduce_labeled_or_conditional(
+        statement,
+        ops,
+        facts,
+        next_register,
+        next_slot,
+        locals,
+    ) {
+        return result;
     }
+    if let Some(result) =
+        helpers::reduce_loop_statement(statement, ops, facts, next_register, next_slot, locals)
+    {
+        return result;
+    }
+    if let Some(result) =
+        helpers::reduce_control_statement(statement, ops, facts, next_register, locals)
+    {
+        return result;
+    }
+    helpers::unsupported_statement(statement)
 }
