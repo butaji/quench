@@ -10,6 +10,32 @@ pub(crate) struct EnvironmentGuard {
     previous: Option<Rc<Environment>>,
 }
 
+pub(crate) struct IterationBinding {
+    environment: Rc<Environment>,
+    slot: u16,
+    previous: Option<Rc<RefCell<Value>>>,
+}
+
+impl IterationBinding {
+    pub(crate) fn install(slot: u16, value: Value) -> Self {
+        let environment = current();
+        let previous = Some(environment.replace_slot(slot, value));
+        Self {
+            environment,
+            slot,
+            previous,
+        }
+    }
+}
+
+impl Drop for IterationBinding {
+    fn drop(&mut self) {
+        if let Some(previous) = self.previous.take() {
+            self.environment.restore_slot(self.slot, previous);
+        }
+    }
+}
+
 impl EnvironmentGuard {
     pub(crate) fn install(environment: Rc<Environment>) -> Self {
         let previous = CURRENT_ENVIRONMENT.with(|current| current.replace(Some(environment)));
