@@ -13,6 +13,14 @@ pub(crate) fn reduce(
     locals: &mut HashMap<String, u16>,
 ) -> Result<Option<u16>, Vec<String>> {
     match statement {
+        Statement::LabeledStatement(statement) => crate::reduce::reduce_statement(
+            &statement.body,
+            ops,
+            facts,
+            next_register,
+            next_slot,
+            locals,
+        ),
         Statement::IfStatement(statement) => crate::reduce::reduce_if_statement(
             statement,
             ops,
