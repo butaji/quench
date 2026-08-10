@@ -14,6 +14,7 @@ pub(crate) fn execute_special(
     let (target, key) = target_and_key(receiver, arguments);
     match builtin {
         Builtin::ObjectHasOwnProperty => has_own_property_result(target, key),
+        Builtin::ObjectPropertyIsEnumerable => Ok(object_property_is_enumerable(target, arguments)),
         Builtin::ObjectGetOwnPropertyDescriptor => {
             require_object_coercible(target)?;
             Ok(descriptor(target, key))
