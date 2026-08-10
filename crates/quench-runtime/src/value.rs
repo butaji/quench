@@ -216,6 +216,13 @@ impl DataViewData {
         Ok(decode::<f64, 8>(self.read::<8>(offset)?, little_endian))
     }
 
+    pub fn get_float16(&self, offset: usize, little_endian: bool) -> Result<f64, DataViewError> {
+        Ok(half_to_f64(decode::<u16, 2>(
+            self.read::<2>(offset)?,
+            little_endian,
+        )))
+    }
+
     pub fn set_int8(&self, offset: usize, value: i8) -> Result<(), DataViewError> {
         self.write(offset, value.to_ne_bytes())
     }
@@ -276,6 +283,15 @@ impl DataViewData {
         little_endian: bool,
     ) -> Result<(), DataViewError> {
         encode::<f64, 8>(self, offset, value, little_endian)
+    }
+
+    pub fn set_float16(
+        &self,
+        offset: usize,
+        value: f64,
+        little_endian: bool,
+    ) -> Result<(), DataViewError> {
+        encode::<u16, 2>(self, offset, f64_to_half(value), little_endian)
     }
 }
 
@@ -342,6 +358,71 @@ data_view_codec!(i32, 4);
 data_view_codec!(u32, 4);
 data_view_codec!(f32, 4);
 data_view_codec!(f64, 8);
+
+fn half_to_f64(bits: u16) -> f64 {
+    let sign = ((bits & 0x8000) as u64) << 48;
+    let exponent = (bits >> 10) & 0x1f;
+    let fraction = bits & 0x03ff;
+    match (exponent, fraction) {
+        (0, 0) => f64::from_bits(sign),
+        (0, fraction) => (fraction as f64 * 2f64.powi(-24)) * sign_factor(sign),
+        (0x1f, 0) => f64::from_bits(sign | 0x7ff0_0000_0000_0000),
+        (0x1f, fraction) => f64::from_bits(sign | 0x7ff0_0000_0000_0000 | (fraction as u64) << 42),
+        (exponent, fraction) => {
+            let value = (1.0 + fraction as f64 / 1024.0) * 2f64.powi(exponent as i32 - 15);
+            value * sign_factor(sign)
+        }
+    }
+}
+
+fn f64_to_half(value: f64) -> u16 {
+    let bits = value.to_bits();
+    let sign = ((bits >> 63) as u16) << 15;
+    let exponent = ((bits >> 52) & 0x7ff) as u16;
+    let fraction = bits & 0x000f_ffff_ffff_ffff;
+    if exponent == 0x7ff {
+        return sign
+            | if fraction == 0 {
+                0x7c00
+            } else {
+                0x7c00 | ((fraction >> 42) as u16).max(1)
+            };
+    }
+    let absolute = f64::from_bits(bits & 0x7fff_ffff_ffff_ffff);
+    if absolute < 2f64.powi(-14) {
+        let rounded = round_half(absolute * 2f64.powi(24));
+        return sign | if rounded >= 0x0400 { 0x0400 } else { rounded };
+    }
+    let unbiased = exponent as i32 - 1023;
+    if unbiased > 15 {
+        return sign | 0x7c00;
+    }
+    let mut significand = (fraction >> 42) as u16;
+    let remainder = fraction & ((1u64 << 42) - 1);
+    if remainder > (1u64 << 41) || (remainder == (1u64 << 41) && significand & 1 != 0) {
+        significand += 1;
+    }
+    let half_exponent = (unbiased + 15) as u16;
+    if significand == 0x0400 {
+        return sign | ((half_exponent + 1) << 10);
+    }
+    sign | (half_exponent << 10) | significand
+}
+
+fn round_half(value: f64) -> u16 {
+    let lower = value.floor() as u64;
+    let fraction = value - lower as f64;
+    let rounded = lower + u64::from(fraction > 0.5 || (fraction == 0.5 && lower & 1 != 0));
+    rounded as u16
+}
+
+fn sign_factor(sign: u64) -> f64 {
+    if sign == 0 {
+        1.0
+    } else {
+        -1.0
+    }
+}
 
 /// A Float64Array view over shared ArrayBuffer bytes.
 #[derive(Debug, Clone, PartialEq)]
