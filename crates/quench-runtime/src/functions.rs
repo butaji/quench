@@ -437,6 +437,7 @@ pub(super) fn make(
         captures,
         properties: function_properties(length),
         private_slots: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
+        private_environment: crate::private_environment::current(),
         instance_fields: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
         kind: metadata.kind,
         strictness: metadata.strictness,

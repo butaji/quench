@@ -54,6 +54,7 @@ pub mod ops;
 mod ops_meta;
 mod own_keys;
 mod packing;
+mod private_environment;
 mod private_slots;
 mod promise;
 mod properties;
