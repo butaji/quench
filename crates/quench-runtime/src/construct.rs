@@ -51,21 +51,18 @@ pub(crate) fn construct_value(
     match target {
         Value::Builtin(crate::ops::Builtin::Array) => Ok(crate::builtins::array(arguments)),
         Value::Builtin(crate::ops::Builtin::Object) => Ok(crate::builtins::object(arguments)),
-        Value::Builtin(crate::ops::Builtin::Number) => {
-            let value = crate::execute::execute_builtin_with_receiver(
-                crate::ops::Builtin::Number,
+        Value::Builtin(crate::ops::Builtin::Number) => construct_number(arguments),
+        Value::Builtin(crate::ops::Builtin::Boolean) => construct_boolean(arguments),
+        Value::Builtin(crate::ops::Builtin::Promise) => {
+            crate::execute::execute_builtin_with_receiver(
+                crate::ops::Builtin::Promise,
                 arguments,
                 None,
-            )?;
-            Ok(Value::Object(std::rc::Rc::new(vec![(
-                "_value".to_string(),
-                value,
-            )])))
+            )
         }
-        Value::Builtin(crate::ops::Builtin::TypeError) => Ok(crate::builtins::error(
-            crate::ops::Builtin::TypeError,
-            arguments,
-        )),
+        Value::Builtin(crate::ops::Builtin::TypeError) => {
+            construct_error(&crate::ops::Builtin::TypeError, arguments)
+        }
         Value::Builtin(
             crate::ops::Builtin::Error
             | crate::ops::Builtin::RangeError
@@ -74,8 +71,11 @@ pub(crate) fn construct_value(
             | crate::ops::Builtin::EvalError
             | crate::ops::Builtin::URIError
             | crate::ops::Builtin::AggregateError,
-        ) => Ok(crate::builtins::error(*target_builtin(target), arguments)),
-        Value::Builtin(crate::ops::Builtin::Date) => Ok(crate::builtins::object(arguments)),
+        ) => construct_error(target_builtin(target), arguments),
+        Value::Builtin(crate::ops::Builtin::Date) => {
+            crate::date::execute(crate::ops::Builtin::Date, None, arguments)
+                .unwrap_or_else(|| Ok(crate::builtins::object(arguments)))
+        }
         Value::Builtin(crate::ops::Builtin::RegExp) => Ok(crate::builtins::object(arguments)),
         Value::Builtin(
             crate::ops::Builtin::IntlNumberFormat
@@ -89,16 +89,56 @@ pub(crate) fn construct_value(
             | crate::ops::Builtin::IntlLocale,
         ) => crate::intl::execute(*target_builtin(target), arguments, None)
             .unwrap_or_else(|| Ok(crate::builtins::object(arguments))),
-        Value::Function(function) => {
-            let object = Value::Object(std::rc::Rc::new(Vec::new()));
-            let result = crate::functions::execute(function, &object, arguments)?;
-            if matches!(result, Value::Object(_)) {
-                Ok(result)
-            } else {
-                Ok(object)
-            }
-        }
+        Value::Function(function) => construct_function(function, target, arguments),
         _ => Err(crate::execute::VmError::NotCallable),
+    }
+}
+
+fn construct_number(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
+    let value = arguments.first().map_or(0.0, |argument| {
+        crate::intl::tolocale::value::to_number(Some(argument))
+    });
+    Ok(Value::Object(std::rc::Rc::new(vec![(
+        "_value".to_string(),
+        Value::Number(value),
+    )])))
+}
+
+fn construct_boolean(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
+    let value = crate::execute::execute_builtin_with_receiver(
+        crate::ops::Builtin::Boolean,
+        arguments,
+        None,
+    )?;
+    Ok(Value::Object(std::rc::Rc::new(vec![(
+        "_value".to_string(),
+        value,
+    )])))
+}
+
+fn construct_error(
+    builtin: &crate::ops::Builtin,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    Ok(crate::builtins::error(*builtin, arguments))
+}
+
+fn construct_function(
+    function: &crate::value::FunctionValue,
+    target: &Value,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let object = Value::Object(std::rc::Rc::new(vec![(
+        "constructor".to_string(),
+        target.clone(),
+    )]));
+    let (result, final_this) = crate::functions::execute_construct(function, &object, arguments)?;
+    if matches!(result, Value::Object(_)) {
+        Ok(result)
+    } else if matches!(final_this, Value::Object(_)) {
+        Ok(final_this)
+    } else {
+        Ok(object)
     }
 }
 
