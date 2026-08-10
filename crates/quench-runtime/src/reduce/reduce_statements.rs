@@ -283,6 +283,7 @@ pub fn reduce_function_declaration(
     let strictness = crate::reduce_support::function_strictness(body, facts.strict);
     let body_ops = functions::reduce_body(
         body,
+        &function.params,
         facts,
         parameters,
         parameter_count,
@@ -309,7 +310,7 @@ fn function_metadata(
         kind: functions::function_kind(function),
         strictness,
         is_async: function.r#async,
-        mapped_arguments: function.params.rest.is_none(),
+        mapped_arguments: crate::function_parameters::is_simple(&function.params),
     }
 }
 
