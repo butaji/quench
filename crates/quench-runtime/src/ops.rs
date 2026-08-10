@@ -55,6 +55,7 @@ pub enum Op {
         body: Vec<Op>,
         params: u16,
         captures: u16,
+        strictness: FunctionStrictness,
         is_async: bool,
     },
     MakeFunctionWithKind {
@@ -63,6 +64,7 @@ pub enum Op {
         params: u16,
         captures: u16,
         kind: FunctionKind,
+        strictness: FunctionStrictness,
         is_async: bool,
     },
     Call {
@@ -156,6 +158,12 @@ pub enum Op {
 pub enum FunctionKind {
     Ordinary,
     Arrow,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FunctionStrictness {
+    Sloppy,
+    Strict,
 }
 
 /// Opaque identity for a host realm.
