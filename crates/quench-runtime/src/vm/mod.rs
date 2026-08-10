@@ -219,6 +219,7 @@ fn run_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Value>, VmError>
         SetProperty { .. } | SetPropertyDynamic { .. } => run_get_set_property(registers, op)?,
         DeleteProperty { .. } => run_delete_property(registers, op)?,
         ForIn { .. } => return run_for_in(registers, op),
+        ForOf { .. } => return crate::loops::execute_for_of(registers, op),
         MakeFunction { .. } => crate::functions::write_op(registers, op),
         Call { .. } => run_call(registers, op)?,
         Branch { .. } => return run_branch(registers, op),
