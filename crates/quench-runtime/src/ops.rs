@@ -56,6 +56,13 @@ pub enum Op {
         params: u16,
         captures: u16,
     },
+    MakeFunctionWithKind {
+        dst: u16,
+        body: Vec<Op>,
+        params: u16,
+        captures: u16,
+        kind: FunctionKind,
+    },
     Call {
         dst: u16,
         callee: u16,
@@ -136,6 +143,12 @@ pub enum Op {
     Throw {
         src: u16,
     },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FunctionKind {
+    Ordinary,
+    Arrow,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
