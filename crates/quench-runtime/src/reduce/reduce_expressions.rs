@@ -265,6 +265,9 @@ pub fn reduce_call(
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
+    if is_direct_eval(call, locals) {
+        return reduce_direct_eval(call, ops, facts, next_register, locals);
+    }
     if let Some(result) = properties::reduce_method_call(call, ops, facts, next_register, locals) {
         return Some(result);
     }
@@ -277,6 +280,30 @@ pub fn reduce_call(
         callee,
         args,
         spreads,
+    });
+    Some(dst)
+}
+
+fn is_direct_eval(call: &oxc::ast::ast::CallExpression<'_>, locals: &HashMap<String, u16>) -> bool {
+    matches!(&call.callee, Expression::Identifier(identifier) if identifier.name == "eval")
+        && !locals.contains_key("eval")
+}
+
+fn reduce_direct_eval(
+    call: &oxc::ast::ast::CallExpression<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<u16> {
+    let argument = call.arguments.first()?.as_expression()?;
+    let source = reduce_expression(argument, ops, facts, next_register, locals)?;
+    let dst = *next_register;
+    *next_register = next_register.saturating_add(1);
+    ops.push(Op::Eval {
+        dst,
+        source,
+        strict: facts.strict,
     });
     Some(dst)
 }

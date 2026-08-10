@@ -15,6 +15,13 @@ pub(crate) mod error {
             &[Value::String(message.to_string())],
         ))
     }
+
+    pub(crate) fn throw_reference_error(message: &str) -> crate::execute::VmError {
+        crate::execute::VmError::Thrown(crate::builtins::error(
+            crate::ops::Builtin::ReferenceError,
+            &[Value::String(message.to_string())],
+        ))
+    }
 }
 
 /// Identity-bearing host capability kept outside the JavaScript value space.

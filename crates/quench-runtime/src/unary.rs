@@ -24,7 +24,12 @@ pub(crate) fn reduce_delete(
         crate::reduce::reduce_expression(&member.expression, ops, facts, next_register, locals)?;
     let dst = *next_register;
     *next_register = next_register.saturating_add(1);
-    ops.push(Op::DeleteProperty { dst, object, key });
+    ops.push(Op::DeleteProperty {
+        dst,
+        object,
+        key,
+        strict: facts.strict,
+    });
     Some(dst)
 }
 
