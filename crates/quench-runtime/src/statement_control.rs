@@ -37,6 +37,10 @@ pub(crate) fn reduce(
             crate::loops::reduce_while(statement, ops, facts, next_register, next_slot, locals)
                 .map(|_| None)
         }
+        Statement::DoWhileStatement(statement) => {
+            crate::loops::reduce_do_while(statement, ops, facts, next_register, next_slot, locals)
+                .map(|_| None)
+        }
         Statement::ForInStatement(statement) => {
             crate::loops::reduce_for_in(statement, ops, facts, next_register, next_slot, locals)
                 .map(|_| None)
