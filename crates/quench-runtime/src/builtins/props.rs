@@ -208,6 +208,7 @@ pub(crate) fn special_property(builtin: Builtin, key: &str) -> Option<Value> {
 pub(crate) fn callable(builtin: Builtin, key: &str) -> Option<Value> {
     match key {
         "call" => Some(Value::Builtin(Builtin::FunctionCall)),
+        "bind" => Some(Value::Builtin(Builtin::FunctionBind)),
         "length" => Some(Value::Number(builtin_length(builtin))),
         "name" => Some(Value::String(builtin_name(builtin).to_string())),
         _ => None,
