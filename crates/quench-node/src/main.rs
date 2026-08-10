@@ -15,10 +15,11 @@ use std::{
 use walkdir::WalkDir;
 mod esm;
 mod host_context;
-mod polyfill_codegen;
-mod polyfill_js;
+
+mod polyfills;
 #[rustfmt::skip]
-const BOOTSTRAP_SOURCE: &str = polyfill_js::BOOTSTRAP_SOURCE;
+static BOOTSTRAP_SOURCE: std::sync::LazyLock<String> =
+    std::sync::LazyLock::new(|| polyfills::node_compat().bootstrap_source());
 static MKDTEMP_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = cli_args().into_iter();
