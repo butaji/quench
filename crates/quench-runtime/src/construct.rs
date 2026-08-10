@@ -81,7 +81,7 @@ fn construct_builtin(
         crate::ops::Builtin::Promise => construct_promise(arguments),
         crate::ops::Builtin::Date => crate::date::execute(builtin, None, arguments)
             .unwrap_or_else(|| Ok(crate::builtins::object(arguments))),
-        crate::ops::Builtin::RegExp => Ok(crate::builtins::object(arguments)),
+        crate::ops::Builtin::RegExp => Ok(construct_regexp(arguments)),
         crate::ops::Builtin::IntlNumberFormat
         | crate::ops::Builtin::IntlDateTimeFormat
         | crate::ops::Builtin::IntlCollator
@@ -94,6 +94,20 @@ fn construct_builtin(
             .unwrap_or_else(|| Ok(crate::builtins::object(arguments))),
         _ => Err(crate::execute::VmError::NotCallable),
     }
+}
+
+fn construct_regexp(arguments: &[Value]) -> Value {
+    let source = arguments.first().map_or_else(String::new, |value| {
+        crate::intl::tolocale::value::to_string(Some(value))
+    });
+    let flags = arguments.get(1).map_or_else(String::new, |value| {
+        crate::intl::tolocale::value::to_string(Some(value))
+    });
+    Value::Object(Rc::new(vec![
+        ("source".to_string(), Value::String(source)),
+        ("flags".to_string(), Value::String(flags)),
+        ("lastIndex".to_string(), Value::Number(0.0)),
+    ]))
 }
 
 fn is_error_builtin(builtin: crate::ops::Builtin) -> bool {
