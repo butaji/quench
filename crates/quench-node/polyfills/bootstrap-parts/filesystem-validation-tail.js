@@ -64,11 +64,7 @@ Object.assign(globalThis.__nodeFs, {
       options?.encoding !== undefined &&
       !NodeBuffer.isEncoding(options.encoding)
     ) {
-      const error = new TypeError(
-        `The argument 'encoding' is invalid. Received '${options.encoding}'`
-      );
-      error.code = "ERR_INVALID_ARG_VALUE";
-      throw error;
+      throw Object.assign(new TypeError(`The argument 'encoding' is invalid. Received '${options.encoding}'`), { code: "ERR_INVALID_ARG_VALUE" });
     }
     let kind;
     try {
@@ -107,11 +103,7 @@ Object.assign(globalThis.__nodeFs, {
   },
   rmdirSync: (value, options = {}) => {
     if (options?.recursive === true) {
-      const error = new TypeError(
-        "The recursive option is no longer supported for fs.rmdir"
-      );
-      error.code = "ERR_INVALID_ARG_VALUE";
-      throw error;
+      throw Object.assign(new TypeError("The recursive option is no longer supported for fs.rmdir"), { code: "ERR_INVALID_ARG_VALUE" });
     }
     const path = nodeFsPath(value);
     try {
@@ -140,14 +132,10 @@ Object.assign(globalThis.__nodeFs, {
   unlinkSync: (value) => globalThis.__quench_fs_unlink(String(value)),
   truncateSync: (value, length = 0) => {
     if (typeof length !== "number" || !Number.isFinite(length)) {
-      const error = new TypeError('The "len" argument must be of type number');
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError('The "len" argument must be of type number'), { code: "ERR_INVALID_ARG_TYPE" });
     }
     if (!Number.isInteger(length)) {
-      const error = new RangeError('The value of "len" is out of range');
-      error.code = "ERR_OUT_OF_RANGE";
-      throw error;
+      throw Object.assign(new RangeError('The value of "len" is out of range'), { code: "ERR_OUT_OF_RANGE" });
     }
     const path =
       typeof value === "number"

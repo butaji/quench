@@ -147,23 +147,13 @@ const __quenchNetSocket = class Socket extends globalThis.__nodeEventEmitter {
   }
   setTimeout(timeout, callback) {
     if (typeof timeout !== "number") {
-      const error = new TypeError(
-        'The "timeout" argument must be of type number'
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError('The "timeout" argument must be of type number'), { code: "ERR_INVALID_ARG_TYPE" });
     }
     if (!Number.isFinite(timeout) || timeout < 0) {
-      const error = new RangeError('The value of "timeout" is out of range');
-      error.code = "ERR_OUT_OF_RANGE";
-      throw error;
+      throw Object.assign(new RangeError('The value of "timeout" is out of range'), { code: "ERR_OUT_OF_RANGE" });
     }
     if (callback !== undefined && typeof callback !== "function") {
-      const error = new TypeError(
-        'The "callback" argument must be of type function'
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError('The "callback" argument must be of type function'), { code: "ERR_INVALID_ARG_TYPE" });
     }
     if (this._timeoutTimer) {
       globalThis.clearTimeout(this._timeoutTimer);
@@ -211,11 +201,7 @@ const __quenchNetSocket = class Socket extends globalThis.__nodeEventEmitter {
   connect(_options, callback) {
     if (Array.isArray(_options)) {
       if (!_options[globalThis.__quenchNetNormalizedArgsSymbol]) {
-        const error = new TypeError(
-          "The port or options argument must be specified"
-        );
-        error.code = "ERR_MISSING_ARGS";
-        throw error;
+        throw Object.assign(new TypeError("The port or options argument must be specified"), { code: "ERR_MISSING_ARGS" });
       }
       callback = _options[1];
       _options = _options[0];
@@ -249,11 +235,7 @@ const __quenchNetSocket = class Socket extends globalThis.__nodeEventEmitter {
       this._handle?.constructor?.name === "BoundSocket" &&
       (_options.localAddress !== undefined || _options.localPort !== undefined)
     ) {
-      const error = new TypeError(
-        "localAddress and localPort cannot be used with a bound socket"
-      );
-      error.code = "ERR_INVALID_ARG_VALUE";
-      throw error;
+      throw Object.assign(new TypeError("localAddress and localPort cannot be used with a bound socket"), { code: "ERR_INVALID_ARG_VALUE" });
     }
     const localPort = Number(_options.localPort || 0);
     if (

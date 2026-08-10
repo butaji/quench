@@ -9,9 +9,7 @@ const __quenchDecoderInputBytes = (input) => {
 };
 const __quenchDecoderValidateInput = (decoder, input) => {
   if (!decoder || !Array.isArray(decoder._pending)) {
-    const error = new TypeError("Cannot call write on an invalid receiver");
-    error.code = "ERR_INVALID_THIS";
-    throw error;
+    throw Object.assign(new TypeError("Cannot call write on an invalid receiver"), { code: "ERR_INVALID_THIS" });
   }
   if (!ArrayBuffer.isView(input)) {
     const error = new TypeError(
@@ -50,9 +48,7 @@ const __quenchStringDecoderClass = class {
     if (
       !["utf8", "ucs2", "utf16le", "latin1", "ascii"].includes(this.encoding)
     ) {
-      const error = new TypeError(`Unknown encoding: ${encoding}`);
-      error.code = "ERR_UNKNOWN_ENCODING";
-      throw error;
+      throw Object.assign(new TypeError(`Unknown encoding: ${encoding}`), { code: "ERR_UNKNOWN_ENCODING" });
     }
     this._decoder = this.encoding === "utf8"
       ? new TextDecoder("utf-8")

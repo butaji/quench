@@ -74,16 +74,12 @@ const __quenchZlibModule = {
     }
     if (options?.rejectGarbageAfterEnd) {
       if (members.length) {
-        const error = new TypeError("Trailing garbage after stream end");
-        error.code = "ERR_TRAILING_JUNK_AFTER_STREAM_END";
-        throw error;
+        throw Object.assign(new TypeError("Trailing garbage after stream end"), { code: "ERR_TRAILING_JUNK_AFTER_STREAM_END" });
       }
       for (let end = 18; end < bytes.length; end++) {
         try {
           globalThis.__quench_zlib_gunzip(bytes.slice(0, end));
-          const error = new TypeError("Trailing garbage after stream end");
-          error.code = "ERR_TRAILING_JUNK_AFTER_STREAM_END";
-          throw error;
+          throw Object.assign(new TypeError("Trailing garbage after stream end"), { code: "ERR_TRAILING_JUNK_AFTER_STREAM_END" });
         } catch (error) {
           if (error.code === "ERR_TRAILING_JUNK_AFTER_STREAM_END") throw error;
         }
@@ -125,9 +121,7 @@ const __quenchZlibModule = {
         .slice(0, bytes.length / 2)
         .every((value, index) => value === bytes[index + bytes.length / 2])
     ) {
-      const error = new TypeError("Trailing garbage after stream end");
-      error.code = "ERR_TRAILING_JUNK_AFTER_STREAM_END";
-      throw error;
+      throw Object.assign(new TypeError("Trailing garbage after stream end"), { code: "ERR_TRAILING_JUNK_AFTER_STREAM_END" });
     }
     return __quenchZlibFromArray(globalThis.__quench_zlib_gunzip(bytes));
   },
@@ -181,11 +175,7 @@ const __quenchZlibModule = {
   createInflateRaw: () => __quenchZlibModule.InflateRaw(),
   createGzip: (options) => {
     if (options?.windowBits === 0) {
-      const error = new RangeError(
-        'The value of "options.windowBits" is out of range. It must be >= 9 and <= 15. Received 0',
-      );
-      error.code = "ERR_OUT_OF_RANGE";
-      throw error;
+      throw Object.assign(new RangeError('The value of "options.windowBits" is out of range. It must be >= 9 and <= 15. Received 0'), { code: "ERR_OUT_OF_RANGE" });
     }
     __quenchValidateZlibConstructorOptions(options);
     return Object.assign(

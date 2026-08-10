@@ -154,11 +154,7 @@ class __QuenchRealFSProvider extends __QuenchVirtualProvider {
   constructor(root = ".") {
     super();
     if (typeof root !== "string") {
-      const error = new TypeError(
-        "The rootPath argument must be of type string"
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError("The rootPath argument must be of type string"), { code: "ERR_INVALID_ARG_TYPE" });
     }
     this.root = globalThis.__nodePath.resolve(root);
     this.rootPath = this.root;

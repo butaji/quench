@@ -8,22 +8,16 @@ let __quenchAsyncHooksModule;
   class AsyncResource {
     constructor(type, options = {}) {
       if (type === undefined) {
-        const error = new TypeError('The "type" argument must be specified');
-        error.code = "ERR_INVALID_ARG_TYPE";
-        throw error;
+        throw Object.assign(new TypeError('The "type" argument must be specified'), { code: "ERR_INVALID_ARG_TYPE" });
       }
       if (String(type).length === 0) {
-        const error = new TypeError("Invalid asyncId type");
-        error.code = "ERR_ASYNC_TYPE";
-        throw error;
+        throw Object.assign(new TypeError("Invalid asyncId type"), { code: "ERR_ASYNC_TYPE" });
       }
       if (
         typeof options === "number" &&
         (!Number.isInteger(options) || options < 0)
       ) {
-        const error = new RangeError("Invalid asyncId");
-        error.code = "ERR_INVALID_ASYNC_ID";
-        throw error;
+        throw Object.assign(new RangeError("Invalid asyncId"), { code: "ERR_INVALID_ASYNC_ID" });
       }
       this.type = String(type);
       this._asyncId = ++globalThis.__nodeNextAsyncId;
@@ -38,11 +32,7 @@ let __quenchAsyncHooksModule;
     }
     runInAsyncScope(callback, thisArg, ...args) {
       if (typeof callback !== "function") {
-        const error = new TypeError(
-          "The callback argument must be of type function"
-        );
-        error.code = "ERR_INVALID_ARG_TYPE";
-        throw error;
+        throw Object.assign(new TypeError("The callback argument must be of type function"), { code: "ERR_INVALID_ARG_TYPE" });
       }
       const previous = globalThis.__nodeCurrentAsyncResource;
       globalThis.__nodeCurrentAsyncResource = this._resource;
@@ -54,11 +44,7 @@ let __quenchAsyncHooksModule;
     }
     bind(callback, thisArg) {
       if (typeof callback !== "function") {
-        const error = new TypeError(
-          "The callback argument must be of type function"
-        );
-        error.code = "ERR_INVALID_ARG_TYPE";
-        throw error;
+        throw Object.assign(new TypeError("The callback argument must be of type function"), { code: "ERR_INVALID_ARG_TYPE" });
       }
       const resource = this;
       const bound = function (...args) {
@@ -76,11 +62,7 @@ let __quenchAsyncHooksModule;
     }
     static bind(callback, thisArg) {
       if (typeof callback !== "function") {
-        const error = new TypeError(
-          'The "fn" argument must be of type function'
-        );
-        error.code = "ERR_INVALID_ARG_TYPE";
-        throw error;
+        throw Object.assign(new TypeError('The "fn" argument must be of type function'), { code: "ERR_INVALID_ARG_TYPE" });
       }
       const resource = globalThis.__nodeCurrentAsyncResource;
       const captured = globalThis.__nodeCloneAsyncResource(resource);
@@ -181,11 +163,7 @@ let __quenchAsyncHooksModule;
     }
     static bind(callback) {
       if (typeof callback !== "function") {
-        const error = new TypeError(
-          'The "fn" argument must be of type function'
-        );
-        error.code = "ERR_INVALID_ARG_TYPE";
-        throw error;
+        throw Object.assign(new TypeError('The "fn" argument must be of type function'), { code: "ERR_INVALID_ARG_TYPE" });
       }
       const resource = globalThis.__nodeCurrentAsyncResource;
       const captured = globalThis.__nodeCloneAsyncResource(resource);
@@ -220,9 +198,7 @@ let __quenchAsyncHooksModule;
           callbacks[name] !== undefined &&
           typeof callbacks[name] !== "function"
         ) {
-          const error = new TypeError(`hook.${name} must be a function`);
-          error.code = "ERR_ASYNC_CALLBACK";
-          throw error;
+          throw Object.assign(new TypeError(`hook.${name} must be a function`), { code: "ERR_ASYNC_CALLBACK" });
         }
       }
       const hook = {

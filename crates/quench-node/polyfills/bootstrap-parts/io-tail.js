@@ -4,11 +4,7 @@ Object.assign(globalThis.__nodeFs, {
       ? options
       : options && options.encoding;
     if (encoding !== undefined && !NodeBuffer.isEncoding(encoding)) {
-      const error = new TypeError(
-        `The argument 'encoding' is invalid. Received '${encoding}'`,
-      );
-      error.code = "ERR_INVALID_ARG_VALUE";
-      throw error;
+      throw Object.assign(new TypeError(`The argument 'encoding' is invalid. Received '${encoding}'`), { code: "ERR_INVALID_ARG_VALUE" });
     }
     const result = globalThis.__quench_fs_readlink(nodeFsPath(value));
     return encoding === "buffer"
@@ -43,16 +39,10 @@ Object.assign(globalThis.__nodeFs, {
       (typeof target !== "string" && !(target instanceof Uint8Array)) ||
       (typeof link !== "string" && !(link instanceof Uint8Array))
     ) {
-      const error = new TypeError(
-        'The "target" and "path" arguments must be strings or Buffer',
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError('The "target" and "path" arguments must be strings or Buffer'), { code: "ERR_INVALID_ARG_TYPE" });
     }
     if (type !== undefined && !["file", "dir", "junction"].includes(type)) {
-      const error = new TypeError('The "type" argument is invalid');
-      error.code = "ERR_INVALID_ARG_VALUE";
-      throw error;
+      throw Object.assign(new TypeError('The "type" argument is invalid'), { code: "ERR_INVALID_ARG_VALUE" });
     }
     const targetPath = typeof target === "string"
       ? target
@@ -64,11 +54,7 @@ Object.assign(globalThis.__nodeFs, {
       (typeof existing !== "string" && !(existing instanceof Uint8Array)) ||
       (typeof link !== "string" && !(link instanceof Uint8Array))
     ) {
-      const error = new TypeError(
-        'The "path" argument must be of type string or an instance of Buffer or URL',
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError('The "path" argument must be of type string or an instance of Buffer or URL'), { code: "ERR_INVALID_ARG_TYPE" });
     }
     return globalThis.__quench_fs_link(nodeFsPath(existing), nodeFsPath(link));
   },

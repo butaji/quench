@@ -335,11 +335,7 @@ const __nodeUtilDeprecate = (
       code === null
         ? "Received null"
         : `Received type ${typeof code} (${String(code)})`;
-    const error = new TypeError(
-      'The "code" argument must be of type string. ' + received
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "code" argument must be of type string. ' + received), { code: "ERR_INVALID_ARG_TYPE" });
   }
   const warningKey = code === undefined ? functionToWrap : code;
   const deprecatedFunction = function (...args) {

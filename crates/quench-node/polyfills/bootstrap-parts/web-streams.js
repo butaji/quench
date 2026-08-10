@@ -47,9 +47,7 @@ const __quenchStartReadable = (stream, source) => {
 };
 const __quenchValidateCompressionFormat = (format) => {
   if (["gzip", "deflate", "deflate-raw", "brotli"].includes(format)) return;
-  const error = new TypeError("The compression format is invalid");
-  error.code = "ERR_INVALID_ARG_VALUE";
-  throw error;
+  throw Object.assign(new TypeError("The compression format is invalid"), { code: "ERR_INVALID_ARG_VALUE" });
 };
 const __quenchReadableRead = async (stream) => {
   if (stream._error) throw stream._error;
@@ -116,9 +114,7 @@ class __quenchReadableStream {
   }
   getReader() {
     if (this.locked) {
-      const error = new TypeError("Invalid state: stream is locked");
-      error.code = "ERR_INVALID_STATE";
-      throw error;
+      throw Object.assign(new TypeError("Invalid state: stream is locked"), { code: "ERR_INVALID_STATE" });
     }
     this.locked = true;
     return __quenchReadableReader(this);
@@ -134,9 +130,7 @@ class __quenchReadableStream {
   }
   pipeThrough(transform) {
     if (this.locked) {
-      const error = new TypeError("Invalid state: stream is locked");
-      error.code = "ERR_INVALID_STATE";
-      throw error;
+      throw Object.assign(new TypeError("Invalid state: stream is locked"), { code: "ERR_INVALID_STATE" });
     }
     const writer = transform.writable.getWriter();
     const reader = this.getReader();
@@ -169,9 +163,7 @@ class __quenchReadableStream {
   }
   tee() {
     if (this.locked) {
-      const error = new TypeError("Invalid state: stream is locked");
-      error.code = "ERR_INVALID_STATE";
-      throw error;
+      throw Object.assign(new TypeError("Invalid state: stream is locked"), { code: "ERR_INVALID_STATE" });
     }
     const reader = this.getReader();
     let controllers = [];
@@ -227,9 +219,7 @@ class __quenchWritableStream {
   }
   getWriter() {
     if (this.locked) {
-      const error = new TypeError("Invalid state: stream is locked");
-      error.code = "ERR_INVALID_STATE";
-      throw error;
+      throw Object.assign(new TypeError("Invalid state: stream is locked"), { code: "ERR_INVALID_STATE" });
     }
     this.locked = true;
     const sink = this._sink;
@@ -326,9 +316,7 @@ class __quenchDecompressionStream extends __quenchTransformStream {
 class __quenchCompressionStream extends __quenchTransformStream {
   constructor(format) {
     if (!["gzip", "deflate", "deflate-raw", "brotli"].includes(format)) {
-      const error = new TypeError("The compression format is invalid");
-      error.code = "ERR_INVALID_ARG_VALUE";
-      throw error;
+      throw Object.assign(new TypeError("The compression format is invalid"), { code: "ERR_INVALID_ARG_VALUE" });
     }
     const chunks = [];
     super({
@@ -362,17 +350,13 @@ class __quenchTextDecoderStream extends __quenchTransformStream {
   constructor(encoding = "utf-8", options = {}) {
     const normalized = String(encoding).toLowerCase();
     if (normalized !== "utf-8" && normalized !== "utf8") {
-      const error = new TypeError(`The "encoding" argument is invalid`);
-      error.code = "ERR_ENCODING_NOT_SUPPORTED";
-      throw error;
+      throw Object.assign(new TypeError(`The "encoding" argument is invalid`), { code: "ERR_ENCODING_NOT_SUPPORTED" });
     }
     if (
       options !== undefined &&
       (options === null || typeof options !== "object")
     ) {
-      const error = new TypeError("The options argument must be an object");
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError("The options argument must be an object"), { code: "ERR_INVALID_ARG_TYPE" });
     }
     const decoder = new TextDecoder("utf-8", options);
     super({

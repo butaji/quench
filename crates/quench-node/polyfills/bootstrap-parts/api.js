@@ -18,11 +18,7 @@ const __nodeAssertionFailure = (message) => {
   throw error;
 };
 const __nodeAssertMissingArgs = () => {
-  const error = new TypeError(
-    'The "actual" and "expected" arguments must be specified'
-  );
-  error.code = "ERR_MISSING_ARGS";
-  throw error;
+  throw Object.assign(new TypeError('The "actual" and "expected" arguments must be specified'), { code: "ERR_MISSING_ARGS" });
 };
 const __nodeAssertStringDiff = (actual, expected) => {
   const render = (value, marker) => {

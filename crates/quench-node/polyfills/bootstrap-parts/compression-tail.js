@@ -35,12 +35,8 @@ const __quenchZlibToBytes = (input, encoding) => {
       : typeof input === "boolean" || typeof input === "number"
       ? `Received type ${typeof input} (${String(input)})`
       : `Received an instance of ${input?.constructor?.name || "Object"}`;
-    const error = new TypeError(
-      'The "buffer" argument must be of type string or an instance of Buffer, TypedArray, DataView, or ArrayBuffer.' +
-        ` ${received}`,
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "buffer" argument must be of type string or an instance of Buffer, TypedArray, DataView, or ArrayBuffer.' +
+        ` ${received}`), { code: "ERR_INVALID_ARG_TYPE" });
   }
   if (
     ArrayBuffer.isView(input) &&
@@ -49,11 +45,7 @@ const __quenchZlibToBytes = (input, encoding) => {
     Number.isFinite(input.buffer.byteLength) &&
     input.byteLength > input.buffer.byteLength
   ) {
-    const error = new RangeError(
-      "Offset is outside the bounds of the DataView",
-    );
-    error.code = "ERR_OUT_OF_RANGE";
-    throw error;
+    throw Object.assign(new RangeError("Offset is outside the bounds of the DataView"), { code: "ERR_OUT_OF_RANGE" });
   }
   if (ArrayBuffer.isView(input)) {
     return new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
@@ -191,25 +183,17 @@ const __quenchZlibStream = (transform, validateOnWrite = false) => {
         callback = kind;
         kind = undefined;
       } else if (kind !== undefined && typeof kind !== "number") {
-        const error = new TypeError(
-          'The "kind" argument must be of type number',
-        );
-        error.code = "ERR_INVALID_ARG_TYPE";
-        throw error;
+        throw Object.assign(new TypeError('The "kind" argument must be of type number'), { code: "ERR_INVALID_ARG_TYPE" });
       } else if (typeof kind === "number" && Number.isNaN(kind)) {
         kind = undefined;
       } else if (kind !== undefined && !Number.isInteger(kind)) {
-        const error = new RangeError('The value of "kind" is out of range');
-        error.code = "ERR_OUT_OF_RANGE";
-        throw error;
+        throw Object.assign(new RangeError('The value of "kind" is out of range'), { code: "ERR_OUT_OF_RANGE" });
       } else if (
         kind !== undefined &&
         stream.__flushKinds &&
         !stream.__flushKinds.includes(kind)
       ) {
-        const error = new RangeError('The value of "kind" is out of range');
-        error.code = "ERR_OUT_OF_RANGE";
-        throw error;
+        throw Object.assign(new RangeError('The value of "kind" is out of range'), { code: "ERR_OUT_OF_RANGE" });
       }
       if (typeof callback === "function") queueMicrotask(() => callback());
       return stream;
@@ -238,9 +222,7 @@ const __quenchZlibStream = (transform, validateOnWrite = false) => {
     _outOffset: 0,
     _processChunk(input) {
       if (this._outOffset > this._chunkSize) {
-        const error = new RangeError('The value of "offset" is out of range');
-        error.code = "ERR_OUT_OF_RANGE";
-        throw error;
+        throw Object.assign(new RangeError('The value of "offset" is out of range'), { code: "ERR_OUT_OF_RANGE" });
       }
       return transform(input);
     },
@@ -320,11 +302,7 @@ const __quenchValidateBrotliOptions = (options) => {
   for (const name of ["flush", "finishFlush"]) {
     const value = options?.[name];
     if (value !== undefined && (value < 0 || value > 3)) {
-      const error = new RangeError(
-        `The value of "options.${name}" is out of range. It must be >= 0 and <= 3. Received ${value}`,
-      );
-      error.code = "ERR_OUT_OF_RANGE";
-      throw error;
+      throw Object.assign(new RangeError(`The value of "options.${name}" is out of range. It must be >= 0 and <= 3. Received ${value}`), { code: "ERR_OUT_OF_RANGE" });
     }
   }
   const params = options?.params;
@@ -337,9 +315,7 @@ const __quenchValidateBrotliOptions = (options) => {
       !valid.has(numeric) ||
       String(numeric) !== key
     ) {
-      const error = new RangeError(`${key} is not a valid Brotli parameter`);
-      error.code = "ERR_BROTLI_INVALID_PARAM";
-      throw error;
+      throw Object.assign(new RangeError(`${key} is not a valid Brotli parameter`), { code: "ERR_BROTLI_INVALID_PARAM" });
     }
     if (numeric === 4 && params[key] !== 0 && params[key] !== 1) {
       const error = new Error("Initialization failed");
