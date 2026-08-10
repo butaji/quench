@@ -164,6 +164,7 @@ pub(crate) fn execute_for_in(
         match crate::execute::execute_in_place(body, registers) {
             Ok(value) => return Ok(Some(value)),
             Err(crate::execute::VmError::MissingReturn) => {}
+            Err(crate::execute::VmError::Break) => return Ok(None),
             Err(error) => return Err(error),
         }
     }
@@ -188,6 +189,7 @@ pub(crate) fn execute(
         match crate::execute::execute_in_place(body, registers) {
             Ok(value) => return Ok(Some(value)),
             Err(crate::execute::VmError::MissingReturn) => {}
+            Err(crate::execute::VmError::Break) => break,
             Err(error) => return Err(error),
         }
         run_fragment(update, registers)?;
