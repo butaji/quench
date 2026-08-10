@@ -63,6 +63,7 @@ fn run_control_op(
         ForIn { .. } => crate::loops::execute_for_in(registers, op).map(Some),
         ForOf { .. } => crate::loops::execute_for_of(registers, op).map(Some),
         Branch { .. } => crate::branch::execute(registers, op).map(Some),
+        Label { .. } => crate::statement_control::execute_label(registers, op).map(Some),
         Try { .. } => crate::exceptions::execute(registers, op).map(Some),
         Loop { .. } => crate::loops::execute(registers, op).map(Some),
         Switch { .. } => crate::switch::execute(registers, op).map(Some),

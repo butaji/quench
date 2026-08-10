@@ -38,6 +38,7 @@ pub enum Op {
     Await { dst: u16, src: u16 },
     Construct { dst: u16, callee: u16, args: Vec<u16> },
     Branch { condition: u16, then_ops: Vec<Op>, else_ops: Vec<Op> },
+    Label { name: String, body: Vec<Op> },
     Try {
         body: Vec<Op>,
         handler: Option<Vec<Op>>,
@@ -50,6 +51,7 @@ pub enum Op {
         test: Vec<Op>,
         body: Vec<Op>,
         update: Vec<Op>,
+        post_test: bool,
     },
     ForIn { label: Option<String>, object: u16, slot: u16, body: Vec<Op> },
     ForOf { label: Option<String>, iterable: u16, slot: u16, body: Vec<Op> },
