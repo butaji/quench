@@ -90,6 +90,57 @@ pub struct Float64ArrayData {
     pub length: usize,
 }
 
+/// A Float32Array view over shared ArrayBuffer bytes.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Float32ArrayData {
+    pub buffer: Rc<ArrayBufferData>,
+    pub byte_offset: usize,
+    pub length: usize,
+}
+
+impl Float32ArrayData {
+    pub const BYTES_PER_ELEMENT: usize = std::mem::size_of::<f32>();
+
+    pub fn new(buffer: Rc<ArrayBufferData>, byte_offset: usize, length: usize) -> Self {
+        Self {
+            buffer,
+            byte_offset,
+            length,
+        }
+    }
+
+    pub fn byte_length(&self) -> usize {
+        self.length * Self::BYTES_PER_ELEMENT
+    }
+
+    pub fn get(&self, index: usize) -> Option<f32> {
+        if index >= self.length || self.buffer.byte_length() < self.byte_offset + self.byte_length()
+        {
+            return None;
+        }
+        let start = self.byte_offset + index * Self::BYTES_PER_ELEMENT;
+        let end = start + Self::BYTES_PER_ELEMENT;
+        let bytes = self.buffer.bytes.borrow();
+        let data: [u8; Self::BYTES_PER_ELEMENT] = bytes.get(start..end)?.try_into().ok()?;
+        Some(f32::from_ne_bytes(data))
+    }
+
+    pub fn set(&self, index: usize, value: f32) -> bool {
+        if index >= self.length || self.buffer.byte_length() < self.byte_offset + self.byte_length()
+        {
+            return false;
+        }
+        let start = self.byte_offset + index * Self::BYTES_PER_ELEMENT;
+        let end = start + Self::BYTES_PER_ELEMENT;
+        let mut bytes = self.buffer.bytes.borrow_mut();
+        let Some(destination) = bytes.get_mut(start..end) else {
+            return false;
+        };
+        destination.copy_from_slice(&value.to_ne_bytes());
+        true
+    }
+}
+
 impl Float64ArrayData {
     pub const BYTES_PER_ELEMENT: usize = std::mem::size_of::<f64>();
 
@@ -149,6 +200,9 @@ pub enum Value {
     BigInt(String),
     Array(Rc<Vec<Value>>),
     Object(Rc<Vec<(String, Value)>>),
+    ArrayBuffer(Rc<ArrayBufferData>),
+    Float64Array(Rc<Float64ArrayData>),
+    Float32Array(Rc<Float32ArrayData>),
     Builtin(Builtin),
     Function(Rc<FunctionValue>),
     BoundFunction(Rc<BoundFunctionValue>),
