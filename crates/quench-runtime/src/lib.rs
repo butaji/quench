@@ -13,6 +13,7 @@
 
 mod arrays;
 mod bigint;
+mod binding_patterns;
 mod blocks;
 mod branch;
 mod builtin_meta;

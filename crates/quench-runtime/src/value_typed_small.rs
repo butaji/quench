@@ -25,12 +25,20 @@ impl Float32ArrayData {
         }
     }
 
+    pub fn logical_len(&self) -> usize {
+        if self.length == usize::MAX {
+            self.buffer.byte_length().saturating_sub(self.byte_offset) / Self::BYTES_PER_ELEMENT
+        } else {
+            self.length
+        }
+    }
+
     pub fn byte_length(&self) -> usize {
-        self.length * Self::BYTES_PER_ELEMENT
+        self.logical_len() * Self::BYTES_PER_ELEMENT
     }
 
     pub fn get(&self, index: usize) -> Option<f32> {
-        if index >= self.length || self.buffer.byte_length() < self.byte_offset + self.byte_length()
+        if index >= self.logical_len() || self.buffer.byte_length() < self.byte_offset + self.byte_length()
         {
             return None;
         }
@@ -42,7 +50,7 @@ impl Float32ArrayData {
     }
 
     pub fn set(&self, index: usize, value: f32) -> bool {
-        if index >= self.length || self.buffer.byte_length() < self.byte_offset + self.byte_length()
+        if index >= self.logical_len() || self.buffer.byte_length() < self.byte_offset + self.byte_length()
         {
             return false;
         }
@@ -68,12 +76,20 @@ impl Float64ArrayData {
         }
     }
 
+    pub fn logical_len(&self) -> usize {
+        if self.length == usize::MAX {
+            self.buffer.byte_length().saturating_sub(self.byte_offset) / Self::BYTES_PER_ELEMENT
+        } else {
+            self.length
+        }
+    }
+
     pub fn byte_length(&self) -> usize {
-        self.length * Self::BYTES_PER_ELEMENT
+        self.logical_len() * Self::BYTES_PER_ELEMENT
     }
 
     pub fn get(&self, index: usize) -> Option<f64> {
-        if index >= self.length || self.buffer.byte_length() < self.byte_offset + self.byte_length()
+        if index >= self.logical_len() || self.buffer.byte_length() < self.byte_offset + self.byte_length()
         {
             return None;
         }
@@ -85,7 +101,7 @@ impl Float64ArrayData {
     }
 
     pub fn set(&self, index: usize, value: f64) -> bool {
-        if index >= self.length || self.buffer.byte_length() < self.byte_offset + self.byte_length()
+        if index >= self.logical_len() || self.buffer.byte_length() < self.byte_offset + self.byte_length()
         {
             return false;
         }
@@ -127,12 +143,20 @@ impl Int16ArrayData {
         }
     }
 
+    pub fn logical_len(&self) -> usize {
+        if self.length == usize::MAX {
+            self.buffer.byte_length().saturating_sub(self.byte_offset) / Self::BYTES_PER_ELEMENT
+        } else {
+            self.length
+        }
+    }
+
     pub fn byte_length(&self) -> usize {
-        self.length * Self::BYTES_PER_ELEMENT
+        self.logical_len() * Self::BYTES_PER_ELEMENT
     }
 
     pub fn get(&self, index: usize) -> Option<i16> {
-        if index >= self.length || self.is_out_of_bounds() {
+        if index >= self.logical_len() || self.is_out_of_bounds() {
             return None;
         }
         let start = self.byte_offset + index * Self::BYTES_PER_ELEMENT;
@@ -143,7 +167,7 @@ impl Int16ArrayData {
     }
 
     pub fn set(&self, index: usize, value: i16) -> bool {
-        if index >= self.length || self.is_out_of_bounds() {
+        if index >= self.logical_len() || self.is_out_of_bounds() {
             return false;
         }
         let start = self.byte_offset + index * Self::BYTES_PER_ELEMENT;
@@ -180,12 +204,20 @@ impl Uint16ArrayData {
         }
     }
 
+    pub fn logical_len(&self) -> usize {
+        if self.length == usize::MAX {
+            self.buffer.byte_length().saturating_sub(self.byte_offset) / Self::BYTES_PER_ELEMENT
+        } else {
+            self.length
+        }
+    }
+
     pub fn byte_length(&self) -> usize {
-        self.length * Self::BYTES_PER_ELEMENT
+        self.logical_len() * Self::BYTES_PER_ELEMENT
     }
 
     pub fn get(&self, index: usize) -> Option<u16> {
-        if index >= self.length || self.is_out_of_bounds() {
+        if index >= self.logical_len() || self.is_out_of_bounds() {
             return None;
         }
         let start = self.byte_offset + index * Self::BYTES_PER_ELEMENT;
@@ -196,7 +228,7 @@ impl Uint16ArrayData {
     }
 
     pub fn set(&self, index: usize, value: u16) -> bool {
-        if index >= self.length || self.is_out_of_bounds() {
+        if index >= self.logical_len() || self.is_out_of_bounds() {
             return false;
         }
         let start = self.byte_offset + index * Self::BYTES_PER_ELEMENT;
@@ -225,12 +257,20 @@ impl Int8ArrayData {
         }
     }
 
+    pub fn logical_len(&self) -> usize {
+        if self.length == usize::MAX {
+            self.buffer.byte_length().saturating_sub(self.byte_offset) / Self::BYTES_PER_ELEMENT
+        } else {
+            self.length
+        }
+    }
+
     pub fn byte_length(&self) -> usize {
-        self.length * Self::BYTES_PER_ELEMENT
+        self.logical_len() * Self::BYTES_PER_ELEMENT
     }
 
     pub fn get(&self, index: usize) -> Option<i8> {
-        if index >= self.length || self.is_out_of_bounds() {
+        if index >= self.logical_len() || self.is_out_of_bounds() {
             return None;
         }
         let offset = self.byte_offset + index;
@@ -243,7 +283,7 @@ impl Int8ArrayData {
     }
 
     pub fn set(&self, index: usize, value: i8) -> bool {
-        if index >= self.length || self.is_out_of_bounds() {
+        if index >= self.logical_len() || self.is_out_of_bounds() {
             return false;
         }
         let offset = self.byte_offset + index;

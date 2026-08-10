@@ -109,7 +109,7 @@ pub(crate) fn execute_set_property(
         ));
     }
     let value = crate::execute::read_register(registers, src)?.clone();
-    if crate::vm::is_global_object(&target) && crate::with_scope::set_if_bound(&key, &value) {
+    if crate::vm::is_global_object(&target) && crate::with_scope::set_if_bound(&key, &value)? {
         return Ok(());
     }
     if let Some(setter) = crate::property_define::accessor(&target, &key, "set") {

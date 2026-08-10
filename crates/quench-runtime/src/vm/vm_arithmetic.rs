@@ -91,6 +91,18 @@ fn evaluate_binary(
 fn instanceof(value: &Value, constructor: &Value) -> bool {
     if matches!(
         (value, constructor),
+        (
+            Value::BigInt64Array(_),
+            Value::Builtin(Builtin::BigInt64Array)
+        ) | (
+            Value::BigUint64Array(_),
+            Value::Builtin(Builtin::BigUint64Array)
+        )
+    ) {
+        return true;
+    }
+    if matches!(
+        (value, constructor),
         (Value::Map(_), Value::Builtin(Builtin::Map))
     ) {
         return true;
