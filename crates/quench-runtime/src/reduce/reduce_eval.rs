@@ -4,6 +4,32 @@ use oxc::ast::ast::Statement;
 
 use crate::{facts::ProgramDb, ops::Op, reduce_support::EvalBehavior};
 
+pub(super) fn directive_completion(
+    program: &oxc::ast::ast::Program<'_>,
+    inherited_strict: bool,
+) -> Option<String> {
+    program
+        .directives
+        .get(usize::from(inherited_strict)..)?
+        .last()
+        .map(|directive| directive.directive.to_string())
+}
+
+pub(super) fn emit_directive(
+    ops: &mut Vec<Op>,
+    next: &mut u16,
+    value: Option<String>,
+) -> Option<u16> {
+    let value = value?;
+    let register = *next;
+    *next = next.saturating_add(1);
+    ops.push(Op::Const {
+        dst: register,
+        value: crate::ops::Constant::String(value),
+    });
+    Some(register)
+}
+
 type ReductionState<'a> = (
     &'a mut Vec<Op>,
     &'a mut u16,

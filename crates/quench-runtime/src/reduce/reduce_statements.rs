@@ -9,7 +9,6 @@ use oxc::{
     span::SourceType,
 };
 use std::collections::HashMap;
-
 const GLOBAL_THIS: &str = "globalThis";
 const SCRIPT_THIS_SLOT: &str = "\0script_this";
 #[derive(Debug, PartialEq)]
@@ -17,7 +16,6 @@ pub struct ResidualProgram {
     pub facts: ProgramDb,
     pub ops: Vec<Op>,
 }
-
 pub fn reduce_source(source: &str) -> Result<ResidualProgram, Vec<String>> {
     reduce_source_with_type(source, SourceType::cjs())
 }
@@ -39,6 +37,8 @@ pub fn reduce_eval_source(
     let (scope_count, symbol_count) = crate::semantic::analyze(&parsed.program)?;
     let strict = inherited_strict || has_strict_directive(&parsed.program);
     crate::reduce_support::validate_eval_var_names(&parsed.program, strict, forbidden_var_names)?;
+    let directive_completion =
+        super::reduce_eval::directive_completion(&parsed.program, inherited_strict);
     let mut facts = ProgramDb {
         strict,
         scope_count,
@@ -54,18 +54,17 @@ pub fn reduce_eval_source(
         next_slot,
         true,
         behavior,
+        directive_completion,
     )?;
     prefix.append(&mut ops);
     Ok(ResidualProgram { facts, ops: prefix })
 }
-
 fn has_strict_directive(program: &oxc::ast::ast::Program<'_>) -> bool {
     program
         .directives
         .iter()
         .any(|directive| directive.directive.as_str() == "use strict")
 }
-
 fn validate_parse(parsed: &oxc::parser::ParserReturn<'_>) -> Result<(), Vec<String>> {
     if parsed.panicked {
         return Err(vec!["SyntaxError: OXC parser rejected source".to_string()]);
@@ -86,16 +85,7 @@ pub fn reduce_source_with_type(
     let (scope_count, symbol_count, ops) = {
         let allocator = Allocator::default();
         let parsed = Parser::new(&allocator, source, source_type).parse();
-        if parsed.panicked {
-            return Err(vec!["SyntaxError: OXC parser rejected source".to_string()]);
-        }
-        if !parsed.errors.is_empty() {
-            return Err(parsed
-                .errors
-                .iter()
-                .map(|error| format!("SyntaxError: {error}"))
-                .collect());
-        }
+        validate_parse(&parsed)?;
         let (scope_count, symbol_count) = crate::semantic::analyze(&parsed.program)?;
         let strict = source_type.is_module()
             || parsed
@@ -126,14 +116,12 @@ fn reduce_statements(
     let last = state.append(statements, facts, true)?;
     crate::reduce_support::finish_program(state.ops, last)
 }
-
 pub(super) struct StatementReducer {
     locals: HashMap<String, u16>,
     pub(super) ops: Vec<Op>,
     next_slot: u16,
     next_register: u16,
 }
-
 impl StatementReducer {
     pub(super) fn new(source_type: SourceType) -> Self {
         let mut locals = HashMap::from([(GLOBAL_THIS.to_string(), 0)]);
@@ -159,7 +147,6 @@ impl StatementReducer {
             next_register,
         }
     }
-
     pub(super) fn append(
         &mut self,
         statements: &[Statement<'_>],
@@ -181,7 +168,6 @@ impl StatementReducer {
         Ok(last)
     }
 }
-
 fn reduce_state_statement(
     state: &mut StatementReducer,
     statement: &Statement<'_>,
@@ -206,7 +192,6 @@ fn reduce_state_statement(
     }
     Ok(value)
 }
-
 pub fn reduce_statements_with_locals(
     statements: &[Statement<'_>],
     facts: &mut ProgramDb,
@@ -220,6 +205,7 @@ pub fn reduce_statements_with_locals(
         next_slot,
         false,
         crate::reduce_support::EvalBehavior::Normal,
+        None,
     )?;
     ops.push(Op::Const {
         dst: 0,
@@ -241,6 +227,7 @@ pub fn reduce_expression_statements_with_locals(
         next_slot,
         true,
         crate::reduce_support::EvalBehavior::Normal,
+        None,
     )
 }
 /// Reduce statements without appending a terminal `Return`. Used for nested
@@ -258,9 +245,9 @@ pub fn reduce_statements_no_tail(
         next_slot,
         false,
         crate::reduce_support::EvalBehavior::Normal,
+        None,
     )
 }
-
 fn reduce_statements_opt(
     statements: &[Statement<'_>],
     facts: &mut ProgramDb,
@@ -268,12 +255,15 @@ fn reduce_statements_opt(
     mut next_slot: u16,
     tail: bool,
     eval_behavior: crate::reduce_support::EvalBehavior,
+    directive_completion: Option<String>,
 ) -> Result<Vec<Op>, Vec<String>> {
     let mut ops = Vec::new();
     let mut next_register = 0;
     crate::reduce_support::predeclare_functions(statements, &mut locals, &mut next_slot);
     next_register = next_register.max(crate::reduce_support::register_base(&locals));
     let eval = eval_behavior != crate::reduce_support::EvalBehavior::Normal;
+    let initial_value =
+        super::reduce_eval::emit_directive(&mut ops, &mut next_register, directive_completion);
     if eval {
         super::reduce_eval::instantiate_functions(
             statements,
@@ -289,7 +279,7 @@ fn reduce_statements_opt(
         &mut next_register,
         &mut next_slot,
         &mut locals,
-        eval_behavior,
+        (eval_behavior, initial_value),
     )?;
     if tail {
         crate::reduce_support::finish_program(ops, last_value)
@@ -297,7 +287,6 @@ fn reduce_statements_opt(
         Ok(ops)
     }
 }
-
 fn reduce_statement_list(
     statements: &[Statement<'_>],
     facts: &mut ProgramDb,
@@ -305,10 +294,10 @@ fn reduce_statement_list(
     next_register: &mut u16,
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
-    eval_behavior: crate::reduce_support::EvalBehavior,
+    completion: (crate::reduce_support::EvalBehavior, Option<u16>),
 ) -> Result<Option<u16>, Vec<String>> {
+    let (eval_behavior, mut last_value) = completion;
     let eval = eval_behavior != crate::reduce_support::EvalBehavior::Normal;
-    let mut last_value = None;
     for statement in statements {
         if eval && matches!(statement, Statement::FunctionDeclaration(_)) {
             continue;
@@ -357,7 +346,6 @@ pub fn reduce_statement(
         }
     }
 }
-
 fn reduce_expression_stmt(
     expression: &Expression<'_>,
     ops: &mut Vec<Op>,
@@ -373,7 +361,6 @@ fn reduce_expression_stmt(
         locals,
     )
 }
-
 fn reduce_other_statement(
     statement: &Statement<'_>,
     ops: &mut Vec<Op>,
@@ -421,7 +408,6 @@ pub fn reduce_function_declaration(
     store_function(ops, slot, register);
     Ok(())
 }
-
 fn function_metadata(
     function: &oxc::ast::ast::Function<'_>,
     strictness: crate::ops::FunctionStrictness,
@@ -433,11 +419,9 @@ fn function_metadata(
         mapped_arguments: crate::function_parameters::is_simple(&function.params),
     }
 }
-
 fn store_function(ops: &mut Vec<Op>, slot: u16, src: u16) {
     ops.push(Op::StoreLocal { slot, src });
 }
-
 fn function_declaration_op(
     dst: u16,
     body: Vec<Op>,
@@ -456,7 +440,6 @@ fn function_declaration_op(
         mapped_arguments: metadata.mapped_arguments,
     }
 }
-
 fn declaration_slot(name: &str, next_slot: &mut u16, locals: &mut HashMap<String, u16>) -> u16 {
     if let Some(slot) = locals.get(name) {
         return *slot;
@@ -466,13 +449,11 @@ fn declaration_slot(name: &str, next_slot: &mut u16, locals: &mut HashMap<String
     locals.insert(name.to_string(), slot);
     slot
 }
-
 fn take_register(next_register: &mut u16) -> u16 {
     let register = *next_register;
     *next_register = next_register.saturating_add(1);
     register
 }
-
 fn function_locals(
     function: &oxc::ast::ast::Function<'_>,
     locals: &HashMap<String, u16>,
