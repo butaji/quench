@@ -45,8 +45,9 @@ pub fn reduce_eval_source(
         symbol_count,
         ..ProgramDb::default()
     };
-    let (locals, next_slot, mut prefix, behavior) =
+    let (locals, next_slot, mut prefix, behavior, deletable) =
         crate::reduce_support::eval_bindings(&parsed.program, bindings, strict, global);
+    facts.eval_deletable = deletable;
     let mut ops = reduce_statements_opt(
         &parsed.program.body,
         &mut facts,
@@ -148,6 +149,22 @@ impl StatementReducer {
         }
     }
     pub(super) fn append(
+        &mut self,
+        statements: &[Statement<'_>],
+        facts: &mut ProgramDb,
+        program_scope: bool,
+    ) -> Result<Option<u16>, Vec<String>> {
+        let barrier_len = facts.eval_var_barrier.len();
+        facts
+            .eval_var_barrier
+            .extend(crate::semantic_early::lexically_declared_names_in(
+                statements,
+            ));
+        let result = self.append_scoped(statements, facts, program_scope);
+        facts.eval_var_barrier.truncate(barrier_len);
+        result
+    }
+    fn append_scoped(
         &mut self,
         statements: &[Statement<'_>],
         facts: &mut ProgramDb,
@@ -306,9 +323,6 @@ fn reduce_statement_list(
             reduce_statement(statement, ops, facts, next_register, next_slot, locals)?
         {
             last_value = Some(value);
-        }
-        if eval_behavior == crate::reduce_support::EvalBehavior::Global {
-            crate::reduce_support::mirror_script_bindings(statement, locals, ops, next_register);
         }
     }
     Ok(last_value)

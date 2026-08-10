@@ -32,6 +32,15 @@ pub(crate) fn is_defined(name: &str) -> bool {
     name == "$262" || builtin(name).is_some() || global_constant(name).is_some()
 }
 
+pub(crate) fn immutable_value(name: &str) -> Option<crate::value::Value> {
+    Some(match name {
+        "undefined" => crate::value::Value::Undefined,
+        "NaN" => crate::value::Value::Number(f64::NAN),
+        "Infinity" => crate::value::Value::Number(f64::INFINITY),
+        _ => return None,
+    })
+}
+
 pub(crate) fn script_properties(ops: &mut Vec<Op>, next_register: &mut u16) -> Vec<(String, u16)> {
     let names = [
         "Object",

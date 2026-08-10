@@ -172,6 +172,7 @@ pub enum Value {
     Array(Rc<ArrayData>),
     Object(Rc<Vec<(String, Value)>>),
     ObjectAlias(ObjectAliasValue),
+    BindingCell(Rc<RefCell<Value>>),
     ArrayBuffer(Rc<ArrayBufferData>),
     Float64Array(Rc<Float64ArrayData>),
     Float32Array(Rc<Float32ArrayData>),
@@ -200,6 +201,9 @@ pub enum Value {
 }
 
 pub(crate) fn is_object(value: &Value) -> bool {
+    if let Value::BindingCell(cell) = value {
+        return is_object(&cell.borrow());
+    }
     !matches!(
         value,
         Value::Number(_)

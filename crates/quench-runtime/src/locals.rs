@@ -121,6 +121,14 @@ pub(crate) fn mark_uninitialized(slot: u16) {
     current().mark_uninitialized(slot);
 }
 
+pub(crate) fn slot_cell(slot: u16) -> Rc<RefCell<Value>> {
+    current().slot_cell(slot)
+}
+
+pub(crate) fn install_slot_cell(slot: u16, cell: Rc<RefCell<Value>>) {
+    current().install_slot_cell(slot, cell);
+}
+
 fn ensure_initialized(slot: u16, name: &str) -> Result<(), VmError> {
     if current().is_uninitialized(slot) {
         return Err(crate::value::error::throw_reference_error(&format!(
@@ -131,7 +139,10 @@ fn ensure_initialized(slot: u16, name: &str) -> Result<(), VmError> {
 }
 
 pub(crate) fn alias_name(name: &str, slot: u16) {
-    current().alias_name(name, slot);
+    let environment = current();
+    if !environment.alias_caller_name(name, slot) {
+        environment.alias_name(name, slot);
+    }
 }
 
 pub(crate) fn resolve_name(name: &str) -> Option<Value> {
@@ -140,6 +151,11 @@ pub(crate) fn resolve_name(name: &str) -> Option<Value> {
 
 pub(crate) fn set_named(name: &str, value: Value) -> bool {
     current().set_named(name, value)
+}
+
+pub(crate) fn delete_named(name: &str, slot: u16) -> bool {
+    let environment = current();
+    environment.delete_caller_name(name, slot) || environment.delete_named(name, slot)
 }
 
 pub(crate) fn capture(count: u16) -> Rc<Environment> {

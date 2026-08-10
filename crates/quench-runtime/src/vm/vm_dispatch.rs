@@ -21,6 +21,9 @@ fn run_simple_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Option<Va
     if run_property_op(registers, op)? {
         return Ok(Some(None));
     }
+    if run_global_declaration_op(registers, op)? {
+        return Ok(Some(None));
+    }
     match op {
         Const { dst, value } => write_value(registers, *dst, value.into()),
         MakeArray { .. } => run_make_array(registers, op)?,
@@ -44,6 +47,20 @@ fn run_simple_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Option<Va
         _ => return Ok(None),
     }
     Ok(Some(None))
+}
+
+fn run_global_declaration_op(registers: &mut Vec<Value>, op: &Op) -> Result<bool, VmError> {
+    if !matches!(
+        op,
+        Op::CheckGlobalFunction { .. }
+            | Op::CheckGlobalVar { .. }
+            | Op::CreateGlobalFunction { .. }
+            | Op::CreateGlobalVar { .. }
+    ) {
+        return Ok(false);
+    }
+    crate::global_environment::execute(registers, op)?;
+    Ok(true)
 }
 
 fn run_eval(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
@@ -100,6 +117,11 @@ fn run_local_op(registers: &mut Vec<Value>, op: &Op) -> Result<bool, VmError> {
     match op {
         StoreLocal { slot, src } => crate::locals::store(registers, *slot, *src)?,
         MarkUninitialized { slot } => crate::locals::mark_uninitialized(*slot),
+        DeleteEvalBinding { dst, name, slot } => write_value(
+            registers,
+            *dst,
+            Value::Boolean(crate::locals::delete_named(name, *slot)),
+        ),
         LoadLocal { dst, slot } => crate::locals::load(registers, *dst, *slot)?,
         LoadBinding { dst, slot, name } => crate::locals::load_binding(registers, *dst, *slot, name)?,
         ResolveBindingTarget { dst, name } => crate::locals::resolve_target(registers, *dst, name)?,
