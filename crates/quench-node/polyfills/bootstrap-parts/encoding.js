@@ -67,32 +67,20 @@ const __nodeIsValidUtf8 = (value) => {
 };
 const __nodeValidateUtf8Input = (value) => {
   if (value instanceof ArrayBuffer && __nodeDetachedBuffers.has(value)) {
-    const error = new TypeError("ArrayBuffer is detached");
-    error.code = "ERR_INVALID_STATE";
-    throw error;
+    throw Object.assign(new TypeError("ArrayBuffer is detached"), { code: "ERR_INVALID_STATE" });
   }
   if (value instanceof Uint8Array) return value;
-  const error = new TypeError(
-    'The "input" argument must be an instance of Uint8Array'
-  );
-  error.code = "ERR_INVALID_ARG_TYPE";
-  throw error;
+  throw Object.assign(new TypeError('The "input" argument must be an instance of Uint8Array'), { code: "ERR_INVALID_ARG_TYPE" });
 };
 const __nodeCopyBytesValidateView = (view, offset, length) => {
   if (!ArrayBuffer.isView(view)) {
-    const error = new TypeError(
-      'The "view" argument must be an instance of TypedArray'
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "view" argument must be an instance of TypedArray'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   if (
     typeof offset !== "number" ||
     (length !== undefined && typeof length !== "number")
   ) {
-    const error = new TypeError("offset and length must be numbers");
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError("offset and length must be numbers"), { code: "ERR_INVALID_ARG_TYPE" });
   }
 };
 const __nodeCopyBytesRangeInvalid = (offset, length) =>
@@ -111,11 +99,7 @@ const __nodeCopyBytesRange = (view, offset, length) => {
     length = offset >= elementLength ? 0 : elementLength - offset;
   }
   if (__nodeCopyBytesRangeInvalid(offset, length)) {
-    const error = new RangeError(
-      "The requested range is outside the bounds of the view"
-    );
-    error.code = "ERR_OUT_OF_RANGE";
-    throw error;
+    throw Object.assign(new RangeError("The requested range is outside the bounds of the view"), { code: "ERR_OUT_OF_RANGE" });
   }
   offset = Math.min(Math.trunc(offset), elementLength);
   length = Math.min(Math.trunc(length), elementLength - offset);
@@ -147,24 +131,18 @@ const __nodeBufferArrayBufferRange = (value, encoding, length) => {
   if (!Number.isFinite(offset)) offset = Number.isNaN(offset) ? 0 : offset;
   offset = Math.trunc(offset);
   if (__nodeBufferInvalidOffset(offset, value.byteLength)) {
-    const error = new RangeError('"offset" is outside of buffer bounds');
-    error.code = "ERR_BUFFER_OUT_OF_BOUNDS";
-    throw error;
+    throw Object.assign(new RangeError('"offset" is outside of buffer bounds'), { code: "ERR_BUFFER_OUT_OF_BOUNDS" });
   }
   let size = value.byteLength - offset;
   if (length !== undefined) {
     const numericLength = Number(length);
     if (numericLength === Infinity || numericLength === -Infinity) {
-      const error = new RangeError('"length" is outside of buffer bounds');
-      error.code = "ERR_BUFFER_OUT_OF_BOUNDS";
-      throw error;
+      throw Object.assign(new RangeError('"length" is outside of buffer bounds'), { code: "ERR_BUFFER_OUT_OF_BOUNDS" });
     }
     size = Number.isNaN(numericLength) ? 0 : Math.trunc(numericLength);
   }
   if (__nodeBufferInvalidLength(size, offset, value.byteLength)) {
-    const error = new RangeError('"length" is outside of buffer bounds');
-    error.code = "ERR_BUFFER_OUT_OF_BOUNDS";
-    throw error;
+    throw Object.assign(new RangeError('"length" is outside of buffer bounds'), { code: "ERR_BUFFER_OUT_OF_BOUNDS" });
   }
   return { offset, size };
 };
@@ -278,9 +256,7 @@ const __nodeBufferValidateEncoding = (value, encoding) => {
     typeof encoding === "string" &&
     !NodeBuffer.isEncoding(encoding)
   ) {
-    const error = new TypeError(`Unknown encoding: ${encoding}`);
-    error.code = "ERR_UNKNOWN_ENCODING";
-    throw error;
+    throw Object.assign(new TypeError(`Unknown encoding: ${encoding}`), { code: "ERR_UNKNOWN_ENCODING" });
   }
   return encoding;
 };
@@ -376,14 +352,10 @@ NodeBuffer.concat = (list, totalLength) => {
 };
 NodeBuffer._validateSize = (size) => {
   if (typeof size !== "number") {
-    const error = new TypeError('The "size" argument must be of type number');
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "size" argument must be of type number'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   if (!Number.isFinite(size) || size < 0 || size > 0x7fffffff) {
-    const error = new RangeError('The value of "size" is out of range');
-    error.code = "ERR_OUT_OF_RANGE";
-    throw error;
+    throw Object.assign(new RangeError('The value of "size" is out of range'), { code: "ERR_OUT_OF_RANGE" });
   }
   return Math.trunc(size);
 };
@@ -437,16 +409,10 @@ NodeBuffer.prototype.slice = function slice(start = 0, end = this.length) {
 };
 NodeBuffer.isAscii = (value) => {
   if (value instanceof ArrayBuffer && __nodeDetachedBuffers.has(value)) {
-    const error = new TypeError("ArrayBuffer is detached");
-    error.code = "ERR_INVALID_STATE";
-    throw error;
+    throw Object.assign(new TypeError("ArrayBuffer is detached"), { code: "ERR_INVALID_STATE" });
   }
   if (!(value instanceof Uint8Array)) {
-    const error = new TypeError(
-      'The "input" argument must be an instance of Uint8Array'
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "input" argument must be an instance of Uint8Array'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   return value.every((byte) => byte < 0x80);
 };

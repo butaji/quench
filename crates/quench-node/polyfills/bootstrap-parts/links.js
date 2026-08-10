@@ -1,20 +1,12 @@
 globalThis.__nodeFs.link = (existing, link, callback) => {
   if (typeof callback !== "function") {
-    const error = new TypeError(
-      'The "callback" argument must be of type function'
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "callback" argument must be of type function'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   if (
     (typeof existing !== "string" && !(existing instanceof Uint8Array)) ||
     (typeof link !== "string" && !(link instanceof Uint8Array))
   ) {
-    const error = new TypeError(
-      'The "path" argument must be of type string or an instance of Buffer or URL'
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "path" argument must be of type string or an instance of Buffer or URL'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   queueMicrotask(() => {
     try {
@@ -31,11 +23,7 @@ globalThis.__nodeFs.chmod = (value, mode, callback) => {
     mode = undefined;
   }
   if (typeof callback !== "function") {
-    const error = new TypeError(
-      'The "callback" argument must be of type function'
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "callback" argument must be of type function'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   const path = __nodeFsPathOnly(value);
   queueMicrotask(() => {
@@ -58,27 +46,15 @@ globalThis.__nodeFs.appendFile = (value, data, options, callback) => {
     !(data instanceof NodeBuffer) &&
     !(data instanceof Uint8Array)
   ) {
-    const error = new TypeError(
-      'The "data" argument must be of type string or an instance of Buffer'
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "data" argument must be of type string or an instance of Buffer'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   if (typeof callback !== "function") {
-    const error = new TypeError(
-      'The "callback" argument must be of type function'
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "callback" argument must be of type function'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   const encoding =
     typeof options === "string" ? options : options && options.encoding;
   if (encoding !== undefined && !NodeBuffer.isEncoding(encoding)) {
-    const error = new TypeError(
-      `The argument 'encoding' is invalid. Received '${encoding}'`
-    );
-    error.code = "ERR_INVALID_ARG_VALUE";
-    throw error;
+    throw Object.assign(new TypeError(`The argument 'encoding' is invalid. Received '${encoding}'`), { code: "ERR_INVALID_ARG_VALUE" });
   }
   queueMicrotask(() => {
     try {
@@ -104,11 +80,7 @@ globalThis.__nodeFs.rmdir = (value, options, callback) => {
     throw error;
   }
   if (options?.recursive === true) {
-    const error = new TypeError(
-      "The recursive option is no longer supported for fs.rmdir"
-    );
-    error.code = "ERR_INVALID_ARG_VALUE";
-    throw error;
+    throw Object.assign(new TypeError("The recursive option is no longer supported for fs.rmdir"), { code: "ERR_INVALID_ARG_VALUE" });
   }
   const path = nodeFsPath(value);
   queueMicrotask(() => {
@@ -162,18 +134,12 @@ globalThis.__nodeFs.copyFile = (from, to, mode, callback) => {
     mode = 0;
   }
   if (typeof callback !== "function") {
-    const error = new TypeError(
-      'The "callback" argument must be of type function'
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "callback" argument must be of type function'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   const source = __nodeFsCopyPath(from, "src");
   const destination = __nodeFsCopyPath(to, "dest");
   if (typeof mode !== "number") {
-    const error = new TypeError('The "mode" argument must be of type number');
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "mode" argument must be of type number'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   queueMicrotask(() => {
     try {
@@ -194,11 +160,7 @@ globalThis.__nodeFs.realpath = (value, options, callback) => {
   const encoding =
     typeof options === "string" ? options : options && options.encoding;
   if (encoding !== undefined && !NodeBuffer.isEncoding(encoding)) {
-    const error = new TypeError(
-      `The argument 'encoding' is invalid. Received '${encoding}'`
-    );
-    error.code = "ERR_INVALID_ARG_VALUE";
-    throw error;
+    throw Object.assign(new TypeError(`The argument 'encoding' is invalid. Received '${encoding}'`), { code: "ERR_INVALID_ARG_VALUE" });
   }
   const path = nodeFsPath(value);
   queueMicrotask(() => {
@@ -255,9 +217,7 @@ globalThis.__nodeStats.prototype.isSymbolicLink = function () {
 globalThis.__nodeFs.Dir = class Dir {
   constructor(path) {
     if (path === undefined) {
-      const error = new TypeError('The "path" argument must be specified');
-      error.code = "ERR_MISSING_ARGS";
-      throw error;
+      throw Object.assign(new TypeError('The "path" argument must be specified'), { code: "ERR_MISSING_ARGS" });
     }
     this._path = path;
     if (globalThis.__quench_fs_kind(path) === "file") {

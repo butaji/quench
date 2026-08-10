@@ -10,11 +10,7 @@ globalThis.__nodeFs.readlink = (value, options, callback) => {
     ? options
     : options && options.encoding;
   if (encoding !== undefined && !NodeBuffer.isEncoding(encoding)) {
-    const error = new TypeError(
-      `The argument 'encoding' is invalid. Received '${encoding}'`,
-    );
-    error.code = "ERR_INVALID_ARG_VALUE";
-    throw error;
+    throw Object.assign(new TypeError(`The argument 'encoding' is invalid. Received '${encoding}'`), { code: "ERR_INVALID_ARG_VALUE" });
   }
   const path = nodeFsPath(value);
   queueMicrotask(() => {

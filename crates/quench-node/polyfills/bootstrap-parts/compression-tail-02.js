@@ -20,14 +20,10 @@ const __quenchBufferModule = () => {
     get: () => __nodeInspectMaxBytes,
     set: (value) => {
       if (typeof value !== "number") {
-        const error = new TypeError("INSPECT_MAX_BYTES must be a number");
-        error.code = "ERR_INVALID_ARG_TYPE";
-        throw error;
+        throw Object.assign(new TypeError("INSPECT_MAX_BYTES must be a number"), { code: "ERR_INVALID_ARG_TYPE" });
       }
       if (Number.isNaN(value) || value < 0) {
-        const error = new RangeError("INSPECT_MAX_BYTES is out of range");
-        error.code = "ERR_OUT_OF_RANGE";
-        throw error;
+        throw Object.assign(new RangeError("INSPECT_MAX_BYTES is out of range"), { code: "ERR_OUT_OF_RANGE" });
       }
       __nodeInspectMaxBytes = value;
     },

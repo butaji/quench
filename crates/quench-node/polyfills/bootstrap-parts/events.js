@@ -25,9 +25,7 @@ class NodeReadable extends NodeEventEmitter {
       else options.signal.addEventListener("abort", abort, { once: true });
     }
     if (!NodeBuffer.isEncoding(this.readableDefaultEncoding)) {
-      const error = new TypeError("Unknown encoding");
-      error.code = "ERR_UNKNOWN_ENCODING";
-      throw error;
+      throw Object.assign(new TypeError("Unknown encoding"), { code: "ERR_UNKNOWN_ENCODING" });
     }
     this._chunks = [];
     this._readableState = {

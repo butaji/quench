@@ -146,9 +146,7 @@ const __quenchRequireCoreBase = (name) => {
 };
 const __quenchValidateChildMessage = (message) => {
   if (message === undefined) {
-    const error = new TypeError('The "message" argument must be specified');
-    error.code = "ERR_MISSING_ARGS";
-    throw error;
+    throw Object.assign(new TypeError('The "message" argument must be specified'), { code: "ERR_MISSING_ARGS" });
   }
   if (typeof message === "symbol") {
     const error = new TypeError(
@@ -256,18 +254,14 @@ const __quenchSpawnChild = (_command, args = [], options = {}) => {
       options = args;
       args = [];
     } else {
-      const error = new TypeError('The "args" argument must be an array');
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError('The "args" argument must be an array'), { code: "ERR_INVALID_ARG_TYPE" });
     }
   }
   if (
     options !== undefined &&
     (typeof options !== "object" || Array.isArray(options))
   ) {
-    const error = new TypeError('The "options" argument must be an object');
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "options" argument must be an object'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   const child = new __quenchChildProcessClass();
   child.spawnfile = options.shell
@@ -602,11 +596,7 @@ const __quenchChildProcessModule = () => {
         (typeof options.timeout !== "number" ||
           !Number.isFinite(options.timeout))
       ) {
-        const error = new TypeError(
-          'ERR_INVALID_ARG_TYPE: The "timeout" option must be a number'
-        );
-        error.code = "ERR_INVALID_ARG_TYPE";
-        throw error;
+        throw Object.assign(new TypeError('ERR_INVALID_ARG_TYPE: The "timeout" option must be a number'), { code: "ERR_INVALID_ARG_TYPE" });
       }
       const child = childProcess.spawn(script, args, options);
       const signal = options?.signal;
@@ -640,9 +630,7 @@ const __quenchChildProcessModule = () => {
         !Array.isArray(args) &&
         typeof args !== "object"
       ) {
-        const error = new TypeError('The "args" argument must be an array');
-        error.code = "ERR_INVALID_ARG_TYPE";
-        throw error;
+        throw Object.assign(new TypeError('The "args" argument must be an array'), { code: "ERR_INVALID_ARG_TYPE" });
       }
       if (
         args &&
@@ -651,9 +639,7 @@ const __quenchChildProcessModule = () => {
         options !== null &&
         typeof options !== "object"
       ) {
-        const error = new TypeError('The "options" argument must be an object');
-        error.code = "ERR_INVALID_ARG_TYPE";
-        throw error;
+        throw Object.assign(new TypeError('The "options" argument must be an object'), { code: "ERR_INVALID_ARG_TYPE" });
       }
       if (
         options !== undefined &&
@@ -661,16 +647,10 @@ const __quenchChildProcessModule = () => {
           typeof options !== "object" ||
           Array.isArray(options))
       ) {
-        const error = new TypeError('The "options" argument must be an object');
-        error.code = "ERR_INVALID_ARG_TYPE";
-        throw error;
+        throw Object.assign(new TypeError('The "options" argument must be an object'), { code: "ERR_INVALID_ARG_TYPE" });
       }
       if (callback !== undefined && typeof callback !== "function") {
-        const error = new TypeError(
-          'The "callback" argument must be a function'
-        );
-        error.code = "ERR_INVALID_ARG_TYPE";
-        throw error;
+        throw Object.assign(new TypeError('The "callback" argument must be a function'), { code: "ERR_INVALID_ARG_TYPE" });
       }
       const child = __quenchSpawnChild(file, args, options);
       if (typeof callback === "function") {
@@ -1138,11 +1118,7 @@ let __quenchHttpModule;
           !headers ||
           !(headers instanceof Map || headers instanceof globalThis.Headers)
         ) {
-          const error = new TypeError(
-            'The "headers" argument must be an instance of Headers or Map'
-          );
-          error.code = "ERR_INVALID_ARG_TYPE";
-          throw error;
+          throw Object.assign(new TypeError('The "headers" argument must be an instance of Headers or Map'), { code: "ERR_INVALID_ARG_TYPE" });
         }
         for (const [key, value] of headers.entries()) {
           response.setHeader(key, value);
@@ -1176,11 +1152,7 @@ let __quenchHttpModule;
                 ? "[]"
                 : "{}"
               : String(statusCode);
-          const error = new RangeError(
-            `Invalid status code: ${renderedStatusCode}`
-          );
-          error.code = "ERR_HTTP_INVALID_STATUS_CODE";
-          throw error;
+          throw Object.assign(new RangeError(`Invalid status code: ${renderedStatusCode}`), { code: "ERR_HTTP_INVALID_STATUS_CODE" });
         }
         response.statusCode = statusCode;
         response.statusMessage =
@@ -1222,11 +1194,7 @@ let __quenchHttpModule;
       response.flushHeaders = () => response;
       response.addTrailers = (trailers) => {
         if (trailers === null || typeof trailers !== "object") {
-          const error = new TypeError(
-            "The trailers argument must be an object"
-          );
-          error.code = "ERR_INVALID_ARG_TYPE";
-          throw error;
+          throw Object.assign(new TypeError("The trailers argument must be an object"), { code: "ERR_INVALID_ARG_TYPE" });
         }
         response._trailers ||= Object.create(null);
         for (const [key, value] of Object.entries(trailers)) {
@@ -1238,9 +1206,7 @@ let __quenchHttpModule;
       };
       response.writeEarlyHints = (hints, callback) => {
         if (hints === null || typeof hints !== "object") {
-          const error = new TypeError('The "hints" argument must be an object');
-          error.code = "ERR_INVALID_ARG_TYPE";
-          throw error;
+          throw Object.assign(new TypeError('The "hints" argument must be an object'), { code: "ERR_INVALID_ARG_TYPE" });
         }
         const headers = Object.create(null);
         for (const [key, value] of Object.entries(hints)) {
@@ -1260,9 +1226,7 @@ let __quenchHttpModule;
       response.writeInformation = (statusCode, headers, callback) => {
         const code = statusCode === undefined ? 100 : Number(statusCode);
         if (!Number.isInteger(code) || code < 100 || code >= 200) {
-          const error = new RangeError(`Invalid status code: ${statusCode}`);
-          error.code = "ERR_HTTP_INVALID_STATUS_CODE";
-          throw error;
+          throw Object.assign(new RangeError(`Invalid status code: ${statusCode}`), { code: "ERR_HTTP_INVALID_STATUS_CODE" });
         }
         const infoHeaders = Object.create(null);
         const rawHeaders = [];
@@ -1508,9 +1472,7 @@ let __quenchHttpModule;
       constructor(req) {
         super();
         if (req === undefined || req === null) {
-          const error = new TypeError("The request argument must be an object");
-          error.code = "ERR_INVALID_ARG_TYPE";
-          throw error;
+          throw Object.assign(new TypeError("The request argument must be an object"), { code: "ERR_INVALID_ARG_TYPE" });
         }
         initializeResponse(this);
         this.req = req;
@@ -1527,9 +1489,7 @@ let __quenchHttpModule;
           socket._httpMessage = null;
         }
         if (typeof socket.on !== "function") {
-          const error = new TypeError("socket.on is not a function");
-          error.code = "ERR_INVALID_ARG_TYPE";
-          throw error;
+          throw Object.assign(new TypeError("socket.on is not a function"), { code: "ERR_INVALID_ARG_TYPE" });
         }
         const response = this;
         const onClose = () => {
@@ -1568,11 +1528,7 @@ let __quenchHttpModule;
       context
     ) => {
       if (typeof pathname === "string" && /[^\u0021-\u00ff]/.test(pathname)) {
-        const error = new TypeError(
-          "Request path contains unescaped characters"
-        );
-        error.code = "ERR_UNESCAPED_CHARACTERS";
-        throw error;
+        throw Object.assign(new TypeError("Request path contains unescaped characters"), { code: "ERR_UNESCAPED_CHARACTERS" });
       }
       if (
         options.method !== undefined &&
@@ -1584,11 +1540,7 @@ let __quenchHttpModule;
           value !== null && typeof value === "object"
             ? `an instance of ${value.constructor?.name || "Object"}`
             : `type ${typeof value} (${String(value)})`;
-        const error = new TypeError(
-          `The "options.method" property must be of type string. Received ${received}`
-        );
-        error.code = "ERR_INVALID_ARG_TYPE";
-        throw error;
+        throw Object.assign(new TypeError(`The "options.method" property must be of type string. Received ${received}`), { code: "ERR_INVALID_ARG_TYPE" });
       }
       const request = attachHttpSignal(new NodeIncomingMessage());
       Object.setPrototypeOf(request, NodeClientRequest.prototype);
@@ -1712,11 +1664,7 @@ let __quenchHttpModule;
         !Array.isArray(options.headers) &&
         Array.isArray(options.headers.host)
       ) {
-        const error = new TypeError(
-          'The "host" header must be a string [ERR_INVALID_ARG_TYPE]'
-        );
-        error.code = "ERR_INVALID_ARG_TYPE";
-        throw error;
+        throw Object.assign(new TypeError('The "host" header must be a string [ERR_INVALID_ARG_TYPE]'), { code: "ERR_INVALID_ARG_TYPE" });
       }
       if (Array.isArray(options.headers)) {
         for (let index = 0; index + 1 < options.headers.length; index += 2) {
@@ -1797,11 +1745,7 @@ let __quenchHttpModule;
       request._timeoutTimer = undefined;
       request.setTimeout = (msecs, callback) => {
         if (typeof msecs !== "number") {
-          const error = new TypeError(
-            `The "msecs" argument must be of type number. Received type ${typeof msecs}`
-          );
-          error.code = "ERR_INVALID_ARG_TYPE";
-          throw error;
+          throw Object.assign(new TypeError(`The "msecs" argument must be of type number. Received type ${typeof msecs}`), { code: "ERR_INVALID_ARG_TYPE" });
         }
         if (!Number.isFinite(msecs) || msecs < 0) {
           const error = new RangeError(
@@ -2256,16 +2200,10 @@ let __quenchHttpModule;
     };
     const validateHttpServerInteger = (value, name) => {
       if (typeof value !== "number") {
-        const error = new TypeError(
-          `The "${name}" argument must be of type number`
-        );
-        error.code = "ERR_INVALID_ARG_TYPE";
-        throw error;
+        throw Object.assign(new TypeError(`The "${name}" argument must be of type number`), { code: "ERR_INVALID_ARG_TYPE" });
       }
       if (!Number.isSafeInteger(value) || value < 0) {
-        const error = new RangeError(`The value of "${name}" is out of range`);
-        error.code = "ERR_OUT_OF_RANGE";
-        throw error;
+        throw Object.assign(new RangeError(`The value of "${name}" is out of range`), { code: "ERR_OUT_OF_RANGE" });
       }
     };
     const httpServerOptionInteger = (options, name, fallback) => {
@@ -2282,11 +2220,7 @@ let __quenchHttpModule;
         } else if (options == null) {
           options = {};
         } else if (typeof options !== "object" || Array.isArray(options)) {
-          const error = new TypeError(
-            'The "options" argument must be of type object'
-          );
-          error.code = "ERR_INVALID_ARG_TYPE";
-          throw error;
+          throw Object.assign(new TypeError('The "options" argument must be of type object'), { code: "ERR_INVALID_ARG_TYPE" });
         }
         const requestTimeout = httpServerOptionInteger(
           options,
@@ -2303,11 +2237,7 @@ let __quenchHttpModule;
           headersTimeout > 0 &&
           headersTimeout > requestTimeout
         ) {
-          const error = new RangeError(
-            'The value of "headersTimeout" is out of range'
-          );
-          error.code = "ERR_OUT_OF_RANGE";
-          throw error;
+          throw Object.assign(new RangeError('The value of "headersTimeout" is out of range'), { code: "ERR_OUT_OF_RANGE" });
         }
         this._handler = handler;
         this.requireHostHeader = options.requireHostHeader !== false;
@@ -2574,22 +2504,14 @@ let __quenchHttpModule;
             typeof maxTotalSockets === "string"
               ? `string ('${maxTotalSockets}')`
               : `${typeof maxTotalSockets} (${String(maxTotalSockets)})`;
-          const error = new TypeError(
-            `The "maxTotalSockets" argument must be of type number. Received type ${received}`
-          );
-          error.code = "ERR_INVALID_ARG_TYPE";
-          throw error;
+          throw Object.assign(new TypeError(`The "maxTotalSockets" argument must be of type number. Received type ${received}`), { code: "ERR_INVALID_ARG_TYPE" });
         }
         if (
           maxTotalSockets !== undefined &&
           maxTotalSockets !== Infinity &&
           (Number.isNaN(maxTotalSockets) || maxTotalSockets <= 0)
         ) {
-          const error = new RangeError(
-            'The "maxTotalSockets" argument must be greater than 0'
-          );
-          error.code = "ERR_OUT_OF_RANGE";
-          throw error;
+          throw Object.assign(new RangeError('The "maxTotalSockets" argument must be greater than 0'), { code: "ERR_OUT_OF_RANGE" });
         }
         this.options = { ...options };
         this.requests = Object.create(null);
@@ -2611,12 +2533,8 @@ let __quenchHttpModule;
         this.maxCachedSessions = options.maxCachedSessions ?? 100;
         this.scheduling = options.scheduling || "lifo";
         if (this.scheduling !== "fifo" && this.scheduling !== "lifo") {
-          const error = new TypeError(
-            "The argument 'scheduling' must be one of: 'fifo', 'lifo'. " +
-              `Received '${this.scheduling}'`
-          );
-          error.code = "ERR_INVALID_ARG_VALUE";
-          throw error;
+          throw Object.assign(new TypeError("The argument 'scheduling' must be one of: 'fifo', 'lifo'. " +
+              `Received '${this.scheduling}'`), { code: "ERR_INVALID_ARG_VALUE" });
         }
         this.totalSocketCount = 0;
         this.on("free", (socket, options = {}) => {
@@ -2820,11 +2738,7 @@ let __quenchHttpModule;
             typeof requestOptions.path === "string" &&
             /[^\u0021-\u00ff]/.test(requestOptions.path)
           ) {
-            const error = new TypeError(
-              "Request path contains unescaped characters"
-            );
-            error.code = "ERR_UNESCAPED_CHARACTERS";
-            throw error;
+            throw Object.assign(new TypeError("Request path contains unescaped characters"), { code: "ERR_UNESCAPED_CHARACTERS" });
           }
           target = `http://${target.hostname || target.host || "localhost"}:${
             target.port || 80
@@ -2877,22 +2791,14 @@ let __quenchHttpModule;
                 value && typeof value === "object"
                   ? `an instance of ${value.constructor?.name || "Object"}`
                   : `type ${typeof value} (${String(value)})`;
-              const error = new TypeError(
-                `The "options.${name}" property must be of type string or one of undefined or null. Received ${received}`
-              );
-              error.code = "ERR_INVALID_ARG_TYPE";
-              throw error;
+              throw Object.assign(new TypeError(`The "options.${name}" property must be of type string or one of undefined or null. Received ${received}`), { code: "ERR_INVALID_ARG_TYPE" });
             }
           }
           if (
             typeof options.path === "string" &&
             /[^\u0021-\u00ff]/.test(options.path)
           ) {
-            const error = new TypeError(
-              "Request path contains unescaped characters"
-            );
-            error.code = "ERR_UNESCAPED_CHARACTERS";
-            throw error;
+            throw Object.assign(new TypeError("Request path contains unescaped characters"), { code: "ERR_UNESCAPED_CHARACTERS" });
           }
           if (
             options.method !== undefined &&
@@ -2926,11 +2832,7 @@ let __quenchHttpModule;
             options.timeout !== undefined &&
             typeof options.timeout !== "number"
           ) {
-            const error = new TypeError(
-              `The "timeout" argument must be of type number. Received type ${typeof options.timeout}`
-            );
-            error.code = "ERR_INVALID_ARG_TYPE";
-            throw error;
+            throw Object.assign(new TypeError(`The "timeout" argument must be of type number. Received type ${typeof options.timeout}`), { code: "ERR_INVALID_ARG_TYPE" });
           }
         }
         const url = typeof target === "string" ? new URL(target) : target;

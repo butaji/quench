@@ -2,9 +2,7 @@ const __nodeFsReadStreamOptions = (options) => {
   const start = options.start === undefined ? 0 : Number(options.start);
   const end = options.end === undefined ? undefined : Number(options.end);
   if (!Number.isInteger(start) || start < 0) {
-    const error = new RangeError('The "start" option is out of range');
-    error.code = "ERR_OUT_OF_RANGE";
-    throw error;
+    throw Object.assign(new RangeError('The "start" option is out of range'), { code: "ERR_OUT_OF_RANGE" });
   }
   if (end !== undefined && start > end) {
     const error = new RangeError(
@@ -14,9 +12,7 @@ const __nodeFsReadStreamOptions = (options) => {
     throw error;
   }
   if (end !== undefined && (!Number.isInteger(end) || end < 0)) {
-    const error = new RangeError('The "end" option is out of range');
-    error.code = "ERR_OUT_OF_RANGE";
-    throw error;
+    throw Object.assign(new RangeError('The "end" option is out of range'), { code: "ERR_OUT_OF_RANGE" });
   }
   return { start, end };
 };
@@ -47,11 +43,7 @@ globalThis.__nodeFs.createReadStream = function (value, options = {}) {
     ? options
     : options && options.encoding;
   if (encoding !== undefined && !NodeBuffer.isEncoding(encoding)) {
-    const error = new TypeError(
-      `The argument 'encoding' is invalid. Received '${encoding}'`,
-    );
-    error.code = "ERR_INVALID_ARG_VALUE";
-    throw error;
+    throw Object.assign(new TypeError(`The argument 'encoding' is invalid. Received '${encoding}'`), { code: "ERR_INVALID_ARG_VALUE" });
   }
   const { start, end } = __nodeFsReadStreamOptions(options);
   const stream = options.__target || new NodeReadable(options);
@@ -175,11 +167,7 @@ class NodeAbortSignal {
       !Array.isArray(signals) &&
       !(signals && typeof signals[Symbol.iterator] === "function")
     ) {
-      const error = new TypeError(
-        'The "signals" argument must be an instance of Array',
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError('The "signals" argument must be an instance of Array'), { code: "ERR_INVALID_ARG_TYPE" });
     }
     const values = Array.from(signals);
     const combined = new NodeAbortSignal();
@@ -201,11 +189,7 @@ class NodeAbortSignal {
     for (let index = 0; index < values.length; index++) {
       const signal = values[index];
       if (!(signal instanceof NodeAbortSignal)) {
-        const error = new TypeError(
-          `signals[${index}] is not of type AbortSignal.`,
-        );
-        error.code = "ERR_INVALID_ARG_TYPE";
-        throw error;
+        throw Object.assign(new TypeError(`signals[${index}] is not of type AbortSignal.`), { code: "ERR_INVALID_ARG_TYPE" });
       }
       if (signal.aborted) abort(signal);
       else signal.addEventListener("abort", () => abort(signal));
@@ -260,11 +244,7 @@ globalThis.__nodeFs.open = (value, flags, mode, callback) => {
     mode = undefined;
   }
   if (typeof callback !== "function") {
-    const error = new TypeError(
-      'The "callback" argument must be of type function',
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "callback" argument must be of type function'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   __nodeFsValidateMode(mode);
   const path = nodeFsPath(value);
@@ -291,11 +271,7 @@ globalThis.__nodeFs.readdir = (value, options, callback) => {
     ? options
     : options && options.encoding;
   if (encoding !== undefined && !NodeBuffer.isEncoding(encoding)) {
-    const error = new TypeError(
-      `The argument 'encoding' is invalid. Received '${encoding}'`,
-    );
-    error.code = "ERR_INVALID_ARG_VALUE";
-    throw error;
+    throw Object.assign(new TypeError(`The argument 'encoding' is invalid. Received '${encoding}'`), { code: "ERR_INVALID_ARG_VALUE" });
   }
   const path = nodeFsPath(value);
   queueMicrotask(() => {
@@ -351,11 +327,7 @@ globalThis.__nodeFs.watch = (value, options, listener) => {
     ? options
     : options && options.encoding;
   if (encoding !== undefined && !NodeBuffer.isEncoding(encoding)) {
-    const error = new TypeError(
-      `The argument 'encoding' is invalid. Received '${encoding}'`,
-    );
-    error.code = "ERR_INVALID_ARG_VALUE";
-    throw error;
+    throw Object.assign(new TypeError(`The argument 'encoding' is invalid. Received '${encoding}'`), { code: "ERR_INVALID_ARG_VALUE" });
   }
   __nodeFsReadPath(typeof value === "number" ? false : value);
   const watcher = new globalThis.__nodeEventEmitter();
@@ -469,11 +441,7 @@ const __nodeFsValidateMkdtemp = (prefix, options, callback) => {
     ? options
     : options && options.encoding;
   if (encoding !== undefined && !NodeBuffer.isEncoding(encoding)) {
-    const error = new TypeError(
-      `The argument 'encoding' is invalid. Received '${encoding}'`,
-    );
-    error.code = "ERR_INVALID_ARG_VALUE";
-    throw error;
+    throw Object.assign(new TypeError(`The argument 'encoding' is invalid. Received '${encoding}'`), { code: "ERR_INVALID_ARG_VALUE" });
   }
 };
 globalThis.__nodeFs.mkdtemp = (prefix, options, callback) => {

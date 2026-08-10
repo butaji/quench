@@ -19,29 +19,17 @@ const __quenchTlsValidateFields = (options, names, type) => {
   for (const name of names) {
     if (options[name] !== undefined && typeof options[name] !== type) {
       const detail = __quenchTlsArgDetail(options[name]);
-      const error = new TypeError(
-        `The "options.${name}" property must be of type ${type}.${detail}`,
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError(`The "options.${name}" property must be of type ${type}.${detail}`), { code: "ERR_INVALID_ARG_TYPE" });
     }
   }
 };
 const __quenchTlsValidateTicketKeys = (options) => {
   if (options.ticketKeys !== undefined) {
     if (!ArrayBuffer.isView(options.ticketKeys)) {
-      const error = new TypeError(
-        'The "options.ticketKeys" property must be an instance of Buffer or Uint8Array',
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError('The "options.ticketKeys" property must be an instance of Buffer or Uint8Array'), { code: "ERR_INVALID_ARG_TYPE" });
     }
     if (options.ticketKeys.byteLength !== 48) {
-      const error = new RangeError(
-        "The property 'options.ticketKeys' must be exactly 48 bytes",
-      );
-      error.code = "ERR_INVALID_ARG_VALUE";
-      throw error;
+      throw Object.assign(new RangeError("The property 'options.ticketKeys' must be exactly 48 bytes"), { code: "ERR_INVALID_ARG_VALUE" });
     }
   }
 };
@@ -59,11 +47,7 @@ const __quenchTlsValidateOptions = (options = {}) => {
   __quenchTlsValidateTicketKeys(options);
   for (const name of ["minVersion", "maxVersion"]) {
     if (options[name] !== undefined && !/^TLSv1\.[0-3]$/.test(options[name])) {
-      const error = new TypeError(
-        `Invalid TLS protocol version: ${options[name]}`,
-      );
-      error.code = "ERR_TLS_INVALID_PROTOCOL_VERSION";
-      throw error;
+      throw Object.assign(new TypeError(`Invalid TLS protocol version: ${options[name]}`), { code: "ERR_TLS_INVALID_PROTOCOL_VERSION" });
     }
   }
 };
@@ -110,11 +94,7 @@ const __quenchTlsModule = {
     for (let index = 0; index < values.length; index++) {
       const value = NodeBuffer.from(String(values[index]));
       if (value.length > 255) {
-        const error = new RangeError(
-          `The byte length of the protocol at index ${index} exceeds the maximum length. It must be <= 255. Received ${value.length}`,
-        );
-        error.code = "ERR_OUT_OF_RANGE";
-        throw error;
+        throw Object.assign(new RangeError(`The byte length of the protocol at index ${index} exceeds the maximum length. It must be <= 255. Received ${value.length}`), { code: "ERR_OUT_OF_RANGE" });
       }
       chunks.push(NodeBuffer.from([value.length]), value);
     }
@@ -129,11 +109,7 @@ const __quenchTlsModule = {
       "checkServerIdentity" in options &&
       typeof options.checkServerIdentity !== "function"
     ) {
-      const error = new TypeError(
-        'The "options.checkServerIdentity" property must be of type function',
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError('The "options.checkServerIdentity" property must be of type function'), { code: "ERR_INVALID_ARG_TYPE" });
     }
     throw __quenchTlsUnsupported("tls.connect");
   },

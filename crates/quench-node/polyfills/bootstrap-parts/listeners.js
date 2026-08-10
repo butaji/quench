@@ -35,28 +35,16 @@ __quenchEventListenersModule.listenerCount = (emitter, event, listener) => {
       : values.filter((item) => item === listener).length;
   }
   if (!emitter || typeof emitter.listenerCount !== "function") {
-    const error = new TypeError(
-      "The emitter argument must be an instance of EventEmitter [ERR_INVALID_ARG_TYPE]",
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError("The emitter argument must be an instance of EventEmitter [ERR_INVALID_ARG_TYPE]"), { code: "ERR_INVALID_ARG_TYPE" });
   }
   return emitter.listenerCount(event, listener);
 };
 __quenchEventListenersModule.addAbortListener = (signal, listener) => {
   if (!signal || typeof signal.addEventListener !== "function") {
-    const error = new TypeError(
-      "The signal argument must be an AbortSignal [ERR_INVALID_ARG_TYPE]",
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError("The signal argument must be an AbortSignal [ERR_INVALID_ARG_TYPE]"), { code: "ERR_INVALID_ARG_TYPE" });
   }
   if (typeof listener !== "function") {
-    const error = new TypeError(
-      "The listener argument must be a function [ERR_INVALID_ARG_TYPE]",
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError("The listener argument must be a function [ERR_INVALID_ARG_TYPE]"), { code: "ERR_INVALID_ARG_TYPE" });
   }
   Symbol.dispose ||= Symbol("dispose");
   let active = true;
@@ -89,9 +77,5 @@ __quenchEventListenersModule.getEventListeners = (target, event) => {
         (listener, index, listeners) => listeners.indexOf(listener) === index,
       );
   }
-  const error = new TypeError(
-    "The emitter argument must be an instance of EventEmitter or EventTarget [ERR_INVALID_ARG_TYPE]",
-  );
-  error.code = "ERR_INVALID_ARG_TYPE";
-  throw error;
+  throw Object.assign(new TypeError("The emitter argument must be an instance of EventEmitter or EventTarget [ERR_INVALID_ARG_TYPE]"), { code: "ERR_INVALID_ARG_TYPE" });
 };

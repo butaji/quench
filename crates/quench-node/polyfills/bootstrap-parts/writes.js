@@ -6,11 +6,7 @@ const __nodeFsCollectWriteIterable = (data, options) => {
       !(chunk instanceof Uint8Array) &&
       !ArrayBuffer.isView(chunk)
     ) {
-      const error = new TypeError(
-        'The "data" argument must be of type string or an instance of Buffer, TypedArray, or DataView',
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw Object.assign(new TypeError('The "data" argument must be of type string or an instance of Buffer, TypedArray, or DataView'), { code: "ERR_INVALID_ARG_TYPE" });
     }
     chunks.push(chunk);
   }
@@ -68,11 +64,7 @@ const __nodeFsValidateWriteData = (data) => {
     !ArrayBuffer.isView(data) &&
     !(data instanceof ArrayBuffer)
   ) {
-    const error = new TypeError(
-      'The "data" argument must be of type string or an instance of Buffer, TypedArray, or DataView',
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "data" argument must be of type string or an instance of Buffer, TypedArray, or DataView'), { code: "ERR_INVALID_ARG_TYPE" });
   }
 };
 const __nodeFsHandleWriteFile = async (fd, data, options) => {
@@ -101,11 +93,7 @@ const __nodeFsWriteArguments = (buffer, offset, length, position) => {
     typeof offset !== "object" &&
     typeof offset !== "string"
   ) {
-    const error = new TypeError(
-      'The "options" argument must be of type object or string',
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "options" argument must be of type object or string'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   const named = offset &&
     typeof offset === "object" &&
@@ -130,9 +118,7 @@ const __nodeFsWriteArguments = (buffer, offset, length, position) => {
     size < 0 ||
     start + size > source.length
   ) {
-    const error = new RangeError("The value is out of range");
-    error.code = "ERR_OUT_OF_RANGE";
-    throw error;
+    throw Object.assign(new RangeError("The value is out of range"), { code: "ERR_OUT_OF_RANGE" });
   }
   return { source, start, size, at };
 };
@@ -144,11 +130,7 @@ const __nodeFsHandleWrite = (handle, buffer, offset, length, position) => {
       !ArrayBuffer.isView(buffer) &&
       !(buffer instanceof ArrayBuffer))
   ) {
-    const error = new TypeError(
-      'The "buffer" argument must be an instance of Buffer, TypedArray, or DataView',
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "buffer" argument must be an instance of Buffer, TypedArray, or DataView'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   const { source, start, size, at } = __nodeFsWriteArguments(
     buffer,
@@ -362,19 +344,13 @@ const __nodeFsValidatePullOptions = (options) => {
     options.autoClose !== undefined &&
     typeof options.autoClose !== "boolean"
   ) {
-    const error = new TypeError(
-      'The "autoClose" option must be of type boolean',
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "autoClose" option must be of type boolean'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   if (
     options.signal !== undefined &&
     (!options.signal || typeof options.signal.aborted !== "boolean")
   ) {
-    const error = new TypeError('The "signal" option must be an AbortSignal');
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError('The "signal" option must be an AbortSignal'), { code: "ERR_INVALID_ARG_TYPE" });
   }
   for (
     const [name, value] of [
@@ -389,14 +365,10 @@ const __nodeFsValidatePullOptions = (options) => {
 };
 const __nodeFsValidatePullNumber = (name, value) => {
   if (typeof value !== "number" || !Number.isFinite(value)) {
-    const error = new TypeError(`The "${name}" option must be of type number`);
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw Object.assign(new TypeError(`The "${name}" option must be of type number`), { code: "ERR_INVALID_ARG_TYPE" });
   }
   if (!Number.isInteger(value) || value < 0) {
-    const error = new RangeError(`The value of "${name}" is out of range`);
-    error.code = "ERR_OUT_OF_RANGE";
-    throw error;
+    throw Object.assign(new RangeError(`The value of "${name}" is out of range`), { code: "ERR_OUT_OF_RANGE" });
   }
 };
 const __nodeFsPullBatches = (handle, options) => {
