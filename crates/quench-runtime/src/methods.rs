@@ -54,21 +54,8 @@ fn execute_callee(
         }
         Value::Function(function) => crate::functions::execute(&function, receiver, arguments)?,
         Value::BoundFunction(bound) => crate::functions::execute_bound(&bound, arguments)?,
-        Value::Undefined => execute_fallback(receiver, arguments)?,
+        Value::Undefined => return Err(crate::vm::not_callable()),
         _ => return Err(crate::vm::not_callable()),
     };
     Ok(value)
-}
-
-fn execute_fallback(receiver: &Value, arguments: &[Value]) -> Result<Value, VmError> {
-    let this_arg = arguments.first().unwrap_or(&Value::Undefined);
-    let call_arguments = arguments.get(1..).unwrap_or_default();
-    match receiver {
-        Value::Builtin(builtin) => {
-            execute_builtin_with_receiver(*builtin, call_arguments, Some(this_arg))
-        }
-        Value::Function(function) => crate::functions::execute(function, this_arg, call_arguments),
-        Value::BoundFunction(bound) => crate::functions::execute_bound(bound, call_arguments),
-        _ => Err(crate::vm::not_callable()),
-    }
 }
