@@ -43,10 +43,11 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<Completion,
 fn execute_try_body(ops: &[Op], registers: &mut Vec<Value>) -> Result<Completion, VmError> {
     for op in ops {
         if matches!(op, Op::YieldStar { .. }) {
-            if let Some(completion) =
-                crate::generator::execute_yield_star(registers, op, Completion::Normal)?
-            {
-                return Ok(completion);
+            match crate::generator::execute_yield_star(registers, op, Completion::Normal) {
+                Ok(Some(completion)) => return Ok(completion),
+                Ok(None) => {}
+                Err(VmError::Thrown(value)) => return Ok(Completion::Throw(value)),
+                Err(error) => return Err(error),
             }
             continue;
         }
