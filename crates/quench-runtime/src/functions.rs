@@ -1,9 +1,8 @@
-use std::collections::HashMap;
-
 use crate::{
     facts::ProgramDb,
     ops::{FunctionKind, FunctionStrictness, Op},
 };
+use std::collections::HashMap;
 
 #[derive(Clone, Copy)]
 pub(crate) struct FunctionMetadata {
@@ -12,13 +11,11 @@ pub(crate) struct FunctionMetadata {
     pub(crate) is_async: bool,
     pub(crate) mapped_arguments: bool,
 }
-
 pub(super) fn function_parameters(
     function: &oxc::ast::ast::Function<'_>,
 ) -> Result<(HashMap<String, u16>, u16), Vec<String>> {
     crate::function_parameters::bindings(&function.params)
 }
-
 pub(crate) fn reduce_body(
     body: &oxc::ast::ast::FunctionBody<'_>,
     formal: &oxc::ast::ast::FormalParameters<'_>,
@@ -28,6 +25,7 @@ pub(crate) fn reduce_body(
     captures: u16,
     strictness: FunctionStrictness,
 ) -> Result<Vec<Op>, Vec<String>> {
+    let formal_parameters = crate::function_parameters::bindings(formal)?.0;
     let rest = rest_slot(&parameters, parameter_count, captures);
     let minimum = captures
         .saturating_add(parameter_count)
@@ -35,19 +33,28 @@ pub(crate) fn reduce_body(
     let next_slot = crate::reduce_support::register_base(&parameters).max(minimum);
     let inherited = facts.strict;
     facts.strict = matches!(strictness, FunctionStrictness::Strict);
-    let mut prefix = crate::function_parameters::prefix(formal, facts, &parameters, captures)
-        .ok_or_else(|| vec!["Unsupported function parameter initialization".to_string()])?;
+    let prefix = crate::function_parameters::prefix(formal, facts, &parameters, captures, true);
+    let mut body_locals = parameters.clone();
+    crate::reduce_support::shadow_function_bindings(
+        &body.statements,
+        &mut body_locals,
+        &formal_parameters,
+    );
+    let inherited_barrier = std::mem::take(&mut facts.eval_var_barrier);
     let reduced = crate::reduce::reduce_statements_with_locals(
         &body.statements,
         facts,
-        parameters,
+        body_locals,
         next_slot,
     );
+    facts.eval_var_barrier = inherited_barrier;
     facts.strict = inherited;
+    let mut prefix =
+        prefix.ok_or_else(|| vec!["Unsupported function parameter initialization".to_string()])?;
+    prefix.extend((!prefix.is_empty()).then_some(Op::ParameterEnd));
     prefix.extend(reduced?);
     Ok(bind_rest(prefix, rest, parameter_count, captures))
 }
-
 fn rest_slot(parameters: &HashMap<String, u16>, params: u16, captures: u16) -> Option<u16> {
     let slot = captures.saturating_add(params).saturating_add(2);
     parameters
@@ -55,7 +62,6 @@ fn rest_slot(parameters: &HashMap<String, u16>, params: u16, captures: u16) -> O
         .any(|value| *value == slot)
         .then_some(slot)
 }
-
 fn bind_rest(mut body: Vec<Op>, rest: Option<u16>, params: u16, captures: u16) -> Vec<Op> {
     let Some(slot) = rest else { return body };
     let arguments = captures.saturating_add(params);
@@ -79,7 +85,6 @@ fn bind_rest(mut body: Vec<Op>, rest: Option<u16>, params: u16, captures: u16) -
     prefix.append(&mut body);
     prefix
 }
-
 fn capture_count(locals: &HashMap<String, u16>) -> u16 {
     locals
         .values()
@@ -87,7 +92,6 @@ fn capture_count(locals: &HashMap<String, u16>) -> u16 {
         .max()
         .map_or(0, |slot| slot.saturating_add(1))
 }
-
 fn extend_function_parameters(
     mut parameters: HashMap<String, u16>,
     parameter_count: u16,
@@ -123,35 +127,62 @@ pub(super) fn reduce_function_ops(
     arrow_expression: Option<bool>,
 ) -> Option<(Vec<Op>, u16)> {
     let captures = capture_count(locals);
-    let formal_parameters = parameters.clone();
-    let mut parameters = extend_function_parameters(
+    let (parameters, body_locals) = split_function_locals(
+        statements,
         parameters,
         parameter_count,
         captures,
         locals,
         arrow_expression.is_some(),
     );
-    crate::reduce_support::shadow_function_bindings(
-        statements,
-        &mut parameters,
-        &formal_parameters,
-    );
     let rest = rest_slot(&parameters, parameter_count, captures);
-    let mut prefix = crate::function_parameters::prefix(formal, facts, &parameters, captures)?;
-    let minimum = captures
-        .saturating_add(parameter_count)
-        .saturating_add(2)
-        .saturating_add(u16::from(rest.is_some()));
-    let local_count = crate::reduce_support::register_base(&parameters).max(minimum);
+    let mut prefix = crate::function_parameters::prefix(
+        formal,
+        facts,
+        &parameters,
+        captures,
+        arrow_expression.is_none(),
+    )?;
+    let local_count = function_local_count(&body_locals, parameter_count, captures, rest);
+    let inherited_barrier = std::mem::take(&mut facts.eval_var_barrier);
     let body_ops = reduce_selected_body(
         statements,
         facts,
-        parameters,
+        body_locals,
         local_count,
         arrow_expression.unwrap_or(false),
-    )?;
-    prefix.extend(body_ops);
+    );
+    facts.eval_var_barrier = inherited_barrier;
+    prefix.extend((!prefix.is_empty()).then_some(Op::ParameterEnd));
+    prefix.extend(body_ops?);
     Some((bind_rest(prefix, rest, parameter_count, captures), captures))
+}
+fn split_function_locals(
+    statements: &[oxc::ast::ast::Statement<'_>],
+    parameters: HashMap<String, u16>,
+    count: u16,
+    captures: u16,
+    locals: &HashMap<String, u16>,
+    lexical_receiver: bool,
+) -> (HashMap<String, u16>, HashMap<String, u16>) {
+    let formal = parameters.clone();
+    let parameters =
+        extend_function_parameters(parameters, count, captures, locals, lexical_receiver);
+    let mut body = parameters.clone();
+    crate::reduce_support::shadow_function_bindings(statements, &mut body, &formal);
+    (parameters, body)
+}
+fn function_local_count(
+    locals: &HashMap<String, u16>,
+    count: u16,
+    captures: u16,
+    rest: Option<u16>,
+) -> u16 {
+    let minimum = captures
+        .saturating_add(count)
+        .saturating_add(2)
+        .saturating_add(u16::from(rest.is_some()));
+    crate::reduce_support::register_base(locals).max(minimum)
 }
 
 fn reduce_selected_body(
