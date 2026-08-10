@@ -65,6 +65,44 @@ pub(crate) fn store(registers: &[Value], slot: u16, source: u16) -> Result<(), V
     Ok(())
 }
 
+pub(crate) fn load_binding(
+    registers: &mut Vec<Value>,
+    dst: u16,
+    slot: u16,
+    name: &str,
+) -> Result<(), VmError> {
+    let value = crate::with_scope::resolve_binding(name)?.unwrap_or_else(|| current().get(slot));
+    crate::execute::write_value(registers, dst, value);
+    Ok(())
+}
+
+pub(crate) fn resolve_target(
+    registers: &mut Vec<Value>,
+    dst: u16,
+    name: &str,
+) -> Result<(), VmError> {
+    let target = crate::with_scope::binding_target(name)?.unwrap_or(Value::Undefined);
+    crate::execute::write_value(registers, dst, target);
+    Ok(())
+}
+
+pub(crate) fn initialize_resolved(
+    registers: &[Value],
+    target: u16,
+    slot: u16,
+    name: &str,
+    source: u16,
+) -> Result<(), VmError> {
+    let value = crate::execute::read_register(registers, source)?;
+    let target = crate::execute::read_register(registers, target)?;
+    if matches!(target, Value::Undefined) {
+        current().set(slot, value);
+    } else {
+        crate::proxy::proxy_set(&target, name, &value, None)?;
+    }
+    Ok(())
+}
+
 pub(crate) fn load(registers: &mut Vec<Value>, dst: u16, slot: u16) {
     crate::execute::write_value(registers, dst, current().get(slot));
 }

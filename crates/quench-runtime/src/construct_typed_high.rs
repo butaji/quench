@@ -47,9 +47,9 @@ fn view_int8_array(
     let available = buffer.byte_length() - offset;
     let length = match arguments.get(2) {
         Some(value) => to_index(crate::intl::tolocale::value::to_number(Some(value)))?,
-        None => available,
+        None => view_length(buffer, available),
     };
-    if length > available {
+    if arguments.get(2).is_some() && length > available {
         return Err(range_error("Invalid Int8Array length"));
     }
     Ok(Value::Int8Array(Rc::new(crate::value::Int8ArrayData::new(
@@ -114,9 +114,9 @@ fn view_int16_array(
     let available = buffer.byte_length() - offset;
     let length = match arguments.get(2) {
         Some(value) => to_index(crate::intl::tolocale::value::to_number(Some(value)))?,
-        None => available / element_size,
+        None => view_length(buffer, available / element_size),
     };
-    if length > available / element_size {
+    if arguments.get(2).is_some() && length > available / element_size {
         return Err(range_error("Invalid Int16Array length"));
     }
     Ok(Value::Int16Array(Rc::new(
@@ -165,9 +165,9 @@ fn view_int32_array(
     let available = buffer.byte_length() - offset;
     let length = match arguments.get(2) {
         Some(value) => to_index(crate::intl::tolocale::value::to_number(Some(value)))?,
-        None => available / element_size,
+        None => view_length(buffer, available / element_size),
     };
-    if length > available / element_size {
+    if arguments.get(2).is_some() && length > available / element_size {
         return Err(range_error("Invalid Int32Array length"));
     }
     Ok(Value::Int32Array(Rc::new(
@@ -272,9 +272,9 @@ fn view_float32_array(
     let available = buffer.byte_length() - offset;
     let length = match arguments.get(2) {
         Some(value) => to_index(crate::intl::tolocale::value::to_number(Some(value)))?,
-        None => available / element_size,
+        None => view_length(buffer, available / element_size),
     };
-    if length > available / element_size {
+    if arguments.get(2).is_some() && length > available / element_size {
         return Err(range_error("Invalid Float32Array length"));
     }
     Ok(Value::Float32Array(Rc::new(
@@ -326,9 +326,9 @@ fn view_float64_array(
     let available = buffer.byte_length() - offset;
     let length = match arguments.get(2) {
         Some(value) => to_index(crate::intl::tolocale::value::to_number(Some(value)))?,
-        None => available / element_size,
+        None => view_length(buffer, available / element_size),
     };
-    if length > available / element_size {
+    if arguments.get(2).is_some() && length > available / element_size {
         return Err(range_error("Invalid Float64Array length"));
     }
     Ok(Value::Float64Array(Rc::new(
@@ -336,7 +336,7 @@ fn view_float64_array(
     )))
 }
 
-fn to_index(value: f64) -> Result<usize, crate::execute::VmError> {
+pub(crate) fn to_index(value: f64) -> Result<usize, crate::execute::VmError> {
     if value.is_nan() {
         return Ok(0);
     }

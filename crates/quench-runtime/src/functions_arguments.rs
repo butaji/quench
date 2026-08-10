@@ -90,6 +90,7 @@ pub(crate) fn execute_body(
     arguments: &[crate::value::Value],
 ) -> Result<crate::value::Value, crate::execute::VmError> {
     let _home = crate::super_scope::Guard::install(function, this_value);
+    let _with_scope = crate::with_scope::FunctionGuard::isolate();
     let (mut registers, environment) = build_registers(function, this_value, arguments);
     crate::vm::execute_in_environment(
         &function.body,

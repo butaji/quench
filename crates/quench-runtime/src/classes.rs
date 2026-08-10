@@ -14,8 +14,17 @@ pub(crate) fn reduce_expression(
     next: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
-    let constructor = reduce_constructor(class, ops, facts, next, locals)?;
+    let heritage = reduce_heritage(class, ops, facts, next, locals)?;
+    let (constructor, default_constructor) = reduce_constructor(class, ops, facts, next, locals)?;
     let prototype = emit_object(ops, next, Vec::new());
+    configure_heritage(
+        heritage,
+        constructor,
+        prototype,
+        default_constructor,
+        ops,
+        next,
+    );
     define_static_key(
         ops,
         next,
@@ -34,13 +43,73 @@ pub(crate) fn reduce_expression(
     Some(constructor)
 }
 
+fn reduce_heritage(
+    class: &Class<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<Option<u16>> {
+    let Some(super_class) = &class.super_class else {
+        return Some(None);
+    };
+    let src = crate::reduce::reduce_expression(super_class, ops, facts, next, locals)?;
+    ops.push(Op::ValidateClassHeritage { src });
+    Some(Some(src))
+}
+
+fn configure_heritage(
+    heritage: Option<u16>,
+    constructor: u16,
+    prototype: u16,
+    default_constructor: bool,
+    ops: &mut Vec<Op>,
+    next: &mut u16,
+) {
+    let Some(heritage) = heritage else { return };
+    let parent_prototype = take_register(next);
+    ops.push(Op::GetProperty {
+        dst: parent_prototype,
+        object: heritage,
+        key: "prototype".to_string(),
+    });
+    set_internal_prototype(ops, prototype, parent_prototype);
+    set_internal_prototype(ops, constructor, heritage);
+    if default_constructor {
+        ops.push(Op::SetProperty {
+            object: constructor,
+            key: "\0derived_constructor".to_string(),
+            src: heritage,
+        });
+    }
+}
+
+fn set_internal_prototype(ops: &mut Vec<Op>, object: u16, src: u16) {
+    ops.push(Op::SetProperty {
+        object,
+        key: "\0prototype".to_string(),
+        src,
+    });
+}
+
+pub(crate) fn validate_heritage(
+    value: &crate::value::Value,
+) -> Result<(), crate::execute::VmError> {
+    if matches!(value, crate::value::Value::Null) || crate::conversion::is_callable(value) {
+        return Ok(());
+    }
+    Err(crate::value::error::throw_type_error(
+        "Class extends value is not a constructor or null",
+    ))
+}
+
 fn reduce_constructor(
     class: &Class<'_>,
     ops: &mut Vec<Op>,
     facts: &mut ProgramDb,
     next: &mut u16,
     locals: &HashMap<String, u16>,
-) -> Option<u16> {
+) -> Option<(u16, bool)> {
     let method = class.body.body.iter().find_map(|element| match element {
         ClassElement::MethodDefinition(method)
             if method.kind == MethodDefinitionKind::Constructor =>
@@ -50,8 +119,8 @@ fn reduce_constructor(
         _ => None,
     });
     match method {
-        Some(method) => reduce_method(method, ops, facts, next, locals),
-        None => Some(emit_default_constructor(ops, next)),
+        Some(method) => reduce_method(method, ops, facts, next, locals).map(|value| (value, false)),
+        None => Some((emit_default_constructor(ops, next), true)),
     }
 }
 

@@ -3,14 +3,25 @@
 pub struct ArrayBufferData {
     pub bytes: Rc<RefCell<Vec<u8>>>,
     pub detached: Rc<RefCell<bool>>,
+    pub max_byte_length: Option<usize>,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResizeError;
 
 impl ArrayBufferData {
     pub fn new(byte_length: usize) -> Self {
         Self {
             bytes: Rc::new(RefCell::new(vec![0; byte_length])),
             detached: Rc::new(RefCell::new(false)),
+            max_byte_length: None,
         }
+    }
+
+    pub fn new_resizable(byte_length: usize, max_byte_length: usize) -> Self {
+        let mut buffer = Self::new(byte_length);
+        buffer.max_byte_length = Some(max_byte_length);
+        buffer
     }
 
     pub fn byte_length(&self) -> usize {
@@ -24,6 +35,15 @@ impl ArrayBufferData {
     pub fn detach(&self) {
         *self.detached.borrow_mut() = true;
         self.bytes.borrow_mut().clear();
+    }
+
+    pub fn resize(&self, byte_length: usize) -> Result<(), ResizeError> {
+        let exceeds_maximum = self.max_byte_length.map_or(true, |max| byte_length > max);
+        if *self.detached.borrow() || exceeds_maximum {
+            return Err(ResizeError);
+        }
+        self.bytes.borrow_mut().resize(byte_length, 0);
+        Ok(())
     }
 }
 
@@ -332,4 +352,3 @@ fn sign_factor(sign: u64) -> f64 {
         -1.0
     }
 }
-

@@ -60,7 +60,9 @@ fn take_register(next_register: &mut u16) -> u16 {
 }
 
 fn builtin(name: &str) -> Option<crate::ops::Builtin> {
-    typed_array_builtin(name).or_else(|| builtin_core(name))
+    typed_array_builtin(name)
+        .or_else(|| (name == "Proxy").then_some(crate::ops::Builtin::Proxy))
+        .or_else(|| builtin_core(name))
 }
 
 fn typed_array_builtin(name: &str) -> Option<crate::ops::Builtin> {
@@ -74,6 +76,8 @@ fn typed_array_builtin(name: &str) -> Option<crate::ops::Builtin> {
         "Uint16Array" => Some(crate::ops::Builtin::Uint16Array),
         "Uint32Array" => Some(crate::ops::Builtin::Uint32Array),
         "Uint8ClampedArray" => Some(crate::ops::Builtin::Uint8ClampedArray),
+        "BigInt64Array" => Some(crate::ops::Builtin::BigInt64Array),
+        "BigUint64Array" => Some(crate::ops::Builtin::BigUint64Array),
         _ => None,
     }
 }

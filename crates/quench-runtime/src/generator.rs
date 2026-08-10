@@ -43,6 +43,7 @@ fn resume(generator: &GeneratorData) -> Result<Value, VmError> {
     let mut state = generator.state.borrow_mut();
     let state = state.as_mut().ok_or(VmError::MissingReturn)?;
     let _home = crate::super_scope::Guard::install(&generator.function, &generator.receiver);
+    let _with_scope = crate::with_scope::FunctionGuard::isolate();
     let (completion, pc) = crate::vm::execute_generator_step(
         &generator.function.body,
         &mut state.registers,

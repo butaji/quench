@@ -39,9 +39,10 @@ fn reduce_local(
     let slot = *locals.get(identifier.name.as_str())?;
     let register = *next_register;
     *next_register = next_register.saturating_add(1);
-    ops.push(Op::LoadLocal {
+    ops.push(Op::LoadBinding {
         dst: register,
         slot,
+        name: identifier.name.to_string(),
     });
     Some(register)
 }
