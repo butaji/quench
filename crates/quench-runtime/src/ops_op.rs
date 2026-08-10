@@ -46,8 +46,10 @@ pub enum Op {
         bindings: Vec<(String, u16)>,
     },
     CallMethod { dst: u16, object: u16, key: String, args: Vec<u16> },
+    CallSuperMethod { dst: u16, key: String, args: Vec<u16> },
     /// Suspend async execution until the source completion settles.
     Await { dst: u16, src: u16 },
+    Yield { src: u16 },
     Construct { dst: u16, callee: u16, args: Vec<u16> },
     Branch { condition: u16, then_ops: Vec<Op>, else_ops: Vec<Op> },
     Label { name: String, body: Vec<Op> },
