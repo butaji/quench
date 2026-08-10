@@ -700,7 +700,10 @@ fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
     if matches!(key, "prototype" | "constructor") {
         return property;
     }
-    bind_method(value, property)
+    if matches!(key, "call" | "bind") {
+        return bind_method(value, property);
+    }
+    property
 }
 
 fn bind_function_property(value: &Value, key: &str) -> Value {
