@@ -293,15 +293,23 @@ fn object_property(properties: &Rc<Vec<(String, Value)>>, key: &str) -> Value {
     }) {
         return global_property(properties, key);
     }
-    let prototype = if properties.iter().any(|(name, _)| name == "timeValue") {
-        crate::ops::Builtin::DatePrototype
-    } else {
-        crate::ops::Builtin::ObjectPrototype
-    };
+    let prototype = object_prototype(properties);
     bind_method(
         &Value::Object(properties.clone()),
         crate::builtins::property(prototype, key),
     )
+}
+
+fn object_prototype(properties: &[(String, Value)]) -> Builtin {
+    if properties.iter().any(|(name, _)| name == "timeValue") {
+        Builtin::DatePrototype
+    } else if properties.iter().any(|(name, _)| name == "source")
+        && properties.iter().any(|(name, _)| name == "flags")
+    {
+        Builtin::RegExpPrototype
+    } else {
+        Builtin::ObjectPrototype
+    }
 }
 
 fn global_property(properties: &Rc<Vec<(String, Value)>>, key: &str) -> Value {
