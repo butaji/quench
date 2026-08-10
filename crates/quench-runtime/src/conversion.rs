@@ -83,6 +83,11 @@ fn ordinary_to_primitive(value: &Value, hint: &str) -> Result<Value, VmError> {
             Some(&Value::String(name.to_string())),
         ) == Value::Boolean(true);
         if matches!(method, Value::Undefined) && !owns_method {
+            if name == "valueOf" {
+                if let Some(boxed) = boxed_primitive(value) {
+                    return Ok(boxed);
+                }
+            }
             if name == "toString" {
                 return Ok(crate::builtins::prototype_to_string(Some(value)));
             }
@@ -99,6 +104,16 @@ fn ordinary_to_primitive(value: &Value, hint: &str) -> Result<Value, VmError> {
     Err(crate::value::error::throw_type_error(
         "Cannot convert object to primitive value",
     ))
+}
+
+fn boxed_primitive(value: &Value) -> Option<Value> {
+    let Value::Object(properties) = value else {
+        return None;
+    };
+    properties
+        .iter()
+        .rev()
+        .find_map(|(name, value)| (name == "_value").then(|| value.clone()))
 }
 
 fn call_primitive(method: &Value, receiver: &Value, arguments: &[Value]) -> Result<Value, VmError> {

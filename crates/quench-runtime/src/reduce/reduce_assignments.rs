@@ -34,6 +34,14 @@ pub fn reduce_assignment(
     next: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
+    if matches!(
+        assignment.left,
+        AssignmentTarget::ArrayAssignmentTarget(_) | AssignmentTarget::ObjectAssignmentTarget(_)
+    ) {
+        let value = crate::reduce::reduce_expression(&assignment.right, ops, facts, next, locals)?;
+        crate::binding_patterns::assign_target(&assignment.left, value, ops, facts, next, locals)?;
+        return Some(value);
+    }
     let mut place = reduce_place(&assignment.left, ops, facts, next, locals)?;
     let lhs = if assignment.operator == AssignmentOperator::Assign {
         None
@@ -45,6 +53,18 @@ pub fn reduce_assignment(
     let value = assignment_value(assignment.operator, lhs, rhs, ops, next)?;
     put(place, value, ops)?;
     Some(value)
+}
+
+pub(crate) fn put_assignment_target(
+    target: &AssignmentTarget<'_>,
+    value: u16,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<()> {
+    let place = reduce_place(target, ops, facts, next, locals)?;
+    put(place, value, ops)
 }
 
 fn reduce_place(
@@ -81,6 +101,55 @@ fn reduce_place(
         }
         _ => None,
     }
+}
+
+pub(crate) fn maybe_default_place(
+    target: &oxc::ast::ast::AssignmentTargetMaybeDefault<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<Place> {
+    let target = match target {
+        oxc::ast::ast::AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(default) => {
+            &default.binding
+        }
+        _ => target.as_assignment_target()?,
+    };
+    if matches!(
+        target,
+        AssignmentTarget::ArrayAssignmentTarget(_) | AssignmentTarget::ObjectAssignmentTarget(_)
+    ) {
+        return None;
+    }
+    reduce_place(target, ops, facts, next, locals)
+}
+
+pub(crate) fn emit_object_rest(
+    source: u16,
+    excluded: Vec<u16>,
+    ops: &mut Vec<Op>,
+    next: &mut u16,
+) -> u16 {
+    let target = take_register(next);
+    ops.push(Op::MakeObject {
+        dst: target,
+        properties: Vec::new(),
+    });
+    ops.push(Op::CopyDataProperties {
+        target,
+        source,
+        excluded,
+    });
+    target
+}
+
+pub(crate) fn identifier_assignment_place(
+    name: &str,
+    strict: bool,
+    locals: &HashMap<String, u16>,
+) -> Place {
+    identifier_place(name, strict, locals)
 }
 
 pub(crate) fn reduce_simple_place(

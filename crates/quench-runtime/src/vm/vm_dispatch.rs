@@ -100,6 +100,7 @@ fn run_property_op(registers: &mut Vec<Value>, op: &Op) -> Result<bool, VmError>
             | SetProperty { .. }
             | SetPropertyDynamic { .. }
             | DefineProperty { .. }
+            | CopyDataProperties { .. }
             | ResolveName { .. }
             | ResolveNameOrUndefined { .. }
             | SetName { .. }
@@ -300,6 +301,9 @@ fn run_get_set_property(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmErr
             crate::properties::execute_set_property(registers, op)?
         }
         DefineProperty { .. } => crate::property_define::execute(registers, op)?,
+        CopyDataProperties { .. } => {
+            crate::properties::execute_copy_data_properties(registers, op)?
+        }
         _ => {}
     }
     Ok(())

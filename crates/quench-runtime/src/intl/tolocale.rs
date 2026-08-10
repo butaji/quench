@@ -134,32 +134,7 @@ pub(crate) mod value {
             .map_or(f64::NAN, |value| to_number(Some(value)))
     }
     pub(crate) fn to_number_result(value: Option<&Value>) -> Result<f64, crate::execute::VmError> {
-        let Some(object @ Value::Object(_)) = value else {
-            return Ok(to_number(value));
-        };
-        let boxed = crate::execute::get_property(object, "_value");
-        if !matches!(boxed, Value::Undefined) {
-            return Ok(to_number(Some(&boxed)));
-        }
-        for key in ["valueOf", "toString"] {
-            let method = crate::execute::get_property(object, key);
-            if key == "toString" && matches!(method, Value::Undefined) {
-                return Ok(to_number(Some(&Value::String(
-                    "[object Object]".to_string(),
-                ))));
-            }
-            if !matches!(
-                method,
-                Value::Function(_) | Value::BoundFunction(_) | Value::Builtin(_)
-            ) {
-                continue;
-            }
-            let result = crate::functions::execute_target(&method, object, &[])?;
-            if !crate::value::is_object(&result) {
-                return Ok(to_number(Some(&result)));
-            }
-        }
-        Err(crate::execute::VmError::NotCallable)
+        crate::conversion::to_number(value.unwrap_or(&Value::Undefined))
     }
     pub(crate) fn parse_number(value: &str) -> f64 {
         let value = value.trim();
@@ -280,27 +255,6 @@ pub(crate) mod value {
         }) as i32
     }
 
-    pub(crate) fn loose_equal(left: &Value, right: &Value) -> bool {
-        if std::mem::discriminant(left) == std::mem::discriminant(right) {
-            return strict_equal(left, right);
-        }
-        if matches!(
-            (left, right),
-            (Value::Null, Value::Undefined) | (Value::Undefined, Value::Null)
-        ) {
-            return true;
-        }
-        if matches!(left, Value::Boolean(_)) || matches!(right, Value::Boolean(_)) {
-            return to_number(Some(left)) == to_number(Some(right));
-        }
-        number_string_combo(left, right) && to_number(Some(left)) == to_number(Some(right))
-    }
-    fn number_string_combo(left: &Value, right: &Value) -> bool {
-        matches!(
-            (left, right),
-            (Value::Number(_), Value::String(_)) | (Value::String(_), Value::Number(_))
-        )
-    }
     pub(crate) fn strict_equal(left: &Value, right: &Value) -> bool {
         crate::equality::strict_equal(left, right)
     }
