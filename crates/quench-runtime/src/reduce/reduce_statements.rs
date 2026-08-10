@@ -51,15 +51,16 @@ pub(crate) fn reduce_eval_source_in_context(
     let allocator = Allocator::default();
     let parsed = Parser::new(&allocator, source, SourceType::cjs()).parse();
     crate::reduce_support::validate_parse(&parsed)?;
-    let (scope_count, symbol_count) = crate::semantic::analyze_eval(&parsed.program, grammar)?;
+    let analysis = crate::semantic::analyze_eval(&parsed.program, grammar)?;
     let strict = inherited_strict || crate::reduce_support::has_strict_directive(&parsed.program);
     crate::reduce_support::validate_eval_var_names(&parsed.program, strict, forbidden_var_names)?;
     let directive_completion =
         super::reduce_eval::directive_completion(&parsed.program, inherited_strict);
     let mut facts = ProgramDb {
         strict,
-        scope_count,
-        symbol_count,
+        scope_count: analysis.scope_count,
+        symbol_count: analysis.symbol_count,
+        private_names: analysis.private_names,
         ..ProgramDb::default()
     };
     let (locals, next_slot, mut prefix, behavior, deletable) =
@@ -81,11 +82,11 @@ pub fn reduce_source_with_type(
     source: &str,
     source_type: SourceType,
 ) -> Result<ResidualProgram, Vec<String>> {
-    let (scope_count, symbol_count, ops) = {
+    let (scope_count, symbol_count, private_names, ops) = {
         let allocator = Allocator::default();
         let parsed = Parser::new(&allocator, source, source_type).parse();
         crate::reduce_support::validate_parse(&parsed)?;
-        let (scope_count, symbol_count) = crate::semantic::analyze(&parsed.program)?;
+        let analysis = crate::semantic::analyze(&parsed.program)?;
         let strict = source_type.is_module()
             || parsed
                 .program
@@ -94,14 +95,21 @@ pub fn reduce_source_with_type(
                 .any(|directive| directive.directive.as_str() == "use strict");
         let mut facts = ProgramDb {
             strict,
+            private_names: analysis.private_names,
             ..ProgramDb::default()
         };
         let ops = reduce_statements(&parsed.program.body, source_type, &mut facts)?;
-        (scope_count, symbol_count, ops)
+        (
+            analysis.scope_count,
+            analysis.symbol_count,
+            facts.private_names,
+            ops,
+        )
     };
     let facts = ProgramDb {
         scope_count,
         symbol_count,
+        private_names,
         ..ProgramDb::default()
     };
     Ok(ResidualProgram { facts, ops })
