@@ -1,8 +1,6 @@
 //! VM op execution helpers (arithmetic, unary, binary, call dispatch).
 use crate::bigint;
-use crate::intl::tolocale::value::{
-    is_truthy, loose_equal, strict_equal, to_int32, to_string, type_of,
-};
+use crate::intl::tolocale::value::{is_truthy, strict_equal, to_int32, to_string, type_of};
 use crate::ops::Builtin;
 use crate::value::Value;
 
@@ -67,8 +65,8 @@ fn evaluate_binary(
         | BinaryOp::Divide
         | BinaryOp::Remainder
         | BinaryOp::Exponentiate => arithmetic_value(left, right, operator)?,
-        BinaryOp::Equal => Value::Boolean(loose_equal(left, right)),
-        BinaryOp::NotEqual => Value::Boolean(!loose_equal(left, right)),
+        BinaryOp::Equal => Value::Boolean(crate::equality::abstract_equal(left, right)?),
+        BinaryOp::NotEqual => Value::Boolean(!crate::equality::abstract_equal(left, right)?),
         BinaryOp::StrictEqual => Value::Boolean(strict_equal(left, right)),
         BinaryOp::StrictNotEqual => Value::Boolean(!strict_equal(left, right)),
         BinaryOp::LessThan => compare_values(left, right, |a, b| a < b)?,

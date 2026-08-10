@@ -20,21 +20,43 @@ pub(crate) fn reduce(
         properties: Vec::new(),
     });
     for property in &object.properties {
-        let ObjectPropertyKind::ObjectProperty(property) = property else {
-            return None;
-        };
-        let key = reduce_key(property, ops, facts, next_register, locals)?;
-        let value =
-            crate::reduce::reduce_expression(&property.value, ops, facts, next_register, locals)?;
-        ops.push(Op::DefineProperty {
-            object: object_register,
-            key,
-            value,
-            kind: definition_kind(property.kind),
-            enumerable: true,
-        });
+        reduce_property(property, object_register, ops, facts, next_register, locals)?;
     }
     Some(object_register)
+}
+
+fn reduce_property(
+    property: &ObjectPropertyKind<'_>,
+    object: u16,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<()> {
+    match property {
+        ObjectPropertyKind::ObjectProperty(property) => {
+            let key = reduce_key(property, ops, facts, next, locals)?;
+            let value =
+                crate::reduce::reduce_expression(&property.value, ops, facts, next, locals)?;
+            ops.push(Op::DefineProperty {
+                object,
+                key,
+                value,
+                kind: definition_kind(property.kind),
+                enumerable: true,
+            });
+        }
+        ObjectPropertyKind::SpreadProperty(spread) => {
+            let source =
+                crate::reduce::reduce_expression(&spread.argument, ops, facts, next, locals)?;
+            ops.push(Op::CopyDataProperties {
+                target: object,
+                source,
+                excluded: Vec::new(),
+            });
+        }
+    }
+    Some(())
 }
 
 fn reduce_key(
