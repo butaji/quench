@@ -216,6 +216,7 @@ pub(crate) fn object(arguments: &[Value]) -> Value {
     match arguments.first() {
         Some(Value::Array(_))
         | Some(Value::ArrayBuffer(_))
+        | Some(Value::DataView(_))
         | Some(Value::Float32Array(_))
         | Some(Value::Float64Array(_))
         | Some(Value::Object(_))
@@ -267,6 +268,7 @@ pub(crate) fn same_value(left: Option<&Value>, right: Option<&Value>) -> bool {
         (Value::Array(left), Value::Array(right)) => Rc::ptr_eq(left, right),
         (Value::Object(left), Value::Object(right)) => Rc::ptr_eq(left, right),
         (Value::ArrayBuffer(left), Value::ArrayBuffer(right)) => Rc::ptr_eq(left, right),
+        (Value::DataView(left), Value::DataView(right)) => Rc::ptr_eq(left, right),
         (Value::Float32Array(left), Value::Float32Array(right)) => Rc::ptr_eq(left, right),
         (Value::Float64Array(left), Value::Float64Array(right)) => Rc::ptr_eq(left, right),
         (Value::Function(left), Value::Function(right)) => Rc::ptr_eq(left, right),
@@ -370,6 +372,7 @@ pub(crate) fn prototype_to_string(receiver: Option<&Value>) -> Value {
         Some(Value::Array(_)) => "Array",
         Some(Value::Object(_)) => "Object",
         Some(Value::ArrayBuffer(_)) => "ArrayBuffer",
+        Some(Value::DataView(_)) => "DataView",
         Some(Value::Float32Array(_)) => "Float32Array",
         Some(Value::Float64Array(_)) => "Float64Array",
         Some(Value::Function(_)) => "Function",

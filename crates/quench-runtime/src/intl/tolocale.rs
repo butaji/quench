@@ -21,6 +21,7 @@ pub(crate) mod value {
                 .join(","),
             Some(Value::Object(_)) => "[object Object]".to_string(),
             Some(Value::ArrayBuffer(_)) => "[object ArrayBuffer]".to_string(),
+            Some(Value::DataView(_)) => "[object DataView]".to_string(),
             Some(Value::Float32Array(_)) => "[object Float32Array]".to_string(),
             Some(Value::Float64Array(_)) => "[object Float64Array]".to_string(),
             Some(
@@ -62,6 +63,7 @@ pub(crate) mod value {
             Some(
                 Value::Array(_)
                 | Value::ArrayBuffer(_)
+                | Value::DataView(_)
                 | Value::Float32Array(_)
                 | Value::Float64Array(_)
                 | Value::Function(_)
@@ -139,6 +141,7 @@ pub(crate) mod value {
             Value::Null | Value::Undefined => false,
             Value::Array(_)
             | Value::ArrayBuffer(_)
+            | Value::DataView(_)
             | Value::Float32Array(_)
             | Value::Float64Array(_)
             | Value::Object(_)
@@ -159,6 +162,7 @@ pub(crate) mod value {
             Value::Null
             | Value::Array(_)
             | Value::ArrayBuffer(_)
+            | Value::DataView(_)
             | Value::Float32Array(_)
             | Value::Float64Array(_)
             | Value::Object(_) => "object",
@@ -219,6 +223,7 @@ pub(crate) mod value {
             (Value::ArrayBuffer(left), Value::ArrayBuffer(right)) => {
                 std::rc::Rc::ptr_eq(left, right)
             }
+            (Value::DataView(left), Value::DataView(right)) => std::rc::Rc::ptr_eq(left, right),
             (Value::Float32Array(left), Value::Float32Array(right)) => {
                 std::rc::Rc::ptr_eq(left, right)
             }
