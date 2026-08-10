@@ -67,6 +67,7 @@ mod special;
 mod statement_control;
 mod statements;
 mod strings;
+mod super_scope;
 mod switch;
 mod templates;
 mod transparent;

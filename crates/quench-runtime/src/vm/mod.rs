@@ -107,6 +107,7 @@ pub enum VmError {
     EvalError(String),
     Thrown(Value),
     Suspended(Rc<crate::value::PromiseData>),
+    Yield(Value),
 }
 
 pub(crate) fn not_callable() -> VmError {
@@ -206,6 +207,25 @@ pub(crate) fn execute_in_environment(
     run_ops(ops, registers, context)
 }
 
+pub(crate) fn execute_generator_step(
+    ops: &[Op],
+    registers: &mut Vec<Value>,
+    environment: Rc<crate::environment::Environment>,
+    pc: usize,
+) -> Result<(crate::completion::Completion, usize), VmError> {
+    let context = VmContext::default();
+    let _context_guard = ContextGuard::install(&context);
+    let _global_guard = GlobalObjectGuard::install();
+    let _environment_guard = crate::locals::EnvironmentGuard::install(environment);
+    for (offset, op) in ops[pc..].iter().enumerate() {
+        match run_op(registers, op, &context)? {
+            None | Some(crate::completion::Completion::Normal) => {}
+            Some(completion) => return Ok((completion, pc + offset + 1)),
+        }
+    }
+    Ok((crate::completion::Completion::Normal, ops.len()))
+}
+
 fn run_ops(ops: &[Op], registers: &mut Vec<Value>, context: &VmContext) -> Result<Value, VmError> {
     completion_result(run_ops_completion(ops, registers, context)?)
 }
@@ -235,6 +255,7 @@ fn error_completion(error: VmError) -> Result<crate::completion::Completion, VmE
         VmError::Break(label) => Ok(Completion::Break(label)),
         VmError::Continue(label) => Ok(Completion::Continue(label)),
         VmError::Suspended(promise) => Ok(Completion::Suspend(promise)),
+        VmError::Yield(value) => Ok(Completion::Yield(value)),
         error => Err(error),
     }
 }
@@ -248,6 +269,7 @@ fn completion_result(completion: crate::completion::Completion) -> Result<Value,
         Completion::Break(label) => Err(VmError::Break(label)),
         Completion::Continue(label) => Err(VmError::Continue(label)),
         Completion::Suspend(promise) => Err(VmError::Suspended(promise)),
+        Completion::Yield(value) => Err(VmError::Yield(value)),
     }
 }
 
@@ -377,6 +399,7 @@ fn is_object_special(builtin: Builtin) -> bool {
             | Builtin::ObjectGetOwnPropertyNames
             | Builtin::ObjectGetOwnPropertySymbols
             | Builtin::ObjectKeys
+            | Builtin::ObjectSetPrototypeOf
             | Builtin::ObjectPropertyIsEnumerable
     )
 }

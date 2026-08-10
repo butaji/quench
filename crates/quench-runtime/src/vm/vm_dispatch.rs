@@ -74,6 +74,7 @@ fn run_control_op(
         Break { label } => Ok(Some(Completion::Break(label.clone()))),
         Continue { label } => Ok(Some(Completion::Continue(label.clone()))),
         Await { .. } => run_await_completion(registers, op),
+        Yield { src } => read_register(registers, *src).map(Completion::Yield).map(Some),
         _ => Ok(None),
     }
 }
@@ -85,7 +86,9 @@ fn return_completion(value: Option<Value>) -> Option<crate::completion::Completi
 fn run_dispatch_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Value>, VmError> {
     use Op::*;
     match op {
-        CallMethod { .. } | Construct { .. } => run_method_or_construct(registers, op)?,
+        CallMethod { .. } | CallSuperMethod { .. } | Construct { .. } => {
+            run_method_or_construct(registers, op)?
+        }
         _ => {}
     }
     Ok(None)
@@ -175,6 +178,7 @@ fn run_method_or_construct(registers: &mut Vec<Value>, op: &Op) -> Result<(), Vm
     use Op::*;
     match op {
         CallMethod { .. } => crate::methods::execute(registers, op)?,
+        CallSuperMethod { .. } => crate::super_scope::execute_call(registers, op)?,
         Construct { .. } => crate::construct::execute(registers, op)?,
         _ => {}
     }

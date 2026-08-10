@@ -73,8 +73,29 @@ pub(crate) fn execute_special(
         Builtin::ObjectGetOwnPropertyNames => crate::own_keys::names(arguments.first()),
         Builtin::ObjectGetOwnPropertySymbols => crate::own_keys::symbols(arguments.first()),
         Builtin::ObjectKeys => Ok(crate::own_keys::enumerable_names(arguments.first())),
+        Builtin::ObjectSetPrototypeOf => set_prototype_of(arguments),
         _ => Ok(Value::Undefined),
     }
+}
+
+pub(crate) fn set_prototype_of(arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(target @ Value::Object(_)) = arguments.first() else {
+        return Err(crate::value::error::throw_type_error(
+            "Object.setPrototypeOf target must be an object",
+        ));
+    };
+    let prototype = arguments.get(1).cloned().unwrap_or(Value::Undefined);
+    if !matches!(
+        prototype,
+        Value::Object(_) | Value::ObjectAlias(_) | Value::Null
+    ) {
+        return Err(crate::value::error::throw_type_error(
+            "Object prototype must be an object or null",
+        ));
+    }
+    let result = crate::builtins::set_property(target.clone(), "\0prototype", prototype);
+    crate::super_scope::attach_home_objects(&result);
+    Ok(result)
 }
 
 fn has_own_target<'a>(
