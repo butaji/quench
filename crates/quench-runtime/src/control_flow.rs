@@ -52,10 +52,12 @@ pub(crate) fn reduce_try(
         .handler
         .as_ref()
         .map(|handler| {
-            let handler_locals = handler_locals(handler, locals);
+            let (handler_locals, catch_slot) = handler_locals(handler, locals);
             crate::reduce::reduce_statements_no_tail(&handler.body.body, facts, handler_locals, 0)
+                .map(|ops| (ops, catch_slot))
         })
         .transpose()?;
+    let (handler, catch_slot) = handler.map_or((None, None), |(ops, slot)| (Some(ops), slot));
     let finalizer = statement
         .finalizer
         .as_ref()
@@ -67,6 +69,7 @@ pub(crate) fn reduce_try(
         body,
         handler,
         finalizer,
+        catch_slot,
     });
     Ok(())
 }
@@ -74,14 +77,14 @@ pub(crate) fn reduce_try(
 fn handler_locals(
     handler: &oxc::ast::ast::CatchClause<'_>,
     locals: &HashMap<String, u16>,
-) -> HashMap<String, u16> {
+) -> (HashMap<String, u16>, Option<u16>) {
     let mut result = locals.clone();
     let Some(parameter) = handler.param.as_ref() else {
-        return result;
+        return (result, None);
     };
     let oxc::ast::ast::BindingPatternKind::BindingIdentifier(identifier) = &parameter.pattern.kind
     else {
-        return result;
+        return (result, None);
     };
     let slot = result
         .values()
@@ -89,7 +92,7 @@ fn handler_locals(
         .max()
         .map_or(0, |value| value.saturating_add(1));
     result.insert(identifier.name.to_string(), slot);
-    result
+    (result, Some(slot))
 }
 
 pub(crate) fn reduce_try_statement(
