@@ -25,7 +25,7 @@ fn run_simple_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Option<Va
     }
     match op {
         Const { dst, value } => write_value(registers, *dst, value.into()),
-        MakeArray { .. } => run_make_array(registers, op)?,
+        MakeArray { .. } | BuildArray { .. } => run_make_array(registers, op)?,
         MakeObject { .. } => run_make_object(registers, op)?,
         MakeBuiltin { .. } => run_make_builtin(registers, op),
         RequireObjectCoercible { .. }
@@ -204,8 +204,10 @@ fn run_dispatch_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Value>,
 }
 
 fn run_make_array(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
-    if let Op::MakeArray { dst, elements } = op {
-        execute_array(registers, *dst, elements)?;
+    match op {
+        Op::MakeArray { dst, elements } => execute_array(registers, *dst, elements)?,
+        Op::BuildArray { dst, elements } => execute_array_plan(registers, *dst, elements)?,
+        _ => {}
     }
     Ok(())
 }
@@ -360,6 +362,7 @@ fn execute_array(registers: &mut Vec<Value>, dst: u16, elements: &[u16]) -> Resu
     write_value(registers, dst, Value::array(values));
     Ok(())
 }
+include!("vm_array_build.rs");
 
 fn execute_object(
     registers: &mut Vec<Value>,

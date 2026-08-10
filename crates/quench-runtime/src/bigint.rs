@@ -57,6 +57,41 @@ pub fn negate(a: &str) -> Result<String, Error> {
     parse(a).map(|value| render(-value))
 }
 
+pub fn bitwise_and(a: &str, b: &str) -> Result<String, Error> {
+    binary(a, b, |left, right| Ok(left & right))
+}
+
+pub fn bitwise_or(a: &str, b: &str) -> Result<String, Error> {
+    binary(a, b, |left, right| Ok(left | right))
+}
+
+pub fn bitwise_xor(a: &str, b: &str) -> Result<String, Error> {
+    binary(a, b, |left, right| Ok(left ^ right))
+}
+
+pub fn shift_left(a: &str, b: &str) -> Result<String, Error> {
+    shift(a, b, true)
+}
+
+pub fn shift_right(a: &str, b: &str) -> Result<String, Error> {
+    shift(a, b, false)
+}
+
+fn shift(a: &str, b: &str, left: bool) -> Result<String, Error> {
+    let value = parse(a)?;
+    let count = parse(b)?;
+    let reverse = count.sign() == Sign::Minus;
+    let magnitude = render(if reverse { -count } else { count })
+        .parse::<usize>()
+        .map_err(|_| Error::ExponentTooLarge)?;
+    let shift_left = left != reverse;
+    Ok(render(if shift_left {
+        value << magnitude
+    } else {
+        value >> magnitude
+    }))
+}
+
 fn binary(
     a: &str,
     b: &str,
