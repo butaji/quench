@@ -70,7 +70,7 @@ pub(crate) fn execute_get_dynamic(
     let object_value = crate::execute::read_register(registers, *object)?;
     let key_value = crate::execute::read_register(registers, *key)?;
     let key = dynamic_property_key(&key_value)?;
-    let value = crate::execute::get_property(&object_value, &key);
+    let value = crate::execute::get_property_result(&object_value, &key)?;
     crate::execute::write_value(registers, *dst, value);
     Ok(())
 }
@@ -375,8 +375,10 @@ pub(crate) fn execute_get(
     let crate::ops::Op::GetProperty { dst, object, key } = op else {
         return Err(crate::execute::VmError::MissingReturn);
     };
-    let value =
-        crate::execute::get_property(&crate::execute::read_register(registers, *object)?, key);
+    let value = crate::execute::get_property_result(
+        &crate::execute::read_register(registers, *object)?,
+        key,
+    )?;
     crate::execute::write_value(registers, *dst, value);
     Ok(())
 }
