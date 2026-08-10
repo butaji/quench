@@ -64,6 +64,7 @@ fn construct_builtin(
         crate::ops::Builtin::ArrayBuffer => construct_array_buffer(arguments),
         crate::ops::Builtin::Float64Array => construct_float64_array(arguments),
         crate::ops::Builtin::Float32Array => construct_float32_array(arguments),
+        crate::ops::Builtin::Int8Array => construct_int8_array(arguments),
         crate::ops::Builtin::DataView => construct_data_view(arguments),
         crate::ops::Builtin::Object => Ok(crate::builtins::object(arguments)),
         crate::ops::Builtin::Number => construct_number(arguments),
@@ -163,6 +164,82 @@ fn construct_float32_array(arguments: &[Value]) -> Result<Value, crate::execute:
             "Float32Array source must be iterable or a buffer",
         )),
     }
+}
+
+fn construct_int8_array(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
+    match arguments.first() {
+        None | Some(Value::Undefined) => empty_int8_array(),
+        Some(Value::ArrayBuffer(buffer)) => view_int8_array(buffer, arguments),
+        Some(Value::Int8Array(view)) => copy_int8_array(view),
+        Some(Value::Array(values)) => values_int8_array(values),
+        Some(_) => Err(type_error("Int8Array source must be iterable or a buffer")),
+    }
+}
+
+fn empty_int8_array() -> Result<Value, crate::execute::VmError> {
+    let buffer = Rc::new(crate::value::ArrayBufferData::new(0));
+    Ok(Value::Int8Array(Rc::new(crate::value::Int8ArrayData::new(
+        buffer, 0, 0,
+    ))))
+}
+
+fn values_int8_array(values: &[Value]) -> Result<Value, crate::execute::VmError> {
+    let buffer = Rc::new(crate::value::ArrayBufferData::new(values.len()));
+    let view = crate::value::Int8ArrayData::new(buffer, 0, values.len());
+    for (index, value) in values.iter().enumerate() {
+        view.set(
+            index,
+            to_int8(crate::intl::tolocale::value::to_number(Some(value))),
+        );
+    }
+    Ok(Value::Int8Array(Rc::new(view)))
+}
+
+fn copy_int8_array(source: &crate::value::Int8ArrayData) -> Result<Value, crate::execute::VmError> {
+    let buffer = Rc::new(crate::value::ArrayBufferData::new(source.byte_length()));
+    let view = crate::value::Int8ArrayData::new(buffer, 0, source.length);
+    for index in 0..source.length {
+        view.set(index, source.get(index).unwrap_or(0));
+    }
+    Ok(Value::Int8Array(Rc::new(view)))
+}
+
+fn view_int8_array(
+    buffer: &Rc<crate::value::ArrayBufferData>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let offset = arguments.get(1).map_or(0.0, |value| {
+        crate::intl::tolocale::value::to_number(Some(value))
+    });
+    let offset = to_index(offset)?;
+    if offset > buffer.byte_length() {
+        return Err(range_error("Invalid Int8Array byte offset"));
+    }
+    let available = buffer.byte_length() - offset;
+    let length = match arguments.get(2) {
+        Some(value) => to_index(crate::intl::tolocale::value::to_number(Some(value)))?,
+        None => available,
+    };
+    if length > available {
+        return Err(range_error("Invalid Int8Array length"));
+    }
+    Ok(Value::Int8Array(Rc::new(crate::value::Int8ArrayData::new(
+        buffer.clone(),
+        offset,
+        length,
+    ))))
+}
+
+fn to_int8(value: f64) -> i8 {
+    if !value.is_finite() || value == 0.0 {
+        return 0;
+    }
+    let modulo = value.trunc().rem_euclid(256.0);
+    (if modulo >= 128.0 {
+        modulo - 256.0
+    } else {
+        modulo
+    }) as i8
 }
 
 fn empty_float32_array() -> Result<Value, crate::execute::VmError> {
