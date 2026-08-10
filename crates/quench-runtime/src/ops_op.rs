@@ -11,6 +11,8 @@ pub enum Op {
     MakeBuiltin { dst: u16, builtin: Builtin },
     GetProperty { dst: u16, object: u16, key: String },
     ResolveGlobal { dst: u16, object: u16, key: String },
+    ResolveName { dst: u16, key: String },
+    SetName { key: String, src: u16, strict: bool },
     GetPropertyDynamic { dst: u16, object: u16, key: u16 },
     ToPropertyKey { dst: u16, src: u16 },
     RequireObjectCoercible { src: u16 },

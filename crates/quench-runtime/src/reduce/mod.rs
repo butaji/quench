@@ -1,13 +1,15 @@
 //! OXC-to-residual reduction entry point.
+mod reduce_assignments;
 pub mod reduce_expressions;
 mod reduce_scripts;
 pub mod reduce_statements;
 mod tagged_template;
 
 // Re-export commonly used functions at the crate::reduce level
+pub use reduce_assignments::reduce_assignment;
 pub use reduce_expressions::{
-    reduce_assignment, reduce_atom, reduce_call, reduce_declaration, reduce_expression,
-    reduce_expression_statement, reduce_if_statement, reduce_unary,
+    reduce_atom, reduce_call, reduce_declaration, reduce_expression, reduce_expression_statement,
+    reduce_if_statement, reduce_unary,
 };
 pub use reduce_scripts::{reduce_module_with_harness, reduce_script_sources, ScriptSource};
 pub use reduce_statements::{
