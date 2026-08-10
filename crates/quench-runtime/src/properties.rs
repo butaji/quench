@@ -89,7 +89,8 @@ pub(crate) fn execute_set_property(
     };
     let target = crate::execute::read_register(registers, object)?.clone();
     let value = crate::execute::read_register(registers, src)?.clone();
-    let result = crate::builtins::set_property(target, &key, value);
+    let result = crate::builtins::set_property(target.clone(), &key, value);
+    crate::vm::synchronize_global_object(registers, &target, &result);
     crate::execute::write_value(registers, object, result);
     Ok(())
 }
