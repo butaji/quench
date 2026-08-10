@@ -1,6 +1,4 @@
-use std::{collections::HashMap, convert::TryFrom};
-
-use oxc::ast::ast::BindingPatternKind;
+use std::collections::HashMap;
 
 use crate::{
     facts::ProgramDb,
@@ -18,34 +16,12 @@ pub(crate) struct FunctionMetadata {
 pub(super) fn function_parameters(
     function: &oxc::ast::ast::Function<'_>,
 ) -> Result<(HashMap<String, u16>, u16), Vec<String>> {
-    parameters(&function.params)
-}
-
-fn parameters(
-    formal: &oxc::ast::ast::FormalParameters<'_>,
-) -> Result<(HashMap<String, u16>, u16), Vec<String>> {
-    let mut parameters = HashMap::new();
-    for (slot, parameter) in formal.items.iter().enumerate() {
-        let BindingPatternKind::BindingIdentifier(identifier) = &parameter.pattern.kind else {
-            return Err(vec!["Unsupported function parameter pattern".to_string()]);
-        };
-        let slot =
-            u16::try_from(slot).map_err(|_| vec!["Too many function parameters".to_string()])?;
-        parameters.insert(identifier.name.to_string(), slot);
-    }
-    let count = u16::try_from(formal.items.len())
-        .map_err(|_| vec!["Too many function parameters".to_string()])?;
-    if let Some(rest) = &formal.rest {
-        let BindingPatternKind::BindingIdentifier(identifier) = &rest.argument.kind else {
-            return Err(vec!["Unsupported rest parameter pattern".to_string()]);
-        };
-        parameters.insert(identifier.name.to_string(), count.saturating_add(2));
-    }
-    Ok((parameters, count))
+    crate::function_parameters::bindings(&function.params)
 }
 
 pub(crate) fn reduce_body(
     body: &oxc::ast::ast::FunctionBody<'_>,
+    formal: &oxc::ast::ast::FormalParameters<'_>,
     facts: &mut ProgramDb,
     parameters: HashMap<String, u16>,
     parameter_count: u16,
@@ -53,11 +29,14 @@ pub(crate) fn reduce_body(
     strictness: FunctionStrictness,
 ) -> Result<Vec<Op>, Vec<String>> {
     let rest = rest_slot(&parameters, parameter_count, captures);
-    let next_slot = captures
+    let minimum = captures
         .saturating_add(parameter_count)
         .saturating_add(if rest.is_some() { 3 } else { 2 });
+    let next_slot = crate::reduce_support::register_base(&parameters).max(minimum);
     let inherited = facts.strict;
     facts.strict = matches!(strictness, FunctionStrictness::Strict);
+    let mut prefix = crate::function_parameters::prefix(formal, facts, &parameters, captures)
+        .ok_or_else(|| vec!["Unsupported function parameter initialization".to_string()])?;
     let reduced = crate::reduce::reduce_statements_with_locals(
         &body.statements,
         facts,
@@ -65,8 +44,8 @@ pub(crate) fn reduce_body(
         next_slot,
     );
     facts.strict = inherited;
-    let body = reduced?;
-    Ok(bind_rest(body, rest, parameter_count, captures))
+    prefix.extend(reduced?);
+    Ok(bind_rest(prefix, rest, parameter_count, captures))
 }
 
 fn rest_slot(parameters: &HashMap<String, u16>, params: u16, captures: u16) -> Option<u16> {
@@ -136,12 +115,12 @@ fn extend_function_parameters(
 
 pub(super) fn reduce_function_ops(
     statements: &[oxc::ast::ast::Statement<'_>],
+    formal: &oxc::ast::ast::FormalParameters<'_>,
     facts: &mut ProgramDb,
     parameters: HashMap<String, u16>,
     parameter_count: u16,
     locals: &HashMap<String, u16>,
-    lexical_receiver: bool,
-    expression_body: bool,
+    arrow_expression: Option<bool>,
 ) -> Option<(Vec<Op>, u16)> {
     let captures = capture_count(locals);
     let formal_parameters = parameters.clone();
@@ -150,22 +129,29 @@ pub(super) fn reduce_function_ops(
         parameter_count,
         captures,
         locals,
-        lexical_receiver,
+        arrow_expression.is_some(),
     );
     crate::reduce_support::shadow_function_bindings(
         statements,
         &mut parameters,
         &formal_parameters,
     );
-    let local_count = captures.saturating_add(parameter_count).saturating_add(2);
     let rest = rest_slot(&parameters, parameter_count, captures);
-    let local_count = local_count.saturating_add(u16::from(rest.is_some()));
-    let body_ops =
-        reduce_selected_body(statements, facts, parameters, local_count, expression_body)?;
-    Some((
-        bind_rest(body_ops, rest, parameter_count, captures),
-        captures,
-    ))
+    let mut prefix = crate::function_parameters::prefix(formal, facts, &parameters, captures)?;
+    let minimum = captures
+        .saturating_add(parameter_count)
+        .saturating_add(2)
+        .saturating_add(u16::from(rest.is_some()));
+    let local_count = crate::reduce_support::register_base(&parameters).max(minimum);
+    let body_ops = reduce_selected_body(
+        statements,
+        facts,
+        parameters,
+        local_count,
+        arrow_expression.unwrap_or(false),
+    )?;
+    prefix.extend(body_ops);
+    Some((bind_rest(prefix, rest, parameter_count, captures), captures))
 }
 
 fn reduce_selected_body(
@@ -226,12 +212,12 @@ pub(crate) fn reduce_expression(
     facts.strict = matches!(strictness, FunctionStrictness::Strict);
     let reduced = reduce_function_ops(
         &body.statements,
+        &function.params,
         facts,
         parameters,
         parameter_count,
         locals,
-        false,
-        false,
+        None,
     );
     facts.strict = inherited;
     let (body_ops, captures) = reduced?;
@@ -245,7 +231,7 @@ pub(crate) fn reduce_expression(
             kind: function_kind(function),
             strictness,
             is_async: function.r#async,
-            mapped_arguments: function.params.rest.is_none(),
+            mapped_arguments: crate::function_parameters::is_simple(&function.params),
         },
     ))
 }
@@ -266,17 +252,18 @@ pub(crate) fn reduce_arrow(
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
     let strictness = crate::reduce_support::function_strictness(&function.body, facts.strict);
-    let (parameters, parameter_count) = parameters(&function.params).ok()?;
+    let (parameters, parameter_count) =
+        crate::function_parameters::bindings(&function.params).ok()?;
     let inherited = facts.strict;
     facts.strict = matches!(strictness, FunctionStrictness::Strict);
     let reduced = reduce_function_ops(
         &function.body.statements,
+        &function.params,
         facts,
         parameters,
         parameter_count,
         locals,
-        true,
-        function.expression,
+        Some(function.expression),
     );
     facts.strict = inherited;
     let (body_ops, captures) = reduced?;
