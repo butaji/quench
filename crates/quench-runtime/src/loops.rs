@@ -110,7 +110,12 @@ pub(crate) fn reduce_for_in(
         crate::reduce::reduce_expression(&statement.right, ops, facts, next_register, locals)
             .ok_or_else(|| vec!["Unsupported for-in object".to_string()])?;
     let body = crate::branch::reduce(&statement.body, facts, locals)?;
-    ops.push(Op::ForIn { object, slot, body });
+    ops.push(Op::ForIn {
+        label: None,
+        object,
+        slot,
+        body,
+    });
     Ok(())
 }
 
@@ -149,7 +154,13 @@ pub(crate) fn execute_for_in(
     registers: &mut Vec<crate::value::Value>,
     op: &Op,
 ) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
-    let Op::ForIn { object, slot, body } = op else {
+    let Op::ForIn {
+        label,
+        object,
+        slot,
+        body,
+    } = op
+    else {
         return Err(crate::execute::VmError::MissingReturn);
     };
     let value = crate::execute::read_register(registers, *object)?;
@@ -166,7 +177,14 @@ pub(crate) fn execute_for_in(
             Ok(value) => return Ok(Some(value)),
             Err(crate::execute::VmError::MissingReturn) => {}
             Err(crate::execute::VmError::Continue) => {}
-            Err(crate::execute::VmError::Break) => return Ok(None),
+            Err(crate::execute::VmError::Break(break_label))
+                if break_matches(label, &break_label) =>
+            {
+                return Ok(None)
+            }
+            Err(crate::execute::VmError::Break(break_label)) => {
+                return Err(crate::execute::VmError::Break(break_label));
+            }
             Err(error) => return Err(error),
         }
     }
@@ -178,6 +196,7 @@ pub(crate) fn execute(
     op: &crate::ops::Op,
 ) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
     let crate::ops::Op::Loop {
+        label,
         init,
         test,
         body,
@@ -192,12 +211,23 @@ pub(crate) fn execute(
             Ok(value) => return Ok(Some(value)),
             Err(crate::execute::VmError::MissingReturn) => {}
             Err(crate::execute::VmError::Continue) => {}
-            Err(crate::execute::VmError::Break) => break,
+            Err(crate::execute::VmError::Break(break_label))
+                if break_matches(label, &break_label) =>
+            {
+                break
+            }
+            Err(crate::execute::VmError::Break(break_label)) => {
+                return Err(crate::execute::VmError::Break(break_label));
+            }
             Err(error) => return Err(error),
         }
         run_fragment(update, registers)?;
     }
     Ok(None)
+}
+
+fn break_matches(loop_label: &Option<String>, break_label: &Option<String>) -> bool {
+    break_label.is_none() || loop_label == break_label
 }
 
 /// Run a loop fragment. An empty fragment (no init/update, e.g. a `while`
@@ -235,6 +265,7 @@ pub(crate) fn reduce_while(
         fragment
     };
     ops.push(Op::Loop {
+        label: None,
         init: Vec::new(),
         test,
         body,
@@ -266,9 +297,10 @@ pub(crate) fn reduce_do_while(
     body.push(Op::Branch {
         condition,
         then_ops: Vec::new(),
-        else_ops: vec![Op::Break],
+        else_ops: vec![Op::Break { label: None }],
     });
     ops.push(Op::Loop {
+        label: None,
         init: Vec::new(),
         test: always_true(next_register),
         body,
@@ -387,6 +419,7 @@ fn reduce_dynamic_for(
     let body = reduce_body_fragment(statement, ops, facts, next_register, next_slot, locals)?;
     let update = reduce_fragment(statement.update.as_ref(), ops, facts, next_register, locals)?;
     ops.push(Op::Loop {
+        label: None,
         init,
         test,
         body,

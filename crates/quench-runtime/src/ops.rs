@@ -85,12 +85,14 @@ pub enum Op {
         catch_slot: Option<u16>,
     },
     Loop {
+        label: Option<String>,
         init: Vec<Op>,
         test: Vec<Op>,
         body: Vec<Op>,
         update: Vec<Op>,
     },
     ForIn {
+        label: Option<String>,
         object: u16,
         slot: u16,
         body: Vec<Op>,
@@ -119,7 +121,9 @@ pub enum Op {
     Return {
         src: u16,
     },
-    Break,
+    Break {
+        label: Option<String>,
+    },
     Continue,
     Throw {
         src: u16,
