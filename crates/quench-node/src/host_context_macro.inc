@@ -607,8 +607,7 @@ macro_rules! run_host_context {
             }),
         )?;
         ctx.globals().set("__quench_host_timer_scheduler", true)?;
-        let bootstrap_source = BOOTSTRAP_PARTS.join("\n");
-        ctx.eval::<(), _>(bootstrap_source.as_bytes()).map_err(|error| {
+        ctx.eval::<(), _>(BOOTSTRAP_SOURCE.as_bytes()).map_err(|error| {
             eprintln!("Bootstrap JavaScript exception: {error:?}");
             error
         })?;

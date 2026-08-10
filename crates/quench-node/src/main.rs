@@ -15,13 +15,13 @@ use std::{
 use walkdir::WalkDir;
 mod esm;
 mod host_context;
-macro_rules! bootstrap_parts {
+macro_rules! bootstrap_source {
     ($($name:literal),* $(,)?) => {
-        &[$(include_str!(concat!("../polyfills/bootstrap-parts/", $name, ".js"))),*]
+        concat!($(include_str!(concat!("../polyfills/bootstrap-parts/", $name, ".js")), "\n"),*)
     };
 }
 #[rustfmt::skip]
-const BOOTSTRAP_PARTS: &[&str] = bootstrap_parts!(
+const BOOTSTRAP_SOURCE: &str = bootstrap_source!(
     "timer-validation", "globals", "globals-extra", "globals-tail", "fetch", "promises", "validation", "arraybuffer", "encoding", "encoding-tail", "pool", "copy-head", "copy", "buffer-validation", "views", "allocation",
     "api-head", "api", "api-tail", "api-tail-02", "path", "support", "events-head", "events", "events-readable-tail", "events-writable-tail", "events-duplex-tail", "events-transform-tail", "events-stream-tail", "events-tail", "filesystem-validation", "filesystem-validation-tail",
     "file-descriptors", "filesystem-access-validation", "io", "io-tail", "metadata", "metadata-tail", "filesystem-permissions", "timestamps", "links", "links-tail", "directory-options", "directory", "streams", "stream-classes", "externalizable-strings", "open-validation",
