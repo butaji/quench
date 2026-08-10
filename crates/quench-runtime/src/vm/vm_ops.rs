@@ -134,7 +134,6 @@ pub fn execute_builtin_tail(
         Builtin::ObjectIsExtensible => {
             crate::proxy::proxy_is_extensible(arguments.first().ok_or(VmError::NotCallable)?)?
         }
-        Builtin::ObjectKeys => crate::builtins::keys(arguments.first()),
         Builtin::ObjectGetPrototypeOf => {
             crate::builtins::object::get_prototype_of(arguments.first())?
         }

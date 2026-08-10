@@ -11,6 +11,13 @@ pub enum FunctionStrictness {
     Strict,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PropertyDefinitionKind {
+    Data,
+    Get,
+    Set,
+}
+
 /// Opaque identity for a host realm.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct RealmId(u64);

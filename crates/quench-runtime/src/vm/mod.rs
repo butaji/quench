@@ -345,12 +345,7 @@ pub fn execute_builtin_with_receiver(
     if builtin == Builtin::Print {
         return execute_print(arguments);
     }
-    if matches!(
-        builtin,
-        Builtin::ObjectHasOwnProperty
-            | Builtin::ObjectGetOwnPropertyDescriptor
-            | Builtin::ObjectPropertyIsEnumerable
-    ) {
+    if is_object_special(builtin) {
         return crate::builtins::object::execute_special(builtin, receiver, arguments);
     }
     if builtin == Builtin::ObjectDefineProperty {
@@ -372,6 +367,18 @@ pub fn execute_builtin_with_receiver(
         _ if is_simple_builtin(builtin) => execute_simple_builtin(builtin, arguments, receiver),
         _ => vm_ops::execute_builtin_tail(builtin, arguments, receiver),
     }
+}
+
+fn is_object_special(builtin: Builtin) -> bool {
+    matches!(
+        builtin,
+        Builtin::ObjectHasOwnProperty
+            | Builtin::ObjectGetOwnPropertyDescriptor
+            | Builtin::ObjectGetOwnPropertyNames
+            | Builtin::ObjectGetOwnPropertySymbols
+            | Builtin::ObjectKeys
+            | Builtin::ObjectPropertyIsEnumerable
+    )
 }
 
 pub(crate) fn execute_host_capability(
