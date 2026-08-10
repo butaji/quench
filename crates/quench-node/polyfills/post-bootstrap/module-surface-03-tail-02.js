@@ -1,7 +1,7 @@
 const __quenchIterableOptions = (callback, options) => {
   if (typeof callback !== "function") {
     const error = new TypeError(
-      "ERR_INVALID_ARG_TYPE: callback must be a function",
+      "ERR_INVALID_ARG_TYPE: callback must be a function"
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -9,7 +9,7 @@ const __quenchIterableOptions = (callback, options) => {
   if (options === undefined) return;
   if (!options || typeof options !== "object") {
     const error = new TypeError(
-      "ERR_INVALID_ARG_TYPE: options must be an object",
+      "ERR_INVALID_ARG_TYPE: options must be an object"
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -19,14 +19,14 @@ const __quenchIterableOptions = (callback, options) => {
     (!Number.isInteger(options.concurrency) || options.concurrency < 1)
   ) {
     const error = new RangeError(
-      "ERR_OUT_OF_RANGE: concurrency must be positive",
+      "ERR_OUT_OF_RANGE: concurrency must be positive"
     );
     error.code = "ERR_OUT_OF_RANGE";
     throw error;
   }
   if (options.signal !== undefined && typeof options.signal !== "object") {
     const error = new TypeError(
-      "ERR_INVALID_ARG_TYPE: signal must be an AbortSignal",
+      "ERR_INVALID_ARG_TYPE: signal must be an AbortSignal"
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -35,7 +35,7 @@ const __quenchIterableOptions = (callback, options) => {
 const __quenchForEachReadable = (slice, callback, options) => {
   if (typeof callback !== "function") {
     const error = new TypeError(
-      "ERR_INVALID_ARG_TYPE: callback must be a function",
+      "ERR_INVALID_ARG_TYPE: callback must be a function"
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     return Promise.reject(error);
@@ -45,7 +45,7 @@ const __quenchForEachReadable = (slice, callback, options) => {
       slice[Symbol.asyncIterator](),
       callback,
       options,
-      "forEach",
+      "forEach"
     );
     for await (const _value of values);
   })();
@@ -59,8 +59,8 @@ const __quenchSliceMap = (stream, operations, callback, options) => {
     operations: operations.operations.concat({
       type: "map",
       callback,
-      options,
-    }),
+      options
+    })
   });
 };
 const __quenchSliceFilter = (stream, operations, callback, options) => {
@@ -70,8 +70,8 @@ const __quenchSliceFilter = (stream, operations, callback, options) => {
     operations: operations.operations.concat({
       type: "filter",
       callback,
-      options,
-    }),
+      options
+    })
   });
 };
 const __quenchSliceFlatMap = (stream, operations, callback, options) => {
@@ -81,15 +81,15 @@ const __quenchSliceFlatMap = (stream, operations, callback, options) => {
     operations: operations.operations.concat({
       type: "flatMap",
       callback,
-      options,
-    }),
+      options
+    })
   });
 };
 const __quenchReadableSlice = (stream, operations) => {
   operations.errorState ||= {
     error: undefined,
     hasError: false,
-    listeners: new Set(),
+    listeners: new Set()
   };
   return {
     readable: true,
@@ -128,7 +128,7 @@ const __quenchReadableSlice = (stream, operations) => {
         take: operations.take,
         operations: operations.operations,
         signal: options?.signal || operations.signal,
-        errorState: operations.errorState,
+        errorState: operations.errorState
       });
     },
     take(count, options) {
@@ -138,7 +138,7 @@ const __quenchReadableSlice = (stream, operations) => {
         take: Math.min(operations.take, __quenchSliceCount(count)),
         operations: operations.operations,
         signal: options?.signal || operations.signal,
-        errorState: operations.errorState,
+        errorState: operations.errorState
       });
     },
     map(callback, options) {
@@ -159,7 +159,7 @@ const __quenchReadableSlice = (stream, operations) => {
         reducer,
         initialValue,
         options,
-        arguments.length > 1,
+        arguments.length > 1
       );
     },
     some(predicate, options) {
@@ -176,7 +176,7 @@ const __quenchReadableSlice = (stream, operations) => {
     },
     [Symbol.asyncIterator]() {
       return __quenchReadableSliceIterator(stream, operations);
-    },
+    }
   };
 };
 const __quenchAddSliceMethods = (prototype) => {
@@ -186,7 +186,7 @@ const __quenchAddSliceMethods = (prototype) => {
       drop: __quenchSliceCount(count),
       take: Infinity,
       operations: [],
-      signal: options?.signal,
+      signal: options?.signal
     });
   };
   prototype.take ||= function (count, options) {
@@ -195,65 +195,33 @@ const __quenchAddSliceMethods = (prototype) => {
       drop: 0,
       take: __quenchSliceCount(count),
       operations: [],
-      signal: options?.signal,
+      signal: options?.signal
     });
   };
-  prototype.map = function (callback, options) {
-    __quenchIterableOptions(callback, options);
-    return __quenchReadableSlice(this, {
+  const slice = (stream) =>
+    __quenchReadableSlice(stream, {
       drop: 0,
       take: Infinity,
-      operations: [],
-    }).map(callback, options);
-  };
-  prototype.filter = function (callback, options) {
-    __quenchIterableOptions(callback, options);
-    return __quenchReadableSlice(this, {
-      drop: 0,
-      take: Infinity,
-      operations: [],
-    }).filter(callback, options);
-  };
-  prototype.flatMap = function (callback, options) {
-    return __quenchSliceFlatMap(
-      this,
-      { drop: 0, take: Infinity, operations: [] },
-      callback,
-      options,
-    );
-  };
-  prototype.toArray = function () {
-    return __quenchReadableSlice(this, {
-      drop: 0,
-      take: Infinity,
-      operations: [],
-    }).toArray();
-  };
-  prototype.forEach = function (callback) {
-    return __quenchReadableSlice(this, {
-      drop: 0,
-      take: Infinity,
-      operations: [],
-    }).forEach(callback);
-  };
+      operations: []
+    });
+  for (const name of ["map", "filter", "flatMap", "toArray", "forEach"]) {
+    prototype[name] = function (...args) {
+      return slice(this)[name](...args);
+    };
+  }
   prototype.reduce = function (reducer, initialValue, options) {
     return __quenchReduceReadable(
       this,
       reducer,
       initialValue,
       options,
-      arguments.length > 1,
+      arguments.length > 1
     );
   };
-  prototype.some = function (predicate, options) {
-    return __quenchPredicateReadable(this, predicate, options, "some");
-  };
-  prototype.every = function (predicate, options) {
-    return __quenchPredicateReadable(this, predicate, options, "every");
-  };
-  prototype.find = function (predicate, options) {
-    return __quenchPredicateReadable(this, predicate, options, "find");
-  };
+  for (const name of ["some", "every", "find"])
+    prototype[name] = function (predicate, options) {
+      return __quenchPredicateReadable(this, predicate, options, name);
+    };
 };
 const __quenchAddReadableSlices = (result) => {
   for (const name of ["Readable", "Duplex", "Transform", "PassThrough"]) {
@@ -265,7 +233,7 @@ const __quenchAddReadableSlices = (result) => {
         drop: __quenchSliceCount(count),
         take: Infinity,
         operations: [],
-        signal: options?.signal,
+        signal: options?.signal
       });
     };
     prototype.take ||= function (count, options) {
@@ -274,7 +242,7 @@ const __quenchAddReadableSlices = (result) => {
         drop: 0,
         take: __quenchSliceCount(count),
         operations: [],
-        signal: options?.signal,
+        signal: options?.signal
       });
     };
     __quenchAddSliceMethods(prototype);
@@ -397,14 +365,14 @@ if (globalThis.require) {
 const __quenchAddAbortSignal = (signal, stream) => {
   if (!signal || typeof signal !== "object") {
     const error = new TypeError(
-      "ERR_INVALID_ARG_TYPE: The signal argument must be an AbortSignal",
+      "ERR_INVALID_ARG_TYPE: The signal argument must be an AbortSignal"
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
   if (!stream || typeof stream !== "object") {
     const error = new TypeError(
-      "ERR_INVALID_ARG_TYPE: The stream argument must be a stream",
+      "ERR_INVALID_ARG_TYPE: The stream argument must be a stream"
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;

@@ -22,9 +22,7 @@ const __quenchDeliverPendingWrites = (socket, writes) => {
 };
 const __quenchSetTypeOfService = (socket, value) => {
   if (typeof value !== "number" || Number.isNaN(value)) {
-    const error = new TypeError(
-      'The "tos" argument must be of type number',
-    );
+    const error = new TypeError('The "tos" argument must be of type number');
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
@@ -79,7 +77,7 @@ const isValidIPv6GroupPosition = (
   index,
   groups,
   hasDoubleColon,
-  isHead,
+  isHead
 ) => {
   if (isHead && hasDoubleColon && group.includes(".")) return false;
   if (
@@ -107,12 +105,9 @@ const countIPv6GroupList = (groups, hasDoubleColon, isHead) => {
   }
   return expanded;
 };
-const countIPv6Groups = (headGroups, tailGroups, hasDoubleColon) => {
-  return (
-    countIPv6GroupList(headGroups, hasDoubleColon, true) +
-    countIPv6GroupList(tailGroups, hasDoubleColon, false)
-  );
-};
+const countIPv6Groups = (headGroups, tailGroups, hasDoubleColon) =>
+  countIPv6GroupList(headGroups, hasDoubleColon, true) +
+  countIPv6GroupList(tailGroups, hasDoubleColon, false);
 const parseIPv6Groups = (address) => {
   if (address === "::") return { expanded: 0, special: true };
   const doubleColonIndex = address.indexOf("::");
@@ -232,7 +227,7 @@ const normalizeAddress = (address, label = "address") => {
   if (address && typeof address.address === "string") {
     return {
       value: address.address,
-      explicit: address.family !== undefined,
+      explicit: address.family !== undefined
     };
   }
   const error = new TypeError(`Invalid ${label}`);
@@ -316,10 +311,11 @@ const resolveBlockListCheck = (address, type, checkType) => {
   if (type === undefined) {
     resolvedType = isIPv4(str) ? "ipv4" : isIPv6(str) ? "ipv6" : null;
   } else resolvedType = resolveAddressType(str, type, checkType);
-  const inputKind = address &&
-      typeof address !== "string" &&
-      typeof address.address === "string"
-    ? "socket"
-    : "string";
+  const inputKind =
+    address &&
+    typeof address !== "string" &&
+    typeof address.address === "string"
+      ? "socket"
+      : "string";
   return { str, resolvedType, explicitType, inputKind };
 };

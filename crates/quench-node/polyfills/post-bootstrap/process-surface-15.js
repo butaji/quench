@@ -1,11 +1,11 @@
-{
-  if (globalThis.process && globalThis.process.stdout) {
-    const stdout = globalThis.process.stdout;
-    stdout.writableHighWaterMark = 65536;
-    if (stdout.constructor.name !== "Socket") {
-      Object.defineProperty(stdout, "constructor", {
+if (globalThis.process) {
+  for (const stream of [globalThis.process.stdout, globalThis.process.stderr]) {
+    if (!stream) continue;
+    stream.writableHighWaterMark = 65536;
+    if (stream.constructor.name !== "Socket") {
+      Object.defineProperty(stream, "constructor", {
         value: function Socket() {},
-        configurable: true,
+        configurable: true
       });
     }
   }

@@ -1,7 +1,7 @@
 {
   const __quenchEnvError = () => {
     const error = new TypeError(
-      'The "content" argument must be of type string',
+      'The "content" argument must be of type string'
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     return error;
@@ -46,16 +46,31 @@
   if (globalThis.require) {
     const originalRequire = globalThis.require;
     globalThis.require = (name) => {
-      const result = originalRequire(name);
-      if (String(name).replace(/^node:/, "") === "os") {
+      const normalized = String(name).replace(/^node:/, "");
+      let result = originalRequire(name);
+      if (normalized === "os") {
         result.availableParallelism ||= () => 1;
         result.getPriority ||= () => 0;
         result.setPriority ||= () => undefined;
         result.machine ||= () => "unknown";
         result.version ||= () => "";
       }
-      if (String(name).replace(/^node:/, "") === "util") {
+      if (normalized === "util") {
         result.parseEnv ||= __quenchParseEnv;
+      }
+      if (normalized === "console") {
+        result.createTask ||= () => ({});
+        result.dir ||= () => undefined;
+        result.time ||= () => undefined;
+        result.timeEnd ||= () => undefined;
+        result.assert ||= () => undefined;
+        result.table ||= () => undefined;
+      }
+      if (normalized === "dgram") {
+        result = Object.assign({}, result);
+        result.createSocket ||= () => undefined;
+        result.Socket ||= function Socket() {};
+        result.SocketAddress ||= function SocketAddress() {};
       }
       return result;
     };

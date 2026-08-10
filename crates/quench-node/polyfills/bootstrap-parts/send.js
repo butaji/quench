@@ -1,4 +1,3 @@
-const __quenchProcessSendRequire = globalThis.require;
 const __quenchProcessSend = globalThis.process;
 const __quenchOriginalProcessSend = __quenchProcessSend.send;
 __quenchProcessSend.send = (...values) => {

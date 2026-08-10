@@ -467,17 +467,13 @@ const __quenchWebStreams = {
   TextEncoderStream: __quenchTextEncoderStream,
   TextDecoderStream: __quenchTextDecoderStream
 };
-globalThis.ReadableStream ||= __quenchReadableStream;
-globalThis.WritableStream ||= __quenchWritableStream;
-globalThis.TransformStream ||= __quenchTransformStream;
-globalThis.DecompressionStream ||= __quenchDecompressionStream;
+for (const [name, constructor] of Object.entries(__quenchWebStreams)) {
+  globalThis[name] ||= constructor;
+}
 for (const constructor of "ReadableStreamDefaultReader ReadableStreamBYOBReader ReadableStreamBYOBRequest ReadableByteStreamController ReadableStreamDefaultController TransformStreamDefaultController WritableStreamDefaultWriter WritableStreamDefaultController".split(
   " "
 )) {
   globalThis[constructor] ||= class {};
 }
-globalThis.CompressionStream ||= __quenchCompressionStream;
-globalThis.TextEncoderStream ||= __quenchTextEncoderStream;
-globalThis.TextDecoderStream ||= __quenchTextDecoderStream;
 globalThis.ByteLengthQueuingStrategy ||= __quenchByteLengthQueuingStrategy;
 globalThis.CountQueuingStrategy ||= __quenchCountQueuingStrategy;
