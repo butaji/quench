@@ -15,8 +15,26 @@ pub fn execute_call(
     let arguments = collect_call_arguments(registers, args, spreads)?;
     let callee_value = super::read_register(registers, callee)?;
     let value = invoke_callee(&callee_value, &arguments)?;
+    propagate_object_mutation(registers, &callee_value, args, &arguments, &value);
     super::write_value(registers, dst, value);
     Ok(())
+}
+
+fn propagate_object_mutation(
+    registers: &mut Vec<Value>,
+    callee: &Value,
+    args: &[u16],
+    arguments: &[Value],
+    result: &Value,
+) {
+    if !matches!(
+        callee,
+        Value::Builtin(crate::ops::Builtin::ObjectDefineProperty)
+    ) {
+        return;
+    }
+    let target = arguments.first().unwrap_or(&Value::Undefined);
+    crate::properties::propagate_updated_object(registers, args.first().copied(), target, result);
 }
 
 /// Resolve an await operand, suspending only for a pending Promise.
