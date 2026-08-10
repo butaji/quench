@@ -262,6 +262,7 @@ mod tests {
         let function = Value::Function(Rc::new(FunctionValue {
             body: Vec::new(),
             params: 2,
+            is_async: false,
             captures: Rc::new(RefCell::new(Vec::new())),
             properties: Rc::new(RefCell::new(vec![(
                 "custom".to_string(),
