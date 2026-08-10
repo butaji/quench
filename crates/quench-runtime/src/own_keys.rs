@@ -84,10 +84,7 @@ fn function_keys(function: &crate::value::FunctionValue, symbols: bool) -> Vec<S
     if symbols {
         return ordered(&function.properties.borrow(), true);
     }
-    let mut properties = vec![
-        ("length".to_string(), Value::Undefined),
-        ("name".to_string(), Value::Undefined),
-    ];
+    let mut properties = vec![("name".to_string(), Value::Undefined)];
     properties.extend(function.properties.borrow().iter().cloned());
     ordered(&properties, false)
 }

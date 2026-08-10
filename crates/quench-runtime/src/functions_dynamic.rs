@@ -63,7 +63,8 @@ fn reduce_dynamic(source: &str, kind: FunctionKind, is_async: bool) -> Result<Va
     );
     facts.in_function = inherited;
     let (ops, _) = reduced.ok_or_else(|| invalid("Unsupported function source"))?;
-    let value = dynamic_value(&ops, count, strictness, kind, is_async);
+    let length = crate::function_parameters::expected_argument_count(&function.params);
+    let value = dynamic_value(&ops, count, length, strictness, kind, is_async);
     mark_dynamic(&value);
     Ok(value)
 }
@@ -71,13 +72,26 @@ fn reduce_dynamic(source: &str, kind: FunctionKind, is_async: bool) -> Result<Va
 fn dynamic_value(
     ops: &[crate::ops::Op],
     count: u16,
+    length: u16,
     strictness: crate::ops::FunctionStrictness,
     kind: FunctionKind,
     is_async: bool,
 ) -> Value {
     let captures = crate::environment::Environment::new();
     captures.set(0, crate::vm::current_global_object());
-    crate::functions::make(ops, count, captures, kind, strictness, is_async, true)
+    crate::functions::make(
+        ops,
+        count,
+        length,
+        captures,
+        crate::functions::FunctionMetadata {
+            kind,
+            length,
+            strictness,
+            is_async,
+            mapped_arguments: true,
+        },
+    )
 }
 
 fn function_source(arguments: &[Value], kind: FunctionKind, is_async: bool) -> String {

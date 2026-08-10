@@ -3,11 +3,13 @@ use crate::{
     ops::{FunctionKind, FunctionStrictness, Op},
 };
 use std::collections::HashMap;
+include!("functions_properties.rs");
 const NEW_TARGET: &str = "\0new_target";
 pub(crate) const FUNCTION_SELF: &str = "\0function_self";
 #[derive(Clone, Copy)]
 pub(crate) struct FunctionMetadata {
     pub(crate) kind: FunctionKind,
+    pub(crate) length: u16,
     pub(crate) strictness: FunctionStrictness,
     pub(crate) is_async: bool,
     pub(crate) mapped_arguments: bool,
@@ -323,6 +325,7 @@ fn emit_function_op(
         body,
         params,
         captures,
+        length: metadata.length,
         kind: metadata.kind,
         strictness: metadata.strictness,
         is_async: metadata.is_async,
@@ -342,8 +345,7 @@ pub(crate) fn reduce_expression(
     let strictness = crate::reduce_support::function_strictness(body, facts.strict);
     let (parameters, parameter_count) =
         crate::function_parameters::bindings(&function.params).ok()?;
-    let kind = function_kind(function);
-    let tail_calls = tail_calls_enabled(strictness, kind, function.r#async);
+    let tail_calls = tail_calls_enabled(strictness, function_kind(function), function.r#async);
     let inherited = enter_function(facts, strictness, tail_calls);
     let reduced = reduce_function_ops_named(
         &body.statements,
@@ -363,7 +365,8 @@ pub(crate) fn reduce_expression(
         parameter_count,
         captures,
         FunctionMetadata {
-            kind,
+            kind: function_kind(function),
+            length: crate::function_parameters::expected_argument_count(&function.params),
             strictness,
             is_async: function.r#async,
             mapped_arguments: crate::function_parameters::is_simple(&function.params),
@@ -380,15 +383,7 @@ pub(crate) fn function_kind(function: &oxc::ast::ast::Function<'_>) -> FunctionK
     }
 }
 
-pub(crate) fn tail_calls_enabled(
-    strictness: FunctionStrictness,
-    kind: FunctionKind,
-    is_async: bool,
-) -> bool {
-    matches!(strictness, FunctionStrictness::Strict)
-        && matches!(kind, FunctionKind::Ordinary | FunctionKind::Arrow)
-        && !is_async
-}
+include!("functions_tail.rs");
 
 pub(crate) fn reduce_arrow(
     function: &oxc::ast::ast::ArrowFunctionExpression<'_>,
@@ -421,6 +416,7 @@ pub(crate) fn reduce_arrow(
         captures,
         FunctionMetadata {
             kind: FunctionKind::Arrow,
+            length: crate::function_parameters::expected_argument_count(&function.params),
             strictness,
             is_async: function.r#async,
             mapped_arguments: false,
@@ -431,22 +427,20 @@ pub(crate) fn reduce_arrow(
 pub(super) fn make(
     body: &[Op],
     params: u16,
+    length: u16,
     captures: std::rc::Rc<crate::environment::Environment>,
-    kind: FunctionKind,
-    strictness: FunctionStrictness,
-    is_async: bool,
-    mapped_arguments: bool,
+    metadata: FunctionMetadata,
 ) -> crate::value::Value {
     let value = crate::value::Value::Function(std::rc::Rc::new(crate::value::FunctionValue {
         body: body.to_vec(),
         params,
         captures,
-        properties: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
+        properties: function_properties(length),
         instance_fields: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
-        kind,
-        strictness,
-        is_async,
-        mapped_arguments,
+        kind: metadata.kind,
+        strictness: metadata.strictness,
+        is_async: metadata.is_async,
+        mapped_arguments: metadata.mapped_arguments,
     }));
     let prototype = crate::value::Value::Object(std::rc::Rc::new(vec![(
         "constructor".to_string(),
@@ -472,11 +466,9 @@ pub(crate) fn write(
     let value = make(
         body,
         params,
+        metadata.length,
         crate::locals::capture(captures),
-        metadata.kind,
-        metadata.strictness,
-        metadata.is_async,
-        metadata.mapped_arguments,
+        metadata,
     );
     if matches!(metadata.kind, FunctionKind::Ordinary) {
         if let crate::value::Value::Function(function) = &value {

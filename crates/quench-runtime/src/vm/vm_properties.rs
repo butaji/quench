@@ -48,7 +48,6 @@ fn get_property_value(value: &Value, key: &str) -> Value {
         String(value) => string_property(value, key),
         Number(value) => number_property(*value, key),
         Boolean(value) => boolean_property(*value, key),
-        Function(function) if key == "length" => Value::Number(f64::from(function.params)),
         Function(_) if matches!(key, "apply" | "call" | "bind") => {
             bind_function_property(value, key)
         }
