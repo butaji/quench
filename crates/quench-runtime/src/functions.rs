@@ -436,6 +436,7 @@ pub(super) fn make(
         params,
         captures,
         properties: function_properties(length),
+        private_slots: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
         instance_fields: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
         kind: metadata.kind,
         strictness: metadata.strictness,
