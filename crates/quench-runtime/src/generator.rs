@@ -68,26 +68,30 @@ fn require_normal_parameter_completion(
     }
 }
 
-pub(crate) fn next(receiver: Option<&Value>) -> Result<Value, VmError> {
+pub(crate) fn next(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let Some(Value::Generator(generator)) = receiver else {
         return Err(crate::value::error::throw_type_error(
             "Generator.next called on incompatible receiver",
         ));
     };
-    let completion = resume(generator);
+    let completion = resume(
+        generator,
+        arguments.first().cloned().unwrap_or(Value::Undefined),
+    );
     if generator.function.is_async {
         return Ok(crate::promise::from_async_completion(completion));
     }
     completion
 }
 
-fn resume(generator: &GeneratorData) -> Result<Value, VmError> {
+fn resume(generator: &GeneratorData, input: Value) -> Result<Value, VmError> {
     if *generator.done.borrow() {
         return Ok(iterator_result(Value::Undefined, true));
     }
     initialize_state(generator);
     let mut state = generator.state.borrow_mut();
     let state = state.as_mut().ok_or(VmError::MissingReturn)?;
+    install_resume_input(generator, state, input);
     let _home = crate::super_scope::Guard::install(&generator.function, &generator.receiver);
     let _with_scope = crate::with_scope::FunctionGuard::isolate();
     let (completion, pc) = crate::vm::execute_generator_step(
@@ -98,6 +102,71 @@ fn resume(generator: &GeneratorData) -> Result<Value, VmError> {
     )?;
     state.pc = pc;
     complete_step(generator, completion)
+}
+
+fn install_resume_input(generator: &GeneratorData, state: &mut GeneratorState, input: Value) {
+    if let Some(Op::YieldStar { dst, .. }) = generator.function.body.get(state.pc) {
+        crate::execute::write_value(&mut state.registers, *dst, input);
+        return;
+    }
+    let Some(index) = state.pc.checked_sub(1) else {
+        return;
+    };
+    let Some(Op::Yield { src }) = generator.function.body.get(index) else {
+        return;
+    };
+    crate::execute::write_value(&mut state.registers, *src, input);
+}
+
+pub(crate) fn execute_yield_star(
+    registers: &mut Vec<Value>,
+    op: &Op,
+    resume: crate::completion::Completion,
+) -> Result<Option<crate::completion::Completion>, VmError> {
+    let Op::YieldStar {
+        dst,
+        source,
+        iterator,
+    } = op
+    else {
+        return Err(VmError::MissingReturn);
+    };
+    let record = delegation_record(registers, *source, *iterator)?;
+    let input = crate::execute::read_register(registers, *dst)?;
+    let returning = matches!(resume, crate::completion::Completion::Return(_));
+    let result = delegate(&record, input, resume)?;
+    if !result.done {
+        return Ok(Some(crate::completion::Completion::Yield(result.value)));
+    }
+    if returning {
+        return Ok(Some(crate::completion::Completion::Return(result.value)));
+    }
+    crate::execute::write_value(registers, *dst, result.value);
+    Ok(None)
+}
+
+fn delegation_record(registers: &mut Vec<Value>, source: u16, slot: u16) -> Result<Value, VmError> {
+    let current = crate::execute::read_register(registers, slot)?;
+    if !matches!(current, Value::Undefined) {
+        return Ok(current);
+    }
+    let source = crate::execute::read_register(registers, source)?;
+    let iterator = crate::collections::iterator::delegate_start(source)?;
+    crate::execute::write_value(registers, slot, iterator.clone());
+    Ok(iterator)
+}
+
+fn delegate(
+    iterator: &Value,
+    input: Value,
+    resume: crate::completion::Completion,
+) -> Result<crate::collections::iterator::DelegationResult, VmError> {
+    use crate::completion::Completion;
+    match resume {
+        Completion::Return(value) => crate::collections::iterator::delegate_return(iterator, value),
+        Completion::Throw(value) => crate::collections::iterator::delegate_throw(iterator, value),
+        _ => crate::collections::iterator::delegate_next(iterator, input),
+    }
 }
 
 fn initialize_state(generator: &GeneratorData) {
@@ -151,7 +220,7 @@ pub(crate) fn reduce_yield(
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
     if yield_expression.delegate {
-        return None;
+        return reduce_yield_star(yield_expression, ops, facts, next, locals);
     }
     let src = match yield_expression.argument.as_ref() {
         Some(argument) => crate::reduce::reduce_expression(argument, ops, facts, next, locals)?,
@@ -159,4 +228,24 @@ pub(crate) fn reduce_yield(
     };
     ops.push(Op::Yield { src });
     Some(src)
+}
+
+fn reduce_yield_star(
+    expression: &oxc::ast::ast::YieldExpression<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<u16> {
+    let source =
+        crate::reduce::reduce_expression(expression.argument.as_ref()?, ops, facts, next, locals)?;
+    let dst = *next;
+    let iterator = next.saturating_add(1);
+    *next = next.saturating_add(2);
+    ops.push(Op::YieldStar {
+        dst,
+        source,
+        iterator,
+    });
+    Some(dst)
 }

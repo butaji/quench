@@ -100,17 +100,19 @@ fn assign_array(
     locals: &HashMap<String, u16>,
 ) -> Option<()> {
     let iterator = iterator_start(source, ops, next);
+    let mut body = Vec::new();
     for element in &pattern.elements {
-        let value = iterator_step(iterator, ops, next);
+        let value = iterator_step(iterator, &mut body, next);
         if let Some(element) = element {
-            assign_maybe_default(element, value, ops, facts, next, locals)?;
+            assign_maybe_default(element, value, &mut body, facts, next, locals)?;
         }
     }
-    let Some(rest) = &pattern.rest else {
-        return Some(());
-    };
-    let value = iterator_rest(iterator, ops, next);
-    assign_target(&rest.target, value, ops, facts, next, locals)
+    if let Some(rest) = &pattern.rest {
+        let value = iterator_rest(iterator, &mut body, next);
+        assign_target(&rest.target, value, &mut body, facts, next, locals)?;
+    }
+    ops.push(Op::IteratorBinding { iterator, body });
+    Some(())
 }
 
 fn assign_object(
@@ -325,26 +327,19 @@ fn bind_array(
     locals: &HashMap<String, u16>,
 ) -> Option<()> {
     let iterator = iterator_start(source, ops, next);
+    let mut body = Vec::new();
     for element in &pattern.elements {
-        let value = iterator_step(iterator, ops, next);
+        let value = iterator_step(iterator, &mut body, next);
         if let Some(element) = element {
-            bind(element, value, ops, facts, next, locals)?;
+            bind(element, value, &mut body, facts, next, locals)?;
         }
     }
-    bind_array_rest(pattern.rest.as_deref(), iterator, ops, facts, next, locals)
-}
-
-fn bind_array_rest(
-    rest: Option<&oxc::ast::ast::BindingRestElement<'_>>,
-    iterator: u16,
-    ops: &mut Vec<Op>,
-    facts: &mut ProgramDb,
-    next: &mut u16,
-    locals: &HashMap<String, u16>,
-) -> Option<()> {
-    let Some(rest) = rest else { return Some(()) };
-    let value = iterator_rest(iterator, ops, next);
-    bind(&rest.argument, value, ops, facts, next, locals)
+    if let Some(rest) = pattern.rest.as_deref() {
+        let value = iterator_rest(iterator, &mut body, next);
+        bind(&rest.argument, value, &mut body, facts, next, locals)?;
+    }
+    ops.push(Op::IteratorBinding { iterator, body });
+    Some(())
 }
 
 fn iterator_start(source: u16, ops: &mut Vec<Op>, next: &mut u16) -> u16 {
