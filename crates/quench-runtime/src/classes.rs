@@ -4,7 +4,10 @@ use oxc::ast::ast::{Class, ClassElement, MethodDefinition, MethodDefinitionKind,
 
 use crate::{
     facts::ProgramDb,
-    ops::{Constant, FunctionKind, FunctionStrictness, Op, PropertyDefinitionKind},
+    ops::{
+        AppendInstanceFieldOp, Constant, FunctionKind, FunctionStrictness,
+        InstanceFieldInitializerOp, InstanceFieldKeyOp, Op, PropertyDefinitionKind,
+    },
 };
 
 pub(crate) fn reduce_expression(
@@ -33,7 +36,7 @@ pub(crate) fn reduce_expression(
         constructor,
         PropertyDefinitionKind::Data,
     );
-    reduce_methods(class, prototype, constructor, ops, facts, next, locals)?;
+    reduce_elements(class, prototype, constructor, ops, facts, next, locals)?;
     ops.push(Op::SetProperty {
         object: constructor,
         key: "prototype".to_string(),
@@ -102,6 +105,66 @@ pub(crate) fn validate_heritage(
     ))
 }
 
+pub(crate) fn append_instance_field(
+    registers: &[crate::value::Value],
+    op: &Op,
+) -> Result<(), crate::execute::VmError> {
+    let Op::AppendInstanceField(AppendInstanceFieldOp {
+        constructor,
+        key,
+        initializer,
+    }) = op
+    else {
+        return Err(crate::execute::VmError::MissingReturn);
+    };
+    let constructor = crate::execute::read_register(registers, *constructor)?;
+    let crate::value::Value::Function(constructor) = constructor else {
+        return Err(crate::execute::VmError::NotCallable);
+    };
+    let key = instance_field_key(registers, key)?;
+    let initializer = instance_field_initializer(initializer.as_ref())?;
+    constructor
+        .instance_fields
+        .borrow_mut()
+        .push(crate::value::InstanceFieldPlan { key, initializer });
+    Ok(())
+}
+
+fn instance_field_key(
+    registers: &[crate::value::Value],
+    key: &InstanceFieldKeyOp,
+) -> Result<crate::value::InstanceFieldKey, crate::execute::VmError> {
+    Ok(match key {
+        InstanceFieldKeyOp::Static(key) => {
+            crate::value::InstanceFieldKey::Static(std::rc::Rc::from(key.as_str()))
+        }
+        InstanceFieldKeyOp::Dynamic(src) => {
+            crate::value::InstanceFieldKey::Dynamic(crate::execute::read_register(registers, *src)?)
+        }
+    })
+}
+
+fn instance_field_initializer(
+    initializer: Option<&InstanceFieldInitializerOp>,
+) -> Result<crate::value::InstanceFieldInitializer, crate::execute::VmError> {
+    let Some(initializer) = initializer else {
+        return Ok(crate::value::InstanceFieldInitializer::Undefined);
+    };
+    let value = crate::functions::make(
+        &initializer.body,
+        0,
+        crate::locals::capture(initializer.captures),
+        FunctionKind::Ordinary,
+        FunctionStrictness::Strict,
+        false,
+        false,
+    );
+    let crate::value::Value::Function(function) = value else {
+        return Err(crate::execute::VmError::NotCallable);
+    };
+    Ok(crate::value::InstanceFieldInitializer::Callable(function))
+}
+
 fn reduce_constructor(
     class: &Class<'_>,
     ops: &mut Vec<Op>,
@@ -123,7 +186,7 @@ fn reduce_constructor(
     }
 }
 
-fn reduce_methods(
+fn reduce_elements(
     class: &Class<'_>,
     prototype: u16,
     constructor: u16,
@@ -133,22 +196,103 @@ fn reduce_methods(
     locals: &HashMap<String, u16>,
 ) -> Option<()> {
     for element in &class.body.body {
-        let ClassElement::MethodDefinition(method) = element else {
-            continue;
-        };
-        if method.kind == MethodDefinitionKind::Constructor {
-            continue;
+        match element {
+            ClassElement::MethodDefinition(method) => {
+                reduce_class_method(method, prototype, constructor, ops, facts, next, locals)?
+            }
+            ClassElement::PropertyDefinition(field)
+                if !matches!(field.key, PropertyKey::PrivateIdentifier(_)) =>
+            {
+                reduce_public_field(field, constructor, ops, facts, next, locals)?
+            }
+            _ => {}
         }
-        let key = reduce_method_key(method, ops, facts, next, locals)?;
-        let value = reduce_method(method, ops, facts, next, locals)?;
-        let target = if method.r#static {
-            constructor
-        } else {
-            prototype
-        };
-        define_method(ops, target, key, value, method.kind);
     }
     Some(())
+}
+
+fn reduce_class_method(
+    method: &MethodDefinition<'_>,
+    prototype: u16,
+    constructor: u16,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<()> {
+    if method.kind == MethodDefinitionKind::Constructor {
+        return Some(());
+    }
+    let key = reduce_method_key(method, ops, facts, next, locals)?;
+    let value = reduce_method(method, ops, facts, next, locals)?;
+    let target = if method.r#static {
+        constructor
+    } else {
+        prototype
+    };
+    define_method(ops, target, key, value, method.kind);
+    Some(())
+}
+
+fn reduce_public_field(
+    field: &oxc::ast::ast::PropertyDefinition<'_>,
+    constructor: u16,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<()> {
+    let key = reduce_field_key(field, ops, facts, next, locals)?;
+    if field.r#static {
+        return Some(());
+    }
+    let initializer = match field.value.as_ref() {
+        Some(value) => Some(reduce_field_initializer(value, facts, locals)?),
+        None => None,
+    };
+    ops.push(Op::AppendInstanceField(AppendInstanceFieldOp {
+        constructor,
+        key,
+        initializer,
+    }));
+    Some(())
+}
+
+fn reduce_field_key(
+    field: &oxc::ast::ast::PropertyDefinition<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<InstanceFieldKeyOp> {
+    if !field.computed {
+        return method_key(&field.key).map(InstanceFieldKeyOp::Static);
+    }
+    let src =
+        crate::reduce::reduce_expression(field.key.as_expression()?, ops, facts, next, locals)?;
+    let key = take_register(next);
+    ops.push(Op::ToPropertyKey { dst: key, src });
+    Some(InstanceFieldKeyOp::Dynamic(key))
+}
+
+fn reduce_field_initializer(
+    value: &oxc::ast::ast::Expression<'_>,
+    facts: &mut ProgramDb,
+    locals: &HashMap<String, u16>,
+) -> Option<InstanceFieldInitializerOp> {
+    let captures = crate::reduce_support::register_base(locals);
+    let mut body_locals = locals.clone();
+    body_locals.insert("this".to_string(), captures.saturating_add(1));
+    let mut next = captures.saturating_add(3);
+    let mut body = Vec::new();
+    let inherited = (facts.strict, facts.in_function);
+    facts.strict = true;
+    facts.in_function = true;
+    let result = crate::reduce::reduce_expression(value, &mut body, facts, &mut next, &body_locals);
+    (facts.strict, facts.in_function) = inherited;
+    let result = result?;
+    body.push(Op::Return { src: result });
+    Some(InstanceFieldInitializerOp { body, captures })
 }
 
 fn define_method(ops: &mut Vec<Op>, object: u16, key: u16, value: u16, kind: MethodDefinitionKind) {
