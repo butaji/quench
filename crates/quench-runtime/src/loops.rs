@@ -207,7 +207,7 @@ fn for_in_slot(
 pub(crate) fn execute_for_in(
     registers: &mut Vec<crate::value::Value>,
     op: &Op,
-) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
+) -> Result<crate::completion::Completion, crate::execute::VmError> {
     let (label, slot, body, keys) = unpack_for_in(registers, op)?;
     iterate_loop_keys(registers, label, slot, body, keys)
 }
@@ -215,7 +215,7 @@ pub(crate) fn execute_for_in(
 pub(crate) fn execute_for_of(
     registers: &mut Vec<crate::value::Value>,
     op: &Op,
-) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
+) -> Result<crate::completion::Completion, crate::execute::VmError> {
     let (label, slot, body, values) = unpack_for_of(registers, op)?;
     iterate_loop_values(registers, label, slot, body, values)
 }
@@ -261,14 +261,16 @@ fn iterate_loop_keys(
     slot: u16,
     body: &[Op],
     keys: Vec<String>,
-) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
+) -> Result<crate::completion::Completion, crate::execute::VmError> {
     for key in keys {
         crate::locals::write(slot, crate::value::Value::String(key));
-        if let Some(result) = execute_loop_body(registers, label, body)? {
-            return Ok(result);
+        match execute_loop_body(registers, label, body)? {
+            LoopAction::Continue => {}
+            LoopAction::Break => return Ok(crate::completion::Completion::Normal),
+            LoopAction::Propagate(completion) => return Ok(completion),
         }
     }
-    Ok(None)
+    Ok(crate::completion::Completion::Normal)
 }
 
 fn unpack_for_of<'a>(
@@ -312,46 +314,46 @@ fn iterate_loop_values(
     slot: u16,
     body: &[Op],
     values: Vec<crate::value::Value>,
-) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
+) -> Result<crate::completion::Completion, crate::execute::VmError> {
     for value in values {
         crate::locals::write(slot, value);
-        if let Some(result) = execute_loop_body(registers, label, body)? {
-            return Ok(result);
+        match execute_loop_body(registers, label, body)? {
+            LoopAction::Continue => {}
+            LoopAction::Break => return Ok(crate::completion::Completion::Normal),
+            LoopAction::Propagate(completion) => return Ok(completion),
         }
     }
-    Ok(None)
+    Ok(crate::completion::Completion::Normal)
+}
+
+enum LoopAction {
+    Continue,
+    Break,
+    Propagate(crate::completion::Completion),
 }
 
 fn execute_loop_body(
     registers: &mut Vec<crate::value::Value>,
     label: &Option<String>,
     body: &[Op],
-) -> Result<Option<Option<crate::value::Value>>, crate::execute::VmError> {
-    match crate::execute::execute_in_place(body, registers) {
-        Ok(value) => Ok(Some(Some(value))),
-        Err(crate::execute::VmError::MissingReturn) => Ok(None),
-        Err(crate::execute::VmError::Continue(continue_label))
-            if continue_matches(label, &continue_label) =>
-        {
-            Ok(None)
+) -> Result<LoopAction, crate::execute::VmError> {
+    use crate::completion::Completion;
+    match crate::execute::execute_completion_in_place(body, registers)? {
+        Completion::Normal => Ok(LoopAction::Continue),
+        Completion::Continue(continue_label) if continue_matches(label, &continue_label) => {
+            Ok(LoopAction::Continue)
         }
-        Err(crate::execute::VmError::Continue(continue_label)) => {
-            Err(crate::execute::VmError::Continue(continue_label))
+        Completion::Break(break_label) if break_matches(label, &break_label) => {
+            Ok(LoopAction::Break)
         }
-        Err(crate::execute::VmError::Break(break_label)) if break_matches(label, &break_label) => {
-            Ok(Some(None))
-        }
-        Err(crate::execute::VmError::Break(break_label)) => {
-            Err(crate::execute::VmError::Break(break_label))
-        }
-        Err(error) => Err(error),
+        completion => Ok(LoopAction::Propagate(completion)),
     }
 }
 
 pub(crate) fn execute(
     registers: &mut Vec<crate::value::Value>,
     op: &crate::ops::Op,
-) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
+) -> Result<crate::completion::Completion, crate::execute::VmError> {
     let crate::ops::Op::Loop {
         label,
         init,
@@ -364,27 +366,14 @@ pub(crate) fn execute(
     };
     run_fragment(init, registers)?;
     while crate::execute::is_truthy(&crate::execute::execute_in_place(test, registers)?) {
-        match crate::execute::execute_in_place(body, registers) {
-            Ok(value) => return Ok(Some(value)),
-            Err(crate::execute::VmError::MissingReturn) => {}
-            Err(crate::execute::VmError::Continue(continue_label))
-                if continue_matches(label, &continue_label) => {}
-            Err(crate::execute::VmError::Continue(continue_label)) => {
-                return Err(crate::execute::VmError::Continue(continue_label));
-            }
-            Err(crate::execute::VmError::Break(break_label))
-                if break_matches(label, &break_label) =>
-            {
-                break
-            }
-            Err(crate::execute::VmError::Break(break_label)) => {
-                return Err(crate::execute::VmError::Break(break_label));
-            }
-            Err(error) => return Err(error),
+        match execute_loop_body(registers, label, body)? {
+            LoopAction::Continue => {}
+            LoopAction::Break => break,
+            LoopAction::Propagate(completion) => return Ok(completion),
         }
         run_fragment(update, registers)?;
     }
-    Ok(None)
+    Ok(crate::completion::Completion::Normal)
 }
 
 fn break_matches(loop_label: &Option<String>, break_label: &Option<String>) -> bool {

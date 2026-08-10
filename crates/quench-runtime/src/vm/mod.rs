@@ -138,6 +138,13 @@ pub fn execute_in_place(ops: &[Op], registers: &mut Vec<Value>) -> Result<Value,
     execute_in_place_context(ops, registers, &VmContext::default())
 }
 
+pub(crate) fn execute_completion_in_place(
+    ops: &[Op],
+    registers: &mut Vec<Value>,
+) -> Result<crate::completion::Completion, VmError> {
+    execute_completion_in_place_context(ops, registers, &VmContext::default())
+}
+
 pub fn execute_with_context(ops: &[Op], context: &VmContext) -> Result<Value, VmError> {
     execute_with_registers_context(ops, Vec::new(), context)
 }
@@ -169,6 +176,24 @@ pub fn execute_in_place_context(
     execute_in_environment(ops, registers, context, environment)
 }
 
+fn execute_completion_in_place_context(
+    ops: &[Op],
+    registers: &mut Vec<Value>,
+    context: &VmContext,
+) -> Result<crate::completion::Completion, VmError> {
+    if crate::locals::is_installed() {
+        return run_ops_completion(ops, registers, context);
+    }
+    let environment = crate::environment::Environment::child(
+        &crate::environment::Environment::new(),
+        registers.clone(),
+    );
+    let _context_guard = ContextGuard::install(context);
+    let _global_guard = GlobalObjectGuard::install();
+    let _environment_guard = crate::locals::EnvironmentGuard::install(environment);
+    run_ops_completion(ops, registers, context)
+}
+
 pub(crate) fn execute_in_environment(
     ops: &[Op],
     registers: &mut Vec<Value>,
@@ -182,13 +207,48 @@ pub(crate) fn execute_in_environment(
 }
 
 fn run_ops(ops: &[Op], registers: &mut Vec<Value>, context: &VmContext) -> Result<Value, VmError> {
+    completion_result(run_ops_completion(ops, registers, context)?)
+}
+
+fn run_ops_completion(
+    ops: &[Op],
+    registers: &mut Vec<Value>,
+    context: &VmContext,
+) -> Result<crate::completion::Completion, VmError> {
     for op in ops {
-        match run_op(registers, op, context)? {
-            None => {}
-            Some(value) => return Ok(value),
+        let result = match run_op(registers, op, context) {
+            Ok(result) => result,
+            Err(error) => return error_completion(error),
+        };
+        match result {
+            None | Some(crate::completion::Completion::Normal) => {}
+            Some(completion) => return Ok(completion),
         }
     }
-    Err(VmError::MissingReturn)
+    Ok(crate::completion::Completion::Normal)
+}
+
+fn error_completion(error: VmError) -> Result<crate::completion::Completion, VmError> {
+    use crate::completion::Completion;
+    match error {
+        VmError::Thrown(value) => Ok(Completion::Throw(value)),
+        VmError::Break(label) => Ok(Completion::Break(label)),
+        VmError::Continue(label) => Ok(Completion::Continue(label)),
+        VmError::Suspended(promise) => Ok(Completion::Suspend(promise)),
+        error => Err(error),
+    }
+}
+
+fn completion_result(completion: crate::completion::Completion) -> Result<Value, VmError> {
+    use crate::completion::Completion;
+    match completion {
+        Completion::Normal => Err(VmError::MissingReturn),
+        Completion::Return(value) => Ok(value),
+        Completion::Throw(value) => Err(VmError::Thrown(value)),
+        Completion::Break(label) => Err(VmError::Break(label)),
+        Completion::Continue(label) => Err(VmError::Continue(label)),
+        Completion::Suspend(promise) => Err(VmError::Suspended(promise)),
+    }
 }
 
 struct GlobalObjectGuard {
