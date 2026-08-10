@@ -1,7 +1,7 @@
 //! VM op execution helpers (arithmetic, unary, binary, call dispatch).
 use crate::bigint;
 use crate::intl::tolocale::value::{
-    is_truthy, loose_equal, strict_equal, to_int32, to_number, to_string, type_of,
+    is_truthy, loose_equal, strict_equal, to_int32, to_string, type_of,
 };
 use crate::ops::Builtin;
 use crate::value::Value;
@@ -36,7 +36,9 @@ pub(crate) fn execute_unary(
 }
 
 fn numeric_unary(value: &Value, transform: fn(f64) -> f64) -> Result<Value, VmError> {
-    Ok(Value::Number(transform(to_number(Some(value)))))
+    Ok(Value::Number(transform(crate::conversion::to_number(
+        value,
+    )?)))
 }
 
 pub(crate) fn execute_binary(
@@ -58,16 +60,13 @@ fn evaluate_binary(
     operator: crate::ops::BinaryOp,
 ) -> Result<Value, VmError> {
     use crate::ops::BinaryOp;
-    if let Some(result) = special_binary(left, right, operator)? {
-        return Ok(result);
-    }
     Ok(match operator {
         BinaryOp::Add
         | BinaryOp::Subtract
         | BinaryOp::Multiply
         | BinaryOp::Divide
         | BinaryOp::Remainder
-        | BinaryOp::Exponentiate => arithmetic_value(left, right, operator),
+        | BinaryOp::Exponentiate => arithmetic_value(left, right, operator)?,
         BinaryOp::Equal => Value::Boolean(loose_equal(left, right)),
         BinaryOp::NotEqual => Value::Boolean(!loose_equal(left, right)),
         BinaryOp::StrictEqual => Value::Boolean(strict_equal(left, right)),
@@ -83,7 +82,7 @@ fn evaluate_binary(
         BinaryOp::ShiftRight => {
             bitwise_numbers(left, right, |a, b| a.wrapping_shr(shift_count(b)))?
         }
-        BinaryOp::ShiftRightZeroFill => Value::Number(shift_right_unsigned(left, right)),
+        BinaryOp::ShiftRightZeroFill => Value::Number(shift_right_unsigned(left, right)?),
         BinaryOp::Instanceof => Value::Boolean(instanceof(left, right)),
     })
 }
@@ -155,21 +154,6 @@ fn own_constructor(value: &Value) -> Option<Value> {
         .find_map(|(name, value)| (name == "constructor").then(|| value.clone()))
 }
 
-fn special_binary(
-    left: &Value,
-    right: &Value,
-    operator: crate::ops::BinaryOp,
-) -> Result<Option<Value>, VmError> {
-    use crate::ops::BinaryOp;
-    if operator == BinaryOp::Add && has_string_operand(left, right) {
-        return Ok(Some(arithmetic_value(left, right, operator)));
-    }
-    if is_bigint_arithmetic(operator) && has_bigint_operand(left, right) {
-        return bigint_binary(left, right, operator).map(Some);
-    }
-    Ok(None)
-}
-
 fn bigint_binary(
     left: &Value,
     right: &Value,
@@ -198,15 +182,28 @@ fn bigint_binary(
     })
 }
 
-fn arithmetic_value(left: &Value, right: &Value, operator: crate::ops::BinaryOp) -> Value {
+fn arithmetic_value(
+    left: &Value,
+    right: &Value,
+    operator: crate::ops::BinaryOp,
+) -> Result<Value, VmError> {
+    let left = crate::conversion::to_primitive(left, "default")?;
+    let right = crate::conversion::to_primitive(right, "default")?;
     if operator == crate::ops::BinaryOp::Add
         && (matches!(left, Value::String(_)) || matches!(right, Value::String(_)))
     {
-        return Value::String(format!("{}{}", add_string(left), add_string(right)));
+        return Ok(Value::String(format!(
+            "{}{}",
+            add_string(&left)?,
+            add_string(&right)?
+        )));
     }
-    let left = to_number(Some(left));
-    let right = to_number(Some(right));
-    Value::Number(numeric_binary(left, right, operator))
+    if has_bigint_operand(&left, &right) {
+        return bigint_binary(&left, &right, operator);
+    }
+    let left = crate::conversion::primitive_to_number(&left)?;
+    let right = crate::conversion::primitive_to_number(&right)?;
+    Ok(Value::Number(numeric_binary(left, right, operator)))
 }
 
 fn bitwise_numbers(
@@ -214,8 +211,8 @@ fn bitwise_numbers(
     right: &Value,
     operation: fn(i32, i32) -> i32,
 ) -> Result<Value, VmError> {
-    let left = to_int32(to_number(Some(left)));
-    let right = to_int32(to_number(Some(right)));
+    let left = to_int32(crate::conversion::to_number(left)?);
+    let right = to_int32(crate::conversion::to_number(right)?);
     Ok(Value::Number(f64::from(operation(left, right))))
 }
 
@@ -225,10 +222,10 @@ fn shift_count(right: i32) -> u32 {
 }
 
 /// ECMAScript unsigned right shift: ToUint32(left) >> (count & 31), as a number.
-fn shift_right_unsigned(left: &Value, right: &Value) -> f64 {
-    let left = to_int32(to_number(Some(left))) as u32;
-    let right = to_int32(to_number(Some(right)));
-    f64::from(left >> shift_count(right))
+fn shift_right_unsigned(left: &Value, right: &Value) -> Result<f64, VmError> {
+    let left = to_int32(crate::conversion::to_number(left)?) as u32;
+    let right = to_int32(crate::conversion::to_number(right)?);
+    Ok(f64::from(left >> shift_count(right)))
 }
 
 fn numeric_binary(left: f64, right: f64, operator: crate::ops::BinaryOp) -> f64 {
@@ -238,9 +235,58 @@ fn numeric_binary(left: f64, right: f64, operator: crate::ops::BinaryOp) -> f64 
         crate::ops::BinaryOp::Multiply => left * right,
         crate::ops::BinaryOp::Divide => left / right,
         crate::ops::BinaryOp::Remainder => left % right,
-        crate::ops::BinaryOp::Exponentiate => left.powf(right),
+        crate::ops::BinaryOp::Exponentiate => exponentiate(left, right),
         _ => 0.0,
     }
+}
+
+fn exponentiate(base: f64, exponent: f64) -> f64 {
+    if exponent.is_nan() {
+        return f64::NAN;
+    }
+    if exponent == 0.0 {
+        return 1.0;
+    }
+    if base.is_nan() || base.abs() == 1.0 && exponent.is_infinite() {
+        return f64::NAN;
+    }
+    if base.is_infinite() {
+        return infinite_power(base, exponent);
+    }
+    if base == 0.0 {
+        return zero_power(base, exponent);
+    }
+    base.powf(exponent)
+}
+
+fn infinite_power(base: f64, exponent: f64) -> f64 {
+    let magnitude = if exponent.is_sign_positive() {
+        f64::INFINITY
+    } else {
+        0.0
+    };
+    if base.is_sign_negative() && is_odd_integer(exponent) {
+        -magnitude
+    } else {
+        magnitude
+    }
+}
+
+fn zero_power(base: f64, exponent: f64) -> f64 {
+    let magnitude = if exponent.is_sign_positive() {
+        0.0
+    } else {
+        f64::INFINITY
+    };
+    if base.is_sign_negative() && is_odd_integer(exponent) {
+        -magnitude
+    } else {
+        magnitude
+    }
+}
+
+fn is_odd_integer(value: f64) -> bool {
+    value.is_finite() && value.fract() == 0.0 && value.abs() % 2.0 == 1.0
 }
 
 fn unary_plus(value: &Value) -> Result<Value, VmError> {
@@ -250,24 +296,8 @@ fn unary_plus(value: &Value) -> Result<Value, VmError> {
     numeric_unary(value, |n| n)
 }
 
-fn has_string_operand(left: &Value, right: &Value) -> bool {
-    matches!(left, Value::String(_)) || matches!(right, Value::String(_))
-}
-
 fn has_bigint_operand(left: &Value, right: &Value) -> bool {
     bigint_value(left).is_some() || bigint_value(right).is_some()
-}
-
-fn is_bigint_arithmetic(operator: crate::ops::BinaryOp) -> bool {
-    matches!(
-        operator,
-        crate::ops::BinaryOp::Add
-            | crate::ops::BinaryOp::Subtract
-            | crate::ops::BinaryOp::Multiply
-            | crate::ops::BinaryOp::Divide
-            | crate::ops::BinaryOp::Remainder
-            | crate::ops::BinaryOp::Exponentiate
-    )
 }
 
 fn bigint_error(error: bigint::Error) -> VmError {
@@ -293,10 +323,13 @@ fn range_error(message: &str) -> VmError {
     ))
 }
 
-fn add_string(value: &Value) -> String {
-    bigint_value(value)
+fn add_string(value: &Value) -> Result<String, VmError> {
+    if crate::conversion::is_symbol(value) {
+        return Err(type_error("Cannot convert Symbol value to string"));
+    }
+    Ok(bigint_value(value)
         .map(str::to_string)
-        .unwrap_or_else(|| to_string(Some(value)))
+        .unwrap_or_else(|| to_string(Some(value))))
 }
 
 fn bigint_value(value: &Value) -> Option<&str> {
@@ -322,11 +355,13 @@ fn compare_values(
     right: &Value,
     compare: fn(f64, f64) -> bool,
 ) -> Result<Value, VmError> {
-    if let (Value::String(left), Value::String(right)) = (left, right) {
+    let left = crate::conversion::to_primitive(left, "number")?;
+    let right = crate::conversion::to_primitive(right, "number")?;
+    if let (Value::String(left), Value::String(right)) = (&left, &right) {
         return Ok(Value::Boolean(compare_strings(left, right, compare)));
     }
-    let left = to_number(Some(left));
-    let right = to_number(Some(right));
+    let left = crate::conversion::primitive_to_number(&left)?;
+    let right = crate::conversion::primitive_to_number(&right)?;
     Ok(Value::Boolean(
         !left.is_nan() && !right.is_nan() && compare(left, right),
     ))

@@ -20,6 +20,20 @@ pub fn execute_call(
     Ok(())
 }
 
+pub fn prepare_tail_call(
+    registers: &[Value],
+    callee: u16,
+    args: &[u16],
+    spreads: &[bool],
+) -> Result<crate::completion::TailCallRequest, VmError> {
+    let arguments = collect_call_arguments(registers, args, spreads)?;
+    Ok(crate::completion::TailCallRequest {
+        callee: super::read_register(registers, callee)?,
+        receiver: Value::Undefined,
+        arguments,
+    })
+}
+
 fn propagate_object_mutation(
     registers: &mut Vec<Value>,
     callee: &Value,

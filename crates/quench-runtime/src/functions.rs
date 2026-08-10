@@ -23,7 +23,7 @@ pub(crate) fn reduce_body(
     parameters: HashMap<String, u16>,
     parameter_count: u16,
     captures: u16,
-    strictness: FunctionStrictness,
+    metadata: FunctionMetadata,
 ) -> Result<Vec<Op>, Vec<String>> {
     let formal_parameters = crate::function_parameters::bindings(formal)?.0;
     let rest = rest_slot(&parameters, parameter_count, captures);
@@ -31,9 +31,8 @@ pub(crate) fn reduce_body(
         .saturating_add(parameter_count)
         .saturating_add(if rest.is_some() { 4 } else { 3 });
     let next_slot = crate::reduce_support::register_base(&parameters).max(minimum);
-    let inherited = (facts.strict, facts.in_function);
-    facts.strict = matches!(strictness, FunctionStrictness::Strict);
-    facts.in_function = true;
+    let tail_calls = tail_calls_enabled(metadata.strictness, metadata.kind, metadata.is_async);
+    let inherited = enter_function(facts, metadata.strictness, tail_calls);
     let prefix = crate::function_parameters::prefix(formal, facts, &parameters, captures, true);
     let mut body_locals = parameters.clone();
     crate::reduce_support::shadow_function_bindings(
@@ -49,12 +48,23 @@ pub(crate) fn reduce_body(
         next_slot,
     );
     facts.eval_var_barrier = inherited_barrier;
-    (facts.strict, facts.in_function) = inherited;
+    (facts.strict, facts.in_function, facts.tail_calls) = inherited;
     let mut prefix =
         prefix.ok_or_else(|| vec!["Unsupported function parameter initialization".to_string()])?;
     prefix.extend((!prefix.is_empty()).then_some(Op::ParameterEnd));
     prefix.extend(reduced?);
     Ok(bind_rest(prefix, rest, parameter_count, captures))
+}
+fn enter_function(
+    facts: &mut ProgramDb,
+    strictness: FunctionStrictness,
+    tail_calls: bool,
+) -> (bool, bool, bool) {
+    let inherited = (facts.strict, facts.in_function, facts.tail_calls);
+    facts.strict = matches!(strictness, FunctionStrictness::Strict);
+    facts.in_function = true;
+    facts.tail_calls = tail_calls;
+    inherited
 }
 fn rest_slot(parameters: &HashMap<String, u16>, params: u16, captures: u16) -> Option<u16> {
     let slot = captures
@@ -237,9 +247,9 @@ pub(crate) fn reduce_expression(
     let strictness = crate::reduce_support::function_strictness(body, facts.strict);
     let (parameters, parameter_count) =
         crate::function_parameters::bindings(&function.params).ok()?;
-    let inherited = (facts.strict, facts.in_function);
-    facts.strict = matches!(strictness, FunctionStrictness::Strict);
-    facts.in_function = true;
+    let kind = function_kind(function);
+    let tail_calls = tail_calls_enabled(strictness, kind, function.r#async);
+    let inherited = enter_function(facts, strictness, tail_calls);
     let reduced = reduce_function_ops(
         &body.statements,
         &function.params,
@@ -249,7 +259,7 @@ pub(crate) fn reduce_expression(
         locals,
         None,
     );
-    (facts.strict, facts.in_function) = inherited;
+    (facts.strict, facts.in_function, facts.tail_calls) = inherited;
     let (body_ops, captures) = reduced?;
     Some(emit_function_op(
         ops,
@@ -258,7 +268,7 @@ pub(crate) fn reduce_expression(
         parameter_count,
         captures,
         FunctionMetadata {
-            kind: function_kind(function),
+            kind,
             strictness,
             is_async: function.r#async,
             mapped_arguments: crate::function_parameters::is_simple(&function.params),
@@ -274,6 +284,16 @@ pub(crate) fn function_kind(function: &oxc::ast::ast::Function<'_>) -> FunctionK
     }
 }
 
+pub(crate) fn tail_calls_enabled(
+    strictness: FunctionStrictness,
+    kind: FunctionKind,
+    is_async: bool,
+) -> bool {
+    matches!(strictness, FunctionStrictness::Strict)
+        && matches!(kind, FunctionKind::Ordinary | FunctionKind::Arrow)
+        && !is_async
+}
+
 pub(crate) fn reduce_arrow(
     function: &oxc::ast::ast::ArrowFunctionExpression<'_>,
     ops: &mut Vec<Op>,
@@ -284,9 +304,8 @@ pub(crate) fn reduce_arrow(
     let strictness = crate::reduce_support::function_strictness(&function.body, facts.strict);
     let (parameters, parameter_count) =
         crate::function_parameters::bindings(&function.params).ok()?;
-    let inherited = (facts.strict, facts.in_function);
-    facts.strict = matches!(strictness, FunctionStrictness::Strict);
-    facts.in_function = true;
+    let tail_calls = tail_calls_enabled(strictness, FunctionKind::Arrow, function.r#async);
+    let inherited = enter_function(facts, strictness, tail_calls);
     let reduced = reduce_function_ops(
         &function.body.statements,
         &function.params,
@@ -296,7 +315,7 @@ pub(crate) fn reduce_arrow(
         locals,
         Some(function.expression),
     );
-    (facts.strict, facts.in_function) = inherited;
+    (facts.strict, facts.in_function, facts.tail_calls) = inherited;
     let (body_ops, captures) = reduced?;
     Some(emit_function_op(
         ops,

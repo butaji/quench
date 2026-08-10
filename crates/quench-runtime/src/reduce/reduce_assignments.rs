@@ -1,8 +1,31 @@
 use std::collections::HashMap;
 
-use oxc::ast::ast::{AssignmentOperator, AssignmentTarget};
+use oxc::ast::ast::{AssignmentOperator, AssignmentTarget, Expression};
 
-use crate::{facts::ProgramDb, literal::reduce_operator, ops::Op, properties};
+use crate::{facts::ProgramDb, literal::reduce_operator, ops::Op};
+
+pub(crate) enum PlaceKey {
+    Static(String),
+    Dynamic(u16),
+}
+
+pub(crate) enum Place {
+    Local {
+        slot: u16,
+    },
+    Name {
+        name: String,
+        strict: bool,
+    },
+    Property {
+        object: u16,
+        key: PlaceKey,
+        origin: Option<u16>,
+    },
+    Super {
+        key: PlaceKey,
+    },
+}
 
 pub fn reduce_assignment(
     assignment: &oxc::ast::ast::AssignmentExpression<'_>,
@@ -11,38 +34,250 @@ pub fn reduce_assignment(
     next: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
-    let AssignmentTarget::AssignmentTargetIdentifier(identifier) = &assignment.left else {
-        return properties::reduce_assignment(assignment, ops, facts, next, locals);
+    let mut place = reduce_place(&assignment.left, ops, facts, next, locals)?;
+    let lhs = if assignment.operator == AssignmentOperator::Assign {
+        None
+    } else {
+        prepare_get(&mut place, ops, next);
+        Some(get(&place, ops, next)?)
     };
-    let Some(slot) = locals.get(identifier.name.as_str()).copied() else {
-        return reduce_unresolved(identifier, assignment, ops, facts, next, locals);
-    };
-    let lhs = local_lhs(assignment.operator, slot, ops, next);
     let rhs = crate::reduce::reduce_expression(&assignment.right, ops, facts, next, locals)?;
     let value = assignment_value(assignment.operator, lhs, rhs, ops, next)?;
-    ops.push(Op::StoreLocal { slot, src: value });
+    put(place, value, ops)?;
     Some(value)
 }
 
-fn reduce_unresolved(
-    identifier: &oxc::ast::ast::IdentifierReference<'_>,
-    assignment: &oxc::ast::ast::AssignmentExpression<'_>,
+fn reduce_place(
+    target: &AssignmentTarget<'_>,
     ops: &mut Vec<Op>,
     facts: &mut ProgramDb,
     next: &mut u16,
     locals: &HashMap<String, u16>,
-) -> Option<u16> {
-    let lhs = (assignment.operator != AssignmentOperator::Assign)
-        .then(|| crate::identifiers::reduce(identifier, ops, facts, next, locals))
-        .flatten();
-    let rhs = crate::reduce::reduce_expression(&assignment.right, ops, facts, next, locals)?;
-    let value = assignment_value(assignment.operator, lhs, rhs, ops, next)?;
-    ops.push(Op::SetName {
-        key: identifier.name.to_string(),
-        src: value,
-        strict: facts.strict,
-    });
-    Some(value)
+) -> Option<Place> {
+    match target {
+        AssignmentTarget::AssignmentTargetIdentifier(identifier) => Some(identifier_place(
+            identifier.name.as_str(),
+            facts.strict,
+            locals,
+        )),
+        AssignmentTarget::StaticMemberExpression(member) => member_place(
+            &member.object,
+            PlaceKey::Static(member.property.name.to_string()),
+            ops,
+            facts,
+            next,
+            locals,
+        ),
+        AssignmentTarget::PrivateFieldExpression(member) => member_place(
+            &member.object,
+            PlaceKey::Static(format!("#{}", member.field.name)),
+            ops,
+            facts,
+            next,
+            locals,
+        ),
+        AssignmentTarget::ComputedMemberExpression(member) => {
+            computed_place(member, ops, facts, next, locals)
+        }
+        _ => None,
+    }
+}
+
+pub(crate) fn reduce_simple_place(
+    target: &oxc::ast::ast::SimpleAssignmentTarget<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<Place> {
+    match target {
+        oxc::ast::ast::SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) => Some(
+            identifier_place(identifier.name.as_str(), facts.strict, locals),
+        ),
+        oxc::ast::ast::SimpleAssignmentTarget::StaticMemberExpression(member) => member_place(
+            &member.object,
+            PlaceKey::Static(member.property.name.to_string()),
+            ops,
+            facts,
+            next,
+            locals,
+        ),
+        oxc::ast::ast::SimpleAssignmentTarget::PrivateFieldExpression(member) => member_place(
+            &member.object,
+            PlaceKey::Static(format!("#{}", member.field.name)),
+            ops,
+            facts,
+            next,
+            locals,
+        ),
+        oxc::ast::ast::SimpleAssignmentTarget::ComputedMemberExpression(member) => {
+            computed_place(member, ops, facts, next, locals)
+        }
+        _ => None,
+    }
+}
+
+fn identifier_place(name: &str, strict: bool, locals: &HashMap<String, u16>) -> Place {
+    locals.get(name).map_or_else(
+        || Place::Name {
+            name: name.to_string(),
+            strict,
+        },
+        |slot| Place::Local { slot: *slot },
+    )
+}
+
+fn computed_place(
+    member: &oxc::ast::ast::ComputedMemberExpression<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<Place> {
+    let object = reduce_member_object(&member.object, ops, facts, next, locals)?;
+    let key = crate::reduce::reduce_expression(&member.expression, ops, facts, next, locals)?;
+    finish_member_place(&member.object, object, PlaceKey::Dynamic(key), locals)
+}
+
+pub(crate) fn prepare_get(place: &mut Place, ops: &mut Vec<Op>, next: &mut u16) {
+    let key = match place {
+        Place::Property {
+            key: PlaceKey::Dynamic(key),
+            ..
+        }
+        | Place::Super {
+            key: PlaceKey::Dynamic(key),
+        } => key,
+        _ => return,
+    };
+    let dst = take_register(next);
+    ops.push(Op::ToPropertyKey { dst, src: *key });
+    *key = dst;
+}
+
+fn member_place(
+    expression: &Expression<'_>,
+    key: PlaceKey,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<Place> {
+    let object = reduce_member_object(expression, ops, facts, next, locals)?;
+    finish_member_place(expression, object, key, locals)
+}
+
+fn reduce_member_object(
+    expression: &Expression<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<Option<u16>> {
+    if matches!(expression, Expression::Super(_)) {
+        return Some(None);
+    }
+    crate::reduce::reduce_expression(expression, ops, facts, next, locals).map(Some)
+}
+
+fn finish_member_place(
+    expression: &Expression<'_>,
+    object: Option<u16>,
+    key: PlaceKey,
+    locals: &HashMap<String, u16>,
+) -> Option<Place> {
+    match object {
+        Some(object) => Some(Place::Property {
+            object,
+            key,
+            origin: object_origin(expression, locals),
+        }),
+        None => Some(Place::Super { key }),
+    }
+}
+
+fn object_origin(expression: &Expression<'_>, locals: &HashMap<String, u16>) -> Option<u16> {
+    let name = match expression {
+        Expression::Identifier(identifier) => identifier.name.as_str(),
+        Expression::ThisExpression(_) => "this",
+        _ => return None,
+    };
+    locals.get(name).copied()
+}
+
+pub(crate) fn get(place: &Place, ops: &mut Vec<Op>, next: &mut u16) -> Option<u16> {
+    let dst = take_register(next);
+    match place {
+        Place::Local { slot } => ops.push(Op::LoadLocal { dst, slot: *slot }),
+        Place::Name { name, .. } => ops.push(Op::ResolveName {
+            dst,
+            key: name.clone(),
+        }),
+        Place::Property { object, key, .. } => emit_property_get(ops, dst, *object, key),
+        Place::Super {
+            key: PlaceKey::Static(key),
+        } => ops.push(Op::GetSuperProperty {
+            dst,
+            key: key.clone(),
+        }),
+        Place::Super {
+            key: PlaceKey::Dynamic(_),
+        } => return None,
+    }
+    Some(dst)
+}
+
+fn emit_property_get(ops: &mut Vec<Op>, dst: u16, object: u16, key: &PlaceKey) {
+    match key {
+        PlaceKey::Static(key) => ops.push(Op::GetProperty {
+            dst,
+            object,
+            key: key.clone(),
+        }),
+        PlaceKey::Dynamic(key) => ops.push(Op::GetPropertyDynamic {
+            dst,
+            object,
+            key: *key,
+        }),
+    }
+}
+
+pub(crate) fn put(place: Place, value: u16, ops: &mut Vec<Op>) -> Option<()> {
+    match place {
+        Place::Local { slot } => ops.push(Op::StoreLocal { slot, src: value }),
+        Place::Name { name, strict } => ops.push(Op::SetName {
+            key: name,
+            src: value,
+            strict,
+        }),
+        Place::Property {
+            object,
+            key,
+            origin,
+        } => {
+            emit_property_put(ops, object, key, value);
+            if let Some(slot) = origin {
+                ops.push(Op::StoreLocal { slot, src: object });
+            }
+        }
+        Place::Super { .. } => return None,
+    }
+    Some(())
+}
+
+fn emit_property_put(ops: &mut Vec<Op>, object: u16, key: PlaceKey, value: u16) {
+    match key {
+        PlaceKey::Static(key) => ops.push(Op::SetProperty {
+            object,
+            key,
+            src: value,
+        }),
+        PlaceKey::Dynamic(key) => ops.push(Op::SetPropertyDynamic {
+            object,
+            key,
+            src: value,
+        }),
+    }
 }
 
 fn assignment_value(
@@ -55,36 +290,12 @@ fn assignment_value(
     if assignment == AssignmentOperator::Assign {
         return Some(rhs);
     }
-    binary_value(assignment, lhs?, rhs, ops, next)
-}
-
-fn local_lhs(
-    assignment: AssignmentOperator,
-    slot: u16,
-    ops: &mut Vec<Op>,
-    next: &mut u16,
-) -> Option<u16> {
-    if assignment == AssignmentOperator::Assign {
-        return None;
-    }
-    let lhs = take_register(next);
-    ops.push(Op::LoadLocal { dst: lhs, slot });
-    Some(lhs)
-}
-
-fn binary_value(
-    assignment: AssignmentOperator,
-    lhs: u16,
-    rhs: u16,
-    ops: &mut Vec<Op>,
-    next: &mut u16,
-) -> Option<u16> {
     let dst = take_register(next);
     let operator = reduce_operator(assignment.to_binary_operator()?)?;
     ops.push(Op::Binary {
         dst,
         operator,
-        lhs,
+        lhs: lhs?,
         rhs,
     });
     Some(dst)
