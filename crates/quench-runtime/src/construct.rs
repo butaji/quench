@@ -81,8 +81,10 @@ fn construct_builtin(
     if is_error_builtin(builtin) {
         return construct_error(&builtin, arguments);
     }
+    if let Some(result) = crate::functions_dynamic::construct_builtin(builtin, arguments) {
+        return result;
+    }
     match builtin {
-        crate::ops::Builtin::Function => crate::functions_dynamic::construct(arguments),
         crate::ops::Builtin::Array => Ok(crate::builtins::array(arguments)),
         crate::ops::Builtin::ArrayBuffer => construct_array_buffer(arguments),
         crate::ops::Builtin::Float64Array => construct_float64_array(arguments),

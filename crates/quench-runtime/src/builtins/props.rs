@@ -50,6 +50,9 @@ fn builtin_method(builtin: Builtin, key: &str) -> Option<Builtin> {
     if builtin == StringPrototype {
         return crate::strings::property_method(key);
     }
+    if builtin == String && key == "fromCharCode" {
+        return Some(StringFromCharCode);
+    }
     if builtin == DataViewPrototype {
         return data_view_method(key);
     }

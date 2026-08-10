@@ -266,6 +266,18 @@ pub(crate) fn current_global_object() -> Value {
         .unwrap_or(Value::Undefined)
 }
 
+pub(crate) fn is_global_object(value: &Value) -> bool {
+    let Value::Object(object) = value else {
+        return false;
+    };
+    GLOBAL_OBJECT.with(|global| {
+        global
+            .borrow()
+            .as_ref()
+            .is_some_and(|global| Rc::ptr_eq(global, object))
+    })
+}
+
 pub(crate) fn synchronize_global_object(registers: &mut Vec<Value>, old: &Value, new: &Value) {
     let (Value::Object(old_object), Value::Object(new_object)) = (old, new) else {
         return;

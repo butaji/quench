@@ -300,10 +300,16 @@ fn reduce_direct_eval(
     let source = reduce_expression(argument, ops, facts, next_register, locals)?;
     let dst = *next_register;
     *next_register = next_register.saturating_add(1);
+    let mut bindings = locals
+        .iter()
+        .map(|(name, slot)| (name.clone(), *slot))
+        .collect::<Vec<_>>();
+    bindings.sort_by(|left, right| left.0.cmp(&right.0));
     ops.push(Op::Eval {
         dst,
         source,
         strict: facts.strict,
+        bindings,
     });
     Some(dst)
 }
