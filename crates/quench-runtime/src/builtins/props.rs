@@ -83,6 +83,8 @@ fn builtin_method3(builtin: Builtin, key: &str) -> Option<Builtin> {
     use Builtin::*;
     match (builtin, key) {
         (Number, "prototype") => Some(NumberPrototype),
+        (Number, "isNaN") => Some(IsNaN),
+        (Number, "isFinite") => Some(IsFinite),
         (Boolean, "prototype") => Some(BooleanPrototype),
         #[allow(unreachable_patterns)]
         (Symbol, "prototype") => Some(SymbolPrototype),
@@ -116,6 +118,7 @@ fn builtin_length(builtin: Builtin) -> f64 {
     match builtin {
         Escape | Unescape | DateSetYear => 1.0,
         DateNow => 0.0,
+        RegExp => 2.0,
         DateParse => 1.0,
         DateUTC => 7.0,
         _ => 0.0,
