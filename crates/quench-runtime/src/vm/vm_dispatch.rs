@@ -30,6 +30,7 @@ fn run_simple_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Option<Va
             },
         ),
         GetProperty { .. }
+        | ResolveGlobal { .. }
         | GetPropertyDynamic { .. }
         | SetProperty { .. }
         | SetPropertyDynamic { .. } => run_get_set_property(registers, op)?,
@@ -38,6 +39,11 @@ fn run_simple_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Option<Va
             crate::functions::write_op(registers, op)
         }
         Call { .. } => run_call(registers, op)?,
+        Eval {
+            dst,
+            source,
+            strict,
+        } => crate::reflect::execute_eval(registers, *dst, *source, *strict)?,
         Unary { dst, operator, src } => {
             vm_arithmetic::execute_unary(registers, *dst, *operator, *src)?
         }
@@ -148,6 +154,7 @@ fn run_get_set_property(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmErr
     use Op::*;
     match op {
         GetProperty { .. } => crate::properties::execute_get(registers, op)?,
+        ResolveGlobal { .. } => crate::properties::execute_resolve_global(registers, op)?,
         GetPropertyDynamic { .. } => crate::properties::execute_get_dynamic(registers, op)?,
         SetProperty { .. } | SetPropertyDynamic { .. } => {
             crate::properties::execute_set_property(registers, op)?

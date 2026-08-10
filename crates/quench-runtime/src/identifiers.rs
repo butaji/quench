@@ -17,7 +17,7 @@ pub(crate) fn reduce(
     if let Some(register) = reduce_local(identifier, ops, next_register, locals) {
         return Some(register);
     }
-    Some(throw_reference_error(identifier, ops, next_register))
+    resolve_global(identifier, ops, next_register, locals)
 }
 
 fn reduce_global(
@@ -46,29 +46,22 @@ fn reduce_local(
     Some(register)
 }
 
-fn throw_reference_error(
+fn resolve_global(
     identifier: &IdentifierReference<'_>,
     ops: &mut Vec<Op>,
     next_register: &mut u16,
-) -> u16 {
-    let constructor = allocate_register(next_register);
-    ops.push(Op::MakeBuiltin {
-        dst: constructor,
-        builtin: crate::ops::Builtin::ReferenceError,
+    locals: &HashMap<String, u16>,
+) -> Option<u16> {
+    let slot = *locals.get("globalThis")?;
+    let object = allocate_register(next_register);
+    ops.push(Op::LoadLocal { dst: object, slot });
+    let dst = allocate_register(next_register);
+    ops.push(Op::ResolveGlobal {
+        dst,
+        object,
+        key: identifier.name.to_string(),
     });
-    let message = allocate_register(next_register);
-    ops.push(Op::Const {
-        dst: message,
-        value: crate::ops::Constant::String(format!("{} is not defined", identifier.name)),
-    });
-    let error = allocate_register(next_register);
-    ops.push(Op::Construct {
-        dst: error,
-        callee: constructor,
-        args: vec![message],
-    });
-    ops.push(Op::Throw { src: error });
-    error
+    Some(dst)
 }
 
 fn allocate_register(next_register: &mut u16) -> u16 {

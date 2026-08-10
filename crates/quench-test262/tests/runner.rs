@@ -16,6 +16,19 @@ impl Test262Host for Probe {
     fn run_module_script(&mut self, _source: &str) -> Result<(), String> {
         Ok(())
     }
+
+    fn run_harnessed_script(
+        &mut self,
+        _harness: &[String],
+        source: &str,
+        _strict: bool,
+    ) -> Result<(), String> {
+        self.run_script(source)
+    }
+
+    fn run_harnessed_module(&mut self, _harness: &[String], source: &str) -> Result<(), String> {
+        self.run_module_script(source)
+    }
 }
 
 struct NegativeProbe;
@@ -27,6 +40,19 @@ impl Test262Host for NegativeProbe {
 
     fn run_module_script(&mut self, _source: &str) -> Result<(), String> {
         Err("TypeError: wrong error".into())
+    }
+
+    fn run_harnessed_script(
+        &mut self,
+        _harness: &[String],
+        source: &str,
+        _strict: bool,
+    ) -> Result<(), String> {
+        self.run_script(source)
+    }
+
+    fn run_harnessed_module(&mut self, _harness: &[String], source: &str) -> Result<(), String> {
+        self.run_module_script(source)
     }
 }
 
@@ -44,6 +70,23 @@ impl Test262Host for HarnessProbe {
     fn run_module_script(&mut self, _source: &str) -> Result<(), String> {
         Ok(())
     }
+
+    fn run_harnessed_script(
+        &mut self,
+        harness: &[String],
+        _source: &str,
+        strict: bool,
+    ) -> Result<(), String> {
+        if harness.iter().any(|source| source.contains("harness")) && strict {
+            Ok(())
+        } else {
+            Err("harness composition missing".into())
+        }
+    }
+
+    fn run_harnessed_module(&mut self, _harness: &[String], source: &str) -> Result<(), String> {
+        self.run_module_script(source)
+    }
 }
 
 struct CaptureHost {
@@ -59,6 +102,27 @@ impl Test262Host for CaptureHost {
     fn run_module_script(&mut self, source: &str) -> Result<(), String> {
         self.seen.lock().unwrap().push(source.to_string());
         Ok(())
+    }
+
+    fn run_harnessed_script(
+        &mut self,
+        harness: &[String],
+        source: &str,
+        strict: bool,
+    ) -> Result<(), String> {
+        let observed = harness
+            .iter()
+            .map(String::as_str)
+            .chain(strict.then_some("\"use strict\";"))
+            .chain(std::iter::once(source))
+            .collect::<Vec<_>>()
+            .join("\n");
+        self.seen.lock().unwrap().push(observed);
+        Ok(())
+    }
+
+    fn run_harnessed_module(&mut self, harness: &[String], source: &str) -> Result<(), String> {
+        self.run_harnessed_script(harness, source, true)
     }
 }
 

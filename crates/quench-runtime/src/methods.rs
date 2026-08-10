@@ -47,7 +47,7 @@ fn execute_callee(
         }
         Value::Builtin(crate::ops::Builtin::ObjectDefineProperty) => {
             let target = arguments.first().cloned().unwrap_or(Value::Undefined);
-            let value = crate::builtins::define_property(arguments);
+            let value = crate::builtins::define_property(arguments)?;
             crate::properties::propagate_updated_object(
                 registers,
                 args.first().copied(),

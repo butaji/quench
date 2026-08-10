@@ -82,3 +82,49 @@ fn descriptor_default(current: &Value, name: &str) -> Value {
         _ => Value::Undefined,
     }
 }
+
+fn validate_redefinition(
+    current: &Value,
+    requested: &[(String, Value)],
+) -> Result<(), crate::execute::VmError> {
+    if descriptor_value(current, "configurable") != Some(&Value::Boolean(false)) {
+        return Ok(());
+    }
+    if descriptor_value_in(requested, "configurable") == Some(&Value::Boolean(true))
+        || changes_descriptor_kind(current, requested)
+    {
+        return Err(cannot_redefine());
+    }
+    if descriptor_value(current, "writable") == Some(&Value::Boolean(false))
+        && descriptor_value_in(requested, "writable") == Some(&Value::Boolean(true))
+    {
+        return Err(cannot_redefine());
+    }
+    Ok(())
+}
+
+fn changes_descriptor_kind(current: &Value, requested: &[(String, Value)]) -> bool {
+    let current_accessor = descriptor_value(current, "get").is_some()
+        || descriptor_value(current, "set").is_some();
+    let requests_accessor = descriptor_value_in(requested, "get").is_some()
+        || descriptor_value_in(requested, "set").is_some();
+    let requests_data = descriptor_value_in(requested, "value").is_some()
+        || descriptor_value_in(requested, "writable").is_some();
+    current_accessor && requests_data || !current_accessor && requests_accessor
+}
+
+fn descriptor_value<'a>(descriptor: &'a Value, field: &str) -> Option<&'a Value> {
+    let Value::Object(properties) = descriptor else { return None };
+    descriptor_value_in(properties, field)
+}
+
+fn descriptor_value_in<'a>(descriptor: &'a [(String, Value)], field: &str) -> Option<&'a Value> {
+    descriptor
+        .iter()
+        .rev()
+        .find_map(|(name, value)| (name == field).then_some(value))
+}
+
+fn cannot_redefine() -> crate::execute::VmError {
+    crate::value::error::throw_type_error("Cannot redefine non-configurable property")
+}
