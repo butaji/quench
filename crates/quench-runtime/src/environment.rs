@@ -300,6 +300,12 @@ fn replace_nested(value: &mut Value, old: &Value, new: &Value) {
             }
             return;
         }
+        Value::Function(function) => {
+            for (_, value) in function.properties.borrow_mut().iter_mut() {
+                replace_direct(value, old, new);
+            }
+            return;
+        }
         _ => return,
     };
     for value in values.values_mut() {
@@ -337,8 +343,29 @@ fn contains_nested(value: &Value, target: &Value) -> bool {
         Value::Object(values) => values
             .iter()
             .any(|(_, value)| same_identity(value, target) || contains_nested(value, target)),
+        Value::Function(function) => {
+            function.properties.borrow().iter().any(|(_, value)| {
+                same_identity(value, target) || alias_targets_value(value, target)
+            })
+        }
         _ => false,
     }
+}
+
+fn replace_direct(value: &mut Value, old: &Value, new: &Value) {
+    if let Value::ObjectAlias(alias) = value {
+        if alias_targets(alias, old) {
+            if let Value::Object(object) = new {
+                *alias.0.borrow_mut() = Rc::downgrade(object);
+            }
+        }
+    } else if same_identity(value, old) {
+        *value = new.clone();
+    }
+}
+
+fn alias_targets_value(value: &Value, target: &Value) -> bool {
+    matches!(value, Value::ObjectAlias(alias) if alias_targets(alias, target))
 }
 
 fn replace_alias(value: &mut Value, old: &Value, new: &Value) {
