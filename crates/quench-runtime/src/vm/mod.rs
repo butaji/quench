@@ -261,6 +261,7 @@ fn execute_simple_builtin(
                 Value::Float64Array(_)
                     | Value::Float32Array(_)
                     | Value::Int8Array(_)
+                    | Value::Uint8Array(_)
                     | Value::DataView(_),
             )
         ))),
@@ -525,6 +526,7 @@ pub fn get_property(value: &Value, key: &str) -> Value {
         Float64Array(view) => float64_array_property(view, key),
         Float32Array(view) => float32_array_property(view, key),
         Int8Array(view) => int8_array_property(view, key),
+        Uint8Array(view) => uint8_array_property(view, key),
         DataView(view) => data_view_property(view, key),
         Object(properties) => object_property(properties, key),
         String(value) => string_property(value, key),
@@ -607,6 +609,20 @@ fn int8_array_property(view: &crate::value::Int8ArrayData, key: &str) -> Value {
         "length" => Value::Number(if detached { 0 } else { view.length } as f64),
         "BYTES_PER_ELEMENT" => Value::Number(crate::value::Int8ArrayData::BYTES_PER_ELEMENT as f64),
         _ => crate::builtins::property(Builtin::Int8ArrayPrototype, key),
+    }
+}
+
+fn uint8_array_property(view: &crate::value::Uint8ArrayData, key: &str) -> Value {
+    let detached = view.buffer.byte_length() == 0 && view.length != 0;
+    match key {
+        "buffer" => Value::ArrayBuffer(view.buffer.clone()),
+        "byteLength" => Value::Number(if detached { 0 } else { view.byte_length() } as f64),
+        "byteOffset" => Value::Number(if detached { 0 } else { view.byte_offset } as f64),
+        "length" => Value::Number(if detached { 0 } else { view.length } as f64),
+        "BYTES_PER_ELEMENT" => {
+            Value::Number(crate::value::Uint8ArrayData::BYTES_PER_ELEMENT as f64)
+        }
+        _ => crate::builtins::property(Builtin::Uint8ArrayPrototype, key),
     }
 }
 
@@ -869,6 +885,11 @@ fn builtin_property(builtin: crate::ops::Builtin, key: &str) -> Value {
         && key == "BYTES_PER_ELEMENT"
     {
         return Value::Number(crate::value::Int8ArrayData::BYTES_PER_ELEMENT as f64);
+    }
+    if matches!(builtin, Builtin::Uint8Array | Builtin::Uint8ArrayPrototype)
+        && key == "BYTES_PER_ELEMENT"
+    {
+        return Value::Number(crate::value::Uint8ArrayData::BYTES_PER_ELEMENT as f64);
     }
     let value = crate::builtins::property(builtin, key);
     if let Value::Builtin(symbol) = value {
