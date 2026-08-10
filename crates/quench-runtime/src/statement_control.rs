@@ -25,6 +25,10 @@ pub(crate) fn reduce(
             crate::loops::reduce_for(statement, ops, facts, next_register, next_slot, locals)
                 .map(|_| None)
         }
+        Statement::WhileStatement(statement) => {
+            crate::loops::reduce_while(statement, ops, facts, next_register, next_slot, locals)
+                .map(|_| None)
+        }
         Statement::ForInStatement(statement) => {
             crate::loops::reduce_for_in(statement, ops, facts, next_register, next_slot, locals)
                 .map(|_| None)
@@ -35,7 +39,10 @@ pub(crate) fn reduce(
         Statement::SwitchStatement(statement) => {
             crate::switch::reduce(statement, ops, facts, next_register, locals).map(|_| None)
         }
-        Statement::BreakStatement(_) => Ok(None),
+        Statement::BreakStatement(_) => {
+            ops.push(Op::Break);
+            Ok(None)
+        }
         _ => Err(vec![format!(
             "Unsupported executable statement: {statement:?}"
         )]),

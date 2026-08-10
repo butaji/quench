@@ -82,6 +82,7 @@ pub enum Op {
         body: Vec<Op>,
         handler: Option<Vec<Op>>,
         finalizer: Option<Vec<Op>>,
+        catch_slot: Option<u16>,
     },
     Loop {
         init: Vec<Op>,
@@ -118,6 +119,7 @@ pub enum Op {
     Return {
         src: u16,
     },
+    Break,
     Throw {
         src: u16,
     },
@@ -419,6 +421,9 @@ pub enum BinaryOp {
     BitwiseOr,
     BitwiseXor,
     BitwiseAnd,
+    ShiftLeft,
+    ShiftRight,
+    ShiftRightZeroFill,
     Instanceof,
 }
 
