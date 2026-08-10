@@ -216,6 +216,7 @@ fn builtin_method2(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Object, "isSealed") => Some(ObjectIsSealed),
         (Object, "isExtensible") => Some(ObjectIsExtensible),
         (Object, "getPrototypeOf") => Some(ObjectGetPrototypeOf),
+        (Object, "is") => Some(ObjectIs),
         (Object, "setPrototypeOf") => Some(ObjectSetPrototypeOf),
         (FunctionPrototype, "toString") => Some(FunctionPrototypeToString),
         (FunctionPrototype, "valueOf") => Some(FunctionPrototypeValueOf),
