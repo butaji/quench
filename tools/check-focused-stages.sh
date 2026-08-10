@@ -93,6 +93,8 @@ for stage in $(find "$root/tests/node-compat" -mindepth 2 -type f \( -name '*.js
   if ([ "$stage" -ge 169 ] && [ "$stage" -le 174 ]) ||
     ([ "$stage" -ge 1879 ] && [ "$stage" -le 1898 ]) ||
     ([ "$stage" -ge 2014 ] && [ "$stage" -le 2015 ]) ||
+    ([ "$stage" -ge 2434 ] && [ "$stage" -le 2436 ]) ||
+    ([ "$stage" -ge 2522 ] && [ "$stage" -le 2528 ]) ||
     [ "$stage" -eq 394 ]; then
     flags="--experimental-stream-iter"
   fi
@@ -100,6 +102,8 @@ for stage in $(find "$root/tests/node-compat" -mindepth 2 -type f \( -name '*.js
   stage_timeout_seconds="$timeout_seconds"
   if [ "$stage" -eq 1858 ]; then
     stage_timeout_seconds="${QUENCH_LARGE_STAGE_TIMEOUT_SECONDS:-120}"
+  elif [ "$stage" -eq 2223 ]; then
+    stage_timeout_seconds="${QUENCH_TIMER_STAGE_TIMEOUT_SECONDS:-20}"
   fi
   run_stage() {
     if command -v timeout >/dev/null 2>&1; then
