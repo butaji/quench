@@ -9,24 +9,36 @@ use crate::{
 };
 
 thread_local! {
-    static CURRENT: RefCell<Option<(Value, Value)>> = const { RefCell::new(None) };
+    static CURRENT: RefCell<Option<Context>> = const { RefCell::new(None) };
     static STRICT: Cell<bool> = const { Cell::new(false) };
 }
 
+#[derive(Clone)]
+struct Context {
+    home: Value,
+    receiver: Value,
+    function: Rc<crate::value::FunctionValue>,
+}
+
 pub(crate) struct Guard {
-    previous: Option<(Value, Value)>,
+    previous: Option<Context>,
     previous_strict: bool,
 }
 
 impl Guard {
-    pub(crate) fn install(function: &crate::value::FunctionValue, receiver: &Value) -> Self {
+    pub(crate) fn install(function: &Rc<crate::value::FunctionValue>, receiver: &Value) -> Self {
         let home = function
             .properties
             .borrow()
             .iter()
             .rev()
             .find_map(|(name, value)| (name == "\0home_object").then(|| value.clone()));
-        let current = home.map(|home| (home, receiver.clone()));
+        let current = home.map(|home| Context {
+            home,
+            receiver: receiver.clone(),
+            function: Rc::clone(function),
+        });
+        let current = current.or_else(|| CURRENT.with(|slot| slot.borrow().clone()));
         let previous = CURRENT.with(|slot| slot.replace(current));
         let strict = matches!(function.strictness, crate::ops::FunctionStrictness::Strict);
         let previous_strict = STRICT.with(|slot| slot.replace(strict));
@@ -56,9 +68,9 @@ pub(crate) fn execute_get(registers: &mut Vec<Value>, op: &crate::ops::Op) -> Re
     let crate::ops::Op::GetSuperProperty { dst, key } = op else {
         return Err(VmError::MissingReturn);
     };
-    let (home, receiver) = current()?;
-    let prototype = crate::execute::get_property(&home, "\0prototype");
-    let value = get_with_receiver(&prototype, key, &receiver)?;
+    let context = current()?;
+    let prototype = crate::execute::get_property(&context.home, "\0prototype");
+    let value = get_with_receiver(&prototype, key, &context.receiver)?;
     crate::execute::write_value(registers, *dst, value);
     Ok(())
 }
@@ -70,19 +82,65 @@ pub(crate) fn execute_call(registers: &mut Vec<Value>, op: &crate::ops::Op) -> R
     let crate::ops::Op::CallSuperMethod { dst, key, args } = op else {
         return Err(VmError::MissingReturn);
     };
-    let (home, receiver) = current()?;
-    let prototype = crate::execute::get_property(&home, "\0prototype");
-    let callee = get_with_receiver(&prototype, key, &receiver)?;
+    let context = current()?;
+    let prototype = crate::execute::get_property(&context.home, "\0prototype");
+    let callee = get_with_receiver(&prototype, key, &context.receiver)?;
     let arguments = args
         .iter()
         .map(|index| crate::execute::read_register(registers, *index))
         .collect::<Result<Vec<_>, _>>()?;
-    let value = crate::functions::execute_target(&callee, &receiver, &arguments)?;
+    let value = crate::functions::execute_target(&callee, &context.receiver, &arguments)?;
     crate::execute::write_value(registers, *dst, value);
     Ok(())
 }
 
-fn current() -> Result<(Value, Value), VmError> {
+pub(crate) fn execute_constructor(
+    registers: &mut Vec<Value>,
+    op: &crate::ops::Op,
+) -> Result<(), VmError> {
+    let crate::ops::Op::CallSuperConstructor { dst, args, spreads } = op else {
+        return Err(VmError::MissingReturn);
+    };
+    let context = current()?;
+    let arguments = call_arguments(registers, args, spreads)?;
+    let superclass = crate::construct::derived_constructor(&context.function)?;
+    let receiver = crate::construct::construct_super(&superclass, &context.function, &arguments)?;
+    let this_slot = context
+        .function
+        .captures
+        .len()
+        .saturating_add(usize::from(context.function.params))
+        .saturating_add(1);
+    let this_slot = u16::try_from(this_slot).map_err(|_| VmError::MissingReturn)?;
+    if !crate::locals::current().is_uninitialized(this_slot) {
+        return Err(crate::value::error::throw_reference_error(
+            "Super constructor may only be called once",
+        ));
+    }
+    crate::locals::write(this_slot, receiver.clone());
+    let receiver = crate::construct::initialize_instance_fields(&context.function, receiver)?;
+    crate::locals::write(this_slot, receiver.clone());
+    crate::execute::write_value(registers, *dst, receiver);
+    Ok(())
+}
+
+fn call_arguments(
+    registers: &[Value],
+    args: &[u16],
+    spreads: &[bool],
+) -> Result<Vec<Value>, VmError> {
+    let mut arguments = Vec::new();
+    for (index, spread) in args.iter().zip(spreads) {
+        let value = crate::execute::read_register(registers, *index)?;
+        match (spread, value) {
+            (true, Value::Array(values)) => arguments.extend(values.iter().cloned()),
+            (_, value) => arguments.push(value),
+        }
+    }
+    Ok(arguments)
+}
+
+fn current() -> Result<Context, VmError> {
     CURRENT
         .with(|slot| slot.borrow().clone())
         .ok_or_else(super_error)

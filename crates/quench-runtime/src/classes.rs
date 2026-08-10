@@ -78,10 +78,15 @@ fn configure_heritage(
     });
     set_internal_prototype(ops, prototype, parent_prototype);
     set_internal_prototype(ops, constructor, heritage);
+    ops.push(Op::SetProperty {
+        object: constructor,
+        key: "\0derived_constructor".to_string(),
+        src: heritage,
+    });
     if default_constructor {
         ops.push(Op::SetProperty {
             object: constructor,
-            key: "\0derived_constructor".to_string(),
+            key: "\0default_derived_constructor".to_string(),
             src: heritage,
         });
     }

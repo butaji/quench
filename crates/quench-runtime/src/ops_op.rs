@@ -211,6 +211,11 @@ pub enum Op {
         args: Vec<u16>,
         spreads: Vec<bool>,
     },
+    CallSuperConstructor {
+        dst: u16,
+        args: Vec<u16>,
+        spreads: Vec<bool>,
+    },
     TailCall {
         callee: u16,
         args: Vec<u16>,

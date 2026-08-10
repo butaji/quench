@@ -198,7 +198,10 @@ fn return_completion(value: Option<Value>) -> Option<crate::completion::Completi
 fn run_dispatch_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Value>, VmError> {
     use Op::*;
     match op {
-        CallMethod { .. } | CallSuperMethod { .. } | Construct { .. } => {
+        CallMethod { .. }
+        | CallSuperMethod { .. }
+        | CallSuperConstructor { .. }
+        | Construct { .. } => {
             run_method_or_construct(registers, op)?
         }
         _ => {}
@@ -323,6 +326,7 @@ fn run_method_or_construct(registers: &mut Vec<Value>, op: &Op) -> Result<(), Vm
     match op {
         CallMethod { .. } => crate::methods::execute(registers, op)?,
         CallSuperMethod { .. } => crate::super_scope::execute_call(registers, op)?,
+        CallSuperConstructor { .. } => crate::super_scope::execute_constructor(registers, op)?,
         Construct { .. } => crate::construct::execute(registers, op)?,
         _ => {}
     }
