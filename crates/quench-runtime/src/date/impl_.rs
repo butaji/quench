@@ -21,8 +21,8 @@ pub fn execute(
         Builtin::DateUTC => date_utc(arguments),
         Builtin::DateToString => date_to_string(receiver),
         _ => {
-            let val =
-                dispatch_get(builtin, receiver).or_else(|| dispatch_set(builtin, receiver, &[]));
+            let val = dispatch_get(builtin, receiver)
+                .or_else(|| dispatch_set(builtin, receiver, arguments));
             val?
         }
     };
