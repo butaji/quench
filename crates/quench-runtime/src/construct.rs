@@ -866,6 +866,9 @@ fn construct_function(
     target: &Value,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
+    if !crate::functions::is_constructible(function) {
+        return Err(crate::execute::VmError::NotCallable);
+    }
     let object = Value::Object(std::rc::Rc::new(vec![(
         "constructor".to_string(),
         target.clone(),

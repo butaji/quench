@@ -423,6 +423,14 @@ pub(crate) fn execute_construct(
     Ok((result, final_this))
 }
 
+pub(crate) fn is_constructible(function: &crate::value::FunctionValue) -> bool {
+    match (function.kind, function.strictness, function.is_async) {
+        (FunctionKind::Ordinary, FunctionStrictness::Sloppy, false)
+        | (FunctionKind::Ordinary, FunctionStrictness::Strict, false) => true,
+        (FunctionKind::Arrow, _, _) | (FunctionKind::Ordinary, _, true) => false,
+    }
+}
+
 pub(crate) fn execute_bound(
     bound: &crate::value::BoundFunctionValue,
     arguments: &[crate::value::Value],
