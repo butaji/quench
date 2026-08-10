@@ -444,10 +444,9 @@ pub(super) fn make(
         is_async: metadata.is_async,
         mapped_arguments: metadata.mapped_arguments,
     }));
-    let prototype = crate::value::Value::Object(std::rc::Rc::new(vec![(
-        "constructor".to_string(),
-        value.clone(),
-    )]));
+    let prototype = crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(
+        vec![("constructor".to_string(), value.clone())],
+    )));
     if let crate::value::Value::Function(ref function) = value {
         function
             .properties

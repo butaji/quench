@@ -12,7 +12,7 @@ mod vm_ops;
 mod vm_typed_bigint;
 pub use crate::intl::tolocale::value::is_truthy;
 pub type OutputSink = Arc<dyn Fn(&str) + Send + Sync>;
-type ObjectProperties = Rc<Vec<(String, Value)>>;
+type ObjectProperties = Rc<crate::value::ObjectData>;
 #[derive(Clone)]
 pub struct VmContext {
     output_sink: Option<OutputSink>,
@@ -467,12 +467,18 @@ fn create_realm_value() -> Value {
         receiver: capability,
         arguments: Vec::new(),
     }));
-    let properties = Rc::new(vec![("TypeError".to_string(), constructor)]);
+    let properties = Rc::new(crate::value::ObjectData::new(vec![(
+        "TypeError".to_string(),
+        constructor,
+    )]));
     if realm::id_for_token(&token).is_none() || !realm::register_global(&token, properties) {
         return Value::Undefined;
     }
     let global = realm::global(realm).unwrap_or(Value::Undefined);
-    Value::Object(Rc::new(vec![("global".to_string(), global)]))
+    Value::Object(Rc::new(crate::value::ObjectData::new(vec![(
+        "global".to_string(),
+        global,
+    )])))
 }
 
 fn current_global_value() -> Result<Value, VmError> {

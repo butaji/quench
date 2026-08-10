@@ -298,12 +298,14 @@ fn replace_nested(value: &mut Value, old: &Value, new: &Value) {
             for (_, value) in values.iter() {
                 retarget_nested_alias(value, old, new);
             }
+            retarget_private_aliases(&values.private_slots, old, new);
             return;
         }
         Value::Function(function) => {
             for (_, value) in function.properties.borrow_mut().iter_mut() {
                 replace_direct(value, old, new);
             }
+            replace_private_slots(&function.private_slots, old, new);
             return;
         }
         _ => return,
@@ -329,7 +331,9 @@ fn retarget_nested_alias(value: &Value, old: &Value, new: &Value) {
             for (_, value) in values.iter() {
                 retarget_nested_alias(value, old, new);
             }
+            retarget_private_aliases(&values.private_slots, old, new);
         }
+        Value::Function(function) => retarget_private_aliases(&function.private_slots, old, new),
         _ => {}
     }
 }
@@ -340,16 +344,83 @@ fn contains_nested(value: &Value, target: &Value) -> bool {
         Value::Array(values) => values
             .iter()
             .any(|value| same_identity(value, target) || contains_nested(value, target)),
-        Value::Object(values) => values
-            .iter()
-            .any(|(_, value)| same_identity(value, target) || contains_nested(value, target)),
+        Value::Object(values) => {
+            values
+                .iter()
+                .any(|(_, value)| same_identity(value, target) || contains_nested(value, target))
+                || private_slots_contain(&values.private_slots, target)
+        }
         Value::Function(function) => {
             function.properties.borrow().iter().any(|(_, value)| {
                 same_identity(value, target) || alias_targets_value(value, target)
-            })
+            }) || private_slots_contain(&function.private_slots, target)
         }
         _ => false,
     }
+}
+
+fn retarget_private_aliases(slots: &crate::value::PrivateSlots, old: &Value, new: &Value) {
+    for (_, slot) in slots.borrow().iter() {
+        retarget_private_slot(slot, old, new);
+    }
+}
+
+fn retarget_private_slot(slot: &crate::value::PrivateSlot, old: &Value, new: &Value) {
+    match slot {
+        crate::value::PrivateSlot::Data(value) => retarget_nested_alias(value, old, new),
+        crate::value::PrivateSlot::Accessor { get, set } => {
+            get.as_ref()
+                .iter()
+                .for_each(|value| retarget_nested_alias(value, old, new));
+            set.as_ref()
+                .iter()
+                .for_each(|value| retarget_nested_alias(value, old, new));
+        }
+    }
+}
+
+fn replace_private_slots(slots: &crate::value::PrivateSlots, old: &Value, new: &Value) {
+    for (_, slot) in slots.borrow_mut().iter_mut() {
+        replace_private_slot(slot, old, new);
+    }
+}
+
+fn replace_private_slot(slot: &mut crate::value::PrivateSlot, old: &Value, new: &Value) {
+    match slot {
+        crate::value::PrivateSlot::Data(value) => replace_alias(value, old, new),
+        crate::value::PrivateSlot::Accessor { get, set } => {
+            get.as_mut()
+                .iter_mut()
+                .for_each(|value| replace_alias(value, old, new));
+            set.as_mut()
+                .iter_mut()
+                .for_each(|value| replace_alias(value, old, new));
+        }
+    }
+}
+
+fn private_slots_contain(slots: &crate::value::PrivateSlots, target: &Value) -> bool {
+    slots
+        .borrow()
+        .iter()
+        .any(|(_, slot)| private_slot_contains(slot, target))
+}
+
+fn private_slot_contains(slot: &crate::value::PrivateSlot, target: &Value) -> bool {
+    match slot {
+        crate::value::PrivateSlot::Data(value) => private_value_contains(value, target),
+        crate::value::PrivateSlot::Accessor { get, set } => {
+            get.as_ref()
+                .is_some_and(|value| private_value_contains(value, target))
+                || set
+                    .as_ref()
+                    .is_some_and(|value| private_value_contains(value, target))
+        }
+    }
+}
+
+fn private_value_contains(value: &Value, target: &Value) -> bool {
+    same_identity(value, target) || contains_nested(value, target)
 }
 
 fn replace_direct(value: &mut Value, old: &Value, new: &Value) {

@@ -35,14 +35,16 @@ fn delete_function_property(function: Rc<crate::value::FunctionValue>, key: &str
     (Value::Function(function), true)
 }
 
-fn delete_object_property(properties: Rc<Vec<(String, Value)>>, key: &str) -> Value {
-    Value::Object(Rc::new(
-        properties
+fn delete_object_property(properties: Rc<crate::value::ObjectData>, key: &str) -> Value {
+    let values = properties
             .iter()
             .filter(|(name, _)| name != key && name != &descriptor_key(key))
             .cloned()
-            .collect(),
-    ))
+            .collect();
+    Value::Object(Rc::new(crate::value::ObjectData::with_private_slots(
+        values,
+        Rc::clone(&properties.private_slots),
+    )))
 }
 
 fn define_property_value(target: Value, key: &str, value: Value) -> Value {
@@ -67,7 +69,10 @@ fn define_array_descriptor(target: &mut Value, key: &str, descriptor: Vec<(Strin
             Rc::make_mut(&mut values).disconnect_index(index);
         }
     }
-    Rc::make_mut(&mut values).define_descriptor(key, Value::Object(Rc::new(descriptor)));
+    Rc::make_mut(&mut values).define_descriptor(
+        key,
+        Value::Object(Rc::new(crate::value::ObjectData::new(descriptor))),
+    );
     *target = Value::Array(values);
 }
 

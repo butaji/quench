@@ -1,12 +1,8 @@
 use std::rc::Rc;
 
-use crate::value::Value;
+use crate::value::{ObjectData, Value};
 
-pub(super) fn set_object_property(
-    properties: Rc<Vec<(String, Value)>>,
-    key: &str,
-    value: Value,
-) -> Value {
+pub(super) fn set_object_property(properties: Rc<ObjectData>, key: &str, value: Value) -> Value {
     let cell = properties
         .iter()
         .rev()

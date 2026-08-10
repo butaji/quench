@@ -30,7 +30,7 @@ fn object_prototype_property(properties: &[(String, Value)], key: &str) -> Value
         .map_or(Value::Undefined, |prototype| get_property(prototype, key))
 }
 
-fn object_property(properties: &Rc<Vec<(String, Value)>>, key: &str) -> Value {
+fn object_property(properties: &Rc<crate::value::ObjectData>, key: &str) -> Value {
     if let Some((_, value)) = properties.iter().rev().find(|(name, _)| name == key) {
         return property_value(value);
     }
@@ -79,7 +79,7 @@ fn object_prototype(properties: &[(String, Value)]) -> Builtin {
 }
 
 fn global_property(
-    properties: &Rc<Vec<(String, Value)>>,
+    properties: &Rc<crate::value::ObjectData>,
     key: &str,
     realm: Option<RealmId>,
 ) -> Value {

@@ -1,6 +1,10 @@
 use std::rc::Rc;
 
-use crate::{execute::VmError, ops::Builtin, value::Value};
+use crate::{
+    execute::VmError,
+    ops::Builtin,
+    value::{ObjectData, Value},
+};
 
 pub(crate) fn boxed_constructor(value: &Value) -> Builtin {
     match value {
@@ -81,10 +85,10 @@ fn create(arguments: &[Value]) -> Result<Value, VmError> {
             "Object prototype must be an object or null",
         ));
     }
-    Ok(Value::Object(Rc::new(vec![(
+    Ok(Value::Object(Rc::new(ObjectData::new(vec![(
         "\0prototype".to_string(),
         prototype,
-    )])))
+    )]))))
 }
 pub(crate) fn set_prototype_of(arguments: &[Value]) -> Result<Value, VmError> {
     let Some(target @ Value::Object(_)) = arguments.first() else {
@@ -327,12 +331,12 @@ fn refresh_array_descriptor(
 }
 fn strict_callee_descriptor() -> Value {
     let thrower = Value::Builtin(Builtin::TypeError);
-    Value::Object(Rc::new(vec![
+    Value::Object(Rc::new(ObjectData::new(vec![
         ("get".to_string(), thrower.clone()),
         ("set".to_string(), thrower),
         ("enumerable".to_string(), Value::Boolean(false)),
         ("configurable".to_string(), Value::Boolean(false)),
-    ]))
+    ])))
 }
 
 fn string_descriptor(value: &str, key: &str) -> Option<Value> {
@@ -352,11 +356,11 @@ fn public_descriptor(descriptor: &Value) -> Value {
     let Value::Object(properties) = descriptor else {
         return descriptor.clone();
     };
-    let mut properties = properties.as_ref().clone();
+    let mut properties = properties.properties.clone();
     if let Some((_, value)) = properties.iter_mut().find(|(name, _)| name == "value") {
         *value = public_value(value);
     }
-    Value::Object(Rc::new(properties))
+    Value::Object(Rc::new(ObjectData::new(properties)))
 }
 
 fn public_value(value: &Value) -> Value {
@@ -373,12 +377,12 @@ fn descriptor_object_with_flags(
     configurable: bool,
 ) -> Value {
     let value = public_value(&value);
-    Value::Object(Rc::new(vec![
+    Value::Object(Rc::new(ObjectData::new(vec![
         ("value".to_string(), value),
         ("writable".to_string(), Value::Boolean(writable)),
         ("enumerable".to_string(), Value::Boolean(enumerable)),
         ("configurable".to_string(), Value::Boolean(configurable)),
-    ]))
+    ])))
 }
 
 #[cfg(test)]
@@ -387,7 +391,7 @@ mod tests {
     use crate::{
         execute::{execute_builtin_with_receiver, VmError},
         ops::Builtin,
-        value::{FunctionValue, Value},
+        value::{FunctionValue, ObjectData, Value},
     };
     use std::{cell::RefCell, rc::Rc};
 
@@ -395,14 +399,14 @@ mod tests {
     fn binding_cell_property_mutates_without_escaping() {
         let cell = Rc::new(RefCell::new(Value::Number(1.0)));
         let binding = Value::BindingCell(Rc::clone(&cell));
-        let metadata = Value::Object(Rc::new(vec![
+        let metadata = Value::Object(Rc::new(ObjectData::new(vec![
             ("value".to_string(), binding.clone()),
             ("writable".to_string(), Value::Boolean(true)),
-        ]));
-        let object = Value::Object(Rc::new(vec![
+        ])));
+        let object = Value::Object(Rc::new(ObjectData::new(vec![
             ("x".to_string(), binding),
             (crate::builtins::descriptor_key("x"), metadata),
-        ]));
+        ])));
         let updated = crate::builtins::set_property(object.clone(), "x", Value::Number(2.0));
         assert!(
             matches!((&object, &updated), (Value::Object(a), Value::Object(b)) if Rc::ptr_eq(a, b))
