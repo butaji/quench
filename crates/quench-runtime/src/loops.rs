@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
 use oxc::{
-    ast::ast::{Expression, ForInStatement, ForStatement, ForStatementInit, Statement},
+    ast::ast::{
+        Expression, ForInStatement, ForStatement, ForStatementInit, Statement, WhileStatement,
+    },
     syntax::operator::BinaryOperator,
 };
 
@@ -20,7 +22,7 @@ pub(crate) fn reduce_update(
     let oxc::ast::ast::SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) =
         &update.argument
     else {
-        return None;
+        return reduce_member_update(update, ops, next_register);
     };
     let slot = *locals.get(identifier.name.as_str())?;
     let old = *next_register;
@@ -45,6 +47,52 @@ pub(crate) fn reduce_update(
         rhs: one,
     });
     ops.push(Op::StoreLocal { slot, src: updated });
+    Some(if update.prefix { updated } else { old })
+}
+
+fn reduce_member_update(
+    update: &oxc::ast::ast::UpdateExpression<'_>,
+    ops: &mut Vec<Op>,
+    next_register: &mut u16,
+) -> Option<u16> {
+    let oxc::ast::ast::SimpleAssignmentTarget::StaticMemberExpression(member) = &update.argument
+    else {
+        return None;
+    };
+    if !matches!(member.object, Expression::ThisExpression(_)) {
+        return None;
+    }
+    let object = crate::reduce_support::emit_undefined(ops, next_register);
+    let old = *next_register;
+    *next_register = next_register.saturating_add(1);
+    ops.push(Op::GetProperty {
+        dst: old,
+        object,
+        key: member.property.name.to_string(),
+    });
+    let one = *next_register;
+    *next_register = next_register.saturating_add(1);
+    ops.push(Op::Const {
+        dst: one,
+        value: Constant::Number(1.0),
+    });
+    let updated = *next_register;
+    *next_register = next_register.saturating_add(1);
+    let operator = match update.operator {
+        oxc::syntax::operator::UpdateOperator::Increment => crate::ops::BinaryOp::Add,
+        oxc::syntax::operator::UpdateOperator::Decrement => crate::ops::BinaryOp::Subtract,
+    };
+    ops.push(Op::Binary {
+        dst: updated,
+        operator,
+        lhs: old,
+        rhs: one,
+    });
+    ops.push(Op::SetProperty {
+        object,
+        key: member.property.name.to_string(),
+        src: updated,
+    });
     Some(if update.prefix { updated } else { old })
 }
 
@@ -99,7 +147,7 @@ fn for_in_slot(
 pub(crate) fn execute_for_in(
     registers: &mut Vec<crate::value::Value>,
     op: &Op,
-) -> Result<(), crate::execute::VmError> {
+) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
     let Op::ForIn { object, slot, body } = op else {
         return Err(crate::execute::VmError::MissingReturn);
     };
@@ -113,15 +161,19 @@ pub(crate) fn execute_for_in(
     };
     for key in keys {
         crate::execute::write_value(registers, *slot, crate::value::Value::String(key));
-        let _ = crate::execute::execute_in_place(body, registers)?;
+        match crate::execute::execute_in_place(body, registers) {
+            Ok(value) => return Ok(Some(value)),
+            Err(crate::execute::VmError::MissingReturn) => {}
+            Err(error) => return Err(error),
+        }
     }
-    Ok(())
+    Ok(None)
 }
 
 pub(crate) fn execute(
     registers: &mut Vec<crate::value::Value>,
     op: &crate::ops::Op,
-) -> Result<(), crate::execute::VmError> {
+) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
     let crate::ops::Op::Loop {
         init,
         test,
@@ -131,11 +183,58 @@ pub(crate) fn execute(
     else {
         return Err(crate::execute::VmError::MissingReturn);
     };
-    crate::execute::execute_in_place(init, registers)?;
+    run_fragment(init, registers)?;
     while crate::execute::is_truthy(&crate::execute::execute_in_place(test, registers)?) {
-        crate::execute::execute_in_place(body, registers)?;
-        crate::execute::execute_in_place(update, registers)?;
+        match crate::execute::execute_in_place(body, registers) {
+            Ok(value) => return Ok(Some(value)),
+            Err(crate::execute::VmError::MissingReturn) => {}
+            Err(error) => return Err(error),
+        }
+        run_fragment(update, registers)?;
     }
+    Ok(None)
+}
+
+/// Run a loop fragment. An empty fragment (no init/update, e.g. a `while`
+/// loop) is a no-op; a non-empty fragment must return normally.
+fn run_fragment(
+    ops: &[crate::ops::Op],
+    registers: &mut Vec<crate::value::Value>,
+) -> Result<(), crate::execute::VmError> {
+    if ops.is_empty() {
+        return Ok(());
+    }
+    crate::execute::execute_in_place(ops, registers)?;
+    Ok(())
+}
+
+pub(crate) fn reduce_while(
+    statement: &WhileStatement<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    next_slot: &mut u16,
+    locals: &mut HashMap<String, u16>,
+) -> Result<(), Vec<String>> {
+    let test = reduce_fragment(Some(&statement.test), ops, facts, next_register, locals)?;
+    let body = {
+        let mut fragment = Vec::new();
+        reduce_body(
+            &statement.body,
+            &mut fragment,
+            facts,
+            next_register,
+            next_slot,
+            locals,
+        )?;
+        fragment
+    };
+    ops.push(Op::Loop {
+        init: Vec::new(),
+        test,
+        body,
+        update: Vec::new(),
+    });
     Ok(())
 }
 
@@ -303,7 +402,7 @@ fn reduce_body_fragment(
         next_slot,
         locals,
     )?;
-    crate::reduce_support::finish_program(fragment, None)
+    Ok(fragment)
 }
 
 struct LoopContext<'a> {
