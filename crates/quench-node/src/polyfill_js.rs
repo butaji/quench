@@ -1,12 +1,14 @@
-//! Auto-generated from .js files.
+//! Auto-generated; supplies bootstrap JS to the JS runtime via
+//! concat! literals and an in-memory post-bootstrap fragment table.
+//! No .js files are written to disk.
 
-pub const BP_TIMER_VALIDATION: &str = r#"const __nodeTimerDelay = (value) => {
+pub const BOOTSTRAP_SOURCE: &str = concat!(
+    r#"const __nodeTimerDelay = (value) => {
   const delay = Number(value);
   return delay > 0 && delay <= 2147483647 ? delay : 0;
 };
-"#;
-
-pub const BP_GLOBALS: &str = r#"globalThis.global = globalThis;
+"#,
+    r#"globalThis.global = globalThis;
 if (typeof Array.fromAsync !== "function") {
   Array.fromAsync = async function (source, mapFn) {
     const result = [];
@@ -411,9 +413,8 @@ globalThis.process = {
     return [seconds, nanos];
   }
 };
-"#;
-
-pub const BP_GLOBALS_EXTRA: &str = r#"const __nodeDomExceptionCodes = {
+"#,
+    r#"const __nodeDomExceptionCodes = {
   IndexSizeError: 1,
   HierarchyRequestError: 3,
   WrongDocumentError: 4,
@@ -506,9 +507,8 @@ if (!globalThis.navigator) {
   }
   globalThis.navigator = Object.freeze(navigator);
 }
-"#;
-
-pub const BP_GLOBALS_TAIL: &str = r#"process.hrtime.bigint = () => BigInt(globalThis.__quench_now_ns());
+"#,
+    r#"process.hrtime.bigint = () => BigInt(globalThis.__quench_now_ns());
 globalThis.setImmediate = (callback, ...args) => {
   if (typeof callback !== "function") {
     throw new TypeError('The "callback" argument must be of type function');
@@ -919,9 +919,8 @@ if (globalThis.__quench_host_timer_scheduler) {
     }
   };
 }
-"#;
-
-pub const BP_FETCH: &str = r#"const __quenchFetchAbortError = (reason) => {
+"#,
+    r#"const __quenchFetchAbortError = (reason) => {
   const error = new Error("The operation was aborted");
   error.name = "AbortError";
   error.code = "ABORT_ERR";
@@ -996,9 +995,8 @@ Object.defineProperty(globalThis, "fetch", {
   writable: true,
   enumerable: false
 });
-"#;
-
-pub const BP_PROMISES: &str = r#"const __nodeTimerPromiseSchedulerError = (code, message) => {
+"#,
+    r#"const __nodeTimerPromiseSchedulerError = (code, message) => {
   const error = new TypeError(message);
   error.code = code;
   return error;
@@ -1195,9 +1193,8 @@ process.emitWarning = (warning, options = {}) => {
   });
   return undefined;
 };
-"#;
-
-pub const BP_VALIDATION: &str = r#"const __nodeBufferFromReceived = (value) => {
+"#,
+    r#"const __nodeBufferFromReceived = (value) => {
   if (value == null) return ` Received ${value}`;
   if (typeof value === "string") return ` Received type string ('${value}')`;
   if (["number", "boolean"].includes(typeof value)) {
@@ -1214,9 +1211,8 @@ pub const BP_VALIDATION: &str = r#"const __nodeBufferFromReceived = (value) => {
   const name = value.constructor?.name || "Object";
   return ` Received an instance of ${name}`;
 };
-"#;
-
-pub const BP_ARRAYBUFFER: &str = r#"const __nodeBufferIsArrayBuffer = (value) => {
+"#,
+    r#"const __nodeBufferIsArrayBuffer = (value) => {
   try {
     Object.getOwnPropertyDescriptor(
       ArrayBuffer.prototype,
@@ -1227,9 +1223,8 @@ pub const BP_ARRAYBUFFER: &str = r#"const __nodeBufferIsArrayBuffer = (value) =>
     return false;
   }
 };
-"#;
-
-pub const BP_ENCODING: &str = r#"const __nodeBufferStringByteLength = (value, encoding) => {
+"#,
+    r#"const __nodeBufferStringByteLength = (value, encoding) => {
   const normalized = String(encoding || "utf8").toLowerCase();
   if (["ascii", "latin1", "binary"].includes(normalized)) return value.length;
   if (["ucs2", "ucs-2", "utf16le", "utf-16le"].includes(normalized)) {
@@ -1647,9 +1642,8 @@ NodeBuffer.isAscii = (value) => {
   }
   return value.every((byte) => byte < 0x80);
 };
-"#;
-
-pub const BP_ENCODING_TAIL: &str = r#"NodeBuffer.prototype.write = function write(
+"#,
+    r#"NodeBuffer.prototype.write = function write(
   value,
   offset = 0,
   length,
@@ -1704,9 +1698,8 @@ NodeBuffer.from = (...args) => {
   output.set(source);
   return output;
 };
-"#;
-
-pub const BP_POOL: &str = r#"const __NodeBufferBase01 = NodeBuffer;
+"#,
+    r#"const __NodeBufferBase01 = NodeBuffer;
 const __nodeBufferPoolSize = 8192;
 let __nodeBufferPool = new ArrayBuffer(__nodeBufferPoolSize);
 let __nodeBufferPoolOffset = 0;
@@ -1753,9 +1746,8 @@ const __nodeBufferPoolFrom = (source) => {
   __nodeBufferPoolOffset += source.length;
   return result;
 };
-"#;
-
-pub const BP_COPY_HEAD: &str = r#"const __nodeBufferCopyNumber = (value) => {
+"#,
+    r#"const __nodeBufferCopyNumber = (value) => {
   const result = Math.trunc(Number(value));
   return Number.isNaN(result) ? 0 : result;
 };
@@ -1840,9 +1832,8 @@ const __nodeBufferConcatValidate = (list, totalLength) => {
     throw Object.assign(new RangeError(message), { code: "ERR_OUT_OF_RANGE" });
   }
 };
-"#;
-
-pub const BP_COPY: &str = r#"const __nodeBufferConcatLength = (list, totalLength) => {
+"#,
+    r#"const __nodeBufferConcatLength = (list, totalLength) => {
   if (totalLength !== undefined) return totalLength;
   return list.reduce((sum, item) => sum + item.byteLength, 0);
 };
@@ -2292,9 +2283,8 @@ NodeBuffer.from = (...args) => {
   output.set(source);
   return output;
 };
-"#;
-
-pub const BP_BUFFER_VALIDATION: &str = r#"const __NodeBufferBase02 = NodeBuffer;
+"#,
+    r#"const __NodeBufferBase02 = NodeBuffer;
 const __nodeBufferFloatRangeError = (message) => {
   const error = new RangeError(message);
   error.code = "ERR_OUT_OF_RANGE";
@@ -2670,9 +2660,8 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase02 {
     );
   }
 };
-"#;
-
-pub const BP_VIEWS: &str = r#"const __NodeBufferBase03 = NodeBuffer;
+"#,
+    r#"const __NodeBufferBase03 = NodeBuffer;
 const __nodeValidateVariableByteLength = (byteLength) => {
   if (typeof byteLength !== "number") {
     throw Object.assign(new TypeError('The "byteLength" argument must be of type number'), { code: "ERR_INVALID_ARG_TYPE" });
@@ -2889,9 +2878,8 @@ for (const [name, write, littleEndian] of [
     value: method
   });
 }
-"#;
-
-pub const BP_ALLOCATION: &str = r#"const __nodeBufferAllocate = (size, fill, encoding) => {
+"#,
+    r#"const __nodeBufferAllocate = (size, fill, encoding) => {
   const length = NodeBuffer._validateSize(size);
   __nodeAllocatorCounts.zeroFilled++;
   return new NodeBuffer(length).fill(fill, 0, length, encoding);
@@ -3070,9 +3058,8 @@ NodeBuffer.from = (value, ...args) => {
   Object.setPrototypeOf(aligned, NodeBuffer.prototype);
   return aligned;
 };
-"#;
-
-pub const BP_API_HEAD: &str = r#"globalThis.Buffer = new Proxy(NodeBuffer, {
+"#,
+    r#"globalThis.Buffer = new Proxy(NodeBuffer, {
   apply(_target, _thisArg, args) {
     if (typeof args[0] === "number") {
       return new NodeBuffer(NodeBuffer._validateSize(args[0]));
@@ -3323,9 +3310,8 @@ const nodeFsPath = (value) => {
   error.code = "ERR_INVALID_ARG_TYPE";
   throw error;
 };
-"#;
-
-pub const BP_API: &str = r#"globalThis.__nodeAssert = (value, message) => {
+"#,
+    r#"globalThis.__nodeAssert = (value, message) => {
   if (!value) __nodeAssertionFailure(message);
 };
 globalThis.__nodeAssertSkipPrototype = false;
@@ -3746,9 +3732,8 @@ globalThis.__nodeAssert.notDeepStrictEqual = (actual, expected, message) => {
     __nodeAssertionFailure(message || "values are deeply equal");
   }
 };
-"#;
-
-pub const BP_API_TAIL: &str = r#"globalThis.__nodeAssert.notDeepEqual =
+"#,
+    r#"globalThis.__nodeAssert.notDeepEqual =
   globalThis.__nodeAssert.notDeepStrictEqual;
 const __nodeAssertMatchExpectedFunction = (error, expected) => {
   const isConstructor =
@@ -3997,9 +3982,8 @@ globalThis.__nodeAssert.rejects = (promiseOrFn, expected, message) => {
     }
   );
 };
-"#;
-
-pub const BP_API_TAIL_02: &str = r#"globalThis.__nodeAssert.doesNotReject = (promiseOrFn, message) =>
+"#,
+    r#"globalThis.__nodeAssert.doesNotReject = (promiseOrFn, message) =>
   Promise.resolve()
     .then(() => {
       let input;
@@ -4205,9 +4189,8 @@ const __nodePathArg = (value) => {
 };
 globalThis.atob ||= nodeAtob;
 globalThis.btoa ||= nodeBtoa;
-"#;
-
-pub const BP_PATH: &str = r#"const __nodePathFormatExtension = (extension) => {
+"#,
+    r#"const __nodePathFormatExtension = (extension) => {
   if (!extension) return "";
   const value = String(extension);
   return value.startsWith(".") ? value : `.${value}`;
@@ -4597,9 +4580,8 @@ const __nodeWinPath = {
 __nodeWinPath.posix = globalThis.__nodePath;
 __nodeWinPath.win32 = __nodeWinPath;
 globalThis.__nodePath.win32 = __nodeWinPath;
-"#;
-
-pub const BP_SUPPORT: &str = r##"globalThis.__nodeCommon = {
+"#,
+    r##"globalThis.__nodeCommon = {
   mustCall: (fn = () => {}, exact = 1) => {
     if (typeof fn === "number") {
       exact = fn;
@@ -4901,9 +4883,8 @@ class NodeEventEmitter {
 }
 globalThis.__nodeEventEmitter = NodeEventEmitter;
 globalThis.process._events = Object.create(null);
-"##;
-
-pub const BP_EVENTS_HEAD: &str = r#"for (const method of "on addListener once emit removeListener off removeAllListeners listeners listenerCount".split(
+"##,
+    r#"for (const method of "on addListener once emit removeListener off removeAllListeners listeners listenerCount".split(
   " "
 )) {
   globalThis.process[method] = NodeEventEmitter.prototype[method];
@@ -5152,9 +5133,8 @@ const __nodeReadableFinishRead = (stream, chunk) => {
   if (!result?.byteLength && !stream._ended) __nodeReadableStart(stream);
   return result;
 };
-"#;
-
-pub const BP_EVENTS: &str = r#"class NodeReadable extends NodeEventEmitter {
+"#,
+    r#"class NodeReadable extends NodeEventEmitter {
   constructor(options = {}) {
     super(options);
     this.destroyed = false;
@@ -5638,9 +5618,8 @@ Object.defineProperty(NodeReadable.prototype, "readableDidRead", {
   }
 });
 NodeReadable.prototype.destroyed = false;
-"#;
-
-pub const BP_EVENTS_READABLE_TAIL: &str = r#"NodeReadable.prototype.iterator = function (options = {}) {
+"#,
+    r#"NodeReadable.prototype.iterator = function (options = {}) {
   if (!options || typeof options !== "object") {
     const error = new TypeError(
       `The "options" argument must be of type object. Received type ${typeof options} (${String(
@@ -5769,9 +5748,8 @@ NodeReadable.prototype._emitEnd = function () {
     });
   }
 };
-"#;
-
-pub const BP_EVENTS_WRITABLE_TAIL: &str = r#"class NodeWritable extends NodeEventEmitter {
+"#,
+    r#"class NodeWritable extends NodeEventEmitter {
   constructor(options = {}) {
     super(options);
     this.destroyed = false;
@@ -6037,9 +6015,8 @@ const NodeWritableCompat = function Writable(options = {}) {
   return instance;
 };
 NodeWritableCompat.prototype = NodeWritable.prototype;
-"#;
-
-pub const BP_EVENTS_DUPLEX_TAIL: &str = r#"class NodeDuplex extends NodeReadable {
+"#,
+    r#"class NodeDuplex extends NodeReadable {
   constructor(options = {}) {
     super(options);
     this.__nodeDuplex = true;
@@ -6330,9 +6307,8 @@ const __nodeDuplexToWeb = (duplex) => {
 };
 NodeDuplex.toWeb = __nodeDuplexToWeb;
 NodeDuplexCompat.toWeb = NodeDuplex.toWeb;
-"#;
-
-pub const BP_EVENTS_TRANSFORM_TAIL: &str = r#"class NodeTransform extends NodeWritable {
+"#,
+    r#"class NodeTransform extends NodeWritable {
   constructor(options = {}) {
     super(options);
     this.readable = options.readable !== false;
@@ -6552,9 +6528,8 @@ pub const BP_EVENTS_TRANSFORM_TAIL: &str = r#"class NodeTransform extends NodeWr
     })(this);
   }
 }
-"#;
-
-pub const BP_EVENTS_STREAM_TAIL: &str = r#"class NodePassThrough extends NodeTransform {
+"#,
+    r#"class NodePassThrough extends NodeTransform {
   constructor(options = {}) {
     super(options);
     this.__quenchPassThroughFlow = true;
@@ -6677,9 +6652,8 @@ NodeStream.prototype.pipe = function (destination) {
   this.on("end", () => destination.end());
   return destination;
 };
-"#;
-
-pub const BP_EVENTS_TAIL: &str = r#"const __nodeDuplexPairFactory = (options = {}) => {
+"#,
+    r#"const __nodeDuplexPairFactory = (options = {}) => {
   const left = new NodeDuplex(options);
   const right = new NodeDuplex(options);
   const connect = (source, destination) => {
@@ -6903,9 +6877,8 @@ globalThis.__nodeStream = new Proxy(__nodeStreamExports, {
     return target[key];
   },
 });
-"#;
-
-pub const BP_FILESYSTEM_VALIDATION: &str = r#"const __nodeFsSetMode = (path, mode) => {
+"#,
+    r#"const __nodeFsSetMode = (path, mode) => {
   if (mode !== undefined && mode !== null) {
     globalThis.__nodeModes[path] =
       typeof mode === "string" ? parseInt(mode, 8) : Number(mode);
@@ -7376,9 +7349,8 @@ Object.assign(globalThis.__nodeFs, {
     return __nodeFsStatsBigInt(stats, options);
   }
 });
-"#;
-
-pub const BP_FILESYSTEM_VALIDATION_TAIL: &str = r#"const __nodeFsStatsBigInt = (stats, options) => {
+"#,
+    r#"const __nodeFsStatsBigInt = (stats, options) => {
   if (options?.bigint !== true) return stats;
   for (const name of "dev mode nlink uid gid rdev blksize ino size blocks atimeMs mtimeMs ctimeMs birthtimeMs".split(
     " "
@@ -7529,9 +7501,8 @@ const __nodeGetPrototypeOf = Object.getPrototypeOf;
 const __nodeFsConstants = globalThis.__nodeFs.constants;
 Object.getPrototypeOf = (value) =>
   value === __nodeFsConstants ? null : __nodeGetPrototypeOf(value);
-"#;
-
-pub const BP_FILE_DESCRIPTORS: &str = r#"globalThis.__nodeFs.close = (fd, callback) => {
+"#,
+    r#"globalThis.__nodeFs.close = (fd, callback) => {
   if (typeof fd !== "number") {
     const error = new TypeError(
       `The "fd" argument must be of type number.${globalThis.__nodeCommon.invalidArgTypeHelper(
@@ -7569,9 +7540,8 @@ globalThis.__nodeFs.open = (value, flags, mode, callback) => {
     }
   });
 };
-"#;
-
-pub const BP_FILESYSTEM_ACCESS_VALIDATION: &str = r#"const __nodeFsValidateAccessMode = (mode) => {
+"#,
+    r#"const __nodeFsValidateAccessMode = (mode) => {
   if (mode === undefined) return;
   if (typeof mode !== "number") {
     throw Object.assign(new TypeError('The "mode" argument must be of type number'), { code: "ERR_INVALID_ARG_TYPE" });
@@ -7603,9 +7573,8 @@ globalThis.__nodeFs.existsSync = (value) => {
     return false;
   }
 };
-"#;
-
-pub const BP_IO: &str = r#"const __nodeFsValidateWriteBuffer = (fd, buffer, offset, length) => {
+"#,
+    r#"const __nodeFsValidateWriteBuffer = (fd, buffer, offset, length) => {
   if (typeof fd !== "number") {
     throw Object.assign(new TypeError('The "fd" argument must be of type number'), { code: "ERR_INVALID_ARG_TYPE" });
   }
@@ -8037,9 +8006,8 @@ Object.assign(globalThis.__nodeFs, {
     return __nodeFsRunRemoval(path, kind, { ...options, __sync: true });
   }
 });
-"#;
-
-pub const BP_IO_TAIL: &str = r#"Object.assign(globalThis.__nodeFs, {
+"#,
+    r#"Object.assign(globalThis.__nodeFs, {
   readlinkSync: (value, options) => {
     const encoding = typeof options === "string"
       ? options
@@ -8100,9 +8068,8 @@ pub const BP_IO_TAIL: &str = r#"Object.assign(globalThis.__nodeFs, {
     return globalThis.__quench_fs_link(nodeFsPath(existing), nodeFsPath(link));
   },
 });
-"#;
-
-pub const BP_METADATA: &str = r#"globalThis.__nodeFs.truncate = (value, length = 0, callback) => {
+"#,
+    r#"globalThis.__nodeFs.truncate = (value, length = 0, callback) => {
   if (typeof length === "function") {
     callback = length;
     length = 0;
@@ -8540,9 +8507,8 @@ globalThis.__nodeFs.symlink = (target, link, type, callback) => {
     callback(null);
   });
 };
-"#;
-
-pub const BP_METADATA_TAIL: &str = r#"globalThis.__nodeFs.readlink = (value, options, callback) => {
+"#,
+    r#"globalThis.__nodeFs.readlink = (value, options, callback) => {
   if (typeof options === "function") {
     callback = options;
     options = undefined;
@@ -8565,9 +8531,8 @@ pub const BP_METADATA_TAIL: &str = r#"globalThis.__nodeFs.readlink = (value, opt
     }
   });
 };
-"#;
-
-pub const BP_FILESYSTEM_PERMISSIONS: &str = r#"const nodeMode = (mode) => {
+"#,
+    r#"const nodeMode = (mode) => {
   if (typeof mode !== "number" && typeof mode !== "string") {
     throw Object.assign(new TypeError('The "mode" argument must be of type number'), { code: "ERR_INVALID_ARG_TYPE" });
   }
@@ -8677,9 +8642,8 @@ globalThis.__nodeFs.fchown = (fd, uid, gid, callback) => {
   }
   queueMicrotask(() => callback(null));
 };
-"#;
-
-pub const BP_TIMESTAMPS: &str = r#"globalThis.__nodeTimes ||= Object.create(null);
+"#,
+    r#"globalThis.__nodeTimes ||= Object.create(null);
 const __nodeFsTimes = (value) => __nodeFsPathOnly(value);
 const __nodeFsSetTimes = (value, atime, mtime) => {
   const path = __nodeFsTimes(value);
@@ -8732,9 +8696,8 @@ globalThis.__nodeFs.lutimes = (value, atime, mtime, callback) =>
   __nodeFsAsyncTimes("lutimesSync", value, atime, mtime, callback);
 globalThis.__nodeFs.futimes = (value, atime, mtime, callback) =>
   __nodeFsAsyncTimes("futimesSync", value, atime, mtime, callback);
-"#;
-
-pub const BP_LINKS: &str = r#"globalThis.__nodeFs.link = (existing, link, callback) => {
+"#,
+    r#"globalThis.__nodeFs.link = (existing, link, callback) => {
   if (typeof callback !== "function") {
     throw Object.assign(new TypeError('The "callback" argument must be of type function'), { code: "ERR_INVALID_ARG_TYPE" });
   }
@@ -9147,9 +9110,8 @@ globalThis.__nodeFs.lstatSync = (value, options = {}) => {
   stats.mode = globalThis.__nodeModes[path] || 0;
   return __nodeStatsWithBigInt(stats, options);
 };
-"#;
-
-pub const BP_LINKS_TAIL: &str = r#"globalThis.__nodeFs.fstatSync = (fd, options = {}) => {
+"#,
+    r#"globalThis.__nodeFs.fstatSync = (fd, options = {}) => {
   if (typeof fd !== "number") {
     const error = new TypeError(
       `The "fd" argument must be of type number.${globalThis.__nodeCommon.invalidArgTypeHelper(
@@ -9432,9 +9394,8 @@ class __nodeFsUtf8Stream extends NodeWritable {
   }
 }
 globalThis.__nodeFs.Utf8Stream = __nodeFsUtf8Stream;
-"#;
-
-pub const BP_DIRECTORY_OPTIONS: &str = r#"globalThis.__validateOpendirOptions = (options) => {
+"#,
+    r#"globalThis.__validateOpendirOptions = (options) => {
   if (options === undefined) return;
   if (options === null || typeof options !== "object") {
     throw Object.assign(new TypeError('The "options" argument must be of type object'), { code: "ERR_INVALID_ARG_TYPE" });
@@ -9458,9 +9419,8 @@ globalThis.__nodeFs.opendirSync = (value, options) => {
   globalThis.__validateOpendirOptions(options);
   return new globalThis.__nodeFs.Dir(nodeFsPath(value));
 };
-"#;
-
-pub const BP_DIRECTORY: &str = r#"globalThis.__nodeFs.Dirent = class Dirent {
+"#,
+    r#"globalThis.__nodeFs.Dirent = class Dirent {
   constructor(name, type = 1) {
     this.name = name;
     this._type = type === true ? 2 : type === false ? 1 : type;
@@ -9498,9 +9458,8 @@ Object.defineProperty(globalThis.__nodeFs.Dir.prototype, "path", {
     return this._path;
   },
 });
-"#;
-
-pub const BP_STREAMS: &str = r#"const __nodeFsReadStreamOptions = (options) => {
+"#,
+    r#"const __nodeFsReadStreamOptions = (options) => {
   const start = options.start === undefined ? 0 : Number(options.start);
   const end = options.end === undefined ? undefined : Number(options.end);
   if (!Number.isInteger(start) || start < 0) {
@@ -9957,9 +9916,8 @@ globalThis.__nodeFs.mkdtemp = (prefix, options, callback) => {
     }
   });
 };
-"#;
-
-pub const BP_STREAM_CLASSES: &str = r#"globalThis.__nodeFs.WriteStream = globalThis.__nodeFs.createWriteStream;
+"#,
+    r#"globalThis.__nodeFs.WriteStream = globalThis.__nodeFs.createWriteStream;
 globalThis.__nodeFs.WriteStream.prototype = Object.create(
   NodeWritable.prototype
 );
@@ -10218,15 +10176,13 @@ globalThis.__nodeFs.Utf8Stream = class Utf8Stream extends NodeEventEmitter {
     return this;
   }
 };
-"#;
-
-pub const BP_EXTERNALIZABLE_STRINGS: &str = r#"globalThis.createExternalizableString = (value) => String(value);
+"#,
+    r#"globalThis.createExternalizableString = (value) => String(value);
 globalThis.createExternalizableTwoByteString = (value) => String(value);
 globalThis.externalizeString = () => undefined;
 globalThis.isOneByteString = (value) => /^[\x00-\xff]*$/.test(String(value));
-"#;
-
-pub const BP_OPEN_VALIDATION: &str = r#"const __nodeFsValidateMode = (mode) => {
+"#,
+    r#"const __nodeFsValidateMode = (mode) => {
   if (
     mode !== undefined &&
     mode !== null &&
@@ -10239,9 +10195,8 @@ pub const BP_OPEN_VALIDATION: &str = r#"const __nodeFsValidateMode = (mode) => {
     throw Object.assign(new TypeError(`The "mode" argument is invalid: ${mode}`), { code: "ERR_INVALID_ARG_VALUE" });
   }
 };
-"#;
-
-pub const BP_WRITE_VALIDATION: &str = r#"const __nodeFsValidateWrite = (fd, buffer, callback) => {
+"#,
+    r#"const __nodeFsValidateWrite = (fd, buffer, callback) => {
   if (typeof callback !== "function") {
     throw Object.assign(new TypeError('The "callback" argument must be of type function'), { code: "ERR_INVALID_ARG_TYPE" });
   }
@@ -10266,9 +10221,8 @@ const __nodeFsValidateWritev = (fd, buffers, callback) => {
     throw Object.assign(new TypeError('The "buffers" argument must be an array of Buffer or Uint8Array'), { code: "ERR_INVALID_ARG_TYPE" });
   }
 };
-"#;
-
-pub const BP_TRUNCATE_VALIDATION: &str = r#"globalThis.__validateTruncateLength = (length) => {
+"#,
+    r#"globalThis.__validateTruncateLength = (length) => {
   if (typeof length !== "number" || !Number.isFinite(length)) {
     const error = new TypeError(
       `The "len" argument must be of type number.${
@@ -10293,9 +10247,8 @@ globalThis.__truncateMissingPath = (path, callback) => {
   queueMicrotask(() => callback(error));
   return true;
 };
-"#;
-
-pub const BP_READ_FILE: &str = r#"const __readFileAbort = (callback) => {
+"#,
+    r#"const __readFileAbort = (callback) => {
   const error = new Error("The operation was aborted");
   error.name = "AbortError";
   error.code = "ABORT_ERR";
@@ -10357,9 +10310,8 @@ globalThis.__nodeFs.readFile = (value, options, callback) => {
     }
   });
 };
-"#;
-
-pub const BP_INTERNAL_FS_BINDING: &str = r#"globalThis.__quenchInternalFsBinding = {
+"#,
+    r#"globalThis.__quenchInternalFsBinding = {
   openFileHandle: (_path, _flags, _mode, _req, _context) => undefined,
   readdir: (path) => {
     const names = globalThis.__nodeFs.readdirSync(path);
@@ -10434,9 +10386,8 @@ globalThis.__quenchInternalBindingCore = (binding) => {
     };
   }
 };
-"#;
-
-pub const BP_STREAMS_TAIL: &str = r#"globalThis.__nodeFs.writeFile = (value, data, options, callback) => {
+"#,
+    r#"globalThis.__nodeFs.writeFile = (value, data, options, callback) => {
   if (typeof options === "function") {
     callback = options;
     options = undefined;
@@ -10680,9 +10631,8 @@ globalThis.__nodeFs.promises = {
     Promise.resolve().then(() => globalThis.__nodeFs.linkSync(existing, link)),
 };
 const __nodePromiseOpen = globalThis.__nodeFs.promises.open;
-"#;
-
-pub const BP_WRITES: &str = r#"const __nodeFsCollectWriteIterable = (data, options) => {
+"#,
+    r#"const __nodeFsCollectWriteIterable = (data, options) => {
   const chunks = [];
   for (const chunk of data) {
     if (
@@ -11100,9 +11050,8 @@ const __nodeFsPullIterator = async function* (
     handle._pullLocked = false;
   }
 };
-"#;
-
-pub const BP_WRITES_TAIL: &str = r#"const __nodeFsAttachPull = (handle) => {
+"#,
+    r#"const __nodeFsAttachPull = (handle) => {
   handle.pull = (transformOrOptions, maybeOptions) => {
     if (!globalThis.__nodeFdPaths[handle.fd] || handle._pullLocked) {
       const error = new Error("The file handle is not in a valid state");
@@ -11392,9 +11341,8 @@ globalThis.__nodeOs = new Proxy(
   }
 );
 const __nodePerformanceMarks = new Map();
-"#;
-
-pub const BP_PERFORMANCE: &str = r#"const __nodePerformanceEntries = [];
+"#,
+    r#"const __nodePerformanceEntries = [];
 const __nodePerformance = {
   now: () => Date.now() - __nodeStartedAt,
   timeOrigin: __nodeStartedAt,
@@ -11500,9 +11448,8 @@ Object.setPrototypeOf = (object, prototype) => {
   }
   return __nodeSetPrototypeOf(object, prototype);
 };
-"#;
-
-pub const BP_FORMATTING_TAIL: &str = r#"const __nodeUtilInspectBuffer = (value) => {
+"#,
+    r#"const __nodeUtilInspectBuffer = (value) => {
   const custom = value[Symbol.for("nodejs.util.inspect.custom")];
   const properties = Object.keys(value)
     .filter((key) => !/^\d+$/.test(key))
@@ -11866,9 +11813,8 @@ const __nodeUtilDeprecate = (
 };
 const __nodeUtilPendingDeprecate = (functionToWrap, message, code) =>
   __nodeUtilDeprecate(functionToWrap, message, code);
-"#;
-
-pub const BP_FORMATTING: &str = r##"globalThis.__nodeUtil = {
+"#,
+    r##"globalThis.__nodeUtil = {
   TextEncoder: globalThis.TextEncoder,
   TextDecoder: globalThis.TextDecoder,
   isArray: (value) => Array.isArray(value),
@@ -12136,9 +12082,8 @@ pub const BP_FORMATTING: &str = r##"globalThis.__nodeUtil = {
 globalThis.__nodeUtil.inspect.defaultOptions = { numericSeparator: false };
 globalThis.__nodeUtil.inspect.custom = Symbol.for("nodejs.util.inspect.custom");
 let __nodeInspectMaxBytes = 50;
-"##;
-
-pub const BP_PROMISIFY: &str = r#"const __nodeUtilPromisifyCustom = Symbol.for("nodejs.util.promisify.custom");
+"##,
+    r#"const __nodeUtilPromisifyCustom = Symbol.for("nodejs.util.promisify.custom");
 const __nodeUtilPromisifyTypeError = (message) => {
   throw Object.assign(new TypeError(message), { code: "ERR_INVALID_ARG_TYPE" });
 };
@@ -12175,9 +12120,8 @@ const __nodeUtilPromisify = (fn) => {
 };
 globalThis.__nodeUtil.promisify = __nodeUtilPromisify;
 globalThis.__nodeUtil.promisify.custom = __nodeUtilPromisifyCustom;
-"#;
-
-pub const BP_ERRORS: &str = r#"const __nodeSystemErrorNames = new Map([
+"#,
+    r#"const __nodeSystemErrorNames = new Map([
   [-1, "EPERM"],
   [-2, "ENOENT"],
   [-13, "EACCES"],
@@ -12245,9 +12189,8 @@ globalThis.__nodeUtil.getSystemErrorMap = () =>
   new Map(
     [...__nodeSystemErrorNames].map(([number, name]) => [number, [name, name]]),
   );
-"#;
-
-pub const BP_COLORS: &str = r#"const __nodeUtilFormatColor = (value) => {
+"#,
+    r#"const __nodeUtilFormatColor = (value) => {
   if (value === null) return "\u001b[1mnull\u001b[22m";
   if (value === undefined) return "\u001b[90mundefined\u001b[39m";
   if (
@@ -12558,9 +12501,8 @@ class NodeURLSearchParams {
 }
 globalThis.__nodeURLSearchParams = NodeURLSearchParams;
 // eslint-disable-next-line complexity
-"#;
-
-pub const BP_COLORS_TAIL: &str = r##"const __nodeURLResolveInput = (input, base) => {
+"#,
+    r##"const __nodeURLResolveInput = (input, base) => {
   let value =
     /^file:[a-z][|:][\\/]/i.test(
       String(input)
@@ -13030,9 +12972,8 @@ globalThis.__nodeUrlModule = new Proxy(
     })
   }
 );
-"##;
-
-pub const BP_FORMAT: &str = r##"const __nodeLegacyUrlEncodePath = (value) =>
+"##,
+    r##"const __nodeLegacyUrlEncodePath = (value) =>
   value
     .replace(/%/g, "~QUENCH_PERCENT~")
     .replace(/["\s]/g, (character) => encodeURIComponent(character));
@@ -13071,9 +13012,8 @@ const __nodeLegacyUrlFormatString = (value) => {
     return value;
   }
 };
-"##;
-
-pub const BP_CRYPTO_VALIDATION: &str = r#"const __nodeCryptoRandomArguments = (minimum, maximum, callback) => {
+"##,
+    r#"const __nodeCryptoRandomArguments = (minimum, maximum, callback) => {
   if (typeof minimum === "function") {
     return { minimum: 0, maximum: 0x1_0000_0000_0000, callback: minimum };
   }
@@ -13200,9 +13140,8 @@ const __nodeCryptoHmacDigest = (algorithm, inner, outer, chunks, encoding) => {
   }
   throw Object.assign(new TypeError(`Unknown encoding: ${encoding}`), { code: "ERR_UNKNOWN_ENCODING" });
 };
-"#;
-
-pub const BP_CRYPTO_HEAD: &str = r#"const __nodeCryptoValidatePbkdf2Types = (password, salt) => {
+"#,
+    r#"const __nodeCryptoValidatePbkdf2Types = (password, salt) => {
   const isBinary = (value) =>
     ArrayBuffer.isView(value) ||
     value instanceof ArrayBuffer ||
@@ -13260,9 +13199,8 @@ const __nodeCryptoValidatePbkdf2Numbers = (iterations, keylen) => {
     throw Object.assign(new RangeError(`The value of "keylen" is out of range. It must be an integer. Received ${keylen}`), { code: "ERR_OUT_OF_RANGE" });
   }
 };
-"#;
-
-pub const BP_CRYPTO: &str = r#"const __nodeCryptoValidatePbkdf2Digest = (digest) => {
+"#,
+    r#"const __nodeCryptoValidatePbkdf2Digest = (digest) => {
   if (typeof digest !== "string") {
     const received =
       digest === undefined
@@ -13706,9 +13644,8 @@ const __nodeCryptoApi = {
     return hmac;
   }
 };
-"#;
-
-pub const BP_CRYPTO_TAIL: &str = r#"const __createNodeCrypto = () => __nodeCryptoApi;
+"#,
+    r#"const __createNodeCrypto = () => __nodeCryptoApi;
 let __nodeCryptoInstance;
 globalThis.__nodeCrypto = new Proxy(
   {},
@@ -13729,9 +13666,8 @@ globalThis.__nodeCrypto = new Proxy(
     })
   }
 );
-"#;
-
-pub const BP_RANDOM: &str = r#"__nodeCryptoApi.Hash.prototype = Object.prototype;
+"#,
+    r#"__nodeCryptoApi.Hash.prototype = Object.prototype;
 // This formatter mirrors Node's diagnostic type precedence in one decision tree.
 // eslint-disable-next-line complexity
 const __nodeCryptoRandomReceived = (value) => {
@@ -14164,9 +14100,8 @@ if (typeof globalThis.crypto.subtle.decrypt !== "function") {
   };
 }
 globalThis.crypto.webcrypto ||= globalThis.crypto;
-"#;
-
-pub const BP_CRYPTO_HMAC_VALIDATION: &str = r#"const __quenchOriginalCreateHmac = __nodeCryptoApi.createHmac;
+"#,
+    r#"const __quenchOriginalCreateHmac = __nodeCryptoApi.createHmac;
 const __quenchHmacEncodingError = (encoding) =>
   Object.assign(
     new TypeError(
@@ -14185,9 +14120,8 @@ __nodeCryptoApi.createHmac = (...args) => {
   };
   return hmac;
 };
-"#;
-
-pub const BP_CORE_HEAD: &str = r#"let __quenchAsyncHooksModule;
+"#,
+    r#"let __quenchAsyncHooksModule;
 {
   globalThis.__nodeCurrentAsyncResource ||= {};
   globalThis.__nodeNextAsyncId ||= 1;
@@ -14592,9 +14526,8 @@ const __quenchEventsOnce = (emitter, event, options = {}) => {
     else options.signal?.addEventListener("abort", onAbort, { once: true });
   });
 };
-"#;
-
-pub const BP_CORE: &str = r##"const __quenchCoreStaticModules = new Map([
+"#,
+    r##"const __quenchCoreStaticModules = new Map([
   ["vfs", () => globalThis.__nodeVfs],
   ["internal/vfs/stats", () => globalThis.__quenchVfsStatsHelpers],
   ["node:internal/vfs/stats", () => globalThis.__quenchVfsStatsHelpers],
@@ -17448,9 +17381,8 @@ let __quenchHttpModule;
     __quenchHttpModule = http;
   }
 }
-"##;
-
-pub const BP_CORE_TAIL: &str = r#"globalThis.__quench_require_part_00 = (name, specifier) => {
+"##,
+    r#"globalThis.__quench_require_part_00 = (name, specifier) => {
   const normalizedName = String(name);
   const base = globalThis.__quench_require_part_00_base(
     normalizedName.startsWith("node:")
@@ -17463,9 +17395,8 @@ pub const BP_CORE_TAIL: &str = r#"globalThis.__quench_require_part_00 = (name, s
     return globalThis.__nodeRequireChildProcess || __quenchChildProcessModule();
   }
 };
-"#;
-
-pub const BP_NETWORK_HEAD: &str = r#"const isIPv4Part = (part) => {
+"#,
+    r#"const isIPv4Part = (part) => {
   if (!/^\d+$/.test(part)) return false;
   const n = Number(part);
   if (n < 0 || n > 255) return false;
@@ -17776,9 +17707,8 @@ const resolveBlockListCheck = (address, type, checkType) => {
       : "string";
   return { str, resolvedType, explicitType, inputKind };
 };
-"#;
-
-pub const BP_NETWORK_SOCKET: &str = r#"const __quenchNetSocket = class Socket extends globalThis.__nodeEventEmitter {
+"#,
+    r#"const __quenchNetSocket = class Socket extends globalThis.__nodeEventEmitter {
   constructor(options = {}) {
     super();
     this.readable = true;
@@ -18254,9 +18184,8 @@ pub const BP_NETWORK_SOCKET: &str = r#"const __quenchNetSocket = class Socket ex
     return this;
   }
 };
-"#;
-
-pub const BP_NETWORK_SOCKET_TAIL: &str = r#"__quenchNetSocket.prototype.setTypeOfService = function (value) {
+"#,
+    r#"__quenchNetSocket.prototype.setTypeOfService = function (value) {
   return __quenchSetTypeOfService(this, value);
 };
 __quenchNetSocket.prototype.getTypeOfService = function () {
@@ -18293,9 +18222,8 @@ __quenchNetSocket.prototype.address = function () {
   }
   return this.destroyed ? null : undefined;
 };
-"#;
-
-pub const BP_NETWORK_BLOCKLIST: &str = r#"const __quenchNetBlockList = class BlockList {
+"#,
+    r#"const __quenchNetBlockList = class BlockList {
   [Symbol.toStringTag] = "BlockList";
   constructor() {
     this._v4 = new Map();
@@ -18419,9 +18347,8 @@ pub const BP_NETWORK_BLOCKLIST: &str = r#"const __quenchNetBlockList = class Blo
       : checkBlockListV6(this, str, explicitType, inputKind);
   }
 };
-"#;
-
-pub const BP_NETWORK: &str = r#"let __quenchNetAutoSelectFamily = false;
+"#,
+    r#"let __quenchNetAutoSelectFamily = false;
 const __quenchNetNormalizedArgsSymbol =
   (globalThis.__quenchNetNormalizedArgsSymbol ||= Symbol("normalizedArgs"));
 const __quenchNetFamilyTimeoutFlag = globalThis.__quench_argv?.find?.((value) =>
@@ -18875,9 +18802,8 @@ globalThis.__quench_require_part_01 = (name, specifier) => {
     return { normalizedArgsSymbol: __quenchNetNormalizedArgsSymbol };
   }
 };
-"#;
-
-pub const BP_NETWORK_PROMISES_TAIL: &str = r#"globalThis.__quenchNetPromisesModule = {
+"#,
+    r#"globalThis.__quenchNetPromisesModule = {
   listen(options = {}) {
     if (options === null || typeof options !== "object") {
       const error = new TypeError(
@@ -18944,9 +18870,8 @@ pub const BP_NETWORK_PROMISES_TAIL: &str = r#"globalThis.__quenchNetPromisesModu
     });
   },
 };
-"#;
-
-pub const BP_NETWORK_VALIDATION: &str = r#"const __quenchValidatePort = (value) => {
+"#,
+    r#"const __quenchValidatePort = (value) => {
   if (typeof value !== "number" && typeof value !== "string") {
     throw Object.assign(new TypeError('The "options.port" property must be a number or string'), { code: "ERR_INVALID_ARG_TYPE" });
   }
@@ -18979,9 +18904,8 @@ globalThis.__quenchValidateConnectionOptions = (options) => {
   }
   return __quenchValidatePort(options);
 };
-"#;
-
-pub const BP_FILESYSTEM_INTERNALS: &str = r#"const __quenchRmValidateBoolean = (options, key) => {
+"#,
+    r#"const __quenchRmValidateBoolean = (options, key) => {
   if (
     !Object.prototype.hasOwnProperty.call(options, key) ||
     typeof options[key] === "boolean"
@@ -19050,9 +18974,8 @@ const __quenchInternalFsUtilsModule = {
     return values[flags];
   },
 };
-"#;
-
-pub const BP_CLUSTER: &str = r#"const __quenchRequireStreamIter = () => {
+"#,
+    r#"const __quenchRequireStreamIter = () => {
   const toStreamable = Symbol.for("nodejs.stream.iter.toStreamable");
   const toAsyncStreamable = Symbol.for("nodejs.stream.iter.toAsyncStreamable");
   const normalizeOptions = (options) => {
@@ -20702,9 +20625,8 @@ globalThis.__quench_require_part_02 = (name, specifier) => {
   if (name === "node:test" || name === "test") return __quenchNodeTestModule;
   return __quenchRequireClusterInternal(name);
 };
-"#;
-
-pub const BP_TCP_BINDING: &str = r#"globalThis.__quenchTcpBinding = () => {
+"#,
+    r#"globalThis.__quenchTcpBinding = () => {
   const TCP = class TCP {
     constructor() {
       this.fd = 0;
@@ -20720,9 +20642,8 @@ pub const BP_TCP_BINDING: &str = r#"globalThis.__quenchTcpBinding = () => {
   };
   return { TCP, TCPWrap: TCP, constants: { SOCKET: 1 } };
 };
-"#;
-
-pub const BP_CONTEXT: &str = r##"const __quenchVmContexts = new WeakSet();
+"#,
+    r##"const __quenchVmContexts = new WeakSet();
 const __quenchVmTypeError = (message) => {
   throw Object.assign(new TypeError(message), { code: "ERR_INVALID_ARG_TYPE" });
 };
@@ -21098,9 +21019,8 @@ const __quenchVmRunInNewContext = (code, sandbox, options) => {
     );
   }
 };
-"##;
-
-pub const BP_COMPILE: &str = r#"const __quenchVmCompileExtensions = (options) => [
+"##,
+    r#"const __quenchVmCompileExtensions = (options) => [
   ...(options?.parsingContext ? [options.parsingContext] : []),
   ...(options?.contextExtensions || []),
 ];
@@ -21182,9 +21102,8 @@ const __quenchVmCompileFunction = (code, params = [], options) => {
     params,
   );
 };
-"#;
-
-pub const BP_COMPRESSION_TAIL: &str = r#"const __quenchZlibToBytes = (input, encoding) => {
+"#,
+    r#"const __quenchZlibToBytes = (input, encoding) => {
   if (typeof input === "string") {
     if (!encoding || encoding === "utf8" || encoding === "utf-8") {
       return new TextEncoder().encode(input);
@@ -21569,9 +21488,8 @@ const __quenchZlibUnzipSync = (input) => {
 };
 const __quenchZlibRawSync = (input, operation, encoding) =>
   __quenchZlibFromArray(operation(__quenchZlibToArray(input, encoding)));
-"#;
-
-pub const BP_COMPRESSION: &str = r#"const __quenchZlibModule = {
+"#,
+    r#"const __quenchZlibModule = {
   Deflate: __quenchZlibConstructor(
     () => __quenchZlibStream(__quenchZlibDeflateSync),
     false,
@@ -21855,9 +21773,8 @@ pub const BP_COMPRESSION: &str = r#"const __quenchZlibModule = {
   BROTLI_PARAM_NPOSTFIX: 7,
   BROTLI_PARAM_NDIRECT: 8,
 };
-"#;
-
-pub const BP_COMPRESSION_TAIL_02: &str = r#"const __quenchBufferModule = () => {
+"#,
+    r#"const __quenchBufferModule = () => {
   globalThis.__nodeBlobUrls ||= new Map();
   const module = {
     Buffer: globalThis.Buffer,
@@ -22137,9 +22054,8 @@ globalThis.__quench_require_part_03 = (name) => {
   if (name === "buffer") return __quenchBufferModule();
   if (name === "fs" || name === "fs/promises") return globalThis.__nodeFs;
 };
-"#;
-
-pub const BP_DISPATCH: &str = r#"const __quenchRequireParts = [
+"#,
+    r#"const __quenchRequireParts = [
   globalThis.__quench_require_part_00,
   globalThis.__quench_require_part_01,
   globalThis.__quench_require_part_02,
@@ -22297,9 +22213,8 @@ globalThis.require = (specifier) => {
   }
   throw new Error("Cannot find module " + String(specifier));
 };
-"#;
-
-pub const BP_ZLIB: &str = r#"const __quenchOriginalRequire = globalThis.require;
+"#,
+    r#"const __quenchOriginalRequire = globalThis.require;
 const __quenchZlibConstants = Object.freeze({
   Z_OK: 0,
   Z_STREAM_END: 1,
@@ -22517,9 +22432,8 @@ globalThis.require = (specifier) => {
   });
   return exported;
 };
-"#;
-
-pub const BP_DECODER: &str = r#"const __quenchOriginalRequireWithDecoder = globalThis.require;
+"#,
+    r#"const __quenchOriginalRequireWithDecoder = globalThis.require;
 const __quenchDecoderInputBytes = (input) => {
   if (ArrayBuffer.isView(input)) {
     return Array.from(
@@ -22626,9 +22540,8 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithDecoder(specifier);
 };
-"#;
-
-pub const BP_UTF8: &str = r#"const __quenchUtf8Width = (first) =>
+"#,
+    r#"const __quenchUtf8Width = (first) =>
   first < 0xc2 || first > 0xf4 ? 1 : first < 0xe0 ? 2 : first < 0xf0 ? 3 : 4;
 const __quenchUtf8ContinuationCode = (bytes, index, width) => {
   let code = bytes[index] & (width === 2 ? 0x1f : width === 3 ? 0xf : 0x7);
@@ -22702,9 +22615,8 @@ const __quenchDecodeUtf8 = (bytes, final) => {
   }
   return { text: output, pending: bytes.slice(index) };
 };
-"#;
-
-pub const BP_CODECS: &str = r#"const __quenchDecodeUtf16 = (bytes, final) => {
+"#,
+    r#"const __quenchDecodeUtf16 = (bytes, final) => {
   const complete = bytes.length - (bytes.length % 2);
   let text = "";
   let index = 0;
@@ -22718,9 +22630,8 @@ pub const BP_CODECS: &str = r#"const __quenchDecodeUtf16 = (bytes, final) => {
   const pending = final ? [] : bytes.slice(index);
   return { text, pending };
 };
-"#;
-
-pub const BP_TLS: &str = r#"const __quenchOriginalRequireWithTls = globalThis.require;
+"#,
+    r#"const __quenchOriginalRequireWithTls = globalThis.require;
 const __quenchTlsUnsupported = (operation) => {
   const error = new Error(`${operation} is not supported by quench-node`);
   error.code = "ERR_TLS_NOT_SUPPORTED";
@@ -22847,9 +22758,8 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithTls(specifier);
 };
-"#;
-
-pub const BP_TTY: &str = r#"const __quenchOriginalRequireWithTty = globalThis.require;
+"#,
+    r#"const __quenchOriginalRequireWithTty = globalThis.require;
 class __quenchWriteStream {
   constructor(fd) {
     this.fd = fd;
@@ -22879,9 +22789,8 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithTty(specifier);
 };
-"#;
-
-pub const BP_ZLIB_STREAMS: &str = r#"const __quenchOriginalRequireWithZlibStreams = globalThis.require;
+"#,
+    r#"const __quenchOriginalRequireWithZlibStreams = globalThis.require;
 const __quenchValidateFlushKind = (stream, kind) => {
   if (kind === undefined || Number.isNaN(kind)) return undefined;
   if (typeof kind !== "number") {
@@ -23084,9 +22993,8 @@ globalThis.require = (specifier) => {
   if (String(specifier).replace(/^node:/, "") !== "zlib") return module;
   return Object.assign({}, module, __quenchZlibStreamExports(module));
 };
-"#;
-
-pub const BP_ITERATORS: &str = r#"const __quenchOriginalRequireWithZlibIter = globalThis.require;
+"#,
+    r#"const __quenchOriginalRequireWithZlibIter = globalThis.require;
 const __quenchZlibIterInput = (chunk) => {
   if (!Array.isArray(chunk)) return Buffer.from(chunk);
   return Buffer.concat(chunk.map((part) => Buffer.from(part)));
@@ -23123,9 +23031,8 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithZlibIter(specifier);
 };
-"#;
-
-pub const BP_TYPES: &str = r#"const __quenchOriginalRequireWithUtilTypes = globalThis.require;
+"#,
+    r#"const __quenchOriginalRequireWithUtilTypes = globalThis.require;
 const __quenchUtilTypes = {
   isAnyArrayBuffer: (value) =>
     value instanceof ArrayBuffer ||
@@ -23156,9 +23063,8 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithUtilTypes(specifier);
 };
-"#;
-
-pub const BP_STREAM_PROMISES: &str = r#"const __quenchOriginalRequireWithStreamPromises = globalThis.require;
+"#,
+    r#"const __quenchOriginalRequireWithStreamPromises = globalThis.require;
 const __quenchStreamPromises = {
   pipeline: (...streams) => {
     let options = {};
@@ -23279,9 +23185,8 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithStreamPromises(specifier);
 };
-"#;
-
-pub const BP_WEB_STREAMS: &str = r#"const __quenchOriginalRequireWithWebStreams = globalThis.require;
+"#,
+    r#"const __quenchOriginalRequireWithWebStreams = globalThis.require;
 const __quenchWebStreamsState = Symbol("kState");
 const __quenchReadableEnqueue = (stream, value) => {
   const waiter = stream._readWaiters.shift();
@@ -23744,9 +23649,8 @@ for (const constructor of "ReadableStreamDefaultReader ReadableStreamBYOBReader 
 }
 globalThis.ByteLengthQueuingStrategy ||= __quenchByteLengthQueuingStrategy;
 globalThis.CountQueuingStrategy ||= __quenchCountQueuingStrategy;
-"#;
-
-pub const BP_WEB_STREAMS_REQUIRE: &str = r#"globalThis.require = (specifier) => {
+"#,
+    r#"globalThis.require = (specifier) => {
   const name = String(specifier).replace(/^node:/, "");
   if (name === "internal/webstreams/util") {
     return { kState: __quenchWebStreamsState };
@@ -23754,9 +23658,8 @@ pub const BP_WEB_STREAMS_REQUIRE: &str = r#"globalThis.require = (specifier) => 
   if (name === "stream/web") return __quenchWebStreams;
   return __quenchOriginalRequireWithWebStreams(specifier);
 };
-"#;
-
-pub const BP_WEB_STREAMS_BLOB: &str = r#"if (globalThis.Blob?.prototype) {
+"#,
+    r#"if (globalThis.Blob?.prototype) {
   globalThis.Blob.prototype.stream = function () {
     const blob = this;
     return new __quenchReadableStream({
@@ -23774,9 +23677,8 @@ pub const BP_WEB_STREAMS_BLOB: &str = r#"if (globalThis.Blob?.prototype) {
     });
   };
 }
-"#;
-
-pub const BP_CONSUMERS: &str = r#"const __quenchOriginalRequireWithConsumers = globalThis.require;
+"#,
+    r#"const __quenchOriginalRequireWithConsumers = globalThis.require;
 const __quenchConsume = async (stream) => {
   const reader = stream?.getReader ? stream.getReader() : null;
   const chunks = [];
@@ -23841,9 +23743,8 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithConsumers(specifier);
 };
-"#;
-
-pub const BP_PUNYCODE: &str = r#"const __quenchOriginalRequireWithPunycode = globalThis.require;
+"#,
+    r#"const __quenchOriginalRequireWithPunycode = globalThis.require;
 const __pcBase = 36,
   __pcTMin = 1,
   __pcTMax = 26,
@@ -23959,9 +23860,8 @@ globalThis.require = (specifier) =>
   String(specifier).replace(/^node:/, "") === "punycode"
     ? __quenchPunycode
     : __quenchOriginalRequireWithPunycode(specifier);
-"#;
-
-pub const BP_MODULE: &str = r#"const __quenchOriginalRequireWithModule = globalThis.require;
+"#,
+    r#"const __quenchOriginalRequireWithModule = globalThis.require;
 const __quenchBuiltinModules =
   "assert buffer child_process cluster crypto events fs http https module net os path perf_hooks process querystring stream string_decoder timers tls tty url util vm worker_threads zlib".split(
     " "
@@ -24117,9 +24017,8 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithModule(specifier);
 };
-"#;
-
-pub const BP_CHANNEL: &str = r#"const __quenchOriginalRequireWithDiagnostics = globalThis.require;
+"#,
+    r#"const __quenchOriginalRequireWithDiagnostics = globalThis.require;
 const __quenchChannels = new Map();
 class __QuenchChannelClass {}
 const __quenchChannel = (name) => {
@@ -24389,9 +24288,8 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithDiagnostics(specifier);
 };
-"#;
-
-pub const BP_DOMAIN: &str = r#"const __quenchOriginalRequireWithDomain = globalThis.require;
+"#,
+    r#"const __quenchOriginalRequireWithDomain = globalThis.require;
 const __quenchMarkDomainError = (error, domain, thrown) => {
   Object.defineProperty(error, "domain", {
     configurable: true,
@@ -24551,9 +24449,8 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithDomain(specifier);
 };
-"#;
-
-pub const BP_READLINE_PROMISES: &str = r#"const __quenchOriginalRequireWithReadlinePromises = globalThis.require;
+"#,
+    r#"const __quenchOriginalRequireWithReadlinePromises = globalThis.require;
 class __quenchReadlinePromisesInterface {
   constructor(options = {}) {
     this.input = options.input;
@@ -24591,9 +24488,8 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithReadlinePromises(specifier);
 };
-"#;
-
-pub const BP_REPL: &str = r#"const __quenchOriginalRequireWithRepl = globalThis.require;
+"#,
+    r#"const __quenchOriginalRequireWithRepl = globalThis.require;
 const __quenchFinishRepl = (server) => {
   server.displayPrompt();
   return server;
@@ -24657,9 +24553,8 @@ globalThis.require = (specifier) => {
   if (String(specifier).replace(/^node:/, "") === "repl") return __quenchRepl;
   return __quenchOriginalRequireWithRepl(specifier);
 };
-"#;
-
-pub const BP_CONSTANTS: &str = r#"const __quenchOriginalRequireWithConstants = globalThis.require;
+"#,
+    r#"const __quenchOriginalRequireWithConstants = globalThis.require;
 const __quenchConstants = Object.freeze({
   O_RDONLY: 0,
   O_WRONLY: 1,
@@ -24691,27 +24586,24 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithConstants(specifier);
 };
-"#;
-
-pub const BP_STRICT: &str = r#"const __quenchOriginalRequireWithAssertStrict = globalThis.require;
+"#,
+    r#"const __quenchOriginalRequireWithAssertStrict = globalThis.require;
 globalThis.require = (specifier) => {
   if (String(specifier).replace(/^node:/, "") === "assert/strict") {
     return globalThis.__nodeAssert;
   }
   return __quenchOriginalRequireWithAssertStrict(specifier);
 };
-"#;
-
-pub const BP_SYS: &str = r#"const __quenchOriginalRequireWithSys = globalThis.require;
+"#,
+    r#"const __quenchOriginalRequireWithSys = globalThis.require;
 globalThis.require = (specifier) => {
   if (String(specifier).replace(/^node:/, "") === "sys") {
     return __quenchOriginalRequireWithSys("util");
   }
   return __quenchOriginalRequireWithSys(specifier);
 };
-"#;
-
-pub const BP_TRACE_EVENTS: &str = r#"const __quenchOriginalRequireWithTraceEvents = globalThis.require;
+"#,
+    r#"const __quenchOriginalRequireWithTraceEvents = globalThis.require;
 globalThis.require = (specifier) => {
   if (String(specifier).replace(/^node:/, "") === "trace_events") {
     const error = new Error(`No such built-in module: ${specifier}`);
@@ -24720,9 +24612,8 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithTraceEvents(specifier);
 };
-"#;
-
-pub const BP_WASI: &str = r#"const __quenchOriginalRequireWithWasi = globalThis.require;
+"#,
+    r#"const __quenchOriginalRequireWithWasi = globalThis.require;
 globalThis.require = (specifier) => {
   if (String(specifier).replace(/^node:/, "") === "wasi") {
     const error = new Error(`No such built-in module: ${specifier}`);
@@ -24731,9 +24622,8 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithWasi(specifier);
 };
-"#;
-
-pub const BP_INSPECTOR: &str = r#"const __quenchOriginalRequireWithInspector = globalThis.require;
+"#,
+    r#"const __quenchOriginalRequireWithInspector = globalThis.require;
 globalThis.require = (specifier) => {
   const name = String(specifier).replace(/^node:/, "");
   if (name === "inspector" || name === "inspector/promises") {
@@ -24743,9 +24633,8 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithInspector(specifier);
 };
-"#;
-
-pub const BP_ARGS: &str = r#"const __quenchOriginalRequireWithParseArgs = globalThis.require;
+"#,
+    r#"const __quenchOriginalRequireWithParseArgs = globalThis.require;
 const __quenchParseOption = (
   argument,
   args,
@@ -24800,9 +24689,8 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithParseArgs(specifier);
 };
-"#;
-
-pub const BP_TEXT: &str = r#"const __quenchOriginalRequireWithStyleText = globalThis.require;
+"#,
+    r#"const __quenchOriginalRequireWithStyleText = globalThis.require;
 const __quenchStyles = {
   reset: [0, 0],
   bold: [1, 22],
@@ -24899,9 +24787,8 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithStyleText(specifier);
 };
-"#;
-
-pub const BP_CALLBACKIFY: &str = r#"const __quenchOriginalRequireWithCallbackify = globalThis.require;
+"#,
+    r#"const __quenchOriginalRequireWithCallbackify = globalThis.require;
 const __quenchCallbackify = (fn) => {
   if (typeof fn !== "function") {
     throw new TypeError("The first argument must be a function");
@@ -24932,9 +24819,8 @@ globalThis.require = (specifier) =>
       callbackify: __quenchCallbackify,
     })
     : __quenchOriginalRequireWithCallbackify(specifier);
-"#;
-
-pub const BP_ABORT: &str = r#"const __quenchOriginalRequireWithTransferableAbort = globalThis.require;
+"#,
+    r#"const __quenchOriginalRequireWithTransferableAbort = globalThis.require;
 const __quenchTransferableSignals = new WeakSet();
 const __quenchTransferableAbortSignal = (signal) => {
   if (!(signal instanceof AbortSignal)) {
@@ -24961,9 +24847,8 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithTransferableAbort(specifier);
 };
-"#;
-
-pub const BP_CONSOLE: &str = r#"const __quenchOriginalRequireWithConsole = globalThis.require;
+"#,
+    r#"const __quenchOriginalRequireWithConsole = globalThis.require;
 class __quenchConsole {
   constructor(
     stdout = globalThis.process?.stdout,
@@ -25078,9 +24963,8 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithConsole(specifier);
 };
-"#;
-
-pub const BP_URL: &str = r#"const __quenchOriginalRequireWithUrlStatics = globalThis.require;
+"#,
+    r#"const __quenchOriginalRequireWithUrlStatics = globalThis.require;
 const __quenchUrlParse = (input, base) => {
   if (base === undefined && !/^[A-Za-z][A-Za-z0-9+.-]*:/.test(String(input))) {
     return null;
@@ -25097,9 +24981,8 @@ if (typeof URL.canParse !== "function") {
 if (typeof URL.parse !== "function") URL.parse = __quenchUrlParse;
 globalThis.require = (specifier) =>
   __quenchOriginalRequireWithUrlStatics(specifier);
-"#;
-
-pub const BP_V8: &str = r#"const __quenchOriginalRequireWithV8 = globalThis.require;
+"#,
+    r#"const __quenchOriginalRequireWithV8 = globalThis.require;
 const __quenchV8 = {
   getHeapStatistics: () => ({
     total_heap_size: 0,
@@ -25137,9 +25020,8 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithV8(specifier);
 };
-"#;
-
-pub const BP_OS: &str = r#"const __quenchOriginalRequireWithOsHelpers = globalThis.require;
+"#,
+    r#"const __quenchOriginalRequireWithOsHelpers = globalThis.require;
 globalThis.__nodeOsInitialized = false;
 const __quenchOsFallback = {
   homedir: () =>
@@ -25206,9 +25088,8 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithOsHelpers(specifier);
 };
-"#;
-
-pub const BP_METRICS: &str = r#"const __quenchProcessStart = Date.now();
+"#,
+    r#"const __quenchProcessStart = Date.now();
 const __quenchOriginalRequireWithProcessMetrics = globalThis.require;
 if (globalThis.process) {
   globalThis.process.uptime ||= () =>
@@ -25228,9 +25109,8 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithProcessMetrics(specifier);
 };
-"#;
-
-pub const BP_FILESYSTEM_CONSTANTS: &str = r#"const __quenchOriginalRequireWithFsConstants = globalThis.require;
+"#,
+    r#"const __quenchOriginalRequireWithFsConstants = globalThis.require;
 const __quenchFsConstants = Object.freeze({
   F_OK: 0,
   R_OK: 4,
@@ -25268,11 +25148,9 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithFsConstants(specifier);
 };
-"#;
-
-pub const BP_PASSTHROUGH: &str = r#""#;
-
-pub const BP_REPORT: &str = r#"const __quenchOriginalRequireWithProcessReport = globalThis.require;
+"#,
+    r#""#,
+    r#"const __quenchOriginalRequireWithProcessReport = globalThis.require;
 if (globalThis.process && !globalThis.process.report) {
   globalThis.process.report = {
     directory: "",
@@ -25300,9 +25178,8 @@ globalThis.require = (specifier) =>
   String(specifier).replace(/^node:/, "") === "process"
     ? globalThis.process
     : __quenchOriginalRequireWithProcessReport(specifier);
-"#;
-
-pub const BP_GLOB: &str = r#"const __quenchOriginalRequireWithGlob = globalThis.require;
+"#,
+    r#"const __quenchOriginalRequireWithGlob = globalThis.require;
 const __quenchGlobEscape = (value) =>
   value.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
 const __quenchGlobPattern = (pattern) => {
@@ -25482,9 +25359,8 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithGlob(specifier);
 };
-"#;
-
-pub const BP_DNS: &str = r#"const __quenchOriginalRequireWithDns = globalThis.require;
+"#,
+    r#"const __quenchOriginalRequireWithDns = globalThis.require;
 let __quenchDnsServers = ["127.0.0.1"];
 let __quenchDnsDefaultResultOrder = "verbatim";
 const __quenchDnsNormalizeServer = (server) => {
@@ -25945,9 +25821,8 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithDns(specifier);
 };
-"#;
-
-pub const BP_DGRAM_HEAD: &str = r#"/* eslint-disable max-lines-per-function, complexity */
+"#,
+    r#"/* eslint-disable max-lines-per-function, complexity */
 const __quenchOriginalRequireWithDgram = globalThis.require;
 const __quenchDgramStateSymbol = Symbol.for("quench.dgram.state");
 const __quenchDgramBoundPorts = new Set();
@@ -25993,9 +25868,8 @@ const __quenchDgramBufferError = (type, code, message) => {
   });
   return error;
 };
-"#;
-
-pub const BP_DGRAM: &str = r#"const __quenchDgramBind = (socket, type, port, address, callback) => {
+"#,
+    r#"const __quenchDgramBind = (socket, type, port, address, callback) => {
   if (socket._bound) {
     throw Object.assign(new Error("Socket is already bound"), {
       code: "ERR_SOCKET_ALREADY_BOUND",
@@ -26481,9 +26355,8 @@ const __quenchDgramOn = (socket, listeners, event, callback) => {
   (listeners[event] ||= []).push(callback);
   return socket;
 };
-"#;
-
-pub const BP_DGRAM_TAIL: &str = r#"const __quenchDgramOnce = (socket, listeners, event, callback) => {
+"#,
+    r#"const __quenchDgramOnce = (socket, listeners, event, callback) => {
   const wrapper = (...args) => {
     listeners[event] = (listeners[event] || []).filter(
       (listener) => listener !== wrapper,
@@ -26936,9 +26809,8 @@ globalThis.require = (specifier) =>
       },
     }
     : __quenchOriginalRequireWithDgram(specifier);
-"#;
-
-pub const BP_MEMBERSHIP: &str = r#"const __quenchDgramMembership = (socket, operation, address) => {
+"#,
+    r#"const __quenchDgramMembership = (socket, operation, address) => {
   if (address === undefined) {
     throw Object.assign(
       new TypeError('The "multicastAddress" argument must be specified'),
@@ -27002,9 +26874,8 @@ const __quenchSourceMembership = (socket, operation, source, group) => {
     });
   }
 };
-"#;
-
-pub const BP_HTTPS: &str = r#"const __quenchOriginalRequireWithHttps = globalThis.require;
+"#,
+    r#"const __quenchOriginalRequireWithHttps = globalThis.require;
 const __quenchHttpsUnsupported = (operation) => {
   const error = new Error(`${operation} is not supported by quench-node`);
   error.code = "ERR_TLS_NOT_SUPPORTED";
@@ -27029,9 +26900,8 @@ globalThis.require = (specifier) =>
   String(specifier).replace(/^node:/, "") === "https"
     ? __quenchHttps
     : __quenchOriginalRequireWithHttps(specifier);
-"#;
-
-pub const BP_HTTP2: &str = r#"const __quenchOriginalRequireWithHttp2 = globalThis.require;
+"#,
+    r#"const __quenchOriginalRequireWithHttp2 = globalThis.require;
 const __quenchHttp2Unsupported = (operation) => {
   const error = new Error(`${operation} is not supported by quench-node`);
   error.code = "ERR_HTTP2_NOT_SUPPORTED";
@@ -27049,9 +26919,8 @@ globalThis.require = (specifier) =>
   String(specifier).replace(/^node:/, "") === "http2"
     ? __quenchHttp2
     : __quenchOriginalRequireWithHttp2(specifier);
-"#;
-
-pub const BP_REPORTERS: &str = r#"const __quenchOriginalRequireWithTestReporters = globalThis.require;
+"#,
+    r#"const __quenchOriginalRequireWithTestReporters = globalThis.require;
 globalThis.require = (specifier) => {
   if (
     String(specifier) === "node:test/reporters" ||
@@ -27063,9 +26932,8 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithTestReporters(specifier);
 };
-"#;
-
-pub const BP_SQLITE: &str = r#"const __quenchOriginalRequireWithSqlite = globalThis.require;
+"#,
+    r#"const __quenchOriginalRequireWithSqlite = globalThis.require;
 globalThis.require = (specifier) => {
   if (String(specifier) === "node:sqlite" || String(specifier) === "sqlite") {
     const error = new Error(`No such built-in module: ${specifier}`);
@@ -27074,33 +26942,29 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithSqlite(specifier);
 };
-"#;
-
-pub const BP_UTIL: &str = r#"const __quenchOriginalRequireWithSharedUtil = globalThis.require;
+"#,
+    r#"const __quenchOriginalRequireWithSharedUtil = globalThis.require;
 const __quenchSharedUtil = __quenchOriginalRequireWithSharedUtil("util");
 globalThis.require = (specifier) => {
   const name = String(specifier).replace(/^node:/, "");
   if (name === "util" || name === "sys") return __quenchSharedUtil;
   return __quenchOriginalRequireWithSharedUtil(specifier);
 };
-"#;
-
-pub const BP_CLUSTER_RUNTIME: &str = r#"const __quenchClusterRequire = globalThis.require;
+"#,
+    r#"const __quenchClusterRequire = globalThis.require;
 const __quenchCluster = __quenchClusterRequire("cluster");
 __quenchCluster.SCHED_NONE = 1;
 __quenchCluster.SCHED_RR = 2;
-"#;
-
-pub const BP_CLUSTER_API: &str = r#"const __quenchClusterApiRequire = globalThis.require;
+"#,
+    r#"const __quenchClusterApiRequire = globalThis.require;
 const __quenchClusterApi = __quenchClusterApiRequire("cluster");
 if (typeof __quenchClusterApi.Worker?.prototype.isConnected !== "function") {
   __quenchClusterApi.Worker.prototype.isConnected = function () {
     return this.state !== "dead" && this.state !== "disconnected";
   };
 }
-"#;
-
-pub const BP_WORKER: &str = r#"const __quenchClusterWorkerRequire = globalThis.require;
+"#,
+    r#"const __quenchClusterWorkerRequire = globalThis.require;
 const __quenchClusterWorkerModule = __quenchClusterWorkerRequire("cluster");
 const __quenchWorkerPrototype = __quenchClusterWorkerModule.Worker?.prototype;
 if (
@@ -27123,16 +26987,14 @@ if (
     return this.kill(signal);
   };
 }
-"#;
-
-pub const BP_POLICY: &str = r#"const __quenchClusterPolicyRequire = globalThis.require;
+"#,
+    r#"const __quenchClusterPolicyRequire = globalThis.require;
 const __quenchClusterPolicy = __quenchClusterPolicyRequire("cluster");
 if (__quenchClusterPolicy.schedulingPolicy === undefined) {
   __quenchClusterPolicy.schedulingPolicy = __quenchClusterPolicy.SCHED_RR;
 }
-"#;
-
-pub const BP_SETUP: &str = r#"const __quenchClusterSetupRequire = globalThis.require;
+"#,
+    r#"const __quenchClusterSetupRequire = globalThis.require;
 const __quenchClusterSetup = __quenchClusterSetupRequire("cluster");
 const __quenchOriginalSetupPrimary = __quenchClusterSetup.setupPrimary;
 __quenchClusterSetup.setupPrimary = (options = {}) =>
@@ -27140,9 +27002,8 @@ __quenchClusterSetup.setupPrimary = (options = {}) =>
     ...__quenchClusterSetup.settings,
     ...options,
   });
-"#;
-
-pub const BP_DEFAULTS: &str = r#"const __quenchClusterDefaultsRequire = globalThis.require;
+"#,
+    r#"const __quenchClusterDefaultsRequire = globalThis.require;
 const __quenchClusterDefaults = __quenchClusterDefaultsRequire("cluster");
 const __quenchSetupWithCumulativeSettings =
   __quenchClusterDefaults.setupPrimary;
@@ -27163,14 +27024,12 @@ __quenchClusterDefaults.setupPrimary = (options = {}) => {
     ...options,
   });
 };
-"#;
-
-pub const BP_ALIAS: &str = r#"const __quenchClusterAliasRequire = globalThis.require;
+"#,
+    r#"const __quenchClusterAliasRequire = globalThis.require;
 const __quenchClusterAlias = __quenchClusterAliasRequire("cluster");
 __quenchClusterAlias.setupMaster = __quenchClusterAlias.setupPrimary;
-"#;
-
-pub const BP_WORKERS: &str = r#"const __quenchClusterWorkersRequire = globalThis.require;
+"#,
+    r#"const __quenchClusterWorkersRequire = globalThis.require;
 const __quenchClusterWorkers = __quenchClusterWorkersRequire("cluster");
 if (Array.isArray(__quenchClusterWorkers.workers)) {
   const workers = {};
@@ -27197,9 +27056,8 @@ if (Array.isArray(__quenchClusterWorkers.workers)) {
   });
   __quenchClusterWorkers.workers = workers;
 }
-"#;
-
-pub const BP_CLEANUP: &str = r#"const __quenchClusterCleanupRequire = globalThis.require;
+"#,
+    r#"const __quenchClusterCleanupRequire = globalThis.require;
 const __quenchClusterCleanup = __quenchClusterCleanupRequire("cluster");
 const __quenchOriginalWorkerKill = __quenchClusterCleanup.Worker?.prototype
   .kill;
@@ -27212,9 +27070,8 @@ if (__quenchOriginalWorkerKill) {
     return result;
   };
 }
-"#;
-
-pub const BP_PROCESS: &str = r#"const __quenchClusterProcessRequire = globalThis.require;
+"#,
+    r#"const __quenchClusterProcessRequire = globalThis.require;
 const __quenchClusterProcess = __quenchClusterProcessRequire("cluster");
 const __quenchOriginalClusterFork = __quenchClusterProcess.fork;
 __quenchClusterProcess.fork = (...args) => {
@@ -27229,9 +27086,8 @@ __quenchClusterProcess.fork = (...args) => {
   }
   return worker;
 };
-"#;
-
-pub const BP_CHILD_PROCESS: &str = r#"const __quenchChildProcessRequire = globalThis.require;
+"#,
+    r#"const __quenchChildProcessRequire = globalThis.require;
 const __quenchChildProcess = __quenchChildProcessRequire("child_process");
 const __quenchExecCallback = (options, callback) =>
   typeof options === "function" ? options : callback;
@@ -27317,9 +27173,8 @@ __quenchChildProcess.execFileSync = (file, args = [], options) => {
   const output = String(file).endsWith("echo") ? `${args.join(" ")}\n` : "";
   return options?.encoding ? output : NodeBuffer.from(output);
 };
-"#;
-
-pub const BP_SHARED: &str = r#"const __quenchSharedChildProcessOriginalRequire = globalThis.require;
+"#,
+    r#"const __quenchSharedChildProcessOriginalRequire = globalThis.require;
 const __quenchSharedChildProcess = __quenchSharedChildProcessOriginalRequire(
   "child_process",
 );
@@ -27398,9 +27253,8 @@ globalThis.require = (specifier) =>
   String(specifier).replace(/^node:/, "") === "child_process"
     ? __quenchSharedChildProcess
     : __quenchSharedChildProcessOriginalRequire(specifier);
-"#;
-
-pub const BP_SURFACE: &str = r#"const __quenchChildProcessSurfaceRequire = globalThis.require;
+"#,
+    r#"const __quenchChildProcessSurfaceRequire = globalThis.require;
 const __quenchChildProcessSurface = __quenchChildProcessSurfaceRequire(
   "child_process",
 );
@@ -27451,11 +27305,9 @@ __quenchChildProcessSurface.spawn = (...args) => {
   };
   return child;
 };
-"#;
-
-pub const BP_LIFECYCLE: &str = r#""#;
-
-pub const BP_CHILD_PROCESS_EVENTS: &str = r#"const __quenchChildEventOrderRequire = globalThis.require;
+"#,
+    r#""#,
+    r#"const __quenchChildEventOrderRequire = globalThis.require;
 const __quenchChildEventOrder = __quenchChildEventOrderRequire("child_process");
 const __quenchEventOrderSpawn = __quenchChildEventOrder.spawn;
 __quenchChildEventOrder.spawn = (...args) => {
@@ -27472,9 +27324,8 @@ __quenchChildEventOrder.spawn = (...args) => {
   )(child.emit);
   return child;
 };
-"#;
-
-pub const BP_CHILD_PROCESS_SPAWN_ERRORS: &str = r#"const __quenchChildSpawnErrorRequire = globalThis.require;
+"#,
+    r#"const __quenchChildSpawnErrorRequire = globalThis.require;
 const __quenchChildSpawnError = __quenchChildSpawnErrorRequire("child_process");
 const __quenchSpawnWithError = __quenchChildSpawnError.spawn;
 __quenchChildSpawnError.spawn = (...args) => {
@@ -27506,9 +27357,8 @@ __quenchChildSpawnError.spawn = (...args) => {
   }
   return child;
 };
-"#;
-
-pub const BP_CHILD_PROCESS_EXEC_ERRORS: &str = r#"const __quenchExecErrorRequire = globalThis.require;
+"#,
+    r#"const __quenchExecErrorRequire = globalThis.require;
 const __quenchExecErrorChildProcess = __quenchExecErrorRequire("child_process");
 const __quenchExecSuccess = __quenchExecErrorChildProcess.exec;
 const __quenchExecFileSuccess = __quenchExecErrorChildProcess.execFile;
@@ -27575,9 +27425,8 @@ __quenchExecErrorChildProcess.execFile = (file, args, options, callback) => {
   }
   return __quenchExecFileSuccess(file, args, options, callback);
 };
-"#;
-
-pub const BP_SYNC: &str = r#"const __quenchSpawnSyncErrorRequire = globalThis.require;
+"#,
+    r#"const __quenchSpawnSyncErrorRequire = globalThis.require;
 const __quenchSpawnSyncErrorChildProcess = __quenchSpawnSyncErrorRequire(
   "child_process",
 );
@@ -27608,9 +27457,8 @@ __quenchSpawnSyncErrorChildProcess.spawnSync = (
   }
   return __quenchOriginalSpawnSync(command, args, options);
 };
-"#;
-
-pub const BP_EXEC: &str = r#"const __quenchSyncExecErrorRequire = globalThis.require;
+"#,
+    r#"const __quenchSyncExecErrorRequire = globalThis.require;
 const __quenchSyncExecErrorChildProcess = __quenchSyncExecErrorRequire(
   "child_process",
 );
@@ -27651,9 +27499,8 @@ __quenchSyncExecErrorChildProcess.execFileSync = (file, args, options) => {
   }
   return __quenchSyncExecFile(file, args, options);
 };
-"#;
-
-pub const BP_CHILD_PROCESS_VALIDATION: &str = r#"const __quenchSpawnValidationRequire = globalThis.require;
+"#,
+    r#"const __quenchSpawnValidationRequire = globalThis.require;
 const __quenchSpawnValidationChildProcess = __quenchSpawnValidationRequire(
   "child_process",
 );
@@ -27705,25 +27552,22 @@ __quenchSpawnValidationChildProcess.spawn = (...args) => {
   __quenchValidateSpawnOptions(args[2], args[1]);
   return __quenchSpawnValidated(...args);
 };
-"#;
-
-pub const BP_CONSTRUCTOR: &str = r#"const __quenchChildProcessConstructorRequire = globalThis.require;
+"#,
+    r#"const __quenchChildProcessConstructorRequire = globalThis.require;
 const __quenchChildProcessConstructor = __quenchChildProcessConstructorRequire(
   "child_process",
 );
 if (__quenchChildProcessConstructor.ChildProcess === undefined) {
   __quenchChildProcessConstructor.ChildProcess = globalThis.__nodeEventEmitter;
 }
-"#;
-
-pub const BP_FORK: &str = r#"const __quenchForkChildRequire = globalThis.require;
+"#,
+    r#"const __quenchForkChildRequire = globalThis.require;
 const __quenchForkChildModule = __quenchForkChildRequire("child_process");
 if (__quenchForkChildModule._forkChild === undefined) {
   __quenchForkChildModule._forkChild = (fd, options) => undefined;
 }
-"#;
-
-pub const BP_CHILD_PROCESS_STREAMS: &str = r#"const __quenchChildStreamRequire = globalThis.require;
+"#,
+    r#"const __quenchChildStreamRequire = globalThis.require;
 const __quenchChildStreamModule = __quenchChildStreamRequire("child_process");
 const __quenchOriginalChildStreamSpawn = __quenchChildStreamModule.spawn;
 const __quenchEnsureStream = (stream) => {
@@ -27741,9 +27585,8 @@ __quenchChildStreamModule.spawn = (...args) => {
   __quenchEnsureStream(child.stderr);
   return child;
 };
-"#;
-
-pub const BP_OUTPUT: &str = r#"const __quenchChildOutputRequire = globalThis.require;
+"#,
+    r#"const __quenchChildOutputRequire = globalThis.require;
 const __quenchChildOutputModule = __quenchChildOutputRequire("child_process");
 const __quenchOutputSpawn = __quenchChildOutputModule.spawn;
 const __quenchOutputStream = (stream) => {
@@ -27814,9 +27657,8 @@ __quenchChildOutputModule.spawn = (...args) => {
     __quenchEmitChildOutput(child, emit, args, stdout, stderr, event, values);
   return child;
 };
-"#;
-
-pub const BP_REFERENCES: &str = r#"const __quenchChildRefRequire = globalThis.require;
+"#,
+    r#"const __quenchChildRefRequire = globalThis.require;
 const __quenchChildRefModule = __quenchChildRefRequire("child_process");
 const __quenchRefSpawn = __quenchChildRefModule.spawn;
 __quenchChildRefModule.spawn = (...args) => {
@@ -27824,9 +27666,8 @@ __quenchChildRefModule.spawn = (...args) => {
   if (typeof child.ref !== "function") child.ref = () => undefined;
   return child;
 };
-"#;
-
-pub const BP_CHILD_PROCESS_ENCODING: &str = r#"const __quenchExecEncodingRequire = globalThis.require;
+"#,
+    r#"const __quenchExecEncodingRequire = globalThis.require;
 const __quenchExecEncodingChildProcess = __quenchExecEncodingRequire(
   "child_process",
 );
@@ -27852,9 +27693,8 @@ __quenchExecEncodingChildProcess.exec = (command, options, callback) => {
     },
   );
 };
-"#;
-
-pub const BP_STATE: &str = r#"const __quenchChildStreamStateRequire = globalThis.require;
+"#,
+    r#"const __quenchChildStreamStateRequire = globalThis.require;
 const __quenchChildStreamStateModule = __quenchChildStreamStateRequire(
   "child_process",
 );
@@ -27878,9 +27718,8 @@ __quenchChildStreamStateModule.spawn = (...args) => {
   });
   return child;
 };
-"#;
-
-pub const BP_SEND: &str = r#"const __quenchProcessSend = globalThis.process;
+"#,
+    r#"const __quenchProcessSend = globalThis.process;
 const __quenchOriginalProcessSend = __quenchProcessSend.send;
 __quenchProcessSend.send = (...values) => {
   if (values.length > 3) {
@@ -27900,9 +27739,8 @@ __quenchProcessSend.send = (...values) => {
   }
   return __quenchOriginalProcessSend(...values);
 };
-"#;
-
-pub const BP_FORK_SEND: &str = r#"const __quenchForkSendRequire = globalThis.require;
+"#,
+    r#"const __quenchForkSendRequire = globalThis.require;
 const __quenchForkSendModule = __quenchForkSendRequire("child_process");
 const __quenchForkSendOriginal = __quenchForkSendModule.fork;
 const __quenchValidateSend = (send, values) => {
@@ -27929,9 +27767,8 @@ __quenchForkSendModule.fork = (...args) => {
   child.send = (...values) => __quenchValidateSend(send, values);
   return child;
 };
-"#;
-
-pub const BP_EXIT: &str = r#"const __quenchForkExitRequire = globalThis.require;
+"#,
+    r#"const __quenchForkExitRequire = globalThis.require;
 const __quenchForkExitModule = __quenchForkExitRequire("child_process");
 const __quenchForkExitOriginal = __quenchForkExitModule.fork;
 __quenchForkExitModule.fork = (...args) => {
@@ -27943,9 +27780,8 @@ __quenchForkExitModule.fork = (...args) => {
       : emit.call(child, event, ...values);
   return child;
 };
-"#;
-
-pub const BP_DISPOSAL: &str = r#"const __quenchChildDisposeRequire = globalThis.require;
+"#,
+    r#"const __quenchChildDisposeRequire = globalThis.require;
 const __quenchChildDisposeModule = __quenchChildDisposeRequire("child_process");
 const __quenchChildDisposeSpawn = __quenchChildDisposeModule.spawn;
 __quenchChildDisposeModule.spawn = (...args) => {
@@ -27959,9 +27795,8 @@ __quenchChildDisposeModule.spawn = (...args) => {
   };
   return child;
 };
-"#;
-
-pub const BP_UNLINK: &str = r#"const __quenchUnlinkRequire = globalThis.require;
+"#,
+    r#"const __quenchUnlinkRequire = globalThis.require;
 const __quenchUnlinkFs = __quenchUnlinkRequire("fs");
 const __quenchUnlinkPath = (value) =>
   typeof value === "string" ||
@@ -28012,9 +27847,8 @@ __quenchUnlinkPromiseFs.promises.unlink = (value) =>
       error ? reject(error) : resolve()
     )
   );
-"#;
-
-pub const BP_FLAGS: &str = r#"globalThis.__quench_argv ||= [];
+"#,
+    r#"globalThis.__quench_argv ||= [];
 const __quenchProcessWrite = (chunk) => {
   globalThis.__quench_console_write(String(chunk));
   return true;
@@ -28028,9 +27862,8 @@ if (globalThis.require) {
   __quenchProcessModule.stdout ||= {};
   __quenchProcessModule.stdout.write ||= __quenchProcessWrite;
 }
-"#;
-
-pub const BP_PROBE: &str = r#"/* Keep the portable self-PID child-process probe useful without a host spawn API. */
+"#,
+    r#"/* Keep the portable self-PID child-process probe useful without a host spawn API. */
 const __quenchParentPidSpawnRequire = globalThis.require;
 const __quenchParentPidSpawnProcess = __quenchParentPidSpawnRequire(
   "child_process",
@@ -28053,9 +27886,8 @@ __quenchParentPidSpawnProcess.spawnSync = (command, args = [], options) => {
   }
   return __quenchParentPidSpawnOriginal(command, args, options);
 };
-"#;
-
-pub const BP_PPID: &str = r#"const __quenchPpidFixtureRequire = globalThis.require;
+"#,
+    r#"const __quenchPpidFixtureRequire = globalThis.require;
 const __quenchPpidFixtureProcess = __quenchPpidFixtureRequire("child_process");
 const __quenchPpidFixtureOriginal = __quenchPpidFixtureProcess.spawnSync;
 __quenchPpidFixtureProcess.spawnSync = (command, args = [], options) => {
@@ -28074,9 +27906,8 @@ __quenchPpidFixtureProcess.spawnSync = (command, args = [], options) => {
   }
   return __quenchPpidFixtureOriginal(command, args, options);
 };
-"#;
-
-pub const BP_MAPS: &str = r#"const __quenchSourceMapsProcess = globalThis.process;
+"#,
+    r#"const __quenchSourceMapsProcess = globalThis.process;
 const __quenchSetSourceMapsEnabled = (value) => {
   if (typeof value !== "boolean") {
     throw Object.assign(new TypeError('The "val" argument must be of type boolean [ERR_INVALID_ARG_TYPE]'), { code: "ERR_INVALID_ARG_TYPE" });
@@ -28088,9 +27919,8 @@ Object.defineProperty(__quenchSourceMapsProcess, "setSourceMapsEnabled", {
   set: () => {},
   configurable: true,
 });
-"#;
-
-pub const BP_REF: &str = r#"const __quenchProcessRef = globalThis.process;
+"#,
+    r#"const __quenchProcessRef = globalThis.process;
 const __quenchRefSymbol = Symbol.for("nodejs.ref");
 const __quenchUnrefSymbol = Symbol.for("nodejs.unref");
 __quenchProcessRef.ref = (value) => {
@@ -28101,9 +27931,8 @@ __quenchProcessRef.unref = (value) => {
   if (value?.[__quenchUnrefSymbol]) value[__quenchUnrefSymbol]();
   else value?.unref?.();
 };
-"#;
-
-pub const BP_TARGET: &str = r#"globalThis.EventTarget ||= class EventTarget {
+"#,
+    r#"globalThis.EventTarget ||= class EventTarget {
   constructor() {
     this._listeners = {};
   }
@@ -28575,9 +28404,8 @@ globalThis.require = (name) => {
   if (String(name).replace(/^node:/, "") !== "events") return value;
   return __quenchEventsRequire(value);
 };
-"#;
-
-pub const BP_LISTENERS: &str = r#"const __quenchEventListenersOriginalAdd =
+"#,
+    r#"const __quenchEventListenersOriginalAdd =
   EventTarget.prototype.addEventListener;
 EventTarget.prototype.addEventListener = function (name, listener, options) {
   const current = this._listeners?.[name] || [];
@@ -28658,9 +28486,8 @@ __quenchEventListenersModule.getEventListeners = (target, event) => {
   }
   throw Object.assign(new TypeError("The emitter argument must be an instance of EventEmitter or EventTarget [ERR_INVALID_ARG_TYPE]"), { code: "ERR_INVALID_ARG_TYPE" });
 };
-"#;
-
-pub const BP_INTROSPECTION: &str = r#"const __quenchEventNameVisible = (emitter, name, value) => {
+"#,
+    r#"const __quenchEventNameVisible = (emitter, name, value) => {
   if (value === undefined || (Array.isArray(value) && value.length === 0)) {
     return false;
   }
@@ -28740,9 +28567,8 @@ globalThis.__nodeErrorMonitorSymbol = __quenchEventsSymbols.errorMonitor;
 __quenchEventsSymbols.captureRejections ??= false;
 __quenchEventsSymbols.EventEmitter.captureRejections =
   __quenchEventsSymbols.captureRejections;
-"#;
-
-pub const BP_VFS_HEAD: &str = r#"// Experimental node:vfs surface.  Keep the provider contract small and
+"#,
+    r#"// Experimental node:vfs surface.  Keep the provider contract small and
 // readable; mount interception is added only once the core tree semantics are
 // covered by focused fixtures.
 class __QuenchVirtualProvider {
@@ -28975,9 +28801,8 @@ const __quenchVfsResolveParentPath = (entries, path) => {
   const resolvedParent = __quenchVfsResolvePath(entries, parent);
   return `${resolvedParent === "/" ? "" : resolvedParent}/${name}`;
 };
-"#;
-
-pub const BP_VFS: &str = r#"const __quenchVfsAsync = (name) =>
+"#,
+    r#"const __quenchVfsAsync = (name) =>
   function (...args) {
     return Promise.resolve().then(() => this[name](...args));
   };
@@ -31236,9 +31061,11 @@ globalThis.__nodeVfs = {
   MemoryProvider: __QuenchMemoryProvider,
   RealFSProvider: __QuenchRealFSProvider
 };
-"#;
+"#
+);
 
-pub const PB_PROCESS_SURFACE_00: &str = r#"{
+pub const POST_BOOTSTRAP: &[(&str, &str)] = &[
+    ("process-surface-00", r#"{
   if (globalThis.process) {
     globalThis.process[Symbol.toStringTag] ||= "process";
     globalThis.gc ||= () => undefined;
@@ -31452,9 +31279,8 @@ pub const PB_PROCESS_SURFACE_00: &str = r#"{
     globalThis.process.memoryUsage.rss ||= () => 0;
   }
 }
-"#;
-
-pub const PB_PROCESS_SURFACE_01: &str = r#"{
+"#),
+    ("process-surface-01", r#"{
   if (globalThis.process) {
     const write = (chunk) => {
       globalThis.__quench_console_write(String(chunk));
@@ -31707,35 +31533,21 @@ pub const PB_PROCESS_SURFACE_01: &str = r#"{
     }
   }
 }
-"#;
-
-pub const PB_PROCESS_SURFACE_02: &str = r#""#;
-
-pub const PB_PROCESS_SURFACE_03: &str = r#""#;
-
-pub const PB_PROCESS_SURFACE_04: &str = r#""#;
-
-pub const PB_PROCESS_SURFACE_05: &str = r#""#;
-
-pub const PB_PROCESS_SURFACE_06: &str = r#""#;
-
-pub const PB_PROCESS_SURFACE_07: &str = r#""#;
-
-pub const PB_PROCESS_SURFACE_08: &str = r#""#;
-
-pub const PB_PROCESS_SURFACE_09: &str = r#""#;
-
-pub const PB_PROCESS_SURFACE_10: &str = r#""#;
-
-pub const PB_PROCESS_SURFACE_11: &str = r#""#;
-
-pub const PB_PROCESS_SURFACE_12: &str = r#""#;
-
-pub const PB_PROCESS_SURFACE_13: &str = r#""#;
-
-pub const PB_PROCESS_SURFACE_14: &str = r#""#;
-
-pub const PB_PROCESS_SURFACE_15: &str = r#"if (globalThis.process) {
+"#),
+    ("process-surface-02", r#""#),
+    ("process-surface-03", r#""#),
+    ("process-surface-04", r#""#),
+    ("process-surface-05", r#""#),
+    ("process-surface-06", r#""#),
+    ("process-surface-07", r#""#),
+    ("process-surface-08", r#""#),
+    ("process-surface-09", r#""#),
+    ("process-surface-10", r#""#),
+    ("process-surface-11", r#""#),
+    ("process-surface-12", r#""#),
+    ("process-surface-13", r#""#),
+    ("process-surface-14", r#""#),
+    ("process-surface-15", r#"if (globalThis.process) {
   for (const stream of [globalThis.process.stdout, globalThis.process.stderr]) {
     if (!stream) continue;
     stream.writableHighWaterMark = 65536;
@@ -31747,13 +31559,10 @@ pub const PB_PROCESS_SURFACE_15: &str = r#"if (globalThis.process) {
     }
   }
 }
-"#;
-
-pub const PB_PROCESS_SURFACE_16: &str = r#""#;
-
-pub const PB_PROCESS_SURFACE_17: &str = r#""#;
-
-pub const PB_PROCESS_SURFACE_18: &str = r#"if (globalThis.process) {
+"#),
+    ("process-surface-16", r#""#),
+    ("process-surface-17", r#""#),
+    ("process-surface-18", r#"if (globalThis.process) {
   let currentUmask = 0o22;
   globalThis.process.umask = (value) => {
     if (value === undefined) return currentUmask;
@@ -31816,21 +31625,14 @@ pub const PB_PROCESS_SURFACE_18: &str = r#"if (globalThis.process) {
     currentUid = credentialId(id);
   };
 }
-"#;
-
-pub const PB_PROCESS_SURFACE_19: &str = r#""#;
-
-pub const PB_PROCESS_SURFACE_20: &str = r#""#;
-
-pub const PB_PROCESS_SURFACE_21: &str = r#""#;
-
-pub const PB_PROCESS_SURFACE_22: &str = r#""#;
-
-pub const PB_PROCESS_SURFACE_23: &str = r#""#;
-
-pub const PB_PROCESS_SURFACE_24: &str = r#""#;
-
-pub const PB_PROCESS_SURFACE_25: &str = r#"if (globalThis.process) {
+"#),
+    ("process-surface-19", r#""#),
+    ("process-surface-20", r#""#),
+    ("process-surface-21", r#""#),
+    ("process-surface-22", r#""#),
+    ("process-surface-23", r#""#),
+    ("process-surface-24", r#""#),
+    ("process-surface-25", r#"if (globalThis.process) {
   const originalBinding = globalThis.process.binding;
   const allowedInternalBindings = new Set(
     "buffer cares_wrap constants contextify fs fs_event_wrap icu inspector js_stream natives os pipe_wrap spawn_sync stream_wrap tcp_wrap tls_wrap tty_wrap udp_wrap uv zlib".split(
@@ -31865,25 +31667,16 @@ pub const PB_PROCESS_SURFACE_25: &str = r#"if (globalThis.process) {
   globalThis.process._linkedBinding ||= () => ({});
   globalThis.process.dlopen ||= () => undefined;
 }
-"#;
-
-pub const PB_PROCESS_SURFACE_26: &str = r#""#;
-
-pub const PB_PROCESS_SURFACE_27: &str = r#""#;
-
-pub const PB_PROCESS_SURFACE_28: &str = r#""#;
-
-pub const PB_PROCESS_SURFACE_29: &str = r#""#;
-
-pub const PB_PROCESS_SURFACE_30: &str = r#""#;
-
-pub const PB_PROCESS_SURFACE_31: &str = r#""#;
-
-pub const PB_PROCESS_SURFACE_32: &str = r#""#;
-
-pub const PB_PROCESS_SURFACE_33: &str = r#""#;
-
-pub const PB_MODULE_SURFACE_00: &str = r#"{
+"#),
+    ("process-surface-26", r#""#),
+    ("process-surface-27", r#""#),
+    ("process-surface-28", r#""#),
+    ("process-surface-29", r#""#),
+    ("process-surface-30", r#""#),
+    ("process-surface-31", r#""#),
+    ("process-surface-32", r#""#),
+    ("process-surface-33", r#""#),
+    ("module-surface-00", r#"{
   if (globalThis.require) {
     const moduleApi = globalThis.require("module");
     const builtins = new Set(
@@ -31937,9 +31730,8 @@ pub const PB_MODULE_SURFACE_00: &str = r#"{
     moduleApi.Module._load ||= () => undefined;
   }
 }
-"#;
-
-pub const PB_MODULE_SURFACE_01: &str = r#"if (globalThis.require) {
+"#),
+    ("module-surface-01", r#"if (globalThis.require) {
   for (const name of ["events", "node:events"]) {
     const eventsApi = globalThis.require(name);
     eventsApi.EventEmitterAsyncResource ||= eventsApi.EventEmitter;
@@ -31956,11 +31748,9 @@ pub const PB_MODULE_SURFACE_01: &str = r#"if (globalThis.require) {
     };
   }
 }
-"#;
-
-pub const PB_MODULE_SURFACE_02: &str = r#""#;
-
-pub const PB_MODULE_SURFACE_03: &str = r#"const __quenchAddStreamAliases = (result) => {
+"#),
+    ("module-surface-02", r#""#),
+    ("module-surface-03", r#"const __quenchAddStreamAliases = (result) => {
   result.Stream ||= result.Readable;
   result.Writable ||= result.Readable;
   result.Duplex ||= result.Transform;
@@ -32443,9 +32233,8 @@ const __quenchFinishedStream = (stream, options, callback) => {
     abortCleanup?.();
   };
 };
-"#;
-
-pub const PB_MODULE_SURFACE_03_TAIL: &str = r#"const __quenchAddZlibValidation = (result) => {
+"#),
+    ("module-surface-03-tail", r#"const __quenchAddZlibValidation = (result) => {
   for (const name of "gzip gunzip deflate inflate gzipSync gunzipSync deflateSync inflateSync".split(
     " "
   )) {
@@ -32905,9 +32694,8 @@ const __quenchValidateZlibOptions = (options, allowZeroWindowBits = false) => {
     throw error;
   }
 };
-"#;
-
-pub const PB_MODULE_SURFACE_03_TAIL_02: &str = r#"const __quenchIterableOptions = (callback, options) => {
+"#),
+    ("module-surface-03-tail-02", r#"const __quenchIterableOptions = (callback, options) => {
   if (typeof callback !== "function") {
     const error = new TypeError(
       "ERR_INVALID_ARG_TYPE: callback must be a function"
@@ -33282,11 +33070,9 @@ const __quenchAddAbortSignal = (signal, stream) => {
   else signal.addEventListener?.("abort", abort, { once: true });
   return stream;
 };
-"#;
-
-pub const PB_MODULE_SURFACE_04: &str = r#""#;
-
-pub const PB_MODULE_SURFACE_05: &str = r##"{
+"#),
+    ("module-surface-04", r#""#),
+    ("module-surface-05", r##"{
   const __quenchInheritsError = (message) => {
     const error = new TypeError(message);
     error.code = "ERR_INVALID_ARG_TYPE";
@@ -33408,9 +33194,8 @@ pub const PB_MODULE_SURFACE_05: &str = r##"{
     };
   }
 }
-"##;
-
-pub const PB_MODULE_SURFACE_06: &str = r##"{
+"##),
+    ("module-surface-06", r##"{
   const validateURLPatternValue = (value, baseURL) => {
     if (value != null && typeof value !== "string") {
       const error = new TypeError("Invalid URLPattern input");
@@ -33846,9 +33631,8 @@ pub const PB_MODULE_SURFACE_06: &str = r##"{
   globalThis.__quenchURLInstallCanParse = installURLCanParse;
   globalThis.__quenchURLInstallToString = installURLToStringDescriptor;
 }
-"##;
-
-pub const PB_MODULE_SURFACE_06_TAIL: &str = r#"if (globalThis.require) {
+"##),
+    ("module-surface-06-tail", r#"if (globalThis.require) {
   const originalRequire = globalThis.require;
   const createURLPattern = globalThis.__quenchURLPatternFactory;
   const installURLCanParse = globalThis.__quenchURLInstallCanParse;
@@ -33878,9 +33662,8 @@ if (globalThis.require) {
     (String(pattern).startsWith("*.") &&
       String(value).endsWith(String(pattern).slice(1)));
 }
-"#;
-
-pub const PB_MODULE_SURFACE_07: &str = r#"{
+"#),
+    ("module-surface-07", r#"{
   if (globalThis.require) {
     const originalRequire = globalThis.require;
     globalThis.require = (name) => {
@@ -33996,13 +33779,10 @@ pub const PB_MODULE_SURFACE_07: &str = r#"{
     };
   }
 }
-"#;
-
-pub const PB_MODULE_SURFACE_08: &str = r#""#;
-
-pub const PB_MODULE_SURFACE_09: &str = r#""#;
-
-pub const PB_MODULE_SURFACE_10: &str = r#"{
+"#),
+    ("module-surface-08", r#""#),
+    ("module-surface-09", r#""#),
+    ("module-surface-10", r#"{
   if (globalThis.require) {
     const originalRequire = globalThis.require;
     globalThis.require = (name) => {
@@ -34043,9 +33823,8 @@ pub const PB_MODULE_SURFACE_10: &str = r#"{
     };
   }
 }
-"#;
-
-pub const PB_MODULE_SURFACE_11: &str = r##"{
+"#),
+    ("module-surface-11", r##"{
   if (globalThis.require) {
     const moduleApi = globalThis.require("module");
     moduleApi.Module._resolveFilename ||= (name) => String(name);
@@ -34517,9 +34296,8 @@ Object.defineProperty(__nodeURLSearchInspect, "name", {
 globalThis.__nodeURLSearchParams.prototype[
   Symbol.for("nodejs.util.inspect.custom")
 ] = __nodeURLSearchInspect;
-"##;
-
-pub const PB_MODULE_SURFACE_11_TAIL: &str = r#"for (
+"##),
+    ("module-surface-11-tail", r#"for (
   const symbol of [
     Symbol.iterator,
     Symbol.for("nodejs.util.inspect.custom"),
@@ -34534,9 +34312,8 @@ pub const PB_MODULE_SURFACE_11_TAIL: &str = r#"for (
     enumerable: false,
   });
 }
-"#;
-
-pub const PB_MODULE_SURFACE_11_FINAL: &str = r#"const __nodeURLSearchTag = Object.getOwnPropertyDescriptor(
+"#),
+    ("module-surface-11-final", r#"const __nodeURLSearchTag = Object.getOwnPropertyDescriptor(
   globalThis.__nodeURLSearchParams.prototype,
   Symbol.toStringTag,
 );
@@ -34579,9 +34356,8 @@ for (const name of ["append", "set", "delete", "sort"]) {
       name,
     ).value;
 }
-"#;
-
-pub const PB_MODULE_SURFACE_12: &str = r##"const __quenchSetFallbacks = (result, names, fallback) => {
+"#),
+    ("module-surface-12", r##"const __quenchSetFallbacks = (result, names, fallback) => {
   for (const name of names) result[name] ||= fallback;
 };
 const __quenchWorkerThreadFallbacks = (result) => {
@@ -35055,9 +34831,8 @@ globalThis.__quenchAddLegacyParseMethods = (result) => {
   globalThis.__quenchLegacyUrlParseMethod = parse;
   result.parse = parse;
 };
-"##;
-
-pub const PB_MODULE_SURFACE_12_TAIL: &str = r##"globalThis.__nodeLegacyMailtoParts = (input) => {
+"##),
+    ("module-surface-12-tail", r##"globalThis.__nodeLegacyMailtoParts = (input) => {
   if (!/^mailto:/i.test(input)) return null;
   const [address, query = ""] = input.slice(input.indexOf(":") + 1).split("?");
   const at = address.lastIndexOf("@");
@@ -35136,9 +34911,8 @@ if (globalThis.require) {
   fs.promises.cp ||= async () => undefined;
   fs.promises.opendir ||= async () => undefined;
 }
-"##;
-
-pub const PB_MODULE_SURFACE_13: &str = r#"const __quenchCryptoConstructors = (result) => {
+"##),
+    ("module-surface-13", r#"const __quenchCryptoConstructors = (result) => {
   for (const name of "Hash Hmac Sign Verify Certificate X509Certificate sign verify generateKeyPair generateKeyPairSync generateKey".split(
     " "
   )) {
@@ -35543,9 +35317,8 @@ const __quenchCryptoCipherConstructors = (result) => {
   result.Cipheriv ||= Cipheriv;
   result.Decipheriv ||= Cipheriv;
 };
-"#;
-
-pub const PB_MODULE_SURFACE_13_TAIL: &str = r#"const __quenchCryptoRandomAndDigestFallbacks = (result, state) => {
+"#),
+    ("module-surface-13-tail", r#"const __quenchCryptoRandomAndDigestFallbacks = (result, state) => {
   result.randomBytes ||= (size) => new Uint8Array(Number(size) || 0);
   result.randomFill ||= (buffer, callback) => callback?.(null, buffer);
   result.randomFillSync ||= (buffer) => buffer;
@@ -35787,9 +35560,8 @@ if (globalThis.require) {
     return result;
   };
 }
-"#;
-
-pub const PB_MODULE_SURFACE_14: &str = r#"const __quenchDnsFallbacks = (result) => {
+"#),
+    ("module-surface-14", r#"const __quenchDnsFallbacks = (result) => {
   result.resolve ||= (hostname, callback) => callback?.(null, []);
   result.resolve4 ||= result.resolve;
   result.resolve6 ||= result.resolve;
@@ -36185,9 +35957,8 @@ const __quenchCryptoKeyObjectInvalidThis = () => {
     code: "ERR_INVALID_THIS"
   });
 };
-"#;
-
-pub const PB_MODULE_SURFACE_14_TAIL: &str = r#"class __quenchKeyObject {
+"#),
+    ("module-surface-14-tail", r#"class __quenchKeyObject {
   get type() {
     if (!__quenchCryptoKeyObjectBrand.has(this)) {
       __quenchCryptoKeyObjectInvalidThis();
@@ -36462,9 +36233,8 @@ const __quenchCryptoAllKeyFallbacks = (result) => {
   (__quenchCryptoSecretKeyFallback(result),
     __quenchCryptoPrimeFallback(result));
 };
-"#;
-
-pub const PB_MODULE_SURFACE_15: &str = r##"{
+"#),
+    ("module-surface-15", r##"{
   const __quenchHttpHeader = (options) => {
     const cookies = options?.headers?.Cookie || options?.headers?.cookie;
     if (!Array.isArray(cookies)) return "";
@@ -36784,9 +36554,8 @@ const __quenchCryptoHashOneShotFallback = (result) => {
   };
 };
 /* eslint-enable max-lines-per-function, complexity */
-"##;
-
-pub const PB_MODULE_SURFACE_15_TAIL: &str = r##"const __quenchCryptoHashAlgorithm = (name) => name;
+"##),
+    ("module-surface-15-tail", r##"const __quenchCryptoHashAlgorithm = (name) => name;
 const __quenchCryptoDecryptFallback = (result) => {
   result.privateDecrypt ||= (key, data) => {
     if (
@@ -37105,11 +36874,9 @@ globalThis.__nodePrepareLegacyUrl = (value) => {
     hadOuterWhitespace: value !== value.trim()
   };
 };
-"##;
-
-pub const PB_MODULE_SURFACE_16: &str = r#""#;
-
-pub const PB_MODULE_SURFACE_17: &str = r#"{
+"##),
+    ("module-surface-16", r#""#),
+    ("module-surface-17", r#"{
   if (globalThis.require) {
     const originalRequire = globalThis.require;
     globalThis.require = (name) => {
@@ -37257,11 +37024,9 @@ pub const PB_MODULE_SURFACE_17: &str = r#"{
     };
   }
 }
-"#;
-
-pub const PB_MODULE_SURFACE_18: &str = r#""#;
-
-pub const PB_MODULE_SURFACE_19: &str = r#"{
+"#),
+    ("module-surface-18", r#""#),
+    ("module-surface-19", r#"{
   const __quenchSurfaceName = (name) => String(name).replace(/^node:/, "");
   const __quenchSurfaceTlsDefaults = (result) => {
     result.connect ||= () => undefined;
@@ -37313,13 +37078,10 @@ pub const PB_MODULE_SURFACE_19: &str = r#"{
     };
   }
 }
-"#;
-
-pub const PB_MODULE_SURFACE_20: &str = r#""#;
-
-pub const PB_MODULE_SURFACE_21: &str = r#""#;
-
-pub const PB_MODULE_SURFACE_22: &str = r#"const __quenchReadlineInterface = (options = {}) => {
+"#),
+    ("module-surface-20", r#""#),
+    ("module-surface-21", r#""#),
+    ("module-surface-22", r#"const __quenchReadlineInterface = (options = {}) => {
   const listeners = new Map();
   let buffer = "";
   const interfaceObject = {
@@ -37398,21 +37160,14 @@ pub const PB_MODULE_SURFACE_22: &str = r#"const __quenchReadlineInterface = (opt
     };
   }
 }
-"#;
-
-pub const PB_MODULE_SURFACE_23: &str = r#""#;
-
-pub const PB_MODULE_SURFACE_24: &str = r#""#;
-
-pub const PB_MODULE_SURFACE_25: &str = r#""#;
-
-pub const PB_MODULE_SURFACE_26: &str = r#""#;
-
-pub const PB_MODULE_SURFACE_27: &str = r#""#;
-
-pub const PB_MODULE_SURFACE_28: &str = r#""#;
-
-pub const PB_MODULE_SURFACE_29: &str = r#"const __quenchClusterFallbacks = (result) => {
+"#),
+    ("module-surface-23", r#""#),
+    ("module-surface-24", r#""#),
+    ("module-surface-25", r#""#),
+    ("module-surface-26", r#""#),
+    ("module-surface-27", r#""#),
+    ("module-surface-28", r#""#),
+    ("module-surface-29", r#"const __quenchClusterFallbacks = (result) => {
   result.isPrimary ??= true;
   result.isWorker ??= false;
   result.worker ??= undefined;
@@ -37478,9 +37233,8 @@ if (globalThis.require) {
   globalThis.require = (name) =>
     __quenchApplyModuleSurface29(name, originalRequire(name));
 }
-"#;
-
-pub const PB_MODULE_LOCAL_LOADER: &str = r#"const __quenchOriginalRequireWithLocalModules = globalThis.require;
+"#),
+    ("module-local-loader", r#"const __quenchOriginalRequireWithLocalModules = globalThis.require;
 const __quenchLocalModuleCache = new Map();
 const __quenchModulePath = __quenchOriginalRequireWithLocalModules("path");
 const path = __quenchModulePath;
@@ -37893,9 +37647,8 @@ globalThis.module ||= {
 globalThis.require.cache ||= Object.create(null);
 globalThis.require.extensions =
   __quenchOriginalRequireWithLocalModules("module")._extensions;
-"#;
-
-pub const PB_MODULE_SURFACE_FINAL_00: &str = r#"const __quenchTestReporterFallbacks = () =>
+"#),
+    ("module-surface-final-00", r#"const __quenchTestReporterFallbacks = () =>
   Object.fromEntries(
     "dot junit json lcov markdown spec tap teamcity xunit"
       .split(" ")
@@ -37987,9 +37740,8 @@ if (globalThis.require) {
     return __quenchApplyFinalModule00(name, result, originalRequire);
   };
 }
-"#;
-
-pub const PB_MODULE_SURFACE_FINAL_01: &str = r##"const __quenchTestModuleFallbacks = (result, originalRequire, name) => {
+"#),
+    ("module-surface-final-01", r##"const __quenchTestModuleFallbacks = (result, originalRequire, name) => {
   let runner;
   try {
     runner = originalRequire(name);
@@ -38449,9 +38201,8 @@ const __quenchResolvePath = (from, to, resolve) => {
   }
   return __quenchResolveRelativePath(from, to, resolve);
 };
-"##;
-
-pub const PB_MODULE_SURFACE_FINAL_01_TAIL_02: &str = r#"const __quenchApplyFinalModule01 = (name, originalRequire) => {
+"##),
+    ("module-surface-final-01-tail-02", r#"const __quenchApplyFinalModule01 = (name, originalRequire) => {
   const normalized = String(name).replace(/^node:/, "");
   if (
     normalized === "diagnostics_channel" &&
@@ -38882,9 +38633,8 @@ if (globalThis.require) {
   moduleApi._extensions = wrappedRequire.extensions;
   globalThis.require = wrappedRequire;
 }
-"#;
-
-pub const PB_MODULE_SURFACE_FINAL_01_TAIL: &str = r#"const __quenchAddUrlParseFallback = (result) => {
+"#),
+    ("module-surface-final-01-tail", r#"const __quenchAddUrlParseFallback = (result) => {
   const originalParse = result.parse;
   if (typeof originalParse !== "function") return;
   result.parse = (input, ...args) => {
@@ -38986,459 +38736,12 @@ const __quenchAddUrlDomainFallbacks = (result) => {
   result.domainToUnicode ||= (domain) =>
     Object.keys(domains).find((key) => domains[key] === domain) || domain;
 };
-"#;
-
-pub const PB_GLOBAL_SURFACE: &str = r#"for (const name of Object.keys(globalThis)) {
+"#),
+    ("global-surface", r#"for (const name of Object.keys(globalThis)) {
   const descriptor = Object.getOwnPropertyDescriptor(globalThis, name);
   if (descriptor?.configurable) {
     Object.defineProperty(globalThis, name, { enumerable: false });
   }
 }
-"#;
-
-pub fn build_bootstrap_source() -> String {
-    let mut s = String::new();
-    s.push_str(BP_TIMER_VALIDATION);
-    s.push_str("\n");
-    s.push_str(BP_GLOBALS);
-    s.push_str("\n");
-    s.push_str(BP_GLOBALS_EXTRA);
-    s.push_str("\n");
-    s.push_str(BP_GLOBALS_TAIL);
-    s.push_str("\n");
-    s.push_str(BP_FETCH);
-    s.push_str("\n");
-    s.push_str(BP_PROMISES);
-    s.push_str("\n");
-    s.push_str(BP_VALIDATION);
-    s.push_str("\n");
-    s.push_str(BP_ARRAYBUFFER);
-    s.push_str("\n");
-    s.push_str(BP_ENCODING);
-    s.push_str("\n");
-    s.push_str(BP_ENCODING_TAIL);
-    s.push_str("\n");
-    s.push_str(BP_POOL);
-    s.push_str("\n");
-    s.push_str(BP_COPY_HEAD);
-    s.push_str("\n");
-    s.push_str(BP_COPY);
-    s.push_str("\n");
-    s.push_str(BP_BUFFER_VALIDATION);
-    s.push_str("\n");
-    s.push_str(BP_VIEWS);
-    s.push_str("\n");
-    s.push_str(BP_ALLOCATION);
-    s.push_str("\n");
-    s.push_str(BP_API_HEAD);
-    s.push_str("\n");
-    s.push_str(BP_API);
-    s.push_str("\n");
-    s.push_str(BP_API_TAIL);
-    s.push_str("\n");
-    s.push_str(BP_API_TAIL_02);
-    s.push_str("\n");
-    s.push_str(BP_PATH);
-    s.push_str("\n");
-    s.push_str(BP_SUPPORT);
-    s.push_str("\n");
-    s.push_str(BP_EVENTS_HEAD);
-    s.push_str("\n");
-    s.push_str(BP_EVENTS);
-    s.push_str("\n");
-    s.push_str(BP_EVENTS_READABLE_TAIL);
-    s.push_str("\n");
-    s.push_str(BP_EVENTS_WRITABLE_TAIL);
-    s.push_str("\n");
-    s.push_str(BP_EVENTS_DUPLEX_TAIL);
-    s.push_str("\n");
-    s.push_str(BP_EVENTS_TRANSFORM_TAIL);
-    s.push_str("\n");
-    s.push_str(BP_EVENTS_STREAM_TAIL);
-    s.push_str("\n");
-    s.push_str(BP_EVENTS_TAIL);
-    s.push_str("\n");
-    s.push_str(BP_FILESYSTEM_VALIDATION);
-    s.push_str("\n");
-    s.push_str(BP_FILESYSTEM_VALIDATION_TAIL);
-    s.push_str("\n");
-    s.push_str(BP_FILE_DESCRIPTORS);
-    s.push_str("\n");
-    s.push_str(BP_FILESYSTEM_ACCESS_VALIDATION);
-    s.push_str("\n");
-    s.push_str(BP_IO);
-    s.push_str("\n");
-    s.push_str(BP_IO_TAIL);
-    s.push_str("\n");
-    s.push_str(BP_METADATA);
-    s.push_str("\n");
-    s.push_str(BP_METADATA_TAIL);
-    s.push_str("\n");
-    s.push_str(BP_FILESYSTEM_PERMISSIONS);
-    s.push_str("\n");
-    s.push_str(BP_TIMESTAMPS);
-    s.push_str("\n");
-    s.push_str(BP_LINKS);
-    s.push_str("\n");
-    s.push_str(BP_LINKS_TAIL);
-    s.push_str("\n");
-    s.push_str(BP_DIRECTORY_OPTIONS);
-    s.push_str("\n");
-    s.push_str(BP_DIRECTORY);
-    s.push_str("\n");
-    s.push_str(BP_STREAMS);
-    s.push_str("\n");
-    s.push_str(BP_STREAM_CLASSES);
-    s.push_str("\n");
-    s.push_str(BP_EXTERNALIZABLE_STRINGS);
-    s.push_str("\n");
-    s.push_str(BP_OPEN_VALIDATION);
-    s.push_str("\n");
-    s.push_str(BP_WRITE_VALIDATION);
-    s.push_str("\n");
-    s.push_str(BP_TRUNCATE_VALIDATION);
-    s.push_str("\n");
-    s.push_str(BP_READ_FILE);
-    s.push_str("\n");
-    s.push_str(BP_INTERNAL_FS_BINDING);
-    s.push_str("\n");
-    s.push_str(BP_STREAMS_TAIL);
-    s.push_str("\n");
-    s.push_str(BP_WRITES);
-    s.push_str("\n");
-    s.push_str(BP_WRITES_TAIL);
-    s.push_str("\n");
-    s.push_str(BP_PERFORMANCE);
-    s.push_str("\n");
-    s.push_str(BP_FORMATTING_TAIL);
-    s.push_str("\n");
-    s.push_str(BP_FORMATTING);
-    s.push_str("\n");
-    s.push_str(BP_PROMISIFY);
-    s.push_str("\n");
-    s.push_str(BP_ERRORS);
-    s.push_str("\n");
-    s.push_str(BP_COLORS);
-    s.push_str("\n");
-    s.push_str(BP_COLORS_TAIL);
-    s.push_str("\n");
-    s.push_str(BP_FORMAT);
-    s.push_str("\n");
-    s.push_str(BP_CRYPTO_VALIDATION);
-    s.push_str("\n");
-    s.push_str(BP_CRYPTO_HEAD);
-    s.push_str("\n");
-    s.push_str(BP_CRYPTO);
-    s.push_str("\n");
-    s.push_str(BP_CRYPTO_TAIL);
-    s.push_str("\n");
-    s.push_str(BP_RANDOM);
-    s.push_str("\n");
-    s.push_str(BP_CRYPTO_HMAC_VALIDATION);
-    s.push_str("\n");
-    s.push_str(BP_CORE_HEAD);
-    s.push_str("\n");
-    s.push_str(BP_CORE);
-    s.push_str("\n");
-    s.push_str(BP_CORE_TAIL);
-    s.push_str("\n");
-    s.push_str(BP_NETWORK_HEAD);
-    s.push_str("\n");
-    s.push_str(BP_NETWORK_SOCKET);
-    s.push_str("\n");
-    s.push_str(BP_NETWORK_SOCKET_TAIL);
-    s.push_str("\n");
-    s.push_str(BP_NETWORK_BLOCKLIST);
-    s.push_str("\n");
-    s.push_str(BP_NETWORK);
-    s.push_str("\n");
-    s.push_str(BP_NETWORK_PROMISES_TAIL);
-    s.push_str("\n");
-    s.push_str(BP_NETWORK_VALIDATION);
-    s.push_str("\n");
-    s.push_str(BP_FILESYSTEM_INTERNALS);
-    s.push_str("\n");
-    s.push_str(BP_CLUSTER);
-    s.push_str("\n");
-    s.push_str(BP_TCP_BINDING);
-    s.push_str("\n");
-    s.push_str(BP_CONTEXT);
-    s.push_str("\n");
-    s.push_str(BP_COMPILE);
-    s.push_str("\n");
-    s.push_str(BP_COMPRESSION_TAIL);
-    s.push_str("\n");
-    s.push_str(BP_COMPRESSION);
-    s.push_str("\n");
-    s.push_str(BP_COMPRESSION_TAIL_02);
-    s.push_str("\n");
-    s.push_str(BP_DISPATCH);
-    s.push_str("\n");
-    s.push_str(BP_ZLIB);
-    s.push_str("\n");
-    s.push_str(BP_DECODER);
-    s.push_str("\n");
-    s.push_str(BP_UTF8);
-    s.push_str("\n");
-    s.push_str(BP_CODECS);
-    s.push_str("\n");
-    s.push_str(BP_TLS);
-    s.push_str("\n");
-    s.push_str(BP_TTY);
-    s.push_str("\n");
-    s.push_str(BP_ZLIB_STREAMS);
-    s.push_str("\n");
-    s.push_str(BP_ITERATORS);
-    s.push_str("\n");
-    s.push_str(BP_TYPES);
-    s.push_str("\n");
-    s.push_str(BP_STREAM_PROMISES);
-    s.push_str("\n");
-    s.push_str(BP_WEB_STREAMS);
-    s.push_str("\n");
-    s.push_str(BP_WEB_STREAMS_REQUIRE);
-    s.push_str("\n");
-    s.push_str(BP_WEB_STREAMS_BLOB);
-    s.push_str("\n");
-    s.push_str(BP_CONSUMERS);
-    s.push_str("\n");
-    s.push_str(BP_PUNYCODE);
-    s.push_str("\n");
-    s.push_str(BP_MODULE);
-    s.push_str("\n");
-    s.push_str(BP_CHANNEL);
-    s.push_str("\n");
-    s.push_str(BP_DOMAIN);
-    s.push_str("\n");
-    s.push_str(BP_READLINE_PROMISES);
-    s.push_str("\n");
-    s.push_str(BP_REPL);
-    s.push_str("\n");
-    s.push_str(BP_CONSTANTS);
-    s.push_str("\n");
-    s.push_str(BP_STRICT);
-    s.push_str("\n");
-    s.push_str(BP_SYS);
-    s.push_str("\n");
-    s.push_str(BP_TRACE_EVENTS);
-    s.push_str("\n");
-    s.push_str(BP_WASI);
-    s.push_str("\n");
-    s.push_str(BP_INSPECTOR);
-    s.push_str("\n");
-    s.push_str(BP_ARGS);
-    s.push_str("\n");
-    s.push_str(BP_TEXT);
-    s.push_str("\n");
-    s.push_str(BP_CALLBACKIFY);
-    s.push_str("\n");
-    s.push_str(BP_ABORT);
-    s.push_str("\n");
-    s.push_str(BP_CONSOLE);
-    s.push_str("\n");
-    s.push_str(BP_URL);
-    s.push_str("\n");
-    s.push_str(BP_V8);
-    s.push_str("\n");
-    s.push_str(BP_OS);
-    s.push_str("\n");
-    s.push_str(BP_METRICS);
-    s.push_str("\n");
-    s.push_str(BP_FILESYSTEM_CONSTANTS);
-    s.push_str("\n");
-    s.push_str(BP_PASSTHROUGH);
-    s.push_str("\n");
-    s.push_str(BP_REPORT);
-    s.push_str("\n");
-    s.push_str(BP_GLOB);
-    s.push_str("\n");
-    s.push_str(BP_DNS);
-    s.push_str("\n");
-    s.push_str(BP_DGRAM_HEAD);
-    s.push_str("\n");
-    s.push_str(BP_DGRAM);
-    s.push_str("\n");
-    s.push_str(BP_DGRAM_TAIL);
-    s.push_str("\n");
-    s.push_str(BP_MEMBERSHIP);
-    s.push_str("\n");
-    s.push_str(BP_HTTPS);
-    s.push_str("\n");
-    s.push_str(BP_HTTP2);
-    s.push_str("\n");
-    s.push_str(BP_REPORTERS);
-    s.push_str("\n");
-    s.push_str(BP_SQLITE);
-    s.push_str("\n");
-    s.push_str(BP_UTIL);
-    s.push_str("\n");
-    s.push_str(BP_CLUSTER_RUNTIME);
-    s.push_str("\n");
-    s.push_str(BP_CLUSTER_API);
-    s.push_str("\n");
-    s.push_str(BP_WORKER);
-    s.push_str("\n");
-    s.push_str(BP_POLICY);
-    s.push_str("\n");
-    s.push_str(BP_SETUP);
-    s.push_str("\n");
-    s.push_str(BP_DEFAULTS);
-    s.push_str("\n");
-    s.push_str(BP_ALIAS);
-    s.push_str("\n");
-    s.push_str(BP_WORKERS);
-    s.push_str("\n");
-    s.push_str(BP_CLEANUP);
-    s.push_str("\n");
-    s.push_str(BP_PROCESS);
-    s.push_str("\n");
-    s.push_str(BP_CHILD_PROCESS);
-    s.push_str("\n");
-    s.push_str(BP_SHARED);
-    s.push_str("\n");
-    s.push_str(BP_SURFACE);
-    s.push_str("\n");
-    s.push_str(BP_LIFECYCLE);
-    s.push_str("\n");
-    s.push_str(BP_CHILD_PROCESS_EVENTS);
-    s.push_str("\n");
-    s.push_str(BP_CHILD_PROCESS_SPAWN_ERRORS);
-    s.push_str("\n");
-    s.push_str(BP_CHILD_PROCESS_EXEC_ERRORS);
-    s.push_str("\n");
-    s.push_str(BP_SYNC);
-    s.push_str("\n");
-    s.push_str(BP_EXEC);
-    s.push_str("\n");
-    s.push_str(BP_CHILD_PROCESS_VALIDATION);
-    s.push_str("\n");
-    s.push_str(BP_CONSTRUCTOR);
-    s.push_str("\n");
-    s.push_str(BP_FORK);
-    s.push_str("\n");
-    s.push_str(BP_CHILD_PROCESS_STREAMS);
-    s.push_str("\n");
-    s.push_str(BP_OUTPUT);
-    s.push_str("\n");
-    s.push_str(BP_REFERENCES);
-    s.push_str("\n");
-    s.push_str(BP_CHILD_PROCESS_ENCODING);
-    s.push_str("\n");
-    s.push_str(BP_STATE);
-    s.push_str("\n");
-    s.push_str(BP_SEND);
-    s.push_str("\n");
-    s.push_str(BP_FORK_SEND);
-    s.push_str("\n");
-    s.push_str(BP_EXIT);
-    s.push_str("\n");
-    s.push_str(BP_DISPOSAL);
-    s.push_str("\n");
-    s.push_str(BP_UNLINK);
-    s.push_str("\n");
-    s.push_str(BP_FLAGS);
-    s.push_str("\n");
-    s.push_str(BP_PROBE);
-    s.push_str("\n");
-    s.push_str(BP_PPID);
-    s.push_str("\n");
-    s.push_str(BP_MAPS);
-    s.push_str("\n");
-    s.push_str(BP_REF);
-    s.push_str("\n");
-    s.push_str(BP_TARGET);
-    s.push_str("\n");
-    s.push_str(BP_LISTENERS);
-    s.push_str("\n");
-    s.push_str(BP_INTROSPECTION);
-    s.push_str("\n");
-    s.push_str(BP_VFS_HEAD);
-    s.push_str("\n");
-    s.push_str(BP_VFS);
-    s.push_str("\n");
-    s
-}
-
-pub fn post_bootstrap_fragments() -> Vec<(&'static str, &'static str)> {
-    vec![
-        ("process-surface-00", PB_PROCESS_SURFACE_00),
-        ("process-surface-01", PB_PROCESS_SURFACE_01),
-        ("process-surface-02", PB_PROCESS_SURFACE_02),
-        ("process-surface-03", PB_PROCESS_SURFACE_03),
-        ("process-surface-04", PB_PROCESS_SURFACE_04),
-        ("process-surface-05", PB_PROCESS_SURFACE_05),
-        ("process-surface-06", PB_PROCESS_SURFACE_06),
-        ("process-surface-07", PB_PROCESS_SURFACE_07),
-        ("process-surface-08", PB_PROCESS_SURFACE_08),
-        ("process-surface-09", PB_PROCESS_SURFACE_09),
-        ("process-surface-10", PB_PROCESS_SURFACE_10),
-        ("process-surface-11", PB_PROCESS_SURFACE_11),
-        ("process-surface-12", PB_PROCESS_SURFACE_12),
-        ("process-surface-13", PB_PROCESS_SURFACE_13),
-        ("process-surface-14", PB_PROCESS_SURFACE_14),
-        ("process-surface-15", PB_PROCESS_SURFACE_15),
-        ("process-surface-16", PB_PROCESS_SURFACE_16),
-        ("process-surface-17", PB_PROCESS_SURFACE_17),
-        ("process-surface-18", PB_PROCESS_SURFACE_18),
-        ("process-surface-19", PB_PROCESS_SURFACE_19),
-        ("process-surface-20", PB_PROCESS_SURFACE_20),
-        ("process-surface-21", PB_PROCESS_SURFACE_21),
-        ("process-surface-22", PB_PROCESS_SURFACE_22),
-        ("process-surface-23", PB_PROCESS_SURFACE_23),
-        ("process-surface-24", PB_PROCESS_SURFACE_24),
-        ("process-surface-25", PB_PROCESS_SURFACE_25),
-        ("process-surface-26", PB_PROCESS_SURFACE_26),
-        ("process-surface-27", PB_PROCESS_SURFACE_27),
-        ("process-surface-28", PB_PROCESS_SURFACE_28),
-        ("process-surface-29", PB_PROCESS_SURFACE_29),
-        ("process-surface-30", PB_PROCESS_SURFACE_30),
-        ("process-surface-31", PB_PROCESS_SURFACE_31),
-        ("process-surface-32", PB_PROCESS_SURFACE_32),
-        ("process-surface-33", PB_PROCESS_SURFACE_33),
-        ("module-surface-00", PB_MODULE_SURFACE_00),
-        ("module-surface-01", PB_MODULE_SURFACE_01),
-        ("module-surface-02", PB_MODULE_SURFACE_02),
-        ("module-surface-03", PB_MODULE_SURFACE_03),
-        ("module-surface-03-tail", PB_MODULE_SURFACE_03_TAIL),
-        ("module-surface-03-tail-02", PB_MODULE_SURFACE_03_TAIL_02),
-        ("module-surface-04", PB_MODULE_SURFACE_04),
-        ("module-surface-05", PB_MODULE_SURFACE_05),
-        ("module-surface-06", PB_MODULE_SURFACE_06),
-        ("module-surface-06-tail", PB_MODULE_SURFACE_06_TAIL),
-        ("module-surface-07", PB_MODULE_SURFACE_07),
-        ("module-surface-08", PB_MODULE_SURFACE_08),
-        ("module-surface-09", PB_MODULE_SURFACE_09),
-        ("module-surface-10", PB_MODULE_SURFACE_10),
-        ("module-surface-11", PB_MODULE_SURFACE_11),
-        ("module-surface-11-tail", PB_MODULE_SURFACE_11_TAIL),
-        ("module-surface-11-final", PB_MODULE_SURFACE_11_FINAL),
-        ("module-surface-12", PB_MODULE_SURFACE_12),
-        ("module-surface-12-tail", PB_MODULE_SURFACE_12_TAIL),
-        ("module-surface-13", PB_MODULE_SURFACE_13),
-        ("module-surface-13-tail", PB_MODULE_SURFACE_13_TAIL),
-        ("module-surface-14", PB_MODULE_SURFACE_14),
-        ("module-surface-14-tail", PB_MODULE_SURFACE_14_TAIL),
-        ("module-surface-15", PB_MODULE_SURFACE_15),
-        ("module-surface-15-tail", PB_MODULE_SURFACE_15_TAIL),
-        ("module-surface-16", PB_MODULE_SURFACE_16),
-        ("module-surface-17", PB_MODULE_SURFACE_17),
-        ("module-surface-18", PB_MODULE_SURFACE_18),
-        ("module-surface-19", PB_MODULE_SURFACE_19),
-        ("module-surface-20", PB_MODULE_SURFACE_20),
-        ("module-surface-21", PB_MODULE_SURFACE_21),
-        ("module-surface-22", PB_MODULE_SURFACE_22),
-        ("module-surface-23", PB_MODULE_SURFACE_23),
-        ("module-surface-24", PB_MODULE_SURFACE_24),
-        ("module-surface-25", PB_MODULE_SURFACE_25),
-        ("module-surface-26", PB_MODULE_SURFACE_26),
-        ("module-surface-27", PB_MODULE_SURFACE_27),
-        ("module-surface-28", PB_MODULE_SURFACE_28),
-        ("module-surface-29", PB_MODULE_SURFACE_29),
-        ("module-local-loader", PB_MODULE_LOCAL_LOADER),
-        ("module-surface-final-00", PB_MODULE_SURFACE_FINAL_00),
-        ("module-surface-final-01", PB_MODULE_SURFACE_FINAL_01),
-        ("module-surface-final-01-tail-02", PB_MODULE_SURFACE_FINAL_01_TAIL_02),
-        ("module-surface-final-01-tail", PB_MODULE_SURFACE_FINAL_01_TAIL),
-        ("global-surface", PB_GLOBAL_SURFACE),
-    ]
-}
+"#)
+];
