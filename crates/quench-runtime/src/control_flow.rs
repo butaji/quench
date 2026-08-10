@@ -46,27 +46,75 @@ pub(crate) fn reduce_try(
     facts: &mut crate::facts::ProgramDb,
     locals: &HashMap<String, u16>,
 ) -> Result<(), Vec<String>> {
-    let body =
-        crate::reduce::reduce_statements_no_tail(&statement.block.body, facts, locals.clone(), 0)?;
+    let next_slot = crate::reduce_support::register_base(locals);
+    let mut body_locals = locals.clone();
+    let mut body_next_slot = next_slot;
+    for statement in &statement.block.body {
+        let names = crate::loops::body_var_names(statement);
+        crate::loops::propagate_body_vars(&mut body_locals, &mut body_next_slot, &names);
+    }
+    let body = crate::reduce::reduce_statements_no_tail(
+        &statement.block.body,
+        facts,
+        body_locals.clone(),
+        body_next_slot,
+    )?;
     let handler = statement
         .handler
         .as_ref()
         .map(|handler| {
-            let handler_locals = handler_locals(handler, locals);
-            crate::reduce::reduce_statements_no_tail(&handler.body.body, facts, handler_locals, 0)
+            let (mut handler_locals, mut catch_slot) = handler_locals(handler, &body_locals);
+            let mut handler_next_slot = crate::reduce_support::register_base(&handler_locals);
+            for statement in &handler.body.body {
+                let names = crate::loops::body_var_names(statement);
+                for name in names {
+                    handler_locals.insert(name, handler_next_slot);
+                    handler_next_slot = handler_next_slot.saturating_add(1);
+                }
+            }
+            for statement in &statement.block.body {
+                let names = crate::loops::body_var_names(statement);
+                for name in names {
+                    handler_locals.insert(name, body_next_slot);
+                    body_next_slot = body_next_slot.saturating_add(1);
+                }
+            }
+            if let Some(parameter) = handler.param.as_ref() {
+                if let oxc::ast::ast::BindingPatternKind::BindingIdentifier(identifier) =
+                    &parameter.pattern.kind
+                {
+                    let slot = body_next_slot;
+                    handler_locals.insert(identifier.name.to_string(), slot);
+                    catch_slot = Some(slot);
+                }
+            }
+            let ops = crate::reduce::reduce_statements_no_tail(
+                &handler.body.body,
+                facts,
+                handler_locals,
+                handler_next_slot,
+            );
+            ops.map(|ops| (ops, catch_slot))
         })
         .transpose()?;
+    let (handler, catch_slot) = handler.map_or((None, None), |(ops, slot)| (Some(ops), slot));
     let finalizer = statement
         .finalizer
         .as_ref()
         .map(|finalizer| {
-            crate::reduce::reduce_statements_no_tail(&finalizer.body, facts, locals.clone(), 0)
+            crate::reduce::reduce_statements_no_tail(
+                &finalizer.body,
+                facts,
+                locals.clone(),
+                next_slot,
+            )
         })
         .transpose()?;
     ops.push(Op::Try {
         body,
         handler,
         finalizer,
+        catch_slot,
     });
     Ok(())
 }
@@ -74,14 +122,14 @@ pub(crate) fn reduce_try(
 fn handler_locals(
     handler: &oxc::ast::ast::CatchClause<'_>,
     locals: &HashMap<String, u16>,
-) -> HashMap<String, u16> {
+) -> (HashMap<String, u16>, Option<u16>) {
     let mut result = locals.clone();
     let Some(parameter) = handler.param.as_ref() else {
-        return result;
+        return (result, None);
     };
     let oxc::ast::ast::BindingPatternKind::BindingIdentifier(identifier) = &parameter.pattern.kind
     else {
-        return result;
+        return (result, None);
     };
     let slot = result
         .values()
@@ -89,7 +137,7 @@ fn handler_locals(
         .max()
         .map_or(0, |value| value.saturating_add(1));
     result.insert(identifier.name.to_string(), slot);
-    result
+    (result, Some(slot))
 }
 
 pub(crate) fn reduce_try_statement(
