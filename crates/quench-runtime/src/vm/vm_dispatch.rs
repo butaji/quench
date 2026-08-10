@@ -178,6 +178,7 @@ fn run_control_op(
             .map(Some),
         Break { label } => Ok(Some(Completion::Break(label.clone()))),
         Continue { label } => Ok(Some(Completion::Continue(label.clone()))),
+        TailCall { .. } => run_tail_call(registers, op).map(Some),
         Await { .. } => run_await_completion(registers, op),
         Yield { src } => read_register(registers, *src)
             .map(Completion::Yield)
@@ -229,6 +230,22 @@ fn run_call(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
         vm_ops::execute_call(registers, *dst, *callee, args, spreads)?;
     }
     Ok(())
+}
+
+fn run_tail_call(
+    registers: &[Value],
+    op: &Op,
+) -> Result<crate::completion::Completion, VmError> {
+    let Op::TailCall {
+        callee,
+        args,
+        spreads,
+    } = op
+    else {
+        return Ok(crate::completion::Completion::Normal);
+    };
+    vm_ops::prepare_tail_call(registers, *callee, args, spreads)
+        .map(crate::completion::Completion::TailCall)
 }
 
 fn run_await_completion(

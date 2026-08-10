@@ -30,6 +30,7 @@ pub struct ProgramDb {
     pub symbol_count: usize,
     pub(crate) strict: bool,
     pub(crate) in_function: bool,
+    pub(crate) tail_calls: bool,
     pub(crate) eval_var_barrier: Vec<String>,
     pub(crate) eval_deletable: Vec<(String, u16)>,
 }

@@ -20,76 +20,19 @@ pub(crate) fn reduce_update(
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
-    let oxc::ast::ast::SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) =
-        &update.argument
-    else {
-        return reduce_member_update(update, ops, facts, next_register, locals);
-    };
-    let name = identifier.name.as_str();
-    let slot = locals.get(name).copied();
-    let old = *next_register;
-    *next_register = next_register.saturating_add(1);
-    match slot {
-        Some(slot) => ops.push(Op::LoadLocal { dst: old, slot }),
-        None => ops.push(Op::ResolveName {
-            dst: old,
-            key: name.to_string(),
-        }),
-    }
+    let mut place = crate::reduce::reduce_assignments::reduce_simple_place(
+        &update.argument,
+        ops,
+        facts,
+        next_register,
+        locals,
+    )?;
+    crate::reduce::reduce_assignments::prepare_get(&mut place, ops, next_register);
+    let old = crate::reduce::reduce_assignments::get(&place, ops, next_register)?;
     let one = emit_one(ops, next_register);
     let updated = emit_member_update_value(ops, next_register, update, old, one);
-    match slot {
-        Some(slot) => ops.push(Op::StoreLocal { slot, src: updated }),
-        None => ops.push(Op::SetName {
-            key: name.to_string(),
-            src: updated,
-            strict: facts.strict,
-        }),
-    }
+    crate::reduce::reduce_assignments::put(place, updated, ops)?;
     Some(if update.prefix { updated } else { old })
-}
-
-fn reduce_member_update(
-    update: &oxc::ast::ast::UpdateExpression<'_>,
-    ops: &mut Vec<Op>,
-    facts: &mut ProgramDb,
-    next_register: &mut u16,
-    locals: &HashMap<String, u16>,
-) -> Option<u16> {
-    let member = static_member(update)?;
-    let object =
-        crate::reduce::reduce_expression(&member.object, ops, facts, next_register, locals)?;
-    let key = member.property.name.to_string();
-    let old = emit_member_load(ops, next_register, object, &key);
-    let one = emit_one(ops, next_register);
-    let updated = emit_member_update_value(ops, next_register, update, old, one);
-    ops.push(Op::SetProperty {
-        object,
-        key,
-        src: updated,
-    });
-    Some(if update.prefix { updated } else { old })
-}
-
-fn static_member<'a>(
-    update: &'a oxc::ast::ast::UpdateExpression<'_>,
-) -> Option<&'a oxc::ast::ast::StaticMemberExpression<'a>> {
-    let oxc::ast::ast::SimpleAssignmentTarget::StaticMemberExpression(member) = &update.argument
-    else {
-        return None;
-    };
-    Some(member)
-}
-
-fn emit_member_load(ops: &mut Vec<Op>, next_register: &mut u16, object: u16, key: &str) -> u16 {
-    let old = *next_register;
-    *next_register = next_register.saturating_add(1);
-    ops.push(Op::GetProperty {
-        dst: old,
-        object,
-        key: key.to_string(),
-    });
-    old
 }
 
 fn emit_one(ops: &mut Vec<Op>, next_register: &mut u16) -> u16 {
