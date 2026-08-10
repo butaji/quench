@@ -157,6 +157,9 @@ pub fn reduce_expression(
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
+    if let Expression::TaggedTemplateExpression(tagged) = expression {
+        return reduce_tagged_template(tagged, ops, facts, next_register, locals);
+    }
     if let Expression::AwaitExpression(await_expression) = expression {
         let src = reduce_expression(
             &await_expression.argument,
@@ -201,6 +204,64 @@ pub fn reduce_expression(
         lhs,
         rhs,
     });
+    Some(dst)
+}
+
+fn reduce_tagged_template(
+    tagged: &oxc::ast::ast::TaggedTemplateExpression<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<u16> {
+    let callee = reduce_expression(&tagged.tag, ops, facts, next_register, locals)?;
+    let cooked = reduce_template_parts(&tagged.quasi, true, ops, next_register)?;
+    let raw = reduce_template_parts(&tagged.quasi, false, ops, next_register)?;
+    ops.push(Op::SetProperty {
+        object: cooked,
+        key: "raw".to_string(),
+        src: raw,
+    });
+    let mut args = vec![cooked];
+    for expression in &tagged.quasi.expressions {
+        args.push(reduce_expression(
+            expression,
+            ops,
+            facts,
+            next_register,
+            locals,
+        )?);
+    }
+    let spreads = vec![false; args.len()];
+    let dst = *next_register;
+    *next_register = next_register.saturating_add(1);
+    ops.push(Op::Call {
+        dst,
+        callee,
+        args,
+        spreads,
+    });
+    Some(dst)
+}
+
+fn reduce_template_parts(
+    template: &oxc::ast::ast::TemplateLiteral<'_>,
+    cooked: bool,
+    ops: &mut Vec<Op>,
+    next_register: &mut u16,
+) -> Option<u16> {
+    let mut elements = Vec::with_capacity(template.quasis.len());
+    for quasi in &template.quasis {
+        let value = if cooked {
+            quasi.value.cooked.as_ref()?.as_str()
+        } else {
+            quasi.value.raw.as_str()
+        };
+        elements.push(emit_string(ops, next_register, value));
+    }
+    let dst = *next_register;
+    *next_register = next_register.saturating_add(1);
+    ops.push(Op::MakeArray { dst, elements });
     Some(dst)
 }
 pub fn reduce_unary(
