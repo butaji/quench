@@ -33,6 +33,24 @@ pub(crate) fn write_intrinsic_override(builtin: Builtin, key: &str, descriptor: 
     overrides::write(builtin, key, descriptor)
 }
 
+/// Mark `key` as deleted from `builtin`'s prototype chain so a future
+/// hardcoded lookup for that combination observes the removal.
+pub(crate) fn mark_builtin_prototype_property_removed(builtin: Builtin, key: &str) {
+    overrides::mark_removed(builtin, key)
+}
+
+/// Returns true if JS `delete` has previously removed `key` from `builtin`'s
+/// prototype chain in the current program.
+pub(crate) fn builtin_prototype_property_is_removed(builtin: Builtin, key: &str) -> bool {
+    overrides::is_removed(builtin, key)
+}
+
+/// Drop every cached intrinsic-property override and recorded deletion so a
+/// fresh program can start with a clean prototype view.
+pub fn reset_intrinsic_prototype_state() {
+    overrides::reset()
+}
+
 pub(crate) fn property(builtin: Builtin, key: &str) -> Value {
     props::lookup(builtin, key)
 }

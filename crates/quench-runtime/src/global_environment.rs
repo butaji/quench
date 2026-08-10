@@ -49,17 +49,13 @@ fn check_function(name: &str) -> Result<(), VmError> {
 fn check_var(name: &str, is_lexical: bool) -> Result<(), VmError> {
     // The reducer conflates var and lexical declarations under CheckGlobalVar.
     // Lexical declarations (let/const/class) must throw SyntaxError on existing
-    // or restricted bindings, while var declarations must throw TypeError on
-    // non-configurable or non-extensible globals.
+    // or restricted bindings, while var declarations follow CanDeclareGlobalVar:
+    // if the global already has an own property of that name, the declaration
+    // is permitted; otherwise the global must be extensible.
     if is_lexical {
         check_lexical_declaration(name)?;
         Ok(())
-    } else if let Some(descriptor) = own_descriptor(name) {
-        if !descriptor.configurable {
-            return Err(crate::value::error::throw_type_error(&format!(
-                "Cannot declare global var '{name}'"
-            )));
-        }
+    } else if own_descriptor(name).is_some() {
         Ok(())
     } else if !is_global_extensible() {
         Err(crate::value::error::throw_type_error(&format!(

@@ -127,6 +127,14 @@ fn open(value: Value) -> Result<Value, crate::execute::VmError> {
         if matches!(value, Value::Generator(_)) {
             return open_self_iterator(value);
         }
+        if matches!(value, Value::Array(_))
+            && crate::builtins::builtin_prototype_property_is_removed(
+                crate::ops::Builtin::ArrayPrototype,
+                "Symbol.iterator",
+            )
+        {
+            return Err(not_iterable());
+        }
         return iterable_values(value).map(make);
     }
     let iterator = call(&method, &value)?;
