@@ -4,10 +4,12 @@ use crate::{environment::Environment, execute::VmError, value::Value};
 
 thread_local! {
     static CURRENT_ENVIRONMENT: RefCell<Option<Rc<Environment>>> = const { RefCell::new(None) };
+    static GLOBAL_LEXICAL_ENVIRONMENT: RefCell<Option<Rc<Environment>>> = const { RefCell::new(None) };
 }
 
 pub(crate) struct EnvironmentGuard {
     previous: Option<Rc<Environment>>,
+    previous_global: Option<Rc<Environment>>,
 }
 
 pub(crate) struct IterationBinding {
@@ -39,13 +41,25 @@ impl Drop for IterationBinding {
 impl EnvironmentGuard {
     pub(crate) fn install(environment: Rc<Environment>) -> Self {
         let previous = CURRENT_ENVIRONMENT.with(|current| current.replace(Some(environment)));
-        Self { previous }
+        let previous_global = GLOBAL_LEXICAL_ENVIRONMENT.with(|global| {
+            let previous_global = global.borrow().clone();
+            if previous.is_none() && previous_global.is_none() {
+                let current = CURRENT_ENVIRONMENT.with(|current| current.borrow().clone());
+                global.replace(current);
+            }
+            previous_global
+        });
+        Self {
+            previous,
+            previous_global,
+        }
     }
 }
 
 impl Drop for EnvironmentGuard {
     fn drop(&mut self) {
         CURRENT_ENVIRONMENT.with(|current| current.replace(self.previous.take()));
+        GLOBAL_LEXICAL_ENVIRONMENT.with(|global| global.replace(self.previous_global.take()));
     }
 }
 
@@ -53,6 +67,14 @@ pub(crate) fn current() -> Rc<Environment> {
     CURRENT_ENVIRONMENT
         .with(|current| current.borrow().clone())
         .unwrap_or_default()
+}
+
+pub(crate) fn global_lexical() -> Option<Rc<Environment>> {
+    GLOBAL_LEXICAL_ENVIRONMENT.with(|global| global.borrow().clone())
+}
+
+pub(crate) fn global_has_own_name(name: &str) -> bool {
+    global_lexical().is_some_and(|environment| environment.has_own_name(name))
 }
 
 pub(crate) fn is_installed() -> bool {
@@ -146,7 +168,22 @@ pub(crate) fn alias_name(name: &str, slot: u16) {
 }
 
 pub(crate) fn resolve_name(name: &str) -> Option<Value> {
-    current().resolve_name(name)
+    current().resolve_name(name).or_else(|| {
+        global_has_own_name(name)
+            .then(global_lexical)
+            .flatten()?
+            .resolve_name(name)
+    })
+}
+
+pub(crate) fn resolve_name_or_undefined(name: &str) -> Result<Value, VmError> {
+    if let Some(value) = crate::with_scope::resolve_binding(name)? {
+        return Ok(value);
+    }
+    if let Some(value) = resolve_name(name) {
+        return Ok(value);
+    }
+    crate::execute::get_property_result(&crate::vm::current_global_object(), name)
 }
 
 pub(crate) fn set_named(name: &str, value: Value) -> bool {

@@ -3,6 +3,7 @@ use crate::{
     ops::{FunctionKind, FunctionStrictness, Op},
 };
 use std::collections::HashMap;
+const NEW_TARGET: &str = "\0new_target";
 #[derive(Clone, Copy)]
 pub(crate) struct FunctionMetadata {
     pub(crate) kind: FunctionKind,
@@ -28,7 +29,7 @@ pub(crate) fn reduce_body(
     let rest = rest_slot(&parameters, parameter_count, captures);
     let minimum = captures
         .saturating_add(parameter_count)
-        .saturating_add(if rest.is_some() { 3 } else { 2 });
+        .saturating_add(if rest.is_some() { 4 } else { 3 });
     let next_slot = crate::reduce_support::register_base(&parameters).max(minimum);
     let inherited = (facts.strict, facts.in_function);
     facts.strict = matches!(strictness, FunctionStrictness::Strict);
@@ -56,11 +57,10 @@ pub(crate) fn reduce_body(
     Ok(bind_rest(prefix, rest, parameter_count, captures))
 }
 fn rest_slot(parameters: &HashMap<String, u16>, params: u16, captures: u16) -> Option<u16> {
-    let slot = captures.saturating_add(params).saturating_add(2);
-    parameters
-        .values()
-        .any(|value| *value == slot)
-        .then_some(slot)
+    let slot = captures
+        .saturating_add(params)
+        .saturating_add(2 + u16::from(parameters.contains_key(NEW_TARGET)));
+    parameters.values().copied().find(|value| *value == slot)
 }
 fn bind_rest(mut body: Vec<Op>, rest: Option<u16>, params: u16, captures: u16) -> Vec<Op> {
     let Some(slot) = rest else { return body };
@@ -86,32 +86,31 @@ fn bind_rest(mut body: Vec<Op>, rest: Option<u16>, params: u16, captures: u16) -
     prefix
 }
 fn capture_count(locals: &HashMap<String, u16>) -> u16 {
-    locals
-        .values()
-        .copied()
-        .max()
-        .map_or(0, |slot| slot.saturating_add(1))
+    crate::reduce_support::register_base(locals)
 }
-fn extend_function_parameters(
+pub(super) fn function_bindings(
     mut parameters: HashMap<String, u16>,
     parameter_count: u16,
     captures: u16,
     locals: &HashMap<String, u16>,
     lexical_receiver: bool,
 ) -> HashMap<String, u16> {
+    if !lexical_receiver {
+        let shifted = parameter_count.saturating_add(2);
+        parameters
+            .values_mut()
+            .filter(|slot| **slot >= shifted)
+            .for_each(|slot| *slot = slot.saturating_add(1));
+    }
     for slot in parameters.values_mut() {
         *slot = slot.saturating_add(captures);
     }
     let mut bindings = locals.clone();
     if !lexical_receiver {
-        bindings.insert(
-            "arguments".to_string(),
-            captures.saturating_add(parameter_count),
-        );
-        bindings.insert(
-            "this".to_string(),
-            captures.saturating_add(parameter_count).saturating_add(1),
-        );
+        let base = captures.saturating_add(parameter_count);
+        for (name, offset) in [("arguments", 0), ("this", 1), (NEW_TARGET, 2)] {
+            bindings.insert(name.to_string(), base.saturating_add(offset));
+        }
     }
     bindings.extend(parameters);
     bindings
@@ -165,8 +164,7 @@ fn split_function_locals(
     lexical_receiver: bool,
 ) -> (HashMap<String, u16>, HashMap<String, u16>) {
     let formal = parameters.clone();
-    let parameters =
-        extend_function_parameters(parameters, count, captures, locals, lexical_receiver);
+    let parameters = function_bindings(parameters, count, captures, locals, lexical_receiver);
     let mut body = parameters.clone();
     crate::reduce_support::shadow_function_bindings(statements, &mut body, &formal);
     (parameters, body)
@@ -179,7 +177,7 @@ fn function_local_count(
 ) -> u16 {
     let minimum = captures
         .saturating_add(count)
-        .saturating_add(2)
+        .saturating_add(2 + u16::from(locals.contains_key(NEW_TARGET)))
         .saturating_add(u16::from(rest.is_some()));
     crate::reduce_support::register_base(locals).max(minimum)
 }
@@ -237,7 +235,8 @@ pub(crate) fn reduce_expression(
 ) -> Option<u16> {
     let body = function.body.as_ref()?;
     let strictness = crate::reduce_support::function_strictness(body, facts.strict);
-    let (parameters, parameter_count) = function_parameters(function).ok()?;
+    let (parameters, parameter_count) =
+        crate::function_parameters::bindings(&function.params).ok()?;
     let inherited = (facts.strict, facts.in_function);
     facts.strict = matches!(strictness, FunctionStrictness::Strict);
     facts.in_function = true;
@@ -379,24 +378,6 @@ pub(crate) fn write_op(registers: &mut Vec<crate::value::Value>, op: &Op) {
 }
 
 include!("functions_arguments.rs");
-
-/// Execute a constructor and return its result plus the final `this` value.
-pub(crate) fn execute_construct(
-    function: &std::rc::Rc<crate::value::FunctionValue>,
-    this_value: &crate::value::Value,
-    arguments: &[crate::value::Value],
-) -> Result<(crate::value::Value, crate::value::Value), crate::execute::VmError> {
-    let this_slot = function.captures.len() as u16 + function.params + 1;
-    let (mut registers, environment) = build_registers(function, this_value, arguments);
-    let result = crate::vm::execute_in_environment(
-        &function.body,
-        &mut registers,
-        &crate::vm::VmContext::default(),
-        environment.clone(),
-    )?;
-    let final_this = environment.get(this_slot);
-    Ok((result, final_this))
-}
 
 pub(crate) fn execute_bound(
     bound: &crate::value::BoundFunctionValue,

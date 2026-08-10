@@ -49,9 +49,19 @@ fn evaluate_direct(
     let Value::String(source) = value else {
         return Ok(value.clone());
     };
-    let program =
-        crate::reduce::reduce_eval_source(source, strict, global, bindings, forbidden_var_names)
-            .map_err(syntax_error)?;
+    let grammar = crate::semantic::EvalGrammarContext {
+        new_target: bindings.iter().any(|(name, _)| name == "\0new_target"),
+        super_property: crate::super_scope::is_active(),
+    };
+    let program = crate::reduce::reduce_statements::reduce_eval_source_in_context(
+        source,
+        strict,
+        global,
+        bindings,
+        forbidden_var_names,
+        grammar,
+    )
+    .map_err(syntax_error)?;
     execute_direct_eval(&program.ops)
 }
 

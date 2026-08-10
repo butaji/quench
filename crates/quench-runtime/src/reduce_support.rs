@@ -22,6 +22,27 @@ use crate::ops::{Constant, Op};
 
 const SCRIPT_THIS_SLOT: &str = "\0script_this";
 
+pub(crate) fn has_strict_directive(program: &oxc::ast::ast::Program<'_>) -> bool {
+    program
+        .directives
+        .iter()
+        .any(|directive| directive.directive.as_str() == "use strict")
+}
+
+pub(crate) fn validate_parse(parsed: &oxc::parser::ParserReturn<'_>) -> Result<(), Vec<String>> {
+    if parsed.panicked {
+        return Err(vec!["SyntaxError: OXC parser rejected source".to_string()]);
+    }
+    if parsed.errors.is_empty() {
+        return Ok(());
+    }
+    Err(parsed
+        .errors
+        .iter()
+        .map(|error| format!("SyntaxError: {error}"))
+        .collect())
+}
+
 /// Highest allocated local slot plus one, used as the next register base.
 pub(crate) fn register_base(locals: &HashMap<String, u16>) -> u16 {
     locals
@@ -41,6 +62,57 @@ pub(crate) fn predeclare_functions(
         for name in declared_names(statement) {
             reserve(&name, locals, next_slot);
         }
+    }
+}
+
+pub(crate) fn instantiate_script_declarations(
+    statements: &[oxc::ast::ast::Statement<'_>],
+    locals: &mut HashMap<String, u16>,
+    next_slot: &mut u16,
+    ops: &mut Vec<Op>,
+    script: bool,
+) {
+    predeclare_functions(statements, locals, next_slot);
+    if !script {
+        return;
+    }
+    for statement in statements {
+        for name in script_lexical_names(statement) {
+            let slot = *next_slot;
+            *next_slot = next_slot.saturating_add(1);
+            locals.insert(name.clone(), slot);
+            ops.push(Op::MarkUninitialized { slot });
+            ops.push(Op::DeclareEvalBinding { name, slot });
+        }
+    }
+}
+
+pub(crate) fn script_lexical_slot(
+    statement: &oxc::ast::ast::Statement<'_>,
+    locals: &HashMap<String, u16>,
+) -> Option<u16> {
+    script_lexical_names(statement)
+        .first()
+        .and_then(|name| locals.get(name).copied())
+}
+
+fn script_lexical_names(statement: &oxc::ast::ast::Statement<'_>) -> Vec<String> {
+    match statement {
+        oxc::ast::ast::Statement::VariableDeclaration(declaration)
+            if declaration.kind != oxc::ast::ast::VariableDeclarationKind::Var =>
+        {
+            declaration
+                .declarations
+                .iter()
+                .flat_map(|declarator| crate::binding_patterns::names(&declarator.id))
+                .collect()
+        }
+        oxc::ast::ast::Statement::ClassDeclaration(class) => class
+            .id
+            .iter()
+            .map(|identifier| identifier.name.to_string())
+            .collect(),
+        _ => Vec::new(),
     }
 }
 

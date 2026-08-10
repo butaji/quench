@@ -14,6 +14,7 @@ use oxc::{
 use std::collections::HashMap;
 
 const SCRIPT_THIS_SLOT: &str = "\0script_this";
+const NEW_TARGET_SLOT: &str = "\0new_target";
 pub fn reduce_if_statement(
     statement: &oxc::ast::ast::IfStatement<'_>,
     ops: &mut Vec<Op>,
@@ -243,9 +244,11 @@ pub fn reduce_unary(
         UnaryOperator::Typeof => crate::ops::UnaryOp::Typeof,
         _ => return None,
     };
-    let src = if operator == crate::ops::UnaryOp::Typeof
-        && crate::unary::is_unresolved_identifier(&unary.argument, locals)
-    {
+    let unresolved_typeof = operator == crate::ops::UnaryOp::Typeof
+        && crate::unary::is_unresolved_identifier(&unary.argument, locals);
+    let src = if unresolved_typeof && dynamic_binding_may_exist(ops) {
+        emit_optional_name_lookup(&unary.argument, ops, next_register)?
+    } else if unresolved_typeof {
         crate::reduce_support::emit_undefined(ops, next_register)
     } else {
         reduce_expression(&unary.argument, ops, facts, next_register, locals)?
@@ -254,6 +257,52 @@ pub fn reduce_unary(
     *next_register = next_register.saturating_add(1);
     ops.push(Op::Unary { dst, operator, src });
     Some(dst)
+}
+
+fn emit_optional_name_lookup(
+    expression: &Expression<'_>,
+    ops: &mut Vec<Op>,
+    next: &mut u16,
+) -> Option<u16> {
+    let mut expression = expression;
+    while let Expression::ParenthesizedExpression(parenthesized) = expression {
+        expression = &parenthesized.expression;
+    }
+    let Expression::Identifier(identifier) = expression else {
+        return None;
+    };
+    let dst = take_register(next);
+    ops.push(Op::ResolveNameOrUndefined {
+        dst,
+        name: identifier.name.to_string(),
+    });
+    Some(dst)
+}
+
+fn dynamic_binding_may_exist(ops: &[Op]) -> bool {
+    ops.iter().any(op_may_invoke_eval)
+}
+
+fn op_may_invoke_eval(op: &Op) -> bool {
+    matches!(
+        op,
+        Op::Eval { .. }
+            | Op::Call { .. }
+            | Op::CallMethod { .. }
+            | Op::CallSuperMethod { .. }
+            | Op::Construct { .. }
+            | Op::Await { .. }
+            | Op::Yield { .. }
+            | Op::Branch { .. }
+            | Op::Label { .. }
+            | Op::With { .. }
+            | Op::Try { .. }
+            | Op::Loop { .. }
+            | Op::ForIn { .. }
+            | Op::ForOf { .. }
+            | Op::Switch { .. }
+            | Op::Conditional { .. }
+    )
 }
 pub fn reduce_call(
     call: &oxc::ast::ast::CallExpression<'_>,
@@ -352,6 +401,12 @@ pub fn reduce_atom(
 ) -> Option<u16> {
     if matches!(expression, Expression::ThisExpression(_)) {
         return Some(reduce_this_atom(ops, next_register, locals));
+    }
+    if let Expression::MetaProperty(property) = expression {
+        if property.meta.name == "new" && property.property.name == "target" {
+            let slot = *locals.get(NEW_TARGET_SLOT)?;
+            return Some(emit_load_local(ops, next_register, slot));
+        }
     }
     if let Some(value) = reduce_literal(expression) {
         return Some(reduce_literal_atom(value, ops, facts, next_register));
