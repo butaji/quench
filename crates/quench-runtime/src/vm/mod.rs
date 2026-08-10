@@ -218,8 +218,25 @@ pub fn get_property(value: &Value, key: &str) -> Value {
             .map_or(Value::Undefined, |(_, value)| value.clone()),
         Map(_) => crate::collections::map::property(key),
         Set(_) => crate::collections::set::property(key),
+        Promise(_) => promise_property(value, key),
         _ => Value::Undefined,
     }
+}
+
+fn promise_property(value: &Value, key: &str) -> Value {
+    let Some(builtin @ (Builtin::PromiseThen | Builtin::PromiseCatch | Builtin::PromiseFinally)) =
+        (match crate::builtins::property(Builtin::PromisePrototype, key) {
+            Value::Builtin(builtin) => Some(builtin),
+            _ => None,
+        })
+    else {
+        return crate::builtins::property(Builtin::PromisePrototype, key);
+    };
+    Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
+        target: Value::Builtin(builtin),
+        receiver: value.clone(),
+        arguments: Vec::new(),
+    }))
 }
 
 fn object_property(properties: &Rc<Vec<(String, Value)>>, key: &str) -> Value {
