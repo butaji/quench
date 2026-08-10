@@ -49,6 +49,9 @@ fn builtin_method(builtin: Builtin, key: &str) -> Option<Builtin> {
 
 fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
     use Builtin::*;
+    if let HostCapability(kind) = builtin {
+        return host_capability_method(kind, key);
+    }
     match (builtin, key) {
         (Array, "prototype") => Some(ArrayPrototype),
         (ArrayBuffer, "isView") => Some(ArrayBufferIsView),
@@ -98,6 +101,17 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
         (RegExpPrototype, "exec") => Some(RegExpExec),
         _ => builtin_method2(builtin, key),
     }
+}
+
+fn host_capability_method(kind: crate::ops::HostCapabilityKind, key: &str) -> Option<Builtin> {
+    use crate::ops::HostCapabilityKind::*;
+    let expected = match kind {
+        GetGlobal => "getGlobal",
+        CreateRealm => "createRealm",
+        EvalScript => "evalScript",
+        DetachArrayBuffer => "detachArrayBuffer",
+    };
+    (key == expected).then_some(Builtin::HostCapability(kind))
 }
 
 fn data_view_method(key: &str) -> Option<Builtin> {
