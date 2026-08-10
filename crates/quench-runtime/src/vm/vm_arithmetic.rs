@@ -84,11 +84,19 @@ fn evaluate_binary(
             bitwise_numbers(left, right, |a, b| a.wrapping_shr(shift_count(b)))?
         }
         BinaryOp::ShiftRightZeroFill => Value::Number(shift_right_unsigned(left, right)),
-        BinaryOp::Instanceof => Value::Boolean(matches!(
-            (left, right),
-            (Value::Object(_), Value::Function(_))
-        )),
+        BinaryOp::Instanceof => Value::Boolean(instanceof(left, right)),
     })
+}
+
+fn instanceof(value: &Value, constructor: &Value) -> bool {
+    let Value::Object(properties) = value else {
+        return false;
+    };
+    properties
+        .iter()
+        .rev()
+        .find(|(name, _)| name == "constructor")
+        .is_some_and(|(_, value)| crate::builtins::same_value(Some(value), Some(constructor)))
 }
 
 fn special_binary(
