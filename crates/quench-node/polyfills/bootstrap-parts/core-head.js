@@ -39,7 +39,7 @@ let __quenchAsyncHooksModule;
     runInAsyncScope(callback, thisArg, ...args) {
       if (typeof callback !== "function") {
         const error = new TypeError(
-          "The callback argument must be of type function",
+          "The callback argument must be of type function"
         );
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
@@ -55,7 +55,7 @@ let __quenchAsyncHooksModule;
     bind(callback, thisArg) {
       if (typeof callback !== "function") {
         const error = new TypeError(
-          "The callback argument must be of type function",
+          "The callback argument must be of type function"
         );
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
@@ -65,7 +65,7 @@ let __quenchAsyncHooksModule;
         return resource.runInAsyncScope(
           callback,
           thisArg === undefined ? this : thisArg,
-          ...args,
+          ...args
         );
       };
       Object.defineProperty(bound, "length", { value: callback.length });
@@ -77,7 +77,7 @@ let __quenchAsyncHooksModule;
     static bind(callback, thisArg) {
       if (typeof callback !== "function") {
         const error = new TypeError(
-          'The "fn" argument must be of type function',
+          'The "fn" argument must be of type function'
         );
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
@@ -98,7 +98,7 @@ let __quenchAsyncHooksModule;
       if (options === null || typeof options !== "object") {
         const error = new TypeError(
           'The "options" argument must be of type object. Received ' +
-            (options === null ? "null" : typeof options),
+            (options === null ? "null" : typeof options)
         );
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
@@ -155,7 +155,7 @@ let __quenchAsyncHooksModule;
       };
       return {
         dispose,
-        [Symbol.dispose]: dispose,
+        [Symbol.dispose]: dispose
       };
     }
     exit(callback, ...args) {
@@ -182,7 +182,7 @@ let __quenchAsyncHooksModule;
     static bind(callback) {
       if (typeof callback !== "function") {
         const error = new TypeError(
-          'The "fn" argument must be of type function',
+          'The "fn" argument must be of type function'
         );
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
@@ -213,15 +213,9 @@ let __quenchAsyncHooksModule;
     executionAsyncId: () => globalThis.__nodeCurrentAsyncResource.asyncId || 1,
     triggerAsyncId: () => 0,
     createHook: (callbacks = {}) => {
-      for (
-        const name of [
-          "init",
-          "before",
-          "after",
-          "destroy",
-          "promiseResolve",
-        ]
-      ) {
+      for (const name of "init before after destroy promiseResolve".split(
+        " "
+      )) {
         if (
           callbacks[name] !== undefined &&
           typeof callbacks[name] !== "function"
@@ -242,7 +236,7 @@ let __quenchAsyncHooksModule;
             ) {
               callbacks.after(
                 globalThis.__nodePromiseResourceList.values().next().value
-                  .asyncId,
+                  .asyncId
               );
             }
           }
@@ -254,10 +248,10 @@ let __quenchAsyncHooksModule;
           return this;
         },
         _enabled: false,
-        callbacks,
+        callbacks
       };
       return hook;
-    },
+    }
   };
   globalThis.__nodeAsyncLocalStorage = AsyncLocalStorage;
   globalThis.__nodeAsyncStoresKey = asyncLocalStore;
@@ -271,7 +265,7 @@ let __quenchAsyncHooksModule;
   globalThis.__nodeCreatePromiseResource = (trigger) => {
     const resource = {
       asyncId: ++globalThis.__nodeNextAsyncId,
-      triggerAsyncId: trigger?.asyncId || 1,
+      triggerAsyncId: trigger?.asyncId || 1
     };
     globalThis.__nodePromiseResourceList.add(resource);
     for (const hook of globalThis.__nodeAsyncHooks) {
@@ -280,7 +274,7 @@ let __quenchAsyncHooksModule;
           resource.asyncId,
           "PROMISE",
           resource.triggerAsyncId,
-          resource,
+          resource
         );
       }
     }
@@ -296,7 +290,7 @@ let __quenchAsyncHooksModule;
   globalThis.__nodeCaptureAsyncCallback = (callback, resource) => {
     if (typeof callback !== "function") return callback;
     const captured = globalThis.__nodeCreatePromiseResource(
-      resource || globalThis.__nodeCurrentAsyncResource,
+      resource || globalThis.__nodeCurrentAsyncResource
     );
     captured[asyncLocalStore] = resource?.[asyncLocalStore]
       ? new Map(resource[asyncLocalStore])
@@ -327,7 +321,7 @@ let __quenchAsyncHooksModule;
     const nativeCatch = Promise.prototype.catch;
     const nativeFinally = Promise.prototype.finally;
     Object.defineProperty(Promise.prototype, "__quenchAsyncContextPatched", {
-      value: true,
+      value: true
     });
     const nativeResolve = Promise.resolve;
     Promise.resolve = function (value) {
@@ -335,19 +329,20 @@ let __quenchAsyncHooksModule;
       const existing = globalThis.__nodePromiseResources.get(promise);
       if (existing) return promise;
       const resource = globalThis.__nodeCreatePromiseResource(
-        globalThis.__nodeCurrentAsyncResource,
+        globalThis.__nodeCurrentAsyncResource
       );
       globalThis.__nodePromiseResources.set(promise, resource);
       globalThis.__nodePromiseResolve(resource);
       return promise;
     };
     Promise.prototype.then = function (onFulfilled, onRejected) {
-      const resource = globalThis.__nodePromiseResources.get(this) ||
+      const resource =
+        globalThis.__nodePromiseResources.get(this) ||
         globalThis.__nodeCurrentAsyncResource;
       const result = nativeThen.call(
         this,
         globalThis.__nodeCaptureAsyncCallback(onFulfilled, resource),
-        globalThis.__nodeCaptureAsyncCallback(onRejected, resource),
+        globalThis.__nodeCaptureAsyncCallback(onRejected, resource)
       );
       return result;
     };
@@ -355,14 +350,14 @@ let __quenchAsyncHooksModule;
       const resource = globalThis.__nodeCurrentAsyncResource;
       return nativeCatch.call(
         this,
-        globalThis.__nodeCaptureAsyncCallback(onRejected, resource),
+        globalThis.__nodeCaptureAsyncCallback(onRejected, resource)
       );
     };
     Promise.prototype.finally = function (onFinally) {
       const resource = globalThis.__nodeCurrentAsyncResource;
       return nativeFinally.call(
         this,
-        globalThis.__nodeCaptureAsyncCallback(onFinally, resource),
+        globalThis.__nodeCaptureAsyncCallback(onFinally, resource)
       );
     };
   }
@@ -387,7 +382,7 @@ const __quenchValidateOnceOptions = (emitter, options) => {
     typeof emitter.on !== "function"
   ) {
     throw __quenchOnceTypeError(
-      "The emitter must be an EventEmitter or EventTarget",
+      "The emitter must be an EventEmitter or EventTarget"
     );
   }
 };
@@ -398,7 +393,7 @@ const __quenchOnceListeners = (emitter) => {
   return {
     isEventTarget,
     add: emitter[add].bind(emitter),
-    remove: emitter[remove].bind(emitter),
+    remove: emitter[remove].bind(emitter)
   };
 };
 const __quenchEventsOnce = (emitter, event, options = {}) => {

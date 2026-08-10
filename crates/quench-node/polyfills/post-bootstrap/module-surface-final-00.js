@@ -1,49 +1,23 @@
 const __quenchTestReporterFallbacks = () =>
   Object.fromEntries(
-    [
-      "dot",
-      "junit",
-      "json",
-      "lcov",
-      "markdown",
-      "spec",
-      "tap",
-      "teamcity",
-      "xunit",
-    ].map((name) => [name, () => undefined]),
+    "dot junit json lcov markdown spec tap teamcity xunit"
+      .split(" ")
+      .map((name) => [name, () => undefined])
   );
 const __quenchInspectorPromisesFallbacks = () => ({
   open: async () => undefined,
   close: async () => undefined,
   url: async () => undefined,
   waitForDebugger: async () => undefined,
-  Session: function Session() {},
+  Session: function Session() {}
 });
 const __quenchStreamWebFallbacks = (result, originalRequire, name) => {
   result = globalThis.__quenchFsPromisesModule || Object.assign({}, result);
   globalThis.__quenchFsConstantsModule ||= originalRequire("fs").constants;
   result.constants = globalThis.__quenchFsConstantsModule;
-  for (
-    const constructor of [
-      "ReadableStream",
-      "ReadableStreamDefaultReader",
-      "ReadableStreamBYOBReader",
-      "ReadableStreamBYOBRequest",
-      "ReadableByteStreamController",
-      "ReadableStreamDefaultController",
-      "TransformStream",
-      "TransformStreamDefaultController",
-      "WritableStream",
-      "WritableStreamDefaultWriter",
-      "WritableStreamDefaultController",
-      "ByteLengthQueuingStrategy",
-      "CountQueuingStrategy",
-      "TextEncoderStream",
-      "TextDecoderStream",
-      "CompressionStream",
-      "DecompressionStream",
-    ]
-  ) {
+  for (const constructor of "ReadableStream ReadableStreamDefaultReader ReadableStreamBYOBReader ReadableStreamBYOBRequest ReadableByteStreamController ReadableStreamDefaultController TransformStream TransformStreamDefaultController WritableStream WritableStreamDefaultWriter WritableStreamDefaultController ByteLengthQueuingStrategy CountQueuingStrategy TextEncoderStream TextDecoderStream CompressionStream DecompressionStream".split(
+    " "
+  )) {
     if (typeof globalThis[constructor] === "function") {
       result[constructor] = globalThis[constructor];
     }
@@ -54,16 +28,9 @@ const __quenchStreamWebFallbacks = (result, originalRequire, name) => {
   result.ReadableStream.from ||= async function* (source) {
     yield* source;
   };
-  for (
-    const constructor of [
-      "WritableStream",
-      "TransformStream",
-      "ReadableStreamDefaultReader",
-      "WritableStreamDefaultWriter",
-      "ByteLengthQueuingStrategy",
-      "CountQueuingStrategy",
-    ]
-  ) {
+  for (const constructor of "WritableStream TransformStream ReadableStreamDefaultReader WritableStreamDefaultWriter ByteLengthQueuingStrategy CountQueuingStrategy".split(
+    " "
+  )) {
     result[constructor] ||= function Constructor() {};
   }
   return result;

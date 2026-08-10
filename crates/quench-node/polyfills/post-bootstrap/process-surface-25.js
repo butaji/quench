@@ -1,28 +1,11 @@
 {
   if (globalThis.process) {
     const originalBinding = globalThis.process.binding;
-    const allowedInternalBindings = new Set([
-      "buffer",
-      "cares_wrap",
-      "constants",
-      "contextify",
-      "fs",
-      "fs_event_wrap",
-      "icu",
-      "inspector",
-      "js_stream",
-      "natives",
-      "os",
-      "pipe_wrap",
-      "spawn_sync",
-      "stream_wrap",
-      "tcp_wrap",
-      "tls_wrap",
-      "tty_wrap",
-      "udp_wrap",
-      "uv",
-      "zlib",
-    ]);
+    const allowedInternalBindings = new Set(
+      "buffer cares_wrap constants contextify fs fs_event_wrap icu inspector js_stream natives os pipe_wrap spawn_sync stream_wrap tcp_wrap tls_wrap tty_wrap udp_wrap uv zlib".split(
+        " "
+      )
+    );
     globalThis.process.binding = (name) => {
       if (name === "util" && globalThis.__nodeUtil?.types) {
         const types = globalThis.__nodeUtil.types;
@@ -42,7 +25,7 @@
           isSet: types.isSet,
           isSetIterator: types.isSetIterator,
           isTypedArray: types.isTypedArray,
-          isUint8Array: types.isUint8Array,
+          isUint8Array: types.isUint8Array
         };
       }
       if (allowedInternalBindings.has(name)) return {};

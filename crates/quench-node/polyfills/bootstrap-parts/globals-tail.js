@@ -5,7 +5,7 @@ globalThis.setImmediate = (callback, ...args) => {
   }
   const resource = {
     asyncId: ++globalThis.__nodeNextAsyncId,
-    triggerAsyncId: globalThis.__nodeCurrentAsyncResource?.asyncId || 1,
+    triggerAsyncId: globalThis.__nodeCurrentAsyncResource?.asyncId || 1
   };
   for (const hook of globalThis.__nodeAsyncHooks || []) {
     if (typeof hook.callbacks?.init === "function") {
@@ -13,7 +13,7 @@ globalThis.setImmediate = (callback, ...args) => {
         resource.asyncId,
         "Immediate",
         resource.triggerAsyncId,
-        resource,
+        resource
       );
     }
   }
@@ -22,7 +22,7 @@ globalThis.setImmediate = (callback, ...args) => {
     refed: true,
     generation: 0,
     __immediate: true,
-    _destroyed: false,
+    _destroyed: false
   };
   const activeDomain = globalThis.__quench_active_domain;
   id.ref = () => {
@@ -68,7 +68,7 @@ globalThis.setTimeout = (callback, _delay = 0, ...args) => {
     generation: 0,
     counted: true,
     unrefChecks: 0,
-    _destroyed: false,
+    _destroyed: false
   };
   const handleId = globalThis.__quenchNextTimerHandleId++;
   globalThis.__quenchTimerHandleIds.set(handleId, id);
@@ -90,7 +90,7 @@ globalThis.setTimeout = (callback, _delay = 0, ...args) => {
       id.counted = false;
       globalThis.__quenchRefedHandles = Math.max(
         0,
-        globalThis.__quenchRefedHandles - 1,
+        globalThis.__quenchRefedHandles - 1
       );
     }
     return id;
@@ -118,7 +118,7 @@ globalThis.setTimeout = (callback, _delay = 0, ...args) => {
           id.counted = false;
           globalThis.__quenchRefedHandles = Math.max(
             0,
-            globalThis.__quenchRefedHandles - 1,
+            globalThis.__quenchRefedHandles - 1
           );
         }
         const delay = __nodeTimerDelay(_delay);
@@ -154,7 +154,7 @@ globalThis.clearTimeout = (id) => {
       id.counted = false;
       globalThis.__quenchRefedHandles = Math.max(
         0,
-        globalThis.__quenchRefedHandles - 1,
+        globalThis.__quenchRefedHandles - 1
       );
     }
     id.active = false;
@@ -203,14 +203,14 @@ globalThis.__nodeTimers = {
   setInterval,
   clearInterval,
   setImmediate,
-  clearImmediate,
+  clearImmediate
 };
 if (typeof Object.hasOwn !== "function") {
   Object.defineProperty(Object, "hasOwn", {
     value: (object, property) =>
       Object.prototype.hasOwnProperty.call(object, property),
     configurable: true,
-    writable: true,
+    writable: true
   });
 }
 if (typeof globalThis.Blob !== "function") {
@@ -218,25 +218,25 @@ if (typeof globalThis.Blob !== "function") {
     constructor(parts = [], options = {}) {
       if (!Array.isArray(parts)) {
         const error = new TypeError(
-          'The "sources" argument must be an instance of Array',
+          'The "sources" argument must be an instance of Array'
         );
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
       }
       const chunks = parts.map((part) =>
         typeof part === "string" ||
-          ArrayBuffer.isView(part) ||
-          part instanceof ArrayBuffer
+        ArrayBuffer.isView(part) ||
+        part instanceof ArrayBuffer
           ? NodeBuffer.from(part)
           : part instanceof Blob
-          ? NodeBuffer.from(part._data)
-          : (() => {
-            const error = new TypeError(
-              "The sources argument contains an invalid part",
-            );
-            error.code = "ERR_INVALID_ARG_TYPE";
-            throw error;
-          })()
+            ? NodeBuffer.from(part._data)
+            : (() => {
+                const error = new TypeError(
+                  "The sources argument contains an invalid part"
+                );
+                error.code = "ERR_INVALID_ARG_TYPE";
+                throw error;
+              })()
       );
       this._data = NodeBuffer.concat(chunks);
       this.size = this._data.length;
@@ -245,7 +245,7 @@ if (typeof globalThis.Blob !== "function") {
     async arrayBuffer() {
       return this._data.buffer.slice(
         this._data.byteOffset,
-        this._data.byteOffset + this._data.byteLength,
+        this._data.byteOffset + this._data.byteLength
       );
     }
     async text() {
@@ -263,21 +263,20 @@ if (globalThis.Blob && !globalThis.Blob.__quenchTypeNormalized) {
     if (options && options.type !== undefined) {
       Object.defineProperty(value, "type", {
         configurable: true,
-        value: String(options.type).toLowerCase(),
+        value: String(options.type).toLowerCase()
       });
     }
     return value;
   };
   __quenchBlob.prototype = __quenchNativeBlob.prototype;
   Object.defineProperty(__quenchBlob, "__quenchTypeNormalized", {
-    value: true,
+    value: true
   });
   globalThis.Blob = __quenchBlob;
 }
 if (globalThis.process && typeof globalThis.process.emit !== "function") {
   globalThis.process.emit = () => globalThis.process;
 }
-
 if (globalThis.__quench_host_timer_scheduler) {
   const __quenchHostTimers = new Map();
   let __quenchHostTimerId = 1;
@@ -309,7 +308,7 @@ if (globalThis.__quench_host_timer_scheduler) {
       },
       [Symbol.toPrimitive]() {
         return entry.id;
-      },
+      }
     };
     Symbol.dispose ||= Symbol("dispose");
     handle[Symbol.dispose] = () => __quenchHostClear(handle);
@@ -318,8 +317,8 @@ if (globalThis.__quench_host_timer_scheduler) {
     return handle;
   };
   const __quenchHostClear = (handle) => {
-    const entry = __quenchHostTimers.get(Number(handle)) ||
-      handle?.__quenchHostEntry;
+    const entry =
+      __quenchHostTimers.get(Number(handle)) || handle?.__quenchHostEntry;
     if (!entry) return;
     entry.cleared = true;
     entry.handle.active = false;
@@ -336,7 +335,7 @@ if (globalThis.__quench_host_timer_scheduler) {
       cleared: false,
       order: __quenchHostTimerOrder++,
       domain: globalThis.__quench_active_domain,
-      resource: globalThis.__nodeCurrentAsyncResource,
+      resource: globalThis.__nodeCurrentAsyncResource
     };
     __quenchHostTimers.set(entry.id, entry);
     const handle = __quenchHostHandle(entry);
@@ -370,7 +369,7 @@ if (globalThis.__quench_host_timer_scheduler) {
     setInterval: globalThis.setInterval,
     clearInterval: globalThis.clearInterval,
     setImmediate: globalThis.setImmediate,
-    clearImmediate: globalThis.clearImmediate,
+    clearImmediate: globalThis.clearImmediate
   };
   globalThis.__quench_timer_next_delay = () => {
     let next = -1;
@@ -385,14 +384,14 @@ if (globalThis.__quench_host_timer_scheduler) {
   globalThis.__quench_timer_poll = () => {
     const now = __quenchHostNow();
     const hasRefedTimer = [...__quenchHostTimers.values()].some(
-      (entry) => entry.handle.refed && entry.handle.active,
+      (entry) => entry.handle.refed && entry.handle.active
     );
     const due = [...__quenchHostTimers.values()]
       .filter(
         (entry) =>
           entry.due <= now &&
           entry.handle.active &&
-          (entry.handle.refed || hasRefedTimer),
+          (entry.handle.refed || hasRefedTimer)
       )
       .sort((a, b) => a.due - b.due || a.order - b.order);
     for (const entry of due) {

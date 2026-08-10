@@ -5,16 +5,15 @@ const __nodeFsAttachPull = (handle) => {
       error.code = "ERR_INVALID_STATE";
       throw error;
     }
-    const transform = typeof transformOrOptions === "function"
-      ? transformOrOptions
-      : undefined;
+    const transform =
+      typeof transformOrOptions === "function" ? transformOrOptions : undefined;
     const options = transform ? maybeOptions || {} : transformOrOptions || {};
     __nodeFsValidatePullOptions(options);
     handle._pullLocked = true;
     const { batches, end } = __nodeFsPullBatches(handle, options);
     return {
       [Symbol.asyncIterator]: () =>
-        __nodeFsPullIterator(handle, batches, end, options, transform),
+        __nodeFsPullIterator(handle, batches, end, options, transform)
     };
   };
   handle.pullSync = (transformOrOptions, maybeOptions) => {
@@ -23,9 +22,8 @@ const __nodeFsAttachPull = (handle) => {
       error.code = "ERR_INVALID_STATE";
       throw error;
     }
-    const transform = typeof transformOrOptions === "function"
-      ? transformOrOptions
-      : undefined;
+    const transform =
+      typeof transformOrOptions === "function" ? transformOrOptions : undefined;
     const options = transform ? maybeOptions || {} : transformOrOptions || {};
     __nodeFsValidatePullOptions(options);
     handle._pullLocked = true;
@@ -52,7 +50,7 @@ const __nodeFsAttachPull = (handle) => {
           }
           handle._pullLocked = false;
         }
-      },
+      }
     };
   };
 };
@@ -70,14 +68,15 @@ const __nodeFsAttachPositionedWrites = (handle, previousWriteFile) => {
     if (typeof data === "string") {
       data = NodeBuffer.from(
         data,
-        options && options.encoding ? options.encoding : "utf8",
+        options && options.encoding ? options.encoding : "utf8"
       );
     }
     if (data instanceof ArrayBuffer) data = new Uint8Array(data);
     if (data instanceof Uint8Array || ArrayBuffer.isView(data)) {
-      const view = data instanceof Uint8Array
-        ? data
-        : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+      const view =
+        data instanceof Uint8Array
+          ? data
+          : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
       globalThis.__nodeFs.writeSync(handle.fd, view, 0, view.length, null);
       return;
     }
@@ -99,9 +98,8 @@ const __nodeFsAttachPositionedRead = (handle, previousReadFile) => {
     const position = globalThis.__nodeFdPositions[handle.fd] || 0;
     globalThis.__nodeFdPositions[handle.fd] = source.length;
     const result = NodeBuffer.from(source.subarray(position));
-    const encoding = typeof options === "string"
-      ? options
-      : options && options.encoding;
+    const encoding =
+      typeof options === "string" ? options : options && options.encoding;
     return encoding ? result.toString(encoding) : result;
   };
 };
@@ -122,7 +120,7 @@ const __nodeValidatePriorityPid = (pid) => {
   }
   if (pid === -1) {
     const error = new Error(
-      "A system error occurred: uv_os_getpriority returned ESRCH",
+      "A system error occurred: uv_os_getpriority returned ESRCH"
     );
     error.code = "ERR_SYSTEM_ERROR";
     error.name = "SystemError";
@@ -135,7 +133,7 @@ const __nodeValidatePriorityPid = (pid) => {
   }
   if (pid === 0 || pid === globalThis.process.pid) return;
   const error = new Error(
-    "A system error occurred: uv_os_getpriority returned ESRCH",
+    "A system error occurred: uv_os_getpriority returned ESRCH"
   );
   error.code = "ERR_SYSTEM_ERROR";
   throw error;
@@ -143,7 +141,7 @@ const __nodeValidatePriorityPid = (pid) => {
 const __nodeValidatePriorityValue = (priority) => {
   if (typeof priority !== "number") {
     const error = new TypeError(
-      'The "priority" argument must be of type number.',
+      'The "priority" argument must be of type number.'
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -164,8 +162,8 @@ const __nodeOsExports = {
   version: () => "v0.1.0",
   machine: () => process.arch,
   tmpdir: () => {
-    const candidate = process.env.TMPDIR || process.env.TMP ||
-      process.env.TEMP || "/tmp";
+    const candidate =
+      process.env.TMPDIR || process.env.TMP || process.env.TEMP || "/tmp";
     return candidate.length > 1 ? candidate.replace(/\/+$/, "") : candidate;
   },
   homedir: () => globalThis.__quenchOsHomeDirectory(),
@@ -183,9 +181,9 @@ const __nodeOsExports = {
         family: "IPv4",
         mac: "00:00:00:00:00:00",
         internal: true,
-        cidr: "127.0.0.1/8",
-      },
-    ],
+        cidr: "127.0.0.1/8"
+      }
+    ]
   }),
   uptime: () => Math.max(0.001, (Date.now() - __nodeStartedAt) / 1000),
   getPriority: (pid) => {
@@ -202,7 +200,7 @@ const __nodeOsExports = {
     Array.from({ length: globalThis.__quench_cpu_count }, () => ({
       model: "unknown",
       speed: 0,
-      times: { user: 0, nice: 0, sys: 0, idle: 0, irq: 0 },
+      times: { user: 0, nice: 0, sys: 0, idle: 0, irq: 0 }
     })),
   availableParallelism: () => globalThis.__quench_cpu_count,
   userInfo: (options = {}) => {
@@ -211,14 +209,14 @@ const __nodeOsExports = {
       uid: 0,
       gid: 0,
       shell: "/bin/sh",
-      homedir: globalThis.__quench_homedir || "/",
+      homedir: globalThis.__quench_homedir || "/"
     };
     if (options.encoding === "buffer") {
       return Object.fromEntries(
         Object.entries(value).map(([key, item]) => [
           key,
-          typeof item === "string" ? NodeBuffer.from(item) : item,
-        ]),
+          typeof item === "string" ? NodeBuffer.from(item) : item
+        ])
       );
     }
     return value;
@@ -255,7 +253,7 @@ const __nodeOsExports = {
       SIGWINCH: 28,
       SIGIO: 23,
       SIGINFO: 29,
-      SIGSYS: 12,
+      SIGSYS: 12
     }),
     errno: Object.freeze({ ENOENT: 2, EACCES: 13 }),
     priority: Object.freeze({
@@ -264,35 +262,22 @@ const __nodeOsExports = {
       PRIORITY_NORMAL: 0,
       PRIORITY_ABOVE_NORMAL: -7,
       PRIORITY_HIGH: -14,
-      PRIORITY_HIGHEST: -20,
-    }),
-  }),
+      PRIORITY_HIGHEST: -20
+    })
+  })
 };
 globalThis.__nodeOs = __nodeOsExports;
-for (
-  const [name, getter] of [
-    ["uptime", () => globalThis.__nodeOs.uptime()],
-    ["availableParallelism", () => globalThis.__nodeOs.availableParallelism()],
-    ["freemem", () => globalThis.__nodeOs.freemem()],
-    ["totalmem", () => globalThis.__nodeOs.totalmem()],
-  ]
-) {
+for (const [name, getter] of [
+  ["uptime", () => globalThis.__nodeOs.uptime()],
+  ["availableParallelism", () => globalThis.__nodeOs.availableParallelism()],
+  ["freemem", () => globalThis.__nodeOs.freemem()],
+  ["totalmem", () => globalThis.__nodeOs.totalmem()]
+]) {
   globalThis.__nodeOs[name].valueOf = getter;
 }
-for (
-  const name of [
-    "hostname",
-    "homedir",
-    "release",
-    "type",
-    "endianness",
-    "tmpdir",
-    "arch",
-    "platform",
-    "version",
-    "machine",
-  ]
-) {
+for (const name of "hostname homedir release type endianness tmpdir arch platform version machine".split(
+  " "
+)) {
   globalThis.__nodeOs[name].toString = () =>
     String(globalThis.__nodeOs[name]());
 }
@@ -308,8 +293,8 @@ globalThis.__nodeOs = new Proxy(
     getOwnPropertyDescriptor: (_, key) => ({
       enumerable: true,
       configurable: true,
-      value: __nodeOsExports[key],
-    }),
-  },
+      value: __nodeOsExports[key]
+    })
+  }
 );
 const __nodePerformanceMarks = new Map();

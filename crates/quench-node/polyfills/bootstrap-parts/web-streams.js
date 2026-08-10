@@ -35,7 +35,7 @@ const __quenchReadableController = (stream) => ({
   },
   enqueue: (value) => __quenchReadableEnqueue(stream, value),
   close: () => __quenchReadableClose(stream),
-  error: (error) => __quenchReadableError(stream, error),
+  error: (error) => __quenchReadableError(stream, error)
 });
 const __quenchStartReadable = (stream, source) => {
   try {
@@ -85,15 +85,14 @@ const __quenchReadableReader = (stream) => ({
   closed: stream._closedPromise,
   releaseLock() {
     stream.locked = false;
-  },
+  }
 });
 class __quenchReadableStream {
   constructor(source = {}, options = {}) {
     this._queue = [];
     this._queueSize = 0;
-    this._highWaterMark = options.highWaterMark === undefined
-      ? 1
-      : Number(options.highWaterMark);
+    this._highWaterMark =
+      options.highWaterMark === undefined ? 1 : Number(options.highWaterMark);
     this._size = typeof options.size === "function" ? options.size : () => 1;
     this._closed = false;
     this.locked = false;
@@ -201,8 +200,8 @@ class __quenchReadableStream {
           },
           pull() {
             return pump();
-          },
-        }),
+          }
+        })
     );
     return branches;
   }
@@ -252,7 +251,7 @@ class __quenchWritableStream {
       },
       releaseLock() {
         stream.locked = false;
-      },
+      }
     };
   }
 }
@@ -268,7 +267,7 @@ class __quenchTransformStream {
         this.writable[__quenchWebStreamsState].state = "errored";
         this.writable[__quenchWebStreamsState].storedError = error;
         this.readable._errorStream(error);
-      },
+      }
     };
     this.writable = new __quenchWritableStream({
       write: (value) =>
@@ -278,7 +277,7 @@ class __quenchTransformStream {
       close: async () => {
         await transform.flush?.(this._controller);
         this.readable._close();
-      },
+      }
     });
   }
 }
@@ -294,14 +293,14 @@ class __quenchDecompressionStream extends __quenchTransformStream {
         try {
           const zlib = globalThis.require("zlib");
           const input = NodeBuffer.concat(
-            chunks.map((value) => NodeBuffer.from(value)),
+            chunks.map((value) => NodeBuffer.from(value))
           );
           let output;
           if (format === "gzip") {
             output = zlib.gunzipSync(input, { rejectGarbageAfterEnd: true });
           } else if (format === "brotli") {
             output = zlib.brotliDecompressSync(input, {
-              rejectGarbageAfterEnd: true,
+              rejectGarbageAfterEnd: true
             });
           } else if (format === "deflate-raw") {
             output = zlib.inflateRawSync(input);
@@ -320,7 +319,7 @@ class __quenchDecompressionStream extends __quenchTransformStream {
         } catch (_) {
           controller.error?.(new TypeError("Decompression failed"));
         }
-      },
+      }
     });
   }
 }
@@ -345,7 +344,7 @@ class __quenchCompressionStream extends __quenchTransformStream {
         else if (format === "deflate-raw") output = zlib.deflateRawSync(input);
         else output = zlib.brotliCompressSync(input);
         controller.enqueue(output);
-      },
+      }
     });
   }
 }
@@ -354,7 +353,7 @@ class __quenchTextEncoderStream extends __quenchTransformStream {
     super({
       transform(value, controller) {
         controller.enqueue(new TextEncoder().encode(String(value)));
-      },
+      }
     });
     this.encoding = "utf-8";
   }
@@ -383,7 +382,7 @@ class __quenchTextDecoderStream extends __quenchTransformStream {
       flush(controller) {
         const tail = decoder.decode(new Uint8Array());
         if (tail) controller.enqueue(tail);
-      },
+      }
     });
     this.encoding = "utf-8";
     this.fatal = Boolean(options?.fatal);
@@ -411,29 +410,25 @@ const __quenchPrivateGetter = (Constructor, property, storage) =>
     },
     set(value) {
       this[storage] = value;
-    },
+    }
   });
-for (
-  const [Constructor, properties] of [
-    [__quenchTextEncoderStream, ["encoding", "readable", "writable"]],
-    [
-      __quenchTextDecoderStream,
-      ["encoding", "fatal", "ignoreBOM", "readable", "writable"],
-    ],
-    [__quenchCompressionStream, ["readable", "writable"]],
-    [__quenchDecompressionStream, ["readable", "writable"]],
-  ]
-) {
+for (const [Constructor, properties] of [
+  [__quenchTextEncoderStream, ["encoding", "readable", "writable"]],
+  [
+    __quenchTextDecoderStream,
+    ["encoding", "fatal", "ignoreBOM", "readable", "writable"]
+  ],
+  [__quenchCompressionStream, ["readable", "writable"]],
+  [__quenchDecompressionStream, ["readable", "writable"]]
+]) {
   for (const property of properties) {
     __quenchPrivateGetter(Constructor, property, Symbol(property));
   }
 }
-for (
-  const [Constructor, size] of [
-    [__quenchByteLengthQueuingStrategy, (value) => value?.byteLength ?? 0],
-    [__quenchCountQueuingStrategy, () => 1],
-  ]
-) {
+for (const [Constructor, size] of [
+  [__quenchByteLengthQueuingStrategy, (value) => value?.byteLength ?? 0],
+  [__quenchCountQueuingStrategy, () => 1]
+]) {
   Object.defineProperties(Constructor.prototype, {
     highWaterMark: {
       configurable: true,
@@ -442,7 +437,7 @@ for (
           throw new TypeError("Cannot read private member");
         }
         return this._highWaterMark;
-      },
+      }
     },
     size: {
       configurable: true,
@@ -451,17 +446,17 @@ for (
           throw new TypeError("Cannot read private member");
         }
         return size;
-      },
-    },
+      }
+    }
   });
 }
 Object.defineProperty(__quenchCompressionStream.prototype, Symbol.toStringTag, {
-  value: "CompressionStream",
+  value: "CompressionStream"
 });
 Object.defineProperty(
   __quenchDecompressionStream.prototype,
   Symbol.toStringTag,
-  { value: "DecompressionStream" },
+  { value: "DecompressionStream" }
 );
 const __quenchWebStreams = {
   ReadableStream: __quenchReadableStream,
@@ -470,24 +465,15 @@ const __quenchWebStreams = {
   CompressionStream: __quenchCompressionStream,
   DecompressionStream: __quenchDecompressionStream,
   TextEncoderStream: __quenchTextEncoderStream,
-  TextDecoderStream: __quenchTextDecoderStream,
+  TextDecoderStream: __quenchTextDecoderStream
 };
 globalThis.ReadableStream ||= __quenchReadableStream;
 globalThis.WritableStream ||= __quenchWritableStream;
 globalThis.TransformStream ||= __quenchTransformStream;
 globalThis.DecompressionStream ||= __quenchDecompressionStream;
-for (
-  const constructor of [
-    "ReadableStreamDefaultReader",
-    "ReadableStreamBYOBReader",
-    "ReadableStreamBYOBRequest",
-    "ReadableByteStreamController",
-    "ReadableStreamDefaultController",
-    "TransformStreamDefaultController",
-    "WritableStreamDefaultWriter",
-    "WritableStreamDefaultController",
-  ]
-) {
+for (const constructor of "ReadableStreamDefaultReader ReadableStreamBYOBReader ReadableStreamBYOBRequest ReadableByteStreamController ReadableStreamDefaultController TransformStreamDefaultController WritableStreamDefaultWriter WritableStreamDefaultController".split(
+  " "
+)) {
   globalThis[constructor] ||= class {};
 }
 globalThis.CompressionStream ||= __quenchCompressionStream;

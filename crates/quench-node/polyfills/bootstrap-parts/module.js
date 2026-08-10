@@ -1,32 +1,8 @@
 const __quenchOriginalRequireWithModule = globalThis.require;
-const __quenchBuiltinModules = [
-  "assert",
-  "buffer",
-  "child_process",
-  "cluster",
-  "crypto",
-  "events",
-  "fs",
-  "http",
-  "https",
-  "module",
-  "net",
-  "os",
-  "path",
-  "perf_hooks",
-  "process",
-  "querystring",
-  "stream",
-  "string_decoder",
-  "timers",
-  "tls",
-  "tty",
-  "url",
-  "util",
-  "vm",
-  "worker_threads",
-  "zlib",
-];
+const __quenchBuiltinModules =
+  "assert buffer child_process cluster crypto events fs http https module net os path perf_hooks process querystring stream string_decoder timers tls tty url util vm worker_threads zlib".split(
+    " "
+  );
 const decodeFilePath = (value) => {
   try {
     return decodeURIComponent(value);
@@ -50,9 +26,10 @@ const nodeModulePaths = (from) => {
   const result = [];
   let current = pathApi.resolve(value);
   while (true) {
-    const candidate = pathApi.basename(current) === "node_modules"
-      ? current
-      : pathApi.join(current, "node_modules");
+    const candidate =
+      pathApi.basename(current) === "node_modules"
+        ? current
+        : pathApi.join(current, "node_modules");
     if (result[result.length - 1] !== candidate) result.push(candidate);
     const parent = pathApi.dirname(current);
     if (parent === current) break;
@@ -71,14 +48,14 @@ const moduleStat = (filename) => {
 const setSourceMapsSupport = (enabled, options) => {
   if (typeof enabled !== "boolean") {
     const error = new TypeError(
-      "enabled must be a boolean (ERR_INVALID_ARG_TYPE)",
+      "enabled must be a boolean (ERR_INVALID_ARG_TYPE)"
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
   if (options !== undefined && (!options || typeof options !== "object")) {
     const error = new TypeError(
-      "options must be an object (ERR_INVALID_ARG_TYPE)",
+      "options must be an object (ERR_INVALID_ARG_TYPE)"
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -86,7 +63,7 @@ const setSourceMapsSupport = (enabled, options) => {
   for (const name of ["nodeModules", "generatedCode"]) {
     if (options?.[name] !== undefined && typeof options[name] !== "boolean") {
       const error = new TypeError(
-        `${name} must be a boolean (ERR_INVALID_ARG_TYPE)`,
+        `${name} must be a boolean (ERR_INVALID_ARG_TYPE)`
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
@@ -107,30 +84,32 @@ const __quenchValidateRequireFilename = (
   pathApi,
   isFileUrl,
   isFileUrlObject,
-  raw,
+  raw
 ) => {
   if (typeof filename !== "string" && !isFileUrlObject) {
     const error = new TypeError(
-      `The argument 'filename' must be a file URL object, file URL string, or absolute path string. Received ${
-        formatValue(filename)
-      }`,
+      `The argument 'filename' must be a file URL object, file URL string, or absolute path string. Received ${formatValue(
+        filename
+      )}`
     );
     error.code = "ERR_INVALID_ARG_VALUE";
     throw error;
   }
   if (!isFileUrl && !isFileUrlObject && !pathApi.isAbsolute(raw)) {
     const error = new TypeError(
-      "The argument 'filename' must be a file URL object, file URL string, or absolute path string",
+      "The argument 'filename' must be a file URL object, file URL string, or absolute path string"
     );
     error.code = "ERR_INVALID_ARG_VALUE";
     throw error;
   }
 };
 const __quenchRequireFilename = (filename, pathApi) => {
-  const isFileUrl = typeof filename === "string" &&
-    filename.startsWith("file://");
-  const isFileUrlObject = typeof URL === "function" &&
-    filename instanceof URL && filename.protocol === "file:";
+  const isFileUrl =
+    typeof filename === "string" && filename.startsWith("file://");
+  const isFileUrlObject =
+    typeof URL === "function" &&
+    filename instanceof URL &&
+    filename.protocol === "file:";
   const raw = isFileUrlObject
     ? decodeFilePath(filename.pathname)
     : String(filename || "");
@@ -139,7 +118,7 @@ const __quenchRequireFilename = (filename, pathApi) => {
     pathApi,
     isFileUrl,
     isFileUrlObject,
-    raw,
+    raw
   );
   return { isFileUrl, raw, isFileUrlObject };
 };
@@ -171,7 +150,7 @@ const __quenchModule = {
   _stat: moduleStat,
   setSourceMapsSupport,
   globalPaths,
-  _initPaths: initPaths,
+  _initPaths: initPaths
 };
 globalThis.require = (specifier) => {
   if (String(specifier).replace(/^node:/, "") === "module") {

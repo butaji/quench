@@ -1,7 +1,7 @@
 globalThis.__nodeFs.link = (existing, link, callback) => {
   if (typeof callback !== "function") {
     const error = new TypeError(
-      'The "callback" argument must be of type function',
+      'The "callback" argument must be of type function'
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -11,7 +11,7 @@ globalThis.__nodeFs.link = (existing, link, callback) => {
     (typeof link !== "string" && !(link instanceof Uint8Array))
   ) {
     const error = new TypeError(
-      'The "path" argument must be of type string or an instance of Buffer or URL',
+      'The "path" argument must be of type string or an instance of Buffer or URL'
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -32,7 +32,7 @@ globalThis.__nodeFs.chmod = (value, mode, callback) => {
   }
   if (typeof callback !== "function") {
     const error = new TypeError(
-      'The "callback" argument must be of type function',
+      'The "callback" argument must be of type function'
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -59,24 +59,23 @@ globalThis.__nodeFs.appendFile = (value, data, options, callback) => {
     !(data instanceof Uint8Array)
   ) {
     const error = new TypeError(
-      'The "data" argument must be of type string or an instance of Buffer',
+      'The "data" argument must be of type string or an instance of Buffer'
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
   if (typeof callback !== "function") {
     const error = new TypeError(
-      'The "callback" argument must be of type function',
+      'The "callback" argument must be of type function'
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
-  const encoding = typeof options === "string"
-    ? options
-    : options && options.encoding;
+  const encoding =
+    typeof options === "string" ? options : options && options.encoding;
   if (encoding !== undefined && !NodeBuffer.isEncoding(encoding)) {
     const error = new TypeError(
-      `The argument 'encoding' is invalid. Received '${encoding}'`,
+      `The argument 'encoding' is invalid. Received '${encoding}'`
     );
     error.code = "ERR_INVALID_ARG_VALUE";
     throw error;
@@ -98,7 +97,7 @@ globalThis.__nodeFs.rmdir = (value, options, callback) => {
   }
   if (typeof callback !== "function") {
     const error = new TypeError(
-      'The "callback" argument must be of type function',
+      'The "callback" argument must be of type function'
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     error.toString = () => `TypeError [ERR_INVALID_ARG_TYPE]: ${error.message}`;
@@ -106,7 +105,7 @@ globalThis.__nodeFs.rmdir = (value, options, callback) => {
   }
   if (options?.recursive === true) {
     const error = new TypeError(
-      "The recursive option is no longer supported for fs.rmdir",
+      "The recursive option is no longer supported for fs.rmdir"
     );
     error.code = "ERR_INVALID_ARG_VALUE";
     throw error;
@@ -164,7 +163,7 @@ globalThis.__nodeFs.copyFile = (from, to, mode, callback) => {
   }
   if (typeof callback !== "function") {
     const error = new TypeError(
-      'The "callback" argument must be of type function',
+      'The "callback" argument must be of type function'
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -192,12 +191,11 @@ globalThis.__nodeFs.realpath = (value, options, callback) => {
   if (typeof callback !== "function") {
     throw new TypeError('The "callback" argument must be of type function');
   }
-  const encoding = typeof options === "string"
-    ? options
-    : options && options.encoding;
+  const encoding =
+    typeof options === "string" ? options : options && options.encoding;
   if (encoding !== undefined && !NodeBuffer.isEncoding(encoding)) {
     const error = new TypeError(
-      `The argument 'encoding' is invalid. Received '${encoding}'`,
+      `The argument 'encoding' is invalid. Received '${encoding}'`
     );
     error.code = "ERR_INVALID_ARG_VALUE";
     throw error;
@@ -219,7 +217,7 @@ globalThis.__nodeFs.realpath.native = globalThis.__nodeFs.realpath;
 globalThis.__nodeStats = function Stats(
   file = false,
   directory = false,
-  date = new Date(),
+  date = new Date()
 ) {
   if (!(date instanceof Date)) date = new Date(Number(date) || 0);
   this.dev = 0;
@@ -278,7 +276,7 @@ globalThis.__nodeFs.Dir = class Dir {
       throw error;
     }
     this._entries = globalThis.__nodeFs.readdirSync(path, {
-      withFileTypes: true,
+      withFileTypes: true
     });
     this._index = 0;
     this._closed = false;
@@ -326,7 +324,7 @@ globalThis.__nodeFs.Dir = class Dir {
     }
     if (typeof callback !== "function") {
       const error = new TypeError(
-        'The "callback" argument must be of type function',
+        'The "callback" argument must be of type function'
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       error.toString = () => `TypeError [${error.code}]: ${error.message}`;
@@ -361,7 +359,7 @@ globalThis.__nodeFs.Dir = class Dir {
     }
     if (typeof callback !== "function") {
       const error = new TypeError(
-        'The "callback" argument must be of type function',
+        'The "callback" argument must be of type function'
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       error.toString = () => `TypeError [${error.code}]: ${error.message}`;
@@ -403,7 +401,7 @@ globalThis.__nodeFs.opendir = (value, options, callback) => {
   }
   if (typeof callback !== "function") {
     const error = new TypeError(
-      'The "callback" argument must be of type function',
+      'The "callback" argument must be of type function'
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     error.toString = () => `TypeError [${error.code}]: ${error.message}`;
@@ -421,27 +419,13 @@ globalThis.__nodeFs.opendir = (value, options, callback) => {
 };
 const __nodeStatsWithBigInt = (stats, options) => {
   if (options?.bigint !== true) return stats;
-  for (
-    const name of [
-      "dev",
-      "mode",
-      "nlink",
-      "uid",
-      "gid",
-      "rdev",
-      "blksize",
-      "ino",
-      "size",
-      "blocks",
-      "atimeMs",
-      "mtimeMs",
-      "ctimeMs",
-      "birthtimeMs",
-    ]
-  ) stats[name] = BigInt(Math.trunc(Number(stats[name]) || 0));
+  for (const name of "dev mode nlink uid gid rdev blksize ino size blocks atimeMs mtimeMs ctimeMs birthtimeMs".split(
+    " "
+  ))
+    stats[name] = BigInt(Math.trunc(Number(stats[name]) || 0));
   for (const name of ["atime", "mtime", "ctime", "birthtime"]) {
     stats[`${name}Ns`] = BigInt(
-      Math.trunc(Number(stats[`${name}Ms`]) * 1_000_000),
+      Math.trunc(Number(stats[`${name}Ms`]) * 1_000_000)
     );
   }
   return stats;
@@ -454,7 +438,7 @@ globalThis.__nodeFs.lstatSync = (value, options = {}) => {
   } catch (_) {
     if (options?.throwIfNoEntry === false) return undefined;
     const error = new Error(
-      `ENOENT: no such file or directory, lstat '${path}'`,
+      `ENOENT: no such file or directory, lstat '${path}'`
     );
     error.code = "ENOENT";
     error.syscall = "lstat";
@@ -465,7 +449,7 @@ globalThis.__nodeFs.lstatSync = (value, options = {}) => {
   const stats = new globalThis.__nodeStats(
     kind === "file",
     kind === "directory",
-    new Date(times?.mtime ?? Date.now() - 1),
+    new Date(times?.mtime ?? Date.now() - 1)
   );
   if (times) {
     stats.atime = new Date(times.atime);

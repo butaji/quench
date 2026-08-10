@@ -1,26 +1,12 @@
 const __nodeFsStatsBigInt = (stats, options) => {
   if (options?.bigint !== true) return stats;
-  for (
-    const name of [
-      "dev",
-      "mode",
-      "nlink",
-      "uid",
-      "gid",
-      "rdev",
-      "blksize",
-      "ino",
-      "size",
-      "blocks",
-      "atimeMs",
-      "mtimeMs",
-      "ctimeMs",
-      "birthtimeMs",
-    ]
-  ) stats[name] = BigInt(Math.trunc(Number(stats[name]) || 0));
+  for (const name of "dev mode nlink uid gid rdev blksize ino size blocks atimeMs mtimeMs ctimeMs birthtimeMs".split(
+    " "
+  ))
+    stats[name] = BigInt(Math.trunc(Number(stats[name]) || 0));
   for (const name of ["atime", "mtime", "ctime", "birthtime"]) {
     stats[`${name}Ns`] = BigInt(
-      Math.trunc(Number(stats[`${name}Ms`]) * 1_000_000),
+      Math.trunc(Number(stats[`${name}Ms`]) * 1_000_000)
     );
   }
   return stats;
@@ -63,7 +49,7 @@ Object.assign(globalThis.__nodeFs, {
     } catch (error) {
       if (error.code) throw error;
       const mkdirError = new Error(
-        `ENOENT: no such file or directory, mkdir '${path}'`,
+        `ENOENT: no such file or directory, mkdir '${path}'`
       );
       mkdirError.code = "ENOENT";
       mkdirError.syscall = "mkdir";
@@ -79,7 +65,7 @@ Object.assign(globalThis.__nodeFs, {
       !NodeBuffer.isEncoding(options.encoding)
     ) {
       const error = new TypeError(
-        `The argument 'encoding' is invalid. Received '${options.encoding}'`,
+        `The argument 'encoding' is invalid. Received '${options.encoding}'`
       );
       error.code = "ERR_INVALID_ARG_VALUE";
       throw error;
@@ -107,12 +93,13 @@ Object.assign(globalThis.__nodeFs, {
         name,
         (() => {
           try {
-            return globalThis.__quench_fs_kind(`${path}/${name}`) ===
-              "directory";
+            return (
+              globalThis.__quench_fs_kind(`${path}/${name}`) === "directory"
+            );
           } catch (_) {
             return false;
           }
-        })(),
+        })()
       );
       dirent.parentPath = path;
       return dirent;
@@ -121,7 +108,7 @@ Object.assign(globalThis.__nodeFs, {
   rmdirSync: (value, options = {}) => {
     if (options?.recursive === true) {
       const error = new TypeError(
-        "The recursive option is no longer supported for fs.rmdir",
+        "The recursive option is no longer supported for fs.rmdir"
       );
       error.code = "ERR_INVALID_ARG_VALUE";
       throw error;
@@ -134,12 +121,12 @@ Object.assign(globalThis.__nodeFs, {
       const code = message.startsWith("EACCES:")
         ? "EACCES"
         : message.includes("Not a directory")
-        ? "ENOTDIR"
-        : message.includes("No such file")
-        ? "ENOENT"
-        : message.includes("Directory not empty")
-        ? "ENOTEMPTY"
-        : undefined;
+          ? "ENOTDIR"
+          : message.includes("No such file")
+            ? "ENOENT"
+            : message.includes("Directory not empty")
+              ? "ENOTEMPTY"
+              : undefined;
       if (code) {
         error.code = code;
         error.syscall = "rmdir";
@@ -162,12 +149,13 @@ Object.assign(globalThis.__nodeFs, {
       error.code = "ERR_OUT_OF_RANGE";
       throw error;
     }
-    const path = typeof value === "number"
-      ? globalThis.__nodeFdPaths[value]
-      : nodeFsPath(value);
+    const path =
+      typeof value === "number"
+        ? globalThis.__nodeFdPaths[value]
+        : nodeFsPath(value);
     if (!path) throw new Error("EBADF");
     return globalThis.__quench_fs_truncate(path, Math.max(0, Number(length)));
-  },
+  }
 });
 const __nodeGetPrototypeOf = Object.getPrototypeOf;
 const __nodeFsConstants = globalThis.__nodeFs.constants;

@@ -4,7 +4,6 @@ let __nodeBufferPool = new ArrayBuffer(__nodeBufferPoolSize);
 let __nodeBufferPoolOffset = 0;
 const __nodeUntransferableBuffers = new WeakSet([__nodeBufferPool]);
 const __nodeArrayBufferTransfer = ArrayBuffer.prototype.transfer;
-
 ArrayBuffer.prototype.transfer = function (...args) {
   if (__nodeUntransferableBuffers.has(this)) {
     throw new TypeError("Cannot transfer an untransferable ArrayBuffer");
@@ -14,7 +13,7 @@ ArrayBuffer.prototype.transfer = function (...args) {
   }
   if (!(this instanceof ArrayBuffer)) {
     throw new TypeError(
-      "Method ArrayBuffer.prototype.transfer called on incompatible receiver",
+      "Method ArrayBuffer.prototype.transfer called on incompatible receiver"
     );
   }
   const maxByteLength = args[0];
@@ -28,7 +27,6 @@ ArrayBuffer.prototype.transfer = function (...args) {
   new Uint8Array(result).set(new Uint8Array(this));
   return result;
 };
-
 const __nodeBufferPoolFrom = (source) => {
   if (source.length === 0 || source.length >= __nodeBufferPoolSize >>> 1) {
     return undefined;
@@ -41,7 +39,7 @@ const __nodeBufferPoolFrom = (source) => {
   const result = new __NodeBufferBase01(
     __nodeBufferPool,
     __nodeBufferPoolOffset,
-    source.length,
+    source.length
   );
   result.set(source);
   __nodeBufferPoolOffset += source.length;
