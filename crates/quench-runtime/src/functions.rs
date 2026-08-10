@@ -5,8 +5,20 @@ use oxc::{allocator::Allocator, parser::Parser, span::SourceType};
 
 use crate::{
     facts::ProgramDb,
-    ops::{FunctionKind, Op},
+    ops::{FunctionKind, FunctionStrictness, Op},
 };
+
+fn strictness(body: &oxc::ast::ast::FunctionBody<'_>) -> FunctionStrictness {
+    if body
+        .directives
+        .iter()
+        .any(|directive| directive.directive.as_str() == "use strict")
+    {
+        FunctionStrictness::Strict
+    } else {
+        FunctionStrictness::Sloppy
+    }
+}
 
 pub(crate) fn function_parameters(
     function: &oxc::ast::ast::Function<'_>,
@@ -98,6 +110,7 @@ fn emit_function_op(
     params: u16,
     captures: u16,
     kind: FunctionKind,
+    strictness: FunctionStrictness,
     is_async: bool,
 ) -> u16 {
     let register = *next_register;
@@ -108,6 +121,7 @@ fn emit_function_op(
         params,
         captures,
         kind,
+        strictness,
         is_async,
     });
     register
@@ -131,6 +145,7 @@ pub(crate) fn reduce_expression(
         parameter_count,
         captures,
         FunctionKind::Ordinary,
+        strictness(body),
         function.r#async,
     ))
 }
@@ -157,6 +172,7 @@ pub(crate) fn reduce_arrow(
         parameter_count,
         captures,
         FunctionKind::Arrow,
+        FunctionStrictness::Sloppy,
         function.r#async,
     ))
 }
@@ -165,6 +181,8 @@ pub(crate) fn make(
     body: &[Op],
     params: u16,
     captures: Vec<crate::value::Value>,
+    kind: FunctionKind,
+    strictness: FunctionStrictness,
     is_async: bool,
 ) -> crate::value::Value {
     let value = crate::value::Value::Function(std::rc::Rc::new(crate::value::FunctionValue {
@@ -172,6 +190,8 @@ pub(crate) fn make(
         params,
         captures: std::rc::Rc::new(std::cell::RefCell::new(captures)),
         properties: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
+        kind,
+        strictness,
         is_async,
     }));
     let prototype = crate::value::Value::Object(std::rc::Rc::new(vec![(
@@ -234,7 +254,21 @@ pub(crate) fn dynamic_constructor(
     .ok_or(crate::execute::VmError::EvalError(
         "Unsupported function source".to_string(),
     ))?;
-    let value = make(&body_ops, parameter_count, Vec::new(), false);
+    let value = make(
+        &body_ops,
+        parameter_count,
+        Vec::new(),
+        FunctionKind::Ordinary,
+        strictness(
+            function
+                .body
+                .as_ref()
+                .ok_or(crate::execute::VmError::EvalError(
+                    "Invalid function source".to_string(),
+                ))?,
+        ),
+        false,
+    );
     if let crate::value::Value::Function(function) = &value {
         function.properties.borrow_mut().push((
             "\0dynamic_function".to_string(),
@@ -251,7 +285,8 @@ pub(crate) fn write(
     body: &[Op],
     params: u16,
     captures: u16,
-    _kind: FunctionKind,
+    kind: FunctionKind,
+    strictness: FunctionStrictness,
     is_async: bool,
 ) {
     let mut values = registers
@@ -260,16 +295,26 @@ pub(crate) fn write(
         .cloned()
         .collect::<Vec<_>>();
     values.resize(usize::from(captures), crate::value::Value::Undefined);
-    crate::execute::write_value(registers, dst, make(body, params, values, is_async));
+    let value = make(body, params, values, kind, strictness, is_async);
+    if matches!(kind, FunctionKind::Ordinary) {
+        if let crate::value::Value::Function(function) = &value {
+            function.properties.borrow_mut().push((
+                "\0ordinary_function".to_string(),
+                crate::value::Value::Boolean(true),
+            ));
+        }
+    }
+    crate::execute::write_value(registers, dst, value);
 }
 
 pub(crate) fn write_op(registers: &mut Vec<crate::value::Value>, op: &Op) {
-    let (dst, body, params, captures, kind, is_async) = match op {
+    let (dst, body, params, captures, kind, strictness, is_async) = match op {
         Op::MakeFunction {
             dst,
             body,
             params,
             captures,
+            strictness,
             is_async,
         } => (
             dst,
@@ -277,6 +322,7 @@ pub(crate) fn write_op(registers: &mut Vec<crate::value::Value>, op: &Op) {
             params,
             captures,
             FunctionKind::Ordinary,
+            *strictness,
             is_async,
         ),
         Op::MakeFunctionWithKind {
@@ -285,11 +331,14 @@ pub(crate) fn write_op(registers: &mut Vec<crate::value::Value>, op: &Op) {
             params,
             captures,
             kind,
+            strictness,
             is_async,
-        } => (dst, body, params, captures, *kind, is_async),
+        } => (dst, body, params, captures, *kind, *strictness, is_async),
         _ => return,
     };
-    write(registers, *dst, body, *params, *captures, kind, *is_async);
+    write(
+        registers, *dst, body, *params, *captures, kind, strictness, *is_async,
+    );
 }
 
 fn build_registers(
@@ -328,7 +377,8 @@ pub(crate) fn execute(
 ) -> Result<crate::value::Value, crate::execute::VmError> {
     let this_value = if matches!(this_value, crate::value::Value::Undefined)
         && function.properties.borrow().iter().any(|(key, value)| {
-            key == "\0dynamic_function" && matches!(value, crate::value::Value::Boolean(true))
+            matches!(key.as_str(), "\0dynamic_function" | "\0ordinary_function")
+                && matches!(value, crate::value::Value::Boolean(true))
         }) {
         crate::vm::current_global_object()
     } else {
