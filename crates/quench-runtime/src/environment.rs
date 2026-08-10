@@ -60,6 +60,19 @@ impl Environment {
         self.slots.borrow().get(usize::from(slot)).cloned()
     }
 
+    pub(crate) fn replace_slot(&self, slot: u16, value: Value) -> Rc<RefCell<Value>> {
+        let index = usize::from(slot);
+        let mut slots = self.slots.borrow_mut();
+        while slots.len() <= index {
+            slots.push(Rc::new(RefCell::new(Value::Undefined)));
+        }
+        std::mem::replace(&mut slots[index], Rc::new(RefCell::new(value)))
+    }
+
+    pub(crate) fn restore_slot(&self, slot: u16, value: Rc<RefCell<Value>>) {
+        self.slots.borrow_mut()[usize::from(slot)] = value;
+    }
+
     pub(crate) fn replace_value(&self, old: &Value, new: &Value) {
         if let Some(caller) = &self.caller {
             caller.replace_value(old, new);
