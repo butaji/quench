@@ -30,6 +30,7 @@ fn run_simple_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Option<Va
         | SetProperty { .. }
         | SetPropertyDynamic { .. }
         | DefineProperty { .. } => run_get_set_property(registers, op)?,
+        ResolveName { .. } | SetName { .. } => crate::with_scope::execute_name(registers, op)?,
         RequireObjectCoercible { .. }
         | GetIterator { .. }
         | IteratorStep { .. }
