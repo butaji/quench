@@ -90,6 +90,7 @@ pub(crate) fn execute_set_property(
     let target = crate::execute::read_register(registers, object)?.clone();
     let value = crate::execute::read_register(registers, src)?.clone();
     let result = crate::builtins::set_property(target.clone(), &key, value);
+    crate::locals::replace_object(&target, &result);
     crate::vm::synchronize_global_object(registers, &target, &result);
     crate::execute::write_value(registers, object, result);
     Ok(())
@@ -97,13 +98,12 @@ pub(crate) fn execute_set_property(
 
 pub(crate) fn propagate_updated_object(
     registers: &mut Vec<crate::value::Value>,
-    owner: u16,
     argument: Option<u16>,
     old: &crate::value::Value,
     new: &crate::value::Value,
 ) {
+    crate::locals::replace_object(old, new);
     crate::vm::synchronize_global_object(registers, old, new);
-    crate::execute::write_value(registers, owner, new.clone());
     if let Some(argument) = argument {
         crate::execute::write_value(registers, argument, new.clone());
     }

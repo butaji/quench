@@ -47,6 +47,7 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Valu
 
 fn bind_caught(value: Value, catch_slot: Option<u16>, registers: &mut Vec<Value>) {
     if let Some(slot) = catch_slot {
-        crate::execute::write_value(registers, slot, value);
+        let _ = registers;
+        crate::locals::write(slot, value);
     }
 }
