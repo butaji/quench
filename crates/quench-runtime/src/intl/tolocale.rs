@@ -41,6 +41,7 @@ pub(crate) mod value {
                 | Value::Set(_),
             ) => "function".to_string(),
             Some(Value::BigInt(_)) => "[object BigInt]".to_string(),
+            Some(Value::HostCapability(_)) => "[object Object]".to_string(),
         }
     }
 
@@ -88,7 +89,8 @@ pub(crate) mod value {
                 | Value::Map(_)
                 | Value::Set(_)
                 | Value::BigInt(_),
-            ) => f64::NAN,
+            )
+            | Some(Value::HostCapability(_)) => f64::NAN,
         }
     }
     pub(crate) fn to_number_result(value: Option<&Value>) -> Result<f64, crate::execute::VmError> {
@@ -174,6 +176,7 @@ pub(crate) mod value {
             | Value::Map(_)
             | Value::Set(_)
             | Value::BigInt(_) => true,
+            Value::HostCapability(_) => true,
         }
     }
 
@@ -205,6 +208,7 @@ pub(crate) mod value {
             Value::Builtin(_) | Value::Function(_) | Value::BoundFunction(_) => "function",
             Value::BigInt(_) => "bigint",
             Value::Proxy(_) | Value::Promise(_) | Value::Map(_) | Value::Set(_) => "object",
+            Value::HostCapability(_) => "object",
         }
     }
 
