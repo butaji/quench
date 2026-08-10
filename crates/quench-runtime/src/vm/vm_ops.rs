@@ -11,39 +11,63 @@ pub fn execute_call(
     args: &[u16],
     spreads: &[bool],
 ) -> Result<(), VmError> {
+    let arguments = collect_call_arguments(registers, args, spreads)?;
+    let callee_value = super::read_register(registers, callee)?;
+    let value = invoke_callee(&callee_value, &arguments)?;
+    super::write_value(registers, dst, value);
+    Ok(())
+}
+
+fn collect_call_arguments(
+    registers: &[Value],
+    args: &[u16],
+    spreads: &[bool],
+) -> Result<Vec<Value>, VmError> {
     let mut arguments = Vec::new();
     for (i, index) in args.iter().enumerate() {
-        let value = super::read_register(registers, *index)?;
-        if spreads.get(i) == Some(&true) {
-            if let Value::Array(values) = value {
-                arguments.extend(values.iter().cloned());
-            } else {
-                arguments.push(value);
-            }
+        push_argument_value(
+            &mut arguments,
+            super::read_register(registers, *index)?,
+            spreads.get(i) == Some(&true),
+        );
+    }
+    Ok(arguments)
+}
+
+fn push_argument_value(arguments: &mut Vec<Value>, value: Value, is_spread: bool) {
+    if is_spread {
+        if let Value::Array(values) = value {
+            arguments.extend(values.iter().cloned());
         } else {
             arguments.push(value);
         }
+        return;
     }
-    let callee_value = super::read_register(registers, callee)?;
-    let value = match &callee_value {
+    arguments.push(value);
+}
+
+fn invoke_callee(callee_value: &Value, arguments: &[Value]) -> Result<Value, VmError> {
+    match callee_value {
         Value::Function(body) => {
-            crate::functions::execute(body, &crate::value::Value::Undefined, &arguments)?
+            crate::functions::execute(body, &crate::value::Value::Undefined, arguments)
         }
-        Value::BoundFunction(bound) => crate::functions::execute_bound(bound, &arguments)?,
-        Value::Builtin(builtin) => {
-            super::execute_builtin_with_receiver(*builtin, &arguments, None)?
-        }
-        Value::Proxy(proxy) => {
-            if *proxy.revoked.borrow() {
-                return Err(VmError::EvalError("Cannot call revoked proxy".to_string()));
-            }
-            let this_arg = arguments.first().cloned().unwrap_or(Value::Undefined);
-            crate::proxy::proxy_apply(&callee_value, &this_arg, &arguments[1..])?
-        }
-        _ => return Err(VmError::NotCallable),
-    };
-    super::write_value(registers, dst, value);
-    Ok(())
+        Value::BoundFunction(bound) => crate::functions::execute_bound(bound, arguments),
+        Value::Builtin(builtin) => super::execute_builtin_with_receiver(*builtin, arguments, None),
+        Value::Proxy(proxy) => execute_proxy_call(callee_value, proxy, arguments),
+        _ => Err(VmError::NotCallable),
+    }
+}
+
+fn execute_proxy_call(
+    callee_value: &Value,
+    proxy: &crate::value::ProxyValue,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
+    if *proxy.revoked.borrow() {
+        return Err(VmError::EvalError("Cannot call revoked proxy".to_string()));
+    }
+    let this_arg = arguments.first().cloned().unwrap_or(Value::Undefined);
+    crate::proxy::proxy_apply(callee_value, &this_arg, &arguments[1..])
 }
 
 pub fn execute_builtin_tail(
