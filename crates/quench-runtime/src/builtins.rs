@@ -359,7 +359,7 @@ pub(crate) fn define_own_property(
     descriptor: &[(String, Value)],
 ) -> Result<Value, crate::execute::VmError> {
     let key_value = Value::String(key.to_string());
-    let current = crate::builtins::object::descriptor(Some(target), Some(&key_value));
+    let current = crate::builtins::object::descriptor(Some(target), Some(&key_value))?;
     validate_redefinition(&current, descriptor)?;
     let descriptor = complete_descriptor(descriptor, &current);
     let value = descriptor

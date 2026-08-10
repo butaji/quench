@@ -68,7 +68,7 @@ pub(crate) fn execute_special(
         Builtin::ObjectGetOwnPropertyDescriptor => {
             let (target, key) = static_target(arguments);
             require_object_coercible(target)?;
-            Ok(descriptor(target, key))
+            descriptor(target, key)
         }
         Builtin::ObjectGetOwnPropertyNames => crate::own_keys::names(arguments.first()),
         Builtin::ObjectGetOwnPropertySymbols => crate::own_keys::symbols(arguments.first()),
@@ -207,22 +207,14 @@ pub(crate) fn object_special(
     execute_special(builtin, receiver, arguments).unwrap_or(Value::Undefined)
 }
 
-fn value_to_string(value: &Value) -> String {
-    use Value::*;
-    match value {
-        String(value) => value.clone(),
-        Number(value) => value.to_string(),
-        Boolean(value) => value.to_string(),
-        Null => "null".to_string(),
-        Undefined => "undefined".to_string(),
-        _ => "[object Object]".to_string(),
-    }
-}
-
-pub(crate) fn descriptor(value: Option<&Value>, key: Option<&Value>) -> Value {
-    let (Some(value), Some(key)) = (value, key.map(value_to_string)) else {
-        return Value::Undefined;
+pub(crate) fn descriptor(
+    value: Option<&Value>,
+    key: Option<&Value>,
+) -> Result<Value, crate::execute::VmError> {
+    let (Some(value), Some(key)) = (value, key) else {
+        return Ok(Value::Undefined);
     };
+    let key = crate::conversion::to_property_key(key)?;
     let descriptor = match value {
         Value::Object(properties) => object_descriptor(properties, &key),
         Value::Array(values) => array_descriptor(values, &key),
@@ -231,7 +223,7 @@ pub(crate) fn descriptor(value: Option<&Value>, key: Option<&Value>) -> Value {
         Value::Function(function) => function_descriptor(function, &key),
         _ => None,
     };
-    descriptor.unwrap_or(Value::Undefined)
+    Ok(descriptor.unwrap_or(Value::Undefined))
 }
 
 fn function_descriptor(function: &crate::value::FunctionValue, key: &str) -> Option<Value> {
@@ -414,7 +406,7 @@ mod tests {
         assert_eq!(*cell.borrow(), Value::Number(2.0));
         let result = descriptor(Some(&updated), Some(&Value::String("x".to_string())));
         assert_eq!(
-            crate::execute::get_property(&result, "value"),
+            crate::execute::get_property(&result.unwrap(), "value"),
             Value::Number(2.0)
         );
     }
