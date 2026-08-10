@@ -1,5 +1,6 @@
 //! OXC-to-residual reduction entry point.
 mod reduce_assignments;
+mod reduce_eval;
 pub mod reduce_expressions;
 mod reduce_scripts;
 pub mod reduce_statements;

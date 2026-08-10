@@ -111,6 +111,18 @@ pub(crate) fn write(slot: u16, value: Value) {
     current().set(slot, value);
 }
 
+pub(crate) fn alias_name(name: &str, slot: u16) {
+    current().alias_name(name, slot);
+}
+
+pub(crate) fn resolve_name(name: &str) -> Option<Value> {
+    current().resolve_name(name)
+}
+
+pub(crate) fn set_named(name: &str, value: Value) -> bool {
+    current().set_named(name, value)
+}
+
 pub(crate) fn capture(count: u16) -> Rc<Environment> {
     Environment::capture(&current(), count)
 }

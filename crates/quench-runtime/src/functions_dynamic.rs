@@ -50,7 +50,9 @@ fn reduce_dynamic(source: &str, kind: FunctionKind, is_async: bool) -> Result<Va
         ..ProgramDb::default()
     };
     let global = HashMap::from([("globalThis".to_string(), 0)]);
-    let (ops, _) = crate::functions::reduce_function_ops(
+    let inherited = facts.in_function;
+    facts.in_function = true;
+    let reduced = crate::functions::reduce_function_ops(
         &body.statements,
         &function.params,
         &mut facts,
@@ -58,8 +60,9 @@ fn reduce_dynamic(source: &str, kind: FunctionKind, is_async: bool) -> Result<Va
         count,
         &global,
         None,
-    )
-    .ok_or_else(|| invalid("Unsupported function source"))?;
+    );
+    facts.in_function = inherited;
+    let (ops, _) = reduced.ok_or_else(|| invalid("Unsupported function source"))?;
     let value = dynamic_value(&ops, count, strictness, kind, is_async);
     mark_dynamic(&value);
     Ok(value)

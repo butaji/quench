@@ -76,7 +76,8 @@ pub(crate) fn execute_name(registers: &mut Vec<Value>, op: &Op) -> Result<(), Vm
 
 fn resolve_name(registers: &mut Vec<Value>, dst: u16, key: &str) -> Result<(), VmError> {
     let global = crate::vm::current_global_object();
-    let value = match resolve_binding(key)? {
+    let binding = resolve_binding(key)?.or_else(|| crate::locals::resolve_name(key));
+    let value = match binding {
         Some(value) => value,
         None => crate::execute::get_property_result(&global, key)?,
     };
@@ -92,6 +93,9 @@ fn resolve_name(registers: &mut Vec<Value>, dst: u16, key: &str) -> Result<(), V
 fn set_name(registers: &mut Vec<Value>, key: &str, src: u16, strict: bool) -> Result<(), VmError> {
     let value = crate::execute::read_register(registers, src)?;
     if set_if_bound(key, &value)? {
+        return Ok(());
+    }
+    if crate::locals::set_named(key, value.clone()) {
         return Ok(());
     }
     let global = crate::vm::current_global_object();

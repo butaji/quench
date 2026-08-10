@@ -35,6 +35,7 @@ fn run_simple_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Option<Va
         MakeFunction { .. } | MakeFunctionWithKind { .. } => crate::functions::write_op(registers, op),
         Call { .. } => run_call(registers, op)?,
         Eval { .. } => run_eval(registers, op)?,
+        DeclareEvalBinding { name, slot } => crate::locals::alias_name(name, *slot),
         ParameterEnd => {}
         Unary { dst, operator, src } => {
             vm_arithmetic::execute_unary(registers, *dst, *operator, *src)?
@@ -50,6 +51,7 @@ fn run_eval(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
         dst,
         source,
         strict,
+        global,
         bindings,
         forbidden_var_names,
     } = op
@@ -61,6 +63,7 @@ fn run_eval(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
         *dst,
         *source,
         *strict,
+        *global,
         bindings,
         forbidden_var_names,
     )

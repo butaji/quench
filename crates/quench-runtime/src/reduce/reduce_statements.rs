@@ -1,4 +1,3 @@
-//! OXC-to-residual reduction entry point.
 use crate::{
     blocks::reduce as reduce_block, control_flow, facts::ProgramDb, functions, ops::Op,
     statements::reduce_declaration as reduce_declaration_statement,
@@ -28,6 +27,7 @@ pub fn reduce_module_source(source: &str) -> Result<ResidualProgram, Vec<String>
 pub fn reduce_eval_source(
     source: &str,
     inherited_strict: bool,
+    global: bool,
     bindings: &[(String, u16)],
     forbidden_var_names: &[String],
 ) -> Result<ResidualProgram, Vec<String>> {
@@ -38,42 +38,25 @@ pub fn reduce_eval_source(
     validate_parse(&parsed)?;
     let (scope_count, symbol_count) = crate::semantic::analyze(&parsed.program)?;
     let strict = inherited_strict || has_strict_directive(&parsed.program);
-    validate_eval_var_names(&parsed.program, strict, forbidden_var_names)?;
+    crate::reduce_support::validate_eval_var_names(&parsed.program, strict, forbidden_var_names)?;
     let mut facts = ProgramDb {
         strict,
         scope_count,
         symbol_count,
         ..ProgramDb::default()
     };
-    let locals = bindings.iter().cloned().collect::<HashMap<_, _>>();
-    let next_slot = crate::reduce_support::register_base(&locals);
-    let ops = reduce_statements_opt(
+    let (locals, next_slot, mut prefix, behavior) =
+        crate::reduce_support::eval_bindings(&parsed.program, bindings, strict, global);
+    let mut ops = reduce_statements_opt(
         &parsed.program.body,
         &mut facts,
         locals,
         next_slot,
         true,
-        true,
+        behavior,
     )?;
-    Ok(ResidualProgram { facts, ops })
-}
-
-fn validate_eval_var_names(
-    program: &oxc::ast::ast::Program<'_>,
-    strict: bool,
-    forbidden: &[String],
-) -> Result<(), Vec<String>> {
-    if strict {
-        return Ok(());
-    }
-    let names = crate::semantic_early::var_declared_names(program);
-    let conflict = names.iter().find(|name| forbidden.contains(name));
-    match conflict {
-        Some(name) => Err(vec![format!(
-            "SyntaxError: eval var declaration conflicts with lexical binding `{name}`"
-        )]),
-        None => Ok(()),
-    }
+    prefix.append(&mut ops);
+    Ok(ResidualProgram { facts, ops: prefix })
 }
 
 fn has_strict_directive(program: &oxc::ast::ast::Program<'_>) -> bool {
@@ -230,7 +213,14 @@ pub fn reduce_statements_with_locals(
     locals: HashMap<String, u16>,
     next_slot: u16,
 ) -> Result<Vec<Op>, Vec<String>> {
-    let mut ops = reduce_statements_opt(statements, facts, locals, next_slot, false, false)?;
+    let mut ops = reduce_statements_opt(
+        statements,
+        facts,
+        locals,
+        next_slot,
+        false,
+        crate::reduce_support::EvalBehavior::Normal,
+    )?;
     ops.push(Op::Const {
         dst: 0,
         value: crate::ops::Constant::Undefined,
@@ -244,7 +234,14 @@ pub fn reduce_expression_statements_with_locals(
     locals: HashMap<String, u16>,
     next_slot: u16,
 ) -> Result<Vec<Op>, Vec<String>> {
-    reduce_statements_opt(statements, facts, locals, next_slot, true, false)
+    reduce_statements_opt(
+        statements,
+        facts,
+        locals,
+        next_slot,
+        true,
+        crate::reduce_support::EvalBehavior::Normal,
+    )
 }
 /// Reduce statements without appending a terminal `Return`. Used for nested
 /// blocks whose control flow continues after the block (if/try/switch bodies).
@@ -254,7 +251,14 @@ pub fn reduce_statements_no_tail(
     locals: HashMap<String, u16>,
     next_slot: u16,
 ) -> Result<Vec<Op>, Vec<String>> {
-    reduce_statements_opt(statements, facts, locals, next_slot, false, false)
+    reduce_statements_opt(
+        statements,
+        facts,
+        locals,
+        next_slot,
+        false,
+        crate::reduce_support::EvalBehavior::Normal,
+    )
 }
 
 fn reduce_statements_opt(
@@ -263,38 +267,62 @@ fn reduce_statements_opt(
     mut locals: HashMap<String, u16>,
     mut next_slot: u16,
     tail: bool,
-    mirror_bindings: bool,
+    eval_behavior: crate::reduce_support::EvalBehavior,
 ) -> Result<Vec<Op>, Vec<String>> {
     let mut ops = Vec::new();
     let mut next_register = 0;
     crate::reduce_support::predeclare_functions(statements, &mut locals, &mut next_slot);
     next_register = next_register.max(crate::reduce_support::register_base(&locals));
-    let mut last_value = None;
-    for statement in statements {
-        if let Some(value) = reduce_statement(
-            statement,
-            &mut ops,
+    let eval = eval_behavior != crate::reduce_support::EvalBehavior::Normal;
+    if eval {
+        super::reduce_eval::instantiate_functions(
+            statements,
             facts,
-            &mut next_register,
-            &mut next_slot,
-            &mut locals,
-        )? {
-            last_value = Some(value);
-        }
-        if mirror_bindings {
-            crate::reduce_support::mirror_script_bindings(
-                statement,
-                &locals,
-                &mut ops,
-                &mut next_register,
-            );
-        }
+            (&mut ops, &mut next_register, &mut next_slot, &mut locals),
+            eval_behavior,
+        )?;
     }
+    let last_value = reduce_statement_list(
+        statements,
+        facts,
+        &mut ops,
+        &mut next_register,
+        &mut next_slot,
+        &mut locals,
+        eval_behavior,
+    )?;
     if tail {
         crate::reduce_support::finish_program(ops, last_value)
     } else {
         Ok(ops)
     }
+}
+
+fn reduce_statement_list(
+    statements: &[Statement<'_>],
+    facts: &mut ProgramDb,
+    ops: &mut Vec<Op>,
+    next_register: &mut u16,
+    next_slot: &mut u16,
+    locals: &mut HashMap<String, u16>,
+    eval_behavior: crate::reduce_support::EvalBehavior,
+) -> Result<Option<u16>, Vec<String>> {
+    let eval = eval_behavior != crate::reduce_support::EvalBehavior::Normal;
+    let mut last_value = None;
+    for statement in statements {
+        if eval && matches!(statement, Statement::FunctionDeclaration(_)) {
+            continue;
+        }
+        if let Some(value) =
+            reduce_statement(statement, ops, facts, next_register, next_slot, locals)?
+        {
+            last_value = Some(value);
+        }
+        if eval_behavior == crate::reduce_support::EvalBehavior::Global {
+            crate::reduce_support::mirror_script_bindings(statement, locals, ops, next_register);
+        }
+    }
+    Ok(last_value)
 }
 pub fn reduce_statement(
     statement: &Statement<'_>,

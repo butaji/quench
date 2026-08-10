@@ -44,6 +44,102 @@ pub(crate) fn predeclare_functions(
     }
 }
 
+pub(crate) fn reserve_names(
+    names: &[String],
+    locals: &mut HashMap<String, u16>,
+    next_slot: &mut u16,
+) -> Vec<(String, u16)> {
+    let mut names = names.to_vec();
+    names.sort_unstable();
+    names.dedup();
+    let mut declared = Vec::new();
+    for name in names {
+        if locals.contains_key(&name) {
+            continue;
+        }
+        let slot = *next_slot;
+        reserve(&name, locals, next_slot);
+        declared.push((name, slot));
+    }
+    declared
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EvalBehavior {
+    Normal,
+    Strict,
+    Local,
+    Global,
+}
+
+pub(crate) fn eval_bindings(
+    program: &oxc::ast::ast::Program<'_>,
+    bindings: &[(String, u16)],
+    strict: bool,
+    global: bool,
+) -> (HashMap<String, u16>, u16, Vec<Op>, EvalBehavior) {
+    let mut locals = bindings.iter().cloned().collect::<HashMap<_, _>>();
+    let mut next_slot = register_base(&locals);
+    let names = crate::semantic_early::var_declared_names(program);
+    let declared = if strict {
+        shadow_names(&names, &mut locals, &mut next_slot);
+        Vec::new()
+    } else {
+        reserve_names(&names, &mut locals, &mut next_slot)
+    };
+    let behavior = if strict {
+        EvalBehavior::Strict
+    } else if global {
+        EvalBehavior::Global
+    } else {
+        EvalBehavior::Local
+    };
+    let prefix = eval_binding_prefix(&declared, strict, global);
+    (locals, next_slot, prefix, behavior)
+}
+
+fn shadow_names(names: &[String], locals: &mut HashMap<String, u16>, next_slot: &mut u16) {
+    let mut names = names.to_vec();
+    names.sort_unstable();
+    names.dedup();
+    for name in names {
+        let slot = *next_slot;
+        *next_slot = next_slot.saturating_add(1);
+        locals.insert(name, slot);
+    }
+}
+
+fn eval_binding_prefix(declared: &[(String, u16)], strict: bool, global: bool) -> Vec<Op> {
+    if strict || global {
+        return Vec::new();
+    }
+    declared
+        .iter()
+        .map(|(name, slot)| Op::DeclareEvalBinding {
+            name: name.clone(),
+            slot: *slot,
+        })
+        .collect()
+}
+
+pub(crate) fn validate_eval_var_names(
+    program: &oxc::ast::ast::Program<'_>,
+    strict: bool,
+    forbidden: &[String],
+) -> Result<(), Vec<String>> {
+    if strict {
+        return Ok(());
+    }
+    let names = crate::semantic_early::var_declared_names(program);
+    let conflict = names.iter().find(|name| forbidden.contains(name));
+    match conflict {
+        Some(name) => Err(vec![format!(
+            "SyntaxError: eval var declaration conflicts with lexical binding `{name}`"
+        )]),
+        None => Ok(()),
+    }
+}
+
 pub(crate) fn shadow_function_bindings(
     statements: &[oxc::ast::ast::Statement<'_>],
     locals: &mut HashMap<String, u16>,
