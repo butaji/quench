@@ -36,9 +36,10 @@ fn has_own_property_result(
     receiver: Option<&Value>,
     key: Option<&Value>,
 ) -> Result<Value, VmError> {
-    let Some(key) = key.map(value_to_string) else {
+    let Some(key) = key else {
         return Ok(Value::Boolean(false));
     };
+    let key = crate::properties::dynamic_property_key(key)?;
     let receiver = require_object_coercible(receiver)?;
     Ok(Value::Boolean(owns_property(receiver, &key)?))
 }
@@ -107,6 +108,18 @@ pub(crate) fn object_special(
     execute_special(builtin, receiver, arguments).unwrap_or(Value::Undefined)
 }
 
+fn value_to_string(value: &Value) -> String {
+    use Value::*;
+    match value {
+        String(value) => value.clone(),
+        Number(value) => value.to_string(),
+        Boolean(value) => value.to_string(),
+        Null => "null".to_string(),
+        Undefined => "undefined".to_string(),
+        _ => "[object Object]".to_string(),
+    }
+}
+
 pub(crate) fn descriptor(value: Option<&Value>, key: Option<&Value>) -> Value {
     let (Some(value), Some(key)) = (value, key.map(value_to_string)) else {
         return Value::Undefined;
@@ -170,18 +183,6 @@ fn descriptor_object(value: &Value) -> Value {
         ("enumerable".to_string(), Value::Boolean(true)),
         ("configurable".to_string(), Value::Boolean(true)),
     ]))
-}
-
-fn value_to_string(value: &Value) -> String {
-    use Value::*;
-    match value {
-        String(value) => value.clone(),
-        Number(value) => value.to_string(),
-        Boolean(value) => value.to_string(),
-        Null => "null".to_string(),
-        Undefined => "undefined".to_string(),
-        _ => "[object Object]".to_string(),
-    }
 }
 
 #[cfg(test)]
