@@ -12,6 +12,7 @@ pub(crate) struct FunctionMetadata {
     pub(crate) kind: FunctionKind,
     pub(crate) strictness: FunctionStrictness,
     pub(crate) is_async: bool,
+    pub(crate) mapped_arguments: bool,
 }
 
 pub(super) fn function_parameters(
@@ -206,6 +207,7 @@ fn emit_function_op(
         kind: metadata.kind,
         strictness: metadata.strictness,
         is_async: metadata.is_async,
+        mapped_arguments: metadata.mapped_arguments,
     });
     register
 }
@@ -240,15 +242,20 @@ pub(crate) fn reduce_expression(
         parameter_count,
         captures,
         FunctionMetadata {
-            kind: if function.generator {
-                FunctionKind::Generator
-            } else {
-                FunctionKind::Ordinary
-            },
+            kind: function_kind(function),
             strictness,
             is_async: function.r#async,
+            mapped_arguments: function.params.rest.is_none(),
         },
     ))
+}
+
+fn function_kind(function: &oxc::ast::ast::Function<'_>) -> FunctionKind {
+    if function.generator {
+        FunctionKind::Generator
+    } else {
+        FunctionKind::Ordinary
+    }
 }
 
 pub(crate) fn reduce_arrow(
@@ -283,6 +290,7 @@ pub(crate) fn reduce_arrow(
             kind: FunctionKind::Arrow,
             strictness,
             is_async: function.r#async,
+            mapped_arguments: false,
         },
     ))
 }
@@ -294,6 +302,7 @@ pub(super) fn make(
     kind: FunctionKind,
     strictness: FunctionStrictness,
     is_async: bool,
+    mapped_arguments: bool,
 ) -> crate::value::Value {
     let value = crate::value::Value::Function(std::rc::Rc::new(crate::value::FunctionValue {
         body: body.to_vec(),
@@ -303,6 +312,7 @@ pub(super) fn make(
         kind,
         strictness,
         is_async,
+        mapped_arguments,
     }));
     let prototype = crate::value::Value::Object(std::rc::Rc::new(vec![(
         "constructor".to_string(),
@@ -332,6 +342,7 @@ pub(crate) fn write(
         metadata.kind,
         metadata.strictness,
         metadata.is_async,
+        metadata.mapped_arguments,
     );
     if matches!(metadata.kind, FunctionKind::Ordinary) {
         if let crate::value::Value::Function(function) = &value {
@@ -385,16 +396,6 @@ pub(crate) fn execute_construct(
     )?;
     let final_this = environment.get(this_slot);
     Ok((result, final_this))
-}
-
-pub(crate) fn is_constructible(function: &crate::value::FunctionValue) -> bool {
-    match (function.kind, function.strictness, function.is_async) {
-        (FunctionKind::Ordinary, FunctionStrictness::Sloppy, false)
-        | (FunctionKind::Ordinary, FunctionStrictness::Strict, false) => true,
-        (FunctionKind::Arrow, _, _)
-        | (FunctionKind::Generator, _, _)
-        | (FunctionKind::Ordinary, _, true) => false,
-    }
 }
 
 pub(crate) fn execute_bound(

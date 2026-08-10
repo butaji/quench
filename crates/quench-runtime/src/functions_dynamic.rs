@@ -57,6 +57,7 @@ fn dynamic_value(
         FunctionKind::Ordinary,
         strictness,
         false,
+        true,
     )
 }
 
