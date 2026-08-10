@@ -1,8 +1,7 @@
 //! `toLocaleString` family and number/string formatting helpers.
 
-use crate::{execute::VmError, ops::Builtin, value::Value};
-
 use super::{resolve_locales, runtime_error, to_string_value};
+use crate::{execute::VmError, ops::Builtin, value::Value};
 
 /// Value coercion helpers extracted from `execute.rs` to keep that file under
 /// the lint line limit. These are pure JS semantics (type conversion,
@@ -10,7 +9,6 @@ use super::{resolve_locales, runtime_error, to_string_value};
 /// the call sites keep their short names.
 pub(crate) mod value {
     use crate::value::Value;
-
     pub(crate) fn to_string(value: Option<&Value>) -> String {
         match value {
             None | Some(Value::Undefined) => "undefined".to_string(),
@@ -39,7 +37,6 @@ pub(crate) mod value {
             Some(Value::BigInt(_)) => "[object BigInt]".to_string(),
         }
     }
-
     pub(crate) fn to_number(value: Option<&Value>) -> f64 {
         match value {
             None | Some(Value::Undefined) => f64::NAN,
@@ -64,7 +61,33 @@ pub(crate) mod value {
             ) => f64::NAN,
         }
     }
-
+    pub(crate) fn to_number_result(value: Option<&Value>) -> Result<f64, crate::execute::VmError> {
+        let Some(object @ Value::Object(_)) = value else {
+            return Ok(to_number(value));
+        };
+        for key in ["valueOf", "toString"] {
+            let method = crate::execute::get_property(object, key);
+            if key == "toString" && matches!(method, Value::Undefined) {
+                return Ok(to_number(Some(&Value::String(
+                    "[object Object]".to_string(),
+                ))));
+            }
+            if !matches!(
+                method,
+                Value::Function(_) | Value::BoundFunction(_) | Value::Builtin(_)
+            ) {
+                continue;
+            }
+            let result = crate::functions::execute_target(&method, object, &[])?;
+            if !matches!(result, Value::Object(_)) {
+                return Ok(to_number(Some(&result)));
+            }
+        }
+        if let Value::Number(value) = crate::execute::get_property(object, "_value") {
+            return Ok(value);
+        }
+        Err(crate::execute::VmError::NotCallable)
+    }
     pub(crate) fn parse_number(value: &str) -> f64 {
         let value = value.trim();
         if value.is_empty() {
@@ -77,7 +100,6 @@ pub(crate) mod value {
         }
         value.parse().unwrap_or(f64::NAN)
     }
-
     pub(crate) fn parse_int(arguments: &[Value]) -> f64 {
         let text = to_string(arguments.first()).trim().to_string();
         let radix = arguments.get(1).map_or(0, |v| to_number(Some(v)) as i32);
@@ -91,11 +113,9 @@ pub(crate) mod value {
         };
         i64::from_str_radix(digits, radix as u32).map_or(f64::NAN, |v| sign * v as f64)
     }
-
     pub(crate) fn parse_float(value: Option<&Value>) -> f64 {
         to_string(value).trim().parse().unwrap_or(f64::NAN)
     }
-
     pub fn is_truthy(value: &Value) -> bool {
         match value {
             Value::Boolean(value) => *value,
@@ -136,7 +156,6 @@ pub(crate) mod value {
     pub(crate) fn is_finite(value: Option<&Value>) -> bool {
         matches!(value, Some(Value::Number(number)) if number.is_finite())
     }
-
     pub(crate) fn to_int32(value: f64) -> i32 {
         if !value.is_finite() || value == 0.0 {
             return 0;
@@ -164,14 +183,12 @@ pub(crate) mod value {
         }
         number_string_combo(left, right) && to_number(Some(left)) == to_number(Some(right))
     }
-
     fn number_string_combo(left: &Value, right: &Value) -> bool {
         matches!(
             (left, right),
             (Value::Number(_), Value::String(_)) | (Value::String(_), Value::Number(_))
         )
     }
-
     pub(crate) fn strict_equal(left: &Value, right: &Value) -> bool {
         match (left, right) {
             (Value::Array(left), Value::Array(right)) => std::rc::Rc::ptr_eq(left, right),
@@ -195,7 +212,6 @@ pub(crate) mod symbol {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static SYMBOL_COUNTER: AtomicU64 = AtomicU64::new(0);
-
     /// Dispatch helper used by `execute_builtin_with_receiver` for the
     /// `Symbol*` family. Returns `None` for builtins this module does not own.
     pub(crate) fn dispatch(
@@ -215,7 +231,6 @@ pub(crate) mod symbol {
             _ => return None,
         })
     }
-
     pub(crate) fn name(builtin: Builtin) -> Option<&'static str> {
         Some(match builtin {
             Builtin::SymbolIterator => "Symbol.iterator",
@@ -231,7 +246,6 @@ pub(crate) mod symbol {
             _ => return None,
         })
     }
-
     fn make_symbol(arguments: &[Value]) -> Value {
         let description = match arguments.first() {
             None | Some(Value::Undefined) => String::new(),
@@ -319,13 +333,11 @@ pub(crate) fn number_to_locale_string(
         arguments.get(1),
     )))
 }
-
 fn format_number(number: f64, locales: &[String], options: Option<&Value>) -> String {
     let locale = locales.first().cloned().unwrap_or_else(|| "en".to_string());
     let resolved = number_resolved(locale, options);
     number::format_resolved(number, &resolved)
 }
-
 fn number_resolved(locale: String, options: Option<&Value>) -> Vec<(String, Value)> {
     let mut properties = vec![
         ("locale".to_string(), Value::String(locale)),
@@ -414,7 +426,6 @@ pub(crate) mod number {
         text = pad_minimum(text, min_fraction);
         text
     }
-
     fn format_fixed(number: f64, max_fraction: usize) -> String {
         if number.is_nan() {
             return "NaN".to_string();
