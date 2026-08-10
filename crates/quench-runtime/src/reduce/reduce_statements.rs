@@ -149,6 +149,7 @@ fn reduce_statements_opt(
     mut ops: Vec<Op>,
     mut next_register: u16,
 ) -> Result<Vec<Op>, Vec<String>> {
+    let program_scope = !ops.is_empty();
     crate::reduce_support::predeclare_functions(statements, &mut locals, &mut next_slot);
     next_register = next_register.max(crate::reduce_support::register_base(&locals));
     let mut last_value = None;
@@ -162,6 +163,14 @@ fn reduce_statements_opt(
             &mut locals,
         )? {
             last_value = Some(value);
+        }
+        if program_scope {
+            crate::reduce_support::mirror_script_function(
+                statement,
+                &locals,
+                &mut ops,
+                &mut next_register,
+            );
         }
     }
     if tail {

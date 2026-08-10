@@ -4,6 +4,8 @@ use std::collections::HashMap;
 
 use crate::ops::{Constant, Op};
 
+const SCRIPT_THIS_SLOT: &str = "\0script_this";
+
 /// Highest allocated local slot plus one, used as the next register base.
 pub(crate) fn register_base(locals: &HashMap<String, u16>) -> u16 {
     locals
@@ -32,6 +34,44 @@ pub(crate) fn predeclare_functions(
         locals.insert(identifier.name.to_string(), *next_slot);
         *next_slot = next_slot.saturating_add(1);
     }
+}
+
+/// Mirror a script-level function declaration onto the actual script global.
+pub(crate) fn mirror_script_function(
+    statement: &oxc::ast::ast::Statement<'_>,
+    locals: &HashMap<String, u16>,
+    ops: &mut Vec<Op>,
+    next_register: &mut u16,
+) {
+    let oxc::ast::ast::Statement::FunctionDeclaration(function) = statement else {
+        return;
+    };
+    let Some(identifier) = function.id.as_ref() else {
+        return;
+    };
+    let (Some(global_slot), Some(function_slot)) = (
+        locals.get(SCRIPT_THIS_SLOT),
+        locals.get(identifier.name.as_str()),
+    ) else {
+        return;
+    };
+    let global = load_local(ops, next_register, *global_slot);
+    let function = load_local(ops, next_register, *function_slot);
+    ops.push(Op::SetProperty {
+        object: global,
+        key: identifier.name.to_string(),
+        src: function,
+    });
+}
+
+fn load_local(ops: &mut Vec<Op>, next_register: &mut u16, slot: u16) -> u16 {
+    let register = *next_register;
+    *next_register = next_register.saturating_add(1);
+    ops.push(Op::LoadLocal {
+        dst: register,
+        slot,
+    });
+    register
 }
 
 /// Append a terminal `Return`, either the last expression value or `undefined`.
