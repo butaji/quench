@@ -1,10 +1,6 @@
 //! OXC-to-residual reduction entry point.
 use crate::{
-    blocks::reduce as reduce_block,
-    control_flow,
-    facts::ProgramDb,
-    functions,
-    ops::{Builtin, Op},
+    blocks::reduce as reduce_block, control_flow, facts::ProgramDb, functions, ops::Op,
     statements::reduce_declaration as reduce_declaration_statement,
 };
 use oxc::{
@@ -49,11 +45,13 @@ pub fn reduce_eval_source(
     };
     let locals = bindings.iter().cloned().collect::<HashMap<_, _>>();
     let next_slot = crate::reduce_support::register_base(&locals);
-    let ops = reduce_expression_statements_with_locals(
+    let ops = reduce_statements_opt(
         &parsed.program.body,
         &mut facts,
         locals,
         next_slot,
+        true,
+        true,
     )?;
     Ok(ResidualProgram { facts, ops })
 }
@@ -141,7 +139,7 @@ impl StatementReducer {
         }
         let mut ops = Vec::new();
         let mut next_register = 0;
-        let properties = global_properties(&mut ops, &mut next_register);
+        let properties = crate::globals::script_properties(&mut ops, &mut next_register);
         ops.push(Op::MakeObject {
             dst: next_register,
             properties,
@@ -206,43 +204,13 @@ fn reduce_state_statement(
     Ok(value)
 }
 
-fn global_properties(ops: &mut Vec<Op>, next_register: &mut u16) -> Vec<(String, u16)> {
-    let globals = [
-        ("Object", Builtin::Object),
-        ("Function", Builtin::Function),
-        ("Array", Builtin::Array),
-        ("Promise", Builtin::Promise),
-        ("RegExp", Builtin::RegExp),
-        ("Date", Builtin::Date),
-        ("Error", Builtin::Error),
-        ("TypeError", Builtin::TypeError),
-        ("RangeError", Builtin::RangeError),
-        ("ReferenceError", Builtin::ReferenceError),
-        ("SyntaxError", Builtin::SyntaxError),
-        ("EvalError", Builtin::EvalError),
-        ("URIError", Builtin::URIError),
-    ];
-    globals
-        .into_iter()
-        .map(|(name, builtin)| {
-            let register = *next_register;
-            *next_register = next_register.saturating_add(1);
-            ops.push(Op::MakeBuiltin {
-                dst: register,
-                builtin,
-            });
-            (name.to_string(), register)
-        })
-        .collect()
-}
 pub fn reduce_statements_with_locals(
     statements: &[Statement<'_>],
     facts: &mut ProgramDb,
     locals: HashMap<String, u16>,
     next_slot: u16,
 ) -> Result<Vec<Op>, Vec<String>> {
-    let mut ops =
-        reduce_statements_opt(statements, facts, locals, next_slot, false, Vec::new(), 0)?;
+    let mut ops = reduce_statements_opt(statements, facts, locals, next_slot, false, false)?;
     ops.push(Op::Const {
         dst: 0,
         value: crate::ops::Constant::Undefined,
@@ -256,7 +224,7 @@ pub fn reduce_expression_statements_with_locals(
     locals: HashMap<String, u16>,
     next_slot: u16,
 ) -> Result<Vec<Op>, Vec<String>> {
-    reduce_statements_opt(statements, facts, locals, next_slot, true, Vec::new(), 0)
+    reduce_statements_opt(statements, facts, locals, next_slot, true, false)
 }
 /// Reduce statements without appending a terminal `Return`. Used for nested
 /// blocks whose control flow continues after the block (if/try/switch bodies).
@@ -266,18 +234,19 @@ pub fn reduce_statements_no_tail(
     locals: HashMap<String, u16>,
     next_slot: u16,
 ) -> Result<Vec<Op>, Vec<String>> {
-    reduce_statements_opt(statements, facts, locals, next_slot, false, Vec::new(), 0)
+    reduce_statements_opt(statements, facts, locals, next_slot, false, false)
 }
+
 fn reduce_statements_opt(
     statements: &[Statement<'_>],
     facts: &mut ProgramDb,
     mut locals: HashMap<String, u16>,
     mut next_slot: u16,
     tail: bool,
-    mut ops: Vec<Op>,
-    mut next_register: u16,
+    mirror_bindings: bool,
 ) -> Result<Vec<Op>, Vec<String>> {
-    let program_scope = !ops.is_empty();
+    let mut ops = Vec::new();
+    let mut next_register = 0;
     crate::reduce_support::predeclare_functions(statements, &mut locals, &mut next_slot);
     next_register = next_register.max(crate::reduce_support::register_base(&locals));
     let mut last_value = None;
@@ -292,7 +261,7 @@ fn reduce_statements_opt(
         )? {
             last_value = Some(value);
         }
-        if program_scope {
+        if mirror_bindings {
             crate::reduce_support::mirror_script_bindings(
                 statement,
                 &locals,

@@ -66,6 +66,45 @@ pub(crate) fn execute_resolve_global(registers: &mut Vec<Value>, op: &Op) -> Res
     Ok(())
 }
 
+pub(crate) fn execute_name(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
+    match op {
+        Op::ResolveName { dst, key } => resolve_name(registers, *dst, key),
+        Op::SetName { key, src, strict } => set_name(registers, key, *src, *strict),
+        _ => Err(VmError::MissingReturn),
+    }
+}
+
+fn resolve_name(registers: &mut Vec<Value>, dst: u16, key: &str) -> Result<(), VmError> {
+    let global = crate::vm::current_global_object();
+    let value = match resolve_binding(key)? {
+        Some(value) => value,
+        None => crate::execute::get_property_result(&global, key)?,
+    };
+    if matches!(value, Value::Undefined) && !has_key(&global, key)? {
+        return Err(crate::value::error::throw_reference_error(&format!(
+            "{key} is not defined"
+        )));
+    }
+    crate::execute::write_value(registers, dst, value);
+    Ok(())
+}
+
+fn set_name(registers: &mut Vec<Value>, key: &str, src: u16, strict: bool) -> Result<(), VmError> {
+    let value = crate::execute::read_register(registers, src)?;
+    if set_if_bound(key, &value)? {
+        return Ok(());
+    }
+    let global = crate::vm::current_global_object();
+    if strict && !has_key(&global, key)? {
+        return Err(crate::value::error::throw_reference_error(&format!(
+            "{key} is not defined"
+        )));
+    }
+    let updated = crate::builtins::set_property(global.clone(), key, value);
+    crate::vm::synchronize_global_object(registers, &global, &updated);
+    Ok(())
+}
+
 fn resolve(key: &str) -> Result<Option<Value>, VmError> {
     let Some(target) = binding_target(key)? else {
         return Ok(None);
@@ -103,17 +142,17 @@ pub(crate) fn set_if_bound(key: &str, value: &Value) -> Result<bool, VmError> {
 }
 
 fn has_key(value: &Value, key: &str) -> Result<bool, VmError> {
-    Ok(match value {
-        Value::Proxy(_) => crate::proxy::proxy_has(value, key)? == Value::Boolean(true),
-        Value::Object(properties) => properties.iter().any(|(name, _)| name == key),
-        Value::ObjectAlias(alias) => alias
-            .0
-            .borrow()
-            .upgrade()
-            .is_some_and(|properties| properties.iter().any(|(name, _)| name == key)),
-        Value::Array(values) => {
-            key == "length" || key.parse::<usize>().is_ok_and(|index| index < values.len())
-        }
-        _ => !matches!(crate::execute::get_property(value, key), Value::Undefined),
-    })
+    if matches!(value, Value::Proxy(_)) {
+        return Ok(crate::proxy::proxy_has(value, key)? == Value::Boolean(true));
+    }
+    let key_value = Value::String(key.to_string());
+    let own = crate::builtins::object::has_own_property(Some(value), Some(&key_value));
+    if own == Value::Boolean(true) {
+        return Ok(true);
+    }
+    let prototype = crate::execute::get_property(value, "\0prototype");
+    if crate::value::is_object(&prototype) {
+        return has_key(&prototype, key);
+    }
+    Ok(false)
 }

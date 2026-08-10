@@ -17,7 +17,7 @@ pub(crate) fn reduce(
     if let Some(register) = reduce_local(identifier, ops, next_register, locals) {
         return Some(register);
     }
-    resolve_global(identifier, ops, next_register, locals)
+    resolve_name(identifier, ops, next_register)
 }
 
 fn reduce_global(
@@ -47,19 +47,14 @@ fn reduce_local(
     Some(register)
 }
 
-fn resolve_global(
+fn resolve_name(
     identifier: &IdentifierReference<'_>,
     ops: &mut Vec<Op>,
     next_register: &mut u16,
-    locals: &HashMap<String, u16>,
 ) -> Option<u16> {
-    let slot = *locals.get("globalThis")?;
-    let object = allocate_register(next_register);
-    ops.push(Op::LoadLocal { dst: object, slot });
     let dst = allocate_register(next_register);
-    ops.push(Op::ResolveGlobal {
+    ops.push(Op::ResolveName {
         dst,
-        object,
         key: identifier.name.to_string(),
     });
     Some(dst)
