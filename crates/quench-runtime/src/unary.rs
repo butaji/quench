@@ -27,6 +27,9 @@ pub(crate) fn reduce_delete(
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
+    if let Some(result) = reduce_eval_delete(expression, ops, facts, next_register) {
+        return Some(result);
+    }
     let Expression::ComputedMemberExpression(member) = expression else {
         return Some(emit_constant(
             ops,
@@ -45,6 +48,29 @@ pub(crate) fn reduce_delete(
         object,
         key,
         strict: facts.strict,
+    });
+    Some(dst)
+}
+
+fn reduce_eval_delete(
+    expression: &Expression<'_>,
+    ops: &mut Vec<Op>,
+    facts: &ProgramDb,
+    next: &mut u16,
+) -> Option<u16> {
+    let Expression::Identifier(identifier) = expression else {
+        return None;
+    };
+    let (name, slot) = facts
+        .eval_deletable
+        .iter()
+        .find(|(name, _)| name == identifier.name.as_str())?;
+    let dst = *next;
+    *next = next.saturating_add(1);
+    ops.push(Op::DeleteEvalBinding {
+        dst,
+        name: name.clone(),
+        slot: *slot,
     });
     Some(dst)
 }

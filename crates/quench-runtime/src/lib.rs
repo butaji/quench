@@ -36,6 +36,7 @@ mod functions;
 mod functions_dynamic;
 mod functions_write;
 mod generator;
+mod global_environment;
 mod globals;
 mod identifiers;
 mod intl;

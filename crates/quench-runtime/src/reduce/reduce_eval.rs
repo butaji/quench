@@ -44,7 +44,13 @@ pub(super) fn instantiate_functions(
     behavior: EvalBehavior,
 ) -> Result<(), Vec<String>> {
     let (ops, next_register, next_slot, locals) = state;
-    for statement in selected_functions(statements) {
+    let selected = selected_functions(statements);
+    let winners = selected_function_names(&selected);
+    let variables = global_variable_names(statements, &winners);
+    if behavior == EvalBehavior::Global {
+        emit_global_checks(&selected, &variables, ops);
+    }
+    for statement in selected {
         let Statement::FunctionDeclaration(function) = statement else {
             continue;
         };
@@ -57,10 +63,78 @@ pub(super) fn instantiate_functions(
             locals,
         )?;
         if behavior == EvalBehavior::Global {
-            crate::reduce_support::mirror_script_bindings(statement, locals, ops, next_register);
+            emit_global_function(function, locals, ops);
         }
     }
+    if behavior == EvalBehavior::Global {
+        emit_global_vars(&variables, locals, ops);
+    }
     Ok(())
+}
+
+fn selected_function_names(statements: &[&Statement<'_>]) -> HashSet<String> {
+    statements
+        .iter()
+        .filter_map(|statement| match statement {
+            Statement::FunctionDeclaration(function) => {
+                function.id.as_ref().map(|id| id.name.to_string())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn global_variable_names(statements: &[Statement<'_>], winners: &HashSet<String>) -> Vec<String> {
+    crate::reduce_support::declared_names_in(statements)
+        .into_iter()
+        .filter(|name| !winners.contains(name))
+        .collect()
+}
+
+fn emit_global_checks(functions: &[&Statement<'_>], variables: &[String], ops: &mut Vec<Op>) {
+    for statement in functions.iter().rev() {
+        let Statement::FunctionDeclaration(function) = statement else {
+            continue;
+        };
+        if let Some(identifier) = &function.id {
+            ops.push(Op::CheckGlobalFunction {
+                name: identifier.name.to_string(),
+            });
+        }
+    }
+    for name in variables {
+        ops.push(Op::CheckGlobalVar { name: name.clone() });
+    }
+}
+
+fn emit_global_function(
+    function: &oxc::ast::ast::Function<'_>,
+    locals: &HashMap<String, u16>,
+    ops: &mut Vec<Op>,
+) {
+    let Some(identifier) = &function.id else {
+        return;
+    };
+    let Some(slot) = locals.get(identifier.name.as_str()) else {
+        return;
+    };
+    ops.push(Op::CreateGlobalFunction {
+        name: identifier.name.to_string(),
+        slot: *slot,
+        deletable: true,
+    });
+}
+
+fn emit_global_vars(names: &[String], locals: &HashMap<String, u16>, ops: &mut Vec<Op>) {
+    for name in names {
+        if let Some(slot) = locals.get(name) {
+            ops.push(Op::CreateGlobalVar {
+                name: name.clone(),
+                slot: *slot,
+                deletable: true,
+            });
+        }
+    }
 }
 
 fn selected_functions<'a>(statements: &'a [Statement<'a>]) -> Vec<&'a Statement<'a>> {
