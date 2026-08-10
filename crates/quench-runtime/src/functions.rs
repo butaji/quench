@@ -38,9 +38,7 @@ pub(crate) fn reduce_body(
         &body.statements,
         facts,
         parameters,
-        captures
-            .saturating_add(parameter_count)
-            .saturating_add(2),
+        captures.saturating_add(parameter_count).saturating_add(2),
     )
 }
 
@@ -74,9 +72,7 @@ pub(crate) fn reduce_expression(
         &body.statements,
         facts,
         parameters,
-        captures
-            .saturating_add(parameter_count)
-            .saturating_add(2),
+        captures.saturating_add(parameter_count).saturating_add(2),
     )
     .ok()?;
     let register = *next_register;
@@ -119,9 +115,7 @@ pub(crate) fn reduce_arrow(
         &function.body.statements,
         facts,
         parameters,
-        captures
-            .saturating_add(parameter_count)
-            .saturating_add(2),
+        captures.saturating_add(parameter_count).saturating_add(2),
     )
     .ok()?;
     let register = *next_register;
@@ -140,12 +134,23 @@ pub(crate) fn make(
     params: u16,
     captures: Vec<crate::value::Value>,
 ) -> crate::value::Value {
-    crate::value::Value::Function(std::rc::Rc::new(crate::value::FunctionValue {
+    let value = crate::value::Value::Function(std::rc::Rc::new(crate::value::FunctionValue {
         body: body.to_vec(),
         params,
         captures: std::rc::Rc::new(std::cell::RefCell::new(captures)),
         properties: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
-    }))
+    }));
+    let prototype = crate::value::Value::Object(std::rc::Rc::new(vec![(
+        "constructor".to_string(),
+        value.clone(),
+    )]));
+    if let crate::value::Value::Function(ref function) = value {
+        function
+            .properties
+            .borrow_mut()
+            .push(("prototype".to_string(), prototype));
+    }
+    value
 }
 
 pub(crate) fn write(
@@ -177,32 +182,57 @@ pub(crate) fn write_op(registers: &mut Vec<crate::value::Value>, op: &Op) {
     write(registers, *dst, body, *params, *captures);
 }
 
-pub(crate) fn execute(
+fn build_registers(
     function: &crate::value::FunctionValue,
     this_value: &crate::value::Value,
     arguments: &[crate::value::Value],
-) -> Result<crate::value::Value, crate::execute::VmError> {
+) -> Vec<crate::value::Value> {
     let original_arguments = arguments.to_vec();
     let mut parameters = arguments.to_vec();
     parameters.resize(usize::from(function.params), crate::value::Value::Undefined);
     parameters.truncate(usize::from(function.params));
     let mut registers = function.captures.borrow().clone();
     registers.extend(parameters);
+    let base = function.captures.borrow().len() as u16;
     crate::execute::write_value(
         &mut registers,
-        function.captures.borrow().len() as u16 + function.params,
+        base + function.params,
         crate::value::Value::Array(std::rc::Rc::new(original_arguments)),
     );
     crate::execute::write_value(
         &mut registers,
-        function.captures.borrow().len() as u16 + function.params + 1,
+        base + function.params + 1,
         this_value.clone(),
     );
     registers.resize(
         registers.len().saturating_add(32),
         crate::value::Value::Undefined,
     );
+    registers
+}
+
+pub(crate) fn execute(
+    function: &crate::value::FunctionValue,
+    this_value: &crate::value::Value,
+    arguments: &[crate::value::Value],
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    let registers = build_registers(function, this_value, arguments);
     crate::execute::execute_with_registers(&function.body, registers)
+}
+
+/// Execute a constructor, returning both its result and the object bound to
+/// `this` after it ran (so `this.message = ...` mutations are preserved).
+pub(crate) fn execute_construct(
+    function: &crate::value::FunctionValue,
+    this_value: &crate::value::Value,
+    arguments: &[crate::value::Value],
+) -> Result<(crate::value::Value, crate::value::Value), crate::execute::VmError> {
+    let this_slot = function.captures.borrow().len() as u16 + function.params + 1;
+    let mut registers = build_registers(function, this_value, arguments);
+    let result = crate::execute::execute_in_place(&function.body, &mut registers)?;
+    let final_this = crate::execute::read_register(&registers, this_slot)
+        .unwrap_or(crate::value::Value::Undefined);
+    Ok((result, final_this))
 }
 
 pub(crate) fn execute_bound(
@@ -253,6 +283,17 @@ pub(crate) fn function_builtin(
             execute_target(receiver, &this, &arguments[1..])
         }
         crate::ops::Builtin::FunctionBind => {
+            if !matches!(
+                receiver,
+                Some(
+                    crate::value::Value::Builtin(_)
+                        | crate::value::Value::Function(_)
+                        | crate::value::Value::BoundFunction(_)
+                        | crate::value::Value::Proxy(_)
+                )
+            ) {
+                return Err(crate::execute::VmError::NotCallable);
+            }
             let target = arguments
                 .first()
                 .ok_or(crate::execute::VmError::NotCallable)?;
