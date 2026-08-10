@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    env, fs,
+    env,
     path::{Path, PathBuf},
     process::ExitCode,
     sync::{
@@ -10,7 +10,7 @@ use std::{
     thread,
 };
 
-use quench_test262::{discover_js_files, RuntimeHost, Test262Runner, TestOutcome};
+use quench_test262::{discover_js_files, HarnessCache, RuntimeHost, Test262Runner, TestOutcome};
 
 /// Per-thread outcomes for one contiguous chunk of files.
 #[derive(Default)]
@@ -59,12 +59,15 @@ fn run_parallel(
     threads: usize,
 ) -> (usize, usize, Vec<(PathBuf, String)>) {
     let counter = Arc::new(AtomicUsize::new(0));
-    let handles: Vec<_> = chunks(files, threads)
-        .into_iter()
-        .map(|chunk| {
+    let files = Arc::new(files);
+    let next = Arc::new(AtomicUsize::new(0));
+    let handles: Vec<_> = (0..threads)
+        .map(|_| {
             let root = root.to_path_buf();
+            let files = Arc::clone(&files);
             let counter = Arc::clone(&counter);
-            thread::spawn(move || run_chunk(chunk, root, limit, counter))
+            let next = Arc::clone(&next);
+            thread::spawn(move || run_worker(files, root, limit, counter, next))
         })
         .collect();
     let mut passed = 0;
@@ -80,38 +83,25 @@ fn run_parallel(
     (passed, failed, failures)
 }
 
-/// Split the sorted file list into `threads` contiguous chunks.
-fn chunks(files: Vec<PathBuf>, threads: usize) -> Vec<Vec<PathBuf>> {
-    let per = files.len().div_ceil(threads);
-    let mut result = Vec::new();
-    let mut iter = files.into_iter();
-    loop {
-        let chunk = iter.by_ref().take(per).collect::<Vec<_>>();
-        if chunk.is_empty() {
-            break;
-        }
-        result.push(chunk);
-    }
-    result
-}
-
-/// Run one chunk with its own runner, stopping when the global failure cap is hit.
-fn run_chunk(
-    files: Vec<PathBuf>,
+/// Pull tests from a shared queue, stopping when the global failure cap is hit.
+fn run_worker(
+    files: Arc<Vec<PathBuf>>,
     root: PathBuf,
     limit: usize,
     counter: Arc<AtomicUsize>,
+    next: Arc<AtomicUsize>,
 ) -> RunReport {
     let mut runner = Test262Runner::new(RuntimeHost);
+    let mut harness = HarnessCache::new(root.join("harness"));
     let mut report = RunReport::default();
-    for path in &files {
+    loop {
         if counter.load(Ordering::Relaxed) >= limit {
             break;
         }
-        let outcome = runner.run_file_with_harness(path, |name| {
-            fs::read_to_string(root.join("harness").join(name))
-                .map_err(|error| format!("harness {name}: {error}"))
-        });
+        let Some(path) = files.get(next.fetch_add(1, Ordering::Relaxed)) else {
+            break;
+        };
+        let outcome = runner.run_file_with_harness(path, |name| harness.load(name));
         match outcome {
             Ok(TestOutcome::Pass) => report.passed += 1,
             Ok(TestOutcome::Fail { reason }) | Err(reason) => {
