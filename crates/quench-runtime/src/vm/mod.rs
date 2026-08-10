@@ -637,8 +637,18 @@ pub fn get_property(value: &Value, key: &str) -> Value {
         Map(_) => crate::collections::map::property(key),
         Set(_) => crate::collections::set::property(key),
         Promise(_) => promise_property(value, key),
+        HostCapability(capability) => host_capability_property(value, capability.descriptor, key),
         _ => Value::Undefined,
     }
+}
+
+fn host_capability_property(value: &Value, capability: HostCapabilityRef, key: &str) -> Value {
+    let builtin = Builtin::HostCapability(capability.kind);
+    let property = crate::builtins::property(builtin, key);
+    if matches!(property, Value::Builtin(_)) {
+        return bind_method(value, property);
+    }
+    property
 }
 
 fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
@@ -852,10 +862,25 @@ fn global_property(properties: &Rc<Vec<(String, Value)>>, key: &str) -> Value {
     if key == "globalThis" {
         return Value::Object(properties.clone());
     }
+    if key == "$262" {
+        return current_host_capability(HostCapabilityKind::GetGlobal);
+    }
     global_builtin(key).map_or_else(
         || crate::builtins::property(Builtin::ObjectPrototype, key),
         Value::Builtin,
     )
+}
+
+fn current_host_capability(kind: HostCapabilityKind) -> Value {
+    let realm = CURRENT_CONTEXT.with(|context| {
+        context
+            .borrow()
+            .as_ref()
+            .map_or(RealmId::ROOT, VmContext::realm)
+    });
+    Value::HostCapability(Rc::new(crate::value::HostCapabilityValue::new(
+        HostCapabilityRef { realm, kind },
+    )))
 }
 
 fn global_builtin(key: &str) -> Option<Builtin> {
