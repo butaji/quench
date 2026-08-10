@@ -49,7 +49,7 @@ fn fallback_ops(
     Some(ops)
 }
 
-fn anonymous_function_definition(expression: &Expression<'_>) -> bool {
+pub(crate) fn anonymous_function_definition(expression: &Expression<'_>) -> bool {
     match expression {
         Expression::ArrowFunctionExpression(_) => true,
         Expression::FunctionExpression(function) => function.id.is_none(),
