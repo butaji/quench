@@ -11,6 +11,7 @@ mod vm_ops;
 pub use crate::intl::tolocale::value::is_truthy;
 
 pub type OutputSink = Arc<dyn Fn(&str) + Send + Sync>;
+type ObjectProperties = Rc<Vec<(String, Value)>>;
 
 #[derive(Clone)]
 pub struct VmContext {
@@ -31,6 +32,7 @@ impl Default for VmContext {
 
 thread_local! {
     static CURRENT_CONTEXT: RefCell<Option<VmContext>> = const { RefCell::new(None) };
+    static GLOBAL_OBJECT: RefCell<Option<ObjectProperties>> = const { RefCell::new(None) };
 }
 
 struct ContextGuard {
@@ -139,6 +141,7 @@ pub fn execute_in_place_context(
     context: &VmContext,
 ) -> Result<Value, VmError> {
     let _context_guard = ContextGuard::install(context);
+    let _global_guard = GlobalObjectGuard::install();
     for op in ops {
         match run_op(registers, op, context)? {
             None => {}
@@ -146,6 +149,23 @@ pub fn execute_in_place_context(
         }
     }
     Err(VmError::MissingReturn)
+}
+
+struct GlobalObjectGuard {
+    previous: Option<ObjectProperties>,
+}
+
+impl GlobalObjectGuard {
+    fn install() -> Self {
+        let previous = GLOBAL_OBJECT.with(|global| global.replace(None));
+        Self { previous }
+    }
+}
+
+impl Drop for GlobalObjectGuard {
+    fn drop(&mut self) {
+        GLOBAL_OBJECT.with(|global| global.replace(self.previous.take()));
+    }
 }
 
 pub fn execute_builtin_with_receiver(
@@ -721,12 +741,65 @@ fn object_property(properties: &Rc<Vec<(String, Value)>>, key: &str) -> Value {
     if let Some((_, value)) = properties.iter().rev().find(|(name, _)| name == key) {
         return value.clone();
     }
+    if GLOBAL_OBJECT.with(|global| {
+        global
+            .borrow()
+            .as_ref()
+            .is_some_and(|candidate| Rc::ptr_eq(candidate, properties))
+    }) {
+        return global_property(properties, key);
+    }
     let prototype = if properties.iter().any(|(name, _)| name == "timeValue") {
         crate::ops::Builtin::DatePrototype
     } else {
         crate::ops::Builtin::ObjectPrototype
     };
     crate::builtins::property(prototype, key)
+}
+
+fn global_property(properties: &Rc<Vec<(String, Value)>>, key: &str) -> Value {
+    if key == "globalThis" {
+        return Value::Object(properties.clone());
+    }
+    global_builtin(key).map_or_else(
+        || crate::builtins::property(Builtin::ObjectPrototype, key),
+        Value::Builtin,
+    )
+}
+
+fn global_builtin(key: &str) -> Option<Builtin> {
+    use Builtin::*;
+    Some(match key {
+        "Array" => Array,
+        "ArrayBuffer" => ArrayBuffer,
+        "DataView" => DataView,
+        "Float32Array" => Float32Array,
+        "Float64Array" => Float64Array,
+        "Int8Array" => Int8Array,
+        "Int16Array" => Int16Array,
+        "Int32Array" => Int32Array,
+        "Uint8Array" => Uint8Array,
+        "Uint8ClampedArray" => Uint8ClampedArray,
+        "Uint16Array" => Uint16Array,
+        "Uint32Array" => Uint32Array,
+        "Object" => Object,
+        "Function" => Function,
+        "Promise" => Promise,
+        "RegExp" => RegExp,
+        "Symbol" => Symbol,
+        "Number" => Number,
+        "Boolean" => Boolean,
+        "String" => String,
+        "Date" => Date,
+        "Error" => Error,
+        "TypeError" => TypeError,
+        "RangeError" => RangeError,
+        "ReferenceError" => ReferenceError,
+        "SyntaxError" => SyntaxError,
+        "EvalError" => EvalError,
+        "URIError" => URIError,
+        _ => return None,
+    })
 }
 
 fn run_op(
@@ -807,6 +880,11 @@ fn run_make_array(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
 fn run_make_object(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
     if let Op::MakeObject { dst, properties } = op {
         execute_object(registers, *dst, properties)?;
+        if GLOBAL_OBJECT.with(|global| global.borrow().is_none()) {
+            if let Value::Object(object) = read_register(registers, *dst)? {
+                GLOBAL_OBJECT.with(|global| global.replace(Some(object)));
+            }
+        }
     }
     Ok(())
 }

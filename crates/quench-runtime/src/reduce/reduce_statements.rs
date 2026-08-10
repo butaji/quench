@@ -1,6 +1,10 @@
 //! OXC-to-residual reduction entry point.
 use crate::{
-    blocks::reduce as reduce_block, control_flow, facts::ProgramDb, functions, ops::Op,
+    blocks::reduce as reduce_block,
+    control_flow,
+    facts::ProgramDb,
+    functions,
+    ops::{Builtin, Op},
     statements::reduce_declaration as reduce_declaration_statement,
 };
 use oxc::{
@@ -67,15 +71,17 @@ fn reduce_statements(
     if !source_type.is_module() {
         locals.insert(SCRIPT_THIS_SLOT.to_string(), global_slot);
     }
+    let global_properties = global_properties(&mut ops, &mut next_register);
+    let global_register = next_register;
     ops.push(Op::MakeObject {
-        dst: next_register,
-        properties: Vec::new(),
+        dst: global_register,
+        properties: global_properties,
     });
     ops.push(Op::StoreLocal {
         slot: global_slot,
-        src: next_register,
+        src: global_register,
     });
-    next_register = next_register.saturating_add(1);
+    next_register = global_register.saturating_add(1);
     reduce_statements_opt(
         statements,
         facts,
@@ -85,6 +91,36 @@ fn reduce_statements(
         ops,
         next_register,
     )
+}
+
+fn global_properties(ops: &mut Vec<Op>, next_register: &mut u16) -> Vec<(String, u16)> {
+    let globals = [
+        ("Object", Builtin::Object),
+        ("Function", Builtin::Function),
+        ("Array", Builtin::Array),
+        ("Promise", Builtin::Promise),
+        ("RegExp", Builtin::RegExp),
+        ("Date", Builtin::Date),
+        ("Error", Builtin::Error),
+        ("TypeError", Builtin::TypeError),
+        ("RangeError", Builtin::RangeError),
+        ("ReferenceError", Builtin::ReferenceError),
+        ("SyntaxError", Builtin::SyntaxError),
+        ("EvalError", Builtin::EvalError),
+        ("URIError", Builtin::URIError),
+    ];
+    globals
+        .into_iter()
+        .map(|(name, builtin)| {
+            let register = *next_register;
+            *next_register = next_register.saturating_add(1);
+            ops.push(Op::MakeBuiltin {
+                dst: register,
+                builtin,
+            });
+            (name.to_string(), register)
+        })
+        .collect()
 }
 pub fn reduce_statements_with_locals(
     statements: &[Statement<'_>],
