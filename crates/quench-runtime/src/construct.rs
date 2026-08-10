@@ -51,6 +51,17 @@ pub(crate) fn construct_value(
     match target {
         Value::Builtin(crate::ops::Builtin::Array) => Ok(crate::builtins::array(arguments)),
         Value::Builtin(crate::ops::Builtin::Object) => Ok(crate::builtins::object(arguments)),
+        Value::Builtin(crate::ops::Builtin::Number) => {
+            let value = crate::execute::execute_builtin_with_receiver(
+                crate::ops::Builtin::Number,
+                arguments,
+                None,
+            )?;
+            Ok(Value::Object(std::rc::Rc::new(vec![(
+                "_value".to_string(),
+                value,
+            )])))
+        }
         Value::Builtin(crate::ops::Builtin::TypeError) => Ok(crate::builtins::error(
             crate::ops::Builtin::TypeError,
             arguments,
