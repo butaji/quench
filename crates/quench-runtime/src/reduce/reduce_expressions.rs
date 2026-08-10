@@ -143,6 +143,14 @@ pub fn reduce_expression(
     let Expression::BinaryExpression(binary) = expression else {
         return None;
     };
+    if binary.operator == oxc::syntax::operator::BinaryOperator::In {
+        let key = reduce_expression(&binary.left, ops, facts, next_register, locals)?;
+        let object = reduce_expression(&binary.right, ops, facts, next_register, locals)?;
+        let dst = *next_register;
+        *next_register = next_register.saturating_add(1);
+        ops.push(Op::GetPropertyDynamic { dst, object, key });
+        return Some(dst);
+    }
     let operator = reduce_operator(binary.operator)?;
     let lhs = reduce_expression(&binary.left, ops, facts, next_register, locals)?;
     let rhs = reduce_expression(&binary.right, ops, facts, next_register, locals)?;
