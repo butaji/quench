@@ -580,6 +580,55 @@ impl Int8ArrayData {
     }
 }
 
+/// An unsigned 8-bit integer view over shared ArrayBuffer bytes.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Uint8ArrayData {
+    pub buffer: Rc<ArrayBufferData>,
+    pub byte_offset: usize,
+    pub length: usize,
+}
+
+impl Uint8ArrayData {
+    pub const BYTES_PER_ELEMENT: usize = std::mem::size_of::<u8>();
+
+    pub fn new(buffer: Rc<ArrayBufferData>, byte_offset: usize, length: usize) -> Self {
+        Self {
+            buffer,
+            byte_offset,
+            length,
+        }
+    }
+
+    pub fn byte_length(&self) -> usize {
+        self.length * Self::BYTES_PER_ELEMENT
+    }
+
+    pub fn get(&self, index: usize) -> Option<u8> {
+        if index >= self.length || self.is_out_of_bounds() {
+            return None;
+        }
+        let offset = self.byte_offset + index;
+        self.buffer.bytes.borrow().get(offset).copied()
+    }
+
+    pub fn set(&self, index: usize, value: u8) -> bool {
+        if index >= self.length || self.is_out_of_bounds() {
+            return false;
+        }
+        let offset = self.byte_offset + index;
+        let mut bytes = self.buffer.bytes.borrow_mut();
+        let Some(byte) = bytes.get_mut(offset) else {
+            return false;
+        };
+        *byte = value;
+        true
+    }
+
+    fn is_out_of_bounds(&self) -> bool {
+        self.buffer.byte_length() < self.byte_offset + self.byte_length()
+    }
+}
+
 /// A Proxy value wrapping a target and handler.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProxyValue {
@@ -600,6 +649,7 @@ pub enum Value {
     Float64Array(Rc<Float64ArrayData>),
     Float32Array(Rc<Float32ArrayData>),
     Int8Array(Rc<Int8ArrayData>),
+    Uint8Array(Rc<Uint8ArrayData>),
     DataView(Rc<DataViewData>),
     Builtin(Builtin),
     Function(Rc<FunctionValue>),
