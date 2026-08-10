@@ -108,6 +108,7 @@ fn run_property_op(registers: &mut Vec<Value>, op: &Op) -> Result<bool, VmError>
             | ResolveName { .. }
             | ResolveNameOrUndefined { .. }
             | SetName { .. }
+            | CheckStrictName { .. }
             | SetFunctionName { .. }
             | SetFunctionNameDynamic { .. }
     ) {
@@ -301,7 +302,9 @@ fn run_get_set_property(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmErr
         ResolveGlobal { .. } => crate::with_scope::execute_resolve_global(registers, op)?,
         GetPropertyDynamic { .. } => crate::properties::execute_get_dynamic(registers, op)?,
         HasPropertyDynamic { .. } => crate::with_scope::execute_has_property(registers, op)?,
-        ResolveName { .. } | SetName { .. } => crate::with_scope::execute_name(registers, op)?,
+        ResolveName { .. } | SetName { .. } | CheckStrictName { .. } => {
+            crate::with_scope::execute_name(registers, op)?
+        }
         SetFunctionName { .. } => crate::properties::execute_set_function_name(registers, op)?,
         SetFunctionNameDynamic { .. } => {
             crate::properties::execute_set_function_name_dynamic(registers, op)?
@@ -358,11 +361,22 @@ fn render_thrown(value: &Value) -> String {
         match (name, message) {
             (Some(name), Some(message)) => format!("{name}: {message}"),
             (Some(name), None) => name,
+            (None, Some(message)) if message.is_empty() => constructor_name(value),
             (None, Some(message)) => message,
             (None, None) => "[object Object]".to_string(),
         }
     } else {
         to_string(Some(value))
+    }
+}
+
+fn constructor_name(value: &Value) -> String {
+    match crate::vm::get_property(
+        &crate::vm::get_property(value, "constructor"),
+        "name",
+    ) {
+        Value::String(name) if !name.is_empty() => name,
+        _ => "[object Object]".to_string(),
     }
 }
 
@@ -455,7 +469,7 @@ fn typed_array_element_size(builtin: Builtin) -> Option<f64> {
 fn string_property(value: &str, key: &str) -> Value {
     use crate::ops::Builtin::*;
     match key {
-        "length" => return Value::Number(value.chars().count() as f64),
+        "length" => return Value::Number(crate::strings::utf16_len(value) as f64),
         "toLocaleLowerCase" => return Value::Builtin(StringToLocaleLowerCase),
         "toLocaleUpperCase" => return Value::Builtin(StringToLocaleUpperCase),
         _ => {}
@@ -465,8 +479,8 @@ fn string_property(value: &str, key: &str) -> Value {
     }
     key.parse::<usize>()
         .ok()
-        .and_then(|index| value.chars().nth(index))
-        .map(|character| Value::String(character.to_string()))
+        .and_then(|index| crate::strings::char_at_utf16(value, index))
+        .map(Value::String)
         .unwrap_or(Value::Undefined)
 }
 

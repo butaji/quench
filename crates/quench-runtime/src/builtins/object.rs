@@ -158,7 +158,9 @@ fn owns_property(receiver: &Value, key: &str) -> Result<bool, VmError> {
                 || values.property(key).is_some()
                 || (values.is_strict_arguments() && key == "callee")
         }
-        Value::String(value) => key == "length" || valid_index(key, value.chars().count()),
+        Value::String(value) => {
+            key == "length" || valid_index(key, crate::strings::utf16_len(value))
+        }
         Value::Builtin(builtin) => builtin_owns_property(*builtin, key),
         Value::Function(function) => function
             .properties
@@ -332,12 +334,8 @@ fn strict_callee_descriptor() -> Value {
 }
 
 fn string_descriptor(value: &str, key: &str) -> Option<Value> {
-    value
-        .chars()
-        .nth(key.parse::<usize>().ok()?)
-        .map(|character| {
-            descriptor_object_with_flags(Value::String(character.to_string()), false, true, false)
-        })
+    crate::strings::char_at_utf16(value, key.parse::<usize>().ok()?)
+        .map(|character| descriptor_object_with_flags(Value::String(character), false, true, false))
 }
 
 fn descriptor_object(value: &Value) -> Value {

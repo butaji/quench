@@ -49,6 +49,9 @@ pub fn reduce_assignment(
         return Some(value);
     }
     let mut place = reduce_place(&assignment.left, ops, facts, next, locals)?;
+    if let Place::Name { name, strict: true } = &place {
+        ops.push(Op::CheckStrictName { key: name.clone() });
+    }
     if assignment.operator.is_logical() {
         return crate::logical::reduce_assignment(assignment, place, ops, facts, next, locals);
     }
