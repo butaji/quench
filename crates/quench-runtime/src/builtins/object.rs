@@ -16,7 +16,11 @@ pub(crate) fn execute_special(
         Builtin::ObjectHasOwnProperty => has_own_property_result(target, key),
         Builtin::ObjectGetOwnPropertyDescriptor => {
             require_object_coercible(target)?;
-            Ok(descriptor(target, key))
+            let key = key
+                .map(crate::properties::dynamic_property_key)
+                .transpose()?;
+            let key = key.map(Value::String);
+            Ok(descriptor(target, key.as_ref()))
         }
         _ => Ok(Value::Undefined),
     }

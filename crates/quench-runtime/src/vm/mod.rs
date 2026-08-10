@@ -573,6 +573,7 @@ pub fn get_property(value: &Value, key: &str) -> Value {
             .rev()
             .find(|(name, _)| name == key)
             .map_or(Value::Undefined, |(_, value)| value.clone()),
+        BoundFunction(_) if matches!(key, "call" | "bind") => bind_function_property(value, key),
         Map(_) => crate::collections::map::property(key),
         Set(_) => crate::collections::set::property(key),
         Promise(_) => promise_property(value, key),
@@ -582,6 +583,9 @@ pub fn get_property(value: &Value, key: &str) -> Value {
 
 fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
     let property = builtin_property(builtin, key);
+    if matches!(key, "prototype" | "constructor") {
+        return property;
+    }
     bind_method(value, property)
 }
 
@@ -598,9 +602,6 @@ fn bind_method(receiver: &Value, property: Value) -> Value {
     let Value::Builtin(builtin) = property else {
         return property;
     };
-    if !matches!(builtin, Builtin::FunctionCall | Builtin::FunctionBind) {
-        return Value::Builtin(builtin);
-    }
     Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
         target: Value::Builtin(builtin),
         receiver: receiver.clone(),
