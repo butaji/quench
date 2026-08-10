@@ -1168,6 +1168,63 @@
       "improvement_vs": "slice-dead-fs-callbacks-2026-08-10.quench_node",
       "note": "After the all-Rust migration (c29f6c772, 7dc5294f1) and the lint exemption for polyfill data (c97e21a58). Attempted per-polyfill .rs files with a PolyfillImpl trait, but Rust's `concat!()` macro limitation (only literals) made chunked huge polyfills unbuildable. Reverted to the single-file polyfill_js.rs data table. route-load workload regressed 11% (15.8 \u2192 17.6 ms); props-json and ssr-response within noise. Source LOC: 40170 (was 39037 baseline).",
       "cause": "Stable working state after the abstraction refactor attempt."
+    },
+    {
+      "id": "per-polyfill-abstraction-reverted-2026-08-10",
+      "commit": "2079bca37",
+      "build": "debug-opt-level-3",
+      "scenario": "scenario-run-b-workloads",
+      "conditions": {
+        "platform": "darwin-arm64",
+        "node": "v26.5.1",
+        "cpus": 10,
+        "loadavg_1m": 3.68,
+        "runs": 7,
+        "caffeinate": true
+      },
+      "source_loc_non_test_rs_js": 40212,
+      "node": {
+        "route-load": {
+          "startup_ms": 43.6,
+          "peak_rss_mib": 50.0,
+          "workload_ms": 16.6,
+          "req_per_sec": 120832
+        },
+        "props-json": {
+          "startup_ms": 27.8,
+          "peak_rss_mib": 45.7,
+          "workload_ms": 0.4,
+          "req_per_sec": 4685662
+        },
+        "ssr-response": {
+          "startup_ms": 28.5,
+          "peak_rss_mib": 48.9,
+          "workload_ms": 0.6,
+          "req_per_sec": 3305785
+        }
+      },
+      "quench_node": {
+        "route-load": {
+          "startup_ms": 61.6,
+          "peak_rss_mib": 16.2,
+          "workload_ms": 17.6,
+          "req_per_sec": 113604
+        },
+        "props-json": {
+          "startup_ms": 50.0,
+          "peak_rss_mib": 15.9,
+          "workload_ms": 5.9,
+          "req_per_sec": 341355
+        },
+        "ssr-response": {
+          "startup_ms": 47.5,
+          "peak_rss_mib": 16.1,
+          "workload_ms": 3.3,
+          "req_per_sec": 599880
+        }
+      },
+      "note": "Per-polyfill .rs abstraction (one file per polyfill with a `PolyfillImpl` trait + module path lookup) was attempted and reverted. The build failed with bootstrap JavaScript exceptions caused by lookup resolution problems with rust keywords (ref, etc.) and module resolution edge cases. The single-file `polyfill_js.rs` data table from commit 7dc5294f1 remains the working state. The trait pattern in `polyfill_codegen.rs` (DirectCallable hook) is kept as a forward-compatibility sketch for future native-rust hot-path implementations.",
+      "cause": "Per-polyfill abstraction attempt reverted; reverted to single-file polyfill data table."
     }
   ],
   "runtime_change_ledger": [
