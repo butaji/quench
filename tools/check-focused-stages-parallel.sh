@@ -50,6 +50,8 @@ xargs -n 1 -P "$jobs" sh -c '
   if ([ "$stage" -ge 169 ] && [ "$stage" -le 174 ]) ||
     ([ "$stage" -ge 1879 ] && [ "$stage" -le 1898 ]) ||
     ([ "$stage" -ge 2014 ] && [ "$stage" -le 2015 ]) ||
+    ([ "$stage" -ge 2434 ] && [ "$stage" -le 2436 ]) ||
+    ([ "$stage" -ge 2522 ] && [ "$stage" -le 2528 ]) ||
     [ "$stage" -eq 394 ]; then
     flags="--experimental-stream-iter"
   fi
