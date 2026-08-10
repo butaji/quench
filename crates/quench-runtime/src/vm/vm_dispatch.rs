@@ -389,13 +389,7 @@ fn builtin_property(builtin: crate::ops::Builtin, key: &str) -> Value {
             return Value::Number(size);
         }
     }
-    let value = crate::builtins::property(builtin, key);
-    if let Value::Builtin(symbol) = value {
-        if let Some(name) = crate::intl::tolocale::symbol::name(symbol) {
-            return Value::String(name.to_string());
-        }
-    }
-    value
+    crate::builtins::property(builtin, key)
 }
 
 fn typed_array_element_size(builtin: Builtin) -> Option<f64> {

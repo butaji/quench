@@ -76,7 +76,8 @@ pub(crate) fn is_symbol(value: &Value) -> bool {
 }
 
 fn ordinary_to_primitive(value: &Value, hint: &str) -> Result<Value, VmError> {
-    let methods = if hint == "string" {
+    let string_hint = hint == "string" || hint == "default" && is_date_object(value);
+    let methods = if string_hint {
         ["toString", "valueOf"]
     } else {
         ["valueOf", "toString"]
@@ -109,6 +110,13 @@ fn ordinary_to_primitive(value: &Value, hint: &str) -> Result<Value, VmError> {
     Err(crate::value::error::throw_type_error(
         "Cannot convert object to primitive value",
     ))
+}
+
+fn is_date_object(value: &Value) -> bool {
+    let Value::Object(properties) = value else {
+        return false;
+    };
+    properties.iter().any(|(name, _)| name == "timeValue")
 }
 
 fn boxed_primitive(value: &Value) -> Option<Value> {

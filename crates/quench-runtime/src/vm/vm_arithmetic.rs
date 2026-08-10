@@ -185,6 +185,11 @@ fn arithmetic_value(
     };
     let left = crate::conversion::to_primitive(left, hint)?;
     let right = crate::conversion::to_primitive(right, hint)?;
+    if crate::conversion::is_symbol(&left) || crate::conversion::is_symbol(&right) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot convert Symbol value",
+        ));
+    }
     if operator == crate::ops::BinaryOp::Add
         && (matches!(left, Value::String(_)) || matches!(right, Value::String(_)))
     {
