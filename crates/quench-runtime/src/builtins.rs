@@ -202,10 +202,15 @@ pub(crate) fn is_array(value: Option<&Value>) -> Value {
 
 pub(crate) fn delete_property(target: Value, key: &str) -> Value {
     match target {
+        Value::Object(properties)
+            if descriptor_flag_in(&properties, key, "configurable") == Some(false) =>
+        {
+            Value::Object(properties)
+        }
         Value::Object(properties) => Value::Object(Rc::new(
             properties
                 .iter()
-                .filter(|(name, _)| name != key)
+                .filter(|(name, _)| name != key && name != &descriptor_key(key))
                 .cloned()
                 .collect(),
         )),
@@ -322,6 +327,11 @@ pub(crate) fn keys(value: Option<&Value>) -> Value {
 
 pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
     match target {
+        Value::Object(properties)
+            if descriptor_flag_in(&properties, key, "writable") == Some(false) =>
+        {
+            Value::Object(properties)
+        }
         Value::Object(mut properties) => {
             {
                 let properties = Rc::make_mut(&mut properties);
@@ -339,6 +349,28 @@ pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
         Value::Function(function) => set_function_property(function, key, value),
         other => other,
     }
+}
+
+pub(crate) fn descriptor_flag(target: &Value, key: &str, field: &str) -> Option<bool> {
+    let Value::Object(properties) = target else {
+        return None;
+    };
+    descriptor_flag_in(properties, key, field)
+}
+
+fn descriptor_flag_in(properties: &[(String, Value)], key: &str, field: &str) -> Option<bool> {
+    let metadata_key = descriptor_key(key);
+    let (_, Value::Object(descriptor)) = properties
+        .iter()
+        .rev()
+        .find(|(name, _)| name == &metadata_key)?
+    else {
+        return None;
+    };
+    descriptor
+        .iter()
+        .rev()
+        .find_map(|(name, value)| (name == field).then(|| matches!(value, Value::Boolean(true))))
 }
 
 pub(crate) fn define_property(arguments: &[Value]) -> Value {
