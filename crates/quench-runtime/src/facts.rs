@@ -40,6 +40,7 @@ pub enum Constant {
     Number(f64),
     Boolean(bool),
     String(String),
+    BigInt(String),
     Null,
     Undefined,
 }

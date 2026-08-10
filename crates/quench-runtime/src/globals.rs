@@ -16,34 +16,15 @@ pub(crate) fn reduce(
         return None;
     }
     if name == "$262" {
-        let register = *next_register;
-        *next_register = next_register.saturating_add(1);
-        ops.push(Op::MakeBuiltin {
-            dst: register,
-            builtin: crate::ops::Builtin::HostCapability(crate::ops::HostCapabilityKind::GetGlobal),
-        });
-        return Some(register);
+        let builtin =
+            crate::ops::Builtin::HostCapability(crate::ops::HostCapabilityKind::GetGlobal);
+        return Some(emit_builtin(ops, next_register, builtin));
     }
     if let Some(builtin) = builtin(name) {
-        let register = *next_register;
-        *next_register = next_register.saturating_add(1);
-        ops.push(Op::MakeBuiltin {
-            dst: register,
-            builtin,
-        });
-        return Some(register);
+        return Some(emit_builtin(ops, next_register, builtin));
     }
-    let (fact, value) = match name {
-        "undefined" => (FactConstant::Undefined, Constant::Undefined),
-        "NaN" => (FactConstant::Number(f64::NAN), Constant::Number(f64::NAN)),
-        "Infinity" => (
-            FactConstant::Number(f64::INFINITY),
-            Constant::Number(f64::INFINITY),
-        ),
-        _ => return None,
-    };
-    let register = *next_register;
-    *next_register = next_register.saturating_add(1);
+    let (fact, value) = global_constant(name)?;
+    let register = take_register(next_register);
     facts.constants.push(ConstantFact { value: fact });
     ops.push(Op::Const {
         dst: register,
@@ -52,10 +33,39 @@ pub(crate) fn reduce(
     Some(register)
 }
 
+fn global_constant(name: &str) -> Option<(FactConstant, Constant)> {
+    Some(match name {
+        "undefined" => (FactConstant::Undefined, Constant::Undefined),
+        "NaN" => (FactConstant::Number(f64::NAN), Constant::Number(f64::NAN)),
+        "Infinity" => (
+            FactConstant::Number(f64::INFINITY),
+            Constant::Number(f64::INFINITY),
+        ),
+        _ => return None,
+    })
+}
+
+fn emit_builtin(ops: &mut Vec<Op>, next_register: &mut u16, builtin: crate::ops::Builtin) -> u16 {
+    let register = take_register(next_register);
+    ops.push(Op::MakeBuiltin {
+        dst: register,
+        builtin,
+    });
+    register
+}
+
+fn take_register(next_register: &mut u16) -> u16 {
+    let register = *next_register;
+    *next_register = next_register.saturating_add(1);
+    register
+}
+
 fn builtin(name: &str) -> Option<crate::ops::Builtin> {
+    typed_array_builtin(name).or_else(|| builtin_core(name))
+}
+
+fn typed_array_builtin(name: &str) -> Option<crate::ops::Builtin> {
     match name {
-        "Array" => Some(crate::ops::Builtin::Array),
-        "ArrayBuffer" => Some(crate::ops::Builtin::ArrayBuffer),
         "Float64Array" => Some(crate::ops::Builtin::Float64Array),
         "Float32Array" => Some(crate::ops::Builtin::Float32Array),
         "Int8Array" => Some(crate::ops::Builtin::Int8Array),
@@ -65,6 +75,14 @@ fn builtin(name: &str) -> Option<crate::ops::Builtin> {
         "Uint16Array" => Some(crate::ops::Builtin::Uint16Array),
         "Uint32Array" => Some(crate::ops::Builtin::Uint32Array),
         "Uint8ClampedArray" => Some(crate::ops::Builtin::Uint8ClampedArray),
+        _ => None,
+    }
+}
+
+fn builtin_core(name: &str) -> Option<crate::ops::Builtin> {
+    match name {
+        "Array" => Some(crate::ops::Builtin::Array),
+        "ArrayBuffer" => Some(crate::ops::Builtin::ArrayBuffer),
         "DataView" => Some(crate::ops::Builtin::DataView),
         "Boolean" => Some(crate::ops::Builtin::Boolean),
         "eval" => Some(crate::ops::Builtin::Eval),

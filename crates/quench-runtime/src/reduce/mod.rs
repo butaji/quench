@@ -1,6 +1,7 @@
 //! OXC-to-residual reduction entry point.
 pub mod reduce_expressions;
 pub mod reduce_statements;
+mod tagged_template;
 
 // Re-export commonly used functions at the crate::reduce level
 pub use reduce_expressions::{

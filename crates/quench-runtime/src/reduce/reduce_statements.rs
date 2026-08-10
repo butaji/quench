@@ -253,39 +253,17 @@ pub fn reduce_function_declaration(
     let Some(body) = function.body.as_ref() else {
         return Err(vec!["Function without body".to_string()]);
     };
-    let slot = if let Some(slot) = locals.get(identifier.name.as_str()) {
-        *slot
-    } else {
-        let slot = *next_slot;
-        *next_slot = next_slot.saturating_add(1);
-        locals.insert(identifier.name.to_string(), slot);
-        slot
-    };
+    let slot = declaration_slot(identifier.name.as_str(), next_slot, locals);
     let (parameters, parameter_count, captures) = function_locals(function, locals)?;
     let body_ops = functions::reduce_body(body, facts, parameters, parameter_count, captures)?;
-    let register = *next_register;
-    *next_register = next_register.saturating_add(1);
+    let register = take_register(next_register);
     ops.push(Op::MakeFunctionWithKind {
         dst: register,
         body: body_ops,
         params: parameter_count,
         captures,
         kind: crate::ops::FunctionKind::Ordinary,
-        strictness: function
-            .body
-            .as_ref()
-            .map(|body| {
-                if body
-                    .directives
-                    .iter()
-                    .any(|directive| directive.directive.as_str() == "use strict")
-                {
-                    FunctionStrictness::Strict
-                } else {
-                    FunctionStrictness::Sloppy
-                }
-            })
-            .unwrap_or(FunctionStrictness::Sloppy),
+        strictness: function_strictness(body),
         is_async: function.r#async,
     });
     ops.push(Op::StoreLocal {
@@ -293,6 +271,34 @@ pub fn reduce_function_declaration(
         src: register,
     });
     Ok(())
+}
+
+fn declaration_slot(name: &str, next_slot: &mut u16, locals: &mut HashMap<String, u16>) -> u16 {
+    if let Some(slot) = locals.get(name) {
+        return *slot;
+    }
+    let slot = *next_slot;
+    *next_slot = next_slot.saturating_add(1);
+    locals.insert(name.to_string(), slot);
+    slot
+}
+
+fn take_register(next_register: &mut u16) -> u16 {
+    let register = *next_register;
+    *next_register = next_register.saturating_add(1);
+    register
+}
+
+fn function_strictness(body: &oxc::ast::ast::FunctionBody<'_>) -> FunctionStrictness {
+    let strict = body
+        .directives
+        .iter()
+        .any(|directive| directive.directive.as_str() == "use strict");
+    if strict {
+        FunctionStrictness::Strict
+    } else {
+        FunctionStrictness::Sloppy
+    }
 }
 fn function_locals(
     function: &oxc::ast::ast::Function<'_>,
