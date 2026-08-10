@@ -124,7 +124,9 @@ pub enum Op {
     Break {
         label: Option<String>,
     },
-    Continue,
+    Continue {
+        label: Option<String>,
+    },
     Throw {
         src: u16,
     },

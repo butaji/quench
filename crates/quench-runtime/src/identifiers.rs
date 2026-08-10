@@ -16,12 +16,35 @@ pub(crate) fn reduce(
     {
         return Some(register);
     }
-    let slot = *locals.get(identifier.name.as_str())?;
-    let register = *next_register;
+    if let Some(slot) = locals.get(identifier.name.as_str()) {
+        let register = *next_register;
+        *next_register = next_register.saturating_add(1);
+        ops.push(Op::LoadLocal {
+            dst: register,
+            slot: *slot,
+        });
+        return Some(register);
+    }
+
+    let constructor = *next_register;
     *next_register = next_register.saturating_add(1);
-    ops.push(Op::LoadLocal {
-        dst: register,
-        slot,
+    ops.push(Op::MakeBuiltin {
+        dst: constructor,
+        builtin: crate::ops::Builtin::ReferenceError,
     });
-    Some(register)
+    let message = *next_register;
+    *next_register = next_register.saturating_add(1);
+    ops.push(Op::Const {
+        dst: message,
+        value: crate::ops::Constant::String(format!("{} is not defined", identifier.name)),
+    });
+    let error = *next_register;
+    *next_register = next_register.saturating_add(1);
+    ops.push(Op::Construct {
+        dst: error,
+        callee: constructor,
+        args: vec![message],
+    });
+    ops.push(Op::Throw { src: error });
+    Some(error)
 }
