@@ -227,10 +227,10 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
     ))
 }
 
-fn array_descriptor(values: &[Value], key: &str) -> Option<Value> {
+fn array_descriptor(values: &crate::value::ArrayData, key: &str) -> Option<Value> {
     if key == "length" {
         return Some(descriptor_object_with_flags(
-            Value::Number(values.len() as f64),
+            Value::Number(values.logical_len() as f64),
             true,
             false,
             false,

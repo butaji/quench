@@ -1,5 +1,4 @@
 use crate::value::Value;
-use std::rc::Rc;
 
 pub(crate) fn property_method(key: &str) -> Option<crate::ops::Builtin> {
     match key {
@@ -223,7 +222,7 @@ pub(crate) fn concat(receiver: Option<&Value>, arguments: &[Value]) -> Value {
 
 pub(crate) fn split(receiver: Option<&Value>, arguments: &[Value]) -> Value {
     let Some(Value::String(value)) = receiver else {
-        return Value::Array(Rc::new(Vec::new()));
+        return Value::array(Vec::new());
     };
     let separator = arguments.first().map_or_else(String::new, to_string);
     let values = if separator.is_empty() {
@@ -237,7 +236,7 @@ pub(crate) fn split(receiver: Option<&Value>, arguments: &[Value]) -> Value {
             .map(|part| Value::String(part.to_string()))
             .collect()
     };
-    Value::Array(Rc::new(values))
+    Value::array(values)
 }
 
 pub(crate) fn pad_start(receiver: Option<&Value>, arguments: &[Value]) -> Value {

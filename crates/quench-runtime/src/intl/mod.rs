@@ -472,5 +472,5 @@ pub(crate) fn make_object(properties: Vec<(String, Value)>) -> Value {
 }
 
 pub(crate) fn make_array(values: Vec<Value>) -> Value {
-    Value::Array(std::rc::Rc::new(values))
+    Value::array(values)
 }

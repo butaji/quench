@@ -108,7 +108,7 @@ pub enum Value {
     Boolean(bool),
     String(String),
     BigInt(String),
-    Array(Rc<Vec<Value>>),
+    Array(Rc<ArrayData>),
     Object(Rc<Vec<(String, Value)>>),
     ArrayBuffer(Rc<ArrayBufferData>),
     Float64Array(Rc<Float64ArrayData>),
@@ -131,6 +131,53 @@ pub enum Value {
     Set(Rc<SetData>),
     Null,
     Undefined,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArrayData {
+    values: Vec<Value>,
+    length: usize,
+}
+
+impl ArrayData {
+    pub fn new(values: Vec<Value>) -> Self {
+        let length = values.len();
+        Self { values, length }
+    }
+
+    pub fn logical_len(&self) -> usize {
+        self.length
+    }
+
+    pub fn set_length(&mut self, length: usize) {
+        self.values.truncate(length);
+        self.length = length;
+    }
+
+    pub fn set_index(&mut self, index: usize, value: Value) {
+        self.values
+            .resize(index.saturating_add(1), Value::Undefined);
+        self.values[index] = value;
+        self.length = self.length.max(index.saturating_add(1));
+    }
+
+    pub(crate) fn values_mut(&mut self) -> &mut [Value] {
+        &mut self.values
+    }
+}
+
+impl std::ops::Deref for ArrayData {
+    type Target = [Value];
+
+    fn deref(&self) -> &Self::Target {
+        &self.values
+    }
+}
+
+impl Value {
+    pub(crate) fn array(values: Vec<Value>) -> Self {
+        Self::Array(Rc::new(ArrayData::new(values)))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

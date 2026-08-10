@@ -73,10 +73,10 @@ pub(crate) fn unescape(value: Option<&Value>) -> Value {
 pub(crate) fn array(arguments: &[Value]) -> Value {
     if let [Value::Number(length)] = arguments {
         if *length >= 0.0 && length.fract() == 0.0 {
-            return Value::Array(Rc::new(vec![Value::Undefined; *length as usize]));
+            return Value::array(vec![Value::Undefined; *length as usize]);
         }
     }
-    Value::Array(Rc::new(arguments.to_vec()))
+    Value::array(arguments.to_vec())
 }
 
 pub(crate) fn array_map(
@@ -84,10 +84,10 @@ pub(crate) fn array_map(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     let Some(receiver) = receiver else {
-        return Ok(Value::Array(Rc::new(Vec::new())));
+        return Ok(Value::array(Vec::new()));
     };
     let Some(callback) = arguments.first() else {
-        return Ok(Value::Array(Rc::new(Vec::new())));
+        return Ok(Value::array(Vec::new()));
     };
     let length = array_like_length(receiver);
     let mut mapped = Vec::with_capacity(length);
@@ -97,7 +97,7 @@ pub(crate) fn array_map(
         let this_arg = arguments.get(1).map_or(&Value::Undefined, |value| value);
         mapped.push(crate::functions::execute_target(callback, this_arg, &args)?);
     }
-    Ok(Value::Array(Rc::new(mapped)))
+    Ok(Value::array(mapped))
 }
 
 fn array_like_length(value: &Value) -> usize {
@@ -149,7 +149,7 @@ pub(crate) fn array_filter(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     let Some(Value::Array(values)) = receiver else {
-        return Ok(Value::Array(Rc::new(Vec::new())));
+        return Ok(Value::array(Vec::new()));
     };
     let Some(callback) = arguments.first() else {
         return Ok(Value::Array(values.clone()));
@@ -162,7 +162,7 @@ pub(crate) fn array_filter(
             filtered.push(value.clone());
         }
     }
-    Ok(Value::Array(Rc::new(filtered)))
+    Ok(Value::array(filtered))
 }
 
 pub(crate) fn array_join(receiver: Option<&Value>, arguments: &[Value]) -> Value {
@@ -185,10 +185,10 @@ pub(crate) fn array_push(receiver: Option<&Value>, arguments: &[Value]) -> Value
     let Some(receiver @ Value::Array(values)) = receiver else {
         return Value::Number(f64::NAN);
     };
-    let mut result = values.as_ref().clone();
+    let mut result = values.to_vec();
     result.extend_from_slice(arguments);
     let length = result.len();
-    crate::locals::replace_value(receiver, &Value::Array(Rc::new(result)));
+    crate::locals::replace_value(receiver, &Value::array(result));
     Value::Number(length as f64)
 }
 
@@ -324,7 +324,7 @@ pub(crate) fn keys(value: Option<&Value>) -> Value {
             .collect(),
         _ => Vec::new(),
     };
-    Value::Array(Rc::new(keys))
+    Value::array(keys)
 }
 
 pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
@@ -379,16 +379,16 @@ pub(crate) fn define_property(arguments: &[Value]) -> Value {
 
 include!("builtins_descriptor.rs");
 
-fn set_array_property(values: Rc<Vec<Value>>, key: &str, value: Value) -> Value {
+fn set_array_property(mut values: Rc<crate::value::ArrayData>, key: &str, value: Value) -> Value {
+    if key == "length" {
+        let length = value_to_number(&value).max(0.0) as usize;
+        Rc::make_mut(&mut values).set_length(length);
+        return Value::Array(values);
+    }
     let Ok(index) = key.parse::<usize>() else {
         return Value::Array(values);
     };
-    let mut values = values;
-    {
-        let values = Rc::make_mut(&mut values);
-        values.resize(index.saturating_add(1), Value::Undefined);
-        values[index] = value;
-    }
+    Rc::make_mut(&mut values).set_index(index, value);
     Value::Array(values)
 }
 
