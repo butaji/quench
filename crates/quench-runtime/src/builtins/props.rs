@@ -35,14 +35,17 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
 
 fn builtin_method(builtin: Builtin, key: &str) -> Option<Builtin> {
     use Builtin::*;
+    if builtin == ArrayPrototype {
+        return array_method(key);
+    }
+    if builtin == StringPrototype {
+        return crate::strings::property_method(key);
+    }
     match (builtin, key) {
         (Function, "prototype") => Some(FunctionPrototype),
         (FunctionPrototype, "call") => Some(FunctionCall),
         (FunctionPrototype, "bind") => Some(FunctionBind),
         (FunctionCall, "bind") => Some(FunctionBind),
-        (ArrayPrototype, "join") => Some(ArrayJoin),
-        (ArrayPrototype, "map") => Some(ArrayMap),
-        (ArrayPrototype, "push") => Some(ArrayPush),
         (Object, "prototype") => Some(ObjectPrototype),
         (ObjectPrototype, "hasOwnProperty") => Some(ObjectHasOwnProperty),
         (ObjectPrototype, "propertyIsEnumerable") => Some(ObjectPropertyIsEnumerable),
@@ -57,6 +60,33 @@ fn builtin_method(builtin: Builtin, key: &str) -> Option<Builtin> {
         (RegExpPrototype, "test") => Some(RegExpTest),
         (RegExpPrototype, "exec") => Some(RegExpExec),
         _ => builtin_method2(builtin, key),
+    }
+}
+
+fn array_method(key: &str) -> Option<Builtin> {
+    use Builtin::*;
+    match key {
+        "forEach" => Some(ArrayForEach),
+        "map" => Some(ArrayMap),
+        "filter" => Some(ArrayFilter),
+        "some" => Some(ArraySome),
+        "every" => Some(ArrayEvery),
+        "find" => Some(ArrayFind),
+        "includes" => Some(ArrayIncludes),
+        "indexOf" => Some(ArrayIndexOf),
+        "lastIndexOf" => Some(ArrayLastIndexOf),
+        "slice" => Some(ArraySlice),
+        "concat" => Some(ArrayConcat),
+        "flat" => Some(ArrayFlat),
+        "flatMap" => Some(ArrayFlatMap),
+        "at" => Some(ArrayAt),
+        "toReversed" => Some(ArrayToReversed),
+        "join" => Some(ArrayJoin),
+        "reduce" => Some(ArrayReduce),
+        "reduceRight" => Some(ArrayReduceRight),
+        "toLocaleString" => Some(ArrayToLocaleString),
+        "push" => Some(ArrayPush),
+        _ => None,
     }
 }
 
