@@ -14,6 +14,8 @@ use crate::{
     ops::{Constant, Op},
 };
 
+const STATIC_REDUCTION_BOUND: usize = 1_000;
+
 pub(crate) fn reduce_update(
     update: &oxc::ast::ast::UpdateExpression<'_>,
     ops: &mut Vec<Op>,
@@ -354,6 +356,9 @@ pub(crate) fn reduce_for(
     else {
         return reduce_dynamic_for(statement, ops, facts, next_register, next_slot, locals);
     };
+    if !fits_static_bound(start, limit, step) {
+        return reduce_dynamic_for(statement, ops, facts, next_register, next_slot, locals);
+    }
     reduce_static_for(
         statement,
         (name, start, limit, step),
@@ -363,6 +368,19 @@ pub(crate) fn reduce_for(
         next_slot,
         locals,
     )
+}
+
+fn fits_static_bound(start: f64, limit: f64, step: f64) -> bool {
+    let mut current = start;
+    let mut count = 0;
+    while (step > 0.0 && current < limit) || (step < 0.0 && current > limit) {
+        if count >= STATIC_REDUCTION_BOUND {
+            return false;
+        }
+        current += step;
+        count += 1;
+    }
+    true
 }
 
 fn contains_loop_control(statement: &Statement<'_>) -> bool {
@@ -432,7 +450,7 @@ fn reduce_static_for(
         locals,
     };
     while (step > 0.0 && current < limit) || (step < 0.0 && current > limit) {
-        if count >= 1_000 {
+        if count >= STATIC_REDUCTION_BOUND {
             return Err(vec!["Static loop exceeds reduction bound".to_string()]);
         }
         emit_iteration(statement, current, slot, &mut context)?;
@@ -452,6 +470,8 @@ fn reduce_dynamic_for(
 ) -> Result<(), Vec<String>> {
     let init = reduce_for_init(statement, ops, facts, next_register, next_slot, locals)?;
     let test = reduce_fragment(statement.test.as_ref(), ops, facts, next_register, locals)?;
+    let var_names = body_var_names(&statement.body);
+    propagate_body_vars(locals, &var_names);
     let body = reduce_body_fragment(statement, ops, facts, next_register, next_slot, locals)?;
     let update = reduce_fragment(statement.update.as_ref(), ops, facts, next_register, locals)?;
     ops.push(Op::Loop {
@@ -462,6 +482,54 @@ fn reduce_dynamic_for(
         update,
     });
     Ok(())
+}
+
+fn body_var_names(statement: &Statement<'_>) -> Vec<String> {
+    let mut names = Vec::new();
+    collect_body_vars(statement, &mut names);
+    names
+}
+
+fn collect_body_vars(statement: &Statement<'_>, names: &mut Vec<String>) {
+    match statement {
+        Statement::VariableDeclaration(declaration)
+            if declaration.kind == oxc::ast::ast::VariableDeclarationKind::Var =>
+        {
+            names.extend(declaration.declarations.iter().filter_map(|declarator| {
+                declarator
+                    .id
+                    .get_binding_identifier()
+                    .map(|id| id.name.to_string())
+            }));
+        }
+        Statement::BlockStatement(block) => {
+            for statement in &block.body {
+                collect_body_vars(statement, names);
+            }
+        }
+        Statement::TryStatement(statement) => {
+            for statement in &statement.block.body {
+                collect_body_vars(statement, names);
+            }
+            if let Some(handler) = &statement.handler {
+                for statement in &handler.body.body {
+                    collect_body_vars(statement, names);
+                }
+            }
+            if let Some(finalizer) = &statement.finalizer {
+                for statement in &finalizer.body {
+                    collect_body_vars(statement, names);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn propagate_body_vars(locals: &mut HashMap<String, u16>, names: &[String]) {
+    for name in names {
+        locals.entry(name.clone()).or_insert(0);
+    }
 }
 
 fn reduce_for_init(
