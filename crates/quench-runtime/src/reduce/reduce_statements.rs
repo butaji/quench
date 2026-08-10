@@ -29,13 +29,30 @@ pub fn reduce_eval_source(
     bindings: &[(String, u16)],
     forbidden_var_names: &[String],
 ) -> Result<ResidualProgram, Vec<String>> {
+    reduce_eval_source_in_context(
+        source,
+        inherited_strict,
+        global,
+        bindings,
+        forbidden_var_names,
+        crate::semantic::EvalGrammarContext::default(),
+    )
+}
+pub(crate) fn reduce_eval_source_in_context(
+    source: &str,
+    inherited_strict: bool,
+    global: bool,
+    bindings: &[(String, u16)],
+    forbidden_var_names: &[String],
+    grammar: crate::semantic::EvalGrammarContext,
+) -> Result<ResidualProgram, Vec<String>> {
     let strict_source = inherited_strict.then(|| format!("\"use strict\";\n{source}"));
     let source = strict_source.as_deref().unwrap_or(source);
     let allocator = Allocator::default();
     let parsed = Parser::new(&allocator, source, SourceType::cjs()).parse();
-    validate_parse(&parsed)?;
-    let (scope_count, symbol_count) = crate::semantic::analyze(&parsed.program)?;
-    let strict = inherited_strict || has_strict_directive(&parsed.program);
+    crate::reduce_support::validate_parse(&parsed)?;
+    let (scope_count, symbol_count) = crate::semantic::analyze_eval(&parsed.program, grammar)?;
+    let strict = inherited_strict || crate::reduce_support::has_strict_directive(&parsed.program);
     crate::reduce_support::validate_eval_var_names(&parsed.program, strict, forbidden_var_names)?;
     let directive_completion =
         super::reduce_eval::directive_completion(&parsed.program, inherited_strict);
@@ -60,25 +77,6 @@ pub fn reduce_eval_source(
     prefix.append(&mut ops);
     Ok(ResidualProgram { facts, ops: prefix })
 }
-fn has_strict_directive(program: &oxc::ast::ast::Program<'_>) -> bool {
-    program
-        .directives
-        .iter()
-        .any(|directive| directive.directive.as_str() == "use strict")
-}
-fn validate_parse(parsed: &oxc::parser::ParserReturn<'_>) -> Result<(), Vec<String>> {
-    if parsed.panicked {
-        return Err(vec!["SyntaxError: OXC parser rejected source".to_string()]);
-    }
-    if parsed.errors.is_empty() {
-        return Ok(());
-    }
-    Err(parsed
-        .errors
-        .iter()
-        .map(|error| format!("SyntaxError: {error}"))
-        .collect())
-}
 pub fn reduce_source_with_type(
     source: &str,
     source_type: SourceType,
@@ -86,7 +84,7 @@ pub fn reduce_source_with_type(
     let (scope_count, symbol_count, ops) = {
         let allocator = Allocator::default();
         let parsed = Parser::new(&allocator, source, source_type).parse();
-        validate_parse(&parsed)?;
+        crate::reduce_support::validate_parse(&parsed)?;
         let (scope_count, symbol_count) = crate::semantic::analyze(&parsed.program)?;
         let strict = source_type.is_module()
             || parsed
@@ -170,17 +168,24 @@ impl StatementReducer {
         facts: &mut ProgramDb,
         program_scope: bool,
     ) -> Result<Option<u16>, Vec<String>> {
-        crate::reduce_support::predeclare_functions(
+        crate::reduce_support::instantiate_script_declarations(
             statements,
             &mut self.locals,
             &mut self.next_slot,
+            &mut self.ops,
+            program_scope,
         );
         self.next_register = self
             .next_register
             .max(crate::reduce_support::register_base(&self.locals));
         let mut last = None;
         for statement in statements {
+            let limit = program_scope
+                .then(|| crate::reduce_support::script_lexical_slot(statement, &self.locals))
+                .flatten()
+                .map(|slot| std::mem::replace(&mut self.next_slot, slot));
             last = reduce_state_statement(self, statement, facts, program_scope)?.or(last);
+            self.next_slot = limit.map_or(self.next_slot, |limit| limit.max(self.next_slot));
         }
         Ok(last)
     }
@@ -472,24 +477,13 @@ fn function_locals(
     function: &oxc::ast::ast::Function<'_>,
     locals: &HashMap<String, u16>,
 ) -> Result<(HashMap<String, u16>, u16, u16), Vec<String>> {
-    let (mut parameters, parameter_count) = functions::function_parameters(function)?;
+    let (parameters, parameter_count) = crate::function_parameters::bindings(&function.params)?;
     let captures = locals
         .values()
         .copied()
         .max()
         .map_or(0, |slot| slot.saturating_add(1));
-    for slot in parameters.values_mut() {
-        *slot = slot.saturating_add(captures);
-    }
-    let mut bindings = locals.clone();
-    bindings.insert(
-        "arguments".to_string(),
-        captures.saturating_add(parameter_count),
-    );
-    bindings.insert(
-        "this".to_string(),
-        captures.saturating_add(parameter_count).saturating_add(1),
-    );
-    bindings.extend(parameters);
+    let bindings =
+        functions::function_bindings(parameters, parameter_count, captures, locals, false);
     Ok((bindings, parameter_count, captures))
 }

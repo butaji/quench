@@ -48,6 +48,9 @@ fn emit_get(
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
+    if matches!(object, Expression::Super(_)) {
+        return Some(emit_super_get(ops, next_register, key));
+    }
     let object = crate::reduce::reduce_expression(object, ops, facts, next_register, locals)?;
     let register = *next_register;
     *next_register = next_register.saturating_add(1);
@@ -57,6 +60,13 @@ fn emit_get(
         key,
     });
     Some(register)
+}
+
+fn emit_super_get(ops: &mut Vec<Op>, next_register: &mut u16, key: String) -> u16 {
+    let dst = *next_register;
+    *next_register = next_register.saturating_add(1);
+    ops.push(Op::GetSuperProperty { dst, key });
+    dst
 }
 
 fn reduce_dynamic_get(
