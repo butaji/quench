@@ -403,10 +403,6 @@ fn set_function_property(
     key: &str,
     value: Value,
 ) -> Value {
-    if key == "name" && function_name_is_unset(&function) {
-        define_function_name(&function, value);
-        return Value::Function(function);
-    }
     if descriptor_flag_in(&function.properties.borrow(), key, "writable") == Some(false) {
         return Value::Function(function);
     }

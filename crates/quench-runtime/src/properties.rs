@@ -139,6 +139,8 @@ pub(crate) fn execute_set_property(
     Ok(())
 }
 
+include!("properties_function_name.rs");
+
 fn rejects_new_property(target: &crate::value::Value, key: &str) -> bool {
     let crate::value::Value::Object(properties) = target else {
         return false;
