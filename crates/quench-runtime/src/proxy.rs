@@ -195,6 +195,14 @@ pub(crate) fn proxy_construct(
     arguments: &[Value],
     new_target: Option<&Value>,
 ) -> Result<Value, VmError> {
+    if let Some(new_target) = new_target {
+        if !is_constructible(new_target) {
+            return Err(VmError::Thrown(crate::builtins::error(
+                Builtin::TypeError,
+                &[Value::String("Target is not a constructor".to_string())],
+            )));
+        }
+    }
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
         if let Some(trap) = get_handler_trap(proxy, "construct") {
@@ -208,6 +216,14 @@ pub(crate) fn proxy_construct(
         }
     }
     crate::construct::construct_value(target, arguments)
+}
+
+fn is_constructible(value: &Value) -> bool {
+    match value {
+        Value::Function(_) | Value::BoundFunction(_) | Value::Proxy(_) => true,
+        Value::Builtin(builtin) => crate::builtin_meta::constructor_name(*builtin).is_some(),
+        _ => false,
+    }
 }
 
 pub(crate) fn proxy_get_prototype_of(target: &Value) -> Result<Value, VmError> {
