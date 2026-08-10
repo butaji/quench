@@ -46,14 +46,20 @@ pub(crate) fn accessor(value: &Value, key: &str, field: &str) -> Option<Value> {
         return Some(value);
     }
     let key = crate::builtins::descriptor_key(key);
-    let properties = match value {
-        Value::Object(properties) => properties.as_slice(),
-        Value::Function(function) => {
-            return accessor_field(&function.properties.borrow(), &key, field)
-        }
-        _ => return None,
-    };
-    accessor_field(properties, &key, field)
+    accessor_value(value, &key, field)
+}
+
+fn accessor_value(value: &Value, key: &str, field: &str) -> Option<Value> {
+    match value {
+        Value::Object(properties) => accessor_field(properties, key, field),
+        Value::Function(function) => accessor_field(&function.properties.borrow(), key, field),
+        Value::ObjectAlias(alias) => alias
+            .0
+            .borrow()
+            .upgrade()
+            .and_then(|properties| accessor_field(&properties, key, field)),
+        _ => None,
+    }
 }
 
 fn accessor_field(properties: &[(String, Value)], key: &str, field: &str) -> Option<Value> {
@@ -71,8 +77,5 @@ fn accessor_field(properties: &[(String, Value)], key: &str, field: &str) -> Opt
         .iter()
         .rev()
         .find_map(|(name, value)| (name == "\0prototype").then_some(value));
-    match prototype {
-        Some(Value::Object(properties)) => accessor_field(properties, key, field),
-        _ => None,
-    }
+    prototype.and_then(|prototype| accessor_value(prototype, key, field))
 }

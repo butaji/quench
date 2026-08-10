@@ -1,4 +1,7 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
 use crate::{
     execute::VmError,
@@ -7,10 +10,12 @@ use crate::{
 
 thread_local! {
     static CURRENT: RefCell<Option<(Value, Value)>> = const { RefCell::new(None) };
+    static STRICT: Cell<bool> = const { Cell::new(false) };
 }
 
 pub(crate) struct Guard {
     previous: Option<(Value, Value)>,
+    previous_strict: bool,
 }
 
 impl Guard {
@@ -23,18 +28,28 @@ impl Guard {
             .find_map(|(name, value)| (name == "\0home_object").then(|| value.clone()));
         let current = home.map(|home| (home, receiver.clone()));
         let previous = CURRENT.with(|slot| slot.replace(current));
-        Self { previous }
+        let strict = matches!(function.strictness, crate::ops::FunctionStrictness::Strict);
+        let previous_strict = STRICT.with(|slot| slot.replace(strict));
+        Self {
+            previous,
+            previous_strict,
+        }
     }
 }
 
 impl Drop for Guard {
     fn drop(&mut self) {
         CURRENT.with(|slot| slot.replace(self.previous.take()));
+        STRICT.with(|slot| slot.set(self.previous_strict));
     }
 }
 
 pub(crate) fn is_active() -> bool {
     CURRENT.with(|slot| slot.borrow().is_some())
+}
+
+pub(crate) fn is_strict() -> bool {
+    STRICT.with(Cell::get)
 }
 
 pub(crate) fn execute_get(registers: &mut Vec<Value>, op: &crate::ops::Op) -> Result<(), VmError> {

@@ -49,7 +49,9 @@ fn get_property_value(value: &Value, key: &str) -> Value {
         Number(value) => number_property(*value, key),
         Boolean(value) => boolean_property(*value, key),
         Function(function) if key == "length" => Value::Number(f64::from(function.params)),
-        Function(_) if matches!(key, "apply" | "call" | "bind") => bind_function_property(value, key),
+        Function(_) if matches!(key, "apply" | "call" | "bind") => {
+            bind_function_property(value, key)
+        }
         Function(function) => function_property(function, key),
         BoundFunction(bound) => bound_function_property(value, bound, key),
         Map(data) if key == "size" => Value::Number(data.keys.len() as f64),
@@ -74,22 +76,6 @@ fn generator_property(value: &Value, key: &str) -> Value {
     bind_method(value, Value::Builtin(builtin))
 }
 
-fn object_alias_property(alias: &crate::value::ObjectAliasValue, key: &str) -> Value {
-    alias
-        .0
-        .borrow()
-        .upgrade()
-        .map_or(Value::Undefined, |object| object_property(&object, key))
-}
-
-fn object_prototype_property(properties: &[(String, Value)], key: &str) -> Value {
-    properties
-        .iter()
-        .rev()
-        .find_map(|(name, value)| (name == "\0prototype").then_some(value))
-        .map_or(Value::Undefined, |prototype| get_property(prototype, key))
-}
-
 fn function_property(function: &crate::value::FunctionValue, key: &str) -> Value {
     if key == "constructor" {
         return Value::Builtin(function_constructor(function));
@@ -103,7 +89,15 @@ fn function_property(function: &crate::value::FunctionValue, key: &str) -> Value
         .rev()
         .find_map(|(name, value)| (name == "\0prototype").then(|| property_value(value)))
         .map(|prototype| get_property(&prototype, key));
-    inherited.unwrap_or_else(|| builtin_property(Builtin::FunctionPrototype, key))
+    inherited.unwrap_or_else(|| function_prototype_property(key))
+}
+
+fn function_prototype_property(key: &str) -> Value {
+    let value = builtin_property(Builtin::FunctionPrototype, key);
+    if matches!(value, Value::Undefined) {
+        return builtin_property(Builtin::ObjectPrototype, key);
+    }
+    value
 }
 
 fn property_value(value: &Value) -> Value {
@@ -128,6 +122,11 @@ pub fn get_property_result(value: &Value, key: &str) -> Result<Value, VmError> {
             "'callee' is unavailable on strict arguments",
         ));
     }
+    if has_restricted_function_property(value, key) {
+        return Err(crate::value::error::throw_type_error(
+            "'caller' and 'arguments' are unavailable on this function",
+        ));
+    }
     if let Some(getter) = array_accessor(value, key, "get") {
         if matches!(getter, Value::Undefined) {
             return Ok(Value::Undefined);
@@ -145,7 +144,9 @@ pub fn get_property_result(value: &Value, key: &str) -> Result<Value, VmError> {
 }
 
 pub(crate) fn array_accessor(value: &Value, key: &str, field: &str) -> Option<Value> {
-    let Value::Array(values) = value else { return None };
+    let Value::Array(values) = value else {
+        return None;
+    };
     let Value::Object(descriptor) = values.descriptor(key)? else {
         return None;
     };
@@ -229,7 +230,9 @@ fn promise_property(value: &Value, key: &str) -> Value {
 fn array_buffer_property(buffer: &crate::value::ArrayBufferData, key: &str) -> Value {
     match key {
         "byteLength" => Value::Number(buffer.byte_length() as f64),
-        "maxByteLength" => Value::Number(buffer.max_byte_length.unwrap_or(buffer.byte_length()) as f64),
+        "maxByteLength" => {
+            Value::Number(buffer.max_byte_length.unwrap_or(buffer.byte_length()) as f64)
+        }
         "resizable" => Value::Boolean(buffer.max_byte_length.is_some()),
         "resize" => Value::Builtin(Builtin::ArrayBufferResize),
         _ => crate::builtins::property(Builtin::ArrayBuffer, key),
@@ -410,88 +413,4 @@ fn data_view_property(view: &crate::value::DataViewData, key: &str) -> Value {
     }
 }
 
-fn object_property(properties: &Rc<Vec<(String, Value)>>, key: &str) -> Value {
-    if let Some((_, value)) = properties.iter().rev().find(|(name, _)| name == key) {
-        return property_value(value);
-    }
-    if let Some(realm) = realm::id_for_global(properties) {
-        return global_property(properties, key, Some(realm));
-    }
-    if GLOBAL_OBJECT.with(|global| {
-        global
-            .borrow()
-            .as_ref()
-            .is_some_and(|candidate| Rc::ptr_eq(candidate, properties))
-    }) {
-        return global_property(properties, key, None);
-    }
-    let inherited = object_prototype_property(properties, key);
-    if !matches!(inherited, Value::Undefined) {
-        return inherited;
-    }
-    let prototype = object_prototype(properties);
-    bind_method(
-        &Value::Object(properties.clone()),
-        crate::builtins::property(prototype, key),
-    )
-}
-
-fn object_prototype(properties: &[(String, Value)]) -> Builtin {
-    if let Some((_, value)) = properties.iter().find(|(name, _)| name == "_value") {
-        return match value {
-            Value::String(value) if value.contains('\0') => Builtin::SymbolPrototype,
-            Value::String(_) => Builtin::StringPrototype,
-            Value::Number(_) => Builtin::NumberPrototype,
-            Value::Boolean(_) => Builtin::BooleanPrototype,
-            Value::BigInt(_) => Builtin::BigIntPrototype,
-            _ => Builtin::ObjectPrototype,
-        };
-    }
-    if properties.iter().any(|(name, _)| name == "timeValue") {
-        Builtin::DatePrototype
-    } else if properties.iter().any(|(name, _)| name == "source")
-        && properties.iter().any(|(name, _)| name == "flags")
-    {
-        Builtin::RegExpPrototype
-    } else {
-        Builtin::ObjectPrototype
-    }
-}
-
-fn global_property(
-    properties: &Rc<Vec<(String, Value)>>,
-    key: &str,
-    realm: Option<RealmId>,
-) -> Value {
-    if key == "globalThis" {
-        return Value::Object(properties.clone());
-    }
-    if key == "$262" {
-        if let Some(realm) = realm {
-            return realm::host_capability(realm, HostCapabilityKind::GetGlobal)
-                .unwrap_or(Value::Undefined);
-        }
-        return current_host_capability(HostCapabilityKind::GetGlobal);
-    }
-    realm::global_builtin(key).map_or_else(
-        || crate::builtins::property(Builtin::ObjectPrototype, key),
-        |builtin| {
-            realm.map_or_else(
-                || Value::Builtin(builtin),
-                |realm| realm::intrinsic(realm, builtin).unwrap_or(Value::Undefined),
-            )
-        },
-    )
-}
-
-fn current_host_capability(kind: HostCapabilityKind) -> Value {
-    let realm = CURRENT_CONTEXT.with(|context| {
-        context
-            .borrow()
-            .as_ref()
-            .map_or(RealmId::ROOT, VmContext::realm)
-    });
-    Value::HostCapability(Rc::new(crate::value::HostCapabilityValue::new(
-        HostCapabilityRef { realm, kind },
-    )))
-}
+include!("vm_object_properties.rs");
