@@ -8,6 +8,6 @@ for (let index = 0; index <= 32; index += 1) {
     (error) =>
       error.name === "TypeError" &&
       error.code === "ERR_UNESCAPED_CHARACTERS" &&
-      error.message === "Request path contains unescaped characters"
+      error.message === "Request path contains unescaped characters",
   );
 }

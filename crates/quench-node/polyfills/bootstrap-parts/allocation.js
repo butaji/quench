@@ -128,11 +128,15 @@ const __nodeBufferFromIsUnsupported = (value) => {
   if (__nodeBufferFromIsPrimitiveUnsupported(value)) return true;
   if (__nodeBufferFromIsBinaryView(value)) return false;
   if (__nodeBufferFromIsBufferLike(value)) return false;
-  return !(value && typeof value === "object" && typeof value.length === "number");
+  return !(value && typeof value === "object" &&
+    typeof value.length === "number");
 };
 const __nodeBufferFromSpecialValue = (value) => {
   if (value?.type === "Buffer" && Array.isArray(value.data)) return value.data;
-  if (!ArrayBuffer.isView(value) && value?.buffer && __nodeBufferIsArrayBuffer(value.buffer)) {
+  if (
+    !ArrayBuffer.isView(value) && value?.buffer &&
+    __nodeBufferIsArrayBuffer(value.buffer)
+  ) {
     return value.buffer;
   }
   return undefined;
@@ -140,9 +144,13 @@ const __nodeBufferFromSpecialValue = (value) => {
 const __nodeBufferNormalizeFromValue = (value) => {
   const special = __nodeBufferFromSpecialValue(value);
   if (special !== undefined) return special;
-  if (Object.prototype.toString.call(value) === "[object String]") return String(value);
+  if (Object.prototype.toString.call(value) === "[object String]") {
+    return String(value);
+  }
   if (value?.[Symbol.toPrimitive]) return value[Symbol.toPrimitive]("string");
-  if (ArrayBuffer.isView(value) && !(value instanceof Uint8Array)) return Array.from(value);
+  if (ArrayBuffer.isView(value) && !(value instanceof Uint8Array)) {
+    return Array.from(value);
+  }
   return value;
 };
 NodeBuffer.from = (value, ...args) => {

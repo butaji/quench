@@ -9,7 +9,7 @@ filesystem.symlinkSync("/real-dir", "/root/symdir");
 assert.ok(
   filesystem
     .readdirSync("/root", { recursive: true })
-    .includes("symdir/nested.txt")
+    .includes("symdir/nested.txt"),
 );
 
 const cycle = vfs.create();
@@ -19,6 +19,6 @@ cycle.symlinkSync("/dir", "/dir/loop");
 assert.deepStrictEqual(cycle.readdirSync("/", { recursive: true }).sort(), [
   "dir",
   "dir/loop",
-  "dir/nested.txt"
+  "dir/nested.txt",
 ]);
 console.log("recursive symlink readdir passed");

@@ -10,7 +10,7 @@ const transform = new Transform({
   },
   destroy(_error, callback) {
     callback();
-  }
+  },
 });
 transform.write("hello");
 transform.write("world");

@@ -13,8 +13,8 @@ JavaScript jobs; it does not own a native-I/O wait/poll phase.
 Stage 2313 now provides the first host-owned scheduling seam: the host invokes
 `globalThis.__quench_io_poll()` before draining pending jobs and on each
 `beforeExit` turn. The stage verifies that this hook is visible to JavaScript,
-but it intentionally does not claim native readiness delivery or public
-`net` integration yet.
+but it intentionally does not claim native readiness delivery or public `net`
+integration yet.
 
 Stage 2314 adds `__quench_tcp_readable()`, a non-destructive native stream
 readiness probe with distinct would-block, readable, and EOF results. Its
@@ -24,44 +24,44 @@ before consuming data.
 Stage 2315 wires the first public `net` loopback path to those primitives when
 the internal `__quenchNativeTransport` option is present. `Server.listen()`
 binds a real listener and reports its ephemeral port; `createConnection()`
-creates a real client; the host poll hook delivers `connection` and `data`.
-The focused ping/pong stage passes. The option is intentionally gated while
+creates a real client; the host poll hook delivers `connection` and `data`. The
+focused ping/pong stage passes. The option is intentionally gated while
 ordering, half-close, liveness, and ordinary Node option normalization are
 completed.
 
-Stage 2316 adds native write shutdown and verifies a real client half-close:
-the server receives EOF, runs `end`, and completes cleanup. The upstream
+Stage 2316 adds native write shutdown and verifies a real client half-close: the
+server receives EOF, runs `end`, and completes cleanup. The upstream
 `test-net-allow-half-open-async-iter.js` still fails at its larger harness
 callback path, so this stage is only a transport primitive/lifecycle claim.
 
 Stage 2317 makes the host poll phase drain all pending native accepts in one
 turn and removes destroyed sockets from its native registration set. Three
-concurrent native clients complete independent ping/pong writes in the
-focused stage.
+concurrent native clients complete independent ping/pong writes in the focused
+stage.
 
-Stage 2318 also fixes the general `net.Server.close()` lifecycle: the server
-now emits its asynchronous `close` event after closing, including when no
-callback is supplied. The authoritative `test-net-server-close.js` passes.
+Stage 2318 also fixes the general `net.Server.close()` lifecycle: the server now
+emits its asynchronous `close` event after closing, including when no callback
+is supplied. The authoritative `test-net-server-close.js` passes.
 
 Stage 2331 exposes native client and accepted-server `localAddress`,
 `localPort`, `remoteAddress`, and `remotePort` metadata, backed by the actual
-TCP handles, including `socket.address()`. The focused native address stage passes; in-memory address
-metadata remains intentionally separate.
+TCP handles, including `socket.address()`. The focused native address stage
+passes; in-memory address metadata remains intentionally separate.
 
 The native path remains explicitly opted in with `__quenchNativeTransport`.
-Stages 2315, 2316, 2317, 2318, and 2331 pass together on the current host.
-An environment-based opt-in probe against
-`test-net-allow-half-open-async-iter.js` still fails before the expected
-upstream callback, so native transport is not promoted to the default `net`
-path and no upstream half-open pass is claimed.
+Stages 2315, 2316, 2317, 2318, and 2331 pass together on the current host. An
+environment-based opt-in probe against `test-net-allow-half-open-async-iter.js`
+still fails before the expected upstream callback, so native transport is not
+promoted to the default `net` path and no upstream half-open pass is claimed.
 
 ## Required integration contract
 
-1. The host must extend the Stage 2313 hook into a bounded native poll step that can report readable,
-   writable, EOF, and error states without an unbounded JavaScript interval.
+1. The host must extend the Stage 2313 hook into a bounded native poll step that
+   can report readable, writable, EOF, and error states without an unbounded
+   JavaScript interval.
 2. `net.Server.listen()` must register a native listener, publish its actual
-   ephemeral port, and deliver accepted sockets through the existing EventEmitter
-   surface.
+   ephemeral port, and deliver accepted sockets through the existing
+   EventEmitter surface.
 3. `net.Socket` must preserve Node ordering for `connect`, `data`, `end`,
    `finish`, `close`, and error events, including `allowHalfOpen`.
 4. `destroy()`, `end()`, `unref()`, and server close must release native handles
@@ -78,7 +78,8 @@ path and no upstream half-open pass is claimed.
 - Stage 2317: gated concurrent native client acceptance (passing).
 - The upstream `test-net-allow-half-open-async-iter.js` fixture now passes after
   preserving `allowHalfOpen`, buffering writes issued during the connect race,
-  implementing socket async iteration, and supporting `listen(port, host,
+  implementing socket async iteration, and supporting
+  `listen(port, host,
   callback)` and `end(callback)` overloads.
 - Stage 2318: `Server.close` event lifecycle (passing; upstream verified).
 - Stage 2331: native socket address metadata (passing).
@@ -87,9 +88,27 @@ path and no upstream half-open pass is claimed.
   `test-net-allow-half-open-async-iter.js`.
 - Finally: run the owned `net` queue and refresh the differential report.
 
-The Node suite remains the oracle; LLRT and Deno references remain documented
-in `docs/authoritative-test-sources.md`. Until the host poll phase exists, raw
-TCP fixtures and applications requiring real network sockets remain unresolved.
+The Node suite remains the oracle; LLRT and Deno references remain documented in
+`docs/authoritative-test-sources.md`. Until the host poll phase exists, raw TCP
+fixtures and applications requiring real network sockets remain unresolved.
+
+Current verification update: the authoritative
+`test-net-allow-half-open-async-iter.js` fixture now passes through the default
+test runner, in addition to the gated focused stages. The remaining native TCP
+work is therefore the broader default-path network fixture queue and scheduler
+coverage, not this half-close contract.
+
+Stage 2585 now covers the stateful `net.setDefaultAutoSelectFamily()` and
+`setDefaultAutoSelectFamilyAttemptTimeout()` APIs with Node-shaped validation.
+Address-attempt fallback through mocked DNS results remains a separate open
+transport slice.
+
+Stage 2586 now covers the mocked-DNS address selection path: auto-selection
+chooses the IPv4 candidate after an unreachable IPv6 candidate and completes a
+real in-memory loopback exchange.
+
+The upstream command-line auto-family fixture now passes. The default and
+IPv4-first fixtures still require additional option/error-ordering behavior.
 
 ## Additional scheduler boundary
 
@@ -99,32 +118,32 @@ JavaScript microtask. Consequently, a long-delay timer can run before queued
 `setImmediate` or promise work. This is observable in the full stream
 backpressure and watch-promises fixtures, while ordinary timer fixtures and
 focused stream contracts pass. A future host scheduler step must provide
-non-blocking delayed callbacks with Node ordering; changing callback behavior
-in JavaScript alone would misrepresent timer semantics.
+non-blocking delayed callbacks with Node ordering; changing callback behavior in
+JavaScript alone would misrepresent timer semantics.
 
-An isolated clean-worktree prototype replaced synchronous delay with
-cooperative deadline polling using `__quench_now_ns()`. Its minimal stream
-trace advanced from two reads with no callbacks to four reads with callbacks,
-confirming the ordering diagnosis. It still failed the full backpressure and
-watch-promises fixtures and consumed CPU during long waits, so the prototype
-was discarded rather than integrated. A production fix needs host-backed
-non-blocking timers or an equivalent bounded scheduler mechanism.
+An isolated clean-worktree prototype replaced synchronous delay with cooperative
+deadline polling using `__quench_now_ns()`. Its minimal stream trace advanced
+from two reads with no callbacks to four reads with callbacks, confirming the
+ordering diagnosis. It still failed the full backpressure and watch-promises
+fixtures and consumed CPU during long waits, so the prototype was discarded
+rather than integrated. A production fix needs host-backed non-blocking timers
+or an equivalent bounded scheduler mechanism.
 
 The local `rquickjs` 0.9 source confirms two host-backed implementation routes:
 `AsyncRuntime`/`AsyncContext` with `Promise::wrap_future()` can host a Rust
 sleep future, but would require migrating the synchronous harness; alternatively
 the existing `Runtime` can keep its shape while a Rust deadline registry is
-polled alongside `__quench_io_poll()` and `execute_pending_job()`. The latter
-is the smaller integration seam: JavaScript timer creation/cancellation would
+polled alongside `__quench_io_poll()` and `execute_pending_job()`. The latter is
+the smaller integration seam: JavaScript timer creation/cancellation would
 register deadlines, and the host loop would dispatch due callbacks without
 blocking the JS job queue.
 
 Stage 2444 prototypes this seam: the host loop now owns timer deadlines while
-the JS layer owns handles, cancellation, ref state, and callback invocation.
-The focused microtask/`setImmediate`/delayed-timeout ordering stage passes, as
-do the representative application stages and ordinary upstream timers. Full
-backpressure and watch-promises fixtures remain unresolved, so this is a
-partial scheduler integration rather than a completed Node timer claim.
+the JS layer owns handles, cancellation, ref state, and callback invocation. The
+focused microtask/`setImmediate`/delayed-timeout ordering stage passes, as do
+the representative application stages and ordinary upstream timers. Full
+backpressure and watch-promises fixtures remain unresolved, so this is a partial
+scheduler integration rather than a completed Node timer claim.
 
 Stage 2445 exposed a second scheduler interaction: draining every pending
 QuickJS job before polling timers starved `setImmediate` callbacks behind
@@ -132,3 +151,35 @@ stream-demand microtasks. Polling the host timer registry between jobs raises
 the large backpressure trace from 1 to 18 writes, but readable demand still
 stops at 3/11 reads. The timer interleave is retained as partial evidence; the
 remaining read-demand contract belongs to the stream implementation.
+
+The in-memory TCP compatibility path now preserves explicit IPv4/IPv6 listener
+addresses and family-separated port reuse. Auto-family connections record all
+attempted addresses, select the first reachable candidate in lookup order, and
+deliver writes queued before connection to the server side. The authoritative
+`test-net-autoselectfamily.js` and `test-net-autoselectfamily-ipv4first.js`
+fixtures pass locally, alongside focused stages 2585 and 2586.
+
+The auto-family timeout contract is also covered: the default is 2500 ms,
+`--network-family-autoselection-attempt-timeout=123` yields 615 ms, values
+below 10 are clamped by the setter, and non-positive connection options retain
+`ERR_OUT_OF_RANGE`. The corresponding six upstream net fixtures pass locally.
+
+Custom DNS lookups with `net.BlockList` now preserve `ERR_IP_BLOCKED` for
+single and multi-address auto-family connections. The authoritative
+`test-net-blocklist.js` fixture passes alongside the auto-family fixtures.
+
+Socket error delivery now remains asynchronous for custom lookup failures, and
+path-based listener failures preserve the requested address. The authoritative
+`test-net-better-error-messages-listen-path.js` and
+`test-net-better-error-messages-port-hostname.js` fixtures pass.
+
+The `net/promises` module is now registered. Its `listen()` implementation
+supports ephemeral and host-bound listeners, connection listeners, address-in-
+use rejection, and abort-before-bind versus abort-after-listen semantics. The
+authoritative `test-net-promises-listen.js` fixture passes.
+
+The `internal/net` normalized-argument symbol and `net._normalizeArgs()` are
+also exposed; raw arrays are rejected by `Socket.connect()` while symbol-marked
+normalized arrays are accepted. `test-net-normalize-args.js` passes. Server
+`maxConnections` rejection is covered by `test-net-server-max-connections.js`;
+the longer close-and-reopen chain remains an unresolved ordering case.

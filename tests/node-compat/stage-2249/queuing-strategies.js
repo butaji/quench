@@ -1,7 +1,7 @@
 const assert = require("assert");
 const {
   ByteLengthQueuingStrategy,
-  CountQueuingStrategy
+  CountQueuingStrategy,
 } = require("stream/web");
 
 const bytes = new ByteLengthQueuingStrategy({ highWaterMark: 8 });
@@ -12,6 +12,6 @@ assert.strictEqual(count.highWaterMark, 2);
 assert.strictEqual(count.size("anything"), 1);
 assert.throws(
   () => Reflect.get(ByteLengthQueuingStrategy.prototype, "size", {}),
-  /private member/
+  /private member/,
 );
 console.log("queuing strategies passed");

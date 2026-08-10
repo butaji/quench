@@ -2,7 +2,7 @@ globalThis.__validateOpendirOptions = (options) => {
   if (options === undefined) return;
   if (options === null || typeof options !== "object") {
     const error = new TypeError(
-      'The "options" argument must be of type object'
+      'The "options" argument must be of type object',
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -12,7 +12,7 @@ globalThis.__validateOpendirOptions = (options) => {
     !NodeBuffer.isEncoding(options.encoding)
   ) {
     const error = new TypeError(
-      `The argument 'encoding' is invalid encoding. Received '${options.encoding}'`
+      `The argument 'encoding' is invalid encoding. Received '${options.encoding}'`,
     );
     error.code = "ERR_INVALID_ARG_VALUE";
     throw error;
@@ -21,7 +21,7 @@ globalThis.__validateOpendirOptions = (options) => {
   if (bufferSize === undefined) return;
   if (typeof bufferSize !== "number") {
     const error = new TypeError(
-      'The "bufferSize" argument must be of type number'
+      'The "bufferSize" argument must be of type number',
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;

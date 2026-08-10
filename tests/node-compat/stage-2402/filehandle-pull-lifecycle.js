@@ -17,7 +17,7 @@ Promise.all([
     assert.strictEqual(data, "auto close");
     await assert.rejects(
       fh.stat(),
-      (error) => error.code === "ERR_INVALID_STATE" || error.code === "EBADF"
+      (error) => error.code === "ERR_INVALID_STATE" || error.code === "EBADF",
     );
   })(),
   (async () => {
@@ -49,5 +49,5 @@ Promise.all([
     } finally {
       await fh.close();
     }
-  })()
+  })(),
 ]).then(() => console.log("pull lifecycle contracts passed"));

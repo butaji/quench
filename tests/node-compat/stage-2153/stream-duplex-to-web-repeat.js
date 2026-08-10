@@ -11,7 +11,7 @@ const duplex = Duplex({
     writes++;
     assert.deepStrictEqual(chunk, Buffer.from("world"));
     callback();
-  }
+  },
 });
 const first = Duplex.toWeb(duplex);
 first.writable.getWriter().write(Buffer.from("world"));

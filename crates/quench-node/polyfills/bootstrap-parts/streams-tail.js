@@ -173,8 +173,8 @@ globalThis.__nodeFs.promises = {
     Promise.resolve().then(() =>
       globalThis.__nodeFs.realpathSync(value, options)
     ),
-  fstat: (fd) =>
-    Promise.resolve().then(() => globalThis.__nodeFs.fstatSync(fd)),
+  fstat: (fd, options) =>
+    Promise.resolve().then(() => globalThis.__nodeFs.fstatSync(fd, options)),
   statfs: (value, options) =>
     Promise.resolve().then(() => {
       if (value === undefined || value === null) {
@@ -244,10 +244,10 @@ globalThis.__nodeFs.promises = {
     Promise.resolve().then(() =>
       globalThis.__nodeFs.readdirSync(value, options)
     ),
-  stat: (value) =>
-    Promise.resolve().then(() => globalThis.__nodeFs.statSync(value)),
-  lstat: (value) =>
-    Promise.resolve().then(() => globalThis.__nodeFs.lstatSync(value)),
+  stat: (value, options) =>
+    Promise.resolve().then(() => globalThis.__nodeFs.statSync(value, options)),
+  lstat: (value, options) =>
+    Promise.resolve().then(() => globalThis.__nodeFs.lstatSync(value, options)),
   link: (existing, link) =>
     Promise.resolve().then(() => globalThis.__nodeFs.linkSync(existing, link)),
 };

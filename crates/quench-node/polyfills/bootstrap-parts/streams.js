@@ -54,7 +54,7 @@ globalThis.__nodeFs.createReadStream = function (value, options = {}) {
     throw error;
   }
   const { start, end } = __nodeFsReadStreamOptions(options);
-  const stream = new NodeReadable(options);
+  const stream = options.__target || new NodeReadable(options);
   const fileHandle = options.fd && typeof options.fd === "object"
     ? options.fd
     : null;
@@ -78,6 +78,10 @@ globalThis.__nodeFs.createReadStream = function (value, options = {}) {
   if (options.encoding !== undefined) stream.setEncoding(options.encoding);
   setTimeout(() => {
     try {
+      if (options.__target && typeof stream.open === "function") {
+        stream.open();
+        return;
+      }
       if (!hasSuppliedFd) {
         stream.fd = globalThis.__nodeFs.openSync(path, "r");
         stream.emit("open", stream.fd);
@@ -112,7 +116,19 @@ globalThis.__nodeFs.openAsBlob = async (value, options = {}) => {
   const data = globalThis.__nodeFs.readFileSync(value);
   return new Blob([data], { type: options.type || "" });
 };
-globalThis.__nodeFs.ReadStream = globalThis.__nodeFs.createReadStream;
+globalThis.__nodeFs.ReadStream = function ReadStream(value, options = {}) {
+  Object.assign(
+    this,
+    new NodeReadable({ ...options, __quenchCompatConstruct: true }),
+  );
+  this.once("error", () => this.destroy());
+  globalThis.__nodeFs.createReadStream(value, { ...options, __target: this });
+};
+globalThis.__nodeFs.ReadStream.prototype = Object.create(
+  NodeReadable.prototype,
+);
+globalThis.__nodeFs.ReadStream.prototype.constructor =
+  globalThis.__nodeFs.ReadStream;
 class NodeAbortSignal {
   constructor(reason) {
     this.aborted = false;

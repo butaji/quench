@@ -11,7 +11,7 @@ const readable = new Readable({
   },
   destroy(_error, callback) {
     callback();
-  }
+  },
 });
 readable.resume();
 readable.on("end", () => {

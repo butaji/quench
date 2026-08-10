@@ -7,7 +7,7 @@ const writer = {
   },
   end() {
     return Promise.resolve();
-  }
+  },
 };
 const writable = toWritable(writer);
 assert.strictEqual(writable.writableHighWaterMark, Number.MAX_SAFE_INTEGER);

@@ -11,7 +11,7 @@ const { Readable } = require("stream");
     async *[Symbol.asyncIterator]() {
       yield "c";
       yield "d";
-    }
+    },
   });
   await handle.close();
   assert.strictEqual(fs.readFileSync(path, "utf8"), "abcd");
@@ -23,7 +23,7 @@ const { Readable } = require("stream");
   controller.abort();
   await assert.rejects(
     abortHandle.appendFile("x", { signal: controller.signal }),
-    { name: "AbortError" }
+    { name: "AbortError" },
   );
   await abortHandle.close();
   fs.unlinkSync(abortPath);

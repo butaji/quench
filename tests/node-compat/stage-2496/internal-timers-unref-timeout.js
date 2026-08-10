@@ -2,7 +2,7 @@ const assert = require("assert");
 const { setUnrefTimeout } = require("internal/timers");
 
 assert.throws(() => setUnrefTimeout(null), {
-  code: "ERR_INVALID_ARG_TYPE"
+  code: "ERR_INVALID_ARG_TYPE",
 });
 
 let calls = 0;
@@ -14,7 +14,7 @@ const timer = setUnrefTimeout(
     clearTimeout(keepAlive);
   },
   0,
-  "value"
+  "value",
 );
 assert.strictEqual(timer.hasRef(), false);
 assert.strictEqual(timer.refresh(), timer);

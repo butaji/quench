@@ -9,7 +9,7 @@ const duplex = Duplex({
   write(chunk, _encoding, callback) {
     assert.deepStrictEqual(chunk, Buffer.from("world"));
     callback();
-  }
+  },
 });
 const { readable, writable } = Duplex.toWeb(duplex);
 writable.getWriter().write(Buffer.from("world"));

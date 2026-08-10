@@ -1,4 +1,4 @@
-# ADR 0001: Node 24 application runtime contract
+# ADR 0001: Node 24 broad compatibility runtime contract
 
 ## Status
 
@@ -6,48 +6,40 @@ Accepted
 
 ## Decision
 
-quench-node is an application-first Node-compatible runtime built on Rust and
-rquickjs. Its compatibility target is Node 24 behavior on Linux x86_64.
+quench-node is a broad Node-compatible runtime built on Rust and rquickjs. Its
+target is Node 24 behavior on Linux x86_64, Linux ARM64, macOS, and Windows.
+Native addons and Node-API are outside the contract.
 
-Compatibility means matching observable APIs, module loading, errors, and
-timing wherever the host platform permits it. Platform-bound behavior is not
-silently treated as compatible; it is classified explicitly.
-
-Node's upstream tests are the primary compatibility oracle. The initial
-manifest covers `test/parallel/`, `test/es-module/`, and the required
-`test/common/` and `test/fixtures/` support files. A curated application gate
-is also required for release confidence, beginning with a Hono application and
-a small npm CLI tool. Each application is compared under Node 24 and
-quench-node, including status, headers, and body where applicable.
-
-Compatibility status is stored in a versioned JSONC manifest under
-`tests/node-compat/`. It supports `pass`, `fail`, `skip`, `platform-limited`,
-`unsupported`, and `known-conflict`, with explicit fixture entries and optional
-prefix defaults.
+Applicable Node upstream tests are the primary oracle. Native-addon and
+explicitly platform-impossible tests are the only exclusions. Required
+application gates cover web server, CLI, package loader, streams, crypto, and
+database/SDK workloads. Compatibility statuses are defined in
+[`compatibility-contract.md`](../compatibility-contract.md).
 
 ## Release criterion
 
-A Linux x86_64 release must have zero failures in the curated application gate
-and no regressions in the declared Node 24 compatibility manifest.
+Every supported platform must have no unexplained failures in the declared
+Node 24 contract, all application gates must pass, and two complete runs must
+finish with zero retries or timeouts. A reproducible report must include the
+runtime version, Node oracle, platform, manifest revision, fixtures,
+applications, and results.
 
 ## Boundaries
 
-The authoritative test sources and their roles are documented in
-[`authoritative-test-sources.md`](../authoritative-test-sources.md).
+Declarations and generated JavaScript adapters own ordinary Node semantics;
+handwritten JavaScript is reserved for irreducible behavior. Rust owns the
+declaration/IR generator, engine integration, and unsafe or OS-bound
+primitives. No separate `quench-runtime` crate may be introduced. TypeScript
+execution and package installation are outside the runtime contract;
+applications start after dependencies are installed.
 
-Rust remains limited to engine integration and unsafe or OS-bound primitives.
-Node semantics remain in readable JavaScript polyfills. LLRT is a design
-reference for QuickJS/Rust boundaries and capability classification. Deno's
-Node compatibility runner is a design reference for manifests and foreign
-runtime test execution. WPT covers web-platform APIs; Test262 remains a
-secondary engine-baseline check.
+LLRT remains a QuickJS/Rust design reference, WinterJS a web-platform and
+capability-matrix reference, Deno a foreign-runtime runner reference, WPT a
+web-platform oracle, and Test262 an ECMAScript baseline.
 
 ## Consequences
 
-- Upstream test counts are evidence of progress, not an API-coverage
-  percentage.
-- Platform limitations and upstream fixture conflicts remain visible and
-  auditable.
-- Real npm applications can block a release even when focused fixtures pass.
-- The existing `tests/node` submodule and local runners should be extended,
-  rather than replaced with a second vendored suite.
+- API names alone do not establish compatibility; every entry needs evidence.
+- Unsupported and platform-limited behavior remains visible and deterministic.
+- Real applications block releases alongside upstream tests.
+- All supported platforms share one core contract.

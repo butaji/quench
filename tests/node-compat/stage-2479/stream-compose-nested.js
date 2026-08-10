@@ -6,7 +6,7 @@ const source = compose(
   (async function* () {
     yield "hello";
     yield "world";
-  })()
+  })(),
 );
 const transform = compose(async function* (values) {
   for await (const value of values) yield value.toUpperCase();

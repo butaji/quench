@@ -3,12 +3,12 @@ const { Readable } = require("stream");
 
 const shortCircuit = Readable.from([1, 2, 3, 4, 5]);
 Object.defineProperty(shortCircuit, "map", {
-  value: () => assert.fail("terminal predicates must not call public map")
+  value: () => assert.fail("terminal predicates must not call public map"),
 });
 
 const controller = new AbortController();
 const aborted = Readable.from([1, 2, 3]).some(() => new Promise(() => {}), {
-  signal: controller.signal
+  signal: controller.signal,
 });
 
 let failure;
@@ -26,8 +26,8 @@ const cases = [
   Readable.from([]).find(() => true),
   assert.rejects(aborted, { name: "AbortError" }),
   assert.rejects(Readable.from([1]).some(1), {
-    code: "ERR_INVALID_ARG_TYPE"
-  })
+    code: "ERR_INVALID_ARG_TYPE",
+  }),
 ];
 const expected = [3, true, true, false, true, undefined];
 let completed = 0;
@@ -49,7 +49,7 @@ for (let index = 0; index < cases.length; index++) {
       failure ||= error;
       completed++;
       if (completed === cases.length) clearInterval(keepAlive);
-    }
+    },
   );
 }
 

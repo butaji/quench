@@ -7,6 +7,10 @@ cd "$root"
 
 tools/lint-size.sh
 
+echo "=== rust source limits (40 lines/function, complexity 10) ==="
+tools/lint-rust-limits.sh
+echo "OK: Rust source limits"
+
 echo "=== rustfmt check ==="
 cargo fmt --check || { echo "FAIL: rustfmt — run 'cargo fmt'"; exit 1; }
 echo "OK: rustfmt"

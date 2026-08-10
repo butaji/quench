@@ -7,13 +7,13 @@ const source = new Readable({
     if (reads === 11) return this.push(null);
     this.push(Buffer.alloc(65500));
     for (let i = 0; i < 40; i++) this.push(Buffer.alloc(1024));
-  }
+  },
 });
 const target = new Writable({
   write(_chunk, _encoding, callback) {
     writes++;
     setImmediate(callback);
-  }
+  },
 });
 source.pipe(target);
 target.on("finish", () => {
@@ -22,7 +22,7 @@ target.on("finish", () => {
       reads,
       writes,
       ended: source.readableEnded,
-      finished: target.writableFinished
-    })
+      finished: target.writableFinished,
+    }),
   );
 });

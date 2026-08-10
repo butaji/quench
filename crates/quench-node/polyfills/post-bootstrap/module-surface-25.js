@@ -6,7 +6,7 @@
       if (String(name).replace(/^node:/, "") === "async_hooks") {
         result.createHook ||= () => ({
           enable: () => undefined,
-          disable: () => undefined
+          disable: () => undefined,
         });
         result.executionAsyncId ||= () => 0;
         result.triggerAsyncId ||= () => 0;

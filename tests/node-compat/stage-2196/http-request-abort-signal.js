@@ -10,7 +10,7 @@ const controller = new AbortController();
 server.listen(0, () => {
   const request = http.get({
     port: server.address().port,
-    signal: controller.signal
+    signal: controller.signal,
   });
   assert.strictEqual(listenerCount(controller.signal, "abort"), 1);
   assert.strictEqual(request.aborted, false);

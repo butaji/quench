@@ -1,11 +1,17 @@
 # Upstream fixtures — Node 24 application compatibility manifest
 
+> Contract: This task is part of broad Node 24 compatibility across Linux
+> x86_64, Linux ARM64, macOS, and Windows. Native addons and Node-API are
+> excluded. Use the statuses and release gates in
+> [compatibility-contract.md](../docs/compatibility-contract.md).
+
 Node's upstream suite is the primary behavioral oracle. The first manifest
 covers `test/parallel/` and `test/es-module/`, with required `test/common/` and
 `test/fixtures/` support files. It is versioned as JSONC under
-`tests/node-compat/` and records `pass`, `fail`, `skip`, `platform-limited`,
-`unsupported`, and `known-conflict`. Upstream counts measure progress, not an
-API percentage; Hono and a representative npm CLI are also release gates.
+`tests/node-compat/` and records `pass`, `fail`, `unsupported`,
+`platform-limited`, `known-conflict`, and `not-tested`. Upstream counts measure
+progress, not an API percentage; six workload-class application gates are also
+release gates.
 The source relationships and implementation order are documented in
 `docs/authoritative-test-sources.md`: Node is the oracle, LLRT is the
 QuickJS/Rust reference, Deno is the foreign-runtime runner reference, WPT
@@ -589,7 +595,9 @@ For each row in the table above:
 
 - The Node 24 compatibility manifest has no unclassified regressions.
 - `tools/check-focused-stages.sh` reports 100% of registered stages pass.
-- Hono and the representative npm CLI application gates have zero failures.
+- All six workload-class application gates have zero unexplained failures.
+- Two complete supported-platform verification runs finish with no retries or
+  timeouts and publish reproducible reports.
 - The npm package smoke gate includes an `ajv` application probe for
   CommonJS package resolution and nested dependency loading.
 - The package-loader slice is regression-checked by

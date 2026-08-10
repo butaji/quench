@@ -13,7 +13,7 @@ server.listen(0, "127.0.0.1", () => {
       configurable: true,
       get() {
         throw new Error("inherited hostname was accessed");
-      }
+      },
     });
     const request = http.request(options, (response) => {
       responses += 1;
@@ -32,6 +32,6 @@ server.listen(0, "127.0.0.1", () => {
     __proto__: null,
     host: "127.0.0.1",
     port: server.address().port,
-    path: "/"
+    path: "/",
   });
 });

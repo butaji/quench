@@ -394,3 +394,29 @@ if (globalThis.require) {
     return result;
   };
 }
+const __quenchAddAbortSignal = (signal, stream) => {
+  if (!signal || typeof signal !== "object") {
+    const error = new TypeError(
+      "ERR_INVALID_ARG_TYPE: The signal argument must be an AbortSignal",
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  if (!stream || typeof stream !== "object") {
+    const error = new TypeError(
+      "ERR_INVALID_ARG_TYPE: The stream argument must be a stream",
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  const abort = () => {
+    const error = new Error("The operation was aborted");
+    error.name = "AbortError";
+    error.code = "ABORT_ERR";
+    if (typeof stream._errorStream === "function") stream._errorStream(error);
+    else stream.destroy?.(error);
+  };
+  if (signal.aborted) abort();
+  else signal.addEventListener?.("abort", abort, { once: true });
+  return stream;
+};

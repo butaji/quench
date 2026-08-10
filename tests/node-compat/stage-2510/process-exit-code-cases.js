@@ -13,7 +13,7 @@ if (process.argv[2] !== undefined) {
       "exit",
       (actual) => {
         assert.strictEqual(actual, code);
-      }
+      },
     );
   });
 }

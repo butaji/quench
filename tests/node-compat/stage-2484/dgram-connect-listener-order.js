@@ -11,7 +11,7 @@ queueMicrotask(() => {
   assert.deepStrictEqual(socket.remoteAddress(), {
     address: "127.0.0.1",
     family: "IPv4",
-    port: 12345
+    port: 12345,
   });
   socket.close();
 });

@@ -16,23 +16,28 @@ const __quenchValidateSpawnCommand = (command) => {
   }
 };
 const __quenchValidateSpawnArgs = (options) => {
-  if (options !== undefined && options !== null &&
-      !Array.isArray(options) && typeof options !== "object") {
+  if (
+    options !== undefined && options !== null &&
+    !Array.isArray(options) && typeof options !== "object"
+  ) {
     const error = new TypeError("The args argument must be an array");
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
 };
 const __quenchValidateSpawnOptions = (third, options) => {
-  if (third !== undefined &&
-      (third === null || typeof third !== "object" || Array.isArray(third))) {
+  if (
+    third !== undefined &&
+    (third === null || typeof third !== "object" || Array.isArray(third))
+  ) {
     const error = new TypeError("The options argument must be an object");
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
   __quenchValidateSpawnIds(__quenchSpawnChildOptions(third, options));
 };
-const __quenchSpawnChildOptions = (third, options) => third && typeof third === "object"
+const __quenchSpawnChildOptions = (third, options) =>
+  third && typeof third === "object"
     ? third
     : options && typeof options === "object" && !Array.isArray(options)
     ? options

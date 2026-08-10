@@ -13,6 +13,12 @@ macro_rules! run_host_context {
         ctx.globals().set("__quench_tcp_write", Func::from($crate::host_context::quench_tcp_write))?;
         ctx.globals().set("__quench_tcp_shutdown", Func::from($crate::host_context::quench_tcp_shutdown))?;
         ctx.globals().set("__quench_tcp_close", Func::from($crate::host_context::quench_tcp_close))?;
+        ctx.globals().set("__quench_udp_socket", Func::from($crate::host_context::quench_udp_socket))?;
+        ctx.globals().set("__quench_udp_send", Func::from($crate::host_context::quench_udp_send))?;
+        ctx.globals().set("__quench_udp_recv", Func::from($crate::host_context::quench_udp_recv))?;
+        ctx.globals().set("__quench_udp_close", Func::from($crate::host_context::quench_tcp_close))?;
+        ctx.globals().set("__quench_dns_lookup", Func::from($crate::host_context::quench_dns_lookup))?;
+        ctx.globals().set("__quench_dns_reverse", Func::from($crate::host_context::quench_dns_reverse))?;
         ctx.globals().set(
             "__quench_fs_exists",
             Func::from(|path: String| fs::metadata(path).is_ok()),

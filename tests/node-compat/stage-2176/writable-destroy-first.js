@@ -3,7 +3,7 @@ const { Writable } = require("stream");
 const first = new Writable({
   write(_chunk, _encoding, callback) {
     callback();
-  }
+  },
 });
 first.on("close", () => {});
 first.destroy();
@@ -13,7 +13,7 @@ const second = new Writable({
   write(_chunk, _encoding, callback) {
     this.destroy(new Error("asd"));
     callback();
-  }
+  },
 });
 second.on("error", (error) => {
   if (error.message !== "asd") throw new Error("wrong error");

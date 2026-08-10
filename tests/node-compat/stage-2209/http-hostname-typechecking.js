@@ -7,6 +7,6 @@ for (const name of ["hostname", "host"]) {
     (error) =>
       error.name === "TypeError" &&
       error.code === "ERR_INVALID_ARG_TYPE" &&
-      error.message.includes(`options.${name}`)
+      error.message.includes(`options.${name}`),
   );
 }

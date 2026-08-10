@@ -27,80 +27,82 @@ const __quenchValidateZlibParams = (level, strategy) => {
     error.code = "ERR_OUT_OF_RANGE";
     throw error;
   }
-  if (strategy !== undefined &&
-      (typeof strategy !== "number" || !Number.isFinite(strategy) ||
-       strategy < 0 || strategy > 4)) {
+  if (
+    strategy !== undefined &&
+    (typeof strategy !== "number" || !Number.isFinite(strategy) ||
+      strategy < 0 || strategy > 4)
+  ) {
     const error = new TypeError('The "strategy" argument is invalid');
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
 };
 const __quenchZlibStreamEvents = (stream, listeners, method) => ({
-    on(event, callback) {
-      (listeners[event] ||= []).push(callback);
-      return stream;
-    },
-    emit(event, ...args) {
-      for (const callback of listeners[event] || []) callback(...args);
-      return stream;
-    },
-    write(input, callback) {
-      try {
-        stream.emit("data", method(input));
-        if (typeof callback === "function") queueMicrotask(() => callback());
-      } catch (error) {
-        stream._closed = true;
-        queueMicrotask(() => stream.emit("error", error));
-        if (typeof callback === "function") {
-          queueMicrotask(() => callback(error));
-        }
+  on(event, callback) {
+    (listeners[event] ||= []).push(callback);
+    return stream;
+  },
+  emit(event, ...args) {
+    for (const callback of listeners[event] || []) callback(...args);
+    return stream;
+  },
+  write(input, callback) {
+    try {
+      stream.emit("data", method(input));
+      if (typeof callback === "function") queueMicrotask(() => callback());
+    } catch (error) {
+      stream._closed = true;
+      queueMicrotask(() => stream.emit("error", error));
+      if (typeof callback === "function") {
+        queueMicrotask(() => callback(error));
       }
-      return true;
-    },
-    end(input) {
-      if (input !== undefined) stream.write(input);
-      queueMicrotask(() => stream.emit("end").emit("finish"));
-      return stream;
-    },
+    }
+    return true;
+  },
+  end(input) {
+    if (input !== undefined) stream.write(input);
+    queueMicrotask(() => stream.emit("end").emit("finish"));
+    return stream;
+  },
 });
 const __quenchZlibStreamControls = (stream, method) => ({
-    flush(kind, callback) {
-      if (typeof kind === "function") {
-        callback = kind;
-        kind = undefined;
-      }
-      __quenchValidateFlushKind(stream, kind);
-      if (typeof callback === "function") queueMicrotask(() => callback());
-      return stream;
-    },
-    resume() {
-      return stream;
-    },
-    pipe(destination) {
-      stream.on("data", (chunk) => destination.write(chunk));
-      stream.on("end", () => destination.end());
-      return destination;
-    },
-    _chunkSize: 16384,
-    _outOffset: 0,
-    _processChunk(input) {
-      if (this._outOffset > this._chunkSize) {
-        const error = new RangeError('The value of "offset" is out of range');
-        error.code = "ERR_OUT_OF_RANGE";
-        throw error;
-      }
-      return method(input);
-    },
-    close(callback) {
-      this.closed = true;
-      this._closed = true;
-      if (typeof callback === "function") queueMicrotask(callback);
-      return this;
-    },
-    params(level, strategy) {
-      __quenchValidateZlibParams(level, strategy);
-      return stream;
-    },
+  flush(kind, callback) {
+    if (typeof kind === "function") {
+      callback = kind;
+      kind = undefined;
+    }
+    __quenchValidateFlushKind(stream, kind);
+    if (typeof callback === "function") queueMicrotask(() => callback());
+    return stream;
+  },
+  resume() {
+    return stream;
+  },
+  pipe(destination) {
+    stream.on("data", (chunk) => destination.write(chunk));
+    stream.on("end", () => destination.end());
+    return destination;
+  },
+  _chunkSize: 16384,
+  _outOffset: 0,
+  _processChunk(input) {
+    if (this._outOffset > this._chunkSize) {
+      const error = new RangeError('The value of "offset" is out of range');
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    return method(input);
+  },
+  close(callback) {
+    this.closed = true;
+    this._closed = true;
+    if (typeof callback === "function") queueMicrotask(callback);
+    return this;
+  },
+  params(level, strategy) {
+    __quenchValidateZlibParams(level, strategy);
+    return stream;
+  },
 });
 const __quenchZlibTransform = (options, method) => {
   const listeners = {};
@@ -149,7 +151,13 @@ const __quenchValidateCompressionWindowBits = (options) => {
     throw error;
   }
 };
-const __quenchCreateZlibStream = (module, method, prototype, options, validate) => {
+const __quenchCreateZlibStream = (
+  module,
+  method,
+  prototype,
+  options,
+  validate,
+) => {
   validate?.(options);
   const stream = __quenchZlibTransform(options, module[method]);
   Object.setPrototypeOf(stream, module[prototype].prototype);
@@ -160,26 +168,49 @@ const __quenchZlibStreamExports = (module) => ({
     __quenchValidateFlushOptions(options);
     __quenchValidateCompressionWindowBits(options);
     const stream = __quenchCreateZlibStream(
-      module, "gzipSync", "Gzip", options,
+      module,
+      "gzipSync",
+      "Gzip",
+      options,
     );
     stream.__flushKinds = [0, 4, 5];
     return stream;
   },
-  createGunzip: (options) => __quenchCreateZlibStream(
-    module, "gunzipSync", "Gunzip", options, __quenchValidateFlushOptions,
-  ),
-  createDeflate: (options) => __quenchCreateZlibStream(
-    module, "deflateSync", "Deflate", options, (value) => {
-      __quenchValidateFlushOptions(value);
-      __quenchValidateCompressionWindowBits(value);
-    },
-  ),
-  createInflate: (options) => __quenchCreateZlibStream(
-    module, "inflateSync", "Inflate", options, __quenchValidateFlushOptions,
-  ),
-  createUnzip: (options) => __quenchCreateZlibStream(
-    module, "unzipSync", "Unzip", options, __quenchValidateFlushOptions,
-  ),
+  createGunzip: (options) =>
+    __quenchCreateZlibStream(
+      module,
+      "gunzipSync",
+      "Gunzip",
+      options,
+      __quenchValidateFlushOptions,
+    ),
+  createDeflate: (options) =>
+    __quenchCreateZlibStream(
+      module,
+      "deflateSync",
+      "Deflate",
+      options,
+      (value) => {
+        __quenchValidateFlushOptions(value);
+        __quenchValidateCompressionWindowBits(value);
+      },
+    ),
+  createInflate: (options) =>
+    __quenchCreateZlibStream(
+      module,
+      "inflateSync",
+      "Inflate",
+      options,
+      __quenchValidateFlushOptions,
+    ),
+  createUnzip: (options) =>
+    __quenchCreateZlibStream(
+      module,
+      "unzipSync",
+      "Unzip",
+      options,
+      __quenchValidateFlushOptions,
+    ),
 });
 globalThis.require = (specifier) => {
   const module = __quenchOriginalRequireWithZlibStreams(specifier);

@@ -145,25 +145,6 @@ const __quenchNetSocket = class Socket extends globalThis.__nodeEventEmitter {
     }
     return this;
   }
-  setTypeOfService(value) {
-    if (typeof value !== "number" || Number.isNaN(value)) {
-      const error = new TypeError(
-        'The "tos" argument must be of type number',
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
-    }
-    if (!Number.isInteger(value) || value < 0 || value > 255) {
-      const error = new RangeError('The value of "tos" is out of range');
-      error.code = "ERR_OUT_OF_RANGE";
-      throw error;
-    }
-    this._typeOfService = value;
-    return this;
-  }
-  getTypeOfService() {
-    return this._typeOfService;
-  }
   setTimeout(timeout, callback) {
     if (typeof timeout !== "number") {
       const error = new TypeError(
@@ -199,37 +180,6 @@ const __quenchNetSocket = class Socket extends globalThis.__nodeEventEmitter {
     }
     return this;
   }
-  ref() {
-    this._refed = true;
-    this._timeoutTimer?.ref?.();
-    return this;
-  }
-  unref() {
-    this._refed = false;
-    this._timeoutTimer?.unref?.();
-    return this;
-  }
-  hasRef() {
-    return this._refed;
-  }
-  cork() {
-    this._corked++;
-    return this;
-  }
-  uncork() {
-    this._corked = Math.max(0, this._corked - 1);
-    return this;
-  }
-  address() {
-    if (this._nativeId) {
-      return {
-        address: this.localAddress || "127.0.0.1",
-        family: "IPv4",
-        port: this.localPort,
-      };
-    }
-    return this.destroyed ? null : undefined;
-  }
   destroy() {
     if (this.destroyed) return this;
     const peer = this._peer;
@@ -259,6 +209,17 @@ const __quenchNetSocket = class Socket extends globalThis.__nodeEventEmitter {
     return this.destroy();
   }
   connect(_options, callback) {
+    if (Array.isArray(_options)) {
+      if (!_options[globalThis.__quenchNetNormalizedArgsSymbol]) {
+        const error = new TypeError(
+          "The port or options argument must be specified",
+        );
+        error.code = "ERR_MISSING_ARGS";
+        throw error;
+      }
+      callback = _options[1];
+      _options = _options[0];
+    }
     if (typeof _options !== "object" || _options === null) {
       _options = { port: _options };
     }
@@ -278,6 +239,12 @@ const __quenchNetSocket = class Socket extends globalThis.__nodeEventEmitter {
       this.bytesWritten = 0;
     }
     globalThis.__quenchValidateConnectionOptions(_options);
+    if (_options.allowHalfOpen !== undefined) {
+      this.allowHalfOpen = _options.allowHalfOpen === true;
+    }
+    this._resolvedAddress = _options._resolvedAddress
+      ? _options.host
+      : undefined;
     if (
       this._handle?.constructor?.name === "BoundSocket" &&
       (_options.localAddress !== undefined || _options.localPort !== undefined)
@@ -336,6 +303,7 @@ const __quenchNetSocket = class Socket extends globalThis.__nodeEventEmitter {
       queueMicrotask(() => {
         this.connecting = false;
         this.emit("connect");
+        this.emit("ready");
         queueMicrotask(() => {
           if (this._endPending && !this.destroyed) {
             this._endPending = false;
@@ -351,6 +319,9 @@ const __quenchNetSocket = class Socket extends globalThis.__nodeEventEmitter {
         const server = [...__quenchNetServers].find(
           (candidate) =>
             candidate.listening &&
+            (!candidate._ipv6Only || isIPv6(_options.host)) &&
+            (!this._resolvedAddress ||
+              candidate.address().address === this._resolvedAddress) &&
             ((!requestedPath &&
               (!requestedPort || candidate.address().port === requestedPort)) ||
               (requestedPath && candidate._path === requestedPath)),
@@ -364,14 +335,38 @@ const __quenchNetSocket = class Socket extends globalThis.__nodeEventEmitter {
           serverSocket.allowHalfOpen = httpServer.httpAllowHalfOpen === true;
           this._peer = serverSocket;
           serverSocket._peer = this;
-          for (const chunk of this._pendingWrites) {
-            serverSocket._pendingData.push(NodeBuffer.from(chunk));
-          }
-          this._pendingWrites = [];
+          const pendingWrites = this._pendingWrites.splice(0);
           httpServer.__quenchRawConnection?.(serverSocket);
+          __quenchDeliverPendingWrites(serverSocket, pendingWrites);
           return;
         }
-        if (!server) return;
+        if (!server) {
+          const address = this._resolvedAddress || _options.host ||
+            (isIPv6(_options.family) ? "::1" : "127.0.0.1");
+          const error = new Error(
+            `connect ECONNREFUSED ${address}:${requestedPort}`,
+          );
+          error.code = "ECONNREFUSED";
+          error.address = address;
+          error.port = requestedPort;
+          this.emit("error", error);
+          return;
+        }
+        if (
+          Number.isFinite(server.maxConnections) &&
+          server.maxConnections >= 0 &&
+          server._connections.size >= server.maxConnections
+        ) {
+          const error = new Error("socket hang up");
+          error.code = "ECONNRESET";
+          queueMicrotask(() => {
+            if (!this.destroyed && this.listenerCount("error") > 0) {
+              this.emit("error", error);
+            }
+            this.destroy();
+          });
+          return;
+        }
         const serverSocket = new __quenchNetModule.Socket();
         serverSocket._handle = { setKeepAlive: () => {} };
         serverSocket.allowHalfOpen = server._allowHalfOpen;
@@ -383,16 +378,14 @@ const __quenchNetSocket = class Socket extends globalThis.__nodeEventEmitter {
         }
         this._peer = serverSocket;
         serverSocket._peer = this;
-        for (const chunk of this._pendingWrites) {
-          serverSocket._pendingData.push(NodeBuffer.from(chunk));
-        }
-        this._pendingWrites = [];
+        const pendingWrites = this._pendingWrites.splice(0);
         server._connections.add(serverSocket);
         serverSocket.once("close", () => {
           server._connections.delete(serverSocket);
           server._finishClose?.();
         });
         server.emit("connection", serverSocket);
+        __quenchDeliverPendingWrites(serverSocket, pendingWrites);
       });
     }
     return this;
@@ -445,6 +438,7 @@ const __quenchNetSocket = class Socket extends globalThis.__nodeEventEmitter {
     }
     return true;
   }
+
   end(_data, callback) {
     if (typeof _data === "function") {
       callback = _data;
@@ -478,6 +472,8 @@ const __quenchNetSocket = class Socket extends globalThis.__nodeEventEmitter {
       }
       if (peer && !peer.destroyed) {
         queueMicrotask(() => {
+          peer._readableEnded = true;
+          peer.emit("end");
           if (!peer.allowHalfOpen) {
             peer.writable = false;
             peer._localEnded = true;
@@ -487,8 +483,6 @@ const __quenchNetSocket = class Socket extends globalThis.__nodeEventEmitter {
             }
             peer.destroy();
           }
-          peer._readableEnded = true;
-          peer.emit("end");
           if (this._localEnded && peer._localEnded) this.destroy();
         });
       }

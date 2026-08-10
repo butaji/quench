@@ -7,8 +7,8 @@ const readable = addAbortSignal(
   new Readable({
     read() {
       this.push("data");
-    }
-  })
+    },
+  }),
 );
 readable.on("error", (error) => {
   assert.strictEqual(error.name, "AbortError");

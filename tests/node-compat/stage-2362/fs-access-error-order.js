@@ -12,7 +12,7 @@ fs.promises.access(missing).then(
   (error) => {
     rejectionCalls++;
     assert.strictEqual(error.code, "ENOENT");
-  }
+  },
 );
 setTimeout(() => {
   assert.strictEqual(callbackCalls, 1);

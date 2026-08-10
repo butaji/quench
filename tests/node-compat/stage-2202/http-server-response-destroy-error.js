@@ -5,8 +5,9 @@ let clientError = false;
 const server = http.createServer((request, response) => {
   assert.strictEqual(response.closed, false);
   request.pipe(response);
-  response.on("error", () =>
-    assert.fail("server response should not emit error")
+  response.on(
+    "error",
+    () => assert.fail("server response should not emit error"),
   );
   response.on("close", () => {
     assert.strictEqual(response.closed, true);

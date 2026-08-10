@@ -1,5 +1,10 @@
 # Ten remaining evidence boundaries
 
+> Contract: This task is part of broad Node 24 compatibility across Linux
+> x86_64, Linux ARM64, macOS, and Windows. Native addons and Node-API are
+> excluded. Use the statuses and release gates in
+> [compatibility-contract.md](../docs/compatibility-contract.md).
+
 This queue turns the remaining failures into concrete evidence contracts. Each
 item must have a focused stage, an authoritative upstream fixture or app probe,
 and a task-log result before it is considered improved.
@@ -23,6 +28,11 @@ general behavior, and the remaining difference. Push each verified item as its
 own commit.
 
 ## Status
+
+The stream pipeline function-stage regression is now finite and stable: stage
+2554 emits one chunk and EOF, then verifies sequential function-stage
+invocation. Stages 1026, 1348, 1474, and 2060 also pass after their respective
+compatibility fixes.
 
 - Item 1: improved. Stage 2333 verifies explicit `Socket.connect()` server
   delivery; upstream `test-net-socket-tos.js` passes. The local-address
@@ -1570,3 +1580,55 @@ Aggregate verification: documented `tools/check-all-tests.sh` completed
 successfully (Cargo fallback ran 2/2 Rust tests; focused stages completed), and
 `tools/check-focused-stages.sh` also completed successfully. These aggregate
 checks do not include the still-failing authoritative fixtures listed above.
+
+Stage 2543 adds real paused-data queuing to in-memory `net.Socket`: writes
+arriving while paused are retained in order, resume drains them, and destroy
+drops queued data. The focused regression passes. The authoritative
+`test-net-stream.js` fixture now passes as well; its remote-destroy path also
+delivers the expected single `ECONNRESET` error to an ended peer.
+
+Stage 2544 separates `stream.pipeline()` validation for a missing callback from
+an invalid callback type. The focused validation stage and authoritative
+`test-stream-pipeline.js` fixture both pass after this correction.
+
+Stage 2545 prevents promise-backed `Duplex.from()` stages from surfacing a
+rejection as an unhandled error before pipeline listeners attach. An internal
+error listener preserves normal error propagation; the focused rejected
+function stage passes. The authoritative pipeline fixture still has separate
+generator/function-stage failures.
+
+Stage 2546 defers synchronous iterator-construction failures from
+`Readable.from()` into the stream error channel. The focused immediate
+generator-error pipeline stage passes; the authoritative pipeline fixture now
+advances beyond its immediate generator error case but still has later
+function-stage validation failures.
+
+Stage 2547 preserves the aligned result from the low-level
+`Buffer.copyBytesFrom()` implementation instead of passing it through the
+pooled `Buffer.from()` wrapper. The focused allocator-state regression and
+authoritative `test-buffer-from.js` fixture both pass, including Float64Array
+reinterpretation.
+
+Stage 2548 aligns `stream.pipeline()` validation for synchronous generator
+functions used as intermediate stages: source generators remain supported,
+while intermediate sync generators report `ERR_INVALID_RETURN_VALUE`. The
+focused regression and authoritative `test-stream-pipeline.js` fixture pass.
+
+Stage 2549 adds Node-compatible array-form pipeline normalization and applies
+the callable-constructor adapter to the complete stream constructor surface,
+including `PassThrough()`. The focused regression passes. A later
+authoritative pipeline rerun still exposes a separate `TypeError: not a
+function` path, so the full fixture is not claimed complete.
+Stage 2554 restores sequential stream pipeline function-stage invocation: an
+ordinary function now receives the preceding stream, matching Node's
+`pipeline(readable, (source) => ...)` contract. The focused stage and
+authoritative `test-stream-pipeline.js` fixture pass.
+
+Function-backed `stream.compose()` now bridges a missing terminal finish when
+its non-readable final stage closes without requesting end. Stage 2479 passes
+the nested async source/transform/sink lifecycle; the broader upstream compose
+fixture still reports a separate duplicate callback in another lifecycle case.
+
+The PassThrough constructor now preserves identity through `new.target`, so
+close and lifecycle events target the public stream object. Stages 1861,
+1873, 1875, and 2489 now pass together with the application gates.

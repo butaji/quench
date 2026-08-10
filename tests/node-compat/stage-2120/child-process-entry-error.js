@@ -7,7 +7,7 @@ for (const entry of ["iDoNotExist", "iDoNotExist.js", "iDoNotExist.mjs"]) {
     (error) =>
       error.code === "MODULE_NOT_FOUND" &&
       error.toString().includes("Cannot find module") &&
-      error.toString().includes(entry)
+      error.toString().includes(entry),
   );
 }
 

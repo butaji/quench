@@ -12,7 +12,7 @@
             const currentPrototype = Object.getPrototypeOf(server);
             if (
               Object.getPrototypeOf(result.Server.prototype) !==
-              currentPrototype
+                currentPrototype
             ) {
               Object.setPrototypeOf(result.Server.prototype, currentPrototype);
             }
@@ -77,8 +77,9 @@
             return false;
           }
           const marker = address.indexOf("::");
-          if (marker !== -1 && address.indexOf("::", marker + 2) !== -1)
+          if (marker !== -1 && address.indexOf("::", marker + 2) !== -1) {
             return false;
+          }
           const hasCompression = marker !== -1;
           const head = hasCompression ? address.slice(0, marker) : address;
           const tail = hasCompression ? address.slice(marker + 2) : "";
@@ -98,11 +99,12 @@
                 ? index !== all.length - 1 || !validDottedTail(`::${group}`)
                 : !/^[0-9a-fA-F]{1,4}$/.test(group)
             )
-          )
+          ) {
             return false;
+          }
           const width = all.reduce(
             (count, group) => count + (group.includes(".") ? 2 : 1),
-            0
+            0,
           );
           return hasCompression ? width < 8 : width === 8;
         };
@@ -122,9 +124,7 @@
         };
         result.isIP = (value) =>
           typeof value === "string" && value.includes(":")
-            ? strictIPv6(value)
-              ? 6
-              : 0
+            ? strictIPv6(value) ? 6 : 0
             : originalIsIP?.(value) || 0;
         result.isIPv4 = (value) =>
           typeof value === "string" && value.includes(":")
@@ -134,12 +134,14 @@
           typeof value === "string" && value.includes(":")
             ? strictIPv6(value)
             : originalIsIPv6?.(value) || false;
-        for (const constructor of [
-          "Server",
-          "Socket",
-          "SocketAddress",
-          "BlockList"
-        ]) {
+        for (
+          const constructor of [
+            "Server",
+            "Socket",
+            "SocketAddress",
+            "BlockList",
+          ]
+        ) {
           result[constructor] ||= function Constructor() {};
         }
       }

@@ -17,11 +17,11 @@ server.listen(
       {
         port: server.address().port,
         host: "127.0.0.1",
-        __quenchNativeTransport: true
+        __quenchNativeTransport: true,
       },
-      () => client.end()
+      () => client.end(),
     );
-  }
+  },
 );
 
 process.on("exit", () => assert.ok(serverEnded));

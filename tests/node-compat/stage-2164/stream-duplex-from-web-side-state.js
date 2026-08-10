@@ -5,7 +5,7 @@ const readable = new ReadableStream({
   start(controller) {
     controller.enqueue("foo");
     controller.close();
-  }
+  },
 });
 const readableDuplex = Duplex.from(readable);
 assert.strictEqual(readableDuplex.readable, true);

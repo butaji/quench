@@ -8,7 +8,8 @@ socket.on("message", (message) => {
   console.log("dgram connected string array passed");
 });
 socket.bind(0, () => {
-  socket.connect(socket.address().port, () =>
-    socket.send(["foo", "bar", "baz"])
+  socket.connect(
+    socket.address().port,
+    () => socket.send(["foo", "bar", "baz"]),
   );
 });

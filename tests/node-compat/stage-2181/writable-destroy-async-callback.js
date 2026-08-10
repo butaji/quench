@@ -7,7 +7,7 @@ const writable = new Writable({
   },
   write(_chunk, _encoding, callback) {
     callback();
-  }
+  },
 });
 
 writable.on("error", (error) => {

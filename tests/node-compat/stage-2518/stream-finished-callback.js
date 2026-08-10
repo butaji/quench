@@ -9,7 +9,7 @@ readable.resume();
 const writable = new Writable({
   write(_chunk, _encoding, callback) {
     callback();
-  }
+  },
 });
 finished(writable, (error) => assert.ifError(error));
 writable.end();

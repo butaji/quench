@@ -3,7 +3,7 @@ const { Worker } = require("worker_threads");
 
 const worker = new Worker(__filename, {
   execArgv: ["--pending-deprecation", "--"],
-  stdout: true
+  stdout: true,
 });
 let output = "";
 worker.stdout.setEncoding("utf8");

@@ -202,12 +202,6 @@ globalThis.console.timeEnd = (label = "default") => {
   delete consoleTimers[label];
 };
 globalThis.__quench_node_pids = new Set([globalThis.__quench_pid]);
-globalThis.DOMException = class DOMException extends Error {
-  constructor(message = "", name = "Error") {
-    super(message);
-    this.name = name;
-  }
-};
 const __nodeClusterKill = (cluster, pid, signal) => {
   if (!cluster || !Number.isInteger(pid)) return false;
   for (const worker of cluster.workers) {

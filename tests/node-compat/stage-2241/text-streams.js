@@ -2,10 +2,10 @@ const assert = require("assert");
 const { TextEncoderStream, TextDecoderStream } = require("stream/web");
 
 assert.throws(() => new TextDecoderStream("latin1"), {
-  code: "ERR_ENCODING_NOT_SUPPORTED"
+  code: "ERR_ENCODING_NOT_SUPPORTED",
 });
 assert.throws(() => new TextDecoderStream("utf-8", 1), {
-  code: "ERR_INVALID_ARG_TYPE"
+  code: "ERR_INVALID_ARG_TYPE",
 });
 
 const encoder = new TextEncoderStream();

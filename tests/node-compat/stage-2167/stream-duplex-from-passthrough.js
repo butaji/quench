@@ -4,7 +4,7 @@ const { Duplex, PassThrough, Readable } = require("stream");
 const through = new PassThrough({ objectMode: true });
 let result = "";
 const duplex = Readable.from(["foo", "bar"], { objectMode: true }).pipe(
-  Duplex.from({ readable: through, writable: through })
+  Duplex.from({ readable: through, writable: through }),
 );
 duplex.on("data", (data) => {
   duplex.pause();

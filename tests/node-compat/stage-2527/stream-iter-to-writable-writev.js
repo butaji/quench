@@ -12,7 +12,7 @@ const writable = toWritable({
   },
   end() {
     return Promise.resolve();
-  }
+  },
 });
 writable.cork();
 writable.write("a");

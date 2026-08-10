@@ -1,8 +1,18 @@
 const __quenchOriginalRequireWithStreamPromises = globalThis.require;
 const __quenchStreamPromises = {
   pipeline: (...streams) => {
-    const destination = streams.pop();
-    for (const source of streams) source.pipe(destination);
+    let options = {};
+    const possibleOptions = streams[streams.length - 1];
+    if (
+      possibleOptions &&
+      typeof possibleOptions === "object" &&
+      !Array.isArray(possibleOptions) &&
+      !possibleOptions.pipe &&
+      !possibleOptions.write &&
+      !possibleOptions.read
+    ) {
+      options = streams.pop();
+    }
     return new Promise((resolve, reject) => {
       let settled = false;
       const complete = () => {
@@ -17,27 +27,23 @@ const __quenchStreamPromises = {
           reject(error);
         }
       };
-      const readable =
-        destination.readable !== false &&
-        (destination.readable !== undefined ||
-          destination.readableEnded !== undefined);
-      const writable =
-        destination.writable !== false &&
-        (destination.writable !== undefined ||
-          destination.writableEnded !== undefined);
-      if (readable) destination.once("end", complete);
-      if (writable) destination.once("finish", complete);
-      for (const stream of streams) stream.once?.("error", fail);
-      destination.once?.("error", fail);
-      for (const stream of streams) {
-        stream.once?.("close", () => {
-          if (!stream.readableEnded) {
-            const error = new Error("Premature close");
-            error.code = "ERR_STREAM_PREMATURE_CLOSE";
-            fail(error);
-          }
+      const abort = () => {
+        const error = Object.assign(new Error("The operation was aborted"), {
+          name: "AbortError",
+          code: "ABORT_ERR",
         });
-      }
+        streams.at(-1)?.destroy?.(error);
+        fail(error);
+      };
+      if (options.signal?.aborted) return abort();
+      options.signal?.addEventListener?.("abort", abort, { once: true });
+      queueMicrotask(() => {
+        if (settled) return;
+        globalThis.require("stream").pipeline(
+          ...streams,
+          (error) => error ? fail(error) : complete(),
+        );
+      });
     });
   },
   finished: (stream, options = {}) => {
@@ -46,9 +52,7 @@ const __quenchStreamPromises = {
     }
     if (typeof stream?.getReader === "function") {
       return new Promise((resolve, reject) => {
-        queueMicrotask(() =>
-          stream._error ? reject(stream._error) : resolve()
-        );
+        queueMicrotask(() => stream._error ? reject(stream._error) : resolve());
       });
     }
     if (typeof stream?.getWriter === "function") {
@@ -64,17 +68,15 @@ const __quenchStreamPromises = {
       throw Object.assign(
         new TypeError('The "cleanup" option must be of type boolean'),
         {
-          code: "ERR_INVALID_ARG_TYPE"
-        }
+          code: "ERR_INVALID_ARG_TYPE",
+        },
       );
     }
     return new Promise((resolve, reject) => {
-      const readable =
-        options.readable !== false &&
+      const readable = options.readable !== false &&
         stream.readable !== false &&
         (stream.readable !== undefined || stream.readableEnded !== undefined);
-      const writable =
-        options.writable !== false &&
+      const writable = options.writable !== false &&
         stream.writable !== false &&
         (stream.writable !== undefined || stream.writableEnded !== undefined);
       let ended = !readable;
@@ -109,7 +111,7 @@ const __quenchStreamPromises = {
       stream.once("error", onError);
       settle();
     });
-  }
+  },
 };
 globalThis.require = (specifier) => {
   if (String(specifier).replace(/^node:/, "") === "stream/promises") {

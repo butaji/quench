@@ -23,7 +23,7 @@ server.listen(0, () => {
         server.close();
         console.log("http upload chunks passed");
       });
-    }
+    },
   );
   request.write("1\n");
   request.write("2\n");

@@ -9,7 +9,7 @@ fs.rmSync(root, { recursive: true, force: true });
 fs.mkdirSync(packageRoot, { recursive: true });
 fs.writeFileSync(
   path.join(packageRoot, "index.js"),
-  "module.exports = 'global';"
+  "module.exports = 'global';",
 );
 process.env.NODE_PATH = root;
 moduleApi._initPaths();

@@ -6,7 +6,7 @@ const writable = new Writable({
   highWaterMark: 1,
   write(_chunk, _encoding, callback) {
     process.nextTick(callback);
-  }
+  },
 });
 
 let drains = 0;

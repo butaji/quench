@@ -12,18 +12,18 @@ const nested = [
   ...fromSync(
     (function* () {
       yield ["hello", " ", "world"];
-    })()
-  )
+    })(),
+  ),
 ];
 assert.deepStrictEqual(
   nested[0].map((value) => new TextDecoder().decode(value)),
-  ["hello", " ", "world"]
+  ["hello", " ", "world"],
 );
 
 const protocol = {
   [Symbol.for("nodejs.stream.iter.toStreamable")]() {
     return "protocol-data";
-  }
+  },
 };
 assert.strictEqual(textSync(fromSync(protocol)), "protocol-data");
 

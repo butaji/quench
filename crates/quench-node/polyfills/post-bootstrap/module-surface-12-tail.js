@@ -15,12 +15,12 @@ globalThis.__nodeLegacyMailtoParts = (input) => {
     path: query ? `?${query}` : null,
     slashes: null,
     port: null,
-    hash: null
+    hash: null,
   };
 };
 globalThis.__nodeLegacySchemeAddressParts = (input) => {
   const match = input.match(
-    /^([a-z][a-z0-9+.-]*:)([^/?#]*@[^/?#]*)(?:\?([^#]*))?/i
+    /^([a-z][a-z0-9+.-]*:)([^/?#]*@[^/?#]*)(?:\?([^#]*))?/i,
   );
   if (!match || ["mailto:", "javascript:"].includes(match[1].toLowerCase())) {
     return null;
@@ -40,12 +40,12 @@ globalThis.__nodeLegacySchemeAddressParts = (input) => {
     hash: null,
     search,
     query: match[3] || null,
-    path: search
+    path: search,
   };
 };
 globalThis.__nodeLegacyOpaquePathParts = (input) => {
   const match = input.match(
-    /^([a-z][a-z0-9+.-]*:)([^/?#]+)\/([^?#]*)(?:\?([^#]*))?(?:#(.*))?$/i
+    /^([a-z][a-z0-9+.-]*:)([^/?#]+)\/([^?#]*)(?:\?([^#]*))?(?:#(.*))?$/i,
   );
   if (!match || match[1].toLowerCase() === "mailto:") return null;
   const search = match[4] ? `?${match[4]}` : null;
@@ -62,7 +62,7 @@ globalThis.__nodeLegacyOpaquePathParts = (input) => {
     port: null,
     hash,
     search,
-    query: match[4] || null
+    query: match[4] || null,
   };
 };
 globalThis.__nodeLegacyHostASCII = (host) => {

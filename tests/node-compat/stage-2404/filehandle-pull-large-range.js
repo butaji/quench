@@ -8,7 +8,7 @@ const path = `/tmp/quench-node-stage-2404-${process.pid}`;
   const handle = await fs.promises.open(path, "r");
   try {
     const data = await require("stream/iter").bytes(
-      handle.pull({ start: 50 * 1024, limit: 200 * 1024 })
+      handle.pull({ start: 50 * 1024, limit: 200 * 1024 }),
     );
     assert.strictEqual(data.byteLength, 200 * 1024);
   } finally {

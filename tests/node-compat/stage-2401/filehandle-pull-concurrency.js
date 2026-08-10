@@ -39,8 +39,9 @@ Promise.all([
     const fh = await fs.promises.open(file("chunks", "abcdefgh"), "r");
     try {
       let count = 0;
-      for await (const batch of fh.pull({ chunkSize: 2 }))
+      for await (const batch of fh.pull({ chunkSize: 2 })) {
         count += batch[0].byteLength;
+      }
       assert.strictEqual(count, 8);
     } finally {
       await fh.close();
@@ -52,10 +53,10 @@ Promise.all([
       const controller = new AbortController();
       controller.abort();
       await assert.rejects(text(fh.pull({ signal: controller.signal })), {
-        name: "AbortError"
+        name: "AbortError",
       });
     } finally {
       await fh.close();
     }
-  })()
+  })(),
 ]).then(() => console.log("concurrent pull contracts passed"));

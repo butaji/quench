@@ -10,7 +10,7 @@ const vfs = require("node:vfs");
     await filesystem.promises.writeFile("/a.txt", "hello");
     assert.strictEqual(
       await filesystem.promises.readFile("/a.txt", "utf8"),
-      "hello"
+      "hello",
     );
     console.log("real-provider promise read/write passed");
   } finally {

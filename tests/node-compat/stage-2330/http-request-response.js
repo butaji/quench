@@ -15,7 +15,7 @@ server.listen(0, () => {
         assert.strictEqual(body, "pong");
         server.close(() => console.log("http request response passed"));
       });
-    }
+    },
   );
   request.on("error", (error) => {
     throw error;

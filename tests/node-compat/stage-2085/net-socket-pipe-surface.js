@@ -8,7 +8,7 @@ const destination = {
   write() {},
   end() {
     this.writableEnded = true;
-  }
+  },
 };
 
 assert.strictEqual(source.pipe(destination), destination);

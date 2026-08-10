@@ -2,7 +2,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "lint:js": "eslint .",
+    "lint:js": "eslint --max-warnings=0 .",
+    "lint:all": "tools/lint-js.sh && tools/lint-rs.sh && tools/lint-host.sh",
     "format:check": "deno fmt --check crates tests/node-compat tools AGENTS.md README.md package.json eslint.config.js",
     "format:write": "deno fmt crates tests/node-compat tools AGENTS.md README.md package.json eslint.config.js"
   },

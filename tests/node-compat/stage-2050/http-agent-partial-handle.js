@@ -9,7 +9,7 @@ const server = http.createServer((request, response) => response.end());
 
 server.listen(0, () => {
   const request = new http.ClientRequest(
-    `http://localhost:${server.address().port}/`
+    `http://localhost:${server.address().port}/`,
   );
   agent.freeSockets[agent.getName(request)] = [socket];
   agent.addRequest(request, {});

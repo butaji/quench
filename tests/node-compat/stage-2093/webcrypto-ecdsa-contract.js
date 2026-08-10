@@ -4,7 +4,7 @@ const assert = require("assert");
   const pair = await crypto.subtle.generateKey(
     { name: "ECDSA", namedCurve: "P-256" },
     true,
-    ["sign", "verify"]
+    ["sign", "verify"],
   );
   assert.strictEqual(pair.privateKey.type, "private");
   assert.strictEqual(pair.publicKey.type, "public");
@@ -12,15 +12,15 @@ const assert = require("assert");
   const signature = await crypto.subtle.sign(
     { name: "ECDSA", hash: "SHA-256" },
     pair.privateKey,
-    data
+    data,
   );
   assert.strictEqual(
     await crypto.subtle.verify(
       { name: "ECDSA", hash: "SHA-256" },
       pair.publicKey,
       signature,
-      data
+      data,
     ),
-    true
+    true,
   );
 })();

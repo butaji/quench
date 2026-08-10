@@ -14,6 +14,6 @@ fs.writeFileSync(path.join(root, "entry.js"), "module.exports = true;");
 const paths = [nested, outer];
 assert.strictEqual(
   require.resolve("ordered", { paths }),
-  fs.realpathSync(path.join(outer, "ordered.js"))
+  fs.realpathSync(path.join(outer, "ordered.js")),
 );
 console.log("module resolve path order pass");

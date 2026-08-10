@@ -20,7 +20,7 @@ __quenchChildSpawnError.spawn = (...args) => {
           errno: -2,
           syscall: `spawn ${command}`,
           path: command,
-          spawnargs: args[1] || []
+          spawnargs: args[1] || [],
         });
         emit.call(child, "error", error);
       }

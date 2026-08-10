@@ -21,7 +21,7 @@ server.listen(0, () => {
   socket.on("connect", () => {
     socket.write(
       "GET /one HTTP/1.1\r\nHost: example.com\r\n\r\n" +
-        "GET /two HTTP/1.1\r\nHost: example.com\r\n\r\n"
+        "GET /two HTTP/1.1\r\nHost: example.com\r\n\r\n",
     );
   });
 });

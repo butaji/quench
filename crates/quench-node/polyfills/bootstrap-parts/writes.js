@@ -245,7 +245,7 @@ const __nodeFsAttachHandleOperations = (handle) => {
     Promise.resolve().then(() =>
       globalThis.__nodeFs.ftruncateSync(handle.fd, length)
     );
-  handle.stat = () =>
+  handle.stat = (options) =>
     Promise.resolve().then(() => {
       if (handle.fd === -1) {
         const error = new Error("EBADF: bad file descriptor, fstat");
@@ -253,7 +253,7 @@ const __nodeFsAttachHandleOperations = (handle) => {
         error.syscall = "fstat";
         throw error;
       }
-      return globalThis.__nodeFs.fstatSync(handle.fd);
+      return globalThis.__nodeFs.fstatSync(handle.fd, options);
     });
   handle.sync = () =>
     Promise.resolve().then(() => globalThis.__nodeFs.fsyncSync(handle.fd));

@@ -75,3 +75,20 @@ The timer compatibility sweep on 2026-08-09 also passed stages 366, 367, 368,
 2214, 2223, 2225–2229, 2486, 2493, 2495, and 2501 in parallel. Full scheduler
 ordering and broad upstream coverage remain open, so this task stays
 in-progress.
+
+The asynchronous `timers/promises` scheduler wait path now uses the host timer
+queue instead of blocking the JavaScript job with a synchronous sleep. This
+preserves concurrent timer ordering and is covered by the authoritative
+`test-timers-promises-scheduler.js` fixture; stages 401 and 405–408 continue to
+pass after the change.
+
+`timers/promises.setTimeout(NaN)` now emits Node's `TimeoutNaNWarning` while
+still resolving its promise, covered by the authoritative
+`test-timers-nan-duration-warning-promises.js` fixture.
+
+`timers/promises.setInterval()` now waits through asynchronous host timers for
+positive delays, avoiding event-loop starvation while retaining the existing
+abort behavior; stages 405 and 407 pass after this change.
+
+Positive-delay interval waits now also observe abort signals while the timer is
+pending, preventing an extra yielded value after cancellation.

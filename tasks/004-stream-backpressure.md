@@ -1,5 +1,10 @@
 # Implement stream backpressure semantics
 
+> Contract: This task is part of broad Node 24 compatibility across Linux
+> x86_64, Linux ARM64, macOS, and Windows. Native addons and Node-API are
+> excluded. Use the statuses and release gates in
+> [compatibility-contract.md](../docs/compatibility-contract.md).
+
 ## Contract alignment
 
 This task supports the Node 24 application-runtime contract on Linux x86_64;
@@ -24,6 +29,10 @@ Make Node-compatible streams preserve buffering, ordering, pause/resume, and bac
 - Backpressure does not change public Node semantics.
 
 ## Status
+
+The authoritative upstream `test-stream-backpressure.js` fixture currently
+passes, alongside the maintained focused backpressure stages. Broader stream
+iterator and lifecycle scheduling coverage remains in progress.
 
 Initial writable backpressure (`highWaterMark`, `writableLength`, `drain`) is
 implemented and covered by `tests/node-compat/stage-370/stream-backpressure.js`.
@@ -117,3 +126,8 @@ Writable cork state is covered by
 `tests/node-compat/stage-441/stream-cork.js`.
 Deferred corked writes and final uncork delivery are covered by
 `tests/node-compat/stage-442/stream-cork-buffer.js`.
+
+PassThrough constructor identity now uses the public `new.target`, preserving
+event/state ownership across the compatibility adapter. Stages 1861, 1873,
+1875, and 2489 verify finished, readable, closed, and selected-side lifecycle
+behavior.

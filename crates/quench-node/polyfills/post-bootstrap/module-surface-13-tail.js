@@ -56,12 +56,58 @@ const __quenchPbkdf2Sync = (
   return output;
 };
 const __quenchCryptoKdfFallbacks = (result) => {
+  const kdfBytes = (value) => {
+    if (typeof value === "string") return NodeBuffer.from(value);
+    if (value?.type === "secret" && typeof value.export === "function") {
+      return kdfBytes(value.export());
+    }
+    if (ArrayBuffer.isView(value)) {
+      return NodeBuffer.from(value.buffer, value.byteOffset, value.byteLength);
+    }
+    if (value instanceof ArrayBuffer || value instanceof SharedArrayBuffer) {
+      return NodeBuffer.from(value);
+    }
+    return undefined;
+  };
   result.hkdfSync ||= (hash, ikm, salt, info, length) => {
     if (typeof hash !== "string") {
       const error = new TypeError(
         'The "digest" argument must be of type string',
       );
       error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (
+      kdfBytes(info)?.byteLength > 1024
+    ) {
+      const size = kdfBytes(info)?.byteLength;
+      const error = new RangeError(
+        `The value of "info" is out of range. It must be must not contain more than 1024 bytes. Received ${size}`,
+      );
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    const byteValues = {};
+    for (
+      const [name, value] of [["ikm", ikm], ["salt", salt], ["info", info]]
+    ) {
+      const bytes = kdfBytes(value);
+      if (!bytes) {
+        const error = new TypeError(
+          `The "${name}" argument must be of type string or an instance of Buffer, TypedArray, or DataView`,
+        );
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      byteValues[name] = bytes;
+    }
+    const infoBytes = byteValues.info.byteLength;
+    if (infoBytes > 1024) {
+      const size = infoBytes;
+      const error = new RangeError(
+        `The value of "info" is out of range. It must be must not contain more than 1024 bytes. Received ${size}`,
+      );
+      error.code = "ERR_OUT_OF_RANGE";
       throw error;
     }
     if (
@@ -74,21 +120,6 @@ const __quenchCryptoKdfFallbacks = (result) => {
       error.code = "ERR_CRYPTO_INVALID_DIGEST";
       throw error;
     }
-    for (
-      const [name, value] of [
-        ["ikm", ikm],
-        ["salt", salt],
-        ["info", info],
-      ]
-    ) {
-      if (typeof value !== "string" && !(value instanceof Uint8Array)) {
-        const error = new TypeError(
-          `The "${name}" argument must be of type string or an instance of Buffer, TypedArray, or DataView`,
-        );
-        error.code = "ERR_INVALID_ARG_TYPE";
-        throw error;
-      }
-    }
     if (typeof length !== "number") {
       const error = new TypeError(
         'The "length" argument must be of type number',
@@ -96,22 +127,42 @@ const __quenchCryptoKdfFallbacks = (result) => {
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
-    if (!Number.isInteger(length) || length < 0 || length > 255 * 64) {
+    if (!Number.isInteger(length) || length < 0) {
       const error = new RangeError('The value of "length" is out of range');
       error.code = "ERR_OUT_OF_RANGE";
       throw error;
     }
+    if (length > 0x7fffffff) {
+      const error = new RangeError('The value of "length" is out of range');
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    const digestLength = {
+      md5: 16,
+      sha1: 20,
+      sha224: 28,
+      sha256: 32,
+      sha384: 48,
+      sha512: 64,
+    }[hash.toLowerCase()] || 32;
+    if (length > 255 * digestLength) {
+      const error = new RangeError("Invalid key length");
+      error.code = "ERR_CRYPTO_INVALID_KEYLEN";
+      throw error;
+    }
+    const hmacHash = hash.toLowerCase() === "rsa-sha1" ? "sha1" : hash;
     const output = new Uint8Array(Number(length));
     const prk = new Uint8Array(
-      result.createHmac(hash, salt).update(ikm).digest(),
+      result.createHmac(hmacHash, byteValues.salt).update(byteValues.ikm)
+        .digest(),
     );
     let previous = new Uint8Array(0);
     for (let index = 1, offset = 0; offset < output.length; index += 1) {
       previous = new Uint8Array(
         result
-          .createHmac(hash, prk)
+          .createHmac(hmacHash, prk)
           .update(previous)
-          .update(info)
+          .update(byteValues.info)
           .update(Uint8Array.of(index))
           .digest(),
       );

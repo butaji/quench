@@ -6,7 +6,7 @@ function LegacyWritable() {
   Writable.call(this, {
     write(_chunk, _encoding, callback) {
       callback();
-    }
+    },
   });
 }
 Object.setPrototypeOf(LegacyWritable.prototype, Writable.prototype);

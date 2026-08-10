@@ -46,8 +46,16 @@ const __quenchTlsValidateTicketKeys = (options) => {
   }
 };
 const __quenchTlsValidateOptions = (options = {}) => {
-  __quenchTlsValidateFields(options, ["ciphers", "passphrase", "ecdhCurve"], "string");
-  __quenchTlsValidateFields(options, ["handshakeTimeout", "sessionTimeout"], "number");
+  __quenchTlsValidateFields(
+    options,
+    ["ciphers", "passphrase", "ecdhCurve"],
+    "string",
+  );
+  __quenchTlsValidateFields(
+    options,
+    ["handshakeTimeout", "sessionTimeout"],
+    "number",
+  );
   __quenchTlsValidateTicketKeys(options);
   for (const name of ["minVersion", "maxVersion"]) {
     if (options[name] !== undefined && !/^TLSv1\.[0-3]$/.test(options[name])) {

@@ -6,7 +6,7 @@ const __quenchDomainFallbacks = (result) => {
     enter: () => undefined,
     exit: () => undefined,
     bind: (callback) => callback,
-    dispose: () => undefined
+    dispose: () => undefined,
   });
   result.create ||= makeDomain;
   result.createDomain ||= result.create;
@@ -16,12 +16,14 @@ const __quenchHttp2Fallbacks = (result) => {
   for (const name of ["connect", "createServer", "createSecureServer"]) {
     result[name] ||= () => undefined;
   }
-  for (const name of [
-    "Http2Server",
-    "Http2SecureServer",
-    "Http2Session",
-    "Http2Stream"
-  ]) {
+  for (
+    const name of [
+      "Http2Server",
+      "Http2SecureServer",
+      "Http2Session",
+      "Http2Stream",
+    ]
+  ) {
     result[name] ||= function Constructor() {};
   }
   result.constants ||= {};

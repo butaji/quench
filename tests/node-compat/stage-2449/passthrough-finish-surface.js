@@ -3,7 +3,7 @@ const { Readable, PassThrough } = require("stream");
 
 const source = new Readable({ read() {} });
 const destination = source.pipe(
-  new PassThrough({ objectMode: true, highWaterMark: 2 })
+  new PassThrough({ objectMode: true, highWaterMark: 2 }),
 );
 let finished = false;
 
@@ -20,6 +20,8 @@ setImmediate(() => {
   assert.strictEqual(
     finished,
     false,
-    `finish emitted with ${destination._readableChunks?.length ?? "unknown"} unread chunks`
+    `finish emitted with ${
+      destination._readableChunks?.length ?? "unknown"
+    } unread chunks`,
   );
 });

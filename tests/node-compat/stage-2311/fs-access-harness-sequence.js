@@ -15,7 +15,7 @@ fs.access(
   fs.constants.W_OK,
   common.mustCall((error) => {
     assert.strictEqual(error.code, "EACCES");
-  })
+  }),
 );
 fs.promises
   .access(path, fs.constants.W_OK)
@@ -23,5 +23,5 @@ fs.promises
   .catch(
     common.mustCall((error) => {
       assert.strictEqual(error.code, "EACCES");
-    })
+    }),
   );

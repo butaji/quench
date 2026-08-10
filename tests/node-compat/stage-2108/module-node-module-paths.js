@@ -9,11 +9,11 @@ assert.deepStrictEqual(
     "/usr/test/lib/node_modules",
     "/usr/test/node_modules",
     "/usr/node_modules",
-    "/node_modules"
-  ]
+    "/node_modules",
+  ],
 );
 assert.deepStrictEqual(moduleApi._nodeModulePaths("/node_modules"), [
-  "/node_modules"
+  "/node_modules",
 ]);
 assert.deepStrictEqual(moduleApi._nodeModulePaths("/"), ["/node_modules"]);
 

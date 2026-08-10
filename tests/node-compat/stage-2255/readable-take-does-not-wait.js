@@ -10,7 +10,7 @@ const stream = Readable.from(
     await pending;
     reached = true;
     yield 2;
-  })()
+  })(),
 );
 
 stream

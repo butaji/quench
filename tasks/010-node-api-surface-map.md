@@ -1,6 +1,15 @@
 # Node API surface map and measurable Node 24 compatibility strategy
 
+> Contract: This task is part of broad Node 24 compatibility across Linux
+> x86_64, Linux ARM64, macOS, and Windows. Native addons and Node-API are
+> excluded. Use the statuses and release gates in
+> [compatibility-contract.md](../docs/compatibility-contract.md).
+
 ## Goal
+
+Represent the API surface as the source data for generated registration,
+exports, validation, and coverage tests. Do not maintain a parallel hand-written
+list when the same facts can generate it.
 
 Define the Node 24 application-facing API surface that `quench-node` must
 support, map every surface area to its current coverage and planned work, and
@@ -112,7 +121,9 @@ At the end of every slice, the task file's `## Status` block records:
   contract gate.
 - The declared Node 24 manifest has no unclassified regressions.
 - The focused-stage suite reports 100% pass on the registered gate set.
-- Hono and the representative npm CLI application gates have zero failures.
+- All six workload-class application gates have zero unexplained failures.
+- Two complete supported-platform verification runs finish with no retries or
+  timeouts and publish reproducible reports.
 
 ## Status
 

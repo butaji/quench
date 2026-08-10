@@ -21,6 +21,6 @@ setTimeout(() => {
 process.on("beforeExit", () => {
   assert.deepStrictEqual(
     { size, contents },
-    { size: 10, contents: "hellothere" }
+    { size: 10, contents: "hellothere" },
   );
 });

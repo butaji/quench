@@ -17,7 +17,7 @@ fs.fstatSync = () => {
 try {
   assert.strictEqual(
     getVirtualFd(fd).entry.readFileSync("utf8"),
-    "internal read"
+    "internal read",
   );
 } finally {
   fs.fstatSync = originalFstatSync;

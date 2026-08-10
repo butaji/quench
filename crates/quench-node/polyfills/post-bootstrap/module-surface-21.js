@@ -11,13 +11,15 @@
         result.createContext ||= () => ({});
         result.isContext ||= () => false;
         result.compileFunction ||= () => () => undefined;
-        for (const constructor of [
-          "Script",
-          "Context",
-          "Module",
-          "SourceTextModule",
-          "SyntheticModule"
-        ]) {
+        for (
+          const constructor of [
+            "Script",
+            "Context",
+            "Module",
+            "SourceTextModule",
+            "SyntheticModule",
+          ]
+        ) {
           result[constructor] ||= function Constructor() {};
         }
       }

@@ -24,7 +24,7 @@ const vfs = require("node:vfs");
     await fs.promises.chmod(p("hello.txt"), 0o644);
     assert.strictEqual(
       (await fs.promises.lstat(p("hello.txt"))).mode & 0o777,
-      0o644
+      0o644,
     );
     console.log("mounted promise attribute sequence passed");
   } finally {

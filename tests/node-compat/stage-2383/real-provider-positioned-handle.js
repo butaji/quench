@@ -27,12 +27,12 @@ provider.closeSync(fd);
   assert.strictEqual(asyncHandle.readSync(asyncBuffer, 0, 3, 0), 3);
   assert.strictEqual(
     (await asyncHandle.read(Buffer.alloc(3), 0, 3, 3)).bytesRead,
-    3
+    3,
   );
   asyncHandle.writeSync(Buffer.from("ZZ"), 0, 2, 0);
   assert.strictEqual(
     (await asyncHandle.write(Buffer.from("YY"), 0, 2, 4)).bytesWritten,
-    2
+    2,
   );
   asyncHandle.writeFileSync("OVERWRITTEN");
   assert.strictEqual(asyncHandle.readFileSync("utf8"), "OVERWRITTEN");

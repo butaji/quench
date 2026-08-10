@@ -8,26 +8,26 @@ const recursiveWritable = new Writable({
     recursiveWrites++;
     assert.strictEqual(
       recursiveReadable._readableState.awaitDrainWriters,
-      null
+      null,
     );
     if (chunk.length === 32 * 1024) {
       recursiveReadable.push(Buffer.alloc(34 * 1024));
       process.nextTick(() => {
         assert.strictEqual(
           recursiveReadable._readableState.awaitDrainWriters,
-          recursiveWritable
+          recursiveWritable,
         );
       });
     }
     process.nextTick(callback);
-  }
+  },
 });
 const buffers = [Buffer.alloc(32 * 1024), Buffer.alloc(33 * 1024)];
 const recursiveReadable = new Readable({
   highWaterMark: 16 * 1024,
   read() {
     while (buffers.length) this.push(buffers.shift());
-  }
+  },
 });
 recursiveReadable.pipe(recursiveWritable);
 
@@ -40,11 +40,11 @@ const multiWriters = [0, 1, 2].map(
         multiSizes.push(multiReadable._readableState.awaitDrainWriters.size);
         assert.strictEqual(
           multiReadable._readableState.awaitDrainWriters.size,
-          expected
+          expected,
         );
         if (expected === 0) process.nextTick(callback);
-      }
-    })
+      },
+    }),
 );
 for (const writer of multiWriters) multiReadable.pipe(writer);
 multiReadable.push(Buffer.alloc(560000));

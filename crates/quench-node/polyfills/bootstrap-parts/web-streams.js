@@ -1,11 +1,99 @@
 const __quenchOriginalRequireWithWebStreams = globalThis.require;
 const __quenchWebStreamsState = Symbol("kState");
+const __quenchReadableEnqueue = (stream, value) => {
+  const waiter = stream._readWaiters.shift();
+  if (waiter) return waiter({ value, done: false });
+  const size = stream._size(value);
+  stream._queue.push({ value, size });
+  stream._queueSize += size;
+};
+const __quenchReadableClose = (stream) => {
+  stream._closed = true;
+  stream[__quenchWebStreamsState].state = "closed";
+  stream._resolveClosed();
+  while (stream._readWaiters.length) {
+    stream._readWaiters.shift()({ value: undefined, done: true });
+  }
+  if (!stream._queue.length) {
+    while (stream._finishWaiters.length) stream._finishWaiters.shift()();
+  }
+};
+const __quenchReadableError = (stream, error) => {
+  stream._error = error;
+  stream._closed = true;
+  stream[__quenchWebStreamsState].state = "errored";
+  stream[__quenchWebStreamsState].storedError = error;
+  stream._rejectClosed(error);
+  while (stream._readWaiters.length) {
+    stream._readWaiters.shift()(Promise.reject(error));
+  }
+  while (stream._finishWaiters.length) stream._finishWaiters.shift()(error);
+};
+const __quenchReadableController = (stream) => ({
+  get desiredSize() {
+    return stream._highWaterMark - stream._queueSize;
+  },
+  enqueue: (value) => __quenchReadableEnqueue(stream, value),
+  close: () => __quenchReadableClose(stream),
+  error: (error) => __quenchReadableError(stream, error),
+});
+const __quenchStartReadable = (stream, source) => {
+  try {
+    const started = source.start?.(stream._controller);
+    if (started?.then) started.catch((error) => stream._errorStream(error));
+  } catch (error) {
+    stream._errorStream(error);
+  }
+};
+const __quenchValidateCompressionFormat = (format) => {
+  if (["gzip", "deflate", "deflate-raw", "brotli"].includes(format)) return;
+  const error = new TypeError("The compression format is invalid");
+  error.code = "ERR_INVALID_ARG_VALUE";
+  throw error;
+};
+const __quenchReadableRead = async (stream) => {
+  if (stream._error) throw stream._error;
+  if (stream._queue.length) {
+    const item = stream._queue.shift();
+    stream._queueSize -= item.size;
+    if (stream._closed && !stream._queue.length) {
+      while (stream._finishWaiters.length) stream._finishWaiters.shift()();
+    }
+    return { value: item.value, done: false };
+  }
+  if (stream._closed) return { value: undefined, done: true };
+  if (stream._pull && !stream._pulling) {
+    stream._pulling = true;
+    Promise.resolve(stream._pull(stream._controller)).finally(() => {
+      stream._pulling = false;
+    });
+  }
+  return new Promise((resolve) => stream._readWaiters.push(resolve));
+};
+const __quenchReadableCancel = async (stream, reason) => {
+  stream._closed = true;
+  stream[__quenchWebStreamsState].state = "closed";
+  await stream._cancel?.(reason);
+  stream._cancelReason = reason;
+  while (stream._readWaiters.length) {
+    stream._readWaiters.shift()({ value: undefined, done: true });
+  }
+};
+const __quenchReadableReader = (stream) => ({
+  read: () => __quenchReadableRead(stream),
+  cancel: (reason) => __quenchReadableCancel(stream, reason),
+  closed: stream._closedPromise,
+  releaseLock() {
+    stream.locked = false;
+  },
+});
 class __quenchReadableStream {
   constructor(source = {}, options = {}) {
     this._queue = [];
     this._queueSize = 0;
-    this._highWaterMark =
-      options.highWaterMark === undefined ? 1 : Number(options.highWaterMark);
+    this._highWaterMark = options.highWaterMark === undefined
+      ? 1
+      : Number(options.highWaterMark);
     this._size = typeof options.size === "function" ? options.size : () => 1;
     this._closed = false;
     this.locked = false;
@@ -19,53 +107,13 @@ class __quenchReadableStream {
     this._pull = source.pull?.bind(source);
     this._pulling = false;
     this[__quenchWebStreamsState] = { state: "readable" };
-    const stream = this;
-    const controller = {
-      get desiredSize() {
-        return stream._highWaterMark - stream._queueSize;
-      },
-      enqueue: (value) => {
-        const waiter = this._readWaiters.shift();
-        if (waiter) waiter({ value, done: false });
-        else {
-          this._queue.push({ value, size: this._size(value) });
-          this._queueSize += this._queue[this._queue.length - 1].size;
-        }
-      },
-      close: () => {
-        this._closed = true;
-        this[__quenchWebStreamsState].state = "closed";
-        this._resolveClosed();
-        while (this._readWaiters.length) {
-          this._readWaiters.shift()({ value: undefined, done: true });
-        }
-        if (!this._queue.length) {
-          while (this._finishWaiters.length) this._finishWaiters.shift()();
-        }
-      },
-      error: (error) => {
-        this._error = error;
-        this._closed = true;
-        this[__quenchWebStreamsState].state = "errored";
-        this[__quenchWebStreamsState].storedError = error;
-        this._rejectClosed(error);
-        while (this._readWaiters.length) {
-          this._readWaiters.shift()(Promise.reject(error));
-        }
-        while (this._finishWaiters.length) this._finishWaiters.shift()(error);
-      }
-    };
+    const controller = __quenchReadableController(this);
     this._enqueue = controller.enqueue;
     this._close = controller.close;
     this._errorStream = controller.error;
     this[__quenchWebStreamsState].controller = controller;
     this._controller = controller;
-    try {
-      const started = source.start?.(controller);
-      if (started?.then) started.catch((error) => controller.error(error));
-    } catch (error) {
-      controller.error(error);
-    }
+    __quenchStartReadable(this, source);
   }
   getReader() {
     if (this.locked) {
@@ -74,42 +122,7 @@ class __quenchReadableStream {
       throw error;
     }
     this.locked = true;
-    const stream = this;
-    return {
-      read: async () => {
-        if (stream._error) throw stream._error;
-        if (stream._queue.length) {
-          const item = stream._queue.shift();
-          stream._queueSize -= item.size;
-          if (stream._closed && !stream._queue.length) {
-            while (stream._finishWaiters.length)
-              stream._finishWaiters.shift()();
-          }
-          return { value: item.value, done: false };
-        }
-        if (stream._closed) return { value: undefined, done: true };
-        if (stream._pull && !stream._pulling) {
-          stream._pulling = true;
-          Promise.resolve(stream._pull(stream._controller)).finally(() => {
-            stream._pulling = false;
-          });
-        }
-        return new Promise((resolve) => stream._readWaiters.push(resolve));
-      },
-      cancel: async (reason) => {
-        stream._closed = true;
-        stream[__quenchWebStreamsState].state = "closed";
-        await stream._cancel?.(reason);
-        stream._cancelReason = reason;
-        while (stream._readWaiters.length) {
-          stream._readWaiters.shift()({ value: undefined, done: true });
-        }
-      },
-      closed: stream._closedPromise,
-      releaseLock() {
-        stream.locked = false;
-      }
-    };
+    return __quenchReadableReader(this);
   }
   cancel() {
     if (this.locked) {
@@ -188,8 +201,8 @@ class __quenchReadableStream {
           },
           pull() {
             return pump();
-          }
-        })
+          },
+        }),
     );
     return branches;
   }
@@ -239,7 +252,7 @@ class __quenchWritableStream {
       },
       releaseLock() {
         stream.locked = false;
-      }
+      },
     };
   }
 }
@@ -255,7 +268,7 @@ class __quenchTransformStream {
         this.writable[__quenchWebStreamsState].state = "errored";
         this.writable[__quenchWebStreamsState].storedError = error;
         this.readable._errorStream(error);
-      }
+      },
     };
     this.writable = new __quenchWritableStream({
       write: (value) =>
@@ -265,17 +278,13 @@ class __quenchTransformStream {
       close: async () => {
         await transform.flush?.(this._controller);
         this.readable._close();
-      }
+      },
     });
   }
 }
 class __quenchDecompressionStream extends __quenchTransformStream {
   constructor(format) {
-    if (!["gzip", "deflate", "deflate-raw", "brotli"].includes(format)) {
-      const error = new TypeError("The compression format is invalid");
-      error.code = "ERR_INVALID_ARG_VALUE";
-      throw error;
-    }
+    __quenchValidateCompressionFormat(format);
     const chunks = [];
     super({
       transform(value) {
@@ -285,14 +294,14 @@ class __quenchDecompressionStream extends __quenchTransformStream {
         try {
           const zlib = globalThis.require("zlib");
           const input = NodeBuffer.concat(
-            chunks.map((value) => NodeBuffer.from(value))
+            chunks.map((value) => NodeBuffer.from(value)),
           );
           let output;
           if (format === "gzip") {
             output = zlib.gunzipSync(input, { rejectGarbageAfterEnd: true });
           } else if (format === "brotli") {
             output = zlib.brotliDecompressSync(input, {
-              rejectGarbageAfterEnd: true
+              rejectGarbageAfterEnd: true,
             });
           } else if (format === "deflate-raw") {
             output = zlib.inflateRawSync(input);
@@ -311,7 +320,7 @@ class __quenchDecompressionStream extends __quenchTransformStream {
         } catch (_) {
           controller.error?.(new TypeError("Decompression failed"));
         }
-      }
+      },
     });
   }
 }
@@ -336,7 +345,7 @@ class __quenchCompressionStream extends __quenchTransformStream {
         else if (format === "deflate-raw") output = zlib.deflateRawSync(input);
         else output = zlib.brotliCompressSync(input);
         controller.enqueue(output);
-      }
+      },
     });
   }
 }
@@ -345,7 +354,7 @@ class __quenchTextEncoderStream extends __quenchTransformStream {
     super({
       transform(value, controller) {
         controller.enqueue(new TextEncoder().encode(String(value)));
-      }
+      },
     });
     this.encoding = "utf-8";
   }
@@ -374,7 +383,7 @@ class __quenchTextDecoderStream extends __quenchTransformStream {
       flush(controller) {
         const tail = decoder.decode(new Uint8Array());
         if (tail) controller.enqueue(tail);
-      }
+      },
     });
     this.encoding = "utf-8";
     this.fatal = Boolean(options?.fatal);
@@ -402,51 +411,57 @@ const __quenchPrivateGetter = (Constructor, property, storage) =>
     },
     set(value) {
       this[storage] = value;
-    }
+    },
   });
-for (const [Constructor, properties] of [
-  [__quenchTextEncoderStream, ["encoding", "readable", "writable"]],
-  [
-    __quenchTextDecoderStream,
-    ["encoding", "fatal", "ignoreBOM", "readable", "writable"]
-  ],
-  [__quenchCompressionStream, ["readable", "writable"]],
-  [__quenchDecompressionStream, ["readable", "writable"]]
-]) {
+for (
+  const [Constructor, properties] of [
+    [__quenchTextEncoderStream, ["encoding", "readable", "writable"]],
+    [
+      __quenchTextDecoderStream,
+      ["encoding", "fatal", "ignoreBOM", "readable", "writable"],
+    ],
+    [__quenchCompressionStream, ["readable", "writable"]],
+    [__quenchDecompressionStream, ["readable", "writable"]],
+  ]
+) {
   for (const property of properties) {
     __quenchPrivateGetter(Constructor, property, Symbol(property));
   }
 }
-for (const [Constructor, size] of [
-  [__quenchByteLengthQueuingStrategy, (value) => value?.byteLength ?? 0],
-  [__quenchCountQueuingStrategy, () => 1]
-]) {
+for (
+  const [Constructor, size] of [
+    [__quenchByteLengthQueuingStrategy, (value) => value?.byteLength ?? 0],
+    [__quenchCountQueuingStrategy, () => 1],
+  ]
+) {
   Object.defineProperties(Constructor.prototype, {
     highWaterMark: {
       configurable: true,
       get() {
-        if (!(this instanceof Constructor))
+        if (!(this instanceof Constructor)) {
           throw new TypeError("Cannot read private member");
+        }
         return this._highWaterMark;
-      }
+      },
     },
     size: {
       configurable: true,
       get() {
-        if (!(this instanceof Constructor))
+        if (!(this instanceof Constructor)) {
           throw new TypeError("Cannot read private member");
+        }
         return size;
-      }
-    }
+      },
+    },
   });
 }
 Object.defineProperty(__quenchCompressionStream.prototype, Symbol.toStringTag, {
-  value: "CompressionStream"
+  value: "CompressionStream",
 });
 Object.defineProperty(
   __quenchDecompressionStream.prototype,
   Symbol.toStringTag,
-  { value: "DecompressionStream" }
+  { value: "DecompressionStream" },
 );
 const __quenchWebStreams = {
   ReadableStream: __quenchReadableStream,
@@ -455,22 +470,24 @@ const __quenchWebStreams = {
   CompressionStream: __quenchCompressionStream,
   DecompressionStream: __quenchDecompressionStream,
   TextEncoderStream: __quenchTextEncoderStream,
-  TextDecoderStream: __quenchTextDecoderStream
+  TextDecoderStream: __quenchTextDecoderStream,
 };
 globalThis.ReadableStream ||= __quenchReadableStream;
 globalThis.WritableStream ||= __quenchWritableStream;
 globalThis.TransformStream ||= __quenchTransformStream;
 globalThis.DecompressionStream ||= __quenchDecompressionStream;
-for (const constructor of [
-  "ReadableStreamDefaultReader",
-  "ReadableStreamBYOBReader",
-  "ReadableStreamBYOBRequest",
-  "ReadableByteStreamController",
-  "ReadableStreamDefaultController",
-  "TransformStreamDefaultController",
-  "WritableStreamDefaultWriter",
-  "WritableStreamDefaultController"
-]) {
+for (
+  const constructor of [
+    "ReadableStreamDefaultReader",
+    "ReadableStreamBYOBReader",
+    "ReadableStreamBYOBRequest",
+    "ReadableByteStreamController",
+    "ReadableStreamDefaultController",
+    "TransformStreamDefaultController",
+    "WritableStreamDefaultWriter",
+    "WritableStreamDefaultController",
+  ]
+) {
   globalThis[constructor] ||= class {};
 }
 globalThis.CompressionStream ||= __quenchCompressionStream;
@@ -478,30 +495,3 @@ globalThis.TextEncoderStream ||= __quenchTextEncoderStream;
 globalThis.TextDecoderStream ||= __quenchTextDecoderStream;
 globalThis.ByteLengthQueuingStrategy ||= __quenchByteLengthQueuingStrategy;
 globalThis.CountQueuingStrategy ||= __quenchCountQueuingStrategy;
-if (globalThis.Blob?.prototype) {
-  globalThis.Blob.prototype.stream = function () {
-    const blob = this;
-    return new __quenchReadableStream({
-      start: (controller) => {
-        if (blob._data) {
-          controller.enqueue(blob._data);
-          controller.close();
-        } else {
-          Promise.resolve(blob.arrayBuffer()).then((buffer) => {
-            controller.enqueue(new Uint8Array(buffer));
-            controller.close();
-          });
-        }
-      }
-    });
-  };
-}
-globalThis.require = (specifier) => {
-  if (String(specifier).replace(/^node:/, "") === "internal/webstreams/util") {
-    return { kState: __quenchWebStreamsState };
-  }
-  if (String(specifier).replace(/^node:/, "") === "stream/web") {
-    return __quenchWebStreams;
-  }
-  return __quenchOriginalRequireWithWebStreams(specifier);
-};

@@ -2,7 +2,7 @@ const __quenchOriginalRequireWithDecoder = globalThis.require;
 const __quenchDecoderInputBytes = (input) => {
   if (ArrayBuffer.isView(input)) {
     return Array.from(
-      new Uint8Array(input.buffer, input.byteOffset, input.byteLength)
+      new Uint8Array(input.buffer, input.byteOffset, input.byteLength),
     );
   }
   return Array.from(input || []);
@@ -15,9 +15,11 @@ const __quenchDecoderValidateInput = (decoder, input) => {
   }
   if (!ArrayBuffer.isView(input)) {
     const error = new TypeError(
-      `The "buf" argument must be an instance of Buffer, TypedArray, or DataView.${__nodeInvalidArgSuffix(
-        input
-      )}`
+      `The "buf" argument must be an instance of Buffer, TypedArray, or DataView.${
+        __nodeInvalidArgSuffix(
+          input,
+        )
+      }`,
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -32,6 +34,16 @@ const __quenchDecoderStoreUtf8 = (decoder, bytes) => {
   decoder.lastChar.set(result.pending);
   return result.text;
 };
+const __quenchDecoderStoreSingleByte = (decoder, bytes) => {
+  let end = bytes.length;
+  decoder._pending = [];
+  if (decoder.encoding === "ascii") {
+    return String.fromCharCode(
+      ...bytes.slice(0, end).map((value) => value & 0x7f),
+    );
+  }
+  return String.fromCharCode(...bytes.slice(0, end));
+};
 const __quenchStringDecoderClass = class {
   constructor(encoding = "utf8") {
     this.encoding = String(encoding).toLowerCase().replace("-", "");
@@ -42,9 +54,9 @@ const __quenchStringDecoderClass = class {
       error.code = "ERR_UNKNOWN_ENCODING";
       throw error;
     }
-    this._decoder = new TextDecoder(
-      this.encoding === "utf8" ? "utf-8" : this.encoding
-    );
+    this._decoder = this.encoding === "utf8"
+      ? new TextDecoder("utf-8")
+      : undefined;
     this._pending = [];
     this.lastNeed = 0;
     this.lastTotal = 0;
@@ -61,21 +73,7 @@ const __quenchStringDecoderClass = class {
       this._pending = result.pending;
       return result.text;
     }
-    let end = 0;
-    while (end < bytes.length) {
-      const width =
-        bytes[end] < 0x80
-          ? 1
-          : bytes[end] < 0xe0
-            ? 2
-            : bytes[end] < 0xf0
-              ? 3
-              : 4;
-      if (end + width > bytes.length) break;
-      end += width;
-    }
-    this._pending = bytes.slice(end);
-    return this._decoder.decode(new Uint8Array(bytes.slice(0, end)));
+    return __quenchDecoderStoreSingleByte(this, bytes);
   }
   text(input, offset = 0) {
     return offset >= input.length ? "" : this.write(input.slice(offset));
@@ -91,9 +89,12 @@ const __quenchStringDecoderClass = class {
       const prefix = input === undefined ? "" : this.write(input);
       return `${prefix}${__quenchDecodeUtf16(this._pending, true).text}`;
     }
-    return `${input === undefined ? "" : this.write(input)}${this._decoder.decode(
-      new Uint8Array(this._pending)
-    )}`;
+    return `${input === undefined ? "" : this.write(input)}${
+      __quenchDecoderStoreSingleByte(
+        this,
+        this._pending,
+      )
+    }`;
   }
 };
 const __quenchStringDecoder = function __quenchStringDecoder(encoding) {

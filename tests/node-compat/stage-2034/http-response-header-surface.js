@@ -9,7 +9,7 @@ const server = http.createServer((request, response) => {
   assert.strictEqual(response.flushHeaders(), response);
   assert.strictEqual(
     response.writeEarlyHints({ link: "</style.css>; rel=preload" }),
-    response
+    response,
   );
   response.end("ok");
 });
@@ -25,7 +25,7 @@ server.listen(0, () => {
         assert.strictEqual(body, "ok");
         server.close();
       });
-    }
+    },
   );
   assert.strictEqual(request.flushHeaders(), request);
 });

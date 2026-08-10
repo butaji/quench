@@ -1,5 +1,10 @@
 # Add Buffer-based fs read and write paths
 
+> Contract: This task is part of broad Node 24 compatibility across Linux
+> x86_64, Linux ARM64, macOS, and Windows. Native addons and Node-API are
+> excluded. Use the statuses and release gates in
+> [compatibility-contract.md](../docs/compatibility-contract.md).
+
 ## Contract alignment
 
 This task supports the Node 24 application-runtime contract on Linux x86_64;

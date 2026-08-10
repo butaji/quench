@@ -7,7 +7,7 @@ const __quenchHttpsUnsupported = (operation) => {
 const __quenchHttps = {
   request: () => __quenchHttpsUnsupported("https.request"),
   get: () => __quenchHttpsUnsupported("https.get"),
-  createServer: () => __quenchHttpsUnsupported("https.createServer")
+  createServer: () => __quenchHttpsUnsupported("https.createServer"),
 };
 const __quenchHttp = __quenchOriginalRequireWithHttps("http");
 class __quenchHttpsAgent extends __quenchHttp.Agent {

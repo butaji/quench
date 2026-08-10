@@ -6,7 +6,7 @@ const readable = Readable({
   read() {
     this.push(msg);
     this.push(null);
-  }
+  },
 });
 assert.strictEqual(typeof readable.on, "function");
 const duplex = Duplex.from({ readable });

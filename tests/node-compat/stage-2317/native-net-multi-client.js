@@ -20,8 +20,8 @@ server.listen(
     for (const value of ["one", "two", "three"]) {
       const client = net.createConnection(
         { host: "127.0.0.1", port, __quenchNativeTransport: true },
-        () => client.end(value)
+        () => client.end(value),
       );
     }
-  }
+  },
 );

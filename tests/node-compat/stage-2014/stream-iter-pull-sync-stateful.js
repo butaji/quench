@@ -15,21 +15,21 @@ const stateful = {
         yield* chunks;
       }
     })();
-  }
+  },
 };
 
 assert.strictEqual(
   decode(bytesSync(pullSync(fromSync("data"), stateful))),
-  "data-END"
+  "data-END",
 );
 
 const add = (suffix) => (chunks) =>
   chunks === null ? null : [...chunks, encoder.encode(suffix)];
 assert.strictEqual(
   decode(bytesSync(pullSync(fromSync("hello"), add("!"), add("?")))),
-  "hello!?"
+  "hello!?",
 );
 
 assert.throws(() => pullSync(fromSync("x"), { transform: 1 }), {
-  code: "ERR_INVALID_ARG_TYPE"
+  code: "ERR_INVALID_ARG_TYPE",
 });

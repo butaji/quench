@@ -6,7 +6,7 @@ const readable = new Readable({ read() {} });
 const writable = new Writable({
   write(_chunk, _encoding, callback) {
     callback();
-  }
+  },
 });
 const duplex = Duplex.from({ readable, writable });
 duplex.on("error", (error) => assert.strictEqual(error, expected));

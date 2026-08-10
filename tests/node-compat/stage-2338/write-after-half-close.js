@@ -10,7 +10,8 @@ const server = net.createServer((socket) => {
   });
 });
 server.listen(0, () => {
-  const client = net.createConnection(server.address().port, () =>
-    client.end()
+  const client = net.createConnection(
+    server.address().port,
+    () => client.end(),
   );
 });

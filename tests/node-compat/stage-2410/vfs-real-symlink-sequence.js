@@ -11,26 +11,26 @@ const vfs = require("node:vfs");
   try {
     await assert.rejects(
       filesystem.promises.symlink("/etc/passwd", "/escape"),
-      { code: "EACCES" }
+      { code: "EACCES" },
     );
     await assert.rejects(filesystem.promises.symlink("../../escape", "/bad"), {
-      code: "EACCES"
+      code: "EACCES",
     });
     fs.writeFileSync(path.join(root, "target.txt"), "x");
     fs.symlinkSync(path.join(root, "target.txt"), path.join(root, "abs"));
     assert.strictEqual(
       await filesystem.promises.readlink("/abs"),
-      "/target.txt"
+      "/target.txt",
     );
     fs.symlinkSync(root, path.join(root, "root-link"));
     assert.strictEqual(await filesystem.promises.readlink("/root-link"), "/");
     fs.writeFileSync(path.join(base, "outside.txt"), "no");
     fs.symlinkSync(
       path.join(base, "outside.txt"),
-      path.join(root, "outside-link")
+      path.join(root, "outside-link"),
     );
     await assert.rejects(filesystem.promises.realpath("/outside-link"), {
-      code: "EACCES"
+      code: "EACCES",
     });
     console.log("real-provider symlink sequence passed");
   } finally {

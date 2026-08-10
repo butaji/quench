@@ -1,5 +1,10 @@
 # Reduce crypto byte and string conversions
 
+> Contract: This task is part of broad Node 24 compatibility across Linux
+> x86_64, Linux ARM64, macOS, and Windows. Native addons and Node-API are
+> excluded. Use the statuses and release gates in
+> [compatibility-contract.md](../docs/compatibility-contract.md).
+
 ## Contract alignment
 
 This task supports the Node 24 application-runtime contract on Linux x86_64;
@@ -24,6 +29,10 @@ Keep Node crypto operations on byte-oriented values across the Rust/JavaScript b
 - Byte inputs and outputs avoid unnecessary intermediate strings.
 
 ## Status
+
+Node-compatible RSA signing diagnostics are covered by stages 1348, 1468,
+1474, and 2551. The digest-length regression stage was corrected against the
+local Node oracle (SHA-384: 96 hex characters; SHA-512: 128).
 
 SHA-256 byte updates now use the native `Vec<u8>` binding and are covered by
 `tests/node-compat/stage-374/crypto-hash-bytes.js`. HMAC and signing paths
@@ -63,3 +72,25 @@ Finalized hash and HMAC copy validation is covered by
 `tests/node-compat/stage-487/crypto-random-bytes-validation.js`.
 `randomFillSync()` buffer and range validation is covered by
 `tests/node-compat/stage-488/crypto-random-fill-validation.js`.
+The authoritative `test-crypto.js` hash capability ordering is covered by
+`tests/node-compat/stage-2550/crypto-hash-order.js`.
+The small-RSA signing error contract is covered by
+`tests/node-compat/stage-2551/crypto-rsa-small-key-error.js`; the
+authoritative `test-crypto.js` fixture now passes.
+SHA-384/SHA-512 HMAC block sizing and the authoritative HMAC fixture are now
+covered by `tests/node-compat/stage-2552/crypto-hmac-sha512-block.js`.
+Stage 2553 removes the obsolete SHA-384/SHA-512-to-SHA-256 fallback now that
+the host exposes the real digest implementations, and aligns invalid HMAC
+algorithm errors with Node's `ERR_CRYPTO_INVALID_DIGEST`. The focused stage
+and authoritative hash/HMAC fixtures pass after rebuild.
+HKDF invalid-digest error-code parity is additionally covered by
+`tests/node-compat/stage-2564/hkdf-invalid-digest-code.js`; the focused HKDF
+stages pass while the later upstream fixture mismatch remains tracked in the
+compatibility queue.
+
+HKDF length validation now distinguishes `buffer.kMaxLength + 1` as
+`ERR_OUT_OF_RANGE`, while the digest-specific 255-block limit remains
+`ERR_CRYPTO_INVALID_KEYLEN`. The fallback also normalizes typed arrays,
+ArrayBuffer, SharedArrayBuffer, and secret KeyObjects to byte inputs. The
+authoritative `test-crypto-hkdf.js` fixture now passes; WebCrypto HKDF remains
+separate.

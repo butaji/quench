@@ -8,7 +8,7 @@ if (globalThis.process) {
     heapTotal: 0,
     heapUsed: 0,
     external: 0,
-    arrayBuffers: 0
+    arrayBuffers: 0,
   });
   globalThis.process.cpuUsage ||= () => ({ user: 0, system: 0 });
 }

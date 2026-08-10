@@ -1,44 +1,39 @@
+const __quenchEventNameVisible = (emitter, name, value) => {
+  if (value === undefined || (Array.isArray(value) && value.length === 0)) {
+    return false;
+  }
+  const hiddenError = ["NodeReadable", "NodeWritable", "NodeDuplex"].includes(
+    emitter.constructor?.name,
+  );
+  return !(name === "error" && hiddenError && !Array.isArray(value));
+};
 globalThis.__nodeEventEmitter.prototype.eventNames = function () {
-  const names = Reflect.ownKeys(this._events).filter((name) => {
-    const value = this._events[name];
-    if (value === undefined || (Array.isArray(value) && value.length === 0)) {
-      return false;
-    }
-    if (
-      name === "error" &&
-      (this.constructor?.name === "NodeReadable" ||
-        this.constructor?.name === "NodeWritable" ||
-        this.constructor?.name === "NodeDuplex") &&
-      !Array.isArray(value)
-    ) {
-      return false;
-    }
-    return true;
-  });
+  const names = Reflect.ownKeys(this._events).filter((name) =>
+    __quenchEventNameVisible(this, name, this._events[name])
+  );
   const priority = new Map([
     ["error", 0],
     ["data", 1],
     ["prefinish", 0],
     ["drain", 1],
-    ["finish", 0]
+    ["finish", 0],
   ]);
   return names.sort(
-    (left, right) => (priority.get(left) ?? 2) - (priority.get(right) ?? 2)
+    (left, right) => (priority.get(left) ?? 2) - (priority.get(right) ?? 2),
   );
 };
 globalThis.__nodeEventEmitter.prototype.off =
   globalThis.__nodeEventEmitter.prototype.removeListener;
 globalThis.__nodeEventEmitter.prototype.prependListener = function (
   event,
-  listener
+  listener,
 ) {
   const current = this._events[event];
-  this._events[event] =
-    current === undefined
-      ? listener
-      : Array.isArray(current)
-        ? [listener, ...current]
-        : [listener, current];
+  this._events[event] = current === undefined
+    ? listener
+    : Array.isArray(current)
+    ? [listener, ...current]
+    : [listener, current];
   return this;
 };
 globalThis.__nodeEventEmitter.prototype.once = function (event, listener) {
@@ -54,7 +49,7 @@ globalThis.__nodeEventEmitter.prototype.once = function (event, listener) {
 };
 globalThis.__nodeEventEmitter.prototype.prependOnceListener = function (
   event,
-  listener
+  listener,
 ) {
   let called = false;
   const once = (...args) => {

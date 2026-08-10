@@ -16,7 +16,7 @@ compose(
   },
   async function* (source) {
     for await (const chunk of source) yield chunk.toUpperCase();
-  }
+  },
 )
   .end("asd")
   .on("data", (chunk) => {
@@ -34,7 +34,7 @@ compose(
   },
   async function (source) {
     for await (const chunk of source) consumed += chunk;
-  }
+  },
 )
   .end("value")
   .on("finish", () => {
