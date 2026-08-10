@@ -140,6 +140,9 @@ pub fn execute_builtin_tail(
     if is_proxy_or_reflect(builtin) {
         return crate::proxy::builtin(builtin, arguments);
     }
+    if builtin == Builtin::RegExp {
+        return crate::construct::construct_value(&Value::Builtin(Builtin::RegExp), arguments);
+    }
     Ok(match builtin {
         Builtin::ObjectIs => Value::Boolean(crate::builtins::same_value(
             arguments.first(),

@@ -123,18 +123,27 @@ pub fn execute(ops: &[Op]) -> Result<Value, VmError> {
 }
 
 pub fn execute_with_registers(ops: &[Op], registers: Vec<Value>) -> Result<Value, VmError> {
-    execute_with_registers_context(ops, registers, &VmContext::default())
+    let context = current_context_or_default();
+    execute_with_registers_context(ops, registers, &context)
 }
 
 pub fn execute_in_place(ops: &[Op], registers: &mut Vec<Value>) -> Result<Value, VmError> {
-    execute_in_place_context(ops, registers, &VmContext::default())
+    let context = current_context_or_default();
+    execute_in_place_context(ops, registers, &context)
+}
+
+pub(crate) fn current_context_or_default() -> VmContext {
+    CURRENT_CONTEXT
+        .with(|current| current.borrow().clone())
+        .unwrap_or_default()
 }
 
 pub(crate) fn execute_completion_in_place(
     ops: &[Op],
     registers: &mut Vec<Value>,
 ) -> Result<crate::completion::Completion, VmError> {
-    execute_completion_in_place_context(ops, registers, &VmContext::default())
+    let context = current_context_or_default();
+    execute_completion_in_place_context(ops, registers, &context)
 }
 
 pub fn execute_with_context(ops: &[Op], context: &VmContext) -> Result<Value, VmError> {
@@ -352,14 +361,58 @@ pub(crate) fn bare_call_receiver(
     function: &crate::value::FunctionValue,
     this_value: &Value,
 ) -> Value {
-    if matches!(this_value, Value::Undefined)
-        && matches!(function.kind, FunctionKind::Ordinary)
+    if matches!(function.kind, FunctionKind::Ordinary)
         && matches!(function.strictness, FunctionStrictness::Sloppy)
     {
-        current_global_object()
-    } else {
-        this_value.clone()
+        if matches!(this_value, Value::Undefined | Value::Null) {
+            return current_global_object();
+        }
+        return to_object_value(this_value);
     }
+    this_value.clone()
+}
+
+fn to_object_value(this_value: &Value) -> Value {
+    match this_value {
+        Value::Object(_)
+        | Value::Array(_)
+        | Value::Function(_)
+        | Value::BoundFunction(_)
+        | Value::Builtin(_)
+        | Value::ObjectAlias(_)
+        | Value::Proxy(_)
+        | Value::Promise(_)
+        | Value::Map(_)
+        | Value::Set(_)
+        | Value::ArrayBuffer(_)
+        | Value::DataView(_)
+        | Value::Float32Array(_)
+        | Value::Float64Array(_)
+        | Value::Int8Array(_)
+        | Value::Int16Array(_)
+        | Value::Int32Array(_)
+        | Value::Uint8Array(_)
+        | Value::Uint8ClampedArray(_)
+        | Value::Uint16Array(_)
+        | Value::Uint32Array(_)
+        | Value::BigInt64Array(_)
+        | Value::BigUint64Array(_)
+        | Value::Iterator(_)
+        | Value::Generator(_)
+        | Value::HostCapability(_) => this_value.clone(),
+        Value::Number(_) => boxed_primitive(this_value, crate::ops::Builtin::Number),
+        Value::Boolean(_) => boxed_primitive(this_value, crate::ops::Builtin::Boolean),
+        Value::String(_) => boxed_primitive(this_value, crate::ops::Builtin::String),
+        Value::BigInt(_) => boxed_primitive(this_value, crate::ops::Builtin::BigInt),
+        Value::Null | Value::Undefined | Value::BindingCell(_) => this_value.clone(),
+    }
+}
+
+fn boxed_primitive(value: &Value, constructor: crate::ops::Builtin) -> Value {
+    Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
+        ("_value".to_string(), value.clone()),
+        ("constructor".to_string(), Value::Builtin(constructor)),
+    ])))
 }
 
 pub fn execute_builtin_with_receiver(
@@ -444,9 +497,36 @@ pub(crate) fn execute_host_capability(
         HostCapabilityKind::CreateRealm if arguments.is_empty() => Ok(create_realm_value()),
         HostCapabilityKind::CreateRealm => Err(type_error("createRealm expects no arguments")),
         HostCapabilityKind::DetachArrayBuffer => vm_ops::detach_array_buffer(arguments),
-        _ => Err(VmError::EvalError(
-            "Host capability is unavailable".to_string(),
-        )),
+        HostCapabilityKind::EvalScript => run_eval_script(arguments),
+    }
+}
+
+fn run_eval_script(arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(value) = arguments.first() else {
+        return Err(type_error("evalScript expects a string argument"));
+    };
+    let Value::String(source) = value else {
+        return Err(type_error("evalScript expects a string argument"));
+    };
+    let realm = CURRENT_CONTEXT
+        .with(|context| context.borrow().as_ref().map(VmContext::realm))
+        .and_then(|id| realm::context(id).is_some().then_some(id));
+    let bindings = vec![
+        ("globalThis".to_string(), 0),
+        ("\0script_this".to_string(), 0),
+    ];
+    let program = match crate::reduce::reduce_eval_source(source, false, true, &bindings, &[]) {
+        Ok(program) => program,
+        Err(errors) => {
+            return Err(VmError::Thrown(crate::builtins::error(
+                crate::ops::Builtin::SyntaxError,
+                &[Value::String(errors.join("; "))],
+            )));
+        }
+    };
+    match realm {
+        Some(realm) => execute_indirect_eval_in_realm(realm, &program.ops),
+        None => execute_indirect_eval(&program.ops),
     }
 }
 

@@ -79,6 +79,7 @@ fn is_simple_builtin(builtin: Builtin) -> bool {
             | Builtin::ObjectPrototypeValueOf
             | Builtin::FunctionPrototypeToString
             | Builtin::FunctionPrototypeValueOf
+            | Builtin::RegExpPrototypeToString
             | Builtin::Function
             | Builtin::AsyncFunction
             | Builtin::GeneratorFunction
@@ -128,6 +129,7 @@ fn execute_simple_builtin(
         Builtin::FunctionPrototypeToString | Builtin::FunctionPrototypeValueOf => {
             function_prototype_builtin(builtin, receiver)
         }
+        Builtin::RegExpPrototypeToString => regexp_prototype_to_string(receiver),
         Builtin::NumberToFixed | Builtin::NumberToPrecision | Builtin::NumberToExponential => {
             crate::number_fmt::number_format(arguments.first(), arguments.get(1), builtin)
         }
@@ -410,4 +412,25 @@ fn function_prototype_builtin(
         }
         _ => Ok(Value::Undefined),
     }
+}
+
+fn regexp_prototype_to_string(
+    receiver: Option<&Value>,
+) -> Result<Value, VmError> {
+    let Some(value) = receiver else {
+        return Ok(Value::String("/(?:)/".to_string()));
+    };
+    let source = crate::execute::get_property(value, "source");
+    let flags = crate::execute::get_property(value, "flags");
+    let source_str = if let Value::String(s) = &source {
+        s.clone()
+    } else {
+        String::new()
+    };
+    let flags_str = if let Value::String(s) = &flags {
+        s.clone()
+    } else {
+        String::new()
+    };
+    Ok(Value::String(format!("/{source_str}/{flags_str}")))
 }

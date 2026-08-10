@@ -226,12 +226,14 @@ fn bind_function_target(
     }
     let target = arguments
         .first()
-        .ok_or(crate::execute::VmError::NotCallable)?;
+        .cloned()
+        .unwrap_or(crate::value::Value::Undefined);
+    let extra = arguments.get(1..).unwrap_or(&[]).to_vec();
     Ok(crate::value::Value::BoundFunction(std::rc::Rc::new(
         crate::value::BoundFunctionValue {
             target: receiver.cloned().unwrap_or(crate::value::Value::Undefined),
-            receiver: target.clone(),
-            arguments: arguments[1..].to_vec(),
+            receiver: target,
+            arguments: extra,
         },
     )))
 }
@@ -331,12 +333,8 @@ fn execute_frame_completion(
     let _with_scope = crate::with_scope::FunctionGuard::isolate();
     let (mut registers, environment) =
         build_registers(&frame.function, &frame.receiver, &frame.arguments);
-    crate::vm::execute_frame_completion(
-        &frame.function.body,
-        &mut registers,
-        &crate::vm::VmContext::default(),
-        environment,
-    )
+    let context = crate::vm::current_context_or_default();
+    crate::vm::execute_frame_completion(&frame.function.body, &mut registers, &context, environment)
 }
 
 fn resolve_tail_target(

@@ -1,4 +1,8 @@
-use crate::{execute::VmError, ops::PropertyDefinitionKind, value::Value};
+use crate::{
+    execute::VmError,
+    ops::{Builtin, PropertyDefinitionKind},
+    value::Value,
+};
 
 pub(crate) fn execute(registers: &mut Vec<Value>, op: &crate::ops::Op) -> Result<(), VmError> {
     let crate::ops::Op::DefineProperty {
@@ -58,8 +62,63 @@ fn accessor_value(value: &Value, key: &str, field: &str) -> Option<Value> {
             .borrow()
             .upgrade()
             .and_then(|properties| accessor_field(&properties, key, field)),
+        Value::Number(_) => accessor_value(&Value::Builtin(Builtin::NumberPrototype), key, field),
+        Value::Boolean(_) => accessor_value(&Value::Builtin(Builtin::BooleanPrototype), key, field),
+        Value::String(_) => accessor_value(&Value::Builtin(Builtin::StringPrototype), key, field),
+        Value::BigInt(_) => accessor_value(&Value::Builtin(Builtin::BigIntPrototype), key, field),
+        Value::Builtin(builtin) => {
+            if let Some(descriptor) =
+                crate::builtins::read_intrinsic_override(*builtin, field_key(key))
+            {
+                if let Some(found) = descriptor_field(&descriptor, field) {
+                    return Some(found);
+                }
+            }
+            builtin_prototype(*builtin).and_then(|prototype| accessor_value(&prototype, key, field))
+        }
         _ => None,
     }
+}
+
+fn field_key(descriptor_key: &str) -> &str {
+    descriptor_key
+        .strip_prefix(&crate::builtins::descriptor_key(""))
+        .unwrap_or(descriptor_key)
+}
+
+fn descriptor_field(descriptor: &Value, field: &str) -> Option<Value> {
+    let Value::Object(properties) = descriptor else {
+        return None;
+    };
+    properties
+        .iter()
+        .rev()
+        .find_map(|(name, value)| (name == field).then(|| value.clone()))
+}
+
+/// Map a builtin prototype reference to its [[Prototype]] — ObjectPrototype for
+/// intrinsic prototypes. Object.prototype's own chain terminates.
+fn builtin_prototype(builtin: Builtin) -> Option<Value> {
+    if builtin == Builtin::ObjectPrototype {
+        return None;
+    }
+    let next = match builtin {
+        Builtin::NumberPrototype
+        | Builtin::BooleanPrototype
+        | Builtin::StringPrototype
+        | Builtin::BigIntPrototype
+        | Builtin::FunctionPrototype
+        | Builtin::ArrayPrototype
+        | Builtin::RegExpPrototype
+        | Builtin::DatePrototype
+        | Builtin::ErrorPrototype
+        | Builtin::SymbolPrototype
+        | Builtin::PromisePrototype
+        | Builtin::MapPrototype
+        | Builtin::SetPrototype => Builtin::ObjectPrototype,
+        _ => return None,
+    };
+    Some(Value::Builtin(next))
 }
 
 fn accessor_field(properties: &[(String, Value)], key: &str, field: &str) -> Option<Value> {
