@@ -117,11 +117,20 @@ pub fn promise_finally(_receiver: Option<&Value>, _arguments: &[Value]) -> Resul
 
 /// Dispatch Promise builtins.
 pub fn execute_builtin(
-    _builtin: Builtin,
-    _receiver: Option<&Value>,
-    _arguments: &[Value],
+    builtin: Builtin,
+    receiver: Option<&Value>,
+    arguments: &[Value],
 ) -> Option<Result<Value, VmError>> {
-    None
+    let result = match builtin {
+        Builtin::Promise => Ok(new_promise()),
+        Builtin::PromiseResolve => Ok(promise_resolve(arguments)),
+        Builtin::PromiseReject => Ok(promise_reject(arguments)),
+        Builtin::PromiseThen => promise_then(receiver, arguments),
+        Builtin::PromiseCatch => promise_catch(receiver, arguments),
+        Builtin::PromiseFinally => promise_finally(receiver, arguments),
+        _ => return None,
+    };
+    Some(result)
 }
 
 const _: () = {
