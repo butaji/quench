@@ -1,11 +1,7 @@
-use std::collections::HashMap;
-
-use oxc::ast::ast::Expression;
-
 use crate::{facts::ProgramDb, literal::reduce_literal, ops::Op};
-
+use oxc::ast::ast::Expression;
+use std::collections::HashMap;
 const NON_EXTENSIBLE: &str = "\0quench:non_extensible";
-
 pub(crate) fn reduce(
     expression: &Expression<'_>,
     ops: &mut Vec<Op>,
@@ -18,7 +14,7 @@ pub(crate) fn reduce(
             (&member.object, member.property.name.to_string())
         }
         Expression::PrivateFieldExpression(member) => {
-            (&member.object, format!("#{}", member.field.name))
+            return reduce_private_get(member, ops, facts, next_register, locals);
         }
         Expression::ComputedMemberExpression(member) => {
             let object = crate::reduce::reduce_expression(
@@ -41,7 +37,21 @@ pub(crate) fn reduce(
     };
     emit_get(object, key, ops, facts, next_register, locals)
 }
-
+fn reduce_private_get(
+    member: &oxc::ast::ast::PrivateFieldExpression<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<u16> {
+    let name = facts.private_name(member.field.span)?;
+    let object =
+        crate::reduce::reduce_expression(&member.object, ops, facts, next_register, locals)?;
+    let dst = *next_register;
+    *next_register = next_register.saturating_add(1);
+    ops.push(Op::GetPrivate { dst, object, name });
+    Some(dst)
+}
 fn emit_get(
     object: &Expression<'_>,
     key: String,
@@ -63,14 +73,12 @@ fn emit_get(
     });
     Some(register)
 }
-
 fn emit_super_get(ops: &mut Vec<Op>, next_register: &mut u16, key: String) -> u16 {
     let dst = *next_register;
     *next_register = next_register.saturating_add(1);
     ops.push(Op::GetSuperProperty { dst, key });
     dst
 }
-
 fn reduce_dynamic_get(
     key_expression: &Expression<'_>,
     object: u16,
@@ -138,7 +146,6 @@ pub(crate) fn execute_set_property(
     crate::execute::write_value(registers, object, result);
     Ok(())
 }
-
 include!("properties_function_name.rs");
 
 fn rejects_new_property(target: &crate::value::Value, key: &str) -> bool {

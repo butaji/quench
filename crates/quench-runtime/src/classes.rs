@@ -46,7 +46,6 @@ pub(crate) fn reduce_expression(
     ops.extend(static_fields);
     Some(constructor)
 }
-
 include!("classes_name.rs");
 include!("classes_method_name.rs");
 
@@ -64,7 +63,6 @@ fn reduce_heritage(
     ops.push(Op::ValidateClassHeritage { src });
     Some(Some(src))
 }
-
 fn configure_heritage(
     heritage: Option<u16>,
     constructor: u16,
@@ -95,7 +93,6 @@ fn configure_heritage(
         });
     }
 }
-
 fn set_internal_prototype(ops: &mut Vec<Op>, object: u16, src: u16) {
     ops.push(Op::SetProperty {
         object,
@@ -103,7 +100,6 @@ fn set_internal_prototype(ops: &mut Vec<Op>, object: u16, src: u16) {
         src,
     });
 }
-
 pub(crate) fn validate_heritage(
     value: &crate::value::Value,
 ) -> Result<(), crate::execute::VmError> {
@@ -114,7 +110,6 @@ pub(crate) fn validate_heritage(
         "Class extends value is not a constructor or null",
     ))
 }
-
 pub(crate) fn append_instance_field(
     registers: &[crate::value::Value],
     op: &Op,
@@ -137,7 +132,6 @@ pub(crate) fn append_instance_field(
         .push(crate::value::InstanceFieldPlan { key, initializer });
     Ok(())
 }
-
 fn define_static_field(
     registers: &[crate::value::Value],
     field: &AppendInstanceFieldOp,
@@ -149,7 +143,6 @@ fn define_static_field(
     define_public_field(&constructor, &key, value)?;
     Ok(())
 }
-
 fn field_key_value(
     registers: &[crate::value::Value],
     key: &InstanceFieldKeyOp,
@@ -296,6 +289,21 @@ fn reduce_class_method(
 ) -> Option<()> {
     if method.kind == MethodDefinitionKind::Constructor {
         return Some(());
+    }
+    if method.r#static && method.kind == MethodDefinitionKind::Method {
+        if let PropertyKey::PrivateIdentifier(name) = &method.key {
+            let value = reduce_method(method, ops, facts, next, locals)?;
+            ops.push(Op::SetFunctionName {
+                function: value,
+                name: format!("#{}", name.name),
+            });
+            ops.push(Op::DefinePrivate {
+                object: constructor,
+                name: facts.private_name(name.span)?,
+                src: value,
+            });
+            return Some(());
+        }
     }
     let key = reduce_method_key(method, ops, facts, next, locals)?;
     let value = reduce_method(method, ops, facts, next, locals)?;
