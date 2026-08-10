@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::rc::Rc;
 
 use oxc::ast::ast::{ArrayExpression, ArrayExpressionElement};
 
@@ -44,7 +43,7 @@ pub(crate) fn execute_builtin(
 
 fn splice(receiver: Option<&Value>, arguments: &[Value]) -> Value {
     let Some(receiver @ Value::Array(values)) = receiver else {
-        return Value::Array(Rc::new(Vec::new()));
+        return Value::array(Vec::new());
     };
     let length = values.len();
     let start = relative_index(arguments.first(), length as isize) as usize;
@@ -53,15 +52,15 @@ fn splice(receiver: Option<&Value>, arguments: &[Value]) -> Value {
             .max(0.0)
             .min((length - start) as f64) as usize
     });
-    let mut updated = values.as_ref().clone();
+    let mut updated = values.to_vec();
     let removed = updated
         .splice(
             start..start + delete_count,
             arguments.iter().skip(2).cloned(),
         )
         .collect();
-    crate::locals::replace_value(receiver, &Value::Array(Rc::new(updated)));
-    Value::Array(Rc::new(removed))
+    crate::locals::replace_value(receiver, &Value::array(updated));
+    Value::array(removed)
 }
 
 pub(crate) fn reduce(
@@ -97,9 +96,9 @@ pub(crate) fn reduce(
     Some(register)
 }
 
-pub(crate) fn property(values: &[Value], key: &str) -> Value {
+pub(crate) fn property(values: &crate::value::ArrayData, key: &str) -> Value {
     if key == "length" {
-        return Value::Number(values.len() as f64);
+        return Value::Number(values.logical_len() as f64);
     }
     let method = match key {
         "forEach" => crate::ops::Builtin::ArrayForEach,
@@ -241,7 +240,7 @@ pub(crate) fn last_index_of(receiver: Option<&Value>, arguments: &[Value]) -> Va
 
 pub(crate) fn slice(receiver: Option<&Value>, arguments: &[Value]) -> Value {
     let Some(Value::Array(values)) = receiver else {
-        return Value::Array(Rc::new(Vec::new()));
+        return Value::array(Vec::new());
     };
     let length = values.len() as isize;
     let start = relative_index(arguments.first(), length);
@@ -249,28 +248,28 @@ pub(crate) fn slice(receiver: Option<&Value>, arguments: &[Value]) -> Value {
         .get(1)
         .map_or(length, |value| end_index(value, length));
     if end <= start {
-        return Value::Array(Rc::new(Vec::new()));
+        return Value::array(Vec::new());
     }
-    Value::Array(Rc::new(values[start as usize..end as usize].to_vec()))
+    Value::array(values[start as usize..end as usize].to_vec())
 }
 
 pub(crate) fn concat(receiver: Option<&Value>, arguments: &[Value]) -> Value {
     let Some(Value::Array(values)) = receiver else {
-        return Value::Array(Rc::new(Vec::new()));
+        return Value::array(Vec::new());
     };
-    let mut result = values.as_ref().clone();
+    let mut result = values.to_vec();
     for argument in arguments {
         match argument {
             Value::Array(values) => result.extend(values.iter().cloned()),
             value => result.push(value.clone()),
         }
     }
-    Value::Array(Rc::new(result))
+    Value::array(result)
 }
 
 pub(crate) fn flat(receiver: Option<&Value>, arguments: &[Value]) -> Value {
     let Some(Value::Array(values)) = receiver else {
-        return Value::Array(Rc::new(Vec::new()));
+        return Value::array(Vec::new());
     };
     let depth = arguments
         .first()
@@ -279,7 +278,7 @@ pub(crate) fn flat(receiver: Option<&Value>, arguments: &[Value]) -> Value {
             _ => None,
         })
         .unwrap_or(1);
-    Value::Array(Rc::new(flatten(values, depth)))
+    Value::array(flatten(values, depth))
 }
 
 fn flatten(values: &[Value], depth: usize) -> Vec<Value> {
@@ -301,7 +300,7 @@ pub(crate) fn flat_map(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     let Some(Value::Array(values)) = receiver else {
-        return Ok(Value::Array(Rc::new(Vec::new())));
+        return Ok(Value::array(Vec::new()));
     };
     let Some(callback) = arguments.first() else {
         return Ok(Value::Array(values.clone()));
@@ -319,7 +318,7 @@ pub(crate) fn flat_map(
             value => mapped.push(value),
         }
     }
-    Ok(Value::Array(Rc::new(mapped)))
+    Ok(Value::array(mapped))
 }
 
 pub(crate) fn at(receiver: Option<&Value>, arguments: &[Value]) -> Value {
@@ -346,9 +345,9 @@ pub(crate) fn at(receiver: Option<&Value>, arguments: &[Value]) -> Value {
 
 pub(crate) fn to_reversed(receiver: Option<&Value>) -> Value {
     let Some(Value::Array(values)) = receiver else {
-        return Value::Array(Rc::new(Vec::new()));
+        return Value::array(Vec::new());
     };
-    Value::Array(Rc::new(values.iter().rev().cloned().collect()))
+    Value::array(values.iter().rev().cloned().collect())
 }
 
 pub(crate) fn reduce_values(

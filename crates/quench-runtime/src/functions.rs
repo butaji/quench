@@ -335,9 +335,7 @@ fn build_registers(
     let mut parameters = arguments.to_vec();
     parameters.resize(usize::from(function.params), crate::value::Value::Undefined);
     parameters.truncate(usize::from(function.params));
-    parameters.push(crate::value::Value::Array(std::rc::Rc::new(
-        original_arguments,
-    )));
+    parameters.push(crate::value::Value::array(original_arguments));
     parameters.push(this_value.clone());
     let environment = crate::environment::Environment::child(&function.captures, parameters);
     (vec![crate::value::Value::Undefined; 32], environment)
