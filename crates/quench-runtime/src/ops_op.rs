@@ -2,6 +2,9 @@
 pub enum Op {
     Const { dst: u16, value: Constant },
     StoreLocal { slot: u16, src: u16 },
+    ResolveBindingTarget { dst: u16, name: String },
+    InitializeResolvedBinding { target: u16, slot: u16, name: String, src: u16 },
+    LoadBinding { dst: u16, slot: u16, name: String },
     LoadLocal { dst: u16, slot: u16 },
     MakeArray { dst: u16, elements: Vec<u16> },
     MakeObject { dst: u16, properties: Vec<(String, u16)> },
@@ -9,6 +12,12 @@ pub enum Op {
     GetProperty { dst: u16, object: u16, key: String },
     ResolveGlobal { dst: u16, object: u16, key: String },
     GetPropertyDynamic { dst: u16, object: u16, key: u16 },
+    ToPropertyKey { dst: u16, src: u16 },
+    RequireObjectCoercible { src: u16 },
+    GetIterator { dst: u16, iterable: u16 },
+    IteratorStep { dst: u16, iterator: u16 },
+    IteratorRest { dst: u16, iterator: u16 },
+    ValidateClassHeritage { src: u16 },
     SetProperty { object: u16, key: String, src: u16 },
     SetPropertyDynamic { object: u16, key: u16, src: u16 },
     DefineProperty {

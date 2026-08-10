@@ -22,6 +22,13 @@ pub(crate) mod error {
             &[Value::String(message.to_string())],
         ))
     }
+
+    pub(crate) fn throw_range_error(message: &str) -> crate::execute::VmError {
+        crate::execute::VmError::Thrown(crate::builtins::error(
+            crate::ops::Builtin::RangeError,
+            &[Value::String(message.to_string())],
+        ))
+    }
 }
 
 /// Identity-bearing host capability kept outside the JavaScript value space.
@@ -171,6 +178,8 @@ pub enum Value {
     Int8Array(Rc<Int8ArrayData>),
     Int16Array(Rc<Int16ArrayData>),
     Int32Array(Rc<Int32ArrayData>),
+    BigInt64Array(Rc<BigInt64ArrayData>),
+    BigUint64Array(Rc<BigUint64ArrayData>),
     Uint32Array(Rc<Uint32ArrayData>),
     Uint8Array(Rc<Uint8ArrayData>),
     Uint8ClampedArray(Rc<Uint8ClampedArrayData>),

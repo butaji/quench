@@ -146,6 +146,8 @@ fn is_typed_array_prototype(builtin: Builtin) -> bool {
             | Uint16ArrayPrototype
             | Uint32ArrayPrototype
             | Uint8ClampedArrayPrototype
+            | BigInt64ArrayPrototype
+            | BigUint64ArrayPrototype
     )
 }
 
@@ -170,6 +172,10 @@ fn typed_array_constructor_property(builtin: Builtin, key: &str) -> Option<Built
         (Uint32ArrayPrototype, "constructor") => Uint32Array,
         (Uint8ClampedArray, "prototype") => Uint8ClampedArrayPrototype,
         (Uint8ClampedArrayPrototype, "constructor") => Uint8ClampedArray,
+        (BigInt64Array, "prototype") => BigInt64ArrayPrototype,
+        (BigInt64ArrayPrototype, "constructor") => BigInt64Array,
+        (BigUint64Array, "prototype") => BigUint64ArrayPrototype,
+        (BigUint64ArrayPrototype, "constructor") => BigUint64Array,
         _ => return None,
     })
 }
@@ -326,6 +332,7 @@ fn builtin_length(builtin: Builtin) -> f64 {
         Uint8Array => 3.0,
         Uint32Array => 3.0,
         Uint8ClampedArray => 3.0,
+        BigInt64Array | BigUint64Array => 3.0,
         DataView => 3.0,
         DateNow => 0.0,
         RegExp => 2.0,
@@ -372,6 +379,8 @@ pub(crate) fn builtin_name(builtin: Builtin) -> &'static str {
         Uint8Array => "Uint8Array",
         Uint32Array => "Uint32Array",
         Uint8ClampedArray => "Uint8ClampedArray",
+        BigInt64Array => "BigInt64Array",
+        BigUint64Array => "BigUint64Array",
         Object => "Object",
         String => "String",
         Symbol => "Symbol",
