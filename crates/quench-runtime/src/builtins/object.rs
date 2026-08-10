@@ -2,6 +2,17 @@ use std::rc::Rc;
 
 use crate::{execute::VmError, ops::Builtin, value::Value};
 
+pub(crate) fn boxed_constructor(value: &Value) -> Builtin {
+    match value {
+        Value::String(value) if value.contains('\0') => Builtin::Symbol,
+        Value::String(_) => Builtin::String,
+        Value::Number(_) => Builtin::Number,
+        Value::Boolean(_) => Builtin::Boolean,
+        Value::BigInt(_) => Builtin::BigInt,
+        _ => Builtin::Object,
+    }
+}
+
 pub(crate) fn has_own_property(receiver: Option<&Value>, key: Option<&Value>) -> Value {
     has_own_property_result(receiver, key).unwrap_or(Value::Boolean(false))
 }

@@ -246,6 +246,15 @@ pub(crate) fn object(arguments: &[Value]) -> Value {
         | Some(Value::Object(_))
         | Some(Value::Function(_))
         | Some(Value::Builtin(_)) => arguments[0].clone(),
+        Some(
+            value @ (Value::String(_) | Value::Number(_) | Value::Boolean(_) | Value::BigInt(_)),
+        ) => Value::Object(Rc::new(vec![
+            ("_value".to_string(), value.clone()),
+            (
+                "constructor".to_string(),
+                Value::Builtin(object::boxed_constructor(value)),
+            ),
+        ])),
         _ => Value::Object(Rc::new(Vec::new())),
     }
 }

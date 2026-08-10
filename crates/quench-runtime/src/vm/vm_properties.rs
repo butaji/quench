@@ -333,6 +333,16 @@ fn object_property(properties: &Rc<Vec<(String, Value)>>, key: &str) -> Value {
 }
 
 fn object_prototype(properties: &[(String, Value)]) -> Builtin {
+    if let Some((_, value)) = properties.iter().find(|(name, _)| name == "_value") {
+        return match value {
+            Value::String(value) if value.contains('\0') => Builtin::SymbolPrototype,
+            Value::String(_) => Builtin::StringPrototype,
+            Value::Number(_) => Builtin::NumberPrototype,
+            Value::Boolean(_) => Builtin::BooleanPrototype,
+            Value::BigInt(_) => Builtin::BigIntPrototype,
+            _ => Builtin::ObjectPrototype,
+        };
+    }
     if properties.iter().any(|(name, _)| name == "timeValue") {
         Builtin::DatePrototype
     } else if properties.iter().any(|(name, _)| name == "source")
@@ -391,8 +401,11 @@ fn global_builtin(key: &str) -> Option<Builtin> {
         "Symbol" => Symbol,
         "Number" => Number,
         "Boolean" => Boolean,
+        "BigInt" => BigInt,
         "String" => String,
         "Date" => Date,
+        "Map" => Map,
+        "Set" => Set,
         "Error" => Error,
         "TypeError" => TypeError,
         "RangeError" => RangeError,

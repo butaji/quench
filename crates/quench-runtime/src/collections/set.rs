@@ -27,10 +27,12 @@ pub fn property(key: &str) -> Value {
     }
 }
 
-pub(crate) fn set_new(_arguments: &[Value]) -> Value {
-    Value::Set(Rc::new(SetData {
-        values: VecDeque::new(),
-    }))
+pub(crate) fn set_new(arguments: &[Value]) -> Value {
+    let values = match arguments.first() {
+        Some(Value::Array(values)) => values.iter().cloned().collect(),
+        _ => VecDeque::new(),
+    };
+    Value::Set(Rc::new(SetData { values }))
 }
 
 pub(crate) fn set_add(receiver: Option<&Value>, arguments: &[Value]) -> Value {
@@ -44,7 +46,9 @@ pub(crate) fn set_add(receiver: Option<&Value>, arguments: &[Value]) -> Value {
     if !data.values.iter().any(|v| same_value_zero(v, value)) {
         data.values.push_back(value.clone());
     }
-    Value::Set(Rc::new(data))
+    let result = Value::Set(Rc::new(data));
+    crate::locals::replace_value(receiver.unwrap(), &result);
+    result
 }
 
 pub(crate) fn set_has(receiver: Option<&Value>, arguments: &[Value]) -> Value {
