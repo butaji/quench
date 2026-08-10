@@ -22,10 +22,14 @@ fn emit_function_expression(
     params: u16,
     captures: u16,
     metadata: FunctionMetadata,
-    named: bool,
+    declared_name: Option<&str>,
 ) -> u16 {
     let function = emit_function_op(ops, next, body, params, captures, metadata);
-    if named {
+    if let Some(name) = declared_name {
+        ops.push(Op::SetFunctionName {
+            function,
+            name: name.to_string(),
+        });
         let marker = *next;
         *next = next.saturating_add(1);
         ops.push(Op::Const {
