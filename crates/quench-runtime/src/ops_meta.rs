@@ -80,6 +80,7 @@ pub enum UnaryOp {
     Plus,
     Minus,
     Not,
+    BitwiseNot,
     Void,
     Typeof,
     ToString,
