@@ -1,6 +1,6 @@
 use std::{env, fs, path::PathBuf, process::ExitCode};
 
-use quench_test262::{RuntimeHost, Test262Runner, TestOutcome};
+use quench_test262::{HarnessCache, RuntimeHost, Test262Runner, TestOutcome};
 
 fn main() -> ExitCode {
     let Some(path) = env::args_os().nth(1).map(PathBuf::from) else {
@@ -13,10 +13,8 @@ fn main() -> ExitCode {
     };
     let root = test262_root();
     let mut runner = Test262Runner::new(RuntimeHost);
-    let outcome = runner.run_test_with_harness(&source, |name| {
-        fs::read_to_string(root.join("harness").join(name))
-            .map_err(|error| format!("harness {name}: {error}"))
-    });
+    let mut harness = HarnessCache::new(root.join("harness"));
+    let outcome = runner.run_test_with_harness(&source, |name| harness.load(name));
     match outcome {
         Ok(TestOutcome::Pass) => ExitCode::SUCCESS,
         Ok(TestOutcome::Fail { reason }) => fail(reason),

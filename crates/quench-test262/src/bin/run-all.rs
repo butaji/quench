@@ -1,6 +1,6 @@
-use std::{env, fs, path::PathBuf, process::ExitCode};
+use std::{env, path::PathBuf, process::ExitCode};
 
-use quench_test262::{discover_js_files, RuntimeHost, Test262Runner};
+use quench_test262::{discover_js_files, HarnessCache, RuntimeHost, Test262Runner};
 
 fn main() -> ExitCode {
     let root = test262_root();
@@ -9,10 +9,8 @@ fn main() -> ExitCode {
         Err(error) => return fail(error),
     };
     let mut runner = Test262Runner::new(RuntimeHost);
-    let report = runner.run_files_with_harness(files, |name| {
-        fs::read_to_string(root.join("harness").join(name))
-            .map_err(|error| format!("harness {name}: {error}"))
-    });
+    let mut harness = HarnessCache::new(root.join("harness"));
+    let report = runner.run_files_with_harness(files, |name| harness.load(name));
     match report {
         Ok(report) if report.failed == 0 => {
             println!("passed={} failed=0 total={}", report.passed, report.total);
