@@ -208,6 +208,7 @@ pub enum Builtin {
     TypedArrayFill,
     ObjectDefineProperty,
     ObjectGetOwnPropertyNames,
+    ObjectGetOwnPropertySymbols,
     ObjectPropertyIsEnumerable,
     ObjectPrototypeToString,
     ObjectPrototypeValueOf,

@@ -33,11 +33,10 @@ fn run_simple_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Option<Va
         | ResolveGlobal { .. }
         | GetPropertyDynamic { .. }
         | SetProperty { .. }
-        | SetPropertyDynamic { .. } => run_get_set_property(registers, op)?,
+        | SetPropertyDynamic { .. }
+        | DefineProperty { .. } => run_get_set_property(registers, op)?,
         DeleteProperty { .. } => run_delete_property(registers, op)?,
-        MakeFunction { .. } | MakeFunctionWithKind { .. } => {
-            crate::functions::write_op(registers, op)
-        }
+        MakeFunction { .. } | MakeFunctionWithKind { .. } => crate::functions::write_op(registers, op),
         Call { .. } => run_call(registers, op)?,
         Eval {
             dst,
@@ -162,6 +161,7 @@ fn run_get_set_property(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmErr
         SetProperty { .. } | SetPropertyDynamic { .. } => {
             crate::properties::execute_set_property(registers, op)?
         }
+        DefineProperty { .. } => crate::property_define::execute(registers, op)?,
         _ => {}
     }
     Ok(())
