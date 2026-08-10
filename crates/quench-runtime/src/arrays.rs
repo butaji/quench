@@ -28,6 +28,7 @@ pub(crate) fn execute_builtin(
         ArrayFlatMap => return Some(flat_map(receiver, arguments)),
         ArrayAt => return Some(Ok(at(receiver, arguments))),
         ArrayToReversed => return Some(Ok(to_reversed(receiver))),
+        ArraySplice => return Some(Ok(splice(receiver, arguments))),
         ArrayReduce => return Some(reduce_values(receiver, arguments, false)),
         ArrayReduceRight => return Some(reduce_values(receiver, arguments, true)),
         ArrayForEach => return Some(crate::builtins::array_for_each(receiver, arguments)),
@@ -39,6 +40,28 @@ pub(crate) fn execute_builtin(
         _ => return None,
     };
     Some(Ok(result))
+}
+
+fn splice(receiver: Option<&Value>, arguments: &[Value]) -> Value {
+    let Some(receiver @ Value::Array(values)) = receiver else {
+        return Value::Array(Rc::new(Vec::new()));
+    };
+    let length = values.len();
+    let start = relative_index(arguments.first(), length as isize) as usize;
+    let delete_count = arguments.get(1).map_or(length - start, |value| {
+        crate::intl::tolocale::value::to_number(Some(value))
+            .max(0.0)
+            .min((length - start) as f64) as usize
+    });
+    let mut updated = values.as_ref().clone();
+    let removed = updated
+        .splice(
+            start..start + delete_count,
+            arguments.iter().skip(2).cloned(),
+        )
+        .collect();
+    crate::locals::replace_value(receiver, &Value::Array(Rc::new(updated)));
+    Value::Array(Rc::new(removed))
 }
 
 pub(crate) fn reduce(
@@ -95,6 +118,8 @@ pub(crate) fn property(values: &[Value], key: &str) -> Value {
         "at" => crate::ops::Builtin::ArrayAt,
         "toReversed" => crate::ops::Builtin::ArrayToReversed,
         "join" => crate::ops::Builtin::ArrayJoin,
+        "push" => crate::ops::Builtin::ArrayPush,
+        "splice" => crate::ops::Builtin::ArraySplice,
         "reduce" => crate::ops::Builtin::ArrayReduce,
         "reduceRight" => crate::ops::Builtin::ArrayReduceRight,
         "toLocaleString" => crate::ops::Builtin::ArrayToLocaleString,
