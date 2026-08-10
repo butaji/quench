@@ -15,6 +15,7 @@ speculatively.
 | `num-bigint` | BigInt arithmetic. |
 | `oxc` | Canonical parser, AST, and semantic scope/symbol data. |
 | `regress` | RegExp execution support. |
+| `serde_json` | Internal JSON serialization kernel behind JavaScript semantics. |
 | `tempfile` | Temporary filesystem isolation in `quench-test262`. |
 
 ## Candidate dependencies
@@ -27,7 +28,6 @@ above, and move it to the current table in that same change.
 |---|---|
 | `oxc_ast_visit` | OXC AST traversal where a reducer query needs it. |
 | `regress` | RegExp execution support. |
-| `serde_json` | JSON parsing and serialization. |
 | `urlencoding` | URI percent encoding/decoding. |
 | `icu` / selected ICU4X crates | Modular ECMA-402 locale, calendar, formatting, collation, and segmentation data; use generated minimal data. |
 | `indexmap` | Ordered storage where ECMAScript order is observable. |
