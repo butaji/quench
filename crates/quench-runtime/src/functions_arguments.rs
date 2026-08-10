@@ -28,8 +28,14 @@ fn arguments_object(
     let strict = matches!(function.strictness, FunctionStrictness::Strict);
     let mut arguments = crate::value::ArrayData::new_arguments(values, strict);
     arguments.set_property("length", crate::value::Value::Number(length));
+    arguments.set_property(
+        "Symbol.iterator",
+        crate::value::Value::Builtin(crate::ops::Builtin::ArrayIterator),
+    );
     if matches!(function.strictness, FunctionStrictness::Sloppy) {
-        map_arguments(&mut arguments, function, environment);
+        if function.mapped_arguments {
+            map_arguments(&mut arguments, function, environment);
+        }
         arguments.set_property(
             "callee",
             crate::value::Value::Function(std::rc::Rc::clone(function)),
@@ -49,5 +55,15 @@ fn map_arguments(
         if let Some(binding) = environment.slot(captures.saturating_add(index)) {
             arguments.map_index(usize::from(index), binding);
         }
+    }
+}
+
+pub(crate) fn is_constructible(function: &crate::value::FunctionValue) -> bool {
+    match (function.kind, function.strictness, function.is_async) {
+        (FunctionKind::Ordinary, FunctionStrictness::Sloppy, false)
+        | (FunctionKind::Ordinary, FunctionStrictness::Strict, false) => true,
+        (FunctionKind::Arrow, _, _)
+        | (FunctionKind::Generator, _, _)
+        | (FunctionKind::Ordinary, _, true) => false,
     }
 }
