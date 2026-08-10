@@ -23,9 +23,35 @@ pub(crate) fn reduce_return(
         })
         .or_else(|| Some(crate::reduce_support::emit_undefined(ops, next_register)));
     if let Some(register) = register {
+        if facts.tail_calls && promote_tail_call(ops, register) {
+            return Ok(None);
+        }
         ops.push(Op::Return { src: register });
     }
     Ok(None)
+}
+
+fn promote_tail_call(ops: &mut Vec<Op>, returned: u16) -> bool {
+    let Some(Op::Call {
+        dst,
+        callee,
+        args,
+        spreads,
+    }) = ops.last()
+    else {
+        return false;
+    };
+    if *dst != returned {
+        return false;
+    }
+    let tail_call = Op::TailCall {
+        callee: *callee,
+        args: args.clone(),
+        spreads: spreads.clone(),
+    };
+    let _ = ops.pop();
+    ops.push(tail_call);
+    true
 }
 
 pub(crate) fn reduce_throw(

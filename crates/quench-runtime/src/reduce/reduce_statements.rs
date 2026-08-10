@@ -407,6 +407,7 @@ pub fn reduce_function_declaration(
     let slot = declaration_slot(identifier.name.as_str(), next_slot, locals);
     let (parameters, parameter_count, captures) = function_locals(function, locals)?;
     let strictness = crate::reduce_support::function_strictness(body, facts.strict);
+    let metadata = function_metadata(function, strictness);
     let body_ops = functions::reduce_body(
         body,
         &function.params,
@@ -414,7 +415,7 @@ pub fn reduce_function_declaration(
         parameters,
         parameter_count,
         captures,
-        strictness,
+        metadata,
     )?;
     let register = take_register(next_register);
     ops.push(function_declaration_op(
@@ -422,7 +423,7 @@ pub fn reduce_function_declaration(
         body_ops,
         parameter_count,
         captures,
-        function_metadata(function, strictness),
+        metadata,
     ));
     store_function(ops, slot, register);
     Ok(())
