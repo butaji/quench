@@ -275,7 +275,9 @@ fn run_simple_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Option<Va
         | SetProperty { .. }
         | SetPropertyDynamic { .. } => run_get_set_property(registers, op)?,
         DeleteProperty { .. } => run_delete_property(registers, op)?,
-        MakeFunction { .. } => crate::functions::write_op(registers, op),
+        MakeFunction { .. } | MakeFunctionWithKind { .. } => {
+            crate::functions::write_op(registers, op)
+        }
         Call { .. } => run_call(registers, op)?,
         Unary { dst, operator, src } => {
             vm_arithmetic::execute_unary(registers, *dst, *operator, *src)?
