@@ -360,27 +360,42 @@ pub(crate) fn initialize_instance_fields(
 ) -> Result<Value, crate::execute::VmError> {
     for field in function.instance_fields.borrow().iter() {
         let previous = receiver.clone();
-        receiver = initialize_instance_field(field, receiver)?;
+        receiver = initialize_instance_field(function, field, receiver)?;
         crate::locals::replace_value(&previous, &receiver);
     }
     Ok(receiver)
 }
 
 fn initialize_instance_field(
+    function: &crate::value::FunctionValue,
     field: &crate::value::InstanceFieldPlan,
     receiver: Value,
 ) -> Result<Value, crate::execute::VmError> {
-    let key = match &field.key {
-        crate::value::InstanceFieldKey::Static(key) => key.to_string(),
-        crate::value::InstanceFieldKey::Dynamic(key) => crate::conversion::to_property_key(key)?,
-    };
     let value = match &field.initializer {
         crate::value::InstanceFieldInitializer::Undefined => Value::Undefined,
         crate::value::InstanceFieldInitializer::Callable(initializer) => {
             crate::functions::execute(initializer, &receiver, &[])?
         }
+        crate::value::InstanceFieldInitializer::Value(value) => value.clone(),
     };
-    define_instance_field(receiver, &key, value)
+    match &field.key {
+        crate::value::InstanceFieldKey::Private(id) => {
+            let name = function.private_environment.resolve(*id).ok_or_else(|| {
+                crate::value::error::throw_type_error(
+                    "Private field access on an object without the required brand",
+                )
+            })?;
+            crate::private_slots::define(&receiver, name, value)?;
+            Ok(receiver)
+        }
+        crate::value::InstanceFieldKey::Static(key) => {
+            define_instance_field(receiver, key.as_ref(), value)
+        }
+        crate::value::InstanceFieldKey::Dynamic(key) => {
+            let key = crate::conversion::to_property_key(key)?;
+            define_instance_field(receiver, &key, value)
+        }
+    }
 }
 
 fn define_instance_field(
