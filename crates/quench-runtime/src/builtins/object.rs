@@ -259,7 +259,7 @@ fn object_descriptor(properties: &[(String, Value)], key: &str) -> Option<Value>
         .rev()
         .find(|(name, _)| name == &super::descriptor_key(key))
     {
-        return Some(metadata.clone());
+        return Some(public_descriptor(metadata));
     }
     properties
         .iter()
@@ -351,7 +351,25 @@ fn string_descriptor(value: &str, key: &str) -> Option<Value> {
 }
 
 fn descriptor_object(value: &Value) -> Value {
-    descriptor_object_with_flags(value.clone(), true, true, true)
+    descriptor_object_with_flags(public_value(value), true, true, true)
+}
+
+fn public_descriptor(descriptor: &Value) -> Value {
+    let Value::Object(properties) = descriptor else {
+        return descriptor.clone();
+    };
+    let mut properties = properties.as_ref().clone();
+    if let Some((_, value)) = properties.iter_mut().find(|(name, _)| name == "value") {
+        *value = public_value(value);
+    }
+    Value::Object(Rc::new(properties))
+}
+
+fn public_value(value: &Value) -> Value {
+    match value {
+        Value::BindingCell(cell) => public_value(&cell.borrow()),
+        value => value.clone(),
+    }
 }
 
 fn descriptor_object_with_flags(
@@ -360,6 +378,7 @@ fn descriptor_object_with_flags(
     enumerable: bool,
     configurable: bool,
 ) -> Value {
+    let value = public_value(&value);
     Value::Object(Rc::new(vec![
         ("value".to_string(), value),
         ("writable".to_string(), Value::Boolean(writable)),
@@ -370,13 +389,37 @@ fn descriptor_object_with_flags(
 
 #[cfg(test)]
 mod tests {
-    use super::execute_special;
+    use super::{descriptor, execute_special};
     use crate::{
         execute::{execute_builtin_with_receiver, VmError},
         ops::Builtin,
         value::{FunctionValue, Value},
     };
     use std::{cell::RefCell, rc::Rc};
+
+    #[test]
+    fn binding_cell_property_mutates_without_escaping() {
+        let cell = Rc::new(RefCell::new(Value::Number(1.0)));
+        let binding = Value::BindingCell(Rc::clone(&cell));
+        let metadata = Value::Object(Rc::new(vec![
+            ("value".to_string(), binding.clone()),
+            ("writable".to_string(), Value::Boolean(true)),
+        ]));
+        let object = Value::Object(Rc::new(vec![
+            ("x".to_string(), binding),
+            (crate::builtins::descriptor_key("x"), metadata),
+        ]));
+        let updated = crate::builtins::set_property(object.clone(), "x", Value::Number(2.0));
+        assert!(
+            matches!((&object, &updated), (Value::Object(a), Value::Object(b)) if Rc::ptr_eq(a, b))
+        );
+        assert_eq!(*cell.borrow(), Value::Number(2.0));
+        let result = descriptor(Some(&updated), Some(&Value::String("x".to_string())));
+        assert_eq!(
+            crate::execute::get_property(&result, "value"),
+            Value::Number(2.0)
+        );
+    }
 
     #[test]
     fn static_has_own_uses_first_argument_as_target() {
