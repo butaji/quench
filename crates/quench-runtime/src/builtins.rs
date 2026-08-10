@@ -302,6 +302,7 @@ pub(crate) fn same_value(left: Option<&Value>, right: Option<&Value>) -> bool {
         }
         (Value::Uint32Array(left), Value::Uint32Array(right)) => Rc::ptr_eq(left, right),
         (Value::Function(left), Value::Function(right)) => Rc::ptr_eq(left, right),
+        (Value::Generator(left), Value::Generator(right)) => Rc::ptr_eq(left, right),
         _ => left == right,
     }
 }
@@ -438,6 +439,7 @@ pub(crate) fn prototype_to_string(receiver: Option<&Value>) -> Value {
         Some(Value::Promise(_)) => "Promise",
         Some(Value::Map(_)) => "Map",
         Some(Value::Set(_)) => "Set",
+        Some(Value::Generator(_)) => "Generator",
         Some(Value::HostCapability(_) | Value::Iterator(_) | Value::ObjectAlias(_)) => "Object",
     };
     Value::String(format!("[object {tag}]"))

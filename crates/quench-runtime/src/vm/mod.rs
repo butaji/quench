@@ -327,6 +327,9 @@ pub fn execute_builtin_with_receiver(
     arguments: &[Value],
     receiver: Option<&Value>,
 ) -> Result<Value, VmError> {
+    if builtin == Builtin::GeneratorNext {
+        return crate::generator::next(receiver);
+    }
     if builtin == Builtin::Print {
         return execute_print(arguments);
     }

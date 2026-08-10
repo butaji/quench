@@ -108,6 +108,14 @@ pub struct IteratorData {
     pub index: RefCell<usize>,
 }
 
+#[derive(Debug, PartialEq)]
+pub struct GeneratorData {
+    pub function: Rc<FunctionValue>,
+    pub receiver: Value,
+    pub arguments: Vec<Value>,
+    pub done: RefCell<bool>,
+}
+
 pub type ObjectProperties = Vec<(String, Value)>;
 pub type WeakObject = std::rc::Weak<ObjectProperties>;
 
@@ -162,6 +170,7 @@ pub enum Value {
     Map(Rc<MapData>),
     Set(Rc<SetData>),
     Iterator(Rc<IteratorData>),
+    Generator(Rc<GeneratorData>),
     Null,
     Undefined,
 }
