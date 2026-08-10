@@ -45,7 +45,7 @@ pub(crate) mod value {
                 | Value::Set(_),
             ) => "function".to_string(),
             Some(Value::BigInt(_)) => "[object BigInt]".to_string(),
-            Some(Value::HostCapability(_)) => "[object Object]".to_string(),
+            Some(Value::HostCapability(_) | Value::Iterator(_)) => "[object Object]".to_string(),
         }
     }
 
@@ -94,7 +94,8 @@ pub(crate) mod value {
                 | Value::Set(_)
                 | Value::BigInt(_),
             )
-            | Some(Value::HostCapability(_)) => f64::NAN,
+            | Some(Value::HostCapability(_))
+            | Some(Value::Iterator(_)) => f64::NAN,
         }
     }
     pub(crate) fn to_number_result(value: Option<&Value>) -> Result<f64, crate::execute::VmError> {
@@ -180,7 +181,7 @@ pub(crate) mod value {
             | Value::Map(_)
             | Value::Set(_)
             | Value::BigInt(_) => true,
-            Value::HostCapability(_) => true,
+            Value::HostCapability(_) | Value::Iterator(_) => true,
         }
     }
 
@@ -211,7 +212,11 @@ pub(crate) mod value {
             Value::String(_) => "string",
             Value::Builtin(_) | Value::Function(_) | Value::BoundFunction(_) => "function",
             Value::BigInt(_) => "bigint",
-            Value::Proxy(_) | Value::Promise(_) | Value::Map(_) | Value::Set(_) => "object",
+            Value::Proxy(_)
+            | Value::Promise(_)
+            | Value::Map(_)
+            | Value::Set(_)
+            | Value::Iterator(_) => "object",
             Value::HostCapability(_) => "object",
         }
     }
@@ -283,6 +288,7 @@ pub(crate) mod value {
             (Value::Number(left), Value::Number(right)) => left == right,
             (Value::Boolean(left), Value::Boolean(right)) => left == right,
             (Value::String(left), Value::String(right)) => left == right,
+            (Value::BigInt(left), Value::BigInt(right)) => left == right,
             (Value::Builtin(left), Value::Builtin(right)) => left == right,
             (Value::Null, Value::Null) | (Value::Undefined, Value::Undefined) => true,
             _ => false,

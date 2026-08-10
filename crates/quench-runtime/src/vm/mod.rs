@@ -5,6 +5,7 @@ use crate::ops::{
 use crate::value::Value;
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 mod vm_arithmetic;
@@ -14,6 +15,7 @@ pub use crate::intl::tolocale::value::is_truthy;
 
 pub type OutputSink = Arc<dyn Fn(&str) + Send + Sync>;
 type ObjectProperties = Rc<Vec<(String, Value)>>;
+static NEXT_REALM: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone)]
 pub struct VmContext {
@@ -305,23 +307,46 @@ pub(crate) fn execute_host_capability(
     let Some(Value::HostCapability(capability)) = receiver else {
         return Err(VmError::NotCallable);
     };
+    let descriptor = HostCapabilityRef {
+        realm: capability.realm(),
+        kind,
+    };
     let permitted = CURRENT_CONTEXT.with(|context| {
         context
             .borrow()
             .as_ref()
-            .is_some_and(|context| context.permits(capability.descriptor))
+            .is_some_and(|context| context.permits(descriptor))
     });
-    if !permitted || capability.descriptor.kind != kind {
+    if !permitted {
         return Err(VmError::NotCallable);
     }
     match kind {
         HostCapabilityKind::GetGlobal if arguments.is_empty() => current_global_value(),
         HostCapabilityKind::GetGlobal => Err(type_error("getGlobal expects no arguments")),
+        HostCapabilityKind::CreateRealm if arguments.is_empty() => Ok(create_realm_value()),
+        HostCapabilityKind::CreateRealm => Err(type_error("createRealm expects no arguments")),
         HostCapabilityKind::DetachArrayBuffer => vm_ops::detach_array_buffer(arguments),
         _ => Err(VmError::EvalError(
             "Host capability is unavailable".to_string(),
         )),
     }
+}
+
+fn create_realm_value() -> Value {
+    let realm = RealmId::new(NEXT_REALM.fetch_add(1, Ordering::Relaxed));
+    let capability = Value::HostCapability(Rc::new(crate::value::HostCapabilityValue::new(
+        HostCapabilityRef {
+            realm,
+            kind: HostCapabilityKind::GetGlobal,
+        },
+    )));
+    let constructor = Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
+        target: Value::Builtin(Builtin::TypeError),
+        receiver: capability,
+        arguments: Vec::new(),
+    }));
+    let global = Value::Object(Rc::new(vec![("TypeError".to_string(), constructor)]));
+    Value::Object(Rc::new(vec![("global".to_string(), global)]))
 }
 
 fn current_global_value() -> Result<Value, VmError> {

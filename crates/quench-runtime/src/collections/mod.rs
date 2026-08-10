@@ -25,6 +25,11 @@ pub(crate) fn execute_builtin(
         SetDelete => Some(Ok(set::set_delete(receiver, arguments))),
         SetClear => Some(Ok(set::set_clear(receiver))),
         SetForEach => Some(set::set_for_each(receiver, arguments)),
+        MapIterator => Some(Ok(iterator::from_map(receiver))),
+        SetIterator => Some(Ok(iterator::from_set(receiver))),
+        IteratorNext => Some(Ok(iterator::next(receiver))),
         _ => None,
     }
 }
+
+pub(crate) mod iterator;

@@ -89,6 +89,18 @@ fn evaluate_binary(
 }
 
 fn instanceof(value: &Value, constructor: &Value) -> bool {
+    if matches!(
+        (value, constructor),
+        (Value::Map(_), Value::Builtin(Builtin::Map))
+    ) {
+        return true;
+    }
+    if matches!(
+        (value, constructor),
+        (Value::Set(_), Value::Builtin(Builtin::Set))
+    ) {
+        return true;
+    }
     let Value::Object(properties) = value else {
         return false;
     };

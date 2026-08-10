@@ -64,6 +64,7 @@ impl Environment {
             let mut value = slot.borrow_mut();
             if same_identity(&value, old) {
                 *value = new.clone();
+                replace_nested(&mut value, old, new);
             } else {
                 replace_nested(&mut value, old, new);
             }
