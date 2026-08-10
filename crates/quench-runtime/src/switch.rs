@@ -86,6 +86,7 @@ pub(crate) fn execute(
         match crate::execute::execute_in_place(body, registers) {
             Ok(value) => return Ok(Some(value)),
             Err(crate::execute::VmError::MissingReturn) => {}
+            Err(crate::execute::VmError::Break(None)) => return Ok(None),
             Err(error) => return Err(error),
         }
     }
