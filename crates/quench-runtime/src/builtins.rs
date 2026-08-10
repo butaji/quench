@@ -203,38 +203,6 @@ pub(crate) fn is_array(value: Option<&Value>) -> Value {
     Value::Boolean(matches!(value, Some(Value::Array(_))))
 }
 
-pub(crate) fn delete_property(target: Value, key: &str) -> (Value, bool) {
-    match target {
-        Value::Object(properties)
-            if descriptor_flag_in(&properties, key, "configurable") == Some(false) =>
-        {
-            (Value::Object(properties), false)
-        }
-        Value::Object(properties) => (
-            Value::Object(Rc::new(
-                properties
-                    .iter()
-                    .filter(|(name, _)| name != key && name != &descriptor_key(key))
-                    .cloned()
-                    .collect(),
-            )),
-            true,
-        ),
-        Value::Array(values)
-            if array_descriptor_flag(&values, key, "configurable") == Some(false) =>
-        {
-            (Value::Array(values), false)
-        }
-        Value::Array(mut values) if values.is_arguments() => {
-            Rc::make_mut(&mut values).delete_property(key);
-            (Value::Array(values), true)
-        }
-        Value::Array(values) if key != "length" => (Value::Array(values), true),
-        Value::Array(values) => (Value::Array(values), false),
-        value => (value, true),
-    }
-}
-
 fn value_to_number(value: &Value) -> f64 {
     match value {
         Value::Number(value) => *value,
@@ -396,7 +364,14 @@ pub(crate) fn define_property(arguments: &[Value]) -> Value {
         .rev()
         .find(|(name, _)| name == "value")
         .map_or(Value::Undefined, |(_, value)| value.clone());
-    let mut result = set_property(target.clone(), &key, value);
+    let accessor = descriptor
+        .iter()
+        .any(|(name, _)| matches!(name.as_str(), "get" | "set"));
+    let mut result = if accessor {
+        define_accessor_placeholder(target.clone(), &key)
+    } else {
+        define_property_value(target.clone(), &key, value)
+    };
     if let Value::Object(properties) = &mut result {
         let metadata = Value::Object(Rc::new(descriptor.clone()));
         let properties = Rc::make_mut(properties);
@@ -405,6 +380,13 @@ pub(crate) fn define_property(arguments: &[Value]) -> Value {
     }
     define_array_descriptor(&mut result, &key, descriptor);
     result
+}
+
+fn define_accessor_placeholder(target: Value, key: &str) -> Value {
+    if matches!(target, Value::Object(_)) {
+        return set_property(target, key, Value::Undefined);
+    }
+    target
 }
 
 include!("builtins_array.rs");

@@ -1,11 +1,54 @@
+pub(crate) fn delete_property(target: Value, key: &str) -> (Value, bool) {
+    match target {
+        Value::Object(properties)
+            if descriptor_flag_in(&properties, key, "configurable") == Some(false) =>
+        {
+            (Value::Object(properties), false)
+        }
+        Value::Object(properties) => (delete_object_property(properties, key), true),
+        Value::Array(values)
+            if array_descriptor_flag(&values, key, "configurable") == Some(false) =>
+        {
+            (Value::Array(values), false)
+        }
+        Value::Array(mut values) if values.is_arguments() => {
+            Rc::make_mut(&mut values).delete_property(key);
+            (Value::Array(values), true)
+        }
+        Value::Array(values) if key != "length" => (Value::Array(values), true),
+        Value::Array(values) => (Value::Array(values), false),
+        value => (value, true),
+    }
+}
+
+fn delete_object_property(properties: Rc<Vec<(String, Value)>>, key: &str) -> Value {
+    Value::Object(Rc::new(
+        properties
+            .iter()
+            .filter(|(name, _)| name != key && name != &descriptor_key(key))
+            .cloned()
+            .collect(),
+    ))
+}
+
+fn define_property_value(target: Value, key: &str, value: Value) -> Value {
+    match target {
+        Value::Array(values) => set_array_property(values, key, value),
+        target => set_property(target, key, value),
+    }
+}
+
 fn define_array_descriptor(target: &mut Value, key: &str, descriptor: Vec<(String, Value)>) {
     let Value::Array(values) = target else { return };
     let mut values = Rc::clone(values);
+    let accessor = descriptor
+        .iter()
+        .any(|(name, _)| matches!(name.as_str(), "get" | "set"));
     let writable = descriptor
         .iter()
         .rev()
         .find_map(|(name, value)| (name == "writable").then_some(value));
-    if writable == Some(&Value::Boolean(false)) {
+    if accessor || writable == Some(&Value::Boolean(false)) {
         if let Ok(index) = key.parse::<usize>() {
             Rc::make_mut(&mut values).disconnect_index(index);
         }
