@@ -25,7 +25,10 @@ pub(crate) fn execute_special(
     let (target, key) = target_and_key(receiver, arguments);
     match builtin {
         Builtin::ObjectHasOwnProperty => has_own_property_result(target, key),
-        Builtin::ObjectGetOwnPropertyDescriptor => Ok(descriptor(target, key)),
+        Builtin::ObjectGetOwnPropertyDescriptor => {
+            require_object_coercible(target)?;
+            Ok(descriptor(target, key))
+        }
         _ => Ok(Value::Undefined),
     }
 }
@@ -220,6 +223,17 @@ mod tests {
     fn has_own_throws_on_nullish_target() {
         let error = execute_builtin_with_receiver(
             Builtin::ObjectHasOwnProperty,
+            &[Value::Null, Value::String("x".to_string())],
+            None,
+        )
+        .unwrap_err();
+        assert!(matches!(error, VmError::Thrown(_)));
+    }
+
+    #[test]
+    fn get_own_property_descriptor_throws_on_nullish_target() {
+        let error = execute_builtin_with_receiver(
+            Builtin::ObjectGetOwnPropertyDescriptor,
             &[Value::Null, Value::String("x".to_string())],
             None,
         )
