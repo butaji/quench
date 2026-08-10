@@ -246,6 +246,11 @@ pub(crate) fn reduce_for(
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
 ) -> Result<(), Vec<String>> {
+    if is_static_false_condition(statement) {
+        let init = reduce_for_init(statement, ops, facts, next_register, next_slot, locals)?;
+        ops.extend(init);
+        return Ok(());
+    }
     let Some((name, start, limit, step)) = static_bounds(statement) else {
         return reduce_dynamic_for(statement, ops, facts, next_register, next_slot, locals);
     };
@@ -258,6 +263,26 @@ pub(crate) fn reduce_for(
         next_slot,
         locals,
     )
+}
+
+fn is_literal_false(expression: Option<&Expression<'_>>) -> bool {
+    matches!(
+        expression
+            .and_then(reduce_literal)
+            .map(|literal| literal.op),
+        Some(Constant::Boolean(false))
+    )
+}
+
+fn is_static_false_condition(statement: &ForStatement<'_>) -> bool {
+    is_literal_false(statement.test.as_ref())
+        || (statement.test.is_none()
+            && is_literal_false(
+                statement
+                    .init
+                    .as_ref()
+                    .and_then(ForStatementInit::as_expression),
+            ))
 }
 
 fn static_bounds(statement: &ForStatement<'_>) -> Option<(String, f64, f64, f64)> {
