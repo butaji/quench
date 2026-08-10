@@ -1,5 +1,5 @@
 use crate::intl::tolocale::value::{is_finite, to_number, to_string};
-use crate::ops::{Builtin, Op};
+use crate::ops::{Builtin, HostCapabilityKind, HostCapabilityRef, Op, RealmId};
 use crate::value::Value;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -12,9 +12,21 @@ pub use crate::intl::tolocale::value::is_truthy;
 
 pub type OutputSink = Arc<dyn Fn(&str) + Send + Sync>;
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct VmContext {
     output_sink: Option<OutputSink>,
+    realm: RealmId,
+    capabilities: Vec<HostCapabilityRef>,
+}
+
+impl Default for VmContext {
+    fn default() -> Self {
+        Self {
+            output_sink: None,
+            realm: RealmId::ROOT,
+            capabilities: Vec::new(),
+        }
+    }
 }
 
 thread_local! {
@@ -42,7 +54,30 @@ impl VmContext {
     pub fn with_output_sink(output_sink: OutputSink) -> Self {
         Self {
             output_sink: Some(output_sink),
+            ..Self::default()
         }
+    }
+
+    pub fn for_realm(realm: RealmId, capabilities: Vec<HostCapabilityKind>) -> Self {
+        let capabilities = capabilities
+            .into_iter()
+            .map(|kind| HostCapabilityRef { realm, kind })
+            .collect();
+        Self {
+            realm,
+            capabilities,
+            ..Self::default()
+        }
+    }
+
+    pub fn realm(&self) -> RealmId {
+        self.realm
+    }
+
+    pub fn has_capability(&self, kind: HostCapabilityKind) -> bool {
+        self.capabilities
+            .iter()
+            .any(|capability| capability.kind == kind)
     }
 
     pub fn emit_output(&self, text: &str) {
