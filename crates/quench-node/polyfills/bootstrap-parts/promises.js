@@ -13,20 +13,20 @@ class NodeTimerPromiseScheduler {
     if (this !== globalThis.__nodeTimersPromises.scheduler) {
       throw __nodeTimerPromiseSchedulerError(
         "ERR_INVALID_THIS",
-        'Value of "this" must be of type Scheduler',
+        'Value of "this" must be of type Scheduler'
       );
     }
     return globalThis.__nodeTimersPromises.setTimeout(
       _delay,
       undefined,
-      options,
+      options
     );
   }
   yield(options = {}) {
     if (this !== globalThis.__nodeTimersPromises.scheduler) {
       throw __nodeTimerPromiseSchedulerError(
         "ERR_INVALID_THIS",
-        'Value of "this" must be of type Scheduler',
+        'Value of "this" must be of type Scheduler'
       );
     }
     return globalThis.__nodeTimersPromises.setImmediate(undefined, options);
@@ -38,7 +38,7 @@ globalThis.__nodeTimersPromises = {
       const signal = options?.signal;
       if (Number.isNaN(Number(_delay))) {
         process.emitWarning("NaN is an invalid delay value", {
-          name: "TimeoutNaNWarning",
+          name: "TimeoutNaNWarning"
         });
       }
       const abort = () => {
@@ -51,14 +51,21 @@ globalThis.__nodeTimersPromises = {
         abort();
         return;
       }
-      const timer = globalThis.setTimeout(() => {
-        signal?.removeEventListener?.("abort", abort);
-        resolve(value);
-      }, Math.max(0, Number(_delay)));
-      signal?.addEventListener?.("abort", () => {
-        globalThis.clearTimeout(timer);
-        abort();
-      }, { once: true });
+      const timer = globalThis.setTimeout(
+        () => {
+          signal?.removeEventListener?.("abort", abort);
+          resolve(value);
+        },
+        Math.max(0, Number(_delay))
+      );
+      signal?.addEventListener?.(
+        "abort",
+        () => {
+          globalThis.clearTimeout(timer);
+          abort();
+        },
+        { once: true }
+      );
     }),
   setImmediate: (value, options = {}) =>
     new Promise((resolve, reject) =>
@@ -77,13 +84,13 @@ globalThis.__nodeTimersPromises = {
     if (options === null || typeof options !== "object") {
       throw __nodeTimerPromiseSchedulerError(
         "ERR_INVALID_ARG_TYPE",
-        'The "options" argument must be an object',
+        'The "options" argument must be an object'
       );
     }
     if (options.ref !== undefined && typeof options.ref !== "boolean") {
       throw __nodeTimerPromiseSchedulerError(
         "ERR_INVALID_ARG_TYPE",
-        'The "options.ref" property must be of type boolean',
+        'The "options.ref" property must be of type boolean'
       );
     }
     if (
@@ -93,7 +100,7 @@ globalThis.__nodeTimersPromises = {
     ) {
       throw __nodeTimerPromiseSchedulerError(
         "ERR_INVALID_ARG_TYPE",
-        'The "options.signal" property must be an AbortSignal',
+        'The "options.signal" property must be an AbortSignal'
       );
     }
     let activeAbort;
@@ -121,11 +128,14 @@ globalThis.__nodeTimersPromises = {
               reject(error);
             };
             activeAbort = abort;
-            const timer = globalThis.setTimeout(() => {
-              options.signal?.removeEventListener?.("abort", abort);
-              activeAbort = undefined;
-              resolve();
-            }, Math.max(0, Number(_delay)));
+            const timer = globalThis.setTimeout(
+              () => {
+                options.signal?.removeEventListener?.("abort", abort);
+                activeAbort = undefined;
+                resolve();
+              },
+              Math.max(0, Number(_delay))
+            );
             if (options.ref === false) timer.unref?.();
             options.signal?.addEventListener?.("abort", abort, { once: true });
           });
@@ -136,9 +146,8 @@ globalThis.__nodeTimersPromises = {
       options.signal?.removeEventListener?.("abort", activeAbort);
     }
   },
-  scheduler: Object.create(NodeTimerPromiseScheduler.prototype),
+  scheduler: Object.create(NodeTimerPromiseScheduler.prototype)
 };
-
 const processListeners = {};
 process.stdout ||= { isTTY: false };
 process.stderr ||= { isTTY: false };
@@ -160,7 +169,7 @@ process.once = (event, listener) => {
 };
 process.removeListener = (event, listener) => {
   processListeners[event] = (processListeners[event] || []).filter(
-    (item) => item !== listener,
+    (item) => item !== listener
   );
   return process;
 };
@@ -168,7 +177,7 @@ process.removeAllListeners = (event) => {
   if (event) delete processListeners[event];
   else {
     Object.keys(processListeners).forEach(
-      (key) => delete processListeners[key],
+      (key) => delete processListeners[key]
     );
   }
 };
@@ -182,7 +191,7 @@ process.emitWarning = (warning, options = {}) => {
   process.emit("warning", {
     name: options.name || "Warning",
     message,
-    code: options.code,
+    code: options.code
   });
   return undefined;
 };

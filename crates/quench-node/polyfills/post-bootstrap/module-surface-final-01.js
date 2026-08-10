@@ -5,17 +5,9 @@ const __quenchTestModuleFallbacks = (result, originalRequire, name) => {
   } catch (_) {
     runner = function test() {};
   }
-  for (
-    const exportName of [
-      "test",
-      "describe",
-      "it",
-      "before",
-      "after",
-      "beforeEach",
-      "afterEach",
-    ]
-  ) {
+  for (const exportName of "test describe it before after beforeEach afterEach".split(
+    " "
+  )) {
     runner[exportName] ||= () => undefined;
   }
   runner.run ||= () => ({});
@@ -23,7 +15,7 @@ const __quenchTestModuleFallbacks = (result, originalRequire, name) => {
   runner.snapshot ||= () => undefined;
   return runner;
 };
-const __quenchUtilTypesBasicFallbacks = (result) => {
+const __quenchUtilTypesFallbacks = (result) => {
   result.isKeyObject = (value) =>
     globalThis.__quenchCryptoKeyObjectBrand?.has(value) === true ||
     (value?.source !== undefined && typeof value.export === "function");
@@ -35,23 +27,15 @@ const __quenchUtilTypesBasicFallbacks = (result) => {
   result.isArrayBufferView ||= (value) => value && ArrayBuffer.isView(value);
   result.isAsyncFunction ||= (value) =>
     Object.prototype.toString.call(value) === "[object AsyncFunction]";
-};
-const __quenchUtilTypesCollectionFallbacks = (result) => {
   result.isDate ||= (value) => value instanceof Date;
   result.isMap ||= (value) => value instanceof Map;
   result.isPromise ||= (value) => value instanceof Promise;
   result.isRegExp ||= (value) => value instanceof RegExp;
   result.isSet ||= (value) => value instanceof Set;
-};
-const __quenchUtilTypesTypedFallbacks = (result) => {
   result.isTypedArray ||= (value) =>
     value && ArrayBuffer.isView(value) && !(value instanceof DataView);
   result.isUint8Array ||= (value) => value instanceof Uint8Array;
-};
-const __quenchUtilTypesFallbacks = (result) => {
-  (__quenchUtilTypesBasicFallbacks(result),
-    __quenchUtilTypesCollectionFallbacks(result));
-  return (__quenchUtilTypesTypedFallbacks(result), result);
+  return result;
 };
 const __quenchInternalStreamFallback = (normalized) => {
   if (normalized === "internal/async_context_frame") {
@@ -82,18 +66,18 @@ const __quenchInternalStreamFallback = (normalized) => {
           typeof pair.writable?.getWriter !== "function"
         ) {
           const error = new TypeError(
-            "The readable and writable must be streams",
+            "The readable and writable must be streams"
           );
           error.code = "ERR_INVALID_ARG_TYPE";
           throw error;
         }
         return stream.Duplex.fromWeb(pair, options);
-      },
+      }
     };
   }
   if (normalized === "internal/streams/end-of-stream") {
     return {
-      kEosNodeSynchronousCallback: Symbol("kEosNodeSynchronousCallback"),
+      kEosNodeSynchronousCallback: Symbol("kEosNodeSynchronousCallback")
     };
   }
   if (normalized === "internal/streams/add-abort-signal") {
@@ -144,7 +128,7 @@ const __quenchApplyFinalSurface = (normalized, result) => {
           this.listeners.get("exit")?.(0);
           return Promise.resolve(0);
         }
-      },
+      }
     };
   }
   return result;
@@ -164,14 +148,12 @@ const __quenchUrlAuth = (input) =>
   input.auth
     ? `${encodeURIComponent(input.auth).replace(/%3A/gi, ":")}@`
     : input.username || input.password
-    ? `${encodeURIComponent(input.username || "")}:${
-      encodeURIComponent(
-        input.password || "",
-      )
-    }@`
-    : input.host?.includes("@")
-    ? `${input.host.split("@")[0]}@`
-    : "";
+      ? `${encodeURIComponent(input.username || "")}:${encodeURIComponent(
+          input.password || ""
+        )}@`
+      : input.host?.includes("@")
+        ? `${input.host.split("@")[0]}@`
+        : "";
 const __quenchUrlPrefix = (input, protocol, authority) => {
   if (protocol === "mailto:") {
     return `${protocol}${__quenchUrlAuth(input)}${authority}`;
@@ -188,9 +170,10 @@ const __quenchUrlPrefix = (input, protocol, authority) => {
 const __quenchUrlSearch = (input) => {
   let search = input.search || "";
   if (!search && input.query != null) {
-    search = typeof input.query === "string"
-      ? input.query
-      : new URLSearchParams(input.query).toString();
+    search =
+      typeof input.query === "string"
+        ? input.query
+        : new URLSearchParams(input.query).toString();
   }
   if (search && !search.startsWith("?")) search = `?${search}`;
   return search.replace(/#/g, "%23");
@@ -201,11 +184,9 @@ const __quenchFormatUrlObject = (input) => {
   const authority = __quenchUrlAuthority(input);
   const pathname = globalThis.__quenchUrlPath(input, authority);
   const hash = input.hash ? `#${input.hash.replace(/^#/, "")}` : "";
-  return `${__quenchUrlPrefix(input, protocol, authority)}${pathname}${
-    __quenchUrlSearch(
-      input,
-    )
-  }${hash}`;
+  return `${__quenchUrlPrefix(input, protocol, authority)}${pathname}${__quenchUrlSearch(
+    input
+  )}${hash}`;
 };
 const __quenchParseQueryObject = (value) => {
   const query = Object.create(null);
@@ -230,7 +211,7 @@ const __quenchUrlUnicodeHost = (host, enabled) => {
   return (
     {
       "xn--lck1c3crb1723bpq4a.com": "理容ナカムラ.com",
-      "xn--0zwm56d.com": "测试.com",
+      "xn--0zwm56d.com": "测试.com"
     }[host] || host
   );
 };
@@ -239,7 +220,7 @@ const __quenchUrlOptionValue = (
   options,
   name,
   disabled,
-  source = name,
+  source = name
 ) =>
   Object.prototype.hasOwnProperty.call(options, name)
     ? disabled
@@ -251,19 +232,10 @@ const __quenchUrlFormattedHost = (input, host, hasAuth) => {
 };
 const __quenchUrlFormatInput = (input, options) => {
   if (!options || __quenchUrlOptionsPreserve(options)) return input;
-  const fields = [
-    "protocol",
-    "slashes",
-    "auth",
-    "hostname",
-    "host",
-    "port",
-    "pathname",
-    "path",
-    "search",
-    "query",
-    "hash",
-  ];
+  const fields =
+    "protocol slashes auth hostname host port pathname path search query hash".split(
+      " "
+    );
   const base = { ...input };
   for (const field of fields) {
     if (field in input) base[field] = input[field];
@@ -273,7 +245,7 @@ const __quenchUrlFormatInput = (input, options) => {
   const hasSearch = Object.prototype.hasOwnProperty.call(options, "search");
   const unicodeHost = __quenchUrlUnicodeHost(
     input.hostname || input.host,
-    options.unicode,
+    options.unicode
   );
   return {
     ...base,
@@ -286,7 +258,7 @@ const __quenchUrlFormatInput = (input, options) => {
     host: __quenchUrlFormattedHost(input, unicodeHost, hasAuth),
     hostname: unicodeHost,
     hash: __quenchUrlOptionValue(input, options, "fragment", "", "hash"),
-    search: __quenchUrlOptionValue(input, options, "search", "", "search"),
+    search: __quenchUrlOptionValue(input, options, "search", "", "search")
   };
 };
 const __quenchFormatUrlString = (input, originalFormat, args, result) => {
@@ -294,15 +266,16 @@ const __quenchFormatUrlString = (input, originalFormat, args, result) => {
   const standardProtocol = ["http:", "https:", "ftp:", "gopher:", "file:"];
   if (protocol && !standardProtocol.includes(protocol)) return input;
   const oversizedHost = input.match(
-    /^[A-Za-z][A-Za-z0-9+.-]*:\/\/([^/]*)(\/.*)$/,
+    /^[A-Za-z][A-Za-z0-9+.-]*:\/\/([^/]*)(\/.*)$/
   );
   if (oversizedHost && oversizedHost[1].length > 255) {
     return `${protocol}//${oversizedHost[2]}`;
   }
   const formatted = originalFormat.call(result, input, ...args);
-  const withProtocol = protocol && !formatted.startsWith(protocol)
-    ? `${protocol}${formatted}`
-    : formatted.replace(/^null(?=\/)/, "");
+  const withProtocol =
+    protocol && !formatted.startsWith(protocol)
+      ? `${protocol}${formatted}`
+      : formatted.replace(/^null(?=\/)/, "");
   const quotedHost = input.match(/^([A-Za-z][A-Za-z0-9+.-]*:\/\/[^/\"]*)\"/);
   if (!quotedHost) return withProtocol;
   const suffix = withProtocol.slice(quotedHost[1].length);
@@ -418,7 +391,7 @@ const __quenchResolveWebRelativePath = (from, to) => {
     rawOrigin,
     base,
     targetPath,
-    suffix,
+    suffix
   );
   if (duplicateParent) return duplicateParent;
   const cleanTarget = targetPath.replace(/^\.\//, "");
@@ -432,7 +405,7 @@ const __quenchResolveSameWebScheme = (from, to) =>
   globalThis.__quenchResolveSameWebScheme(
     from,
     to,
-    __quenchResolveWebRelativePath,
+    __quenchResolveWebRelativePath
   );
 const __quenchResolveRelativePath = (from, to, resolve) => {
   const webPath = __quenchResolveWebRelativePath(from, to);

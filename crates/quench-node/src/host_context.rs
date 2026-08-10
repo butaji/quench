@@ -5,20 +5,16 @@ use std::{
     net::{IpAddr, Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs, UdpSocket},
     sync::{Mutex, OnceLock},
 };
-
 enum QuenchTcpResource {
     Listener(TcpListener),
     Stream(TcpStream),
     Udp(UdpSocket),
 }
-
 static QUENCH_TCP_RESOURCES: OnceLock<Mutex<HashMap<u32, QuenchTcpResource>>> = OnceLock::new();
 static QUENCH_TCP_NEXT_ID: OnceLock<Mutex<u32>> = OnceLock::new();
-
 fn quench_tcp_resources() -> &'static Mutex<HashMap<u32, QuenchTcpResource>> {
     QUENCH_TCP_RESOURCES.get_or_init(|| Mutex::new(HashMap::new()))
 }
-
 fn quench_tcp_id() -> u32 {
     let mut next = QUENCH_TCP_NEXT_ID
         .get_or_init(|| Mutex::new(1))
@@ -28,7 +24,6 @@ fn quench_tcp_id() -> u32 {
     *next = next.wrapping_add(1).max(1);
     id
 }
-
 fn quench_tcp_insert(resource: QuenchTcpResource) -> u32 {
     let id = quench_tcp_id();
     quench_tcp_resources()
@@ -37,7 +32,6 @@ fn quench_tcp_insert(resource: QuenchTcpResource) -> u32 {
         .insert(id, resource);
     id
 }
-
 pub(crate) fn quench_tcp_bind(host: String, port: u16) -> rquickjs::Result<u32> {
     let listener = TcpListener::bind((host.as_str(), port))
         .map_err(|_| rquickjs::Error::new_from_js("tcp", "bind failed"))?;
@@ -46,7 +40,6 @@ pub(crate) fn quench_tcp_bind(host: String, port: u16) -> rquickjs::Result<u32> 
         .map_err(|_| rquickjs::Error::new_from_js("tcp", "nonblocking failed"))?;
     Ok(quench_tcp_insert(QuenchTcpResource::Listener(listener)))
 }
-
 pub(crate) fn quench_tcp_bound_port(id: u32) -> rquickjs::Result<u16> {
     let resources = quench_tcp_resources()
         .lock()
@@ -59,7 +52,6 @@ pub(crate) fn quench_tcp_bound_port(id: u32) -> rquickjs::Result<u16> {
         _ => Err(rquickjs::Error::new_from_js("tcp", "not a listener")),
     }
 }
-
 pub(crate) fn quench_tcp_local_port(id: u32) -> rquickjs::Result<u16> {
     let resources = quench_tcp_resources()
         .lock()
@@ -72,7 +64,6 @@ pub(crate) fn quench_tcp_local_port(id: u32) -> rquickjs::Result<u16> {
         _ => Err(rquickjs::Error::new_from_js("tcp", "not a stream")),
     }
 }
-
 pub(crate) fn quench_tcp_peer_port(id: u32) -> rquickjs::Result<u16> {
     let resources = quench_tcp_resources()
         .lock()
@@ -85,7 +76,6 @@ pub(crate) fn quench_tcp_peer_port(id: u32) -> rquickjs::Result<u16> {
         _ => Err(rquickjs::Error::new_from_js("tcp", "not a stream")),
     }
 }
-
 pub(crate) fn quench_tcp_accept(id: u32) -> rquickjs::Result<u32> {
     let resources = quench_tcp_resources()
         .lock()
@@ -106,7 +96,6 @@ pub(crate) fn quench_tcp_accept(id: u32) -> rquickjs::Result<u32> {
         Err(_) => Err(rquickjs::Error::new_from_js("tcp", "accept failed")),
     }
 }
-
 pub(crate) fn quench_tcp_connect(host: String, port: u16) -> rquickjs::Result<u32> {
     let stream = TcpStream::connect((host.as_str(), port))
         .map_err(|_| rquickjs::Error::new_from_js("tcp", "connect failed"))?;
@@ -115,7 +104,6 @@ pub(crate) fn quench_tcp_connect(host: String, port: u16) -> rquickjs::Result<u3
         .map_err(|_| rquickjs::Error::new_from_js("tcp", "nonblocking failed"))?;
     Ok(quench_tcp_insert(QuenchTcpResource::Stream(stream)))
 }
-
 pub(crate) fn quench_tcp_read(id: u32) -> rquickjs::Result<Vec<u8>> {
     let mut resources = quench_tcp_resources()
         .lock()
@@ -134,7 +122,6 @@ pub(crate) fn quench_tcp_read(id: u32) -> rquickjs::Result<Vec<u8>> {
         Err(_) => Err(rquickjs::Error::new_from_js("tcp", "read failed")),
     }
 }
-
 pub(crate) fn quench_tcp_readable(id: u32) -> rquickjs::Result<i32> {
     let resources = quench_tcp_resources()
         .lock()
@@ -151,7 +138,6 @@ pub(crate) fn quench_tcp_readable(id: u32) -> rquickjs::Result<i32> {
         Err(_) => Err(rquickjs::Error::new_from_js("tcp", "peek failed")),
     }
 }
-
 pub(crate) fn quench_tcp_write(id: u32, data: Vec<u8>) -> rquickjs::Result<u32> {
     let mut resources = quench_tcp_resources()
         .lock()
@@ -165,7 +151,6 @@ pub(crate) fn quench_tcp_write(id: u32, data: Vec<u8>) -> rquickjs::Result<u32> 
         .map(|length| length as u32)
         .map_err(|_| rquickjs::Error::new_from_js("tcp", "write failed"))
 }
-
 pub(crate) fn quench_tcp_shutdown(id: u32) -> rquickjs::Result<()> {
     let resources = quench_tcp_resources()
         .lock()
@@ -178,14 +163,12 @@ pub(crate) fn quench_tcp_shutdown(id: u32) -> rquickjs::Result<()> {
         .shutdown(Shutdown::Write)
         .map_err(|_| rquickjs::Error::new_from_js("tcp", "shutdown failed"))
 }
-
 pub(crate) fn quench_tcp_close(id: u32) {
     quench_tcp_resources()
         .lock()
         .expect("tcp resource mutex poisoned")
         .remove(&id);
 }
-
 pub(crate) fn quench_udp_socket(host: String, port: u16) -> rquickjs::Result<u32> {
     let socket = UdpSocket::bind((host.as_str(), port))
         .map_err(|_| rquickjs::Error::new_from_js("udp", "bind failed"))?;
@@ -194,7 +177,6 @@ pub(crate) fn quench_udp_socket(host: String, port: u16) -> rquickjs::Result<u32
         .map_err(|_| rquickjs::Error::new_from_js("udp", "nonblocking failed"))?;
     Ok(quench_tcp_insert(QuenchTcpResource::Udp(socket)))
 }
-
 pub(crate) fn quench_udp_send(
     id: u32,
     host: String,
@@ -220,7 +202,6 @@ pub(crate) fn quench_udp_send(
         .map(|length| length as u32)
         .map_err(|_| rquickjs::Error::new_from_js("udp", "send failed"))
 }
-
 pub(crate) fn quench_udp_recv(id: u32) -> rquickjs::Result<Vec<u8>> {
     let resources = quench_tcp_resources()
         .lock()
@@ -239,14 +220,12 @@ pub(crate) fn quench_udp_recv(id: u32) -> rquickjs::Result<Vec<u8>> {
         Err(_) => Err(rquickjs::Error::new_from_js("udp", "receive failed")),
     }
 }
-
 pub(crate) fn quench_dns_lookup(host: String, port: u16) -> rquickjs::Result<Vec<String>> {
     (host.as_str(), port)
         .to_socket_addrs()
         .map(|addresses| addresses.map(|address| address.ip().to_string()).collect())
         .map_err(|_| rquickjs::Error::new_from_js("dns", "lookup failed"))
 }
-
 #[allow(clippy::too_many_lines)]
 pub(crate) fn quench_dns_reverse(address: String) -> rquickjs::Result<String> {
     let ip: IpAddr = address
@@ -297,5 +276,4 @@ pub(crate) fn quench_dns_reverse(address: String) -> rquickjs::Result<String> {
         .map(str::to_owned)
         .map_err(|_| rquickjs::Error::new_from_js("dns", "invalid hostname"))
 }
-
 include!("host_context_macro.inc");

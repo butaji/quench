@@ -20,7 +20,6 @@ if (globalThis.require) {
 delete globalThis.__quenchURLPatternFactory;
 delete globalThis.__quenchURLInstallCanParse;
 delete globalThis.__quenchURLInstallToString;
-
 if (globalThis.require) {
   const path = globalThis.require("path");
   path.toNamespacedPath ||= (value) => value;

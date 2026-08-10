@@ -1,16 +1,6 @@
-for (
-  const method of [
-    "on",
-    "addListener",
-    "once",
-    "emit",
-    "removeListener",
-    "off",
-    "removeAllListeners",
-    "listeners",
-    "listenerCount",
-  ]
-) {
+for (const method of "on addListener once emit removeListener off removeAllListeners listeners listenerCount".split(
+  " "
+)) {
   globalThis.process[method] = NodeEventEmitter.prototype[method];
 }
 const __nodeWritableWriteError = (stream, callback, error) => {

@@ -18,7 +18,7 @@ class __QuenchVirtualProvider {
     if (
       this instanceof __QuenchRealFSProvider &&
       !globalThis.__nodeFs.existsSync(
-        globalThis.__nodePath.join(this.root, String(path)),
+        globalThis.__nodePath.join(this.root, String(path))
       )
     ) {
       throw __quenchVfsError("ENOENT", "open", path);
@@ -169,7 +169,7 @@ class __QuenchMemoryProvider extends __QuenchVirtualProvider {
         return typeof this.contentProvider === "function"
           ? await this.contentProvider()
           : this.content;
-      },
+      }
     };
     const root = Object.assign(Object.create(entryPrototype), {
       type: 1,
@@ -178,7 +178,7 @@ class __QuenchMemoryProvider extends __QuenchVirtualProvider {
       populated: true,
       nlink: 1,
       uid: 0,
-      gid: 0,
+      gid: 0
     });
     Object.defineProperty(this, Symbol("kRoot"), { value: root });
   }
@@ -197,7 +197,7 @@ class __QuenchRealFSProvider extends __QuenchVirtualProvider {
     super();
     if (typeof root !== "string") {
       const error = new TypeError(
-        "The rootPath argument must be of type string",
+        "The rootPath argument must be of type string"
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
@@ -212,7 +212,6 @@ class __QuenchRealFSProvider extends __QuenchVirtualProvider {
     return true;
   }
 }
-
 const __quenchVfsError = (code, syscall, path) => {
   const error = new Error(`${code}: ${syscall}, ${path}`);
   error.code = code;
@@ -248,9 +247,8 @@ const __quenchVfsResolvePath = (entries, path, seen = []) => {
   const parts = key.split("/").filter(Boolean);
   let current = "/";
   for (let index = 0; index < parts.length; index++) {
-    const candidate = current === "/"
-      ? `/${parts[index]}`
-      : `${current}/${parts[index]}`;
+    const candidate =
+      current === "/" ? `/${parts[index]}` : `${current}/${parts[index]}`;
     const entry = entries.get(candidate);
     if (entry?.type !== "symlink") {
       current = candidate;
@@ -266,7 +264,7 @@ const __quenchVfsResolvePath = (entries, path, seen = []) => {
     return __quenchVfsResolvePath(
       entries,
       remainder ? `${target}/${remainder}` : target,
-      [...seen, candidate],
+      [...seen, candidate]
     );
   }
   return current;

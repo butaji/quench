@@ -1,11 +1,9 @@
 globalThis.__nodeFs.close = (fd, callback) => {
   if (typeof fd !== "number") {
     const error = new TypeError(
-      `The "fd" argument must be of type number.${
-        globalThis.__nodeCommon.invalidArgTypeHelper(
-          fd,
-        )
-      }`,
+      `The "fd" argument must be of type number.${globalThis.__nodeCommon.invalidArgTypeHelper(
+        fd
+      )}`
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -22,7 +20,6 @@ globalThis.__nodeFs.close = (fd, callback) => {
     }
   });
 };
-
 globalThis.__nodeFs.open = (value, flags, mode, callback) => {
   if (typeof mode === "function") {
     callback = mode;

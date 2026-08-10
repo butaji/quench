@@ -11,7 +11,7 @@ globalThis.Buffer = new Proxy(NodeBuffer, {
         const error = new TypeError(
           `The "string" argument must be of type string. Received type number (${
             args[0]
-          })`,
+          })`
         );
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
@@ -19,29 +19,19 @@ globalThis.Buffer = new Proxy(NodeBuffer, {
       const buffer = new NodeBuffer(NodeBuffer._validateSize(args[0]));
       Object.defineProperties(buffer, {
         parent: { value: buffer.buffer, configurable: true },
-        offset: { value: buffer.byteOffset, configurable: true },
+        offset: { value: buffer.byteOffset, configurable: true }
       });
       return buffer;
     }
     return NodeBuffer.from(...args);
-  },
+  }
 });
 Object.defineProperties(NodeBuffer.prototype, {
   parent: { value: undefined, configurable: true },
-  offset: { value: undefined, configurable: true },
+  offset: { value: undefined, configurable: true }
 });
 NodeBuffer.poolSize = 8192;
-for (
-  const name of [
-    "ascii",
-    "base64",
-    "base64url",
-    "latin1",
-    "hex",
-    "ucs2",
-    "utf8",
-  ]
-) {
+for (const name of "ascii base64 base64url latin1 hex ucs2 utf8".split(" ")) {
   NodeBuffer.prototype[`${name}Slice`] = NodeBuffer.prototype.slice;
   NodeBuffer.prototype[`${name}Write`] = NodeBuffer.prototype.write;
 }
@@ -86,7 +76,7 @@ Object.getOwnPropertyNames = (value) => {
 const __nodeInvalidCharacter = () => {
   const error = new DOMException(
     "The string contains invalid characters.",
-    "InvalidCharacterError",
+    "InvalidCharacterError"
   );
   error.code = 5;
   return error;
@@ -120,14 +110,14 @@ const __nodeEncodeCodePoint = (output, code) => {
     return output.push(
       0xe0 | (code >> 12),
       0x80 | ((code >> 6) & 0x3f),
-      0x80 | (code & 0x3f),
+      0x80 | (code & 0x3f)
     );
   }
   return output.push(
     0xf0 | (code >> 18),
     0x80 | ((code >> 12) & 0x3f),
     0x80 | ((code >> 6) & 0x3f),
-    0x80 | (code & 0x3f),
+    0x80 | (code & 0x3f)
   );
 };
 const __nodeReadCodePoint = (input, index) => {
@@ -193,7 +183,7 @@ const __nodeWindows1252 = {
   155: "›",
   156: "œ",
   158: "ž",
-  159: "Ÿ",
+  159: "Ÿ"
 };
 class NodeTextDecoder {
   constructor(encoding = "utf-8") {
@@ -208,20 +198,20 @@ class NodeTextDecoder {
       } else if (first < 0x80) result += String.fromCodePoint(first);
       else if (first < 0xe0) {
         result += String.fromCodePoint(
-          ((first & 0x1f) << 6) | (bytes[i++] & 0x3f),
+          ((first & 0x1f) << 6) | (bytes[i++] & 0x3f)
         );
       } else if (first < 0xf0) {
         result += String.fromCodePoint(
           ((first & 0x0f) << 12) |
             ((bytes[i++] & 0x3f) << 6) |
-            (bytes[i++] & 0x3f),
+            (bytes[i++] & 0x3f)
         );
       } else {
         result += String.fromCodePoint(
           ((first & 7) << 18) |
             ((bytes[i++] & 0x3f) << 12) |
             ((bytes[i++] & 0x3f) << 6) |
-            (bytes[i++] & 0x3f),
+            (bytes[i++] & 0x3f)
         );
       }
     }
@@ -241,10 +231,10 @@ const nodePathValue = (value) =>
   value instanceof NodeBuffer
     ? value.toString()
     : value instanceof Uint8Array
-    ? new NodeTextDecoder().decode(value)
-    : value instanceof globalThis.__nodeURL
-    ? nodePathFromURL(value)
-    : String(value);
+      ? new NodeTextDecoder().decode(value)
+      : value instanceof globalThis.__nodeURL
+        ? nodePathFromURL(value)
+        : String(value);
 const nodeFsPath = (value) => {
   if (
     typeof value === "string" ||
@@ -255,7 +245,7 @@ const nodeFsPath = (value) => {
     return nodePathValue(value);
   }
   const error = new TypeError(
-    'The "path" argument must be of type string or an instance of Buffer or URL.',
+    'The "path" argument must be of type string or an instance of Buffer or URL.'
   );
   error.message += globalThis.__nodeCommon.invalidArgTypeHelper(value);
   error.code = "ERR_INVALID_ARG_TYPE";

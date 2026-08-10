@@ -21,19 +21,17 @@ const __nodeUtilFormatCompact = (options, args) => {
   ) {
     return null;
   }
-  return `[ ${
-    args[1]
-      .map((value) =>
-        value && typeof value === "object" ? "[Object]" : String(value)
-      )
-      .join(", ")
-  } ]`;
+  return `[ ${args[1]
+    .map((value) =>
+      value && typeof value === "object" ? "[Object]" : String(value)
+    )
+    .join(", ")} ]`;
 };
 globalThis.__nodeUtil.formatWithOptions = (options, ...args) => {
   if (!options || typeof options !== "object" || Array.isArray(options)) {
     const error = new TypeError(
       'The "inspectOptions" argument must be an object.' +
-        globalThis.__nodeCommon.invalidArgTypeHelper(options),
+        globalThis.__nodeCommon.invalidArgTypeHelper(options)
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -72,11 +70,11 @@ const __nodeQuerystringEscape = (value) => {
       const next = input.charCodeAt(index + 1);
       if (next >= 0xdc00 && next <= 0xdfff) {
         normalized += String.fromCodePoint(
-          0x10000 + ((code - 0xd800) << 10) + next - 0xdc00,
+          0x10000 + ((code - 0xd800) << 10) + next - 0xdc00
         );
       } else {
         normalized += String.fromCodePoint(
-          0x10000 + ((code - 0xd800) << 10) + next,
+          0x10000 + ((code - 0xd800) << 10) + next
         );
       }
       index += 1;
@@ -102,7 +100,7 @@ const __nodeQuerystringDecodeByte = (input, index, decodeSpaces) => {
   ) {
     return {
       bytes: [parseInt(input.slice(index + 1, index + 3), 16)],
-      advance: 2,
+      advance: 2
     };
   }
   let character = input[index];
@@ -117,7 +115,7 @@ const __nodeQuerystringDecodeByte = (input, index, decodeSpaces) => {
   }
   return {
     bytes: Array.from(new TextEncoder().encode(character)),
-    advance: character.length - 1,
+    advance: character.length - 1
   };
 };
 const __nodeQuerystringParseValue = (value, options) => {
@@ -130,11 +128,12 @@ const __nodeQuerystringParseValue = (value, options) => {
   return globalThis.__nodeQuerystring.unescape(inputValue);
 };
 const __nodeQuerystringAddValue = (result, key, value) => {
-  result[key] = result[key] === undefined
-    ? value
-    : Array.isArray(result[key])
-    ? result[key].concat(value)
-    : [result[key], value];
+  result[key] =
+    result[key] === undefined
+      ? value
+      : Array.isArray(result[key])
+        ? result[key].concat(value)
+        : [result[key], value];
 };
 const __nodeQuerystringMaxKeys = (options) => {
   if (!options || options.maxKeys === undefined) return 1000;
@@ -162,9 +161,10 @@ const __nodeQuerystringExports = {
     if (!object || typeof object !== "object") return "";
     sep = sep == null ? "&" : String(sep);
     eq = eq == null ? "=" : String(eq);
-    const encode = options && options.encodeURIComponent
-      ? options.encodeURIComponent
-      : globalThis.__nodeQuerystring.escape;
+    const encode =
+      options && options.encodeURIComponent
+        ? options.encodeURIComponent
+        : globalThis.__nodeQuerystring.escape;
     return Object.keys(object)
       .flatMap((key) => {
         const value = object[key];
@@ -175,12 +175,13 @@ const __nodeQuerystringExports = {
           let encodedValue;
           try {
             encodedKey = encode(key);
-            encodedValue = item === null ||
-                typeof item === "object" ||
-                typeof item === "function" ||
-                (typeof item === "number" && !Number.isFinite(item))
-              ? ""
-              : encode(item);
+            encodedValue =
+              item === null ||
+              typeof item === "object" ||
+              typeof item === "function" ||
+              (typeof item === "number" && !Number.isFinite(item))
+                ? ""
+                : encode(item);
           } catch (error) {
             if (error instanceof URIError) {
               error.code = "ERR_INVALID_URI";
@@ -207,16 +208,16 @@ const __nodeQuerystringExports = {
         const index = part.indexOf(equals);
         const key = __nodeQuerystringParseValue(
           index < 0 ? part : part.slice(0, index),
-          options,
+          options
         );
         const value = __nodeQuerystringParseValue(
           index < 0 ? "" : part.slice(index + equals.length),
-          options,
+          options
         );
         __nodeQuerystringAddValue(result, key, value);
       });
     return result;
-  },
+  }
 };
 let __nodeQuerystringInstance;
 globalThis.__nodeQuerystringInitialized = false;
@@ -233,17 +234,16 @@ globalThis.__nodeQuerystring = new Proxy(
     getOwnPropertyDescriptor: (_, key) => ({
       enumerable: true,
       configurable: true,
-      value: __nodeQuerystringExports[key],
+      value: __nodeQuerystringExports[key]
     }),
     set: (_, key, value) => {
       __nodeQuerystringExports[key] = value;
       return true;
-    },
-  },
+    }
+  }
 );
 class NodeURLSearchParams {
   constructor(init = "") {
-    // prettier-ignore
     this._pairs = [];
     if (typeof init === "string") {
       init
@@ -252,68 +252,61 @@ class NodeURLSearchParams {
         .filter(Boolean)
         .forEach((part) => {
           const i = part.indexOf("=");
-          // prettier-ignore
           this.append(
             globalThis.__nodeURLDecode(
-              (i < 0 ? part : part.slice(0, i)).replace(/\+/g, " "),
+              (i < 0 ? part : part.slice(0, i)).replace(/\+/g, " ")
             ),
             globalThis.__nodeURLDecode(
-              (i < 0 ? "" : part.slice(i + 1)).replace(/\+/g, " "),
-            ),
+              (i < 0 ? "" : part.slice(i + 1)).replace(/\+/g, " ")
+            )
           );
         });
     } else Object.keys(init).forEach((key) => this.append(key, init[key]));
   }
   append(key, value) {
-    // prettier-ignore
     this._pairs.push([
-      globalThis.__nodeURLSearchString(key).replace(
-        /[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g,
-        "\uFFFD",
-      ).replace(/(^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "$1\uFFFD"),
-      globalThis.__nodeURLSearchString(value).replace(
-        /[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g,
-        "\uFFFD",
-      ).replace(/(^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "$1\uFFFD"),
+      globalThis
+        .__nodeURLSearchString(key)
+        .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, "\uFFFD")
+        .replace(/(^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "$1\uFFFD"),
+      globalThis
+        .__nodeURLSearchString(value)
+        .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, "\uFFFD")
+        .replace(/(^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "$1\uFFFD")
     ]);
   }
-  // prettier-ignore
   set(key, value) {
     this.delete(key);
     this.append(key, value);
   }
-  // prettier-ignore
   get(key) {
-    const pair = this._pairs.find(([name]) =>
-      name === globalThis.__nodeURLSearchString(key)
+    const pair = this._pairs.find(
+      ([name]) => name === globalThis.__nodeURLSearchString(key)
     );
     return pair ? pair[1] : null;
   }
-  // prettier-ignore
   getAll(key) {
-    return this._pairs.filter(([name]) =>
-      name === globalThis.__nodeURLSearchString(key)
-    ).map(([, value]) => value);
+    return this._pairs
+      .filter(([name]) => name === globalThis.__nodeURLSearchString(key))
+      .map(([, value]) => value);
   }
   has(key) {
     return this._pairs.some(
-      ([name]) => name === globalThis.__nodeURLSearchString(key),
+      ([name]) => name === globalThis.__nodeURLSearchString(key)
     );
   }
   delete(key) {
     this._pairs = this._pairs.filter(
-      ([name]) => name !== globalThis.__nodeURLSearchString(key),
+      ([name]) => name !== globalThis.__nodeURLSearchString(key)
     );
   }
   toString() {
     return this._pairs
       .map(
         ([key, value]) =>
-          `${globalThis.__nodeURLFormEncode(key).replace(/%20/g, "+")}=${
-            globalThis
-              .__nodeURLFormEncode(value)
-              .replace(/%20/g, "+")
-          }`,
+          `${globalThis.__nodeURLFormEncode(key).replace(/%20/g, "+")}=${globalThis
+            .__nodeURLFormEncode(value)
+            .replace(/%20/g, "+")}`
       )
       .join("&");
   }

@@ -37,7 +37,7 @@ const __nodeDetachedBuffers = new WeakSet();
 const __nodeImmutableBuffers = new WeakSet();
 const __nodeAllocatorCounts = {
   uninitialized: 0,
-  zeroFilled: 0,
+  zeroFilled: 0
 };
 const __nodeNativeStructuredClone = globalThis.structuredClone;
 globalThis.structuredClone = (value, options) => {
@@ -78,22 +78,9 @@ globalThis.DataView = function (...args) {
 };
 globalThis.DataView.prototype = __nodeNativeDataView.prototype;
 const __nodeTypedArraySets = {};
-for (
-  const name of [
-    "Uint8Array",
-    "Uint8ClampedArray",
-    "Int8Array",
-    "Uint16Array",
-    "Int16Array",
-    "Uint32Array",
-    "Int32Array",
-    "Float16Array",
-    "Float32Array",
-    "Float64Array",
-    "BigInt64Array",
-    "BigUint64Array",
-  ]
-) {
+for (const name of "Uint8Array Uint8ClampedArray Int8Array Uint16Array Int16Array Uint32Array Int32Array Float16Array Float32Array Float64Array BigInt64Array BigUint64Array".split(
+  " "
+)) {
   const Native = globalThis[name];
   const set = new WeakSet();
   __nodeTypedArraySets[name] = set;
@@ -118,7 +105,7 @@ globalThis.queueMicrotask = (callback) =>
         Object.defineProperty(globalThis, "__quench_pending_uncaught", {
           configurable: true,
           value: error,
-          writable: true,
+          writable: true
         });
       }
     }
@@ -189,7 +176,7 @@ globalThis.console.timeLog = (label = "default", ...args) => {
   globalThis.__quench_console_write(
     `${label}: ${
       Number(BigInt(globalThis.__quench_now_ns()) - consoleTimers[label]) / 1e6
-    } ms ${globalThis.__nodeFormat(args)}`,
+    } ms ${globalThis.__nodeFormat(args)}`
   );
 };
 globalThis.console.timeEnd = (label = "default") => {
@@ -197,7 +184,7 @@ globalThis.console.timeEnd = (label = "default") => {
   globalThis.__quench_console_write(
     `${label}: ${
       Number(BigInt(globalThis.__quench_now_ns()) - consoleTimers[label]) / 1e6
-    } ms`,
+    } ms`
   );
   delete consoleTimers[label];
 };
@@ -240,14 +227,14 @@ globalThis.process = {
         if (String(key) === "") return true;
         globalThis.__quench_env_set(String(key), String(value));
         globalThis.__quench_env_keys = [
-          ...new Set([...globalThis.__quench_env_keys, String(key)]),
+          ...new Set([...globalThis.__quench_env_keys, String(key)])
         ];
         return true;
       },
       deleteProperty: (_, key) => {
         globalThis.__quench_env_delete(String(key));
         globalThis.__quench_env_keys = globalThis.__quench_env_keys.filter(
-          (item) => item !== String(key),
+          (item) => item !== String(key)
         );
         return true;
       },
@@ -255,7 +242,7 @@ globalThis.process = {
         if (typeof key === "symbol") return true;
         if (descriptor.get || descriptor.set) {
           const error = new TypeError(
-            "'process.env' does not accept an accessor(getter/setter) descriptor",
+            "'process.env' does not accept an accessor(getter/setter) descriptor"
           );
           error.code = "ERR_INVALID_OBJECT_DEFINE_PROPERTY";
           throw error;
@@ -266,7 +253,7 @@ globalThis.process = {
           descriptor.enumerable !== true
         ) {
           const error = new TypeError(
-            "'process.env' only accepts a configurable, writable, and enumerable data descriptor",
+            "'process.env' only accepts a configurable, writable, and enumerable data descriptor"
           );
           error.code = "ERR_INVALID_OBJECT_DEFINE_PROPERTY";
           throw error;
@@ -283,8 +270,8 @@ globalThis.process = {
         return value === undefined
           ? undefined
           : { enumerable: true, configurable: true, value };
-      },
-    },
+      }
+    }
   ),
   argv: [globalThis.__quench_exec_path, ...globalThis.__quench_argv.slice(1)],
   execPath: globalThis.__quench_exec_path,
@@ -294,12 +281,12 @@ globalThis.process = {
   geteuid: () => globalThis.__quench_geteuid,
   getgid: () => globalThis.__quench_getgid,
   getegid: () => globalThis.__quench_getegid,
-  platform: globalThis.__quench_platform === "macos"
-    ? "darwin"
-    : globalThis.__quench_platform,
-  arch: globalThis.__quench_arch === "aarch64"
-    ? "arm64"
-    : globalThis.__quench_arch,
+  platform:
+    globalThis.__quench_platform === "macos"
+      ? "darwin"
+      : globalThis.__quench_platform,
+  arch:
+    globalThis.__quench_arch === "aarch64" ? "arm64" : globalThis.__quench_arch,
   version: "v20.0.0",
   versions: { node: "20.0.0", v8: "0.0.0-quench", uv: "0.0.0" },
   release: { name: "node", lts: "Quench" },
@@ -309,15 +296,15 @@ globalThis.process = {
       v8_enable_i18n_support: false,
       v8_enable_temporal_support: false,
       node_shared: false,
-      node_use_ffi: false,
-    },
+      node_use_ffi: false
+    }
   },
   features: { inspector: false, tls: false, quic: false, dtls: false },
   cwd: __quenchDisplayCwd,
   chdir: (value) => {
     if (typeof value !== "string") {
       const error = new TypeError(
-        `The "directory" argument must be of type string. Received ${typeof value}`,
+        `The "directory" argument must be of type string. Received ${typeof value}`
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
@@ -325,13 +312,13 @@ globalThis.process = {
     const path = String(value);
     if (!globalThis.__quench_fs_exists(path)) {
       const error = new Error(
-        `ENOENT: no such file or directory, chdir '${process.cwd()}' -> '${path}'`,
+        `ENOENT: no such file or directory, chdir '${process.cwd()}' -> '${path}'`
       );
       Object.assign(error, {
         code: "ENOENT",
         path: process.cwd(),
         syscall: "chdir",
-        dest: path,
+        dest: path
       });
       throw error;
     }
@@ -346,19 +333,19 @@ globalThis.process = {
     throw { __quench_process_exit: true };
   },
   kill: __nodeProcessKill,
-  platform: globalThis.__quench_platform === "macos"
-    ? "darwin"
-    : globalThis.__quench_platform,
-  arch: globalThis.__quench_arch === "aarch64"
-    ? "arm64"
-    : globalThis.__quench_arch,
+  platform:
+    globalThis.__quench_platform === "macos"
+      ? "darwin"
+      : globalThis.__quench_platform,
+  arch:
+    globalThis.__quench_arch === "aarch64" ? "arm64" : globalThis.__quench_arch,
   uptime: () => Math.max(0, (Date.now() - __nodeStartedAt) / 1000),
   memoryUsage: () => ({
     rss: 0,
     heapTotal: 0,
     heapUsed: 0,
     external: 0,
-    arrayBuffers: 0,
+    arrayBuffers: 0
   }),
   resourceUsage: () => ({
     userCPUTime: 0,
@@ -376,7 +363,7 @@ globalThis.process = {
     ipcReceived: 0,
     signalsCount: 0,
     voluntaryContextSwitches: 0,
-    involuntaryContextSwitches: 0,
+    involuntaryContextSwitches: 0
   }),
   binding: (name) => {
     const error = new Error(`No such module: ${String(name)}`);
@@ -395,7 +382,7 @@ globalThis.process = {
   nextTick: (callback, ...args) => {
     if (typeof callback !== "function") {
       const error = new TypeError(
-        'The "callback" argument must be of type function',
+        'The "callback" argument must be of type function'
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
@@ -425,18 +412,16 @@ globalThis.process = {
     if (previous === undefined) return current;
     if (!Array.isArray(previous)) {
       const error = new TypeError(
-        `The "time" argument must be an instance of Array. Received type ${typeof previous} (${
-          String(
-            previous,
-          )
-        })`,
+        `The "time" argument must be an instance of Array. Received type ${typeof previous} (${String(
+          previous
+        )})`
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
     if (previous.length !== 2) {
       const error = new RangeError(
-        `The value of "time" is out of range. It must be 2. Received ${previous.length}`,
+        `The value of "time" is out of range. It must be 2. Received ${previous.length}`
       );
       error.code = "ERR_OUT_OF_RANGE";
       throw error;
@@ -448,5 +433,5 @@ globalThis.process = {
       nanos += 1000000000;
     }
     return [seconds, nanos];
-  },
+  }
 };

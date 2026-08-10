@@ -1,4 +1,4 @@
-const __quenchCryptoRandomFallbacks = (result, state) => {
+const __quenchCryptoRandomAndDigestFallbacks = (result, state) => {
   result.randomBytes ||= (size) => new Uint8Array(Number(size) || 0);
   result.randomFill ||= (buffer, callback) => callback?.(null, buffer);
   result.randomFillSync ||= (buffer) => buffer;
@@ -9,8 +9,6 @@ const __quenchCryptoRandomFallbacks = (result, state) => {
   result.setFips ||= (value) => {
     state.fips = Number(value) ? 1 : 0;
   };
-};
-const __quenchCryptoDigestFallbacks = (result) => {
   result.getCiphers ||= () => [];
   result.getHashes ||= () => [];
   if (!result.getCiphers().length) result.getCiphers = () => ["aes-256-ctr"];
@@ -20,7 +18,7 @@ const __quenchCryptoDigestFallbacks = (result) => {
     return {
       type: "secret",
       symmetricKeySize: bytes.byteLength,
-      export: () => bytes,
+      export: () => bytes
     };
   };
 };
@@ -30,7 +28,7 @@ const __quenchPbkdf2Sync = (
   password,
   salt,
   iterations,
-  length,
+  length
 ) => {
   const output = new Uint8Array(Number(length));
   for (let block = 1, offset = 0; offset < output.length; block += 1) {
@@ -39,12 +37,12 @@ const __quenchPbkdf2Sync = (
         .createHmac(hash, password)
         .update(salt)
         .update(Uint8Array.of(block))
-        .digest(),
+        .digest()
     );
     const derived = new Uint8Array(previous);
     for (let round = 1; round < Number(iterations); round += 1) {
       previous = new Uint8Array(
-        result.createHmac(hash, password).update(previous).digest(),
+        result.createHmac(hash, password).update(previous).digest()
       );
       for (let index = 0; index < derived.length; index += 1) {
         derived[index] ^= previous[index];
@@ -72,29 +70,29 @@ const __quenchCryptoKdfFallbacks = (result) => {
   result.hkdfSync ||= (hash, ikm, salt, info, length) => {
     if (typeof hash !== "string") {
       const error = new TypeError(
-        'The "digest" argument must be of type string',
+        'The "digest" argument must be of type string'
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
-    if (
-      kdfBytes(info)?.byteLength > 1024
-    ) {
+    if (kdfBytes(info)?.byteLength > 1024) {
       const size = kdfBytes(info)?.byteLength;
       const error = new RangeError(
-        `The value of "info" is out of range. It must be must not contain more than 1024 bytes. Received ${size}`,
+        `The value of "info" is out of range. It must be must not contain more than 1024 bytes. Received ${size}`
       );
       error.code = "ERR_OUT_OF_RANGE";
       throw error;
     }
     const byteValues = {};
-    for (
-      const [name, value] of [["ikm", ikm], ["salt", salt], ["info", info]]
-    ) {
+    for (const [name, value] of [
+      ["ikm", ikm],
+      ["salt", salt],
+      ["info", info]
+    ]) {
       const bytes = kdfBytes(value);
       if (!bytes) {
         const error = new TypeError(
-          `The "${name}" argument must be of type string or an instance of Buffer, TypedArray, or DataView`,
+          `The "${name}" argument must be of type string or an instance of Buffer, TypedArray, or DataView`
         );
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
@@ -105,7 +103,7 @@ const __quenchCryptoKdfFallbacks = (result) => {
     if (infoBytes > 1024) {
       const size = infoBytes;
       const error = new RangeError(
-        `The value of "info" is out of range. It must be must not contain more than 1024 bytes. Received ${size}`,
+        `The value of "info" is out of range. It must be must not contain more than 1024 bytes. Received ${size}`
       );
       error.code = "ERR_OUT_OF_RANGE";
       throw error;
@@ -122,7 +120,7 @@ const __quenchCryptoKdfFallbacks = (result) => {
     }
     if (typeof length !== "number") {
       const error = new TypeError(
-        'The "length" argument must be of type number',
+        'The "length" argument must be of type number'
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
@@ -137,14 +135,15 @@ const __quenchCryptoKdfFallbacks = (result) => {
       error.code = "ERR_OUT_OF_RANGE";
       throw error;
     }
-    const digestLength = {
-      md5: 16,
-      sha1: 20,
-      sha224: 28,
-      sha256: 32,
-      sha384: 48,
-      sha512: 64,
-    }[hash.toLowerCase()] || 32;
+    const digestLength =
+      {
+        md5: 16,
+        sha1: 20,
+        sha224: 28,
+        sha256: 32,
+        sha384: 48,
+        sha512: 64
+      }[hash.toLowerCase()] || 32;
     if (length > 255 * digestLength) {
       const error = new RangeError("Invalid key length");
       error.code = "ERR_CRYPTO_INVALID_KEYLEN";
@@ -153,8 +152,10 @@ const __quenchCryptoKdfFallbacks = (result) => {
     const hmacHash = hash.toLowerCase() === "rsa-sha1" ? "sha1" : hash;
     const output = new Uint8Array(Number(length));
     const prk = new Uint8Array(
-      result.createHmac(hmacHash, byteValues.salt).update(byteValues.ikm)
-        .digest(),
+      result
+        .createHmac(hmacHash, byteValues.salt)
+        .update(byteValues.ikm)
+        .digest()
     );
     let previous = new Uint8Array(0);
     for (let index = 1, offset = 0; offset < output.length; index += 1) {
@@ -164,7 +165,7 @@ const __quenchCryptoKdfFallbacks = (result) => {
           .update(previous)
           .update(byteValues.info)
           .update(Uint8Array.of(index))
-          .digest(),
+          .digest()
       );
       output.set(previous.subarray(0, output.length - offset), offset);
       offset += previous.length;
@@ -192,12 +193,12 @@ const __quenchCryptoWebFallbacks = (result) => {
       .toLowerCase()
       .replace("-", "");
     return new Uint8Array(
-      result.createHash(name).update(new Uint8Array(data)).digest(),
+      result.createHash(name).update(new Uint8Array(data)).digest()
     );
   };
   result.webcrypto.getRandomValues ||= (values) => {
     new Uint8Array(values.buffer, values.byteOffset, values.byteLength).set(
-      result.randomBytes(values.byteLength),
+      result.randomBytes(values.byteLength)
     );
     return values;
   };
@@ -213,8 +214,7 @@ const __quenchCryptoFallbacks = (result) => {
   const state = { fips: 0 };
   result.createHash ||= () => ({ update: () => this, digest: () => "" });
   result.createHmac ||= () => ({ update: () => this, digest: () => "" });
-  __quenchCryptoRandomFallbacks(result, state);
-  __quenchCryptoDigestFallbacks(result);
+  __quenchCryptoRandomAndDigestFallbacks(result, state);
   __quenchCryptoClassPrototypes(result);
   __quenchCryptoKdfFallbacks(result);
   __quenchCryptoConstructors(result);

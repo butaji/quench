@@ -14,27 +14,28 @@ globalThis.__nodeAssert.doesNotReject = (promiseOrFn, message) =>
         const error = new TypeError(
           typeof promiseOrFn === "function"
             ? `Expected instance of Promise to be returned from the "promiseFn" function but got ${
-              input === undefined
-                ? "undefined"
-                : `an instance of ${input?.constructor?.name || typeof input}`
-            }.`
-            : `The "promiseFn" argument must be of type function or an instance of Promise. Received type ${typeof input} (${input})`,
+                input === undefined
+                  ? "undefined"
+                  : `an instance of ${input?.constructor?.name || typeof input}`
+              }.`
+            : `The "promiseFn" argument must be of type function or an instance of Promise. Received type ${typeof input} (${input})`
         );
-        error.code = typeof promiseOrFn === "function"
-          ? "ERR_INVALID_RETURN_VALUE"
-          : "ERR_INVALID_ARG_TYPE";
+        error.code =
+          typeof promiseOrFn === "function"
+            ? "ERR_INVALID_RETURN_VALUE"
+            : "ERR_INVALID_ARG_TYPE";
         throw error;
       }
       if (typeof input === "function") {
         const error = new TypeError(
-          'Expected instance of Promise to be returned from the "promiseFn" function but got a function.',
+          'Expected instance of Promise to be returned from the "promiseFn" function but got a function.'
         );
         error.code = "ERR_INVALID_RETURN_VALUE";
         throw error;
       }
       if (typeof input.catch !== "function") {
         const error = new TypeError(
-          'The "promiseFn" argument must be a function or an instance of Promise',
+          'The "promiseFn" argument must be a function or an instance of Promise'
         );
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
@@ -53,8 +54,8 @@ globalThis.__nodeAssert.doesNotReject = (promiseOrFn, message) =>
         message && typeof message !== "function"
           ? message
           : `Got unwanted rejection.\nActual message: "${
-            error.message || error
-          }"`,
+              error.message || error
+            }"`
       );
       assertion.code = "ERR_ASSERTION";
       assertion.operator = "doesNotReject";
@@ -66,11 +67,12 @@ globalThis.__nodeAssert.doesNotReject = (promiseOrFn, message) =>
     });
 globalThis.__nodeAssert.match = (value, expression) => {
   if (!(expression instanceof RegExp)) {
-    const received = typeof expression === "string"
-      ? ` Received type string ('${expression}')`
-      : ` Received ${expression}`;
+    const received =
+      typeof expression === "string"
+        ? ` Received type string ('${expression}')`
+        : ` Received ${expression}`;
     const error = new TypeError(
-      `The "regexp" argument must be an instance of RegExp.${received}`,
+      `The "regexp" argument must be an instance of RegExp.${received}`
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -81,11 +83,12 @@ globalThis.__nodeAssert.match = (value, expression) => {
 };
 globalThis.__nodeAssert.doesNotMatch = (value, expression) => {
   if (!(expression instanceof RegExp)) {
-    const received = typeof expression === "string"
-      ? ` Received type string ('${expression}')`
-      : ` Received ${expression}`;
+    const received =
+      typeof expression === "string"
+        ? ` Received type string ('${expression}')`
+        : ` Received ${expression}`;
     const error = new TypeError(
-      `The "regexp" argument must be an instance of RegExp.${received}`,
+      `The "regexp" argument must be an instance of RegExp.${received}`
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -104,47 +107,26 @@ globalThis.__nodeAssert.Assert = class Assert {
       !["simple", "full"].includes(options.diff)
     ) {
       const error = new TypeError(
-        `The property 'options.diff' must be one of: 'simple', 'full'. Received '${options.diff}'`,
+        `The property 'options.diff' must be one of: 'simple', 'full'. Received '${options.diff}'`
       );
       error.code = "ERR_INVALID_ARG_VALUE";
       throw error;
     }
     this.diff = options?.diff || "simple";
     this.AssertionError = globalThis.__nodeAssert.AssertionError;
-    const methods = [
-      "ok",
-      "fail",
-      "equal",
-      "notEqual",
-      "strictEqual",
-      "notStrictEqual",
-      "deepEqual",
-      "notDeepEqual",
-      "deepStrictEqual",
-      "notDeepStrictEqual",
-      "partialDeepStrictEqual",
-      "throws",
-      "doesNotThrow",
-      "rejects",
-      "doesNotReject",
-      "ifError",
-      "match",
-      "doesNotMatch",
-    ];
+    const methods =
+      "ok fail equal notEqual strictEqual notStrictEqual deepEqual notDeepEqual deepStrictEqual notDeepStrictEqual partialDeepStrictEqual throws doesNotThrow rejects doesNotReject ifError match doesNotMatch".split(
+        " "
+      );
     const owner = this;
     for (const name of methods) {
       this[name] = function (...args) {
-        const context = this === owner
-          ? owner
-          : { strict: owner.strict, diff: "simple" };
+        const context =
+          this === owner ? owner : { strict: owner.strict, diff: "simple" };
         if (
-          [
-            "deepEqual",
-            "notDeepEqual",
-            "deepStrictEqual",
-            "notDeepStrictEqual",
-            "partialDeepStrictEqual",
-          ].includes(name) &&
+          "deepEqual notDeepEqual deepStrictEqual notDeepStrictEqual partialDeepStrictEqual"
+            .split(" ")
+            .includes(name) &&
           args.length < 2
         ) {
           return __nodeAssertMissingArgs();
@@ -177,14 +159,9 @@ globalThis.__nodeAssert.Assert = class Assert {
                     ? `${value.slice(0, 508)}...`
                     : value;
                 };
-                error.message =
-                  `Expected values to be loosely deep-equal:\n\n'${
-                    shorten(
-                      error.actual,
-                    )
-                  }\n\nshould loosely deep-equal\n\n'${
-                    shorten(error.expected)
-                  }`;
+                error.message = `Expected values to be loosely deep-equal:\n\n'${shorten(
+                  error.actual
+                )}\n\nshould loosely deep-equal\n\n'${shorten(error.expected)}`;
               }
               if (
                 name === "notStrictEqual" &&
@@ -234,7 +211,7 @@ const __nodeAssertClass = globalThis.__nodeAssert.Assert;
 globalThis.__nodeAssert.Assert = function Assert(options) {
   if (!new.target) {
     const error = new TypeError(
-      "Class constructor Assert cannot be invoked without 'new'",
+      "Class constructor Assert cannot be invoked without 'new'"
     );
     error.code = "ERR_CONSTRUCT_CALL_REQUIRED";
     throw error;
@@ -243,7 +220,6 @@ globalThis.__nodeAssert.Assert = function Assert(options) {
 };
 globalThis.__nodeAssert.Assert.prototype = __nodeAssertClass.prototype;
 globalThis.__nodeAssert.strict = globalThis.__nodeAssert;
-
 const __nodePathArg = (value) => {
   if (typeof value !== "string") {
     const error = new TypeError('The "path" argument must be of type string');

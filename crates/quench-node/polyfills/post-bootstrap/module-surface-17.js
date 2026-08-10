@@ -12,7 +12,7 @@
             const currentPrototype = Object.getPrototypeOf(server);
             if (
               Object.getPrototypeOf(result.Server.prototype) !==
-                currentPrototype
+              currentPrototype
             ) {
               Object.setPrototypeOf(result.Server.prototype, currentPrototype);
             }
@@ -104,7 +104,7 @@
           }
           const width = all.reduce(
             (count, group) => count + (group.includes(".") ? 2 : 1),
-            0,
+            0
           );
           return hasCompression ? width < 8 : width === 8;
         };
@@ -124,7 +124,9 @@
         };
         result.isIP = (value) =>
           typeof value === "string" && value.includes(":")
-            ? strictIPv6(value) ? 6 : 0
+            ? strictIPv6(value)
+              ? 6
+              : 0
             : originalIsIP?.(value) || 0;
         result.isIPv4 = (value) =>
           typeof value === "string" && value.includes(":")
@@ -134,14 +136,9 @@
           typeof value === "string" && value.includes(":")
             ? strictIPv6(value)
             : originalIsIPv6?.(value) || false;
-        for (
-          const constructor of [
-            "Server",
-            "Socket",
-            "SocketAddress",
-            "BlockList",
-          ]
-        ) {
+        for (const constructor of "Server Socket SocketAddress BlockList".split(
+          " "
+        )) {
           result[constructor] ||= function Constructor() {};
         }
       }

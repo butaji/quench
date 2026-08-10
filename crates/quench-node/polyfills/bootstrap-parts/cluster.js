@@ -29,7 +29,7 @@ const __quenchRequireStreamIter = () => {
   const abortError = (signal) =>
     signal?.reason ||
     Object.assign(new Error("The operation was aborted"), {
-      name: "AbortError",
+      name: "AbortError"
     });
   const normalizeChunk = (chunk) => {
     if (chunk === null) return [];
@@ -37,7 +37,7 @@ const __quenchRequireStreamIter = () => {
     if (typeof chunk === "string") return [NodeBuffer.from(chunk)];
     if (chunk instanceof Uint8Array || ArrayBuffer.isView(chunk)) {
       return [
-        NodeBuffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength),
+        NodeBuffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength)
       ];
     }
     if (chunk instanceof ArrayBuffer) return [NodeBuffer.from(chunk)];
@@ -53,8 +53,8 @@ const __quenchRequireStreamIter = () => {
         NodeBuffer.from(
           source.buffer || source,
           source.byteOffset || 0,
-          source.byteLength,
-        ),
+          source.byteLength
+        )
       ];
       return;
     }
@@ -144,15 +144,15 @@ const __quenchRequireStreamIter = () => {
       const nextPromise = iterator.next();
       const next = signal
         ? await Promise.race([
-          nextPromise,
-          new Promise((_, reject) => {
-            const abort = () => reject(abortError(signal));
-            signal.addEventListener("abort", abort, { once: true });
-            nextPromise.finally(() =>
-              signal.removeEventListener("abort", abort)
-            );
-          }),
-        ])
+            nextPromise,
+            new Promise((_, reject) => {
+              const abort = () => reject(abortError(signal));
+              signal.addEventListener("abort", abort, { once: true });
+              nextPromise.finally(() =>
+                signal.removeEventListener("abort", abort)
+              );
+            })
+          ])
         : await nextPromise;
       if (next.done) break;
       for (const chunk of normalizeChunk(next.value)) {
@@ -193,15 +193,15 @@ const __quenchRequireStreamIter = () => {
       const nextPromise = iterator.next();
       const next = options.signal
         ? await Promise.race([
-          nextPromise,
-          new Promise((_, reject) => {
-            const abort = () => reject(abortError(options.signal));
-            options.signal.addEventListener("abort", abort, { once: true });
-            nextPromise.finally(() =>
-              options.signal.removeEventListener("abort", abort)
-            );
-          }),
-        ])
+            nextPromise,
+            new Promise((_, reject) => {
+              const abort = () => reject(abortError(options.signal));
+              options.signal.addEventListener("abort", abort, { once: true });
+              nextPromise.finally(() =>
+                options.signal.removeEventListener("abort", abort)
+              );
+            })
+          ])
         : await nextPromise;
       if (next.done) break;
       const value = next.value;
@@ -266,23 +266,17 @@ const __quenchRequireStreamIter = () => {
     }
     const normalized = encoding.toLowerCase();
     if (
-      ![
-        "utf-8",
-        "utf8",
-        "utf-16le",
-        "utf16le",
-        "latin1",
-        "iso-8859-1",
-        "ascii",
-      ].includes(normalized)
+      !"utf-8 utf8 utf-16le utf16le latin1 iso-8859-1 ascii"
+        .split(" ")
+        .includes(normalized)
     ) {
       const error = new RangeError(`Unknown encoding: ${encoding}`);
       error.code = "ERR_ENCODING_NOT_SUPPORTED";
       throw error;
     }
     return normalized === "latin1" ||
-        normalized === "iso-8859-1" ||
-        normalized === "ascii"
+      normalized === "iso-8859-1" ||
+      normalized === "ascii"
       ? "iso-8859-1"
       : normalized;
   };
@@ -318,14 +312,14 @@ const __quenchRequireStreamIter = () => {
   const fromAsyncSource = (source) =>
     typeof source === "string"
       ? (async function* () {
-        yield [NodeBuffer.from(source)];
-      })()
+          yield [NodeBuffer.from(source)];
+        })()
       : sourceAsync(source);
   const fromSyncSource = (source) =>
     typeof source === "string"
       ? (function* () {
-        yield [NodeBuffer.from(source)];
-      })()
+          yield [NodeBuffer.from(source)];
+        })()
       : sourceSync(source);
   const tapSync = (observer) => {
     if (typeof observer !== "function") {
@@ -352,7 +346,7 @@ const __quenchRequireStreamIter = () => {
         typeof transform?.transform !== "function"
       ) {
         const error = new TypeError(
-          "transform must be a function or an object with transform()",
+          "transform must be a function or an object with transform()"
         );
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
@@ -379,14 +373,14 @@ const __quenchRequireStreamIter = () => {
                 (function* () {
                   yield* source;
                   yield null;
-                })(),
+                })()
               );
               yield* output;
             })();
           }
         }
         yield* current;
-      },
+      }
     };
   };
   const push = () => {
@@ -405,7 +399,7 @@ const __quenchRequireStreamIter = () => {
           if (value === null) return;
           yield value;
         }
-      },
+      }
     };
     const enqueue = (value) => {
       const batch = Array.isArray(value) ? value : [NodeBuffer.from(value)];
@@ -425,9 +419,9 @@ const __quenchRequireStreamIter = () => {
           ended = true;
           while (waiters.length) waiters.shift()(null);
           return this;
-        },
+        }
       },
-      readable,
+      readable
     };
   };
   const merge = (...args) => {
@@ -451,7 +445,7 @@ const __quenchRequireStreamIter = () => {
         const pending = sources.map((iterator, index) => ({
           index,
           iterator,
-          promise: iterator.next().then((result) => ({ index, result })),
+          promise: iterator.next().then((result) => ({ index, result }))
         }));
         let primaryError = null;
         try {
@@ -460,19 +454,19 @@ const __quenchRequireStreamIter = () => {
             const next = Promise.race(pending.map((entry) => entry.promise));
             const result = options.signal
               ? await Promise.race([
-                next,
-                new Promise((_, reject) =>
-                  options.signal.addEventListener(
-                    "abort",
-                    () => reject(abortError(options.signal)),
-                    { once: true },
+                  next,
+                  new Promise((_, reject) =>
+                    options.signal.addEventListener(
+                      "abort",
+                      () => reject(abortError(options.signal)),
+                      { once: true }
+                    )
                   )
-                ),
-              ])
+                ])
               : await next;
             const { index } = result;
             const entry = pending.find(
-              (candidate) => candidate.index === index,
+              (candidate) => candidate.index === index
             );
             if (!result.result.done) {
               yield result.result.value;
@@ -487,20 +481,20 @@ const __quenchRequireStreamIter = () => {
         } finally {
           try {
             await Promise.all(
-              pending.map((entry) => entry.iterator.return?.()),
+              pending.map((entry) => entry.iterator.return?.())
             );
           } catch (cleanupError) {
             if (primaryError) {
               throw new SuppressedError(
                 primaryError,
                 cleanupError,
-                "An error was suppressed during stream cleanup",
+                "An error was suppressed during stream cleanup"
               );
             }
             throw cleanupError;
           }
         }
-      },
+      }
     };
   };
   const broadcast = (options = {}) => {
@@ -515,12 +509,12 @@ const __quenchRequireStreamIter = () => {
     let totalBytes = 0;
     const publish = (value) => {
       const batch = (Array.isArray(value) ? value : [value]).flatMap(
-        normalizeChunk,
+        normalizeChunk
       );
       const bytes = batch.reduce(
         (sum, item) =>
           sum + (item?.byteLength ?? NodeBuffer.byteLength(String(item))),
-        0,
+        0
       );
       if (totalBytes + bytes > budget) {
         if (backpressure === "drop-newest") return false;
@@ -530,7 +524,7 @@ const __quenchRequireStreamIter = () => {
             const droppedBytes = dropped.reduce(
               (sum, item) =>
                 sum + (item?.byteLength ?? NodeBuffer.byteLength(String(item))),
-              0,
+              0
             );
             totalBytes -= droppedBytes;
             for (const consumer of consumers) {
@@ -556,7 +550,7 @@ const __quenchRequireStreamIter = () => {
         done: ended,
         failure: undefined,
         signal: options?.signal,
-        onAbort: null,
+        onAbort: null
       };
       const detachSignal = () => {
         if (consumer.signal && consumer.onAbort) {
@@ -568,8 +562,8 @@ const __quenchRequireStreamIter = () => {
         if (consumer.done) return;
         consumer.done = true;
         consumers.delete(consumer);
-        const reason = consumer.signal.reason ||
-          new Error("The operation was aborted");
+        const reason =
+          consumer.signal.reason || new Error("The operation was aborted");
         consumer.failure = reason;
         while (consumer.waiters.length) consumer.waiters.shift().reject(reason);
         detachSignal();
@@ -591,8 +585,8 @@ const __quenchRequireStreamIter = () => {
                   (sum, item) =>
                     sum +
                     (item?.byteLength ?? NodeBuffer.byteLength(String(item))),
-                  0,
-                ),
+                  0
+                )
             );
             while (pendingWrites.length) {
               const pending = pendingWrites[0];
@@ -602,7 +596,7 @@ const __quenchRequireStreamIter = () => {
                 (sum, item) =>
                   sum +
                   (item?.byteLength ?? NodeBuffer.byteLength(String(item))),
-                0,
+                0
               );
               if (totalBytes + pendingBytes > budget) break;
               pendingWrites.shift();
@@ -613,8 +607,8 @@ const __quenchRequireStreamIter = () => {
               else {
                 pending.reject(
                   Object.assign(new RangeError("Invalid state: Failed"), {
-                    code: "ERR_INVALID_STATE",
-                  }),
+                    code: "ERR_INVALID_STATE"
+                  })
                 );
               }
             }
@@ -640,7 +634,7 @@ const __quenchRequireStreamIter = () => {
         },
         [Symbol.asyncIterator]() {
           return this;
-        },
+        }
       };
     };
     const finish = (error) => {
@@ -652,8 +646,8 @@ const __quenchRequireStreamIter = () => {
         pending.reject(
           error ||
             Object.assign(new TypeError("Invalid state: Failed"), {
-              code: "ERR_INVALID_STATE",
-            }),
+              code: "ERR_INVALID_STATE"
+            })
         );
       }
       for (const consumer of consumers) {
@@ -676,7 +670,7 @@ const __quenchRequireStreamIter = () => {
       if (options.signal.aborted) abortBroadcast();
       else {
         options.signal.addEventListener("abort", abortBroadcast, {
-          once: true,
+          once: true
         });
       }
     }
@@ -689,7 +683,7 @@ const __quenchRequireStreamIter = () => {
         const bytes = (Array.isArray(value) ? value : [value]).reduce(
           (sum, item) =>
             sum + (item?.byteLength ?? NodeBuffer.byteLength(String(item))),
-          0,
+          0
         );
         if (totalBytes + bytes > budget && backpressure === "unbounded") {
           return new Promise((resolve, reject) => {
@@ -697,7 +691,7 @@ const __quenchRequireStreamIter = () => {
               value,
               resolve,
               reject,
-              signal: writeOptions?.signal,
+              signal: writeOptions?.signal
             };
             if (pending.signal) {
               pending.abort = () => {
@@ -706,7 +700,7 @@ const __quenchRequireStreamIter = () => {
                 reject(abortError(pending.signal));
               };
               pending.signal.addEventListener("abort", pending.abort, {
-                once: true,
+                once: true
               });
             }
             pendingWrites.push(pending);
@@ -714,7 +708,7 @@ const __quenchRequireStreamIter = () => {
         }
         if (totalBytes + bytes > budget && backpressure === "strict") {
           const error = Object.assign(new RangeError("Invalid state: Failed"), {
-            code: "ERR_INVALID_STATE",
+            code: "ERR_INVALID_STATE"
           });
           if (pendingWrites.length) return Promise.reject(error);
           return new Promise((resolve, reject) =>
@@ -728,7 +722,7 @@ const __quenchRequireStreamIter = () => {
         const bytes = (Array.isArray(value) ? value : [value]).reduce(
           (sum, item) =>
             sum + (item?.byteLength ?? NodeBuffer.byteLength(String(item))),
-          0,
+          0
         );
         if (
           totalBytes + bytes > budget &&
@@ -747,7 +741,7 @@ const __quenchRequireStreamIter = () => {
       async end(value) {
         if (value?.signal?.aborted) {
           return Promise.reject(
-            value.signal.reason || new Error("The operation was aborted"),
+            value.signal.reason || new Error("The operation was aborted")
           );
         }
         if (value !== undefined) publish(value);
@@ -763,13 +757,13 @@ const __quenchRequireStreamIter = () => {
         finish(
           error ||
             Object.assign(new TypeError("Invalid state: Failed"), {
-              code: "ERR_INVALID_STATE",
-            }),
+              code: "ERR_INVALID_STATE"
+            })
         );
       },
       [drainableProtocol]() {
         return ended ? null : { desiredSize: budget - totalBytes };
-      },
+      }
     };
     return {
       writer,
@@ -782,8 +776,8 @@ const __quenchRequireStreamIter = () => {
         },
         get consumerCount() {
           return consumers.size;
-        },
-      },
+        }
+      }
     };
   };
   const shareSync = (source, options = {}) => {
@@ -826,7 +820,7 @@ const __quenchRequireStreamIter = () => {
               consumer.active = false;
               consumers.delete(consumer);
             }
-          },
+          }
         };
       },
       cancel() {
@@ -837,7 +831,7 @@ const __quenchRequireStreamIter = () => {
       },
       get consumerCount() {
         return consumers.size;
-      },
+      }
     };
     return shared;
   };
@@ -895,7 +889,7 @@ const __quenchRequireStreamIter = () => {
     return globalThis.__nodeStream.Readable.from(chunks, {
       ...opts,
       objectMode: false,
-      highWaterMark: opts.highWaterMark ?? 64 * 1024,
+      highWaterMark: opts.highWaterMark ?? 64 * 1024
     });
   };
   const toReadableSync = (source, options) => {
@@ -907,7 +901,7 @@ const __quenchRequireStreamIter = () => {
     return globalThis.__nodeStream.Readable.from(chunks, {
       ...opts,
       objectMode: false,
-      highWaterMark: opts.highWaterMark ?? 64 * 1024,
+      highWaterMark: opts.highWaterMark ?? 64 * 1024
     });
   };
   const Broadcast = {
@@ -917,7 +911,7 @@ const __quenchRequireStreamIter = () => {
         const result = source[protocol](options);
         if (!result || typeof result !== "object") {
           const error = new TypeError(
-            "The broadcast protocol must return an object",
+            "The broadcast protocol must return an object"
           );
           error.code = "ERR_INVALID_RETURN_VALUE";
           throw error;
@@ -944,7 +938,7 @@ const __quenchRequireStreamIter = () => {
         }
       })();
       return result;
-    },
+    }
   };
   const writableCache = new WeakMap();
   const fromWritable = (writable, options = {}) => {
@@ -1002,13 +996,11 @@ const __quenchRequireStreamIter = () => {
           throw error;
         }
         for (const chunk of chunks) {
-          if (
-            !(
-              typeof chunk === "string" ||
-              ArrayBuffer.isView(chunk) ||
-              chunk instanceof ArrayBuffer
-            )
-          ) {
+          if (!(
+            typeof chunk === "string" ||
+            ArrayBuffer.isView(chunk) ||
+            chunk instanceof ArrayBuffer
+          )) {
             const error = new TypeError("chunk must be a string or buffer");
             error.code = "ERR_INVALID_ARG_TYPE";
             throw error;
@@ -1024,7 +1016,7 @@ const __quenchRequireStreamIter = () => {
       },
       endSync() {
         return -1;
-      },
+      }
     };
     state.writer = writer;
     return writer;
@@ -1092,14 +1084,15 @@ const __quenchRequireStreamIter = () => {
           }
         }
         callback();
-      },
+      }
     });
-    writable._writev = typeof writer.writev === "function"
-      ? (chunks, callback) =>
-        Promise.resolve(
-          writer.writev(chunks.map((item) => item.chunk)),
-        ).then(() => callback(), callback)
-      : null;
+    writable._writev =
+      typeof writer.writev === "function"
+        ? (chunks, callback) =>
+            Promise.resolve(
+              writer.writev(chunks.map((item) => item.chunk))
+            ).then(() => callback(), callback)
+        : null;
     if (typeof writer.writev === "function") {
       const originalWrite = writable._write;
       writable._write = function (chunk, encoding, callback) {
@@ -1116,7 +1109,7 @@ const __quenchRequireStreamIter = () => {
         if (!batch.length || this.writableCorked > 0) return;
         Promise.resolve(writer.writev(batch.map(({ chunk }) => chunk))).then(
           () => batch.forEach(({ callback }) => callback()),
-          (error) => batch.forEach(({ callback }) => callback(error)),
+          (error) => batch.forEach(({ callback }) => callback(error))
         );
       };
     }
@@ -1172,7 +1165,7 @@ const __quenchRequireStreamIter = () => {
         return {
           async *[Symbol.asyncIterator]() {
             yield* transform(sourceAsync(readable));
-          },
+          }
         };
       }
       return {
@@ -1185,21 +1178,22 @@ const __quenchRequireStreamIter = () => {
               yield result;
             }
           }
-        },
+        }
       };
     },
     toStreamable,
-    toAsyncStreamable,
+    toAsyncStreamable
   };
 };
 const __quenchFinishClusterWorker = (cluster, worker, workerError) => {
   queueMicrotask(() => {
     if (worker.state !== "online" && worker.state !== "listening") return;
-    const exitCode = process.exitCode !== undefined && process.exitCode !== 0
-      ? process.exitCode
-      : workerError
-      ? 1
-      : 0;
+    const exitCode =
+      process.exitCode !== undefined && process.exitCode !== 0
+        ? process.exitCode
+        : workerError
+          ? 1
+          : 0;
     worker.process.exitCode = exitCode;
     worker.process.signalCode = null;
     worker._markDead();
@@ -1265,7 +1259,7 @@ const __quenchVmRunCallback = (callback, sandbox, args) => {
       state.keys,
       state.previous,
       state.hiddenProcess,
-      state.previousPrototype,
+      state.previousPrototype
     );
   }
 };
@@ -1276,18 +1270,16 @@ const __quenchVmFormatError = (error, options, code) => {
   }
   const filename = typeof options === "string" ? options : options?.filename;
   if (filename) {
-    const lineOffset = typeof options === "object"
-      ? options.lineOffset || 0
-      : 0;
-    const columnOffset = typeof options === "object"
-      ? options.columnOffset || 0
-      : 0;
+    const lineOffset =
+      typeof options === "object" ? options.lineOffset || 0 : 0;
+    const columnOffset =
+      typeof options === "object" ? options.columnOffset || 0 : 0;
     error.stack = __quenchVmFormatStack(
       error,
       filename,
       lineOffset,
       columnOffset,
-      code,
+      code
     );
   }
 };
@@ -1295,17 +1287,18 @@ const __quenchVmEvaluateContext = (code, sandbox, options, state) => {
   try {
     __quenchVmCheckRestrictedDeclaration(code);
     const source = String(code);
-    const result = source.trim() === "window" &&
-        Object.prototype.hasOwnProperty.call(sandbox, "window")
-      ? globalThis
-      : (0, eval)(source);
+    const result =
+      source.trim() === "window" &&
+      Object.prototype.hasOwnProperty.call(sandbox, "window")
+        ? globalThis
+        : (0, eval)(source);
     __quenchVmCopyProperties(sandbox, state.keys, state.originalGlobalKeys);
     return result;
   } catch (error) {
     __quenchVmFormatError(
       error,
       options,
-      state.formatCode ? String(code) : null,
+      state.formatCode ? String(code) : null
     );
     throw error;
   }
@@ -1313,12 +1306,12 @@ const __quenchVmEvaluateContext = (code, sandbox, options, state) => {
 const __quenchVmValidateContext = (sandbox) => {
   if (!__quenchVmIsObject(sandbox)) {
     __quenchVmTypeError(
-      'The "contextifiedObject" argument must be of type object.',
+      'The "contextifiedObject" argument must be of type object.'
     );
   }
   if (!__quenchVmContexts.has(sandbox)) {
     __quenchVmTypeError(
-      'The "contextifiedObject" argument must be an vm.Context',
+      'The "contextifiedObject" argument must be an vm.Context'
     );
   }
 };
@@ -1332,7 +1325,7 @@ const __quenchVmRunInContext = (code, sandbox, options) => {
       state.keys,
       state.previous,
       state.hiddenProcess,
-      state.previousPrototype,
+      state.previousPrototype
     );
   }
 };
@@ -1394,7 +1387,7 @@ const __quenchVmModule = {
   runInNewContext: (code, sandbox = {}, options) =>
     __quenchVmRunInNewContext(code, sandbox, options),
   runInContext: (code, sandbox, options) =>
-    __quenchVmRunInContext(code, sandbox, options),
+    __quenchVmRunInContext(code, sandbox, options)
 };
 const __quenchTrackTestResult = (result) => {
   if (!result?.then) return result;
@@ -1420,12 +1413,12 @@ const __quenchNodeTestModule = (name, options, callback) =>
           wrapper.mock = {
             _count: 0,
             calls: [],
-            callCount: () => wrapper.mock._count,
+            callCount: () => wrapper.mock._count
           };
           return wrapper;
-        },
-      },
-    }),
+        }
+      }
+    })
   );
 __quenchNodeTestModule.describe = (_name, callback) =>
   __quenchTrackTestResult(callback({ assert: globalThis.__nodeAssert }));
@@ -1436,7 +1429,7 @@ const __quenchDebugBinding = () => ({
   getGenericUsageCount: (name) =>
     name.includes("Uninitialized")
       ? __nodeAllocatorCounts.uninitialized
-      : __nodeAllocatorCounts.zeroFilled,
+      : __nodeAllocatorCounts.zeroFilled
 });
 const __quenchInternalBindingModule = {
   internalBinding: (binding) => {
@@ -1450,7 +1443,7 @@ const __quenchInternalBindingModule = {
         errname: (errorNumber) =>
           globalThis.__nodeUtil.getSystemErrorName(errorNumber),
         getErrorMessage: (errorNumber) =>
-          globalThis.__nodeUtil.getSystemErrorMessage(errorNumber),
+          globalThis.__nodeUtil.getSystemErrorMessage(errorNumber)
       };
     }
     if (binding === "udp_wrap") {
@@ -1459,7 +1452,7 @@ const __quenchInternalBindingModule = {
     if (binding === "timers") {
       return {
         getLibuvNow: () =>
-          Number(BigInt(globalThis.__quench_now_ns()) / 1000000n),
+          Number(BigInt(globalThis.__quench_now_ns()) / 1000000n)
       };
     }
     if (binding === "js_stream") {
@@ -1468,7 +1461,7 @@ const __quenchInternalBindingModule = {
           constructor() {
             this._externalStream = { __quench_external: true };
           }
-        },
+        }
       };
     }
     if (binding === "tcp_wrap") return globalThis.__quenchTcpBinding?.();
@@ -1482,11 +1475,11 @@ const __quenchInternalBindingModule = {
             return false;
           };
         })(),
-        previewEntries: () => [],
+        previewEntries: () => []
       };
     }
     return globalThis.__quenchInternalFallbackBinding;
-  },
+  }
 };
 const __quenchInternalErrorsModule = {
   codes: {
@@ -1496,12 +1489,12 @@ const __quenchInternalErrorsModule = {
         super("Channel closed");
         this.code = "ERR_IPC_CHANNEL_CLOSED";
       }
-    },
-  },
+    }
+  }
 };
 const __quenchInternalBufferModule = {
   utf8Write: (buffer, string, offset = 0, length = buffer.length - offset) =>
-    buffer.write(string, offset, length, "utf8"),
+    buffer.write(string, offset, length, "utf8")
 };
 Object.assign(__quenchInternalFsUtilsModule, {
   stringToFlags: (flags) => {
@@ -1527,7 +1520,7 @@ Object.assign(__quenchInternalFsUtilsModule, {
       as: 1053761,
       sa: 1053761,
       "as+": 1053762,
-      "sa+": 1053762,
+      "sa+": 1053762
     };
     if (typeof flags !== "string" || values[flags] === undefined) {
       const error = new TypeError(`Unknown file open flag: ${flags}`);
@@ -1535,7 +1528,7 @@ Object.assign(__quenchInternalFsUtilsModule, {
       throw error;
     }
     return values[flags];
-  },
+  }
 });
 const __quenchRequireClusterInternal = (name) => {
   if (name === "internal/test/binding") return __quenchInternalBindingModule;
@@ -1545,7 +1538,7 @@ const __quenchRequireClusterInternal = (name) => {
   if (name === "zlib/iter") {
     return {
       compressGzip: () => (chunks) => chunks,
-      decompressGzip: () => (chunks) => chunks,
+      decompressGzip: () => (chunks) => chunks
     };
   }
 };
@@ -1564,7 +1557,7 @@ let __quenchClusterModule;
           pid,
           exitCode: undefined,
           signalCode: undefined,
-          kill: (signal) => this.kill(signal),
+          kill: (signal) => this.kill(signal)
         };
         this._sends = 0;
         const alive = globalThis.__quench_node_pids || new Set();
@@ -1613,7 +1606,7 @@ let __quenchClusterModule;
               "exit",
               this,
               this.process.exitCode,
-              this.process.signalCode,
+              this.process.signalCode
             );
             this.emit("exit", this.process.exitCode, this.process.signalCode);
           } else {
@@ -1621,7 +1614,7 @@ let __quenchClusterModule;
               "exit",
               this,
               this.process.exitCode,
-              this.process.signalCode,
+              this.process.signalCode
             );
             this.emit("exit", this.process.exitCode, this.process.signalCode);
           }
@@ -1701,7 +1694,7 @@ globalThis.__quench_require_part_02 = (name, specifier) => {
       EventTarget,
       CustomEvent,
       NodeEventTarget,
-      kWeakHandler: Symbol("kWeakHandler"),
+      kWeakHandler: Symbol("kWeakHandler")
     };
   }
   if (name === "stream") return globalThis.__nodeStream;

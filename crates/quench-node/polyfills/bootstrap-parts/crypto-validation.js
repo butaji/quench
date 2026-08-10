@@ -11,13 +11,13 @@ const __nodeCryptoRandomArguments = (minimum, maximum, callback) => {
 const __nodeCryptoCipherInfo = (name) =>
   String(name).toLowerCase() === "aes-128-cbc"
     ? {
-      name: "aes-128-cbc",
-      nid: 419,
-      blockSize: 16,
-      ivLength: 16,
-      keyLength: 16,
-      mode: "cbc",
-    }
+        name: "aes-128-cbc",
+        nid: 419,
+        blockSize: 16,
+        ivLength: 16,
+        keyLength: 16,
+        mode: "cbc"
+      }
     : undefined;
 const __nodeCryptoAssertDigestOpen = (finalized) => {
   if (finalized) {
@@ -29,7 +29,7 @@ const __nodeCryptoAssertDigestOpen = (finalized) => {
 const __nodeCryptoValidateStringEncoding = (value, encoding) => {
   if (encoding === "hex" && value.length % 2) {
     const error = new TypeError(
-      `The argument 'encoding' is invalid for data of length ${value.length}. Received 'hex'`,
+      `The argument 'encoding' is invalid for data of length ${value.length}. Received 'hex'`
     );
     error.code = "ERR_INVALID_ARG_VALUE";
     throw error;
@@ -59,14 +59,14 @@ const __quenchValidateDhInputType = (value) => {
   ) {
     throw Object.assign(
       new TypeError(
-        "The sizeOrKey argument must be a number, string, or buffer",
+        "The sizeOrKey argument must be a number, string, or buffer"
       ),
-      { code: "ERR_INVALID_ARG_TYPE" },
+      { code: "ERR_INVALID_ARG_TYPE" }
     );
   }
   if (typeof value === "string" && value.length === 0) {
     throw Object.assign(new TypeError("The sizeOrKey argument is invalid"), {
-      code: "ERR_INVALID_ARG_TYPE",
+      code: "ERR_INVALID_ARG_TYPE"
     });
   }
 };
@@ -79,7 +79,7 @@ const __quenchValidateDhGeneratorType = (generator) => {
     !ArrayBuffer.isView(generator)
   ) {
     throw Object.assign(new TypeError("The generator argument is invalid"), {
-      code: "ERR_INVALID_ARG_TYPE",
+      code: "ERR_INVALID_ARG_TYPE"
     });
   }
 };
@@ -89,9 +89,9 @@ const __quenchValidateDhNumbers = (sizeOrKey, generator) => {
   if (typeof sizeOrKey === "number" && !Number.isInteger(sizeOrKey)) {
     throw Object.assign(
       new RangeError(
-        `The value of "sizeOrKey" is out of range. It must be an integer. Received ${sizeOrKey}`,
+        `The value of "sizeOrKey" is out of range. It must be an integer. Received ${sizeOrKey}`
       ),
-      { code: "ERR_OUT_OF_RANGE" },
+      { code: "ERR_OUT_OF_RANGE" }
     );
   }
   if (typeof sizeOrKey === "number" && sizeOrKey <= 1) {
@@ -102,9 +102,9 @@ const __quenchValidateDhNumbers = (sizeOrKey, generator) => {
   if (typeof generator === "number" && !Number.isInteger(generator)) {
     throw Object.assign(
       new RangeError(
-        `The value of "generator" is out of range. It must be an integer. Received ${generator}`,
+        `The value of "generator" is out of range. It must be an integer. Received ${generator}`
       ),
-      { code: "ERR_OUT_OF_RANGE" },
+      { code: "ERR_OUT_OF_RANGE" }
     );
   }
   __quenchValidateDhGenerator(generator);
@@ -114,25 +114,16 @@ const __nodeCryptoHmacDigest = (algorithm, inner, outer, chunks, encoding) => {
   for (const chunk of chunks) message.push(...chunk);
   const innerDigest = globalThis.__quench_digest_bytes(algorithm, [
     ...inner,
-    ...message,
+    ...message
   ]);
   const result = NodeBuffer.from(
-    globalThis.__quench_digest_bytes(algorithm, [...outer, ...innerDigest]),
+    globalThis.__quench_digest_bytes(algorithm, [...outer, ...innerDigest])
   );
   if (encoding === undefined || encoding === null) return result;
   if (
-    [
-      "hex",
-      "base64",
-      "latin1",
-      "binary",
-      "utf8",
-      "utf-8",
-      "ucs2",
-      "ucs-2",
-      "utf16le",
-      "utf-16le",
-    ].includes(encoding)
+    "hex base64 latin1 binary utf8 utf-8 ucs2 ucs-2 utf16le utf-16le"
+      .split(" ")
+      .includes(encoding)
   ) {
     return result.toString(encoding);
   }
