@@ -26,6 +26,7 @@ pub(crate) fn execute_builtin(
         ArrayFlat => flat(receiver, arguments),
         ArrayFlatMap => return Some(flat_map(receiver, arguments)),
         ArrayAt => return Some(Ok(at(receiver, arguments))),
+        ArraySort => return Some(Ok(sort(receiver))),
         ArrayToReversed => return Some(Ok(to_reversed(receiver))),
         ArraySplice => return Some(Ok(splice(receiver, arguments))),
         ArrayReduce => return Some(reduce_values(receiver, arguments, false)),
@@ -115,6 +116,7 @@ pub(crate) fn property(values: &crate::value::ArrayData, key: &str) -> Value {
         "flat" => crate::ops::Builtin::ArrayFlat,
         "flatMap" => crate::ops::Builtin::ArrayFlatMap,
         "at" => crate::ops::Builtin::ArrayAt,
+        "sort" => crate::ops::Builtin::ArraySort,
         "toReversed" => crate::ops::Builtin::ArrayToReversed,
         "join" => crate::ops::Builtin::ArrayJoin,
         "push" => crate::ops::Builtin::ArrayPush,
@@ -125,6 +127,17 @@ pub(crate) fn property(values: &crate::value::ArrayData, key: &str) -> Value {
         _ => return index(values, key),
     };
     Value::Builtin(method)
+}
+
+fn sort(receiver: Option<&Value>) -> Value {
+    let Some(receiver @ Value::Array(values)) = receiver else {
+        return Value::Undefined;
+    };
+    let mut sorted = values.to_vec();
+    sorted.sort_by_key(|value| crate::intl::tolocale::value::to_string(Some(value)));
+    let result = Value::array(sorted);
+    crate::locals::replace_value(receiver, &result);
+    result
 }
 
 fn index(values: &[Value], key: &str) -> Value {

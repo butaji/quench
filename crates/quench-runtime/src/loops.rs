@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 mod counted_for;
 
-use oxc::ast::ast::{DoWhileStatement, Expression, ForInStatement, ForOfStatement, WhileStatement};
+use oxc::ast::ast::{DoWhileStatement, ForInStatement, ForOfStatement, WhileStatement};
 
 use crate::{
     facts::ProgramDb,
@@ -16,13 +16,14 @@ pub(crate) use counted_for::reduce_for;
 pub(crate) fn reduce_update(
     update: &oxc::ast::ast::UpdateExpression<'_>,
     ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
     let oxc::ast::ast::SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) =
         &update.argument
     else {
-        return reduce_member_update(update, ops, next_register);
+        return reduce_member_update(update, ops, facts, next_register, locals);
     };
     let slot = *locals.get(identifier.name.as_str())?;
     let old = *next_register;
@@ -53,10 +54,13 @@ pub(crate) fn reduce_update(
 fn reduce_member_update(
     update: &oxc::ast::ast::UpdateExpression<'_>,
     ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
     next_register: &mut u16,
+    locals: &HashMap<String, u16>,
 ) -> Option<u16> {
-    let member = this_static_member(update)?;
-    let object = crate::reduce_support::emit_undefined(ops, next_register);
+    let member = static_member(update)?;
+    let object =
+        crate::reduce::reduce_expression(&member.object, ops, facts, next_register, locals)?;
     let key = member.property.name.to_string();
     let old = emit_member_load(ops, next_register, object, &key);
     let one = emit_one(ops, next_register);
@@ -69,14 +73,14 @@ fn reduce_member_update(
     Some(if update.prefix { updated } else { old })
 }
 
-fn this_static_member<'a>(
+fn static_member<'a>(
     update: &'a oxc::ast::ast::UpdateExpression<'_>,
 ) -> Option<&'a oxc::ast::ast::StaticMemberExpression<'a>> {
     let oxc::ast::ast::SimpleAssignmentTarget::StaticMemberExpression(member) = &update.argument
     else {
         return None;
     };
-    matches!(member.object, Expression::ThisExpression(_)).then_some(member)
+    Some(member)
 }
 
 fn emit_member_load(ops: &mut Vec<Op>, next_register: &mut u16, object: u16, key: &str) -> u16 {

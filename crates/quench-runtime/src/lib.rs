@@ -28,6 +28,7 @@ pub mod execute;
 pub mod facts;
 mod functions;
 mod functions_dynamic;
+mod functions_write;
 mod globals;
 mod identifiers;
 mod intl;

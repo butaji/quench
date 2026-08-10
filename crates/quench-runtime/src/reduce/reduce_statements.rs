@@ -128,7 +128,14 @@ pub fn reduce_statements_with_locals(
     locals: HashMap<String, u16>,
     next_slot: u16,
 ) -> Result<Vec<Op>, Vec<String>> {
-    reduce_statements_opt(statements, facts, locals, next_slot, true, Vec::new(), 0)
+    let mut ops =
+        reduce_statements_opt(statements, facts, locals, next_slot, false, Vec::new(), 0)?;
+    ops.push(Op::Const {
+        dst: 0,
+        value: crate::ops::Constant::Undefined,
+    });
+    ops.push(Op::Return { src: 0 });
+    Ok(ops)
 }
 /// Reduce statements without appending a terminal `Return`. Used for nested
 /// blocks whose control flow continues after the block (if/try/switch bodies).

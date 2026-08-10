@@ -9,9 +9,9 @@ use crate::{
 
 #[derive(Clone, Copy)]
 pub(crate) struct FunctionMetadata {
-    kind: FunctionKind,
-    strictness: FunctionStrictness,
-    is_async: bool,
+    pub(crate) kind: FunctionKind,
+    pub(crate) strictness: FunctionStrictness,
+    pub(crate) is_async: bool,
 }
 
 pub(super) fn function_parameters(
@@ -34,6 +34,12 @@ fn parameters(
     }
     let count = u16::try_from(formal.items.len())
         .map_err(|_| vec!["Too many function parameters".to_string()])?;
+    if let Some(rest) = &formal.rest {
+        let BindingPatternKind::BindingIdentifier(identifier) = &rest.argument.kind else {
+            return Err(vec!["Unsupported rest parameter pattern".to_string()]);
+        };
+        parameters.insert(identifier.name.to_string(), count.saturating_add(2));
+    }
     Ok((parameters, count))
 }
 
@@ -44,12 +50,49 @@ pub(crate) fn reduce_body(
     parameter_count: u16,
     captures: u16,
 ) -> Result<Vec<Op>, Vec<String>> {
-    crate::reduce::reduce_statements_with_locals(
+    let rest = rest_slot(&parameters, parameter_count, captures);
+    let next_slot = captures
+        .saturating_add(parameter_count)
+        .saturating_add(if rest.is_some() { 3 } else { 2 });
+    let body = crate::reduce::reduce_statements_with_locals(
         &body.statements,
         facts,
         parameters,
-        captures.saturating_add(parameter_count).saturating_add(2),
-    )
+        next_slot,
+    )?;
+    Ok(bind_rest(body, rest, parameter_count, captures))
+}
+
+fn rest_slot(parameters: &HashMap<String, u16>, params: u16, captures: u16) -> Option<u16> {
+    let slot = captures.saturating_add(params).saturating_add(2);
+    parameters
+        .values()
+        .any(|value| *value == slot)
+        .then_some(slot)
+}
+
+fn bind_rest(mut body: Vec<Op>, rest: Option<u16>, params: u16, captures: u16) -> Vec<Op> {
+    let Some(slot) = rest else { return body };
+    let arguments = captures.saturating_add(params);
+    let mut prefix = vec![
+        Op::LoadLocal {
+            dst: 0,
+            slot: arguments,
+        },
+        Op::Const {
+            dst: 1,
+            value: crate::ops::Constant::Number(f64::from(params)),
+        },
+        Op::CallMethod {
+            dst: 2,
+            object: 0,
+            key: "slice".to_string(),
+            args: vec![1],
+        },
+        Op::StoreLocal { slot, src: 2 },
+    ];
+    prefix.append(&mut body);
+    prefix
 }
 
 fn capture_count(locals: &HashMap<String, u16>) -> u16 {
@@ -108,10 +151,15 @@ pub(super) fn reduce_function_ops(
         &formal_parameters,
     );
     let local_count = captures.saturating_add(parameter_count).saturating_add(2);
+    let rest = rest_slot(&parameters, parameter_count, captures);
+    let local_count = local_count.saturating_add(u16::from(rest.is_some()));
     let body_ops =
         crate::reduce::reduce_statements_with_locals(statements, facts, parameters, local_count)
             .ok()?;
-    Some((body_ops, captures))
+    Some((
+        bind_rest(body_ops, rest, parameter_count, captures),
+        captures,
+    ))
 }
 
 fn emit_function_op(
@@ -259,68 +307,7 @@ pub(crate) fn write(
 }
 
 pub(crate) fn write_op(registers: &mut Vec<crate::value::Value>, op: &Op) {
-    match op {
-        Op::MakeFunction {
-            dst,
-            body,
-            params,
-            captures,
-            strictness,
-            is_async,
-        } => write_ordinary(
-            registers,
-            *dst,
-            body,
-            *params,
-            *captures,
-            *strictness,
-            *is_async,
-        ),
-        Op::MakeFunctionWithKind {
-            dst,
-            body,
-            params,
-            captures,
-            kind,
-            strictness,
-            is_async,
-        } => write_kind(
-            registers,
-            (*dst, body, *params, *captures),
-            FunctionMetadata {
-                kind: *kind,
-                strictness: *strictness,
-                is_async: *is_async,
-            },
-        ),
-        _ => {}
-    }
-}
-
-fn write_kind(
-    registers: &mut Vec<crate::value::Value>,
-    function: (u16, &[Op], u16, u16),
-    metadata: FunctionMetadata,
-) {
-    let (dst, body, params, captures) = function;
-    write(registers, dst, body, params, captures, metadata);
-}
-
-fn write_ordinary(
-    registers: &mut Vec<crate::value::Value>,
-    dst: u16,
-    body: &[Op],
-    params: u16,
-    captures: u16,
-    strictness: FunctionStrictness,
-    is_async: bool,
-) {
-    let metadata = FunctionMetadata {
-        kind: FunctionKind::Ordinary,
-        strictness,
-        is_async,
-    };
-    write(registers, dst, body, params, captures, metadata);
+    crate::functions_write::write_op(registers, op);
 }
 
 fn build_registers(
