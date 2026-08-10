@@ -80,7 +80,8 @@
         "ssr-response": { "startup_ms": 110.8, "peak_rss_mib": 18.6, "workload_ms": 9.3, "req_per_sec": 214638 }
       },
       "improvement_vs": "scenario-run-b.quench_node.route-load",
-      "improvement": { "startup_pct": 44.3, "workload_pct": 63.8 }
+      "improvement": { "startup_pct": 44.3, "workload_pct": 63.8 },
+      "cause": "Raising the development profile from the default unoptimized build to opt-level 2 reduced host/runtime execution overhead."
     },
     {
       "id": "dev-opt-level-3",
@@ -97,7 +98,26 @@
         "ssr-response": { "startup_ms": 96.6, "peak_rss_mib": 18.5, "workload_ms": 9.3, "req_per_sec": 216146 }
       },
       "improvement_vs": "dev-opt-level-2.quench_node",
-      "improvement": { "route_startup_pct": 15.0, "route_workload_pct": 11.5 }
+      "improvement": { "route_startup_pct": 15.0, "route_workload_pct": 11.5 },
+      "cause": "Raising the development profile from opt-level 2 to opt-level 3 further optimized the Rust host and embedded runtime path."
+    },
+    {
+      "id": "fresh-baseline-2026-08-09",
+      "commit": null,
+      "build": "debug-opt-level-3",
+      "scenario": "scenario-run-b-workloads",
+      "conditions": { "platform": "darwin-arm64", "cpus": 10, "loadavg_1m": 6.11, "runs": 7 },
+      "node": {
+        "route-load": { "startup_ms": 44.3, "peak_rss_mib": 50.0, "workload_ms": 15.7, "req_per_sec": 127371 },
+        "props-json": { "startup_ms": 40.8, "peak_rss_mib": 45.8, "workload_ms": 0.4, "req_per_sec": 4537287 },
+        "ssr-response": { "startup_ms": 41.2, "peak_rss_mib": 45.9, "workload_ms": 0.6, "req_per_sec": 3560043 }
+      },
+      "quench_node": {
+        "route-load": { "startup_ms": 151.8, "peak_rss_mib": 18.3, "workload_ms": 49.5, "req_per_sec": 40397 },
+        "props-json": { "startup_ms": 138.4, "peak_rss_mib": 18.5, "workload_ms": 23.9, "req_per_sec": 83717 },
+        "ssr-response": { "startup_ms": 96.3, "peak_rss_mib": 18.3, "workload_ms": 9.2, "req_per_sec": 217533 }
+      },
+      "cause": "Fresh baseline after verifying the repository build; no runtime change was retained this turn."
     }
   ],
   "runtime_change_ledger": [
@@ -106,6 +126,10 @@
     { "commit": "0495f2a83", "change": "Preserve unknown builtin-loader errors." },
     { "commit": "d9731014f", "change": "Reject nonrecursive directory removal of directories." },
     { "commit": "37e3d03b6", "change": "Stop differential heartbeat after reports complete." },
-    { "commit": "c2d64e3ce", "change": "Consolidate compatibility work and generated-run cleanup; no runtime claim." }
+    { "commit": "c2d64e3ce", "change": "Consolidate compatibility work and generated-run cleanup; no runtime claim." },
+    { "commit": null, "change": "Rejected thin LTO experiment.", "cause": "It increased route workload from 40.0 ms to 81.1 ms and props workload from 17.3 ms to 59.6 ms; it was reverted and not committed." },
+    { "commit": null, "change": "Rejected debug-info removal experiment.", "cause": "It changed route startup from 127.9 ms to 127.0 ms and route workload from 40.0 ms to 39.9 ms; the sub-1% differences were within run noise and it was reverted." },
+    { "commit": null, "change": "Rejected post-bootstrap concatenation experiment.", "cause": "A single eval reduced checked-in host boilerplate but failed compatibility: separate evals preserve cross-fragment top-level lexical bindings, and concatenation caused redeclaration/initialization exceptions even with per-fragment block wrappers. No runtime change was retained." },
+    { "commit": null, "change": "Rejected debug-assertions=false profile experiment.", "cause": "With opt-level 3 retained, disabling debug assertions produced approximate direct medians of 220 ms route-load, 160 ms props-json, and 105 ms ssr-response versus the 151.8/138.4/96.3 ms baseline; it was reverted." }
   ]
 }
