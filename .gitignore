@@ -40,4 +40,6 @@ Thumbs.db
 /stage-*.txt
 /stage-????-*/
 # tests/node-compat/stage-N runs may write runtime fixtures next to the .js test
-/tests/node-compat/stage-*/{access.txt,read-only,root/}
+/tests/node-compat/stage-*/access.txt
+/tests/node-compat/stage-*/read-only
+/tests/node-compat/stage-*/root/
