@@ -15,6 +15,15 @@ pub(crate) fn reduce(
     if locals.contains_key(name) {
         return None;
     }
+    if name == "$262" {
+        let register = *next_register;
+        *next_register = next_register.saturating_add(1);
+        ops.push(Op::MakeBuiltin {
+            dst: register,
+            builtin: crate::ops::Builtin::HostCapability(crate::ops::HostCapabilityKind::GetGlobal),
+        });
+        return Some(register);
+    }
     if let Some(builtin) = builtin(name) {
         let register = *next_register;
         *next_register = next_register.saturating_add(1);
