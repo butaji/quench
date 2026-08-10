@@ -1,4 +1,8 @@
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+    rc::Rc,
+};
 
 use crate::value::Value;
 
@@ -7,6 +11,7 @@ use crate::value::Value;
 pub struct Environment {
     slots: RefCell<Vec<Rc<RefCell<Value>>>>,
     names: RefCell<Option<HashMap<String, Rc<RefCell<Value>>>>>,
+    uninitialized: RefCell<Option<Rc<RefCell<HashSet<u16>>>>>,
     caller: Option<Rc<Self>>,
 }
 
@@ -25,6 +30,7 @@ impl Environment {
         Rc::new(Self {
             slots: RefCell::new(slots),
             names: RefCell::new(environment.names.borrow().clone()),
+            uninitialized: RefCell::new(environment.uninitialized.borrow().clone()),
             caller: None,
         })
     }
@@ -35,6 +41,7 @@ impl Environment {
         Rc::new(Self {
             slots: RefCell::new(slots),
             names: RefCell::new(None),
+            uninitialized: RefCell::new(captures.uninitialized.borrow().clone()),
             caller: crate::locals::is_installed().then(crate::locals::current),
         })
     }
@@ -51,12 +58,11 @@ impl Environment {
     }
 
     pub(crate) fn set(&self, slot: u16, value: Value) {
-        let index = usize::from(slot);
-        let mut slots = self.slots.borrow_mut();
-        while slots.len() <= index {
-            slots.push(Rc::new(RefCell::new(Value::Undefined)));
+        {
+            let binding = self.ensure_slot(slot);
+            *binding.borrow_mut() = value;
         }
-        *slots[index].borrow_mut() = value;
+        self.initialize(slot);
     }
 
     pub(crate) fn slot(&self, slot: u16) -> Option<Rc<RefCell<Value>>> {
@@ -77,11 +83,31 @@ impl Environment {
     }
 
     pub(crate) fn set_named(&self, name: &str, value: Value) -> bool {
-        let Some(binding) = self.named_binding(name) else {
-            return false;
-        };
-        *binding.borrow_mut() = value;
-        true
+        let binding = self
+            .names
+            .borrow()
+            .as_ref()
+            .and_then(|names| names.get(name).cloned());
+        if let Some(binding) = binding {
+            *binding.borrow_mut() = value;
+            self.initialize_binding(&binding);
+            return true;
+        }
+        self.caller
+            .as_ref()
+            .is_some_and(|caller| caller.set_named(name, value))
+    }
+
+    pub(crate) fn mark_uninitialized(&self, slot: u16) {
+        self.ensure_slot(slot);
+        self.writable_tdz().borrow_mut().insert(slot);
+    }
+
+    pub(crate) fn is_uninitialized(&self, slot: u16) -> bool {
+        self.uninitialized
+            .borrow()
+            .as_ref()
+            .is_some_and(|slots| slots.borrow().contains(&slot))
     }
 
     fn named_binding(&self, name: &str) -> Option<Rc<RefCell<Value>>> {
@@ -102,13 +128,48 @@ impl Environment {
         slots[index].clone()
     }
 
+    fn initialize(&self, slot: u16) {
+        if let Some(slots) = self.uninitialized.borrow_mut().as_mut() {
+            slots.borrow_mut().remove(&slot);
+        }
+    }
+
+    fn writable_tdz(&self) -> Rc<RefCell<HashSet<u16>>> {
+        let mut state = self.uninitialized.borrow_mut();
+        if let Some(slots) = state.as_ref() {
+            if Rc::strong_count(slots) == 1 {
+                return Rc::clone(slots);
+            }
+            let detached = Rc::new(RefCell::new(slots.borrow().clone()));
+            *state = Some(Rc::clone(&detached));
+            return detached;
+        }
+        let slots = Rc::new(RefCell::new(HashSet::new()));
+        *state = Some(Rc::clone(&slots));
+        slots
+    }
+
+    fn initialize_binding(&self, binding: &Rc<RefCell<Value>>) {
+        let slot = self
+            .slots
+            .borrow()
+            .iter()
+            .position(|candidate| Rc::ptr_eq(candidate, binding));
+        if let Some(slot) = slot.and_then(|slot| u16::try_from(slot).ok()) {
+            self.initialize(slot);
+        }
+    }
+
     pub(crate) fn replace_slot(&self, slot: u16, value: Value) -> Rc<RefCell<Value>> {
         let index = usize::from(slot);
         let mut slots = self.slots.borrow_mut();
         while slots.len() <= index {
             slots.push(Rc::new(RefCell::new(Value::Undefined)));
         }
-        std::mem::replace(&mut slots[index], Rc::new(RefCell::new(value)))
+        let previous = std::mem::replace(&mut slots[index], Rc::new(RefCell::new(value)));
+        drop(slots);
+        self.initialize(slot);
+        previous
     }
 
     pub(crate) fn restore_slot(&self, slot: u16, value: Rc<RefCell<Value>>) {

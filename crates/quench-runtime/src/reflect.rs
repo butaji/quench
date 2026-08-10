@@ -37,9 +37,13 @@ fn evaluate(value: &Value, strict: bool) -> Result<Value, VmError> {
     let Value::String(source) = value else {
         return Ok(value.clone());
     };
-    let script = crate::reduce::ScriptSource { source, strict };
-    let program = crate::reduce::reduce_script_sources(&[script]).map_err(syntax_error)?;
-    crate::execute::run_vm(&program.ops)
+    let bindings = vec![
+        ("globalThis".to_string(), 0),
+        ("\0script_this".to_string(), 0),
+    ];
+    let program = crate::reduce::reduce_eval_source(source, strict, true, &bindings, &[])
+        .map_err(syntax_error)?;
+    crate::vm::execute_indirect_eval(&program.ops)
 }
 
 fn evaluate_direct(

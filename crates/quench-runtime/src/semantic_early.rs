@@ -12,6 +12,32 @@ pub(crate) fn var_declared_names(program: &oxc::ast::ast::Program<'_>) -> Vec<St
     names.into_iter().collect()
 }
 
+pub(crate) fn lexically_declared_names(program: &oxc::ast::ast::Program<'_>) -> Vec<String> {
+    let mut names = BTreeSet::new();
+    for statement in &program.body {
+        collect_top_level_lexical_name(statement, &mut names);
+    }
+    names.into_iter().collect()
+}
+
+fn collect_top_level_lexical_name(statement: &Statement<'_>, names: &mut BTreeSet<String>) {
+    match statement {
+        Statement::VariableDeclaration(declaration)
+            if declaration.kind != VariableDeclarationKind::Var =>
+        {
+            for declarator in &declaration.declarations {
+                collect_pattern_var_names(&declarator.id, names);
+            }
+        }
+        Statement::ClassDeclaration(class) => {
+            if let Some(identifier) = &class.id {
+                names.insert(identifier.name.to_string());
+            }
+        }
+        _ => {}
+    }
+}
+
 fn collect_var_names(statements: &[Statement<'_>], names: &mut BTreeSet<String>) {
     for statement in statements {
         collect_statement_var_names(statement, names);

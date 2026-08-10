@@ -244,12 +244,8 @@ pub fn reduce_unary(
         _ => return None,
     };
     let src = if operator == crate::ops::UnaryOp::Typeof
-        && matches!(
-            &unary.argument,
-            Expression::Identifier(identifier)
-                if !locals.contains_key(identifier.name.as_str())
-                    && !crate::globals::is_defined(identifier.name.as_str())
-        ) {
+        && crate::unary::is_unresolved_identifier(&unary.argument, locals)
+    {
         crate::reduce_support::emit_undefined(ops, next_register)
     } else {
         reduce_expression(&unary.argument, ops, facts, next_register, locals)?

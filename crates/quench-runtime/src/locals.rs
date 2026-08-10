@@ -71,8 +71,12 @@ pub(crate) fn load_binding(
     slot: u16,
     name: &str,
 ) -> Result<(), VmError> {
-    let value = crate::with_scope::resolve_binding(name)?.unwrap_or_else(|| current().get(slot));
-    crate::execute::write_value(registers, dst, value);
+    if let Some(value) = crate::with_scope::resolve_binding(name)? {
+        crate::execute::write_value(registers, dst, value);
+        return Ok(());
+    }
+    ensure_initialized(slot, name)?;
+    crate::execute::write_value(registers, dst, current().get(slot));
     Ok(())
 }
 
@@ -103,12 +107,27 @@ pub(crate) fn initialize_resolved(
     Ok(())
 }
 
-pub(crate) fn load(registers: &mut Vec<Value>, dst: u16, slot: u16) {
+pub(crate) fn load(registers: &mut Vec<Value>, dst: u16, slot: u16) -> Result<(), VmError> {
+    ensure_initialized(slot, "binding")?;
     crate::execute::write_value(registers, dst, current().get(slot));
+    Ok(())
 }
 
 pub(crate) fn write(slot: u16, value: Value) {
     current().set(slot, value);
+}
+
+pub(crate) fn mark_uninitialized(slot: u16) {
+    current().mark_uninitialized(slot);
+}
+
+fn ensure_initialized(slot: u16, name: &str) -> Result<(), VmError> {
+    if current().is_uninitialized(slot) {
+        return Err(crate::value::error::throw_reference_error(&format!(
+            "Cannot access '{name}' before initialization"
+        )));
+    }
+    Ok(())
 }
 
 pub(crate) fn alias_name(name: &str, slot: u16) {
