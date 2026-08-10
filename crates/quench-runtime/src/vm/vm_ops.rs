@@ -1,5 +1,6 @@
 //! VM op execution dispatch (call, builtin tail, unary, binary).
 use crate::intl::tolocale::value::{parse_float, parse_int, to_string};
+use crate::ops::HostCapabilityKind;
 use crate::value::Value;
 
 use crate::vm::VmError;
@@ -126,6 +127,14 @@ pub fn execute_builtin_tail(
         Builtin::MathPow => crate::builtins::math_pow(arguments),
         _ => Value::Undefined,
     })
+}
+
+pub fn execute_host_capability(
+    kind: HostCapabilityKind,
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
+    super::execute_host_capability(kind, receiver, arguments)
 }
 
 fn early_dispatch(

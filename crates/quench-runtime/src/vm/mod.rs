@@ -84,6 +84,10 @@ impl VmContext {
             .any(|capability| capability.kind == kind)
     }
 
+    pub(crate) fn permits(&self, capability: HostCapabilityRef) -> bool {
+        capability.realm == self.realm && self.has_capability(capability.kind)
+    }
+
     pub fn emit_output(&self, text: &str) {
         if let Some(output_sink) = &self.output_sink {
             output_sink(text);
@@ -246,6 +250,9 @@ pub fn execute_builtin_with_receiver(
     if is_data_view_builtin(builtin) {
         return execute_data_view_builtin(builtin, receiver, arguments);
     }
+    if let Builtin::HostCapability(kind) = builtin {
+        return vm_ops::execute_host_capability(kind, receiver, arguments);
+    }
     match builtin {
         _ if is_function_builtin(builtin) => {
             crate::functions::function_builtin(builtin, receiver, arguments)
@@ -253,6 +260,42 @@ pub fn execute_builtin_with_receiver(
         _ if is_simple_builtin(builtin) => execute_simple_builtin(builtin, arguments, receiver),
         _ => vm_ops::execute_builtin_tail(builtin, arguments, receiver),
     }
+}
+
+pub(crate) fn execute_host_capability(
+    kind: HostCapabilityKind,
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
+    let Some(Value::HostCapability(capability)) = receiver else {
+        return Err(VmError::NotCallable);
+    };
+    let permitted = CURRENT_CONTEXT.with(|context| {
+        context
+            .borrow()
+            .as_ref()
+            .is_some_and(|context| context.permits(capability.descriptor))
+    });
+    if !permitted || capability.descriptor.kind != kind {
+        return Err(VmError::NotCallable);
+    }
+    match kind {
+        HostCapabilityKind::GetGlobal if arguments.is_empty() => current_global_value(),
+        HostCapabilityKind::GetGlobal => Err(type_error("getGlobal expects no arguments")),
+        _ => Err(VmError::EvalError(
+            "Host capability is unavailable".to_string(),
+        )),
+    }
+}
+
+fn current_global_value() -> Result<Value, VmError> {
+    GLOBAL_OBJECT.with(|global| {
+        global
+            .borrow()
+            .clone()
+            .map(Value::Object)
+            .ok_or_else(|| VmError::EvalError("Global object is unavailable".to_string()))
+    })
 }
 
 fn execute_print(arguments: &[Value]) -> Result<Value, VmError> {
