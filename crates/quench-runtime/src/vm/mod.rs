@@ -207,7 +207,17 @@ pub(crate) fn execute_in_environment(
     let _environment_guard = crate::locals::EnvironmentGuard::install(environment);
     run_ops(ops, registers, context)
 }
-
+pub(crate) fn execute_indirect_eval(ops: &[Op]) -> Result<Value, VmError> {
+    let context = CURRENT_CONTEXT
+        .with(|current| current.borrow().clone())
+        .unwrap_or_default();
+    let global = current_global_object();
+    let environment = crate::environment::Environment::new();
+    environment.set(0, global);
+    let mut registers = Vec::new();
+    let _with_scope = crate::with_scope::FunctionGuard::isolate();
+    execute_in_environment(ops, &mut registers, &context, environment)
+}
 pub(crate) fn execute_generator_step(
     ops: &[Op],
     registers: &mut Vec<Value>,

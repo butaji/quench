@@ -94,19 +94,34 @@ pub(crate) fn eval_bindings(
     } else {
         EvalBehavior::Local
     };
-    let prefix = eval_binding_prefix(&declared, strict, global);
+    let mut prefix = eval_binding_prefix(&declared, strict, global);
+    let lexical_names = crate::semantic_early::lexically_declared_names(program);
+    let lexical = shadow_names(&lexical_names, &mut locals, &mut next_slot);
+    prefix.extend(
+        lexical
+            .into_iter()
+            .map(|(_, slot)| Op::MarkUninitialized { slot }),
+    );
     (locals, next_slot, prefix, behavior)
 }
 
-fn shadow_names(names: &[String], locals: &mut HashMap<String, u16>, next_slot: &mut u16) {
+fn shadow_names(
+    names: &[String],
+    locals: &mut HashMap<String, u16>,
+    next_slot: &mut u16,
+) -> Vec<(String, u16)> {
     let mut names = names.to_vec();
     names.sort_unstable();
     names.dedup();
-    for name in names {
-        let slot = *next_slot;
-        *next_slot = next_slot.saturating_add(1);
-        locals.insert(name, slot);
-    }
+    names
+        .into_iter()
+        .map(|name| {
+            let slot = *next_slot;
+            *next_slot = next_slot.saturating_add(1);
+            locals.insert(name.clone(), slot);
+            (name, slot)
+        })
+        .collect()
 }
 
 fn eval_binding_prefix(declared: &[(String, u16)], strict: bool, global: bool) -> Vec<Op> {
