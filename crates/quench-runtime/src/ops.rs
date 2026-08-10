@@ -335,6 +335,8 @@ pub enum Builtin {
     SetIterator,
     IteratorNext,
     GeneratorNext,
+    GeneratorReturn,
+    GeneratorThrow,
     Error,
     ErrorPrototype,
     RangeError,

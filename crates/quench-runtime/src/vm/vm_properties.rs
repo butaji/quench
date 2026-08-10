@@ -57,14 +57,21 @@ fn get_property_value(value: &Value, key: &str) -> Value {
         Set(data) if key == "size" => Value::Number(data.values.len() as f64),
         Set(_) => crate::collections::set::property(key),
         Iterator(_) => crate::collections::iterator::property(key),
-        Generator(_) if key == "next" => bind_method(
-            value,
-            Value::Builtin(crate::ops::Builtin::GeneratorNext),
-        ),
+        Generator(_) => generator_property(value, key),
         Promise(_) => promise_property(value, key),
         HostCapability(capability) => host_capability_property(value, capability.descriptor, key),
         _ => Value::Undefined,
     }
+}
+
+fn generator_property(value: &Value, key: &str) -> Value {
+    let builtin = match key {
+        "next" => crate::ops::Builtin::GeneratorNext,
+        "return" => crate::ops::Builtin::GeneratorReturn,
+        "throw" => crate::ops::Builtin::GeneratorThrow,
+        _ => return Value::Undefined,
+    };
+    bind_method(value, Value::Builtin(builtin))
 }
 
 fn object_alias_property(alias: &crate::value::ObjectAliasValue, key: &str) -> Value {
