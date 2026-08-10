@@ -100,6 +100,8 @@ fn run_property_op(registers: &mut Vec<Value>, op: &Op) -> Result<bool, VmError>
             | HasPropertyDynamic { .. }
             | ToPropertyKey { .. }
             | SetProperty { .. }
+            | SetPrivate { .. }
+            | DefinePrivate { .. }
             | SetPropertyDynamic { .. }
             | DefineProperty { .. }
             | CopyDataProperties { .. }
@@ -317,6 +319,7 @@ fn run_get_set_property(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmErr
             crate::properties::execute_set_property(registers, op)?
         }
         SetPrivate { .. } => crate::private_slots::execute_set(registers, op)?,
+        DefinePrivate { .. } => crate::private_slots::execute_define(registers, op)?,
         DefineProperty { .. } => crate::property_define::execute(registers, op)?,
         CopyDataProperties { .. } => {
             crate::properties::execute_copy_data_properties(registers, op)?
