@@ -30,18 +30,18 @@ pub(crate) fn proxy_revocable(arguments: &[Value]) -> Result<Value, VmError> {
         revoked: revoked.clone(),
     }));
     let revoke = create_revoke_function(revoked);
-    Ok(Value::Object(Rc::new(vec![
+    Ok(Value::Object(Rc::new(crate::value::ObjectData::new(vec![
         ("proxy".to_string(), proxy),
         ("revoke".to_string(), revoke),
-    ])))
+    ]))))
 }
 
 fn create_revoke_function(revoked: Rc<std::cell::RefCell<bool>>) -> Value {
     let _revoked_clone = revoked;
-    Value::Object(Rc::new(vec![(
+    Value::Object(Rc::new(crate::value::ObjectData::new(vec![(
         "call".to_string(),
         Value::Builtin(Builtin::FunctionCall),
-    )]))
+    )])))
 }
 
 pub(crate) fn is_revoked(proxy: &ProxyValue) -> bool {

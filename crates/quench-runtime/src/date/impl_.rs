@@ -94,7 +94,7 @@ fn date_constructor(arguments: &[Value]) -> Value {
         local_date_ms(year, month, day, hour, minute, second, ms_val)
     };
     let props = vec![("timeValue".to_string(), Value::Number(ms))];
-    Value::Object(Rc::new(props))
+    Value::Object(Rc::new(crate::value::ObjectData::new(props)))
 }
 
 fn local_date_ms(

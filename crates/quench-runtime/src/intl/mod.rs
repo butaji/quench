@@ -434,7 +434,7 @@ pub(crate) fn intl_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)
     let Some((_, Value::Object(slots))) = properties.iter().find(|(name, _)| name == SLOT) else {
         return Err(runtime_error("TypeError: not an Intl object"));
     };
-    Ok((**slots).clone())
+    Ok(slots.properties.clone())
 }
 
 pub(crate) fn slot_string(slots: &[(String, Value)], key: &str) -> Option<String> {
@@ -468,7 +468,7 @@ pub(crate) fn slot_number(slots: &[(String, Value)], key: &str) -> Option<f64> {
 }
 
 pub(crate) fn make_object(properties: Vec<(String, Value)>) -> Value {
-    Value::Object(std::rc::Rc::new(properties))
+    Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(properties)))
 }
 
 pub(crate) fn make_array(values: Vec<Value>) -> Value {

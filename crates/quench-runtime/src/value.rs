@@ -153,7 +153,52 @@ pub struct GeneratorState {
 }
 
 pub type ObjectProperties = Vec<(String, Value)>;
-pub type WeakObject = std::rc::Weak<ObjectProperties>;
+pub(crate) type PrivateSlots = Rc<RefCell<Vec<(PrivateName, PrivateSlot)>>>;
+
+/// Ordinary public properties plus opaque private slots for one JS object.
+#[derive(Debug, Clone)]
+pub struct ObjectData {
+    pub(crate) properties: ObjectProperties,
+    pub(crate) private_slots: PrivateSlots,
+}
+
+impl ObjectData {
+    pub(crate) fn new(properties: ObjectProperties) -> Self {
+        Self::with_private_slots(properties, Rc::new(RefCell::new(Vec::new())))
+    }
+
+    pub(crate) fn with_private_slots(
+        properties: ObjectProperties,
+        private_slots: PrivateSlots,
+    ) -> Self {
+        Self {
+            properties,
+            private_slots,
+        }
+    }
+}
+
+impl std::ops::Deref for ObjectData {
+    type Target = ObjectProperties;
+
+    fn deref(&self) -> &Self::Target {
+        &self.properties
+    }
+}
+
+impl std::ops::DerefMut for ObjectData {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.properties
+    }
+}
+
+impl PartialEq for ObjectData {
+    fn eq(&self, other: &Self) -> bool {
+        self.properties == other.properties
+    }
+}
+
+pub type WeakObject = std::rc::Weak<ObjectData>;
 
 /// A private name capability created for one evaluation of a class definition.
 ///
@@ -216,7 +261,7 @@ pub enum Value {
     String(String),
     BigInt(String),
     Array(Rc<ArrayData>),
-    Object(Rc<Vec<(String, Value)>>),
+    Object(Rc<ObjectData>),
     ObjectAlias(ObjectAliasValue),
     BindingCell(Rc<RefCell<Value>>),
     ArrayBuffer(Rc<ArrayBufferData>),
@@ -445,8 +490,6 @@ pub enum PrivateSlot {
         set: Option<Value>,
     },
 }
-
-pub(crate) type PrivateSlots = Rc<RefCell<Vec<(PrivateName, PrivateSlot)>>>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionValue {
