@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 
-use oxc::ast::ast::{BindingPattern, BindingPatternKind, Expression, PropertyKey};
+use oxc::ast::ast::{
+    AssignmentTarget, AssignmentTargetMaybeDefault, AssignmentTargetProperty, BindingPattern,
+    BindingPatternKind, Expression, PropertyKey,
+};
 
 use crate::{
     facts::ProgramDb,
@@ -46,6 +49,182 @@ pub(crate) fn bind(
         BindingPatternKind::ObjectPattern(pattern) => {
             bind_object(pattern, source, ops, facts, next, locals)
         }
+    }
+}
+
+pub(crate) fn assign_target(
+    target: &AssignmentTarget<'_>,
+    source: u16,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<()> {
+    match target {
+        AssignmentTarget::ArrayAssignmentTarget(pattern) => {
+            assign_array(pattern, source, ops, facts, next, locals)
+        }
+        AssignmentTarget::ObjectAssignmentTarget(pattern) => {
+            assign_object(pattern, source, ops, facts, next, locals)
+        }
+        _ => crate::reduce::reduce_assignments::put_assignment_target(
+            target, source, ops, facts, next, locals,
+        ),
+    }
+}
+
+fn assign_maybe_default(
+    target: &AssignmentTargetMaybeDefault<'_>,
+    source: u16,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<()> {
+    let (target, value) = match target {
+        AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(default) => (
+            &default.binding,
+            default_value(source, &default.init, ops, facts, next, locals)?,
+        ),
+        _ => (target.as_assignment_target()?, source),
+    };
+    assign_target(target, value, ops, facts, next, locals)
+}
+
+fn assign_array(
+    pattern: &oxc::ast::ast::ArrayAssignmentTarget<'_>,
+    source: u16,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<()> {
+    let iterator = iterator_start(source, ops, next);
+    for element in &pattern.elements {
+        let value = iterator_step(iterator, ops, next);
+        if let Some(element) = element {
+            assign_maybe_default(element, value, ops, facts, next, locals)?;
+        }
+    }
+    let Some(rest) = &pattern.rest else {
+        return Some(());
+    };
+    let value = iterator_rest(iterator, ops, next);
+    assign_target(&rest.target, value, ops, facts, next, locals)
+}
+
+fn assign_object(
+    pattern: &oxc::ast::ast::ObjectAssignmentTarget<'_>,
+    source: u16,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<()> {
+    ops.push(Op::RequireObjectCoercible { src: source });
+    let mut excluded = Vec::with_capacity(pattern.properties.len());
+    for property in &pattern.properties {
+        excluded.push(assign_property(property, source, ops, facts, next, locals)?);
+    }
+    let Some(rest) = &pattern.rest else {
+        return Some(());
+    };
+    let target = crate::reduce::reduce_assignments::emit_object_rest(source, excluded, ops, next);
+    assign_target(&rest.target, target, ops, facts, next, locals)
+}
+
+fn assign_property(
+    property: &AssignmentTargetProperty<'_>,
+    source: u16,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<u16> {
+    match property {
+        AssignmentTargetProperty::AssignmentTargetPropertyIdentifier(property) => {
+            assign_identifier_property(property, source, ops, facts, next, locals)
+        }
+        AssignmentTargetProperty::AssignmentTargetPropertyProperty(property) => {
+            assign_named_property(property, source, ops, facts, next, locals)
+        }
+    }
+}
+
+fn assign_identifier_property(
+    property: &oxc::ast::ast::AssignmentTargetPropertyIdentifier<'_>,
+    source: u16,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<u16> {
+    let name = property.binding.name.as_str();
+    let place =
+        crate::reduce::reduce_assignments::identifier_assignment_place(name, facts.strict, locals);
+    let excluded = emit_const(ops, next, Constant::String(name.to_string()));
+    let value = get_property(ReducedKey::Static(name.to_string()), source, ops, next);
+    let value = match &property.init {
+        Some(init) => default_value(value, init, ops, facts, next, locals)?,
+        None => value,
+    };
+    crate::reduce::reduce_assignments::put(place, value, ops)?;
+    Some(excluded)
+}
+
+fn assign_named_property(
+    property: &oxc::ast::ast::AssignmentTargetPropertyProperty<'_>,
+    source: u16,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<u16> {
+    let key = reduce_key(&property.name, ops, facts, next, locals)?;
+    let excluded = reduced_key_register(&key, ops, next);
+    let place = crate::reduce::reduce_assignments::maybe_default_place(
+        &property.binding,
+        ops,
+        facts,
+        next,
+        locals,
+    );
+    let value = get_property(key, source, ops, next);
+    assign_property_value(property, (place, value), ops, facts, next, locals)?;
+    Some(excluded)
+}
+
+fn assign_property_value(
+    property: &oxc::ast::ast::AssignmentTargetPropertyProperty<'_>,
+    resolved: (Option<crate::reduce::reduce_assignments::Place>, u16),
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<()> {
+    let (place, value) = resolved;
+    match place {
+        Some(place) => {
+            let value = assignment_default(&property.binding, value, ops, facts, next, locals)?;
+            crate::reduce::reduce_assignments::put(place, value, ops)
+        }
+        None => assign_maybe_default(&property.binding, value, ops, facts, next, locals),
+    }
+}
+
+fn assignment_default(
+    target: &AssignmentTargetMaybeDefault<'_>,
+    source: u16,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<u16> {
+    match target {
+        AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(default) => {
+            default_value(source, &default.init, ops, facts, next, locals)
+        }
+        _ => Some(source),
     }
 }
 
@@ -145,17 +324,9 @@ fn bind_array(
     next: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<()> {
-    let iterator = take_register(next);
-    ops.push(Op::GetIterator {
-        dst: iterator,
-        iterable: source,
-    });
+    let iterator = iterator_start(source, ops, next);
     for element in &pattern.elements {
-        let value = take_register(next);
-        ops.push(Op::IteratorStep {
-            dst: value,
-            iterator,
-        });
+        let value = iterator_step(iterator, ops, next);
         if let Some(element) = element {
             bind(element, value, ops, facts, next, locals)?;
         }
@@ -172,12 +343,35 @@ fn bind_array_rest(
     locals: &HashMap<String, u16>,
 ) -> Option<()> {
     let Some(rest) = rest else { return Some(()) };
+    let value = iterator_rest(iterator, ops, next);
+    bind(&rest.argument, value, ops, facts, next, locals)
+}
+
+fn iterator_start(source: u16, ops: &mut Vec<Op>, next: &mut u16) -> u16 {
+    let iterator = take_register(next);
+    ops.push(Op::GetIterator {
+        dst: iterator,
+        iterable: source,
+    });
+    iterator
+}
+
+fn iterator_step(iterator: u16, ops: &mut Vec<Op>, next: &mut u16) -> u16 {
+    let value = take_register(next);
+    ops.push(Op::IteratorStep {
+        dst: value,
+        iterator,
+    });
+    value
+}
+
+fn iterator_rest(iterator: u16, ops: &mut Vec<Op>, next: &mut u16) -> u16 {
     let value = take_register(next);
     ops.push(Op::IteratorRest {
         dst: value,
         iterator,
     });
-    bind(&rest.argument, value, ops, facts, next, locals)
+    value
 }
 
 fn bind_object(
@@ -283,13 +477,15 @@ fn get_property(key: ReducedKey, object: u16, ops: &mut Vec<Op>, next: &mut u16)
     dst
 }
 
-fn static_key(key: &PropertyKey<'_>) -> Option<String> {
+fn reduced_key_register(key: &ReducedKey, ops: &mut Vec<Op>, next: &mut u16) -> u16 {
     match key {
-        PropertyKey::StaticIdentifier(key) => Some(key.name.to_string()),
-        PropertyKey::StringLiteral(key) => Some(key.value.to_string()),
-        PropertyKey::NumericLiteral(key) => Some(key.value.to_string()),
-        _ => None,
+        ReducedKey::Static(key) => emit_const(ops, next, Constant::String(key.clone())),
+        ReducedKey::Dynamic(key) => *key,
     }
+}
+
+fn static_key(key: &PropertyKey<'_>) -> Option<String> {
+    key.static_name().map(|name| name.into_owned())
 }
 
 fn emit_const(ops: &mut Vec<Op>, next: &mut u16, value: Constant) -> u16 {
@@ -297,7 +493,6 @@ fn emit_const(ops: &mut Vec<Op>, next: &mut u16, value: Constant) -> u16 {
     ops.push(Op::Const { dst, value });
     dst
 }
-
 fn take_register(next: &mut u16) -> u16 {
     let register = *next;
     *next = next.saturating_add(1);
