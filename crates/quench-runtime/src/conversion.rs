@@ -53,6 +53,11 @@ pub(crate) fn to_number(value: &Value) -> Result<f64, VmError> {
     primitive_to_number(&primitive)
 }
 
+pub(crate) fn to_string(value: &Value) -> Result<String, VmError> {
+    let primitive = to_primitive(value, "string")?;
+    Ok(crate::intl::tolocale::value::to_string(Some(&primitive)))
+}
+
 pub(crate) fn primitive_to_number(value: &Value) -> Result<f64, VmError> {
     if is_symbol(value) || matches!(value, Value::BigInt(_)) {
         return Err(crate::value::error::throw_type_error(
