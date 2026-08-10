@@ -98,11 +98,12 @@ fn function_property(function: &crate::value::FunctionValue, key: &str) -> Value
     if let Some((_, value)) = properties.iter().rev().find(|(name, _)| name == key) {
         return property_value(value);
     }
-    properties
+    let inherited = properties
         .iter()
         .rev()
         .find_map(|(name, value)| (name == "\0prototype").then(|| property_value(value)))
-        .map_or(Value::Undefined, |prototype| get_property(&prototype, key))
+        .map(|prototype| get_property(&prototype, key));
+    inherited.unwrap_or_else(|| builtin_property(Builtin::FunctionPrototype, key))
 }
 
 fn property_value(value: &Value) -> Value {
