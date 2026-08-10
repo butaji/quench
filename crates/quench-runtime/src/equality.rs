@@ -21,10 +21,10 @@ pub(crate) fn abstract_equal(left: &Value, right: &Value) -> Result<bool, VmErro
     if let Some(result) = bigint_number_equal(left, right) {
         return Ok(result);
     }
-    if is_primitive(left) && is_equality_object(right) {
+    if is_coercible_primitive(left) && is_equality_object(right) {
         return abstract_equal(left, &crate::conversion::to_primitive(right, "default")?);
     }
-    if is_equality_object(left) && is_primitive(right) {
+    if is_equality_object(left) && is_coercible_primitive(right) {
         return abstract_equal(&crate::conversion::to_primitive(left, "default")?, right);
     }
     Ok(false)
@@ -118,6 +118,10 @@ fn number_bigint(value: f64) -> Option<num_bigint::BigInt> {
 
 fn is_primitive(value: &Value) -> bool {
     !is_equality_object(value)
+}
+
+fn is_coercible_primitive(value: &Value) -> bool {
+    is_primitive(value) && !matches!(value, Value::Null | Value::Undefined)
 }
 
 fn is_equality_object(value: &Value) -> bool {

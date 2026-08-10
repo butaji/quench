@@ -5,16 +5,18 @@ use crate::{
     identifiers,
     literal::{reduce_literal, reduce_operator},
     ops::Op,
-    properties, special, transparent,
+    special, transparent,
 };
 use oxc::{
-    ast::ast::{Argument, Expression, Statement, VariableDeclarationKind},
+    ast::ast::{Expression, Statement, VariableDeclarationKind},
     syntax::operator::UnaryOperator,
 };
 use std::collections::HashMap;
 
 const SCRIPT_THIS_SLOT: &str = "\0script_this";
 const NEW_TARGET_SLOT: &str = "\0new_target";
+#[path = "../calls_reduce.rs"]
+mod calls_reduce;
 pub fn reduce_if_statement(
     statement: &oxc::ast::ast::IfStatement<'_>,
     ops: &mut Vec<Op>,
@@ -312,86 +314,7 @@ pub fn reduce_call(
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
-    if is_direct_eval(call, locals) {
-        return reduce_direct_eval(call, ops, facts, next_register, locals);
-    }
-    if let Some(result) = properties::reduce_method_call(call, ops, facts, next_register, locals) {
-        return Some(result);
-    }
-    let callee = reduce_expression(&call.callee, ops, facts, next_register, locals)?;
-    let (args, spreads) = reduce_call_arguments(call, ops, facts, next_register, locals)?;
-    let dst = *next_register;
-    *next_register += 1;
-    ops.push(Op::Call {
-        dst,
-        callee,
-        args,
-        spreads,
-    });
-    Some(dst)
-}
-
-fn is_direct_eval(call: &oxc::ast::ast::CallExpression<'_>, locals: &HashMap<String, u16>) -> bool {
-    matches!(&call.callee, Expression::Identifier(identifier) if identifier.name == "eval")
-        && !locals.contains_key("eval")
-}
-
-fn reduce_direct_eval(
-    call: &oxc::ast::ast::CallExpression<'_>,
-    ops: &mut Vec<Op>,
-    facts: &mut ProgramDb,
-    next_register: &mut u16,
-    locals: &HashMap<String, u16>,
-) -> Option<u16> {
-    let argument = call.arguments.first()?.as_expression()?;
-    let source = reduce_expression(argument, ops, facts, next_register, locals)?;
-    let dst = *next_register;
-    *next_register = next_register.saturating_add(1);
-    let mut bindings = locals
-        .iter()
-        .map(|(name, slot)| (name.clone(), *slot))
-        .collect::<Vec<_>>();
-    bindings.sort_by(|left, right| left.0.cmp(&right.0));
-    ops.push(Op::Eval {
-        dst,
-        source,
-        strict: facts.strict,
-        global: !facts.in_function,
-        bindings,
-        forbidden_var_names: facts.eval_var_barrier.clone(),
-    });
-    Some(dst)
-}
-fn reduce_call_arguments(
-    call: &oxc::ast::ast::CallExpression<'_>,
-    ops: &mut Vec<Op>,
-    facts: &mut ProgramDb,
-    next_register: &mut u16,
-    locals: &HashMap<String, u16>,
-) -> Option<(Vec<u16>, Vec<bool>)> {
-    let mut args = Vec::new();
-    let mut spreads = Vec::new();
-    for argument in &call.arguments {
-        match argument {
-            Argument::SpreadElement(spread) => {
-                let src = reduce_expression(&spread.argument, ops, facts, next_register, locals)?;
-                args.push(src);
-                spreads.push(true);
-            }
-            _ => {
-                let expression = argument.as_expression()?;
-                args.push(reduce_expression(
-                    expression,
-                    ops,
-                    facts,
-                    next_register,
-                    locals,
-                )?);
-                spreads.push(false);
-            }
-        }
-    }
-    Some((args, spreads))
+    calls_reduce::reduce_call(call, ops, facts, next_register, locals)
 }
 pub fn reduce_atom(
     expression: &Expression<'_>,

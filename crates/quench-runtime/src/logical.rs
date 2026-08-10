@@ -43,6 +43,10 @@ fn assignment_condition(
     if operator != AssignmentOperator::LogicalNullish {
         return Some(left);
     }
+    Some(nullish_condition(left, ops, next))
+}
+
+fn nullish_condition(left: u16, ops: &mut Vec<Op>, next: &mut u16) -> u16 {
     let null = take_register(next);
     ops.push(Op::Const {
         dst: null,
@@ -55,7 +59,7 @@ fn assignment_condition(
         lhs: left,
         rhs: null,
     });
-    Some(dst)
+    dst
 }
 
 fn assignment_branches(
@@ -106,9 +110,6 @@ fn reduce_dynamic(
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
-    if matches!(logical.operator, LogicalOperator::Coalesce) {
-        return None;
-    }
     let left = crate::reduce::reduce_expression(&logical.left, ops, facts, next_register, locals)?;
     let mut right_ops = Vec::new();
     let right = crate::reduce::reduce_expression(
@@ -118,12 +119,17 @@ fn reduce_dynamic(
         next_register,
         locals,
     )?;
+    let condition = if matches!(logical.operator, LogicalOperator::Coalesce) {
+        nullish_condition(left, ops, next_register)
+    } else {
+        left
+    };
     let (consequent, alternate) = dynamic_branches(logical.operator, left, right, right_ops)?;
     let dst = *next_register;
     *next_register = next_register.saturating_add(1);
     ops.push(Op::Conditional {
         dst,
-        condition: left,
+        condition,
         consequent,
         alternate,
     });
@@ -149,7 +155,11 @@ fn dynamic_branches(
             consequent = right_ops;
             alternate.push(Op::Return { src: left });
         }
-        LogicalOperator::Coalesce => return None,
+        LogicalOperator::Coalesce => {
+            right_ops.push(Op::Return { src: right });
+            consequent = right_ops;
+            alternate.push(Op::Return { src: left });
+        }
     }
     Some((consequent, alternate))
 }
