@@ -215,6 +215,8 @@ fn value_to_number(value: &Value) -> f64 {
 pub(crate) fn object(arguments: &[Value]) -> Value {
     match arguments.first() {
         Some(Value::Array(_))
+        | Some(Value::ArrayBuffer(_))
+        | Some(Value::Float64Array(_))
         | Some(Value::Object(_))
         | Some(Value::Function(_))
         | Some(Value::Builtin(_)) => arguments[0].clone(),
@@ -263,6 +265,8 @@ pub(crate) fn same_value(left: Option<&Value>, right: Option<&Value>) -> bool {
     match (left, right) {
         (Value::Array(left), Value::Array(right)) => Rc::ptr_eq(left, right),
         (Value::Object(left), Value::Object(right)) => Rc::ptr_eq(left, right),
+        (Value::ArrayBuffer(left), Value::ArrayBuffer(right)) => Rc::ptr_eq(left, right),
+        (Value::Float64Array(left), Value::Float64Array(right)) => Rc::ptr_eq(left, right),
         (Value::Function(left), Value::Function(right)) => Rc::ptr_eq(left, right),
         _ => left == right,
     }
@@ -287,14 +291,18 @@ pub(crate) fn keys(value: Option<&Value>) -> Value {
 
 pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
     match target {
-        Value::Object(properties) => {
-            let mut properties = (*properties).clone();
-            if let Some((_, current)) = properties.iter_mut().rev().find(|(name, _)| name == key) {
-                *current = value;
-            } else {
-                properties.push((key.to_string(), value));
+        Value::Object(mut properties) => {
+            {
+                let properties = Rc::make_mut(&mut properties);
+                if let Some((_, current)) =
+                    properties.iter_mut().rev().find(|(name, _)| name == key)
+                {
+                    *current = value;
+                } else {
+                    properties.push((key.to_string(), value));
+                }
             }
-            Value::Object(Rc::new(properties))
+            Value::Object(properties)
         }
         Value::Array(values) => set_array_property(values, key, value),
         Value::Function(function) => set_function_property(function, key, value),
@@ -302,14 +310,33 @@ pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
     }
 }
 
+pub(crate) fn define_property(arguments: &[Value]) -> Value {
+    let Some(target) = arguments.first() else {
+        return Value::Undefined;
+    };
+    let key = arguments.get(1).map_or_else(String::new, value_to_string);
+    let value = match arguments.get(2) {
+        Some(Value::Object(properties)) => properties
+            .iter()
+            .rev()
+            .find(|(name, _)| name == "value")
+            .map_or(Value::Undefined, |(_, value)| value.clone()),
+        _ => Value::Undefined,
+    };
+    set_property(target.clone(), &key, value)
+}
+
 fn set_array_property(values: Rc<Vec<Value>>, key: &str, value: Value) -> Value {
     let Ok(index) = key.parse::<usize>() else {
         return Value::Array(values);
     };
-    let mut values = (*values).clone();
-    values.resize(index.saturating_add(1), Value::Undefined);
-    values[index] = value;
-    Value::Array(Rc::new(values))
+    let mut values = values;
+    {
+        let values = Rc::make_mut(&mut values);
+        values.resize(index.saturating_add(1), Value::Undefined);
+        values[index] = value;
+    }
+    Value::Array(values)
 }
 
 fn set_function_property(
@@ -340,6 +367,8 @@ pub(crate) fn prototype_to_string(receiver: Option<&Value>) -> Value {
         Some(Value::BigInt(_)) => "BigInt",
         Some(Value::Array(_)) => "Array",
         Some(Value::Object(_)) => "Object",
+        Some(Value::ArrayBuffer(_)) => "ArrayBuffer",
+        Some(Value::Float64Array(_)) => "Float64Array",
         Some(Value::Function(_)) => "Function",
         Some(Value::BoundFunction(_)) => "Function",
         Some(Value::Builtin(_)) => "Function",
