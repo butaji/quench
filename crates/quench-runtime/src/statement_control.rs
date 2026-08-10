@@ -32,9 +32,8 @@ pub(crate) fn reduce(
             )?;
             if wraps_loop {
                 let label = Some(statement.label.name.to_string());
-                if let Some(
-                    Op::Loop { label: slot, .. } | Op::ForIn { label: slot, .. },
-                ) = ops[start..].last_mut()
+                if let Some(Op::Loop { label: slot, .. } | Op::ForIn { label: slot, .. }) =
+                    ops[start..].last_mut()
                 {
                     *slot = label;
                 }
@@ -76,8 +75,9 @@ pub(crate) fn reduce(
             ops.push(Op::Break { label });
             Ok(None)
         }
-        Statement::ContinueStatement(_) => {
-            ops.push(Op::Continue);
+        Statement::ContinueStatement(statement) => {
+            let label = statement.label.as_ref().map(|label| label.name.to_string());
+            ops.push(Op::Continue { label });
             Ok(None)
         }
         _ => Err(vec![format!(
