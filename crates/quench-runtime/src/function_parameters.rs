@@ -4,6 +4,8 @@ use oxc::ast::ast::{BindingPattern, BindingPatternKind, FormalParameters};
 
 use crate::{facts::ProgramDb, ops::Op};
 
+const REST_SLOT: &str = "\0rest";
+
 pub(crate) fn bindings(
     formal: &FormalParameters<'_>,
 ) -> Result<(HashMap<String, u16>, u16), Vec<String>> {
@@ -15,10 +17,9 @@ pub(crate) fn bindings(
         collect_bindings(&parameter.pattern, source, &mut next, &mut bindings)?;
     }
     if let Some(rest) = &formal.rest {
-        let BindingPatternKind::BindingIdentifier(identifier) = &rest.argument.kind else {
-            return Err(vec!["Unsupported rest parameter pattern".to_string()]);
-        };
-        bindings.insert(identifier.name.to_string(), count.saturating_add(2));
+        let slot = count.saturating_add(2);
+        bindings.insert(REST_SLOT.to_string(), slot);
+        collect_bindings(&rest.argument, slot, &mut next, &mut bindings)?;
     }
     Ok((bindings, count))
 }
@@ -71,7 +72,26 @@ fn reduce_prefix(
             locals,
         )?;
     }
+    bind_rest_pattern(formal, &mut ops, facts, &mut next, locals)?;
     Some(ops)
+}
+
+fn bind_rest_pattern(
+    formal: &FormalParameters<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<()> {
+    let Some(rest) = &formal.rest else {
+        return Some(());
+    };
+    if matches!(rest.argument.kind, BindingPatternKind::BindingIdentifier(_)) {
+        return Some(());
+    }
+    let slot = locals.get(REST_SLOT).copied()?;
+    let source = load_local(ops, next, slot);
+    crate::binding_patterns::bind(&rest.argument, source, ops, facts, next, locals)
 }
 
 fn eval_var_barrier(formal: &FormalParameters<'_>, implicit_arguments: bool) -> Vec<String> {
