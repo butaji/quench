@@ -204,12 +204,7 @@ const __nodeFsRemovePath = (path, kind, options) => {
     return globalThis.__quench_fs_unlink(path);
   }
   if (kind === "file") return globalThis.__quench_fs_unlink(path);
-  if (
-    kind === "directory" &&
-    !options.recursive &&
-    (options.__sync ||
-      (!options.__async && globalThis.__nodeFs.readdirSync(path).length > 0))
-  ) {
+  if (kind === "directory" && !options.recursive) {
     const error = new Error(
       `ERR_FS_EISDIR: illegal operation on a directory, rm '${path}'`
     );
