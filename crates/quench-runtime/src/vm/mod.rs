@@ -12,7 +12,7 @@ pub use crate::intl::tolocale::value::is_truthy;
 pub enum VmError {
     RegisterOutOfBounds(u16),
     MissingReturn,
-    Break,
+    Break(Option<String>),
     Continue,
     NotCallable,
     EvalError(String),
@@ -232,7 +232,7 @@ fn run_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Value>, VmError>
         }
         Binary { .. } => run_binary(registers, op)?,
         Return { .. } | Throw { .. } => return run_terminal(registers, op).map(Some),
-        Break => return Err(VmError::Break),
+        Break { label } => return Err(VmError::Break(label.clone())),
         Continue => return Err(VmError::Continue),
     }
     Ok(None)
