@@ -110,7 +110,202 @@ impl DataViewData {
     pub fn is_detached(&self) -> bool {
         *self.buffer.detached.borrow()
     }
+
+    fn range(&self, offset: usize, width: usize) -> Result<usize, DataViewError> {
+        if self.is_detached() {
+            return Err(DataViewError::Detached);
+        }
+        let end = offset
+            .checked_add(width)
+            .ok_or(DataViewError::OutOfBounds)?;
+        if end > self.byte_length {
+            return Err(DataViewError::OutOfBounds);
+        }
+        self.byte_offset
+            .checked_add(offset)
+            .ok_or(DataViewError::OutOfBounds)
+    }
+
+    fn read<const N: usize>(&self, offset: usize) -> Result<[u8; N], DataViewError> {
+        let start = self.range(offset, N)?;
+        let end = start.checked_add(N).ok_or(DataViewError::OutOfBounds)?;
+        self.buffer
+            .bytes
+            .borrow()
+            .get(start..end)
+            .and_then(|bytes| bytes.try_into().ok())
+            .ok_or(DataViewError::OutOfBounds)
+    }
+
+    fn write<const N: usize>(&self, offset: usize, bytes: [u8; N]) -> Result<(), DataViewError> {
+        let start = self.range(offset, N)?;
+        let end = start.checked_add(N).ok_or(DataViewError::OutOfBounds)?;
+        let mut storage = self.buffer.bytes.borrow_mut();
+        let destination = storage
+            .get_mut(start..end)
+            .ok_or(DataViewError::OutOfBounds)?;
+        destination.copy_from_slice(&bytes);
+        Ok(())
+    }
+
+    pub fn get_int8(&self, offset: usize) -> Result<i8, DataViewError> {
+        Ok(i8::from_ne_bytes(self.read::<1>(offset)?))
+    }
+
+    pub fn get_uint8(&self, offset: usize) -> Result<u8, DataViewError> {
+        Ok(self.read::<1>(offset)?[0])
+    }
+
+    pub fn get_int16(&self, offset: usize, little_endian: bool) -> Result<i16, DataViewError> {
+        Ok(decode::<i16, 2>(self.read::<2>(offset)?, little_endian))
+    }
+
+    pub fn get_uint16(&self, offset: usize, little_endian: bool) -> Result<u16, DataViewError> {
+        Ok(decode::<u16, 2>(self.read::<2>(offset)?, little_endian))
+    }
+
+    pub fn get_int32(&self, offset: usize, little_endian: bool) -> Result<i32, DataViewError> {
+        Ok(decode::<i32, 4>(self.read::<4>(offset)?, little_endian))
+    }
+
+    pub fn get_uint32(&self, offset: usize, little_endian: bool) -> Result<u32, DataViewError> {
+        Ok(decode::<u32, 4>(self.read::<4>(offset)?, little_endian))
+    }
+
+    pub fn get_float32(&self, offset: usize, little_endian: bool) -> Result<f32, DataViewError> {
+        Ok(decode::<f32, 4>(self.read::<4>(offset)?, little_endian))
+    }
+
+    pub fn get_float64(&self, offset: usize, little_endian: bool) -> Result<f64, DataViewError> {
+        Ok(decode::<f64, 8>(self.read::<8>(offset)?, little_endian))
+    }
+
+    pub fn set_int8(&self, offset: usize, value: i8) -> Result<(), DataViewError> {
+        self.write(offset, value.to_ne_bytes())
+    }
+
+    pub fn set_uint8(&self, offset: usize, value: u8) -> Result<(), DataViewError> {
+        self.write(offset, [value])
+    }
+
+    pub fn set_int16(
+        &self,
+        offset: usize,
+        value: i16,
+        little_endian: bool,
+    ) -> Result<(), DataViewError> {
+        encode::<i16, 2>(self, offset, value, little_endian)
+    }
+
+    pub fn set_uint16(
+        &self,
+        offset: usize,
+        value: u16,
+        little_endian: bool,
+    ) -> Result<(), DataViewError> {
+        encode::<u16, 2>(self, offset, value, little_endian)
+    }
+
+    pub fn set_int32(
+        &self,
+        offset: usize,
+        value: i32,
+        little_endian: bool,
+    ) -> Result<(), DataViewError> {
+        encode::<i32, 4>(self, offset, value, little_endian)
+    }
+
+    pub fn set_uint32(
+        &self,
+        offset: usize,
+        value: u32,
+        little_endian: bool,
+    ) -> Result<(), DataViewError> {
+        encode::<u32, 4>(self, offset, value, little_endian)
+    }
+
+    pub fn set_float32(
+        &self,
+        offset: usize,
+        value: f32,
+        little_endian: bool,
+    ) -> Result<(), DataViewError> {
+        encode::<f32, 4>(self, offset, value, little_endian)
+    }
+
+    pub fn set_float64(
+        &self,
+        offset: usize,
+        value: f64,
+        little_endian: bool,
+    ) -> Result<(), DataViewError> {
+        encode::<f64, 8>(self, offset, value, little_endian)
+    }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DataViewError {
+    Detached,
+    OutOfBounds,
+}
+
+fn decode<T, const N: usize>(bytes: [u8; N], little_endian: bool) -> T
+where
+    T: DataViewDecode<N>,
+{
+    T::decode(bytes, little_endian)
+}
+
+fn encode<T, const N: usize>(
+    view: &DataViewData,
+    offset: usize,
+    value: T,
+    little_endian: bool,
+) -> Result<(), DataViewError>
+where
+    T: DataViewEncode<N>,
+{
+    view.write(offset, value.encode(little_endian))
+}
+
+trait DataViewDecode<const N: usize> {
+    fn decode(bytes: [u8; N], little_endian: bool) -> Self;
+}
+
+trait DataViewEncode<const N: usize> {
+    fn encode(self, little_endian: bool) -> [u8; N];
+}
+
+macro_rules! data_view_codec {
+    ($type:ty, $size:literal) => {
+        impl DataViewDecode<$size> for $type {
+            fn decode(bytes: [u8; $size], little_endian: bool) -> Self {
+                if little_endian {
+                    <$type>::from_le_bytes(bytes)
+                } else {
+                    <$type>::from_be_bytes(bytes)
+                }
+            }
+        }
+
+        impl DataViewEncode<$size> for $type {
+            fn encode(self, little_endian: bool) -> [u8; $size] {
+                if little_endian {
+                    self.to_le_bytes()
+                } else {
+                    self.to_be_bytes()
+                }
+            }
+        }
+    };
+}
+
+data_view_codec!(i16, 2);
+data_view_codec!(u16, 2);
+data_view_codec!(i32, 4);
+data_view_codec!(u32, 4);
+data_view_codec!(f32, 4);
+data_view_codec!(f64, 8);
 
 /// A Float64Array view over shared ArrayBuffer bytes.
 #[derive(Debug, Clone, PartialEq)]
