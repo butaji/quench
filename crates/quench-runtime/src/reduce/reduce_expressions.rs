@@ -359,7 +359,16 @@ pub fn reduce_assignment(
     let AssignmentTarget::AssignmentTargetIdentifier(identifier) = &assignment.left else {
         return properties::reduce_assignment(assignment, ops, facts, next_register, locals);
     };
-    let slot = *locals.get(identifier.name.as_str())?;
+    let Some(slot) = locals.get(identifier.name.as_str()).copied() else {
+        return properties::reduce_global_assignment(
+            identifier.name.as_str(),
+            assignment,
+            ops,
+            facts,
+            next_register,
+            locals,
+        );
+    };
     let rhs = reduce_expression(&assignment.right, ops, facts, next_register, locals)?;
     let value = if assignment.operator == AssignmentOperator::Assign {
         rhs
@@ -414,6 +423,7 @@ fn reduce_this_atom(
     if let Some(slot) = locals
         .get("this")
         .or_else(|| locals.get(SCRIPT_THIS_SLOT))
+        .or_else(|| locals.get("globalThis"))
         .copied()
     {
         return emit_load_local(ops, next_register, slot);
