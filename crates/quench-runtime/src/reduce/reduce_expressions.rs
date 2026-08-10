@@ -70,6 +70,9 @@ fn reduce_static_if(
     };
     match selected {
         Statement::EmptyStatement(_) => Ok(None),
+        Statement::BlockStatement(_) => {
+            crate::reduce::reduce_statement(selected, ops, facts, next_register, next_slot, locals)
+        }
         Statement::ExpressionStatement(expression) => {
             reduce_expression_statement(&expression.expression, ops, facts, next_register, locals)
                 .map(Some)
