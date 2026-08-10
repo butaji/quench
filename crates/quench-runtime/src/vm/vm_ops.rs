@@ -90,6 +90,9 @@ pub fn execute_builtin_tail(
             arguments.first(),
             arguments.get(1),
         )),
+        Builtin::ObjectIsExtensible => {
+            crate::proxy::proxy_is_extensible(arguments.first().ok_or(VmError::NotCallable)?)?
+        }
         Builtin::ObjectKeys => crate::builtins::keys(arguments.first()),
         Builtin::ObjectHasOwnProperty | Builtin::ObjectGetOwnPropertyDescriptor => {
             crate::builtins::object::object_special(builtin, receiver, arguments)
@@ -132,5 +135,6 @@ fn is_proxy_or_reflect(builtin: crate::ops::Builtin) -> bool {
             | Builtin::ReflectDefineProperty
             | Builtin::ReflectOwnKeys
             | Builtin::ReflectApply
+            | Builtin::ReflectConstruct
     )
 }
