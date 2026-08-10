@@ -91,6 +91,12 @@ pub struct SetData {
     pub values: VecDeque<Value>,
 }
 
+#[derive(Debug, PartialEq)]
+pub struct IteratorData {
+    pub values: Vec<Value>,
+    pub index: RefCell<usize>,
+}
+
 include!("value_buffer.rs");
 include!("value_typed_small.rs");
 include!("value_typed_large.rs");
@@ -129,6 +135,7 @@ pub enum Value {
     HostCapability(Rc<HostCapabilityValue>),
     Map(Rc<MapData>),
     Set(Rc<SetData>),
+    Iterator(Rc<IteratorData>),
     Null,
     Undefined,
 }

@@ -10,10 +10,7 @@ use crate::{
 };
 
 fn same_value_zero(left: &Value, right: &Value) -> bool {
-    match (left, right) {
-        (Value::Number(l), Value::Number(r)) => l.is_nan() && r.is_nan() || l == r,
-        _ => left == right,
-    }
+    crate::builtins::same_value_zero(left, right)
 }
 
 pub fn property(key: &str) -> Value {
@@ -24,6 +21,7 @@ pub fn property(key: &str) -> Value {
         "delete" => Value::Builtin(Builtin::MapDelete),
         "clear" => Value::Builtin(Builtin::MapClear),
         "forEach" => Value::Builtin(Builtin::MapForEach),
+        "Symbol.iterator" => Value::Builtin(Builtin::MapIterator),
         _ => Value::Undefined,
     }
 }
