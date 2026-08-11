@@ -57,6 +57,13 @@ pub enum Op {
         slot: u16,
         name: String,
     },
+    InitializeLocal {
+        slot: u16,
+    },
+    LoadParameter {
+        dst: u16,
+        slot: u16,
+    },
     DeclareEvalBinding {
         name: String,
         slot: u16,
