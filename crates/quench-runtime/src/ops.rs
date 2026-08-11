@@ -397,4 +397,6 @@ pub enum Builtin {
     PromiseFinallyRejected,
     PromiseFinallyOnFulfilled,
     PromiseFinallyOnRejected,
+    PromiseAdoptResolve,
+    PromiseAdoptReject,
 }

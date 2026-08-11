@@ -1,6 +1,10 @@
 //! Machine-sized runtime values for the residual kernel.
 
-use std::{cell::RefCell, collections::VecDeque, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    collections::VecDeque,
+    rc::Rc,
+};
 
 use crate::{
     facts::PrivateNameId,
@@ -101,12 +105,14 @@ pub struct PromiseData {
     pub(crate) properties: RefCell<Vec<(String, Value)>>,
     pub state: RefCell<PromiseState>,
     pub result: RefCell<Option<Value>>,
+    pub(crate) already_resolved: Cell<bool>,
     pub then_actions: RefCell<Vec<(Option<Value>, Option<Value>)>>,
     pub(crate) continuations: RefCell<Vec<PromiseContinuation>>,
 }
 
 impl PromiseData {
     pub fn new(state: PromiseState) -> Self {
+        let already_resolved = !matches!(state, PromiseState::Pending);
         let result = match &state {
             PromiseState::Pending => None,
             PromiseState::Fulfilled(value) | PromiseState::Rejected(value) => Some(value.clone()),
@@ -116,6 +122,7 @@ impl PromiseData {
             properties: RefCell::new(Vec::new()),
             state: RefCell::new(state),
             result: RefCell::new(result),
+            already_resolved: Cell::new(already_resolved),
             then_actions: RefCell::new(Vec::new()),
             continuations: RefCell::new(Vec::new()),
         }
