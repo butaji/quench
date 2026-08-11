@@ -25,6 +25,7 @@ fn is_function_builtin(builtin: Builtin) -> bool {
             | Builtin::ArrayReverse
             | Builtin::ArrayPop
             | Builtin::ArrayUnshift
+            | Builtin::ArrayFill
     )
 }
 
