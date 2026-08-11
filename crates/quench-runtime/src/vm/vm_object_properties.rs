@@ -53,10 +53,7 @@ fn object_property(properties: &Rc<crate::value::ObjectData>, key: &str) -> Valu
     if key == "constructor" {
         return crate::builtins::property(prototype, key);
     }
-    bind_method(
-        &Value::Object(properties.clone()),
-        crate::builtins::property(prototype, key),
-    )
+    crate::builtins::property(prototype, key)
 }
 
 fn object_prototype(properties: &[(String, Value)]) -> Builtin {
