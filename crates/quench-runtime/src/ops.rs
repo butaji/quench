@@ -219,6 +219,7 @@ pub enum Builtin {
     ArrayReverse,
     ArrayPop,
     ArrayUnshift,
+    ArrayFill,
     ArraySplice,
     TypedArrayFill,
     ObjectDefineProperty,
