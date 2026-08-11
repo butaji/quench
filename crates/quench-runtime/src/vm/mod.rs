@@ -463,6 +463,7 @@ fn is_object_special(builtin: Builtin) -> bool {
             | Builtin::ObjectGetOwnPropertyNames
             | Builtin::ObjectGetOwnPropertySymbols
             | Builtin::ObjectKeys
+            | Builtin::ObjectAssign
             | Builtin::ObjectCreate
             | Builtin::ObjectSetPrototypeOf
             | Builtin::ObjectPropertyIsEnumerable

@@ -332,6 +332,7 @@ fn builtin_method2(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Object, "isExtensible") => Some(ObjectIsExtensible),
         (Object, "getPrototypeOf") => Some(ObjectGetPrototypeOf),
         (Object, "is") => Some(ObjectIs),
+        (Object, "assign") => Some(ObjectAssign),
         (Object, "setPrototypeOf") => Some(ObjectSetPrototypeOf),
         (Map, "prototype") => Some(MapPrototype),
         (Set, "prototype") => Some(SetPrototype),
