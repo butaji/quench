@@ -12,6 +12,7 @@ use crate::{
 };
 
 include!("promise_combinators.rs");
+include!("promise_finally.rs");
 
 thread_local! {
     static MICROTASK_QUEUE: RefCell<VecDeque<Rc<PromiseData>>> =
@@ -51,6 +52,7 @@ fn process_promise(promise: &Rc<PromiseData>) {
         match crate::functions::execute_target(&handler, &Value::Undefined, &[value]) {
             Ok(Value::Promise(next)) => adopt_promise(&result_promise, &next),
             Ok(value) => resolve_promise(&result_promise, value),
+            Err(VmError::Thrown(reason)) => reject_promise(&result_promise, reason),
             Err(_) => reject_promise(&result_promise, Value::Undefined),
         }
     }
@@ -391,14 +393,6 @@ pub fn promise_catch(receiver: Option<&Value>, arguments: &[Value]) -> Result<Va
     )
 }
 
-/// Execute Promise.prototype.finally.
-pub fn promise_finally(receiver: Option<&Value>, _arguments: &[Value]) -> Result<Value, VmError> {
-    if !matches!(receiver, Some(Value::Promise(_))) {
-        return Err(VmError::NotCallable);
-    }
-    Ok(Value::Undefined)
-}
-
 /// Dispatch Promise builtins.
 pub fn execute_builtin(
     builtin: Builtin,
@@ -418,6 +412,18 @@ pub fn execute_builtin(
         Builtin::PromiseThen => promise_then(receiver, arguments),
         Builtin::PromiseCatch => promise_catch(receiver, arguments),
         Builtin::PromiseFinally => promise_finally(receiver, arguments),
+        Builtin::PromiseFinallyFulfilled => settle_finally_value(true, receiver),
+        Builtin::PromiseFinallyRejected => settle_finally_value(false, receiver),
+        Builtin::PromiseFinallyOnFulfilled => execute_finally_handler(
+            true,
+            receiver,
+            arguments.first().cloned().unwrap_or(Value::Undefined),
+        ),
+        Builtin::PromiseFinallyOnRejected => execute_finally_handler(
+            false,
+            receiver,
+            arguments.first().cloned().unwrap_or(Value::Undefined),
+        ),
         _ => return None,
     };
     Some(result)
