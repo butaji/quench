@@ -76,17 +76,7 @@ pub enum PromiseState {
     Rejected(Value),
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) enum PromiseContinuation {
-    AsyncGenerator {
-        generator: Rc<GeneratorData>,
-        result: Rc<PromiseData>,
-    },
-    AsyncGeneratorYield {
-        generator: Rc<GeneratorData>,
-        result: Rc<PromiseData>,
-    },
-}
+include!("value_promise.rs");
 
 /// Heap-allocated Promise data.
 #[derive(Debug, Clone, PartialEq, Default)]

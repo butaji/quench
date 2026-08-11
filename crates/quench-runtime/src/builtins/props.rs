@@ -2,6 +2,7 @@ use crate::{ops::Builtin, value::Value};
 
 mod data_view_name;
 use data_view_name::data_view_name;
+include!("props_promise.rs");
 
 /// Lookup a property on a builtin, checking runtime overrides first, then
 /// intl, then special, then callable.
@@ -116,6 +117,12 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
     if let Some(method) = builtin_method_prefix(builtin, key) {
         return Some(method);
     }
+    if builtin == Promise {
+        return promise_method(key).or_else(|| builtin_method2(builtin, key));
+    }
+    if builtin == PromisePrototype {
+        return promise_prototype_method(key).or_else(|| builtin_method2(builtin, key));
+    }
     match (builtin, key) {
         (Array, "prototype") => Some(ArrayPrototype),
         (ArrayBuffer, "isView") => Some(ArrayBufferIsView),
@@ -138,13 +145,6 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Date, "now") => Some(DateNow),
         (Date, "parse") => Some(DateParse),
         (Date, "UTC") => Some(DateUTC),
-        (Promise, "prototype") => Some(PromisePrototype),
-        (PromisePrototype, "constructor") => Some(Promise),
-        (PromisePrototype, "then") => Some(PromiseThen),
-        (PromisePrototype, "catch") => Some(PromiseCatch),
-        (PromisePrototype, "finally") => Some(PromiseFinally),
-        (Promise, "resolve") => Some(PromiseResolve),
-        (Promise, "reject") => Some(PromiseReject),
         (RegExp, "prototype") => Some(RegExpPrototype),
         (RegExpPrototype, "test") => Some(RegExpTest),
         (RegExpPrototype, "exec") => Some(RegExpExec),
