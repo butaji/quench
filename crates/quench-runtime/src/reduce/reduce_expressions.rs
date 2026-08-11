@@ -338,6 +338,7 @@ fn op_may_invoke_eval(op: &Op) -> bool {
         op,
         Op::Eval { .. }
             | Op::Call { .. }
+            | Op::OptionalCall { .. }
             | Op::CallMethod { .. }
             | Op::CallSuperMethod { .. }
             | Op::Construct { .. }
