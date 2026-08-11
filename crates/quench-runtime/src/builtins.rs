@@ -264,7 +264,6 @@ pub(crate) fn error(builtin: Builtin, arguments: &[Value]) -> Value {
     }
     Value::Object(Rc::new(ObjectData::new(properties)))
 }
-
 pub(crate) fn same_value(left: Option<&Value>, right: Option<&Value>) -> bool {
     let (Some(left), Some(right)) = (left, right) else {
         return matches!((left, right), (None, None));
@@ -300,14 +299,12 @@ pub(crate) fn same_value(left: Option<&Value>, right: Option<&Value>) -> bool {
         _ => left == right,
     }
 }
-
 pub(crate) fn same_value_zero(left: &Value, right: &Value) -> bool {
     if let (Value::Number(left), Value::Number(right)) = (left, right) {
         return left.is_nan() && right.is_nan() || left == right;
     }
     same_value(Some(left), Some(right))
 }
-
 pub(crate) fn keys(value: Option<&Value>) -> Value {
     crate::own_keys::enumerable_names(value)
 }
@@ -320,6 +317,9 @@ pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
         return result.unwrap_or(target);
     }
     if let Some(result) = set_prototype_slot(&target, key, value.clone()) {
+        return result;
+    }
+    if let Some(result) = set_promise_property(&target, key, value.clone()) {
         return result;
     }
     match target {
