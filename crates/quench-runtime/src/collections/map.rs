@@ -85,6 +85,62 @@ pub(crate) fn weak_map_get_or_insert(
     Ok(value)
 }
 
+pub(crate) fn weak_map_set(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
+    let key = weak_key(receiver, arguments.first())?;
+    map_set(
+        receiver,
+        &[key, arguments.get(1).cloned().unwrap_or(Value::Undefined)],
+    )
+}
+
+pub(crate) fn weak_map_get(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
+    if !weak_receiver(receiver) {
+        return Err(crate::value::error::throw_type_error(
+            "WeakMap method called on incompatible receiver",
+        ));
+    }
+    if arguments.first().is_some_and(|key| !is_weak_key(key)) {
+        return Ok(Value::Undefined);
+    }
+    map_get(receiver, arguments)
+}
+
+pub(crate) fn weak_map_has(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
+    if !weak_receiver(receiver) {
+        return Err(crate::value::error::throw_type_error(
+            "WeakMap method called on incompatible receiver",
+        ));
+    }
+    if arguments.first().is_some_and(|key| !is_weak_key(key)) {
+        return Ok(Value::Boolean(false));
+    }
+    map_has(receiver, arguments)
+}
+
+pub(crate) fn weak_map_delete(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
+    if !weak_receiver(receiver) {
+        return Err(crate::value::error::throw_type_error(
+            "WeakMap method called on incompatible receiver",
+        ));
+    }
+    if arguments.first().is_some_and(|key| !is_weak_key(key)) {
+        return Ok(Value::Boolean(false));
+    }
+    map_delete(receiver, arguments)
+}
+
 pub(crate) fn weak_map_get_or_insert_computed(
     receiver: Option<&Value>,
     arguments: &[Value],
@@ -106,17 +162,26 @@ pub(crate) fn weak_map_get_or_insert_computed(
 }
 
 fn weak_key(receiver: Option<&Value>, key: Option<&Value>) -> Result<Value, VmError> {
-    if !matches!(receiver, Some(Value::Map(data)) if data.weak) {
+    if !weak_receiver(receiver) {
         return Err(crate::value::error::throw_type_error(
             "WeakMap method called on incompatible receiver",
         ));
     }
-    let Some(key) = key.filter(|value| crate::value::is_object(value)) else {
+    let Some(key) = key.filter(|value| is_weak_key(value)) else {
         return Err(crate::value::error::throw_type_error(
             "Invalid value used as weak map key",
         ));
     };
     Ok(key.clone())
+}
+
+fn weak_receiver(receiver: Option<&Value>) -> bool {
+    matches!(receiver, Some(Value::Map(data)) if data.weak)
+}
+
+fn is_weak_key(value: &Value) -> bool {
+    crate::value::is_object(value)
+        || matches!(value, Value::String(text) if text.starts_with("Symbol.") && !text.starts_with("Symbol.for.") && text.contains('\0'))
 }
 
 pub(crate) fn map_set(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
