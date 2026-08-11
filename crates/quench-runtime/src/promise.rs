@@ -5,8 +5,13 @@ use std::{cell::RefCell, collections::VecDeque, rc::Rc};
 use crate::{
     execute::VmError,
     ops::Builtin,
-    value::{PromiseContinuation, PromiseData, PromiseState, Value},
+    value::{
+        PromiseAggregate, PromiseAggregateKind, PromiseContinuation, PromiseData, PromiseState,
+        Value,
+    },
 };
+
+include!("promise_combinators.rs");
 
 thread_local! {
     static MICROTASK_QUEUE: RefCell<VecDeque<Rc<PromiseData>>> =
@@ -57,6 +62,10 @@ fn process_promise(promise: &Rc<PromiseData>) {
 
 fn process_continuation(continuation: PromiseContinuation, state: &PromiseState) {
     let (generator, result, yielding) = match continuation {
+        PromiseContinuation::Aggregate { aggregate, index } => {
+            aggregate_settle(&aggregate, index, state);
+            return;
+        }
         PromiseContinuation::AsyncGenerator { generator, result } => (generator, result, false),
         PromiseContinuation::AsyncGeneratorYield { generator, result } => (generator, result, true),
     };
@@ -307,6 +316,12 @@ pub fn execute_builtin(
         Builtin::Promise => Ok(new_promise()),
         Builtin::PromiseResolve => resolve_receiver(receiver, arguments),
         Builtin::PromiseReject => reject_receiver(receiver, arguments),
+        Builtin::PromiseAll => promise_combinator(PromiseAggregateKind::All, arguments),
+        Builtin::PromiseAllSettled => {
+            promise_combinator(PromiseAggregateKind::AllSettled, arguments)
+        }
+        Builtin::PromiseAny => promise_combinator(PromiseAggregateKind::Any, arguments),
+        Builtin::PromiseRace => promise_combinator(PromiseAggregateKind::Race, arguments),
         Builtin::PromiseThen => promise_then(receiver, arguments),
         Builtin::PromiseCatch => promise_catch(receiver, arguments),
         Builtin::PromiseFinally => promise_finally(receiver, arguments),
