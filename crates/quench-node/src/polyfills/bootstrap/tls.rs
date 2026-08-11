@@ -1,6 +1,6 @@
 //! Polyfill: `tls`
 
-pub const JS: &str = r#"const __quenchOriginalRequireWithTls = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequireWithTls = globalThis.require;
 const __quenchTlsUnsupported = (operation) => {
   const error = new Error(`${operation} is not supported by quench-node`);
   error.code = "ERR_TLS_NOT_SUPPORTED";
@@ -127,4 +127,4 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithTls(specifier);
 };
-"#;
+"#);

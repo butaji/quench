@@ -1,6 +1,6 @@
 //! Polyfill: `api-head`
 
-pub const JS: &str = r#"globalThis.Buffer = new Proxy(NodeBuffer, {
+pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.Buffer = new Proxy(NodeBuffer, {
   apply(_target, _thisArg, args) {
     if (typeof args[0] === "number") {
       return new NodeBuffer(NodeBuffer._validateSize(args[0]));
@@ -251,4 +251,4 @@ const nodeFsPath = (value) => {
   error.code = "ERR_INVALID_ARG_TYPE";
   throw error;
 };
-"#;
+"#);

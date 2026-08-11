@@ -1,6 +1,6 @@
 //! Polyfill: `filesystem-internals`
 
-pub const JS: &str = r#"const __quenchRmValidateBoolean = (options, key) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchRmValidateBoolean = (options, key) => {
   if (
     !Object.prototype.hasOwnProperty.call(options, key) ||
     typeof options[key] === "boolean"
@@ -69,4 +69,4 @@ const __quenchInternalFsUtilsModule = {
     return values[flags];
   },
 };
-"#;
+"#);

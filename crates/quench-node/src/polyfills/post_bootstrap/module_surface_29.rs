@@ -1,6 +1,6 @@
 //! Polyfill: `module-surface-29`
 
-pub const JS: &str = r#"const __quenchClusterFallbacks = (result) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchClusterFallbacks = (result) => {
   result.isPrimary ??= true;
   result.isWorker ??= false;
   result.worker ??= undefined;
@@ -66,4 +66,4 @@ if (globalThis.require) {
   globalThis.require = (name) =>
     __quenchApplyModuleSurface29(name, originalRequire(name));
 }
-"#;
+"#);

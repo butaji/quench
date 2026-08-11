@@ -1,6 +1,6 @@
 //! Polyfill: `sync`
 
-pub const JS: &str = r#"const __quenchSpawnSyncErrorRequire = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchSpawnSyncErrorRequire = globalThis.require;
 const __quenchSpawnSyncErrorChildProcess = __quenchSpawnSyncErrorRequire(
   "child_process",
 );
@@ -31,4 +31,4 @@ __quenchSpawnSyncErrorChildProcess.spawnSync = (
   }
   return __quenchOriginalSpawnSync(command, args, options);
 };
-"#;
+"#);

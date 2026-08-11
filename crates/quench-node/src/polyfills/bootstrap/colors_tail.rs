@@ -1,6 +1,6 @@
 //! Polyfill: `colors-tail`
 
-pub const JS: &str = r##"const __nodeURLResolveInput = (input, base) => {
+pub const JS: &str = quench_js_check::checked_js!(r##"const __nodeURLResolveInput = (input, base) => {
   let value =
     /^file:[a-z][|:][\\/]/i.test(
       String(input)
@@ -470,4 +470,4 @@ globalThis.__nodeUrlModule = new Proxy(
     })
   }
 );
-"##;
+"##);

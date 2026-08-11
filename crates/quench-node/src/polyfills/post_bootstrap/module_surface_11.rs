@@ -1,6 +1,6 @@
 //! Polyfill: `module-surface-11`
 
-pub const JS: &str = r##"{
+pub const JS: &str = quench_js_check::checked_js!(r##"{
   if (globalThis.require) {
     const moduleApi = globalThis.require("module");
     moduleApi.Module._resolveFilename ||= (name) => String(name);
@@ -472,4 +472,4 @@ Object.defineProperty(__nodeURLSearchInspect, "name", {
 globalThis.__nodeURLSearchParams.prototype[
   Symbol.for("nodejs.util.inspect.custom")
 ] = __nodeURLSearchInspect;
-"##;
+"##);

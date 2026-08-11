@@ -1,6 +1,6 @@
 //! Polyfill: `metadata-tail`
 
-pub const JS: &str = r#"globalThis.__nodeFs.readlink = (value, options, callback) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.__nodeFs.readlink = (value, options, callback) => {
   if (typeof options === "function") {
     callback = options;
     options = undefined;
@@ -23,4 +23,4 @@ pub const JS: &str = r#"globalThis.__nodeFs.readlink = (value, options, callback
     }
   });
 };
-"#;
+"#);

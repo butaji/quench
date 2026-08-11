@@ -1,6 +1,6 @@
 //! Polyfill: `module-surface-final-00`
 
-pub const JS: &str = r#"const __quenchTestReporterFallbacks = () =>
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchTestReporterFallbacks = () =>
   Object.fromEntries(
     "dot junit json lcov markdown spec tap teamcity xunit"
       .split(" ")
@@ -92,4 +92,4 @@ if (globalThis.require) {
     return __quenchApplyFinalModule00(name, result, originalRequire);
   };
 }
-"#;
+"#);

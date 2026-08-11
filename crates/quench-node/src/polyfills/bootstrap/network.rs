@@ -1,6 +1,6 @@
 //! Polyfill: `network`
 
-pub const JS: &str = r#"let __quenchNetAutoSelectFamily = false;
+pub const JS: &str = quench_js_check::checked_js!(r#"let __quenchNetAutoSelectFamily = false;
 const __quenchNetNormalizedArgsSymbol =
   (globalThis.__quenchNetNormalizedArgsSymbol ||= Symbol("normalizedArgs"));
 const __quenchNetFamilyTimeoutFlag = globalThis.__quench_argv?.find?.((value) =>
@@ -454,4 +454,4 @@ globalThis.__quench_require_part_01 = (name, specifier) => {
     return { normalizedArgsSymbol: __quenchNetNormalizedArgsSymbol };
   }
 };
-"#;
+"#);

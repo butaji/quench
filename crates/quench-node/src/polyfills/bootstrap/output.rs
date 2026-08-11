@@ -1,6 +1,6 @@
 //! Polyfill: `output`
 
-pub const JS: &str = r#"const __quenchChildOutputRequire = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchChildOutputRequire = globalThis.require;
 const __quenchChildOutputModule = __quenchChildOutputRequire("child_process");
 const __quenchOutputSpawn = __quenchChildOutputModule.spawn;
 const __quenchOutputStream = (stream) => {
@@ -71,4 +71,4 @@ __quenchChildOutputModule.spawn = (...args) => {
     __quenchEmitChildOutput(child, emit, args, stdout, stderr, event, values);
   return child;
 };
-"#;
+"#);

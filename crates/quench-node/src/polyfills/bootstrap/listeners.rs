@@ -1,6 +1,6 @@
 //! Polyfill: `listeners`
 
-pub const JS: &str = r#"const __quenchEventListenersOriginalAdd =
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchEventListenersOriginalAdd =
   EventTarget.prototype.addEventListener;
 EventTarget.prototype.addEventListener = function (name, listener, options) {
   const current = this._listeners?.[name] || [];
@@ -81,4 +81,4 @@ __quenchEventListenersModule.getEventListeners = (target, event) => {
   }
   throw Object.assign(new TypeError("The emitter argument must be an instance of EventEmitter or EventTarget [ERR_INVALID_ARG_TYPE]"), { code: "ERR_INVALID_ARG_TYPE" });
 };
-"#;
+"#);

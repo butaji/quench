@@ -1,6 +1,6 @@
 //! Polyfill: `filesystem-permissions`
 
-pub const JS: &str = r#"const nodeMode = (mode) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"const nodeMode = (mode) => {
   if (typeof mode !== "number" && typeof mode !== "string") {
     throw Object.assign(new TypeError('The "mode" argument must be of type number'), { code: "ERR_INVALID_ARG_TYPE" });
   }
@@ -110,4 +110,4 @@ globalThis.__nodeFs.fchown = (fd, uid, gid, callback) => {
   }
   queueMicrotask(() => callback(null));
 };
-"#;
+"#);

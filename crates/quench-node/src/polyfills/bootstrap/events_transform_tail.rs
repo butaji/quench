@@ -1,6 +1,6 @@
 //! Polyfill: `events-transform-tail`
 
-pub const JS: &str = r#"class NodeTransform extends NodeWritable {
+pub const JS: &str = quench_js_check::checked_js!(r#"class NodeTransform extends NodeWritable {
   constructor(options = {}) {
     super(options);
     this.readable = options.readable !== false;
@@ -220,4 +220,4 @@ pub const JS: &str = r#"class NodeTransform extends NodeWritable {
     })(this);
   }
 }
-"#;
+"#);

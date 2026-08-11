@@ -1,6 +1,6 @@
 //! Polyfill: `child-process-encoding`
 
-pub const JS: &str = r#"const __quenchExecEncodingRequire = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchExecEncodingRequire = globalThis.require;
 const __quenchExecEncodingChildProcess = __quenchExecEncodingRequire(
   "child_process",
 );
@@ -26,4 +26,4 @@ __quenchExecEncodingChildProcess.exec = (command, options, callback) => {
     },
   );
 };
-"#;
+"#);

@@ -1,6 +1,6 @@
 //! Polyfill: `iterators`
 
-pub const JS: &str = r#"const __quenchOriginalRequireWithZlibIter = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequireWithZlibIter = globalThis.require;
 const __quenchZlibIterInput = (chunk) => {
   if (!Array.isArray(chunk)) return Buffer.from(chunk);
   return Buffer.concat(chunk.map((part) => Buffer.from(part)));
@@ -37,4 +37,4 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithZlibIter(specifier);
 };
-"#;
+"#);

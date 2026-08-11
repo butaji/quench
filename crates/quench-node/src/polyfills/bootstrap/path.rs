@@ -1,6 +1,6 @@
 //! Polyfill: `path`
 
-pub const JS: &str = r#"const __nodePathFormatExtension = (extension) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __nodePathFormatExtension = (extension) => {
   if (!extension) return "";
   const value = String(extension);
   return value.startsWith(".") ? value : `.${value}`;
@@ -390,4 +390,4 @@ const __nodeWinPath = {
 __nodeWinPath.posix = globalThis.__nodePath;
 __nodeWinPath.win32 = __nodeWinPath;
 globalThis.__nodePath.win32 = __nodeWinPath;
-"#;
+"#);

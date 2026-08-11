@@ -1,6 +1,6 @@
 //! Polyfill: `stream-classes`
 
-pub const JS: &str = r#"globalThis.__nodeFs.WriteStream = globalThis.__nodeFs.createWriteStream;
+pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.__nodeFs.WriteStream = globalThis.__nodeFs.createWriteStream;
 globalThis.__nodeFs.WriteStream.prototype = Object.create(
   NodeWritable.prototype
 );
@@ -259,4 +259,4 @@ globalThis.__nodeFs.Utf8Stream = class Utf8Stream extends NodeEventEmitter {
     return this;
   }
 };
-"#;
+"#);

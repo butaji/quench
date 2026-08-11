@@ -1,6 +1,6 @@
 //! Polyfill: `introspection`
 
-pub const JS: &str = r#"const __quenchEventNameVisible = (emitter, name, value) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchEventNameVisible = (emitter, name, value) => {
   if (value === undefined || (Array.isArray(value) && value.length === 0)) {
     return false;
   }
@@ -80,4 +80,4 @@ globalThis.__nodeErrorMonitorSymbol = __quenchEventsSymbols.errorMonitor;
 __quenchEventsSymbols.captureRejections ??= false;
 __quenchEventsSymbols.EventEmitter.captureRejections =
   __quenchEventsSymbols.captureRejections;
-"#;
+"#);

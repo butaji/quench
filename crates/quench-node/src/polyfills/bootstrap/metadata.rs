@@ -1,6 +1,6 @@
 //! Polyfill: `metadata`
 
-pub const JS: &str = r#"globalThis.__nodeFs.truncate = (value, length = 0, callback) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.__nodeFs.truncate = (value, length = 0, callback) => {
   if (typeof length === "function") {
     callback = length;
     length = 0;
@@ -438,4 +438,4 @@ globalThis.__nodeFs.symlink = (target, link, type, callback) => {
     callback(null);
   });
 };
-"#;
+"#);

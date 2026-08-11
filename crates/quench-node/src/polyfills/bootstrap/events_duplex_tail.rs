@@ -1,6 +1,6 @@
 //! Polyfill: `events-duplex-tail`
 
-pub const JS: &str = r#"class NodeDuplex extends NodeReadable {
+pub const JS: &str = quench_js_check::checked_js!(r#"class NodeDuplex extends NodeReadable {
   constructor(options = {}) {
     super(options);
     this.__nodeDuplex = true;
@@ -291,4 +291,4 @@ const __nodeDuplexToWeb = (duplex) => {
 };
 NodeDuplex.toWeb = __nodeDuplexToWeb;
 NodeDuplexCompat.toWeb = NodeDuplex.toWeb;
-"#;
+"#);

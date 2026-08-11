@@ -1,6 +1,6 @@
 //! Polyfill: `module-surface-14`
 
-pub const JS: &str = r#"const __quenchDnsFallbacks = (result) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchDnsFallbacks = (result) => {
   result.resolve ||= (hostname, callback) => callback?.(null, []);
   result.resolve4 ||= result.resolve;
   result.resolve6 ||= result.resolve;
@@ -396,4 +396,4 @@ const __quenchCryptoKeyObjectInvalidThis = () => {
     code: "ERR_INVALID_THIS"
   });
 };
-"#;
+"#);

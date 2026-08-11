@@ -1,6 +1,6 @@
 //! Polyfill: `module-surface-05`
 
-pub const JS: &str = r##"{
+pub const JS: &str = quench_js_check::checked_js!(r##"{
   const __quenchInheritsError = (message) => {
     const error = new TypeError(message);
     error.code = "ERR_INVALID_ARG_TYPE";
@@ -122,4 +122,4 @@ pub const JS: &str = r##"{
     };
   }
 }
-"##;
+"##);

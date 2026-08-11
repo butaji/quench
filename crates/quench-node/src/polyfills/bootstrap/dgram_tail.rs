@@ -1,6 +1,6 @@
 //! Polyfill: `dgram-tail`
 
-pub const JS: &str = r#"const __quenchDgramOnce = (socket, listeners, event, callback) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchDgramOnce = (socket, listeners, event, callback) => {
   const wrapper = (...args) => {
     listeners[event] = (listeners[event] || []).filter(
       (listener) => listener !== wrapper,
@@ -453,4 +453,4 @@ globalThis.require = (specifier) =>
       },
     }
     : __quenchOriginalRequireWithDgram(specifier);
-"#;
+"#);

@@ -1,6 +1,6 @@
 //! Polyfill: `timestamps`
 
-pub const JS: &str = r#"globalThis.__nodeTimes ||= Object.create(null);
+pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.__nodeTimes ||= Object.create(null);
 const __nodeFsTimes = (value) => __nodeFsPathOnly(value);
 const __nodeFsSetTimes = (value, atime, mtime) => {
   const path = __nodeFsTimes(value);
@@ -53,4 +53,4 @@ globalThis.__nodeFs.lutimes = (value, atime, mtime, callback) =>
   __nodeFsAsyncTimes("lutimesSync", value, atime, mtime, callback);
 globalThis.__nodeFs.futimes = (value, atime, mtime, callback) =>
   __nodeFsAsyncTimes("futimesSync", value, atime, mtime, callback);
-"#;
+"#);

@@ -1,6 +1,6 @@
 //! Polyfill: `module-surface-03`
 
-pub const JS: &str = r#"const __quenchAddStreamAliases = (result) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchAddStreamAliases = (result) => {
   result.Stream ||= result.Readable;
   result.Writable ||= result.Readable;
   result.Duplex ||= result.Transform;
@@ -483,4 +483,4 @@ const __quenchFinishedStream = (stream, options, callback) => {
     abortCleanup?.();
   };
 };
-"#;
+"#);

@@ -1,6 +1,6 @@
 //! Polyfill: `module-surface-14-tail`
 
-pub const JS: &str = r#"class __quenchKeyObject {
+pub const JS: &str = quench_js_check::checked_js!(r#"class __quenchKeyObject {
   get type() {
     if (!__quenchCryptoKeyObjectBrand.has(this)) {
       __quenchCryptoKeyObjectInvalidThis();
@@ -275,4 +275,4 @@ const __quenchCryptoAllKeyFallbacks = (result) => {
   (__quenchCryptoSecretKeyFallback(result),
     __quenchCryptoPrimeFallback(result));
 };
-"#;
+"#);

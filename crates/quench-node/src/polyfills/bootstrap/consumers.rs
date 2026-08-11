@@ -1,6 +1,6 @@
 //! Polyfill: `consumers`
 
-pub const JS: &str = r#"const __quenchOriginalRequireWithConsumers = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequireWithConsumers = globalThis.require;
 const __quenchConsume = async (stream) => {
   const reader = stream?.getReader ? stream.getReader() : null;
   const chunks = [];
@@ -65,4 +65,4 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithConsumers(specifier);
 };
-"#;
+"#);

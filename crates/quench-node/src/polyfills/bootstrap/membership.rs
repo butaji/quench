@@ -1,6 +1,6 @@
 //! Polyfill: `membership`
 
-pub const JS: &str = r#"const __quenchDgramMembership = (socket, operation, address) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchDgramMembership = (socket, operation, address) => {
   if (address === undefined) {
     throw Object.assign(
       new TypeError('The "multicastAddress" argument must be specified'),
@@ -64,4 +64,4 @@ const __quenchSourceMembership = (socket, operation, source, group) => {
     });
   }
 };
-"#;
+"#);

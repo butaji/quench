@@ -1,6 +1,6 @@
 //! Polyfill: `module-surface-12-tail`
 
-pub const JS: &str = r#"globalThis.__nodeLegacyMailtoParts = (input) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.__nodeLegacyMailtoParts = (input) => {
   if (!/^mailto:/i.test(input)) return null;
   const [address, query = ""] = input.slice(input.indexOf(":") + 1).split("?");
   const at = address.lastIndexOf("@");
@@ -79,4 +79,4 @@ if (globalThis.require) {
   fs.promises.cp ||= async () => undefined;
   fs.promises.opendir ||= async () => undefined;
 }
-"#;
+"#);

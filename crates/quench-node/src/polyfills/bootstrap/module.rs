@@ -1,6 +1,6 @@
 //! Polyfill: `module`
 
-pub const JS: &str = r#"const __quenchOriginalRequireWithModule = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequireWithModule = globalThis.require;
 const __quenchBuiltinModules =
   "assert buffer child_process cluster crypto events fs http https module net os path perf_hooks process querystring stream string_decoder timers tls tty url util vm worker_threads zlib".split(
     " "
@@ -156,4 +156,4 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithModule(specifier);
 };
-"#;
+"#);

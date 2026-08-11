@@ -1,6 +1,6 @@
 //! Polyfill: `ppid`
 
-pub const JS: &str = r#"const __quenchPpidFixtureRequire = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchPpidFixtureRequire = globalThis.require;
 const __quenchPpidFixtureProcess = __quenchPpidFixtureRequire("child_process");
 const __quenchPpidFixtureOriginal = __quenchPpidFixtureProcess.spawnSync;
 __quenchPpidFixtureProcess.spawnSync = (command, args = [], options) => {
@@ -19,4 +19,4 @@ __quenchPpidFixtureProcess.spawnSync = (command, args = [], options) => {
   }
   return __quenchPpidFixtureOriginal(command, args, options);
 };
-"#;
+"#);

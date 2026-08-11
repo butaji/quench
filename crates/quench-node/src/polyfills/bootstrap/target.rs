@@ -1,6 +1,6 @@
 //! Polyfill: `target`
 
-pub const JS: &str = r#"globalThis.EventTarget ||= class EventTarget {
+pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.EventTarget ||= class EventTarget {
   constructor() {
     this._listeners = {};
   }
@@ -472,4 +472,4 @@ globalThis.require = (name) => {
   if (String(name).replace(/^node:/, "") !== "events") return value;
   return __quenchEventsRequire(value);
 };
-"#;
+"#);

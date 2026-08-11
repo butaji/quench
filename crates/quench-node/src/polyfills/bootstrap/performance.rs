@@ -1,6 +1,6 @@
 //! Polyfill: `performance`
 
-pub const JS: &str = r#"const __nodePerformanceEntries = [];
+pub const JS: &str = quench_js_check::checked_js!(r#"const __nodePerformanceEntries = [];
 const __nodePerformance = {
   now: () => Date.now() - __nodeStartedAt,
   timeOrigin: __nodeStartedAt,
@@ -106,4 +106,4 @@ Object.setPrototypeOf = (object, prototype) => {
   }
   return __nodeSetPrototypeOf(object, prototype);
 };
-"#;
+"#);

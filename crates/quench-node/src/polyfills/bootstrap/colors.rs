@@ -1,6 +1,6 @@
 //! Polyfill: `colors`
 
-pub const JS: &str = r#"const __nodeUtilFormatColor = (value) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __nodeUtilFormatColor = (value) => {
   if (value === null) return "\u001b[1mnull\u001b[22m";
   if (value === undefined) return "\u001b[90mundefined\u001b[39m";
   if (
@@ -311,4 +311,4 @@ class NodeURLSearchParams {
 }
 globalThis.__nodeURLSearchParams = NodeURLSearchParams;
 // eslint-disable-next-line complexity
-"#;
+"#);

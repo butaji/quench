@@ -1,6 +1,6 @@
 //! Polyfill: `compression-tail`
 
-pub const JS: &str = r#"const __quenchZlibToBytes = (input, encoding) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchZlibToBytes = (input, encoding) => {
   if (typeof input === "string") {
     if (!encoding || encoding === "utf8" || encoding === "utf-8") {
       return new TextEncoder().encode(input);
@@ -385,4 +385,4 @@ const __quenchZlibUnzipSync = (input) => {
 };
 const __quenchZlibRawSync = (input, operation, encoding) =>
   __quenchZlibFromArray(operation(__quenchZlibToArray(input, encoding)));
-"#;
+"#);

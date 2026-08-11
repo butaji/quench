@@ -1,6 +1,6 @@
 //! Polyfill: `process-surface-01`
 
-pub const JS: &str = r#"{
+pub const JS: &str = quench_js_check::checked_js!(r#"{
   if (globalThis.process) {
     const write = (chunk) => {
       globalThis.__quench_console_write(String(chunk));
@@ -253,4 +253,4 @@ pub const JS: &str = r#"{
     }
   }
 }
-"#;
+"#);

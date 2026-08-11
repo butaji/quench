@@ -1,6 +1,6 @@
 //! Polyfill: `promisify`
 
-pub const JS: &str = r#"const __nodeUtilPromisifyCustom = Symbol.for("nodejs.util.promisify.custom");
+pub const JS: &str = quench_js_check::checked_js!(r#"const __nodeUtilPromisifyCustom = Symbol.for("nodejs.util.promisify.custom");
 const __nodeUtilPromisifyTypeError = (message) => {
   throw Object.assign(new TypeError(message), { code: "ERR_INVALID_ARG_TYPE" });
 };
@@ -37,4 +37,4 @@ const __nodeUtilPromisify = (fn) => {
 };
 globalThis.__nodeUtil.promisify = __nodeUtilPromisify;
 globalThis.__nodeUtil.promisify.custom = __nodeUtilPromisifyCustom;
-"#;
+"#);

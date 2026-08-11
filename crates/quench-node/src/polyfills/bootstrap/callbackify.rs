@@ -1,6 +1,6 @@
 //! Polyfill: `callbackify`
 
-pub const JS: &str = r#"const __quenchOriginalRequireWithCallbackify = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequireWithCallbackify = globalThis.require;
 const __quenchCallbackify = (fn) => {
   if (typeof fn !== "function") {
     throw new TypeError("The first argument must be a function");
@@ -31,4 +31,4 @@ globalThis.require = (specifier) =>
       callbackify: __quenchCallbackify,
     })
     : __quenchOriginalRequireWithCallbackify(specifier);
-"#;
+"#);

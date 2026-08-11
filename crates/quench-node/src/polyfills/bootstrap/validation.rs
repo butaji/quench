@@ -1,6 +1,6 @@
 //! Polyfill: `validation`
 
-pub const JS: &str = r#"const __nodeBufferFromReceived = (value) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __nodeBufferFromReceived = (value) => {
   if (value == null) return ` Received ${value}`;
   if (typeof value === "string") return ` Received type string ('${value}')`;
   if (["number", "boolean"].includes(typeof value)) {
@@ -17,4 +17,4 @@ pub const JS: &str = r#"const __nodeBufferFromReceived = (value) => {
   const name = value.constructor?.name || "Object";
   return ` Received an instance of ${name}`;
 };
-"#;
+"#);

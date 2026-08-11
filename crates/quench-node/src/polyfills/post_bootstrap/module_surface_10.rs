@@ -1,6 +1,6 @@
 //! Polyfill: `module-surface-10`
 
-pub const JS: &str = r#"{
+pub const JS: &str = quench_js_check::checked_js!(r#"{
   if (globalThis.require) {
     const originalRequire = globalThis.require;
     globalThis.require = (name) => {
@@ -41,4 +41,4 @@ pub const JS: &str = r#"{
     };
   }
 }
-"#;
+"#);

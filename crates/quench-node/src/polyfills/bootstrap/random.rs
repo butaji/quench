@@ -1,6 +1,6 @@
 //! Polyfill: `random`
 
-pub const JS: &str = r#"__nodeCryptoApi.Hash.prototype = Object.prototype;
+pub const JS: &str = quench_js_check::checked_js!(r#"__nodeCryptoApi.Hash.prototype = Object.prototype;
 // This formatter mirrors Node's diagnostic type precedence in one decision tree.
 // eslint-disable-next-line complexity
 const __nodeCryptoRandomReceived = (value) => {
@@ -433,4 +433,4 @@ if (typeof globalThis.crypto.subtle.decrypt !== "function") {
   };
 }
 globalThis.crypto.webcrypto ||= globalThis.crypto;
-"#;
+"#);

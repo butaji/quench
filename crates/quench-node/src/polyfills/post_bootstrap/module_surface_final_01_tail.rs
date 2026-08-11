@@ -1,6 +1,6 @@
 //! Polyfill: `module-surface-final-01-tail`
 
-pub const JS: &str = r#"const __quenchAddUrlParseFallback = (result) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchAddUrlParseFallback = (result) => {
   const originalParse = result.parse;
   if (typeof originalParse !== "function") return;
   result.parse = (input, ...args) => {
@@ -102,4 +102,4 @@ const __quenchAddUrlDomainFallbacks = (result) => {
   result.domainToUnicode ||= (domain) =>
     Object.keys(domains).find((key) => domains[key] === domain) || domain;
 };
-"#;
+"#);

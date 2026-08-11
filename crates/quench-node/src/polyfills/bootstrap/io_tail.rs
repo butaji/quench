@@ -1,6 +1,6 @@
 //! Polyfill: `io-tail`
 
-pub const JS: &str = r#"Object.assign(globalThis.__nodeFs, {
+pub const JS: &str = quench_js_check::checked_js!(r#"Object.assign(globalThis.__nodeFs, {
   readlinkSync: (value, options) => {
     const encoding = typeof options === "string"
       ? options
@@ -61,4 +61,4 @@ pub const JS: &str = r#"Object.assign(globalThis.__nodeFs, {
     return globalThis.__quench_fs_link(nodeFsPath(existing), nodeFsPath(link));
   },
 });
-"#;
+"#);

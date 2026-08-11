@@ -1,6 +1,6 @@
 //! Polyfill: `directory`
 
-pub const JS: &str = r#"globalThis.__nodeFs.Dirent = class Dirent {
+pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.__nodeFs.Dirent = class Dirent {
   constructor(name, type = 1) {
     this.name = name;
     this._type = type === true ? 2 : type === false ? 1 : type;
@@ -38,4 +38,4 @@ Object.defineProperty(globalThis.__nodeFs.Dir.prototype, "path", {
     return this._path;
   },
 });
-"#;
+"#);

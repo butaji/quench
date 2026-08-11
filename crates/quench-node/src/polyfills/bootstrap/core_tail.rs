@@ -1,6 +1,6 @@
 //! Polyfill: `core-tail`
 
-pub const JS: &str = r#"globalThis.__quench_require_part_00 = (name, specifier) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.__quench_require_part_00 = (name, specifier) => {
   const normalizedName = String(name);
   const base = globalThis.__quench_require_part_00_base(
     normalizedName.startsWith("node:")
@@ -13,4 +13,4 @@ pub const JS: &str = r#"globalThis.__quench_require_part_00 = (name, specifier) 
     return globalThis.__nodeRequireChildProcess || __quenchChildProcessModule();
   }
 };
-"#;
+"#);

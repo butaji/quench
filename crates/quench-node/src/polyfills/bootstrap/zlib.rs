@@ -1,6 +1,6 @@
 //! Polyfill: `zlib`
 
-pub const JS: &str = r#"const __quenchOriginalRequire = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequire = globalThis.require;
 const __quenchZlibConstants = Object.freeze({
   Z_OK: 0,
   Z_STREAM_END: 1,
@@ -218,4 +218,4 @@ globalThis.require = (specifier) => {
   });
   return exported;
 };
-"#;
+"#);

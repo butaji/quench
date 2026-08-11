@@ -1,6 +1,6 @@
 //! Polyfill: `exit`
 
-pub const JS: &str = r#"const __quenchForkExitRequire = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchForkExitRequire = globalThis.require;
 const __quenchForkExitModule = __quenchForkExitRequire("child_process");
 const __quenchForkExitOriginal = __quenchForkExitModule.fork;
 __quenchForkExitModule.fork = (...args) => {
@@ -12,4 +12,4 @@ __quenchForkExitModule.fork = (...args) => {
       : emit.call(child, event, ...values);
   return child;
 };
-"#;
+"#);

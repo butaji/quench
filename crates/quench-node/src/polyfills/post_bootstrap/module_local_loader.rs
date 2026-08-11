@@ -1,6 +1,6 @@
 //! Polyfill: `module-local-loader`
 
-pub const JS: &str = r#"const __quenchOriginalRequireWithLocalModules = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequireWithLocalModules = globalThis.require;
 const __quenchLocalModuleCache = new Map();
 const __quenchModulePath = __quenchOriginalRequireWithLocalModules("path");
 const path = __quenchModulePath;
@@ -413,4 +413,4 @@ globalThis.module ||= {
 globalThis.require.cache ||= Object.create(null);
 globalThis.require.extensions =
   __quenchOriginalRequireWithLocalModules("module")._extensions;
-"#;
+"#);

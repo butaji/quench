@@ -1,6 +1,6 @@
 //! Polyfill: `fork-send`
 
-pub const JS: &str = r#"const __quenchForkSendRequire = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchForkSendRequire = globalThis.require;
 const __quenchForkSendModule = __quenchForkSendRequire("child_process");
 const __quenchForkSendOriginal = __quenchForkSendModule.fork;
 const __quenchValidateSend = (send, values) => {
@@ -27,4 +27,4 @@ __quenchForkSendModule.fork = (...args) => {
   child.send = (...values) => __quenchValidateSend(send, values);
   return child;
 };
-"#;
+"#);

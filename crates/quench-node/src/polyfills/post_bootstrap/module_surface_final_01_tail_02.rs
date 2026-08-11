@@ -1,6 +1,6 @@
 //! Polyfill: `module-surface-final-01-tail-02`
 
-pub const JS: &str = r#"const __quenchApplyFinalModule01 = (name, originalRequire) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchApplyFinalModule01 = (name, originalRequire) => {
   const normalized = String(name).replace(/^node:/, "");
   if (
     normalized === "diagnostics_channel" &&
@@ -431,4 +431,4 @@ if (globalThis.require) {
   moduleApi._extensions = wrappedRequire.extensions;
   globalThis.require = wrappedRequire;
 }
-"#;
+"#);

@@ -1,6 +1,6 @@
 //! Polyfill: `links`
 
-pub const JS: &str = r#"globalThis.__nodeFs.link = (existing, link, callback) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.__nodeFs.link = (existing, link, callback) => {
   if (typeof callback !== "function") {
     throw Object.assign(new TypeError('The "callback" argument must be of type function'), { code: "ERR_INVALID_ARG_TYPE" });
   }
@@ -413,4 +413,4 @@ globalThis.__nodeFs.lstatSync = (value, options = {}) => {
   stats.mode = globalThis.__nodeModes[path] || 0;
   return __nodeStatsWithBigInt(stats, options);
 };
-"#;
+"#);

@@ -1,6 +1,6 @@
 //! Polyfill: `console`
 
-pub const JS: &str = r#"const __quenchOriginalRequireWithConsole = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequireWithConsole = globalThis.require;
 class __quenchConsole {
   constructor(
     stdout = globalThis.process?.stdout,
@@ -115,4 +115,4 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithConsole(specifier);
 };
-"#;
+"#);

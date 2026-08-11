@@ -1,6 +1,6 @@
 //! Polyfill: `crypto-head`
 
-pub const JS: &str = r#"const __nodeCryptoValidatePbkdf2Types = (password, salt) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __nodeCryptoValidatePbkdf2Types = (password, salt) => {
   const isBinary = (value) =>
     ArrayBuffer.isView(value) ||
     value instanceof ArrayBuffer ||
@@ -58,4 +58,4 @@ const __nodeCryptoValidatePbkdf2Numbers = (iterations, keylen) => {
     throw Object.assign(new RangeError(`The value of "keylen" is out of range. It must be an integer. Received ${keylen}`), { code: "ERR_OUT_OF_RANGE" });
   }
 };
-"#;
+"#);
