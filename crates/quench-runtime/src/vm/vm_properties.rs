@@ -58,7 +58,7 @@ fn get_property_value(value: &Value, key: &str) -> Value {
         Function(function) => function_property(function, key),
         BoundFunction(bound) => bound_function_property(value, bound, key),
         Map(data) => map_property(data, key),
-        Set(data) if key == "size" => Value::Number(data.values.len() as f64),
+        Set(data) if key == "size" => Value::Number(data.values.borrow().len() as f64),
         Set(data) if data.weak => crate::collections::set::weak_property(key),
         Set(_) => crate::collections::set::property(key),
         Iterator(_) => bind_method(value, crate::collections::iterator::property(key)),

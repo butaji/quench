@@ -183,7 +183,7 @@ impl MapData {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SetData {
     pub(crate) weak: bool,
-    pub values: VecDeque<Value>,
+    pub values: RefCell<VecDeque<Value>>,
     pub(crate) prototype: RefCell<Option<Value>>,
 }
 
@@ -205,6 +205,11 @@ pub struct IteratorData {
 pub enum IteratorState {
     Native {
         values: Vec<Value>,
+        index: usize,
+        done: bool,
+    },
+    Set {
+        data: Rc<SetData>,
         index: usize,
         done: bool,
     },

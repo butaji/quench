@@ -1,8 +1,10 @@
 pub(crate) fn from_map(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
-    let Some(Value::Map(data)) = receiver.filter(|value| {
-        matches!(value, Value::Map(data) if !data.weak)
-    }) else {
-        return Err(crate::value::error::throw_type_error("Map iterator called on incompatible receiver"));
+    let Some(Value::Map(data)) =
+        receiver.filter(|value| matches!(value, Value::Map(data) if !data.weak))
+    else {
+        return Err(crate::value::error::throw_type_error(
+            "Map iterator called on incompatible receiver",
+        ));
     };
     let values = data
         .keys
@@ -15,23 +17,29 @@ pub(crate) fn from_map(receiver: Option<&Value>) -> Result<Value, crate::execute
 
 pub(crate) fn from_map_keys(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
     let Some(Value::Map(data)) = receiver else {
-        return Err(crate::value::error::throw_type_error("Map iterator called on incompatible receiver"));
+        return Err(crate::value::error::throw_type_error(
+            "Map iterator called on incompatible receiver",
+        ));
     };
     Ok(make(data.keys.iter().cloned().collect()))
 }
 
 pub(crate) fn from_map_values(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
     let Some(Value::Map(data)) = receiver else {
-        return Err(crate::value::error::throw_type_error("Map iterator called on incompatible receiver"));
+        return Err(crate::value::error::throw_type_error(
+            "Map iterator called on incompatible receiver",
+        ));
     };
     Ok(make(data.values.clone()))
 }
 
 pub(crate) fn from_set(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
     let Some(Value::Set(data)) = receiver else {
-        return Err(crate::value::error::throw_type_error("Set iterator called on incompatible receiver"));
+        return Err(crate::value::error::throw_type_error(
+            "Set iterator called on incompatible receiver",
+        ));
     };
-    Ok(make(data.values.iter().cloned().collect()))
+    Ok(make_set(Rc::clone(data)))
 }
 
 pub(crate) fn next(receiver: Option<&Value>) -> Value {
@@ -62,11 +70,11 @@ pub(crate) fn make(values: Vec<Value>) -> Value {
     }))
 }
 
-fn make_protocol(iterator: Value, next: Value) -> Value {
+fn make_set(data: Rc<crate::value::SetData>) -> Value {
     Value::Iterator(Rc::new(IteratorData {
-        state: RefCell::new(IteratorState::Protocol {
-            iterator,
-            next,
+        state: RefCell::new(IteratorState::Set {
+            data,
+            index: 0,
             done: false,
         }),
     }))
@@ -78,3 +86,6 @@ fn result(value: Value, done: bool) -> Value {
         ("done".to_string(), Value::Boolean(done)),
     ])))
 }
+use super::step_value;
+use crate::value::{IteratorData, IteratorState, Value};
+use std::{cell::RefCell, rc::Rc};

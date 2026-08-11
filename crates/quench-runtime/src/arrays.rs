@@ -69,7 +69,7 @@ include!("arrays_mutation.rs");
 fn from(value: Option<&Value>) -> Result<Value, crate::execute::VmError> {
     let values = match value {
         Some(Value::Array(values)) => values.to_vec(),
-        Some(Value::Set(data)) => data.values.iter().cloned().collect(),
+        Some(Value::Set(data)) => data.values.borrow().iter().cloned().collect(),
         Some(Value::Map(data)) => data
             .keys
             .iter()
