@@ -34,7 +34,7 @@ fn method_key(key: &PropertyKey<'_>) -> Option<String> {
         PropertyKey::StaticIdentifier(key) => Some(key.name.to_string()),
         PropertyKey::PrivateIdentifier(key) => Some(format!("#{}", key.name)),
         PropertyKey::StringLiteral(key) => Some(key.value.to_string()),
-        PropertyKey::NumericLiteral(key) => Some(key.value.to_string()),
+        PropertyKey::NumericLiteral(key) => Some(crate::conversion::number_to_string(key.value)),
         _ => None,
     }
 }

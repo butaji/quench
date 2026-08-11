@@ -175,7 +175,9 @@ fn property_key(key: &PropertyKey<'_>) -> Option<String> {
         PropertyKey::StaticIdentifier(identifier) => Some(identifier.name.to_string()),
         PropertyKey::PrivateIdentifier(_) => None,
         PropertyKey::StringLiteral(value) => Some(value.value.to_string()),
-        PropertyKey::NumericLiteral(value) => Some(value.value.to_string()),
+        PropertyKey::NumericLiteral(value) => {
+            Some(crate::conversion::number_to_string(value.value))
+        }
         _ => None,
     }
 }
