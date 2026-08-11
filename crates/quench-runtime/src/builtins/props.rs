@@ -3,10 +3,14 @@ use crate::{ops::Builtin, value::Value};
 mod data_view_name;
 use data_view_name::data_view_name;
 
-/// Lookup a property on a builtin, checking intl first, then special, then callable.
+/// Lookup a property on a builtin, checking runtime overrides first, then
+/// intl, then special, then callable.
 pub(crate) fn lookup(builtin: Builtin, key: &str) -> Value {
     if crate::builtins::builtin_prototype_property_is_removed(builtin, key) {
         return Value::Undefined;
+    }
+    if let Some(value) = crate::builtins::read_descriptor_value(builtin, key) {
+        return value;
     }
     if let Some(value) = crate::intl::property(builtin, key) {
         return value;
