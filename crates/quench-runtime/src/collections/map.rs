@@ -99,7 +99,7 @@ pub(crate) fn map_has(receiver: Option<&Value>, arguments: &[Value]) -> Result<V
 }
 
 pub(crate) fn map_delete(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let Some(Value::Map(data)) = receiver else {
+    let Some(receiver @ Value::Map(data)) = receiver else {
         return Err(crate::value::error::throw_type_error(
             "Map method called on incompatible receiver",
         ));
@@ -111,7 +111,10 @@ pub(crate) fn map_delete(receiver: Option<&Value>, arguments: &[Value]) -> Resul
     if let Some(pos) = data.keys.iter().position(|k| same_value_zero(k, key)) {
         data.keys.remove(pos);
         data.values.remove(pos);
-        Ok(Value::Boolean(true))
+        let result = Value::Boolean(true);
+        let updated = Value::Map(Rc::new(data));
+        crate::locals::replace_value(receiver, &updated);
+        Ok(result)
     } else {
         Ok(Value::Boolean(false))
     }
@@ -123,11 +126,15 @@ pub(crate) fn map_clear(receiver: Option<&Value>) -> Result<Value, VmError> {
             "Map method called on incompatible receiver",
         ));
     }
-    Ok(Value::Map(Rc::new(MapData {
+    let updated = Value::Map(Rc::new(MapData {
         keys: VecDeque::new(),
         values: Vec::new(),
         prototype: std::cell::RefCell::new(None),
-    })))
+    }));
+    if let Some(receiver) = receiver {
+        crate::locals::replace_value(receiver, &updated);
+    }
+    Ok(Value::Undefined)
 }
 
 pub(crate) fn map_for_each(

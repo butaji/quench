@@ -69,7 +69,7 @@ pub(crate) fn set_has(receiver: Option<&Value>, arguments: &[Value]) -> Result<V
 }
 
 pub(crate) fn set_delete(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let Some(Value::Set(data)) = receiver else {
+    let Some(receiver @ Value::Set(data)) = receiver else {
         return Err(crate::value::error::throw_type_error(
             "Set method called on incompatible receiver",
         ));
@@ -80,7 +80,10 @@ pub(crate) fn set_delete(receiver: Option<&Value>, arguments: &[Value]) -> Resul
     let mut data = (**data).clone();
     if let Some(pos) = data.values.iter().position(|v| same_value_zero(v, value)) {
         data.values.remove(pos);
-        Ok(Value::Boolean(true))
+        let result = Value::Boolean(true);
+        let updated = Value::Set(Rc::new(data));
+        crate::locals::replace_value(receiver, &updated);
+        Ok(result)
     } else {
         Ok(Value::Boolean(false))
     }
@@ -92,10 +95,14 @@ pub(crate) fn set_clear(receiver: Option<&Value>) -> Result<Value, VmError> {
             "Set method called on incompatible receiver",
         ));
     }
-    Ok(Value::Set(Rc::new(SetData {
+    let updated = Value::Set(Rc::new(SetData {
         values: VecDeque::new(),
         prototype: std::cell::RefCell::new(None),
-    })))
+    }));
+    if let Some(receiver) = receiver {
+        crate::locals::replace_value(receiver, &updated);
+    }
+    Ok(Value::Undefined)
 }
 
 pub(crate) fn set_for_each(
