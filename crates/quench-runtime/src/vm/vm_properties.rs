@@ -153,6 +153,11 @@ fn function_constructor(function: &crate::value::FunctionValue) -> Builtin {
 }
 
 pub fn get_property_result(value: &Value, key: &str) -> Result<Value, VmError> {
+    if matches!(value, Value::Null | Value::Undefined) {
+        return Err(crate::value::error::throw_type_error(&format!(
+            "Cannot read property `{key}` of null or undefined"
+        )));
+    }
     if matches!(value, Value::Array(values) if values.is_strict_arguments() && key == "callee") {
         return Err(crate::value::error::throw_type_error(
             "'callee' is unavailable on strict arguments",
