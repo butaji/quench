@@ -264,19 +264,7 @@ fn unpack_for_of<'a>(
 fn for_of_values(
     value: crate::value::Value,
 ) -> Result<Vec<crate::value::Value>, crate::execute::VmError> {
-    match value {
-        crate::value::Value::Array(values) => Ok(values.iter().cloned().collect()),
-        crate::value::Value::String(value) => Ok(value
-            .chars()
-            .map(|character| crate::value::Value::String(character.to_string()))
-            .collect()),
-        _ => Err(crate::execute::VmError::Thrown(crate::builtins::error(
-            crate::ops::Builtin::TypeError,
-            &[crate::value::Value::String(
-                "value is not iterable".to_string(),
-            )],
-        ))),
-    }
+    crate::collections::iterator::collect_iterable(value)
 }
 
 fn iterate_loop_values(
