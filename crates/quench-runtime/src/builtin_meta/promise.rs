@@ -26,6 +26,10 @@ pub const fn fn_len(builtin: Builtin) -> Option<f64> {
         | Builtin::PromiseFinally
         | Builtin::PromiseCatch => Some(1.0),
         Builtin::PromiseThen => Some(2.0),
+        Builtin::PromiseFinallyOnFulfilled
+        | Builtin::PromiseFinallyOnRejected
+        | Builtin::PromiseFinallyFulfilled
+        | Builtin::PromiseFinallyRejected => Some(1.0),
         _ => None,
     }
 }
