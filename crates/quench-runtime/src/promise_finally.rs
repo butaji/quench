@@ -8,6 +8,13 @@ pub fn promise_finally(receiver: Option<&Value>, arguments: &[Value]) -> Result<
         return Err(crate::vm::not_callable());
     }
     let callback = arguments.first().cloned().unwrap_or(Value::Undefined);
+    if !crate::conversion::is_callable(&callback) {
+        return crate::functions::execute_target(
+            &then,
+            receiver,
+            &[callback.clone(), callback],
+        );
+    }
     let fulfilled = finally_handler(Builtin::PromiseFinallyOnFulfilled, callback.clone());
     let rejected = finally_handler(Builtin::PromiseFinallyOnRejected, callback);
     crate::functions::execute_target(&then, receiver, &[fulfilled, rejected])
