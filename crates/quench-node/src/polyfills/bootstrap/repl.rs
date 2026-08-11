@@ -1,6 +1,6 @@
 //! Polyfill: `repl`
 
-pub const JS: &str = r#"const __quenchOriginalRequireWithRepl = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequireWithRepl = globalThis.require;
 const __quenchFinishRepl = (server) => {
   server.displayPrompt();
   return server;
@@ -64,4 +64,4 @@ globalThis.require = (specifier) => {
   if (String(specifier).replace(/^node:/, "") === "repl") return __quenchRepl;
   return __quenchOriginalRequireWithRepl(specifier);
 };
-"#;
+"#);

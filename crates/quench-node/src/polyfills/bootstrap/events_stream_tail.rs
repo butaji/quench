@@ -1,6 +1,6 @@
 //! Polyfill: `events-stream-tail`
 
-pub const JS: &str = r#"class NodePassThrough extends NodeTransform {
+pub const JS: &str = quench_js_check::checked_js!(r#"class NodePassThrough extends NodeTransform {
   constructor(options = {}) {
     super(options);
     this.__quenchPassThroughFlow = true;
@@ -123,4 +123,4 @@ NodeStream.prototype.pipe = function (destination) {
   this.on("end", () => destination.end());
   return destination;
 };
-"#;
+"#);

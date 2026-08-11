@@ -1,6 +1,6 @@
 //! Polyfill: `send`
 
-pub const JS: &str = r#"const __quenchProcessSend = globalThis.process;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchProcessSend = globalThis.process;
 const __quenchOriginalProcessSend = __quenchProcessSend.send;
 __quenchProcessSend.send = (...values) => {
   if (values.length > 3) {
@@ -20,4 +20,4 @@ __quenchProcessSend.send = (...values) => {
   }
   return __quenchOriginalProcessSend(...values);
 };
-"#;
+"#);

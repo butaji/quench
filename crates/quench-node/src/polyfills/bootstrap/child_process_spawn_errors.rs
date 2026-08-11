@@ -1,6 +1,6 @@
 //! Polyfill: `child-process-spawn-errors`
 
-pub const JS: &str = r#"const __quenchChildSpawnErrorRequire = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchChildSpawnErrorRequire = globalThis.require;
 const __quenchChildSpawnError = __quenchChildSpawnErrorRequire("child_process");
 const __quenchSpawnWithError = __quenchChildSpawnError.spawn;
 __quenchChildSpawnError.spawn = (...args) => {
@@ -32,4 +32,4 @@ __quenchChildSpawnError.spawn = (...args) => {
   }
   return child;
 };
-"#;
+"#);

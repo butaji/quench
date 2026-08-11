@@ -1,6 +1,6 @@
 //! Polyfill: `child-process-streams`
 
-pub const JS: &str = r#"const __quenchChildStreamRequire = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchChildStreamRequire = globalThis.require;
 const __quenchChildStreamModule = __quenchChildStreamRequire("child_process");
 const __quenchOriginalChildStreamSpawn = __quenchChildStreamModule.spawn;
 const __quenchEnsureStream = (stream) => {
@@ -18,4 +18,4 @@ __quenchChildStreamModule.spawn = (...args) => {
   __quenchEnsureStream(child.stderr);
   return child;
 };
-"#;
+"#);

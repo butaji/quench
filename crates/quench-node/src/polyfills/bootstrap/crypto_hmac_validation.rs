@@ -1,6 +1,6 @@
 //! Polyfill: `crypto-hmac-validation`
 
-pub const JS: &str = r#"const __quenchOriginalCreateHmac = __nodeCryptoApi.createHmac;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalCreateHmac = __nodeCryptoApi.createHmac;
 const __quenchHmacEncodingError = (encoding) =>
   Object.assign(
     new TypeError(
@@ -19,4 +19,4 @@ __nodeCryptoApi.createHmac = (...args) => {
   };
   return hmac;
 };
-"#;
+"#);

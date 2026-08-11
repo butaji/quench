@@ -1,6 +1,6 @@
 //! Polyfill: `io`
 
-pub const JS: &str = r#"const __nodeFsValidateWriteBuffer = (fd, buffer, offset, length) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __nodeFsValidateWriteBuffer = (fd, buffer, offset, length) => {
   if (typeof fd !== "number") {
     throw Object.assign(new TypeError('The "fd" argument must be of type number'), { code: "ERR_INVALID_ARG_TYPE" });
   }
@@ -432,4 +432,4 @@ Object.assign(globalThis.__nodeFs, {
     return __nodeFsRunRemoval(path, kind, { ...options, __sync: true });
   }
 });
-"#;
+"#);

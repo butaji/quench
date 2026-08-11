@@ -1,6 +1,6 @@
 //! Polyfill: `events`
 
-pub const JS: &str = r#"class NodeReadable extends NodeEventEmitter {
+pub const JS: &str = quench_js_check::checked_js!(r#"class NodeReadable extends NodeEventEmitter {
   constructor(options = {}) {
     super(options);
     this.destroyed = false;
@@ -484,4 +484,4 @@ Object.defineProperty(NodeReadable.prototype, "readableDidRead", {
   }
 });
 NodeReadable.prototype.destroyed = false;
-"#;
+"#);

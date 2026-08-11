@@ -1,6 +1,6 @@
 //! Polyfill: `events-tail`
 
-pub const JS: &str = r#"const __nodeDuplexPairFactory = (options = {}) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __nodeDuplexPairFactory = (options = {}) => {
   const left = new NodeDuplex(options);
   const right = new NodeDuplex(options);
   const connect = (source, destination) => {
@@ -224,4 +224,4 @@ globalThis.__nodeStream = new Proxy(__nodeStreamExports, {
     return target[key];
   },
 });
-"#;
+"#);

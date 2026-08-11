@@ -1,6 +1,6 @@
 //! Polyfill: `process-surface-18`
 
-pub const JS: &str = r#"if (globalThis.process) {
+pub const JS: &str = quench_js_check::checked_js!(r#"if (globalThis.process) {
   let currentUmask = 0o22;
   globalThis.process.umask = (value) => {
     if (value === undefined) return currentUmask;
@@ -63,4 +63,4 @@ pub const JS: &str = r#"if (globalThis.process) {
     currentUid = credentialId(id);
   };
 }
-"#;
+"#);

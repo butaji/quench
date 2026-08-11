@@ -1,6 +1,6 @@
 //! Polyfill: `events-head`
 
-pub const JS: &str = r#"for (const method of "on addListener once emit removeListener off removeAllListeners listeners listenerCount".split(
+pub const JS: &str = quench_js_check::checked_js!(r#"for (const method of "on addListener once emit removeListener off removeAllListeners listeners listenerCount".split(
   " "
 )) {
   globalThis.process[method] = NodeEventEmitter.prototype[method];
@@ -249,4 +249,4 @@ const __nodeReadableFinishRead = (stream, chunk) => {
   if (!result?.byteLength && !stream._ended) __nodeReadableStart(stream);
   return result;
 };
-"#;
+"#);

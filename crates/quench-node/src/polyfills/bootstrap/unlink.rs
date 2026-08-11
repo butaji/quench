@@ -1,6 +1,6 @@
 //! Polyfill: `unlink`
 
-pub const JS: &str = r#"const __quenchUnlinkRequire = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchUnlinkRequire = globalThis.require;
 const __quenchUnlinkFs = __quenchUnlinkRequire("fs");
 const __quenchUnlinkPath = (value) =>
   typeof value === "string" ||
@@ -51,4 +51,4 @@ __quenchUnlinkPromiseFs.promises.unlink = (value) =>
       error ? reject(error) : resolve()
     )
   );
-"#;
+"#);

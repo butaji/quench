@@ -1,6 +1,6 @@
 //! Polyfill: `v8`
 
-pub const JS: &str = r#"const __quenchOriginalRequireWithV8 = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequireWithV8 = globalThis.require;
 const __quenchV8 = {
   getHeapStatistics: () => ({
     total_heap_size: 0,
@@ -38,4 +38,4 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithV8(specifier);
 };
-"#;
+"#);

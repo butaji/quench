@@ -1,6 +1,6 @@
 //! Polyfill: `child-process-validation`
 
-pub const JS: &str = r#"const __quenchSpawnValidationRequire = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchSpawnValidationRequire = globalThis.require;
 const __quenchSpawnValidationChildProcess = __quenchSpawnValidationRequire(
   "child_process",
 );
@@ -52,4 +52,4 @@ __quenchSpawnValidationChildProcess.spawn = (...args) => {
   __quenchValidateSpawnOptions(args[2], args[1]);
   return __quenchSpawnValidated(...args);
 };
-"#;
+"#);

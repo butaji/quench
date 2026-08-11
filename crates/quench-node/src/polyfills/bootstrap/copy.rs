@@ -1,6 +1,6 @@
 //! Polyfill: `copy`
 
-pub const JS: &str = r#"const __nodeBufferConcatLength = (list, totalLength) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __nodeBufferConcatLength = (list, totalLength) => {
   if (totalLength !== undefined) return totalLength;
   return list.reduce((sum, item) => sum + item.byteLength, 0);
 };
@@ -450,4 +450,4 @@ NodeBuffer.from = (...args) => {
   output.set(source);
   return output;
 };
-"#;
+"#);

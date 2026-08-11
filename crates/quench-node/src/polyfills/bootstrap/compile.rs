@@ -1,6 +1,6 @@
 //! Polyfill: `compile`
 
-pub const JS: &str = r#"const __quenchVmCompileExtensions = (options) => [
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchVmCompileExtensions = (options) => [
   ...(options?.parsingContext ? [options.parsingContext] : []),
   ...(options?.contextExtensions || []),
 ];
@@ -82,4 +82,4 @@ const __quenchVmCompileFunction = (code, params = [], options) => {
     params,
   );
 };
-"#;
+"#);

@@ -1,6 +1,6 @@
 //! Polyfill: `network-blocklist`
 
-pub const JS: &str = r#"const __quenchNetBlockList = class BlockList {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchNetBlockList = class BlockList {
   [Symbol.toStringTag] = "BlockList";
   constructor() {
     this._v4 = new Map();
@@ -124,4 +124,4 @@ pub const JS: &str = r#"const __quenchNetBlockList = class BlockList {
       : checkBlockListV6(this, str, explicitType, inputKind);
   }
 };
-"#;
+"#);

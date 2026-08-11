@@ -1,6 +1,6 @@
 //! Polyfill: `promises`
 
-pub const JS: &str = r#"const __nodeTimerPromiseSchedulerError = (code, message) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __nodeTimerPromiseSchedulerError = (code, message) => {
   const error = new TypeError(message);
   error.code = code;
   return error;
@@ -197,4 +197,4 @@ process.emitWarning = (warning, options = {}) => {
   });
   return undefined;
 };
-"#;
+"#);

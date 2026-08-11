@@ -1,6 +1,6 @@
 //! Polyfill: `child-process-events`
 
-pub const JS: &str = r#"const __quenchChildEventOrderRequire = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchChildEventOrderRequire = globalThis.require;
 const __quenchChildEventOrder = __quenchChildEventOrderRequire("child_process");
 const __quenchEventOrderSpawn = __quenchChildEventOrder.spawn;
 __quenchChildEventOrder.spawn = (...args) => {
@@ -17,4 +17,4 @@ __quenchChildEventOrder.spawn = (...args) => {
   )(child.emit);
   return child;
 };
-"#;
+"#);

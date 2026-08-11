@@ -1,6 +1,6 @@
 //! Polyfill: `module-surface-01`
 
-pub const JS: &str = r#"if (globalThis.require) {
+pub const JS: &str = quench_js_check::checked_js!(r#"if (globalThis.require) {
   for (const name of ["events", "node:events"]) {
     const eventsApi = globalThis.require(name);
     eventsApi.EventEmitterAsyncResource ||= eventsApi.EventEmitter;
@@ -17,4 +17,4 @@ pub const JS: &str = r#"if (globalThis.require) {
     };
   }
 }
-"#;
+"#);

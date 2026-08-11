@@ -1,6 +1,6 @@
 //! Polyfill: `format`
 
-pub const JS: &str = r##"const __nodeLegacyUrlEncodePath = (value) =>
+pub const JS: &str = quench_js_check::checked_js!(r##"const __nodeLegacyUrlEncodePath = (value) =>
   value
     .replace(/%/g, "~QUENCH_PERCENT~")
     .replace(/["\s]/g, (character) => encodeURIComponent(character));
@@ -39,4 +39,4 @@ const __nodeLegacyUrlFormatString = (value) => {
     return value;
   }
 };
-"##;
+"##);

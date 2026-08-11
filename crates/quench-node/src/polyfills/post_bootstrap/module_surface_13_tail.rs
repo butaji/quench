@@ -1,6 +1,6 @@
 //! Polyfill: `module-surface-13-tail`
 
-pub const JS: &str = r#"const __quenchCryptoRandomAndDigestFallbacks = (result, state) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchCryptoRandomAndDigestFallbacks = (result, state) => {
   result.randomBytes ||= (size) => new Uint8Array(Number(size) || 0);
   result.randomFill ||= (buffer, callback) => callback?.(null, buffer);
   result.randomFillSync ||= (buffer) => buffer;
@@ -242,4 +242,4 @@ if (globalThis.require) {
     return result;
   };
 }
-"#;
+"#);

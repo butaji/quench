@@ -1,6 +1,6 @@
 //! Polyfill: `formatting`
 
-pub const JS: &str = r#"globalThis.__nodeUtil = {
+pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.__nodeUtil = {
   TextEncoder: globalThis.TextEncoder,
   TextDecoder: globalThis.TextDecoder,
   isArray: (value) => Array.isArray(value),
@@ -268,4 +268,4 @@ pub const JS: &str = r#"globalThis.__nodeUtil = {
 globalThis.__nodeUtil.inspect.defaultOptions = { numericSeparator: false };
 globalThis.__nodeUtil.inspect.custom = Symbol.for("nodejs.util.inspect.custom");
 let __nodeInspectMaxBytes = 50;
-"#;
+"#);

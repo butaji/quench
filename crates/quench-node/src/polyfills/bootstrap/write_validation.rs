@@ -1,6 +1,6 @@
 //! Polyfill: `write-validation`
 
-pub const JS: &str = r#"const __nodeFsValidateWrite = (fd, buffer, callback) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __nodeFsValidateWrite = (fd, buffer, callback) => {
   if (typeof callback !== "function") {
     throw Object.assign(new TypeError('The "callback" argument must be of type function'), { code: "ERR_INVALID_ARG_TYPE" });
   }
@@ -25,4 +25,4 @@ const __nodeFsValidateWritev = (fd, buffers, callback) => {
     throw Object.assign(new TypeError('The "buffers" argument must be an array of Buffer or Uint8Array'), { code: "ERR_INVALID_ARG_TYPE" });
   }
 };
-"#;
+"#);

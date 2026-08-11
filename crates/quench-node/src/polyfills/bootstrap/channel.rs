@@ -1,6 +1,6 @@
 //! Polyfill: `channel`
 
-pub const JS: &str = r#"const __quenchOriginalRequireWithDiagnostics = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequireWithDiagnostics = globalThis.require;
 const __quenchChannels = new Map();
 class __QuenchChannelClass {}
 const __quenchChannel = (name) => {
@@ -270,4 +270,4 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithDiagnostics(specifier);
 };
-"#;
+"#);

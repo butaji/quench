@@ -1,6 +1,6 @@
 //! Polyfill: `flags`
 
-pub const JS: &str = r#"globalThis.__quench_argv ||= [];
+pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.__quench_argv ||= [];
 const __quenchProcessWrite = (chunk) => {
   globalThis.__quench_console_write(String(chunk));
   return true;
@@ -14,4 +14,4 @@ if (globalThis.require) {
   __quenchProcessModule.stdout ||= {};
   __quenchProcessModule.stdout.write ||= __quenchProcessWrite;
 }
-"#;
+"#);

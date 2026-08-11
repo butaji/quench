@@ -1,6 +1,6 @@
 //! Polyfill: `web-streams`
 
-pub const JS: &str = r#"const __quenchOriginalRequireWithWebStreams = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequireWithWebStreams = globalThis.require;
 const __quenchWebStreamsState = Symbol("kState");
 const __quenchReadableEnqueue = (stream, value) => {
   const waiter = stream._readWaiters.shift();
@@ -463,4 +463,4 @@ for (const constructor of "ReadableStreamDefaultReader ReadableStreamBYOBReader 
 }
 globalThis.ByteLengthQueuingStrategy ||= __quenchByteLengthQueuingStrategy;
 globalThis.CountQueuingStrategy ||= __quenchCountQueuingStrategy;
-"#;
+"#);

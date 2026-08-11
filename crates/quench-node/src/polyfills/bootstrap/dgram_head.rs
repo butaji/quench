@@ -1,6 +1,6 @@
 //! Polyfill: `dgram-head`
 
-pub const JS: &str = r#"/* eslint-disable max-lines-per-function, complexity */
+pub const JS: &str = quench_js_check::checked_js!(r#"/* eslint-disable max-lines-per-function, complexity */
 const __quenchOriginalRequireWithDgram = globalThis.require;
 const __quenchDgramStateSymbol = Symbol.for("quench.dgram.state");
 const __quenchDgramBoundPorts = new Set();
@@ -46,4 +46,4 @@ const __quenchDgramBufferError = (type, code, message) => {
   });
   return error;
 };
-"#;
+"#);
