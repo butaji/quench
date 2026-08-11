@@ -6,7 +6,8 @@ use crate::{
     facts::ProgramDb,
     ops::{
         AppendInstanceFieldOp, Constant, FunctionKind, FunctionStrictness,
-        InstanceFieldInitializerOp, InstanceFieldKeyOp, Op, PropertyDefinitionKind,
+        InstanceFieldInitializerOp, InstanceFieldKeyOp, Op, PrivateAccessorOp,
+        PropertyDefinitionKind,
     },
 };
 
@@ -68,12 +69,22 @@ fn set_internal_prototype(ops: &mut Vec<Op>, object: u16, src: u16) {
 pub(crate) fn validate_heritage(
     value: &crate::value::Value,
 ) -> Result<(), crate::execute::VmError> {
-    if matches!(value, crate::value::Value::Null) || crate::conversion::is_callable(value) {
+    if matches!(value, crate::value::Value::Null) || is_constructible_heritage(value) {
         return Ok(());
     }
     Err(crate::value::error::throw_type_error(
         "Class extends value is not a constructor or null",
     ))
+}
+
+fn is_constructible_heritage(value: &crate::value::Value) -> bool {
+    match value {
+        crate::value::Value::Function(function) => crate::functions::is_constructible(function),
+        crate::value::Value::BoundFunction(_) | crate::value::Value::Builtin(_) => {
+            crate::conversion::is_callable(value)
+        }
+        _ => false,
+    }
 }
 include!("classes_instance_fields.rs");
 
@@ -150,12 +161,7 @@ fn reduce_class_method(
         return Some(());
     }
     if let PropertyKey::PrivateIdentifier(name) = &method.key {
-        if !matches!(
-            method.kind,
-            MethodDefinitionKind::Get | MethodDefinitionKind::Set
-        ) {
-            return reduce_private_method(method, name, constructor, ops, facts, next, locals);
-        }
+        return reduce_private_method(method, name, constructor, ops, facts, next, locals);
     }
     let key = reduce_method_key(method, ops, facts, next, locals)?;
     let value = reduce_method(method, ops, facts, next, locals)?;
@@ -184,14 +190,30 @@ fn reduce_private_method(
         name: format!("#{}", name.name),
     });
     let key = facts.private_name(name.span)?;
+    let accessor = private_accessor(method.kind, value);
     ops.push(Op::AppendInstanceField(AppendInstanceFieldOp {
         constructor,
         key: InstanceFieldKeyOp::Private(key),
         initializer: None,
         is_static: method.r#static,
-        value: Some(value),
+        value: accessor.is_none().then_some(value),
+        accessor,
     }));
     Some(())
+}
+
+fn private_accessor(kind: MethodDefinitionKind, value: u16) -> Option<PrivateAccessorOp> {
+    match kind {
+        MethodDefinitionKind::Get => Some(PrivateAccessorOp {
+            get: Some(value),
+            set: None,
+        }),
+        MethodDefinitionKind::Set => Some(PrivateAccessorOp {
+            get: None,
+            set: Some(value),
+        }),
+        _ => None,
+    }
 }
 
 fn reduce_public_field(
@@ -215,6 +237,7 @@ fn reduce_public_field(
         initializer,
         is_static,
         value: None,
+        accessor: None,
     };
     if is_static {
         static_fields.push(Op::AppendInstanceField(field));
@@ -245,6 +268,7 @@ fn reduce_private_field(
         initializer,
         is_static: field.r#static,
         value: None,
+        accessor: None,
     };
     if field.is_static {
         static_fields.push(Op::AppendInstanceField(field));
