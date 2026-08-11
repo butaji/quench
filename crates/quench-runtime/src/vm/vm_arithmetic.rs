@@ -389,28 +389,4 @@ fn bigint_slot((key, value): &(String, Value)) -> Option<&str> {
     }
 }
 
-fn compare_values(
-    left: &Value,
-    right: &Value,
-    compare: fn(f64, f64) -> bool,
-) -> Result<Value, VmError> {
-    let left = crate::conversion::to_primitive(left, "number")?;
-    let right = crate::conversion::to_primitive(right, "number")?;
-    if let (Value::String(left), Value::String(right)) = (&left, &right) {
-        return Ok(Value::Boolean(compare_strings(left, right, compare)));
-    }
-    let left = crate::conversion::primitive_to_number(&left)?;
-    let right = crate::conversion::primitive_to_number(&right)?;
-    Ok(Value::Boolean(
-        !left.is_nan() && !right.is_nan() && compare(left, right),
-    ))
-}
-
-fn compare_strings(left: &str, right: &str, compare: fn(f64, f64) -> bool) -> bool {
-    let ordering = left.cmp(right);
-    match ordering {
-        std::cmp::Ordering::Less => compare(0.0, 1.0),
-        std::cmp::Ordering::Equal => compare(0.0, 0.0),
-        std::cmp::Ordering::Greater => compare(1.0, 0.0),
-    }
-}
+include!("vm_compare.rs");

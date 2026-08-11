@@ -69,7 +69,7 @@ fn bigint_string_equal(left: &Value, right: &Value) -> Option<bool> {
         | (Value::String(string), Value::BigInt(bigint)) => (bigint, string),
         _ => return None,
     };
-    Some(parse_bigint(string).is_some_and(|value| value.to_string() == *bigint))
+    Some(crate::bigint::parse_string(string).is_some_and(|value| value.to_string() == *bigint))
 }
 
 fn bigint_number_equal(left: &Value, right: &Value) -> Option<bool> {
@@ -79,20 +79,6 @@ fn bigint_number_equal(left: &Value, right: &Value) -> Option<bool> {
         _ => return None,
     };
     Some(number_bigint(number).is_some_and(|number| number.to_string() == *bigint))
-}
-
-fn parse_bigint(value: &str) -> Option<num_bigint::BigInt> {
-    let value = value.trim();
-    if value.is_empty() {
-        return Some(0.into());
-    }
-    let (radix, digits) = match value.as_bytes() {
-        [b'0', b'x' | b'X', digits @ ..] => (16, digits),
-        [b'0', b'o' | b'O', digits @ ..] => (8, digits),
-        [b'0', b'b' | b'B', digits @ ..] => (2, digits),
-        _ => return value.parse().ok(),
-    };
-    num_bigint::BigInt::parse_bytes(digits, radix)
 }
 
 fn number_bigint(value: f64) -> Option<num_bigint::BigInt> {
