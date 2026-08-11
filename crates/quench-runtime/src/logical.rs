@@ -20,6 +20,7 @@ pub(crate) fn reduce_assignment(
     let mut right_ops = Vec::new();
     let right =
         crate::reduce::reduce_expression(&assignment.right, &mut right_ops, facts, next, locals)?;
+    crate::reduce::reduce_assignments::infer_assignment_name(assignment, right, &mut right_ops);
     crate::reduce::reduce_assignments::put(place, right, &mut right_ops)?;
     right_ops.push(Op::Return { src: right });
     let left_ops = vec![Op::Return { src: left }];
