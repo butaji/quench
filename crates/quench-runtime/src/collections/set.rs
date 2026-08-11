@@ -49,7 +49,7 @@ pub(crate) fn set_new(arguments: &[Value]) -> Value {
 
 pub(crate) fn weak_set_new(arguments: &[Value]) -> Result<Value, VmError> {
     let values = match arguments.first() {
-        None => VecDeque::new(),
+        None | Some(Value::Undefined | Value::Null) => VecDeque::new(),
         Some(Value::Array(values)) => values.iter().cloned().collect(),
         Some(_) => {
             return Err(crate::value::error::throw_type_error(
@@ -62,15 +62,30 @@ pub(crate) fn weak_set_new(arguments: &[Value]) -> Result<Value, VmError> {
             "Invalid value used in weak set",
         ));
     }
-    let mut set = Value::Set(Rc::new(SetData {
+    let set = Value::Set(Rc::new(SetData {
         weak: true,
         values,
         prototype: std::cell::RefCell::new(None),
     }));
+    if matches!(
+        arguments.first(),
+        None | Some(Value::Undefined | Value::Null)
+    ) {
+        return Ok(set);
+    }
+    populate_weak_set(set)
+}
+
+fn populate_weak_set(mut set: Value) -> Result<Value, VmError> {
     let adder =
         crate::execute::get_property_result(&Value::Builtin(Builtin::WeakSetPrototype), "add")?;
+    if !crate::conversion::is_callable(&adder) {
+        return Err(crate::value::error::throw_type_error(
+            "WeakSet.prototype.add is not callable",
+        ));
+    }
     let values = match &set {
-        Value::Set(data) => data.values.iter().cloned().collect::<Vec<_>>(),
+        Value::Set(data) => data.values.iter().cloned().collect(),
         _ => Vec::new(),
     };
     for value in values {
