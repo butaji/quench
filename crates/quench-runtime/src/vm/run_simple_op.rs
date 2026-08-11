@@ -32,6 +32,7 @@ fn run_simple_single_op(
             crate::functions::write_op(registers, op)
         }
         Call { .. } => run_call(registers, op)?,
+        OptionalCall { .. } => run_optional_call(registers, op)?,
         Eval { .. } => run_eval(registers, op)?,
         DeclareEvalBinding { name, slot } => crate::locals::alias_name(name, *slot),
         DeclareGlobalLexicalBinding {
@@ -47,4 +48,27 @@ fn run_simple_single_op(
         _ => return Ok(None),
     }
     Ok(Some(None))
+}
+
+fn run_optional_call(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
+    if let Op::OptionalCall {
+        dst,
+        callee,
+        receiver,
+        guard_receiver,
+        args,
+        spreads,
+    } = op
+    {
+        vm_ops::execute_optional_call(
+            registers,
+            *dst,
+            *callee,
+            *receiver,
+            *guard_receiver,
+            args,
+            spreads,
+        )?;
+    }
+    Ok(())
 }

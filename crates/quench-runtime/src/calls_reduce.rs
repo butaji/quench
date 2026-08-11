@@ -15,6 +15,14 @@ pub(crate) fn reduce_call(
     next: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
+    if call.optional
+        || matches!(
+            &call.callee,
+            Expression::StaticMemberExpression(member) if member.optional
+        )
+    {
+        return crate::special::reduce_optional_call(call, ops, facts, next, locals);
+    }
     if is_direct_eval(call, locals) {
         return reduce_direct_eval(call, ops, facts, next, locals);
     }
