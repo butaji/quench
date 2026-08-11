@@ -11,6 +11,9 @@ use crate::{
     },
 };
 
+#[path = "promise_constructor.rs"]
+mod promise_constructor;
+
 include!("promise_combinators.rs");
 include!("promise_finally.rs");
 include!("promise_settlement.rs");
@@ -298,6 +301,9 @@ fn resolve_receiver(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
             let reject = bound_settler(Builtin::PromiseAdoptReject, promise);
             let _ = promise_then(Some(&resolved), &[resolve, reject])?;
             Ok(Value::Undefined)
+        }
+        Some(constructor) if crate::conversion::is_callable(constructor) => {
+            promise_constructor::resolve(constructor, arguments)
         }
         Some(_) => Err(VmError::NotCallable),
         None => Ok(promise_resolve(arguments)),
