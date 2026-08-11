@@ -63,7 +63,9 @@ fn get_property_value(value: &Value, key: &str) -> Value {
         Set(_) => crate::collections::set::property(key),
         Iterator(_) => crate::collections::iterator::property(key),
         Generator(_) => generator_property(value, key),
-        Promise(_) => promise_property(value, key),
+        Promise(promise) => promise
+            .property(key)
+            .unwrap_or_else(|| promise_property(value, key)),
         HostCapability(capability) => host_capability_property(value, capability.descriptor, key),
         _ => Value::Undefined,
     }
