@@ -21,6 +21,7 @@ fn is_function_builtin(builtin: Builtin) -> bool {
             | Builtin::FunctionBind
             | Builtin::ArrayJoin
             | Builtin::ArrayPush
+            | Builtin::ArrayShift
     )
 }
 

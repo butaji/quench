@@ -7,13 +7,17 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::ArrayIterator => Some("values"),
         Builtin::ArrayKeys => Some("keys"),
         Builtin::ArrayEntries => Some("entries"),
+        Builtin::ArrayShift => Some("shift"),
         _ => None,
     }
 }
 
 pub const fn fn_len(builtin: Builtin) -> Option<f64> {
     match builtin {
-        Builtin::ArrayIterator | Builtin::ArrayKeys | Builtin::ArrayEntries => Some(0.0),
+        Builtin::ArrayIterator
+        | Builtin::ArrayKeys
+        | Builtin::ArrayEntries
+        | Builtin::ArrayShift => Some(0.0),
         _ => None,
     }
 }
