@@ -50,8 +50,8 @@ pub(crate) fn map_group_by(arguments: &[Value]) -> Result<Value, VmError> {
     let values = crate::collections::iterator::collect_iterable(iterable)?;
     let mut result = MapData {
         weak: false,
-        keys: VecDeque::new(),
-        values: Vec::new(),
+        keys: std::cell::RefCell::new(VecDeque::new()),
+        values: std::cell::RefCell::new(Vec::new()),
         prototype: std::cell::RefCell::new(None),
     };
     for (index, value) in values.into_iter().enumerate() {
@@ -60,18 +60,19 @@ pub(crate) fn map_group_by(arguments: &[Value]) -> Result<Value, VmError> {
             &Value::Undefined,
             &[value.clone(), Value::Number(index as f64)],
         )?;
-        if let Some(position) = result
+        let position = result
             .keys
+            .borrow()
             .iter()
-            .position(|item| same_value_zero(item, &key))
-        {
-            if let Some(Value::Array(array)) = result.values.get_mut(position) {
+            .position(|item| same_value_zero(item, &key));
+        if let Some(position) = position {
+            if let Some(Value::Array(array)) = result.values.get_mut().get_mut(position) {
                 let next = array.logical_len();
                 Rc::make_mut(array).set_index(next, value);
             }
         } else {
-            result.keys.push_back(key);
-            result.values.push(Value::array(vec![value]));
+            result.keys.get_mut().push_back(key);
+            result.values.get_mut().push(Value::array(vec![value]));
         }
     }
     Ok(Value::Map(Rc::new(result)))
@@ -92,8 +93,8 @@ pub(crate) fn weak_property(key: &str) -> Value {
 pub(crate) fn map_new(arguments: &[Value]) -> Result<Value, VmError> {
     let map = Value::Map(Rc::new(MapData {
         weak: false,
-        keys: VecDeque::new(),
-        values: Vec::new(),
+        keys: std::cell::RefCell::new(VecDeque::new()),
+        values: std::cell::RefCell::new(Vec::new()),
         prototype: std::cell::RefCell::new(None),
     }));
     let Some(iterable) = arguments.first().cloned() else {
@@ -139,8 +140,8 @@ pub(crate) fn weak_map_new(arguments: &[Value]) -> Result<Value, VmError> {
     };
     let set = Value::Map(Rc::new(MapData {
         weak: true,
-        keys: VecDeque::new(),
-        values: Vec::new(),
+        keys: std::cell::RefCell::new(VecDeque::new()),
+        values: std::cell::RefCell::new(Vec::new()),
         prototype: std::cell::RefCell::new(None),
     }));
     if entries.is_empty() {
@@ -152,8 +153,8 @@ pub(crate) fn weak_map_new(arguments: &[Value]) -> Result<Value, VmError> {
 fn weak_map_from_iterable(iterable: Value) -> Result<Value, VmError> {
     let map = std::cell::RefCell::new(Value::Map(Rc::new(MapData {
         weak: true,
-        keys: VecDeque::new(),
-        values: Vec::new(),
+        keys: std::cell::RefCell::new(VecDeque::new()),
+        values: std::cell::RefCell::new(Vec::new()),
         prototype: std::cell::RefCell::new(None),
     })));
     let setter =
@@ -393,20 +394,15 @@ pub(crate) fn map_delete(receiver: Option<&Value>, arguments: &[Value]) -> Resul
 }
 
 pub(crate) fn map_clear(receiver: Option<&Value>) -> Result<Value, VmError> {
-    if !matches!(receiver, Some(Value::Map(data)) if !data.weak) {
+    let Some(Value::Map(data)) =
+        receiver.filter(|value| matches!(value, Value::Map(data) if !data.weak))
+    else {
         return Err(crate::value::error::throw_type_error(
             "Map method called on incompatible receiver",
         ));
-    }
-    let updated = Value::Map(Rc::new(MapData {
-        weak: false,
-        keys: VecDeque::new(),
-        values: Vec::new(),
-        prototype: std::cell::RefCell::new(None),
-    }));
-    if let Some(receiver) = receiver {
-        crate::locals::replace_value(receiver, &updated);
-    }
+    };
+    data.keys.borrow_mut().clear();
+    data.values.borrow_mut().clear();
     Ok(Value::Undefined)
 }
 
@@ -433,10 +429,24 @@ pub(crate) fn map_for_each(
     };
     let this_arg = arguments.get(1).cloned().unwrap_or(Value::Undefined);
     let map = receiver.cloned().unwrap_or(Value::Undefined);
-    let data = (**data).clone();
-    for (key, value) in data.keys.iter().zip(data.values.iter()) {
-        let args = [value.clone(), key.clone(), map.clone()];
+    let mut index = 0;
+    loop {
+        let pair = map_pair(data, index);
+        let Some((key, value)) = pair else {
+            break;
+        };
+        let args = [value, key, map.clone()];
         crate::functions::execute_target(callback, &this_arg, &args)?;
+        let current_key = data.keys.borrow().get(index).cloned();
+        if current_key.is_some_and(|current| same_value_zero(&current, &args[1])) {
+            index += 1;
+        }
     }
     Ok(Value::Undefined)
+}
+
+fn map_pair(data: &MapData, index: usize) -> Option<(Value, Value)> {
+    let key = data.keys.borrow().get(index).cloned();
+    let value = data.values.borrow().get(index).cloned();
+    key.zip(value)
 }
