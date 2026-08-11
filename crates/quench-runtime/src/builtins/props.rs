@@ -34,7 +34,6 @@ fn special(builtin: Builtin, key: &str) -> Option<Value> {
     }
     special_match(builtin, key)
 }
-
 fn number_constant(key: &str) -> Option<Value> {
     let number = match key {
         "EPSILON" => f64::EPSILON,
@@ -49,7 +48,6 @@ fn number_constant(key: &str) -> Option<Value> {
     };
     Some(Value::Number(number))
 }
-
 fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
     use Builtin::*;
     match (builtin, key) {
@@ -60,7 +58,6 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         _ => builtin_method(builtin, key).map(Value::Builtin),
     }
 }
-
 fn builtin_method(builtin: Builtin, key: &str) -> Option<Builtin> {
     use Builtin::*;
     if builtin == ArrayPrototype {
@@ -71,6 +68,9 @@ fn builtin_method(builtin: Builtin, key: &str) -> Option<Builtin> {
     }
     if builtin == Array && key == "from" {
         return Some(ArrayFrom);
+    }
+    if builtin == ArrayBuffer && key == "prototype" {
+        return Some(ArrayBufferPrototype);
     }
     if builtin == StringPrototype {
         return crate::strings::property_method(key);
