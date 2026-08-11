@@ -1,6 +1,7 @@
 /// A signed 32-bit integer view over shared ArrayBuffer bytes.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Int32ArrayData {
+    pub(crate) meta: TypedArrayMeta,
     pub buffer: Rc<ArrayBufferData>,
     pub byte_offset: usize,
     pub length: usize,
@@ -11,6 +12,7 @@ impl Int32ArrayData {
 
     pub fn new(buffer: Rc<ArrayBufferData>, byte_offset: usize, length: usize) -> Self {
         Self {
+            meta: TypedArrayMeta::default(),
             buffer,
             byte_offset,
             length,
@@ -62,6 +64,7 @@ impl Int32ArrayData {
 /// An unsigned 32-bit integer view over shared ArrayBuffer bytes.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Uint32ArrayData {
+    pub(crate) meta: TypedArrayMeta,
     pub buffer: Rc<ArrayBufferData>,
     pub byte_offset: usize,
     pub length: usize,
@@ -72,6 +75,7 @@ impl Uint32ArrayData {
 
     pub fn new(buffer: Rc<ArrayBufferData>, byte_offset: usize, length: usize) -> Self {
         Self {
+            meta: TypedArrayMeta::default(),
             buffer,
             byte_offset,
             length,
@@ -124,6 +128,7 @@ macro_rules! define_bigint_array {
     ($name:ident, $element:ty) => {
         #[derive(Debug, Clone, PartialEq)]
         pub struct $name {
+            pub(crate) meta: TypedArrayMeta,
             pub buffer: Rc<ArrayBufferData>,
             pub byte_offset: usize,
             pub length: usize,
@@ -134,6 +139,7 @@ macro_rules! define_bigint_array {
 
             pub fn new(buffer: Rc<ArrayBufferData>, byte_offset: usize, length: usize) -> Self {
                 Self {
+                    meta: TypedArrayMeta::default(),
                     buffer,
                     byte_offset,
                     length,
@@ -191,6 +197,7 @@ define_bigint_array!(BigUint64ArrayData, u64);
 /// An unsigned 8-bit integer view over shared ArrayBuffer bytes.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Uint8ArrayData {
+    pub(crate) meta: TypedArrayMeta,
     pub buffer: Rc<ArrayBufferData>,
     pub byte_offset: usize,
     pub length: usize,
@@ -199,6 +206,7 @@ pub struct Uint8ArrayData {
 /// An unsigned 8-bit clamped view over shared ArrayBuffer bytes.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Uint8ClampedArrayData {
+    pub(crate) meta: TypedArrayMeta,
     pub buffer: Rc<ArrayBufferData>,
     pub byte_offset: usize,
     pub length: usize,
@@ -209,6 +217,7 @@ impl Uint8ClampedArrayData {
 
     pub fn new(buffer: Rc<ArrayBufferData>, byte_offset: usize, length: usize) -> Self {
         Self {
+            meta: TypedArrayMeta::default(),
             buffer,
             byte_offset,
             length,
@@ -278,6 +287,7 @@ impl Uint8ArrayData {
 
     pub fn new(buffer: Rc<ArrayBufferData>, byte_offset: usize, length: usize) -> Self {
         Self {
+            meta: TypedArrayMeta::default(),
             buffer,
             byte_offset,
             length,
