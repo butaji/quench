@@ -182,8 +182,9 @@ pub(crate) fn execute_for_of(
     registers: &mut Vec<crate::value::Value>,
     op: &Op,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
-    let (label, slot, body, per_iteration, values) = unpack_for_of(registers, op)?;
-    iterate_loop_values(registers, label, slot, body, per_iteration, values)
+    let (label, slot, body, per_iteration, iterable) = unpack_for_of(registers, op)?;
+    let iterator = crate::collections::iterator::open(iterable)?;
+    iterate_loop_values(registers, label, slot, body, per_iteration, iterator)
 }
 
 type ForInLoopData<'a> = (&'a Option<String>, u16, &'a Vec<Op>, bool, Vec<String>);
@@ -192,7 +193,7 @@ type ForOfLoopData<'a> = (
     u16,
     &'a Vec<Op>,
     bool,
-    Vec<crate::value::Value>,
+    crate::value::Value,
 );
 
 fn unpack_for_in<'a>(
@@ -257,14 +258,8 @@ fn unpack_for_of<'a>(
     else {
         return Err(crate::execute::VmError::MissingReturn);
     };
-    let values = for_of_values(crate::execute::read_register(registers, *iterable)?)?;
-    Ok((label, *slot, body, *per_iteration, values))
-}
-
-fn for_of_values(
-    value: crate::value::Value,
-) -> Result<Vec<crate::value::Value>, crate::execute::VmError> {
-    crate::collections::iterator::collect_iterable(value)
+    let iterable = crate::execute::read_register(registers, *iterable)?;
+    Ok((label, *slot, body, *per_iteration, iterable))
 }
 
 fn iterate_loop_values(
@@ -273,17 +268,36 @@ fn iterate_loop_values(
     slot: u16,
     body: &[Op],
     per_iteration: bool,
-    values: Vec<crate::value::Value>,
+    iterator: crate::value::Value,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
-    for value in values {
+    loop {
+        let value = match crate::collections::iterator::step_value(&iterator) {
+            Ok(value) => value,
+            Err(crate::execute::VmError::Thrown(reason)) => {
+                return crate::collections::iterator::close(
+                    iterator,
+                    crate::completion::Completion::Throw(reason),
+                );
+            }
+            Err(error) => return Err(error),
+        };
+        let Some(value) = value else {
+            return Ok(crate::completion::Completion::Normal);
+        };
         let _binding = bind_iteration(slot, value, per_iteration);
         match execute_loop_body(registers, label, body)? {
             LoopAction::Continue => {}
-            LoopAction::Break => return Ok(crate::completion::Completion::Normal),
-            LoopAction::Propagate(completion) => return Ok(completion),
+            LoopAction::Break => {
+                return crate::collections::iterator::close(
+                    iterator,
+                    crate::completion::Completion::Normal,
+                );
+            }
+            LoopAction::Propagate(completion) => {
+                return crate::collections::iterator::close(iterator, completion);
+            }
         }
     }
-    Ok(crate::completion::Completion::Normal)
 }
 
 fn bind_iteration(

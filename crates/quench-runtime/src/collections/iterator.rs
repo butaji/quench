@@ -35,7 +35,7 @@ pub(crate) fn execute_binding(
     let completion = crate::execute::execute_completion_in_place(body, registers)?;
     close(iterator, completion)
 }
-fn close(
+pub(crate) fn close(
     record: Value,
     completion: crate::completion::Completion,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
@@ -123,7 +123,7 @@ fn require_object_coercible(value: Value) -> Result<(), crate::execute::VmError>
     Ok(())
 }
 
-fn open(value: Value) -> Result<Value, crate::execute::VmError> {
+pub(crate) fn open(value: Value) -> Result<Value, crate::execute::VmError> {
     if matches!(value, Value::Iterator(_)) {
         return Ok(value);
     }
@@ -365,7 +365,7 @@ fn get_method(iterator: &Value, name: &str) -> Result<Option<Value>, crate::exec
 fn missing_throw_method() -> crate::execute::VmError {
     crate::value::error::throw_type_error("delegated iterator has no throw method")
 }
-fn step_value(value: &Value) -> Result<Option<Value>, crate::execute::VmError> {
+pub(crate) fn step_value(value: &Value) -> Result<Option<Value>, crate::execute::VmError> {
     let Value::Iterator(data) = value else {
         return Err(not_iterable());
     };
