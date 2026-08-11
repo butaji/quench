@@ -1,6 +1,6 @@
-pub(crate) fn from_map(receiver: Option<&Value>) -> Value {
+pub(crate) fn from_map(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
     let Some(Value::Map(data)) = receiver else {
-        return empty();
+        return Err(crate::value::error::throw_type_error("Map iterator called on incompatible receiver"));
     };
     let values = data
         .keys
@@ -8,14 +8,28 @@ pub(crate) fn from_map(receiver: Option<&Value>) -> Value {
         .zip(&data.values)
         .map(|(key, value)| Value::array(vec![key.clone(), value.clone()]))
         .collect();
-    make(values)
+    Ok(make(values))
 }
 
-pub(crate) fn from_set(receiver: Option<&Value>) -> Value {
-    let Some(Value::Set(data)) = receiver else {
-        return empty();
+pub(crate) fn from_map_keys(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
+    let Some(Value::Map(data)) = receiver else {
+        return Err(crate::value::error::throw_type_error("Map iterator called on incompatible receiver"));
     };
-    make(data.values.iter().cloned().collect())
+    Ok(make(data.keys.iter().cloned().collect()))
+}
+
+pub(crate) fn from_map_values(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
+    let Some(Value::Map(data)) = receiver else {
+        return Err(crate::value::error::throw_type_error("Map iterator called on incompatible receiver"));
+    };
+    Ok(make(data.values.clone()))
+}
+
+pub(crate) fn from_set(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
+    let Some(Value::Set(data)) = receiver else {
+        return Err(crate::value::error::throw_type_error("Set iterator called on incompatible receiver"));
+    };
+    Ok(make(data.values.iter().cloned().collect()))
 }
 
 pub(crate) fn next(receiver: Option<&Value>) -> Value {
@@ -54,10 +68,6 @@ fn make_protocol(iterator: Value, next: Value) -> Value {
             done: false,
         }),
     }))
-}
-
-fn empty() -> Value {
-    make(Vec::new())
 }
 
 fn result(value: Value, done: bool) -> Value {
