@@ -1,8 +1,9 @@
-use oxc::{ast::ast::Expression, syntax::operator::BinaryOperator};
+use oxc::{ast::ast::Expression, span::Span, syntax::operator::BinaryOperator};
 
 use crate::{facts::Constant as FactConstant, ops::Constant};
 
 pub(crate) struct Literal {
+    pub(crate) span: Span,
     pub(crate) fact: FactConstant,
     pub(crate) op: Constant,
 }
@@ -10,37 +11,47 @@ pub(crate) struct Literal {
 pub(crate) fn reduce_literal(expression: &Expression<'_>) -> Option<Literal> {
     match expression {
         Expression::NumericLiteral(number) => Some(Literal {
+            span: number.span,
             fact: FactConstant::Number(number.value),
             op: Constant::Number(number.value),
         }),
         Expression::BooleanLiteral(boolean) => Some(Literal {
+            span: boolean.span,
             fact: FactConstant::Boolean(boolean.value),
             op: Constant::Boolean(boolean.value),
         }),
         Expression::StringLiteral(string) => Some(Literal {
+            span: string.span,
             fact: FactConstant::String(string.value.to_string()),
             op: Constant::String(string.value.to_string()),
         }),
-        Expression::NullLiteral(_) => Some(Literal {
+        Expression::NullLiteral(null) => Some(Literal {
+            span: null.span,
             fact: FactConstant::Null,
             op: Constant::Null,
         }),
         Expression::BigIntLiteral(bigint) => {
             let value = bigint_value(bigint)?;
             Some(Literal {
+                span: bigint.span,
                 fact: FactConstant::BigInt(value.clone()),
                 op: Constant::BigInt(value),
             })
         }
         Expression::TemplateLiteral(template) if template.expressions.is_empty() => {
-            let value = template.quasis.first()?.value.cooked.as_ref()?.to_string();
-            Some(Literal {
-                fact: FactConstant::String(value.clone()),
-                op: Constant::String(value),
-            })
+            reduce_template_literal(template)
         }
         _ => None,
     }
+}
+
+fn reduce_template_literal(template: &oxc::ast::ast::TemplateLiteral<'_>) -> Option<Literal> {
+    let value = template.quasis.first()?.value.cooked.as_ref()?.to_string();
+    Some(Literal {
+        span: template.span,
+        fact: FactConstant::String(value.clone()),
+        op: Constant::String(value),
+    })
 }
 
 /// Decimal string of a BigInt literal, normalizing all supported radices.
