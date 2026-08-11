@@ -22,6 +22,7 @@ pub(crate) fn execute_unary(
         UnaryOp::Void => Value::Undefined,
         UnaryOp::Typeof => Value::String(type_of(&value).to_string()),
         UnaryOp::ToString => Value::String(to_string(Some(&value))),
+        UnaryOp::ToNumeric => to_numeric(&value)?,
         UnaryOp::Delete => Value::Boolean(true),
     };
     write_value(registers, dst, result);
@@ -57,6 +58,7 @@ fn evaluate_binary(
         | BinaryOp::Divide
         | BinaryOp::Remainder
         | BinaryOp::Exponentiate => arithmetic_value(left, right, operator)?,
+        BinaryOp::NumericAdd | BinaryOp::NumericSubtract => numeric_update_value(left, operator)?,
         BinaryOp::Equal => Value::Boolean(crate::equality::abstract_equal(left, right)?),
         BinaryOp::NotEqual => Value::Boolean(!crate::equality::abstract_equal(left, right)?),
         BinaryOp::StrictEqual => Value::Boolean(strict_equal(left, right)),
@@ -136,6 +138,37 @@ fn arithmetic_value(
     let left = crate::conversion::primitive_to_number(&left)?;
     let right = crate::conversion::primitive_to_number(&right)?;
     Ok(Value::Number(numeric_binary(left, right, operator)))
+}
+
+/// Implement `++`/`--` semantics: ToNumeric the operand and adjust it by one
+/// in its own type, never via string concatenation.
+fn numeric_update_value(left: &Value, operator: crate::ops::BinaryOp) -> Result<Value, VmError> {
+    let value = to_numeric(left)?;
+    let decrement = operator == crate::ops::BinaryOp::NumericSubtract;
+    if let Some(big) = bigint_value(&value) {
+        let result = if decrement {
+            crate::bigint::subtract(big, "1")
+        } else {
+            crate::bigint::add(big, "1")
+        };
+        return Ok(Value::BigInt(result.map_err(bigint_error)?));
+    }
+    let n = crate::conversion::to_number(&value)?;
+    Ok(Value::Number(if decrement { n - 1.0 } else { n + 1.0 }))
+}
+
+/// ECMA-262 `ToNumeric`: coerce to a Number or BigInt, rejecting symbols.
+fn to_numeric(value: &Value) -> Result<Value, VmError> {
+    let value = crate::conversion::to_primitive(value, "number")?;
+    if crate::conversion::is_symbol(&value) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot convert Symbol value",
+        ));
+    }
+    if bigint_value(&value).is_some() {
+        return Ok(value);
+    }
+    Ok(Value::Number(crate::conversion::to_number(&value)?))
 }
 
 fn bitwise_value(
