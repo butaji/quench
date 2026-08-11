@@ -164,7 +164,8 @@ fn date_value_of(receiver: Option<&Value>) -> Value {
     if ms.is_nan() {
         Value::Number(f64::NAN)
     } else {
-        Value::Number(ms)
+        let clipped = ms.trunc();
+        Value::Number(if clipped == 0.0 { 0.0 } else { clipped })
     }
 }
 
