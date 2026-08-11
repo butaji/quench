@@ -3,11 +3,11 @@
 use crate::ops::Builtin;
 
 use super::{
-    array, bigint, collections, date, function, intl, math, number, object, reflect, regexp,
-    string, symbol,
+    array, bigint, collections, date, function, intl, math, number, object, promise, reflect,
+    regexp, string, symbol,
 };
 
-pub const fn function_name(builtin: Builtin) -> Option<&'static str> {
+pub fn function_name(builtin: Builtin) -> Option<&'static str> {
     if let Some(v) = array::fn_name(builtin) {
         return Some(v);
     }
@@ -44,10 +44,10 @@ pub const fn function_name(builtin: Builtin) -> Option<&'static str> {
     if let Some(v) = collections::fn_name(builtin) {
         return Some(v);
     }
-    string::fn_name(builtin)
+    promise::fn_name(builtin).or_else(|| string::fn_name(builtin))
 }
 
-pub const fn function_length(builtin: Builtin) -> Option<f64> {
+pub fn function_length(builtin: Builtin) -> Option<f64> {
     if let Some(v) = array::fn_len(builtin) {
         return Some(v);
     }
@@ -84,10 +84,10 @@ pub const fn function_length(builtin: Builtin) -> Option<f64> {
     if let Some(v) = collections::fn_len(builtin) {
         return Some(v);
     }
-    string::fn_len(builtin)
+    promise::fn_len(builtin).or_else(|| string::fn_len(builtin))
 }
 
-pub const fn short_name(builtin: Builtin) -> Option<&'static str> {
+pub fn short_name(builtin: Builtin) -> Option<&'static str> {
     if let Some(v) = array::short_name(builtin) {
         return Some(v);
     }
@@ -124,5 +124,5 @@ pub const fn short_name(builtin: Builtin) -> Option<&'static str> {
     if let Some(v) = collections::short_name(builtin) {
         return Some(v);
     }
-    string::short_name(builtin)
+    promise::short_name(builtin).or_else(|| string::short_name(builtin))
 }

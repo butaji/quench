@@ -15,6 +15,7 @@ pub mod math;
 pub mod methods;
 pub mod number;
 pub mod object;
+pub mod promise;
 pub mod reflect;
 pub mod regexp;
 pub mod string;
@@ -30,6 +31,7 @@ pub fn constructor_name(builtin: Builtin) -> Option<&'static str> {
     match builtin {
         Builtin::Array => Some("Array"),
         Builtin::Boolean => Some("Boolean"),
+        Builtin::Promise => Some("Promise"),
         Builtin::Date => Some("Date"),
         Builtin::Function => Some("Function"),
         Builtin::AsyncFunction => Some("AsyncFunction"),
@@ -70,6 +72,7 @@ pub fn prototype(builtin: Builtin) -> Option<Builtin> {
     match builtin {
         Builtin::Array => Some(Builtin::ArrayPrototype),
         Builtin::Boolean => Some(Builtin::ObjectPrototype),
+        Builtin::Promise => Some(Builtin::PromisePrototype),
         Builtin::Date => Some(Builtin::DatePrototype),
         Builtin::Function => Some(Builtin::FunctionPrototype),
         Builtin::AsyncFunction | Builtin::GeneratorFunction | Builtin::AsyncGeneratorFunction => {
@@ -95,8 +98,7 @@ pub fn prototype(builtin: Builtin) -> Option<Builtin> {
         Builtin::SharedArrayBuffer => Some(Builtin::SharedArrayBufferPrototype),
         Builtin::WeakSet => Some(Builtin::WeakSetPrototype),
         Builtin::WeakRef => Some(Builtin::WeakRefPrototype),
-        Builtin::Error => Some(Builtin::ErrorPrototype),
-        Builtin::RangeError => Some(Builtin::ErrorPrototype),
+        Builtin::Error | Builtin::RangeError => Some(Builtin::ErrorPrototype),
         Builtin::ReferenceError => Some(Builtin::ErrorPrototype),
         Builtin::SyntaxError => Some(Builtin::ErrorPrototype),
         Builtin::EvalError => Some(Builtin::ErrorPrototype),
@@ -117,6 +119,7 @@ pub fn constructor_length(builtin: Builtin) -> Option<f64> {
     match builtin {
         Builtin::Array => Some(1.0),
         Builtin::Boolean => Some(1.0),
+        Builtin::Promise => Some(1.0),
         Builtin::Date => Some(7.0),
         Builtin::Function => Some(1.0),
         Builtin::AsyncFunction | Builtin::GeneratorFunction | Builtin::AsyncGeneratorFunction => {
