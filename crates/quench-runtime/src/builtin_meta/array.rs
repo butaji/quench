@@ -10,6 +10,7 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::ArrayShift => Some("shift"),
         Builtin::ArrayReverse => Some("reverse"),
         Builtin::ArrayPop => Some("pop"),
+        Builtin::ArrayUnshift => Some("unshift"),
         _ => None,
     }
 }
@@ -22,6 +23,7 @@ pub const fn fn_len(builtin: Builtin) -> Option<f64> {
         | Builtin::ArrayShift => Some(0.0),
         Builtin::ArrayReverse => Some(0.0),
         Builtin::ArrayPop => Some(0.0),
+        Builtin::ArrayUnshift => Some(1.0),
         _ => None,
     }
 }

@@ -183,6 +183,7 @@ pub(crate) fn array_push(receiver: Option<&Value>, arguments: &[Value]) -> Value
 include!("builtins_array_shift.rs");
 include!("builtins_array_reverse.rs");
 include!("builtins_array_pop.rs");
+include!("builtins_array_unshift.rs");
 pub(crate) fn math_pow(arguments: &[Value]) -> Value {
     let base = arguments.first().map_or(f64::NAN, value_to_number);
     let exponent = arguments.get(1).map_or(f64::NAN, value_to_number);
