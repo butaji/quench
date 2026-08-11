@@ -44,6 +44,9 @@ fn initialize_parameters(
     };
     let (mut registers, environment) =
         crate::functions::build_registers(function, receiver, arguments);
+    let _private_environment = crate::private_environment::Guard::install_environment(
+        function.private_environment.clone(),
+    );
     let _home = crate::super_scope::Guard::install(function, receiver);
     let _with_scope = crate::with_scope::FunctionGuard::isolate();
     let (completion, _) = crate::vm::execute_generator_step(
@@ -119,6 +122,9 @@ fn resume(generator: &GeneratorData, resume: Resume) -> Result<Value, VmError> {
     if let Some(result) = resume_suspended_contexts(generator, state, &completion)? {
         return Ok(result);
     }
+    let _private_environment = crate::private_environment::Guard::install_environment(
+        generator.function.private_environment.clone(),
+    );
     let _home = crate::super_scope::Guard::install(&generator.function, &generator.receiver);
     let _with_scope = crate::with_scope::FunctionGuard::isolate();
     let (completion, pc) = crate::vm::execute_generator_step(
@@ -399,7 +405,10 @@ fn complete_step(
         Completion::Yield(value) => yielded_result(generator, state, value),
         Completion::Return(value) => finish(generator, value),
         Completion::Normal => finish(generator, Value::Undefined),
-        Completion::Throw(value) => Err(VmError::Thrown(value)),
+        Completion::Throw(value) => {
+            *generator.done.borrow_mut() = true;
+            Err(VmError::Thrown(value))
+        }
         _ => Err(VmError::MissingReturn),
     }
 }
