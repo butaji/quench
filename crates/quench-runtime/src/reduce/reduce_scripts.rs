@@ -23,7 +23,7 @@ pub fn reduce_script_sources(sources: &[ScriptSource<'_>]) -> Result<ResidualPro
 }
 
 pub fn reduce_module_with_harness(
-    harness: &[String],
+    harness: &[&str],
     source: &str,
 ) -> Result<ResidualProgram, Vec<String>> {
     let mut units = harness

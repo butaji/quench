@@ -9,7 +9,7 @@ use std::{collections::HashMap, path::Path};
 pub mod runtime_host;
 pub use runtime_host::RuntimeHost;
 
-/// Exact harness sources cached by filename to avoid repeated filesystem I/O.
+/// Exact harness sources cached by filename for zero-copy runner dispatch.
 pub struct HarnessCache {
     root: std::path::PathBuf,
     sources: HashMap<String, String>,
@@ -23,14 +23,26 @@ impl HarnessCache {
         }
     }
 
+    /// Load a harness source, retaining the original owned-source API.
     pub fn load(&mut self, name: &str) -> Result<String, String> {
-        if let Some(source) = self.sources.get(name) {
-            return Ok(source.clone());
+        self.ensure(name)?;
+        Ok(self.get(name)?.to_string())
+    }
+
+    fn ensure(&mut self, name: &str) -> Result<(), String> {
+        if !self.sources.contains_key(name) {
+            let source = std::fs::read_to_string(self.root.join(name))
+                .map_err(|error| format!("harness {name}: {error}"))?;
+            self.sources.insert(name.to_string(), source);
         }
-        let source = std::fs::read_to_string(self.root.join(name))
-            .map_err(|error| format!("harness {name}: {error}"))?;
-        self.sources.insert(name.to_string(), source.clone());
-        Ok(source)
+        Ok(())
+    }
+
+    fn get(&self, name: &str) -> Result<&str, String> {
+        self.sources
+            .get(name)
+            .map(String::as_str)
+            .ok_or_else(|| format!("harness cache missing {name}"))
     }
 }
 
@@ -45,13 +57,13 @@ pub trait Test262Host: Send {
     /// Execute harness scripts, then one test script in the same realm.
     fn run_harnessed_script(
         &mut self,
-        harness: &[String],
+        harness: &[&str],
         source: &str,
         strict: bool,
     ) -> Result<(), String>;
 
     /// Execute harness scripts, then one module in the same realm.
-    fn run_harnessed_module(&mut self, harness: &[String], source: &str) -> Result<(), String>;
+    fn run_harnessed_module(&mut self, harness: &[&str], source: &str) -> Result<(), String>;
 }
 
 /// Runner metadata needed before dispatching one test.
@@ -225,6 +237,21 @@ impl<H: Test262Host> Test262Runner<H> {
     {
         let metadata = TestMetadata::parse(source)?;
         let harness = load_harness(&metadata, &mut load)?;
+        let harness = harness.iter().map(String::as_str).collect::<Vec<_>>();
+        Ok(apply_negative_expectation(
+            self.dispatch_test(&harness, source, &metadata),
+            &metadata,
+        ))
+    }
+
+    /// Compose a test with cached harness sources without copying their text.
+    pub fn run_test_with_cache(
+        &mut self,
+        source: &str,
+        cache: &mut HarnessCache,
+    ) -> Result<TestOutcome, String> {
+        let metadata = TestMetadata::parse(source)?;
+        let harness = load_cached_harness(&metadata, cache)?;
         Ok(apply_negative_expectation(
             self.dispatch_test(&harness, source, &metadata),
             &metadata,
@@ -249,6 +276,20 @@ impl<H: Test262Host> Test262Runner<H> {
         self.run_test_with_harness(&source, load)
     }
 
+    /// Read one test262 file and compose it with cached harness sources.
+    pub fn run_file_with_cache<P>(
+        &mut self,
+        path: P,
+        cache: &mut HarnessCache,
+    ) -> Result<TestOutcome, String>
+    where
+        P: AsRef<Path>,
+    {
+        let source = std::fs::read_to_string(path.as_ref())
+            .map_err(|error| format!("test262 read failed: {error}"))?;
+        self.run_test_with_cache(&source, cache)
+    }
+
     /// Run files in iterator order and collect all outcomes.
     pub fn run_files<I, P>(&mut self, paths: I) -> Result<StageReport, String>
     where
@@ -263,13 +304,7 @@ impl<H: Test262Host> Test262Runner<H> {
                 Ok(outcome) => outcome,
                 Err(reason) => TestOutcome::Fail { reason },
             };
-            match outcome {
-                TestOutcome::Pass => report.passed += 1,
-                TestOutcome::Fail { reason } => {
-                    report.failed += 1;
-                    report.failures.push((path, reason));
-                }
-            }
+            record_outcome(&mut report, path, outcome);
         }
         Ok(report)
     }
@@ -293,20 +328,37 @@ impl<H: Test262Host> Test262Runner<H> {
                 Ok(outcome) => outcome,
                 Err(reason) => TestOutcome::Fail { reason },
             };
-            match outcome {
-                TestOutcome::Pass => report.passed += 1,
-                TestOutcome::Fail { reason } => {
-                    report.failed += 1;
-                    report.failures.push((path, reason));
-                }
-            }
+            record_outcome(&mut report, path, outcome);
+        }
+        Ok(report)
+    }
+
+    /// Run files in iterator order with one shared, zero-copy harness cache.
+    pub fn run_files_with_cache<I, P>(
+        &mut self,
+        paths: I,
+        cache: &mut HarnessCache,
+    ) -> Result<StageReport, String>
+    where
+        I: IntoIterator<Item = P>,
+        P: AsRef<Path>,
+    {
+        let mut report = StageReport::default();
+        for input in paths {
+            let path = input.as_ref().to_path_buf();
+            report.total += 1;
+            let outcome = match self.run_file_with_cache(&path, cache) {
+                Ok(outcome) => outcome,
+                Err(reason) => TestOutcome::Fail { reason },
+            };
+            record_outcome(&mut report, path, outcome);
         }
         Ok(report)
     }
 
     fn dispatch_test(
         &mut self,
-        harness: &[String],
+        harness: &[&str],
         source: &str,
         metadata: &TestMetadata,
     ) -> TestOutcome {
@@ -320,36 +372,54 @@ impl<H: Test262Host> Test262Runner<H> {
     }
 }
 
+fn load_cached_harness<'a>(
+    metadata: &TestMetadata,
+    cache: &'a mut HarnessCache,
+) -> Result<Vec<&'a str>, String> {
+    let names = harness_names(metadata);
+    for name in &names {
+        cache.ensure(name)?;
+    }
+    names.into_iter().map(|name| cache.get(name)).collect()
+}
+
+fn record_outcome(report: &mut StageReport, path: std::path::PathBuf, outcome: TestOutcome) {
+    match outcome {
+        TestOutcome::Pass => report.passed += 1,
+        TestOutcome::Fail { reason } => {
+            report.failed += 1;
+            report.failures.push((path, reason));
+        }
+    }
+}
+
 fn load_harness<F>(metadata: &TestMetadata, load: &mut F) -> Result<Vec<String>, String>
 where
     F: FnMut(&str) -> Result<String, String>,
 {
-    let mut harness = Vec::new();
-    if !metadata.is_raw {
-        load_harness_file(&mut harness, load, "assert.js")?;
-        load_harness_file(&mut harness, load, "sta.js")?;
-        if metadata.is_async {
-            load_harness_file(&mut harness, load, "doneprintHandle.js")?;
-        }
-        for include in &metadata.includes {
-            if !is_default_harness_binding(include) {
-                load_harness_file(&mut harness, load, include)?;
-            }
-        }
+    harness_names(metadata).into_iter().map(load).collect()
+}
+
+fn harness_names(metadata: &TestMetadata) -> Vec<&str> {
+    if metadata.is_raw {
+        return Vec::new();
     }
-    Ok(harness)
+    let mut names = vec!["assert.js", "sta.js"];
+    if metadata.is_async {
+        names.push("doneprintHandle.js");
+    }
+    names.extend(
+        metadata
+            .includes
+            .iter()
+            .map(String::as_str)
+            .filter(|include| !is_default_harness_binding(include)),
+    );
+    names
 }
 
 fn is_default_harness_binding(include: &str) -> bool {
     matches!(include, "assert.js" | "sta.js")
-}
-
-fn load_harness_file<F>(harness: &mut Vec<String>, load: &mut F, name: &str) -> Result<(), String>
-where
-    F: FnMut(&str) -> Result<String, String>,
-{
-    harness.push(load(name)?);
-    Ok(())
 }
 
 fn apply_negative_expectation(outcome: TestOutcome, metadata: &TestMetadata) -> TestOutcome {
