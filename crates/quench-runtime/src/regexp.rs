@@ -1,5 +1,6 @@
 //! RegExp execution using the `regress` crate.
 
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::Rc;
 
 use regress::{Flags, Regex};
@@ -226,7 +227,9 @@ include!("regexp_named_groups.rs");
 /// Build a regress `Regex` from pattern and JS-style flags.
 pub fn compile(pattern: &str, flags: &str) -> Result<Regex, String> {
     let reg_flags: Flags = flags.into();
-    Regex::with_flags(pattern, reg_flags).map_err(|e| e.to_string())
+    catch_unwind(AssertUnwindSafe(|| Regex::with_flags(pattern, reg_flags)))
+        .map_err(|_| "invalid regular expression".to_string())?
+        .map_err(|e| e.to_string())
 }
 
 /// Reject a regex literal whose pattern fails the ECMA-262 `u`-flag static
@@ -234,7 +237,8 @@ pub fn compile(pattern: &str, flags: &str) -> Result<Regex, String> {
 /// class ranges, control escapes, decimal escapes, and quantified assertions.
 pub fn validate_unicode(pattern: &str, flags: &str) -> Result<(), String> {
     let reg_flags: Flags = flags.into();
-    Regex::with_flags(pattern, reg_flags)
+    catch_unwind(AssertUnwindSafe(|| Regex::with_flags(pattern, reg_flags)))
+        .map_err(|_| "SyntaxError: invalid regular expression".to_string())?
         .map(|_| ())
         .map_err(|error| format!("SyntaxError: {error}"))
 }
@@ -263,50 +267,51 @@ fn build_re_flags(flags: &str) -> String {
     f
 }
 
+fn find_match<'a>(regex: &'a Regex, text: &'a str) -> Result<Option<regress::Match>, VmError> {
+    catch_unwind(AssertUnwindSafe(|| regex.find(text)))
+        .map_err(|_| VmError::EvalError("invalid regular expression execution".to_string()))
+}
+
 /// Implement `RegExp.prototype.test(str)`.
 pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let Some(Value::Object(_)) = receiver else {
+    let Some(receiver @ Value::Object(_)) = receiver else {
         return Err(VmError::EvalError(
             "RegExp.prototype.test requires RegExp".to_string(),
         ));
     };
     let s = argument_string(arguments);
-    let (source, flags, last_index) = extract_regex_parts(receiver.unwrap());
+    let (source, flags, last_index) = extract_regex_parts(receiver);
     let (search_start, search_string) = prepare_search(&s, &flags, last_index);
     let pattern = if source.is_empty() { "(?:)" } else { &source };
     let re_flags = build_re_flags(&flags);
     let re = compile(pattern, &re_flags).map_err(VmError::EvalError)?;
-    let found = re.find(search_string);
+    let found = find_match(&re, search_string)?;
     let matched = found.is_some();
     if flags.contains('g') || flags.contains('y') {
-        let new_index = if matched {
-            found.unwrap().end() + search_start
-        } else {
-            0
-        };
-        set_last_index(receiver.unwrap(), new_index as f64);
+        let new_index = found.map_or(0, |match_| match_.end() + search_start);
+        set_last_index(receiver, new_index as f64);
     }
     Ok(Value::Boolean(matched))
 }
 
 /// Implement `RegExp.prototype.exec(str)`.
 pub fn exec(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let Some(Value::Object(_)) = receiver else {
+    let Some(receiver @ Value::Object(_)) = receiver else {
         return Err(VmError::EvalError(
             "RegExp.prototype.exec requires RegExp".to_string(),
         ));
     };
     let s = argument_string(arguments);
-    let (source, flags, last_index) = extract_regex_parts(receiver.unwrap());
+    let (source, flags, last_index) = extract_regex_parts(receiver);
     let (search_start, search_string) = prepare_search(&s, &flags, last_index);
     let pattern = if source.is_empty() { "(?:)" } else { &source };
     let re_flags = build_re_flags(&flags);
     let re = compile(pattern, &re_flags).map_err(VmError::EvalError)?;
-    if let Some(m) = re.find(search_string) {
-        build_match_result(receiver.unwrap(), &s, m, search_start, &flags)
+    if let Some(m) = find_match(&re, search_string)? {
+        build_match_result(receiver, &s, m, search_start, &flags)
     } else {
         if flags.contains('g') || flags.contains('y') {
-            set_last_index(receiver.unwrap(), 0.0);
+            set_last_index(receiver, 0.0);
         }
         Ok(Value::Null)
     }
