@@ -118,6 +118,13 @@ path unless a sound guard preserves their behavior.
 test262 metadata, exact harness composition, and host classification; it may
 never override harness behavior.
 
+The current copy-on-write object representation does not yet retarget an
+object nested inside a function reachable only through another object.  For
+example, redefining `foo.prototype` through a global `foo` can leave later
+`new foo()` calls observing the former prototype.  Completing this requires
+the planned centralized heap/identity representation rather than an
+assignment-specific cache or runner workaround.
+
 ## Test262 domain strategy
 
 Test262 covers ECMA-262, ECMA-402, and JSON, and its repository is organized

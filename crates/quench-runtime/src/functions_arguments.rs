@@ -48,6 +48,7 @@ fn emit_function_expression(
 pub(crate) fn build_registers(
     function: &std::rc::Rc<crate::value::FunctionValue>,
     this_value: &crate::value::Value,
+            strict: true,
     arguments: &[crate::value::Value],
 ) -> (
     Vec<crate::value::Value>,
