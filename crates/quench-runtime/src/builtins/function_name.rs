@@ -25,7 +25,12 @@ fn dynamic_function_name(
 
 fn function_name_key(key: &Value) -> Result<String, crate::execute::VmError> {
     if crate::conversion::is_symbol(key) {
-        return Ok(format!("[{}]", symbol_description(key)));
+        let description = symbol_description(key);
+        return Ok(if description.is_empty() {
+            String::new()
+        } else {
+            format!("[{description}]")
+        });
     }
     crate::conversion::to_property_key(key)
 }
