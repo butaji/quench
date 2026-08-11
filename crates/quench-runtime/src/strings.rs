@@ -384,7 +384,10 @@ pub(crate) fn code_point_at(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     let value = string_receiver(receiver)?;
-    let position = arguments.first().and_then(number).unwrap_or(0.0);
+    let position = match arguments.first() {
+        None => 0.0,
+        Some(value) => crate::conversion::to_number(value)?,
+    };
     if position < 0.0 || position.is_nan() || position >= utf16_len(&value) as f64 {
         return Ok(Value::Undefined);
     }
