@@ -119,7 +119,7 @@ pub(crate) fn execute_builtin(
         crate::ops::Builtin::StringPadEnd => Ok(pad_end(receiver, arguments)),
         crate::ops::Builtin::StringTrimStart => Ok(trim_start(receiver)),
         crate::ops::Builtin::StringTrimEnd => Ok(trim_end(receiver)),
-        crate::ops::Builtin::StringCodePointAt => Ok(code_point_at(receiver, arguments)),
+        crate::ops::Builtin::StringCodePointAt => code_point_at(receiver, arguments),
         crate::ops::Builtin::StringToString => Ok(to_string_value(receiver)),
         crate::ops::Builtin::StringReplace => replace(receiver, arguments, false),
         crate::ops::Builtin::StringReplaceAll => replace(receiver, arguments, true),
@@ -379,12 +379,18 @@ pub(crate) fn trim_end(receiver: Option<&Value>) -> Value {
     Value::String(value.trim_end().to_string())
 }
 
-pub(crate) fn code_point_at(receiver: Option<&Value>, arguments: &[Value]) -> Value {
-    let Some(Value::String(value)) = receiver else {
-        return Value::Undefined;
-    };
-    let index = arguments.first().and_then(number).unwrap_or(0.0).max(0.0) as usize;
-    code_point_at_utf16(value, index).map_or(Value::Undefined, |code| Value::Number(code as f64))
+pub(crate) fn code_point_at(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let value = string_receiver(receiver)?;
+    let position = arguments.first().and_then(number).unwrap_or(0.0);
+    if position < 0.0 || position.is_nan() || position >= utf16_len(&value) as f64 {
+        return Ok(Value::Undefined);
+    }
+    let index = position as usize;
+    Ok(code_point_at_utf16(&value, index)
+        .map_or(Value::Undefined, |code| Value::Number(code as f64)))
 }
 
 pub(crate) fn to_string_value(receiver: Option<&Value>) -> Value {
