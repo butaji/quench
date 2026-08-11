@@ -194,6 +194,11 @@ pub(crate) fn weak_map_get_or_insert_computed(
     let callback = arguments.get(1).ok_or_else(|| {
         crate::value::error::throw_type_error("WeakMap callback must be callable")
     })?;
+    if !crate::conversion::is_callable(callback) {
+        return Err(crate::value::error::throw_type_error(
+            "WeakMap callback must be callable",
+        ));
+    }
     let value =
         crate::functions::execute_target(callback, &Value::Undefined, std::slice::from_ref(&key))?;
     map_set(receiver, &[key, value.clone()])?;
