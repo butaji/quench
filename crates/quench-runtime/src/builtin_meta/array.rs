@@ -4,6 +4,7 @@ use crate::ops::Builtin;
 
 pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
     match builtin {
+        Builtin::ArrayFrom => Some("from"),
         Builtin::ArrayIterator => Some("values"),
         Builtin::ArrayKeys => Some("keys"),
         Builtin::ArrayEntries => Some("entries"),
@@ -22,6 +23,7 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
 
 pub const fn fn_len(builtin: Builtin) -> Option<f64> {
     match builtin {
+        Builtin::ArrayFrom => Some(1.0),
         Builtin::ArrayIterator
         | Builtin::ArrayKeys
         | Builtin::ArrayEntries
