@@ -19,6 +19,12 @@ pub struct InstanceFieldInitializerOp {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct PrivateAccessorOp {
+    pub get: Option<u16>,
+    pub set: Option<u16>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct AppendInstanceFieldOp {
     pub constructor: u16,
     pub key: InstanceFieldKeyOp,
@@ -27,6 +33,8 @@ pub struct AppendInstanceFieldOp {
     /// Register holding the element value directly (private methods), bypassing
     /// an initializer executable.
     pub value: Option<u16>,
+    /// Accessor functions for a private accessor element.
+    pub accessor: Option<PrivateAccessorOp>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -39,12 +47,20 @@ pub enum Op {
         slot: u16,
         src: u16,
     },
+    LoadCurrentGlobal {
+        dst: u16,
+    },
     MarkUninitialized {
         slot: u16,
     },
     DeclareEvalBinding {
         name: String,
         slot: u16,
+    },
+    DeclareGlobalLexicalBinding {
+        name: String,
+        slot: u16,
+        immutable: bool,
     },
     DeleteEvalBinding {
         dst: u16,
@@ -198,6 +214,10 @@ pub enum Op {
         key: String,
         src: u16,
     },
+    SetPrototype {
+        object: u16,
+        prototype: u16,
+    },
     SetPrivate {
         object: u16,
         name: crate::facts::PrivateNameId,
@@ -273,6 +293,7 @@ pub enum Op {
         source: u16,
         strict: bool,
         global: bool,
+        direct: bool,
         bindings: Vec<(String, u16)>,
         forbidden_var_names: Vec<String>,
     },
@@ -305,6 +326,7 @@ pub enum Op {
         dst: u16,
         callee: u16,
         args: Vec<u16>,
+        spreads: Vec<bool>,
     },
     Branch {
         condition: u16,
