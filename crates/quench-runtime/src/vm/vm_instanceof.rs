@@ -32,7 +32,7 @@ fn has_instance_handler(constructor: &Value) -> Result<Option<Value>, VmError> {
 
 fn builtin_instanceof(value: &Value, constructor: &Value) -> Option<bool> {
     if matches!(constructor, Value::Builtin(Builtin::Function)) {
-        return Some(matches!(value, Value::Function(_) | Value::BoundFunction(_)));
+        return Some(function_instanceof(value));
     }
     Some(match (value, constructor) {
         (Value::BigInt64Array(_), Value::Builtin(Builtin::BigInt64Array))
@@ -52,6 +52,11 @@ fn builtin_instanceof(value: &Value, constructor: &Value) -> Option<bool> {
         }
         _ => return None,
     })
+}
+
+fn function_instanceof(value: &Value) -> bool {
+    matches!(value, Value::Function(_) | Value::BoundFunction(_))
+        || matches!(value, Value::Builtin(_) if instanceof_callable(value))
 }
 
 fn ordinary_instanceof(value: &Value, constructor: &Value) -> Result<bool, VmError> {
