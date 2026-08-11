@@ -14,6 +14,13 @@ fn same_value_zero(left: &Value, right: &Value) -> bool {
     crate::builtins::same_value_zero(left, right)
 }
 
+fn canonicalize_value(value: &Value) -> Value {
+    match value {
+        Value::Number(number) if *number == 0.0 => Value::Number(0.0),
+        _ => value.clone(),
+    }
+}
+
 pub fn property(key: &str) -> Value {
     match key {
         "add" => Value::Builtin(Builtin::SetAdd),
@@ -219,7 +226,7 @@ pub(crate) fn set_add(receiver: Option<&Value>, arguments: &[Value]) -> Result<V
     };
     let mut values = data.values.borrow_mut();
     if !values.iter().any(|v| same_value_zero(v, value)) {
-        values.push_back(value.clone());
+        values.push_back(canonicalize_value(value));
     }
     Ok(Value::Set(Rc::clone(data)))
 }
