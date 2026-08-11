@@ -30,6 +30,21 @@ pub(crate) fn property(key: &str) -> Option<Builtin> {
     }
 }
 
+pub(crate) fn constant(key: &str) -> Option<Value> {
+    let value = match key {
+        "E" => std::f64::consts::E,
+        "LN2" => std::f64::consts::LN_2,
+        "LN10" => std::f64::consts::LN_10,
+        "LOG2E" => std::f64::consts::LOG2_E,
+        "LOG10E" => std::f64::consts::LOG10_E,
+        "PI" => std::f64::consts::PI,
+        "SQRT1_2" => std::f64::consts::FRAC_1_SQRT_2,
+        "SQRT2" => std::f64::consts::SQRT_2,
+        _ => return None,
+    };
+    Some(Value::Number(value))
+}
+
 pub(crate) fn is_builtin(builtin: Builtin) -> bool {
     property_name(builtin).is_some()
 }
