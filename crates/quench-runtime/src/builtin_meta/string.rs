@@ -6,6 +6,8 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
     match b {
         Builtin::StringFromCharCode => Some("String.fromCharCode"),
         Builtin::StringIncludes => Some("String.prototype.includes"),
+        Builtin::StringIsWellFormed => Some("String.prototype.isWellFormed"),
+        Builtin::StringToWellFormed => Some("String.prototype.toWellFormed"),
         Builtin::StringStartsWith => Some("String.prototype.startsWith"),
         Builtin::StringEndsWith => Some("String.prototype.endsWith"),
         Builtin::StringRepeat => Some("String.prototype.repeat"),
@@ -51,6 +53,8 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         | Builtin::StringTrimEnd
         | Builtin::StringToString
         | Builtin::StringSearch
+        | Builtin::StringIsWellFormed
+        | Builtin::StringToWellFormed
         | Builtin::StringToLocaleLowerCase
         | Builtin::StringToLocaleUpperCase => Some(0.0),
         Builtin::StringIncludes
@@ -70,6 +74,8 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
     match b {
         Builtin::StringFromCharCode => Some("fromCharCode"),
         Builtin::StringIncludes => Some("includes"),
+        Builtin::StringIsWellFormed => Some("isWellFormed"),
+        Builtin::StringToWellFormed => Some("toWellFormed"),
         Builtin::StringStartsWith => Some("startsWith"),
         Builtin::StringEndsWith => Some("endsWith"),
         Builtin::StringRepeat => Some("repeat"),
