@@ -143,6 +143,15 @@ pub fn execute_builtin_tail(
     if builtin == Builtin::RegExp {
         return crate::construct::construct_value(&Value::Builtin(Builtin::RegExp), arguments);
     }
+    tail_dispatch(builtin, arguments, receiver)
+}
+
+fn tail_dispatch(
+    builtin: crate::ops::Builtin,
+    arguments: &[Value],
+    receiver: Option<&Value>,
+) -> Result<Value, VmError> {
+    use crate::ops::Builtin;
     Ok(match builtin {
         Builtin::ObjectIs => Value::Boolean(crate::builtins::same_value(
             arguments.first(),
