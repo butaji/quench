@@ -72,6 +72,13 @@ fn get_property_value(value: &Value, key: &str) -> Value {
 }
 
 fn map_property(data: &crate::value::MapData, key: &str) -> Value {
+    if key == "constructor" {
+        return Value::Builtin(if data.weak {
+            Builtin::WeakMap
+        } else {
+            Builtin::Map
+        });
+    }
     if key == "size" && !data.weak {
         return Value::Number(data.keys.len() as f64);
     }
