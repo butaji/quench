@@ -11,7 +11,9 @@ use std::{
     thread,
 };
 
-use quench_test262::{discover_js_files, HarnessCache, RuntimeHost, Test262Runner, TestOutcome};
+use quench_test262::{
+    discover_js_files, HarnessCache, RuntimeHost, Test262Runner, TestMetadata, TestOutcome,
+};
 
 /// Per-thread outcomes for one contiguous chunk of files.
 #[derive(Default)]
@@ -25,6 +27,12 @@ struct RunReport {
 const DEFAULT_STACK_SIZE: usize = 256 * 1024 * 1024;
 const STACK_SIZE_ENV: &str = "TRIAGE_WORKER_STACK_SIZE_BYTES";
 const WORK_BATCH: usize = 32;
+
+struct TestSource {
+    path: PathBuf,
+    source: String,
+    metadata: TestMetadata,
+}
 
 struct Args {
     target: PathBuf,
@@ -49,9 +57,13 @@ fn main() -> ExitCode {
     if files.is_empty() {
         return fail("no tests matched the requested filters");
     }
+    let sources = match load_test_sources(&files) {
+        Ok(sources) => sources,
+        Err(error) => return fail(&error),
+    };
     println!("selected={} discovered={discovered_count}", files.len());
     let threads = args.threads.max(1).min(files.len());
-    let (passed, failed, failures) = run_parallel(&root, files, args.limit, threads);
+    let (passed, failed, failures) = run_parallel(&root, sources, args.limit, threads);
     let buckets = bucket_failures(failures);
     print_report(passed, failed, &buckets);
     if failed == 0 {
@@ -137,7 +149,7 @@ fn select_files(files: Vec<PathBuf>, base: &Path, filters: &[String]) -> Vec<Pat
 /// Run the files across `threads` independent runners and merge the results.
 fn run_parallel(
     root: &Path,
-    files: Vec<PathBuf>,
+    files: Vec<TestSource>,
     limit: usize,
     threads: usize,
 ) -> (usize, usize, Vec<(PathBuf, String)>) {
@@ -172,7 +184,7 @@ fn run_parallel(
 
 /// Pull tests from a shared queue, stopping when the global failure cap is hit.
 fn run_worker(
-    files: Arc<Vec<PathBuf>>,
+    files: Arc<Vec<TestSource>>,
     root: PathBuf,
     limit: usize,
     counter: Arc<AtomicUsize>,
@@ -190,11 +202,15 @@ fn run_worker(
             break;
         }
         let stop = (start + WORK_BATCH).min(files.len());
-        for path in files[start..stop].iter() {
+        for fixture in files[start..stop].iter() {
             if counter.load(Ordering::Relaxed) >= limit {
                 break;
             }
-            let outcome = runner.run_file_with_cache(path, &mut harness);
+            let outcome = runner.run_test_with_cache_and_metadata(
+                &fixture.source,
+                &fixture.metadata,
+                &mut harness,
+            );
             match outcome {
                 Ok(TestOutcome::Pass) => report.passed += 1,
                 Ok(TestOutcome::Fail { reason }) | Err(reason) => {
@@ -202,12 +218,33 @@ fn run_worker(
                     counter.fetch_add(1, Ordering::Relaxed);
                     report
                         .failures
-                        .push((path.clone(), reason.trim().to_string()));
+                        .push((fixture.path.clone(), reason.trim().to_string()));
                 }
             }
         }
     }
     report
+}
+
+fn load_test_sources(files: &[PathBuf]) -> Result<Vec<TestSource>, String> {
+    files
+        .iter()
+        .map(|path| {
+            let source = std::fs::read_to_string(path)
+                .map_err(|error| format!("test262 read failed for {}: {error}", path.display()))?;
+            let metadata = TestMetadata::parse(&source).map_err(|error| {
+                format!(
+                    "test262 metadata parse failed for {}: {error}",
+                    path.display()
+                )
+            })?;
+            Ok(TestSource {
+                path: path.clone(),
+                source,
+                metadata,
+            })
+        })
+        .collect()
 }
 
 /// Group failures by normalized reason, highest-impact buckets first.
