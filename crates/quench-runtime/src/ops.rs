@@ -142,6 +142,7 @@ pub enum Builtin {
     StringFromCharCode,
     Symbol,
     SymbolIterator,
+    SymbolUnscopables,
     SymbolToStringTag,
     SymbolToPrimitive,
     SymbolHasInstance,

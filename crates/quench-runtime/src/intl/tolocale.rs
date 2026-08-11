@@ -306,7 +306,12 @@ pub(crate) mod symbol {
             return Some(Ok(make_symbol(arguments)));
         }
         if let Some(name) = name(builtin) {
-            return Some(Ok(Value::String(name.to_string())));
+            let value = if builtin == Builtin::SymbolUnscopables {
+                Value::String(format!("{name}\0"))
+            } else {
+                Value::String(name.to_string())
+            };
+            return Some(Ok(value));
         }
         Some(match builtin {
             Builtin::SymbolFor => Ok(symbol_for(arguments)),
@@ -317,6 +322,7 @@ pub(crate) mod symbol {
     pub(crate) fn name(builtin: Builtin) -> Option<&'static str> {
         Some(match builtin {
             Builtin::SymbolIterator => "Symbol.iterator",
+            Builtin::SymbolUnscopables => "Symbol.unscopables",
             Builtin::SymbolToStringTag => "Symbol.toStringTag",
             Builtin::SymbolToPrimitive => "Symbol.toPrimitive",
             Builtin::SymbolHasInstance => "Symbol.hasInstance",

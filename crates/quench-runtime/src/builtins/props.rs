@@ -56,6 +56,7 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
     use Builtin::*;
     match (builtin, key) {
         (Symbol, "prototype") => Some(Value::Builtin(SymbolPrototype)),
+        (Symbol, "unscopables") => Some(Value::String("Symbol.unscopables\0".to_string())),
         (Symbol, k) => crate::builtin_meta::symbol::symbol_prop(k).map(Value::Builtin),
         (MapPrototype | SetPrototype, k) => collections_prop(builtin, k).map(Value::Builtin),
         (WeakMapPrototype, "constructor") => Some(Value::Builtin(WeakMap)),
@@ -375,7 +376,6 @@ fn collections_prop(builtin: Builtin, key: &str) -> Option<Builtin> {
         _ => None,
     })
 }
-
 pub(crate) fn special_property(builtin: Builtin, key: &str) -> Option<Value> {
     special(builtin, key)
 }
