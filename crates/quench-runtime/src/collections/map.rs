@@ -30,6 +30,7 @@ pub(crate) fn map_new(arguments: &[Value]) -> Value {
     let mut data = MapData {
         keys: VecDeque::new(),
         values: Vec::new(),
+        prototype: std::cell::RefCell::new(None),
     };
     if let Some(Value::Array(entries)) = arguments.first() {
         for entry in entries.iter() {
@@ -112,6 +113,7 @@ pub(crate) fn map_clear(receiver: Option<&Value>) -> Value {
     Value::Map(Rc::new(MapData {
         keys: VecDeque::new(),
         values: Vec::new(),
+        prototype: std::cell::RefCell::new(None),
     }))
 }
 

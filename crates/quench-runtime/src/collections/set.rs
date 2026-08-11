@@ -30,7 +30,10 @@ pub(crate) fn set_new(arguments: &[Value]) -> Value {
         Some(Value::Array(values)) => values.iter().cloned().collect(),
         _ => VecDeque::new(),
     };
-    Value::Set(Rc::new(SetData { values }))
+    Value::Set(Rc::new(SetData {
+        values,
+        prototype: std::cell::RefCell::new(None),
+    }))
 }
 
 pub(crate) fn set_add(receiver: Option<&Value>, arguments: &[Value]) -> Value {
@@ -81,6 +84,7 @@ pub(crate) fn set_clear(receiver: Option<&Value>) -> Value {
     }
     Value::Set(Rc::new(SetData {
         values: VecDeque::new(),
+        prototype: std::cell::RefCell::new(None),
     }))
 }
 

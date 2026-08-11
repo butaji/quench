@@ -109,12 +109,32 @@ impl Default for PromiseData {
 pub struct MapData {
     pub keys: VecDeque<Value>,
     pub values: Vec<Value>,
+    pub(crate) prototype: RefCell<Option<Value>>,
+}
+
+impl MapData {
+    pub(crate) fn prototype(&self) -> Option<Value> {
+        self.prototype.borrow().clone()
+    }
+    pub(crate) fn set_prototype(&self, prototype: Value) {
+        self.prototype.replace(Some(prototype));
+    }
 }
 
 /// Set value storage.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SetData {
     pub values: VecDeque<Value>,
+    pub(crate) prototype: RefCell<Option<Value>>,
+}
+
+impl SetData {
+    pub(crate) fn prototype(&self) -> Option<Value> {
+        self.prototype.borrow().clone()
+    }
+    pub(crate) fn set_prototype(&self, prototype: Value) {
+        self.prototype.replace(Some(prototype));
+    }
 }
 
 #[derive(Debug, PartialEq)]
