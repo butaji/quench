@@ -118,6 +118,7 @@ fn run_local_op(registers: &mut Vec<Value>, op: &Op) -> Result<bool, VmError> {
             *dst,
             Value::Boolean(crate::locals::delete_named(name, *slot)),
         ),
+        DeleteName { dst, name, strict } => crate::with_scope::execute_delete_name(registers, *dst, name, *strict)?,
         LoadLocal { dst, slot } => crate::locals::load(registers, *dst, *slot)?,
         LoadBinding { dst, slot, name } => {
             crate::locals::load_binding(registers, *dst, *slot, name)?

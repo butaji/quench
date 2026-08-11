@@ -1,5 +1,8 @@
 pub(crate) fn delete_property(target: Value, key: &str) -> (Value, bool) {
     match target {
+        Value::Object(properties) if global_constant(&properties, key) => {
+            (Value::Object(properties), false)
+        }
         Value::Object(properties)
             if descriptor_flag_in(&properties, key, "configurable") == Some(false) =>
         {
@@ -30,6 +33,13 @@ pub(crate) fn delete_property(target: Value, key: &str) -> (Value, bool) {
         }
         value => (value, true),
     }
+}
+
+fn global_constant(properties: &Rc<crate::value::ObjectData>, key: &str) -> bool {
+    if !matches!(key, "NaN" | "Infinity" | "undefined") {
+        return false;
+    }
+    crate::vm::is_global_object(&Value::Object(Rc::clone(properties)))
 }
 
 fn delete_function_property(function: Rc<crate::value::FunctionValue>, key: &str) -> (Value, bool) {

@@ -1,4 +1,9 @@
+use crate::value::ObjectData;
+
 pub(crate) fn current_global_object() -> Value {
+    if let Some(global) = batched_global_object() {
+        return Value::Object(global);
+    }
     if let Some(global) = registered_current_global() {
         return Value::Object(global);
     }
@@ -12,11 +17,72 @@ pub(crate) fn current_global_object() -> Value {
         .unwrap_or(Value::Undefined)
 }
 
+pub(crate) fn initialize_global_object(value: &Value) {
+    let Value::Object(object) = value else {
+        return;
+    };
+    GLOBAL_OBJECT.with(|global| {
+        if global.borrow().is_none() {
+            global.replace(Some(object.clone()));
+        }
+    });
+}
+
 pub(crate) fn is_global_object(value: &Value) -> bool {
     let Value::Object(object) = value else {
         return false;
     };
     matches!(current_global_object(), Value::Object(global) if Rc::ptr_eq(&global, object))
+}
+
+pub(crate) fn begin_global_declaration_batch() {
+    if GLOBAL_DECLARATION_BATCH.with(|batch| batch.borrow().is_some()) {
+        return;
+    }
+    let Some(current) = current_global_base() else {
+        return;
+    };
+    let staged = Rc::new(ObjectData::with_private_slots(
+        current.properties.clone(),
+        Rc::new(RefCell::new(current.private_slots.borrow().clone())),
+    ));
+    GLOBAL_DECLARATION_BASE.with(|base| base.replace(Some(current)));
+    GLOBAL_DECLARATION_BATCH.with(|batch| batch.replace(Some(staged)));
+}
+
+pub(crate) fn flush_global_declaration_batch(registers: &mut Vec<Value>) {
+    let Some(previous) = GLOBAL_DECLARATION_BASE.with(|batch| batch.borrow_mut().take()) else {
+        return;
+    };
+    let Some(staged) = GLOBAL_DECLARATION_BATCH.with(|batch| batch.borrow_mut().take()) else {
+        return;
+    };
+    synchronize_global_object(registers, &Value::Object(previous), &Value::Object(staged));
+}
+
+pub(crate) fn is_global_declaration_batch_active() -> bool {
+    GLOBAL_DECLARATION_BATCH.with(|batch| batch.borrow().is_some())
+}
+
+pub(crate) fn update_global_declaration_batch(updated: &Value) {
+    let Value::Object(updated) = updated else {
+        return;
+    };
+    if !is_global_declaration_batch_active() {
+        return;
+    }
+    GLOBAL_DECLARATION_BATCH.with(|batch| batch.replace(Some(updated.clone())));
+}
+
+fn batched_global_object() -> Option<ObjectProperties> {
+    GLOBAL_DECLARATION_BATCH.with(|batch| batch.borrow().clone())
+}
+
+fn current_global_base() -> Option<ObjectProperties> {
+    if let Some(global) = registered_current_global() {
+        return Some(global);
+    }
+    GLOBAL_OBJECT.with(|global| global.borrow().clone())
 }
 
 pub(crate) fn synchronize_global_object(registers: &mut Vec<Value>, old: &Value, new: &Value) {
@@ -36,6 +102,17 @@ pub(crate) fn synchronize_global_object(registers: &mut Vec<Value>, old: &Value,
     }
     crate::locals::current().replace_value(old, new);
     replace_register_aliases(registers, old_object, new_object);
+}
+
+pub(crate) fn replace_global_object(old: &Value, new: &Value) {
+    let (Value::Object(old_object), Value::Object(new_object)) = (old, new) else {
+        return;
+    };
+    if let Some(realm) = realm::id_for_global(old_object) {
+        replace_realm_global(realm, new_object.clone());
+    }
+    GLOBAL_OBJECT.with(|global| global.replace(Some(new_object.clone())));
+    crate::locals::current().replace_value(old, new);
 }
 
 fn replace_register_aliases(
@@ -82,6 +159,12 @@ fn replace_realm_global(realm: RealmId, global: ObjectProperties) {
     if let Some(token) = realm::token(realm) {
         realm::register_global(&token, global);
     }
+}
+
+thread_local! {
+    static GLOBAL_DECLARATION_BASE: RefCell<Option<ObjectProperties>> = const { RefCell::new(None) };
+    static GLOBAL_DECLARATION_BATCH: RefCell<Option<ObjectProperties>> =
+        const { RefCell::new(None) };
 }
 
 impl GlobalObjectGuard {
