@@ -12,6 +12,11 @@ pub(crate) enum PromiseContinuation {
         aggregate: Rc<PromiseAggregate>,
         index: usize,
     },
+    Thenable {
+        target: Rc<PromiseData>,
+        thenable: Value,
+        then: Value,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
