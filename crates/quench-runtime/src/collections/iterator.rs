@@ -1,6 +1,8 @@
 use crate::value::{IteratorData, IteratorState, Value};
 use std::{cell::RefCell, rc::Rc};
 
+#[path = "iterator_map.rs"]
+mod iterator_map;
 #[path = "iterator_typed.rs"]
 mod iterator_typed;
 #[path = "iterator_values.rs"]
@@ -79,9 +81,11 @@ fn close_target(record: &Value) -> Result<Option<Value>, crate::execute::VmError
     match &*state {
         IteratorState::Native { done: true, .. }
         | IteratorState::Set { done: true, .. }
+        | IteratorState::Map { done: true, .. }
         | IteratorState::Protocol { done: true, .. }
         | IteratorState::Native { .. } => Ok(None),
         IteratorState::Set { .. } => Ok(None),
+        IteratorState::Map { .. } => Ok(None),
         IteratorState::Protocol {
             iterator: Value::Generator(_),
             ..
@@ -275,7 +279,9 @@ pub fn delegate_next(
             } => {
                 return Ok(native_delegation_step(values, index, done));
             }
-            IteratorState::Set { .. } => return Ok(DelegationResult::Done(Value::Undefined)),
+            IteratorState::Set { .. } | IteratorState::Map { .. } => {
+                return Ok(DelegationResult::Done(Value::Undefined));
+            }
             IteratorState::Protocol {
                 iterator,
                 next,
@@ -351,7 +357,9 @@ fn delegation_target(
     };
     let iterator = match &*data.state.borrow() {
         IteratorState::Protocol { iterator, .. } => Some(iterator.clone()),
-        IteratorState::Native { .. } | IteratorState::Set { .. } => None,
+        IteratorState::Native { .. } | IteratorState::Set { .. } | IteratorState::Map { .. } => {
+            None
+        }
     };
     Ok(iterator.map(|iterator| (data.as_ref(), iterator)))
 }
@@ -401,6 +409,12 @@ pub(crate) fn step_value(value: &Value) -> Result<Option<Value>, crate::execute:
             IteratorState::Set { data, index, done } => {
                 return Ok(set_step(data, index, done));
             }
+            IteratorState::Map {
+                data,
+                index,
+                kind,
+                done,
+            } => return Ok(iterator_map::step(data, index, kind, done)),
             IteratorState::Protocol {
                 iterator,
                 next,
@@ -424,7 +438,6 @@ fn native_step(values: &[Value], index: &mut usize, done: &mut bool) -> Option<V
     *done = value.is_none();
     value
 }
-
 fn set_step(data: &crate::value::SetData, index: &mut usize, done: &mut bool) -> Option<Value> {
     if *done {
         return None;
@@ -455,6 +468,7 @@ fn mark_done(data: &IteratorData) {
     match &mut *data.state.borrow_mut() {
         IteratorState::Native { done, .. }
         | IteratorState::Set { done, .. }
+        | IteratorState::Map { done, .. }
         | IteratorState::Protocol { done, .. } => *done = true,
     }
 }
