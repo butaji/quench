@@ -119,6 +119,9 @@ fn construct_bound(
     let Value::Builtin(builtin) = &bound.target else {
         return Err(crate::vm::not_callable());
     };
+    if crate::builtin_meta::constructor_name(*builtin).is_none() {
+        return Err(crate::vm::not_callable());
+    }
     let mut combined = bound.arguments.clone();
     combined.extend_from_slice(arguments);
     let value = construct_builtin(*builtin, &combined)?;
@@ -466,7 +469,6 @@ pub(crate) fn initialize_instance_fields(
 ) -> Result<Value, crate::execute::VmError> {
     initialize_instance_fields_impl(function, receiver)
 }
-
 include!("construct_instance_fields.rs");
 
 pub(crate) fn derived_constructor(
