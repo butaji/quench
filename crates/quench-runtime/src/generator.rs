@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::{cell::RefCell, rc::Rc};
 
 include!("generator_private_scope.rs");
+include!("generator_async.rs");
 
 pub(crate) fn create(
     function: &Rc<crate::value::FunctionValue>,
@@ -26,6 +27,7 @@ pub(crate) fn create(
         arguments: deferred_arguments,
         done: RefCell::new(false),
         state: RefCell::new(state),
+        pending_yield: RefCell::new(false),
     })))
 }
 
@@ -103,9 +105,8 @@ fn resume(generator: &GeneratorData, resume: Resume) -> Result<Value, VmError> {
         return completed_resume(resume);
     }
     initialize_state(generator);
-    let mut state = generator.state.borrow_mut();
-    let state = state.as_mut().ok_or(VmError::MissingReturn)?;
-    if !is_suspended(generator, state) {
+    let mut state = current_state(generator)?;
+    if !is_suspended(generator, &state) {
         match resume {
             Resume::Return(value) => return finish(generator, value),
             Resume::Throw(value) => return throw_and_finish(generator, value),
@@ -114,9 +115,10 @@ fn resume(generator: &GeneratorData, resume: Resume) -> Result<Value, VmError> {
     }
     let completion = resume.completion();
     if let Resume::Next(input) = resume {
-        install_resume_input(generator, state, input);
+        install_resume_input(generator, &mut state, input);
     }
-    if let Some(result) = resume_suspended_contexts(generator, state, &completion)? {
+    if let Some(result) = resume_suspended_contexts(generator, &mut state, &completion)? {
+        generator.state.replace(Some(state));
         return Ok(result);
     }
     let _private_environment = crate::private_environment::Guard::install_environment(
@@ -132,8 +134,19 @@ fn resume(generator: &GeneratorData, resume: Resume) -> Result<Value, VmError> {
         completion,
     )?;
     state.pc = pc;
-    capture_suspended_private_environment(generator, state, &completion);
-    complete_step(generator, state, completion)
+    capture_suspended_private_environment(generator, &mut state, &completion);
+    let result = complete_step(generator, &state, completion);
+    generator.state.replace(Some(state));
+    result
+}
+
+fn current_state(generator: &GeneratorData) -> Result<GeneratorState, VmError> {
+    generator
+        .state
+        .borrow()
+        .as_ref()
+        .cloned()
+        .ok_or(VmError::MissingReturn)
 }
 
 fn resume_suspended_contexts(
@@ -433,28 +446,12 @@ fn complete_step(
     }
 }
 
-fn yielded_result(
-    generator: &GeneratorData,
-    state: &GeneratorState,
-    value: Value,
-) -> Result<Value, VmError> {
-    let op = generator
-        .function
-        .body
-        .get(state.pc)
-        .or_else(|| suspended_try(generator, state).map(|(_, yield_op, _)| yield_op));
-    let Some(Op::YieldStar { dst, .. }) = op else {
-        return Ok(iterator_result(value, false));
-    };
-    crate::execute::read_register(&state.registers, *dst)
-}
-
 fn finish(generator: &GeneratorData, value: Value) -> Result<Value, VmError> {
     *generator.done.borrow_mut() = true;
     Ok(iterator_result(value, true))
 }
 
-fn iterator_result(value: Value, done: bool) -> Value {
+pub(crate) fn iterator_result(value: Value, done: bool) -> Value {
     Value::Object(Rc::new(crate::value::ObjectData::new(vec![
         ("value".to_string(), value),
         ("done".to_string(), Value::Boolean(done)),
