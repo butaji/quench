@@ -153,7 +153,8 @@ fn require_object(value: Option<&Value>) -> Result<(), VmError> {
 }
 
 fn is_weakly_holdable(value: &Value) -> bool {
-    crate::value::is_object(value) || matches!(value, Value::String(text) if text.contains('\0'))
+    crate::value::is_object(value)
+        || matches!(value, Value::String(text) if text.starts_with("Symbol.") && !text.starts_with("Symbol.for.") && text.contains('\0'))
 }
 
 pub(crate) fn set_add(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
