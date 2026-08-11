@@ -20,7 +20,6 @@ pub(crate) fn lookup(builtin: Builtin, key: &str) -> Value {
     }
     Value::Undefined
 }
-
 fn special(builtin: Builtin, key: &str) -> Option<Value> {
     use Builtin::*;
     if builtin == Number {
@@ -314,6 +313,7 @@ fn array_method(key: &str) -> Option<Builtin> {
         "shift" => Some(ArrayShift),
         "reverse" => Some(ArrayReverse),
         "pop" => Some(ArrayPop),
+        "unshift" => Some(ArrayUnshift),
         "splice" => Some(ArraySplice),
         _ => None,
     }
