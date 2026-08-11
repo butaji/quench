@@ -11,6 +11,8 @@ use crate::value::Value;
 pub struct Environment {
     slots: RefCell<Vec<Rc<RefCell<Value>>>>,
     names: RefCell<Option<HashMap<String, Rc<RefCell<Value>>>>>,
+    immutable_names: RefCell<Option<HashSet<String>>>,
+    immutable_slots: RefCell<Option<HashSet<u16>>>,
     uninitialized: RefCell<Option<Rc<RefCell<HashSet<u16>>>>>,
     caller: Option<Rc<Self>>,
 }
@@ -31,6 +33,8 @@ impl Environment {
                     .collect(),
             ),
             names: RefCell::new(None),
+            immutable_names: RefCell::new(None),
+            immutable_slots: RefCell::new(None),
             uninitialized: RefCell::new(None),
             caller: outer.map(Rc::clone),
         })
@@ -46,6 +50,8 @@ impl Environment {
         Rc::new(Self {
             slots: RefCell::new(slots),
             names: RefCell::new(environment.names.borrow().clone()),
+            immutable_names: RefCell::new(environment.immutable_names.borrow().clone()),
+            immutable_slots: RefCell::new(environment.immutable_slots.borrow().clone()),
             uninitialized: RefCell::new(environment.uninitialized.borrow().clone()),
             caller: None,
         })
@@ -60,6 +66,9 @@ impl Environment {
         environment
             .uninitialized
             .replace(captures.uninitialized.borrow().clone());
+        environment
+            .immutable_slots
+            .replace(captures.immutable_slots.borrow().clone());
         environment
     }
 
@@ -104,13 +113,6 @@ impl Environment {
         self.insert_alias(name, binding);
     }
 
-    pub(crate) fn has_own_name(&self, name: &str) -> bool {
-        self.names
-            .borrow()
-            .as_ref()
-            .is_some_and(|names| names.contains_key(name))
-    }
-
     pub(crate) fn alias_caller_name(&self, name: &str, slot: u16) -> bool {
         let Some(caller) = &self.caller else {
             return false;
@@ -118,6 +120,57 @@ impl Environment {
         let binding = self.ensure_slot(slot);
         caller.insert_alias(name, binding);
         true
+    }
+
+    pub(crate) fn alias_binding(&self, name: &str, binding: Rc<RefCell<Value>>) {
+        self.insert_alias(name, binding);
+    }
+
+    pub(crate) fn mark_immutable(&self, name: &str) {
+        self.immutable_names
+            .borrow_mut()
+            .get_or_insert_with(HashSet::new)
+            .insert(name.to_string());
+    }
+
+    pub(crate) fn mark_immutable_slot(&self, slot: u16) {
+        self.immutable_slots
+            .borrow_mut()
+            .get_or_insert_with(HashSet::new)
+            .insert(slot);
+    }
+
+    pub(crate) fn is_immutable_slot(&self, slot: u16) -> bool {
+        self.immutable_slots
+            .borrow()
+            .as_ref()
+            .is_some_and(|slots| slots.contains(&slot))
+    }
+
+    pub(crate) fn is_immutable_name(&self, name: &str) -> bool {
+        self.immutable_names
+            .borrow()
+            .as_ref()
+            .is_some_and(|names| names.contains(name))
+            || self
+                .caller
+                .as_ref()
+                .is_some_and(|caller| caller.is_immutable_name(name))
+    }
+
+    pub(crate) fn has_own_name(&self, name: &str) -> bool {
+        self.names
+            .borrow()
+            .as_ref()
+            .is_some_and(|names| names.contains_key(name))
+    }
+
+    pub(crate) fn has_name(&self, name: &str) -> bool {
+        self.has_own_name(name)
+            || self
+                .caller
+                .as_ref()
+                .is_some_and(|caller| caller.has_name(name))
     }
 
     pub(crate) fn delete_caller_name(&self, name: &str, slot: u16) -> bool {
@@ -201,7 +254,7 @@ impl Environment {
         slots[index].clone()
     }
 
-    fn initialize(&self, slot: u16) {
+    pub(crate) fn initialize(&self, slot: u16) {
         if let Some(slots) = self.uninitialized.borrow_mut().as_mut() {
             slots.borrow_mut().remove(&slot);
         }
@@ -288,190 +341,4 @@ impl Environment {
     }
 }
 
-fn replace_nested(value: &mut Value, old: &Value, new: &Value) {
-    if !contains_nested(value, old) {
-        return;
-    }
-    let values = match value {
-        Value::Array(values) => Rc::make_mut(values),
-        Value::Object(values) => {
-            for (_, value) in values.iter() {
-                retarget_nested_alias(value, old, new);
-            }
-            retarget_private_aliases(&values.private_slots, old, new);
-            return;
-        }
-        Value::Function(function) => {
-            for (_, value) in function.properties.borrow_mut().iter_mut() {
-                replace_direct(value, old, new);
-            }
-            replace_private_slots(&function.private_slots, old, new);
-            return;
-        }
-        _ => return,
-    };
-    for value in values.values_mut() {
-        replace_alias(value, old, new);
-    }
-}
-
-fn retarget_nested_alias(value: &Value, old: &Value, new: &Value) {
-    match value {
-        Value::ObjectAlias(alias) if alias_targets(alias, old) => {
-            if let Value::Object(object) = new {
-                *alias.0.borrow_mut() = Rc::downgrade(object);
-            }
-        }
-        Value::Array(values) => {
-            for value in values.iter() {
-                retarget_nested_alias(value, old, new);
-            }
-        }
-        Value::Object(values) => {
-            for (_, value) in values.iter() {
-                retarget_nested_alias(value, old, new);
-            }
-            retarget_private_aliases(&values.private_slots, old, new);
-        }
-        Value::Function(function) => retarget_private_aliases(&function.private_slots, old, new),
-        _ => {}
-    }
-}
-
-fn contains_nested(value: &Value, target: &Value) -> bool {
-    match value {
-        Value::ObjectAlias(alias) => alias_targets(alias, target),
-        Value::Array(values) => values
-            .iter()
-            .any(|value| same_identity(value, target) || contains_nested(value, target)),
-        Value::Object(values) => {
-            values
-                .iter()
-                .any(|(_, value)| same_identity(value, target) || contains_nested(value, target))
-                || private_slots_contain(&values.private_slots, target)
-        }
-        Value::Function(function) => {
-            function.properties.borrow().iter().any(|(_, value)| {
-                same_identity(value, target) || alias_targets_value(value, target)
-            }) || private_slots_contain(&function.private_slots, target)
-        }
-        _ => false,
-    }
-}
-
-fn retarget_private_aliases(slots: &crate::value::PrivateSlots, old: &Value, new: &Value) {
-    for (_, slot) in slots.borrow().iter() {
-        retarget_private_slot(slot, old, new);
-    }
-}
-
-fn retarget_private_slot(slot: &crate::value::PrivateSlot, old: &Value, new: &Value) {
-    match slot {
-        crate::value::PrivateSlot::Data(value) => retarget_nested_alias(value, old, new),
-        crate::value::PrivateSlot::Accessor { get, set } => {
-            get.as_ref()
-                .iter()
-                .for_each(|value| retarget_nested_alias(value, old, new));
-            set.as_ref()
-                .iter()
-                .for_each(|value| retarget_nested_alias(value, old, new));
-        }
-    }
-}
-
-fn replace_private_slots(slots: &crate::value::PrivateSlots, old: &Value, new: &Value) {
-    for (_, slot) in slots.borrow_mut().iter_mut() {
-        replace_private_slot(slot, old, new);
-    }
-}
-
-fn replace_private_slot(slot: &mut crate::value::PrivateSlot, old: &Value, new: &Value) {
-    match slot {
-        crate::value::PrivateSlot::Data(value) => replace_alias(value, old, new),
-        crate::value::PrivateSlot::Accessor { get, set } => {
-            get.as_mut()
-                .iter_mut()
-                .for_each(|value| replace_alias(value, old, new));
-            set.as_mut()
-                .iter_mut()
-                .for_each(|value| replace_alias(value, old, new));
-        }
-    }
-}
-
-fn private_slots_contain(slots: &crate::value::PrivateSlots, target: &Value) -> bool {
-    slots
-        .borrow()
-        .iter()
-        .any(|(_, slot)| private_slot_contains(slot, target))
-}
-
-fn private_slot_contains(slot: &crate::value::PrivateSlot, target: &Value) -> bool {
-    match slot {
-        crate::value::PrivateSlot::Data(value) => private_value_contains(value, target),
-        crate::value::PrivateSlot::Accessor { get, set } => {
-            get.as_ref()
-                .is_some_and(|value| private_value_contains(value, target))
-                || set
-                    .as_ref()
-                    .is_some_and(|value| private_value_contains(value, target))
-        }
-    }
-}
-
-fn private_value_contains(value: &Value, target: &Value) -> bool {
-    same_identity(value, target) || contains_nested(value, target)
-}
-
-fn replace_direct(value: &mut Value, old: &Value, new: &Value) {
-    if let Value::ObjectAlias(alias) = value {
-        if alias_targets(alias, old) {
-            if let Value::Object(object) = new {
-                *alias.0.borrow_mut() = Rc::downgrade(object);
-            }
-        }
-    } else if same_identity(value, old) {
-        *value = new.clone();
-    }
-}
-
-fn alias_targets_value(value: &Value, target: &Value) -> bool {
-    matches!(value, Value::ObjectAlias(alias) if alias_targets(alias, target))
-}
-
-fn replace_alias(value: &mut Value, old: &Value, new: &Value) {
-    if let Value::ObjectAlias(alias) = value {
-        if alias_targets(alias, old) {
-            if let Value::Object(object) = new {
-                *alias.0.borrow_mut() = Rc::downgrade(object);
-                return;
-            }
-        }
-    }
-    if same_identity(value, old) {
-        *value = new.clone();
-    } else {
-        replace_nested(value, old, new);
-    }
-}
-
-fn alias_targets(alias: &crate::value::ObjectAliasValue, target: &Value) -> bool {
-    let Value::Object(target) = target else {
-        return false;
-    };
-    alias
-        .0
-        .borrow()
-        .upgrade()
-        .is_some_and(|object| Rc::ptr_eq(&object, target))
-}
-
-fn same_identity(left: &Value, right: &Value) -> bool {
-    match (left, right) {
-        (Value::Object(left), Value::Object(right)) => Rc::ptr_eq(left, right),
-        (Value::Array(left), Value::Array(right)) => Rc::ptr_eq(left, right),
-        (Value::Map(left), Value::Map(right)) => Rc::ptr_eq(left, right),
-        (Value::Set(left), Value::Set(right)) => Rc::ptr_eq(left, right),
-        _ => false,
-    }
-}
+include!("environment_alias.rs");

@@ -69,8 +69,10 @@ fn reduce_prefix(
         ) {
             continue;
         }
+        mark_later_parameters(formal, index, captures, &mut ops);
         let slot = captures.saturating_add(u16::try_from(index).ok()?);
-        let source = load_local(&mut ops, &mut next, slot);
+        ops.push(Op::MarkUninitialized { slot });
+        let source = load_parameter(&mut ops, &mut next, slot);
         crate::binding_patterns::bind(
             &parameter.pattern,
             source,
@@ -80,8 +82,39 @@ fn reduce_prefix(
             locals,
         )?;
     }
+    initialize_direct_parameters(formal, captures, &mut ops);
     bind_rest_pattern(formal, &mut ops, facts, &mut next, locals)?;
     Some(ops)
+}
+
+fn mark_later_parameters(
+    formal: &FormalParameters<'_>,
+    index: usize,
+    captures: u16,
+    ops: &mut Vec<Op>,
+) {
+    for later in index.saturating_add(1)..formal.items.len() {
+        if let Ok(offset) = u16::try_from(later) {
+            ops.push(Op::MarkUninitialized {
+                slot: captures.saturating_add(offset),
+            });
+        }
+    }
+}
+
+fn initialize_direct_parameters(formal: &FormalParameters<'_>, captures: u16, ops: &mut Vec<Op>) {
+    for (index, parameter) in formal.items.iter().enumerate() {
+        if matches!(
+            parameter.pattern.kind,
+            BindingPatternKind::BindingIdentifier(_)
+        ) {
+            if let Ok(offset) = u16::try_from(index) {
+                ops.push(Op::InitializeLocal {
+                    slot: captures.saturating_add(offset),
+                });
+            }
+        }
+    }
 }
 
 fn bind_rest_pattern(
@@ -140,6 +173,12 @@ fn collect_bindings(
 fn load_local(ops: &mut Vec<Op>, next: &mut u16, slot: u16) -> u16 {
     let dst = take_register(next);
     ops.push(Op::LoadLocal { dst, slot });
+    dst
+}
+
+fn load_parameter(ops: &mut Vec<Op>, next: &mut u16, slot: u16) -> u16 {
+    let dst = take_register(next);
+    ops.push(Op::LoadParameter { dst, slot });
     dst
 }
 
