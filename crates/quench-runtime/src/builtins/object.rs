@@ -28,6 +28,7 @@ pub(crate) fn get_prototype_of(value: Option<&Value>) -> Result<Value, VmError> 
         Value::Builtin(_) | Value::Function(_) | Value::BoundFunction(_) => {
             Value::Builtin(Builtin::FunctionPrototype)
         }
+        Value::Promise(_) => Value::Builtin(Builtin::PromisePrototype),
         Value::Array(values) if values.is_arguments() => Value::Builtin(Builtin::ObjectPrototype),
         Value::Array(_) => Value::Builtin(Builtin::ArrayPrototype),
         Value::Object(properties) => properties
@@ -278,14 +279,13 @@ fn object_descriptor(properties: &[(String, Value)], key: &str) -> Option<Value>
 fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
     let property =
         super::callable_property(builtin, key).or_else(|| super::special_property(builtin, key))?;
-    let (writable, enumerable) = match key {
-        "length" | "name" => (false, false),
-        _ => (true, false),
-    };
+    let writable = !matches!(key, "length" | "name") && builtin_property_writable(builtin, key);
     Some(descriptor_object_with_flags(
-        property, writable, enumerable, true,
+        property, writable, false, true,
     ))
 }
+
+include!("object_property_flags.rs");
 fn array_descriptor(values: &crate::value::ArrayData, key: &str) -> Option<Value> {
     if let Some(descriptor) = values.descriptor(key) {
         return Some(refresh_array_descriptor(values, key, descriptor));
