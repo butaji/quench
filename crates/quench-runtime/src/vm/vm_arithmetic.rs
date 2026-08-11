@@ -27,13 +27,11 @@ pub(crate) fn execute_unary(
     write_value(registers, dst, result);
     Ok(())
 }
-
 fn numeric_unary(value: &Value, transform: fn(f64) -> f64) -> Result<Value, VmError> {
     Ok(Value::Number(transform(crate::conversion::to_number(
         value,
     )?)))
 }
-
 pub(crate) fn execute_binary(
     registers: &mut Vec<Value>,
     dst: u16,
@@ -46,7 +44,6 @@ pub(crate) fn execute_binary(
     write_value(registers, dst, evaluate_binary(&left, &right, operator)?);
     Ok(())
 }
-
 fn evaluate_binary(
     left: &Value,
     right: &Value,
@@ -74,11 +71,13 @@ fn evaluate_binary(
         | BinaryOp::ShiftLeft
         | BinaryOp::ShiftRight => bitwise_value(left, right, operator)?,
         BinaryOp::ShiftRightZeroFill => Value::Number(shift_right_unsigned(left, right)?),
-        BinaryOp::Instanceof => Value::Boolean(instanceof(left, right)),
+        BinaryOp::Instanceof => Value::Boolean(instanceof(left, right)?),
     })
 }
-
-fn instanceof(value: &Value, constructor: &Value) -> bool {
+fn instanceof(value: &Value, constructor: &Value) -> Result<bool, VmError> {
+    if !instanceof_callable(constructor) {
+        return Err(type_error("Right-hand side of instanceof is not callable"));
+    }
     if matches!(
         (value, constructor),
         (
@@ -89,28 +88,67 @@ fn instanceof(value: &Value, constructor: &Value) -> bool {
             Value::Builtin(Builtin::BigUint64Array)
         )
     ) {
-        return true;
+        return Ok(true);
     }
     if matches!(
         (value, constructor),
         (Value::Map(_), Value::Builtin(Builtin::Map))
     ) {
-        return true;
+        return Ok(true);
     }
     if matches!(
         (value, constructor),
         (Value::Set(_), Value::Builtin(Builtin::Set))
     ) {
-        return true;
+        return Ok(true);
     }
-    let prototype = crate::execute::get_property(constructor, "prototype");
-    if crate::value::is_object(&prototype) && prototype_chain_contains(value, &prototype) {
-        return true;
+    let prototype = crate::execute::get_property_result(constructor, "prototype")?;
+    if !crate::value::is_object(&prototype) {
+        return Err(type_error("Function has non-object prototype"));
     }
-    own_constructor(value)
-        .is_some_and(|value| crate::builtins::same_value(Some(&value), Some(constructor)))
+    Ok(prototype_chain_contains(value, &prototype)
+        || own_constructor(value)
+            .is_some_and(|value| crate::builtins::same_value(Some(&value), Some(constructor)))
+        || is_error_subclass(value, constructor))
 }
-
+fn is_error_subclass(value: &Value, constructor: &Value) -> bool {
+    let (Value::Builtin(Builtin::Error), Some(Value::Builtin(actual))) =
+        (constructor, own_constructor(value))
+    else {
+        return false;
+    };
+    matches!(
+        actual,
+        Builtin::Error
+            | Builtin::RangeError
+            | Builtin::ReferenceError
+            | Builtin::SyntaxError
+            | Builtin::EvalError
+            | Builtin::URIError
+            | Builtin::AggregateError
+            | Builtin::TypeError
+    )
+}
+fn instanceof_callable(value: &Value) -> bool {
+    match value {
+        Value::Builtin(builtin) => !matches!(
+            builtin,
+            Builtin::Math
+                | Builtin::Json
+                | Builtin::Reflect
+                | Builtin::ObjectPrototype
+                | Builtin::FunctionPrototype
+                | Builtin::ArrayPrototype
+                | Builtin::DatePrototype
+                | Builtin::StringPrototype
+                | Builtin::NumberPrototype
+                | Builtin::BooleanPrototype
+                | Builtin::SymbolPrototype
+                | Builtin::BigIntPrototype
+        ),
+        _ => crate::conversion::is_callable(value),
+    }
+}
 fn prototype_chain_contains(value: &Value, expected: &Value) -> bool {
     let mut current = internal_prototype(value);
     for _ in 0..1_024 {
@@ -145,6 +183,12 @@ fn internal_prototype(value: &Value) -> Option<Value> {
                 return Some(Value::Builtin(crate::ops::Builtin::ObjectPrototype));
             }
             Some(Value::Builtin(crate::ops::Builtin::ArrayPrototype))
+        }
+        Value::Builtin(Builtin::FunctionPrototype) => {
+            Some(Value::Builtin(crate::ops::Builtin::ObjectPrototype))
+        }
+        Value::Function(_) | Value::BoundFunction(_) | Value::Builtin(_) => {
+            Some(Value::Builtin(crate::ops::Builtin::FunctionPrototype))
         }
         _ => None,
     }
