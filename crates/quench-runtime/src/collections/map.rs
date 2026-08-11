@@ -29,6 +29,44 @@ pub fn property(key: &str) -> Value {
     }
 }
 
+pub(crate) fn map_group_by(arguments: &[Value]) -> Result<Value, VmError> {
+    let iterable = arguments.first().cloned().unwrap_or(Value::Undefined);
+    let callback = arguments.get(1).cloned().unwrap_or(Value::Undefined);
+    if !crate::conversion::is_callable(&callback) {
+        return Err(crate::value::error::throw_type_error(
+            "Map.groupBy callback is not callable",
+        ));
+    }
+    let values = crate::collections::iterator::collect_iterable(iterable)?;
+    let mut result = MapData {
+        weak: false,
+        keys: VecDeque::new(),
+        values: Vec::new(),
+        prototype: std::cell::RefCell::new(None),
+    };
+    for (index, value) in values.into_iter().enumerate() {
+        let key = crate::functions::execute_target(
+            &callback,
+            &Value::Undefined,
+            &[value.clone(), Value::Number(index as f64)],
+        )?;
+        if let Some(position) = result
+            .keys
+            .iter()
+            .position(|item| same_value_zero(item, &key))
+        {
+            if let Some(Value::Array(array)) = result.values.get_mut(position) {
+                let next = array.logical_len();
+                Rc::make_mut(array).set_index(next, value);
+            }
+        } else {
+            result.keys.push_back(key);
+            result.values.push(Value::array(vec![value]));
+        }
+    }
+    Ok(Value::Map(Rc::new(result)))
+}
+
 pub(crate) fn weak_property(key: &str) -> Value {
     match key {
         "set" => Value::Builtin(Builtin::WeakMapSet),
