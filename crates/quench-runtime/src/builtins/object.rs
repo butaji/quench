@@ -40,10 +40,16 @@ pub(crate) fn execute_special(
         Builtin::ObjectGetOwnPropertyNames => crate::own_keys::names(arguments.first()),
         Builtin::ObjectGetOwnPropertySymbols => crate::own_keys::symbols(arguments.first()),
         Builtin::ObjectKeys => Ok(crate::own_keys::enumerable_names(arguments.first())),
+        Builtin::ObjectAssign => assign(arguments),
         Builtin::ObjectCreate => create(arguments),
         Builtin::ObjectSetPrototypeOf => set_prototype_of(arguments),
         _ => Ok(Value::Undefined),
     }
+}
+
+fn assign(arguments: &[Value]) -> Result<Value, VmError> {
+    let target = arguments.first().cloned().unwrap_or(Value::Undefined);
+    crate::properties::assign_properties(target, &arguments[1..])
 }
 fn create(arguments: &[Value]) -> Result<Value, VmError> {
     let prototype = arguments.first().cloned().unwrap_or(Value::Undefined);

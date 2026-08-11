@@ -139,6 +139,7 @@ pub enum Builtin {
     Number,
     Object,
     ObjectIs,
+    ObjectAssign,
     ObjectKeys,
     ObjectHasOwnProperty,
     ObjectGetOwnPropertyDescriptor,
