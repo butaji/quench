@@ -10,7 +10,7 @@ fn early_dispatch(
         .or_else(|| crate::intl::tolocale::dispatch(builtin, receiver, arguments))
         .or_else(|| crate::collections::execute_builtin(builtin, receiver, arguments))
         .or_else(|| crate::promise::execute_builtin(builtin, receiver, arguments))
-        .or_else(|| crate::date::execute(builtin, receiver, arguments))
+        .or_else(|| (builtin != Builtin::Date).then(|| crate::date::execute(builtin, receiver, arguments))?)
 }
 
 fn is_function_builtin(builtin: Builtin) -> bool {
