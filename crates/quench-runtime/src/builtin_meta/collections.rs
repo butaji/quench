@@ -8,16 +8,10 @@ pub fn collections_property(builtin: Builtin, key: &str) -> Option<Value> {
     if builtin == WeakSetPrototype {
         return weak_set_property(key);
     }
+    if builtin == MapPrototype {
+        return map_property(key);
+    }
     match (builtin, key) {
-        (MapPrototype, "set") => Some(Value::Builtin(MapSet)),
-        (MapPrototype, "get") => Some(Value::Builtin(MapGet)),
-        (MapPrototype, "has") => Some(Value::Builtin(MapHas)),
-        (MapPrototype, "delete") => Some(Value::Builtin(MapDelete)),
-        (MapPrototype, "clear") => Some(Value::Builtin(MapClear)),
-        (MapPrototype, "forEach") => Some(Value::Builtin(MapForEach)),
-        (MapPrototype, "entries") => Some(Value::Builtin(MapEntries)),
-        (MapPrototype, "keys") => Some(Value::Builtin(MapKeys)),
-        (MapPrototype, "values") => Some(Value::Builtin(MapValues)),
         (SetPrototype, "add") => Some(Value::Builtin(SetAdd)),
         (SetPrototype, "has") => Some(Value::Builtin(SetHas)),
         (SetPrototype, "delete") => Some(Value::Builtin(SetDelete)),
@@ -40,6 +34,24 @@ pub fn collections_property(builtin: Builtin, key: &str) -> Option<Value> {
         (WeakMapPrototype, "getOrInsertComputed") => {
             Some(Value::Builtin(WeakMapGetOrInsertComputed))
         }
+        _ => None,
+    }
+}
+
+fn map_property(key: &str) -> Option<Value> {
+    use Builtin::*;
+    match key {
+        "set" => Some(Value::Builtin(MapSet)),
+        "get" => Some(Value::Builtin(MapGet)),
+        "has" => Some(Value::Builtin(MapHas)),
+        "delete" => Some(Value::Builtin(MapDelete)),
+        "clear" => Some(Value::Builtin(MapClear)),
+        "forEach" => Some(Value::Builtin(MapForEach)),
+        "entries" => Some(Value::Builtin(MapEntries)),
+        "keys" => Some(Value::Builtin(MapKeys)),
+        "values" => Some(Value::Builtin(MapValues)),
+        "getOrInsert" => Some(Value::Builtin(MapGetOrInsert)),
+        "getOrInsertComputed" => Some(Value::Builtin(MapGetOrInsertComputed)),
         _ => None,
     }
 }
@@ -99,6 +111,7 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         Builtin::MapClear | Builtin::MapForEach => Some(0.0),
         Builtin::MapEntries | Builtin::MapKeys | Builtin::MapValues => Some(0.0),
         Builtin::MapGroupBy => Some(2.0),
+        Builtin::MapGetOrInsert | Builtin::MapGetOrInsertComputed => Some(2.0),
         Builtin::SetAdd | Builtin::SetHas | Builtin::SetDelete => Some(1.0),
         Builtin::SetClear | Builtin::SetForEach => Some(0.0),
         Builtin::SetDifference
@@ -130,6 +143,8 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
         Builtin::MapKeys => Some("keys"),
         Builtin::MapValues => Some("values"),
         Builtin::MapGroupBy => Some("groupBy"),
+        Builtin::MapGetOrInsert => Some("getOrInsert"),
+        Builtin::MapGetOrInsertComputed => Some("getOrInsertComputed"),
         Builtin::SetAdd => Some("add"),
         Builtin::SetHas => Some("has"),
         Builtin::SetDelete => Some("delete"),

@@ -24,6 +24,8 @@ pub fn property(key: &str) -> Value {
         "entries" => Value::Builtin(Builtin::MapEntries),
         "keys" => Value::Builtin(Builtin::MapKeys),
         "values" => Value::Builtin(Builtin::MapValues),
+        "getOrInsert" => Value::Builtin(Builtin::MapGetOrInsert),
+        "getOrInsertComputed" => Value::Builtin(Builtin::MapGetOrInsertComputed),
         "Symbol.iterator" => Value::Builtin(Builtin::MapIterator),
         _ => Value::Undefined,
     }
@@ -341,6 +343,47 @@ pub(crate) fn map_get(receiver: Option<&Value>, arguments: &[Value]) -> Result<V
         .position(|k| same_value_zero(k, key))
         .and_then(|pos| data.values.get(pos).cloned())
         .unwrap_or(Value::Undefined))
+}
+
+pub(crate) fn map_get_or_insert(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
+    let key = arguments.first().cloned().unwrap_or(Value::Undefined);
+    if matches!(
+        map_has(receiver, std::slice::from_ref(&key))?,
+        Value::Boolean(true)
+    ) {
+        return map_get(receiver, &[key]);
+    }
+    let value = arguments.get(1).cloned().unwrap_or(Value::Undefined);
+    map_set(receiver, &[key, value.clone()])?;
+    Ok(value)
+}
+
+pub(crate) fn map_get_or_insert_computed(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
+    let key = arguments.first().cloned().unwrap_or(Value::Undefined);
+    if matches!(
+        map_has(receiver, std::slice::from_ref(&key))?,
+        Value::Boolean(true)
+    ) {
+        return map_get(receiver, &[key]);
+    }
+    let callback = arguments
+        .get(1)
+        .ok_or_else(|| crate::value::error::throw_type_error("Map callback must be callable"))?;
+    if !crate::conversion::is_callable(callback) {
+        return Err(crate::value::error::throw_type_error(
+            "Map callback must be callable",
+        ));
+    }
+    let value =
+        crate::functions::execute_target(callback, &Value::Undefined, std::slice::from_ref(&key))?;
+    map_set(receiver, &[key, value.clone()])?;
+    Ok(value)
 }
 
 pub(crate) fn map_has(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
