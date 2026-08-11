@@ -19,10 +19,22 @@ pub(crate) fn reduce(
         dst: object_register,
         properties: Vec::new(),
     });
+    reduce_properties(object, object_register, ops, facts, next_register, locals)?;
+    Some(object_register)
+}
+
+fn reduce_properties(
+    object: &ObjectExpression<'_>,
+    object_register: u16,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<()> {
     for property in &object.properties {
         reduce_property(property, object_register, ops, facts, next_register, locals)?;
     }
-    Some(object_register)
+    Some(())
 }
 
 fn reduce_property(
@@ -38,10 +50,7 @@ fn reduce_property(
             let key = reduce_key(property, ops, facts, next, locals)?;
             let value =
                 crate::reduce::reduce_expression(&property.value, ops, facts, next, locals)?;
-            if !property.computed
-                && property.kind == PropertyKind::Init
-                && property_key(&property.key).as_deref() == Some("__proto__")
-            {
+            if is_proto_initializer(property) {
                 ops.push(Op::SetPrototype {
                     object,
                     prototype: value,
@@ -67,6 +76,12 @@ fn reduce_property(
         }
     }
     Some(())
+}
+
+fn is_proto_initializer(property: &oxc::ast::ast::ObjectProperty<'_>) -> bool {
+    !property.computed
+        && property.kind == PropertyKind::Init
+        && property_key(&property.key).as_deref() == Some("__proto__")
 }
 
 fn reduce_key(

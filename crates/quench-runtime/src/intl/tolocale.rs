@@ -206,22 +206,8 @@ pub(crate) mod value {
         match value {
             Value::BindingCell(value) => type_of(&value.borrow()),
             Value::Undefined => "undefined",
-            Value::Null
-            | Value::Array(_)
-            | Value::ArrayBuffer(_)
-            | Value::DataView(_)
-            | Value::Float32Array(_)
-            | Value::Float64Array(_)
-            | Value::Int16Array(_)
-            | Value::Int8Array(_)
-            | Value::Int32Array(_)
-            | Value::Uint16Array(_)
-            | Value::Uint32Array(_)
-            | Value::Uint8Array(_)
-            | Value::Uint8ClampedArray(_)
-            | Value::BigInt64Array(_)
-            | Value::BigUint64Array(_)
-            | Value::Object(_) => "object",
+            Value::Null => "object",
+            value if object_value(value) => "object",
             Value::Boolean(_) => "boolean",
             Value::Number(_) => "number",
             Value::String(value)
@@ -230,12 +216,8 @@ pub(crate) mod value {
                 "symbol"
             }
             Value::String(_) => "string",
-            Value::Builtin(
-                crate::ops::Builtin::Math
-                | crate::ops::Builtin::Reflect
-                | crate::ops::Builtin::Json,
-            ) => "object",
-            Value::Builtin(_) | Value::Function(_) | Value::BoundFunction(_) => "function",
+            Value::Builtin(builtin) => builtin_type(*builtin),
+            Value::Function(_) | Value::BoundFunction(_) => "function",
             Value::BigInt(_) => "bigint",
             Value::Proxy(_)
             | Value::Promise(_)
@@ -245,7 +227,46 @@ pub(crate) mod value {
             | Value::Generator(_) => "object",
             Value::ObjectAlias(_) => "object",
             Value::HostCapability(_) => "object",
+            _ => "object",
         }
+    }
+
+    fn builtin_type(builtin: crate::ops::Builtin) -> &'static str {
+        match builtin {
+            crate::ops::Builtin::Math
+            | crate::ops::Builtin::Reflect
+            | crate::ops::Builtin::Json => "object",
+            _ => "function",
+        }
+    }
+
+    fn object_value(value: &Value) -> bool {
+        matches!(
+            value,
+            Value::Array(_)
+                | Value::ArrayBuffer(_)
+                | Value::DataView(_)
+                | Value::Float32Array(_)
+                | Value::Float64Array(_)
+                | Value::Int16Array(_)
+                | Value::Int8Array(_)
+                | Value::Int32Array(_)
+                | Value::Uint16Array(_)
+                | Value::Uint32Array(_)
+                | Value::Uint8Array(_)
+                | Value::Uint8ClampedArray(_)
+                | Value::BigInt64Array(_)
+                | Value::BigUint64Array(_)
+                | Value::Object(_)
+                | Value::Proxy(_)
+                | Value::Promise(_)
+                | Value::Map(_)
+                | Value::Set(_)
+                | Value::Iterator(_)
+                | Value::Generator(_)
+                | Value::ObjectAlias(_)
+                | Value::HostCapability(_)
+        )
     }
 
     pub(crate) fn is_finite(value: Option<&Value>) -> bool {
