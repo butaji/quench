@@ -17,7 +17,9 @@ pub(crate) fn from_map(receiver: Option<&Value>) -> Result<Value, crate::execute
 }
 
 pub(crate) fn from_map_keys(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
-    let Some(Value::Map(data)) = receiver else {
+    let Some(Value::Map(data)) =
+        receiver.filter(|value| matches!(value, Value::Map(data) if !data.weak))
+    else {
         return Err(crate::value::error::throw_type_error(
             "Map iterator called on incompatible receiver",
         ));
@@ -26,7 +28,9 @@ pub(crate) fn from_map_keys(receiver: Option<&Value>) -> Result<Value, crate::ex
 }
 
 pub(crate) fn from_map_values(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
-    let Some(Value::Map(data)) = receiver else {
+    let Some(Value::Map(data)) =
+        receiver.filter(|value| matches!(value, Value::Map(data) if !data.weak))
+    else {
         return Err(crate::value::error::throw_type_error(
             "Map iterator called on incompatible receiver",
         ));
@@ -35,7 +39,9 @@ pub(crate) fn from_map_values(receiver: Option<&Value>) -> Result<Value, crate::
 }
 
 pub(crate) fn from_set(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
-    let Some(Value::Set(data)) = receiver else {
+    let Some(Value::Set(data)) =
+        receiver.filter(|value| matches!(value, Value::Set(data) if !data.weak))
+    else {
         return Err(crate::value::error::throw_type_error(
             "Set iterator called on incompatible receiver",
         ));

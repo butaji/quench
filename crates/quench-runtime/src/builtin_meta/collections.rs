@@ -87,6 +87,7 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
         Builtin::SetDelete => Some("Set.prototype.delete"),
         Builtin::SetClear => Some("Set.prototype.clear"),
         Builtin::SetForEach => Some("Set.prototype.forEach"),
+        Builtin::SetIterator => Some("Set.prototype.values"),
         Builtin::SetDifference => Some("Set.prototype.difference"),
         Builtin::SetIntersection => Some("Set.prototype.intersection"),
         Builtin::SetSymmetricDifference => Some("Set.prototype.symmetricDifference"),
@@ -119,6 +120,7 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         Builtin::SetAdd | Builtin::SetHas | Builtin::SetDelete => Some(1.0),
         Builtin::SetClear => Some(0.0),
         Builtin::SetForEach => Some(1.0),
+        Builtin::SetIterator => Some(0.0),
         Builtin::SetDifference
         | Builtin::SetIntersection
         | Builtin::SetSymmetricDifference
@@ -153,6 +155,7 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
         Builtin::SetDelete => Some("delete"),
         Builtin::SetClear => Some("clear"),
         Builtin::SetForEach => Some("forEach"),
+        Builtin::SetIterator => Some("values"),
         Builtin::SetDifference => Some("difference"),
         Builtin::SetIntersection => Some("intersection"),
         Builtin::SetSymmetricDifference => Some("symmetricDifference"),
