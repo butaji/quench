@@ -3,8 +3,6 @@
 //! Provides static metadata about JavaScript builtins: constructor names,
 //! prototypes, function lengths, and short names.
 
-#![allow(dead_code)]
-
 use crate::ops::Builtin;
 
 pub mod array;
