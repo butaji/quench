@@ -15,6 +15,7 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::ArrayUnshift => Some("unshift"),
         Builtin::ArrayFill => Some("fill"),
         Builtin::ArrayCopyWithin => Some("copyWithin"),
+        Builtin::ArrayToSorted => Some("toSorted"),
         _ => None,
     }
 }
@@ -31,6 +32,7 @@ pub const fn fn_len(builtin: Builtin) -> Option<f64> {
         Builtin::ArrayFill => Some(1.0),
         Builtin::ArrayCopyWithin => Some(2.0),
         Builtin::ArrayFindLast | Builtin::ArrayFindLastIndex => Some(1.0),
+        Builtin::ArrayToSorted => Some(1.0),
         _ => None,
     }
 }
