@@ -16,7 +16,7 @@ use std::collections::HashMap;
 const SCRIPT_THIS_SLOT: &str = "\0script_this";
 const NEW_TARGET_SLOT: &str = "\0new_target";
 #[path = "../calls_reduce.rs"]
-mod calls_reduce;
+pub(crate) mod calls_reduce;
 pub fn reduce_if_statement(
     statement: &oxc::ast::ast::IfStatement<'_>,
     ops: &mut Vec<Op>,
@@ -140,15 +140,18 @@ fn allocate_pattern_slots(
 }
 
 fn declaration_slot(
-    kind: VariableDeclarationKind,
+    _kind: VariableDeclarationKind,
     name: &str,
     next_slot: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> u16 {
-    if kind == VariableDeclarationKind::Var {
-        if let Some(slot) = locals.get(name) {
-            return *slot;
-        }
+    if _kind != VariableDeclarationKind::Var {
+        let slot = *next_slot;
+        *next_slot = next_slot.saturating_add(1);
+        return slot;
+    }
+    if let Some(slot) = locals.get(name) {
+        return *slot;
     }
     let slot = *next_slot;
     *next_slot = next_slot.saturating_add(1);
@@ -204,12 +207,26 @@ fn reduce_import_expression(
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
     // Dynamic imports have no module graph in this runtime, so eagerly
-    // evaluate the specifier/options for side effects and return undefined.
-    reduce_expression(&import.source, ops, facts, next_register, locals)?;
+    // evaluate the specifier/options for side effects and return a Promise.
+    let specifier = reduce_expression(&import.source, ops, facts, next_register, locals)?;
     for argument in &import.arguments {
         reduce_expression(argument, ops, facts, next_register, locals)?;
     }
-    Some(crate::reduce_support::emit_undefined(ops, next_register))
+    let callee = take_register(next_register);
+    ops.push(Op::MakeBuiltin {
+        dst: callee,
+        builtin: crate::ops::Builtin::PromiseResolve,
+    });
+    let dst = take_register(next_register);
+    let args = vec![specifier];
+    let spreads = vec![false];
+    ops.push(Op::Call {
+        dst,
+        callee,
+        args,
+        spreads,
+    });
+    Some(dst)
 }
 
 fn reduce_in(
@@ -437,10 +454,13 @@ fn reduce_regexp_literal(
     let flags_register = super::tagged_template::emit_string(ops, next_register, flags);
     let dst = *next_register;
     *next_register = next_register.saturating_add(1);
+    let args = vec![pattern_register, flags_register];
+    let spreads = vec![false, false];
     ops.push(Op::Construct {
         dst,
         callee,
-        args: vec![pattern_register, flags_register],
+        args,
+        spreads,
     });
     Some(dst)
 }

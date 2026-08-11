@@ -2,6 +2,7 @@ pub fn reduce_eval_source(
     source: &str,
     inherited_strict: bool,
     global: bool,
+    direct: bool,
     bindings: &[(String, u16)],
     forbidden_var_names: &[String],
 ) -> Result<ResidualProgram, Vec<String>> {
@@ -9,6 +10,7 @@ pub fn reduce_eval_source(
         source,
         inherited_strict,
         global,
+        direct,
         bindings,
         forbidden_var_names,
         crate::semantic::EvalGrammarContext::default(),
@@ -18,6 +20,7 @@ pub(crate) fn reduce_eval_source_in_context(
     source: &str,
     inherited_strict: bool,
     global: bool,
+    _direct: bool,
     bindings: &[(String, u16)],
     forbidden_var_names: &[String],
     grammar: crate::semantic::EvalGrammarContext,
@@ -42,13 +45,16 @@ pub(crate) fn reduce_eval_source_in_context(
         &mut facts,
         locals,
         next_slot,
-        true,
-        behavior,
-        directive_completion,
+        StatementsOptions {
+            tail: true,
+            eval_behavior: behavior,
+            directive_completion,
+        },
     )?;
     prefix.append(&mut ops);
     Ok(ResidualProgram { facts, ops: prefix })
 }
+
 fn eval_facts(analysis: &crate::semantic::Analysis, strict: bool) -> ProgramDb {
     ProgramDb {
         strict,

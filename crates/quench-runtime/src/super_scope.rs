@@ -232,7 +232,16 @@ fn strict_write_failure() -> Result<(), VmError> {
 /// Read the [[HomeObject]][[Prototype]] for `super`. Throws TypeError when
 /// the home's prototype is null/undefined (Spec: RequireObjectCoercible).
 fn require_super_base(home: &Value) -> Result<Value, VmError> {
-    let prototype = crate::execute::get_property(home, "\0prototype");
+    let prototype = match home {
+        Value::ObjectAlias(alias) => alias
+            .0
+            .borrow()
+            .upgrade()
+            .map(Value::Object)
+            .unwrap_or(Value::Null),
+        home => home.clone(),
+    };
+    let prototype = crate::builtins::object::get_prototype_of(Some(&prototype))?;
     match prototype {
         Value::Null | Value::Undefined => Err(crate::value::error::throw_type_error(
             "Super has no prototype",

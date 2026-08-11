@@ -1,6 +1,6 @@
 use crate::{
     blocks::reduce as reduce_block, control_flow, facts::ProgramDb, functions, ops::Op,
-    statements::reduce_declaration as reduce_declaration_statement,
+    ops::PropertyDefinitionKind, statements::reduce_declaration as reduce_declaration_statement,
 };
 use oxc::{
     allocator::Allocator,
@@ -21,12 +21,22 @@ pub struct ResidualProgram {
 pub fn reduce_source(source: &str) -> Result<ResidualProgram, Vec<String>> {
     reduce_source_with_type(source, SourceType::cjs())
 }
+pub(crate) fn reduce_global_script_source(source: &str) -> Result<ResidualProgram, Vec<String>> {
+    reduce_source_with_type_and_global(source, SourceType::cjs(), true)
+}
 pub fn reduce_module_source(source: &str) -> Result<ResidualProgram, Vec<String>> {
     reduce_source_with_type(source, SourceType::mjs())
 }
 pub fn reduce_source_with_type(
     source: &str,
     source_type: SourceType,
+) -> Result<ResidualProgram, Vec<String>> {
+    reduce_source_with_type_and_global(source, source_type, false)
+}
+fn reduce_source_with_type_and_global(
+    source: &str,
+    source_type: SourceType,
+    global: bool,
 ) -> Result<ResidualProgram, Vec<String>> {
     let (scope_count, symbol_count, private_names, ops) = {
         let allocator = Allocator::default();
@@ -44,7 +54,7 @@ pub fn reduce_source_with_type(
             private_names: analysis.private_names,
             ..ProgramDb::default()
         };
-        let ops = reduce_statements(&parsed.program.body, source_type, &mut facts)?;
+        let ops = reduce_statements(&parsed.program.body, source_type, global, &mut facts)?;
         (
             analysis.scope_count,
             analysis.symbol_count,
@@ -63,9 +73,10 @@ pub fn reduce_source_with_type(
 fn reduce_statements(
     statements: &[Statement<'_>],
     source_type: SourceType,
+    global: bool,
     facts: &mut ProgramDb,
 ) -> Result<Vec<Op>, Vec<String>> {
-    let mut state = StatementReducer::new(source_type);
+    let mut state = StatementReducer::new_with_global(source_type, global);
     let last = state.append(statements, facts, true)?;
     crate::reduce_support::finish_program(state.ops, last)
 }
@@ -74,76 +85,9 @@ pub(super) struct StatementReducer {
     pub(super) ops: Vec<Op>,
     next_slot: u16,
     next_register: u16,
+    script: bool,
 }
-impl StatementReducer {
-    pub(super) fn new(source_type: SourceType) -> Self {
-        let mut locals = HashMap::from([(GLOBAL_THIS.to_string(), 0)]);
-        if !source_type.is_module() {
-            locals.insert(SCRIPT_THIS_SLOT.to_string(), 0);
-        }
-        let mut ops = Vec::new();
-        let mut next_register = 0;
-        let properties = crate::globals::script_properties(&mut ops, &mut next_register);
-        ops.push(Op::MakeObject {
-            dst: next_register,
-            properties,
-        });
-        ops.push(Op::StoreLocal {
-            slot: 0,
-            src: next_register,
-        });
-        next_register = next_register.saturating_add(1);
-        Self {
-            locals,
-            ops,
-            next_slot: 1,
-            next_register,
-        }
-    }
-    pub(super) fn append(
-        &mut self,
-        statements: &[Statement<'_>],
-        facts: &mut ProgramDb,
-        program_scope: bool,
-    ) -> Result<Option<u16>, Vec<String>> {
-        let barrier_len = facts.eval_var_barrier.len();
-        facts
-            .eval_var_barrier
-            .extend(crate::semantic_early::lexically_declared_names_in(
-                statements,
-            ));
-        let result = self.append_scoped(statements, facts, program_scope);
-        facts.eval_var_barrier.truncate(barrier_len);
-        result
-    }
-    fn append_scoped(
-        &mut self,
-        statements: &[Statement<'_>],
-        facts: &mut ProgramDb,
-        program_scope: bool,
-    ) -> Result<Option<u16>, Vec<String>> {
-        crate::reduce_support::instantiate_script_declarations(
-            statements,
-            &mut self.locals,
-            &mut self.next_slot,
-            &mut self.ops,
-            program_scope,
-        );
-        self.next_register = self
-            .next_register
-            .max(crate::reduce_support::register_base(&self.locals));
-        let mut last = None;
-        for statement in statements {
-            let limit = program_scope
-                .then(|| crate::reduce_support::script_lexical_slot(statement, &self.locals))
-                .flatten()
-                .map(|slot| std::mem::replace(&mut self.next_slot, slot));
-            last = reduce_state_statement(self, statement, facts, program_scope)?.or(last);
-            self.next_slot = limit.map_or(self.next_slot, |limit| limit.max(self.next_slot));
-        }
-        Ok(last)
-    }
-}
+include!("statement_reducer.rs");
 fn reduce_state_statement(
     state: &mut StatementReducer,
     statement: &Statement<'_>,
@@ -158,7 +102,7 @@ fn reduce_state_statement(
         &mut state.next_slot,
         &mut state.locals,
     )?;
-    if program_scope {
+    if program_scope && !state.script {
         crate::reduce_support::mirror_script_bindings(
             statement,
             &state.locals,
@@ -179,9 +123,11 @@ pub fn reduce_statements_with_locals(
         facts,
         locals,
         next_slot,
-        false,
-        crate::reduce_support::EvalBehavior::Normal,
-        None,
+        StatementsOptions {
+            tail: false,
+            eval_behavior: crate::reduce_support::EvalBehavior::Normal,
+            directive_completion: None,
+        },
     )?;
     ops.push(Op::Const {
         dst: 0,
@@ -201,9 +147,11 @@ pub fn reduce_expression_statements_with_locals(
         facts,
         locals,
         next_slot,
-        true,
-        crate::reduce_support::EvalBehavior::Normal,
-        None,
+        StatementsOptions {
+            tail: true,
+            eval_behavior: crate::reduce_support::EvalBehavior::Normal,
+            directive_completion: None,
+        },
     )
 }
 /// Reduce statements without appending a terminal `Return`. Used for nested
@@ -219,35 +167,40 @@ pub fn reduce_statements_no_tail(
         facts,
         locals,
         next_slot,
-        false,
-        crate::reduce_support::EvalBehavior::Normal,
-        None,
+        StatementsOptions {
+            tail: false,
+            eval_behavior: crate::reduce_support::EvalBehavior::Normal,
+            directive_completion: None,
+        },
     )
 }
+
+pub(crate) struct StatementsOptions {
+    tail: bool,
+    eval_behavior: crate::reduce_support::EvalBehavior,
+    directive_completion: Option<String>,
+}
+
 fn reduce_statements_opt(
     statements: &[Statement<'_>],
     facts: &mut ProgramDb,
     mut locals: HashMap<String, u16>,
     mut next_slot: u16,
-    tail: bool,
-    eval_behavior: crate::reduce_support::EvalBehavior,
-    directive_completion: Option<String>,
+    options: StatementsOptions,
 ) -> Result<Vec<Op>, Vec<String>> {
-    let mut ops = Vec::new();
-    let mut next_register = 0;
-    crate::reduce_support::predeclare_functions(statements, &mut locals, &mut next_slot);
-    next_register = next_register.max(crate::reduce_support::register_base(&locals));
-    let eval = eval_behavior != crate::reduce_support::EvalBehavior::Normal;
-    let initial_value =
-        super::reduce_eval::emit_directive(&mut ops, &mut next_register, directive_completion);
-    if eval {
-        super::reduce_eval::instantiate_functions(
-            statements,
-            facts,
-            (&mut ops, &mut next_register, &mut next_slot, &mut locals),
-            eval_behavior,
-        )?;
-    }
+    let StatementsOptions {
+        tail,
+        eval_behavior,
+        directive_completion,
+    } = options;
+    let (mut ops, mut next_register, initial_value) = initialize_statement_reduction(
+        statements,
+        facts,
+        &mut locals,
+        &mut next_slot,
+        eval_behavior,
+        directive_completion,
+    )?;
     let last_value = reduce_statement_list(
         statements,
         facts,
@@ -257,6 +210,40 @@ fn reduce_statements_opt(
         &mut locals,
         (eval_behavior, initial_value),
     )?;
+    finish_statements_opt(ops, last_value, tail)
+}
+
+fn initialize_statement_reduction(
+    statements: &[Statement<'_>],
+    facts: &mut ProgramDb,
+    locals: &mut HashMap<String, u16>,
+    next_slot: &mut u16,
+    eval_behavior: crate::reduce_support::EvalBehavior,
+    directive_completion: Option<String>,
+) -> Result<(Vec<Op>, u16, Option<u16>), Vec<String>> {
+    let mut ops = Vec::new();
+    let mut next_register = 0;
+    crate::reduce_support::predeclare_functions(statements, locals, next_slot);
+    next_register = next_register.max(crate::reduce_support::register_base(locals));
+    let eval = eval_behavior != crate::reduce_support::EvalBehavior::Normal;
+    let initial_value =
+        super::reduce_eval::emit_directive(&mut ops, &mut next_register, directive_completion);
+    if eval {
+        super::reduce_eval::instantiate_functions(
+            statements,
+            facts,
+            (&mut ops, &mut next_register, next_slot, locals),
+            eval_behavior,
+        )?;
+    }
+    Ok((ops, next_register, initial_value))
+}
+
+fn finish_statements_opt(
+    ops: Vec<Op>,
+    last_value: Option<u16>,
+    tail: bool,
+) -> Result<Vec<Op>, Vec<String>> {
     if tail {
         crate::reduce_support::finish_program(ops, last_value)
     } else {

@@ -1,8 +1,6 @@
 //! Standalone ECMA-262 conformance runner boundary.
 //!
-//! This crate owns runner outcomes and dispatch. The engine is accessed only
-//! through the [`Test262Host`] boundary. Engine implementation details remain
-//! outside this crate.
+//! This crate owns runner outcomes and dispatch.
 
 use std::{collections::HashMap, path::Path};
 
@@ -11,7 +9,6 @@ mod stages;
 pub use runtime_host::RuntimeHost;
 pub use stages::{list_stages, resolve_stages, ConformanceStage, ResolvedStage};
 
-/// Exact harness sources cached by filename for zero-copy runner dispatch.
 pub struct HarnessCache {
     root: std::path::PathBuf,
     sources: HashMap<String, String>,
@@ -25,7 +22,6 @@ impl HarnessCache {
         }
     }
 
-    /// Load a harness source, retaining the original owned-source API.
     pub fn load(&mut self, name: &str) -> Result<String, String> {
         self.ensure(name)?;
         Ok(self.get(name)?.to_string())
@@ -359,6 +355,33 @@ impl<H: Test262Host> Test262Runner<H> {
         I: IntoIterator<Item = P>,
         P: AsRef<Path>,
     {
+        self.run_files_with_cache_impl(paths, cache, None)
+    }
+
+    /// Run files with a cached harness and cap collected failure samples.
+    pub fn run_files_with_cache_limited<I, P>(
+        &mut self,
+        paths: I,
+        cache: &mut HarnessCache,
+        max_failures: usize,
+    ) -> Result<StageReport, String>
+    where
+        I: IntoIterator<Item = P>,
+        P: AsRef<Path>,
+    {
+        self.run_files_with_cache_impl(paths, cache, Some(max_failures))
+    }
+
+    fn run_files_with_cache_impl<I, P>(
+        &mut self,
+        paths: I,
+        cache: &mut HarnessCache,
+        max_failures: Option<usize>,
+    ) -> Result<StageReport, String>
+    where
+        I: IntoIterator<Item = P>,
+        P: AsRef<Path>,
+    {
         let mut report = StageReport::default();
         for input in paths {
             let path = input.as_ref().to_path_buf();
@@ -367,7 +390,15 @@ impl<H: Test262Host> Test262Runner<H> {
                 Ok(outcome) => outcome,
                 Err(reason) => TestOutcome::Fail { reason },
             };
-            record_outcome(&mut report, path, outcome);
+            let keep_failures = match max_failures {
+                Some(max) => report.failures.len() < max,
+                None => true,
+            };
+            if keep_failures {
+                record_outcome(&mut report, path, outcome);
+            } else {
+                count_failure(&mut report, outcome);
+            }
         }
         Ok(report)
     }
@@ -385,6 +416,14 @@ impl<H: Test262Host> Test262Runner<H> {
             self.host
                 .run_harnessed_script(harness, source, metadata.only_strict),
         )
+    }
+}
+
+fn count_failure(report: &mut StageReport, outcome: TestOutcome) {
+    if let TestOutcome::Fail { .. } = outcome {
+        report.failed += 1;
+    } else {
+        report.passed += 1;
     }
 }
 

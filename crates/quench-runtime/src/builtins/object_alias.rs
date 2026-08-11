@@ -74,7 +74,7 @@ fn retarget_private_slots(slots: &PrivateSlots, old: &Rc<ObjectData>, new: &Weak
 
 fn retarget_slot(slot: &mut PrivateSlot, old: &Rc<ObjectData>, new: &WeakObject) {
     match slot {
-        PrivateSlot::Data(value) => retarget(value, old, new),
+        PrivateSlot::Data(value) | PrivateSlot::Method(value) => retarget(value, old, new),
         PrivateSlot::Accessor { get, set } => {
             retarget_optional(get, old, new);
             retarget_optional(set, old, new);

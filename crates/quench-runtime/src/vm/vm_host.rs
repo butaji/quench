@@ -39,11 +39,7 @@ fn run_eval_script(arguments: &[Value]) -> Result<Value, VmError> {
     let realm = CURRENT_CONTEXT
         .with(|context| context.borrow().as_ref().map(VmContext::realm))
         .and_then(|id| realm::context(id).is_some().then_some(id));
-    let bindings = vec![
-        ("globalThis".to_string(), 0),
-        ("\0script_this".to_string(), 0),
-    ];
-    let program = match crate::reduce::reduce_eval_source(source, false, true, &bindings, &[]) {
+    let program = match crate::reduce::reduce_statements::reduce_global_script_source(source) {
         Ok(program) => program,
         Err(errors) => {
             return Err(VmError::Thrown(crate::builtins::error(
