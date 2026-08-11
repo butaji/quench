@@ -38,7 +38,7 @@ fn reduce_source_with_type_and_global(
     source_type: SourceType,
     global: bool,
 ) -> Result<ResidualProgram, Vec<String>> {
-    let (scope_count, symbol_count, private_names, ops) = {
+    let (mut facts, ops, scope_count, symbol_count) = {
         let allocator = Allocator::default();
         let parsed = Parser::new(&allocator, source, source_type).parse();
         crate::reduce_support::validate_parse(&parsed)?;
@@ -55,19 +55,10 @@ fn reduce_source_with_type_and_global(
             ..ProgramDb::default()
         };
         let ops = reduce_statements(&parsed.program.body, source_type, global, &mut facts)?;
-        (
-            analysis.scope_count,
-            analysis.symbol_count,
-            facts.private_names,
-            ops,
-        )
+        (facts, ops, analysis.scope_count, analysis.symbol_count)
     };
-    let facts = ProgramDb {
-        scope_count,
-        symbol_count,
-        private_names,
-        ..ProgramDb::default()
-    };
+    facts.scope_count = scope_count;
+    facts.symbol_count = symbol_count;
     Ok(ResidualProgram { facts, ops })
 }
 fn reduce_statements(
