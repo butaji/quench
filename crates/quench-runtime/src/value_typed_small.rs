@@ -1,6 +1,7 @@
 /// A Float64Array view over shared ArrayBuffer bytes.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Float64ArrayData {
+    pub(crate) meta: TypedArrayMeta,
     pub buffer: Rc<ArrayBufferData>,
     pub byte_offset: usize,
     pub length: usize,
@@ -9,6 +10,7 @@ pub struct Float64ArrayData {
 /// A Float32Array view over shared ArrayBuffer bytes.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Float32ArrayData {
+    pub(crate) meta: TypedArrayMeta,
     pub buffer: Rc<ArrayBufferData>,
     pub byte_offset: usize,
     pub length: usize,
@@ -19,6 +21,7 @@ impl Float32ArrayData {
 
     pub fn new(buffer: Rc<ArrayBufferData>, byte_offset: usize, length: usize) -> Self {
         Self {
+            meta: TypedArrayMeta::default(),
             buffer,
             byte_offset,
             length,
@@ -70,6 +73,7 @@ impl Float64ArrayData {
 
     pub fn new(buffer: Rc<ArrayBufferData>, byte_offset: usize, length: usize) -> Self {
         Self {
+            meta: TypedArrayMeta::default(),
             buffer,
             byte_offset,
             length,
@@ -119,6 +123,7 @@ impl Float64ArrayData {
 /// A signed 8-bit integer view over shared ArrayBuffer bytes.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Int8ArrayData {
+    pub(crate) meta: TypedArrayMeta,
     pub buffer: Rc<ArrayBufferData>,
     pub byte_offset: usize,
     pub length: usize,
@@ -127,6 +132,7 @@ pub struct Int8ArrayData {
 /// A signed 16-bit integer view over shared ArrayBuffer bytes.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Int16ArrayData {
+    pub(crate) meta: TypedArrayMeta,
     pub buffer: Rc<ArrayBufferData>,
     pub byte_offset: usize,
     pub length: usize,
@@ -137,6 +143,7 @@ impl Int16ArrayData {
 
     pub fn new(buffer: Rc<ArrayBufferData>, byte_offset: usize, length: usize) -> Self {
         Self {
+            meta: TypedArrayMeta::default(),
             buffer,
             byte_offset,
             length,
@@ -188,6 +195,7 @@ impl Int16ArrayData {
 /// An unsigned 16-bit integer view over shared ArrayBuffer bytes.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Uint16ArrayData {
+    pub(crate) meta: TypedArrayMeta,
     pub buffer: Rc<ArrayBufferData>,
     pub byte_offset: usize,
     pub length: usize,
@@ -198,6 +206,7 @@ impl Uint16ArrayData {
 
     pub fn new(buffer: Rc<ArrayBufferData>, byte_offset: usize, length: usize) -> Self {
         Self {
+            meta: TypedArrayMeta::default(),
             buffer,
             byte_offset,
             length,
@@ -251,6 +260,7 @@ impl Int8ArrayData {
 
     pub fn new(buffer: Rc<ArrayBufferData>, byte_offset: usize, length: usize) -> Self {
         Self {
+            meta: TypedArrayMeta::default(),
             buffer,
             byte_offset,
             length,
@@ -299,4 +309,3 @@ impl Int8ArrayData {
         self.buffer.byte_length() < self.byte_offset + self.byte_length()
     }
 }
-

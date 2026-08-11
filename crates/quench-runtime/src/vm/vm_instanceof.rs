@@ -37,7 +37,12 @@ fn builtin_instanceof(value: &Value, constructor: &Value) -> Option<bool> {
     Some(match (value, constructor) {
         (Value::BigInt64Array(_), Value::Builtin(Builtin::BigInt64Array))
         | (Value::BigUint64Array(_), Value::Builtin(Builtin::BigUint64Array))
-        | (Value::Map(_), Value::Builtin(Builtin::Map))
+        | (Value::Promise(_), Value::Builtin(Builtin::Promise)) => true,
+        (Value::Object(properties), Value::Builtin(Builtin::Date))
+            if properties.iter().any(|(name, _)| name == "timeValue") => true,
+        (Value::Object(properties), Value::Builtin(Builtin::RegExp))
+            if properties.iter().any(|(name, _)| name == "source") => true,
+        (Value::Map(_), Value::Builtin(Builtin::Map))
         | (Value::Set(_), Value::Builtin(Builtin::Set)) => true,
         _ => return None,
     })
@@ -108,6 +113,9 @@ fn prototype_chain_contains(value: &Value, expected: &Value) -> bool {
 }
 
 fn internal_prototype(value: &Value) -> Option<Value> {
+    if let Some(prototype) = crate::typed_array_prototype::get(value) {
+        return Some(prototype);
+    }
     match value {
         Value::Object(properties) => properties
             .iter()
@@ -133,7 +141,9 @@ fn internal_prototype(value: &Value) -> Option<Value> {
         Value::Set(data) => data
             .prototype()
             .or_else(|| Some(Value::Builtin(Builtin::SetPrototype))),
-        Value::Promise(_) => Some(Value::Builtin(Builtin::PromisePrototype)),
+        Value::Promise(data) => data
+            .prototype()
+            .or_else(|| Some(Value::Builtin(Builtin::PromisePrototype))),
         Value::Generator(_) => Some(Value::Builtin(Builtin::ObjectPrototype)),
         Value::Builtin(Builtin::FunctionPrototype) => Some(Value::Builtin(Builtin::ObjectPrototype)),
         Value::Function(_) | Value::BoundFunction(_) | Value::Builtin(_) => {

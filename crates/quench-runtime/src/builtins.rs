@@ -313,6 +313,9 @@ pub(crate) fn keys(value: Option<&Value>) -> Value {
 }
 
 pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
+    if let Some(result) = crate::typed_array_prototype::set(&target, key, value.clone()) {
+        return result;
+    }
     if let Some(result) = crate::typed_array_ops::set_property(&target, key, &value) {
         return result.unwrap_or(target);
     }
@@ -342,6 +345,10 @@ pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
         Value::Set(data) if key == "\0prototype" => {
             data.set_prototype(value);
             Value::Set(data)
+        }
+        Value::Promise(data) if key == "\0prototype" => {
+            data.set_prototype(value);
+            Value::Promise(data)
         }
         Value::Function(function) => set_function_property(function, key, value),
         other => other,

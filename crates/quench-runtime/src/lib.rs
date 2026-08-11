@@ -76,6 +76,7 @@ mod switch;
 mod templates;
 mod transparent;
 mod typed_array_ops;
+mod typed_array_prototype;
 mod unary;
 pub mod value;
 pub mod vm;

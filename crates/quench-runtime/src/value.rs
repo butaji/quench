@@ -77,8 +77,25 @@ pub enum PromiseState {
 }
 
 /// Heap-allocated Promise data.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub(crate) struct TypedArrayMeta {
+    prototype: RefCell<Option<Value>>,
+}
+
+impl TypedArrayMeta {
+    pub(crate) fn prototype(&self) -> Option<Value> {
+        self.prototype.borrow().clone()
+    }
+
+    pub(crate) fn set_prototype(&self, value: Value) {
+        self.prototype.replace(Some(value));
+    }
+}
+
+/// Heap-allocated Promise data.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PromiseData {
+    pub(crate) prototype: RefCell<Option<Value>>,
     pub state: RefCell<PromiseState>,
     pub result: RefCell<Option<Value>>,
     pub then_actions: RefCell<Vec<(Option<Value>, Option<Value>)>>,
@@ -91,10 +108,19 @@ impl PromiseData {
             PromiseState::Fulfilled(value) | PromiseState::Rejected(value) => Some(value.clone()),
         };
         Self {
+            prototype: RefCell::new(None),
             state: RefCell::new(state),
             result: RefCell::new(result),
             then_actions: RefCell::new(Vec::new()),
         }
+    }
+
+    pub(crate) fn prototype(&self) -> Option<Value> {
+        self.prototype.borrow().clone()
+    }
+
+    pub(crate) fn set_prototype(&self, value: Value) {
+        self.prototype.replace(Some(value));
     }
 }
 
@@ -270,6 +296,29 @@ impl PartialEq for ObjectAliasValue {
 include!("value_buffer.rs");
 include!("value_typed_small.rs");
 include!("value_typed_large.rs");
+
+macro_rules! typed_array_prototype_methods {
+    ($($name:ident),+ $(,)?) => {
+        $(impl $name {
+            pub(crate) fn prototype(&self) -> Option<Value> { self.meta.prototype() }
+            pub(crate) fn set_prototype(&self, value: Value) { self.meta.set_prototype(value); }
+        })+
+    };
+}
+
+typed_array_prototype_methods!(
+    Float64ArrayData,
+    Float32ArrayData,
+    Int8ArrayData,
+    Int16ArrayData,
+    Uint16ArrayData,
+    Int32ArrayData,
+    Uint32ArrayData,
+    BigInt64ArrayData,
+    BigUint64ArrayData,
+    Uint8ArrayData,
+    Uint8ClampedArrayData,
+);
 /// A Proxy value wrapping a target and handler.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProxyValue {
