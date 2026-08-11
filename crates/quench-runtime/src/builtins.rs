@@ -183,7 +183,7 @@ pub(crate) fn array_push(receiver: Option<&Value>, arguments: &[Value]) -> Value
     crate::locals::replace_value(receiver, &Value::array(result));
     Value::Number(length as f64)
 }
-
+include!("builtins_array_shift.rs");
 pub(crate) fn math_pow(arguments: &[Value]) -> Value {
     let base = arguments.first().map_or(f64::NAN, value_to_number);
     let exponent = arguments.get(1).map_or(f64::NAN, value_to_number);

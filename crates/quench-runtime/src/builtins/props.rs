@@ -1,5 +1,4 @@
 use crate::{ops::Builtin, value::Value};
-
 mod data_view_name;
 use data_view_name::data_view_name;
 include!("props_promise.rs");
@@ -314,6 +313,7 @@ fn array_method(key: &str) -> Option<Builtin> {
         "keys" => Some(ArrayKeys),
         "entries" => Some(ArrayEntries),
         "push" => Some(ArrayPush),
+        "shift" => Some(ArrayShift),
         "splice" => Some(ArraySplice),
         _ => None,
     }
