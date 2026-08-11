@@ -57,9 +57,9 @@ fn get_property_value(value: &Value, key: &str) -> Value {
         }
         Function(function) => function_property(function, key),
         BoundFunction(bound) => bound_function_property(value, bound, key),
-        Map(data) if key == "size" => Value::Number(data.keys.len() as f64),
-        Map(_) => crate::collections::map::property(key),
+        Map(data) => map_property(data, key),
         Set(data) if key == "size" => Value::Number(data.values.len() as f64),
+        Set(data) if data.weak => crate::collections::set::weak_property(key),
         Set(_) => crate::collections::set::property(key),
         Iterator(_) => crate::collections::iterator::property(key),
         Generator(_) => generator_property(value, key),
@@ -68,6 +68,17 @@ fn get_property_value(value: &Value, key: &str) -> Value {
             .unwrap_or_else(|| promise_property(value, key)),
         HostCapability(capability) => host_capability_property(value, capability.descriptor, key),
         _ => Value::Undefined,
+    }
+}
+
+fn map_property(data: &crate::value::MapData, key: &str) -> Value {
+    if key == "size" && !data.weak {
+        return Value::Number(data.keys.len() as f64);
+    }
+    if data.weak {
+        crate::collections::map::weak_property(key)
+    } else {
+        crate::collections::map::property(key)
     }
 }
 
