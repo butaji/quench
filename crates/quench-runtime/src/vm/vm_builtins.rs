@@ -131,7 +131,7 @@ fn execute_simple_builtin(
         Builtin::BigInt => explicit_bigint(arguments.first()),
         Builtin::ArrayBufferIsView => Ok(Value::Boolean(is_array_buffer_view(arguments.first()))),
         Builtin::NumberToString => Ok(Value::String(to_string(arguments.first()))),
-        Builtin::NumberValueOf => Ok(Value::Number(to_number(arguments.first()))),
+        Builtin::NumberValueOf => number_value_of(receiver),
         Builtin::BoxedValueOf => Ok(boxed_value(receiver)),
         Builtin::ObjectPrototypeToString => Ok(crate::builtins::prototype_to_string(receiver)),
         Builtin::ObjectPrototypeValueOf => Ok(crate::builtins::prototype_value_of(receiver)),
@@ -201,6 +201,32 @@ fn boxed_value(receiver: Option<&Value>) -> Value {
         Value::Object(_) => crate::execute::get_property(value, "_value"),
         _ => value.clone(),
     })
+}
+
+fn number_value_of(receiver: Option<&Value>) -> Result<Value, VmError> {
+    match receiver {
+        Some(Value::Builtin(Builtin::NumberPrototype)) => Ok(Value::Number(0.0)),
+        Some(Value::Number(value)) => Ok(Value::Number(*value)),
+        Some(value @ Value::Object(_)) => {
+            let constructor = crate::execute::get_property_result(value, "constructor")?;
+            if constructor != Value::Builtin(Builtin::Number) {
+                return Err(crate::value::error::throw_type_error(
+                    "Number.prototype.valueOf called on incompatible receiver",
+                ));
+            }
+            let value = crate::execute::get_property_result(value, "_value")?;
+            if let Value::Number(_) = value {
+                Ok(value)
+            } else {
+                Err(crate::value::error::throw_type_error(
+                    "Number.prototype.valueOf called on incompatible receiver",
+                ))
+            }
+        }
+        _ => Err(crate::value::error::throw_type_error(
+            "Number.prototype.valueOf called on incompatible receiver",
+        )),
+    }
 }
 
 fn is_error_constructor(builtin: Builtin) -> bool {
