@@ -176,6 +176,7 @@ fn array_method(key: &str) -> Option<crate::ops::Builtin> {
         "reduce" => crate::ops::Builtin::ArrayReduce,
         "reduceRight" => crate::ops::Builtin::ArrayReduceRight,
         "toLocaleString" => crate::ops::Builtin::ArrayToLocaleString,
+        "values" => crate::ops::Builtin::ArrayIterator,
         "Symbol.iterator" => crate::ops::Builtin::ArrayIterator,
         "hasOwnProperty" => crate::ops::Builtin::ObjectHasOwnProperty,
         "propertyIsEnumerable" => crate::ops::Builtin::ObjectPropertyIsEnumerable,
