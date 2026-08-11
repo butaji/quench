@@ -119,6 +119,7 @@ fn internal_prototype(value: &Value) -> Option<Value> {
             Some(Value::Builtin(Builtin::ObjectPrototype))
         }
         Value::Array(_) => Some(Value::Builtin(Builtin::ArrayPrototype)),
+        Value::Promise(_) => Some(Value::Builtin(Builtin::PromisePrototype)),
         Value::Builtin(Builtin::FunctionPrototype) => Some(Value::Builtin(Builtin::ObjectPrototype)),
         Value::Function(_) | Value::BoundFunction(_) | Value::Builtin(_) => {
             Some(Value::Builtin(Builtin::FunctionPrototype))
