@@ -10,7 +10,7 @@ fn main() -> ExitCode {
     };
     let mut runner = Test262Runner::new(RuntimeHost);
     let mut harness = HarnessCache::new(root.join("harness"));
-    let report = runner.run_files_with_harness(files, |name| harness.load(name));
+    let report = runner.run_files_with_cache(files, &mut harness);
     match report {
         Ok(report) if report.failed == 0 => {
             println!("passed={} failed=0 total={}", report.passed, report.total);

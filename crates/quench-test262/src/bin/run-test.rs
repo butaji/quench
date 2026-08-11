@@ -14,7 +14,7 @@ fn main() -> ExitCode {
     let root = test262_root();
     let mut runner = Test262Runner::new(RuntimeHost);
     let mut harness = HarnessCache::new(root.join("harness"));
-    let outcome = runner.run_test_with_harness(&source, |name| harness.load(name));
+    let outcome = runner.run_test_with_cache(&source, &mut harness);
     match outcome {
         Ok(TestOutcome::Pass) => ExitCode::SUCCESS,
         Ok(TestOutcome::Fail { reason }) => fail(reason),
