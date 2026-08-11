@@ -95,6 +95,9 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
         (DataView, "prototype") => Some(DataViewPrototype),
         (DataViewPrototype, "constructor") => Some(DataView),
         (Function, "prototype") => Some(FunctionPrototype),
+        (AsyncFunction | GeneratorFunction | AsyncGeneratorFunction, "prototype") => {
+            Some(FunctionPrototype)
+        }
         (FunctionPrototype, "apply") => Some(FunctionApply),
         (FunctionPrototype, "call") => Some(FunctionCall),
         (FunctionPrototype, "bind") => Some(FunctionBind),
@@ -121,14 +124,12 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
         _ => builtin_method2(builtin, key),
     }
 }
-
 fn builtin_method_prefix(builtin: Builtin, key: &str) -> Option<Builtin> {
     if let Builtin::HostCapability(kind) = builtin {
         return host_capability_method(kind, key);
     }
     specialized_method(builtin, key).or_else(|| error_prototype(builtin, key))
 }
-
 fn error_prototype(builtin: Builtin, key: &str) -> Option<Builtin> {
     (key == "prototype"
         && matches!(
@@ -144,7 +145,6 @@ fn error_prototype(builtin: Builtin, key: &str) -> Option<Builtin> {
         ))
     .then_some(Builtin::ErrorPrototype)
 }
-
 fn specialized_method(builtin: Builtin, key: &str) -> Option<Builtin> {
     typed_array_property(builtin, key).or_else(|| {
         (builtin == Builtin::Reflect)
