@@ -58,6 +58,7 @@ pub fn constructor_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::AggregateError => Some("AggregateError"),
         Builtin::Map => Some("Map"),
         Builtin::Set => Some("Set"),
+        Builtin::WeakMap => Some("WeakMap"),
         _ => None,
     }
 }
@@ -90,6 +91,7 @@ pub fn prototype(builtin: Builtin) -> Option<Builtin> {
         Builtin::IntlSegmenter => Some(Builtin::IntlSegmenterPrototype),
         Builtin::Map => Some(Builtin::MapPrototype),
         Builtin::Set => Some(Builtin::SetPrototype),
+        Builtin::WeakMap => Some(Builtin::WeakMapPrototype),
         Builtin::Error => Some(Builtin::ErrorPrototype),
         Builtin::RangeError => Some(Builtin::ErrorPrototype),
         Builtin::ReferenceError => Some(Builtin::ErrorPrototype),
@@ -140,6 +142,7 @@ pub fn constructor_length(builtin: Builtin) -> Option<f64> {
         Builtin::AggregateError => Some(1.0),
         Builtin::Map => Some(0.0),
         Builtin::Set => Some(0.0),
+        Builtin::WeakMap => Some(0.0),
         _ => None,
     }
 }

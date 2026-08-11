@@ -156,6 +156,7 @@ fn construct_builtin(
             crate::collections::execute_builtin(builtin, None, arguments)
                 .unwrap_or_else(|| Err(crate::vm::not_callable()))
         }
+        crate::ops::Builtin::WeakMap => Ok(crate::collections::map::weak_map_new(arguments)),
         crate::ops::Builtin::Date => crate::date::execute(builtin, None, arguments)
             .unwrap_or_else(|| Ok(crate::builtins::object(arguments))),
         crate::ops::Builtin::RegExp => Ok(construct_regexp(arguments)),
