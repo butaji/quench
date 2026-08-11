@@ -18,49 +18,7 @@ pub(crate) fn boxed_constructor(value: &Value) -> Builtin {
 pub(crate) fn has_own_property(receiver: Option<&Value>, key: Option<&Value>) -> Value {
     has_own_property_result(receiver, key).unwrap_or(Value::Boolean(false))
 }
-pub(crate) fn get_prototype_of(value: Option<&Value>) -> Result<Value, VmError> {
-    let value = require_object_coercible(value)?;
-    Ok(match value {
-        Value::Builtin(builtin) if is_typed_array_constructor(*builtin) => {
-            Value::Builtin(Builtin::TypedArray)
-        }
-        Value::Builtin(
-            Builtin::MapPrototype
-            | Builtin::SetPrototype
-            | Builtin::WeakMapPrototype
-            | Builtin::WeakSetPrototype
-            | Builtin::SharedArrayBufferPrototype
-            | Builtin::WeakRefPrototype,
-        ) => Value::Builtin(Builtin::ObjectPrototype),
-        Value::Builtin(_) | Value::Function(_) | Value::BoundFunction(_) => {
-            Value::Builtin(Builtin::FunctionPrototype)
-        }
-        Value::Promise(_) => Value::Builtin(Builtin::PromisePrototype),
-        Value::Generator(_) => Value::Builtin(Builtin::ObjectPrototype),
-        Value::Array(values) if values.is_arguments() => Value::Builtin(Builtin::ObjectPrototype),
-        Value::Array(_) => Value::Builtin(Builtin::ArrayPrototype),
-        Value::Object(properties) => properties
-            .iter()
-            .rev()
-            .find_map(|(name, value)| (name == "\0prototype").then(|| value.clone()))
-            .unwrap_or(Value::Builtin(Builtin::ObjectPrototype)),
-        _ => Value::Null,
-    })
-}
-fn is_typed_array_constructor(builtin: Builtin) -> bool {
-    matches!(
-        builtin,
-        Builtin::Float64Array
-            | Builtin::Float32Array
-            | Builtin::Int8Array
-            | Builtin::Int16Array
-            | Builtin::Int32Array
-            | Builtin::Uint8Array
-            | Builtin::Uint16Array
-            | Builtin::Uint32Array
-            | Builtin::Uint8ClampedArray
-    )
-}
+include!("object_prototype.rs");
 pub(crate) fn execute_special(
     builtin: Builtin,
     receiver: Option<&Value>,
