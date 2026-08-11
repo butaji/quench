@@ -35,6 +35,8 @@ pub(crate) fn weak_property(key: &str) -> Value {
         "get" => Value::Builtin(Builtin::WeakMapGet),
         "has" => Value::Builtin(Builtin::WeakMapHas),
         "delete" => Value::Builtin(Builtin::WeakMapDelete),
+        "getOrInsert" => Value::Builtin(Builtin::WeakMapGetOrInsert),
+        "getOrInsertComputed" => Value::Builtin(Builtin::WeakMapGetOrInsertComputed),
         _ => Value::Undefined,
     }
 }
@@ -65,6 +67,56 @@ pub(crate) fn weak_map_new(arguments: &[Value]) -> Value {
         Rc::make_mut(data).weak = true;
     }
     value
+}
+
+pub(crate) fn weak_map_get_or_insert(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
+    let key = weak_key(receiver, arguments.first())?;
+    if matches!(
+        map_has(receiver, std::slice::from_ref(&key))?,
+        Value::Boolean(true)
+    ) {
+        return map_get(receiver, &[key]);
+    }
+    let value = arguments.get(1).cloned().unwrap_or(Value::Undefined);
+    map_set(receiver, &[key, value.clone()])?;
+    Ok(value)
+}
+
+pub(crate) fn weak_map_get_or_insert_computed(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
+    let key = weak_key(receiver, arguments.first())?;
+    if matches!(
+        map_has(receiver, std::slice::from_ref(&key))?,
+        Value::Boolean(true)
+    ) {
+        return map_get(receiver, &[key]);
+    }
+    let callback = arguments.get(1).ok_or_else(|| {
+        crate::value::error::throw_type_error("WeakMap callback must be callable")
+    })?;
+    let value =
+        crate::functions::execute_target(callback, &Value::Undefined, std::slice::from_ref(&key))?;
+    map_set(receiver, &[key, value.clone()])?;
+    Ok(value)
+}
+
+fn weak_key(receiver: Option<&Value>, key: Option<&Value>) -> Result<Value, VmError> {
+    if !matches!(receiver, Some(Value::Map(data)) if data.weak) {
+        return Err(crate::value::error::throw_type_error(
+            "WeakMap method called on incompatible receiver",
+        ));
+    }
+    let Some(key) = key.filter(|value| crate::value::is_object(value)) else {
+        return Err(crate::value::error::throw_type_error(
+            "Invalid value used as weak map key",
+        ));
+    };
+    Ok(key.clone())
 }
 
 pub(crate) fn map_set(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
