@@ -161,6 +161,10 @@ fn open_self_iterator(iterator: Value) -> Result<Value, crate::execute::VmError>
     Ok(make_protocol(iterator, next))
 }
 
+pub(crate) fn collect_iterator_object(value: Value) -> Result<Vec<Value>, crate::execute::VmError> {
+    collect(&open_self_iterator(value)?)
+}
+
 fn step(value: Value) -> Result<Value, crate::execute::VmError> {
     match step_value(&value) {
         Ok(value) => Ok(value.unwrap_or(Value::Undefined)),
