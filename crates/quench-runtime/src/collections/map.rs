@@ -15,6 +15,7 @@ fn same_value_zero(left: &Value, right: &Value) -> bool {
 
 pub fn property(key: &str) -> Value {
     match key {
+        "constructor" => Value::Builtin(Builtin::Map),
         "set" => Value::Builtin(Builtin::MapSet),
         "get" => Value::Builtin(Builtin::MapGet),
         "has" => Value::Builtin(Builtin::MapHas),
