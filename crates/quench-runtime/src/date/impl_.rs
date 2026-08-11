@@ -15,7 +15,6 @@ pub fn execute(
     arguments: &[Value],
 ) -> Option<Result<Value, VmError>> {
     let result = match builtin {
-        Builtin::Date if receiver.is_none() => date_to_string(Some(&date_constructor(&[]))),
         Builtin::Date => date_constructor(arguments),
         Builtin::DateNow => Value::Number(chrono_utils::current_time_ms()),
         Builtin::DateParse => date_parse(arguments),
@@ -28,6 +27,10 @@ pub fn execute(
         }
     };
     Some(Ok(result))
+}
+
+pub(crate) fn call() -> Value {
+    date_to_string(Some(&date_constructor(&[])))
 }
 
 fn dispatch_get(builtin: Builtin, receiver: Option<&Value>) -> Option<Value> {

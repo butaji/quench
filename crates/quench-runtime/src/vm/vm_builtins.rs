@@ -135,7 +135,7 @@ fn execute_simple_builtin(
         }
         Builtin::Object => Ok(crate::builtins::object(arguments)),
         Builtin::Date => {
-            crate::date::execute(builtin, receiver, arguments).unwrap_or(Ok(Value::Undefined))
+            Ok(crate::date::call())
         }
         _ => Ok(Value::Undefined),
     }
