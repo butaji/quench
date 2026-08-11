@@ -200,6 +200,7 @@ fn array_method_core(key: &str) -> Option<crate::ops::Builtin> {
         "unshift" => crate::ops::Builtin::ArrayUnshift,
         "fill" => crate::ops::Builtin::ArrayFill,
         "copyWithin" => crate::ops::Builtin::ArrayCopyWithin,
+        "toSorted" => crate::ops::Builtin::ArrayToSorted,
         "splice" => crate::ops::Builtin::ArraySplice,
         "reduce" => crate::ops::Builtin::ArrayReduce,
         "reduceRight" => crate::ops::Builtin::ArrayReduceRight,
@@ -417,7 +418,6 @@ pub(crate) fn to_reversed(receiver: Option<&Value>) -> Value {
     };
     Value::array(values.iter().rev().cloned().collect())
 }
-
 pub(crate) fn reduce_values(
     receiver: Option<&Value>,
     arguments: &[Value],

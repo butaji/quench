@@ -279,7 +279,6 @@ fn data_view_method(key: &str) -> Option<Builtin> {
         _ => None,
     }
 }
-
 fn array_method(key: &str) -> Option<Builtin> {
     use Builtin::*;
     match key {
@@ -314,6 +313,7 @@ fn array_method(key: &str) -> Option<Builtin> {
         "unshift" => Some(ArrayUnshift),
         "fill" => Some(ArrayFill),
         "copyWithin" => Some(ArrayCopyWithin),
+        "toSorted" => Some(ArrayToSorted),
         "splice" => Some(ArraySplice),
         _ => None,
     }

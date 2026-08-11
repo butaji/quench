@@ -275,6 +275,9 @@ pub(crate) fn function_builtin(
         crate::ops::Builtin::ArrayFindLastIndex => {
             crate::builtins::array_find_last_index(receiver, arguments)
         }
+        crate::ops::Builtin::ArrayToSorted => {
+            Ok(crate::builtins::array_to_sorted(receiver, arguments))
+        }
         crate::ops::Builtin::ObjectPropertyIsEnumerable => Ok(
             crate::builtins::object::object_property_is_enumerable(receiver, arguments),
         ),

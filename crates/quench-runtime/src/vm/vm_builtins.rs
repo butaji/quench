@@ -29,6 +29,7 @@ fn is_function_builtin(builtin: Builtin) -> bool {
             | Builtin::ArrayCopyWithin
             | Builtin::ArrayFindLast
             | Builtin::ArrayFindLastIndex
+            | Builtin::ArrayToSorted
     )
 }
 

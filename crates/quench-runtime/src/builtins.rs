@@ -187,6 +187,7 @@ include!("builtins_array_unshift.rs");
 include!("builtins_array_fill.rs");
 include!("builtins_array_copy_within.rs");
 include!("builtins_array_find_last.rs");
+include!("builtins_array_to_sorted.rs");
 pub(crate) fn math_pow(arguments: &[Value]) -> Value {
     let base = arguments.first().map_or(f64::NAN, value_to_number);
     let exponent = arguments.get(1).map_or(f64::NAN, value_to_number);
@@ -423,7 +424,6 @@ fn store_descriptor_metadata(result: &mut Value, key: &str, descriptor: &[(Strin
         _ => {}
     }
 }
-
 fn define_accessor_placeholder(target: Value, key: &str) -> Value {
     if matches!(
         target,
