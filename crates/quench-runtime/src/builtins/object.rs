@@ -29,6 +29,7 @@ pub(crate) fn get_prototype_of(value: Option<&Value>) -> Result<Value, VmError> 
             Value::Builtin(Builtin::FunctionPrototype)
         }
         Value::Promise(_) => Value::Builtin(Builtin::PromisePrototype),
+        Value::Generator(_) => Value::Builtin(Builtin::ObjectPrototype),
         Value::Array(values) if values.is_arguments() => Value::Builtin(Builtin::ObjectPrototype),
         Value::Array(_) => Value::Builtin(Builtin::ArrayPrototype),
         Value::Object(properties) => properties
