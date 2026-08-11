@@ -28,41 +28,68 @@ pub fn constructor_name(builtin: Builtin) -> Option<&'static str> {
     if let Some(name) = collection_constructor_name(builtin) {
         return Some(name);
     }
+    if let Some(name) = intl_constructor_name(builtin) {
+        return Some(name);
+    }
     match builtin {
         Builtin::Array => Some("Array"),
+        Builtin::ArrayBuffer => Some("ArrayBuffer"),
         Builtin::Boolean => Some("Boolean"),
+        Builtin::BigInt => Some("BigInt"),
+        Builtin::DataView => Some("DataView"),
+        Builtin::Proxy => Some("Proxy"),
         Builtin::Promise => Some("Promise"),
         Builtin::Date => Some("Date"),
         Builtin::Function => Some("Function"),
         Builtin::AsyncFunction => Some("AsyncFunction"),
         Builtin::GeneratorFunction => Some("GeneratorFunction"),
         Builtin::AsyncGeneratorFunction => Some("AsyncGeneratorFunction"),
-        Builtin::Intl => Some("Intl"),
-        Builtin::IntlCollator => Some("Intl.Collator"),
-        Builtin::IntlDateTimeFormat => Some("Intl.DateTimeFormat"),
-        Builtin::IntlDisplayNames => Some("Intl.DisplayNames"),
-        Builtin::IntlListFormat => Some("Intl.ListFormat"),
-        Builtin::IntlLocale => Some("Intl.Locale"),
-        Builtin::IntlNumberFormat => Some("Intl.NumberFormat"),
-        Builtin::IntlPluralRules => Some("Intl.PluralRules"),
-        Builtin::IntlRelativeTimeFormat => Some("Intl.RelativeTimeFormat"),
-        Builtin::IntlSegmenter => Some("Intl.Segmenter"),
         Builtin::Math => Some("Math"),
         Builtin::Number => Some("Number"),
         Builtin::Object => Some("Object"),
         Builtin::RegExp => Some("RegExp"),
         Builtin::String => Some("String"),
         Builtin::Symbol => Some("Symbol"),
-        Builtin::TypeError => Some("TypeError"),
-        Builtin::Error => Some("Error"),
-        Builtin::RangeError => Some("RangeError"),
-        Builtin::ReferenceError => Some("ReferenceError"),
-        Builtin::SyntaxError => Some("SyntaxError"),
-        Builtin::EvalError => Some("EvalError"),
-        Builtin::URIError => Some("URIError"),
-        Builtin::AggregateError => Some("AggregateError"),
+        Builtin::TypeError
+        | Builtin::Error
+        | Builtin::RangeError
+        | Builtin::ReferenceError
+        | Builtin::SyntaxError
+        | Builtin::EvalError
+        | Builtin::URIError
+        | Builtin::AggregateError => error_constructor_name(builtin),
         _ => None,
     }
+}
+
+fn intl_constructor_name(builtin: Builtin) -> Option<&'static str> {
+    Some(match builtin {
+        Builtin::Intl => "Intl",
+        Builtin::IntlCollator => "Intl.Collator",
+        Builtin::IntlDateTimeFormat => "Intl.DateTimeFormat",
+        Builtin::IntlDisplayNames => "Intl.DisplayNames",
+        Builtin::IntlListFormat => "Intl.ListFormat",
+        Builtin::IntlLocale => "Intl.Locale",
+        Builtin::IntlNumberFormat => "Intl.NumberFormat",
+        Builtin::IntlPluralRules => "Intl.PluralRules",
+        Builtin::IntlRelativeTimeFormat => "Intl.RelativeTimeFormat",
+        Builtin::IntlSegmenter => "Intl.Segmenter",
+        _ => return None,
+    })
+}
+
+fn error_constructor_name(builtin: Builtin) -> Option<&'static str> {
+    Some(match builtin {
+        Builtin::TypeError => "TypeError",
+        Builtin::Error => "Error",
+        Builtin::RangeError => "RangeError",
+        Builtin::ReferenceError => "ReferenceError",
+        Builtin::SyntaxError => "SyntaxError",
+        Builtin::EvalError => "EvalError",
+        Builtin::URIError => "URIError",
+        Builtin::AggregateError => "AggregateError",
+        _ => return None,
+    })
 }
 
 /// Returns the prototype builtin for a constructor builtin.
@@ -116,41 +143,52 @@ pub fn constructor_length(builtin: Builtin) -> Option<f64> {
     if let Some(length) = collection_constructor_length(builtin) {
         return Some(length);
     }
+    if let Some(length) = intl_constructor_length(builtin) {
+        return Some(length);
+    }
     match builtin {
         Builtin::Array => Some(1.0),
+        Builtin::ArrayBuffer => Some(1.0),
         Builtin::Boolean => Some(1.0),
+        Builtin::BigInt => Some(1.0),
+        Builtin::DataView => Some(1.0),
+        Builtin::Proxy => Some(2.0),
         Builtin::Promise => Some(1.0),
         Builtin::Date => Some(7.0),
         Builtin::Function => Some(1.0),
         Builtin::AsyncFunction | Builtin::GeneratorFunction | Builtin::AsyncGeneratorFunction => {
             Some(1.0)
         }
-        Builtin::Intl => Some(0.0),
-        Builtin::IntlCollator => Some(0.0),
-        Builtin::IntlDateTimeFormat => Some(2.0),
-        Builtin::IntlDisplayNames => Some(2.0),
-        Builtin::IntlListFormat => Some(2.0),
-        Builtin::IntlLocale => Some(1.0),
-        Builtin::IntlNumberFormat => Some(2.0),
-        Builtin::IntlPluralRules => Some(0.0),
-        Builtin::IntlRelativeTimeFormat => Some(2.0),
-        Builtin::IntlSegmenter => Some(2.0),
         Builtin::Math => None,
         Builtin::Number => Some(1.0),
         Builtin::Object => Some(1.0),
         Builtin::RegExp => Some(2.0),
         Builtin::String => Some(1.0),
         Builtin::Symbol => Some(0.0),
-        Builtin::TypeError => Some(1.0),
-        Builtin::Error => Some(1.0),
-        Builtin::RangeError => Some(1.0),
-        Builtin::ReferenceError => Some(1.0),
-        Builtin::SyntaxError => Some(1.0),
-        Builtin::EvalError => Some(1.0),
-        Builtin::URIError => Some(1.0),
-        Builtin::AggregateError => Some(1.0),
+        Builtin::TypeError
+        | Builtin::Error
+        | Builtin::RangeError
+        | Builtin::ReferenceError
+        | Builtin::SyntaxError
+        | Builtin::EvalError
+        | Builtin::URIError
+        | Builtin::AggregateError => Some(1.0),
         _ => None,
     }
+}
+
+fn intl_constructor_length(builtin: Builtin) -> Option<f64> {
+    Some(match builtin {
+        Builtin::Intl | Builtin::IntlCollator | Builtin::IntlPluralRules => 0.0,
+        Builtin::IntlDateTimeFormat
+        | Builtin::IntlDisplayNames
+        | Builtin::IntlListFormat
+        | Builtin::IntlNumberFormat
+        | Builtin::IntlRelativeTimeFormat
+        | Builtin::IntlSegmenter => 2.0,
+        Builtin::IntlLocale => 1.0,
+        _ => return None,
+    })
 }
 
 fn collection_constructor_name(builtin: Builtin) -> Option<&'static str> {

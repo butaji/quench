@@ -193,7 +193,7 @@ fn array_method_core(key: &str) -> Option<crate::ops::Builtin> {
         "at" => crate::ops::Builtin::ArrayAt,
         "sort" => crate::ops::Builtin::ArraySort,
         "toReversed" => crate::ops::Builtin::ArrayToReversed,
-        "join" => crate::ops::Builtin::ArrayJoin,
+        "join" | "toString" => crate::ops::Builtin::ArrayJoin,
         "push" => crate::ops::Builtin::ArrayPush,
         "shift" => crate::ops::Builtin::ArrayShift,
         "reverse" => crate::ops::Builtin::ArrayReverse,
