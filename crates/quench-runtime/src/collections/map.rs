@@ -319,7 +319,9 @@ fn is_weak_key(value: &Value) -> bool {
 }
 
 pub(crate) fn map_set(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let Some(receiver @ Value::Map(data)) = receiver else {
+    let Some(receiver @ Value::Map(data)) =
+        receiver.filter(|value| matches!(value, Value::Map(data) if !data.weak))
+    else {
         return Err(crate::value::error::throw_type_error(
             "Map method called on incompatible receiver",
         ));
@@ -341,7 +343,9 @@ pub(crate) fn map_set(receiver: Option<&Value>, arguments: &[Value]) -> Result<V
 }
 
 pub(crate) fn map_get(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let Some(Value::Map(data)) = receiver else {
+    let Some(Value::Map(data)) =
+        receiver.filter(|value| matches!(value, Value::Map(data) if !data.weak))
+    else {
         return Err(crate::value::error::throw_type_error(
             "Map method called on incompatible receiver",
         ));
@@ -399,7 +403,9 @@ pub(crate) fn map_get_or_insert_computed(
 }
 
 pub(crate) fn map_has(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let Some(Value::Map(data)) = receiver else {
+    let Some(Value::Map(data)) =
+        receiver.filter(|value| matches!(value, Value::Map(data) if !data.weak))
+    else {
         return Err(crate::value::error::throw_type_error(
             "Map method called on incompatible receiver",
         ));
@@ -413,7 +419,9 @@ pub(crate) fn map_has(receiver: Option<&Value>, arguments: &[Value]) -> Result<V
 }
 
 pub(crate) fn map_delete(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let Some(receiver @ Value::Map(data)) = receiver else {
+    let Some(receiver @ Value::Map(data)) =
+        receiver.filter(|value| matches!(value, Value::Map(data) if !data.weak))
+    else {
         return Err(crate::value::error::throw_type_error(
             "Map method called on incompatible receiver",
         ));
