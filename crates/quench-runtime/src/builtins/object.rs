@@ -24,6 +24,14 @@ pub(crate) fn get_prototype_of(value: Option<&Value>) -> Result<Value, VmError> 
         Value::Builtin(builtin) if is_typed_array_constructor(*builtin) => {
             Value::Builtin(Builtin::TypedArray)
         }
+        Value::Builtin(
+            Builtin::MapPrototype
+            | Builtin::SetPrototype
+            | Builtin::WeakMapPrototype
+            | Builtin::WeakSetPrototype
+            | Builtin::SharedArrayBufferPrototype
+            | Builtin::WeakRefPrototype,
+        ) => Value::Builtin(Builtin::ObjectPrototype),
         Value::Builtin(_) | Value::Function(_) | Value::BoundFunction(_) => {
             Value::Builtin(Builtin::FunctionPrototype)
         }
@@ -350,16 +358,13 @@ fn strict_callee_descriptor() -> Value {
         ("configurable".to_string(), Value::Boolean(false)),
     ])))
 }
-
 fn string_descriptor(value: &str, key: &str) -> Option<Value> {
     crate::strings::char_at_utf16(value, key.parse::<usize>().ok()?)
         .map(|character| descriptor_object_with_flags(Value::String(character), false, true, false))
 }
-
 fn descriptor_object(value: &Value) -> Value {
     descriptor_object_with_flags(public_value(value), true, true, true)
 }
-
 fn public_descriptor(descriptor: &Value) -> Value {
     let Value::Object(properties) = descriptor else {
         return descriptor.clone();
@@ -370,14 +375,12 @@ fn public_descriptor(descriptor: &Value) -> Value {
     }
     Value::Object(Rc::new(ObjectData::new(properties)))
 }
-
 fn public_value(value: &Value) -> Value {
     match value {
         Value::BindingCell(cell) => public_value(&cell.borrow()),
         value => value.clone(),
     }
 }
-
 fn descriptor_object_with_flags(
     value: Value,
     writable: bool,
@@ -392,7 +395,6 @@ fn descriptor_object_with_flags(
         ("configurable".to_string(), Value::Boolean(configurable)),
     ])))
 }
-
 #[cfg(test)]
 mod tests {
     use super::{descriptor, execute_special};
@@ -402,7 +404,6 @@ mod tests {
         value::{FunctionValue, ObjectData, Value},
     };
     use std::{cell::RefCell, rc::Rc};
-
     #[test]
     fn binding_cell_property_mutates_without_escaping() {
         let cell = Rc::new(RefCell::new(Value::Number(1.0)));
@@ -459,7 +460,6 @@ mod tests {
         .unwrap_err();
         assert!(matches!(error, VmError::Thrown(_)));
     }
-
     #[test]
     fn has_own_observes_function_own_properties() {
         let function = Value::Function(Rc::new(FunctionValue {
