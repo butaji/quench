@@ -58,6 +58,10 @@ pub enum BinaryOp {
     Divide,
     Remainder,
     Exponentiate,
+    /// Numeric increment/decrement addition used by `++`/`--`: ToNumeric the
+    /// operand and add one in the operand's own type (never string-concats).
+    NumericAdd,
+    NumericSubtract,
     Equal,
     NotEqual,
     StrictEqual,
@@ -84,6 +88,7 @@ pub enum UnaryOp {
     Void,
     Typeof,
     ToString,
+    ToNumeric,
     Delete,
 }
 
