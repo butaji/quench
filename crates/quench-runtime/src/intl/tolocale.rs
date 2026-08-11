@@ -173,6 +173,7 @@ pub(crate) mod value {
             Value::Boolean(value) => *value,
             Value::Number(value) => *value != 0.0 && !value.is_nan(),
             Value::String(value) => !value.is_empty(),
+            Value::BigInt(value) => value != "0",
             Value::Null | Value::Undefined => false,
             Value::Array(_)
             | Value::ArrayBuffer(_)
@@ -196,8 +197,7 @@ pub(crate) mod value {
             | Value::Promise(_)
             | Value::Map(_)
             | Value::Set(_)
-            | Value::Generator(_)
-            | Value::BigInt(_) => true,
+            | Value::Generator(_) => true,
             Value::HostCapability(_) | Value::Iterator(_) | Value::ObjectAlias(_) => true,
         }
     }

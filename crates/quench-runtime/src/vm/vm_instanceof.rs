@@ -118,7 +118,9 @@ fn internal_prototype(value: &Value) -> Option<Value> {
         Value::Array(values) if values.is_arguments() => {
             Some(Value::Builtin(Builtin::ObjectPrototype))
         }
-        Value::Array(_) => Some(Value::Builtin(Builtin::ArrayPrototype)),
+        Value::Array(values) => values
+            .property("\0prototype")
+            .or_else(|| Some(Value::Builtin(Builtin::ArrayPrototype))),
         Value::Promise(_) => Some(Value::Builtin(Builtin::PromisePrototype)),
         Value::Generator(_) => Some(Value::Builtin(Builtin::ObjectPrototype)),
         Value::Builtin(Builtin::FunctionPrototype) => Some(Value::Builtin(Builtin::ObjectPrototype)),

@@ -119,7 +119,9 @@ fn invoke_callee(callee_value: &Value, arguments: &[Value]) -> Result<Value, VmE
         }
         Value::BoundFunction(bound) => crate::functions::execute_bound(bound, arguments),
         Value::Builtin(builtin) => super::execute_builtin_with_receiver(*builtin, arguments, None),
-        Value::Proxy(proxy) => execute_proxy_call(callee_value, proxy, arguments),
+        Value::Proxy(proxy) if crate::conversion::is_callable(callee_value) => {
+            execute_proxy_call(callee_value, proxy, arguments)
+        }
         _ => Err(super::not_callable()),
     }
 }
@@ -132,8 +134,7 @@ fn execute_proxy_call(
     if *proxy.revoked.borrow() {
         return Err(VmError::EvalError("Cannot call revoked proxy".to_string()));
     }
-    let this_arg = arguments.first().cloned().unwrap_or(Value::Undefined);
-    crate::proxy::proxy_apply(callee_value, &this_arg, &arguments[1..])
+    crate::proxy::proxy_apply(callee_value, &Value::Undefined, arguments)
 }
 
 pub fn execute_builtin_tail(
@@ -180,9 +181,10 @@ fn tail_dispatch(
         }
         Builtin::ParseFloat => Value::Number(parse_float(arguments.first())),
         Builtin::ParseInt => Value::Number(parse_int(arguments)),
-        Builtin::String => Value::String(crate::conversion::to_string(
-            arguments.first().unwrap_or(&Value::Undefined),
-        )?),
+        Builtin::String => match arguments.first() {
+            Some(value) => Value::String(crate::conversion::to_string(value)?),
+            None => Value::String(String::new()),
+        },
         Builtin::Unescape => crate::builtins::unescape(arguments.first()),
         Builtin::MathPow => crate::builtins::math_pow(arguments),
         _ => Value::Undefined,
