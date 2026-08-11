@@ -1,10 +1,9 @@
+mod array_like;
 mod builtins_cells;
+mod intrinsic_overrides;
 pub mod object;
 pub mod object_alias;
 pub mod props;
-
-mod array_like;
-mod intrinsic_overrides;
 use array_like::{array_like_length, array_like_value};
 use intrinsic_overrides as overrides;
 
@@ -184,6 +183,7 @@ pub(crate) fn array_push(receiver: Option<&Value>, arguments: &[Value]) -> Value
     Value::Number(length as f64)
 }
 include!("builtins_array_shift.rs");
+include!("builtins_array_reverse.rs");
 pub(crate) fn math_pow(arguments: &[Value]) -> Value {
     let base = arguments.first().map_or(f64::NAN, value_to_number);
     let exponent = arguments.get(1).map_or(f64::NAN, value_to_number);
