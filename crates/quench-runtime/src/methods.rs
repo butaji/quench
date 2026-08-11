@@ -11,13 +11,14 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError
         dst,
         object,
         key,
+        callee,
         args,
     } = op
     else {
         return Err(VmError::NotCallable);
     };
     let receiver = read_register(registers, *object)?;
-    let callee = get_property_result(&receiver, key)?;
+    let callee = resolved_callee(registers, *callee, &receiver, key)?;
     let arguments = args
         .iter()
         .map(|index| read_register(registers, *index))
@@ -32,6 +33,18 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError
     }
     write_value(registers, *dst, value);
     Ok(())
+}
+
+fn resolved_callee(
+    registers: &[Value],
+    callee: Option<u16>,
+    receiver: &Value,
+    key: &str,
+) -> Result<Value, VmError> {
+    callee.map_or_else(
+        || get_property_result(receiver, key),
+        |callee| read_register(registers, callee),
+    )
 }
 
 fn execute_callee(
