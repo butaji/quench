@@ -144,12 +144,19 @@ fn bitwise_value(
     operator: crate::ops::BinaryOp,
 ) -> Result<Value, VmError> {
     let left = crate::conversion::to_primitive(left, "number")?;
+    let left_number = bigint_value(&left)
+        .is_none()
+        .then(|| crate::conversion::primitive_to_number(&left).map(to_int32));
+    let left_number = match left_number {
+        Some(value) => Some(value?),
+        None => None,
+    };
     let right = crate::conversion::to_primitive(right, "number")?;
     if has_bigint_operand(&left, &right) {
         return bigint_bitwise(&left, &right, operator);
     }
-    let left = to_int32(crate::conversion::primitive_to_number(&left)?);
     let right = to_int32(crate::conversion::primitive_to_number(&right)?);
+    let left = left_number.ok_or_else(|| type_error("Cannot mix BigInt and other types"))?;
     Ok(Value::Number(f64::from(number_bitwise(
         left, right, operator,
     ))))
