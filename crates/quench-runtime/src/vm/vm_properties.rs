@@ -69,11 +69,6 @@ fn get_property_value(value: &Value, key: &str) -> Value {
     }
 }
 
-/// Mirror of `conversion::is_symbol` for raw `&str` payloads.
-fn looks_like_symbol(value: &str) -> bool {
-    value.starts_with("Symbol.") && value.contains('\0')
-}
-
 /// Look up a property on the boxed prototype for a primitive value.
 ///
 /// Returns the result when the prototype or its chain owns `key`; otherwise
@@ -83,7 +78,7 @@ fn primitive_prototype_property(value: &Value, key: &str) -> Value {
     let prototype = match value {
         Value::Number(_) => Some(Value::Builtin(Builtin::NumberPrototype)),
         Value::Boolean(_) => Some(Value::Builtin(Builtin::BooleanPrototype)),
-        Value::String(value) if !looks_like_symbol(value) => {
+        Value::String(value) if !crate::conversion::is_symbol_string(value) => {
             Some(Value::Builtin(Builtin::StringPrototype))
         }
         Value::BigInt(_) => Some(Value::Builtin(Builtin::BigIntPrototype)),
@@ -96,7 +91,7 @@ fn primitive_prototype_property(value: &Value, key: &str) -> Value {
         let builtin = match value {
             Value::Number(_) => Some(Builtin::Number),
             Value::Boolean(_) => Some(Builtin::Boolean),
-            Value::String(value) if !looks_like_symbol(value) => Some(Builtin::String),
+            Value::String(value) if !crate::conversion::is_symbol_string(value) => Some(Builtin::String),
             Value::BigInt(_) => Some(Builtin::BigInt),
             _ => None,
         };
