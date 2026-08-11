@@ -391,4 +391,8 @@ pub enum Builtin {
     PromiseThen,
     PromiseCatch,
     PromiseFinally,
+    PromiseFinallyFulfilled,
+    PromiseFinallyRejected,
+    PromiseFinallyOnFulfilled,
+    PromiseFinallyOnRejected,
 }
