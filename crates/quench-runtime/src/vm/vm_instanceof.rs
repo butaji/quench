@@ -127,6 +127,12 @@ fn internal_prototype(value: &Value) -> Option<Value> {
         Value::DataView(view) => view
             .prototype()
             .or_else(|| Some(Value::Builtin(Builtin::DataViewPrototype))),
+        Value::Map(data) => data
+            .prototype()
+            .or_else(|| Some(Value::Builtin(Builtin::MapPrototype))),
+        Value::Set(data) => data
+            .prototype()
+            .or_else(|| Some(Value::Builtin(Builtin::SetPrototype))),
         Value::Promise(_) => Some(Value::Builtin(Builtin::PromisePrototype)),
         Value::Generator(_) => Some(Value::Builtin(Builtin::ObjectPrototype)),
         Value::Builtin(Builtin::FunctionPrototype) => Some(Value::Builtin(Builtin::ObjectPrototype)),
