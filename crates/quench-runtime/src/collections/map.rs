@@ -81,24 +81,36 @@ pub(crate) fn weak_property(key: &str) -> Value {
     }
 }
 
-pub(crate) fn map_new(arguments: &[Value]) -> Value {
-    let mut data = MapData {
+pub(crate) fn map_new(arguments: &[Value]) -> Result<Value, VmError> {
+    let map = Value::Map(Rc::new(MapData {
         weak: false,
         keys: VecDeque::new(),
         values: Vec::new(),
         prototype: std::cell::RefCell::new(None),
+    }));
+    let Some(iterable) = arguments.first().cloned() else {
+        return Ok(map);
     };
-    if let Some(Value::Array(entries)) = arguments.first() {
-        for entry in entries.iter() {
-            if let Value::Array(pair) = entry {
-                data.keys
-                    .push_back(pair.first().cloned().unwrap_or(Value::Undefined));
-                data.values
-                    .push(pair.get(1).cloned().unwrap_or(Value::Undefined));
-            }
-        }
+    if matches!(iterable, Value::Undefined | Value::Null) {
+        return Ok(map);
     }
-    Value::Map(Rc::new(data))
+    let setter =
+        crate::execute::get_property_result(&Value::Builtin(Builtin::MapPrototype), "set")?;
+    if !crate::conversion::is_callable(&setter) {
+        return Err(crate::value::error::throw_type_error(
+            "Map.prototype.set is not callable",
+        ));
+    }
+    let map = std::cell::RefCell::new(map);
+    crate::collections::iterator::for_each_iterable(iterable, |entry| {
+        let key = crate::execute::get_property_result(&entry, "0")?;
+        let value = crate::execute::get_property_result(&entry, "1")?;
+        let current = map.borrow().clone();
+        let result = crate::functions::execute_target(&setter, &current, &[key, value])?;
+        *map.borrow_mut() = result;
+        Ok(())
+    })?;
+    Ok(map.into_inner())
 }
 
 pub(crate) fn weak_map_new(arguments: &[Value]) -> Result<Value, VmError> {
