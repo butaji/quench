@@ -351,6 +351,8 @@ pub enum Builtin {
     MapKeys,
     MapValues,
     MapGroupBy,
+    MapGetOrInsert,
+    MapGetOrInsertComputed,
     SetIterator,
     WeakMap,
     WeakMapPrototype,
