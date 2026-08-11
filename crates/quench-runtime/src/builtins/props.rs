@@ -392,6 +392,12 @@ fn builtin_length(builtin: Builtin) -> f64 {
     if let Some(length) = data_view_length(builtin) {
         return length;
     }
+    if let Some(length) = crate::builtin_meta::constructor_length(builtin) {
+        return length;
+    }
+    if let Some(length) = crate::builtin_meta::methods::function_length(builtin) {
+        return length;
+    }
     match builtin {
         Escape | Unescape | DateSetYear | GeneratorNext | GeneratorReturn | GeneratorThrow => 1.0,
         ArrayBuffer => 1.0,
@@ -430,6 +436,12 @@ fn data_view_length(builtin: Builtin) -> Option<f64> {
 
 pub(crate) fn builtin_name(builtin: Builtin) -> &'static str {
     use Builtin::*;
+    if let Some(name) = crate::builtin_meta::methods::function_name(builtin) {
+        return name;
+    }
+    if let Some(name) = crate::builtin_meta::methods::short_name(builtin) {
+        return name;
+    }
     if let Some(name) = data_view_name(builtin) {
         return name;
     }
