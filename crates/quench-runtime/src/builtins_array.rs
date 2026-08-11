@@ -15,7 +15,10 @@ pub(crate) fn delete_property(target: Value, key: &str) -> (Value, bool) {
             Rc::make_mut(&mut values).delete_property(key);
             (Value::Array(values), true)
         }
-        Value::Array(values) if key != "length" => (Value::Array(values), true),
+        Value::Array(mut values) if key != "length" => {
+            Rc::make_mut(&mut values).delete_property(key);
+            (Value::Array(values), true)
+        }
         Value::Array(values) => (Value::Array(values), false),
         Value::Function(function) => delete_function_property(function, key),
         Value::Builtin(builtin) => {
@@ -56,10 +59,15 @@ fn delete_object_property(properties: Rc<crate::value::ObjectData>, key: &str) -
 
 fn define_property_value(target: Value, key: &str, value: Value) -> Value {
     match target {
+        Value::Object(properties) => {
+            crate::builtins::builtins_cells::set_object_property(properties, key, value)
+        }
         Value::Array(values) => set_array_property(values, key, value),
         target => set_property(target, key, value),
     }
 }
+
+const MAX_DENSE_ARRAY_INDEX_GAP: usize = 1024;
 
 fn define_array_descriptor(target: &mut Value, key: &str, descriptor: Vec<(String, Value)>) {
     let Value::Array(values) = target else { return };
@@ -72,8 +80,8 @@ fn define_array_descriptor(target: &mut Value, key: &str, descriptor: Vec<(Strin
         .rev()
         .find_map(|(name, value)| (name == "writable").then_some(value));
     if accessor || writable == Some(&Value::Boolean(false)) {
-        if let Ok(index) = key.parse::<usize>() {
-            Rc::make_mut(&mut values).disconnect_index(index);
+        if let Some(index) = crate::arrays::array_index(key) {
+            Rc::make_mut(&mut values).disconnect_index(index as usize);
         }
     }
     Rc::make_mut(&mut values).define_descriptor(
@@ -103,10 +111,17 @@ fn set_array_property(mut values: Rc<crate::value::ArrayData>, key: &str, value:
         Rc::make_mut(&mut values).set_length(length);
         return Value::Array(values);
     }
-    let Ok(index) = key.parse::<usize>() else {
+    let Some(index) = crate::arrays::array_index(key) else {
         Rc::make_mut(&mut values).set_property(key, value);
         return Value::Array(values);
     };
-    Rc::make_mut(&mut values).set_index(index, value);
+    let index = index as usize;
+    if index > values.logical_len().saturating_add(MAX_DENSE_ARRAY_INDEX_GAP) {
+        let values = Rc::make_mut(&mut values);
+        values.set_property(key, value);
+        values.set_length(index.saturating_add(1));
+    } else {
+        Rc::make_mut(&mut values).set_index(index, value);
+    }
     Value::Array(values)
 }

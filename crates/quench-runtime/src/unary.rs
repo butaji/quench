@@ -31,6 +31,9 @@ pub(crate) fn reduce_delete(
         return Some(result);
     }
     if !is_member_expression(expression) {
+        if is_unresolved_identifier(expression, locals) {
+            return Some(emit_constant(ops, next_register, true));
+        }
         return Some(emit_constant(
             ops,
             next_register,
