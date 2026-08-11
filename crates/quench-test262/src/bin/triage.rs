@@ -22,7 +22,8 @@ struct RunReport {
 }
 
 /// Deep parser/reducer recursion needs more than the default 8 MiB stack.
-const STACK_SIZE: usize = 256 * 1024 * 1024;
+const DEFAULT_STACK_SIZE: usize = 256 * 1024 * 1024;
+const STACK_SIZE_ENV: &str = "TRIAGE_WORKER_STACK_SIZE_BYTES";
 
 struct Args {
     target: PathBuf,
@@ -112,6 +113,13 @@ fn default_threads() -> usize {
     thread::available_parallelism().map_or(1, |count| count.get())
 }
 
+fn worker_stack_size() -> usize {
+    env::var(STACK_SIZE_ENV)
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(DEFAULT_STACK_SIZE)
+}
+
 fn select_files(files: Vec<PathBuf>, base: &Path, filters: &[String]) -> Vec<PathBuf> {
     if filters.is_empty() {
         return files;
@@ -141,8 +149,9 @@ fn run_parallel(
             let files = Arc::clone(&files);
             let counter = Arc::clone(&counter);
             let next = Arc::clone(&next);
+            let stack_size = worker_stack_size();
             thread::Builder::new()
-                .stack_size(STACK_SIZE)
+                .stack_size(stack_size)
                 .spawn(move || run_worker(files, root, limit, counter, next))
                 .expect("spawn triage worker")
         })
