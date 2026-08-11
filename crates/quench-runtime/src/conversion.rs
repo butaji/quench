@@ -69,10 +69,14 @@ pub(crate) fn primitive_to_number(value: &Value) -> Result<f64, VmError> {
 
 pub(crate) fn is_symbol(value: &Value) -> bool {
     match value {
-        Value::String(value) => value.starts_with("Symbol.") && value.contains('\0'),
+        Value::String(value) => is_symbol_string(value),
         Value::Builtin(builtin) => crate::intl::tolocale::symbol::name(*builtin).is_some(),
         _ => false,
     }
+}
+
+pub(crate) fn is_symbol_string(value: &str) -> bool {
+    value.starts_with("Symbol.") && value.contains('\0')
 }
 
 fn ordinary_to_primitive(value: &Value, hint: &str) -> Result<Value, VmError> {
