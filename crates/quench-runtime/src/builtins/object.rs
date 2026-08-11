@@ -1,10 +1,9 @@
-use std::rc::Rc;
-
 use crate::{
     execute::VmError,
     ops::Builtin,
     value::{ObjectData, Value},
 };
+use std::rc::Rc;
 
 pub(crate) fn boxed_constructor(value: &Value) -> Builtin {
     match value {
@@ -278,6 +277,9 @@ fn object_descriptor(properties: &[(String, Value)], key: &str) -> Option<Value>
         .map(|(_, value)| descriptor_object(value))
 }
 fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
+    if let Some(descriptor) = crate::builtins::read_intrinsic_override(builtin, key) {
+        return Some(public_descriptor(&descriptor));
+    }
     let property =
         super::callable_property(builtin, key).or_else(|| super::special_property(builtin, key))?;
     let writable = !matches!(key, "length" | "name") && builtin_property_writable(builtin, key);

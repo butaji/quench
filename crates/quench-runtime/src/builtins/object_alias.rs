@@ -18,10 +18,31 @@ pub(crate) fn set(properties: Rc<ObjectData>, key: &str, value: Value) -> Value 
         } else {
             values.push((key.to_string(), value));
         }
+        sync_descriptor_value(&mut values, key);
         reattach_function_homes(&values, weak);
         ObjectData::with_private_slots(values, Rc::clone(&properties.private_slots))
     });
     Value::Object(object)
+}
+
+fn sync_descriptor_value(values: &mut [(String, Value)], key: &str) {
+    let value = values
+        .iter()
+        .rev()
+        .find_map(|(name, value)| (name == key).then(|| value.clone()));
+    let Some((_, Value::Object(descriptor))) = values
+        .iter_mut()
+        .rev()
+        .find(|(name, _)| name == &super::descriptor_key(key))
+    else {
+        return;
+    };
+    if let Some((_, current)) = Rc::make_mut(descriptor)
+        .iter_mut()
+        .find(|(name, _)| name == "value")
+    {
+        *current = value.unwrap_or(Value::Undefined);
+    }
 }
 
 /// Re-anchor `\0home_object` aliases inside the clone's method values so `super`
