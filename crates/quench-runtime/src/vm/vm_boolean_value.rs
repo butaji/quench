@@ -67,3 +67,28 @@ fn wrapped_symbol(value: &Value) -> Result<Value, crate::execute::VmError> {
         "Symbol.prototype.valueOf called on incompatible receiver",
     ))
 }
+
+fn string_value_of(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
+    match receiver {
+        Some(Value::String(value)) if !crate::conversion::is_symbol_string(value) => {
+            Ok(Value::String(value.clone()))
+        }
+        Some(value @ Value::Object(_)) => wrapped_string(value),
+        _ => Err(crate::value::error::throw_type_error(
+            "String.prototype.valueOf called on incompatible receiver",
+        )),
+    }
+}
+
+fn wrapped_string(value: &Value) -> Result<Value, crate::execute::VmError> {
+    let constructor = crate::execute::get_property_result(value, "constructor")?;
+    let wrapped = crate::execute::get_property_result(value, "_value")?;
+    if constructor == Value::Builtin(Builtin::String)
+        && matches!(&wrapped, Value::String(value) if !crate::conversion::is_symbol_string(value))
+    {
+        return Ok(wrapped);
+    }
+    Err(crate::value::error::throw_type_error(
+        "String.prototype.valueOf called on incompatible receiver",
+    ))
+}
