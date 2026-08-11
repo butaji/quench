@@ -153,6 +153,7 @@ impl Default for PromiseData {
 /// Map key-value storage.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MapData {
+    pub(crate) weak: bool,
     pub keys: VecDeque<Value>,
     pub values: Vec<Value>,
     pub(crate) prototype: RefCell<Option<Value>>,

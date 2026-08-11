@@ -5,7 +5,7 @@ fn typed_array_name(builtin: Builtin) -> Option<&'static str> {
         Int8Array => "Int8Array", Int16Array => "Int16Array", Uint16Array => "Uint16Array",
         Int32Array => "Int32Array", Uint8Array => "Uint8Array", Uint32Array => "Uint32Array",
         Uint8ClampedArray => "Uint8ClampedArray", BigInt64Array => "BigInt64Array",
-        BigUint64Array => "BigUint64Array", _ => return None,
+        BigUint64Array => "BigUint64Array", WeakMap => "WeakMap", _ => return None,
     })
 }
 

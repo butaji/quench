@@ -29,8 +29,19 @@ pub fn property(key: &str) -> Value {
     }
 }
 
+pub(crate) fn weak_property(key: &str) -> Value {
+    match key {
+        "set" => Value::Builtin(Builtin::WeakMapSet),
+        "get" => Value::Builtin(Builtin::WeakMapGet),
+        "has" => Value::Builtin(Builtin::WeakMapHas),
+        "delete" => Value::Builtin(Builtin::WeakMapDelete),
+        _ => Value::Undefined,
+    }
+}
+
 pub(crate) fn map_new(arguments: &[Value]) -> Value {
     let mut data = MapData {
+        weak: false,
         keys: VecDeque::new(),
         values: Vec::new(),
         prototype: std::cell::RefCell::new(None),
@@ -46,6 +57,14 @@ pub(crate) fn map_new(arguments: &[Value]) -> Value {
         }
     }
     Value::Map(Rc::new(data))
+}
+
+pub(crate) fn weak_map_new(arguments: &[Value]) -> Value {
+    let mut value = map_new(arguments);
+    if let Value::Map(data) = &mut value {
+        Rc::make_mut(data).weak = true;
+    }
+    value
 }
 
 pub(crate) fn map_set(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
@@ -124,12 +143,13 @@ pub(crate) fn map_delete(receiver: Option<&Value>, arguments: &[Value]) -> Resul
 }
 
 pub(crate) fn map_clear(receiver: Option<&Value>) -> Result<Value, VmError> {
-    if !matches!(receiver, Some(Value::Map(_))) {
+    if !matches!(receiver, Some(Value::Map(data)) if !data.weak) {
         return Err(crate::value::error::throw_type_error(
             "Map method called on incompatible receiver",
         ));
     }
     let updated = Value::Map(Rc::new(MapData {
+        weak: false,
         keys: VecDeque::new(),
         values: Vec::new(),
         prototype: std::cell::RefCell::new(None),
