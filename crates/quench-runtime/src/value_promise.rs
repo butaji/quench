@@ -1,0 +1,32 @@
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum PromiseContinuation {
+    AsyncGenerator {
+        generator: Rc<GeneratorData>,
+        result: Rc<PromiseData>,
+    },
+    AsyncGeneratorYield {
+        generator: Rc<GeneratorData>,
+        result: Rc<PromiseData>,
+    },
+    Aggregate {
+        aggregate: Rc<PromiseAggregate>,
+        index: usize,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PromiseAggregateKind {
+    All,
+    AllSettled,
+    Any,
+    Race,
+}
+
+#[derive(Debug, PartialEq)]
+pub(crate) struct PromiseAggregate {
+    pub(crate) kind: PromiseAggregateKind,
+    pub(crate) result: Rc<PromiseData>,
+    pub(crate) remaining: RefCell<usize>,
+    pub(crate) values: RefCell<Vec<Value>>,
+    pub(crate) settled: RefCell<bool>,
+}
