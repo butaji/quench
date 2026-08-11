@@ -1,14 +1,11 @@
 //! Proxy and Reflect builtins for JavaScript Proxy and Reflect API.
-
-use std::rc::Rc;
-use std::slice;
-
 use crate::{
     execute::VmError,
     ops::{Builtin, FunctionKind},
     value::{ProxyValue, Value},
 };
-
+use std::rc::Rc;
+use std::slice;
 pub(crate) fn proxy_new(arguments: &[Value]) -> Result<Value, VmError> {
     let target = arguments.first().ok_or(VmError::NotCallable)?;
     let handler = arguments.get(1).ok_or(VmError::NotCallable)?;
@@ -19,7 +16,6 @@ pub(crate) fn proxy_new(arguments: &[Value]) -> Result<Value, VmError> {
         revoked,
     })))
 }
-
 pub(crate) fn proxy_revocable(arguments: &[Value]) -> Result<Value, VmError> {
     let target = arguments.first().ok_or(VmError::NotCallable)?;
     let handler = arguments.get(1).ok_or(VmError::NotCallable)?;
@@ -29,19 +25,29 @@ pub(crate) fn proxy_revocable(arguments: &[Value]) -> Result<Value, VmError> {
         handler: handler.clone(),
         revoked: revoked.clone(),
     }));
-    let revoke = create_revoke_function(revoked);
+    let revoke = create_revoke_function(proxy.clone());
     Ok(Value::Object(Rc::new(crate::value::ObjectData::new(vec![
         ("proxy".to_string(), proxy),
         ("revoke".to_string(), revoke),
     ]))))
 }
 
-fn create_revoke_function(revoked: Rc<std::cell::RefCell<bool>>) -> Value {
-    let _revoked_clone = revoked;
-    Value::Object(Rc::new(crate::value::ObjectData::new(vec![(
-        "call".to_string(),
-        Value::Builtin(Builtin::FunctionCall),
-    )])))
+fn create_revoke_function(proxy: Value) -> Value {
+    Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
+        target: Value::Builtin(Builtin::ProxyRevoke),
+        receiver: proxy,
+        arguments: Vec::new(),
+    }))
+}
+
+pub(crate) fn revoke(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let Some(Value::Proxy(proxy)) = receiver else {
+        return Err(crate::value::error::throw_type_error(
+            "Proxy revoke called on incompatible receiver",
+        ));
+    };
+    *proxy.revoked.borrow_mut() = true;
+    Ok(Value::Undefined)
 }
 
 pub(crate) fn is_revoked(proxy: &ProxyValue) -> bool {
