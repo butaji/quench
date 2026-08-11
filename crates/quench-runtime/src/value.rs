@@ -96,6 +96,7 @@ impl TypedArrayMeta {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PromiseData {
     pub(crate) prototype: RefCell<Option<Value>>,
+    pub(crate) properties: RefCell<Vec<(String, Value)>>,
     pub state: RefCell<PromiseState>,
     pub result: RefCell<Option<Value>>,
     pub then_actions: RefCell<Vec<(Option<Value>, Option<Value>)>>,
@@ -109,6 +110,7 @@ impl PromiseData {
         };
         Self {
             prototype: RefCell::new(None),
+            properties: RefCell::new(Vec::new()),
             state: RefCell::new(state),
             result: RefCell::new(result),
             then_actions: RefCell::new(Vec::new()),
@@ -121,6 +123,24 @@ impl PromiseData {
 
     pub(crate) fn set_prototype(&self, value: Value) {
         self.prototype.replace(Some(value));
+    }
+
+    pub(crate) fn property(&self, key: &str) -> Option<Value> {
+        self.properties
+            .borrow()
+            .iter()
+            .rev()
+            .find(|(name, _)| name == key)
+            .map(|(_, value)| value.clone())
+    }
+
+    pub(crate) fn set_property(&self, key: &str, value: Value) {
+        let mut properties = self.properties.borrow_mut();
+        if let Some((_, current)) = properties.iter_mut().rev().find(|(name, _)| name == key) {
+            *current = value;
+        } else {
+            properties.push((key.to_string(), value));
+        }
     }
 }
 
