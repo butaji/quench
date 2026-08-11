@@ -223,6 +223,7 @@ pub enum Builtin {
     ArrayUnshift,
     ArrayFill,
     ArrayCopyWithin,
+    ArrayToSorted,
     ArraySplice,
     TypedArrayFill,
     ObjectDefineProperty,
