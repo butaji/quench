@@ -159,6 +159,7 @@ fn construct_builtin(
         }
         crate::ops::Builtin::WeakMap => Ok(crate::collections::map::weak_map_new(arguments)),
         crate::ops::Builtin::WeakSet => Ok(crate::collections::set::weak_set_new(arguments)),
+        crate::ops::Builtin::WeakRef => construct_weak_ref(arguments),
         crate::ops::Builtin::Date => crate::date::execute(builtin, None, arguments)
             .unwrap_or_else(|| Ok(crate::builtins::object(arguments))),
         crate::ops::Builtin::RegExp => Ok(construct_regexp(arguments)),
@@ -168,6 +169,23 @@ fn construct_builtin(
     }
 }
 
+fn construct_weak_ref(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
+    let Some(target) = arguments
+        .first()
+        .filter(|value| crate::value::is_object(value))
+    else {
+        return Err(crate::value::error::throw_type_error(
+            "WeakRef target must be an object",
+        ));
+    };
+    Ok(Value::Object(Rc::new(ObjectData::new(vec![
+        ("\0weakref".to_string(), target.clone()),
+        (
+            "\0prototype".to_string(),
+            Value::Builtin(crate::ops::Builtin::WeakRefPrototype),
+        ),
+    ]))))
+}
 fn construct_shared_array_buffer(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
     let Value::ArrayBuffer(mut buffer) = construct_array_buffer(arguments)? else {
         return Err(crate::vm::not_callable());

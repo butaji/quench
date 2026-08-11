@@ -94,6 +94,7 @@ pub fn prototype(builtin: Builtin) -> Option<Builtin> {
         Builtin::WeakMap => Some(Builtin::WeakMapPrototype),
         Builtin::SharedArrayBuffer => Some(Builtin::SharedArrayBufferPrototype),
         Builtin::WeakSet => Some(Builtin::WeakSetPrototype),
+        Builtin::WeakRef => Some(Builtin::WeakRefPrototype),
         Builtin::Error => Some(Builtin::ErrorPrototype),
         Builtin::RangeError => Some(Builtin::ErrorPrototype),
         Builtin::ReferenceError => Some(Builtin::ErrorPrototype),
@@ -156,6 +157,7 @@ fn collection_constructor_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::WeakMap => Some("WeakMap"),
         Builtin::SharedArrayBuffer => Some("SharedArrayBuffer"),
         Builtin::WeakSet => Some("WeakSet"),
+        Builtin::WeakRef => Some("WeakRef"),
         _ => None,
     }
 }
@@ -163,6 +165,7 @@ fn collection_constructor_name(builtin: Builtin) -> Option<&'static str> {
 fn collection_constructor_length(builtin: Builtin) -> Option<f64> {
     match builtin {
         Builtin::Map | Builtin::Set | Builtin::WeakMap | Builtin::WeakSet => Some(0.0),
+        Builtin::WeakRef => Some(1.0),
         Builtin::SharedArrayBuffer => Some(1.0),
         _ => None,
     }
