@@ -54,6 +54,7 @@ fn reduce_units(units: &[SourceUnit<'_>]) -> Result<ResidualProgram, Vec<String>
     let mut state = StatementReducer::new(SourceType::cjs());
     let mut totals = (0, 0);
     let mut last = None;
+    let mut facts_out = ProgramDb::default();
     for unit in units {
         let strict_source;
         let source = if unit.strict && unit.source_type.is_script() {
@@ -78,8 +79,21 @@ fn reduce_units(units: &[SourceUnit<'_>]) -> Result<ResidualProgram, Vec<String>
             &mut facts,
             unit.source_type.is_script(),
         )?;
+        merge_facts(&mut facts_out, facts);
     }
-    finish(state, totals, last)
+    finish(state, totals, last, facts_out)
+}
+
+fn merge_facts(target: &mut ProgramDb, source: ProgramDb) {
+    target.constants.extend(source.constants);
+    target.eval_var_barrier.extend(source.eval_var_barrier);
+    target.eval_deletable.extend(source.eval_deletable);
+    target.strict |= source.strict;
+    target.in_function = source.in_function;
+    target.tail_calls = source.tail_calls;
+    if !source.private_names.is_empty() {
+        target.private_names = source.private_names;
+    }
 }
 
 fn reject_parse_errors(parsed: &oxc::parser::ParserReturn<'_>) -> Result<(), Vec<String>> {
@@ -100,13 +114,12 @@ fn finish(
     state: StatementReducer,
     totals: (usize, usize),
     last: Option<u16>,
+    mut facts: ProgramDb,
 ) -> Result<ResidualProgram, Vec<String>> {
+    facts.scope_count = totals.0;
+    facts.symbol_count = totals.1;
     Ok(ResidualProgram {
-        facts: ProgramDb {
-            scope_count: totals.0,
-            symbol_count: totals.1,
-            ..ProgramDb::default()
-        },
+        facts,
         ops: crate::reduce_support::finish_program(state.ops, last)?,
     })
 }
