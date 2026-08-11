@@ -35,8 +35,20 @@ pub fn property(key: &str) -> Value {
         "getOrInsert" => Value::Builtin(Builtin::MapGetOrInsert),
         "getOrInsertComputed" => Value::Builtin(Builtin::MapGetOrInsertComputed),
         "Symbol.iterator" => Value::Builtin(Builtin::MapEntries),
+        "Symbol.toStringTag" => Value::String("Map".into()),
         _ => Value::Undefined,
     }
+}
+
+pub(crate) fn map_size(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let Some(Value::Map(data)) =
+        receiver.filter(|value| matches!(value, Value::Map(data) if !data.weak))
+    else {
+        return Err(crate::value::error::throw_type_error(
+            "Method get size called on incompatible receiver",
+        ));
+    };
+    Ok(Value::Number(data.keys.borrow().len() as f64))
 }
 
 pub(crate) fn map_group_by(arguments: &[Value]) -> Result<Value, VmError> {

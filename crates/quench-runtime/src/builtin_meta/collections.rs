@@ -12,6 +12,8 @@ pub fn collections_property(builtin: Builtin, key: &str) -> Option<Value> {
         return map_property(key);
     }
     match (builtin, key) {
+        (SetPrototype, "size") => Some(Value::Builtin(SetSizeGetter)),
+        (SetPrototype, "Symbol.toStringTag") => Some(Value::String("Set".into())),
         (SetPrototype, "add") => Some(Value::Builtin(SetAdd)),
         (SetPrototype, "has") => Some(Value::Builtin(SetHas)),
         (SetPrototype, "delete") => Some(Value::Builtin(SetDelete)),
@@ -43,6 +45,8 @@ fn map_property(key: &str) -> Option<Value> {
     use Builtin::*;
     match key {
         "constructor" => Some(Value::Builtin(Map)),
+        "size" => Some(Value::Builtin(MapSizeGetter)),
+        "Symbol.toStringTag" => Some(Value::String("Map".into())),
         "set" => Some(Value::Builtin(MapSet)),
         "get" => Some(Value::Builtin(MapGet)),
         "has" => Some(Value::Builtin(MapHas)),
@@ -74,6 +78,7 @@ fn weak_set_property(key: &str) -> Option<Value> {
 pub const fn fn_name(b: Builtin) -> Option<&'static str> {
     match b {
         Builtin::MapSet => Some("Map.prototype.set"),
+        Builtin::MapSizeGetter => Some("get size"),
         Builtin::MapGet => Some("Map.prototype.get"),
         Builtin::MapHas => Some("Map.prototype.has"),
         Builtin::MapDelete => Some("Map.prototype.delete"),
@@ -83,6 +88,7 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
         Builtin::MapKeys => Some("Map.prototype.keys"),
         Builtin::MapValues => Some("Map.prototype.values"),
         Builtin::SetAdd => Some("Set.prototype.add"),
+        Builtin::SetSizeGetter => Some("get size"),
         Builtin::SetHas => Some("Set.prototype.has"),
         Builtin::SetDelete => Some("Set.prototype.delete"),
         Builtin::SetClear => Some("Set.prototype.clear"),
@@ -111,6 +117,7 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
 pub const fn fn_len(b: Builtin) -> Option<f64> {
     match b {
         Builtin::MapSet => Some(2.0),
+        Builtin::MapSizeGetter | Builtin::SetSizeGetter => Some(0.0),
         Builtin::MapGet | Builtin::MapHas | Builtin::MapDelete => Some(1.0),
         Builtin::MapClear => Some(0.0),
         Builtin::MapForEach => Some(1.0),
@@ -137,6 +144,12 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
 }
 
 pub const fn short_name(b: Builtin) -> Option<&'static str> {
+    if let Some(name) = size_getter_name(b) {
+        return Some(name);
+    }
+    if let Some(name) = weak_short_name(b) {
+        return Some(name);
+    }
     match b {
         Builtin::MapSet => Some("set"),
         Builtin::MapGet => Some("get"),
@@ -163,15 +176,26 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
         Builtin::SetIsDisjointFrom => Some("isDisjointFrom"),
         Builtin::SetIsSubsetOf => Some("isSubsetOf"),
         Builtin::SetIsSupersetOf => Some("isSupersetOf"),
+        _ => None,
+    }
+}
+
+const fn weak_short_name(builtin: Builtin) -> Option<&'static str> {
+    match builtin {
         Builtin::WeakMapSet => Some("set"),
-        Builtin::WeakMapGet => Some("get"),
-        Builtin::WeakMapHas => Some("has"),
-        Builtin::WeakMapDelete => Some("delete"),
-        Builtin::WeakMapGetOrInsert => Some("getOrInsert"),
-        Builtin::WeakMapGetOrInsertComputed => Some("getOrInsertComputed"),
         Builtin::WeakSetAdd => Some("add"),
+        Builtin::WeakMapGet => Some("get"),
         Builtin::WeakSetHas => Some("has"),
-        Builtin::WeakSetDelete => Some("delete"),
+        Builtin::WeakMapHas => Some("has"),
+        Builtin::WeakMapDelete | Builtin::WeakSetDelete => Some("delete"),
+        Builtin::WeakMapGetOrInsert | Builtin::WeakMapGetOrInsertComputed => Some("getOrInsert"),
+        _ => None,
+    }
+}
+
+const fn size_getter_name(builtin: Builtin) -> Option<&'static str> {
+    match builtin {
+        Builtin::MapSizeGetter | Builtin::SetSizeGetter => Some("get size"),
         _ => None,
     }
 }

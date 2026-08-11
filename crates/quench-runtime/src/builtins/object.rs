@@ -248,6 +248,12 @@ fn object_descriptor(properties: &[(String, Value)], key: &str) -> Option<Value>
         .map(|(_, value)| descriptor_object(value))
 }
 fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
+    if builtin == Builtin::MapPrototype && key == "size" {
+        return Some(accessor_descriptor(Builtin::MapSizeGetter));
+    }
+    if builtin == Builtin::SetPrototype && key == "size" {
+        return Some(accessor_descriptor(Builtin::SetSizeGetter));
+    }
     if builtin == Builtin::Symbol && key == "unscopables" {
         return super::special_property(builtin, key)
             .map(|property| descriptor_object_with_flags(property, false, false, false));
@@ -268,6 +274,15 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
         false,
         configurable,
     ))
+}
+
+fn accessor_descriptor(getter: Builtin) -> Value {
+    Value::Object(Rc::new(ObjectData::new(vec![
+        ("get".to_string(), Value::Builtin(getter)),
+        ("set".to_string(), Value::Undefined),
+        ("enumerable".to_string(), Value::Boolean(false)),
+        ("configurable".to_string(), Value::Boolean(true)),
+    ])))
 }
 include!("object_property_flags.rs");
 fn array_descriptor(values: &crate::value::ArrayData, key: &str) -> Option<Value> {

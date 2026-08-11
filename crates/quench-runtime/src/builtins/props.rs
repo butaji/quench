@@ -43,7 +43,7 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (Symbol, "unscopables") => Some(Value::String("Symbol.unscopables\0".to_string())),
         (Symbol, k) => crate::builtin_meta::symbol::symbol_prop(k).map(Value::Builtin),
         (Map, "groupBy") => Some(Value::Builtin(MapGroupBy)),
-        (MapPrototype | SetPrototype, k) => collections_prop(builtin, k).map(Value::Builtin),
+        (MapPrototype | SetPrototype, k) => collections_prop(builtin, k),
         (WeakMapPrototype, "constructor") => Some(Value::Builtin(WeakMap)),
         (WeakMapPrototype, "Symbol.toStringTag") => Some(Value::String("WeakMap".into())),
         (WeakMapPrototype, k) => match crate::collections::map::weak_property(k) {
@@ -373,11 +373,8 @@ fn builtin_method3(builtin: Builtin, key: &str) -> Option<Builtin> {
         _ => None,
     }
 }
-fn collections_prop(builtin: Builtin, key: &str) -> Option<Builtin> {
-    crate::builtin_meta::collections::collections_property(builtin, key).and_then(|v| match v {
-        Value::Builtin(b) => Some(b),
-        _ => None,
-    })
+fn collections_prop(builtin: Builtin, key: &str) -> Option<Value> {
+    crate::builtin_meta::collections::collections_property(builtin, key)
 }
 pub(crate) fn special_property(builtin: Builtin, key: &str) -> Option<Value> {
     special(builtin, key)
