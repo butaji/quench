@@ -56,11 +56,19 @@ fn process_promise(promise: &Rc<PromiseData>) {
 }
 
 fn process_continuation(continuation: PromiseContinuation, state: &PromiseState) {
-    let PromiseContinuation::AsyncGenerator { generator, result } = continuation;
+    let (generator, result, yielding) = match continuation {
+        PromiseContinuation::AsyncGenerator { generator, result } => (generator, result, false),
+        PromiseContinuation::AsyncGeneratorYield { generator, result } => (generator, result, true),
+    };
     let value = match state {
         PromiseState::Fulfilled(value) | PromiseState::Rejected(value) => value.clone(),
         PromiseState::Pending => return,
     };
+    if yielding {
+        *generator.pending_yield.borrow_mut() = false;
+        finish_async_yield(&generator, &result, state, value);
+        return;
+    }
     let resume = if matches!(state, PromiseState::Rejected(_)) {
         crate::generator::resume_async_after_await(&generator, true, value)
     } else {
@@ -73,6 +81,20 @@ fn process_continuation(continuation: PromiseContinuation, state: &PromiseState)
         }
         Err(VmError::Thrown(reason)) => reject_promise(&result, reason),
         Err(_) => reject_promise(&result, Value::Undefined),
+    }
+}
+
+fn finish_async_yield(
+    generator: &Rc<crate::value::GeneratorData>,
+    result: &Rc<PromiseData>,
+    state: &PromiseState,
+    value: Value,
+) {
+    if matches!(state, PromiseState::Rejected(_)) {
+        *generator.done.borrow_mut() = true;
+        reject_promise(result, value);
+    } else {
+        resolve_promise(result, crate::generator::iterator_result(value, false));
     }
 }
 
@@ -133,7 +155,11 @@ pub(crate) fn register_async_generator(
     awaited
         .continuations
         .borrow_mut()
-        .push(PromiseContinuation::AsyncGenerator { generator, result });
+        .push(if *generator.pending_yield.borrow() {
+            PromiseContinuation::AsyncGeneratorYield { generator, result }
+        } else {
+            PromiseContinuation::AsyncGenerator { generator, result }
+        });
     if !matches!(*awaited.state.borrow(), PromiseState::Pending) {
         queue_promise(awaited);
     }

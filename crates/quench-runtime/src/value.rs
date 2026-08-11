@@ -82,6 +82,10 @@ pub(crate) enum PromiseContinuation {
         generator: Rc<GeneratorData>,
         result: Rc<PromiseData>,
     },
+    AsyncGeneratorYield {
+        generator: Rc<GeneratorData>,
+        result: Rc<PromiseData>,
+    },
 }
 
 /// Heap-allocated Promise data.
@@ -221,9 +225,10 @@ pub struct GeneratorData {
     pub arguments: Vec<Value>,
     pub done: RefCell<bool>,
     pub state: RefCell<Option<GeneratorState>>,
+    pub pending_yield: RefCell<bool>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct GeneratorState {
     pub registers: Vec<Value>,
     pub environment: Rc<crate::environment::Environment>,
