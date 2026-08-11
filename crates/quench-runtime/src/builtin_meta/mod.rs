@@ -59,6 +59,7 @@ pub fn constructor_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::Map => Some("Map"),
         Builtin::Set => Some("Set"),
         Builtin::WeakMap => Some("WeakMap"),
+        Builtin::SharedArrayBuffer => Some("SharedArrayBuffer"),
         _ => None,
     }
 }
@@ -92,6 +93,7 @@ pub fn prototype(builtin: Builtin) -> Option<Builtin> {
         Builtin::Map => Some(Builtin::MapPrototype),
         Builtin::Set => Some(Builtin::SetPrototype),
         Builtin::WeakMap => Some(Builtin::WeakMapPrototype),
+        Builtin::SharedArrayBuffer => Some(Builtin::SharedArrayBufferPrototype),
         Builtin::Error => Some(Builtin::ErrorPrototype),
         Builtin::RangeError => Some(Builtin::ErrorPrototype),
         Builtin::ReferenceError => Some(Builtin::ErrorPrototype),
@@ -143,6 +145,7 @@ pub fn constructor_length(builtin: Builtin) -> Option<f64> {
         Builtin::Map => Some(0.0),
         Builtin::Set => Some(0.0),
         Builtin::WeakMap => Some(0.0),
+        Builtin::SharedArrayBuffer => Some(1.0),
         _ => None,
     }
 }
