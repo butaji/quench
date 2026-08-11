@@ -472,8 +472,10 @@ fn function_prototype_builtin(
 fn regexp_prototype_to_string(
     receiver: Option<&Value>,
 ) -> Result<Value, VmError> {
-    let Some(value) = receiver else {
-        return Ok(Value::String("/(?:)/".to_string()));
+    let Some(value) = receiver.filter(|value| !matches!(value, Value::Null | Value::Undefined)) else {
+        return Err(crate::value::error::throw_type_error(
+            "RegExp.prototype.toString called on incompatible receiver",
+        ));
     };
     let source = crate::execute::get_property(value, "source");
     let flags = crate::execute::get_property(value, "flags");
