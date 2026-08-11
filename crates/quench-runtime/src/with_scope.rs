@@ -12,6 +12,8 @@ pub(crate) struct FunctionGuard {
     previous: Vec<Value>,
 }
 
+// Closures created under `with` still need a dedicated dynamic-environment
+// capture path; the current guard intentionally isolates each function call.
 impl FunctionGuard {
     pub(crate) fn isolate() -> Self {
         let previous = OBJECTS.with(|objects| objects.replace(Vec::new()));
