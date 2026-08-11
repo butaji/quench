@@ -8,11 +8,16 @@ use crate::{
     value::Value,
 };
 
+type BuiltinResult = Option<Result<Value, crate::execute::VmError>>;
+
 pub(crate) fn execute_builtin(
     builtin: crate::ops::Builtin,
     receiver: Option<&Value>,
     arguments: &[Value],
-) -> Option<Result<Value, crate::execute::VmError>> {
+) -> BuiltinResult {
+    if let Some(result) = array_iterator_builtin(builtin, receiver) {
+        return Some(result);
+    }
     use crate::ops::Builtin::*;
     let result = match builtin {
         Array => return Some(Ok(crate::builtins::array(arguments))),
@@ -37,15 +42,26 @@ pub(crate) fn execute_builtin(
         ArrayReduce => return Some(reduce_values(receiver, arguments, false)),
         ArrayReduceRight => return Some(reduce_values(receiver, arguments, true)),
         ArrayForEach => return Some(crate::builtins::array_for_each(receiver, arguments)),
-        ArrayToLocaleString => {
-            return Some(crate::intl::tolocale::array_to_locale_string(
-                receiver, arguments,
-            ))
-        }
-        ArrayIterator => return Some(array_iterator(receiver)),
+        ArrayToLocaleString => return Some(array_to_locale_string(receiver, arguments)),
         _ => return None,
     };
     Some(Ok(result))
+}
+
+fn array_to_locale_string(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    crate::intl::tolocale::array_to_locale_string(receiver, arguments)
+}
+
+fn array_iterator_builtin(builtin: crate::ops::Builtin, receiver: Option<&Value>) -> BuiltinResult {
+    match builtin {
+        crate::ops::Builtin::ArrayIterator => Some(array_iterator(receiver)),
+        crate::ops::Builtin::ArrayKeys => Some(array_keys(receiver)),
+        crate::ops::Builtin::ArrayEntries => Some(array_entries(receiver)),
+        _ => None,
+    }
 }
 
 fn from(value: Option<&Value>) -> Result<Value, crate::execute::VmError> {
@@ -177,6 +193,8 @@ fn array_method(key: &str) -> Option<crate::ops::Builtin> {
         "reduceRight" => crate::ops::Builtin::ArrayReduceRight,
         "toLocaleString" => crate::ops::Builtin::ArrayToLocaleString,
         "values" => crate::ops::Builtin::ArrayIterator,
+        "keys" => crate::ops::Builtin::ArrayKeys,
+        "entries" => crate::ops::Builtin::ArrayEntries,
         "Symbol.iterator" => crate::ops::Builtin::ArrayIterator,
         "hasOwnProperty" => crate::ops::Builtin::ObjectHasOwnProperty,
         "propertyIsEnumerable" => crate::ops::Builtin::ObjectPropertyIsEnumerable,
