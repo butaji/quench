@@ -49,6 +49,36 @@ fn reduce_super_constructor_call(
     Some(dst)
 }
 
+pub(crate) fn reduce_call_arguments(
+    call: &CallExpression<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<(Vec<u16>, Vec<bool>)> {
+    reduce_arguments(&call.arguments, ops, facts, next, locals)
+}
+
+pub(crate) fn reduce_arguments(
+    arguments: &[Argument<'_>],
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<(Vec<u16>, Vec<bool>)> {
+    let mut args = Vec::new();
+    let mut spreads = Vec::new();
+    for argument in arguments {
+        let (expression, spread) = match argument {
+            Argument::SpreadElement(spread) => (&spread.argument, true),
+            _ => (argument.as_expression()?, false),
+        };
+        args.push(reduce_expression(expression, ops, facts, next, locals)?);
+        spreads.push(spread);
+    }
+    Some((args, spreads))
+}
+
 fn is_direct_eval(call: &CallExpression<'_>, locals: &HashMap<String, u16>) -> bool {
     matches!(&call.callee, Expression::Identifier(identifier) if identifier.name == "eval")
         && !locals.contains_key("eval")
@@ -73,6 +103,7 @@ fn reduce_direct_eval(
         source,
         strict: facts.strict,
         global: !facts.in_function,
+        direct: true,
         bindings,
         forbidden_var_names: facts.eval_var_barrier.clone(),
     });
@@ -122,26 +153,6 @@ fn materialize_first_argument(
         key: "0".to_string(),
     });
     source
-}
-
-fn reduce_call_arguments(
-    call: &CallExpression<'_>,
-    ops: &mut Vec<Op>,
-    facts: &mut ProgramDb,
-    next: &mut u16,
-    locals: &HashMap<String, u16>,
-) -> Option<(Vec<u16>, Vec<bool>)> {
-    let mut args = Vec::new();
-    let mut spreads = Vec::new();
-    for argument in &call.arguments {
-        let (expression, spread) = match argument {
-            Argument::SpreadElement(spread) => (&spread.argument, true),
-            _ => (argument.as_expression()?, false),
-        };
-        args.push(reduce_expression(expression, ops, facts, next, locals)?);
-        spreads.push(spread);
-    }
-    Some((args, spreads))
 }
 
 fn take_register(next: &mut u16) -> u16 {

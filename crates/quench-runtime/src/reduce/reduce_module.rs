@@ -141,41 +141,110 @@ fn reduce_named(
     locals: &mut HashMap<String, u16>,
 ) -> Result<Option<u16>, Vec<String>> {
     if let Some(declaration) = &export.declaration {
-        return match declaration {
-            oxc::ast::ast::Declaration::FunctionDeclaration(function) => {
-                reduce_module_exported_decl!(
-                    function function,
-                    ops,
-                    facts,
-                    next_register,
-                    next_slot,
-                    locals
-                )
-            }
-            oxc::ast::ast::Declaration::ClassDeclaration(class) => {
-                reduce_module_exported_decl!(
-                    class class,
-                    ops,
-                    facts,
-                    next_register,
-                    next_slot,
-                    locals
-                )
-            }
-            oxc::ast::ast::Declaration::VariableDeclaration(declaration) => {
-                reduce_module_exported_decl!(
-                    variable declaration,
-                    ops,
-                    facts,
-                    next_register,
-                    next_slot,
-                    locals
-                )
-            }
-            _ => Ok(None),
-        };
+        return reduce_named_declaration(declaration, ops, facts, next_register, next_slot, locals);
     }
     Ok(None)
+}
+
+fn reduce_named_declaration(
+    declaration: &oxc::ast::ast::Declaration<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    next_slot: &mut u16,
+    locals: &mut HashMap<String, u16>,
+) -> Result<Option<u16>, Vec<String>> {
+    reduce_named_declaration_kind(declaration, ops, facts, next_register, next_slot, locals)
+}
+
+fn reduce_named_declaration_kind(
+    declaration: &oxc::ast::ast::Declaration<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    next_slot: &mut u16,
+    locals: &mut HashMap<String, u16>,
+) -> Result<Option<u16>, Vec<String>> {
+    match declaration {
+        oxc::ast::ast::Declaration::FunctionDeclaration(function) => {
+            reduce_named_function_declaration(
+                function,
+                ops,
+                facts,
+                next_register,
+                next_slot,
+                locals,
+            )
+        }
+        oxc::ast::ast::Declaration::ClassDeclaration(class) => {
+            reduce_named_class_declaration(class, ops, facts, next_register, next_slot, locals)
+        }
+        oxc::ast::ast::Declaration::VariableDeclaration(declaration) => {
+            reduce_named_variable_declaration(
+                declaration,
+                ops,
+                facts,
+                next_register,
+                next_slot,
+                locals,
+            )
+        }
+        _ => Ok(None),
+    }
+}
+
+fn reduce_named_function_declaration(
+    function: &oxc::ast::ast::Function<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    next_slot: &mut u16,
+    locals: &mut HashMap<String, u16>,
+) -> Result<Option<u16>, Vec<String>> {
+    reduce_module_exported_decl!(
+        function function,
+        ops,
+        facts,
+        next_register,
+        next_slot,
+        locals
+    )
+}
+
+fn reduce_named_class_declaration(
+    class: &oxc::ast::ast::Class<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    next_slot: &mut u16,
+    locals: &mut HashMap<String, u16>,
+) -> Result<Option<u16>, Vec<String>> {
+    reduce_module_exported_decl!(
+        class class,
+        ops,
+        facts,
+        next_register,
+        next_slot,
+        locals
+    )
+}
+
+fn reduce_named_variable_declaration(
+    declaration: &oxc::ast::ast::VariableDeclaration<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    next_slot: &mut u16,
+    locals: &mut HashMap<String, u16>,
+) -> Result<Option<u16>, Vec<String>> {
+    reduce_module_exported_decl!(
+        variable declaration,
+        ops,
+        facts,
+        next_register,
+        next_slot,
+        locals
+    )
 }
 
 fn reduce_default(
@@ -187,37 +256,94 @@ fn reduce_default(
     locals: &mut HashMap<String, u16>,
 ) -> Result<Option<u16>, Vec<String>> {
     if let Some(expression) = export.declaration.as_expression() {
-        return reduce_exported_default!(
-            expression expression,
-            ops,
-            facts,
-            next_register,
-            locals
-        );
+        return reduce_default_expression(expression, ops, facts, next_register, locals);
     }
-    match &export.declaration {
+    reduce_default_declaration(
+        &export.declaration,
+        ops,
+        facts,
+        next_register,
+        next_slot,
+        locals,
+    )
+}
+
+fn reduce_default_expression(
+    expression: &oxc::ast::ast::Expression<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    locals: &mut HashMap<String, u16>,
+) -> Result<Option<u16>, Vec<String>> {
+    reduce_exported_default!(
+        expression expression,
+        ops,
+        facts,
+        next_register,
+        locals
+    )
+}
+
+fn reduce_default_declaration(
+    declaration: &ExportDefaultDeclarationKind<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    next_slot: &mut u16,
+    locals: &mut HashMap<String, u16>,
+) -> Result<Option<u16>, Vec<String>> {
+    match declaration {
         ExportDefaultDeclarationKind::FunctionDeclaration(function) => {
-            reduce_exported_default!(
-                function function,
+            reduce_default_function_declaration(
+                function,
                 ops,
                 facts,
                 next_register,
                 next_slot,
-                locals
+                locals,
             )
         }
         ExportDefaultDeclarationKind::ClassDeclaration(class) => {
-            reduce_exported_default!(
-                class class,
-                ops,
-                facts,
-                next_register,
-                next_slot,
-                locals
-            )
+            reduce_default_class_declaration(class, ops, facts, next_register, next_slot, locals)
         }
         _ => Ok(None),
     }
+}
+
+fn reduce_default_function_declaration<'a>(
+    function: &'a oxc::ast::ast::Function<'a>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    next_slot: &mut u16,
+    locals: &mut HashMap<String, u16>,
+) -> Result<Option<u16>, Vec<String>> {
+    reduce_exported_default!(
+        function function,
+        ops,
+        facts,
+        next_register,
+        next_slot,
+        locals
+    )
+}
+
+fn reduce_default_class_declaration<'a>(
+    class: &'a oxc::ast::ast::Class<'a>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    next_slot: &mut u16,
+    locals: &mut HashMap<String, u16>,
+) -> Result<Option<u16>, Vec<String>> {
+    reduce_module_exported_decl!(
+        class class,
+        ops,
+        facts,
+        next_register,
+        next_slot,
+        locals
+    )
 }
 
 fn reduce_class(

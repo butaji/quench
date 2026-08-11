@@ -1,5 +1,5 @@
 fn reduce_body_statements(
-    body: &oxc::ast::ast::FunctionBody<'_>,
+    body: &[oxc::ast::ast::Statement<'_>],
     formal: &oxc::ast::ast::FormalParameters<'_>,
     facts: &mut ProgramDb,
     parameters: &std::collections::HashMap<String, u16>,
@@ -7,12 +7,20 @@ fn reduce_body_statements(
 ) -> Result<Vec<Op>, Vec<String>> {
     let formal = crate::function_parameters::bindings(formal)?.0;
     let mut locals = parameters.clone();
-    crate::reduce_support::shadow_function_bindings(&body.statements, &mut locals, &formal);
+    crate::reduce_support::shadow_function_bindings(body, &mut locals, &formal);
+    let ordered = crate::functions::ordered_function_declarations_first(body);
     let barrier = std::mem::take(&mut facts.eval_var_barrier);
-    let reduced =
-        crate::reduce::reduce_statements_with_locals(&body.statements, facts, locals, next_slot);
+    let reduced = crate::functions::reduce_selected_body(
+        body,
+        &ordered,
+        facts,
+        locals,
+        next_slot,
+        false,
+    )
+    .ok_or_else(|| vec!["Unsupported function body".to_string()])?;
     facts.eval_var_barrier = barrier;
-    reduced
+    Ok(reduced)
 }
 
 fn emit_function_expression(
@@ -40,6 +48,7 @@ fn emit_function_expression(
             object: function,
             key: FUNCTION_SELF.to_string(),
             src: marker,
+            strict: true,
         });
     }
     function
@@ -48,7 +57,6 @@ fn emit_function_expression(
 pub(crate) fn build_registers(
     function: &std::rc::Rc<crate::value::FunctionValue>,
     this_value: &crate::value::Value,
-            strict: true,
     arguments: &[crate::value::Value],
 ) -> (
     Vec<crate::value::Value>,

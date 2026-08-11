@@ -44,14 +44,60 @@ pub(super) fn instantiate_functions(
     behavior: EvalBehavior,
 ) -> Result<(), Vec<String>> {
     let (ops, next_register, next_slot, locals) = state;
+    let (selected, variables, lexical) = instantiate_context(statements, behavior);
+    if is_global_behavior(behavior) {
+        emit_global_checks(&selected, &variables, &lexical, ops);
+    }
+    emit_function_declarations(
+        statements,
+        facts,
+        ops,
+        next_register,
+        next_slot,
+        locals,
+        behavior,
+    )?;
+    if is_global_behavior(behavior) {
+        emit_global_bindings_and_checks(
+            &variables,
+            &lexical,
+            locals,
+            ops,
+            behavior == EvalBehavior::Global,
+        )?;
+    }
+    if matches!(behavior, EvalBehavior::Script) {
+        emit_global_lexical_bindings(statements, locals, ops);
+    }
+    Ok(())
+}
+
+fn instantiate_context<'a>(
+    statements: &'a [Statement<'a>],
+    behavior: EvalBehavior,
+) -> (Vec<&'a Statement<'a>>, Vec<String>, Vec<String>) {
     let selected = selected_functions(statements);
     let winners = selected_function_names(&selected);
     let variables = global_variable_names(statements, &winners);
-    let lexical = lexical_variable_names(statements);
-    if behavior == EvalBehavior::Global {
-        emit_global_checks(&selected, &variables, &lexical, ops);
-    }
-    for statement in selected {
+    let lexical = if matches!(behavior, EvalBehavior::Script) {
+        lexical_variable_names(statements)
+    } else {
+        Vec::new()
+    };
+    (selected, variables, lexical)
+}
+
+fn emit_function_declarations(
+    statements: &[Statement<'_>],
+    facts: &mut ProgramDb,
+    ops: &mut Vec<Op>,
+    next_register: &mut u16,
+    next_slot: &mut u16,
+    locals: &mut HashMap<String, u16>,
+    behavior: EvalBehavior,
+) -> Result<(), Vec<String>> {
+    let emit_global = is_global_behavior(behavior);
+    for statement in selected_functions(statements) {
         let Statement::FunctionDeclaration(function) = statement else {
             continue;
         };
@@ -63,14 +109,83 @@ pub(super) fn instantiate_functions(
             next_slot,
             locals,
         )?;
-        if behavior == EvalBehavior::Global {
-            emit_global_function(function, locals, ops);
+        if emit_global {
+            emit_global_function(function, locals, ops, behavior == EvalBehavior::Global);
         }
     }
-    if behavior == EvalBehavior::Global {
-        emit_global_vars(&variables, &lexical, locals, ops);
-    }
     Ok(())
+}
+
+fn emit_global_bindings_and_checks(
+    variables: &[String],
+    lexical: &[String],
+    locals: &HashMap<String, u16>,
+    ops: &mut Vec<Op>,
+    deletable: bool,
+) -> Result<(), Vec<String>> {
+    emit_global_vars(variables, lexical, locals, ops, deletable);
+    Ok(())
+}
+
+fn is_global_behavior(behavior: EvalBehavior) -> bool {
+    matches!(behavior, EvalBehavior::Global | EvalBehavior::Script)
+}
+
+pub(super) fn emit_global_lexical_bindings(
+    statements: &[Statement<'_>],
+    locals: &HashMap<String, u16>,
+    ops: &mut Vec<Op>,
+) {
+    for statement in statements {
+        match statement {
+            Statement::VariableDeclaration(declaration)
+                if declaration.kind != oxc::ast::ast::VariableDeclarationKind::Var =>
+            {
+                let immutable = declaration.kind == oxc::ast::ast::VariableDeclarationKind::Const;
+                emit_lexical_declaration(declaration, locals, ops, immutable);
+            }
+            Statement::ClassDeclaration(class) => emit_class_binding(class, locals, ops),
+            _ => {}
+        }
+    }
+}
+
+fn emit_lexical_declaration(
+    declaration: &oxc::ast::ast::VariableDeclaration<'_>,
+    locals: &HashMap<String, u16>,
+    ops: &mut Vec<Op>,
+    immutable: bool,
+) {
+    for declarator in &declaration.declarations {
+        for name in crate::binding_patterns::names(&declarator.id) {
+            emit_lexical_binding(name, locals, ops, immutable);
+        }
+    }
+}
+
+fn emit_class_binding(
+    class: &oxc::ast::ast::Class<'_>,
+    locals: &HashMap<String, u16>,
+    ops: &mut Vec<Op>,
+) {
+    if let Some(identifier) = &class.id {
+        emit_lexical_binding(identifier.name.to_string(), locals, ops, false);
+    }
+}
+
+fn emit_lexical_binding(
+    name: String,
+    locals: &HashMap<String, u16>,
+    ops: &mut Vec<Op>,
+    immutable: bool,
+) {
+    if let Some(slot) = locals.get(&name) {
+        ops.push(Op::DeclareGlobalLexicalBinding {
+            name,
+            slot: *slot,
+            immutable,
+        });
+    }
 }
 
 fn selected_function_names(statements: &[&Statement<'_>]) -> HashSet<String> {
@@ -148,6 +263,7 @@ fn emit_global_function(
     function: &oxc::ast::ast::Function<'_>,
     locals: &HashMap<String, u16>,
     ops: &mut Vec<Op>,
+    deletable: bool,
 ) {
     let Some(identifier) = &function.id else {
         return;
@@ -158,7 +274,7 @@ fn emit_global_function(
     ops.push(Op::CreateGlobalFunction {
         name: identifier.name.to_string(),
         slot: *slot,
-        deletable: true,
+        deletable,
     });
 }
 
@@ -167,6 +283,7 @@ fn emit_global_vars(
     lexical: &[String],
     locals: &HashMap<String, u16>,
     ops: &mut Vec<Op>,
+    deletable: bool,
 ) {
     let lexical_set: std::collections::HashSet<&String> = lexical.iter().collect();
     let seen: std::collections::HashSet<&String> = names.iter().collect();
@@ -175,7 +292,7 @@ fn emit_global_vars(
             ops.push(Op::CreateGlobalVar {
                 name: name.clone(),
                 slot: *slot,
-                deletable: true,
+                deletable,
                 is_lexical: lexical_set.contains(name),
             });
         }
@@ -186,7 +303,7 @@ fn emit_global_vars(
                 ops.push(Op::CreateGlobalVar {
                     name: name.clone(),
                     slot: *slot,
-                    deletable: true,
+                    deletable,
                     is_lexical: true,
                 });
             }
