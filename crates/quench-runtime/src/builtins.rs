@@ -29,6 +29,20 @@ pub(crate) fn read_intrinsic_override(builtin: Builtin, key: &str) -> Option<Val
     overrides::read(builtin, key)
 }
 
+/// Read the data value of a runtime-defined intrinsic property override, if
+/// the recorded descriptor carries one. Accessor descriptors are left to the
+/// caller to invoke.
+pub(crate) fn read_descriptor_value(builtin: Builtin, key: &str) -> Option<Value> {
+    let Value::Object(properties) = read_intrinsic_override(builtin, key)? else {
+        return None;
+    };
+    properties
+        .iter()
+        .rev()
+        .find(|(name, _)| name == "value")
+        .map(|(_, value)| value.clone())
+}
+
 pub(crate) fn write_intrinsic_override(builtin: Builtin, key: &str, descriptor: Value) {
     overrides::write(builtin, key, descriptor)
 }
