@@ -366,7 +366,13 @@ fn emit_property_get(ops: &mut Vec<Op>, dst: u16, object: u16, key: &PlaceKey) {
 
 pub(crate) fn put(place: Place, value: u16, ops: &mut Vec<Op>) -> Option<()> {
     match place {
-        Place::Local { slot } => ops.push(Op::StoreLocal { slot, src: value }),
+        Place::Local { slot } => {
+            ops.push(Op::CheckInitialized {
+                slot,
+                name: format!("local_{slot}"),
+            });
+            ops.push(Op::StoreLocal { slot, src: value });
+        }
         Place::Name { name, strict } => ops.push(Op::SetName {
             key: name,
             src: value,
