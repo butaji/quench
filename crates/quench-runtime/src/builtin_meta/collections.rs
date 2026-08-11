@@ -23,7 +23,8 @@ pub fn collections_property(builtin: Builtin, key: &str) -> Option<Value> {
         (SetPrototype, "delete") => Some(Value::Builtin(SetDelete)),
         (SetPrototype, "clear") => Some(Value::Builtin(SetClear)),
         (SetPrototype, "forEach") => Some(Value::Builtin(SetForEach)),
-        (SetPrototype, "keys") => Some(Value::Builtin(SetKeys)),
+        (SetPrototype, "keys") => Some(Value::Builtin(SetIterator)),
+        (SetPrototype, "values") => Some(Value::Builtin(SetIterator)),
         (SetPrototype, "difference") => Some(Value::Builtin(SetDifference)),
         (SetPrototype, "intersection") => Some(Value::Builtin(SetIntersection)),
         (SetPrototype, "symmetricDifference") => Some(Value::Builtin(SetSymmetricDifference)),
@@ -91,7 +92,7 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         Builtin::MapClear | Builtin::MapForEach => Some(0.0),
         Builtin::MapEntries | Builtin::MapKeys | Builtin::MapValues => Some(0.0),
         Builtin::SetAdd | Builtin::SetHas | Builtin::SetDelete => Some(1.0),
-        Builtin::SetClear | Builtin::SetForEach | Builtin::SetKeys => Some(0.0),
+        Builtin::SetClear | Builtin::SetForEach => Some(0.0),
         Builtin::SetDifference
         | Builtin::SetIntersection
         | Builtin::SetSymmetricDifference

@@ -32,7 +32,6 @@ pub(crate) fn execute_builtin(
         SetDelete => Some(set::set_delete(receiver, arguments)),
         SetClear => Some(set::set_clear(receiver)),
         SetForEach => Some(set::set_for_each(receiver, arguments)),
-        SetKeys => Some(iterator::from_set(receiver)),
         MapIterator | MapEntries => Some(iterator::from_map(receiver)),
         MapKeys => Some(iterator::from_map_keys(receiver)),
         MapValues => Some(iterator::from_map_values(receiver)),
