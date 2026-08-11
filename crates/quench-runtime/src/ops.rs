@@ -134,6 +134,8 @@ pub enum Builtin {
     Escape,
     IsFinite,
     IsNaN,
+    NumberIsInteger,
+    NumberIsSafeInteger,
     Number,
     Object,
     ObjectIs,

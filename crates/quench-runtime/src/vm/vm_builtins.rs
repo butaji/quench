@@ -74,12 +74,12 @@ fn array_like_length(value: &Value) -> Result<usize, VmError> {
 fn is_simple_builtin(builtin: Builtin) -> bool {
     matches!(
         builtin,
-        Builtin::Boolean
-            | Builtin::BooleanValueOf
+        Builtin::Boolean | Builtin::BooleanValueOf
             | Builtin::Eval
             | Builtin::Escape
             | Builtin::IsFinite
             | Builtin::IsNaN
+            | Builtin::NumberIsInteger | Builtin::NumberIsSafeInteger
             | Builtin::Number | Builtin::BigInt
             | Builtin::NumberToString
             | Builtin::NumberValueOf
@@ -117,11 +117,9 @@ fn execute_simple_builtin(
     arguments: &[Value],
     receiver: Option<&Value>,
 ) -> Result<Value, VmError> {
-    if builtin == Builtin::WeakRefDeref {
-        return weak_ref_deref(receiver);
+    if let Some(result) = simple_prelude(builtin, arguments, receiver) {
+        return result;
     }
-    if is_error_constructor(builtin) { return Ok(crate::builtins::error(builtin, arguments)); }
-    if let Some(result) = crate::functions_dynamic::construct_builtin(builtin, arguments) { return result; }
     match builtin {
         Builtin::Boolean => Ok(Value::Boolean(arguments.first().is_some_and(is_truthy))),
         Builtin::BooleanValueOf => boolean_value_of(receiver),

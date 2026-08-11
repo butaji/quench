@@ -6,6 +6,8 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
     match b {
         Builtin::IsFinite => Some("Number.isFinite"),
         Builtin::IsNaN => Some("Number.isNaN"),
+        Builtin::NumberIsInteger => Some("Number.isInteger"),
+        Builtin::NumberIsSafeInteger => Some("Number.isSafeInteger"),
         Builtin::NumberToString => Some("Number.prototype.toString"),
         Builtin::NumberValueOf => Some("Number.prototype.valueOf"),
         Builtin::NumberToFixed => Some("Number.prototype.toFixed"),
@@ -18,7 +20,10 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
 
 pub const fn fn_len(b: Builtin) -> Option<f64> {
     match b {
-        Builtin::IsFinite | Builtin::IsNaN => Some(1.0),
+        Builtin::IsFinite
+        | Builtin::IsNaN
+        | Builtin::NumberIsInteger
+        | Builtin::NumberIsSafeInteger => Some(1.0),
         Builtin::NumberToString | Builtin::NumberValueOf | Builtin::NumberToLocaleString => {
             Some(0.0)
         }
@@ -33,6 +38,8 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
     match b {
         Builtin::IsFinite => Some("isFinite"),
         Builtin::IsNaN => Some("isNaN"),
+        Builtin::NumberIsInteger => Some("isInteger"),
+        Builtin::NumberIsSafeInteger => Some("isSafeInteger"),
         Builtin::NumberToString => Some("toString"),
         Builtin::NumberValueOf => Some("valueOf"),
         Builtin::NumberToFixed => Some("toFixed"),
