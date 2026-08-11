@@ -186,6 +186,7 @@ include!("builtins_array_pop.rs");
 include!("builtins_array_unshift.rs");
 include!("builtins_array_fill.rs");
 include!("builtins_array_copy_within.rs");
+include!("builtins_array_find_last.rs");
 pub(crate) fn math_pow(arguments: &[Value]) -> Value {
     let base = arguments.first().map_or(f64::NAN, value_to_number);
     let exponent = arguments.get(1).map_or(f64::NAN, value_to_number);
@@ -378,7 +379,6 @@ pub(crate) fn define_property(arguments: &[Value]) -> Result<Value, crate::execu
     };
     define_own_property(target, &key, descriptor)
 }
-
 pub(crate) fn define_own_property(
     target: &Value,
     key: &str,
