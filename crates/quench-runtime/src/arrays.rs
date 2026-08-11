@@ -15,6 +15,9 @@ pub(crate) fn execute_builtin(
     if let Some(result) = array_iterator_builtin(builtin, receiver) {
         return Some(result);
     }
+    if let Some(result) = array_mutation_builtin(builtin, receiver, arguments) {
+        return Some(result);
+    }
     use crate::ops::Builtin::*;
     let result = match builtin {
         Array => return Some(Ok(crate::builtins::array(arguments))),
@@ -35,9 +38,6 @@ pub(crate) fn execute_builtin(
         ArrayAt => return Some(Ok(at(receiver, arguments))),
         ArraySort => return Some(Ok(sort(receiver))),
         ArrayToReversed => return Some(Ok(to_reversed(receiver))),
-        ArrayShift => return Some(Ok(crate::builtins::array_shift(receiver))),
-        ArrayReverse => return Some(Ok(crate::builtins::array_reverse(receiver))),
-        ArrayPop => return Some(Ok(crate::builtins::array_pop(receiver))),
         ArraySplice => return Some(Ok(splice(receiver, arguments))),
         ArrayReduce => return Some(reduce_values(receiver, arguments, false)),
         ArrayReduceRight => return Some(reduce_values(receiver, arguments, true)),
@@ -63,6 +63,8 @@ fn array_iterator_builtin(builtin: crate::ops::Builtin, receiver: Option<&Value>
         _ => None,
     }
 }
+
+include!("arrays_mutation.rs");
 
 fn from(value: Option<&Value>) -> Result<Value, crate::execute::VmError> {
     let values = match value {
@@ -191,6 +193,7 @@ fn array_method(key: &str) -> Option<crate::ops::Builtin> {
         "shift" => crate::ops::Builtin::ArrayShift,
         "reverse" => crate::ops::Builtin::ArrayReverse,
         "pop" => crate::ops::Builtin::ArrayPop,
+        "unshift" => crate::ops::Builtin::ArrayUnshift,
         "splice" => crate::ops::Builtin::ArraySplice,
         "reduce" => crate::ops::Builtin::ArrayReduce,
         "reduceRight" => crate::ops::Builtin::ArrayReduceRight,
@@ -270,7 +273,6 @@ fn index(values: &crate::value::ArrayData, key: &str) -> Value {
 }
 
 include!("arrays_iteration.rs");
-
 pub(crate) fn includes(receiver: Option<&Value>, arguments: &[Value]) -> Value {
     let Some(Value::Array(values)) = receiver else {
         return Value::Boolean(false);
@@ -359,7 +361,6 @@ fn flatten(values: &[Value], depth: usize) -> Vec<Value> {
     }
     result
 }
-
 pub(crate) fn flat_map(
     receiver: Option<&Value>,
     arguments: &[Value],
@@ -385,7 +386,6 @@ pub(crate) fn flat_map(
     }
     Ok(Value::array(mapped))
 }
-
 pub(crate) fn at(receiver: Option<&Value>, arguments: &[Value]) -> Value {
     let Some(Value::Array(values)) = receiver else {
         return Value::Undefined;
