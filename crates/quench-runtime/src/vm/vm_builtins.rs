@@ -27,6 +27,8 @@ fn is_function_builtin(builtin: Builtin) -> bool {
             | Builtin::ArrayUnshift
             | Builtin::ArrayFill
             | Builtin::ArrayCopyWithin
+            | Builtin::ArrayFindLast
+            | Builtin::ArrayFindLastIndex
     )
 }
 

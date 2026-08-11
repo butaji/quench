@@ -199,7 +199,6 @@ fn typed_array_property(builtin: Builtin, key: &str) -> Option<Builtin> {
         (is_typed_array_prototype(builtin) && key == "fill").then_some(Builtin::TypedArrayFill)
     })
 }
-
 fn is_typed_array_prototype(builtin: Builtin) -> bool {
     use Builtin::*;
     matches!(
@@ -256,7 +255,6 @@ fn host_capability_method(_kind: crate::ops::HostCapabilityKind, key: &str) -> O
     };
     Some(Builtin::HostCapability(kind))
 }
-
 fn data_view_method(key: &str) -> Option<Builtin> {
     use Builtin::*;
     match key {
@@ -291,6 +289,8 @@ fn array_method(key: &str) -> Option<Builtin> {
         "some" => Some(ArraySome),
         "every" => Some(ArrayEvery),
         "find" => Some(ArrayFind),
+        "findLast" => Some(ArrayFindLast),
+        "findLastIndex" => Some(ArrayFindLastIndex),
         "includes" => Some(ArrayIncludes),
         "indexOf" => Some(ArrayIndexOf),
         "lastIndexOf" => Some(ArrayLastIndexOf),
