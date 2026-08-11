@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 mod counted_for;
+include!("loops_for_of.rs");
 
 use oxc::ast::ast::{DoWhileStatement, ForInStatement, ForOfStatement, WhileStatement};
 
@@ -117,11 +118,14 @@ pub(crate) fn reduce_for_of(
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
 ) -> Result<(), Vec<String>> {
-    let (slot, per_iteration) = for_in_slot(&statement.left, next_slot, locals)?;
+    let (slot, per_iteration, pattern) = for_of_slot(&statement.left, next_slot, locals)?;
     let iterable =
         crate::reduce::reduce_expression(&statement.right, ops, facts, next_register, locals)
             .ok_or_else(|| vec!["Unsupported for-of iterable".to_string()])?;
-    let body = crate::branch::reduce(&statement.body, facts, locals)?;
+    let mut body = crate::branch::reduce(&statement.body, facts, locals)?;
+    if let Some(pattern) = pattern {
+        prepend_for_of_binding(pattern, slot, &mut body, facts, next_register, locals)?;
+    }
     ops.push(Op::ForOf {
         label: None,
         iterable,
