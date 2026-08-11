@@ -24,6 +24,7 @@ struct RunReport {
 /// Deep parser/reducer recursion needs more than the default 8 MiB stack.
 const DEFAULT_STACK_SIZE: usize = 256 * 1024 * 1024;
 const STACK_SIZE_ENV: &str = "TRIAGE_WORKER_STACK_SIZE_BYTES";
+const WORK_BATCH: usize = 32;
 
 struct Args {
     target: PathBuf,
@@ -184,18 +185,25 @@ fn run_worker(
         if counter.load(Ordering::Relaxed) >= limit {
             break;
         }
-        let Some(path) = files.get(next.fetch_add(1, Ordering::Relaxed)) else {
+        let start = next.fetch_add(WORK_BATCH, Ordering::Relaxed);
+        if start >= files.len() {
             break;
-        };
-        let outcome = runner.run_file_with_harness(path, |name| harness.load(name));
-        match outcome {
-            Ok(TestOutcome::Pass) => report.passed += 1,
-            Ok(TestOutcome::Fail { reason }) | Err(reason) => {
-                report.failed += 1;
-                counter.fetch_add(1, Ordering::Relaxed);
-                report
-                    .failures
-                    .push((path.clone(), reason.trim().to_string()));
+        }
+        let stop = (start + WORK_BATCH).min(files.len());
+        for path in files[start..stop].iter() {
+            if counter.load(Ordering::Relaxed) >= limit {
+                break;
+            }
+            let outcome = runner.run_file_with_harness(path, |name| harness.load(name));
+            match outcome {
+                Ok(TestOutcome::Pass) => report.passed += 1,
+                Ok(TestOutcome::Fail { reason }) | Err(reason) => {
+                    report.failed += 1;
+                    counter.fetch_add(1, Ordering::Relaxed);
+                    report
+                        .failures
+                        .push((path.clone(), reason.trim().to_string()));
+                }
             }
         }
     }
