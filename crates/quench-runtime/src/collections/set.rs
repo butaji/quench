@@ -25,15 +25,33 @@ pub fn property(key: &str) -> Value {
     }
 }
 
+pub(crate) fn weak_property(key: &str) -> Value {
+    match key {
+        "add" => Value::Builtin(Builtin::WeakSetAdd),
+        "has" => Value::Builtin(Builtin::WeakSetHas),
+        "delete" => Value::Builtin(Builtin::WeakSetDelete),
+        _ => Value::Undefined,
+    }
+}
+
 pub(crate) fn set_new(arguments: &[Value]) -> Value {
     let values = match arguments.first() {
         Some(Value::Array(values)) => values.iter().cloned().collect(),
         _ => VecDeque::new(),
     };
     Value::Set(Rc::new(SetData {
+        weak: false,
         values,
         prototype: std::cell::RefCell::new(None),
     }))
+}
+
+pub(crate) fn weak_set_new(arguments: &[Value]) -> Value {
+    let mut value = set_new(arguments);
+    if let Value::Set(data) = &mut value {
+        Rc::make_mut(data).weak = true;
+    }
+    value
 }
 
 pub(crate) fn set_add(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
@@ -96,6 +114,7 @@ pub(crate) fn set_clear(receiver: Option<&Value>) -> Result<Value, VmError> {
         ));
     }
     let updated = Value::Set(Rc::new(SetData {
+        weak: false,
         values: VecDeque::new(),
         prototype: std::cell::RefCell::new(None),
     }));

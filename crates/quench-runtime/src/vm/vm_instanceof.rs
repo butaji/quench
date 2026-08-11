@@ -46,6 +46,7 @@ fn builtin_instanceof(value: &Value, constructor: &Value) -> Option<bool> {
         (Value::Map(data), Value::Builtin(Builtin::WeakMap)) if data.weak => true,
         (Value::ArrayBuffer(data), Value::Builtin(Builtin::SharedArrayBuffer)) if data.shared => true,
         (Value::Set(_), Value::Builtin(Builtin::Set)) => true,
+        (Value::Set(data), Value::Builtin(Builtin::WeakSet)) if data.weak => true,
         _ => return None,
     })
 }
@@ -95,6 +96,11 @@ fn instanceof_callable(value: &Value) -> bool {
                 | Builtin::BooleanPrototype
                 | Builtin::SymbolPrototype
                 | Builtin::BigIntPrototype
+                | Builtin::MapPrototype
+                | Builtin::SetPrototype
+                | Builtin::WeakMapPrototype
+                | Builtin::WeakSetPrototype
+                | Builtin::SharedArrayBufferPrototype
         ),
         _ => crate::conversion::is_callable(value),
     }
@@ -134,20 +140,37 @@ fn internal_prototype(value: &Value) -> Option<Value> {
             .prototype()
             .or_else(|| Some(Value::Builtin(Builtin::DataViewPrototype))),
         Value::Map(data) => map_prototype(data),
-        Value::Set(data) => data
-            .prototype()
-            .or_else(|| Some(Value::Builtin(Builtin::SetPrototype))),
+        Value::Set(data) => data.prototype().or_else(|| {
+            Some(Value::Builtin(if data.weak {
+                Builtin::WeakSetPrototype
+            } else {
+                Builtin::SetPrototype
+            }))
+        }),
         Value::Promise(data) => data
             .prototype()
             .or_else(|| Some(Value::Builtin(Builtin::PromisePrototype))),
         Value::Generator(_) => Some(Value::Builtin(Builtin::ObjectPrototype)),
-        Value::Builtin(Builtin::FunctionPrototype) => Some(Value::Builtin(Builtin::ObjectPrototype)),
+        Value::Builtin(builtin) => builtin_prototype_parent(*builtin),
         Value::Function(_) => Some(Value::Builtin(Builtin::FunctionPrototype)),
-        Value::BoundFunction(_) | Value::Builtin(_) => {
+        Value::BoundFunction(_) => {
             Some(Value::Builtin(Builtin::FunctionPrototype))
         }
         _ => None,
     }
+}
+
+fn builtin_prototype_parent(builtin: Builtin) -> Option<Value> {
+    matches!(
+        builtin,
+        Builtin::FunctionPrototype
+            | Builtin::MapPrototype
+            | Builtin::SetPrototype
+            | Builtin::WeakMapPrototype
+            | Builtin::WeakSetPrototype
+            | Builtin::SharedArrayBufferPrototype
+    )
+    .then_some(Value::Builtin(Builtin::ObjectPrototype))
 }
 
 fn map_prototype(data: &crate::value::MapData) -> Option<Value> {

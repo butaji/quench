@@ -35,6 +35,10 @@ pub(crate) fn execute_builtin(
         WeakMapGet => Some(map::map_get(receiver, arguments)),
         WeakMapHas => Some(map::map_has(receiver, arguments)),
         WeakMapDelete => Some(map::map_delete(receiver, arguments)),
+        WeakSet => Some(Ok(set::weak_set_new(arguments))),
+        WeakSetAdd => Some(set::set_add(receiver, arguments)),
+        WeakSetHas => Some(set::set_has(receiver, arguments)),
+        WeakSetDelete => Some(set::set_delete(receiver, arguments)),
         IteratorNext => Some(Ok(iterator::next(receiver))),
         _ => None,
     }

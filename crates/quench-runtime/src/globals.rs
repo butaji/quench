@@ -57,6 +57,8 @@ pub(crate) fn script_properties(ops: &mut Vec<Op>, next_register: &mut u16) -> V
         "EvalError",
         "URIError",
         "WeakMap",
+        "WeakSet",
+        "SharedArrayBuffer",
     ];
     names
         .into_iter()
@@ -174,6 +176,7 @@ fn collection_builtin(name: &str) -> Option<crate::ops::Builtin> {
         "Map" => Some(crate::ops::Builtin::Map),
         "Set" => Some(crate::ops::Builtin::Set),
         "WeakMap" => Some(crate::ops::Builtin::WeakMap),
+        "WeakSet" => Some(crate::ops::Builtin::WeakSet),
         _ => None,
     }
 }

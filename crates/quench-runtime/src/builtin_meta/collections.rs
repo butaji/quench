@@ -24,6 +24,11 @@ pub fn collections_property(builtin: Builtin, key: &str) -> Option<Value> {
         (WeakMapPrototype, "get") => Some(Value::Builtin(WeakMapGet)),
         (WeakMapPrototype, "has") => Some(Value::Builtin(WeakMapHas)),
         (WeakMapPrototype, "delete") => Some(Value::Builtin(WeakMapDelete)),
+        (WeakSetPrototype, "add") => Some(Value::Builtin(WeakSetAdd)),
+        (WeakSetPrototype, "has") => Some(Value::Builtin(WeakSetHas)),
+        (WeakSetPrototype, "delete") => Some(Value::Builtin(WeakSetDelete)),
+        (WeakSetPrototype, "constructor") => Some(Value::Builtin(WeakSet)),
+        (WeakSetPrototype, "Symbol.toStringTag") => Some(Value::String("WeakSet".into())),
         _ => None,
     }
 }
@@ -48,6 +53,9 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
         Builtin::WeakMapGet => Some("WeakMap.prototype.get"),
         Builtin::WeakMapHas => Some("WeakMap.prototype.has"),
         Builtin::WeakMapDelete => Some("WeakMap.prototype.delete"),
+        Builtin::WeakSetAdd => Some("WeakSet.prototype.add"),
+        Builtin::WeakSetHas => Some("WeakSet.prototype.has"),
+        Builtin::WeakSetDelete => Some("WeakSet.prototype.delete"),
         _ => None,
     }
 }
@@ -64,6 +72,7 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         | Builtin::WeakMapGet
         | Builtin::WeakMapHas
         | Builtin::WeakMapDelete => Some(1.0),
+        Builtin::WeakSetAdd | Builtin::WeakSetHas | Builtin::WeakSetDelete => Some(1.0),
         _ => None,
     }
 }
@@ -88,6 +97,9 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
         Builtin::WeakMapGet => Some("get"),
         Builtin::WeakMapHas => Some("has"),
         Builtin::WeakMapDelete => Some("delete"),
+        Builtin::WeakSetAdd => Some("add"),
+        Builtin::WeakSetHas => Some("has"),
+        Builtin::WeakSetDelete => Some("delete"),
         _ => None,
     }
 }
