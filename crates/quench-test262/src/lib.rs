@@ -258,6 +258,20 @@ impl<H: Test262Host> Test262Runner<H> {
         ))
     }
 
+    /// Compose a test with cached harness sources using pre-parsed metadata.
+    pub fn run_test_with_cache_and_metadata(
+        &mut self,
+        source: &str,
+        metadata: &TestMetadata,
+        cache: &mut HarnessCache,
+    ) -> Result<TestOutcome, String> {
+        let harness = load_cached_harness(metadata, cache)?;
+        Ok(apply_negative_expectation(
+            self.dispatch_test(&harness, source, metadata),
+            metadata,
+        ))
+    }
+
     /// Read and execute one test262 source file.
     pub fn run_file<P: AsRef<Path>>(&mut self, path: P) -> Result<TestOutcome, String> {
         let source = std::fs::read_to_string(path.as_ref())
