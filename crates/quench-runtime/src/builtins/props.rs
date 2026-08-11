@@ -365,7 +365,7 @@ fn builtin_method3(builtin: Builtin, key: &str) -> Option<Builtin> {
         (ObjectPrototype, "constructor") => Some(Object),
         (ObjectPrototype, "toLocaleString") => Some(ObjectPrototypeToString),
         (Symbol, "prototype") => Some(SymbolPrototype),
-        (SymbolPrototype, "valueOf") => Some(BoxedValueOf),
+        (SymbolPrototype, "valueOf") => Some(SymbolValueOf),
         (String, "prototype") => Some(StringPrototype),
         (StringPrototype, "valueOf") => Some(BoxedValueOf),
         (BigInt, "prototype") => Some(BigIntPrototype),
