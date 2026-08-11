@@ -169,6 +169,7 @@ fn builtin_prototype_parent(builtin: Builtin) -> Option<Value> {
             | Builtin::WeakMapPrototype
             | Builtin::WeakSetPrototype
             | Builtin::SharedArrayBufferPrototype
+            | Builtin::WeakRefPrototype
     )
     .then_some(Value::Builtin(Builtin::ObjectPrototype))
 }
