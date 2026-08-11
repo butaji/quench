@@ -108,7 +108,8 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
     match b {
         Builtin::MapSet => Some(1.0),
         Builtin::MapGet | Builtin::MapHas | Builtin::MapDelete => Some(1.0),
-        Builtin::MapClear | Builtin::MapForEach => Some(0.0),
+        Builtin::MapClear => Some(0.0),
+        Builtin::MapForEach => Some(1.0),
         Builtin::MapEntries | Builtin::MapKeys | Builtin::MapValues => Some(0.0),
         Builtin::MapGroupBy => Some(2.0),
         Builtin::MapGetOrInsert | Builtin::MapGetOrInsertComputed => Some(2.0),

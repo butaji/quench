@@ -189,6 +189,12 @@ pub(crate) fn collect(value: &Value) -> Result<Vec<Value>, crate::execute::VmErr
             Ok(None) => return Ok(values),
             Err(error) => {
                 if let Value::Iterator(data) = value {
+                    if let crate::execute::VmError::Thrown(reason) = &error {
+                        let _ = close(
+                            value.clone(),
+                            crate::completion::Completion::Throw(reason.clone()),
+                        );
+                    }
                     mark_done(data);
                 }
                 return Err(error);
