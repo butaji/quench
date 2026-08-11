@@ -247,7 +247,15 @@ where
 fn new_set(values: Vec<Value>) -> Value {
     Value::Set(Rc::new(SetData {
         weak: false,
-        values: std::cell::RefCell::new(values.into_iter().collect()),
+        values: std::cell::RefCell::new(
+            values
+                .into_iter()
+                .map(|value| match value {
+                    Value::Number(0.0) => Value::Number(0.0),
+                    value => value,
+                })
+                .collect(),
+        ),
         prototype: std::cell::RefCell::new(None),
     }))
 }
