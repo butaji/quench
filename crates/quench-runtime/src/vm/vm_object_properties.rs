@@ -50,6 +50,9 @@ fn object_property(properties: &Rc<crate::value::ObjectData>, key: &str) -> Valu
         return inherited;
     }
     let prototype = object_prototype(properties);
+    if key == "constructor" {
+        return crate::builtins::property(prototype, key);
+    }
     bind_method(
         &Value::Object(properties.clone()),
         crate::builtins::property(prototype, key),
