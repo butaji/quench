@@ -178,7 +178,6 @@ fn function_constructor(function: &crate::value::FunctionValue) -> Builtin {
         (_, false) => Builtin::Function,
     }
 }
-
 pub fn get_property_result(value: &Value, key: &str) -> Result<Value, VmError> {
     if matches!(value, Value::Null | Value::Undefined) {
         return Err(crate::value::error::throw_type_error(&format!(

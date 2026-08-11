@@ -37,8 +37,20 @@ pub fn property(key: &str) -> Value {
         "isSubsetOf" => Value::Builtin(Builtin::SetIsSubsetOf),
         "isSupersetOf" => Value::Builtin(Builtin::SetIsSupersetOf),
         "Symbol.iterator" => Value::Builtin(Builtin::SetIterator),
+        "Symbol.toStringTag" => Value::String("Set".into()),
         _ => Value::Undefined,
     }
+}
+
+pub(crate) fn set_size(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let Some(Value::Set(data)) =
+        receiver.filter(|value| matches!(value, Value::Set(data) if !data.weak))
+    else {
+        return Err(crate::value::error::throw_type_error(
+            "Method get size called on incompatible receiver",
+        ));
+    };
+    Ok(Value::Number(data.values.borrow().len() as f64))
 }
 
 pub(crate) fn weak_property(key: &str) -> Value {
