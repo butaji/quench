@@ -47,7 +47,6 @@ mod logical;
 mod loops;
 mod math;
 mod methods;
-mod modules;
 mod number_fmt;
 mod objects;
 pub mod ops;
