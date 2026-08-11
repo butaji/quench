@@ -282,7 +282,9 @@ pub(crate) fn set_for_each(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
-    let Some(Value::Set(data)) = receiver else {
+    let Some(Value::Set(data)) =
+        receiver.filter(|value| matches!(value, Value::Set(data) if !data.weak))
+    else {
         return Err(crate::value::error::throw_type_error(
             "Set method called on incompatible receiver",
         ));

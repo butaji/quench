@@ -116,7 +116,8 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         Builtin::MapGroupBy => Some(2.0),
         Builtin::MapGetOrInsert | Builtin::MapGetOrInsertComputed => Some(2.0),
         Builtin::SetAdd | Builtin::SetHas | Builtin::SetDelete => Some(1.0),
-        Builtin::SetClear | Builtin::SetForEach => Some(0.0),
+        Builtin::SetClear => Some(0.0),
+        Builtin::SetForEach => Some(1.0),
         Builtin::SetDifference
         | Builtin::SetIntersection
         | Builtin::SetSymmetricDifference
