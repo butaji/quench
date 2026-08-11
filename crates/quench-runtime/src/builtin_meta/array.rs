@@ -9,6 +9,8 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::ArrayEntries => Some("entries"),
         Builtin::ArrayShift => Some("shift"),
         Builtin::ArrayReverse => Some("reverse"),
+        Builtin::ArrayFindLast => Some("findLast"),
+        Builtin::ArrayFindLastIndex => Some("findLastIndex"),
         Builtin::ArrayPop => Some("pop"),
         Builtin::ArrayUnshift => Some("unshift"),
         Builtin::ArrayFill => Some("fill"),
@@ -28,6 +30,7 @@ pub const fn fn_len(builtin: Builtin) -> Option<f64> {
         Builtin::ArrayUnshift => Some(1.0),
         Builtin::ArrayFill => Some(1.0),
         Builtin::ArrayCopyWithin => Some(2.0),
+        Builtin::ArrayFindLast | Builtin::ArrayFindLastIndex => Some(1.0),
         _ => None,
     }
 }

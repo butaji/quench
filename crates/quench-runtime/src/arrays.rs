@@ -171,6 +171,10 @@ pub(crate) fn property(values: &crate::value::ArrayData, key: &str) -> Value {
 }
 
 fn array_method(key: &str) -> Option<crate::ops::Builtin> {
+    array_search_method(key).or_else(|| array_method_core(key))
+}
+
+fn array_method_core(key: &str) -> Option<crate::ops::Builtin> {
     Some(match key {
         "forEach" => crate::ops::Builtin::ArrayForEach,
         "map" => crate::ops::Builtin::ArrayMap,
@@ -209,6 +213,8 @@ fn array_method(key: &str) -> Option<crate::ops::Builtin> {
         _ => return None,
     })
 }
+
+include!("arrays_search_methods.rs");
 
 fn own_index(values: &crate::value::ArrayData, key: &str) -> Option<Value> {
     array_index(key).and_then(|index| values.get_index(index as usize))
@@ -306,7 +312,6 @@ pub(crate) fn last_index_of(receiver: Option<&Value>, arguments: &[Value]) -> Va
     let index = values.iter().rposition(|value| strict_equal(value, search));
     Value::Number(index.map_or(-1.0, |value| value as f64))
 }
-
 pub(crate) fn slice(receiver: Option<&Value>, arguments: &[Value]) -> Value {
     let Some(Value::Array(values)) = receiver else {
         return Value::array(Vec::new());
@@ -321,7 +326,6 @@ pub(crate) fn slice(receiver: Option<&Value>, arguments: &[Value]) -> Value {
     }
     Value::array(values[start as usize..end as usize].to_vec())
 }
-
 pub(crate) fn concat(receiver: Option<&Value>, arguments: &[Value]) -> Value {
     let Some(Value::Array(values)) = receiver else {
         return Value::array(Vec::new());
@@ -335,7 +339,6 @@ pub(crate) fn concat(receiver: Option<&Value>, arguments: &[Value]) -> Value {
     }
     Value::array(result)
 }
-
 pub(crate) fn flat(receiver: Option<&Value>, arguments: &[Value]) -> Value {
     let Some(Value::Array(values)) = receiver else {
         return Value::array(Vec::new());
@@ -349,7 +352,6 @@ pub(crate) fn flat(receiver: Option<&Value>, arguments: &[Value]) -> Value {
         .unwrap_or(1);
     Value::array(flatten(values, depth))
 }
-
 fn flatten(values: &[Value], depth: usize) -> Vec<Value> {
     let mut result = Vec::new();
     for value in values {
@@ -450,7 +452,6 @@ pub(crate) fn reduce_values(
     }
     Ok(accumulator)
 }
-
 fn relative_index(value: Option<&Value>, length: isize) -> isize {
     let number = match value {
         None | Some(Value::Undefined) => 0.0,
@@ -474,7 +475,6 @@ fn end_index(value: &Value, length: isize) -> isize {
         relative_index(Some(value), length)
     }
 }
-
 fn strict_equal(left: &Value, right: &Value) -> bool {
     crate::equality::strict_equal(left, right)
 }

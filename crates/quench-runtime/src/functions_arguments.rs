@@ -269,6 +269,12 @@ pub(crate) fn function_builtin(
         crate::ops::Builtin::ArrayCopyWithin => {
             Ok(crate::builtins::array_copy_within(receiver, arguments))
         }
+        crate::ops::Builtin::ArrayFindLast => {
+            crate::builtins::array_find_last(receiver, arguments)
+        }
+        crate::ops::Builtin::ArrayFindLastIndex => {
+            crate::builtins::array_find_last_index(receiver, arguments)
+        }
         crate::ops::Builtin::ObjectPropertyIsEnumerable => Ok(
             crate::builtins::object::object_property_is_enumerable(receiver, arguments),
         ),
