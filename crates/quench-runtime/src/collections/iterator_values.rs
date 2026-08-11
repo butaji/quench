@@ -6,14 +6,7 @@ pub(crate) fn from_map(receiver: Option<&Value>) -> Result<Value, crate::execute
             "Map iterator called on incompatible receiver",
         ));
     };
-    let values = data
-        .keys
-        .borrow()
-        .iter()
-        .zip(data.values.borrow().iter())
-        .map(|(key, value)| Value::array(vec![key.clone(), value.clone()]))
-        .collect();
-    Ok(make(values))
+    Ok(make_map(Rc::clone(data), 0))
 }
 
 pub(crate) fn from_map_keys(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
@@ -24,7 +17,7 @@ pub(crate) fn from_map_keys(receiver: Option<&Value>) -> Result<Value, crate::ex
             "Map iterator called on incompatible receiver",
         ));
     };
-    Ok(make(data.keys.borrow().iter().cloned().collect()))
+    Ok(make_map(Rc::clone(data), 1))
 }
 
 pub(crate) fn from_map_values(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
@@ -35,7 +28,7 @@ pub(crate) fn from_map_values(receiver: Option<&Value>) -> Result<Value, crate::
             "Map iterator called on incompatible receiver",
         ));
     };
-    Ok(make(data.values.borrow().clone()))
+    Ok(make_map(Rc::clone(data), 2))
 }
 
 pub(crate) fn from_set(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
@@ -82,6 +75,17 @@ fn make_set(data: Rc<crate::value::SetData>) -> Value {
         state: RefCell::new(IteratorState::Set {
             data,
             index: 0,
+            done: false,
+        }),
+    }))
+}
+
+fn make_map(data: Rc<crate::value::MapData>, kind: u8) -> Value {
+    Value::Iterator(Rc::new(IteratorData {
+        state: RefCell::new(IteratorState::Map {
+            data,
+            index: 0,
+            kind,
             done: false,
         }),
     }))
