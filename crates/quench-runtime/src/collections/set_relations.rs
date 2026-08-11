@@ -34,6 +34,9 @@ pub(crate) fn set_relation(
 }
 
 fn set_like_values(value: Value) -> Result<Vec<Value>, VmError> {
+    if let Value::Set(data) = &value {
+        return Ok(data.values.iter().cloned().collect());
+    }
     let size = crate::execute::get_property_result(&value, "size")?;
     if !matches!(size, Value::Number(number) if number.is_finite() && number >= 0.0) {
         return Err(crate::value::error::throw_type_error(

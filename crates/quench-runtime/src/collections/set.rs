@@ -22,6 +22,13 @@ pub fn property(key: &str) -> Value {
         "clear" => Value::Builtin(Builtin::SetClear),
         "forEach" => Value::Builtin(Builtin::SetForEach),
         "keys" | "values" => Value::Builtin(Builtin::SetIterator),
+        "difference" => Value::Builtin(Builtin::SetDifference),
+        "intersection" => Value::Builtin(Builtin::SetIntersection),
+        "symmetricDifference" => Value::Builtin(Builtin::SetSymmetricDifference),
+        "union" => Value::Builtin(Builtin::SetUnion),
+        "isDisjointFrom" => Value::Builtin(Builtin::SetIsDisjointFrom),
+        "isSubsetOf" => Value::Builtin(Builtin::SetIsSubsetOf),
+        "isSupersetOf" => Value::Builtin(Builtin::SetIsSupersetOf),
         "Symbol.iterator" => Value::Builtin(Builtin::SetIterator),
         _ => Value::Undefined,
     }
