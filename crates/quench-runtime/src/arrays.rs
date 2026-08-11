@@ -194,6 +194,7 @@ fn array_method(key: &str) -> Option<crate::ops::Builtin> {
         "reverse" => crate::ops::Builtin::ArrayReverse,
         "pop" => crate::ops::Builtin::ArrayPop,
         "unshift" => crate::ops::Builtin::ArrayUnshift,
+        "fill" => crate::ops::Builtin::ArrayFill,
         "splice" => crate::ops::Builtin::ArraySplice,
         "reduce" => crate::ops::Builtin::ArrayReduce,
         "reduceRight" => crate::ops::Builtin::ArrayReduceRight,
@@ -407,7 +408,6 @@ pub(crate) fn at(receiver: Option<&Value>, arguments: &[Value]) -> Value {
         .cloned()
         .unwrap_or(Value::Undefined)
 }
-
 pub(crate) fn to_reversed(receiver: Option<&Value>) -> Value {
     let Some(Value::Array(values)) = receiver else {
         return Value::array(Vec::new());
