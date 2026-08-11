@@ -36,7 +36,7 @@ pub(crate) fn weak_property(key: &str) -> Value {
 
 pub(crate) fn set_new(arguments: &[Value]) -> Value {
     let values = match arguments.first() {
-        Some(Value::Undefined) => VecDeque::new(),
+        Some(Value::Undefined | Value::Null) => VecDeque::new(),
         Some(Value::Array(values)) => values.iter().cloned().collect(),
         _ => VecDeque::new(),
     };
@@ -62,11 +62,24 @@ pub(crate) fn weak_set_new(arguments: &[Value]) -> Result<Value, VmError> {
             "Invalid value used in weak set",
         ));
     }
-    Ok(Value::Set(Rc::new(SetData {
+    let mut set = Value::Set(Rc::new(SetData {
         weak: true,
         values,
         prototype: std::cell::RefCell::new(None),
-    })))
+    }));
+    let adder =
+        crate::execute::get_property_result(&Value::Builtin(Builtin::WeakSetPrototype), "add")?;
+    let values = match &set {
+        Value::Set(data) => data.values.iter().cloned().collect::<Vec<_>>(),
+        _ => Vec::new(),
+    };
+    for value in values {
+        let result = crate::functions::execute_target(&adder, &set, &[value])?;
+        if matches!(result, Value::Set(_)) {
+            set = result;
+        }
+    }
+    Ok(set)
 }
 
 pub(crate) fn weak_set_add(
