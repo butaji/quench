@@ -122,6 +122,7 @@ pub(crate) fn execute_set_property(
         _ => return Err(crate::execute::VmError::MissingReturn),
     };
     let target = crate::execute::read_register(registers, object)?.clone();
+    reject_nullish_property_write(&target)?;
     reject_restricted_property_write(&target, &key)?;
     if rejects_new_property(&target, &key) {
         return strict_write_failure();
@@ -143,12 +144,37 @@ pub(crate) fn execute_set_property(
     if matches!(target, crate::value::Value::Builtin(_)) {
         return set_builtin_property(registers, object, &target, &key, value);
     }
-    let result = crate::builtins::set_property(target.clone(), &key, value);
-    crate::locals::replace_value(&target, &result);
-    crate::vm::synchronize_global_object(registers, &target, &result);
-    crate::execute::write_value(registers, object, result);
+    finish_property_write(registers, object, &target, &key, value);
     Ok(())
 }
+
+fn finish_property_write(
+    registers: &mut Vec<crate::value::Value>,
+    object: u16,
+    target: &crate::value::Value,
+    key: &str,
+    value: crate::value::Value,
+) {
+    let result = crate::builtins::set_property(target.clone(), key, value);
+    crate::locals::replace_value(target, &result);
+    crate::vm::synchronize_global_object(registers, target, &result);
+    crate::execute::write_value(registers, object, result);
+}
+
+fn reject_nullish_property_write(
+    target: &crate::value::Value,
+) -> Result<(), crate::execute::VmError> {
+    if matches!(
+        target,
+        crate::value::Value::Null | crate::value::Value::Undefined
+    ) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot assign a property of null or undefined",
+        ));
+    }
+    Ok(())
+}
+
 include!("properties_function_name.rs");
 
 fn set_builtin_property(
