@@ -61,14 +61,30 @@ fn process_promise(promise: &Rc<PromiseData>) {
 }
 
 fn process_continuation(continuation: PromiseContinuation, state: &PromiseState) {
-    let (generator, result, yielding) = match continuation {
+    match continuation {
+        PromiseContinuation::Thenable {
+            target,
+            thenable,
+            then,
+        } => process_thenable(target, thenable, then),
         PromiseContinuation::Aggregate { aggregate, index } => {
             aggregate_settle(&aggregate, index, state);
-            return;
         }
-        PromiseContinuation::AsyncGenerator { generator, result } => (generator, result, false),
-        PromiseContinuation::AsyncGeneratorYield { generator, result } => (generator, result, true),
-    };
+        PromiseContinuation::AsyncGenerator { generator, result } => {
+            process_async_continuation(generator, result, false, state)
+        }
+        PromiseContinuation::AsyncGeneratorYield { generator, result } => {
+            process_async_continuation(generator, result, true, state)
+        }
+    }
+}
+
+fn process_async_continuation(
+    generator: Rc<crate::value::GeneratorData>,
+    result: Rc<PromiseData>,
+    yielding: bool,
+    state: &PromiseState,
+) {
     let value = match state {
         PromiseState::Fulfilled(value) | PromiseState::Rejected(value) => value.clone(),
         PromiseState::Pending => return,
@@ -90,6 +106,16 @@ fn process_continuation(continuation: PromiseContinuation, state: &PromiseState)
         }
         Err(VmError::Thrown(reason)) => reject_promise(&result, reason),
         Err(_) => reject_promise(&result, Value::Undefined),
+    }
+}
+
+fn process_thenable(target: Rc<PromiseData>, thenable: Value, then: Value) {
+    let resolve = bound_settler(Builtin::PromiseResolve, &target);
+    let reject = bound_settler(Builtin::PromiseReject, &target);
+    if let Err(VmError::Thrown(reason)) =
+        crate::functions::execute_target(&then, &thenable, &[resolve, reject])
+    {
+        reject_promise(&target, reason);
     }
 }
 
@@ -205,19 +231,75 @@ pub fn reject_promise(promise: &Rc<PromiseData>, reason: Value) {
     queue_promise(promise);
 }
 
-/// Execute Promise.resolve.
-pub fn promise_resolve(_arguments: &[Value]) -> Value {
-    let value = _arguments.first().cloned().unwrap_or(Value::Undefined);
-    Value::Promise(Rc::new(PromiseData::new(PromiseState::Fulfilled(value))))
+/// Execute Promise.resolve using the single canonical promise-resolution path.
+pub fn promise_resolve(arguments: &[Value]) -> Value {
+    let value = arguments.first().cloned().unwrap_or(Value::Undefined);
+    resolve_value(value)
+}
+
+fn resolve_value(value: Value) -> Value {
+    if matches!(value, Value::Promise(_)) {
+        return value;
+    }
+    let promise = Rc::new(PromiseData::default());
+    let then = match crate::execute::get_property_result(&value, "then") {
+        Ok(then) => then,
+        Err(VmError::Thrown(reason)) => {
+            reject_promise(&promise, reason);
+            return Value::Promise(promise);
+        }
+        Err(_) => {
+            reject_promise(&promise, Value::Undefined);
+            return Value::Promise(promise);
+        }
+    };
+    if !crate::conversion::is_callable(&then) {
+        resolve_promise(&promise, value);
+        return Value::Promise(promise);
+    }
+    promise
+        .continuations
+        .borrow_mut()
+        .push(PromiseContinuation::Thenable {
+            target: Rc::clone(&promise),
+            thenable: value,
+            then,
+        });
+    queue_promise(&promise);
+    Value::Promise(promise)
+}
+
+fn bound_settler(target: Builtin, promise: &Rc<PromiseData>) -> Value {
+    Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
+        target: Value::Builtin(target),
+        receiver: Value::Promise(Rc::clone(promise)),
+        arguments: Vec::new(),
+    }))
 }
 
 fn resolve_receiver(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     match receiver {
+        Some(Value::Builtin(Builtin::Promise)) => Ok(promise_resolve(arguments)),
         Some(Value::Promise(promise)) => {
-            resolve_promise(
-                promise,
-                arguments.first().cloned().unwrap_or(Value::Undefined),
-            );
+            let value = arguments.first().cloned().unwrap_or(Value::Undefined);
+            if let Value::Promise(other) = &value {
+                if Rc::ptr_eq(promise, other) {
+                    reject_promise(
+                        promise,
+                        crate::builtins::error(
+                            Builtin::TypeError,
+                            &[Value::String(
+                                "promise cannot resolve to itself".to_string(),
+                            )],
+                        ),
+                    );
+                    return Ok(Value::Undefined);
+                }
+            }
+            let resolved = resolve_value(value);
+            let resolve = bound_settler(Builtin::PromiseResolve, promise);
+            let reject = bound_settler(Builtin::PromiseReject, promise);
+            let _ = promise_then(Some(&resolved), &[resolve, reject])?;
             Ok(Value::Undefined)
         }
         Some(_) => Err(VmError::NotCallable),
@@ -233,6 +315,7 @@ pub fn promise_reject(_arguments: &[Value]) -> Value {
 
 fn reject_receiver(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     match receiver {
+        Some(Value::Builtin(Builtin::Promise)) => Ok(promise_reject(arguments)),
         Some(Value::Promise(promise)) => {
             reject_promise(
                 promise,
@@ -291,11 +374,21 @@ pub fn promise_then(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
 
 /// Execute Promise.prototype.catch.
 pub fn promise_catch(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    if !matches!(receiver, Some(Value::Promise(_))) {
+    let Some(receiver) = receiver else {
         return Err(VmError::NotCallable);
+    };
+    let then = crate::execute::get_property_result(receiver, "then")?;
+    if !crate::conversion::is_callable(&then) {
+        return Err(crate::vm::not_callable());
     }
-    let _on_rejected = arguments.first().cloned().unwrap_or(Value::Undefined);
-    Ok(new_promise())
+    crate::functions::execute_target(
+        &then,
+        receiver,
+        &[
+            Value::Undefined,
+            arguments.first().cloned().unwrap_or(Value::Undefined),
+        ],
+    )
 }
 
 /// Execute Promise.prototype.finally.
