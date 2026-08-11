@@ -205,13 +205,13 @@ pub(crate) fn weak_map_get_or_insert(
 ) -> Result<Value, VmError> {
     let key = weak_key(receiver, arguments.first())?;
     if matches!(
-        map_has(receiver, std::slice::from_ref(&key))?,
+        map_has_inner(receiver, std::slice::from_ref(&key), true)?,
         Value::Boolean(true)
     ) {
-        return map_get(receiver, &[key]);
+        return map_get_inner(receiver, &[key], true);
     }
     let value = arguments.get(1).cloned().unwrap_or(Value::Undefined);
-    map_set(receiver, &[key, value.clone()])?;
+    map_set_inner(receiver, &[key, value.clone()], true)?;
     Ok(value)
 }
 
@@ -220,9 +220,10 @@ pub(crate) fn weak_map_set(
     arguments: &[Value],
 ) -> Result<Value, VmError> {
     let key = weak_key(receiver, arguments.first())?;
-    map_set(
+    map_set_inner(
         receiver,
         &[key, arguments.get(1).cloned().unwrap_or(Value::Undefined)],
+        true,
     )
 }
 
@@ -238,7 +239,7 @@ pub(crate) fn weak_map_get(
     if arguments.first().is_some_and(|key| !is_weak_key(key)) {
         return Ok(Value::Undefined);
     }
-    map_get(receiver, arguments)
+    map_get_inner(receiver, arguments, true)
 }
 
 pub(crate) fn weak_map_has(
@@ -253,7 +254,7 @@ pub(crate) fn weak_map_has(
     if arguments.first().is_some_and(|key| !is_weak_key(key)) {
         return Ok(Value::Boolean(false));
     }
-    map_has(receiver, arguments)
+    map_has_inner(receiver, arguments, true)
 }
 
 pub(crate) fn weak_map_delete(
@@ -268,7 +269,7 @@ pub(crate) fn weak_map_delete(
     if arguments.first().is_some_and(|key| !is_weak_key(key)) {
         return Ok(Value::Boolean(false));
     }
-    map_delete(receiver, arguments)
+    map_delete_inner(receiver, arguments, true)
 }
 
 pub(crate) fn weak_map_get_or_insert_computed(
@@ -276,12 +277,6 @@ pub(crate) fn weak_map_get_or_insert_computed(
     arguments: &[Value],
 ) -> Result<Value, VmError> {
     let key = weak_key(receiver, arguments.first())?;
-    if matches!(
-        map_has(receiver, std::slice::from_ref(&key))?,
-        Value::Boolean(true)
-    ) {
-        return map_get(receiver, &[key]);
-    }
     let callback = arguments.get(1).ok_or_else(|| {
         crate::value::error::throw_type_error("WeakMap callback must be callable")
     })?;
@@ -290,9 +285,15 @@ pub(crate) fn weak_map_get_or_insert_computed(
             "WeakMap callback must be callable",
         ));
     }
+    if matches!(
+        map_has_inner(receiver, std::slice::from_ref(&key), true)?,
+        Value::Boolean(true)
+    ) {
+        return map_get_inner(receiver, &[key], true);
+    }
     let value =
         crate::functions::execute_target(callback, &Value::Undefined, std::slice::from_ref(&key))?;
-    map_set(receiver, &[key, value.clone()])?;
+    map_set_inner(receiver, &[key, value.clone()], true)?;
     Ok(value)
 }
 
@@ -319,47 +320,14 @@ fn is_weak_key(value: &Value) -> bool {
         || matches!(value, Value::String(text) if text.starts_with("Symbol.") && !text.starts_with("Symbol.for.") && text.contains('\0'))
 }
 
+include!("map_storage.rs");
+
 pub(crate) fn map_set(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let Some(receiver @ Value::Map(data)) =
-        receiver.filter(|value| matches!(value, Value::Map(data) if !data.weak))
-    else {
-        return Err(crate::value::error::throw_type_error(
-            "Map method called on incompatible receiver",
-        ));
-    };
-    let Some(key) = arguments.first() else {
-        return Ok(Value::Undefined);
-    };
-    let value = arguments.get(1).cloned().unwrap_or(Value::Undefined);
-    let mut data = (**data).clone();
-    if let Some(pos) = data.keys.iter().position(|k| same_value_zero(k, key)) {
-        data.values[pos] = value;
-    } else {
-        data.keys.push_back(key.clone());
-        data.values.push(value);
-    }
-    let result = Value::Map(Rc::new(data));
-    crate::locals::replace_value(receiver, &result);
-    Ok(result)
+    map_set_inner(receiver, arguments, false)
 }
 
 pub(crate) fn map_get(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let Some(Value::Map(data)) =
-        receiver.filter(|value| matches!(value, Value::Map(data) if !data.weak))
-    else {
-        return Err(crate::value::error::throw_type_error(
-            "Map method called on incompatible receiver",
-        ));
-    };
-    let Some(key) = arguments.first() else {
-        return Ok(Value::Undefined);
-    };
-    Ok(data
-        .keys
-        .iter()
-        .position(|k| same_value_zero(k, key))
-        .and_then(|pos| data.values.get(pos).cloned())
-        .unwrap_or(Value::Undefined))
+    map_get_inner(receiver, arguments, false)
 }
 
 pub(crate) fn map_get_or_insert(
@@ -383,12 +351,6 @@ pub(crate) fn map_get_or_insert_computed(
     arguments: &[Value],
 ) -> Result<Value, VmError> {
     let key = arguments.first().cloned().unwrap_or(Value::Undefined);
-    if matches!(
-        map_has(receiver, std::slice::from_ref(&key))?,
-        Value::Boolean(true)
-    ) {
-        return map_get(receiver, &[key]);
-    }
     let callback = arguments
         .get(1)
         .ok_or_else(|| crate::value::error::throw_type_error("Map callback must be callable"))?;
@@ -397,6 +359,12 @@ pub(crate) fn map_get_or_insert_computed(
             "Map callback must be callable",
         ));
     }
+    if matches!(
+        map_has(receiver, std::slice::from_ref(&key))?,
+        Value::Boolean(true)
+    ) {
+        return map_get(receiver, &[key]);
+    }
     let value =
         crate::functions::execute_target(callback, &Value::Undefined, std::slice::from_ref(&key))?;
     map_set(receiver, &[key, value.clone()])?;
@@ -404,43 +372,11 @@ pub(crate) fn map_get_or_insert_computed(
 }
 
 pub(crate) fn map_has(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let Some(Value::Map(data)) =
-        receiver.filter(|value| matches!(value, Value::Map(data) if !data.weak))
-    else {
-        return Err(crate::value::error::throw_type_error(
-            "Map method called on incompatible receiver",
-        ));
-    };
-    let Some(key) = arguments.first() else {
-        return Ok(Value::Boolean(false));
-    };
-    Ok(Value::Boolean(
-        data.keys.iter().any(|k| same_value_zero(k, key)),
-    ))
+    map_has_inner(receiver, arguments, false)
 }
 
 pub(crate) fn map_delete(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let Some(receiver @ Value::Map(data)) =
-        receiver.filter(|value| matches!(value, Value::Map(data) if !data.weak))
-    else {
-        return Err(crate::value::error::throw_type_error(
-            "Map method called on incompatible receiver",
-        ));
-    };
-    let Some(key) = arguments.first() else {
-        return Ok(Value::Boolean(false));
-    };
-    let mut data = (**data).clone();
-    if let Some(pos) = data.keys.iter().position(|k| same_value_zero(k, key)) {
-        data.keys.remove(pos);
-        data.values.remove(pos);
-        let result = Value::Boolean(true);
-        let updated = Value::Map(Rc::new(data));
-        crate::locals::replace_value(receiver, &updated);
-        Ok(result)
-    } else {
-        Ok(Value::Boolean(false))
-    }
+    map_delete_inner(receiver, arguments, false)
 }
 
 pub(crate) fn map_clear(receiver: Option<&Value>) -> Result<Value, VmError> {
