@@ -45,7 +45,11 @@ impl ArrayData {
     }
 
     pub fn set_length(&mut self, length: usize) {
-        self.values.truncate(length);
+        if length < self.length {
+            self.values.truncate(length);
+            self.deleted.truncate(length);
+            self.mapped.truncate(length);
+        }
         self.length = length;
     }
 
@@ -132,7 +136,8 @@ impl ArrayData {
     pub(crate) fn delete_property(&mut self, key: &str) {
         self.properties.retain(|(name, _)| name != key);
         self.descriptors.retain(|(name, _)| name != key);
-        if let Ok(index) = key.parse::<usize>() {
+        if let Some(index) = crate::arrays::array_index(key) {
+            let index = index as usize;
             self.disconnect_index(index);
             self.deleted.resize(index.saturating_add(1), false);
             self.deleted[index] = true;
