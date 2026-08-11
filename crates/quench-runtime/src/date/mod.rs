@@ -76,4 +76,5 @@ pub fn store_time(receiver: &Value, ms: f64) -> Value {
     }
 }
 
+pub(crate) use impl_::call;
 pub use impl_::execute;
