@@ -97,8 +97,8 @@ with the relevant commands and test262 runs at execution time.
 Start domain breadth only after sections 1–5 establish canonical semantics,
 compact representation, flat execution, operational facts, and generation.
 Implement each domain as a semantic adapter plus the smallest suitable crate
-kernel. Dependency presence never establishes coverage; observable Test262
-behavior must execute through the canonical path and be verified.
+kernel. Observable Test262 behavior must execute through the canonical path and
+be verified.
 
 - **RegExp:** integrate `regress` behind `RegExpCompile`, `RegExpExec`, and
   canonical string-regexp operations. Preserve JavaScript UTF-16 indices,
@@ -125,12 +125,3 @@ behavior must execute through the canonical path and be verified.
   directory and frontmatter. Stable `language`, `built-ins`, `annexB`, and
   `intl402` are conformance domains; `staging` is proposal work and must not
   be silently counted as stable coverage.
-
-### 9.1 Dependency acceptance gate
-
-Before adding a crate, compare its documented syntax/semantic coverage with
-the relevant ECMA specification and test262 failures. Record the dependency
-in `docs/DEPENDENCIES.md` in the same change, use feature flags to control
-binary/RSS cost, and keep the adapter small enough to obey the Rust lint
-limits. No crate may introduce a second AST, runtime object model, optimizer
-IR, or alternate semantic path.

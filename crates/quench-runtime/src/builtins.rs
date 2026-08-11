@@ -71,8 +71,12 @@ include!("builtins_escape.rs");
 
 pub(crate) fn array(arguments: &[Value]) -> Value {
     if let [Value::Number(length)] = arguments {
-        if *length >= 0.0 && length.fract() == 0.0 {
-            return Value::array(vec![Value::Undefined; *length as usize]);
+        if *length >= 0.0 && length.fract() == 0.0 && *length <= u32::MAX as f64 {
+            let mut values = Value::array(Vec::new());
+            if let Value::Array(values) = &mut values {
+                Rc::make_mut(values).set_length(*length as usize);
+            }
+            return values;
         }
     }
     Value::array(arguments.to_vec())

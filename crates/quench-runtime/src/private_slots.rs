@@ -6,34 +6,115 @@ use crate::{
 
 pub(crate) fn get(value: &Value, name: &PrivateName) -> Result<Value, VmError> {
     let slots = slots(value)?;
-    let slots = slots.borrow();
-    let Some((_, slot)) = slots.iter().find(|(id, _)| id == name) else {
+    let slot = slots
+        .borrow()
+        .iter()
+        .find(|(id, _)| id == name)
+        .map(|(_, slot)| slot.clone());
+    let Some(slot) = slot else {
         return Err(private_brand_error());
     };
     match slot {
-        PrivateSlot::Data(value) => Ok(value.clone()),
-        PrivateSlot::Accessor { .. } => Err(private_brand_error()),
+        PrivateSlot::Data(value) => Ok(value),
+        PrivateSlot::Method(value) => Ok(value),
+        PrivateSlot::Accessor { get: Some(get), .. } => {
+            crate::functions::execute_target(&get, value, &[])
+        }
+        PrivateSlot::Accessor { get: None, .. } => Err(private_brand_error()),
     }
+}
+
+pub(crate) fn define_accessor(
+    value: &Value,
+    name: PrivateName,
+    get: Option<Value>,
+    set: Option<Value>,
+) -> Result<(), VmError> {
+    let slots = slots(value)?;
+    let mut slots = slots.borrow_mut();
+    if let Some((
+        _,
+        PrivateSlot::Accessor {
+            get: old_get,
+            set: old_set,
+        },
+    )) = slots.iter_mut().find(|(id, _)| id == &name)
+    {
+        if get.is_some() {
+            *old_get = get;
+        }
+        if set.is_some() {
+            *old_set = set;
+        }
+        return Ok(());
+    }
+    if slots.iter().any(|(id, _)| id == &name) {
+        return Err(private_brand_error());
+    }
+    slots.push((name, PrivateSlot::Accessor { get, set }));
+    Ok(())
+}
+
+pub(crate) fn define_method(
+    value: &Value,
+    name: PrivateName,
+    method: Value,
+) -> Result<(), VmError> {
+    define_slot(value, name, PrivateSlot::Method(method))
 }
 
 pub(crate) fn set(value: &Value, name: &PrivateName, new_value: Value) -> Result<(), VmError> {
     let slots = slots(value)?;
-    let mut slots = slots.borrow_mut();
-    let Some((_, PrivateSlot::Data(value))) = slots.iter_mut().find(|(id, _)| id == name) else {
+    let slot = slots
+        .borrow()
+        .iter()
+        .find(|(id, _)| id == name)
+        .map(|(_, slot)| slot.clone());
+    let Some(slot) = slot else {
         return Err(private_brand_error());
     };
-    *value = new_value;
+    set_slot(value, name, new_value, slot)
+}
+
+fn set_slot(
+    value: &Value,
+    name: &PrivateName,
+    new_value: Value,
+    slot: PrivateSlot,
+) -> Result<(), VmError> {
+    match slot {
+        PrivateSlot::Data(_) => set_data_slot(value, name, new_value),
+        PrivateSlot::Method(_) => Err(private_brand_error()),
+        PrivateSlot::Accessor { set: Some(set), .. } => {
+            crate::functions::execute_target(&set, value, &[new_value]).map(|_| ())
+        }
+        PrivateSlot::Accessor { set: None, .. } => Err(private_brand_error()),
+    }
+}
+
+fn set_data_slot(value: &Value, name: &PrivateName, new_value: Value) -> Result<(), VmError> {
+    let slots = slots(value)?;
+    let mut slots = slots.borrow_mut();
+    let Some((_, PrivateSlot::Data(old_value))) = slots.iter_mut().find(|(id, _)| id == name)
+    else {
+        return Err(private_brand_error());
+    };
+    *old_value = new_value;
     Ok(())
 }
 
 /// Defines an unforgeable data slot without exposing it as an ordinary key.
 pub(crate) fn define(value: &Value, name: PrivateName, initial: Value) -> Result<(), VmError> {
+    define_slot(value, name, PrivateSlot::Data(initial))
+}
+
+fn define_slot(value: &Value, name: PrivateName, slot: PrivateSlot) -> Result<(), VmError> {
     let slots = slots(value)?;
     let mut slots = slots.borrow_mut();
     if slots.iter().any(|(id, _)| id == &name) {
         return Err(private_brand_error());
     }
-    slots.push((name, PrivateSlot::Data(initial)));
+    slots.push((name, slot));
     Ok(())
 }
 

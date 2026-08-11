@@ -23,38 +23,21 @@ pub(crate) fn append_instance_field(
         .push(crate::value::InstanceFieldPlan { key, initializer });
     Ok(())
 }
-fn append_private_field(
+include!("instance_fields_private.rs");
+
+type PrivateAccessorValues =
+    Option<(Option<crate::value::Value>, Option<crate::value::Value>)>;
+
+fn private_accessor_values(
     registers: &[crate::value::Value],
     field: &AppendInstanceFieldOp,
-    id: crate::facts::PrivateNameId,
-) -> Result<(), crate::execute::VmError> {
-    let constructor = crate::execute::read_register(registers, field.constructor)?;
-    let crate::value::Value::Function(function) = &constructor else {
-        return Err(crate::execute::VmError::NotCallable);
+) -> Result<PrivateAccessorValues, crate::execute::VmError> {
+    let Some(accessor) = &field.accessor else {
+        return Ok(None);
     };
-    if field.is_static {
-        let value = private_field_value(registers, field, &constructor)?;
-        let name = crate::private_environment::resolve(id).ok_or_else(|| {
-            crate::value::error::throw_type_error(
-                "Private field access on an object without the required brand",
-            )
-        })?;
-        return crate::private_slots::define(&constructor, name, value);
-    }
-    let initializer = match field.value {
-        Some(value) => crate::value::InstanceFieldInitializer::Value(
-            crate::execute::read_register(registers, value)?,
-        ),
-        None => instance_field_initializer(field.initializer.as_ref())?,
-    };
-    function
-        .instance_fields
-        .borrow_mut()
-        .push(crate::value::InstanceFieldPlan {
-            key: crate::value::InstanceFieldKey::Private(id),
-            initializer,
-        });
-    Ok(())
+    let get = accessor.get.map(|index| crate::execute::read_register(registers, index)).transpose()?;
+    let set = accessor.set.map(|index| crate::execute::read_register(registers, index)).transpose()?;
+    Ok(Some((get, set)))
 }
 fn private_field_value(
     registers: &[crate::value::Value],
@@ -103,6 +86,10 @@ fn field_initializer_value(
             crate::functions::execute(function, receiver, &[])
         }
         crate::value::InstanceFieldInitializer::Value(value) => Ok(value.clone()),
+        crate::value::InstanceFieldInitializer::PrivateMethod(value) => Ok(value.clone()),
+        crate::value::InstanceFieldInitializer::PrivateAccessor { .. } => {
+            Err(crate::execute::VmError::MissingReturn)
+        }
     }
 }
 

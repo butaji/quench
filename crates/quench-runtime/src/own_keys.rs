@@ -108,8 +108,7 @@ fn ordered(properties: &[(String, Value)], symbols: bool) -> Vec<String> {
 }
 
 fn array_index(key: &str) -> Option<u32> {
-    let index = key.parse::<u32>().ok()?;
-    (index != u32::MAX && index.to_string() == key).then_some(index)
+    crate::arrays::array_index(key)
 }
 
 fn require_object(target: Option<&Value>) -> Result<&Value, VmError> {

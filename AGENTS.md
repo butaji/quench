@@ -10,7 +10,7 @@
 8. **Fix workflow**: fix families of related failures, not single cases; reproduce → minimal fix → re-run relevant tests → leave the regression guard in.
 9. **Linter is law**: every `*.rs` file in this repo must have zero warnings, no file longer than 500 lines, no function longer than 40 lines, and cognitive complexity ≤ 10. Run `tools/lint-rust.sh`; it enforces `cargo fmt --check`, workspace clippy with `-D warnings` and `-D clippy::cognitive_complexity`, the file limit, and the function limit. No `#[allow]` exceptions.
 10. **One canonical semantic path**: `ToPrimitive`, `IsCallable`, `SameValueZero`, etc. have one semantic owner; residual ops and specializations delegate to it. Grep before writing any helper. Never optimize through proxies, accessors, coercion, `Symbol.toPrimitive`, dynamic prototype mutation, direct `eval`, realms, or completion ordering.
-11. **Prefer crates over hand-rolling** (`regress`, `chrono`, `num-bigint`, `serde_json`, `urlencoding`, `oxc`); a new crate needs a `docs/DEPENDENCIES.md` row in the same diff.
+11. **Prefer crates over hand-rolling** (`regress`, `chrono`, `num-bigint`, `serde_json`, `urlencoding`, `oxc`).
 12. **Zero duplication, zero dead code, no speculative generality**: hoist repeated logic to `value/` or `eval/ops.rs`; delete unused symbols, fields, and variants in the same PR.
 13. **Builtins throw, never panic**: use `value::error::throw_type_error(msg)`; `panic!`/`unwrap()`/`expect()` are forbidden in `builtins/` and `eval/`.
 14. **Verify before done**: relevant unit tests green, `cargo fmt`, and `cargo clippy --workspace --all-targets -- -D warnings` clean.

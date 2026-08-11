@@ -15,17 +15,32 @@ pub(crate) fn builtin(
 
 pub(crate) fn execute_eval(
     registers: &mut Vec<Value>,
-    dst: u16,
-    source: u16,
-    strict: bool,
-    global: bool,
-    bindings: &[(String, u16)],
-    forbidden_var_names: &[String],
+    input: EvalExecution<'_>,
 ) -> Result<(), VmError> {
-    let source = crate::execute::read_register(registers, source)?;
-    let value = evaluate_direct(&source, strict, global, bindings, forbidden_var_names)?;
-    crate::execute::write_value(registers, dst, value);
+    let source = crate::execute::read_register(registers, input.source)?;
+    let value = if input.direct {
+        evaluate_direct(
+            &source,
+            input.strict,
+            input.global,
+            input.bindings,
+            input.forbidden_var_names,
+        )?
+    } else {
+        evaluate(&source, input.strict, None)?
+    };
+    crate::execute::write_value(registers, input.dst, value);
     Ok(())
+}
+
+pub(crate) struct EvalExecution<'a> {
+    pub(crate) dst: u16,
+    pub(crate) source: u16,
+    pub(crate) strict: bool,
+    pub(crate) global: bool,
+    pub(crate) direct: bool,
+    pub(crate) bindings: &'a [(String, u16)],
+    pub(crate) forbidden_var_names: &'a [String],
 }
 
 fn evaluate(
@@ -40,7 +55,7 @@ fn evaluate(
         ("globalThis".to_string(), 0),
         ("\0script_this".to_string(), 0),
     ];
-    let program = crate::reduce::reduce_eval_source(source, strict, true, &bindings, &[])
+    let program = crate::reduce::reduce_eval_source(source, strict, true, false, &bindings, &[])
         .map_err(syntax_error)?;
     match realm {
         Some(realm) => crate::vm::execute_indirect_eval_in_realm(realm, &program.ops),
@@ -66,6 +81,7 @@ fn evaluate_direct(
         source,
         strict,
         global,
+        true,
         bindings,
         forbidden_var_names,
         grammar,

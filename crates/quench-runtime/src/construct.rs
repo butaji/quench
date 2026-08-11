@@ -15,37 +15,56 @@ pub(crate) fn reduce(
 ) -> Option<u16> {
     let callee =
         crate::reduce::reduce_expression(&expression.callee, ops, facts, next_register, locals)?;
-    let args = expression
-        .arguments
-        .iter()
-        .map(|argument| {
-            crate::reduce::reduce_expression(
-                argument.as_expression()?,
-                ops,
-                facts,
-                next_register,
-                locals,
-            )
-        })
-        .collect::<Option<Vec<_>>>()?;
+    let (args, spreads) = crate::reduce::reduce_expressions::calls_reduce::reduce_arguments(
+        &expression.arguments,
+        ops,
+        facts,
+        next_register,
+        locals,
+    )?;
     let dst = *next_register;
     *next_register = next_register.saturating_add(1);
-    ops.push(Op::Construct { dst, callee, args });
+    ops.push(Op::Construct {
+        dst,
+        callee,
+        args,
+        spreads,
+    });
     Some(dst)
 }
 
 pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<(), crate::execute::VmError> {
-    let Op::Construct { dst, callee, args } = op else {
+    let Op::Construct {
+        dst,
+        callee,
+        args,
+        spreads,
+    } = op
+    else {
         return Err(crate::execute::VmError::NotCallable);
     };
-    let arguments = args
-        .iter()
-        .map(|index| crate::execute::read_register(registers, *index))
-        .collect::<Result<Vec<_>, _>>()?;
+    let arguments = collect_construct_arguments(registers, args, spreads)?;
     let target = crate::execute::read_register(registers, *callee)?;
     let value = construct_value(&target, &arguments)?;
     crate::execute::write_value(registers, *dst, value);
     Ok(())
+}
+
+fn collect_construct_arguments(
+    registers: &[Value],
+    args: &[u16],
+    spreads: &[bool],
+) -> Result<Vec<Value>, crate::execute::VmError> {
+    let mut arguments = Vec::new();
+    for (index, spread) in args.iter().zip(spreads) {
+        let value = crate::execute::read_register(registers, *index)?;
+        if *spread {
+            arguments.extend(crate::collections::iterator::collect_iterable(value)?);
+        } else {
+            arguments.push(value);
+        }
+    }
+    Ok(arguments)
 }
 
 pub(crate) fn construct_value(
@@ -401,61 +420,12 @@ fn construct_function(
 
 pub(crate) fn initialize_instance_fields(
     function: &crate::value::FunctionValue,
-    mut receiver: Value,
-) -> Result<Value, crate::execute::VmError> {
-    for field in function.instance_fields.borrow().iter() {
-        let previous = receiver.clone();
-        receiver = initialize_instance_field(function, field, receiver)?;
-        crate::locals::replace_value(&previous, &receiver);
-    }
-    Ok(receiver)
-}
-
-fn initialize_instance_field(
-    function: &crate::value::FunctionValue,
-    field: &crate::value::InstanceFieldPlan,
     receiver: Value,
 ) -> Result<Value, crate::execute::VmError> {
-    let value = match &field.initializer {
-        crate::value::InstanceFieldInitializer::Undefined => Value::Undefined,
-        crate::value::InstanceFieldInitializer::Callable(initializer) => {
-            crate::functions::execute(initializer, &receiver, &[])?
-        }
-        crate::value::InstanceFieldInitializer::Value(value) => value.clone(),
-    };
-    match &field.key {
-        crate::value::InstanceFieldKey::Private(id) => {
-            let name = function.private_environment.resolve(*id).ok_or_else(|| {
-                crate::value::error::throw_type_error(
-                    "Private field access on an object without the required brand",
-                )
-            })?;
-            crate::private_slots::define(&receiver, name, value)?;
-            Ok(receiver)
-        }
-        crate::value::InstanceFieldKey::Static(key) => {
-            define_instance_field(receiver, key.as_ref(), value)
-        }
-        crate::value::InstanceFieldKey::Dynamic(key) => {
-            let key = crate::conversion::to_property_key(key)?;
-            define_instance_field(receiver, &key, value)
-        }
-    }
+    initialize_instance_fields_impl(function, receiver)
 }
 
-fn define_instance_field(
-    receiver: Value,
-    key: &str,
-    value: Value,
-) -> Result<Value, crate::execute::VmError> {
-    let descriptor = [
-        ("value".to_string(), value),
-        ("writable".to_string(), Value::Boolean(true)),
-        ("enumerable".to_string(), Value::Boolean(true)),
-        ("configurable".to_string(), Value::Boolean(true)),
-    ];
-    crate::builtins::define_own_property(&receiver, key, &descriptor)
-}
+include!("construct_instance_fields.rs");
 
 pub(crate) fn derived_constructor(
     function: &crate::value::FunctionValue,

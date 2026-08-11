@@ -84,21 +84,32 @@ fn collect_call_arguments(
             &mut arguments,
             super::read_register(registers, *index)?,
             spreads.get(i) == Some(&true),
-        );
+        )
+        .map_err(map_not_callable)?;
     }
     Ok(arguments)
 }
 
-fn push_argument_value(arguments: &mut Vec<Value>, value: Value, is_spread: bool) {
+fn push_argument_value(
+    arguments: &mut Vec<Value>,
+    value: Value,
+    is_spread: bool,
+) -> Result<(), VmError> {
     if is_spread {
-        if let Value::Array(values) = value {
-            arguments.extend(values.iter().cloned());
-        } else {
-            arguments.push(value);
-        }
-        return;
+        arguments.extend(
+            crate::collections::iterator::collect_iterable(value).map_err(map_not_callable)?,
+        );
+        return Ok(());
     }
     arguments.push(value);
+    Ok(())
+}
+
+fn map_not_callable(error: crate::execute::VmError) -> crate::execute::VmError {
+    if matches!(error, crate::execute::VmError::NotCallable) {
+        return crate::vm::not_callable();
+    }
+    error
 }
 
 fn invoke_callee(callee_value: &Value, arguments: &[Value]) -> Result<Value, VmError> {
