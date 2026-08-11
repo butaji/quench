@@ -438,7 +438,6 @@ fn builtin_length(builtin: Builtin) -> f64 {
         _ => 0.0,
     }
 }
-
 fn data_view_length(builtin: Builtin) -> Option<f64> {
     use Builtin::*;
     match builtin {
@@ -451,25 +450,9 @@ fn data_view_length(builtin: Builtin) -> Option<f64> {
         _ => None,
     }
 }
-
 pub(crate) fn builtin_name(builtin: Builtin) -> &'static str {
     use Builtin::*;
-    if let Some(name) = crate::builtin_meta::methods::short_name(builtin) {
-        return name;
-    }
-    if let Some(name) = crate::builtin_meta::methods::function_name(builtin) {
-        return name;
-    }
-    if let Some(name) = data_view_name(builtin) {
-        return name;
-    }
-    if let Some(name) = error_name(builtin) {
-        return name;
-    }
-    if let Some(name) = generator_name(builtin) {
-        return name;
-    }
-    if let Some(name) = typed_array_name(builtin) {
+    if let Some(name) = metadata_builtin_name(builtin) {
         return name;
     }
     match builtin {
@@ -491,5 +474,25 @@ pub(crate) fn builtin_name(builtin: Builtin) -> &'static str {
         _ => "",
     }
 }
-
+fn metadata_builtin_name(builtin: Builtin) -> Option<&'static str> {
+    if let Some(name) = crate::builtin_meta::methods::short_name(builtin) {
+        return Some(name);
+    }
+    if let Some(name) = crate::builtin_meta::methods::function_name(builtin) {
+        return Some(name);
+    }
+    if let Some(name) = data_view_name(builtin) {
+        return Some(name);
+    }
+    if let Some(name) = error_name(builtin) {
+        return Some(name);
+    }
+    if let Some(name) = generator_name(builtin) {
+        return Some(name);
+    }
+    if let Some(name) = typed_array_name(builtin) {
+        return Some(name);
+    }
+    crate::builtin_meta::constructor_name(builtin)
+}
 include!("props_names.rs");
