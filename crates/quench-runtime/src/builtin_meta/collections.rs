@@ -50,6 +50,7 @@ fn map_property(key: &str) -> Option<Value> {
         "entries" => Some(Value::Builtin(MapEntries)),
         "keys" => Some(Value::Builtin(MapKeys)),
         "values" => Some(Value::Builtin(MapValues)),
+        "Symbol.iterator" => Some(Value::Builtin(MapEntries)),
         "getOrInsert" => Some(Value::Builtin(MapGetOrInsert)),
         "getOrInsertComputed" => Some(Value::Builtin(MapGetOrInsertComputed)),
         _ => None,
