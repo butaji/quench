@@ -83,7 +83,7 @@ fn is_simple_builtin(builtin: Builtin) -> bool {
             | Builtin::Number | Builtin::BigInt
             | Builtin::NumberToString
             | Builtin::NumberValueOf
-            | Builtin::BigIntValueOf
+            | Builtin::BigIntValueOf | Builtin::SymbolValueOf
             | Builtin::BoxedValueOf
             | Builtin::ObjectPrototypeToString
             | Builtin::ObjectPrototypeValueOf
@@ -135,6 +135,7 @@ fn execute_simple_builtin(
         Builtin::NumberToString => Ok(Value::String(to_string(arguments.first()))),
         Builtin::NumberValueOf => number_value_of(receiver),
         Builtin::BigIntValueOf => bigint_value_of(receiver),
+        Builtin::SymbolValueOf => symbol_value_of(receiver),
         Builtin::BoxedValueOf => Ok(boxed_value(receiver)),
         Builtin::ObjectPrototypeToString => Ok(crate::builtins::prototype_to_string(receiver)),
         Builtin::ObjectPrototypeValueOf => Ok(crate::builtins::prototype_value_of(receiver)),
@@ -146,9 +147,7 @@ fn execute_simple_builtin(
             crate::number_fmt::number_format(arguments.first(), arguments.get(1), builtin)
         }
         Builtin::Object => Ok(crate::builtins::object(arguments)),
-        Builtin::Date => {
-            Ok(crate::date::call())
-        }
+        Builtin::Date => Ok(crate::date::call()),
         _ => Ok(Value::Undefined),
     }
 }

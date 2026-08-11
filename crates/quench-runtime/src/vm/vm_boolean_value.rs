@@ -42,3 +42,28 @@ fn wrapped_bigint(value: &Value) -> Result<Value, crate::execute::VmError> {
         "BigInt.prototype.valueOf called on incompatible receiver",
     ))
 }
+
+fn symbol_value_of(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
+    match receiver {
+        Some(Value::String(value)) if crate::conversion::is_symbol_string(value) => {
+            Ok(Value::String(value.clone()))
+        }
+        Some(value @ Value::Object(_)) => wrapped_symbol(value),
+        _ => Err(crate::value::error::throw_type_error(
+            "Symbol.prototype.valueOf called on incompatible receiver",
+        )),
+    }
+}
+
+fn wrapped_symbol(value: &Value) -> Result<Value, crate::execute::VmError> {
+    let constructor = crate::execute::get_property_result(value, "constructor")?;
+    let wrapped = crate::execute::get_property_result(value, "_value")?;
+    if constructor == Value::Builtin(Builtin::Symbol)
+        && matches!(&wrapped, Value::String(value) if crate::conversion::is_symbol_string(value))
+    {
+        return Ok(wrapped);
+    }
+    Err(crate::value::error::throw_type_error(
+        "Symbol.prototype.valueOf called on incompatible receiver",
+    ))
+}
