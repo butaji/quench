@@ -199,6 +199,7 @@ pub(crate) fn execute_target(
         }
         crate::value::Value::Function(function) => execute(function, receiver, arguments),
         crate::value::Value::BoundFunction(bound) => execute_bound(bound, arguments),
+        crate::value::Value::Proxy(_) => crate::proxy::proxy_apply(target, receiver, arguments),
         _ => Err(crate::execute::VmError::NotCallable),
     }
 }

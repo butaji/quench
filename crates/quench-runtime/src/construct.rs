@@ -89,10 +89,22 @@ fn construct_with_new_target(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     match target {
-        Value::Builtin(builtin) => construct_builtin(*builtin, arguments),
+        Value::Builtin(builtin) => {
+            let value = construct_builtin(*builtin, arguments)?;
+            Ok(with_new_target_prototype(value, new_target))
+        }
         Value::Function(function) => construct_function(function, new_target, arguments),
         Value::BoundFunction(bound) => construct_bound(bound, target, arguments),
         _ => Err(crate::vm::not_callable()),
+    }
+}
+
+fn with_new_target_prototype(value: Value, new_target: &Value) -> Value {
+    let prototype = crate::execute::get_property(new_target, "prototype");
+    if crate::value::is_object(&prototype) {
+        crate::builtins::set_property(value, "\0prototype", prototype)
+    } else {
+        value
     }
 }
 

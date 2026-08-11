@@ -77,6 +77,20 @@ pub fn shift_right(a: &str, b: &str) -> Result<String, Error> {
     shift(a, b, false)
 }
 
+pub fn parse_string(value: &str) -> Option<BigInt> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Some(0.into());
+    }
+    let (radix, digits) = match value.as_bytes() {
+        [b'0', b'x' | b'X', digits @ ..] => (16, digits),
+        [b'0', b'o' | b'O', digits @ ..] => (8, digits),
+        [b'0', b'b' | b'B', digits @ ..] => (2, digits),
+        _ => return value.parse().ok(),
+    };
+    BigInt::parse_bytes(digits, radix)
+}
+
 fn shift(a: &str, b: &str, left: bool) -> Result<String, Error> {
     let value = parse(a)?;
     let count = parse(b)?;
