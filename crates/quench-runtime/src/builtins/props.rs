@@ -311,6 +311,8 @@ fn array_method(key: &str) -> Option<Builtin> {
         "reduceRight" => Some(ArrayReduceRight),
         "toLocaleString" => Some(ArrayToLocaleString),
         "values" => Some(ArrayIterator),
+        "keys" => Some(ArrayKeys),
+        "entries" => Some(ArrayEntries),
         "push" => Some(ArrayPush),
         "splice" => Some(ArraySplice),
         _ => None,
@@ -370,7 +372,6 @@ fn builtin_method3(builtin: Builtin, key: &str) -> Option<Builtin> {
         _ => None,
     }
 }
-
 fn collections_prop(builtin: Builtin, key: &str) -> Option<Builtin> {
     crate::builtin_meta::collections::collections_property(builtin, key).and_then(|v| match v {
         Value::Builtin(b) => Some(b),
@@ -380,7 +381,6 @@ fn collections_prop(builtin: Builtin, key: &str) -> Option<Builtin> {
 pub(crate) fn special_property(builtin: Builtin, key: &str) -> Option<Value> {
     special(builtin, key)
 }
-
 pub(crate) fn callable(builtin: Builtin, key: &str) -> Option<Value> {
     match key {
         "call" => Some(Value::Builtin(Builtin::FunctionCall)),
