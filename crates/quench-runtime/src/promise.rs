@@ -5,7 +5,7 @@ use std::{cell::RefCell, collections::VecDeque, rc::Rc};
 use crate::{
     execute::VmError,
     ops::Builtin,
-    value::{PromiseData, PromiseState, Value},
+    value::{PromiseContinuation, PromiseData, PromiseState, Value},
 };
 
 thread_local! {
@@ -49,6 +49,31 @@ fn process_promise(promise: &Rc<PromiseData>) {
             Err(_) => reject_promise(&result_promise, Value::Undefined),
         }
     }
+    let continuations = std::mem::take(&mut *promise.continuations.borrow_mut());
+    for continuation in continuations {
+        process_continuation(continuation, &state);
+    }
+}
+
+fn process_continuation(continuation: PromiseContinuation, state: &PromiseState) {
+    let PromiseContinuation::AsyncGenerator { generator, result } = continuation;
+    let value = match state {
+        PromiseState::Fulfilled(value) | PromiseState::Rejected(value) => value.clone(),
+        PromiseState::Pending => return,
+    };
+    let resume = if matches!(state, PromiseState::Rejected(_)) {
+        crate::generator::resume_async_after_await(&generator, true, value)
+    } else {
+        crate::generator::resume_async_after_await(&generator, false, value)
+    };
+    match resume {
+        Ok(value) => resolve_promise(&result, value),
+        Err(VmError::Suspended(awaited)) => {
+            register_async_generator(&awaited, generator, result);
+        }
+        Err(VmError::Thrown(reason)) => reject_promise(&result, reason),
+        Err(_) => reject_promise(&result, Value::Undefined),
+    }
 }
 
 fn propagate_default(result: &Rc<PromiseData>, state: &PromiseState, value: Value) {
@@ -82,6 +107,36 @@ pub(crate) fn from_async_completion(completion: Result<Value, VmError>) -> Value
         Err(_) => reject_promise(&promise, Value::Undefined),
     }
     Value::Promise(promise)
+}
+
+pub(crate) fn from_async_generator_completion(
+    completion: Result<Value, VmError>,
+    generator: Rc<crate::value::GeneratorData>,
+) -> Value {
+    let promise = Rc::new(PromiseData::default());
+    match completion {
+        Ok(value) => resolve_promise(&promise, value),
+        Err(VmError::Suspended(awaited)) => {
+            register_async_generator(&awaited, generator, Rc::clone(&promise))
+        }
+        Err(VmError::Thrown(reason)) => reject_promise(&promise, reason),
+        Err(_) => reject_promise(&promise, Value::Undefined),
+    }
+    Value::Promise(promise)
+}
+
+pub(crate) fn register_async_generator(
+    awaited: &Rc<PromiseData>,
+    generator: Rc<crate::value::GeneratorData>,
+    result: Rc<PromiseData>,
+) {
+    awaited
+        .continuations
+        .borrow_mut()
+        .push(PromiseContinuation::AsyncGenerator { generator, result });
+    if !matches!(*awaited.state.borrow(), PromiseState::Pending) {
+        queue_promise(awaited);
+    }
 }
 
 fn queue_promise(promise: &Rc<PromiseData>) {

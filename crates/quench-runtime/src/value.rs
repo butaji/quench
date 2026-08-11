@@ -76,6 +76,14 @@ pub enum PromiseState {
     Rejected(Value),
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum PromiseContinuation {
+    AsyncGenerator {
+        generator: Rc<GeneratorData>,
+        result: Rc<PromiseData>,
+    },
+}
+
 /// Heap-allocated Promise data.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub(crate) struct TypedArrayMeta {
@@ -100,6 +108,7 @@ pub struct PromiseData {
     pub state: RefCell<PromiseState>,
     pub result: RefCell<Option<Value>>,
     pub then_actions: RefCell<Vec<(Option<Value>, Option<Value>)>>,
+    pub(crate) continuations: RefCell<Vec<PromiseContinuation>>,
 }
 
 impl PromiseData {
@@ -114,6 +123,7 @@ impl PromiseData {
             state: RefCell::new(state),
             result: RefCell::new(result),
             then_actions: RefCell::new(Vec::new()),
+            continuations: RefCell::new(Vec::new()),
         }
     }
 
