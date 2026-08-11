@@ -59,6 +59,7 @@ pub(crate) fn script_properties(ops: &mut Vec<Op>, next_register: &mut u16) -> V
         "WeakMap",
         "WeakSet",
         "SharedArrayBuffer",
+        "WeakRef",
     ];
     names
         .into_iter()
@@ -177,6 +178,7 @@ fn collection_builtin(name: &str) -> Option<crate::ops::Builtin> {
         "Set" => Some(crate::ops::Builtin::Set),
         "WeakMap" => Some(crate::ops::Builtin::WeakMap),
         "WeakSet" => Some(crate::ops::Builtin::WeakSet),
+        "WeakRef" => Some(crate::ops::Builtin::WeakRef),
         _ => None,
     }
 }

@@ -98,6 +98,7 @@ fn is_simple_builtin(builtin: Builtin) -> bool {
             | Builtin::URIError
             | Builtin::AggregateError
             | Builtin::TypeError
+            | Builtin::WeakRefDeref
     )
 }
 
@@ -106,12 +107,11 @@ fn execute_simple_builtin(
     arguments: &[Value],
     receiver: Option<&Value>,
 ) -> Result<Value, VmError> {
-    if is_error_constructor(builtin) {
-        return Ok(crate::builtins::error(builtin, arguments));
+    if builtin == Builtin::WeakRefDeref {
+        return weak_ref_deref(receiver);
     }
-    if let Some(result) = crate::functions_dynamic::construct_builtin(builtin, arguments) {
-        return result;
-    }
+    if is_error_constructor(builtin) { return Ok(crate::builtins::error(builtin, arguments)); }
+    if let Some(result) = crate::functions_dynamic::construct_builtin(builtin, arguments) { return result; }
     match builtin {
         Builtin::Boolean => Ok(Value::Boolean(arguments.first().is_some_and(is_truthy))),
         Builtin::Eval => crate::reflect::builtin(builtin, arguments, receiver),
@@ -139,6 +139,20 @@ fn execute_simple_builtin(
         }
         _ => Ok(Value::Undefined),
     }
+}
+
+fn weak_ref_deref(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let Some(Value::Object(object)) = receiver else {
+        return Err(crate::value::error::throw_type_error(
+            "WeakRef.prototype.deref called on incompatible receiver",
+        ));
+    };
+    Ok(object
+        .iter()
+        .rev()
+        .find(|(key, _)| key == "\0weakref")
+        .map(|(_, value)| value.clone())
+        .unwrap_or(Value::Undefined))
 }
 
 pub(crate) fn realm_id_for_intrinsic_receiver(receiver: Option<&Value>) -> Option<RealmId> {
