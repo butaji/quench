@@ -3,7 +3,6 @@ use crate::{ops::Builtin, value::Value};
 mod data_view_name;
 use data_view_name::data_view_name;
 include!("props_promise.rs");
-
 /// Lookup a property on a builtin, checking runtime overrides first, then
 /// intl, then special, then callable.
 pub(crate) fn lookup(builtin: Builtin, key: &str) -> Value {
@@ -59,6 +58,7 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (Symbol, "prototype") => Some(Value::Builtin(SymbolPrototype)),
         (Symbol, "unscopables") => Some(Value::String("Symbol.unscopables\0".to_string())),
         (Symbol, k) => crate::builtin_meta::symbol::symbol_prop(k).map(Value::Builtin),
+        (Map, "groupBy") => Some(Value::Builtin(MapGroupBy)),
         (MapPrototype | SetPrototype, k) => collections_prop(builtin, k).map(Value::Builtin),
         (WeakMapPrototype, "constructor") => Some(Value::Builtin(WeakMap)),
         (WeakMapPrototype, "Symbol.toStringTag") => Some(Value::String("WeakMap".into())),
