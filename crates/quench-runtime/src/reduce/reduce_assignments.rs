@@ -23,6 +23,7 @@ pub(crate) enum Place {
         object: u16,
         key: PlaceKey,
         origin: Option<u16>,
+        strict: bool,
     },
     Private {
         object: u16,
@@ -237,7 +238,13 @@ fn computed_place(
 ) -> Option<Place> {
     let object = reduce_member_object(&member.object, ops, facts, next, locals)?;
     let key = crate::reduce::reduce_expression(&member.expression, ops, facts, next, locals)?;
-    finish_member_place(&member.object, object, PlaceKey::Dynamic(key), locals)
+    finish_member_place(
+        &member.object,
+        object,
+        PlaceKey::Dynamic(key),
+        facts.strict,
+        locals,
+    )
 }
 
 pub(crate) fn prepare_get(place: &mut Place, ops: &mut Vec<Op>, next: &mut u16) {
@@ -269,7 +276,7 @@ fn member_place(
     locals: &HashMap<String, u16>,
 ) -> Option<Place> {
     let object = reduce_member_object(expression, ops, facts, next, locals)?;
-    finish_member_place(expression, object, key, locals)
+    finish_member_place(expression, object, key, facts.strict, locals)
 }
 
 fn private_place(
@@ -301,6 +308,7 @@ fn finish_member_place(
     expression: &Expression<'_>,
     object: Option<u16>,
     key: PlaceKey,
+    strict: bool,
     locals: &HashMap<String, u16>,
 ) -> Option<Place> {
     match object {
@@ -308,6 +316,7 @@ fn finish_member_place(
             object,
             key,
             origin: object_origin(expression, locals),
+            strict,
         }),
         None => Some(Place::Super { key }),
     }
@@ -382,8 +391,9 @@ pub(crate) fn put(place: Place, value: u16, ops: &mut Vec<Op>) -> Option<()> {
             object,
             key,
             origin,
+            strict,
         } => {
-            emit_property_put(ops, object, key, value);
+            emit_property_put(ops, object, key, value, strict);
             if let Some(slot) = origin {
                 ops.push(Op::StoreLocal { slot, src: object });
             }
@@ -405,17 +415,19 @@ fn emit_super_put(ops: &mut Vec<Op>, key: PlaceKey, value: u16) {
     }
 }
 
-fn emit_property_put(ops: &mut Vec<Op>, object: u16, key: PlaceKey, value: u16) {
+fn emit_property_put(ops: &mut Vec<Op>, object: u16, key: PlaceKey, value: u16, strict: bool) {
     match key {
         PlaceKey::Static(key) => ops.push(Op::SetProperty {
             object,
             key,
             src: value,
+            strict,
         }),
         PlaceKey::Dynamic(key) => ops.push(Op::SetPropertyDynamic {
             object,
             key,
             src: value,
+            strict,
         }),
     }
 }

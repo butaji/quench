@@ -50,12 +50,14 @@ fn configure_heritage(
         object: constructor,
         key: "\0derived_constructor".to_string(),
         src: heritage,
+        strict: true,
     });
     if default_constructor {
         ops.push(Op::SetProperty {
             object: constructor,
             key: "\0default_derived_constructor".to_string(),
             src: heritage,
+            strict: true,
         });
     }
 }
@@ -64,6 +66,7 @@ fn set_internal_prototype(ops: &mut Vec<Op>, object: u16, src: u16) {
         object,
         key: "\0prototype".to_string(),
         src,
+        strict: true,
     });
 }
 pub(crate) fn validate_heritage(

@@ -48,6 +48,7 @@ fn finish_class(
         object: constructor,
         key: "prototype".to_string(),
         src: prototype,
+        strict: true,
     });
     body.extend(static_fields);
     Some(())
