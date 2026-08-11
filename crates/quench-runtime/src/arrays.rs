@@ -134,6 +134,9 @@ fn emit_array(ops: &mut Vec<Op>, dst: u16, elements: Vec<ArrayElement>) {
 }
 
 pub(crate) fn property(values: &crate::value::ArrayData, key: &str) -> Value {
+    if let Some(value) = array_prototype_override(key) {
+        return value;
+    }
     if let Some(value) = direct_property(values, key) {
         return value;
     }
@@ -169,6 +172,18 @@ pub(crate) fn property(values: &crate::value::ArrayData, key: &str) -> Value {
         _ => return index(values, key),
     };
     Value::Builtin(method)
+}
+
+fn array_prototype_override(key: &str) -> Option<Value> {
+    let descriptor =
+        crate::builtins::read_intrinsic_override(crate::ops::Builtin::ArrayPrototype, key)?;
+    let Value::Object(properties) = descriptor else {
+        return None;
+    };
+    properties
+        .iter()
+        .rev()
+        .find_map(|(name, value)| (name == "value").then(|| value.clone()))
 }
 
 pub(crate) fn array_index(key: &str) -> Option<u32> {

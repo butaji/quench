@@ -140,6 +140,9 @@ pub(crate) fn execute_set_property(
     if crate::builtins::descriptor_flag(&target, &key, "writable") == Some(false) {
         return strict_write_failure();
     }
+    if matches!(target, crate::value::Value::Builtin(_)) {
+        return set_builtin_property(registers, object, &target, &key, value);
+    }
     let result = crate::builtins::set_property(target.clone(), &key, value);
     crate::locals::replace_value(&target, &result);
     crate::vm::synchronize_global_object(registers, &target, &result);
@@ -147,6 +150,22 @@ pub(crate) fn execute_set_property(
     Ok(())
 }
 include!("properties_function_name.rs");
+
+fn set_builtin_property(
+    registers: &mut Vec<crate::value::Value>,
+    object: u16,
+    target: &crate::value::Value,
+    key: &str,
+    value: crate::value::Value,
+) -> Result<(), crate::execute::VmError> {
+    let properties = std::rc::Rc::new(crate::value::ObjectData::new(vec![(
+        "value".to_string(),
+        value,
+    )]));
+    let updated = crate::builtins::define_own_property(target, key, properties.as_ref())?;
+    crate::execute::write_value(registers, object, updated);
+    Ok(())
+}
 
 fn rejects_new_property(target: &crate::value::Value, key: &str) -> bool {
     let crate::value::Value::Object(properties) = target else {
