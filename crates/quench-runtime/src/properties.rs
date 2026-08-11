@@ -113,19 +113,12 @@ pub(crate) fn execute_set_property(
     registers: &mut Vec<crate::value::Value>,
     op: &Op,
 ) -> Result<(), crate::execute::VmError> {
-    let (object, key, src) = match op {
-        Op::SetProperty { object, key, src } => (*object, key.clone(), *src),
-        Op::SetPropertyDynamic { object, key, src } => {
-            let key = dynamic_property_key(&crate::execute::read_register(registers, *key)?)?;
-            (*object, key, *src)
-        }
-        _ => return Err(crate::execute::VmError::MissingReturn),
-    };
+    let (object, key, src, strict) = set_property_parts(registers, op)?;
     let target = crate::execute::read_register(registers, object)?.clone();
     reject_nullish_property_write(&target)?;
     reject_restricted_property_write(&target, &key)?;
     if rejects_new_property(&target, &key) {
-        return strict_write_failure();
+        return write_failure(strict);
     }
     let value = crate::execute::read_register(registers, src)?.clone();
     if crate::vm::is_global_object(&target) && crate::with_scope::set_if_bound(&key, &value)? {
@@ -133,19 +126,45 @@ pub(crate) fn execute_set_property(
     }
     if let Some(setter) = crate::property_define::accessor(&target, &key, "set") {
         if matches!(setter, crate::value::Value::Undefined) {
-            return strict_write_failure();
+            return write_failure(strict);
         }
         crate::functions::execute_target(&setter, &target, std::slice::from_ref(&value))?;
         return Ok(());
     }
-    if crate::builtins::descriptor_flag(&target, &key, "writable") == Some(false) {
-        return strict_write_failure();
+    if inherited_write_blocked(&target, &key) {
+        return write_failure(strict);
     }
     if matches!(target, crate::value::Value::Builtin(_)) {
         return set_builtin_property(registers, object, &target, &key, value);
     }
     finish_property_write(registers, object, &target, &key, value);
     Ok(())
+}
+
+fn set_property_parts(
+    registers: &[crate::value::Value],
+    op: &Op,
+) -> Result<(u16, String, u16, bool), crate::execute::VmError> {
+    match op {
+        Op::SetProperty {
+            object,
+            key,
+            src,
+            strict,
+        } => Ok((*object, key.clone(), *src, *strict)),
+        Op::SetPropertyDynamic {
+            object,
+            key,
+            src,
+            strict,
+        } => Ok((
+            *object,
+            dynamic_property_key(&crate::execute::read_register(registers, *key)?)?,
+            *src,
+            *strict,
+        )),
+        _ => Err(crate::execute::VmError::MissingReturn),
+    }
 }
 
 fn finish_property_write(
@@ -263,8 +282,18 @@ fn reject_restricted_property_write(
     Ok(())
 }
 
-fn strict_write_failure() -> Result<(), crate::execute::VmError> {
-    if crate::super_scope::is_strict() {
+fn inherited_write_blocked(target: &crate::value::Value, key: &str) -> bool {
+    if crate::builtins::descriptor_flag(target, key, "writable") == Some(false) {
+        return true;
+    }
+    matches!(
+        crate::property_define::accessor(target, key, "writable"),
+        Some(crate::value::Value::Boolean(false))
+    )
+}
+
+fn write_failure(strict: bool) -> Result<(), crate::execute::VmError> {
+    if strict {
         return Err(crate::value::error::throw_type_error(
             "Cannot assign to read-only property",
         ));
