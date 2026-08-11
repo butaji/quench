@@ -1,6 +1,6 @@
 //! Polyfill: `encoding-tail`
 
-pub const JS: &str = r#"NodeBuffer.prototype.write = function write(
+pub const JS: &str = quench_js_check::checked_js!(r#"NodeBuffer.prototype.write = function write(
   value,
   offset = 0,
   length,
@@ -55,4 +55,4 @@ NodeBuffer.from = (...args) => {
   output.set(source);
   return output;
 };
-"#;
+"#);

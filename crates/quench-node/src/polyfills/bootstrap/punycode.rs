@@ -1,6 +1,6 @@
 //! Polyfill: `punycode`
 
-pub const JS: &str = r#"const __quenchOriginalRequireWithPunycode = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequireWithPunycode = globalThis.require;
 const __pcBase = 36,
   __pcTMin = 1,
   __pcTMax = 26,
@@ -116,4 +116,4 @@ globalThis.require = (specifier) =>
   String(specifier).replace(/^node:/, "") === "punycode"
     ? __quenchPunycode
     : __quenchOriginalRequireWithPunycode(specifier);
-"#;
+"#);

@@ -1,6 +1,6 @@
 //! Polyfill: `crypto-validation`
 
-pub const JS: &str = r#"const __nodeCryptoRandomArguments = (minimum, maximum, callback) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __nodeCryptoRandomArguments = (minimum, maximum, callback) => {
   if (typeof minimum === "function") {
     return { minimum: 0, maximum: 0x1_0000_0000_0000, callback: minimum };
   }
@@ -127,4 +127,4 @@ const __nodeCryptoHmacDigest = (algorithm, inner, outer, chunks, encoding) => {
   }
   throw Object.assign(new TypeError(`Unknown encoding: ${encoding}`), { code: "ERR_UNKNOWN_ENCODING" });
 };
-"#;
+"#);

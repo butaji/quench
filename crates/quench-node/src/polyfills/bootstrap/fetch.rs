@@ -1,6 +1,6 @@
 //! Polyfill: `fetch`
 
-pub const JS: &str = r#"const __quenchFetchAbortError = (reason) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchFetchAbortError = (reason) => {
   const error = new Error("The operation was aborted");
   error.name = "AbortError";
   error.code = "ABORT_ERR";
@@ -75,4 +75,4 @@ Object.defineProperty(globalThis, "fetch", {
   writable: true,
   enumerable: false
 });
-"#;
+"#);

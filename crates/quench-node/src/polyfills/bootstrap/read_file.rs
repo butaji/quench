@@ -1,6 +1,6 @@
 //! Polyfill: `read-file`
 
-pub const JS: &str = r#"const __readFileAbort = (callback) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __readFileAbort = (callback) => {
   const error = new Error("The operation was aborted");
   error.name = "AbortError";
   error.code = "ABORT_ERR";
@@ -62,4 +62,4 @@ globalThis.__nodeFs.readFile = (value, options, callback) => {
     }
   });
 };
-"#;
+"#);

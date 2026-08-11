@@ -1,6 +1,6 @@
 //! Polyfill: `globals-extra`
 
-pub const JS: &str = r#"const __nodeDomExceptionCodes = {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __nodeDomExceptionCodes = {
   IndexSizeError: 1,
   HierarchyRequestError: 3,
   WrongDocumentError: 4,
@@ -93,4 +93,4 @@ if (!globalThis.navigator) {
   }
   globalThis.navigator = Object.freeze(navigator);
 }
-"#;
+"#);

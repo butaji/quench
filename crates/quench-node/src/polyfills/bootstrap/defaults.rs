@@ -1,6 +1,6 @@
 //! Polyfill: `defaults`
 
-pub const JS: &str = r#"const __quenchClusterDefaultsRequire = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchClusterDefaultsRequire = globalThis.require;
 const __quenchClusterDefaults = __quenchClusterDefaultsRequire("cluster");
 const __quenchSetupWithCumulativeSettings =
   __quenchClusterDefaults.setupPrimary;
@@ -21,4 +21,4 @@ __quenchClusterDefaults.setupPrimary = (options = {}) => {
     ...options,
   });
 };
-"#;
+"#);

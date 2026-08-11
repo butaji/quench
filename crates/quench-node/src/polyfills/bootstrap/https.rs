@@ -1,6 +1,6 @@
 //! Polyfill: `https`
 
-pub const JS: &str = r#"const __quenchOriginalRequireWithHttps = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequireWithHttps = globalThis.require;
 const __quenchHttpsUnsupported = (operation) => {
   const error = new Error(`${operation} is not supported by quench-node`);
   error.code = "ERR_TLS_NOT_SUPPORTED";
@@ -25,4 +25,4 @@ globalThis.require = (specifier) =>
   String(specifier).replace(/^node:/, "") === "https"
     ? __quenchHttps
     : __quenchOriginalRequireWithHttps(specifier);
-"#;
+"#);

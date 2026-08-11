@@ -1,6 +1,6 @@
 //! Polyfill: `os`
 
-pub const JS: &str = r#"const __quenchOriginalRequireWithOsHelpers = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequireWithOsHelpers = globalThis.require;
 globalThis.__nodeOsInitialized = false;
 const __quenchOsFallback = {
   homedir: () =>
@@ -67,4 +67,4 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithOsHelpers(specifier);
 };
-"#;
+"#);

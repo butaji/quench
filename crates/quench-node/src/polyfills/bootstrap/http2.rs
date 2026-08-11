@@ -1,6 +1,6 @@
 //! Polyfill: `http2`
 
-pub const JS: &str = r#"const __quenchOriginalRequireWithHttp2 = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequireWithHttp2 = globalThis.require;
 const __quenchHttp2Unsupported = (operation) => {
   const error = new Error(`${operation} is not supported by quench-node`);
   error.code = "ERR_HTTP2_NOT_SUPPORTED";
@@ -18,4 +18,4 @@ globalThis.require = (specifier) =>
   String(specifier).replace(/^node:/, "") === "http2"
     ? __quenchHttp2
     : __quenchOriginalRequireWithHttp2(specifier);
-"#;
+"#);

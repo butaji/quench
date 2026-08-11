@@ -1,6 +1,6 @@
 //! Polyfill: `formatting-tail`
 
-pub const JS: &str = r#"const __nodeUtilInspectBuffer = (value) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __nodeUtilInspectBuffer = (value) => {
   const custom = value[Symbol.for("nodejs.util.inspect.custom")];
   const properties = Object.keys(value)
     .filter((key) => !/^\d+$/.test(key))
@@ -364,4 +364,4 @@ const __nodeUtilDeprecate = (
 };
 const __nodeUtilPendingDeprecate = (functionToWrap, message, code) =>
   __nodeUtilDeprecate(functionToWrap, message, code);
-"#;
+"#);

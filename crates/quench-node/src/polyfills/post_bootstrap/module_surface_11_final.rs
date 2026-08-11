@@ -1,6 +1,6 @@
 //! Polyfill: `module-surface-11-final`
 
-pub const JS: &str = r#"const __nodeURLSearchTag = Object.getOwnPropertyDescriptor(
+pub const JS: &str = quench_js_check::checked_js!(r#"const __nodeURLSearchTag = Object.getOwnPropertyDescriptor(
   globalThis.__nodeURLSearchParams.prototype,
   Symbol.toStringTag,
 );
@@ -43,4 +43,4 @@ for (const name of ["append", "set", "delete", "sort"]) {
       name,
     ).value;
 }
-"#;
+"#);

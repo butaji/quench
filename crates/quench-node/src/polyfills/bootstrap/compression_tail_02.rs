@@ -1,6 +1,6 @@
 //! Polyfill: `compression-tail-02`
 
-pub const JS: &str = r#"const __quenchBufferModule = () => {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchBufferModule = () => {
   globalThis.__nodeBlobUrls ||= new Map();
   const module = {
     Buffer: globalThis.Buffer,
@@ -280,4 +280,4 @@ globalThis.__quench_require_part_03 = (name) => {
   if (name === "buffer") return __quenchBufferModule();
   if (name === "fs" || name === "fs/promises") return globalThis.__nodeFs;
 };
-"#;
+"#);

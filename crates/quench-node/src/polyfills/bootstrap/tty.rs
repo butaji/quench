@@ -1,6 +1,6 @@
 //! Polyfill: `tty`
 
-pub const JS: &str = r#"const __quenchOriginalRequireWithTty = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequireWithTty = globalThis.require;
 class __quenchWriteStream {
   constructor(fd) {
     this.fd = fd;
@@ -30,4 +30,4 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithTty(specifier);
 };
-"#;
+"#);

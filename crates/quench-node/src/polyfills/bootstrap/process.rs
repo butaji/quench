@@ -1,6 +1,6 @@
 //! Polyfill: `process`
 
-pub const JS: &str = r#"const __quenchClusterProcessRequire = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchClusterProcessRequire = globalThis.require;
 const __quenchClusterProcess = __quenchClusterProcessRequire("cluster");
 const __quenchOriginalClusterFork = __quenchClusterProcess.fork;
 __quenchClusterProcess.fork = (...args) => {
@@ -15,4 +15,4 @@ __quenchClusterProcess.fork = (...args) => {
   }
   return worker;
 };
-"#;
+"#);

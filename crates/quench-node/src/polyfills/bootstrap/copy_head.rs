@@ -1,6 +1,6 @@
 //! Polyfill: `copy-head`
 
-pub const JS: &str = r#"const __nodeBufferCopyNumber = (value) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __nodeBufferCopyNumber = (value) => {
   const result = Math.trunc(Number(value));
   return Number.isNaN(result) ? 0 : result;
 };
@@ -85,4 +85,4 @@ const __nodeBufferConcatValidate = (list, totalLength) => {
     throw Object.assign(new RangeError(message), { code: "ERR_OUT_OF_RANGE" });
   }
 };
-"#;
+"#);

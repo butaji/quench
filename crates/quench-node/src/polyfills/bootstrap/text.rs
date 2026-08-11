@@ -1,6 +1,6 @@
 //! Polyfill: `text`
 
-pub const JS: &str = r#"const __quenchOriginalRequireWithStyleText = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequireWithStyleText = globalThis.require;
 const __quenchStyles = {
   reset: [0, 0],
   bold: [1, 22],
@@ -97,4 +97,4 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithStyleText(specifier);
 };
-"#;
+"#);

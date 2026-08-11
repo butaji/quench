@@ -1,6 +1,6 @@
 //! Polyfill: `internal-fs-binding`
 
-pub const JS: &str = r#"globalThis.__quenchInternalFsBinding = {
+pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.__quenchInternalFsBinding = {
   openFileHandle: (_path, _flags, _mode, _req, _context) => undefined,
   readdir: (path) => {
     const names = globalThis.__nodeFs.readdirSync(path);
@@ -75,4 +75,4 @@ globalThis.__quenchInternalBindingCore = (binding) => {
     };
   }
 };
-"#;
+"#);

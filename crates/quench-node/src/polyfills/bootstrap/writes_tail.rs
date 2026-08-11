@@ -1,6 +1,6 @@
 //! Polyfill: `writes-tail`
 
-pub const JS: &str = r#"const __nodeFsAttachPull = (handle) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __nodeFsAttachPull = (handle) => {
   handle.pull = (transformOrOptions, maybeOptions) => {
     if (!globalThis.__nodeFdPaths[handle.fd] || handle._pullLocked) {
       const error = new Error("The file handle is not in a valid state");
@@ -290,4 +290,4 @@ globalThis.__nodeOs = new Proxy(
   }
 );
 const __nodePerformanceMarks = new Map();
-"#;
+"#);

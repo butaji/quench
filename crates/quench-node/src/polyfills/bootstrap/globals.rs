@@ -1,6 +1,6 @@
 //! Polyfill: `globals`
 
-pub const JS: &str = r#"globalThis.global = globalThis;
+pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.global = globalThis;
 if (typeof Array.fromAsync !== "function") {
   Array.fromAsync = async function (source, mapFn) {
     const result = [];
@@ -405,4 +405,4 @@ globalThis.process = {
     return [seconds, nanos];
   }
 };
-"#;
+"#);

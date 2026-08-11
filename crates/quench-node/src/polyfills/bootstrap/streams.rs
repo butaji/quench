@@ -1,6 +1,6 @@
 //! Polyfill: `streams`
 
-pub const JS: &str = r#"const __nodeFsReadStreamOptions = (options) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __nodeFsReadStreamOptions = (options) => {
   const start = options.start === undefined ? 0 : Number(options.start);
   const end = options.end === undefined ? undefined : Number(options.end);
   if (!Number.isInteger(start) || start < 0) {
@@ -457,4 +457,4 @@ globalThis.__nodeFs.mkdtemp = (prefix, options, callback) => {
     }
   });
 };
-"#;
+"#);

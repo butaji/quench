@@ -1,6 +1,6 @@
 //! Polyfill: `api`
 
-pub const JS: &str = r#"globalThis.__nodeAssert = (value, message) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.__nodeAssert = (value, message) => {
   if (!value) __nodeAssertionFailure(message);
 };
 globalThis.__nodeAssertSkipPrototype = false;
@@ -421,4 +421,4 @@ globalThis.__nodeAssert.notDeepStrictEqual = (actual, expected, message) => {
     __nodeAssertionFailure(message || "values are deeply equal");
   }
 };
-"#;
+"#);

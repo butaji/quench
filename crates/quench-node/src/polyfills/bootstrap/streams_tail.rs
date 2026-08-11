@@ -1,6 +1,6 @@
 //! Polyfill: `streams-tail`
 
-pub const JS: &str = r#"globalThis.__nodeFs.writeFile = (value, data, options, callback) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.__nodeFs.writeFile = (value, data, options, callback) => {
   if (typeof options === "function") {
     callback = options;
     options = undefined;
@@ -244,4 +244,4 @@ globalThis.__nodeFs.promises = {
     Promise.resolve().then(() => globalThis.__nodeFs.linkSync(existing, link)),
 };
 const __nodePromiseOpen = globalThis.__nodeFs.promises.open;
-"#;
+"#);

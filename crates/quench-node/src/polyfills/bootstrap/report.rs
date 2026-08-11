@@ -1,6 +1,6 @@
 //! Polyfill: `report`
 
-pub const JS: &str = r#"const __quenchOriginalRequireWithProcessReport = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequireWithProcessReport = globalThis.require;
 if (globalThis.process && !globalThis.process.report) {
   globalThis.process.report = {
     directory: "",
@@ -28,4 +28,4 @@ globalThis.require = (specifier) =>
   String(specifier).replace(/^node:/, "") === "process"
     ? globalThis.process
     : __quenchOriginalRequireWithProcessReport(specifier);
-"#;
+"#);

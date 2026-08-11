@@ -1,6 +1,6 @@
 //! Polyfill: `child-process-exec-errors`
 
-pub const JS: &str = r#"const __quenchExecErrorRequire = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchExecErrorRequire = globalThis.require;
 const __quenchExecErrorChildProcess = __quenchExecErrorRequire("child_process");
 const __quenchExecSuccess = __quenchExecErrorChildProcess.exec;
 const __quenchExecFileSuccess = __quenchExecErrorChildProcess.execFile;
@@ -67,4 +67,4 @@ __quenchExecErrorChildProcess.execFile = (file, args, options, callback) => {
   }
   return __quenchExecFileSuccess(file, args, options, callback);
 };
-"#;
+"#);

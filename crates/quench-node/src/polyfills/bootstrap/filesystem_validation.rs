@@ -1,6 +1,6 @@
 //! Polyfill: `filesystem-validation`
 
-pub const JS: &str = r#"const __nodeFsSetMode = (path, mode) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __nodeFsSetMode = (path, mode) => {
   if (mode !== undefined && mode !== null) {
     globalThis.__nodeModes[path] =
       typeof mode === "string" ? parseInt(mode, 8) : Number(mode);
@@ -471,4 +471,4 @@ Object.assign(globalThis.__nodeFs, {
     return __nodeFsStatsBigInt(stats, options);
   }
 });
-"#;
+"#);

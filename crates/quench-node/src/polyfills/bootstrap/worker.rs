@@ -1,6 +1,6 @@
 //! Polyfill: `worker`
 
-pub const JS: &str = r#"const __quenchClusterWorkerRequire = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchClusterWorkerRequire = globalThis.require;
 const __quenchClusterWorkerModule = __quenchClusterWorkerRequire("cluster");
 const __quenchWorkerPrototype = __quenchClusterWorkerModule.Worker?.prototype;
 if (
@@ -23,4 +23,4 @@ if (
     return this.kill(signal);
   };
 }
-"#;
+"#);

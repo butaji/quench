@@ -1,6 +1,6 @@
 //! Polyfill: `module-surface-06-tail`
 
-pub const JS: &str = r#"if (globalThis.require) {
+pub const JS: &str = quench_js_check::checked_js!(r#"if (globalThis.require) {
   const originalRequire = globalThis.require;
   const createURLPattern = globalThis.__quenchURLPatternFactory;
   const installURLCanParse = globalThis.__quenchURLInstallCanParse;
@@ -30,4 +30,4 @@ if (globalThis.require) {
     (String(pattern).startsWith("*.") &&
       String(value).endsWith(String(pattern).slice(1)));
 }
-"#;
+"#);

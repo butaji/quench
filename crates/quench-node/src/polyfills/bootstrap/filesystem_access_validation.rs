@@ -1,6 +1,6 @@
 //! Polyfill: `filesystem-access-validation`
 
-pub const JS: &str = r#"const __nodeFsValidateAccessMode = (mode) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __nodeFsValidateAccessMode = (mode) => {
   if (mode === undefined) return;
   if (typeof mode !== "number") {
     throw Object.assign(new TypeError('The "mode" argument must be of type number'), { code: "ERR_INVALID_ARG_TYPE" });
@@ -32,4 +32,4 @@ globalThis.__nodeFs.existsSync = (value) => {
     return false;
   }
 };
-"#;
+"#);

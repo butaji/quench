@@ -1,6 +1,6 @@
 //! Polyfill: `module-surface-13`
 
-pub const JS: &str = r#"const __quenchCryptoConstructors = (result) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchCryptoConstructors = (result) => {
   for (const name of "Hash Hmac Sign Verify Certificate X509Certificate sign verify generateKeyPair generateKeyPairSync generateKey".split(
     " "
   )) {
@@ -405,4 +405,4 @@ const __quenchCryptoCipherConstructors = (result) => {
   result.Cipheriv ||= Cipheriv;
   result.Decipheriv ||= Cipheriv;
 };
-"#;
+"#);

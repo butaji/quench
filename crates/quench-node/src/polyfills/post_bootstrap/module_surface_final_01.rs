@@ -1,6 +1,6 @@
 //! Polyfill: `module-surface-final-01`
 
-pub const JS: &str = r##"const __quenchTestModuleFallbacks = (result, originalRequire, name) => {
+pub const JS: &str = quench_js_check::checked_js!(r##"const __quenchTestModuleFallbacks = (result, originalRequire, name) => {
   let runner;
   try {
     runner = originalRequire(name);
@@ -460,4 +460,4 @@ const __quenchResolvePath = (from, to, resolve) => {
   }
   return __quenchResolveRelativePath(from, to, resolve);
 };
-"##;
+"##);

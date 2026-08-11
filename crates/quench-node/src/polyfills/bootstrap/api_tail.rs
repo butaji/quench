@@ -1,6 +1,6 @@
 //! Polyfill: `api-tail`
 
-pub const JS: &str = r#"globalThis.__nodeAssert.notDeepEqual =
+pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.__nodeAssert.notDeepEqual =
   globalThis.__nodeAssert.notDeepStrictEqual;
 const __nodeAssertMatchExpectedFunction = (error, expected) => {
   const isConstructor =
@@ -249,4 +249,4 @@ globalThis.__nodeAssert.rejects = (promiseOrFn, expected, message) => {
     }
   );
 };
-"#;
+"#);

@@ -1,6 +1,6 @@
 //! Polyfill: `dispatch`
 
-pub const JS: &str = r#"const __quenchRequireParts = [
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchRequireParts = [
   globalThis.__quench_require_part_00,
   globalThis.__quench_require_part_01,
   globalThis.__quench_require_part_02,
@@ -158,4 +158,4 @@ globalThis.require = (specifier) => {
   }
   throw new Error("Cannot find module " + String(specifier));
 };
-"#;
+"#);

@@ -1,6 +1,6 @@
 //! Polyfill: `surface`
 
-pub const JS: &str = r#"const __quenchChildProcessSurfaceRequire = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchChildProcessSurfaceRequire = globalThis.require;
 const __quenchChildProcessSurface = __quenchChildProcessSurfaceRequire(
   "child_process",
 );
@@ -51,4 +51,4 @@ __quenchChildProcessSurface.spawn = (...args) => {
   };
   return child;
 };
-"#;
+"#);

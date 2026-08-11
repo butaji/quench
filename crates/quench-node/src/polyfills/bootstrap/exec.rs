@@ -1,6 +1,6 @@
 //! Polyfill: `exec`
 
-pub const JS: &str = r#"const __quenchSyncExecErrorRequire = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchSyncExecErrorRequire = globalThis.require;
 const __quenchSyncExecErrorChildProcess = __quenchSyncExecErrorRequire(
   "child_process",
 );
@@ -41,4 +41,4 @@ __quenchSyncExecErrorChildProcess.execFileSync = (file, args, options) => {
   }
   return __quenchSyncExecFile(file, args, options);
 };
-"#;
+"#);

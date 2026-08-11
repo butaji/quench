@@ -1,6 +1,6 @@
 //! Polyfill: `cluster`
 
-pub const JS: &str = r#"const __quenchRequireStreamIter = () => {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchRequireStreamIter = () => {
   const toStreamable = Symbol.for("nodejs.stream.iter.toStreamable");
   const toAsyncStreamable = Symbol.for("nodejs.stream.iter.toAsyncStreamable");
   const normalizeOptions = (options) => {
@@ -1650,4 +1650,4 @@ globalThis.__quench_require_part_02 = (name, specifier) => {
   if (name === "node:test" || name === "test") return __quenchNodeTestModule;
   return __quenchRequireClusterInternal(name);
 };
-"#;
+"#);

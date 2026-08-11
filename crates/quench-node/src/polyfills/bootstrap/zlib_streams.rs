@@ -1,6 +1,6 @@
 //! Polyfill: `zlib-streams`
 
-pub const JS: &str = r#"const __quenchOriginalRequireWithZlibStreams = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequireWithZlibStreams = globalThis.require;
 const __quenchValidateFlushKind = (stream, kind) => {
   if (kind === undefined || Number.isNaN(kind)) return undefined;
   if (typeof kind !== "number") {
@@ -203,4 +203,4 @@ globalThis.require = (specifier) => {
   if (String(specifier).replace(/^node:/, "") !== "zlib") return module;
   return Object.assign({}, module, __quenchZlibStreamExports(module));
 };
-"#;
+"#);

@@ -1,6 +1,6 @@
 //! Polyfill: `child-process`
 
-pub const JS: &str = r#"const __quenchChildProcessRequire = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchChildProcessRequire = globalThis.require;
 const __quenchChildProcess = __quenchChildProcessRequire("child_process");
 const __quenchExecCallback = (options, callback) =>
   typeof options === "function" ? options : callback;
@@ -86,4 +86,4 @@ __quenchChildProcess.execFileSync = (file, args = [], options) => {
   const output = String(file).endsWith("echo") ? `${args.join(" ")}\n` : "";
   return options?.encoding ? output : NodeBuffer.from(output);
 };
-"#;
+"#);

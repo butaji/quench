@@ -1,6 +1,6 @@
 //! Polyfill: `decoder`
 
-pub const JS: &str = r#"const __quenchOriginalRequireWithDecoder = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequireWithDecoder = globalThis.require;
 const __quenchDecoderInputBytes = (input) => {
   if (ArrayBuffer.isView(input)) {
     return Array.from(
@@ -107,4 +107,4 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithDecoder(specifier);
 };
-"#;
+"#);

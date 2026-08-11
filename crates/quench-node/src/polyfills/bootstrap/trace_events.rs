@@ -1,6 +1,6 @@
 //! Polyfill: `trace-events`
 
-pub const JS: &str = r#"const __quenchOriginalRequireWithTraceEvents = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequireWithTraceEvents = globalThis.require;
 globalThis.require = (specifier) => {
   if (String(specifier).replace(/^node:/, "") === "trace_events") {
     const error = new Error(`No such built-in module: ${specifier}`);
@@ -9,4 +9,4 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithTraceEvents(specifier);
 };
-"#;
+"#);

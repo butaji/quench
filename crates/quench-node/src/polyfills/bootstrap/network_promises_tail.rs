@@ -1,6 +1,6 @@
 //! Polyfill: `network-promises-tail`
 
-pub const JS: &str = r#"globalThis.__quenchNetPromisesModule = {
+pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.__quenchNetPromisesModule = {
   listen(options = {}) {
     if (options === null || typeof options !== "object") {
       const error = new TypeError(
@@ -67,4 +67,4 @@ pub const JS: &str = r#"globalThis.__quenchNetPromisesModule = {
     });
   },
 };
-"#;
+"#);

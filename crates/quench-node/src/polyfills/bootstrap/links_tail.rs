@@ -1,6 +1,6 @@
 //! Polyfill: `links-tail`
 
-pub const JS: &str = r#"globalThis.__nodeFs.fstatSync = (fd, options = {}) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.__nodeFs.fstatSync = (fd, options = {}) => {
   if (typeof fd !== "number") {
     const error = new TypeError(
       `The "fd" argument must be of type number.${globalThis.__nodeCommon.invalidArgTypeHelper(
@@ -283,4 +283,4 @@ class __nodeFsUtf8Stream extends NodeWritable {
   }
 }
 globalThis.__nodeFs.Utf8Stream = __nodeFsUtf8Stream;
-"#;
+"#);

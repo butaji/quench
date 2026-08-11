@@ -1,6 +1,6 @@
 //! Polyfill: `events-readable-tail`
 
-pub const JS: &str = r#"NodeReadable.prototype.iterator = function (options = {}) {
+pub const JS: &str = quench_js_check::checked_js!(r#"NodeReadable.prototype.iterator = function (options = {}) {
   if (!options || typeof options !== "object") {
     const error = new TypeError(
       `The "options" argument must be of type object. Received type ${typeof options} (${String(
@@ -129,4 +129,4 @@ NodeReadable.prototype._emitEnd = function () {
     });
   }
 };
-"#;
+"#);

@@ -1,6 +1,6 @@
 //! Polyfill: `errors`
 
-pub const JS: &str = r#"const __nodeSystemErrorNames = new Map([
+pub const JS: &str = quench_js_check::checked_js!(r#"const __nodeSystemErrorNames = new Map([
   [-1, "EPERM"],
   [-2, "ENOENT"],
   [-13, "EACCES"],
@@ -68,4 +68,4 @@ globalThis.__nodeUtil.getSystemErrorMap = () =>
   new Map(
     [...__nodeSystemErrorNames].map(([number, name]) => [number, [name, name]]),
   );
-"#;
+"#);

@@ -1,6 +1,6 @@
 //! Polyfill: `utf8`
 
-pub const JS: &str = r#"const __quenchUtf8Width = (first) =>
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchUtf8Width = (first) =>
   first < 0xc2 || first > 0xf4 ? 1 : first < 0xe0 ? 2 : first < 0xf0 ? 3 : 4;
 const __quenchUtf8ContinuationCode = (bytes, index, width) => {
   let code = bytes[index] & (width === 2 ? 0x1f : width === 3 ? 0xf : 0x7);
@@ -74,4 +74,4 @@ const __quenchDecodeUtf8 = (bytes, final) => {
   }
   return { text: output, pending: bytes.slice(index) };
 };
-"#;
+"#);

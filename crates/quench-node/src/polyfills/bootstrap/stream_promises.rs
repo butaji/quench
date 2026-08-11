@@ -1,6 +1,6 @@
 //! Polyfill: `stream-promises`
 
-pub const JS: &str = r#"const __quenchOriginalRequireWithStreamPromises = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequireWithStreamPromises = globalThis.require;
 const __quenchStreamPromises = {
   pipeline: (...streams) => {
     let options = {};
@@ -121,4 +121,4 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithStreamPromises(specifier);
 };
-"#;
+"#);

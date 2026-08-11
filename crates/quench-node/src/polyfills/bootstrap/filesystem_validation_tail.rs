@@ -1,6 +1,6 @@
 //! Polyfill: `filesystem-validation-tail`
 
-pub const JS: &str = r#"const __nodeFsStatsBigInt = (stats, options) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __nodeFsStatsBigInt = (stats, options) => {
   if (options?.bigint !== true) return stats;
   for (const name of "dev mode nlink uid gid rdev blksize ino size blocks atimeMs mtimeMs ctimeMs birthtimeMs".split(
     " "
@@ -151,4 +151,4 @@ const __nodeGetPrototypeOf = Object.getPrototypeOf;
 const __nodeFsConstants = globalThis.__nodeFs.constants;
 Object.getPrototypeOf = (value) =>
   value === __nodeFsConstants ? null : __nodeGetPrototypeOf(value);
-"#;
+"#);

@@ -1,6 +1,6 @@
 //! Polyfill: `network-head`
 
-pub const JS: &str = r#"const isIPv4Part = (part) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"const isIPv4Part = (part) => {
   if (!/^\d+$/.test(part)) return false;
   const n = Number(part);
   if (n < 0 || n > 255) return false;
@@ -311,4 +311,4 @@ const resolveBlockListCheck = (address, type, checkType) => {
       : "string";
   return { str, resolvedType, explicitType, inputKind };
 };
-"#;
+"#);

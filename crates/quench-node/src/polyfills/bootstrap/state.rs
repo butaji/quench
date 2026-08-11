@@ -1,6 +1,6 @@
 //! Polyfill: `state`
 
-pub const JS: &str = r#"const __quenchChildStreamStateRequire = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchChildStreamStateRequire = globalThis.require;
 const __quenchChildStreamStateModule = __quenchChildStreamStateRequire(
   "child_process",
 );
@@ -24,4 +24,4 @@ __quenchChildStreamStateModule.spawn = (...args) => {
   });
   return child;
 };
-"#;
+"#);

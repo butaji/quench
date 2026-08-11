@@ -1,6 +1,6 @@
 //! Polyfill: `writes`
 
-pub const JS: &str = r#"const __nodeFsCollectWriteIterable = (data, options) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __nodeFsCollectWriteIterable = (data, options) => {
   const chunks = [];
   for (const chunk of data) {
     if (
@@ -418,4 +418,4 @@ const __nodeFsPullIterator = async function* (
     handle._pullLocked = false;
   }
 };
-"#;
+"#);

@@ -1,6 +1,6 @@
 //! Polyfill: `web-streams-blob`
 
-pub const JS: &str = r#"if (globalThis.Blob?.prototype) {
+pub const JS: &str = quench_js_check::checked_js!(r#"if (globalThis.Blob?.prototype) {
   globalThis.Blob.prototype.stream = function () {
     const blob = this;
     return new __quenchReadableStream({
@@ -18,4 +18,4 @@ pub const JS: &str = r#"if (globalThis.Blob?.prototype) {
     });
   };
 }
-"#;
+"#);

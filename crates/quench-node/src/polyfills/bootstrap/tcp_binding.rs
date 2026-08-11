@@ -1,6 +1,6 @@
 //! Polyfill: `tcp-binding`
 
-pub const JS: &str = r#"globalThis.__quenchTcpBinding = () => {
+pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.__quenchTcpBinding = () => {
   const TCP = class TCP {
     constructor() {
       this.fd = 0;
@@ -16,4 +16,4 @@ pub const JS: &str = r#"globalThis.__quenchTcpBinding = () => {
   };
   return { TCP, TCPWrap: TCP, constants: { SOCKET: 1 } };
 };
-"#;
+"#);

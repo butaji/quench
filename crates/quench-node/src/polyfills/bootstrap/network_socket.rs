@@ -1,6 +1,6 @@
 //! Polyfill: `network-socket`
 
-pub const JS: &str = r#"const __quenchNetSocket = class Socket extends globalThis.__nodeEventEmitter {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchNetSocket = class Socket extends globalThis.__nodeEventEmitter {
   constructor(options = {}) {
     super();
     this.readable = true;
@@ -476,4 +476,4 @@ pub const JS: &str = r#"const __quenchNetSocket = class Socket extends globalThi
     return this;
   }
 };
-"#;
+"#);

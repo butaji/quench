@@ -1,6 +1,6 @@
 //! Polyfill: `context`
 
-pub const JS: &str = r#"const __quenchVmContexts = new WeakSet();
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchVmContexts = new WeakSet();
 const __quenchVmTypeError = (message) => {
   throw Object.assign(new TypeError(message), { code: "ERR_INVALID_ARG_TYPE" });
 };
@@ -376,4 +376,4 @@ const __quenchVmRunInNewContext = (code, sandbox, options) => {
     );
   }
 };
-"#;
+"#);

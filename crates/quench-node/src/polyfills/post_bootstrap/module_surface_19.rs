@@ -1,6 +1,6 @@
 //! Polyfill: `module-surface-19`
 
-pub const JS: &str = r#"{
+pub const JS: &str = quench_js_check::checked_js!(r#"{
   const __quenchSurfaceName = (name) => String(name).replace(/^node:/, "");
   const __quenchSurfaceTlsDefaults = (result) => {
     result.connect ||= () => undefined;
@@ -52,4 +52,4 @@ pub const JS: &str = r#"{
     };
   }
 }
-"#;
+"#);

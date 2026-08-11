@@ -1,6 +1,6 @@
 //! Polyfill: `module-surface-03-tail`
 
-pub const JS: &str = r#"const __quenchAddZlibValidation = (result) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchAddZlibValidation = (result) => {
   for (const name of "gzip gunzip deflate inflate gzipSync gunzipSync deflateSync inflateSync".split(
     " "
   )) {
@@ -460,4 +460,4 @@ const __quenchValidateZlibOptions = (options, allowZeroWindowBits = false) => {
     throw error;
   }
 };
-"#;
+"#);

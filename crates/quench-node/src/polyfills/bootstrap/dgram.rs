@@ -1,6 +1,6 @@
 //! Polyfill: `dgram`
 
-pub const JS: &str = r#"const __quenchDgramBind = (socket, type, port, address, callback) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchDgramBind = (socket, type, port, address, callback) => {
   if (socket._bound) {
     throw Object.assign(new Error("Socket is already bound"), {
       code: "ERR_SOCKET_ALREADY_BOUND",
@@ -486,4 +486,4 @@ const __quenchDgramOn = (socket, listeners, event, callback) => {
   (listeners[event] ||= []).push(callback);
   return socket;
 };
-"#;
+"#);

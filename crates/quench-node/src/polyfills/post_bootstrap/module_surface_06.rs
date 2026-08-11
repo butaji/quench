@@ -1,6 +1,6 @@
 //! Polyfill: `module-surface-06`
 
-pub const JS: &str = r##"{
+pub const JS: &str = quench_js_check::checked_js!(r##"{
   const validateURLPatternValue = (value, baseURL) => {
     if (value != null && typeof value !== "string") {
       const error = new TypeError("Invalid URLPattern input");
@@ -436,4 +436,4 @@ pub const JS: &str = r##"{
   globalThis.__quenchURLInstallCanParse = installURLCanParse;
   globalThis.__quenchURLInstallToString = installURLToStringDescriptor;
 }
-"##;
+"##);

@@ -1,6 +1,6 @@
 //! Polyfill: `reporters`
 
-pub const JS: &str = r#"const __quenchOriginalRequireWithTestReporters = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequireWithTestReporters = globalThis.require;
 globalThis.require = (specifier) => {
   if (
     String(specifier) === "node:test/reporters" ||
@@ -12,4 +12,4 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithTestReporters(specifier);
 };
-"#;
+"#);

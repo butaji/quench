@@ -1,6 +1,6 @@
 //! Polyfill: `process-surface-00`
 
-pub const JS: &str = r#"{
+pub const JS: &str = quench_js_check::checked_js!(r#"{
   if (globalThis.process) {
     globalThis.process[Symbol.toStringTag] ||= "process";
     globalThis.gc ||= () => undefined;
@@ -214,4 +214,4 @@ pub const JS: &str = r#"{
     globalThis.process.memoryUsage.rss ||= () => 0;
   }
 }
-"#;
+"#);

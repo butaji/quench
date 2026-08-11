@@ -1,6 +1,6 @@
 //! Polyfill: `types`
 
-pub const JS: &str = r#"const __quenchOriginalRequireWithUtilTypes = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequireWithUtilTypes = globalThis.require;
 const __quenchUtilTypes = {
   isAnyArrayBuffer: (value) =>
     value instanceof ArrayBuffer ||
@@ -31,4 +31,4 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithUtilTypes(specifier);
 };
-"#;
+"#);

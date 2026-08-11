@@ -1,6 +1,6 @@
 //! Polyfill: `codecs`
 
-pub const JS: &str = r#"const __quenchDecodeUtf16 = (bytes, final) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchDecodeUtf16 = (bytes, final) => {
   const complete = bytes.length - (bytes.length % 2);
   let text = "";
   let index = 0;
@@ -14,4 +14,4 @@ pub const JS: &str = r#"const __quenchDecodeUtf16 = (bytes, final) => {
   const pending = final ? [] : bytes.slice(index);
   return { text, pending };
 };
-"#;
+"#);

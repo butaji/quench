@@ -1,6 +1,6 @@
 //! Polyfill: `dns`
 
-pub const JS: &str = r#"const __quenchOriginalRequireWithDns = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequireWithDns = globalThis.require;
 let __quenchDnsServers = ["127.0.0.1"];
 let __quenchDnsDefaultResultOrder = "verbatim";
 const __quenchDnsNormalizeServer = (server) => {
@@ -461,4 +461,4 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithDns(specifier);
 };
-"#;
+"#);

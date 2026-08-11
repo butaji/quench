@@ -1,6 +1,6 @@
 //! Polyfill: `process-surface-25`
 
-pub const JS: &str = r#"if (globalThis.process) {
+pub const JS: &str = quench_js_check::checked_js!(r#"if (globalThis.process) {
   const originalBinding = globalThis.process.binding;
   const allowedInternalBindings = new Set(
     "buffer cares_wrap constants contextify fs fs_event_wrap icu inspector js_stream natives os pipe_wrap spawn_sync stream_wrap tcp_wrap tls_wrap tty_wrap udp_wrap uv zlib".split(
@@ -35,4 +35,4 @@ pub const JS: &str = r#"if (globalThis.process) {
   globalThis.process._linkedBinding ||= () => ({});
   globalThis.process.dlopen ||= () => undefined;
 }
-"#;
+"#);

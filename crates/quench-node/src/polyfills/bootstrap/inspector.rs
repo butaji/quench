@@ -1,6 +1,6 @@
 //! Polyfill: `inspector`
 
-pub const JS: &str = r#"const __quenchOriginalRequireWithInspector = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequireWithInspector = globalThis.require;
 globalThis.require = (specifier) => {
   const name = String(specifier).replace(/^node:/, "");
   if (name === "inspector" || name === "inspector/promises") {
@@ -10,4 +10,4 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithInspector(specifier);
 };
-"#;
+"#);

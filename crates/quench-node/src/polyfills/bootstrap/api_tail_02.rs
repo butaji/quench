@@ -1,6 +1,6 @@
 //! Polyfill: `api-tail-02`
 
-pub const JS: &str = r#"globalThis.__nodeAssert.doesNotReject = (promiseOrFn, message) =>
+pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.__nodeAssert.doesNotReject = (promiseOrFn, message) =>
   Promise.resolve()
     .then(() => {
       let input;
@@ -206,4 +206,4 @@ const __nodePathArg = (value) => {
 };
 globalThis.atob ||= nodeAtob;
 globalThis.btoa ||= nodeBtoa;
-"#;
+"#);

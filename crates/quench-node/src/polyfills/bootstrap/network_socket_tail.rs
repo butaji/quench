@@ -1,6 +1,6 @@
 //! Polyfill: `network-socket-tail`
 
-pub const JS: &str = r#"__quenchNetSocket.prototype.setTypeOfService = function (value) {
+pub const JS: &str = quench_js_check::checked_js!(r#"__quenchNetSocket.prototype.setTypeOfService = function (value) {
   return __quenchSetTypeOfService(this, value);
 };
 __quenchNetSocket.prototype.getTypeOfService = function () {
@@ -37,4 +37,4 @@ __quenchNetSocket.prototype.address = function () {
   }
   return this.destroyed ? null : undefined;
 };
-"#;
+"#);

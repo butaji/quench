@@ -1,6 +1,6 @@
 //! Polyfill: `glob`
 
-pub const JS: &str = r#"const __quenchOriginalRequireWithGlob = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequireWithGlob = globalThis.require;
 const __quenchGlobEscape = (value) =>
   value.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
 const __quenchGlobPattern = (pattern) => {
@@ -180,4 +180,4 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithGlob(specifier);
 };
-"#;
+"#);

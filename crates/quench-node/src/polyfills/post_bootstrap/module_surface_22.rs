@@ -1,6 +1,6 @@
 //! Polyfill: `module-surface-22`
 
-pub const JS: &str = r#"const __quenchReadlineInterface = (options = {}) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchReadlineInterface = (options = {}) => {
   const listeners = new Map();
   let buffer = "";
   const interfaceObject = {
@@ -79,4 +79,4 @@ pub const JS: &str = r#"const __quenchReadlineInterface = (options = {}) => {
     };
   }
 }
-"#;
+"#);

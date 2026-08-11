@@ -1,6 +1,6 @@
 //! Polyfill: `core`
 
-pub const JS: &str = r#"const __quenchCoreStaticModules = new Map([
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchCoreStaticModules = new Map([
   ["vfs", () => globalThis.__nodeVfs],
   ["internal/vfs/stats", () => globalThis.__quenchVfsStatsHelpers],
   ["node:internal/vfs/stats", () => globalThis.__quenchVfsStatsHelpers],
@@ -2854,4 +2854,4 @@ let __quenchHttpModule;
     __quenchHttpModule = http;
   }
 }
-"#;
+"#);

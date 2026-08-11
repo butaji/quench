@@ -1,6 +1,6 @@
 //! Polyfill: `domain`
 
-pub const JS: &str = r#"const __quenchOriginalRequireWithDomain = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequireWithDomain = globalThis.require;
 const __quenchMarkDomainError = (error, domain, thrown) => {
   Object.defineProperty(error, "domain", {
     configurable: true,
@@ -160,4 +160,4 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithDomain(specifier);
 };
-"#;
+"#);

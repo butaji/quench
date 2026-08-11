@@ -1,6 +1,6 @@
 //! Polyfill: `support`
 
-pub const JS: &str = r#"globalThis.__nodeCommon = {
+pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.__nodeCommon = {
   mustCall: (fn = () => {}, exact = 1) => {
     if (typeof fn === "number") {
       exact = fn;
@@ -302,4 +302,4 @@ class NodeEventEmitter {
 }
 globalThis.__nodeEventEmitter = NodeEventEmitter;
 globalThis.process._events = Object.create(null);
-"#;
+"#);
