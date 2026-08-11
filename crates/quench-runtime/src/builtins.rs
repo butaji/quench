@@ -383,6 +383,7 @@ fn define_accessor_placeholder(target: Value, key: &str) -> Value {
 
 include!("builtins_array.rs");
 include!("builtins_descriptor.rs");
+include!("builtins_define_properties.rs");
 
 fn set_function_property(
     function: Rc<crate::value::FunctionValue>,

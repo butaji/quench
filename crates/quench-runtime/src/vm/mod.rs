@@ -429,8 +429,8 @@ pub fn execute_builtin_with_receiver(
     if is_object_special(builtin) {
         return crate::builtins::object::execute_special(builtin, receiver, arguments);
     }
-    if builtin == Builtin::ObjectDefineProperty {
-        return crate::builtins::define_property(arguments);
+    if let Some(result) = define_builtin(builtin, arguments) {
+        return result;
     }
     if let Some(result) = early_dispatch(builtin, receiver, arguments) {
         return result;
@@ -447,6 +447,14 @@ pub fn execute_builtin_with_receiver(
         }
         _ if is_simple_builtin(builtin) => execute_simple_builtin(builtin, arguments, receiver),
         _ => vm_ops::execute_builtin_tail(builtin, arguments, receiver),
+    }
+}
+
+fn define_builtin(builtin: Builtin, arguments: &[Value]) -> Option<Result<Value, VmError>> {
+    match builtin {
+        Builtin::ObjectDefineProperty => Some(crate::builtins::define_property(arguments)),
+        Builtin::ObjectDefineProperties => Some(crate::builtins::define_properties(arguments)),
+        _ => None,
     }
 }
 
