@@ -62,9 +62,15 @@ pub(crate) fn map_new(arguments: &[Value]) -> Value {
 }
 
 pub(crate) fn weak_map_new(arguments: &[Value]) -> Result<Value, VmError> {
+    if let Some(Value::Object(iterable)) = arguments.first() {
+        return weak_map_from_iterable(Value::Object(iterable.clone()));
+    }
     let entries = match arguments.first() {
         None | Some(Value::Undefined | Value::Null) => Vec::new(),
         Some(Value::Array(entries)) => entries.iter().cloned().collect(),
+        Some(Value::Object(_)) => crate::collections::iterator::collect_iterable(
+            arguments.first().cloned().unwrap_or(Value::Undefined),
+        )?,
         Some(_) => {
             return Err(crate::value::error::throw_type_error(
                 "WeakMap iterator is not callable",
@@ -81,6 +87,38 @@ pub(crate) fn weak_map_new(arguments: &[Value]) -> Result<Value, VmError> {
         return Ok(set);
     }
     populate_weak_map(set, entries)
+}
+
+fn weak_map_from_iterable(iterable: Value) -> Result<Value, VmError> {
+    let map = std::cell::RefCell::new(Value::Map(Rc::new(MapData {
+        weak: true,
+        keys: VecDeque::new(),
+        values: Vec::new(),
+        prototype: std::cell::RefCell::new(None),
+    })));
+    let setter =
+        crate::execute::get_property_result(&Value::Builtin(Builtin::WeakMapPrototype), "set")?;
+    if !crate::conversion::is_callable(&setter) {
+        return Err(crate::value::error::throw_type_error(
+            "WeakMap.prototype.set is not callable",
+        ));
+    }
+    crate::collections::iterator::for_each_iterable(iterable, |entry| {
+        if !crate::value::is_object(&entry) {
+            return Err(crate::value::error::throw_type_error(
+                "Iterator value is not an entry object",
+            ));
+        }
+        let key = crate::execute::get_property_result(&entry, "0")?;
+        let value = crate::execute::get_property_result(&entry, "1")?;
+        let current = map.borrow().clone();
+        let result = crate::functions::execute_target(&setter, &current, &[key, value])?;
+        if matches!(result, Value::Map(_)) {
+            *map.borrow_mut() = result;
+        }
+        Ok(())
+    })?;
+    Ok(map.into_inner())
 }
 
 fn populate_weak_map(map: Value, entries: Vec<Value>) -> Result<Value, VmError> {

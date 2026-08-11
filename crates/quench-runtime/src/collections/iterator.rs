@@ -197,6 +197,30 @@ pub(crate) fn collect_iterable(value: Value) -> Result<Vec<Value>, crate::execut
     let iterator = open(value)?;
     collect(&iterator)
 }
+
+pub(crate) fn for_each_iterable<F>(
+    value: Value,
+    mut callback: F,
+) -> Result<(), crate::execute::VmError>
+where
+    F: FnMut(Value) -> Result<(), crate::execute::VmError>,
+{
+    let iterator = open(value)?;
+    loop {
+        let Some(item) = step_value(&iterator)? else {
+            return Ok(());
+        };
+        if let Err(error) = callback(item) {
+            if let crate::execute::VmError::Thrown(reason) = &error {
+                let _ = close(
+                    iterator.clone(),
+                    crate::completion::Completion::Throw(reason.clone()),
+                );
+            }
+            return Err(error);
+        }
+    }
+}
 pub enum DelegationResult {
     Done(Value),
     Ongoing { value: Value, passthrough: bool },
