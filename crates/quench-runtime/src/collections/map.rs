@@ -45,12 +45,14 @@ pub(crate) fn map_new(arguments: &[Value]) -> Value {
     Value::Map(Rc::new(data))
 }
 
-pub(crate) fn map_set(receiver: Option<&Value>, arguments: &[Value]) -> Value {
-    let Value::Map(data) = receiver.unwrap() else {
-        return Value::Undefined;
+pub(crate) fn map_set(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(receiver @ Value::Map(data)) = receiver else {
+        return Err(crate::value::error::throw_type_error(
+            "Map method called on incompatible receiver",
+        ));
     };
     let Some(key) = arguments.first() else {
-        return Value::Undefined;
+        return Ok(Value::Undefined);
     };
     let value = arguments.get(1).cloned().unwrap_or(Value::Undefined);
     let mut data = (**data).clone();
@@ -61,68 +63,81 @@ pub(crate) fn map_set(receiver: Option<&Value>, arguments: &[Value]) -> Value {
         data.values.push(value);
     }
     let result = Value::Map(Rc::new(data));
-    crate::locals::replace_value(receiver.unwrap(), &result);
-    result
+    crate::locals::replace_value(receiver, &result);
+    Ok(result)
 }
 
-pub(crate) fn map_get(receiver: Option<&Value>, arguments: &[Value]) -> Value {
-    let Value::Map(data) = receiver.unwrap() else {
-        return Value::Undefined;
+pub(crate) fn map_get(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(Value::Map(data)) = receiver else {
+        return Err(crate::value::error::throw_type_error(
+            "Map method called on incompatible receiver",
+        ));
     };
     let Some(key) = arguments.first() else {
-        return Value::Undefined;
+        return Ok(Value::Undefined);
     };
-    data.keys
+    Ok(data
+        .keys
         .iter()
         .position(|k| same_value_zero(k, key))
         .and_then(|pos| data.values.get(pos).cloned())
-        .unwrap_or(Value::Undefined)
+        .unwrap_or(Value::Undefined))
 }
 
-pub(crate) fn map_has(receiver: Option<&Value>, arguments: &[Value]) -> Value {
-    let Value::Map(data) = receiver.unwrap() else {
-        return Value::Boolean(false);
+pub(crate) fn map_has(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(Value::Map(data)) = receiver else {
+        return Err(crate::value::error::throw_type_error(
+            "Map method called on incompatible receiver",
+        ));
     };
     let Some(key) = arguments.first() else {
-        return Value::Boolean(false);
+        return Ok(Value::Boolean(false));
     };
-    Value::Boolean(data.keys.iter().any(|k| same_value_zero(k, key)))
+    Ok(Value::Boolean(
+        data.keys.iter().any(|k| same_value_zero(k, key)),
+    ))
 }
 
-pub(crate) fn map_delete(receiver: Option<&Value>, arguments: &[Value]) -> Value {
-    let Value::Map(data) = receiver.unwrap() else {
-        return Value::Boolean(false);
+pub(crate) fn map_delete(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(Value::Map(data)) = receiver else {
+        return Err(crate::value::error::throw_type_error(
+            "Map method called on incompatible receiver",
+        ));
     };
     let Some(key) = arguments.first() else {
-        return Value::Boolean(false);
+        return Ok(Value::Boolean(false));
     };
     let mut data = (**data).clone();
     if let Some(pos) = data.keys.iter().position(|k| same_value_zero(k, key)) {
         data.keys.remove(pos);
         data.values.remove(pos);
-        Value::Boolean(true)
+        Ok(Value::Boolean(true))
     } else {
-        Value::Boolean(false)
+        Ok(Value::Boolean(false))
     }
 }
 
-pub(crate) fn map_clear(receiver: Option<&Value>) -> Value {
+pub(crate) fn map_clear(receiver: Option<&Value>) -> Result<Value, VmError> {
     if !matches!(receiver, Some(Value::Map(_))) {
-        return Value::Undefined;
+        return Err(crate::value::error::throw_type_error(
+            "Map method called on incompatible receiver",
+        ));
     }
-    Value::Map(Rc::new(MapData {
+    Ok(Value::Map(Rc::new(MapData {
         keys: VecDeque::new(),
         values: Vec::new(),
         prototype: std::cell::RefCell::new(None),
-    }))
+    })))
 }
 
 pub(crate) fn map_for_each(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
-    let Value::Map(data) = receiver.unwrap() else {
-        return Ok(Value::Undefined);
+    let Some(Value::Map(data)) = receiver else {
+        return Err(crate::value::error::throw_type_error(
+            "Map method called on incompatible receiver",
+        ));
     };
     let Some(callback) = arguments.first() else {
         return Ok(Value::Undefined);
