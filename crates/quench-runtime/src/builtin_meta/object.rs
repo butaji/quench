@@ -4,6 +4,7 @@ use crate::ops::Builtin;
 
 pub const fn fn_name(b: Builtin) -> Option<&'static str> {
     match b {
+        Builtin::ObjectPrototypeValueOf => Some("Object.prototype.valueOf"),
         Builtin::ObjectHasOwnProperty => Some("Object.prototype.hasOwnProperty"),
         Builtin::ObjectPropertyIsEnumerable => Some("Object.prototype.propertyIsEnumerable"),
         Builtin::ObjectGetOwnPropertyDescriptor => Some("Object.getOwnPropertyDescriptor"),
@@ -18,7 +19,9 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
 
 pub const fn fn_len(b: Builtin) -> Option<f64> {
     match b {
-        Builtin::BoxedValueOf | Builtin::BooleanValueOf => Some(0.0),
+        Builtin::ObjectPrototypeValueOf | Builtin::BoxedValueOf | Builtin::BooleanValueOf => {
+            Some(0.0)
+        }
         Builtin::ObjectHasOwnProperty
         | Builtin::ObjectPropertyIsEnumerable
         | Builtin::ObjectKeys
@@ -32,7 +35,9 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
 
 pub const fn short_name(b: Builtin) -> Option<&'static str> {
     match b {
-        Builtin::BoxedValueOf | Builtin::BooleanValueOf => Some("valueOf"),
+        Builtin::ObjectPrototypeValueOf | Builtin::BoxedValueOf | Builtin::BooleanValueOf => {
+            Some("valueOf")
+        }
         Builtin::ObjectHasOwnProperty => Some("hasOwnProperty"),
         Builtin::ObjectPropertyIsEnumerable => Some("propertyIsEnumerable"),
         Builtin::ObjectGetOwnPropertyDescriptor => Some("getOwnPropertyDescriptor"),
