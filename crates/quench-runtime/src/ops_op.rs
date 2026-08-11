@@ -53,6 +53,10 @@ pub enum Op {
     MarkUninitialized {
         slot: u16,
     },
+    CheckInitialized {
+        slot: u16,
+        name: String,
+    },
     DeclareEvalBinding {
         name: String,
         slot: u16,

@@ -113,6 +113,7 @@ fn run_local_op(registers: &mut Vec<Value>, op: &Op) -> Result<bool, VmError> {
             write_value(registers, *dst, crate::vm::current_global_object())
         }
         MarkUninitialized { slot } => crate::locals::mark_uninitialized(*slot),
+        CheckInitialized { slot, name } => crate::locals::check_initialized(*slot, name)?,
         DeleteEvalBinding { dst, name, slot } => write_value(
             registers,
             *dst,
