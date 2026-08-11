@@ -12,6 +12,7 @@ use std::collections::HashMap;
 const GLOBAL_THIS: &str = "globalThis";
 const SCRIPT_THIS_SLOT: &str = "\0script_this";
 include!("function_declaration_ops.rs");
+include!("reduce_eval_entry.rs");
 #[derive(Debug, PartialEq)]
 pub struct ResidualProgram {
     pub facts: ProgramDb,
@@ -22,63 +23,6 @@ pub fn reduce_source(source: &str) -> Result<ResidualProgram, Vec<String>> {
 }
 pub fn reduce_module_source(source: &str) -> Result<ResidualProgram, Vec<String>> {
     reduce_source_with_type(source, SourceType::mjs())
-}
-pub fn reduce_eval_source(
-    source: &str,
-    inherited_strict: bool,
-    global: bool,
-    bindings: &[(String, u16)],
-    forbidden_var_names: &[String],
-) -> Result<ResidualProgram, Vec<String>> {
-    reduce_eval_source_in_context(
-        source,
-        inherited_strict,
-        global,
-        bindings,
-        forbidden_var_names,
-        crate::semantic::EvalGrammarContext::default(),
-    )
-}
-pub(crate) fn reduce_eval_source_in_context(
-    source: &str,
-    inherited_strict: bool,
-    global: bool,
-    bindings: &[(String, u16)],
-    forbidden_var_names: &[String],
-    grammar: crate::semantic::EvalGrammarContext,
-) -> Result<ResidualProgram, Vec<String>> {
-    let strict_source = inherited_strict.then(|| format!("\"use strict\";\n{source}"));
-    let source = strict_source.as_deref().unwrap_or(source);
-    let allocator = Allocator::default();
-    let parsed = Parser::new(&allocator, source, SourceType::cjs()).parse();
-    crate::reduce_support::validate_parse(&parsed)?;
-    crate::reduce_support::validate_program(&parsed.program)?;
-    let analysis = crate::semantic::analyze_eval(&parsed.program, grammar)?;
-    let strict = inherited_strict || crate::reduce_support::has_strict_directive(&parsed.program);
-    crate::reduce_support::validate_eval_var_names(&parsed.program, strict, forbidden_var_names)?;
-    let directive_completion =
-        super::reduce_eval::directive_completion(&parsed.program, inherited_strict);
-    let mut facts = ProgramDb {
-        strict,
-        scope_count: analysis.scope_count,
-        symbol_count: analysis.symbol_count,
-        private_names: analysis.private_names,
-        ..ProgramDb::default()
-    };
-    let (locals, next_slot, mut prefix, behavior, deletable) =
-        crate::reduce_support::eval_bindings(&parsed.program, bindings, strict, global);
-    facts.eval_deletable = deletable;
-    let mut ops = reduce_statements_opt(
-        &parsed.program.body,
-        &mut facts,
-        locals,
-        next_slot,
-        true,
-        behavior,
-        directive_completion,
-    )?;
-    prefix.append(&mut ops);
-    Ok(ResidualProgram { facts, ops: prefix })
 }
 pub fn reduce_source_with_type(
     source: &str,
@@ -432,18 +376,8 @@ pub fn reduce_function_declaration(
         return Err(vec!["Function without body".to_string()]);
     };
     let slot = declaration_slot(identifier.name.as_str(), next_slot, locals);
-    let (parameters, parameter_count, captures) = function_locals(function, locals)?;
-    let strictness = crate::reduce_support::function_strictness(body, facts.strict);
-    let metadata = function_metadata(function, strictness);
-    let body_ops = functions::reduce_body(
-        body,
-        &function.params,
-        facts,
-        parameters,
-        parameter_count,
-        captures,
-        metadata,
-    )?;
+    let (body_ops, parameter_count, captures, metadata) =
+        reduce_function_body(function, body, facts, locals)?;
     let register = *next_register;
     *next_register = next_register.saturating_add(1);
     ops.push(function_declaration_op(
@@ -459,6 +393,26 @@ pub fn reduce_function_declaration(
         src: register,
     });
     Ok(())
+}
+fn reduce_function_body(
+    function: &oxc::ast::ast::Function<'_>,
+    body: &oxc::ast::ast::FunctionBody<'_>,
+    facts: &mut ProgramDb,
+    locals: &HashMap<String, u16>,
+) -> Result<(Vec<Op>, u16, u16, functions::FunctionMetadata), Vec<String>> {
+    let (parameters, parameter_count, captures) = function_locals(function, locals)?;
+    let strictness = crate::reduce_support::function_strictness(body, facts.strict);
+    let metadata = function_metadata(function, strictness);
+    let body_ops = functions::reduce_body(
+        body,
+        &function.params,
+        facts,
+        parameters,
+        parameter_count,
+        captures,
+        metadata,
+    )?;
+    Ok((body_ops, parameter_count, captures, metadata))
 }
 fn function_metadata(
     function: &oxc::ast::ast::Function<'_>,
