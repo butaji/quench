@@ -67,6 +67,11 @@ pub enum Op {
         name: String,
         slot: u16,
     },
+    DeleteName {
+        dst: u16,
+        name: String,
+        strict: bool,
+    },
     CheckGlobalFunction {
         name: String,
     },

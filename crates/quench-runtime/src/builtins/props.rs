@@ -5,6 +5,9 @@ use data_view_name::data_view_name;
 
 /// Lookup a property on a builtin, checking intl first, then special, then callable.
 pub(crate) fn lookup(builtin: Builtin, key: &str) -> Value {
+    if crate::builtins::builtin_prototype_property_is_removed(builtin, key) {
+        return Value::Undefined;
+    }
     if let Some(value) = crate::intl::property(builtin, key) {
         return value;
     }
@@ -342,31 +345,20 @@ pub(crate) fn callable(builtin: Builtin, key: &str) -> Option<Value> {
     }
 }
 
-pub(crate) fn is_builtin_deletable(builtin: Builtin, key: &str) -> bool {
-    if callable(builtin, key).is_some() {
+pub(crate) fn is_builtin_deletable(_builtin: Builtin, key: &str) -> bool {
+    if matches!(key, "length" | "name" | "prototype") {
         return false;
     }
-    if special_property(builtin, key).is_some() {
-        return false;
-    }
-    if builtin == Builtin::Number && is_number_constant_key(key) {
+    if matches!(
+        (_builtin, key),
+        (
+            Builtin::Math,
+            "E" | "LN2" | "LN10" | "LOG2E" | "LOG10E" | "PI" | "SQRT1_2" | "SQRT2"
+        )
+    ) {
         return false;
     }
     true
-}
-
-fn is_number_constant_key(key: &str) -> bool {
-    matches!(
-        key,
-        "EPSILON"
-            | "MAX_SAFE_INTEGER"
-            | "MAX_VALUE"
-            | "MIN_SAFE_INTEGER"
-            | "MIN_VALUE"
-            | "NaN"
-            | "NEGATIVE_INFINITY"
-            | "POSITIVE_INFINITY"
-    )
 }
 
 fn builtin_length(builtin: Builtin) -> f64 {

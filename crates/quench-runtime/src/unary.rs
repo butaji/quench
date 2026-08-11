@@ -31,14 +31,7 @@ pub(crate) fn reduce_delete(
         return Some(result);
     }
     if !is_member_expression(expression) {
-        if is_unresolved_identifier(expression, locals) {
-            return Some(emit_constant(ops, next_register, true));
-        }
-        return Some(emit_constant(
-            ops,
-            next_register,
-            !matches!(expression, Expression::Identifier(_)),
-        ));
+        return reduce_non_member_delete(expression, ops, facts, next_register, locals);
     }
     let (object, key) = match expression {
         Expression::ComputedMemberExpression(member) => (
@@ -57,6 +50,42 @@ pub(crate) fn reduce_delete(
         _ => return None,
     };
     push_delete_property(ops, facts, next_register, object, key)
+}
+
+fn reduce_non_member_delete(
+    expression: &Expression<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<u16> {
+    if !matches!(expression, Expression::Identifier(_)) {
+        crate::reduce::reduce_expression(expression, ops, facts, next, locals)?;
+        return Some(emit_constant(ops, next, true));
+    }
+    let Expression::Identifier(identifier) = expression else {
+        return None;
+    };
+    let is_dynamic = !locals.contains_key(identifier.name.as_str())
+        && !facts
+            .eval_deletable
+            .iter()
+            .any(|(name, _)| name == identifier.name.as_str());
+    if is_dynamic {
+        let dst = *next;
+        *next = next.saturating_add(1);
+        ops.push(Op::DeleteName {
+            dst,
+            name: identifier.name.to_string(),
+            strict: facts.strict,
+        });
+        return Some(dst);
+    }
+    Some(emit_constant(
+        ops,
+        next,
+        is_unresolved_identifier(expression, locals),
+    ))
 }
 
 fn push_delete_property(
