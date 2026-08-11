@@ -14,6 +14,7 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
         Builtin::ObjectDefineProperty => Some("Object.defineProperty"),
         Builtin::ObjectGetOwnPropertyNames => Some("Object.getOwnPropertyNames"),
         Builtin::ObjectGetOwnPropertySymbols => Some("Object.getOwnPropertySymbols"),
+        Builtin::WeakRefDeref => Some("WeakRef.prototype.deref"),
         _ => None,
     }
 }
@@ -30,6 +31,7 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         | Builtin::ObjectGetOwnPropertySymbols => Some(1.0),
         Builtin::ObjectGetOwnPropertyDescriptor | Builtin::ObjectIs => Some(2.0),
         Builtin::ObjectAssign => Some(2.0),
+        Builtin::WeakRefDeref => Some(0.0),
         Builtin::ObjectDefineProperty => Some(3.0),
         _ => None,
     }
@@ -49,6 +51,7 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
         Builtin::ObjectDefineProperty => Some("defineProperty"),
         Builtin::ObjectGetOwnPropertyNames => Some("getOwnPropertyNames"),
         Builtin::ObjectGetOwnPropertySymbols => Some("getOwnPropertySymbols"),
+        Builtin::WeakRefDeref => Some("deref"),
         _ => None,
     }
 }
