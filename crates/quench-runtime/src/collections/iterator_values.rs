@@ -8,8 +8,9 @@ pub(crate) fn from_map(receiver: Option<&Value>) -> Result<Value, crate::execute
     };
     let values = data
         .keys
+        .borrow()
         .iter()
-        .zip(&data.values)
+        .zip(data.values.borrow().iter())
         .map(|(key, value)| Value::array(vec![key.clone(), value.clone()]))
         .collect();
     Ok(make(values))
@@ -21,7 +22,7 @@ pub(crate) fn from_map_keys(receiver: Option<&Value>) -> Result<Value, crate::ex
             "Map iterator called on incompatible receiver",
         ));
     };
-    Ok(make(data.keys.iter().cloned().collect()))
+    Ok(make(data.keys.borrow().iter().cloned().collect()))
 }
 
 pub(crate) fn from_map_values(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
@@ -30,7 +31,7 @@ pub(crate) fn from_map_values(receiver: Option<&Value>) -> Result<Value, crate::
             "Map iterator called on incompatible receiver",
         ));
     };
-    Ok(make(data.values.clone()))
+    Ok(make(data.values.borrow().clone()))
 }
 
 pub(crate) fn from_set(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
