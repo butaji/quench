@@ -21,6 +21,9 @@ pub fn property(key: &str) -> Value {
         "delete" => Value::Builtin(Builtin::MapDelete),
         "clear" => Value::Builtin(Builtin::MapClear),
         "forEach" => Value::Builtin(Builtin::MapForEach),
+        "entries" => Value::Builtin(Builtin::MapEntries),
+        "keys" => Value::Builtin(Builtin::MapKeys),
+        "values" => Value::Builtin(Builtin::MapValues),
         "Symbol.iterator" => Value::Builtin(Builtin::MapIterator),
         _ => Value::Undefined,
     }
