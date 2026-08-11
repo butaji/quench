@@ -122,6 +122,8 @@ fn accessor_prefix(kind: PropertyKind) -> Option<&'static str> {
 
 fn is_proto_initializer(property: &oxc::ast::ast::ObjectProperty<'_>) -> bool {
     !property.computed
+        && !property.shorthand
+        && !property.method
         && property.kind == PropertyKind::Init
         && property_key(&property.key).as_deref() == Some("__proto__")
 }
