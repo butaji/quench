@@ -468,6 +468,7 @@ fn stateful_builtin(
         Builtin::GeneratorReturn => Some(crate::generator::return_(receiver, arguments)),
         Builtin::GeneratorThrow => Some(crate::generator::throw(receiver, arguments)),
         Builtin::ProxyRevoke => Some(crate::proxy::revoke(receiver)),
+        Builtin::Math => Some(Err(not_callable())),
         _ => None,
     }
 }
