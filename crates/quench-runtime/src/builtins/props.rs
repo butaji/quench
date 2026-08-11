@@ -217,7 +217,6 @@ fn is_typed_array_prototype(builtin: Builtin) -> bool {
             | BigUint64ArrayPrototype
     )
 }
-
 fn typed_array_constructor_property(builtin: Builtin, key: &str) -> Option<Builtin> {
     use Builtin::*;
     Some(match (builtin, key) {
@@ -314,6 +313,7 @@ fn array_method(key: &str) -> Option<Builtin> {
         "reverse" => Some(ArrayReverse),
         "pop" => Some(ArrayPop),
         "unshift" => Some(ArrayUnshift),
+        "fill" => Some(ArrayFill),
         "splice" => Some(ArraySplice),
         _ => None,
     }

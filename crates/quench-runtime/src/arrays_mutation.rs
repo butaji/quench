@@ -9,6 +9,7 @@ fn array_mutation_builtin(
         ArrayReverse => Some(Ok(crate::builtins::array_reverse(receiver))),
         ArrayPop => Some(Ok(crate::builtins::array_pop(receiver))),
         ArrayUnshift => Some(Ok(crate::builtins::array_unshift(receiver, arguments))),
+        ArrayFill => Some(Ok(crate::builtins::array_fill(receiver, arguments))),
         _ => None,
     }
 }

@@ -184,6 +184,7 @@ include!("builtins_array_shift.rs");
 include!("builtins_array_reverse.rs");
 include!("builtins_array_pop.rs");
 include!("builtins_array_unshift.rs");
+include!("builtins_array_fill.rs");
 pub(crate) fn math_pow(arguments: &[Value]) -> Value {
     let base = arguments.first().map_or(f64::NAN, value_to_number);
     let exponent = arguments.get(1).map_or(f64::NAN, value_to_number);
@@ -366,7 +367,6 @@ fn set_prototype_slot(target: &Value, key: &str, value: Value) -> Option<Value> 
         _ => return None,
     })
 }
-
 pub(crate) fn define_property(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
     let Some(target) = arguments.first() else {
         return Ok(Value::Undefined);
