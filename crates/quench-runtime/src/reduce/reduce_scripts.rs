@@ -86,6 +86,7 @@ fn reduce_units(units: &[SourceUnit<'_>]) -> Result<ResidualProgram, Vec<String>
 
 fn merge_facts(target: &mut ProgramDb, source: ProgramDb) {
     target.constants.extend(source.constants);
+    target.span_facts.merge(source.span_facts);
     target.eval_var_barrier.extend(source.eval_var_barrier);
     target.eval_deletable.extend(source.eval_deletable);
     target.strict |= source.strict;
