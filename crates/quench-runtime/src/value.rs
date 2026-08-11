@@ -150,6 +150,10 @@ pub struct GeneratorState {
     pub registers: Vec<Value>,
     pub environment: Rc<crate::environment::Environment>,
     pub pc: usize,
+    /// Resume offset within a nested `PrivateScope` body suspended on `yield`.
+    pub nested: usize,
+    /// Private-name capabilities captured when a class body suspended on `yield`.
+    pub private_environment: Option<crate::private_environment::PrivateEnvironment>,
 }
 
 pub type ObjectProperties = Vec<(String, Value)>;
