@@ -1,6 +1,6 @@
 //! Polyfill: `module-surface-15-tail`
 
-pub const JS: &str = r#"const __quenchCryptoHashAlgorithm = (name) => name;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchCryptoHashAlgorithm = (name) => name;
 const __quenchCryptoDecryptFallback = (result) => {
   result.privateDecrypt ||= (key, data) => {
     if (
@@ -319,4 +319,4 @@ globalThis.__nodePrepareLegacyUrl = (value) => {
     hadOuterWhitespace: value !== value.trim()
   };
 };
-"#;
+"#);

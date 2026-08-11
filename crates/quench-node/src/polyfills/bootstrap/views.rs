@@ -1,6 +1,6 @@
 //! Polyfill: `views`
 
-pub const JS: &str = r#"const __NodeBufferBase03 = NodeBuffer;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __NodeBufferBase03 = NodeBuffer;
 const __nodeValidateVariableByteLength = (byteLength) => {
   if (typeof byteLength !== "number") {
     throw Object.assign(new TypeError('The "byteLength" argument must be of type number'), { code: "ERR_INVALID_ARG_TYPE" });
@@ -217,4 +217,4 @@ for (const [name, write, littleEndian] of [
     value: method
   });
 }
-"#;
+"#);

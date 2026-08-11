@@ -1,6 +1,6 @@
 //! Polyfill: `network-validation`
 
-pub const JS: &str = r#"const __quenchValidatePort = (value) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchValidatePort = (value) => {
   if (typeof value !== "number" && typeof value !== "string") {
     throw Object.assign(new TypeError('The "options.port" property must be a number or string'), { code: "ERR_INVALID_ARG_TYPE" });
   }
@@ -33,4 +33,4 @@ globalThis.__quenchValidateConnectionOptions = (options) => {
   }
   return __quenchValidatePort(options);
 };
-"#;
+"#);

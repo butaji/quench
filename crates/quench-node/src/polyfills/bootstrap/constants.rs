@@ -1,6 +1,6 @@
 //! Polyfill: `constants`
 
-pub const JS: &str = r#"const __quenchOriginalRequireWithConstants = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequireWithConstants = globalThis.require;
 const __quenchConstants = Object.freeze({
   O_RDONLY: 0,
   O_WRONLY: 1,
@@ -32,4 +32,4 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithConstants(specifier);
 };
-"#;
+"#);

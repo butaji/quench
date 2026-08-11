@@ -1,6 +1,6 @@
 //! Polyfill: `buffer-validation`
 
-pub const JS: &str = r#"const __NodeBufferBase02 = NodeBuffer;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __NodeBufferBase02 = NodeBuffer;
 const __nodeBufferFloatRangeError = (message) => {
   const error = new RangeError(message);
   error.code = "ERR_OUT_OF_RANGE";
@@ -376,4 +376,4 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase02 {
     );
   }
 };
-"#;
+"#);

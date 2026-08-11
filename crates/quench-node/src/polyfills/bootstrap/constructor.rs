@@ -1,10 +1,10 @@
 //! Polyfill: `constructor`
 
-pub const JS: &str = r#"const __quenchChildProcessConstructorRequire = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchChildProcessConstructorRequire = globalThis.require;
 const __quenchChildProcessConstructor = __quenchChildProcessConstructorRequire(
   "child_process",
 );
 if (__quenchChildProcessConstructor.ChildProcess === undefined) {
   __quenchChildProcessConstructor.ChildProcess = globalThis.__nodeEventEmitter;
 }
-"#;
+"#);

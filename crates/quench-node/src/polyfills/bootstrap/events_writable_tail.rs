@@ -1,6 +1,6 @@
 //! Polyfill: `events-writable-tail`
 
-pub const JS: &str = r#"class NodeWritable extends NodeEventEmitter {
+pub const JS: &str = quench_js_check::checked_js!(r#"class NodeWritable extends NodeEventEmitter {
   constructor(options = {}) {
     super(options);
     this.destroyed = false;
@@ -266,4 +266,4 @@ const NodeWritableCompat = function Writable(options = {}) {
   return instance;
 };
 NodeWritableCompat.prototype = NodeWritable.prototype;
-"#;
+"#);

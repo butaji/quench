@@ -1,6 +1,6 @@
 //! Polyfill: `crypto-tail`
 
-pub const JS: &str = r#"const __createNodeCrypto = () => __nodeCryptoApi;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __createNodeCrypto = () => __nodeCryptoApi;
 let __nodeCryptoInstance;
 globalThis.__nodeCrypto = new Proxy(
   {},
@@ -21,4 +21,4 @@ globalThis.__nodeCrypto = new Proxy(
     })
   }
 );
-"#;
+"#);

@@ -1,6 +1,6 @@
 //! Polyfill: `metrics`
 
-pub const JS: &str = r#"const __quenchProcessStart = Date.now();
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchProcessStart = Date.now();
 const __quenchOriginalRequireWithProcessMetrics = globalThis.require;
 if (globalThis.process) {
   globalThis.process.uptime ||= () =>
@@ -20,4 +20,4 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithProcessMetrics(specifier);
 };
-"#;
+"#);

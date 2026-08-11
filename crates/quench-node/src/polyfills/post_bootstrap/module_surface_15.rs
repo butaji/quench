@@ -1,6 +1,6 @@
 //! Polyfill: `module-surface-15`
 
-pub const JS: &str = r#"{
+pub const JS: &str = quench_js_check::checked_js!(r#"{
   const __quenchHttpHeader = (options) => {
     const cookies = options?.headers?.Cookie || options?.headers?.cookie;
     if (!Array.isArray(cookies)) return "";
@@ -320,4 +320,4 @@ const __quenchCryptoHashOneShotFallback = (result) => {
   };
 };
 /* eslint-enable max-lines-per-function, complexity */
-"#;
+"#);

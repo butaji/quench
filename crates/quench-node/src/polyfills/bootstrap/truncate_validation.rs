@@ -1,6 +1,6 @@
 //! Polyfill: `truncate-validation`
 
-pub const JS: &str = r#"globalThis.__validateTruncateLength = (length) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.__validateTruncateLength = (length) => {
   if (typeof length !== "number" || !Number.isFinite(length)) {
     const error = new TypeError(
       `The "len" argument must be of type number.${
@@ -25,4 +25,4 @@ globalThis.__truncateMissingPath = (path, callback) => {
   queueMicrotask(() => callback(error));
   return true;
 };
-"#;
+"#);

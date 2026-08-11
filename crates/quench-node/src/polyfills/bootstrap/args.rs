@@ -1,6 +1,6 @@
 //! Polyfill: `args`
 
-pub const JS: &str = r#"const __quenchOriginalRequireWithParseArgs = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequireWithParseArgs = globalThis.require;
 const __quenchParseOption = (
   argument,
   args,
@@ -55,4 +55,4 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithParseArgs(specifier);
 };
-"#;
+"#);

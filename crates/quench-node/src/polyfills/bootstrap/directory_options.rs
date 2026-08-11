@@ -1,6 +1,6 @@
 //! Polyfill: `directory-options`
 
-pub const JS: &str = r#"globalThis.__validateOpendirOptions = (options) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.__validateOpendirOptions = (options) => {
   if (options === undefined) return;
   if (options === null || typeof options !== "object") {
     throw Object.assign(new TypeError('The "options" argument must be of type object'), { code: "ERR_INVALID_ARG_TYPE" });
@@ -24,4 +24,4 @@ globalThis.__nodeFs.opendirSync = (value, options) => {
   globalThis.__validateOpendirOptions(options);
   return new globalThis.__nodeFs.Dir(nodeFsPath(value));
 };
-"#;
+"#);

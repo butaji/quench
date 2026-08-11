@@ -1,6 +1,6 @@
 //! Polyfill: `shared`
 
-pub const JS: &str = r#"const __quenchSharedChildProcessOriginalRequire = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchSharedChildProcessOriginalRequire = globalThis.require;
 const __quenchSharedChildProcess = __quenchSharedChildProcessOriginalRequire(
   "child_process",
 );
@@ -79,4 +79,4 @@ globalThis.require = (specifier) =>
   String(specifier).replace(/^node:/, "") === "child_process"
     ? __quenchSharedChildProcess
     : __quenchSharedChildProcessOriginalRequire(specifier);
-"#;
+"#);

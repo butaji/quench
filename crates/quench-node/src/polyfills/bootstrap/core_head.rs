@@ -1,6 +1,6 @@
 //! Polyfill: `core-head`
 
-pub const JS: &str = r#"let __quenchAsyncHooksModule;
+pub const JS: &str = quench_js_check::checked_js!(r#"let __quenchAsyncHooksModule;
 {
   globalThis.__nodeCurrentAsyncResource ||= {};
   globalThis.__nodeNextAsyncId ||= 1;
@@ -405,4 +405,4 @@ const __quenchEventsOnce = (emitter, event, options = {}) => {
     else options.signal?.addEventListener("abort", onAbort, { once: true });
   });
 };
-"#;
+"#);

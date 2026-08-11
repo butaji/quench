@@ -6,6 +6,7 @@ description = "Node-compatible JavaScript runtime built on rquickjs"
 license = "MIT"
 
 [dependencies]
+quench-js-check = { path = "../quench-js-check" }
 rquickjs = { version = "0.9", features = ["array-buffer", "classes", "futures", "loader", "macro", "properties", "parallel"] }
 serde_json = "1"
 walkdir = "2"

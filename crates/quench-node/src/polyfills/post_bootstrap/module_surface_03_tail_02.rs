@@ -1,6 +1,6 @@
 //! Polyfill: `module-surface-03-tail-02`
 
-pub const JS: &str = r#"const __quenchIterableOptions = (callback, options) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchIterableOptions = (callback, options) => {
   if (typeof callback !== "function") {
     const error = new TypeError(
       "ERR_INVALID_ARG_TYPE: callback must be a function"
@@ -375,4 +375,4 @@ const __quenchAddAbortSignal = (signal, stream) => {
   else signal.addEventListener?.("abort", abort, { once: true });
   return stream;
 };
-"#;
+"#);

@@ -1,6 +1,6 @@
 //! Polyfill: `probe`
 
-pub const JS: &str = r#"/* Keep the portable self-PID child-process probe useful without a host spawn API. */
+pub const JS: &str = quench_js_check::checked_js!(r#"/* Keep the portable self-PID child-process probe useful without a host spawn API. */
 const __quenchParentPidSpawnRequire = globalThis.require;
 const __quenchParentPidSpawnProcess = __quenchParentPidSpawnRequire(
   "child_process",
@@ -23,4 +23,4 @@ __quenchParentPidSpawnProcess.spawnSync = (command, args = [], options) => {
   }
   return __quenchParentPidSpawnOriginal(command, args, options);
 };
-"#;
+"#);

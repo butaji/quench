@@ -1,6 +1,6 @@
 //! Polyfill: `compression`
 
-pub const JS: &str = r#"const __quenchZlibModule = {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchZlibModule = {
   Deflate: __quenchZlibConstructor(
     () => __quenchZlibStream(__quenchZlibDeflateSync),
     false,
@@ -284,4 +284,4 @@ pub const JS: &str = r#"const __quenchZlibModule = {
   BROTLI_PARAM_NPOSTFIX: 7,
   BROTLI_PARAM_NDIRECT: 8,
 };
-"#;
+"#);

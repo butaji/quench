@@ -1,6 +1,6 @@
 //! Polyfill: `allocation`
 
-pub const JS: &str = r#"const __nodeBufferAllocate = (size, fill, encoding) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __nodeBufferAllocate = (size, fill, encoding) => {
   const length = NodeBuffer._validateSize(size);
   __nodeAllocatorCounts.zeroFilled++;
   return new NodeBuffer(length).fill(fill, 0, length, encoding);
@@ -179,4 +179,4 @@ NodeBuffer.from = (value, ...args) => {
   Object.setPrototypeOf(aligned, NodeBuffer.prototype);
   return aligned;
 };
-"#;
+"#);

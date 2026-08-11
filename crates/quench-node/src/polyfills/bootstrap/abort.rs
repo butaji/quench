@@ -1,6 +1,6 @@
 //! Polyfill: `abort`
 
-pub const JS: &str = r#"const __quenchOriginalRequireWithTransferableAbort = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequireWithTransferableAbort = globalThis.require;
 const __quenchTransferableSignals = new WeakSet();
 const __quenchTransferableAbortSignal = (signal) => {
   if (!(signal instanceof AbortSignal)) {
@@ -27,4 +27,4 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithTransferableAbort(specifier);
 };
-"#;
+"#);

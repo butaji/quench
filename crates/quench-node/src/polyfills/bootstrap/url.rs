@@ -1,6 +1,6 @@
 //! Polyfill: `url`
 
-pub const JS: &str = r#"const __quenchOriginalRequireWithUrlStatics = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequireWithUrlStatics = globalThis.require;
 const __quenchUrlParse = (input, base) => {
   if (base === undefined && !/^[A-Za-z][A-Za-z0-9+.-]*:/.test(String(input))) {
     return null;
@@ -17,4 +17,4 @@ if (typeof URL.canParse !== "function") {
 if (typeof URL.parse !== "function") URL.parse = __quenchUrlParse;
 globalThis.require = (specifier) =>
   __quenchOriginalRequireWithUrlStatics(specifier);
-"#;
+"#);

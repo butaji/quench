@@ -1,6 +1,6 @@
 //! Polyfill: `open-validation`
 
-pub const JS: &str = r#"const __nodeFsValidateMode = (mode) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __nodeFsValidateMode = (mode) => {
   if (
     mode !== undefined &&
     mode !== null &&
@@ -13,4 +13,4 @@ pub const JS: &str = r#"const __nodeFsValidateMode = (mode) => {
     throw Object.assign(new TypeError(`The "mode" argument is invalid: ${mode}`), { code: "ERR_INVALID_ARG_VALUE" });
   }
 };
-"#;
+"#);

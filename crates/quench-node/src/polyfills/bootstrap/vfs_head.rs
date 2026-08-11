@@ -1,6 +1,6 @@
 //! Polyfill: `vfs-head`
 
-pub const JS: &str = r#"// Experimental node:vfs surface.  Keep the provider contract small and
+pub const JS: &str = quench_js_check::checked_js!(r#"// Experimental node:vfs surface.  Keep the provider contract small and
 // readable; mount interception is added only once the core tree semantics are
 // covered by focused fixtures.
 class __QuenchVirtualProvider {
@@ -233,4 +233,4 @@ const __quenchVfsResolveParentPath = (entries, path) => {
   const resolvedParent = __quenchVfsResolvePath(entries, parent);
   return `${resolvedParent === "/" ? "" : resolvedParent}/${name}`;
 };
-"#;
+"#);

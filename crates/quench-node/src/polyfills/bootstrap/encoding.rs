@@ -1,6 +1,6 @@
 //! Polyfill: `encoding`
 
-pub const JS: &str = r#"const __nodeBufferStringByteLength = (value, encoding) => {
+pub const JS: &str = quench_js_check::checked_js!(r#"const __nodeBufferStringByteLength = (value, encoding) => {
   const normalized = String(encoding || "utf8").toLowerCase();
   if (["ascii", "latin1", "binary"].includes(normalized)) return value.length;
   if (["ucs2", "ucs-2", "utf16le", "utf-16le"].includes(normalized)) {
@@ -418,4 +418,4 @@ NodeBuffer.isAscii = (value) => {
   }
   return value.every((byte) => byte < 0x80);
 };
-"#;
+"#);

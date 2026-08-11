@@ -1,6 +1,6 @@
 //! Polyfill: `cleanup`
 
-pub const JS: &str = r#"const __quenchClusterCleanupRequire = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchClusterCleanupRequire = globalThis.require;
 const __quenchClusterCleanup = __quenchClusterCleanupRequire("cluster");
 const __quenchOriginalWorkerKill = __quenchClusterCleanup.Worker?.prototype
   .kill;
@@ -13,4 +13,4 @@ if (__quenchOriginalWorkerKill) {
     return result;
   };
 }
-"#;
+"#);

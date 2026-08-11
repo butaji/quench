@@ -1,6 +1,6 @@
 //! Polyfill: `filesystem-constants`
 
-pub const JS: &str = r#"const __quenchOriginalRequireWithFsConstants = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequireWithFsConstants = globalThis.require;
 const __quenchFsConstants = Object.freeze({
   F_OK: 0,
   R_OK: 4,
@@ -38,4 +38,4 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithFsConstants(specifier);
 };
-"#;
+"#);
