@@ -195,6 +195,7 @@ fn array_method(key: &str) -> Option<crate::ops::Builtin> {
         "pop" => crate::ops::Builtin::ArrayPop,
         "unshift" => crate::ops::Builtin::ArrayUnshift,
         "fill" => crate::ops::Builtin::ArrayFill,
+        "copyWithin" => crate::ops::Builtin::ArrayCopyWithin,
         "splice" => crate::ops::Builtin::ArraySplice,
         "reduce" => crate::ops::Builtin::ArrayReduce,
         "reduceRight" => crate::ops::Builtin::ArrayReduceRight,
@@ -466,7 +467,6 @@ fn relative_index(value: Option<&Value>, length: isize) -> isize {
         integer.min(length)
     }
 }
-
 fn end_index(value: &Value, length: isize) -> isize {
     if matches!(value, Value::Undefined) {
         length
