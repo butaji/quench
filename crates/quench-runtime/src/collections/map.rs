@@ -26,7 +26,7 @@ pub fn property(key: &str) -> Value {
         "values" => Value::Builtin(Builtin::MapValues),
         "getOrInsert" => Value::Builtin(Builtin::MapGetOrInsert),
         "getOrInsertComputed" => Value::Builtin(Builtin::MapGetOrInsertComputed),
-        "Symbol.iterator" => Value::Builtin(Builtin::MapIterator),
+        "Symbol.iterator" => Value::Builtin(Builtin::MapEntries),
         _ => Value::Undefined,
     }
 }
