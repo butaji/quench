@@ -99,7 +99,7 @@ pub(crate) fn put_assignment_target(
     put(place, value, ops)
 }
 
-fn reduce_place(
+pub(crate) fn reduce_place(
     target: &AssignmentTarget<'_>,
     ops: &mut Vec<Op>,
     facts: &mut ProgramDb,
