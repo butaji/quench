@@ -22,7 +22,6 @@ pub(crate) enum Place {
     Property {
         object: u16,
         key: PlaceKey,
-        origin: Option<u16>,
         strict: bool,
     },
     Private {
@@ -238,13 +237,7 @@ fn computed_place(
 ) -> Option<Place> {
     let object = reduce_member_object(&member.object, ops, facts, next, locals)?;
     let key = crate::reduce::reduce_expression(&member.expression, ops, facts, next, locals)?;
-    finish_member_place(
-        &member.object,
-        object,
-        PlaceKey::Dynamic(key),
-        facts.strict,
-        locals,
-    )
+    finish_member_place(object, PlaceKey::Dynamic(key), facts.strict)
 }
 
 pub(crate) fn prepare_get(place: &mut Place, ops: &mut Vec<Op>, next: &mut u16) {
@@ -276,7 +269,7 @@ fn member_place(
     locals: &HashMap<String, u16>,
 ) -> Option<Place> {
     let object = reduce_member_object(expression, ops, facts, next, locals)?;
-    finish_member_place(expression, object, key, facts.strict, locals)
+    finish_member_place(object, key, facts.strict)
 }
 
 fn private_place(
@@ -304,31 +297,15 @@ fn reduce_member_object(
     crate::reduce::reduce_expression(expression, ops, facts, next, locals).map(Some)
 }
 
-fn finish_member_place(
-    expression: &Expression<'_>,
-    object: Option<u16>,
-    key: PlaceKey,
-    strict: bool,
-    locals: &HashMap<String, u16>,
-) -> Option<Place> {
+fn finish_member_place(object: Option<u16>, key: PlaceKey, strict: bool) -> Option<Place> {
     match object {
         Some(object) => Some(Place::Property {
             object,
             key,
-            origin: object_origin(expression, locals),
             strict,
         }),
         None => Some(Place::Super { key }),
     }
-}
-
-fn object_origin(expression: &Expression<'_>, locals: &HashMap<String, u16>) -> Option<u16> {
-    let name = match expression {
-        Expression::Identifier(identifier) => identifier.name.as_str(),
-        Expression::ThisExpression(_) => "this",
-        _ => return None,
-    };
-    locals.get(name).copied()
 }
 
 pub(crate) fn get(place: &Place, ops: &mut Vec<Op>, next: &mut u16) -> Option<u16> {
@@ -390,14 +367,8 @@ pub(crate) fn put(place: Place, value: u16, ops: &mut Vec<Op>) -> Option<()> {
         Place::Property {
             object,
             key,
-            origin,
             strict,
-        } => {
-            emit_property_put(ops, object, key, value, strict);
-            if let Some(slot) = origin {
-                ops.push(Op::StoreLocal { slot, src: object });
-            }
-        }
+        } => emit_property_put(ops, object, key, value, strict),
         Place::Private { object, name } => ops.push(Op::SetPrivate {
             object,
             name,
