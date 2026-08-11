@@ -302,6 +302,7 @@ fn write_failure(strict: bool) -> Result<(), crate::execute::VmError> {
     Ok(())
 }
 
+include!("properties_assign.rs");
 include!("properties_copy_data.rs");
 
 pub(crate) fn propagate_updated_object(

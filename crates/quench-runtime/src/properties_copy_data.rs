@@ -25,6 +25,42 @@ pub(crate) fn execute_copy_data_properties(
     Ok(())
 }
 
+pub(crate) fn assign_properties(
+    target: crate::value::Value,
+    sources: &[crate::value::Value],
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    if matches!(target, crate::value::Value::Null | crate::value::Value::Undefined) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot convert undefined or null to object",
+        ));
+    }
+    let mut target = crate::builtins::object(&[target]);
+    for source in sources {
+        if matches!(source, crate::value::Value::Null | crate::value::Value::Undefined) {
+            continue;
+        }
+        for key in enumerable_own_keys(source)? {
+            let value = if matches!(source, crate::value::Value::Proxy(_)) {
+                crate::proxy::proxy_get(source, &key, Some(source))?
+            } else {
+                crate::execute::get_property_result(source, &key)?
+            };
+            target = assign_property(&target, &key, value)?;
+        }
+    }
+    Ok(target)
+}
+
+fn assign_property(
+    target: &crate::value::Value,
+    key: &str,
+    value: crate::value::Value,
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    let updated = crate::properties::assign_set_property(target, key, value)?;
+    crate::locals::replace_value(target, &updated);
+    Ok(updated)
+}
+
 fn excluded_keys(
     registers: &[crate::value::Value],
     excluded: &[u16],
