@@ -5,6 +5,7 @@ use crate::ops::Builtin;
 pub const fn fn_name(b: Builtin) -> Option<&'static str> {
     match b {
         Builtin::StringFromCharCode => Some("String.fromCharCode"),
+        Builtin::StringValueOf => Some("String.prototype.valueOf"),
         Builtin::StringIncludes => Some("String.prototype.includes"),
         Builtin::StringIsWellFormed => Some("String.prototype.isWellFormed"),
         Builtin::StringToWellFormed => Some("String.prototype.toWellFormed"),
@@ -40,6 +41,7 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
 pub const fn fn_len(b: Builtin) -> Option<f64> {
     match b {
         Builtin::StringFromCharCode => Some(1.0),
+        Builtin::StringValueOf => Some(0.0),
         Builtin::StringRepeat
         | Builtin::StringTrim
         | Builtin::StringToLowerCase
@@ -73,6 +75,7 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
 pub const fn short_name(b: Builtin) -> Option<&'static str> {
     match b {
         Builtin::StringFromCharCode => Some("fromCharCode"),
+        Builtin::StringValueOf => Some("valueOf"),
         Builtin::StringIncludes => Some("includes"),
         Builtin::StringIsWellFormed => Some("isWellFormed"),
         Builtin::StringToWellFormed => Some("toWellFormed"),
