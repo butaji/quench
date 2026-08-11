@@ -131,6 +131,25 @@ impl ArrayData {
         } else {
             self.properties.push((key.to_string(), value));
         }
+        self.sync_descriptor_value(key);
+    }
+
+    fn sync_descriptor_value(&mut self, key: &str) {
+        let value = self.property(key);
+        let Some((_, Value::Object(descriptor))) = self
+            .descriptors
+            .iter_mut()
+            .rev()
+            .find(|(name, _)| name == key)
+        else {
+            return;
+        };
+        if let Some((_, current)) = Rc::make_mut(descriptor)
+            .iter_mut()
+            .find(|(name, _)| name == "value")
+        {
+            *current = value.unwrap_or(Value::Undefined);
+        }
     }
 
     pub(crate) fn delete_property(&mut self, key: &str) {
