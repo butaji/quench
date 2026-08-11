@@ -146,6 +146,7 @@ pub enum Builtin {
     String,
     StringFromCharCode,
     Symbol,
+    SymbolValueOf,
     SymbolIterator,
     SymbolUnscopables,
     SymbolToStringTag,
