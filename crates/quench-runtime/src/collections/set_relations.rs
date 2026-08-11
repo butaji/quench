@@ -39,7 +39,7 @@ impl SetRecord {
         match self {
             Self::Native { values, source } => {
                 if let Some(Value::Set(data)) = source {
-                    return Ok(data.values.iter().cloned().collect());
+                    return Ok(data.values.borrow().iter().cloned().collect());
                 }
                 Ok(values.clone())
             }
@@ -82,15 +82,16 @@ fn native_receiver(receiver: Option<&Value>) -> Result<SetRecord, VmError> {
         ));
     }
     Ok(SetRecord::Native {
-        values: data.values.iter().cloned().collect(),
+        values: data.values.borrow().iter().cloned().collect(),
         source: Some(Value::Set(Rc::clone(data))),
     })
 }
 
 fn set_record(value: Value) -> Result<SetRecord, VmError> {
     if let Value::Set(data) = &value {
+        let values = data.values.borrow().iter().cloned().collect();
         return Ok(SetRecord::Native {
-            values: data.values.iter().cloned().collect(),
+            values,
             source: Some(value),
         });
     }
@@ -210,7 +211,7 @@ fn own_values(record: &SetRecord) -> Vec<Value> {
     match record {
         SetRecord::Native { values, source } => {
             if let Some(Value::Set(data)) = source {
-                return data.values.iter().cloned().collect();
+                return data.values.borrow().iter().cloned().collect();
             }
             values.clone()
         }
@@ -246,7 +247,7 @@ where
 fn new_set(values: Vec<Value>) -> Value {
     Value::Set(Rc::new(SetData {
         weak: false,
-        values: values.into_iter().collect(),
+        values: std::cell::RefCell::new(values.into_iter().collect()),
         prototype: std::cell::RefCell::new(None),
     }))
 }
