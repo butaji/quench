@@ -141,6 +141,9 @@ pub(crate) mod value {
         if value.is_empty() {
             return 0.0;
         }
+        if matches!(value, "INFINITY" | "infinity" | "+infinity" | "-infinity") {
+            return f64::NAN;
+        }
         for (prefix, radix) in [("0b", 2), ("0o", 8), ("0x", 16)] {
             if let Some(digits) = value.strip_prefix(prefix) {
                 return i64::from_str_radix(digits, radix).map_or(f64::NAN, |n| n as f64);
