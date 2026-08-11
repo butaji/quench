@@ -74,6 +74,8 @@ pub enum Builtin {
     ArraySort,
     ArrayToReversed,
     StringIncludes,
+    StringIsWellFormed,
+    StringToWellFormed,
     StringStartsWith,
     StringEndsWith,
     StringRepeat,
