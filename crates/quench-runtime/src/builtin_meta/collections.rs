@@ -42,6 +42,7 @@ pub fn collections_property(builtin: Builtin, key: &str) -> Option<Value> {
 fn map_property(key: &str) -> Option<Value> {
     use Builtin::*;
     match key {
+        "constructor" => Some(Value::Builtin(Map)),
         "set" => Some(Value::Builtin(MapSet)),
         "get" => Some(Value::Builtin(MapGet)),
         "has" => Some(Value::Builtin(MapHas)),
