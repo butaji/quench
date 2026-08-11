@@ -125,6 +125,17 @@ fn contains_loop_control(statement: &Statement<'_>) -> bool {
         | Statement::WhileStatement(_)
         | Statement::DoWhileStatement(_)
         | Statement::ForInStatement(_) => true,
+        Statement::TryStatement(try_statement) => {
+            try_statement.block.body.iter().any(contains_loop_control)
+                || try_statement
+                    .handler
+                    .as_ref()
+                    .is_some_and(|handler| handler.body.body.iter().any(contains_loop_control))
+                || try_statement
+                    .finalizer
+                    .as_ref()
+                    .is_some_and(|finalizer| finalizer.body.iter().any(contains_loop_control))
+        }
         _ => false,
     }
 }
