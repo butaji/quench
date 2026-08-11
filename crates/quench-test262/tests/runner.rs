@@ -31,6 +31,35 @@ impl Test262Host for Probe {
     }
 }
 
+struct SourceProbe;
+
+impl Test262Host for SourceProbe {
+    fn run_script(&mut self, source: &str) -> Result<(), String> {
+        if source.contains("pass") {
+            Ok(())
+        } else {
+            Err("probe failure".into())
+        }
+    }
+
+    fn run_module_script(&mut self, source: &str) -> Result<(), String> {
+        self.run_script(source)
+    }
+
+    fn run_harnessed_script(
+        &mut self,
+        _harness: &[&str],
+        source: &str,
+        _strict: bool,
+    ) -> Result<(), String> {
+        self.run_script(source)
+    }
+
+    fn run_harnessed_module(&mut self, _harness: &[&str], source: &str) -> Result<(), String> {
+        self.run_module_script(source)
+    }
+}
+
 struct NegativeProbe;
 
 impl Test262Host for NegativeProbe {
@@ -271,7 +300,7 @@ fn runner_loads_test_source_from_a_path() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("case.js");
     std::fs::write(&path, "pass").unwrap();
-    let mut runner = Test262Runner::new(Probe);
+    let mut runner = Test262Runner::new(SourceProbe);
     assert_eq!(runner.run_file(&path).unwrap(), TestOutcome::Pass);
 }
 
@@ -342,6 +371,30 @@ fn runner_reports_batch_file_read_failures_without_aborting() {
     assert_eq!(report.failed, 1);
     assert_eq!(report.failures[0].0, missing);
     assert!(report.failures[0].1.contains("test262 read failed"));
+}
+
+#[test]
+fn run_files_with_cache_limited_keeps_failure_samples_capped() {
+    let dir = tempfile::tempdir().unwrap();
+    let pass = dir.path().join("pass.js");
+    let fail_one = dir.path().join("fail-one.js");
+    let fail_two = dir.path().join("fail-two.js");
+    let source_pass = "/*---\nflags: [raw]\n---*/\npass";
+    let source_fail = "/*---\nflags: [raw]\n---*/\nfail";
+    std::fs::write(&pass, source_pass).unwrap();
+    std::fs::write(&fail_one, source_fail).unwrap();
+    std::fs::write(&fail_two, source_fail).unwrap();
+    let mut runner = Test262Runner::new(SourceProbe);
+    let mut cache = HarnessCache::new(dir.path().to_path_buf());
+
+    let report = runner
+        .run_files_with_cache_limited([pass, fail_one, fail_two], &mut cache, 1)
+        .unwrap();
+
+    assert_eq!(report.total, 3);
+    assert_eq!(report.passed, 1);
+    assert_eq!(report.failed, 2);
+    assert_eq!(report.failures.len(), 1);
 }
 
 #[test]

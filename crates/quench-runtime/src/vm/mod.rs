@@ -113,6 +113,7 @@ impl VmError {
         match self {
             VmError::Thrown(value) => render_thrown(value),
             VmError::Suspended(_) => "Suspended".to_string(),
+            VmError::NotCallable => "TypeError: value is not callable".to_string(),
             other => format!("{other:?}"),
         }
     }
@@ -259,44 +260,8 @@ pub(crate) fn execute_indirect_eval_in_realm(
 ) -> Result<Value, VmError> {
     realm::execute(realm_id, ops)
 }
-pub(crate) fn execute_generator_step(
-    ops: &[Op],
-    registers: &mut Vec<Value>,
-    environment: Rc<crate::environment::Environment>,
-    pc: usize,
-    resume: crate::completion::Completion,
-) -> Result<(crate::completion::Completion, usize), VmError> {
-    let context = VmContext::default();
-    let _context_guard = ContextGuard::install(&context);
-    let _global_guard = GlobalObjectGuard::install();
-    let _environment_guard = crate::locals::EnvironmentGuard::install(environment);
-    for (offset, op) in ops[pc..].iter().enumerate() {
-        if matches!(op, Op::YieldStar { .. }) {
-            let completion = crate::generator::execute_yield_star(registers, op, resume.clone())?;
-            if let Some(completion) = completion {
-                let next = pc
-                    + offset
-                    + usize::from(!matches!(
-                        completion,
-                        crate::completion::Completion::Yield(_)
-                    ));
-                return Ok((completion, next));
-            }
-            continue;
-        }
-        let result = match run_op(registers, op, &context) {
-            Err(VmError::Yield(value)) => {
-                return Ok((crate::completion::Completion::Yield(value), pc + offset + 1));
-            }
-            result => result?,
-        };
-        match result {
-            None | Some(crate::completion::Completion::Normal) => {}
-            Some(completion) => return Ok((completion, pc + offset + 1)),
-        }
-    }
-    Ok((crate::completion::Completion::Normal, ops.len()))
-}
+
+include!("vm_generator_step.rs");
 
 fn run_ops(ops: &[Op], registers: &mut Vec<Value>, context: &VmContext) -> Result<Value, VmError> {
     completion_result(run_ops_completion(ops, registers, context)?)
@@ -310,13 +275,20 @@ fn run_ops_completion(
     for op in ops {
         let result = match run_op(registers, op, context) {
             Ok(result) => result,
-            Err(error) => return error_completion(error),
+            Err(error) => {
+                crate::vm::flush_global_declaration_batch(registers);
+                return error_completion(error);
+            }
         };
         match result {
             None | Some(crate::completion::Completion::Normal) => {}
-            Some(completion) => return Ok(completion),
+            Some(completion) => {
+                crate::vm::flush_global_declaration_batch(registers);
+                return Ok(completion);
+            }
         }
     }
+    crate::vm::flush_global_declaration_batch(registers);
     Ok(crate::completion::Completion::Normal)
 }
 
@@ -328,6 +300,16 @@ fn error_completion(error: VmError) -> Result<crate::completion::Completion, VmE
         VmError::Continue(label) => Ok(Completion::Continue(label)),
         VmError::Suspended(promise) => Ok(Completion::Suspend(promise)),
         VmError::Yield(value) => Ok(Completion::Yield(value)),
+        VmError::NotCallable => {
+            if let VmError::Thrown(value) = not_callable() {
+                Ok(Completion::Throw(value))
+            } else {
+                Ok(Completion::Throw(crate::builtins::error(
+                    Builtin::TypeError,
+                    &[Value::String("value is not callable".to_string())],
+                )))
+            }
+        }
         error => Err(error),
     }
 }

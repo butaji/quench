@@ -326,6 +326,11 @@ pub enum InstanceFieldInitializer {
     Callable(Rc<FunctionValue>),
     /// A value stored directly (private methods), not produced by an executable.
     Value(Value),
+    PrivateMethod(Value),
+    PrivateAccessor {
+        get: Option<Value>,
+        set: Option<Value>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -338,6 +343,7 @@ pub struct InstanceFieldPlan {
 #[derive(Debug, Clone, PartialEq)]
 pub enum PrivateSlot {
     Data(Value),
+    Method(Value),
     Accessor {
         get: Option<Value>,
         set: Option<Value>,

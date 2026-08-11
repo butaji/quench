@@ -194,36 +194,51 @@ fn run_worker(
     let mut harness = HarnessCache::new(root.join("harness"));
     let mut report = RunReport::default();
     loop {
-        if counter.load(Ordering::Relaxed) >= limit {
-            break;
-        }
         let start = next.fetch_add(WORK_BATCH, Ordering::Relaxed);
         if start >= files.len() {
             break;
         }
         let stop = (start + WORK_BATCH).min(files.len());
-        for fixture in files[start..stop].iter() {
-            if counter.load(Ordering::Relaxed) >= limit {
-                break;
-            }
-            let outcome = runner.run_test_with_cache_and_metadata(
-                &fixture.source,
-                &fixture.metadata,
-                &mut harness,
-            );
-            match outcome {
-                Ok(TestOutcome::Pass) => report.passed += 1,
-                Ok(TestOutcome::Fail { reason }) | Err(reason) => {
-                    report.failed += 1;
-                    counter.fetch_add(1, Ordering::Relaxed);
-                    report
-                        .failures
-                        .push((fixture.path.clone(), reason.trim().to_string()));
-                }
-            }
+        run_fixture_batch(
+            &mut runner,
+            &mut harness,
+            &files[start..stop],
+            limit,
+            &counter,
+            &mut report,
+        );
+        if counter.load(Ordering::Relaxed) >= limit {
+            break;
         }
     }
     report
+}
+
+fn run_fixture_batch(
+    runner: &mut Test262Runner<RuntimeHost>,
+    harness: &mut HarnessCache,
+    batch: &[TestSource],
+    limit: usize,
+    counter: &Arc<AtomicUsize>,
+    report: &mut RunReport,
+) {
+    for fixture in batch {
+        if counter.load(Ordering::Relaxed) >= limit {
+            break;
+        }
+        let outcome =
+            runner.run_test_with_cache_and_metadata(&fixture.source, &fixture.metadata, harness);
+        match outcome {
+            Ok(TestOutcome::Pass) => report.passed += 1,
+            Ok(TestOutcome::Fail { reason }) | Err(reason) => {
+                counter.fetch_add(1, Ordering::Relaxed);
+                report.failed += 1;
+                report
+                    .failures
+                    .push((fixture.path.clone(), reason.trim().to_string()));
+            }
+        }
+    }
 }
 
 fn load_test_sources(files: &[PathBuf]) -> Result<Vec<TestSource>, String> {

@@ -118,20 +118,13 @@ path unless a sound guard preserves their behavior.
 test262 metadata, exact harness composition, and host classification; it may
 never override harness behavior.
 
-The current copy-on-write object representation does not yet retarget an
-object nested inside a function reachable only through another object.  For
-example, redefining `foo.prototype` through a global `foo` can leave later
-`new foo()` calls observing the former prototype.  Completing this requires
-the planned centralized heap/identity representation rather than an
-assignment-specific cache or runner workaround.
-
 ## Test262 domain strategy
 
 Test262 covers ECMA-262, ECMA-402, and JSON, and its repository is organized
 by domains such as `language`, `built-ins`, `intl402`, `annexB`, `harness`, and
-`staging`. A domain is not a guarantee that one dependency implements the
-whole domain: ECMAScript wrappers, property descriptors, coercion, errors,
-identity, iteration, and observable ordering remain Quench semantics.
+`staging`. A domain is not a guarantee that one area fully implements the whole
+domain: ECMAScript wrappers, property descriptors, coercion, errors, identity,
+iteration, and observable ordering remain Quench semantics.
 
 Use mature crates for algorithmic/data-heavy kernels where their semantics
 match the specification, behind the canonical runtime operations:

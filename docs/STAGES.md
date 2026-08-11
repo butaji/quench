@@ -11,10 +11,8 @@ with the relevant commands and test262 runs at execution time.
 
 ## Execution order
 
-Stages are numbered in dependency order by domain. Dependencies are
-prerequisites, not milestone markers: a stage may be revisited whenever a later
-stage exposes a semantic gap, and the fix re-runs the earlier stage before
-moving on.
+Stages are grouped by domain and revisited when needed if a later stage exposes a
+semantic gap.
 
 0. `harness` (stage 0) — the test262 harness self-tests that validate the
    assertion and helper libraries the runner composes.

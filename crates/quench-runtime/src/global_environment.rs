@@ -30,6 +30,9 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError
 }
 
 fn check_function(name: &str) -> Result<(), VmError> {
+    if crate::locals::global_has_own_name(name) {
+        return lexical_collision(name);
+    }
     if let Some(descriptor) = own_descriptor(name) {
         let compatible = descriptor.configurable
             || descriptor.data && descriptor.writable && descriptor.enumerable;
@@ -55,6 +58,8 @@ fn check_var(name: &str, is_lexical: bool) -> Result<(), VmError> {
     if is_lexical {
         check_lexical_declaration(name)?;
         Ok(())
+    } else if crate::locals::global_has_own_name(name) {
+        lexical_collision(name)
     } else if own_descriptor(name).is_some() {
         Ok(())
     } else if !is_global_extensible() {
@@ -64,6 +69,15 @@ fn check_var(name: &str, is_lexical: bool) -> Result<(), VmError> {
     } else {
         Ok(())
     }
+}
+
+fn lexical_collision(name: &str) -> Result<(), VmError> {
+    Err(VmError::Thrown(crate::builtins::error(
+        crate::ops::Builtin::SyntaxError,
+        &[Value::String(format!(
+            "Global lexical binding '{name}' already exists"
+        ))],
+    )))
 }
 
 fn is_global_extensible() -> bool {
@@ -103,7 +117,7 @@ fn create_var(
     registers: &mut Vec<Value>,
     name: &str,
     slot: u16,
-    _deletable: bool,
+    deletable: bool,
     is_lexical: bool,
 ) -> Result<(), VmError> {
     // Per spec, lexical declarations (let/const/class) do not create
@@ -117,7 +131,7 @@ fn create_var(
     let descriptor = match current {
         Some(current) if !current.configurable => value_descriptor(cell),
         Some(current) => descriptor_with_flags(cell, &current),
-        None => data_descriptor(cell, true, true, false),
+        None => data_descriptor(cell, true, true, deletable),
     };
     define_global(registers, name, descriptor)
 }
@@ -126,16 +140,16 @@ fn create_function(
     registers: &mut Vec<Value>,
     name: &str,
     slot: u16,
-    _deletable: bool,
+    deletable: bool,
 ) -> Result<(), VmError> {
     let current = own_descriptor(name);
     let value = crate::locals::slot_cell(slot).borrow().clone();
     let cell = binding_cell(name, slot, Some(&value));
-    // Per spec, global function bindings are non-configurable.
+    // Per spec, global function bindings are configurable when declared from eval
+    // bindings and non-configurable otherwise.
     let descriptor = match current {
         Some(current) if !current.configurable => value_descriptor(cell),
-        Some(current) => descriptor_with_flags(cell, &current),
-        None => data_descriptor(cell, true, true, false),
+        _ => data_descriptor(cell, true, true, deletable),
     };
     define_global(registers, name, descriptor)
 }
@@ -225,7 +239,12 @@ fn define_global(
     descriptor: Vec<(String, Value)>,
 ) -> Result<(), VmError> {
     let global = crate::vm::current_global_object();
+    crate::vm::begin_global_declaration_batch();
     let updated = crate::builtins::define_own_property(&global, name, &descriptor)?;
+    if crate::vm::is_global_declaration_batch_active() {
+        crate::vm::update_global_declaration_batch(&updated);
+        return Ok(());
+    }
     crate::vm::synchronize_global_object(registers, &global, &updated);
     Ok(())
 }
