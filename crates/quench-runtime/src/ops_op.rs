@@ -301,6 +301,14 @@ pub enum Op {
         args: Vec<u16>,
         spreads: Vec<bool>,
     },
+    OptionalCall {
+        dst: u16,
+        callee: u16,
+        receiver: Option<u16>,
+        guard_receiver: bool,
+        args: Vec<u16>,
+        spreads: Vec<bool>,
+    },
     CallSuperConstructor {
         dst: u16,
         args: Vec<u16>,

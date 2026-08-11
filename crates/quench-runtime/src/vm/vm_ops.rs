@@ -20,6 +20,39 @@ pub fn execute_call(
     Ok(())
 }
 
+pub fn execute_optional_call(
+    registers: &mut Vec<Value>,
+    dst: u16,
+    callee: u16,
+    receiver: Option<u16>,
+    guard_receiver: bool,
+    args: &[u16],
+    spreads: &[bool],
+) -> Result<(), VmError> {
+    let callee_value = super::read_register(registers, callee)?;
+    let this_value = receiver
+        .map(|index| super::read_register(registers, index))
+        .transpose()?;
+    let receiver_nullish = guard_receiver
+        && this_value
+            .as_ref()
+            .is_some_and(|value| matches!(value, Value::Null | Value::Undefined));
+    let callee_nullish =
+        receiver.is_none() && matches!(callee_value, Value::Null | Value::Undefined);
+    if receiver_nullish || callee_nullish {
+        super::write_value(registers, dst, Value::Undefined);
+        return Ok(());
+    }
+    let arguments = collect_call_arguments(registers, args, spreads)?;
+    let value = invoke_with_receiver(
+        &callee_value,
+        this_value.as_ref().unwrap_or(&Value::Undefined),
+        &arguments,
+    )?;
+    super::write_value(registers, dst, value);
+    Ok(())
+}
+
 pub fn prepare_tail_call(
     registers: &[Value],
     callee: u16,
@@ -113,28 +146,25 @@ fn map_not_callable(error: crate::execute::VmError) -> crate::execute::VmError {
 }
 
 fn invoke_callee(callee_value: &Value, arguments: &[Value]) -> Result<Value, VmError> {
+    invoke_with_receiver(callee_value, &Value::Undefined, arguments)
+}
+
+fn invoke_with_receiver(
+    callee_value: &Value,
+    receiver: &Value,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
     match callee_value {
-        Value::Function(body) => {
-            crate::functions::execute(body, &crate::value::Value::Undefined, arguments)
-        }
+        Value::Function(body) => crate::functions::execute(body, receiver, arguments),
         Value::BoundFunction(bound) => crate::functions::execute_bound(bound, arguments),
-        Value::Builtin(builtin) => super::execute_builtin_with_receiver(*builtin, arguments, None),
+        Value::Builtin(builtin) => {
+            super::execute_builtin_with_receiver(*builtin, arguments, Some(receiver))
+        }
         Value::Proxy(proxy) if crate::conversion::is_callable(callee_value) => {
-            execute_proxy_call(callee_value, proxy, arguments)
+            crate::proxy::proxy_apply(callee_value, receiver, arguments)
         }
         _ => Err(super::not_callable()),
     }
-}
-
-fn execute_proxy_call(
-    callee_value: &Value,
-    proxy: &crate::value::ProxyValue,
-    arguments: &[Value],
-) -> Result<Value, VmError> {
-    if *proxy.revoked.borrow() {
-        return Err(VmError::EvalError("Cannot call revoked proxy".to_string()));
-    }
-    crate::proxy::proxy_apply(callee_value, &Value::Undefined, arguments)
 }
 
 pub fn execute_builtin_tail(
