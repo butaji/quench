@@ -178,6 +178,7 @@ fn property_key(key: &PropertyKey<'_>) -> Option<String> {
         PropertyKey::NumericLiteral(value) => {
             Some(crate::conversion::number_to_string(value.value))
         }
+        PropertyKey::BigIntLiteral(value) => crate::literal::bigint_value(value),
         _ => None,
     }
 }
