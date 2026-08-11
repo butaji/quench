@@ -14,7 +14,7 @@ pub(crate) fn to_property_key(value: &Value) -> Result<String, VmError> {
     }
 }
 
-fn number_to_string(value: f64) -> String {
+pub(crate) fn number_to_string(value: f64) -> String {
     if value == 0.0 {
         return "0".to_string();
     }
