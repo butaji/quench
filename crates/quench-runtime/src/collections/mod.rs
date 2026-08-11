@@ -20,6 +20,7 @@ pub(crate) fn execute_builtin(
     }
     match builtin {
         Map => Some(constructor_receiver(receiver).map(|_| map::map_new(arguments))),
+        MapGroupBy => Some(map::map_group_by(arguments)),
         Set => Some(constructor_receiver(receiver).map(|_| set::set_new(arguments))),
         MapSet => Some(map::map_set(receiver, arguments)),
         MapGet => Some(map::map_get(receiver, arguments)),

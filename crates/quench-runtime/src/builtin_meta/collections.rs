@@ -98,6 +98,7 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         Builtin::MapGet | Builtin::MapHas | Builtin::MapDelete => Some(1.0),
         Builtin::MapClear | Builtin::MapForEach => Some(0.0),
         Builtin::MapEntries | Builtin::MapKeys | Builtin::MapValues => Some(0.0),
+        Builtin::MapGroupBy => Some(2.0),
         Builtin::SetAdd | Builtin::SetHas | Builtin::SetDelete => Some(1.0),
         Builtin::SetClear | Builtin::SetForEach => Some(0.0),
         Builtin::SetDifference
@@ -128,6 +129,7 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
         Builtin::MapEntries => Some("entries"),
         Builtin::MapKeys => Some("keys"),
         Builtin::MapValues => Some("values"),
+        Builtin::MapGroupBy => Some("groupBy"),
         Builtin::SetAdd => Some("add"),
         Builtin::SetHas => Some("has"),
         Builtin::SetDelete => Some("delete"),
