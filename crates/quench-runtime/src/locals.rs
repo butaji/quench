@@ -77,13 +77,26 @@ pub(crate) fn global_has_own_name(name: &str) -> bool {
     global_lexical().is_some_and(|environment| environment.has_own_name(name))
 }
 
+pub(crate) fn has_name(name: &str) -> bool {
+    current().has_name(name)
+        || global_lexical().is_some_and(|environment| environment.has_name(name))
+}
+
 pub(crate) fn is_installed() -> bool {
     CURRENT_ENVIRONMENT.with(|current| current.borrow().is_some())
 }
 
 pub(crate) fn store(registers: &[Value], slot: u16, source: u16) -> Result<(), VmError> {
     let value = crate::execute::read_register(registers, source)?;
+    if current().is_immutable_slot(slot) && !current().is_uninitialized(slot) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot assign to immutable binding",
+        ));
+    }
     current().set(slot, value);
+    if slot == 0 {
+        crate::vm::initialize_global_object(&current().get(slot));
+    }
     Ok(())
 }
 
@@ -143,6 +156,10 @@ pub(crate) fn mark_uninitialized(slot: u16) {
     current().mark_uninitialized(slot);
 }
 
+pub(crate) fn check_initialized(slot: u16, name: &str) -> Result<(), VmError> {
+    ensure_initialized(slot, name)
+}
+
 pub(crate) fn slot_cell(slot: u16) -> Rc<RefCell<Value>> {
     current().slot_cell(slot)
 }
@@ -165,6 +182,20 @@ pub(crate) fn alias_name(name: &str, slot: u16) {
     if !environment.alias_caller_name(name, slot) {
         environment.alias_name(name, slot);
     }
+}
+
+pub(crate) fn declare_global_lexical(name: &str, slot: u16, immutable: bool) {
+    let binding = current().slot_cell(slot);
+    let environment = global_lexical().unwrap_or_else(current);
+    environment.alias_binding(name, binding);
+    if immutable {
+        environment.mark_immutable(name);
+        current().mark_immutable_slot(slot);
+    }
+}
+
+pub(crate) fn is_immutable_name(name: &str) -> bool {
+    global_lexical().is_some_and(|environment| environment.is_immutable_name(name))
 }
 
 pub(crate) fn resolve_name(name: &str) -> Option<Value> {
