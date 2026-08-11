@@ -72,8 +72,9 @@ fn from(value: Option<&Value>) -> Result<Value, crate::execute::VmError> {
         Some(Value::Set(data)) => data.values.borrow().iter().cloned().collect(),
         Some(Value::Map(data)) => data
             .keys
+            .borrow()
             .iter()
-            .zip(&data.values)
+            .zip(data.values.borrow().iter())
             .map(|(key, value)| Value::array(vec![key.clone(), value.clone()]))
             .collect(),
         Some(value @ Value::Iterator(_)) => crate::collections::iterator::collect(value)?,
@@ -478,7 +479,6 @@ fn end_index(value: &Value, length: isize) -> isize {
 fn strict_equal(left: &Value, right: &Value) -> bool {
     crate::equality::strict_equal(left, right)
 }
-
 fn same_value_zero(left: &Value, right: &Value) -> bool {
     crate::builtins::same_value_zero(left, right)
 }
