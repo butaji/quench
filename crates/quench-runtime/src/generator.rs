@@ -1,5 +1,3 @@
-use std::{cell::RefCell, rc::Rc};
-
 use crate::{
     execute::VmError,
     facts::ProgramDb,
@@ -7,6 +5,7 @@ use crate::{
     value::{GeneratorData, GeneratorState, Value},
 };
 use std::collections::HashMap;
+use std::{cell::RefCell, rc::Rc};
 
 include!("generator_private_scope.rs");
 
@@ -75,26 +74,24 @@ fn require_normal_parameter_completion(
         _ => Err(VmError::MissingReturn),
     }
 }
-
 pub(crate) fn next(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let generator = generator_receiver(receiver, "next")?;
-    let completion = resume(generator, Resume::Next(first_argument(arguments)));
+    let generator = generator_handle(receiver, "next")?;
+    let completion = resume(&generator, Resume::Next(first_argument(arguments)));
     if generator.function.is_async {
-        return Ok(crate::promise::from_async_completion(completion));
+        return Ok(crate::promise::from_async_generator_completion(
+            completion, generator,
+        ));
     }
     completion
 }
-
 pub(crate) fn return_(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let generator = generator_receiver(receiver, "return")?;
     resume(generator, Resume::Return(first_argument(arguments)))
 }
-
 pub(crate) fn throw(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let generator = generator_receiver(receiver, "throw")?;
     resume(generator, Resume::Throw(first_argument(arguments)))
 }
-
 enum Resume {
     Next(Value),
     Return(Value),
@@ -177,6 +174,29 @@ fn generator_receiver<'a>(
         )));
     };
     Ok(generator)
+}
+
+fn generator_handle(receiver: Option<&Value>, method: &str) -> Result<Rc<GeneratorData>, VmError> {
+    generator_receiver(receiver, method)?;
+    match receiver {
+        Some(Value::Generator(value)) => Ok(Rc::clone(value)),
+        _ => Err(crate::value::error::throw_type_error(
+            "invalid generator receiver",
+        )),
+    }
+}
+
+pub(crate) fn resume_async_after_await(
+    generator: &GeneratorData,
+    rejected: bool,
+    value: Value,
+) -> Result<Value, VmError> {
+    let input = if rejected {
+        Resume::Throw(value)
+    } else {
+        Resume::Next(value)
+    };
+    resume(generator, input)
 }
 
 fn first_argument(arguments: &[Value]) -> Value {
