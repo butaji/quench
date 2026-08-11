@@ -146,7 +146,15 @@ fn internal_prototype(value: &Value) -> Option<Value> {
             .or_else(|| Some(Value::Builtin(Builtin::PromisePrototype))),
         Value::Generator(_) => Some(Value::Builtin(Builtin::ObjectPrototype)),
         Value::Builtin(Builtin::FunctionPrototype) => Some(Value::Builtin(Builtin::ObjectPrototype)),
-        Value::Function(_) | Value::BoundFunction(_) | Value::Builtin(_) => {
+        Value::Function(function) => function
+            .properties
+            .borrow()
+            .iter()
+            .rev()
+            .find(|(name, _)| name == "\0prototype")
+            .map(|(_, prototype)| prototype.clone())
+            .or_else(|| Some(Value::Builtin(Builtin::FunctionPrototype))),
+        Value::BoundFunction(_) | Value::Builtin(_) => {
             Some(Value::Builtin(Builtin::FunctionPrototype))
         }
         _ => None,
