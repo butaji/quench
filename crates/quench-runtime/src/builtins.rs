@@ -185,6 +185,7 @@ include!("builtins_array_reverse.rs");
 include!("builtins_array_pop.rs");
 include!("builtins_array_unshift.rs");
 include!("builtins_array_fill.rs");
+include!("builtins_array_copy_within.rs");
 pub(crate) fn math_pow(arguments: &[Value]) -> Value {
     let base = arguments.first().map_or(f64::NAN, value_to_number);
     let exponent = arguments.get(1).map_or(f64::NAN, value_to_number);
@@ -404,7 +405,6 @@ pub(crate) fn define_own_property(
     define_array_descriptor(&mut result, key, descriptor);
     Ok(result)
 }
-
 fn store_descriptor_metadata(result: &mut Value, key: &str, descriptor: &[(String, Value)]) {
     let metadata = Value::Object(Rc::new(ObjectData::new(descriptor.to_vec())));
     let descriptor_key = descriptor_key(key);

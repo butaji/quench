@@ -220,6 +220,7 @@ pub enum Builtin {
     ArrayPop,
     ArrayUnshift,
     ArrayFill,
+    ArrayCopyWithin,
     ArraySplice,
     TypedArrayFill,
     ObjectDefineProperty,
