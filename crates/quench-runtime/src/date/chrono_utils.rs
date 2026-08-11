@@ -1,6 +1,6 @@
 //! Chrono utility functions for Date implementation.
 
-use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
+use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Utc};
 
 /// Maximum and minimum time values per ECMAScript TimeClip spec (±8.64e15 ms).
 const TIME_CLIP_LIMIT: f64 = 8.64e15;
@@ -23,14 +23,13 @@ pub fn current_time_ms() -> f64 {
 }
 
 /// Convert milliseconds-since-epoch to NaiveDateTime (UTC).
-#[allow(deprecated)]
 pub fn ms_to_datetime(ms: f64) -> Option<NaiveDateTime> {
     if ms.is_nan() || ms.is_infinite() {
         return None;
     }
     let secs = (ms / 1000.0).trunc() as i64;
     let nanos = ((ms % 1000.0) * 1e6) as u32;
-    NaiveDateTime::from_timestamp_opt(secs, nanos)
+    DateTime::<Utc>::from_timestamp(secs, nanos).map(|value| value.naive_utc())
 }
 
 /// Create UTC milliseconds from components.
@@ -80,7 +79,9 @@ pub fn parse_date_string(s: &str) -> f64 {
         }
     }
     if let Ok(d) = NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d") {
-        return d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp_millis() as f64;
+        return d
+            .and_hms_opt(0, 0, 0)
+            .map_or(f64::NAN, |value| value.and_utc().timestamp_millis() as f64);
     }
     f64::NAN
 }
