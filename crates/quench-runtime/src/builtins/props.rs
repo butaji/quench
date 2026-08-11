@@ -23,7 +23,8 @@ fn special(builtin: Builtin, key: &str) -> Option<Value> {
         return number_constant(key).or_else(|| special_match(builtin, key));
     }
     if builtin == Math {
-        return crate::math::property(key).map(Value::Builtin);
+        return crate::math::constant(key)
+            .or_else(|| crate::math::property(key).map(Value::Builtin));
     }
     if builtin == Json && key == "stringify" {
         return Some(Value::Builtin(JsonStringify));
