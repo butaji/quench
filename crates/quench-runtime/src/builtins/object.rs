@@ -188,6 +188,9 @@ fn owns_property(receiver: &Value, key: &str) -> Result<bool, VmError> {
     })
 }
 fn builtin_owns_property(builtin: Builtin, key: &str) -> bool {
+    if crate::builtins::builtin_prototype_property_is_removed(builtin, key) {
+        return false;
+    }
     (builtin == Builtin::Object && key == "hasOwn")
         || super::callable_property(builtin, key).is_some()
         || super::special_property(builtin, key).is_some()
@@ -423,7 +426,6 @@ mod tests {
             Value::Number(2.0)
         );
     }
-
     #[test]
     fn static_has_own_uses_first_argument_as_target() {
         let result = execute_special(
@@ -437,7 +439,6 @@ mod tests {
         .unwrap();
         assert_eq!(result, Value::Boolean(true));
     }
-
     #[test]
     fn has_own_throws_on_nullish_target() {
         let error = execute_builtin_with_receiver(
@@ -448,7 +449,6 @@ mod tests {
         .unwrap_err();
         assert!(matches!(error, VmError::Thrown(_)));
     }
-
     #[test]
     fn get_own_property_descriptor_throws_on_nullish_target() {
         let error = execute_builtin_with_receiver(
