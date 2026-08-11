@@ -42,7 +42,7 @@ pub(crate) fn execute_builtin(
                 receiver, arguments,
             ))
         }
-        ArrayIterator => return Some(Ok(array_iterator(receiver))),
+        ArrayIterator => return Some(array_iterator(receiver)),
         _ => return None,
     };
     Some(Ok(result))
@@ -229,13 +229,7 @@ fn iterator_symbol_removed(key: &str) -> bool {
         )
 }
 
-fn array_iterator(receiver: Option<&Value>) -> Value {
-    let values = match receiver {
-        Some(Value::Array(values)) => values.snapshot(),
-        _ => Vec::new(),
-    };
-    crate::collections::iterator::make(values)
-}
+include!("arrays_iterator.rs");
 
 fn sort(receiver: Option<&Value>) -> Value {
     let Some(receiver @ Value::Array(values)) = receiver else {
