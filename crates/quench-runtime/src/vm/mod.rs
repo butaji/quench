@@ -420,14 +420,8 @@ pub fn execute_builtin_with_receiver(
     arguments: &[Value],
     receiver: Option<&Value>,
 ) -> Result<Value, VmError> {
-    if builtin == Builtin::GeneratorNext {
-        return crate::generator::next(receiver, arguments);
-    }
-    if builtin == Builtin::GeneratorReturn {
-        return crate::generator::return_(receiver, arguments);
-    }
-    if builtin == Builtin::GeneratorThrow {
-        return crate::generator::throw(receiver, arguments);
+    if let Some(result) = stateful_builtin(builtin, receiver, arguments) {
+        return result;
     }
     if builtin == Builtin::Print {
         return execute_print(arguments);
@@ -453,6 +447,20 @@ pub fn execute_builtin_with_receiver(
         }
         _ if is_simple_builtin(builtin) => execute_simple_builtin(builtin, arguments, receiver),
         _ => vm_ops::execute_builtin_tail(builtin, arguments, receiver),
+    }
+}
+
+fn stateful_builtin(
+    builtin: Builtin,
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Option<Result<Value, VmError>> {
+    match builtin {
+        Builtin::GeneratorNext => Some(crate::generator::next(receiver, arguments)),
+        Builtin::GeneratorReturn => Some(crate::generator::return_(receiver, arguments)),
+        Builtin::GeneratorThrow => Some(crate::generator::throw(receiver, arguments)),
+        Builtin::ProxyRevoke => Some(crate::proxy::revoke(receiver)),
+        _ => None,
     }
 }
 
