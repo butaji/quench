@@ -9,9 +9,18 @@ pub enum Fact<T> {
     Unknown,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReduceContext {
+    Value,
+    Place,
+    Effect,
+    Control,
+    Define,
+}
+
 #[derive(Debug, PartialEq)]
 pub struct SpanFacts<T> {
-    entries: Vec<(Span, Fact<T>)>,
+    entries: Vec<(Span, ReduceContext, Fact<T>)>,
 }
 
 impl<T> Default for SpanFacts<T> {
@@ -24,23 +33,37 @@ impl<T> Default for SpanFacts<T> {
 
 impl<T: Clone> SpanFacts<T> {
     pub fn insert(&mut self, span: Span, fact: Fact<T>) {
-        if let Some((_, stored)) = self.entries.iter_mut().find(|(key, _)| *key == span) {
+        self.insert_in_context(span, ReduceContext::Value, fact);
+    }
+
+    pub fn insert_in_context(&mut self, span: Span, context: ReduceContext, fact: Fact<T>) {
+        if let Some((_, _, stored)) = self
+            .entries
+            .iter_mut()
+            .find(|(key, stored_context, _)| *key == span && *stored_context == context)
+        {
             *stored = fact;
         } else {
-            self.entries.push((span, fact));
+            self.entries.push((span, context, fact));
         }
     }
 
     pub fn query(&self, span: Span) -> Fact<T> {
+        self.query_in_context(span, ReduceContext::Value)
+    }
+
+    pub fn query_in_context(&self, span: Span, context: ReduceContext) -> Fact<T> {
         self.entries
             .iter()
-            .find_map(|(key, fact)| (*key == span).then(|| fact.clone()))
+            .find_map(|(key, stored_context, fact)| {
+                (*key == span && *stored_context == context).then(|| fact.clone())
+            })
             .unwrap_or(Fact::Unknown)
     }
 
     pub fn merge(&mut self, other: Self) {
-        for (span, fact) in other.entries {
-            self.insert(span, fact);
+        for (span, context, fact) in other.entries {
+            self.insert_in_context(span, context, fact);
         }
     }
 }
@@ -76,12 +99,21 @@ pub struct ProgramDb {
 }
 
 impl ProgramDb {
-    pub(crate) fn record_fact(&mut self, span: Span, fact: Fact<Constant>) {
-        self.span_facts.insert(span, fact);
+    pub(crate) fn record_fact_in_context(
+        &mut self,
+        span: Span,
+        context: ReduceContext,
+        fact: Fact<Constant>,
+    ) {
+        self.span_facts.insert_in_context(span, context, fact);
     }
 
     pub fn query_fact(&self, span: Span) -> Fact<Constant> {
         self.span_facts.query(span)
+    }
+
+    pub fn query_fact_in_context(&self, span: Span, context: ReduceContext) -> Fact<Constant> {
+        self.span_facts.query_in_context(span, context)
     }
 
     pub fn insert_private_name(&mut self, span: Span, id: PrivateNameId) {
