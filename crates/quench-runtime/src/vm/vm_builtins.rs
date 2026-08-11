@@ -75,6 +75,7 @@ fn is_simple_builtin(builtin: Builtin) -> bool {
     matches!(
         builtin,
         Builtin::Boolean
+            | Builtin::BooleanValueOf
             | Builtin::Eval
             | Builtin::Escape
             | Builtin::IsFinite
@@ -123,6 +124,7 @@ fn execute_simple_builtin(
     if let Some(result) = crate::functions_dynamic::construct_builtin(builtin, arguments) { return result; }
     match builtin {
         Builtin::Boolean => Ok(Value::Boolean(arguments.first().is_some_and(is_truthy))),
+        Builtin::BooleanValueOf => boolean_value_of(receiver),
         Builtin::Eval => crate::reflect::builtin(builtin, arguments, receiver),
         Builtin::Escape => Ok(crate::builtins::escape(arguments.first())),
         Builtin::IsFinite => Ok(Value::Boolean(is_finite(arguments.first()))),

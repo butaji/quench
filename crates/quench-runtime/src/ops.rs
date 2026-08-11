@@ -128,6 +128,7 @@ pub enum Builtin {
     FunctionCall,
     FunctionApply,
     Boolean,
+    BooleanValueOf,
     Print,
     Eval,
     Escape,

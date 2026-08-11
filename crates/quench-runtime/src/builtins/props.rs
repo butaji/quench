@@ -360,7 +360,7 @@ fn builtin_method3(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Number, "isNaN") => Some(IsNaN),
         (Number, "isFinite") => Some(IsFinite),
         (Boolean, "prototype") => Some(BooleanPrototype),
-        (BooleanPrototype, "valueOf") => Some(BoxedValueOf),
+        (BooleanPrototype, "valueOf") => Some(BooleanValueOf),
         (BooleanPrototype, "toString") => Some(NumberToString),
         (ObjectPrototype, "constructor") => Some(Object),
         (ObjectPrototype, "toLocaleString") => Some(ObjectPrototypeToString),
