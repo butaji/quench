@@ -116,13 +116,11 @@ fn internal_prototype(value: &Value) -> Option<Value> {
     if let Some(prototype) = crate::typed_array_prototype::get(value) {
         return Some(prototype);
     }
+    if let Some(prototype) = custom_object_prototype(value) {
+        return Some(prototype);
+    }
     match value {
-        Value::Object(properties) => properties
-            .iter()
-            .rev()
-            .find(|(name, _)| name == "\0prototype")
-            .map(|(_, prototype)| prototype.clone())
-            .or_else(|| Some(Value::Builtin(Builtin::ObjectPrototype))),
+        Value::Object(_) => Some(Value::Builtin(Builtin::ObjectPrototype)),
         Value::Array(values) if values.is_arguments() => {
             Some(Value::Builtin(Builtin::ObjectPrototype))
         }
@@ -146,17 +144,28 @@ fn internal_prototype(value: &Value) -> Option<Value> {
             .or_else(|| Some(Value::Builtin(Builtin::PromisePrototype))),
         Value::Generator(_) => Some(Value::Builtin(Builtin::ObjectPrototype)),
         Value::Builtin(Builtin::FunctionPrototype) => Some(Value::Builtin(Builtin::ObjectPrototype)),
+        Value::Function(_) => Some(Value::Builtin(Builtin::FunctionPrototype)),
+        Value::BoundFunction(_) | Value::Builtin(_) => {
+            Some(Value::Builtin(Builtin::FunctionPrototype))
+        }
+        _ => None,
+    }
+}
+
+fn custom_object_prototype(value: &Value) -> Option<Value> {
+    match value {
+        Value::Object(properties) => properties
+            .iter()
+            .rev()
+            .find(|(name, _)| name == "\0prototype")
+            .map(|(_, prototype)| prototype.clone()),
         Value::Function(function) => function
             .properties
             .borrow()
             .iter()
             .rev()
             .find(|(name, _)| name == "\0prototype")
-            .map(|(_, prototype)| prototype.clone())
-            .or_else(|| Some(Value::Builtin(Builtin::FunctionPrototype))),
-        Value::BoundFunction(_) | Value::Builtin(_) => {
-            Some(Value::Builtin(Builtin::FunctionPrototype))
-        }
+            .map(|(_, prototype)| prototype.clone()),
         _ => None,
     }
 }
