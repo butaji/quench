@@ -11,17 +11,14 @@ use crate::{
 use array_like::{array_like_length, array_like_value};
 use intrinsic_overrides as overrides;
 use std::rc::Rc;
-
 const DESCRIPTOR_PREFIX: &str = "\0quench:descriptor:\0";
 
 pub(crate) fn descriptor_key(key: &str) -> String {
     format!("{DESCRIPTOR_PREFIX}{key}")
 }
-
 pub(crate) fn is_descriptor_key(key: &str) -> bool {
     key.starts_with(DESCRIPTOR_PREFIX)
 }
-
 pub(crate) fn read_intrinsic_override(builtin: Builtin, key: &str) -> Option<Value> {
     overrides::read(builtin, key)
 }
@@ -113,7 +110,6 @@ pub(crate) fn array_map(
     }
     Ok(Value::array(mapped))
 }
-
 pub(crate) fn array_for_each(
     receiver: Option<&Value>,
     arguments: &[Value],
@@ -132,7 +128,6 @@ pub(crate) fn array_for_each(
     }
     Ok(Value::Undefined)
 }
-
 pub(crate) fn array_filter(
     receiver: Option<&Value>,
     arguments: &[Value],
@@ -420,6 +415,11 @@ fn store_descriptor_metadata(result: &mut Value, key: &str, descriptor: &[(Strin
             properties.retain(|(name, _)| name != &descriptor_key);
             properties.push((descriptor_key, metadata));
         }
+        Value::Promise(promise) => {
+            let mut properties = promise.properties.borrow_mut();
+            properties.retain(|(name, _)| name != &descriptor_key);
+            properties.push((descriptor_key, metadata));
+        }
         Value::Builtin(builtin) => write_intrinsic_override(*builtin, key, metadata),
         _ => {}
     }
@@ -427,7 +427,7 @@ fn store_descriptor_metadata(result: &mut Value, key: &str, descriptor: &[(Strin
 fn define_accessor_placeholder(target: Value, key: &str) -> Value {
     if matches!(
         target,
-        Value::Object(_) | Value::Function(_) | Value::Builtin(_)
+        Value::Object(_) | Value::Function(_) | Value::Builtin(_) | Value::Promise(_)
     ) {
         return set_property(target, key, Value::Undefined);
     }
