@@ -1,12 +1,10 @@
-use std::collections::HashMap;
-
-use oxc::ast::ast::{ArrayExpression, ArrayExpressionElement};
-
 use crate::{
     facts::ProgramDb,
     ops::{ArrayElement, Op},
     value::Value,
 };
+use oxc::ast::ast::{ArrayExpression, ArrayExpressionElement};
+use std::collections::HashMap;
 
 type BuiltinResult = Option<Result<Value, crate::execute::VmError>>;
 
@@ -39,6 +37,7 @@ pub(crate) fn execute_builtin(
         ArraySort => return Some(Ok(sort(receiver))),
         ArrayToReversed => return Some(Ok(to_reversed(receiver))),
         ArrayShift => return Some(Ok(crate::builtins::array_shift(receiver))),
+        ArrayReverse => return Some(Ok(crate::builtins::array_reverse(receiver))),
         ArraySplice => return Some(Ok(splice(receiver, arguments))),
         ArrayReduce => return Some(reduce_values(receiver, arguments, false)),
         ArrayReduceRight => return Some(reduce_values(receiver, arguments, true)),
@@ -190,6 +189,7 @@ fn array_method(key: &str) -> Option<crate::ops::Builtin> {
         "join" => crate::ops::Builtin::ArrayJoin,
         "push" => crate::ops::Builtin::ArrayPush,
         "shift" => crate::ops::Builtin::ArrayShift,
+        "reverse" => crate::ops::Builtin::ArrayReverse,
         "splice" => crate::ops::Builtin::ArraySplice,
         "reduce" => crate::ops::Builtin::ArrayReduce,
         "reduceRight" => crate::ops::Builtin::ArrayReduceRight,
