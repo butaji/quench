@@ -21,6 +21,9 @@ fn reduce_primary(
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
     match expression {
+        Expression::ChainExpression(chain) => {
+            reduce_chain(&chain.expression, ops, facts, next_register, locals)
+        }
         Expression::LogicalExpression(value) => {
             crate::logical::reduce_expression(value, ops, facts, next_register, locals)
         }
@@ -44,6 +47,27 @@ fn reduce_primary(
         }
         _ => None,
     }
+}
+
+fn reduce_chain(
+    chain: &oxc::ast::ast::ChainElement<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<u16> {
+    use oxc::ast::ast::ChainElement;
+    let (object, key) = match chain {
+        ChainElement::StaticMemberExpression(member) => {
+            (&member.object, member.property.name.to_string())
+        }
+        _ => return None,
+    };
+    let object = crate::reduce::reduce_expression(object, ops, facts, next_register, locals)?;
+    let dst = *next_register;
+    *next_register = next_register.saturating_add(1);
+    ops.push(Op::OptionalGet { dst, object, key });
+    Some(dst)
 }
 
 fn reduce_secondary(
