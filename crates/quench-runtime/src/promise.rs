@@ -13,6 +13,7 @@ use crate::{
 
 include!("promise_combinators.rs");
 include!("promise_finally.rs");
+include!("promise_settlement.rs");
 
 thread_local! {
     static MICROTASK_QUEUE: RefCell<VecDeque<Rc<PromiseData>>> =
@@ -206,18 +207,9 @@ fn queue_promise(promise: &Rc<PromiseData>) {
     MICROTASK_QUEUE.with(|queue| queue.borrow_mut().push_back(Rc::clone(promise)));
 }
 
-fn set_promise_state(promise: &Rc<PromiseData>, state: PromiseState) {
-    let result = match &state {
-        PromiseState::Pending => None,
-        PromiseState::Fulfilled(value) | PromiseState::Rejected(value) => Some(value.clone()),
-    };
-    *promise.state.borrow_mut() = state;
-    *promise.result.borrow_mut() = result;
-}
-
 /// Resolve a Promise with a value.
 pub fn resolve_promise(promise: &Rc<PromiseData>, value: Value) {
-    if !matches!(*promise.state.borrow(), PromiseState::Pending) {
+    if !claim_promise(promise) || !matches!(*promise.state.borrow(), PromiseState::Pending) {
         return;
     }
     set_promise_state(promise, PromiseState::Fulfilled(value));
@@ -226,7 +218,7 @@ pub fn resolve_promise(promise: &Rc<PromiseData>, value: Value) {
 
 /// Reject a Promise with a reason.
 pub fn reject_promise(promise: &Rc<PromiseData>, reason: Value) {
-    if !matches!(*promise.state.borrow(), PromiseState::Pending) {
+    if !claim_promise(promise) || !matches!(*promise.state.borrow(), PromiseState::Pending) {
         return;
     }
     set_promise_state(promise, PromiseState::Rejected(reason));
@@ -284,9 +276,12 @@ fn resolve_receiver(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
         Some(Value::Builtin(Builtin::Promise)) => Ok(promise_resolve(arguments)),
         Some(Value::Promise(promise)) => {
             let value = arguments.first().cloned().unwrap_or(Value::Undefined);
+            if !claim_promise(promise) {
+                return Ok(Value::Undefined);
+            }
             if let Value::Promise(other) = &value {
                 if Rc::ptr_eq(promise, other) {
-                    reject_promise(
+                    settle_rejected(
                         promise,
                         crate::builtins::error(
                             Builtin::TypeError,
@@ -299,8 +294,8 @@ fn resolve_receiver(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
                 }
             }
             let resolved = resolve_value(value);
-            let resolve = bound_settler(Builtin::PromiseResolve, promise);
-            let reject = bound_settler(Builtin::PromiseReject, promise);
+            let resolve = bound_settler(Builtin::PromiseAdoptResolve, promise);
+            let reject = bound_settler(Builtin::PromiseAdoptReject, promise);
             let _ = promise_then(Some(&resolved), &[resolve, reject])?;
             Ok(Value::Undefined)
         }
@@ -319,10 +314,12 @@ fn reject_receiver(receiver: Option<&Value>, arguments: &[Value]) -> Result<Valu
     match receiver {
         Some(Value::Builtin(Builtin::Promise)) => Ok(promise_reject(arguments)),
         Some(Value::Promise(promise)) => {
-            reject_promise(
-                promise,
-                arguments.first().cloned().unwrap_or(Value::Undefined),
-            );
+            if claim_promise(promise) {
+                settle_rejected(
+                    promise,
+                    arguments.first().cloned().unwrap_or(Value::Undefined),
+                );
+            }
             Ok(Value::Undefined)
         }
         Some(_) => Err(VmError::NotCallable),
@@ -424,6 +421,8 @@ pub fn execute_builtin(
             receiver,
             arguments.first().cloned().unwrap_or(Value::Undefined),
         ),
+        Builtin::PromiseAdoptResolve => adopt_resolve(receiver, arguments),
+        Builtin::PromiseAdoptReject => adopt_reject(receiver, arguments),
         _ => return None,
     };
     Some(result)
