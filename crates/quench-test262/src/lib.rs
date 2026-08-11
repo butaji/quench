@@ -7,7 +7,9 @@
 use std::{collections::HashMap, path::Path};
 
 pub mod runtime_host;
+mod stages;
 pub use runtime_host::RuntimeHost;
+pub use stages::{list_stages, resolve_stages, ConformanceStage, ResolvedStage};
 
 /// Exact harness sources cached by filename for zero-copy runner dispatch.
 pub struct HarnessCache {
