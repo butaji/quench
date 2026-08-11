@@ -44,6 +44,7 @@ fn builtin_instanceof(value: &Value, constructor: &Value) -> Option<bool> {
             if properties.iter().any(|(name, _)| name == "source") => true,
         (Value::Map(data), Value::Builtin(Builtin::Map)) if !data.weak => true,
         (Value::Map(data), Value::Builtin(Builtin::WeakMap)) if data.weak => true,
+        (Value::ArrayBuffer(data), Value::Builtin(Builtin::SharedArrayBuffer)) if data.shared => true,
         (Value::Set(_), Value::Builtin(Builtin::Set)) => true,
         _ => return None,
     })
@@ -128,9 +129,7 @@ fn internal_prototype(value: &Value) -> Option<Value> {
         Value::Array(values) => values
             .property("\0prototype")
             .or_else(|| Some(Value::Builtin(Builtin::ArrayPrototype))),
-        Value::ArrayBuffer(buffer) => buffer
-            .prototype()
-            .or_else(|| Some(Value::Builtin(Builtin::ArrayBufferPrototype))),
+        Value::ArrayBuffer(buffer) => buffer_prototype(buffer),
         Value::DataView(view) => view
             .prototype()
             .or_else(|| Some(Value::Builtin(Builtin::DataViewPrototype))),
@@ -157,6 +156,16 @@ fn map_prototype(data: &crate::value::MapData) -> Option<Value> {
             Builtin::WeakMapPrototype
         } else {
             Builtin::MapPrototype
+        }))
+    })
+}
+
+fn buffer_prototype(data: &crate::value::ArrayBufferData) -> Option<Value> {
+    data.prototype().or_else(|| {
+        Some(Value::Builtin(if data.shared {
+            Builtin::SharedArrayBufferPrototype
+        } else {
+            Builtin::ArrayBufferPrototype
         }))
     })
 }

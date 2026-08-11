@@ -81,6 +81,9 @@ fn builtin_method(builtin: Builtin, key: &str) -> Option<Builtin> {
     if builtin == ArrayBuffer && key == "prototype" {
         return Some(ArrayBufferPrototype);
     }
+    if builtin == SharedArrayBuffer && key == "prototype" {
+        return Some(SharedArrayBufferPrototype);
+    }
     if builtin == Proxy && key == "revocable" {
         return Some(ProxyRevocable);
     }
