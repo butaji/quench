@@ -63,6 +63,7 @@ pub struct DataViewData {
     pub buffer: Rc<ArrayBufferData>,
     pub byte_offset: usize,
     pub byte_length: usize,
+    prototype: RefCell<Option<Value>>,
 }
 
 impl DataViewData {
@@ -71,6 +72,7 @@ impl DataViewData {
             buffer,
             byte_offset,
             byte_length,
+            prototype: RefCell::new(None),
         }
     }
 
@@ -80,6 +82,14 @@ impl DataViewData {
         } else {
             self.byte_length
         }
+    }
+
+    pub(crate) fn prototype(&self) -> Option<Value> {
+        self.prototype.borrow().clone()
+    }
+
+    pub(crate) fn set_prototype(&self, prototype: Value) {
+        self.prototype.replace(Some(prototype));
     }
 
     pub fn is_detached(&self) -> bool {
