@@ -21,6 +21,7 @@ pub fn property(key: &str) -> Value {
         "delete" => Value::Builtin(Builtin::SetDelete),
         "clear" => Value::Builtin(Builtin::SetClear),
         "forEach" => Value::Builtin(Builtin::SetForEach),
+        "keys" | "values" => Value::Builtin(Builtin::SetIterator),
         "Symbol.iterator" => Value::Builtin(Builtin::SetIterator),
         _ => Value::Undefined,
     }
