@@ -48,6 +48,9 @@ pub(crate) fn set_new(arguments: &[Value]) -> Value {
 }
 
 pub(crate) fn weak_set_new(arguments: &[Value]) -> Result<Value, VmError> {
+    if let Some(Value::Object(iterable)) = arguments.first() {
+        return weak_set_from_iterable(Value::Object(iterable.clone()));
+    }
     let values = match arguments.first() {
         None | Some(Value::Undefined | Value::Null) => VecDeque::new(),
         Some(Value::Array(values)) => values.iter().cloned().collect(),
@@ -74,6 +77,30 @@ pub(crate) fn weak_set_new(arguments: &[Value]) -> Result<Value, VmError> {
         return Ok(set);
     }
     populate_weak_set(set)
+}
+
+fn weak_set_from_iterable(iterable: Value) -> Result<Value, VmError> {
+    let set = std::cell::RefCell::new(Value::Set(Rc::new(SetData {
+        weak: true,
+        values: VecDeque::new(),
+        prototype: std::cell::RefCell::new(None),
+    })));
+    let adder =
+        crate::execute::get_property_result(&Value::Builtin(Builtin::WeakSetPrototype), "add")?;
+    if !crate::conversion::is_callable(&adder) {
+        return Err(crate::value::error::throw_type_error(
+            "WeakSet.prototype.add is not callable",
+        ));
+    }
+    crate::collections::iterator::for_each_iterable(iterable, |value| {
+        let current = set.borrow().clone();
+        let result = crate::functions::execute_target(&adder, &current, &[value])?;
+        if matches!(result, Value::Set(_)) {
+            *set.borrow_mut() = result;
+        }
+        Ok(())
+    })?;
+    Ok(set.into_inner())
 }
 
 fn populate_weak_set(mut set: Value) -> Result<Value, VmError> {
