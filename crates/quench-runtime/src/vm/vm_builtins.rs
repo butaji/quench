@@ -149,10 +149,13 @@ pub(crate) fn realm_id_for_intrinsic_receiver(receiver: Option<&Value>) -> Optio
 }
 
 fn explicit_number(value: Option<&Value>) -> Result<f64, VmError> {
-    if let Some(Value::BigInt(value)) = value {
+    let Some(value) = value else {
+        return Ok(0.0);
+    };
+    if let Value::BigInt(value) = value {
         return Ok(value.parse().unwrap_or(f64::NAN));
     }
-    crate::intl::tolocale::value::to_number_result(value)
+    crate::intl::tolocale::value::to_number_result(Some(value))
 }
 
 fn explicit_bigint(value: Option<&Value>) -> Result<Value, VmError> {
