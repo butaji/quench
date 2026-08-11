@@ -24,6 +24,10 @@ pub fn collections_property(builtin: Builtin, key: &str) -> Option<Value> {
         (WeakMapPrototype, "get") => Some(Value::Builtin(WeakMapGet)),
         (WeakMapPrototype, "has") => Some(Value::Builtin(WeakMapHas)),
         (WeakMapPrototype, "delete") => Some(Value::Builtin(WeakMapDelete)),
+        (WeakMapPrototype, "getOrInsert") => Some(Value::Builtin(WeakMapGetOrInsert)),
+        (WeakMapPrototype, "getOrInsertComputed") => {
+            Some(Value::Builtin(WeakMapGetOrInsertComputed))
+        }
         (WeakSetPrototype, "add") => Some(Value::Builtin(WeakSetAdd)),
         (WeakSetPrototype, "has") => Some(Value::Builtin(WeakSetHas)),
         (WeakSetPrototype, "delete") => Some(Value::Builtin(WeakSetDelete)),
@@ -53,6 +57,8 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
         Builtin::WeakMapGet => Some("WeakMap.prototype.get"),
         Builtin::WeakMapHas => Some("WeakMap.prototype.has"),
         Builtin::WeakMapDelete => Some("WeakMap.prototype.delete"),
+        Builtin::WeakMapGetOrInsert => Some("WeakMap.prototype.getOrInsert"),
+        Builtin::WeakMapGetOrInsertComputed => Some("WeakMap.prototype.getOrInsertComputed"),
         Builtin::WeakSetAdd => Some("WeakSet.prototype.add"),
         Builtin::WeakSetHas => Some("WeakSet.prototype.has"),
         Builtin::WeakSetDelete => Some("WeakSet.prototype.delete"),
@@ -72,6 +78,7 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         | Builtin::WeakMapGet
         | Builtin::WeakMapHas
         | Builtin::WeakMapDelete => Some(1.0),
+        Builtin::WeakMapGetOrInsert | Builtin::WeakMapGetOrInsertComputed => Some(2.0),
         Builtin::WeakSetAdd | Builtin::WeakSetHas | Builtin::WeakSetDelete => Some(1.0),
         _ => None,
     }
@@ -97,6 +104,8 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
         Builtin::WeakMapGet => Some("get"),
         Builtin::WeakMapHas => Some("has"),
         Builtin::WeakMapDelete => Some("delete"),
+        Builtin::WeakMapGetOrInsert => Some("getOrInsert"),
+        Builtin::WeakMapGetOrInsertComputed => Some("getOrInsertComputed"),
         Builtin::WeakSetAdd => Some("add"),
         Builtin::WeakSetHas => Some("has"),
         Builtin::WeakSetDelete => Some("delete"),
