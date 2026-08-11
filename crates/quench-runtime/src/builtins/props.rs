@@ -371,7 +371,7 @@ pub(crate) fn callable(builtin: Builtin, key: &str) -> Option<Value> {
 }
 
 pub(crate) fn is_builtin_deletable(_builtin: Builtin, key: &str) -> bool {
-    if matches!(key, "length" | "name" | "prototype") {
+    if key == "prototype" {
         return false;
     }
     if matches!(
