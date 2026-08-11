@@ -145,6 +145,7 @@ fn construct_builtin(
     match builtin {
         crate::ops::Builtin::Array => Ok(crate::builtins::array(arguments)),
         crate::ops::Builtin::ArrayBuffer => construct_array_buffer(arguments),
+        crate::ops::Builtin::SharedArrayBuffer => construct_shared_array_buffer(arguments),
         crate::ops::Builtin::DataView => construct_data_view(arguments),
         crate::ops::Builtin::Object => Ok(crate::builtins::object(arguments)),
         crate::ops::Builtin::Number => construct_number(arguments),
@@ -164,6 +165,14 @@ fn construct_builtin(
             .unwrap_or_else(|| Ok(crate::builtins::object(arguments))),
         _ => Err(crate::vm::not_callable()),
     }
+}
+
+fn construct_shared_array_buffer(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
+    let Value::ArrayBuffer(mut buffer) = construct_array_buffer(arguments)? else {
+        return Err(crate::vm::not_callable());
+    };
+    Rc::make_mut(&mut buffer).shared = true;
+    Ok(Value::ArrayBuffer(buffer))
 }
 
 fn construct_typed_builtin(

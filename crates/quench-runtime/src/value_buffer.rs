@@ -1,6 +1,7 @@
 /// Shared byte storage for ArrayBuffer and typed-array views.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ArrayBufferData {
+    pub shared: bool,
     pub bytes: Rc<RefCell<Vec<u8>>>,
     pub detached: Rc<RefCell<bool>>,
     pub max_byte_length: Option<usize>,
@@ -13,6 +14,7 @@ pub struct ResizeError;
 impl ArrayBufferData {
     pub fn new(byte_length: usize) -> Self {
         Self {
+            shared: false,
             bytes: Rc::new(RefCell::new(vec![0; byte_length])),
             detached: Rc::new(RefCell::new(false)),
             max_byte_length: None,
