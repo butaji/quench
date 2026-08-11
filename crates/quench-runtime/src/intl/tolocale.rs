@@ -230,6 +230,11 @@ pub(crate) mod value {
                 "symbol"
             }
             Value::String(_) => "string",
+            Value::Builtin(
+                crate::ops::Builtin::Math
+                | crate::ops::Builtin::Reflect
+                | crate::ops::Builtin::Json,
+            ) => "object",
             Value::Builtin(_) | Value::Function(_) | Value::BoundFunction(_) => "function",
             Value::BigInt(_) => "bigint",
             Value::Proxy(_)
