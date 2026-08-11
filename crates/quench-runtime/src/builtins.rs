@@ -331,6 +331,10 @@ pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
             buffer.set_prototype(value);
             Value::ArrayBuffer(buffer)
         }
+        Value::DataView(view) if key == "\0prototype" => {
+            view.set_prototype(value);
+            Value::DataView(view)
+        }
         Value::Function(function) => set_function_property(function, key, value),
         other => other,
     }
