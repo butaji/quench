@@ -477,6 +477,9 @@ fn reduced_key_register(key: &ReducedKey, ops: &mut Vec<Op>, next: &mut u16) -> 
 }
 
 fn static_key(key: &PropertyKey<'_>) -> Option<String> {
+    if let PropertyKey::BigIntLiteral(value) = key {
+        return crate::literal::bigint_value(value);
+    }
     key.static_name().map(|name| name.into_owned())
 }
 
