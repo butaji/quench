@@ -5,7 +5,6 @@ use crate::{
 };
 use oxc::ast::ast::{ArrayExpression, ArrayExpressionElement};
 use std::collections::HashMap;
-
 type BuiltinResult = Option<Result<Value, crate::execute::VmError>>;
 
 pub(crate) fn execute_builtin(
@@ -38,6 +37,7 @@ pub(crate) fn execute_builtin(
         ArrayToReversed => return Some(Ok(to_reversed(receiver))),
         ArrayShift => return Some(Ok(crate::builtins::array_shift(receiver))),
         ArrayReverse => return Some(Ok(crate::builtins::array_reverse(receiver))),
+        ArrayPop => return Some(Ok(crate::builtins::array_pop(receiver))),
         ArraySplice => return Some(Ok(splice(receiver, arguments))),
         ArrayReduce => return Some(reduce_values(receiver, arguments, false)),
         ArrayReduceRight => return Some(reduce_values(receiver, arguments, true)),
@@ -190,6 +190,7 @@ fn array_method(key: &str) -> Option<crate::ops::Builtin> {
         "push" => crate::ops::Builtin::ArrayPush,
         "shift" => crate::ops::Builtin::ArrayShift,
         "reverse" => crate::ops::Builtin::ArrayReverse,
+        "pop" => crate::ops::Builtin::ArrayPop,
         "splice" => crate::ops::Builtin::ArraySplice,
         "reduce" => crate::ops::Builtin::ArrayReduce,
         "reduceRight" => crate::ops::Builtin::ArrayReduceRight,

@@ -2,7 +2,6 @@ use crate::{ops::Builtin, value::Value};
 mod data_view_name;
 use data_view_name::data_view_name;
 include!("props_promise.rs");
-/// Lookup a builtin property.
 pub(crate) fn lookup(builtin: Builtin, key: &str) -> Value {
     if crate::builtins::builtin_prototype_property_is_removed(builtin, key) {
         return Value::Undefined;
@@ -314,6 +313,7 @@ fn array_method(key: &str) -> Option<Builtin> {
         "push" => Some(ArrayPush),
         "shift" => Some(ArrayShift),
         "reverse" => Some(ArrayReverse),
+        "pop" => Some(ArrayPop),
         "splice" => Some(ArraySplice),
         _ => None,
     }
