@@ -57,13 +57,8 @@ fn reduce_property(
                 });
                 return Some(());
             }
-            ops.push(Op::DefineProperty {
-                object,
-                key,
-                value,
-                kind: definition_kind(property.kind),
-                enumerable: true,
-            });
+            set_property_name(property, key, value, ops)?;
+            define_property(ops, object, key, value, property.kind);
         }
         ObjectPropertyKind::SpreadProperty(spread) => {
             let source =
@@ -76,6 +71,53 @@ fn reduce_property(
         }
     }
     Some(())
+}
+
+fn define_property(ops: &mut Vec<Op>, object: u16, key: u16, value: u16, kind: PropertyKind) {
+    ops.push(Op::DefineProperty {
+        object,
+        key,
+        value,
+        kind: definition_kind(kind),
+        enumerable: true,
+    });
+}
+
+fn set_property_name(
+    property: &oxc::ast::ast::ObjectProperty<'_>,
+    key: u16,
+    value: u16,
+    ops: &mut Vec<Op>,
+) -> Option<()> {
+    if !crate::binding_patterns::anonymous_function_definition(&property.value) {
+        return Some(());
+    }
+    let prefix = accessor_prefix(property.kind);
+    if property.computed {
+        ops.push(Op::SetFunctionNameDynamic {
+            function: value,
+            key,
+            prefix: prefix.map(str::to_string),
+        });
+        return Some(());
+    }
+    let mut name = property_key(&property.key)?;
+    if let Some(prefix) = prefix {
+        name = format!("{prefix} {name}");
+    }
+    ops.push(Op::SetFunctionName {
+        function: value,
+        name,
+    });
+    Some(())
+}
+
+fn accessor_prefix(kind: PropertyKind) -> Option<&'static str> {
+    match kind {
+        PropertyKind::Get => Some("get"),
+        PropertyKind::Set => Some("set"),
+        PropertyKind::Init => None,
+    }
 }
 
 fn is_proto_initializer(property: &oxc::ast::ast::ObjectProperty<'_>) -> bool {
