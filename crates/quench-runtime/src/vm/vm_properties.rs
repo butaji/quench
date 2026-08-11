@@ -63,12 +63,20 @@ fn get_property_value(value: &Value, key: &str) -> Value {
         Set(_) => crate::collections::set::property(key),
         Iterator(_) => bind_method(value, crate::collections::iterator::property(key)),
         Generator(_) => generator_property(value, key),
-        Promise(promise) => promise
-            .property(key)
-            .unwrap_or_else(|| promise_property(value, key)),
+        Promise(promise) => promise_value_property(promise, value, key),
         HostCapability(capability) => host_capability_property(value, capability.descriptor, key),
         _ => Value::Undefined,
     }
+}
+fn promise_value_property(
+    promise: &crate::value::PromiseData,
+    value: &Value,
+    key: &str,
+) -> Value {
+    promise
+        .property(key)
+        .or_else(|| promise.prototype().map(|prototype| get_property(&prototype, key)))
+        .unwrap_or_else(|| promise_property(value, key))
 }
 
 fn map_property(data: &crate::value::MapData, key: &str) -> Value {
@@ -374,7 +382,6 @@ fn int8_array_property(view: &crate::value::Int8ArrayData, key: &str) -> Value {
         _ => crate::builtins::property(Builtin::Int8ArrayPrototype, key),
     }
 }
-
 fn int16_array_property(view: &crate::value::Int16ArrayData, key: &str) -> Value {
     if let Some(value) = typed_index(key, |index| view.get(index).map(f64::from)) {
         return value;
@@ -392,7 +399,6 @@ fn int16_array_property(view: &crate::value::Int16ArrayData, key: &str) -> Value
         _ => crate::builtins::property(Builtin::Int16ArrayPrototype, key),
     }
 }
-
 fn int32_array_property(view: &crate::value::Int32ArrayData, key: &str) -> Value {
     if let Some(value) = typed_index(key, |index| view.get(index).map(f64::from)) {
         return value;
@@ -410,7 +416,6 @@ fn int32_array_property(view: &crate::value::Int32ArrayData, key: &str) -> Value
         _ => crate::builtins::property(Builtin::Int32ArrayPrototype, key),
     }
 }
-
 fn uint16_array_property(view: &crate::value::Uint16ArrayData, key: &str) -> Value {
     if let Some(value) = typed_index(key, |index| view.get(index).map(f64::from)) {
         return value;
@@ -446,7 +451,6 @@ fn uint8_array_property(view: &crate::value::Uint8ArrayData, key: &str) -> Value
         _ => crate::builtins::property(Builtin::Uint8ArrayPrototype, key),
     }
 }
-
 fn uint32_array_property(view: &crate::value::Uint32ArrayData, key: &str) -> Value {
     if let Some(value) = typed_index(key, |index| view.get(index).map(f64::from)) {
         return value;
@@ -464,7 +468,6 @@ fn uint32_array_property(view: &crate::value::Uint32ArrayData, key: &str) -> Val
         _ => crate::builtins::property(Builtin::Uint32ArrayPrototype, key),
     }
 }
-
 fn uint8_clamped_array_property(view: &crate::value::Uint8ClampedArrayData, key: &str) -> Value {
     if let Some(value) = typed_index(key, |index| view.get(index).map(f64::from)) {
         return value;
@@ -482,12 +485,10 @@ fn uint8_clamped_array_property(view: &crate::value::Uint8ClampedArrayData, key:
         _ => crate::builtins::property(Builtin::Uint8ClampedArrayPrototype, key),
     }
 }
-
 fn typed_index(key: &str, get: impl FnOnce(usize) -> Option<f64>) -> Option<Value> {
     let index = key.parse().ok()?;
     Some(get(index).map_or(Value::Undefined, Value::Number))
 }
-
 fn data_view_property(view: &crate::value::DataViewData, key: &str) -> Value {
     match key {
         "buffer" => Value::ArrayBuffer(view.buffer.clone()),
@@ -496,5 +497,4 @@ fn data_view_property(view: &crate::value::DataViewData, key: &str) -> Value {
         _ => crate::builtins::property(Builtin::DataViewPrototype, key),
     }
 }
-
 include!("vm_object_properties.rs");
