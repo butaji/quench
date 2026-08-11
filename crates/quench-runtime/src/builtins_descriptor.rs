@@ -1,9 +1,31 @@
 pub(crate) fn descriptor_flag(target: &Value, key: &str, field: &str) -> Option<bool> {
+    if crate::vm::is_global_object(target)
+        && field == "writable"
+        && matches!(key, "undefined" | "Infinity" | "NaN")
+    {
+        return Some(false);
+    }
     match target {
         Value::Object(properties) => descriptor_flag_in(properties, key, field),
         Value::Array(values) => array_flag(values, key, field),
+        Value::Builtin(builtin) => builtin_flag(*builtin, key, field),
         _ => None,
     }
+}
+
+fn builtin_flag(builtin: crate::ops::Builtin, key: &str, field: &str) -> Option<bool> {
+    let descriptor = crate::builtins::object::descriptor(
+        Some(&Value::Builtin(builtin)),
+        Some(&Value::String(key.to_string())),
+    )
+    .ok()?;
+    let Value::Object(properties) = descriptor else {
+        return None;
+    };
+    properties
+        .iter()
+        .rev()
+        .find_map(|(name, value)| (name == field).then_some(matches!(value, Value::Boolean(true))))
 }
 
 fn array_flag(values: &crate::value::ArrayData, key: &str, field: &str) -> Option<bool> {
