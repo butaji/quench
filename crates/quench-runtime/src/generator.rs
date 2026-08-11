@@ -116,15 +116,8 @@ fn resume(generator: &GeneratorData, resume: Resume) -> Result<Value, VmError> {
     if let Resume::Next(input) = resume {
         install_resume_input(generator, state, input);
     }
-    if let Some(completion) = resume_suspended_try(generator, state, completion.clone())? {
-        return complete_step(generator, state, completion);
-    }
-    if let Some(completion) = resume_suspended_conditional(generator, state, completion.clone())? {
-        return complete_step(generator, state, completion);
-    }
-    if let Some(completion) = resume_suspended_private_scope(generator, state, completion.clone())?
-    {
-        return complete_step(generator, state, completion);
+    if let Some(result) = resume_suspended_contexts(generator, state, &completion)? {
+        return Ok(result);
     }
     let _home = crate::super_scope::Guard::install(&generator.function, &generator.receiver);
     let _with_scope = crate::with_scope::FunctionGuard::isolate();
@@ -138,6 +131,24 @@ fn resume(generator: &GeneratorData, resume: Resume) -> Result<Value, VmError> {
     state.pc = pc;
     capture_suspended_private_environment(generator, state, &completion);
     complete_step(generator, state, completion)
+}
+
+fn resume_suspended_contexts(
+    generator: &GeneratorData,
+    state: &mut GeneratorState,
+    completion: &crate::completion::Completion,
+) -> Result<Option<Value>, VmError> {
+    if let Some(completion) = resume_suspended_try(generator, state, completion.clone())? {
+        return complete_step(generator, state, completion).map(Some);
+    }
+    if let Some(completion) = resume_suspended_conditional(generator, state, completion.clone())? {
+        return complete_step(generator, state, completion).map(Some);
+    }
+    if let Some(completion) = resume_suspended_private_scope(generator, state, completion.clone())?
+    {
+        return complete_step(generator, state, completion).map(Some);
+    }
+    Ok(None)
 }
 
 impl Resume {
