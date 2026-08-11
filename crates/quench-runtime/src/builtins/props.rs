@@ -290,11 +290,11 @@ fn array_method(key: &str) -> Option<Builtin> {
         _ => None,
     }
 }
-
 fn builtin_method2(builtin: Builtin, key: &str) -> Option<Builtin> {
     use Builtin::*;
     match (builtin, key) {
         (Object, "defineProperty") => Some(ObjectDefineProperty),
+        (Object, "defineProperties") => Some(ObjectDefineProperties),
         (Object, "getOwnPropertyDescriptor") => Some(ObjectGetOwnPropertyDescriptor),
         (Object, "keys") => Some(ObjectKeys),
         (Object, "getOwnPropertyNames") => Some(ObjectGetOwnPropertyNames),
