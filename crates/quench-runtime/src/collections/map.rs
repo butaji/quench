@@ -456,13 +456,22 @@ pub(crate) fn map_for_each(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
-    let Some(Value::Map(data)) = receiver else {
+    let Some(Value::Map(data)) =
+        receiver.filter(|value| matches!(value, Value::Map(data) if !data.weak))
+    else {
         return Err(crate::value::error::throw_type_error(
             "Map method called on incompatible receiver",
         ));
     };
     let Some(callback) = arguments.first() else {
-        return Ok(Value::Undefined);
+        return Err(crate::value::error::throw_type_error(
+            "Map callback must be callable",
+        ));
+    };
+    if !crate::conversion::is_callable(callback) {
+        return Err(crate::value::error::throw_type_error(
+            "Map callback must be callable",
+        ));
     };
     let this_arg = arguments.get(1).cloned().unwrap_or(Value::Undefined);
     let map = receiver.cloned().unwrap_or(Value::Undefined);
