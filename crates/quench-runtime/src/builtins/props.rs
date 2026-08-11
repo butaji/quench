@@ -310,6 +310,7 @@ fn array_method(key: &str) -> Option<Builtin> {
         "reduce" => Some(ArrayReduce),
         "reduceRight" => Some(ArrayReduceRight),
         "toLocaleString" => Some(ArrayToLocaleString),
+        "values" => Some(ArrayIterator),
         "push" => Some(ArrayPush),
         "splice" => Some(ArraySplice),
         _ => None,
@@ -405,7 +406,6 @@ pub(crate) fn is_builtin_deletable(_builtin: Builtin, key: &str) -> bool {
     }
     true
 }
-
 fn builtin_length(builtin: Builtin) -> f64 {
     use Builtin::*;
     if let Some(length) = data_view_length(builtin) {
