@@ -162,6 +162,9 @@ pub fn get_property_result(value: &Value, key: &str) -> Result<Value, VmError> {
             "Cannot read property `{key}` of null or undefined"
         )));
     }
+    if matches!(value, Value::Proxy(_)) {
+        return crate::proxy::proxy_get(value, key, Some(value));
+    }
     if matches!(value, Value::Array(values) if values.is_strict_arguments() && key == "callee") {
         return Err(crate::value::error::throw_type_error(
             "'callee' is unavailable on strict arguments",

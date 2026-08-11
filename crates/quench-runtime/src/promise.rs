@@ -39,7 +39,7 @@ fn process_promise(promise: &Rc<PromiseData>) {
             PromiseState::Fulfilled(value) | PromiseState::Rejected(value) => value.clone(),
             PromiseState::Pending => continue,
         };
-        let Some(handler) = action.filter(is_callable) else {
+        let Some(handler) = action.filter(crate::conversion::is_callable) else {
             propagate_default(&result_promise, &state, value);
             continue;
         };
@@ -49,13 +49,6 @@ fn process_promise(promise: &Rc<PromiseData>) {
             Err(_) => reject_promise(&result_promise, Value::Undefined),
         }
     }
-}
-
-fn is_callable(value: &Value) -> bool {
-    matches!(
-        value,
-        Value::Builtin(_) | Value::Function(_) | Value::BoundFunction(_) | Value::Proxy(_)
-    )
 }
 
 fn propagate_default(result: &Rc<PromiseData>, state: &PromiseState, value: Value) {

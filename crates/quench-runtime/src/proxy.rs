@@ -66,7 +66,7 @@ fn check_revoked(proxy: &ProxyValue) -> Result<(), VmError> {
 
 pub(crate) fn get_handler_trap(proxy: &ProxyValue, trap: &str) -> Option<Value> {
     let value = crate::execute::get_property(&proxy.handler, trap);
-    if value == Value::Undefined {
+    if matches!(value, Value::Undefined | Value::Null) {
         None
     } else {
         Some(value)
@@ -98,7 +98,7 @@ pub(crate) fn proxy_get(
         check_revoked(proxy)?;
         if let Some(trap) = get_handler_trap(proxy, "get") {
             let receiver = receiver.unwrap_or(target);
-            call_trap(
+            return call_trap(
                 &trap,
                 &[
                     target.clone(),
@@ -106,10 +106,34 @@ pub(crate) fn proxy_get(
                     receiver.clone(),
                 ],
                 None,
-            )?;
+            );
         }
+        return proxy_target_property(proxy, prop, receiver.unwrap_or(target));
     }
     Ok(crate::execute::get_property(target, prop))
+}
+
+fn proxy_target_property(
+    proxy: &ProxyValue,
+    prop: &str,
+    receiver: &Value,
+) -> Result<Value, VmError> {
+    if matches!(prop, "apply" | "call" | "bind") && crate::conversion::is_callable(&proxy.target) {
+        let builtin = match prop {
+            "apply" => Builtin::FunctionApply,
+            "call" => Builtin::FunctionCall,
+            "bind" => Builtin::FunctionBind,
+            _ => return Err(VmError::NotCallable),
+        };
+        return Ok(Value::BoundFunction(Rc::new(
+            crate::value::BoundFunctionValue {
+                target: Value::Builtin(builtin),
+                receiver: receiver.clone(),
+                arguments: Vec::new(),
+            },
+        )));
+    }
+    Ok(crate::execute::get_property(&proxy.target, prop))
 }
 
 pub(crate) fn proxy_set(
@@ -182,17 +206,14 @@ pub(crate) fn proxy_apply(
             let args_array = Value::array(arguments.to_vec());
             return call_trap(&trap, &[target.clone(), this_arg.clone(), args_array], None);
         }
+        return proxy_apply(&proxy.target, this_arg, arguments);
     }
     match target {
         Value::Function(func) => crate::functions::execute(func, this_arg, arguments),
         Value::Builtin(builtin) => {
             crate::execute::execute_builtin_with_receiver(*builtin, arguments, Some(this_arg))
         }
-        Value::BoundFunction(bound) => {
-            let mut combined = bound.arguments.clone();
-            combined.extend_from_slice(arguments);
-            crate::functions::execute_bound(bound, &combined)
-        }
+        Value::BoundFunction(bound) => crate::functions::execute_bound(bound, arguments),
         _ => Err(VmError::NotCallable),
     }
 }
@@ -448,53 +469,4 @@ fn reflect_get_own_property_descriptor(arguments: &[Value]) -> Result<Value, VmE
     proxy_get_own_property_descriptor(target, &prop)
 }
 
-fn reflect_define_property(arguments: &[Value]) -> Result<Value, VmError> {
-    let target = arguments.first().ok_or(VmError::NotCallable)?;
-    let prop = arguments.get(1).map(value_to_string).unwrap_or_default();
-    let descriptor = arguments.get(2).cloned().unwrap_or(Value::Undefined);
-    proxy_define_property(target, &prop, &descriptor)?;
-    Ok(Value::Boolean(true))
-}
-
-fn reflect_own_keys(arguments: &[Value]) -> Result<Value, VmError> {
-    let target = arguments.first().ok_or(VmError::NotCallable)?;
-    proxy_own_keys(target)
-}
-
-fn extract_array_arg(arguments: &[Value], index: usize) -> Vec<Value> {
-    arguments
-        .get(index)
-        .and_then(|v| {
-            if let Value::Array(arr) = v {
-                Some(arr.to_vec())
-            } else {
-                None
-            }
-        })
-        .unwrap_or_default()
-}
-
-fn reflect_apply(arguments: &[Value]) -> Result<Value, VmError> {
-    let target = arguments.first().ok_or(VmError::NotCallable)?;
-    let this_arg = arguments.get(1).cloned().unwrap_or(Value::Undefined);
-    let args = extract_array_arg(arguments, 2);
-    proxy_apply(target, &this_arg, &args)
-}
-
-fn reflect_construct(arguments: &[Value]) -> Result<Value, VmError> {
-    let target = arguments.first().ok_or(VmError::NotCallable)?;
-    let args = extract_array_arg(arguments, 1);
-    let new_target = arguments.get(2);
-    proxy_construct(target, &args, new_target)
-}
-
-fn value_to_string(value: &Value) -> String {
-    match value {
-        Value::String(s) => s.clone(),
-        Value::Number(n) => n.to_string(),
-        Value::Boolean(b) => b.to_string(),
-        Value::Null => "null".to_string(),
-        Value::Undefined => "undefined".to_string(),
-        _ => "[object Object]".to_string(),
-    }
-}
+include!("proxy_reflect.rs");
