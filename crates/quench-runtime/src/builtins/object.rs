@@ -198,7 +198,6 @@ fn builtin_owns_property(builtin: Builtin, key: &str) -> bool {
 fn valid_index(key: &str, len: usize) -> bool {
     key.parse::<usize>().is_ok_and(|index| index < len)
 }
-
 pub(crate) fn object_property_is_enumerable(
     receiver: Option<&Value>,
     arguments: &[Value],
@@ -216,7 +215,6 @@ pub(crate) fn object_property_is_enumerable(
     let enumerable = crate::builtins::descriptor_flag(receiver, &key, "enumerable").unwrap_or(true);
     Value::Boolean(owned && enumerable)
 }
-
 pub(crate) fn object_special(
     builtin: Builtin,
     receiver: Option<&Value>,
@@ -224,7 +222,6 @@ pub(crate) fn object_special(
 ) -> Value {
     execute_special(builtin, receiver, arguments).unwrap_or(Value::Undefined)
 }
-
 pub(crate) fn descriptor(
     value: Option<&Value>,
     key: Option<&Value>,
@@ -243,7 +240,6 @@ pub(crate) fn descriptor(
     };
     Ok(descriptor.unwrap_or(Value::Undefined))
 }
-
 fn function_descriptor(function: &crate::value::FunctionValue, key: &str) -> Option<Value> {
     if let Some((_, metadata)) = function
         .properties
@@ -285,12 +281,16 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
     }
     let property =
         super::callable_property(builtin, key).or_else(|| super::special_property(builtin, key))?;
-    let writable = !matches!(key, "length" | "name") && builtin_property_writable(builtin, key);
+    let writable = !matches!(key, "length" | "name" | "prototype" | "Symbol.toStringTag")
+        && builtin_property_writable(builtin, key);
+    let configurable = key != "prototype";
     Some(descriptor_object_with_flags(
-        property, writable, false, true,
+        property,
+        writable,
+        false,
+        configurable,
     ))
 }
-
 include!("object_property_flags.rs");
 fn array_descriptor(values: &crate::value::ArrayData, key: &str) -> Option<Value> {
     if let Some(descriptor) = values.descriptor(key) {
