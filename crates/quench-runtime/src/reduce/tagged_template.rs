@@ -16,6 +16,7 @@ pub(super) fn reduce(
         object: cooked,
         key: "raw".to_string(),
         src: raw,
+        strict: facts.strict,
     });
     let mut args = vec![cooked];
     for expression in &tagged.quasi.expressions {

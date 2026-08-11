@@ -229,6 +229,7 @@ pub enum Op {
         object: u16,
         key: String,
         src: u16,
+        strict: bool,
     },
     SetPrototype {
         object: u16,
@@ -248,6 +249,7 @@ pub enum Op {
         object: u16,
         key: u16,
         src: u16,
+        strict: bool,
     },
     DefineProperty {
         object: u16,
