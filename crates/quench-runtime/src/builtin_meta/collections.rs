@@ -126,10 +126,8 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         | Builtin::SetIsDisjointFrom
         | Builtin::SetIsSubsetOf
         | Builtin::SetIsSupersetOf => Some(1.0),
-        Builtin::WeakMapSet
-        | Builtin::WeakMapGet
-        | Builtin::WeakMapHas
-        | Builtin::WeakMapDelete => Some(1.0),
+        Builtin::WeakMapSet => Some(2.0),
+        Builtin::WeakMapGet | Builtin::WeakMapHas | Builtin::WeakMapDelete => Some(1.0),
         Builtin::WeakMapGetOrInsert | Builtin::WeakMapGetOrInsertComputed => Some(2.0),
         Builtin::WeakSetAdd | Builtin::WeakSetHas | Builtin::WeakSetDelete => Some(1.0),
         _ => None,
