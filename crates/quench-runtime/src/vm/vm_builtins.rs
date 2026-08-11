@@ -26,6 +26,7 @@ fn is_function_builtin(builtin: Builtin) -> bool {
             | Builtin::ArrayPop
             | Builtin::ArrayUnshift
             | Builtin::ArrayFill
+            | Builtin::ArrayCopyWithin
     )
 }
 
