@@ -348,6 +348,8 @@ pub enum Builtin {
     WeakMapGet,
     WeakMapHas,
     WeakMapDelete,
+    WeakMapGetOrInsert,
+    WeakMapGetOrInsertComputed,
     WeakSet,
     WeakSetPrototype,
     WeakSetAdd,

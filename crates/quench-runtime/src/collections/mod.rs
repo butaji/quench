@@ -25,8 +25,7 @@ pub(crate) fn execute_builtin(
         SetDelete => Some(set::set_delete(receiver, arguments)),
         SetClear => Some(set::set_clear(receiver)),
         SetForEach => Some(set::set_for_each(receiver, arguments)),
-        MapIterator => Some(iterator::from_map(receiver)),
-        MapEntries => Some(iterator::from_map(receiver)),
+        MapIterator | MapEntries => Some(iterator::from_map(receiver)),
         MapKeys => Some(iterator::from_map_keys(receiver)),
         MapValues => Some(iterator::from_map_values(receiver)),
         SetIterator => Some(iterator::from_set(receiver)),
@@ -35,6 +34,9 @@ pub(crate) fn execute_builtin(
         WeakMapGet => Some(map::map_get(receiver, arguments)),
         WeakMapHas => Some(map::map_has(receiver, arguments)),
         WeakMapDelete => Some(map::map_delete(receiver, arguments)),
+        WeakMapGetOrInsert | WeakMapGetOrInsertComputed => {
+            weak_map_extended(builtin, receiver, arguments)
+        }
         WeakSet => Some(set::weak_set_new(arguments)),
         WeakSetAdd => Some(set::weak_set_add(receiver, arguments)),
         WeakSetHas => Some(set::weak_set_has(receiver, arguments)),
@@ -42,6 +44,20 @@ pub(crate) fn execute_builtin(
         IteratorNext => Some(Ok(iterator::next(receiver))),
         _ => None,
     }
+}
+
+fn weak_map_extended(
+    builtin: Builtin,
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Option<Result<Value, VmError>> {
+    Some(match builtin {
+        Builtin::WeakMapGetOrInsert => map::weak_map_get_or_insert(receiver, arguments),
+        Builtin::WeakMapGetOrInsertComputed => {
+            map::weak_map_get_or_insert_computed(receiver, arguments)
+        }
+        _ => return None,
+    })
 }
 
 pub(crate) mod iterator;
