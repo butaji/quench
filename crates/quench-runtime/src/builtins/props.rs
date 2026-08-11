@@ -305,6 +305,7 @@ fn array_method(key: &str) -> Option<Builtin> {
         "reduceRight" => Some(ArrayReduceRight),
         "toLocaleString" => Some(ArrayToLocaleString),
         "values" => Some(ArrayIterator),
+        "Symbol.iterator" => Some(ArrayIterator),
         "keys" => Some(ArrayKeys),
         "entries" => Some(ArrayEntries),
         "push" => Some(ArrayPush),
@@ -390,7 +391,6 @@ pub(crate) fn callable(builtin: Builtin, key: &str) -> Option<Value> {
         _ => None,
     }
 }
-
 pub(crate) fn is_builtin_deletable(_builtin: Builtin, key: &str) -> bool {
     if key == "prototype" {
         return false;
