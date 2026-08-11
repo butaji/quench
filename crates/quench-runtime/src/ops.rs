@@ -8,6 +8,8 @@ pub enum Builtin {
     TypedArray,
     ArrayBuffer,
     ArrayBufferPrototype,
+    SharedArrayBuffer,
+    SharedArrayBufferPrototype,
     ArrayBufferIsView,
     ArrayBufferResize,
     Float64Array,
