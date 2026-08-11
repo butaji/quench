@@ -3,7 +3,6 @@ pub fn copy_register(registers: &mut Vec<Value>, dst: u16, src: u16) -> Result<(
     write_value(registers, dst, value);
     Ok(())
 }
-
 pub fn write_value(registers: &mut Vec<Value>, index: u16, value: Value) {
     let index = usize::from(index);
     if registers.len() <= index {
@@ -11,14 +10,12 @@ pub fn write_value(registers: &mut Vec<Value>, index: u16, value: Value) {
     }
     registers[index] = value;
 }
-
 pub fn read_register(registers: &[Value], index: u16) -> Result<Value, VmError> {
     registers
         .get(usize::from(index))
         .cloned()
         .ok_or(VmError::RegisterOutOfBounds(index))
 }
-
 pub fn get_property(value: &Value, key: &str) -> Value {
     if let Value::BindingCell(cell) = value {
         return get_property(&cell.borrow(), key);
@@ -29,7 +26,6 @@ pub fn get_property(value: &Value, key: &str) -> Value {
     }
     primitive_prototype_property(value, key)
 }
-
 fn get_property_value(value: &Value, key: &str) -> Value {
     use Value::*;
     match value {
@@ -244,7 +240,6 @@ pub(crate) fn array_accessor(value: &Value, key: &str, field: &str) -> Option<Va
         .rev()
         .find_map(|(name, value)| (name == field).then(|| value.clone()))
 }
-
 fn host_capability_property(value: &Value, capability: HostCapabilityRef, key: &str) -> Value {
     let builtin = Builtin::HostCapability(capability.kind);
     let property = crate::builtins::property(builtin, key);
@@ -253,7 +248,6 @@ fn host_capability_property(value: &Value, capability: HostCapabilityRef, key: &
     }
     property
 }
-
 fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
     if builtin != Builtin::FunctionPrototype && matches!(key, "apply" | "call" | "bind") {
         return bind_function_property(value, key);
@@ -262,7 +256,14 @@ fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
     if matches!(key, "prototype" | "constructor") {
         return property;
     }
-    property
+    if !matches!(property, Value::Undefined) || builtin == Builtin::FunctionPrototype {
+        return property;
+    }
+    let inherited = crate::builtins::property(Builtin::FunctionPrototype, key);
+    if !matches!(inherited, Value::Undefined) {
+        return bind_method(value, inherited);
+    }
+    bind_method(value, crate::builtins::property(Builtin::ObjectPrototype, key))
 }
 fn bind_function_property(value: &Value, key: &str) -> Value {
     let builtin = match key {
@@ -433,7 +434,6 @@ fn uint16_array_property(view: &crate::value::Uint16ArrayData, key: &str) -> Val
         _ => crate::builtins::property(Builtin::Uint16ArrayPrototype, key),
     }
 }
-
 fn uint8_array_property(view: &crate::value::Uint8ArrayData, key: &str) -> Value {
     if let Some(value) = typed_index(key, |index| view.get(index).map(f64::from)) {
         return value;

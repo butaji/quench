@@ -139,7 +139,7 @@ fn execute_simple_builtin(
         Builtin::StringValueOf => string_value_of(receiver),
         Builtin::BoxedValueOf => Ok(boxed_value(receiver)),
         Builtin::ObjectPrototypeToString => Ok(crate::builtins::prototype_to_string(receiver)),
-        Builtin::ObjectPrototypeValueOf => Ok(crate::builtins::prototype_value_of(receiver)),
+        Builtin::ObjectPrototypeValueOf => crate::builtins::prototype_value_of(receiver),
         Builtin::FunctionPrototypeToString | Builtin::FunctionPrototypeValueOf => {
             function_prototype_builtin(builtin, receiver)
         }
