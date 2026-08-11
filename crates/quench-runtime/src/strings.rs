@@ -176,6 +176,9 @@ fn string_receiver(receiver: Option<&Value>) -> Result<String, crate::execute::V
             "Cannot convert Symbol to string",
         ));
     }
+    if let Value::BigInt(value) = value {
+        return Ok(value.clone());
+    }
     crate::conversion::to_string(value)
 }
 
