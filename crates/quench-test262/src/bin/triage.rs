@@ -21,6 +21,9 @@ struct RunReport {
     failures: Vec<(PathBuf, String)>,
 }
 
+/// Deep parser/reducer recursion needs more than the default 8 MiB stack.
+const STACK_SIZE: usize = 256 * 1024 * 1024;
+
 struct Args {
     target: PathBuf,
     limit: usize,
@@ -138,7 +141,10 @@ fn run_parallel(
             let files = Arc::clone(&files);
             let counter = Arc::clone(&counter);
             let next = Arc::clone(&next);
-            thread::spawn(move || run_worker(files, root, limit, counter, next))
+            thread::Builder::new()
+                .stack_size(STACK_SIZE)
+                .spawn(move || run_worker(files, root, limit, counter, next))
+                .expect("spawn triage worker")
         })
         .collect();
     let mut passed = 0;
