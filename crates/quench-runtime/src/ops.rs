@@ -215,6 +215,7 @@ pub enum Builtin {
     RegExpPrototypeToString,
     ObjectPrototype,
     ArrayPush,
+    ArrayShift,
     ArraySplice,
     TypedArrayFill,
     ObjectDefineProperty,
