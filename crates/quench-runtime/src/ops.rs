@@ -61,6 +61,8 @@ pub enum Builtin {
     ArraySome,
     ArrayEvery,
     ArrayFind,
+    ArrayFindLast,
+    ArrayFindLastIndex,
     ArrayIncludes,
     ArrayIndexOf,
     ArrayLastIndexOf,
