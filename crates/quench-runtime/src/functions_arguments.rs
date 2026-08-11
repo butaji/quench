@@ -263,6 +263,7 @@ pub(crate) fn function_builtin(
         crate::ops::Builtin::ArrayPush => Ok(crate::builtins::array_push(receiver, arguments)),
         crate::ops::Builtin::ArrayShift => Ok(crate::builtins::array_shift(receiver)),
         crate::ops::Builtin::ArrayReverse => Ok(crate::builtins::array_reverse(receiver)),
+        crate::ops::Builtin::ArrayPop => Ok(crate::builtins::array_pop(receiver)),
         crate::ops::Builtin::ObjectPropertyIsEnumerable => Ok(
             crate::builtins::object::object_property_is_enumerable(receiver, arguments),
         ),
