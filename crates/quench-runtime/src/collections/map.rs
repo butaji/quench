@@ -13,6 +13,13 @@ fn same_value_zero(left: &Value, right: &Value) -> bool {
     crate::builtins::same_value_zero(left, right)
 }
 
+fn canonicalize_key(value: &Value) -> Value {
+    match value {
+        Value::Number(number) if *number == 0.0 => Value::Number(0.0),
+        _ => value.clone(),
+    }
+}
+
 pub fn property(key: &str) -> Value {
     match key {
         "constructor" => Value::Builtin(Builtin::Map),
@@ -334,7 +341,10 @@ pub(crate) fn map_get_or_insert(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
-    let key = arguments.first().cloned().unwrap_or(Value::Undefined);
+    let key = arguments
+        .first()
+        .map(canonicalize_key)
+        .unwrap_or(Value::Undefined);
     if matches!(
         map_has(receiver, std::slice::from_ref(&key))?,
         Value::Boolean(true)
@@ -350,7 +360,10 @@ pub(crate) fn map_get_or_insert_computed(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
-    let key = arguments.first().cloned().unwrap_or(Value::Undefined);
+    let key = arguments
+        .first()
+        .map(canonicalize_key)
+        .unwrap_or(Value::Undefined);
     let callback = arguments
         .get(1)
         .ok_or_else(|| crate::value::error::throw_type_error("Map callback must be callable"))?;
