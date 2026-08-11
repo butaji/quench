@@ -297,6 +297,9 @@ fn bind_method(receiver: &Value, property: Value) -> Value {
     }))
 }
 fn promise_property(value: &Value, key: &str) -> Value {
+    if key == "finally" {
+        return Value::Builtin(Builtin::PromiseFinally);
+    }
     let Some(builtin @ (Builtin::PromiseThen | Builtin::PromiseCatch | Builtin::PromiseFinally)) =
         (match crate::builtins::property(Builtin::PromisePrototype, key) {
             Value::Builtin(builtin) => Some(builtin),
@@ -322,7 +325,6 @@ fn array_buffer_property(buffer: &crate::value::ArrayBufferData, key: &str) -> V
         _ => crate::builtins::property(Builtin::ArrayBuffer, key),
     }
 }
-
 fn float64_array_property(view: &crate::value::Float64ArrayData, key: &str) -> Value {
     if let Some(value) = typed_index(key, |index| view.get(index)) {
         return value;
@@ -340,7 +342,6 @@ fn float64_array_property(view: &crate::value::Float64ArrayData, key: &str) -> V
         _ => crate::builtins::property(Builtin::Float64ArrayPrototype, key),
     }
 }
-
 fn float32_array_property(view: &crate::value::Float32ArrayData, key: &str) -> Value {
     if let Some(value) = typed_index(key, |index| view.get(index).map(f64::from)) {
         return value;
@@ -358,7 +359,6 @@ fn float32_array_property(view: &crate::value::Float32ArrayData, key: &str) -> V
         _ => crate::builtins::property(Builtin::Float32ArrayPrototype, key),
     }
 }
-
 fn int8_array_property(view: &crate::value::Int8ArrayData, key: &str) -> Value {
     if let Some(value) = typed_index(key, |index| view.get(index).map(f64::from)) {
         return value;
