@@ -47,6 +47,9 @@ fn builtin_instanceof(value: &Value, constructor: &Value) -> Option<bool> {
         (Value::ArrayBuffer(data), Value::Builtin(Builtin::SharedArrayBuffer)) if data.shared => true,
         (Value::Set(_), Value::Builtin(Builtin::Set)) => true,
         (Value::Set(data), Value::Builtin(Builtin::WeakSet)) if data.weak => true,
+        (Value::Object(properties), Value::Builtin(Builtin::WeakRef)) => {
+            properties.iter().any(|(name, _)| name == "\0weakref")
+        }
         _ => return None,
     })
 }
