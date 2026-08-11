@@ -177,13 +177,51 @@ fn reduce_try_handler(
         return Ok((None, None));
     };
     let (handler_locals, catch_slot, next_slot) = handler_locals(handler, try_locals);
-    let ops = crate::reduce::reduce_statements_no_tail(
+    let mut prefix = catch_binding_prefix(handler, catch_slot, facts, &handler_locals)?;
+    let mut ops = crate::reduce::reduce_statements_no_tail(
         &handler.body.body,
         facts,
         handler_locals,
         next_slot,
     )?;
-    Ok((Some(ops), catch_slot))
+    prefix.append(&mut ops);
+    Ok((Some(prefix), catch_slot))
+}
+
+fn catch_binding_prefix(
+    handler: &CatchClause<'_>,
+    catch_slot: Option<u16>,
+    facts: &mut ProgramDb,
+    locals: &HashMap<String, u16>,
+) -> Result<Vec<Op>, Vec<String>> {
+    let Some(parameter) = handler.param.as_ref() else {
+        return Ok(Vec::new());
+    };
+    let Some(catch_slot) = catch_slot else {
+        return Ok(Vec::new());
+    };
+    if matches!(
+        parameter.pattern.kind,
+        oxc::ast::ast::BindingPatternKind::BindingIdentifier(_)
+    ) {
+        return Ok(Vec::new());
+    }
+    let source = crate::reduce_support::register_base(locals);
+    let mut next_register = source.saturating_add(1);
+    let mut prefix = vec![Op::LoadLocal {
+        dst: source,
+        slot: catch_slot,
+    }];
+    crate::binding_patterns::bind(
+        &parameter.pattern,
+        source,
+        &mut prefix,
+        facts,
+        &mut next_register,
+        locals,
+    )
+    .ok_or_else(|| vec!["Unsupported catch binding pattern".to_string()])?;
+    Ok(prefix)
 }
 
 fn reduce_try_finalizer(
@@ -204,17 +242,25 @@ fn handler_locals(
     locals: &HashMap<String, u16>,
 ) -> (HashMap<String, u16>, Option<u16>, u16) {
     let mut result = locals.clone();
-    let next_slot = crate::reduce_support::register_base(&result);
+    let mut next_slot = crate::reduce_support::register_base(&result);
     let Some(parameter) = handler.param.as_ref() else {
         return (result, None, next_slot);
     };
-    let oxc::ast::ast::BindingPatternKind::BindingIdentifier(identifier) = &parameter.pattern.kind
-    else {
-        return (result, None, next_slot);
-    };
     let slot = next_slot;
-    result.insert(identifier.name.to_string(), slot);
-    (result, Some(slot), slot.saturating_add(1))
+    if let oxc::ast::ast::BindingPatternKind::BindingIdentifier(identifier) =
+        &parameter.pattern.kind
+    {
+        result.insert(identifier.name.to_string(), slot);
+        return (result, Some(slot), slot.saturating_add(1));
+    }
+    next_slot = next_slot.saturating_add(1);
+    for name in crate::binding_patterns::names(&parameter.pattern) {
+        if let std::collections::hash_map::Entry::Vacant(entry) = result.entry(name) {
+            entry.insert(next_slot);
+            next_slot = next_slot.saturating_add(1);
+        }
+    }
+    (result, Some(slot), next_slot)
 }
 
 pub(crate) fn reduce_try_statement(
