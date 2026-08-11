@@ -201,11 +201,15 @@ fn shift_count(right: i32) -> u32 {
 /// ECMAScript unsigned right shift: ToUint32(left) >> (count & 31), as a number.
 fn shift_right_unsigned(left: &Value, right: &Value) -> Result<f64, VmError> {
     let left = crate::conversion::to_primitive(left, "number")?;
+    let left_number = bigint_value(&left)
+        .is_none()
+        .then(|| crate::conversion::primitive_to_number(&left).map(to_int32));
+    let left_number = left_number.transpose()?;
     let right = crate::conversion::to_primitive(right, "number")?;
     if has_bigint_operand(&left, &right) {
         return Err(type_error("BigInt has no unsigned right shift"));
     }
-    let left = to_int32(crate::conversion::primitive_to_number(&left)?) as u32;
+    let left = left_number.ok_or_else(|| type_error("BigInt has no unsigned right shift"))? as u32;
     let right = to_int32(crate::conversion::primitive_to_number(&right)?);
     Ok(f64::from(left >> shift_count(right)))
 }
