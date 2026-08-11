@@ -317,11 +317,7 @@ fn run_get_set_property(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmErr
         ResolveNameOrUndefined { dst, name } => {
             write_value(registers, *dst, crate::locals::resolve_name_or_undefined(name)?)
         }
-        ToPropertyKey { dst, src } => {
-            let value = crate::execute::read_register(registers, *src)?;
-            let key = crate::conversion::to_property_key(&value)?;
-            crate::execute::write_value(registers, *dst, crate::value::Value::String(key));
-        }
+        ToPropertyKey { dst, src } => to_property_key(registers, *dst, *src)?,
         SetProperty { .. } | SetPropertyDynamic { .. } => {
             crate::properties::execute_set_property(registers, op)?
         }
@@ -341,6 +337,13 @@ fn run_get_set_property(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmErr
 
 fn run_delete_property(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
     crate::properties::execute_delete_property(registers, op)
+}
+
+fn to_property_key(registers: &mut Vec<Value>, dst: u16, src: u16) -> Result<(), VmError> {
+    let value = crate::execute::read_register(registers, src)?;
+    let key = crate::conversion::to_property_key(&value)?;
+    crate::execute::write_value(registers, dst, crate::value::Value::String(key));
+    Ok(())
 }
 
 fn run_method_or_construct(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
