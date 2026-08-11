@@ -83,7 +83,7 @@ pub(crate) fn property_method(key: &str) -> Option<crate::ops::Builtin> {
         "trimEnd" => Some(crate::ops::Builtin::StringTrimEnd),
         "codePointAt" => Some(crate::ops::Builtin::StringCodePointAt),
         "toString" => Some(crate::ops::Builtin::StringToString),
-        "valueOf" => Some(crate::ops::Builtin::BoxedValueOf),
+        "valueOf" => Some(crate::ops::Builtin::StringValueOf),
         "replace" => Some(crate::ops::Builtin::StringReplace),
         "replaceAll" => Some(crate::ops::Builtin::StringReplaceAll),
         "search" => Some(crate::ops::Builtin::StringSearch),

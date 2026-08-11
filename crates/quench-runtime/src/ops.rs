@@ -144,6 +144,7 @@ pub enum Builtin {
     ParseFloat,
     ParseInt,
     String,
+    StringValueOf,
     StringFromCharCode,
     Symbol,
     SymbolValueOf,

@@ -83,7 +83,7 @@ fn is_simple_builtin(builtin: Builtin) -> bool {
             | Builtin::Number | Builtin::BigInt
             | Builtin::NumberToString
             | Builtin::NumberValueOf
-            | Builtin::BigIntValueOf | Builtin::SymbolValueOf
+            | Builtin::BigIntValueOf | Builtin::SymbolValueOf | Builtin::StringValueOf
             | Builtin::BoxedValueOf
             | Builtin::ObjectPrototypeToString
             | Builtin::ObjectPrototypeValueOf
@@ -136,6 +136,7 @@ fn execute_simple_builtin(
         Builtin::NumberValueOf => number_value_of(receiver),
         Builtin::BigIntValueOf => bigint_value_of(receiver),
         Builtin::SymbolValueOf => symbol_value_of(receiver),
+        Builtin::StringValueOf => string_value_of(receiver),
         Builtin::BoxedValueOf => Ok(boxed_value(receiver)),
         Builtin::ObjectPrototypeToString => Ok(crate::builtins::prototype_to_string(receiver)),
         Builtin::ObjectPrototypeValueOf => Ok(crate::builtins::prototype_value_of(receiver)),
