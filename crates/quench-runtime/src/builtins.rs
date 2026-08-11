@@ -335,6 +335,14 @@ pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
             view.set_prototype(value);
             Value::DataView(view)
         }
+        Value::Map(data) if key == "\0prototype" => {
+            data.set_prototype(value);
+            Value::Map(data)
+        }
+        Value::Set(data) if key == "\0prototype" => {
+            data.set_prototype(value);
+            Value::Set(data)
+        }
         Value::Function(function) => set_function_property(function, key, value),
         other => other,
     }
@@ -471,28 +479,5 @@ pub(crate) fn prototype_to_string(receiver: Option<&Value>) -> Value {
     Value::String(format!("[object {tag}]"))
 }
 
-/// Implement `Object.prototype.valueOf`.
-pub(crate) fn prototype_value_of(receiver: Option<&Value>) -> Value {
-    match receiver {
-        None | Some(Value::Undefined) | Some(Value::Null) => Value::Null,
-        Some(v) => v.clone(),
-    }
-}
-
-pub(crate) fn function_prototype_to_string(receiver: Option<&Value>) -> Value {
-    match receiver {
-        Some(Value::Builtin(b)) => Value::String(format!(
-            "function {}() {{ [native code] }}",
-            builtin_name(*b)
-        )),
-        Some(Value::Function(_)) | Some(Value::BoundFunction(_)) => {
-            Value::String("function () {{ [native code] }}".to_string())
-        }
-        _ => Value::String("".to_string()),
-    }
-}
-
-pub(crate) fn function_prototype_value_of(receiver: Option<&Value>) -> Value {
-    prototype_value_of(receiver)
-}
+include!("builtins_prototype.rs");
 include!("builtins_value_string.rs");
