@@ -99,6 +99,7 @@ fn bind_rest(mut body: Vec<Op>, rest: Option<u16>, params: u16, captures: u16) -
             dst: 2,
             object: 0,
             key: "slice".to_string(),
+            callee: None,
             args: vec![1],
         },
         Op::StoreLocal { slot, src: 2 },
