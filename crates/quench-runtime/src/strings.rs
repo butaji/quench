@@ -349,7 +349,11 @@ pub(crate) fn code_point_at(receiver: Option<&Value>, arguments: &[Value]) -> Va
 }
 
 pub(crate) fn to_string_value(receiver: Option<&Value>) -> Value {
-    Value::String(receiver.map_or_else(String::new, to_string))
+    Value::String(
+        receiver
+            .map(|value| crate::intl::tolocale::value::to_string(Some(value)))
+            .unwrap_or_default(),
+    )
 }
 
 pub(crate) fn replace(
