@@ -80,10 +80,10 @@ fn is_simple_builtin(builtin: Builtin) -> bool {
             | Builtin::Escape
             | Builtin::IsFinite
             | Builtin::IsNaN
-            | Builtin::Number
-            | Builtin::BigInt
+            | Builtin::Number | Builtin::BigInt
             | Builtin::NumberToString
             | Builtin::NumberValueOf
+            | Builtin::BigIntValueOf
             | Builtin::BoxedValueOf
             | Builtin::ObjectPrototypeToString
             | Builtin::ObjectPrototypeValueOf
@@ -134,6 +134,7 @@ fn execute_simple_builtin(
         Builtin::ArrayBufferIsView => Ok(Value::Boolean(is_array_buffer_view(arguments.first()))),
         Builtin::NumberToString => Ok(Value::String(to_string(arguments.first()))),
         Builtin::NumberValueOf => number_value_of(receiver),
+        Builtin::BigIntValueOf => bigint_value_of(receiver),
         Builtin::BoxedValueOf => Ok(boxed_value(receiver)),
         Builtin::ObjectPrototypeToString => Ok(crate::builtins::prototype_to_string(receiver)),
         Builtin::ObjectPrototypeValueOf => Ok(crate::builtins::prototype_value_of(receiver)),

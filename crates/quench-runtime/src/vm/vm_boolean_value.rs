@@ -21,3 +21,24 @@ fn incompatible_boolean_receiver() -> Result<Value, crate::execute::VmError> {
         "Boolean.prototype.valueOf called on incompatible receiver",
     ))
 }
+
+fn bigint_value_of(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
+    match receiver {
+        Some(Value::BigInt(value)) => Ok(Value::BigInt(value.clone())),
+        Some(value @ Value::Object(_)) => wrapped_bigint(value),
+        _ => Err(crate::value::error::throw_type_error(
+            "BigInt.prototype.valueOf called on incompatible receiver",
+        )),
+    }
+}
+
+fn wrapped_bigint(value: &Value) -> Result<Value, crate::execute::VmError> {
+    let constructor = crate::execute::get_property_result(value, "constructor")?;
+    let wrapped = crate::execute::get_property_result(value, "_value")?;
+    if constructor == Value::Builtin(Builtin::BigInt) && matches!(wrapped, Value::BigInt(_)) {
+        return Ok(wrapped);
+    }
+    Err(crate::value::error::throw_type_error(
+        "BigInt.prototype.valueOf called on incompatible receiver",
+    ))
+}
