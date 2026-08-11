@@ -195,7 +195,6 @@ impl SetData {
         self.prototype.replace(Some(prototype));
     }
 }
-
 #[derive(Debug, PartialEq)]
 pub struct IteratorData {
     pub state: RefCell<IteratorState>,
@@ -211,6 +210,12 @@ pub enum IteratorState {
     Set {
         data: Rc<SetData>,
         index: usize,
+        done: bool,
+    },
+    Map {
+        data: Rc<MapData>,
+        index: usize,
+        kind: u8,
         done: bool,
     },
     Protocol {
