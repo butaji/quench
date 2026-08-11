@@ -229,6 +229,16 @@ pub fn compile(pattern: &str, flags: &str) -> Result<Regex, String> {
     Regex::with_flags(pattern, reg_flags).map_err(|e| e.to_string())
 }
 
+/// Reject a regex literal whose pattern fails the ECMA-262 `u`-flag static
+/// early errors. The `regress` kernel enforces unicode-mode identity escapes,
+/// class ranges, control escapes, decimal escapes, and quantified assertions.
+pub fn validate_unicode(pattern: &str, flags: &str) -> Result<(), String> {
+    let reg_flags: Flags = flags.into();
+    Regex::with_flags(pattern, reg_flags)
+        .map(|_| ())
+        .map_err(|error| format!("SyntaxError: {error}"))
+}
+
 /// Dispatch builtin to implementation.
 pub fn execute_builtin(
     builtin: Builtin,
