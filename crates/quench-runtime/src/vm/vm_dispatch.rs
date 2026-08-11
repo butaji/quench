@@ -114,6 +114,8 @@ fn run_local_op(registers: &mut Vec<Value>, op: &Op) -> Result<bool, VmError> {
         }
         MarkUninitialized { slot } => crate::locals::mark_uninitialized(*slot),
         CheckInitialized { slot, name } => crate::locals::check_initialized(*slot, name)?,
+        InitializeLocal { slot } => crate::locals::initialize(*slot),
+        LoadParameter { dst, slot } => crate::locals::load_parameter(registers, *dst, *slot)?,
         DeleteEvalBinding { dst, name, slot } => write_value(
             registers,
             *dst,

@@ -160,6 +160,19 @@ pub(crate) fn check_initialized(slot: u16, name: &str) -> Result<(), VmError> {
     ensure_initialized(slot, name)
 }
 
+pub(crate) fn initialize(slot: u16) {
+    current().initialize(slot);
+}
+
+pub(crate) fn load_parameter(
+    registers: &mut Vec<Value>,
+    dst: u16,
+    slot: u16,
+) -> Result<(), VmError> {
+    crate::execute::write_value(registers, dst, current().get(slot));
+    Ok(())
+}
+
 pub(crate) fn slot_cell(slot: u16) -> Rc<RefCell<Value>> {
     current().slot_cell(slot)
 }
