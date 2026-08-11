@@ -36,6 +36,7 @@ pub(crate) fn weak_property(key: &str) -> Value {
 
 pub(crate) fn set_new(arguments: &[Value]) -> Value {
     let values = match arguments.first() {
+        Some(Value::Undefined) => VecDeque::new(),
         Some(Value::Array(values)) => values.iter().cloned().collect(),
         _ => VecDeque::new(),
     };
@@ -46,12 +47,85 @@ pub(crate) fn set_new(arguments: &[Value]) -> Value {
     }))
 }
 
-pub(crate) fn weak_set_new(arguments: &[Value]) -> Value {
-    let mut value = set_new(arguments);
-    if let Value::Set(data) = &mut value {
-        Rc::make_mut(data).weak = true;
+pub(crate) fn weak_set_new(arguments: &[Value]) -> Result<Value, VmError> {
+    let values = match arguments.first() {
+        None => VecDeque::new(),
+        Some(Value::Array(values)) => values.iter().cloned().collect(),
+        Some(_) => {
+            return Err(crate::value::error::throw_type_error(
+                "WeakSet iterator is not callable",
+            ))
+        }
+    };
+    if values.iter().any(|value| !is_weakly_holdable(value)) {
+        return Err(crate::value::error::throw_type_error(
+            "Invalid value used in weak set",
+        ));
     }
-    value
+    Ok(Value::Set(Rc::new(SetData {
+        weak: true,
+        values,
+        prototype: std::cell::RefCell::new(None),
+    })))
+}
+
+pub(crate) fn weak_set_add(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
+    require_weak(receiver)?;
+    require_object(arguments.first())?;
+    set_add(receiver, arguments)
+}
+
+pub(crate) fn weak_set_has(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
+    require_weak(receiver)?;
+    if let Some(value) = arguments.first() {
+        if !is_weakly_holdable(value) {
+            return Ok(Value::Boolean(false));
+        }
+    }
+    set_has(receiver, arguments)
+}
+
+pub(crate) fn weak_set_delete(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
+    require_weak(receiver)?;
+    if let Some(value) = arguments.first() {
+        if !is_weakly_holdable(value) {
+            return Ok(Value::Boolean(false));
+        }
+    }
+    set_delete(receiver, arguments)
+}
+
+fn require_weak(receiver: Option<&Value>) -> Result<(), VmError> {
+    if matches!(receiver, Some(Value::Set(data)) if data.weak) {
+        Ok(())
+    } else {
+        Err(crate::value::error::throw_type_error(
+            "WeakSet method called on incompatible receiver",
+        ))
+    }
+}
+
+fn require_object(value: Option<&Value>) -> Result<(), VmError> {
+    if value.is_some_and(is_weakly_holdable) {
+        Ok(())
+    } else {
+        Err(crate::value::error::throw_type_error(
+            "Invalid value used in weak set",
+        ))
+    }
+}
+
+fn is_weakly_holdable(value: &Value) -> bool {
+    crate::value::is_object(value) || matches!(value, Value::String(text) if text.contains('\0'))
 }
 
 pub(crate) fn set_add(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
