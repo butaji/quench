@@ -171,6 +171,11 @@ pub(crate) fn property(values: &crate::value::ArrayData, key: &str) -> Value {
     Value::Builtin(method)
 }
 
+pub(crate) fn array_index(key: &str) -> Option<u32> {
+    let index = key.parse::<u32>().ok()?;
+    (index != u32::MAX && index.to_string() == key).then_some(index)
+}
+
 fn direct_property(values: &crate::value::ArrayData, key: &str) -> Option<Value> {
     if let Some(value) = values.property(key) {
         return Some(value);
@@ -215,9 +220,8 @@ fn sort(receiver: Option<&Value>) -> Value {
 }
 
 fn index(values: &crate::value::ArrayData, key: &str) -> Value {
-    key.parse::<usize>()
-        .ok()
-        .and_then(|index| values.get_index(index))
+    array_index(key)
+        .and_then(|index| values.get_index(index as usize))
         .unwrap_or(Value::Undefined)
 }
 
@@ -428,14 +432,25 @@ fn end_index(value: &Value, length: isize) -> isize {
 }
 
 fn strict_equal(left: &Value, right: &Value) -> bool {
-    left == right
+    crate::equality::strict_equal(left, right)
 }
 
 fn same_value_zero(left: &Value, right: &Value) -> bool {
-    match (left, right) {
-        (Value::Number(left), Value::Number(right)) => {
-            (left.is_nan() && right.is_nan()) || left == right
-        }
-        _ => left == right,
+    crate::builtins::same_value_zero(left, right)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::index_of;
+    use crate::value::{ArrayData, ObjectData, Value};
+    use std::rc::Rc;
+
+    #[test]
+    fn index_of_does_not_use_structural_object_equality() {
+        let left = Value::Object(Rc::new(ObjectData::new(Vec::new())));
+        let right = Value::Object(Rc::new(ObjectData::new(Vec::new())));
+        let array = Value::Array(Rc::new(ArrayData::new(vec![left.clone()])));
+        let result = index_of(Some(&array), &[right]);
+        assert_eq!(result, Value::Number(-1.0));
     }
 }
