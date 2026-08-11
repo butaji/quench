@@ -121,12 +121,13 @@ fn assign_array(
         }
     }
     if let Some(rest) = &pattern.rest {
-        let value = iterator_rest(iterator, &mut body, next);
-        assign_target(&rest.target, value, &mut body, facts, next, locals)?;
+        assign_rest_target(&rest.target, iterator, &mut body, facts, next, locals)?;
     }
     ops.push(Op::IteratorBinding { iterator, body });
     Some(())
 }
+
+include!("binding_pattern_rest.rs");
 
 fn assign_prepared(
     target: &AssignmentTargetMaybeDefault<'_>,
