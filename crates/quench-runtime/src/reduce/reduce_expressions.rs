@@ -425,7 +425,11 @@ fn reduce_literal_atom(
 ) -> u16 {
     let dst = *next_register;
     *next_register = next_register.saturating_add(1);
-    facts.record_fact(value.span, crate::facts::Fact::Proven(value.fact.clone()));
+    facts.record_fact_in_context(
+        value.span,
+        crate::facts::ReduceContext::Value,
+        crate::facts::Fact::Proven(value.fact.clone()),
+    );
     facts.constants.push(crate::facts::ConstantFact {
         value: value.fact.clone(),
     });
