@@ -134,16 +134,26 @@ fn emit_array(ops: &mut Vec<Op>, dst: u16, elements: Vec<ArrayElement>) {
 }
 
 pub(crate) fn property(values: &crate::value::ArrayData, key: &str) -> Value {
-    if let Some(value) = array_prototype_override(key) {
+    if let Some(value) = direct_property(values, key) {
         return value;
     }
-    if let Some(value) = direct_property(values, key) {
+    if let Some(value) = own_index(values, key) {
+        return value;
+    }
+    if let Some(value) = array_prototype_override(key) {
         return value;
     }
     if iterator_symbol_removed(key) {
         return Value::Undefined;
     }
-    let method = match key {
+    let Some(method) = array_method(key) else {
+        return index(values, key);
+    };
+    Value::Builtin(method)
+}
+
+fn array_method(key: &str) -> Option<crate::ops::Builtin> {
+    Some(match key {
         "forEach" => crate::ops::Builtin::ArrayForEach,
         "map" => crate::ops::Builtin::ArrayMap,
         "filter" => crate::ops::Builtin::ArrayFilter,
@@ -169,9 +179,12 @@ pub(crate) fn property(values: &crate::value::ArrayData, key: &str) -> Value {
         "Symbol.iterator" => crate::ops::Builtin::ArrayIterator,
         "hasOwnProperty" => crate::ops::Builtin::ObjectHasOwnProperty,
         "propertyIsEnumerable" => crate::ops::Builtin::ObjectPropertyIsEnumerable,
-        _ => return index(values, key),
-    };
-    Value::Builtin(method)
+        _ => return None,
+    })
+}
+
+fn own_index(values: &crate::value::ArrayData, key: &str) -> Option<Value> {
+    array_index(key).and_then(|index| values.get_index(index as usize))
 }
 
 fn array_prototype_override(key: &str) -> Option<Value> {
