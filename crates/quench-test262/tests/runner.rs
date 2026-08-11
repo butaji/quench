@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use quench_test262::{Test262Host, Test262Runner, TestMetadata, TestOutcome};
+use quench_test262::{HarnessCache, Test262Host, Test262Runner, TestMetadata, TestOutcome};
 
 struct Probe;
 
@@ -19,14 +19,14 @@ impl Test262Host for Probe {
 
     fn run_harnessed_script(
         &mut self,
-        _harness: &[String],
+        _harness: &[&str],
         source: &str,
         _strict: bool,
     ) -> Result<(), String> {
         self.run_script(source)
     }
 
-    fn run_harnessed_module(&mut self, _harness: &[String], source: &str) -> Result<(), String> {
+    fn run_harnessed_module(&mut self, _harness: &[&str], source: &str) -> Result<(), String> {
         self.run_module_script(source)
     }
 }
@@ -44,14 +44,14 @@ impl Test262Host for NegativeProbe {
 
     fn run_harnessed_script(
         &mut self,
-        _harness: &[String],
+        _harness: &[&str],
         source: &str,
         _strict: bool,
     ) -> Result<(), String> {
         self.run_script(source)
     }
 
-    fn run_harnessed_module(&mut self, _harness: &[String], source: &str) -> Result<(), String> {
+    fn run_harnessed_module(&mut self, _harness: &[&str], source: &str) -> Result<(), String> {
         self.run_module_script(source)
     }
 }
@@ -73,7 +73,7 @@ impl Test262Host for HarnessProbe {
 
     fn run_harnessed_script(
         &mut self,
-        harness: &[String],
+        harness: &[&str],
         _source: &str,
         strict: bool,
     ) -> Result<(), String> {
@@ -84,7 +84,7 @@ impl Test262Host for HarnessProbe {
         }
     }
 
-    fn run_harnessed_module(&mut self, _harness: &[String], source: &str) -> Result<(), String> {
+    fn run_harnessed_module(&mut self, _harness: &[&str], source: &str) -> Result<(), String> {
         self.run_module_script(source)
     }
 }
@@ -106,13 +106,13 @@ impl Test262Host for CaptureHost {
 
     fn run_harnessed_script(
         &mut self,
-        harness: &[String],
+        harness: &[&str],
         source: &str,
         strict: bool,
     ) -> Result<(), String> {
         let observed = harness
             .iter()
-            .map(String::as_str)
+            .copied()
             .chain(strict.then_some("\"use strict\";"))
             .chain(std::iter::once(source))
             .collect::<Vec<_>>()
@@ -121,7 +121,7 @@ impl Test262Host for CaptureHost {
         Ok(())
     }
 
-    fn run_harnessed_module(&mut self, harness: &[String], source: &str) -> Result<(), String> {
+    fn run_harnessed_module(&mut self, harness: &[&str], source: &str) -> Result<(), String> {
         self.run_harnessed_script(harness, source, true)
     }
 }
@@ -289,6 +289,28 @@ fn runner_loads_file_and_composes_its_harness() {
         .run_file_with_harness(&path, |name| Ok(format!("// {name} harness")))
         .unwrap();
     assert_eq!(outcome, TestOutcome::Pass);
+}
+
+#[test]
+fn cached_harness_preserves_declared_composition_order() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness_root = dir.path().join("harness");
+    std::fs::create_dir(&harness_root).unwrap();
+    std::fs::write(harness_root.join("assert.js"), "// assert").unwrap();
+    std::fs::write(harness_root.join("sta.js"), "// sta").unwrap();
+    std::fs::write(harness_root.join("helper.js"), "// helper").unwrap();
+    let source = "/*---\nflags: [onlyStrict]\nincludes: [helper.js]\n---*/\npass";
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let mut runner = Test262Runner::new(CaptureHost { seen: seen.clone() });
+    let mut cache = HarnessCache::new(harness_root);
+
+    assert_eq!(
+        runner.run_test_with_cache(source, &mut cache).unwrap(),
+        TestOutcome::Pass
+    );
+
+    let composed = seen.lock().unwrap().pop().unwrap();
+    assert!(composed.starts_with("// assert\n// sta\n// helper\n\"use strict\";\n/*---"));
 }
 
 #[test]
