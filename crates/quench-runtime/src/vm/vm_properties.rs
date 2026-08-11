@@ -80,7 +80,7 @@ fn map_property(data: &crate::value::MapData, key: &str) -> Value {
         });
     }
     if key == "size" && !data.weak {
-        return Value::Number(data.keys.len() as f64);
+        return Value::Number(data.keys.borrow().len() as f64);
     }
     if data.weak {
         crate::collections::map::weak_property(key)
