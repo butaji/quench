@@ -9,6 +9,42 @@ pub enum Fact<T> {
     Unknown,
 }
 
+#[derive(Debug, PartialEq)]
+pub struct SpanFacts<T> {
+    entries: Vec<(Span, Fact<T>)>,
+}
+
+impl<T> Default for SpanFacts<T> {
+    fn default() -> Self {
+        Self {
+            entries: Vec::new(),
+        }
+    }
+}
+
+impl<T: Clone> SpanFacts<T> {
+    pub fn insert(&mut self, span: Span, fact: Fact<T>) {
+        if let Some((_, stored)) = self.entries.iter_mut().find(|(key, _)| *key == span) {
+            *stored = fact;
+        } else {
+            self.entries.push((span, fact));
+        }
+    }
+
+    pub fn query(&self, span: Span) -> Fact<T> {
+        self.entries
+            .iter()
+            .find_map(|(key, fact)| (*key == span).then(|| fact.clone()))
+            .unwrap_or(Fact::Unknown)
+    }
+
+    pub fn merge(&mut self, other: Self) {
+        for (span, fact) in other.entries {
+            self.insert(span, fact);
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Guard {
     PlainObject,
@@ -28,6 +64,7 @@ impl<T> Fact<T> {
 #[derive(Debug, Default, PartialEq)]
 pub struct ProgramDb {
     pub constants: Vec<ConstantFact>,
+    pub(crate) span_facts: SpanFacts<Constant>,
     pub scope_count: usize,
     pub symbol_count: usize,
     pub(crate) private_names: Vec<(Span, PrivateNameId)>,
@@ -39,6 +76,14 @@ pub struct ProgramDb {
 }
 
 impl ProgramDb {
+    pub(crate) fn record_fact(&mut self, span: Span, fact: Fact<Constant>) {
+        self.span_facts.insert(span, fact);
+    }
+
+    pub fn query_fact(&self, span: Span) -> Fact<Constant> {
+        self.span_facts.query(span)
+    }
+
     pub fn insert_private_name(&mut self, span: Span, id: PrivateNameId) {
         if let Some((_, stored)) = self.private_names.iter_mut().find(|(key, _)| *key == span) {
             *stored = id;
