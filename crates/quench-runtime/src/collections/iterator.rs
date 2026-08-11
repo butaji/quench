@@ -1,6 +1,24 @@
 use crate::value::{IteratorData, IteratorState, Value};
 use std::{cell::RefCell, rc::Rc};
 
+#[path = "iterator_typed.rs"]
+mod iterator_typed;
+#[path = "iterator_values.rs"]
+mod iterator_values;
+pub(crate) use iterator_values::{
+    from_map, from_map_keys, from_map_values, from_set, make, next, property,
+};
+
+fn make_protocol(iterator: Value, next: Value) -> Value {
+    Value::Iterator(Rc::new(IteratorData {
+        state: RefCell::new(IteratorState::Protocol {
+            iterator,
+            next,
+            done: false,
+        }),
+    }))
+}
+
 pub(crate) fn execute(
     registers: &mut Vec<Value>,
     op: &crate::ops::Op,
@@ -60,8 +78,10 @@ fn close_target(record: &Value) -> Result<Option<Value>, crate::execute::VmError
     let state = data.state.borrow();
     match &*state {
         IteratorState::Native { done: true, .. }
+        | IteratorState::Set { done: true, .. }
         | IteratorState::Protocol { done: true, .. }
         | IteratorState::Native { .. } => Ok(None),
+        IteratorState::Set { .. } => Ok(None),
         IteratorState::Protocol {
             iterator: Value::Generator(_),
             ..
@@ -255,6 +275,7 @@ pub fn delegate_next(
             } => {
                 return Ok(native_delegation_step(values, index, done));
             }
+            IteratorState::Set { .. } => return Ok(DelegationResult::Done(Value::Undefined)),
             IteratorState::Protocol {
                 iterator,
                 next,
@@ -330,7 +351,7 @@ fn delegation_target(
     };
     let iterator = match &*data.state.borrow() {
         IteratorState::Protocol { iterator, .. } => Some(iterator.clone()),
-        IteratorState::Native { .. } => None,
+        IteratorState::Native { .. } | IteratorState::Set { .. } => None,
     };
     Ok(iterator.map(|iterator| (data.as_ref(), iterator)))
 }
@@ -377,6 +398,9 @@ pub(crate) fn step_value(value: &Value) -> Result<Option<Value>, crate::execute:
                 index,
                 done,
             } => return Ok(native_step(values, index, done)),
+            IteratorState::Set { data, index, done } => {
+                return Ok(set_step(data, index, done));
+            }
             IteratorState::Protocol {
                 iterator,
                 next,
@@ -400,6 +424,19 @@ fn native_step(values: &[Value], index: &mut usize, done: &mut bool) -> Option<V
     *done = value.is_none();
     value
 }
+
+fn set_step(data: &crate::value::SetData, index: &mut usize, done: &mut bool) -> Option<Value> {
+    if *done {
+        return None;
+    }
+    let value = data.values.borrow().get(*index).cloned();
+    if value.is_none() {
+        *done = true;
+    } else {
+        *index += 1;
+    }
+    value
+}
 fn protocol_result(
     data: &IteratorData,
     result: Value,
@@ -416,7 +453,9 @@ fn protocol_result(
 }
 fn mark_done(data: &IteratorData) {
     match &mut *data.state.borrow_mut() {
-        IteratorState::Native { done, .. } | IteratorState::Protocol { done, .. } => *done = true,
+        IteratorState::Native { done, .. }
+        | IteratorState::Set { done, .. }
+        | IteratorState::Protocol { done, .. } => *done = true,
     }
 }
 fn call(callee: &Value, receiver: &Value) -> Result<Value, crate::execute::VmError> {
@@ -437,63 +476,11 @@ fn iterable_values(value: Value) -> Result<Vec<Value>, crate::execute::VmError> 
         Value::Array(values) => Ok(values.snapshot()),
         Value::String(value) if !crate::conversion::is_symbol_string(&value) => Ok(value
             .chars()
-            .map(|character| Value::String(character.to_string()))
+            .map(|c| Value::String(c.to_string()))
             .collect()),
-        value => typed_values(value),
+        value => iterator_typed::typed_values(value),
     }
 }
-macro_rules! number_values {
-    ($data:expr) => {
-        collect_typed(
-            $data.logical_len(),
-            $data.buffer.byte_length() < $data.byte_offset,
-            |index| $data.get(index).map(|value| Value::Number(value.into())),
-        )
-    };
-}
-macro_rules! bigint_values {
-    ($data:expr) => {
-        collect_typed(
-            $data.logical_len(),
-            $data.buffer.byte_length() < $data.byte_offset,
-            |index| {
-                $data
-                    .get(index)
-                    .map(|value| Value::BigInt(value.to_string()))
-            },
-        )
-    };
-}
-fn typed_values(value: Value) -> Result<Vec<Value>, crate::execute::VmError> {
-    match value {
-        Value::Float64Array(data) => number_values!(data),
-        Value::Float32Array(data) => number_values!(data),
-        Value::Int8Array(data) => number_values!(data),
-        Value::Int16Array(data) => number_values!(data),
-        Value::Int32Array(data) => number_values!(data),
-        Value::Uint8Array(data) => number_values!(data),
-        Value::Uint8ClampedArray(data) => number_values!(data),
-        Value::Uint16Array(data) => number_values!(data),
-        Value::Uint32Array(data) => number_values!(data),
-        Value::BigInt64Array(data) => bigint_values!(data),
-        Value::BigUint64Array(data) => bigint_values!(data),
-        _ => Err(not_iterable()),
-    }
-}
-fn collect_typed(
-    length: usize,
-    out_of_bounds: bool,
-    mut get: impl FnMut(usize) -> Option<Value>,
-) -> Result<Vec<Value>, crate::execute::VmError> {
-    if out_of_bounds {
-        return Err(not_iterable());
-    }
-    (0..length)
-        .map(|index| get(index).ok_or_else(not_iterable))
-        .collect()
-}
-fn not_iterable() -> crate::execute::VmError {
+pub(super) fn not_iterable() -> crate::execute::VmError {
     crate::value::error::throw_type_error("value is not iterable")
 }
-
-include!("iterator_values.rs");
