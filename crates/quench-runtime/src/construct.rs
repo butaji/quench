@@ -91,7 +91,7 @@ fn construct_with_new_target(
     match target {
         Value::Builtin(builtin) => {
             let value = construct_builtin(*builtin, arguments)?;
-            Ok(with_new_target_prototype(value, new_target))
+            Ok(with_new_target_prototype(value, target, new_target))
         }
         Value::Function(function) => construct_function(function, new_target, arguments),
         Value::BoundFunction(bound) => construct_bound(bound, target, arguments),
@@ -99,7 +99,10 @@ fn construct_with_new_target(
     }
 }
 
-fn with_new_target_prototype(value: Value, new_target: &Value) -> Value {
+fn with_new_target_prototype(value: Value, target: &Value, new_target: &Value) -> Value {
+    if crate::builtins::same_value(Some(target), Some(new_target)) {
+        return value;
+    }
     let prototype = crate::execute::get_property(new_target, "prototype");
     if crate::value::is_object(&prototype) {
         crate::builtins::set_property(value, "\0prototype", prototype)
