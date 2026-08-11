@@ -171,6 +171,7 @@ impl MapData {
 /// Set value storage.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SetData {
+    pub(crate) weak: bool,
     pub values: VecDeque<Value>,
     pub(crate) prototype: RefCell<Option<Value>>,
 }

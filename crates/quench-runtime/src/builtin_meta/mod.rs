@@ -24,6 +24,9 @@ pub mod symbol;
 ///
 /// Returns `None` for builtins that are not constructors.
 pub fn constructor_name(builtin: Builtin) -> Option<&'static str> {
+    if let Some(name) = collection_constructor_name(builtin) {
+        return Some(name);
+    }
     match builtin {
         Builtin::Array => Some("Array"),
         Builtin::Boolean => Some("Boolean"),
@@ -56,10 +59,6 @@ pub fn constructor_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::EvalError => Some("EvalError"),
         Builtin::URIError => Some("URIError"),
         Builtin::AggregateError => Some("AggregateError"),
-        Builtin::Map => Some("Map"),
-        Builtin::Set => Some("Set"),
-        Builtin::WeakMap => Some("WeakMap"),
-        Builtin::SharedArrayBuffer => Some("SharedArrayBuffer"),
         _ => None,
     }
 }
@@ -94,6 +93,7 @@ pub fn prototype(builtin: Builtin) -> Option<Builtin> {
         Builtin::Set => Some(Builtin::SetPrototype),
         Builtin::WeakMap => Some(Builtin::WeakMapPrototype),
         Builtin::SharedArrayBuffer => Some(Builtin::SharedArrayBufferPrototype),
+        Builtin::WeakSet => Some(Builtin::WeakSetPrototype),
         Builtin::Error => Some(Builtin::ErrorPrototype),
         Builtin::RangeError => Some(Builtin::ErrorPrototype),
         Builtin::ReferenceError => Some(Builtin::ErrorPrototype),
@@ -110,6 +110,9 @@ pub fn prototype(builtin: Builtin) -> Option<Builtin> {
 ///
 /// Returns `None` for builtins that are not constructors or have no defined length.
 pub fn constructor_length(builtin: Builtin) -> Option<f64> {
+    if let Some(length) = collection_constructor_length(builtin) {
+        return Some(length);
+    }
     match builtin {
         Builtin::Array => Some(1.0),
         Builtin::Boolean => Some(1.0),
@@ -142,9 +145,24 @@ pub fn constructor_length(builtin: Builtin) -> Option<f64> {
         Builtin::EvalError => Some(1.0),
         Builtin::URIError => Some(1.0),
         Builtin::AggregateError => Some(1.0),
-        Builtin::Map => Some(0.0),
-        Builtin::Set => Some(0.0),
-        Builtin::WeakMap => Some(0.0),
+        _ => None,
+    }
+}
+
+fn collection_constructor_name(builtin: Builtin) -> Option<&'static str> {
+    match builtin {
+        Builtin::Map => Some("Map"),
+        Builtin::Set => Some("Set"),
+        Builtin::WeakMap => Some("WeakMap"),
+        Builtin::SharedArrayBuffer => Some("SharedArrayBuffer"),
+        Builtin::WeakSet => Some("WeakSet"),
+        _ => None,
+    }
+}
+
+fn collection_constructor_length(builtin: Builtin) -> Option<f64> {
+    match builtin {
+        Builtin::Map | Builtin::Set | Builtin::WeakMap | Builtin::WeakSet => Some(0.0),
         Builtin::SharedArrayBuffer => Some(1.0),
         _ => None,
     }

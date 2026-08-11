@@ -63,6 +63,13 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
             _ => None,
         },
         (WeakMap, "prototype") => Some(Value::Builtin(WeakMapPrototype)),
+        (WeakSetPrototype, "constructor") => Some(Value::Builtin(WeakSet)),
+        (WeakSetPrototype, "Symbol.toStringTag") => Some(Value::String("WeakSet".into())),
+        (WeakSetPrototype, k) => match crate::collections::set::weak_property(k) {
+            Value::Builtin(value) => Some(Value::Builtin(value)),
+            _ => None,
+        },
+        (WeakSet, "prototype") => Some(Value::Builtin(WeakSetPrototype)),
         (DatePrototype, k) => crate::builtin_meta::date::date_prop(k).map(Value::Builtin),
         _ => builtin_method(builtin, key).map(Value::Builtin),
     }
