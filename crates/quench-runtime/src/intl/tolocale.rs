@@ -207,6 +207,7 @@ pub(crate) mod value {
             Value::BindingCell(value) => type_of(&value.borrow()),
             Value::Undefined => "undefined",
             Value::Null => "object",
+            Value::Proxy(proxy) => type_of(&proxy.target),
             value if object_value(value) => "object",
             Value::Boolean(_) => "boolean",
             Value::Number(_) => "number",
@@ -219,8 +220,7 @@ pub(crate) mod value {
             Value::Builtin(builtin) => builtin_type(*builtin),
             Value::Function(_) | Value::BoundFunction(_) => "function",
             Value::BigInt(_) => "bigint",
-            Value::Proxy(_)
-            | Value::Promise(_)
+            Value::Promise(_)
             | Value::Map(_)
             | Value::Set(_)
             | Value::Iterator(_)
