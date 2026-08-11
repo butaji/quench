@@ -228,12 +228,12 @@ fn host_capability_property(value: &Value, capability: HostCapabilityRef, key: &
 }
 
 fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
+    if builtin != Builtin::FunctionPrototype && matches!(key, "apply" | "call" | "bind") {
+        return bind_function_property(value, key);
+    }
     let property = builtin_property(builtin, key);
     if matches!(key, "prototype" | "constructor") {
         return property;
-    }
-    if builtin != Builtin::FunctionPrototype && matches!(key, "apply" | "call" | "bind") {
-        return bind_method(value, property);
     }
     property
 }

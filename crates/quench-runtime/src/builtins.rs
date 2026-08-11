@@ -319,6 +319,9 @@ pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
     if let Some(result) = crate::typed_array_ops::set_property(&target, key, &value) {
         return result.unwrap_or(target);
     }
+    if let Some(result) = set_prototype_slot(&target, key, value.clone()) {
+        return result;
+    }
     match target {
         Value::Object(properties)
             if descriptor_flag_in(&properties, key, "writable") == Some(false) =>
@@ -330,29 +333,38 @@ pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
             Value::Array(values)
         }
         Value::Array(values) => set_array_property(values, key, value),
-        Value::ArrayBuffer(buffer) if key == "\0prototype" => {
-            buffer.set_prototype(value);
-            Value::ArrayBuffer(buffer)
-        }
-        Value::DataView(view) if key == "\0prototype" => {
-            view.set_prototype(value);
-            Value::DataView(view)
-        }
-        Value::Map(data) if key == "\0prototype" => {
-            data.set_prototype(value);
-            Value::Map(data)
-        }
-        Value::Set(data) if key == "\0prototype" => {
-            data.set_prototype(value);
-            Value::Set(data)
-        }
-        Value::Promise(data) if key == "\0prototype" => {
-            data.set_prototype(value);
-            Value::Promise(data)
-        }
         Value::Function(function) => set_function_property(function, key, value),
         other => other,
     }
+}
+
+fn set_prototype_slot(target: &Value, key: &str, value: Value) -> Option<Value> {
+    if key != "\0prototype" {
+        return None;
+    }
+    Some(match target {
+        Value::ArrayBuffer(buffer) => {
+            buffer.set_prototype(value);
+            Value::ArrayBuffer(buffer.clone())
+        }
+        Value::DataView(view) => {
+            view.set_prototype(value);
+            Value::DataView(view.clone())
+        }
+        Value::Map(data) => {
+            data.set_prototype(value);
+            Value::Map(data.clone())
+        }
+        Value::Set(data) => {
+            data.set_prototype(value);
+            Value::Set(data.clone())
+        }
+        Value::Promise(data) => {
+            data.set_prototype(value);
+            Value::Promise(data.clone())
+        }
+        _ => return None,
+    })
 }
 
 pub(crate) fn define_property(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
@@ -446,7 +458,6 @@ fn set_function_property(
 }
 
 include!("builtins/function_name.rs");
-
 /// Implement `Object.prototype.toString` using the receiver's [[Class]].
 pub(crate) fn prototype_to_string(receiver: Option<&Value>) -> Value {
     let tag = match receiver {
@@ -485,6 +496,5 @@ pub(crate) fn prototype_to_string(receiver: Option<&Value>) -> Value {
     };
     Value::String(format!("[object {tag}]"))
 }
-
 include!("builtins_prototype.rs");
 include!("builtins_value_string.rs");
