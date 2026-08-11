@@ -32,7 +32,23 @@ pub(crate) fn reduce_update(
     let one = emit_one(ops, next_register);
     let updated = emit_member_update_value(ops, next_register, update, old, one);
     crate::reduce::reduce_assignments::put(place, updated, ops)?;
-    Some(if update.prefix { updated } else { old })
+    if update.prefix {
+        Some(updated)
+    } else {
+        let numeric_old = emit_numeric(ops, next_register, old);
+        Some(numeric_old)
+    }
+}
+
+fn emit_numeric(ops: &mut Vec<Op>, next_register: &mut u16, src: u16) -> u16 {
+    let dst = *next_register;
+    *next_register = next_register.saturating_add(1);
+    ops.push(Op::Unary {
+        dst,
+        operator: crate::ops::UnaryOp::ToNumeric,
+        src,
+    });
+    dst
 }
 
 fn emit_one(ops: &mut Vec<Op>, next_register: &mut u16) -> u16 {
@@ -65,8 +81,8 @@ fn emit_member_update_value(
 
 fn update_operator(operator: oxc::syntax::operator::UpdateOperator) -> crate::ops::BinaryOp {
     match operator {
-        oxc::syntax::operator::UpdateOperator::Increment => crate::ops::BinaryOp::Add,
-        oxc::syntax::operator::UpdateOperator::Decrement => crate::ops::BinaryOp::Subtract,
+        oxc::syntax::operator::UpdateOperator::Increment => crate::ops::BinaryOp::NumericAdd,
+        oxc::syntax::operator::UpdateOperator::Decrement => crate::ops::BinaryOp::NumericSubtract,
     }
 }
 
