@@ -44,7 +44,7 @@ pub(crate) fn reduce_literal(expression: &Expression<'_>) -> Option<Literal> {
 }
 
 /// Decimal string of a BigInt literal, normalizing all supported radices.
-fn bigint_value(bigint: &oxc::ast::ast::BigIntLiteral<'_>) -> Option<String> {
+pub(crate) fn bigint_value(bigint: &oxc::ast::ast::BigIntLiteral<'_>) -> Option<String> {
     let raw = bigint.raw.as_str().trim_end_matches('n').replace('_', "");
     let (radix, digits) = match raw.as_bytes() {
         [b'0', b'x' | b'X', digits @ ..] => (16, digits),

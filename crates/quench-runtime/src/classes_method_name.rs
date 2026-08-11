@@ -35,6 +35,7 @@ fn method_key(key: &PropertyKey<'_>) -> Option<String> {
         PropertyKey::PrivateIdentifier(key) => Some(format!("#{}", key.name)),
         PropertyKey::StringLiteral(key) => Some(key.value.to_string()),
         PropertyKey::NumericLiteral(key) => Some(crate::conversion::number_to_string(key.value)),
+        PropertyKey::BigIntLiteral(key) => crate::literal::bigint_value(key),
         _ => None,
     }
 }
