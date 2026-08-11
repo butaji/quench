@@ -153,10 +153,8 @@ fn construct_builtin(
         crate::ops::Builtin::String => construct_string(arguments),
         crate::ops::Builtin::Promise => construct_promise(arguments),
         crate::ops::Builtin::Proxy => crate::proxy::proxy_new(arguments),
-        crate::ops::Builtin::Map | crate::ops::Builtin::Set => {
-            crate::collections::execute_builtin(builtin, None, arguments)
-                .unwrap_or_else(|| Err(crate::vm::not_callable()))
-        }
+        crate::ops::Builtin::Map => Ok(crate::collections::map::map_new(arguments)),
+        crate::ops::Builtin::Set => Ok(crate::collections::set::set_new(arguments)),
         crate::ops::Builtin::WeakMap => crate::collections::map::weak_map_new(arguments),
         crate::ops::Builtin::WeakSet => crate::collections::set::weak_set_new(arguments),
         crate::ops::Builtin::WeakRef => construct_weak_ref(arguments),
