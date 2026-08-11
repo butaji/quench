@@ -309,6 +309,8 @@ fn builtin_method2(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Object, "getPrototypeOf") => Some(ObjectGetPrototypeOf),
         (Object, "is") => Some(ObjectIs),
         (Object, "setPrototypeOf") => Some(ObjectSetPrototypeOf),
+        (Map, "prototype") => Some(MapPrototype),
+        (Set, "prototype") => Some(SetPrototype),
         (FunctionPrototype, "toString") => Some(FunctionPrototypeToString),
         (FunctionPrototype, "valueOf") => Some(FunctionPrototypeValueOf),
         (RegExpPrototype, "toString") => Some(RegExpPrototypeToString),
@@ -474,7 +476,6 @@ fn typed_array_name(builtin: Builtin) -> Option<&'static str> {
         _ => return None,
     })
 }
-
 fn generator_name(builtin: Builtin) -> Option<&'static str> {
     Some(match builtin {
         Builtin::GeneratorNext => "next",
@@ -483,7 +484,6 @@ fn generator_name(builtin: Builtin) -> Option<&'static str> {
         _ => return None,
     })
 }
-
 fn error_name(builtin: Builtin) -> Option<&'static str> {
     use Builtin::*;
     Some(match builtin {
