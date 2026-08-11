@@ -435,10 +435,10 @@ fn data_view_length(builtin: Builtin) -> Option<f64> {
 
 pub(crate) fn builtin_name(builtin: Builtin) -> &'static str {
     use Builtin::*;
-    if let Some(name) = crate::builtin_meta::methods::function_name(builtin) {
+    if let Some(name) = crate::builtin_meta::methods::short_name(builtin) {
         return name;
     }
-    if let Some(name) = crate::builtin_meta::methods::short_name(builtin) {
+    if let Some(name) = crate::builtin_meta::methods::function_name(builtin) {
         return name;
     }
     if let Some(name) = data_view_name(builtin) {
