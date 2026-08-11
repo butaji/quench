@@ -478,10 +478,10 @@ fn number_property(_value: f64, key: &str) -> Value {
     }
 }
 
-fn boolean_property(value: bool, key: &str) -> Value {
+fn boolean_property(_value: bool, key: &str) -> Value {
     match key {
         "toString" => Value::Builtin(Builtin::NumberToString),
-        "valueOf" => Value::Boolean(value),
+        "valueOf" => Value::Builtin(Builtin::BooleanValueOf),
         _ => Value::Undefined,
     }
 }

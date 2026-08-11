@@ -470,6 +470,7 @@ fn is_object_special(builtin: Builtin) -> bool {
 }
 
 include!("vm_host.rs");
+include!("vm_boolean_value.rs");
 include!("vm_builtins.rs");
 include!("vm_properties.rs");
 include!("vm_dispatch.rs");
