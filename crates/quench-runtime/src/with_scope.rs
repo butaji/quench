@@ -75,14 +75,62 @@ pub(crate) fn execute_name(registers: &mut Vec<Value>, op: &Op) -> Result<(), Vm
     }
 }
 
+pub(crate) fn execute_delete_name(
+    registers: &mut Vec<Value>,
+    dst: u16,
+    key: &str,
+    strict: bool,
+) -> Result<(), VmError> {
+    let deleted = if matches!(key, "NaN" | "Infinity" | "undefined") {
+        false
+    } else {
+        match delete_from_with_objects(key)? {
+            Some(value) => value,
+            None => delete_from_global(key).unwrap_or(true),
+        }
+    };
+    if !deleted && strict {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot delete non-configurable property",
+        ));
+    }
+    crate::execute::write_value(registers, dst, Value::Boolean(deleted));
+    Ok(())
+}
+
+fn delete_from_with_objects(key: &str) -> Result<Option<bool>, VmError> {
+    let objects = OBJECTS.with(|objects| objects.borrow().clone());
+    for (index, object) in objects.iter().enumerate().rev() {
+        if !has_property(object, key)? {
+            continue;
+        }
+        let (updated, deleted) = crate::builtins::delete_property(object.clone(), key);
+        crate::locals::replace_value(object, &updated);
+        OBJECTS.with(|objects| objects.borrow_mut()[index] = updated);
+        return Ok(Some(deleted));
+    }
+    Ok(None)
+}
+
+fn delete_from_global(key: &str) -> Option<bool> {
+    let global = crate::vm::current_global_object();
+    if !has_property(&global, key).ok()? {
+        return Some(true);
+    }
+    let (updated, deleted) = crate::builtins::delete_property(global.clone(), key);
+    crate::vm::replace_global_object(&global, &updated);
+    Some(deleted)
+}
+
 fn resolve_name(registers: &mut Vec<Value>, dst: u16, key: &str) -> Result<(), VmError> {
     let global = crate::vm::current_global_object();
-    let binding = resolve_binding(key)?.or_else(|| crate::locals::resolve_name(key));
-    let value = match binding {
+    let binding = resolve_binding(key)?;
+    let bound = binding.is_some() || crate::locals::has_name(key);
+    let value = match binding.or_else(|| crate::locals::resolve_name(key)) {
         Some(value) => value,
         None => crate::execute::get_property_result(&global, key)?,
     };
-    if matches!(value, Value::Undefined) && !has_property(&global, key)? {
+    if matches!(value, Value::Undefined) && !bound && !has_property(&global, key)? {
         return Err(crate::value::error::throw_reference_error(&format!(
             "{key} is not defined"
         )));
@@ -93,6 +141,11 @@ fn resolve_name(registers: &mut Vec<Value>, dst: u16, key: &str) -> Result<(), V
 
 fn set_name(registers: &mut Vec<Value>, key: &str, src: u16, strict: bool) -> Result<(), VmError> {
     let value = crate::execute::read_register(registers, src)?;
+    if crate::locals::is_immutable_name(key) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot assign to immutable binding",
+        ));
+    }
     if set_if_bound(key, &value)? {
         return Ok(());
     }

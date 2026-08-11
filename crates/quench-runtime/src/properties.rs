@@ -256,6 +256,14 @@ pub(crate) fn execute_delete_property(
         return Err(crate::execute::VmError::MissingReturn);
     };
     let target = crate::execute::read_register(registers, *object)?.clone();
+    if matches!(
+        target,
+        crate::value::Value::Null | crate::value::Value::Undefined
+    ) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot delete a property of null or undefined",
+        ));
+    }
     let key = dynamic_property_key(&crate::execute::read_register(registers, *key)?)?;
     let (result, deleted) = crate::builtins::delete_property(target.clone(), &key);
     if !deleted && *strict {
