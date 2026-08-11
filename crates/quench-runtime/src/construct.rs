@@ -157,7 +157,7 @@ fn construct_builtin(
             crate::collections::execute_builtin(builtin, None, arguments)
                 .unwrap_or_else(|| Err(crate::vm::not_callable()))
         }
-        crate::ops::Builtin::WeakMap => Ok(crate::collections::map::weak_map_new(arguments)),
+        crate::ops::Builtin::WeakMap => crate::collections::map::weak_map_new(arguments),
         crate::ops::Builtin::WeakSet => crate::collections::set::weak_set_new(arguments),
         crate::ops::Builtin::WeakRef => construct_weak_ref(arguments),
         crate::ops::Builtin::Date => crate::date::execute(builtin, None, arguments)

@@ -61,12 +61,51 @@ pub(crate) fn map_new(arguments: &[Value]) -> Value {
     Value::Map(Rc::new(data))
 }
 
-pub(crate) fn weak_map_new(arguments: &[Value]) -> Value {
-    let mut value = map_new(arguments);
-    if let Value::Map(data) = &mut value {
-        Rc::make_mut(data).weak = true;
+pub(crate) fn weak_map_new(arguments: &[Value]) -> Result<Value, VmError> {
+    let entries = match arguments.first() {
+        None | Some(Value::Undefined | Value::Null) => Vec::new(),
+        Some(Value::Array(entries)) => entries.iter().cloned().collect(),
+        Some(_) => {
+            return Err(crate::value::error::throw_type_error(
+                "WeakMap iterator is not callable",
+            ))
+        }
+    };
+    let set = Value::Map(Rc::new(MapData {
+        weak: true,
+        keys: VecDeque::new(),
+        values: Vec::new(),
+        prototype: std::cell::RefCell::new(None),
+    }));
+    if entries.is_empty() {
+        return Ok(set);
     }
-    value
+    populate_weak_map(set, entries)
+}
+
+fn populate_weak_map(map: Value, entries: Vec<Value>) -> Result<Value, VmError> {
+    let setter =
+        crate::execute::get_property_result(&Value::Builtin(Builtin::WeakMapPrototype), "set")?;
+    if !crate::conversion::is_callable(&setter) {
+        return Err(crate::value::error::throw_type_error(
+            "WeakMap.prototype.set is not callable",
+        ));
+    }
+    let mut map = map;
+    for entry in entries {
+        let Value::Array(pair) = entry else {
+            return Err(crate::value::error::throw_type_error(
+                "Iterator value is not an entry object",
+            ));
+        };
+        let key = pair.first().cloned().unwrap_or(Value::Undefined);
+        let value = pair.get(1).cloned().unwrap_or(Value::Undefined);
+        let result = crate::functions::execute_target(&setter, &map, &[key, value])?;
+        if matches!(result, Value::Map(_)) {
+            map = result;
+        }
+    }
+    Ok(map)
 }
 
 pub(crate) fn weak_map_get_or_insert(

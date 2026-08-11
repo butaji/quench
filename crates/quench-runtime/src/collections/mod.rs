@@ -29,7 +29,7 @@ pub(crate) fn execute_builtin(
         MapKeys => Some(iterator::from_map_keys(receiver)),
         MapValues => Some(iterator::from_map_values(receiver)),
         SetIterator => Some(iterator::from_set(receiver)),
-        WeakMap => Some(Ok(map::weak_map_new(arguments))),
+        WeakMap => Some(map::weak_map_new(arguments)),
         WeakMapSet => Some(map::weak_map_set(receiver, arguments)),
         WeakMapGet => Some(map::weak_map_get(receiver, arguments)),
         WeakMapHas => Some(map::weak_map_has(receiver, arguments)),
