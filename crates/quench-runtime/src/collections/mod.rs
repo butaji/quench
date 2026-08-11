@@ -19,11 +19,11 @@ pub(crate) fn execute_builtin(
         return Some(result);
     }
     match builtin {
-        Map => Some(constructor_receiver(receiver).map(|_| map::map_new(arguments))),
+        Map => Some(constructor_receiver(receiver).and_then(|_| map::map_new(arguments))),
         MapGroupBy => Some(map::map_group_by(arguments)),
         MapGetOrInsert => Some(map::map_get_or_insert(receiver, arguments)),
         MapGetOrInsertComputed => Some(map::map_get_or_insert_computed(receiver, arguments)),
-        Set => Some(constructor_receiver(receiver).map(|_| set::set_new(arguments))),
+        Set => Some(constructor_receiver(receiver).and_then(|_| set::set_new(arguments))),
         MapSet => Some(map::map_set(receiver, arguments)),
         MapGet => Some(map::map_get(receiver, arguments)),
         MapHas => Some(map::map_has(receiver, arguments)),
