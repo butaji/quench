@@ -302,6 +302,7 @@ pub enum Builtin {
     IntlDisplayNamesPrototype,
     Proxy,
     ProxyRevocable,
+    ProxyRevoke,
     ReflectGet,
     ReflectSet,
     ReflectHas,

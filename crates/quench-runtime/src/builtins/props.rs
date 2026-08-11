@@ -72,6 +72,9 @@ fn builtin_method(builtin: Builtin, key: &str) -> Option<Builtin> {
     if builtin == ArrayBuffer && key == "prototype" {
         return Some(ArrayBufferPrototype);
     }
+    if builtin == Proxy && key == "revocable" {
+        return Some(ProxyRevocable);
+    }
     if builtin == StringPrototype {
         return crate::strings::property_method(key);
     }
@@ -83,7 +86,6 @@ fn builtin_method(builtin: Builtin, key: &str) -> Option<Builtin> {
     }
     builtin_method_core(builtin, key)
 }
-
 fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
     use Builtin::*;
     if let Some(method) = builtin_method_prefix(builtin, key) {
@@ -152,7 +154,6 @@ fn specialized_method(builtin: Builtin, key: &str) -> Option<Builtin> {
             .flatten()
     })
 }
-
 fn reflect_method(key: &str) -> Option<Builtin> {
     use Builtin::*;
     Some(match key {
@@ -172,7 +173,6 @@ fn reflect_method(key: &str) -> Option<Builtin> {
         _ => return None,
     })
 }
-
 fn typed_array_property(builtin: Builtin, key: &str) -> Option<Builtin> {
     typed_array_constructor_property(builtin, key).or_else(|| {
         (is_typed_array_prototype(builtin) && key == "fill").then_some(Builtin::TypedArrayFill)
