@@ -25,7 +25,7 @@ impl Test262Host for RuntimeHost {
 
     fn run_harnessed_script(
         &mut self,
-        harness: &[String],
+        harness: &[&str],
         source: &str,
         strict: bool,
     ) -> Result<(), String> {
@@ -41,7 +41,7 @@ impl Test262Host for RuntimeHost {
         execute_program(&program)
     }
 
-    fn run_harnessed_module(&mut self, harness: &[String], source: &str) -> Result<(), String> {
+    fn run_harnessed_module(&mut self, harness: &[&str], source: &str) -> Result<(), String> {
         let program =
             reduce_module_with_harness(harness, source).map_err(|errors| errors.join("; "))?;
         execute_program(&program)

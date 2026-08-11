@@ -194,7 +194,7 @@ fn run_worker(
             if counter.load(Ordering::Relaxed) >= limit {
                 break;
             }
-            let outcome = runner.run_file_with_harness(path, |name| harness.load(name));
+            let outcome = runner.run_file_with_cache(path, &mut harness);
             match outcome {
                 Ok(TestOutcome::Pass) => report.passed += 1,
                 Ok(TestOutcome::Fail { reason }) | Err(reason) => {
