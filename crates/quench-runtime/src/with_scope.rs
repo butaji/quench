@@ -103,7 +103,7 @@ pub(crate) fn execute_delete_name(
 fn delete_from_with_objects(key: &str) -> Result<Option<bool>, VmError> {
     let objects = OBJECTS.with(|objects| objects.borrow().clone());
     for (index, object) in objects.iter().enumerate().rev() {
-        if !has_property(object, key)? {
+        if !has_property(object, key)? || is_unscopable(object, key)? {
             continue;
         }
         let (updated, deleted) = crate::builtins::delete_property(object.clone(), key);
@@ -194,7 +194,7 @@ pub(crate) fn resolve_binding(key: &str) -> Result<Option<Value>, VmError> {
 pub(crate) fn binding_target(key: &str) -> Result<Option<Value>, VmError> {
     let objects = OBJECTS.with(|objects| objects.borrow().clone());
     for object in objects.iter().rev() {
-        if has_property(object, key)? {
+        if has_property(object, key)? && !is_unscopable(object, key)? {
             return Ok(Some(object.clone()));
         }
     }
@@ -204,13 +204,22 @@ pub(crate) fn binding_target(key: &str) -> Result<Option<Value>, VmError> {
 pub(crate) fn set_if_bound(key: &str, value: &Value) -> Result<bool, VmError> {
     let objects = OBJECTS.with(|objects| objects.borrow().clone());
     for (index, object) in objects.iter().enumerate().rev() {
-        if has_property(object, key)? {
+        if has_property(object, key)? && !is_unscopable(object, key)? {
             let updated = crate::proxy::proxy_set(object, key, value, None)?;
             OBJECTS.with(|objects| objects.borrow_mut()[index] = updated);
             return Ok(true);
         }
     }
     Ok(false)
+}
+
+fn is_unscopable(object: &Value, key: &str) -> Result<bool, VmError> {
+    let unscopables = crate::execute::get_property_result(object, "Symbol.unscopables\0")?;
+    if matches!(unscopables, Value::Undefined | Value::Null) {
+        return Ok(false);
+    }
+    let blocked = crate::execute::get_property_result(&unscopables, key)?;
+    Ok(crate::execute::is_truthy(&blocked))
 }
 
 pub(crate) fn has_property(value: &Value, key: &str) -> Result<bool, VmError> {
