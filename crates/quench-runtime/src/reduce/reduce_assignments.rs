@@ -68,12 +68,12 @@ pub fn reduce_assignment(
     Some(value)
 }
 
-fn infer_assignment_name(
+pub(crate) fn infer_assignment_name(
     assignment: &oxc::ast::ast::AssignmentExpression<'_>,
     value: u16,
     ops: &mut Vec<Op>,
 ) {
-    if assignment.operator != AssignmentOperator::Assign
+    if assignment.operator != AssignmentOperator::Assign && !assignment.operator.is_logical()
         || !crate::binding_patterns::anonymous_function_definition(&assignment.right)
     {
         return;
