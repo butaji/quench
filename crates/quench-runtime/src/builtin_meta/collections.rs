@@ -19,6 +19,7 @@ pub fn collections_property(builtin: Builtin, key: &str) -> Option<Value> {
         (SetPrototype, "forEach") => Some(Value::Builtin(SetForEach)),
         (SetPrototype, "keys") => Some(Value::Builtin(SetIterator)),
         (SetPrototype, "values") => Some(Value::Builtin(SetIterator)),
+        (SetPrototype, "Symbol.iterator") => Some(Value::Builtin(SetIterator)),
         (SetPrototype, "difference") => Some(Value::Builtin(SetDifference)),
         (SetPrototype, "intersection") => Some(Value::Builtin(SetIntersection)),
         (SetPrototype, "symmetricDifference") => Some(Value::Builtin(SetSymmetricDifference)),
