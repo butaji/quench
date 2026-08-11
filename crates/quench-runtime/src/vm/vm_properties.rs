@@ -151,7 +151,6 @@ fn function_property(function: &crate::value::FunctionValue, key: &str) -> Value
         .map(|prototype| get_property(&prototype, key));
     inherited.unwrap_or_else(|| function_prototype_property(key))
 }
-
 fn function_prototype_property(key: &str) -> Value {
     let value = builtin_property(Builtin::FunctionPrototype, key);
     if matches!(value, Value::Undefined) {
@@ -257,7 +256,6 @@ fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
     }
     property
 }
-
 fn bind_function_property(value: &Value, key: &str) -> Value {
     let builtin = match key {
         "apply" => Builtin::FunctionApply,
@@ -267,7 +265,6 @@ fn bind_function_property(value: &Value, key: &str) -> Value {
     };
     bind_method(value, Value::Builtin(builtin))
 }
-
 fn bound_function_property(
     value: &Value,
     bound: &crate::value::BoundFunctionValue,
@@ -275,13 +272,20 @@ fn bound_function_property(
 ) -> Value {
     if matches!(key, "apply" | "call" | "bind") {
         bind_function_property(value, key)
+    } else if key == "length" && !realm::is_intrinsic(bound) {
+        match &bound.target {
+            Value::Builtin(builtin) => crate::builtins::props::callable(*builtin, key)
+                .unwrap_or(Value::Number(0.0)),
+            target => get_property(target, key),
+        }
+    } else if key == "name" && !realm::is_intrinsic(bound) {
+        Value::String(String::new())
     } else if realm::is_intrinsic(bound) {
         get_property(&bound.target, key)
     } else {
         Value::Undefined
     }
 }
-
 fn bind_method(receiver: &Value, property: Value) -> Value {
     let Value::Builtin(builtin) = property else {
         return property;
@@ -292,7 +296,6 @@ fn bind_method(receiver: &Value, property: Value) -> Value {
         arguments: Vec::new(),
     }))
 }
-
 fn promise_property(value: &Value, key: &str) -> Value {
     let Some(builtin @ (Builtin::PromiseThen | Builtin::PromiseCatch | Builtin::PromiseFinally)) =
         (match crate::builtins::property(Builtin::PromisePrototype, key) {
@@ -308,7 +311,6 @@ fn promise_property(value: &Value, key: &str) -> Value {
         arguments: Vec::new(),
     }))
 }
-
 fn array_buffer_property(buffer: &crate::value::ArrayBufferData, key: &str) -> Value {
     match key {
         "byteLength" => Value::Number(buffer.byte_length() as f64),

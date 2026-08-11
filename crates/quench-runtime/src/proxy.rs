@@ -251,7 +251,8 @@ fn is_constructible(value: &Value) -> bool {
         Value::Function(function) => {
             !function.is_async && matches!(function.kind, FunctionKind::Ordinary)
         }
-        Value::BoundFunction(_) | Value::Proxy(_) => true,
+        Value::BoundFunction(bound) => is_constructible(&bound.target),
+        Value::Proxy(_) => true,
         Value::Builtin(builtin) => crate::builtin_meta::constructor_name(*builtin).is_some(),
         _ => false,
     }
