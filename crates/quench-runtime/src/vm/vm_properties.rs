@@ -81,6 +81,9 @@ fn primitive_prototype_property(value: &Value, key: &str) -> Value {
         Value::String(value) if !crate::conversion::is_symbol_string(value) => {
             Some(Value::Builtin(Builtin::StringPrototype))
         }
+        Value::String(value) if crate::conversion::is_symbol_string(value) => {
+            Some(Value::Builtin(Builtin::SymbolPrototype))
+        }
         Value::BigInt(_) => Some(Value::Builtin(Builtin::BigIntPrototype)),
         _ => None,
     };
@@ -92,6 +95,7 @@ fn primitive_prototype_property(value: &Value, key: &str) -> Value {
             Value::Number(_) => Some(Builtin::Number),
             Value::Boolean(_) => Some(Builtin::Boolean),
             Value::String(value) if !crate::conversion::is_symbol_string(value) => Some(Builtin::String),
+            Value::String(value) if crate::conversion::is_symbol_string(value) => Some(Builtin::Symbol),
             Value::BigInt(_) => Some(Builtin::BigInt),
             _ => None,
         };
