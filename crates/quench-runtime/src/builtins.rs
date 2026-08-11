@@ -491,14 +491,4 @@ pub(crate) fn function_prototype_to_string(receiver: Option<&Value>) -> Value {
 pub(crate) fn function_prototype_value_of(receiver: Option<&Value>) -> Value {
     prototype_value_of(receiver)
 }
-fn value_to_string(value: &Value) -> String {
-    use Value::*;
-    match value {
-        String(value) => value.clone(),
-        Number(value) => value.to_string(),
-        Boolean(value) => value.to_string(),
-        Null => "null".to_string(),
-        Undefined => "undefined".to_string(),
-        _ => "[object Object]".to_string(),
-    }
-}
+include!("builtins_value_string.rs");
