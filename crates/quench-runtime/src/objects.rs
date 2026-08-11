@@ -38,6 +38,16 @@ fn reduce_property(
             let key = reduce_key(property, ops, facts, next, locals)?;
             let value =
                 crate::reduce::reduce_expression(&property.value, ops, facts, next, locals)?;
+            if !property.computed
+                && property.kind == PropertyKind::Init
+                && property_key(&property.key).as_deref() == Some("__proto__")
+            {
+                ops.push(Op::SetPrototype {
+                    object,
+                    prototype: value,
+                });
+                return Some(());
+            }
             ops.push(Op::DefineProperty {
                 object,
                 key,

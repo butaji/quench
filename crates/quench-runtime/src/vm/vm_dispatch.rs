@@ -3,6 +3,11 @@ fn run_op(
     op: &Op,
     _context: &VmContext,
 ) -> Result<Option<crate::completion::Completion>, VmError> {
+    if is_global_declaration_op(op) {
+        crate::vm::begin_global_declaration_batch();
+    } else {
+        crate::vm::flush_global_declaration_batch(registers);
+    }
     if let Some(result) = run_simple_op(registers, op)? {
         return Ok(result.map(crate::completion::Completion::Return));
     }
@@ -12,57 +17,24 @@ fn run_op(
     run_dispatch_op(registers, op).map(|value| value.map(crate::completion::Completion::Return))
 }
 
-fn run_simple_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Option<Value>>, VmError> {
-    use Op::*;
-    if run_local_op(registers, op)? {
-        return Ok(Some(None));
-    }
-    if run_property_op(registers, op)? {
-        return Ok(Some(None));
-    }
-    if run_global_declaration_op(registers, op)? {
-        return Ok(Some(None));
-    }
-    match op {
-        Const { dst, value } => write_value(registers, *dst, value.into()),
-        MakeArray { .. } | BuildArray { .. } => run_make_array(registers, op)?,
-        MakeObject { .. } => run_make_object(registers, op)?,
-        MakeBuiltin { .. } => run_make_builtin(registers, op),
-        RequireObjectCoercible { .. }
-        | GetIterator { .. }
-        | IteratorStep { .. }
-        | IteratorRest { .. } => crate::collections::iterator::execute(registers, op)?,
-        ValidateClassHeritage { .. } => run_class_heritage(registers, op)?,
-        AppendInstanceField(_) => crate::classes::append_instance_field(registers, op)?,
-        DeleteProperty { .. } => run_delete_property(registers, op)?,
-        MakeFunction { .. } | MakeFunctionWithKind { .. } => {
-            crate::functions::write_op(registers, op)
-        }
-        Call { .. } => run_call(registers, op)?,
-        Eval { .. } => run_eval(registers, op)?,
-        DeclareEvalBinding { name, slot } => crate::locals::alias_name(name, *slot),
-        ParameterEnd => {}
-        Unary { dst, operator, src } => {
-            vm_arithmetic::execute_unary(registers, *dst, *operator, *src)?
-        }
-        Binary { .. } => run_binary(registers, op)?,
-        _ => return Ok(None),
-    }
-    Ok(Some(None))
-}
+include!("run_simple_op.rs");
 
 fn run_global_declaration_op(registers: &mut Vec<Value>, op: &Op) -> Result<bool, VmError> {
-    if !matches!(
+    if !is_global_declaration_op(op) {
+        return Ok(false);
+    }
+    crate::global_environment::execute(registers, op)?;
+    Ok(true)
+}
+
+fn is_global_declaration_op(op: &Op) -> bool {
+    matches!(
         op,
         Op::CheckGlobalFunction { .. }
             | Op::CheckGlobalVar { .. }
             | Op::CreateGlobalFunction { .. }
             | Op::CreateGlobalVar { .. }
-    ) {
-        return Ok(false);
-    }
-    crate::global_environment::execute(registers, op)?;
-    Ok(true)
+    )
 }
 
 fn run_eval(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
@@ -71,6 +43,7 @@ fn run_eval(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
         source,
         strict,
         global,
+        direct,
         bindings,
         forbidden_var_names,
     } = op
@@ -79,12 +52,15 @@ fn run_eval(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
     };
     crate::reflect::execute_eval(
         registers,
-        *dst,
-        *source,
-        *strict,
-        *global,
-        bindings,
-        forbidden_var_names,
+        crate::reflect::EvalExecution {
+            dst: *dst,
+            source: *source,
+            strict: *strict,
+            global: *global,
+            direct: *direct,
+            bindings,
+            forbidden_var_names,
+        },
     )
 }
 
@@ -101,6 +77,7 @@ fn run_property_op(registers: &mut Vec<Value>, op: &Op) -> Result<bool, VmError>
             | HasPropertyDynamic { .. }
             | ToPropertyKey { .. }
             | SetProperty { .. }
+            | SetPrototype { .. }
             | SetPrivate { .. }
             | DefinePrivate { .. }
             | SetPropertyDynamic { .. }
@@ -132,6 +109,9 @@ fn run_local_op(registers: &mut Vec<Value>, op: &Op) -> Result<bool, VmError> {
     use Op::*;
     match op {
         StoreLocal { slot, src } => crate::locals::store(registers, *slot, *src)?,
+        LoadCurrentGlobal { dst } => {
+            write_value(registers, *dst, crate::vm::current_global_object())
+        }
         MarkUninitialized { slot } => crate::locals::mark_uninitialized(*slot),
         DeleteEvalBinding { dst, name, slot } => write_value(
             registers,
@@ -321,6 +301,7 @@ fn run_get_set_property(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmErr
         SetProperty { .. } | SetPropertyDynamic { .. } => {
             crate::properties::execute_set_property(registers, op)?
         }
+        SetPrototype { .. } => crate::properties::execute_set_prototype(registers, op)?,
         SetSuperProperty { .. } | SetSuperPropertyDynamic { .. } => {
             crate::super_scope::execute_set(registers, op)?
         }
