@@ -86,10 +86,7 @@ fn builtin_method(builtin: Builtin, key: &str) -> Option<Builtin> {
 
 fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
     use Builtin::*;
-    if let HostCapability(kind) = builtin {
-        return host_capability_method(kind, key);
-    }
-    if let Some(method) = specialized_method(builtin, key) {
+    if let Some(method) = builtin_method_prefix(builtin, key) {
         return Some(method);
     }
     match (builtin, key) {
@@ -123,6 +120,29 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
         (RegExpPrototype, "exec") => Some(RegExpExec),
         _ => builtin_method2(builtin, key),
     }
+}
+
+fn builtin_method_prefix(builtin: Builtin, key: &str) -> Option<Builtin> {
+    if let Builtin::HostCapability(kind) = builtin {
+        return host_capability_method(kind, key);
+    }
+    specialized_method(builtin, key).or_else(|| error_prototype(builtin, key))
+}
+
+fn error_prototype(builtin: Builtin, key: &str) -> Option<Builtin> {
+    (key == "prototype"
+        && matches!(
+            builtin,
+            Builtin::Error
+                | Builtin::RangeError
+                | Builtin::ReferenceError
+                | Builtin::SyntaxError
+                | Builtin::EvalError
+                | Builtin::URIError
+                | Builtin::AggregateError
+                | Builtin::TypeError
+        ))
+    .then_some(Builtin::ErrorPrototype)
 }
 
 fn specialized_method(builtin: Builtin, key: &str) -> Option<Builtin> {
