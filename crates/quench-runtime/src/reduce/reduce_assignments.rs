@@ -241,16 +241,20 @@ fn computed_place(
 }
 
 pub(crate) fn prepare_get(place: &mut Place, ops: &mut Vec<Op>, next: &mut u16) {
-    let key = match place {
+    let (object, key) = match place {
         Place::Property {
+            object,
             key: PlaceKey::Dynamic(key),
             ..
-        }
-        | Place::Super {
+        } => (Some(*object), key),
+        Place::Super {
             key: PlaceKey::Dynamic(key),
-        } => key,
+        } => (None, key),
         _ => return,
     };
+    if let Some(object) = object {
+        ops.push(Op::RequireObjectCoercible { src: object });
+    }
     let dst = take_register(next);
     ops.push(Op::ToPropertyKey { dst, src: *key });
     *key = dst;
