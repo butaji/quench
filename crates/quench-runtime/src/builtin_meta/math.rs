@@ -35,7 +35,7 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
 pub const fn fn_len(b: Builtin) -> Option<f64> {
     match b {
         Builtin::MathAtan2 | Builtin::MathImul => Some(2.0),
-        _ => Some(1.0),
+        _ => None,
     }
 }
 

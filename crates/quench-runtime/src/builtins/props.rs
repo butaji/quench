@@ -411,6 +411,7 @@ fn builtin_length(builtin: Builtin) -> f64 {
         Uint32Array => 3.0,
         Uint8ClampedArray => 3.0,
         BigInt64Array | BigUint64Array => 3.0,
+        MapEntries | MapKeys | MapValues => 0.0,
         DataView => 3.0,
         DateNow => 0.0,
         RegExp => 2.0,
