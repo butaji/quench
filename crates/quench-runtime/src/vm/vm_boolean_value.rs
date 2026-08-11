@@ -80,6 +80,46 @@ fn string_value_of(receiver: Option<&Value>) -> Result<Value, crate::execute::Vm
     }
 }
 
+fn number_is_integer(value: Option<&Value>) -> bool {
+    let Some(Value::Number(value)) = value else {
+        return false;
+    };
+    value.is_finite() && value.fract() == 0.0
+}
+
+fn number_is_safe_integer(value: Option<&Value>) -> bool {
+    const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
+    number_is_integer(value)
+        && value.is_some_and(|value| {
+            matches!(value, Value::Number(value) if value.abs() <= MAX_SAFE_INTEGER)
+        })
+}
+
+fn number_predicate(builtin: Builtin, value: Option<&Value>) -> bool {
+    if builtin == Builtin::NumberIsSafeInteger {
+        number_is_safe_integer(value)
+    } else {
+        number_is_integer(value)
+    }
+}
+
+fn simple_prelude(
+    builtin: Builtin,
+    arguments: &[Value],
+    receiver: Option<&Value>,
+) -> Option<Result<Value, crate::execute::VmError>> {
+    if builtin == Builtin::WeakRefDeref {
+        return Some(weak_ref_deref(receiver));
+    }
+    if matches!(builtin, Builtin::NumberIsInteger | Builtin::NumberIsSafeInteger) {
+        return Some(Ok(Value::Boolean(number_predicate(builtin, arguments.first()))));
+    }
+    if is_error_constructor(builtin) {
+        return Some(Ok(crate::builtins::error(builtin, arguments)));
+    }
+    crate::functions_dynamic::construct_builtin(builtin, arguments)
+}
+
 fn wrapped_string(value: &Value) -> Result<Value, crate::execute::VmError> {
     let constructor = crate::execute::get_property_result(value, "constructor")?;
     let wrapped = crate::execute::get_property_result(value, "_value")?;
