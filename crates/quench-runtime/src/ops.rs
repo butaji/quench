@@ -215,6 +215,7 @@ pub enum Builtin {
     ArraySplice,
     TypedArrayFill,
     ObjectDefineProperty,
+    ObjectDefineProperties,
     ObjectGetOwnPropertyNames,
     ObjectGetOwnPropertySymbols,
     ObjectPropertyIsEnumerable,

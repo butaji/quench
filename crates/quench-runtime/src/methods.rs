@@ -58,17 +58,10 @@ fn execute_callee(
         Value::Builtin(crate::ops::Builtin::String) => {
             execute_builtin_with_receiver(crate::ops::Builtin::String, arguments, None)?
         }
-        Value::Builtin(crate::ops::Builtin::ObjectDefineProperty) => {
-            let target = arguments.first().cloned().unwrap_or(Value::Undefined);
-            let value = crate::builtins::define_property(arguments)?;
-            crate::properties::propagate_updated_object(
-                registers,
-                args.first().copied(),
-                &target,
-                &value,
-            );
-            value
-        }
+        Value::Builtin(
+            builtin @ (crate::ops::Builtin::ObjectDefineProperty
+            | crate::ops::Builtin::ObjectDefineProperties),
+        ) => define_object_properties(builtin, arguments, args, registers)?,
         Value::Builtin(crate::ops::Builtin::ObjectSetPrototypeOf) => {
             execute_mutating_object_builtin(arguments, args, registers)?
         }
@@ -80,6 +73,24 @@ fn execute_callee(
         Value::Undefined => return Err(crate::vm::not_callable()),
         _ => return Err(crate::vm::not_callable()),
     };
+    Ok(value)
+}
+
+fn define_object_properties(
+    builtin: crate::ops::Builtin,
+    arguments: &[Value],
+    args: &[u16],
+    registers: &mut Vec<Value>,
+) -> Result<Value, VmError> {
+    let target = arguments.first().cloned().unwrap_or(Value::Undefined);
+    let value = match builtin {
+        crate::ops::Builtin::ObjectDefineProperty => crate::builtins::define_property(arguments)?,
+        crate::ops::Builtin::ObjectDefineProperties => {
+            crate::builtins::define_properties(arguments)?
+        }
+        _ => return Err(VmError::NotCallable),
+    };
+    crate::properties::propagate_updated_object(registers, args.first().copied(), &target, &value);
     Ok(value)
 }
 
