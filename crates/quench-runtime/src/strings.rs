@@ -61,6 +61,8 @@ fn is_surrogate(code: u32) -> bool {
 pub(crate) fn property_method(key: &str) -> Option<crate::ops::Builtin> {
     match key {
         "includes" => Some(crate::ops::Builtin::StringIncludes),
+        "isWellFormed" => Some(crate::ops::Builtin::StringIsWellFormed),
+        "toWellFormed" => Some(crate::ops::Builtin::StringToWellFormed),
         "startsWith" => Some(crate::ops::Builtin::StringStartsWith),
         "endsWith" => Some(crate::ops::Builtin::StringEndsWith),
         "repeat" => Some(crate::ops::Builtin::StringRepeat),
@@ -97,6 +99,8 @@ pub(crate) fn execute_builtin(
     let result = match builtin {
         crate::ops::Builtin::StringFromCharCode => Ok(from_char_code(arguments)),
         crate::ops::Builtin::StringIncludes => Ok(includes(receiver, arguments)),
+        crate::ops::Builtin::StringIsWellFormed => is_well_formed(receiver),
+        crate::ops::Builtin::StringToWellFormed => to_well_formed(receiver),
         crate::ops::Builtin::StringStartsWith => Ok(starts_with(receiver, arguments)),
         crate::ops::Builtin::StringEndsWith => Ok(ends_with(receiver, arguments)),
         crate::ops::Builtin::StringRepeat => Ok(repeat(receiver, arguments)),
@@ -141,6 +145,38 @@ pub(crate) fn includes(receiver: Option<&Value>, arguments: &[Value]) -> Value {
         return Value::Boolean(false);
     };
     Value::Boolean(value.contains(&argument(arguments)))
+}
+
+fn is_well_formed(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
+    let value = string_receiver(receiver)?;
+    Ok(Value::Boolean(
+        value
+            .encode_utf16()
+            .all(|unit| !(0xD800..0xE000).contains(&unit)),
+    ))
+}
+
+fn to_well_formed(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
+    Ok(Value::String(string_receiver(receiver)?.to_string()))
+}
+
+fn string_receiver(receiver: Option<&Value>) -> Result<String, crate::execute::VmError> {
+    let Some(value) = receiver else {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot convert undefined to object",
+        ));
+    };
+    if matches!(value, Value::Null | Value::Undefined) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot convert nullish value to object",
+        ));
+    }
+    if crate::conversion::is_symbol(value) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot convert Symbol to string",
+        ));
+    }
+    crate::conversion::to_string(value)
 }
 
 pub(crate) fn starts_with(receiver: Option<&Value>, arguments: &[Value]) -> Value {
