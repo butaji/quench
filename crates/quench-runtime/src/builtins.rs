@@ -327,6 +327,10 @@ pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
             Value::Array(values)
         }
         Value::Array(values) => set_array_property(values, key, value),
+        Value::ArrayBuffer(buffer) if key == "\0prototype" => {
+            buffer.set_prototype(value);
+            Value::ArrayBuffer(buffer)
+        }
         Value::Function(function) => set_function_property(function, key, value),
         other => other,
     }

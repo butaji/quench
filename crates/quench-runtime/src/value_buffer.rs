@@ -4,6 +4,7 @@ pub struct ArrayBufferData {
     pub bytes: Rc<RefCell<Vec<u8>>>,
     pub detached: Rc<RefCell<bool>>,
     pub max_byte_length: Option<usize>,
+    prototype: RefCell<Option<Value>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -15,6 +16,7 @@ impl ArrayBufferData {
             bytes: Rc::new(RefCell::new(vec![0; byte_length])),
             detached: Rc::new(RefCell::new(false)),
             max_byte_length: None,
+            prototype: RefCell::new(None),
         }
     }
 
@@ -30,6 +32,14 @@ impl ArrayBufferData {
         } else {
             self.bytes.borrow().len()
         }
+    }
+
+    pub(crate) fn prototype(&self) -> Option<Value> {
+        self.prototype.borrow().clone()
+    }
+
+    pub(crate) fn set_prototype(&self, prototype: Value) {
+        self.prototype.replace(Some(prototype));
     }
 
     pub fn detach(&self) {
