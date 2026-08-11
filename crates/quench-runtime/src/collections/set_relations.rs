@@ -38,9 +38,16 @@ fn set_like_values(value: Value) -> Result<Vec<Value>, VmError> {
         return Ok(data.values.iter().cloned().collect());
     }
     let size = crate::execute::get_property_result(&value, "size")?;
-    if !matches!(size, Value::Number(number) if number.is_finite() && number >= 0.0) {
+    let size = crate::conversion::to_number(&size)?;
+    if !size.is_finite() || size < 0.0 {
         return Err(crate::value::error::throw_type_error(
             "Set-like size must be a non-negative number",
+        ));
+    }
+    let has = crate::execute::get_property_result(&value, "has")?;
+    if !crate::conversion::is_callable(&has) {
+        return Err(crate::value::error::throw_type_error(
+            "Set-like has is not callable",
         ));
     }
     let keys = crate::execute::get_property_result(&value, "keys")?;
