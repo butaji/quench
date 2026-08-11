@@ -16,6 +16,22 @@ struct Args {
 }
 
 fn main() -> ExitCode {
+    const STACK_SIZE: usize = 256 * 1024 * 1024;
+    let handle = match std::thread::Builder::new()
+        .name("run-stages-main".to_string())
+        .stack_size(STACK_SIZE)
+        .spawn(run_stages_entry)
+    {
+        Ok(handle) => handle,
+        Err(error) => return fail(error.to_string()),
+    };
+    match handle.join() {
+        Ok(code) => code,
+        Err(_) => ExitCode::from(1),
+    }
+}
+
+fn run_stages_entry() -> ExitCode {
     let args = match parse_args() {
         Ok(args) => args,
         Err(error) => return fail(error),
@@ -198,7 +214,7 @@ fn run_stages(root: &Path, stages: Vec<ResolvedStage>, args: &Args) -> ExitCode 
     let mut overall = StageReport::default();
     let mut has_failure = false;
     for stage in &stages {
-        let report = match run_single_stage(&mut runner, &mut harness, stage) {
+        let report = match run_single_stage(&mut runner, &mut harness, stage, args.max_failures) {
             Ok(report) => report,
             Err(error) => return fail(error),
         };
@@ -261,6 +277,7 @@ fn run_single_stage<H: quench_test262::Test262Host>(
     runner: &mut Test262Runner<H>,
     harness: &mut HarnessCache,
     stage: &ResolvedStage,
+    max_failures: usize,
 ) -> Result<StageReport, String> {
     let files = discover_js_files(&stage.root)?;
     if files.is_empty() {
@@ -272,7 +289,7 @@ fn run_single_stage<H: quench_test262::Test262Host>(
         );
         return Ok(StageReport::default());
     }
-    let report = runner.run_files_with_cache(files, harness)?;
+    let report = runner.run_files_with_cache_limited(files, harness, max_failures)?;
     println!(
         "stage {:>3}: {} passed {}",
         stage.id, stage.path, report.passed
