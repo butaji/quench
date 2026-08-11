@@ -6,7 +6,7 @@ use crate::{
 
 /// The lexical capabilities visible while evaluating a class definition.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub(crate) struct PrivateEnvironment {
+pub struct PrivateEnvironment {
     names: Rc<HashMap<PrivateNameId, PrivateName>>,
 }
 
@@ -28,6 +28,12 @@ impl PrivateEnvironment {
 
 thread_local! {
     static CURRENT: RefCell<Option<PrivateEnvironment>> = const { RefCell::new(None) };
+    static SUSPENDED: RefCell<Option<PrivateEnvironment>> = const { RefCell::new(None) };
+}
+
+/// Takes the environment captured by a class body that just suspended on `yield`.
+pub(crate) fn take_suspended() -> Option<PrivateEnvironment> {
+    SUSPENDED.with(|slot| slot.take())
 }
 
 /// Restores the private environment even when class evaluation completes abruptly.
@@ -72,5 +78,9 @@ pub(crate) fn execute_scope(
         return Err(VmError::MissingReturn);
     };
     let _scope = Guard::install(names);
-    crate::execute::execute_completion_in_place(body, registers)
+    let completion = crate::execute::execute_completion_in_place(body, registers)?;
+    if matches!(completion, Completion::Yield(_)) {
+        SUSPENDED.with(|slot| *slot.borrow_mut() = Some(current()));
+    }
+    Ok(completion)
 }

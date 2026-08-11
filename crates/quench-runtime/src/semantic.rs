@@ -77,12 +77,13 @@ fn analyze_with_context(
     let semantic = SemanticBuilder::new()
         .with_check_syntax_error(true)
         .build(program);
-    let errors = semantic
+    let mut errors = semantic
         .errors
         .iter()
         .filter(|error| !context.permits(error, &semantic.semantic))
         .map(|error| format!("SyntaxError: {error}"))
         .collect::<Vec<_>>();
+    errors.extend(class_name_errors(program, &semantic.semantic));
     if !errors.is_empty() {
         return Err(errors);
     }
@@ -124,4 +125,45 @@ fn has_function_boundary(error: &OxcDiagnostic, semantic: &Semantic<'_>) -> bool
     nodes
         .ancestor_kinds(node.id())
         .any(|kind| matches!(kind, AstKind::Function(_)))
+}
+
+/// Class declarations and expressions are strict mode code, so their binding
+/// identifier cannot be a strict-reserved name, `eval`, or `arguments`; in
+/// modules `await` is reserved as well. OXC's checker decides strictness from
+/// the enclosing scope and misses the class binding itself, so check it here.
+fn class_name_errors(program: &oxc::ast::ast::Program<'_>, semantic: &Semantic<'_>) -> Vec<String> {
+    let module = program.source_type.is_module();
+    let mut errors = Vec::new();
+    for node in semantic.nodes().iter() {
+        let AstKind::Class(class) = node.kind() else {
+            continue;
+        };
+        let Some(identifier) = &class.id else {
+            continue;
+        };
+        if reserved_class_name(identifier.name.as_str(), module) {
+            errors.push(format!(
+                "SyntaxError: `{}` is not a valid class binding identifier",
+                identifier.name
+            ));
+        }
+    }
+    errors
+}
+
+fn reserved_class_name(name: &str, module: bool) -> bool {
+    matches!(
+        name,
+        "implements"
+            | "interface"
+            | "let"
+            | "package"
+            | "private"
+            | "protected"
+            | "public"
+            | "static"
+            | "yield"
+            | "eval"
+            | "arguments"
+    ) || (module && name == "await")
 }
