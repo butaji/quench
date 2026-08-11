@@ -91,6 +91,12 @@ fn builtin_method(builtin: Builtin, key: &str) -> Option<Builtin> {
     if builtin == String && key == "fromCharCode" {
         return Some(StringFromCharCode);
     }
+    if builtin == Number && key == "parseFloat" {
+        return Some(ParseFloat);
+    }
+    if builtin == Number && key == "parseInt" {
+        return Some(ParseInt);
+    }
     if builtin == DataViewPrototype {
         return data_view_method(key);
     }
@@ -425,7 +431,7 @@ fn builtin_length(builtin: Builtin) -> f64 {
         Uint8ClampedArray => 3.0,
         BigInt64Array | BigUint64Array => 3.0,
         MapEntries | MapKeys | MapValues => 0.0,
-        DataView => 3.0,
+        DataView => 1.0,
         DateNow => 0.0,
         RegExp => 2.0,
         DateParse => 1.0,
@@ -438,10 +444,10 @@ fn data_view_length(builtin: Builtin) -> Option<f64> {
     match builtin {
         DataViewGetInt8 | DataViewGetUint8 => Some(1.0),
         DataViewGetInt16 | DataViewGetUint16 | DataViewGetInt32 | DataViewGetUint32
-        | DataViewGetFloat16 | DataViewGetFloat32 | DataViewGetFloat64 => Some(2.0),
+        | DataViewGetFloat16 | DataViewGetFloat32 | DataViewGetFloat64 => Some(1.0),
         DataViewSetInt8 | DataViewSetUint8 => Some(2.0),
         DataViewSetInt16 | DataViewSetUint16 | DataViewSetInt32 | DataViewSetUint32
-        | DataViewSetFloat16 | DataViewSetFloat32 | DataViewSetFloat64 => Some(3.0),
+        | DataViewSetFloat16 | DataViewSetFloat32 | DataViewSetFloat64 => Some(2.0),
         _ => None,
     }
 }
