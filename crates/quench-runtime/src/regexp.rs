@@ -250,8 +250,54 @@ pub fn execute_builtin(
     arguments: &[Value],
 ) -> Option<Result<Value, VmError>> {
     match builtin {
+        Builtin::RegExpEscape => Some(escape(arguments)),
         Builtin::RegExpTest => Some(test(receiver, arguments)),
         Builtin::RegExpExec => Some(exec(receiver, arguments)),
+        _ => None,
+    }
+}
+
+fn escape(arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(Value::String(text)) = arguments.first() else {
+        return Err(crate::value::error::throw_type_error(
+            "RegExp.escape requires a string",
+        ));
+    };
+    let mut escaped = String::new();
+    for (index, ch) in text.chars().enumerate() {
+        escape_character(&mut escaped, ch, index == 0);
+    }
+    Ok(Value::String(escaped))
+}
+
+fn escape_character(output: &mut String, ch: char, first: bool) {
+    if first && ch.is_ascii_alphanumeric() {
+        output.push_str(&format!("\\x{:02x}", ch as u32));
+    } else if let Some(name) = escape_control(ch) {
+        output.push_str(name);
+    } else if "^$\\.*+?()[]{}|/".contains(ch) {
+        output.push('\\');
+        output.push(ch);
+    } else if ",-=<>#&!%:;@~'`\"".contains(ch) || ch == ' ' {
+        output.push_str(&format!("\\x{:02x}", ch as u32));
+    } else if ch.is_control() || ch.is_whitespace() || ch == '\u{FEFF}' {
+        if (ch as u32) <= 0xff {
+            output.push_str(&format!("\\x{:02x}", ch as u32));
+        } else {
+            output.push_str(&format!("\\u{:04x}", ch as u32));
+        }
+    } else {
+        output.push(ch);
+    }
+}
+
+fn escape_control(ch: char) -> Option<&'static str> {
+    match ch {
+        '\n' => Some("\\n"),
+        '\r' => Some("\\r"),
+        '\t' => Some("\\t"),
+        '\u{000B}' => Some("\\v"),
+        '\u{000C}' => Some("\\f"),
         _ => None,
     }
 }

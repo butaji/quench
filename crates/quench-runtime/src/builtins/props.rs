@@ -142,6 +142,7 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Date, "parse") => Some(DateParse),
         (Date, "UTC") => Some(DateUTC),
         (RegExp, "prototype") => Some(RegExpPrototype),
+        (RegExp, "escape") => Some(RegExpEscape),
         (RegExpPrototype, "test") => Some(RegExpTest),
         (RegExpPrototype, "exec") => Some(RegExpExec),
         _ => builtin_method2(builtin, key),
@@ -345,7 +346,6 @@ fn builtin_method2(builtin: Builtin, key: &str) -> Option<Builtin> {
         _ => builtin_method3(builtin, key),
     }
 }
-
 fn builtin_method3(builtin: Builtin, key: &str) -> Option<Builtin> {
     use Builtin::*;
     match (builtin, key) {

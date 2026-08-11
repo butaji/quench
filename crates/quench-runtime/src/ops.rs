@@ -213,6 +213,7 @@ pub enum Builtin {
     JsonStringify,
     ReflectConstruct,
     RegExp,
+    RegExpEscape,
     RegExpPrototype,
     RegExpTest,
     RegExpExec,
