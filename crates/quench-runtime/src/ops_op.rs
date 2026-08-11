@@ -141,6 +141,11 @@ pub enum Op {
         object: u16,
         key: String,
     },
+    OptionalGet {
+        dst: u16,
+        object: u16,
+        key: String,
+    },
     GetPrivate {
         dst: u16,
         object: u16,

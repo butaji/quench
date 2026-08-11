@@ -2,6 +2,7 @@ use crate::{facts::ProgramDb, literal::reduce_literal, ops::Op};
 use oxc::ast::ast::Expression;
 use std::collections::HashMap;
 const NON_EXTENSIBLE: &str = "\0quench:non_extensible";
+include!("properties_optional.rs");
 pub(crate) fn reduce(
     expression: &Expression<'_>,
     ops: &mut Vec<Op>,
