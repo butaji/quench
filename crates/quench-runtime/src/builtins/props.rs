@@ -245,7 +245,6 @@ fn typed_array_constructor_property(builtin: Builtin, key: &str) -> Option<Built
         _ => return None,
     })
 }
-
 fn host_capability_method(_kind: crate::ops::HostCapabilityKind, key: &str) -> Option<Builtin> {
     use crate::ops::HostCapabilityKind::*;
     let kind = match key {
@@ -314,6 +313,7 @@ fn array_method(key: &str) -> Option<Builtin> {
         "pop" => Some(ArrayPop),
         "unshift" => Some(ArrayUnshift),
         "fill" => Some(ArrayFill),
+        "copyWithin" => Some(ArrayCopyWithin),
         "splice" => Some(ArraySplice),
         _ => None,
     }
