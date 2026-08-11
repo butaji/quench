@@ -339,7 +339,6 @@ fn builtin_method3(builtin: Builtin, key: &str) -> Option<Builtin> {
         (BooleanPrototype, "toString") => Some(NumberToString),
         (ObjectPrototype, "constructor") => Some(Object),
         (ObjectPrototype, "toLocaleString") => Some(ObjectPrototypeToString),
-        #[allow(unreachable_patterns)]
         (Symbol, "prototype") => Some(SymbolPrototype),
         (SymbolPrototype, "valueOf") => Some(BoxedValueOf),
         (String, "prototype") => Some(StringPrototype),
