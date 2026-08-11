@@ -2,6 +2,7 @@
 
 pub mod map;
 pub mod set;
+include!("collections_set_methods.rs");
 
 use crate::{execute::VmError, ops::Builtin, value::Value};
 
@@ -11,6 +12,12 @@ pub(crate) fn execute_builtin(
     arguments: &[Value],
 ) -> Option<Result<Value, VmError>> {
     use Builtin::*;
+    if is_set_relation(builtin) {
+        return Some(set::set_relation(builtin, receiver, arguments));
+    }
+    if let Some(result) = execute_weak(builtin, receiver, arguments) {
+        return Some(result);
+    }
     match builtin {
         Map => Some(constructor_receiver(receiver).map(|_| map::map_new(arguments))),
         Set => Some(constructor_receiver(receiver).map(|_| set::set_new(arguments))),
@@ -25,25 +32,40 @@ pub(crate) fn execute_builtin(
         SetDelete => Some(set::set_delete(receiver, arguments)),
         SetClear => Some(set::set_clear(receiver)),
         SetForEach => Some(set::set_for_each(receiver, arguments)),
+        SetKeys => Some(iterator::from_set(receiver)),
         MapIterator | MapEntries => Some(iterator::from_map(receiver)),
         MapKeys => Some(iterator::from_map_keys(receiver)),
         MapValues => Some(iterator::from_map_values(receiver)),
         SetIterator => Some(iterator::from_set(receiver)),
-        WeakMap => Some(constructor_receiver(receiver).and_then(|_| map::weak_map_new(arguments))),
-        WeakMapSet => Some(map::weak_map_set(receiver, arguments)),
-        WeakMapGet => Some(map::weak_map_get(receiver, arguments)),
-        WeakMapHas => Some(map::weak_map_has(receiver, arguments)),
-        WeakMapDelete => Some(map::weak_map_delete(receiver, arguments)),
-        WeakMapGetOrInsert | WeakMapGetOrInsertComputed => {
-            weak_map_extended(builtin, receiver, arguments)
-        }
-        WeakSet => Some(constructor_receiver(receiver).and_then(|_| set::weak_set_new(arguments))),
-        WeakSetAdd => Some(set::weak_set_add(receiver, arguments)),
-        WeakSetHas => Some(set::weak_set_has(receiver, arguments)),
-        WeakSetDelete => Some(set::weak_set_delete(receiver, arguments)),
         IteratorNext => Some(Ok(iterator::next(receiver))),
         _ => None,
     }
+}
+
+fn execute_weak(
+    builtin: Builtin,
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Option<Result<Value, VmError>> {
+    Some(match builtin {
+        Builtin::WeakMap => {
+            constructor_receiver(receiver).and_then(|_| map::weak_map_new(arguments))
+        }
+        Builtin::WeakMapSet => map::weak_map_set(receiver, arguments),
+        Builtin::WeakMapGet => map::weak_map_get(receiver, arguments),
+        Builtin::WeakMapHas => map::weak_map_has(receiver, arguments),
+        Builtin::WeakMapDelete => map::weak_map_delete(receiver, arguments),
+        Builtin::WeakMapGetOrInsert | Builtin::WeakMapGetOrInsertComputed => {
+            weak_map_extended(builtin, receiver, arguments)?
+        }
+        Builtin::WeakSet => {
+            constructor_receiver(receiver).and_then(|_| set::weak_set_new(arguments))
+        }
+        Builtin::WeakSetAdd => set::weak_set_add(receiver, arguments),
+        Builtin::WeakSetHas => set::weak_set_has(receiver, arguments),
+        Builtin::WeakSetDelete => set::weak_set_delete(receiver, arguments),
+        _ => return None,
+    })
 }
 
 fn constructor_receiver(receiver: Option<&Value>) -> Result<(), VmError> {

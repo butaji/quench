@@ -8,6 +8,7 @@ use crate::{
     ops::Builtin,
     value::{SetData, Value},
 };
+include!("set_relations.rs");
 
 fn same_value_zero(left: &Value, right: &Value) -> bool {
     crate::builtins::same_value_zero(left, right)

@@ -5,6 +5,9 @@ use crate::{ops::Builtin, value::Value};
 /// Returns the prototype property value for Map/Set builtins.
 pub fn collections_property(builtin: Builtin, key: &str) -> Option<Value> {
     use Builtin::*;
+    if builtin == WeakSetPrototype {
+        return weak_set_property(key);
+    }
     match (builtin, key) {
         (MapPrototype, "set") => Some(Value::Builtin(MapSet)),
         (MapPrototype, "get") => Some(Value::Builtin(MapGet)),
@@ -20,6 +23,14 @@ pub fn collections_property(builtin: Builtin, key: &str) -> Option<Value> {
         (SetPrototype, "delete") => Some(Value::Builtin(SetDelete)),
         (SetPrototype, "clear") => Some(Value::Builtin(SetClear)),
         (SetPrototype, "forEach") => Some(Value::Builtin(SetForEach)),
+        (SetPrototype, "keys") => Some(Value::Builtin(SetKeys)),
+        (SetPrototype, "difference") => Some(Value::Builtin(SetDifference)),
+        (SetPrototype, "intersection") => Some(Value::Builtin(SetIntersection)),
+        (SetPrototype, "symmetricDifference") => Some(Value::Builtin(SetSymmetricDifference)),
+        (SetPrototype, "union") => Some(Value::Builtin(SetUnion)),
+        (SetPrototype, "isDisjointFrom") => Some(Value::Builtin(SetIsDisjointFrom)),
+        (SetPrototype, "isSubsetOf") => Some(Value::Builtin(SetIsSubsetOf)),
+        (SetPrototype, "isSupersetOf") => Some(Value::Builtin(SetIsSupersetOf)),
         (WeakMapPrototype, "set") => Some(Value::Builtin(WeakMapSet)),
         (WeakMapPrototype, "get") => Some(Value::Builtin(WeakMapGet)),
         (WeakMapPrototype, "has") => Some(Value::Builtin(WeakMapHas)),
@@ -28,11 +39,18 @@ pub fn collections_property(builtin: Builtin, key: &str) -> Option<Value> {
         (WeakMapPrototype, "getOrInsertComputed") => {
             Some(Value::Builtin(WeakMapGetOrInsertComputed))
         }
-        (WeakSetPrototype, "add") => Some(Value::Builtin(WeakSetAdd)),
-        (WeakSetPrototype, "has") => Some(Value::Builtin(WeakSetHas)),
-        (WeakSetPrototype, "delete") => Some(Value::Builtin(WeakSetDelete)),
-        (WeakSetPrototype, "constructor") => Some(Value::Builtin(WeakSet)),
-        (WeakSetPrototype, "Symbol.toStringTag") => Some(Value::String("WeakSet".into())),
+        _ => None,
+    }
+}
+
+fn weak_set_property(key: &str) -> Option<Value> {
+    use Builtin::*;
+    match key {
+        "add" => Some(Value::Builtin(WeakSetAdd)),
+        "has" => Some(Value::Builtin(WeakSetHas)),
+        "delete" => Some(Value::Builtin(WeakSetDelete)),
+        "constructor" => Some(Value::Builtin(WeakSet)),
+        "Symbol.toStringTag" => Some(Value::String("WeakSet".into())),
         _ => None,
     }
 }
@@ -73,7 +91,14 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         Builtin::MapClear | Builtin::MapForEach => Some(0.0),
         Builtin::MapEntries | Builtin::MapKeys | Builtin::MapValues => Some(0.0),
         Builtin::SetAdd | Builtin::SetHas | Builtin::SetDelete => Some(1.0),
-        Builtin::SetClear | Builtin::SetForEach => Some(0.0),
+        Builtin::SetClear | Builtin::SetForEach | Builtin::SetKeys => Some(0.0),
+        Builtin::SetDifference
+        | Builtin::SetIntersection
+        | Builtin::SetSymmetricDifference
+        | Builtin::SetUnion
+        | Builtin::SetIsDisjointFrom
+        | Builtin::SetIsSubsetOf
+        | Builtin::SetIsSupersetOf => Some(1.0),
         Builtin::WeakMapSet
         | Builtin::WeakMapGet
         | Builtin::WeakMapHas
