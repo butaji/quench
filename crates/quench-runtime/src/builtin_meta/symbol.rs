@@ -7,6 +7,7 @@ pub fn symbol_prop(key: &str) -> Option<Builtin> {
     use Builtin::*;
     match key {
         "iterator" => Some(SymbolIterator),
+        "unscopables" => Some(SymbolUnscopables),
         "toStringTag" => Some(SymbolToStringTag),
         "toPrimitive" => Some(SymbolToPrimitive),
         "hasInstance" => Some(SymbolHasInstance),

@@ -242,14 +242,20 @@ fn object_descriptor(properties: &[(String, Value)], key: &str) -> Option<Value>
         .map(|(_, value)| descriptor_object(value))
 }
 fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
+    if builtin == Builtin::Symbol && key == "unscopables" {
+        return super::special_property(builtin, key)
+            .map(|property| descriptor_object_with_flags(property, false, false, false));
+    }
     if let Some(descriptor) = crate::builtins::read_intrinsic_override(builtin, key) {
         return Some(public_descriptor(&descriptor));
     }
     let property =
         super::callable_property(builtin, key).or_else(|| super::special_property(builtin, key))?;
-    let writable = !matches!(key, "length" | "name" | "prototype" | "Symbol.toStringTag")
-        && builtin_property_writable(builtin, key);
-    let configurable = key != "prototype";
+    let writable = !matches!(
+        key,
+        "length" | "name" | "prototype" | "Symbol.toStringTag" | "unscopables"
+    ) && builtin_property_writable(builtin, key);
+    let configurable = !matches!(key, "prototype" | "unscopables");
     Some(descriptor_object_with_flags(
         property,
         writable,

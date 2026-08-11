@@ -3,6 +3,9 @@ use crate::{execute::VmError, value::Value};
 pub(crate) fn to_property_key(value: &Value) -> Result<String, VmError> {
     if let Value::Builtin(builtin) = value {
         if let Some(name) = crate::intl::tolocale::symbol::name(*builtin) {
+            if *builtin == crate::ops::Builtin::SymbolUnscopables {
+                return Ok(format!("{name}\0"));
+            }
             return Ok(name.to_string());
         }
     }
