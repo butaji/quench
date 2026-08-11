@@ -369,7 +369,7 @@ fn builtin_method3(builtin: Builtin, key: &str) -> Option<Builtin> {
         (String, "prototype") => Some(StringPrototype),
         (StringPrototype, "valueOf") => Some(BoxedValueOf),
         (BigInt, "prototype") => Some(BigIntPrototype),
-        (BigIntPrototype, "valueOf") => Some(BoxedValueOf),
+        (BigIntPrototype, "valueOf") => Some(BigIntValueOf),
         _ => None,
     }
 }
