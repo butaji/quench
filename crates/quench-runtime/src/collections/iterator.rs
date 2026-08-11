@@ -401,7 +401,7 @@ fn call_with_arguments(
 fn iterable_values(value: Value) -> Result<Vec<Value>, crate::execute::VmError> {
     match value {
         Value::Array(values) => Ok(values.snapshot()),
-        Value::String(value) => Ok(value
+        Value::String(value) if !crate::conversion::is_symbol_string(&value) => Ok(value
             .chars()
             .map(|character| Value::String(character.to_string()))
             .collect()),
