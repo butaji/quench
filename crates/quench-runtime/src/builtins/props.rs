@@ -353,7 +353,7 @@ fn builtin_method3(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Number, "prototype") => Some(NumberPrototype),
         (NumberPrototype, "toLocaleString") => Some(NumberToLocaleString),
         (NumberPrototype, "toString") => Some(NumberToString),
-        (NumberPrototype, "valueOf") => Some(BoxedValueOf),
+        (NumberPrototype, "valueOf") => Some(NumberValueOf),
         (NumberPrototype, "toFixed") => Some(NumberToFixed),
         (NumberPrototype, "toPrecision") => Some(NumberToPrecision),
         (NumberPrototype, "toExponential") => Some(NumberToExponential),
