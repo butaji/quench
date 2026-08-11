@@ -42,8 +42,9 @@ fn builtin_instanceof(value: &Value, constructor: &Value) -> Option<bool> {
             if properties.iter().any(|(name, _)| name == "timeValue") => true,
         (Value::Object(properties), Value::Builtin(Builtin::RegExp))
             if properties.iter().any(|(name, _)| name == "source") => true,
-        (Value::Map(_), Value::Builtin(Builtin::Map))
-        | (Value::Set(_), Value::Builtin(Builtin::Set)) => true,
+        (Value::Map(data), Value::Builtin(Builtin::Map)) if !data.weak => true,
+        (Value::Map(data), Value::Builtin(Builtin::WeakMap)) if data.weak => true,
+        (Value::Set(_), Value::Builtin(Builtin::Set)) => true,
         _ => return None,
     })
 }
@@ -133,9 +134,7 @@ fn internal_prototype(value: &Value) -> Option<Value> {
         Value::DataView(view) => view
             .prototype()
             .or_else(|| Some(Value::Builtin(Builtin::DataViewPrototype))),
-        Value::Map(data) => data
-            .prototype()
-            .or_else(|| Some(Value::Builtin(Builtin::MapPrototype))),
+        Value::Map(data) => map_prototype(data),
         Value::Set(data) => data
             .prototype()
             .or_else(|| Some(Value::Builtin(Builtin::SetPrototype))),
@@ -150,6 +149,16 @@ fn internal_prototype(value: &Value) -> Option<Value> {
         }
         _ => None,
     }
+}
+
+fn map_prototype(data: &crate::value::MapData) -> Option<Value> {
+    data.prototype().or_else(|| {
+        Some(Value::Builtin(if data.weak {
+            Builtin::WeakMapPrototype
+        } else {
+            Builtin::MapPrototype
+        }))
+    })
 }
 
 fn custom_object_prototype(value: &Value) -> Option<Value> {

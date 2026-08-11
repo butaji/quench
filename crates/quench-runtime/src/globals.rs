@@ -56,6 +56,7 @@ pub(crate) fn script_properties(ops: &mut Vec<Op>, next_register: &mut u16) -> V
         "SyntaxError",
         "EvalError",
         "URIError",
+        "WeakMap",
     ];
     names
         .into_iter()
@@ -117,6 +118,12 @@ fn typed_array_builtin(name: &str) -> Option<crate::ops::Builtin> {
 }
 
 fn builtin_core(name: &str) -> Option<crate::ops::Builtin> {
+    if let Some(builtin) = collection_builtin(name) {
+        return Some(builtin);
+    }
+    if let Some(builtin) = standard_builtin(name) {
+        return Some(builtin);
+    }
     match name {
         "Array" => Some(crate::ops::Builtin::Array),
         "ArrayBuffer" => Some(crate::ops::Builtin::ArrayBuffer),
@@ -135,8 +142,6 @@ fn builtin_core(name: &str) -> Option<crate::ops::Builtin> {
         "Symbol" => Some(crate::ops::Builtin::Symbol),
         "unescape" => Some(crate::ops::Builtin::Unescape),
         "Math" => Some(crate::ops::Builtin::Math),
-        "Map" => Some(crate::ops::Builtin::Map),
-        "Set" => Some(crate::ops::Builtin::Set),
         "Function" => Some(crate::ops::Builtin::Function),
         "TypeError" => Some(crate::ops::Builtin::TypeError),
         "Error" => Some(crate::ops::Builtin::Error),
@@ -146,6 +151,12 @@ fn builtin_core(name: &str) -> Option<crate::ops::Builtin> {
         "EvalError" => Some(crate::ops::Builtin::EvalError),
         "URIError" => Some(crate::ops::Builtin::URIError),
         "AggregateError" => Some(crate::ops::Builtin::AggregateError),
+        _ => None,
+    }
+}
+
+fn standard_builtin(name: &str) -> Option<crate::ops::Builtin> {
+    match name {
         "Date" => Some(crate::ops::Builtin::Date),
         "Promise" => Some(crate::ops::Builtin::Promise),
         "print" => Some(crate::ops::Builtin::Print),
@@ -153,6 +164,15 @@ fn builtin_core(name: &str) -> Option<crate::ops::Builtin> {
         "JSON" => Some(crate::ops::Builtin::Json),
         "RegExp" => Some(crate::ops::Builtin::RegExp),
         "Intl" => Some(crate::ops::Builtin::Intl),
+        _ => None,
+    }
+}
+
+fn collection_builtin(name: &str) -> Option<crate::ops::Builtin> {
+    match name {
+        "Map" => Some(crate::ops::Builtin::Map),
+        "Set" => Some(crate::ops::Builtin::Set),
+        "WeakMap" => Some(crate::ops::Builtin::WeakMap),
         _ => None,
     }
 }

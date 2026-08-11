@@ -20,6 +20,10 @@ pub fn collections_property(builtin: Builtin, key: &str) -> Option<Value> {
         (SetPrototype, "delete") => Some(Value::Builtin(SetDelete)),
         (SetPrototype, "clear") => Some(Value::Builtin(SetClear)),
         (SetPrototype, "forEach") => Some(Value::Builtin(SetForEach)),
+        (WeakMapPrototype, "set") => Some(Value::Builtin(WeakMapSet)),
+        (WeakMapPrototype, "get") => Some(Value::Builtin(WeakMapGet)),
+        (WeakMapPrototype, "has") => Some(Value::Builtin(WeakMapHas)),
+        (WeakMapPrototype, "delete") => Some(Value::Builtin(WeakMapDelete)),
         _ => None,
     }
 }
@@ -40,6 +44,10 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
         Builtin::SetDelete => Some("Set.prototype.delete"),
         Builtin::SetClear => Some("Set.prototype.clear"),
         Builtin::SetForEach => Some("Set.prototype.forEach"),
+        Builtin::WeakMapSet => Some("WeakMap.prototype.set"),
+        Builtin::WeakMapGet => Some("WeakMap.prototype.get"),
+        Builtin::WeakMapHas => Some("WeakMap.prototype.has"),
+        Builtin::WeakMapDelete => Some("WeakMap.prototype.delete"),
         _ => None,
     }
 }
@@ -52,6 +60,10 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         Builtin::MapEntries | Builtin::MapKeys | Builtin::MapValues => Some(0.0),
         Builtin::SetAdd | Builtin::SetHas | Builtin::SetDelete => Some(1.0),
         Builtin::SetClear | Builtin::SetForEach => Some(0.0),
+        Builtin::WeakMapSet
+        | Builtin::WeakMapGet
+        | Builtin::WeakMapHas
+        | Builtin::WeakMapDelete => Some(1.0),
         _ => None,
     }
 }
@@ -72,6 +84,10 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
         Builtin::SetDelete => Some("delete"),
         Builtin::SetClear => Some("clear"),
         Builtin::SetForEach => Some("forEach"),
+        Builtin::WeakMapSet => Some("set"),
+        Builtin::WeakMapGet => Some("get"),
+        Builtin::WeakMapHas => Some("has"),
+        Builtin::WeakMapDelete => Some("delete"),
         _ => None,
     }
 }
