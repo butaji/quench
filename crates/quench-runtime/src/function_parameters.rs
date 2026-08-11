@@ -70,6 +70,7 @@ fn reduce_prefix(
             continue;
         }
         mark_later_parameters(formal, index, captures, &mut ops);
+        mark_later_bindings(formal, index, locals, &mut ops);
         let slot = captures.saturating_add(u16::try_from(index).ok()?);
         ops.push(Op::MarkUninitialized { slot });
         let source = load_parameter(&mut ops, &mut next, slot);
@@ -98,6 +99,21 @@ fn mark_later_parameters(
             ops.push(Op::MarkUninitialized {
                 slot: captures.saturating_add(offset),
             });
+        }
+    }
+}
+
+fn mark_later_bindings(
+    formal: &FormalParameters<'_>,
+    index: usize,
+    locals: &HashMap<String, u16>,
+    ops: &mut Vec<Op>,
+) {
+    for parameter in formal.items.iter().skip(index) {
+        for name in crate::binding_patterns::names(&parameter.pattern) {
+            if let Some(slot) = locals.get(&name) {
+                ops.push(Op::MarkUninitialized { slot: *slot });
+            }
         }
     }
 }
