@@ -134,13 +134,16 @@ fn reduce_key(
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
     if property.computed {
-        return crate::reduce::reduce_expression(
+        let src = crate::reduce::reduce_expression(
             property.key.as_expression()?,
             ops,
             facts,
             next,
             locals,
-        );
+        )?;
+        let dst = take_register(next);
+        ops.push(Op::ToPropertyKey { dst, src });
+        return Some(dst);
     }
     let key = property_key(&property.key)?;
     let register = take_register(next);
