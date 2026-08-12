@@ -5,6 +5,18 @@ fn realm_default_prototype(target: &Value, new_target: &Value) -> Option<Value> 
             return crate::vm::intrinsic_for_realm(capability.realm(), builtin);
         }
     }
+    if let Value::Function(function) = new_target {
+        if let Some(Value::HostCapability(capability)) = function
+            .properties
+            .borrow()
+            .iter()
+            .rev()
+            .find_map(|(name, value)| (name == "\0realm").then(|| value.clone()))
+        {
+            let builtin = builtin_default_name(target)?;
+            return crate::vm::intrinsic_for_realm(capability.realm(), builtin);
+        }
+    }
     builtin_default_prototype(target)
 }
 
