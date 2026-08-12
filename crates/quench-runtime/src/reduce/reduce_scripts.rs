@@ -17,6 +17,7 @@ pub fn reduce_script_sources(sources: &[ScriptSource<'_>]) -> Result<ResidualPro
             source: source.source,
             source_type: SourceType::cjs(),
             strict: source.strict,
+            program_scope: true,
         })
         .collect::<Vec<_>>();
     reduce_units(&units)
@@ -32,12 +33,14 @@ pub fn reduce_module_with_harness(
             source,
             source_type: SourceType::cjs(),
             strict: false,
+            program_scope: true,
         })
         .collect::<Vec<_>>();
     units.push(SourceUnit {
         source,
         source_type: SourceType::mjs(),
         strict: true,
+        program_scope: false,
     });
     reduce_units(&units)
 }
@@ -47,11 +50,12 @@ struct SourceUnit<'a> {
     source: &'a str,
     source_type: SourceType,
     strict: bool,
+    program_scope: bool,
 }
 
 fn reduce_units(units: &[SourceUnit<'_>]) -> Result<ResidualProgram, Vec<String>> {
     let allocator = Allocator::default();
-    let mut state = StatementReducer::new(SourceType::cjs());
+    let mut state = StatementReducer::new_with_script(SourceType::cjs(), false);
     let mut totals = (0, 0);
     let mut last = None;
     let mut facts_out = ProgramDb::default();
@@ -74,11 +78,7 @@ fn reduce_units(units: &[SourceUnit<'_>]) -> Result<ResidualProgram, Vec<String>
             private_names: analysis.private_names,
             ..ProgramDb::default()
         };
-        last = state.append(
-            &parsed.program.body,
-            &mut facts,
-            unit.source_type.is_script(),
-        )?;
+        last = state.append(&parsed.program.body, &mut facts, unit.program_scope)?;
         merge_facts(&mut facts_out, facts);
     }
     finish(state, totals, last, facts_out)
