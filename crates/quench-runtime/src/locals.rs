@@ -294,6 +294,9 @@ pub(crate) fn resolve_name_or_undefined(name: &str) -> Result<Value, VmError> {
     if let Some(value) = resolve_name(name) {
         return Ok(value);
     }
+    if let Some(value) = crate::globals::immutable_value(name) {
+        return Ok(value);
+    }
     crate::execute::get_property_result(&crate::vm::current_global_object(), name)
 }
 

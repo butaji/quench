@@ -187,8 +187,12 @@ fn delete_from_global(key: &str) -> Option<bool> {
 fn resolve_name(registers: &mut Vec<Value>, dst: u16, key: &str) -> Result<(), VmError> {
     let global = crate::vm::current_global_object();
     let binding = resolve_binding(key)?;
-    let bound = binding.is_some() || crate::locals::has_name(key);
-    let value = match binding.or_else(|| crate::locals::resolve_name(key)) {
+    let immutable = crate::globals::immutable_value(key);
+    let bound = binding.is_some() || crate::locals::has_name(key) || immutable.is_some();
+    let value = match binding
+        .or_else(|| crate::locals::resolve_name(key))
+        .or(immutable)
+    {
         Some(value) => value,
         None => crate::execute::get_property_result(&global, key)?,
     };
