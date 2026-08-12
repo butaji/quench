@@ -227,13 +227,9 @@ fn resume_machine_frame(
     state: &GeneratorState,
     completion: crate::completion::Completion,
 ) -> Result<Value, VmError> {
-    let should_pop = !completion.is_suspension();
     generator
         .machine
         .borrow_mut()
         .record_completion(completion.clone());
-    if should_pop {
-        generator.machine.borrow_mut().pop_frame();
-    }
     complete_step(generator, state, completion)
 }
