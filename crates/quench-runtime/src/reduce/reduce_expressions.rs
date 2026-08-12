@@ -146,6 +146,9 @@ fn declaration_slot(
     locals: &HashMap<String, u16>,
 ) -> u16 {
     if _kind != VariableDeclarationKind::Var {
+        if let Some(slot) = locals.get(name) {
+            return *slot;
+        }
         let slot = *next_slot;
         *next_slot = next_slot.saturating_add(1);
         return slot;

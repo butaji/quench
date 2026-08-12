@@ -235,6 +235,11 @@ pub(crate) fn descriptor(
                 object_descriptor(properties, &key)
             }
         }
+        Value::ObjectAlias(alias) => alias
+            .0
+            .borrow()
+            .upgrade()
+            .and_then(|properties| object_descriptor(&properties, &key)),
         Value::Array(values) => array_descriptor(values, &key),
         Value::String(value) => string_descriptor(value, &key),
         Value::Builtin(builtin) => builtin_descriptor(*builtin, &key),

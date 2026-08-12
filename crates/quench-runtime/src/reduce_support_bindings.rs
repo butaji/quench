@@ -107,6 +107,28 @@ pub(crate) fn declared_names_in(statements: &[oxc::ast::ast::Statement<'_>]) -> 
     names
 }
 
+pub(crate) fn predeclare_lexicals(
+    statements: &[oxc::ast::ast::Statement<'_>],
+    locals: &mut HashMap<String, u16>,
+    next_slot: &mut u16,
+) {
+    for statement in statements {
+        let oxc::ast::ast::Statement::VariableDeclaration(declaration) = statement else {
+            continue;
+        };
+        if declaration.kind == oxc::ast::ast::VariableDeclarationKind::Var {
+            continue;
+        }
+        for name in declaration
+            .declarations
+            .iter()
+            .flat_map(|declarator| crate::binding_patterns::names(&declarator.id))
+        {
+            reserve(&name, locals, next_slot);
+        }
+    }
+}
+
 fn collect_declared_names(statement: &oxc::ast::ast::Statement<'_>, names: &mut Vec<String>) {
     match statement {
         oxc::ast::ast::Statement::FunctionDeclaration(function) => {
