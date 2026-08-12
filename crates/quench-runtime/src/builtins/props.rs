@@ -2,7 +2,6 @@ use crate::{ops::Builtin, value::Value};
 mod data_view_name;
 #[path = "props_number.rs"]
 mod props_number;
-use data_view_name::data_view_name;
 include!("props_promise.rs");
 pub(crate) fn lookup(builtin: Builtin, key: &str) -> Value {
     if crate::builtins::builtin_prototype_property_is_removed(builtin, key) {
@@ -141,7 +140,6 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
         _ => builtin_method2(builtin, key),
     }
 }
-
 fn builtin_method_prefix(builtin: Builtin, key: &str) -> Option<Builtin> {
     if let Builtin::HostCapability(kind) = builtin {
         return host_capability_method(kind, key);
@@ -273,6 +271,8 @@ fn data_view_method(key: &str) -> Option<Builtin> {
         "setFloat16" => Some(DataViewSetFloat16),
         "setFloat32" => Some(DataViewSetFloat32),
         "setFloat64" => Some(DataViewSetFloat64),
+        "setBigInt64" => Some(DataViewSetBigInt64),
+        "setBigUint64" => Some(DataViewSetBigUint64),
         _ => None,
     }
 }
@@ -449,6 +449,7 @@ fn data_view_length(builtin: Builtin) -> Option<f64> {
         DataViewSetInt8 | DataViewSetUint8 => Some(2.0),
         DataViewSetInt16 | DataViewSetUint16 | DataViewSetInt32 | DataViewSetUint32
         | DataViewSetFloat16 | DataViewSetFloat32 | DataViewSetFloat64 => Some(2.0),
+        DataViewSetBigInt64 | DataViewSetBigUint64 => Some(2.0),
         _ => None,
     }
 }
@@ -483,7 +484,7 @@ fn metadata_builtin_name(builtin: Builtin) -> Option<&'static str> {
     if let Some(name) = crate::builtin_meta::methods::function_name(builtin) {
         return Some(name);
     }
-    if let Some(name) = data_view_name(builtin) {
+    if let Some(name) = data_view_name::data_view_name(builtin) {
         return Some(name);
     }
     if let Some(name) = error_name(builtin) {
@@ -497,4 +498,3 @@ fn metadata_builtin_name(builtin: Builtin) -> Option<&'static str> {
     }
     crate::builtin_meta::constructor_name(builtin)
 }
-include!("props_names.rs");

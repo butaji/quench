@@ -252,6 +252,18 @@ impl DataViewData {
     ) -> Result<(), DataViewError> {
         encode::<u16, 2>(self, offset, f64_to_half(value), little_endian)
     }
+
+    pub fn set_bigint64(
+        &self, offset: usize, value: i64, little_endian: bool,
+    ) -> Result<(), DataViewError> {
+        encode::<i64, 8>(self, offset, value, little_endian)
+    }
+
+    pub fn set_biguint64(
+        &self, offset: usize, value: u64, little_endian: bool,
+    ) -> Result<(), DataViewError> {
+        encode::<u64, 8>(self, offset, value, little_endian)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
