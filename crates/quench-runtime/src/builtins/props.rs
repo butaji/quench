@@ -91,6 +91,9 @@ fn builtin_method(builtin: Builtin, key: &str) -> Option<Builtin> {
     if builtin == String && key == "fromCharCode" {
         return Some(StringFromCharCode);
     }
+    if builtin == String && key == "fromCodePoint" {
+        return Some(StringFromCodePoint);
+    }
     if builtin == Number && key == "parseFloat" {
         return Some(ParseFloat);
     }
@@ -437,20 +440,6 @@ fn builtin_length(builtin: Builtin) -> f64 {
         DateParse => 1.0,
         DateUTC => 7.0,
         _ => 0.0,
-    }
-}
-fn data_view_length(builtin: Builtin) -> Option<f64> {
-    use Builtin::*;
-    match builtin {
-        DataViewGetInt8 | DataViewGetUint8 => Some(1.0),
-        DataViewGetInt16 | DataViewGetUint16 | DataViewGetInt32 | DataViewGetUint32
-        | DataViewGetFloat16 | DataViewGetFloat32 | DataViewGetFloat64 => Some(1.0),
-        DataViewGetBigInt64 | DataViewGetBigUint64 => Some(1.0),
-        DataViewSetInt8 | DataViewSetUint8 => Some(2.0),
-        DataViewSetInt16 | DataViewSetUint16 | DataViewSetInt32 | DataViewSetUint32
-        | DataViewSetFloat16 | DataViewSetFloat32 | DataViewSetFloat64 => Some(2.0),
-        DataViewSetBigInt64 | DataViewSetBigUint64 => Some(2.0),
-        _ => None,
     }
 }
 pub(crate) fn builtin_name(builtin: Builtin) -> &'static str {

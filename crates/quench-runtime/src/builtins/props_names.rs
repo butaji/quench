@@ -39,3 +39,15 @@ fn object_prototype_method(key: &str) -> Option<crate::ops::Builtin> {
         _ => return None,
     })
 }
+fn data_view_length(builtin: crate::ops::Builtin) -> Option<f64> {
+    use crate::ops::Builtin::*;
+    match builtin {
+        DataViewGetInt8 | DataViewGetUint8 | DataViewGetInt16 | DataViewGetUint16
+        | DataViewGetInt32 | DataViewGetUint32 | DataViewGetFloat16 | DataViewGetFloat32
+        | DataViewGetFloat64 | DataViewGetBigInt64 | DataViewGetBigUint64 => Some(1.0),
+        DataViewSetInt8 | DataViewSetUint8 | DataViewSetInt16 | DataViewSetUint16
+        | DataViewSetInt32 | DataViewSetUint32 | DataViewSetFloat16 | DataViewSetFloat32
+        | DataViewSetFloat64 | DataViewSetBigInt64 | DataViewSetBigUint64 => Some(2.0),
+        _ => None,
+    }
+}
