@@ -119,15 +119,12 @@ fn resume_suspended_private_scope(
         None => crate::private_environment::Guard::install(names),
     };
     let suffix = &body[index + 1..];
-    let completion = execute_with_generator_registers(generator, |registers| {
-        crate::execute::execute_completion_in_place(suffix, registers)
+    let step = execute_with_generator_registers(generator, |registers| {
+        crate::execute::execute_completion_step_in_place(suffix, registers)
     })?;
+    let completion = step.completion;
     if matches!(completion, crate::completion::Completion::Yield(_)) {
-        let yielded = suffix
-            .iter()
-            .position(|op| matches!(op, Op::Yield { .. }))
-            .ok_or(VmError::MissingReturn)?;
-        state.nested = index + yielded + 2;
+        state.nested = index + step.next + 1;
         return Ok(Some(completion));
     }
     state.nested = 0;
