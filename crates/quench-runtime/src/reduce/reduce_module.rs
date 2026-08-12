@@ -1,7 +1,8 @@
-//! Minimum-viable reduction of ES module declarations.
+//! Reduction of ES module declarations.
 //!
-//! The reducer keeps module declaration shape, but module graph resolution and
-//! live bindings are deferred until a dedicated module runtime exists.
+//! Declarations are reduced through the ordinary statement path. Import
+//! declarations remain a hard boundary: they require a resolved module graph
+//! and are rejected until the host supplies one.
 
 use std::collections::HashMap;
 
