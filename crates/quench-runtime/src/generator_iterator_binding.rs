@@ -58,16 +58,7 @@ fn resume_after_iterator(
     range: crate::machine::CodeRange,
     completion: crate::completion::Completion,
 ) -> Result<crate::completion::Completion, VmError> {
-    if !matches!(completion, crate::completion::Completion::Normal) { return Ok(completion); }
-    let start = range.start.saturating_sub(generator.function.code.range.start) as usize;
-    let step = execute_with_generator_registers(generator, |registers| {
-        crate::vm::execute_generator_step(
-            generator.function.ops(), registers, machine_environment(generator)?, start, completion,
-        )
-    })?;
-    set_machine_pc(generator, step.pc);
-    state.suspension = step.suspension;
-    Ok(step.completion)
+    resume_generator_range(generator, state, range, completion)
 }
 
 fn set_iterator_phase(generator: &GeneratorData, phase: crate::machine::IteratorPhase) {
