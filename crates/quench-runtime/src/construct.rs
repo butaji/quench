@@ -114,13 +114,6 @@ fn with_new_target_prototype(value: Value, target: &Value, new_target: &Value) -
     })
 }
 
-fn builtin_default_prototype(target: &Value) -> Option<Value> {
-    let Value::Builtin(builtin) = target else {
-        return None;
-    };
-    crate::builtin_meta::prototype(*builtin).map(Value::Builtin)
-}
-
 fn construct_bound(
     bound: &crate::value::BoundFunctionValue,
     target: &Value,
