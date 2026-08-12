@@ -46,6 +46,14 @@ impl RegisterWindow {
             values: Vec::new(),
         }
     }
+
+    pub fn with_count(count: u16) -> Self {
+        Self {
+            base: 0,
+            count,
+            values: vec![Value::Undefined; usize::from(count)],
+        }
+    }
 }
 
 impl Default for RegisterWindow {
@@ -207,6 +215,16 @@ impl Machine {
         }
     }
 
+    pub fn with_register_count(
+        code: CodeId,
+        environment: EnvironmentRef,
+        register_count: u16,
+    ) -> Self {
+        let mut machine = Self::new(code, environment);
+        machine.registers = RegisterWindow::with_count(register_count);
+        machine
+    }
+
     pub fn step<F, E>(&mut self, input: Completion, execute: F) -> Result<Completion, E>
     where
         F: FnOnce(&mut Self) -> Result<Completion, E>,
@@ -244,7 +262,19 @@ impl Machine {
 
 #[cfg(test)]
 mod tests {
-    use super::{CodeId, EnvironmentRef, Frame, FrameStack, Machine};
+    use super::{CodeId, EnvironmentRef, Frame, FrameStack, Machine, RegisterWindow};
+    use crate::value::Value;
+
+    #[test]
+    fn register_window_is_pre_sized_from_code_metadata() {
+        let window = RegisterWindow::with_count(3);
+        assert_eq!(window.count, 3);
+        assert_eq!(window.values.len(), 3);
+        assert!(window
+            .values
+            .iter()
+            .all(|value| matches!(value, Value::Undefined)));
+    }
     use crate::completion::Completion;
 
     #[test]
