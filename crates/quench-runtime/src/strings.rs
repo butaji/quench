@@ -100,6 +100,7 @@ pub(crate) fn execute_builtin(
     let result = match builtin {
         crate::ops::Builtin::StringFromCharCode => Ok(from_char_code(arguments)),
         crate::ops::Builtin::StringFromCodePoint => from_code_point(arguments),
+        crate::ops::Builtin::StringRaw => raw(arguments),
         crate::ops::Builtin::StringIncludes => Ok(includes(receiver, arguments)),
         crate::ops::Builtin::StringIsWellFormed => is_well_formed(receiver),
         crate::ops::Builtin::StringToWellFormed => to_well_formed(receiver),

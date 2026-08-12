@@ -88,11 +88,8 @@ fn builtin_method(builtin: Builtin, key: &str) -> Option<Builtin> {
     if builtin == StringPrototype {
         return crate::strings::property_method(key);
     }
-    if builtin == String && key == "fromCharCode" {
-        return Some(StringFromCharCode);
-    }
-    if builtin == String && key == "fromCodePoint" {
-        return Some(StringFromCodePoint);
+    if builtin == String {
+        return string_static_method(key).or_else(|| builtin_method_core(builtin, key));
     }
     if builtin == Number && key == "parseFloat" {
         return Some(ParseFloat);
@@ -104,6 +101,14 @@ fn builtin_method(builtin: Builtin, key: &str) -> Option<Builtin> {
         return data_view_method(key);
     }
     builtin_method_core(builtin, key)
+}
+fn string_static_method(key: &str) -> Option<Builtin> {
+    Some(match key {
+        "fromCharCode" => Builtin::StringFromCharCode,
+        "fromCodePoint" => Builtin::StringFromCodePoint,
+        "raw" => Builtin::StringRaw,
+        _ => return None,
+    })
 }
 fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
     use Builtin::*;
