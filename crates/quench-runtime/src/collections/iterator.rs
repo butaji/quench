@@ -53,6 +53,9 @@ pub(crate) fn execute_binding(
     };
     let iterator = read(registers, *iterator)?;
     let completion = crate::execute::execute_completion_in_place(body, registers)?;
+    if matches!(completion, crate::completion::Completion::Normal) {
+        return Ok(completion);
+    }
     close(iterator, completion)
 }
 pub(crate) fn close(
