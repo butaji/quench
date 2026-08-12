@@ -488,15 +488,5 @@ mod tests {
         .unwrap_err();
         assert!(matches!(error, VmError::Thrown(_)));
     }
-    #[test]
-    fn get_own_property_descriptor_throws_on_nullish_target() {
-        let error = execute_builtin_with_receiver(
-            Builtin::ObjectGetOwnPropertyDescriptor,
-            &[Value::Null, Value::String("x".to_string())],
-            None,
-        )
-        .unwrap_err();
-        assert!(matches!(error, VmError::Thrown(_)));
-    }
     include!("object_tests.rs");
 }

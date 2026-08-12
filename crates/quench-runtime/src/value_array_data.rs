@@ -180,6 +180,11 @@ impl std::ops::Deref for ArrayData {
 }
 
 impl Value {
+    /// Create an ordinary JavaScript object from own data properties.
+    pub fn object(properties: ObjectProperties) -> Self {
+        Self::Object(Rc::new(ObjectData::new(properties)))
+    }
+
     pub(crate) fn array(values: Vec<Value>) -> Self {
         Self::Array(Rc::new(ArrayData::new(values)))
     }
