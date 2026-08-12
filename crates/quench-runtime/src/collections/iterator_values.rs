@@ -42,14 +42,16 @@ pub(crate) fn from_set(receiver: Option<&Value>) -> Result<Value, crate::execute
     Ok(make_set(Rc::clone(data)))
 }
 
-pub(crate) fn next(receiver: Option<&Value>) -> Value {
+pub(crate) fn next(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
     let Some(iterator @ Value::Iterator(_)) = receiver else {
-        return result(Value::Undefined, true);
+        return Err(crate::value::error::throw_type_error(
+            "Iterator.prototype.next called on incompatible receiver",
+        ));
     };
     match step_value(iterator) {
-        Ok(Some(value)) => result(value, false),
-        Ok(None) => result(Value::Undefined, true),
-        Err(_) => result(Value::Undefined, true),
+        Ok(Some(value)) => Ok(result(value, false)),
+        Ok(None) => Ok(result(Value::Undefined, true)),
+        Err(error) => Err(error),
     }
 }
 
