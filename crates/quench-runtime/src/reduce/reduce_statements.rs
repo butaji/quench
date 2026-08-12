@@ -372,7 +372,7 @@ pub fn reduce_function_declaration(
         captures,
         metadata,
     ));
-    name_function_declaration(ops, register, slot, next_register, identifier.name.as_str());
+    name_function_declaration(ops, register, next_register, identifier.name.as_str());
     ops.push(Op::StoreLocal {
         slot,
         src: register,
