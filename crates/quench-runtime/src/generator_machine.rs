@@ -45,3 +45,23 @@ fn ensure_try_frame(generator: &GeneratorData, state: &GeneratorState) {
             finalizer: None,
         });
 }
+
+fn ensure_control_frame(generator: &GeneratorData, state: &GeneratorState) {
+    if (suspended_conditional(generator, state).is_none()
+        && suspended_private_scope(generator, state).is_none())
+        || generator.machine.borrow().frame_count() != 0
+    {
+        return;
+    }
+    generator
+        .machine
+        .borrow_mut()
+        .push_frame(crate::machine::Frame::Control {
+            phase: 0,
+            body: crate::machine::CodeRange {
+                code: crate::machine::CodeId(0),
+                start: state.pc.saturating_sub(1) as u32,
+                end: state.pc as u32,
+            },
+        });
+}
