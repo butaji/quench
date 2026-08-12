@@ -182,14 +182,18 @@ impl FunctionCode {
     /// Materialize related nested bodies in one immutable store.
     pub fn from_ops_many(bodies: Vec<Vec<Op>>) -> Vec<Self> {
         let mut arena = CodeArena::new();
+        let store = Rc::new(OnceLock::new());
         let ranges = bodies
             .into_iter()
-            .map(|body| arena.append(body))
+            .map(|body| arena.append_tree(body, &store))
             .collect::<Vec<_>>();
-        let store = arena.freeze();
+        let _ = store.set(arena.freeze());
         ranges
             .into_iter()
-            .map(|range| Self::new(store.clone(), range))
+            .map(|range| Self {
+                store: store.clone(),
+                range,
+            })
             .collect()
     }
 
@@ -386,6 +390,20 @@ mod tests {
         };
         assert!(std::rc::Rc::ptr_eq(&root.store, &body.store));
         assert_ne!(root.range, body.range);
+    }
+
+    #[test]
+    fn grouped_bodies_recursively_share_one_immutable_code_store() {
+        let child = super::FunctionCode::from_ops(vec![super::Op::ParameterEnd]);
+        let bodies = super::FunctionCode::from_ops_many(vec![vec![super::Op::IteratorBinding {
+            iterator: 0,
+            body: child,
+            close_normal: false,
+        }]]);
+        let Some([super::Op::IteratorBinding { body, .. }]) = bodies[0].ops() else {
+            panic!("grouped body is not an iterator binding");
+        };
+        assert!(std::rc::Rc::ptr_eq(&bodies[0].store, &body.store));
     }
 
     #[test]
