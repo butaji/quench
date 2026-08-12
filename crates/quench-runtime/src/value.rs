@@ -238,7 +238,6 @@ pub struct GeneratorData {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct GeneratorState {
-    pub registers: Vec<Value>,
     pub environment: Rc<crate::environment::Environment>,
     pub pc: usize,
     /// Resume offset within a nested `PrivateScope` body suspended on `yield`.

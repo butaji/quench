@@ -25,7 +25,7 @@ fn suspended_context(
         return Some(SuspendedContext::Yield);
     }
     if let Some(Op::YieldStar { iterator, .. }) = generator.function.ops().get(state.pc) {
-        if crate::execute::read_register(&state.registers, *iterator)
+        if crate::execute::read_register(&registers(generator), *iterator)
             .is_ok_and(|value| !matches!(value, Value::Undefined))
         {
             return Some(SuspendedContext::YieldStar);
