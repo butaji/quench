@@ -80,8 +80,8 @@ fn promote_conditional_tail(ops: &mut Vec<Op>, returned: u16) -> bool {
     if promoted {
         ops.push(Op::Branch {
             condition,
-            then_ops: consequent,
-            else_ops: alternate,
+            then_ops: crate::machine::FunctionCode::from_ops(consequent),
+            else_ops: crate::machine::FunctionCode::from_ops(alternate),
         });
     } else {
         restore_conditional(ops, dst, condition, consequent, alternate);
