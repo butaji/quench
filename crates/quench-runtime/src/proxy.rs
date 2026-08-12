@@ -157,7 +157,7 @@ pub(crate) fn proxy_set(
         check_revoked(proxy)?;
         if let Some(trap) = get_handler_trap(proxy, "set") {
             let receiver = receiver.unwrap_or(target);
-            call_trap(
+            let result = call_trap(
                 &trap,
                 &[
                     target.clone(),
@@ -167,7 +167,7 @@ pub(crate) fn proxy_set(
                 ],
                 None,
             )?;
-            return Ok(Value::Boolean(true));
+            return Ok(Value::Boolean(crate::execute::is_truthy(&result)));
         }
     }
     Ok(crate::builtins::set_property(
