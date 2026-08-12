@@ -382,7 +382,7 @@ pub enum Op {
     },
     With {
         object: u16,
-        body: Vec<Op>,
+        body: crate::machine::FunctionCode,
     },
     PrivateScope {
         names: Vec<crate::facts::PrivateNameId>,
