@@ -177,27 +177,19 @@ fn resume_suspended_contexts(
 ) -> Result<Option<Value>, VmError> {
     ensure_try_frame(generator, state);
     if let Some(completion) = resume_suspended_try(generator, state, completion.clone())? {
-        if !completion.is_suspension() {
-            generator.machine.borrow_mut().pop_frame();
-        }
-        return complete_step(generator, state, completion).map(Some);
+        return resume_machine_frame(generator, state, completion).map(Some);
     }
     ensure_control_frame(generator, state);
     if let Some(completion) = resume_suspended_conditional(generator, state, completion.clone())? {
-        if !completion.is_suspension() {
-            generator.machine.borrow_mut().pop_frame();
-        }
-        return complete_step(generator, state, completion).map(Some);
+        return resume_machine_frame(generator, state, completion).map(Some);
     }
     if let Some(completion) = resume_suspended_private_scope(generator, state, completion.clone())?
     {
-        if !completion.is_suspension() {
-            generator.machine.borrow_mut().pop_frame();
-        }
-        return complete_step(generator, state, completion).map(Some);
+        return resume_machine_frame(generator, state, completion).map(Some);
     }
     Ok(None)
 }
+
 impl Resume {
     fn completion(&self) -> crate::completion::Completion {
         match self {
