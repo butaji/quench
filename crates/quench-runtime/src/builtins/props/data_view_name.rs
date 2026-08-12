@@ -10,6 +10,8 @@ pub(crate) fn data_view_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::DataViewGetInt32 => "getInt32",
         Builtin::DataViewGetUint32 => "getUint32",
         Builtin::DataViewGetFloat16 => "getFloat16",
+        Builtin::DataViewGetBigInt64 => "getBigInt64",
+        Builtin::DataViewGetBigUint64 => "getBigUint64",
         Builtin::DataViewGetFloat32 => "getFloat32",
         Builtin::DataViewGetFloat64 => "getFloat64",
         Builtin::DataViewSetInt8 => "setInt8",
