@@ -1,7 +1,7 @@
 #[test]
 fn has_own_observes_function_own_properties() {
     let function = Value::Function(Rc::new(FunctionValue {
-        code: Some(empty_function_code()),
+        code: empty_function_code(),
         params: 2,
         kind: crate::ops::FunctionKind::Ordinary,
         strictness: crate::ops::FunctionStrictness::Sloppy,
