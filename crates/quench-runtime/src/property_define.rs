@@ -55,7 +55,13 @@ pub(crate) fn accessor(value: &Value, key: &str, field: &str) -> Option<Value> {
 
 fn accessor_value(value: &Value, key: &str, field: &str) -> Option<Value> {
     match value {
-        Value::Object(properties) => accessor_field(properties, key, field),
+        Value::Object(properties) => accessor_field(properties, key, field).or_else(|| {
+            properties
+                .iter()
+                .rev()
+                .find_map(|(name, value)| (name == "\0prototype").then(|| value.clone()))
+                .and_then(|prototype| accessor_value(&prototype, key, field))
+        }),
         Value::Function(function) => accessor_field(&function.properties.borrow(), key, field),
         Value::ObjectAlias(alias) => alias
             .0

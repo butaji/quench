@@ -95,7 +95,6 @@ fn bigint_argument(value: Option<&Value>) -> Result<num_bigint::BigInt, VmError>
 }
 
 fn parse_bigint_argument(value: &str) -> Result<num_bigint::BigInt, VmError> {
-    value
-        .parse()
-        .map_err(|_| crate::value::error::throw_syntax_error("Invalid BigInt value"))
+    crate::bigint::parse_string(value)
+        .ok_or_else(|| crate::value::error::throw_syntax_error("Invalid BigInt value"))
 }
