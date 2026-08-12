@@ -53,7 +53,7 @@ fn initialize_parameters(
     let _home = crate::super_scope::Guard::install(function, receiver);
     let _with_scope = crate::with_scope::FunctionGuard::isolate();
     let step = crate::vm::execute_generator_step(
-        &function.body[..marker],
+        &function.ops()[..marker],
         &mut registers,
         Rc::clone(&environment),
         0,
@@ -147,7 +147,7 @@ fn execute_generator_step(
     let _home = crate::super_scope::Guard::install(&generator.function, &generator.receiver);
     let _with_scope = crate::with_scope::FunctionGuard::isolate();
     crate::vm::execute_generator_step(
-        &generator.function.body,
+        generator.function.ops(),
         &mut state.registers,
         state.environment.clone(),
         state.pc,
@@ -244,12 +244,12 @@ fn is_suspended(generator: &GeneratorData, state: &GeneratorState) -> bool {
         return true;
     }
     if matches!(
-        generator.function.body.get(state.pc.wrapping_sub(1)),
+        generator.function.ops().get(state.pc.wrapping_sub(1)),
         Some(Op::Yield { .. })
     ) {
         return true;
     }
-    let Some(Op::YieldStar { iterator, .. }) = generator.function.body.get(state.pc) else {
+    let Some(Op::YieldStar { iterator, .. }) = generator.function.ops().get(state.pc) else {
         return suspended_try(generator, state).is_some()
             || suspended_conditional(generator, state).is_some()
             || suspended_private_scope(generator, state).is_some();
@@ -263,7 +263,7 @@ fn suspended_try<'a>(
     state: &GeneratorState,
 ) -> Option<(&'a Op, &'a Op, &'a [Op])> {
     let index = state.pc.checked_sub(1)?;
-    let op @ Op::Try { body, .. } = generator.function.body.get(index)? else {
+    let op @ Op::Try { body, .. } = generator.function.ops().get(index)? else {
         return None;
     };
     let (yield_index, yield_op) = body
@@ -342,7 +342,7 @@ fn install_resume_input(generator: &GeneratorData, state: &mut GeneratorState, i
         }
         return;
     }
-    if let Some(Op::YieldStar { dst, .. }) = generator.function.body.get(state.pc) {
+    if let Some(Op::YieldStar { dst, .. }) = generator.function.ops().get(state.pc) {
         crate::execute::write_value(&mut state.registers, *dst, input);
         return;
     }
@@ -353,7 +353,7 @@ fn install_resume_input(generator: &GeneratorData, state: &mut GeneratorState, i
     let Some(index) = state.pc.checked_sub(1) else {
         return;
     };
-    let Some(Op::Yield { src }) = generator.function.body.get(index) else {
+    let Some(Op::Yield { src }) = generator.function.ops().get(index) else {
         install_nested_resume_input(generator, state, input);
         return;
     };
