@@ -112,6 +112,7 @@ pub(super) fn function_bindings(
         *slot = slot.saturating_add(captures);
     }
     let mut bindings = locals.clone();
+    bindings.retain(|name, _| !name.starts_with("\0lexical-predeclared:"));
     if !lexical_receiver {
         let base = captures.saturating_add(parameter_count);
         for (name, offset) in [("arguments", 0), ("this", 1), (NEW_TARGET, 2)] {

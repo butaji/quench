@@ -124,7 +124,13 @@ pub(crate) fn predeclare_lexicals(
             .iter()
             .flat_map(|declarator| crate::binding_patterns::names(&declarator.id))
         {
-            reserve(&name, locals, next_slot);
+            if locals.contains_key(&name) {
+                continue;
+            }
+            let slot = *next_slot;
+            *next_slot = next_slot.saturating_add(1);
+            locals.insert(name.clone(), slot);
+            locals.insert(format!("\0lexical-predeclared:{name}"), slot);
         }
     }
 }
