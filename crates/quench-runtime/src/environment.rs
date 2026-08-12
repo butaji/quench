@@ -120,12 +120,6 @@ impl Environment {
         Rc::new(Self::default())
     }
 
-    fn refs(store: Rc<SlotStore>) -> Vec<BindingRef> {
-        (0..store.len())
-            .map(|index| BindingRef::new(Rc::clone(&store), index))
-            .collect()
-    }
-
     pub(crate) fn capture(environment: &Rc<Self>, count: u16) -> Rc<Self> {
         let count = usize::from(count);
         for index in 0..count {
@@ -357,11 +351,12 @@ impl Environment {
             return binding;
         }
         let index = usize::from(slot);
-        let store = SlotStore::from_values(vec![Value::Undefined; index.saturating_add(1)]);
-        let refs = Self::refs(store);
-        let binding = refs[index].clone();
-        self.slots.borrow_mut().extend(refs);
-        binding
+        let mut slots = self.slots.borrow_mut();
+        while slots.len() <= index {
+            let store = SlotStore::from_values(vec![Value::Undefined]);
+            slots.push(BindingRef::new(store, 0));
+        }
+        slots[index].clone()
     }
 
     pub(crate) fn initialize(&self, slot: u16) {
