@@ -385,6 +385,7 @@ fn builtin_method3(builtin: Builtin, key: &str) -> Option<Builtin> {
         (BigInt, "asIntN") => Some(BigIntAsIntN),
         (BigInt, "asUintN") => Some(BigIntAsUintN),
         (BigIntPrototype, "valueOf") => Some(BigIntValueOf),
+        (BigIntPrototype, "toString" | "toLocaleString") => Some(BigIntToString),
         _ => None,
     }
 }
@@ -403,7 +404,6 @@ pub(crate) fn callable(builtin: Builtin, key: &str) -> Option<Value> {
         _ => None,
     }
 }
-
 pub(crate) fn is_builtin_deletable(_builtin: Builtin, key: &str) -> bool {
     if key == "prototype" {
         return false;
