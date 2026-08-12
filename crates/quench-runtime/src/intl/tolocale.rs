@@ -233,6 +233,17 @@ pub(crate) mod value {
 
     fn builtin_type(builtin: crate::ops::Builtin) -> &'static str {
         match builtin {
+            crate::ops::Builtin::SymbolIterator
+            | crate::ops::Builtin::SymbolUnscopables
+            | crate::ops::Builtin::SymbolToStringTag
+            | crate::ops::Builtin::SymbolToPrimitive
+            | crate::ops::Builtin::SymbolHasInstance
+            | crate::ops::Builtin::SymbolIsConcatSpreadable
+            | crate::ops::Builtin::SymbolSpecies
+            | crate::ops::Builtin::SymbolMatch
+            | crate::ops::Builtin::SymbolReplace
+            | crate::ops::Builtin::SymbolSearch
+            | crate::ops::Builtin::SymbolSplit => "symbol",
             crate::ops::Builtin::Math
             | crate::ops::Builtin::Reflect
             | crate::ops::Builtin::Json => "object",
