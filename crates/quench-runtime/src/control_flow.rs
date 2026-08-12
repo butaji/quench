@@ -139,9 +139,10 @@ pub(crate) fn reduce_try(
     statement: &oxc::ast::ast::TryStatement<'_>,
     ops: &mut Vec<Op>,
     facts: &mut crate::facts::ProgramDb,
-    locals: &HashMap<String, u16>,
+    locals: &mut HashMap<String, u16>,
 ) -> Result<(), Vec<String>> {
     let (try_locals, next_slot) = hoisted_try_locals(statement, locals);
+    locals.clone_from(&try_locals);
     let body = reduce_try_body(statement, facts, &try_locals, next_slot)?;
     let (handler, catch_slot) = reduce_try_handler(statement, facts, &try_locals)?;
     let finalizer = reduce_try_finalizer(statement, facts, &try_locals, next_slot)?;
@@ -267,7 +268,7 @@ pub(crate) fn reduce_try_statement(
     statement: &oxc::ast::ast::TryStatement<'_>,
     ops: &mut Vec<Op>,
     facts: &mut crate::facts::ProgramDb,
-    locals: &HashMap<String, u16>,
+    locals: &mut HashMap<String, u16>,
 ) -> Result<Option<u16>, Vec<String>> {
     reduce_try(statement, ops, facts, locals).map(|_| None)
 }

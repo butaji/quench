@@ -28,7 +28,7 @@ pub(crate) fn create(
     Ok(Value::Generator(Rc::new(GeneratorData {
         function: Rc::clone(function),
         machine: RefCell::new(crate::machine::Machine::with_register_count(
-            crate::machine::CodeId(0),
+            function.code_id(),
             crate::machine::EnvironmentRef(0),
             register_count,
         )),
