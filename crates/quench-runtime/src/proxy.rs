@@ -283,7 +283,8 @@ pub(crate) fn proxy_set_prototype_of(target: &Value, prototype: &Value) -> Resul
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
         if let Some(trap) = get_handler_trap(proxy, "setPrototypeOf") {
-            return call_trap(&trap, &[target.clone(), prototype.clone()], None);
+            let result = call_trap(&trap, &[proxy.target.clone(), prototype.clone()], None)?;
+            return Ok(Value::Boolean(crate::execute::is_truthy(&result)));
         }
     }
     Ok(prototype.clone())
@@ -293,7 +294,8 @@ pub(crate) fn proxy_is_extensible(target: &Value) -> Result<Value, VmError> {
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
         if let Some(trap) = get_handler_trap(proxy, "isExtensible") {
-            return call_trap(&trap, slice::from_ref(&proxy.target), None);
+            let result = call_trap(&trap, slice::from_ref(&proxy.target), None)?;
+            return Ok(Value::Boolean(crate::execute::is_truthy(&result)));
         }
     }
     require_reflect_object(target)?;
@@ -306,7 +308,8 @@ pub(crate) fn proxy_prevent_extensions(target: &Value) -> Result<Value, VmError>
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
         if let Some(trap) = get_handler_trap(proxy, "preventExtensions") {
-            return call_trap(&trap, slice::from_ref(&proxy.target), None);
+            let result = call_trap(&trap, slice::from_ref(&proxy.target), None)?;
+            return Ok(Value::Boolean(crate::execute::is_truthy(&result)));
         }
         return Ok(Value::Boolean(true));
     }
@@ -447,8 +450,7 @@ fn reflect_set(arguments: &[Value]) -> Result<Value, VmError> {
     let prop = arguments.get(1).map(value_to_string).unwrap_or_default();
     let value = arguments.get(2).cloned().unwrap_or(Value::Undefined);
     let receiver = arguments.get(3);
-    proxy_set(target, &prop, &value, receiver)?;
-    Ok(Value::Boolean(true))
+    proxy_set(target, &prop, &value, receiver)
 }
 
 fn reflect_has(arguments: &[Value]) -> Result<Value, VmError> {
