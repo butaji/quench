@@ -140,6 +140,7 @@ pub enum Builtin {
     Object,
     ObjectIs,
     ObjectAssign,
+    ObjectFromEntries,
     ObjectKeys,
     ObjectHasOwnProperty,
     ObjectPrototypeIsPrototypeOf,

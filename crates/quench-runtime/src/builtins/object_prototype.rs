@@ -91,6 +91,33 @@ fn require_object_receiver(receiver: Option<&Value>) -> Result<&Value, crate::ex
     })
 }
 
+pub(crate) fn from_entries(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
+    let iterable = arguments.first().cloned().unwrap_or(Value::Undefined);
+    let result = std::cell::RefCell::new(Value::Object(std::rc::Rc::new(
+        crate::value::ObjectData::new(Vec::new()),
+    )));
+    crate::collections::iterator::for_each_iterable(iterable, |entry| {
+        if !crate::value::is_object(&entry) {
+            return Err(crate::value::error::throw_type_error(
+                "Object.fromEntries iterator value is not an object",
+            ));
+        }
+        let raw_key = crate::execute::get_property_result(&entry, "0")?;
+        let value = crate::execute::get_property_result(&entry, "1")?;
+        let key = crate::conversion::to_property_key(&raw_key)?;
+        let current = result.borrow().clone();
+        let descriptor = vec![
+            ("value".to_string(), value),
+            ("writable".to_string(), Value::Boolean(true)),
+            ("enumerable".to_string(), Value::Boolean(true)),
+            ("configurable".to_string(), Value::Boolean(true)),
+        ];
+        *result.borrow_mut() = crate::builtins::define_own_property(&current, &key, &descriptor)?;
+        Ok(())
+    })?;
+    Ok(result.into_inner())
+}
+
 fn is_intrinsic_prototype(builtin: Builtin) -> bool {
     matches!(
         builtin,

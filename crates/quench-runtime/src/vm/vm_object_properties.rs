@@ -45,6 +45,12 @@ fn object_property(properties: &Rc<crate::value::ObjectData>, key: &str) -> Valu
     }) {
         return global_property(properties, key, None);
     }
+    if let Some((_, Value::String(value))) = properties.iter().find(|(name, _)| name == "_value") {
+        let indexed = get_property(&Value::String(value.clone()), key);
+        if !matches!(indexed, Value::Undefined) {
+            return indexed;
+        }
+    }
     let inherited = object_prototype_property(properties, key);
     if !matches!(inherited, Value::Undefined) {
         return inherited;
