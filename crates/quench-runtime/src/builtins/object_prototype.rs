@@ -64,7 +64,12 @@ pub(crate) fn is_prototype_of(
             )
         })?;
     let mut current = get_prototype_of(Some(value))?;
+    let mut steps = 0u8;
     while !matches!(current, Value::Null) {
+        steps = steps.saturating_add(1);
+        if steps == 64 {
+            return Ok(Value::Boolean(false));
+        }
         if crate::builtins::same_value(Some(&current), Some(prototype)) {
             return Ok(Value::Boolean(true));
         }
