@@ -96,6 +96,11 @@ pub(crate) fn call_trap(
             arguments,
         ),
         Value::BoundFunction(bound) => crate::functions::execute_bound(bound, arguments),
+        Value::Proxy(_) => proxy_apply(
+            trap,
+            receiver.unwrap_or(&crate::value::Value::Undefined),
+            arguments,
+        ),
         _ => Err(crate::vm::not_callable()),
     }
 }
