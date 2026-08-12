@@ -161,6 +161,7 @@ pub enum Builtin {
     StringValueOf,
     StringFromCharCode,
     StringFromCodePoint,
+    StringRaw,
     Symbol,
     SymbolValueOf,
     SymbolIterator,
