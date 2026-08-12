@@ -230,19 +230,18 @@ fn reduce_import_expression(
     for argument in &import.arguments {
         reduce_expression(argument, ops, facts, next_register, locals)?;
     }
-    let callee = take_register(next_register);
+    let promise = take_register(next_register);
     ops.push(Op::MakeBuiltin {
-        dst: callee,
-        builtin: crate::ops::Builtin::PromiseResolve,
+        dst: promise,
+        builtin: crate::ops::Builtin::Promise,
     });
     let dst = take_register(next_register);
-    let args = vec![specifier];
-    let spreads = vec![false];
-    ops.push(Op::Call {
+    ops.push(Op::CallMethod {
         dst,
-        callee,
-        args,
-        spreads,
+        object: promise,
+        key: "resolve".to_string(),
+        callee: None,
+        args: vec![specifier],
     });
     Some(dst)
 }
