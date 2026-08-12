@@ -17,6 +17,7 @@ pub(crate) struct Analysis {
     pub(crate) scope_count: usize,
     pub(crate) symbol_count: usize,
     pub(crate) private_names: Vec<(Span, crate::facts::PrivateNameId)>,
+    pub(crate) fact_sites: HashMap<Span, crate::facts::FactSiteId>,
 }
 
 pub(crate) fn analyze(program: &oxc::ast::ast::Program<'_>) -> Result<Analysis, Vec<String>> {
@@ -91,6 +92,13 @@ fn analyze_with_context(
         scope_count: semantic.semantic.scopes().len(),
         symbol_count: semantic.semantic.symbols().len(),
         private_names: private_name_ids(&semantic.semantic),
+        fact_sites: semantic
+            .semantic
+            .nodes()
+            .iter()
+            .enumerate()
+            .map(|(index, node)| (node.kind().span(), crate::facts::FactSiteId(index as u32)))
+            .collect(),
     })
 }
 

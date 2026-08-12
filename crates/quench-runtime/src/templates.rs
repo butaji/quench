@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use oxc::ast::ast::TemplateLiteral;
 
 use crate::{
-    facts::{Constant as FactConstant, ConstantFact, ProgramDb},
+    facts::ProgramDb,
     ops::{BinaryOp, Constant, Op, UnaryOp},
 };
 
@@ -40,12 +40,9 @@ pub(crate) fn reduce(
     Some(result)
 }
 
-fn emit_string(value: &str, ops: &mut Vec<Op>, facts: &mut ProgramDb, next: &mut u16) -> u16 {
+fn emit_string(value: &str, ops: &mut Vec<Op>, _facts: &mut ProgramDb, next: &mut u16) -> u16 {
     let register = *next;
     *next = next.saturating_add(1);
-    facts.constants.push(ConstantFact {
-        value: FactConstant::String(value.to_string()),
-    });
     ops.push(Op::Const {
         dst: register,
         value: Constant::String(value.to_string()),
