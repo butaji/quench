@@ -86,10 +86,6 @@ fn close_target(record: &Value) -> Result<Option<Value>, crate::execute::VmError
         | IteratorState::Native { .. } => Ok(None),
         IteratorState::Set { .. } => Ok(None),
         IteratorState::Map { .. } => Ok(None),
-        IteratorState::Protocol {
-            iterator: Value::Generator(_),
-            ..
-        } => Ok(None),
         IteratorState::Protocol { iterator, .. } => Ok(Some(iterator.clone())),
     }
 }
