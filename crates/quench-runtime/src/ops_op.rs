@@ -373,8 +373,8 @@ pub enum Op {
     },
     Branch {
         condition: u16,
-        then_ops: Vec<Op>,
-        else_ops: Vec<Op>,
+        then_ops: crate::machine::FunctionCode,
+        else_ops: crate::machine::FunctionCode,
     },
     Label {
         name: String,
