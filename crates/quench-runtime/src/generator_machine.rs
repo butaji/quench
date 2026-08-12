@@ -214,11 +214,12 @@ fn push_private_frame(generator: &GeneratorData, state: &GeneratorState) -> Resu
     let Some(Op::PrivateScope { body, .. }) = generator.function.ops().get(machine_pc(generator).wrapping_sub(1)) else { return Ok(()); };
     let Some(environment) = state.private_environment.clone() else { return Ok(()); };
     let body_resume = crate::machine::CodeRange { code: body.range.code, start: body.range.start.saturating_add(index as u32 + 1), end: body.range.end };
+    let resume = parent_resume_range(generator, state);
     try_push_frame(&mut generator.machine.borrow_mut(), crate::machine::Frame::Private {
         phase: crate::machine::PrivatePhase::Body,
         environment,
         body_resume,
-        resume: parent_resume_range(generator, state),
+        resume,
         yield_dst: *src,
     })
 }
