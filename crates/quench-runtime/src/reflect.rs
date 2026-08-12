@@ -87,15 +87,16 @@ fn evaluate_direct(
         grammar,
     )
     .map_err(syntax_error)?;
-    execute_direct_eval(&program.ops)
+    execute_direct_eval(&program.ops, program.facts.strict)
 }
 
-fn execute_direct_eval(ops: &[crate::ops::Op]) -> Result<Value, VmError> {
+fn execute_direct_eval(ops: &[crate::ops::Op], strict: bool) -> Result<Value, VmError> {
     let count = u16::try_from(crate::locals::current().len())
         .map_err(|_| VmError::EvalError("Too many eval bindings".to_string()))?;
     let captures = crate::locals::capture(count);
     let environment = crate::environment::Environment::child(&captures, Vec::new());
     let _guard = crate::locals::EnvironmentGuard::install(environment);
+    let _strict_eval = crate::locals::StrictEvalGuard::install(strict);
     crate::execute::execute_in_place(ops, &mut Vec::new())
 }
 
