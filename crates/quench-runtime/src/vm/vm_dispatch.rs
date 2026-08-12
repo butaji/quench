@@ -266,9 +266,10 @@ fn run_await_completion(
     if let Op::Await { dst, src } = op {
         return match vm_ops::execute_await(registers, *dst, *src) {
             Ok(()) => Ok(None),
-            Err(VmError::Thrown(value)) => Ok(Some(Completion::Throw(value))),
-            Err(VmError::Suspended(promise)) => Ok(Some(Completion::Suspend(promise))),
-            Err(error) => Err(error),
+            Err(error) => match Completion::from_vm_error(error) {
+                Ok(completion) => Ok(Some(completion)),
+                Err(error) => Err(error),
+            },
         };
     }
     Ok(None)
