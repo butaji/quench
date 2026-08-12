@@ -197,16 +197,8 @@ impl Environment {
 
     pub(crate) fn install_slot_cell(&self, slot: u16, cell: Rc<RefCell<Value>>) {
         let index = usize::from(slot);
-        if let Some(binding) = self.slot(slot) {
-            let _ = binding;
-            self.slots.borrow_mut()[index] = BindingRef::new(SlotStore::from_cell(cell), 0);
-        } else {
-            let store = SlotStore::from_cell(cell);
-            self.slots
-                .borrow_mut()
-                .resize_with(index, || BindingRef::new(Rc::clone(&store), 0));
-            self.slots.borrow_mut().push(BindingRef::new(store, 0));
-        }
+        self.ensure_slot(slot);
+        self.slots.borrow_mut()[index] = BindingRef::new(SlotStore::from_cell(cell), 0);
     }
 
     pub(crate) fn alias_name(&self, name: &str, slot: u16) {
