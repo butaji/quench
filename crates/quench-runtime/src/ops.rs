@@ -424,6 +424,7 @@ pub enum Builtin {
     PromiseAllSettled,
     PromiseAny,
     PromiseRace,
+    PromiseWithResolvers,
     PromiseThen,
     PromiseCatch,
     PromiseFinally,
