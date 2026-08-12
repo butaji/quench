@@ -1,6 +1,8 @@
 impl StatementReducer {
-    pub(super) fn new(source_type: SourceType) -> Self {
-        Self::new_with_global(source_type, false)
+    pub(super) fn new_with_script(source_type: SourceType, global: bool) -> Self {
+        let mut state = Self::new_with_global(source_type, global);
+        state.script = true;
+        state
     }
 
     pub(super) fn new_with_global(source_type: SourceType, global: bool) -> Self {

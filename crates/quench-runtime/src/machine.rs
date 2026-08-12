@@ -213,6 +213,10 @@ impl Machine {
         Ok(completion)
     }
 
+    pub fn record_completion(&mut self, completion: Completion) {
+        self.completion = completion;
+    }
+
     pub fn push_frame(&mut self, frame: Frame) {
         self.frames.push(frame);
     }
