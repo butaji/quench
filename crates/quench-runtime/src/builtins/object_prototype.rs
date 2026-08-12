@@ -73,7 +73,7 @@ pub(crate) fn is_prototype_of(
 
 fn prototype_chain_contains(value: &Value, prototype: &Value) -> Result<bool, crate::execute::VmError> {
     let mut seen = Vec::new();
-    let mut current = get_prototype_of(Some(value))?;
+    let mut current = resolve_object_alias(get_prototype_of(Some(value))?);
     while !matches!(current, Value::Null) {
         if crate::builtins::same_value(Some(&current), Some(prototype)) {
             return Ok(true);
@@ -85,9 +85,22 @@ fn prototype_chain_contains(value: &Value, prototype: &Value) -> Result<bool, cr
             return Ok(false);
         }
         seen.push(current.clone());
-        current = get_prototype_of(Some(&current))?;
+        current = resolve_object_alias(get_prototype_of(Some(&current))?);
     }
     Ok(false)
+}
+
+fn resolve_object_alias(value: Value) -> Value {
+    let Value::ObjectAlias(alias) = value else {
+        return value;
+    };
+    let object = alias
+        .0
+        .borrow()
+        .upgrade()
+        .map(Value::Object)
+        .unwrap_or(Value::Null);
+    object
 }
 
 pub(crate) fn define_legacy_accessor(
