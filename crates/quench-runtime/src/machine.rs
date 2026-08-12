@@ -210,6 +210,10 @@ impl FunctionCode {
         self.range.code
     }
 
+    pub(crate) fn store(&self) -> Option<Rc<CodeStore>> {
+        self.store.get().cloned()
+    }
+
     pub(crate) fn rehome(&mut self, arena: &mut CodeArena, store: &Rc<OnceLock<Rc<CodeStore>>>) {
         let Some(body) = self.ops() else {
             return;
@@ -256,6 +260,7 @@ pub enum Frame {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Machine {
+    pub(crate) store: Option<Rc<CodeStore>>,
     pub(crate) code: CodeId,
     pub(crate) pc: u32,
     pub(crate) registers: RegisterWindow,
@@ -267,6 +272,7 @@ pub struct Machine {
 impl Machine {
     pub fn new(code: CodeId, environment: EnvironmentRef) -> Self {
         Self {
+            store: None,
             code,
             pc: 0,
             registers: RegisterWindow::new(),
@@ -274,6 +280,21 @@ impl Machine {
             completion: Completion::Normal,
             frames: FrameStack::new(),
         }
+    }
+
+    pub fn with_function(
+        function: &FunctionCode,
+        environment: EnvironmentRef,
+        register_count: u16,
+    ) -> Self {
+        let mut machine =
+            Self::with_register_count(function.code_id(), environment, register_count);
+        machine.store = function.store();
+        machine
+    }
+
+    pub(crate) fn code(&self, range: CodeRange) -> Option<&[Op]> {
+        self.store.as_ref()?.get(range)
     }
 
     pub fn with_register_count(
@@ -369,6 +390,13 @@ mod tests {
         };
         assert!(std::rc::Rc::ptr_eq(&root.store, &body.store));
         assert_ne!(root.range, body.range);
+    }
+
+    #[test]
+    fn machine_resolves_frame_ranges_from_its_function_store() {
+        let function = super::FunctionCode::from_ops(vec![super::Op::ParameterEnd]);
+        let machine = Machine::with_function(&function, EnvironmentRef(0), 1);
+        assert_eq!(machine.code(function.range), function.ops());
     }
 
     #[test]
