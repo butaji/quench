@@ -436,12 +436,16 @@ pub(crate) fn reduce_while(
         )?;
         fragment
     };
+    let [init, test, body, update] =
+        crate::machine::FunctionCode::from_ops_many(vec![Vec::new(), test, body, Vec::new()])
+            .try_into()
+            .expect("four loop bodies");
     ops.push(Op::Loop {
         label: None,
-        init: crate::machine::FunctionCode::from_ops(Vec::new()),
-        test: crate::machine::FunctionCode::from_ops(test),
-        body: crate::machine::FunctionCode::from_ops(body),
-        update: crate::machine::FunctionCode::from_ops(Vec::new()),
+        init,
+        test,
+        body,
+        update,
         post_test: false,
     });
     Ok(())
@@ -465,12 +469,16 @@ pub(crate) fn reduce_do_while(
         locals,
     )?;
     let test = reduce_fragment(Some(&statement.test), ops, facts, next_register, locals)?;
+    let [init, test, body, update] =
+        crate::machine::FunctionCode::from_ops_many(vec![Vec::new(), test, body, Vec::new()])
+            .try_into()
+            .expect("four loop bodies");
     ops.push(Op::Loop {
         label: None,
-        init: crate::machine::FunctionCode::from_ops(Vec::new()),
-        test: crate::machine::FunctionCode::from_ops(test),
-        body: crate::machine::FunctionCode::from_ops(body),
-        update: crate::machine::FunctionCode::from_ops(Vec::new()),
+        init,
+        test,
+        body,
+        update,
         post_test: true,
     });
     Ok(())

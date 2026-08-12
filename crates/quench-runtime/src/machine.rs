@@ -170,6 +170,20 @@ impl FunctionCode {
         Self::new(arena.freeze(), range)
     }
 
+    /// Materialize related nested bodies in one immutable store.
+    pub fn from_ops_many(bodies: Vec<Vec<Op>>) -> Vec<Self> {
+        let mut arena = CodeArena::new();
+        let ranges = bodies
+            .into_iter()
+            .map(|body| arena.append(body))
+            .collect::<Vec<_>>();
+        let store = arena.freeze();
+        ranges
+            .into_iter()
+            .map(|range| Self::new(store.clone(), range))
+            .collect()
+    }
+
     pub fn new(store: Rc<CodeStore>, range: CodeRange) -> Self {
         Self { store, range }
     }
