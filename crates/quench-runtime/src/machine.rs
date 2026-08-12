@@ -77,6 +77,19 @@ impl Default for FrameStack {
     }
 }
 
+impl FrameStack {
+    pub fn push(&mut self, frame: Frame) {
+        self.frames.push(frame);
+        self.count = u16::try_from(self.frames.len()).unwrap_or(u16::MAX);
+    }
+
+    pub fn pop(&mut self) -> Option<Frame> {
+        let frame = self.frames.pop();
+        self.count = u16::try_from(self.frames.len()).unwrap_or(u16::MAX);
+        frame
+    }
+}
+
 impl CodeArena {
     pub fn new() -> Self {
         Self::default()
@@ -184,5 +197,45 @@ impl Machine {
             completion: Completion::Normal,
             frames: FrameStack::new(),
         }
+    }
+
+    pub fn step<F>(&mut self, input: Completion, execute: F) -> Completion
+    where
+        F: FnOnce(&mut Self) -> Completion,
+    {
+        self.completion = input;
+        let completion = execute(self);
+        self.completion = completion.clone();
+        completion
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CodeId, EnvironmentRef, Frame, FrameStack, Machine};
+    use crate::completion::Completion;
+
+    #[test]
+    fn machine_step_updates_completion_and_frame_count() {
+        let mut machine = Machine::new(CodeId(1), EnvironmentRef(2));
+        let mut frames = FrameStack::new();
+        frames.push(Frame::Await {
+            phase: 0,
+            resume: super::CodeRange {
+                code: CodeId(1),
+                start: 0,
+                end: 1,
+            },
+        });
+        assert_eq!(frames.count, 1);
+        assert!(frames.pop().is_some());
+        assert_eq!(frames.count, 0);
+        let completion = machine.step(Completion::Normal, |_| {
+            Completion::Return(crate::value::Value::Undefined)
+        });
+        assert!(matches!(
+            completion,
+            Completion::Return(crate::value::Value::Undefined)
+        ));
     }
 }
