@@ -72,6 +72,7 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (WeakRefPrototype, "constructor") => Some(Value::Builtin(WeakRef)),
         (WeakRefPrototype, "deref") => Some(Value::Builtin(WeakRefDeref)),
         (WeakRefPrototype, "Symbol.toStringTag") => Some(Value::String("WeakRef".into())),
+        (BigIntPrototype, "Symbol.toStringTag") => Some(Value::String("BigInt".to_string())),
         (DatePrototype, k) => crate::builtin_meta::date::date_prop(k).map(Value::Builtin),
         _ => builtin_method(builtin, key).map(Value::Builtin),
     }
