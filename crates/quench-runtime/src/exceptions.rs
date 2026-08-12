@@ -18,7 +18,7 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<Completion,
         return Err(VmError::MissingReturn);
     };
     let body_completion = execute_try_body(body, registers)?;
-    if matches!(body_completion, Completion::Yield(_)) {
+    if body_completion.is_suspension() {
         return Ok(body_completion);
     }
     let completion = match body_completion {
