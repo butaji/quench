@@ -62,14 +62,44 @@ fn reduce_chain(
     }
     let (object, key) = match chain {
         ChainElement::StaticMemberExpression(member) => {
-            (&member.object, member.property.name.to_string())
+            let object = crate::reduce::reduce_expression(
+                &member.object,
+                ops,
+                facts,
+                next_register,
+                locals,
+            )?;
+            let dst = *next_register;
+            *next_register = next_register.saturating_add(1);
+            ops.push(Op::OptionalGet {
+                dst,
+                object,
+                key: member.property.name.to_string(),
+            });
+            return Some(dst);
+        }
+        ChainElement::ComputedMemberExpression(member) => {
+            let object = crate::reduce::reduce_expression(
+                &member.object,
+                ops,
+                facts,
+                next_register,
+                locals,
+            )?;
+            let key = crate::reduce::reduce_expression(
+                &member.expression,
+                ops,
+                facts,
+                next_register,
+                locals,
+            )?;
+            (object, key)
         }
         _ => return None,
     };
-    let object = crate::reduce::reduce_expression(object, ops, facts, next_register, locals)?;
     let dst = *next_register;
     *next_register = next_register.saturating_add(1);
-    ops.push(Op::OptionalGet { dst, object, key });
+    ops.push(Op::OptionalGetDynamic { dst, object, key });
     Some(dst)
 }
 
@@ -126,6 +156,28 @@ fn reduce_optional_callee(
                     dst: callee,
                     object,
                     key: member.property.name.to_string(),
+                });
+            }
+            Some((callee, Some(object), member.optional))
+        }
+        Expression::ComputedMemberExpression(member) => {
+            let object =
+                crate::reduce::reduce_expression(&member.object, ops, facts, next, locals)?;
+            let key =
+                crate::reduce::reduce_expression(&member.expression, ops, facts, next, locals)?;
+            let callee = *next;
+            *next = next.saturating_add(1);
+            if member.optional {
+                ops.push(Op::OptionalGetDynamic {
+                    dst: callee,
+                    object,
+                    key,
+                });
+            } else {
+                ops.push(Op::GetPropertyDynamic {
+                    dst: callee,
+                    object,
+                    key,
                 });
             }
             Some((callee, Some(object), member.optional))
