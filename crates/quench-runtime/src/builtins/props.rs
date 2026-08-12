@@ -108,11 +108,8 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
     if let Some(method) = builtin_method_prefix(builtin, key) {
         return Some(method);
     }
-    if builtin == Promise {
-        return promise_method(key).or_else(|| builtin_method2(builtin, key));
-    }
-    if builtin == PromisePrototype {
-        return promise_prototype_method(key).or_else(|| builtin_method2(builtin, key));
+    if let Some(method) = promise_builtin_method(builtin, key) {
+        return Some(method);
     }
     match (builtin, key) {
         (Array, "prototype") => Some(ArrayPrototype),
@@ -129,6 +126,7 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
         (FunctionCall, "bind") => Some(FunctionBind),
         (Object, "prototype") => Some(ObjectPrototype),
         (ObjectPrototype, "hasOwnProperty") => Some(ObjectHasOwnProperty),
+        (ObjectPrototype, "isPrototypeOf") => Some(ObjectPrototypeIsPrototypeOf),
         (ObjectPrototype, "propertyIsEnumerable") => Some(ObjectPropertyIsEnumerable),
         (ObjectPrototype, "toString") => Some(ObjectPrototypeToString),
         (ObjectPrototype, "valueOf") => Some(ObjectPrototypeValueOf),
@@ -143,6 +141,7 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
         _ => builtin_method2(builtin, key),
     }
 }
+
 fn builtin_method_prefix(builtin: Builtin, key: &str) -> Option<Builtin> {
     if let Builtin::HostCapability(kind) = builtin {
         return host_capability_method(kind, key);
