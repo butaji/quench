@@ -288,6 +288,7 @@ pub(crate) fn execute_indirect_eval_in_realm(
 }
 
 include!("vm_generator_step.rs");
+include!("vm_completion_step.rs");
 
 fn run_ops(ops: &[Op], registers: &mut Vec<Value>, context: &VmContext) -> Result<Value, VmError> {
     completion_result(run_ops_completion(ops, registers, context)?)
@@ -298,24 +299,41 @@ fn run_ops_completion(
     registers: &mut Vec<Value>,
     context: &VmContext,
 ) -> Result<crate::completion::Completion, VmError> {
-    for op in ops {
+    Ok(run_ops_completion_step(ops, registers, context)?.completion)
+}
+
+fn run_ops_completion_step(
+    ops: &[Op],
+    registers: &mut Vec<Value>,
+    context: &VmContext,
+) -> Result<CompletionStep, VmError> {
+    for (index, op) in ops.iter().enumerate() {
         let result = match run_op(registers, op, context) {
             Ok(result) => result,
             Err(error) => {
                 crate::vm::flush_global_declaration_batch(registers);
-                return error_completion(error);
+                return error_completion(error).map(|completion| CompletionStep {
+                    completion,
+                    next: index + 1,
+                });
             }
         };
         match result {
             None | Some(crate::completion::Completion::Normal) => {}
             Some(completion) => {
                 crate::vm::flush_global_declaration_batch(registers);
-                return Ok(completion);
+                return Ok(CompletionStep {
+                    completion,
+                    next: index + 1,
+                });
             }
         }
     }
     crate::vm::flush_global_declaration_batch(registers);
-    Ok(crate::completion::Completion::Normal)
+    Ok(CompletionStep {
+        completion: crate::completion::Completion::Normal,
+        next: ops.len(),
+    })
 }
 
 fn error_completion(error: VmError) -> Result<crate::completion::Completion, VmError> {

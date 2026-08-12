@@ -25,9 +25,10 @@ fn resume_private_frame(
         return Ok(Some(input));
     }
     let _scope = crate::private_environment::Guard::install_environment(frame.environment);
-    let completion = execute_private_suffix(generator, state, frame.body_resume)?;
+    let step = execute_private_suffix(generator, state, frame.body_resume)?;
+    let completion = step.completion;
     if completion.is_suspension() {
-        advance_private_frame(generator, frame.body_resume)?;
+        advance_private_frame(generator, frame.body_resume, step.next)?;
         return Ok(Some(completion));
     }
     generator.machine.borrow_mut().pop_frame();
@@ -38,17 +39,18 @@ fn resume_private_frame(
 fn advance_private_frame(
     generator: &GeneratorData,
     range: crate::machine::CodeRange,
+    next: usize,
 ) -> Result<(), VmError> {
-    advance_frame_after_yield(generator, range)
+    advance_frame_after_yield(generator, range, next)
 }
 
 fn execute_private_suffix(
     generator: &GeneratorData, _state: &mut GeneratorState, range: crate::machine::CodeRange,
-) -> Result<crate::completion::Completion, VmError> {
+) -> Result<crate::vm::CompletionStep, VmError> {
     let store = generator.machine.borrow().store.clone().ok_or(VmError::MissingReturn)?;
     let ops = store.get(range).ok_or(VmError::MissingReturn)?;
     execute_with_generator_registers(generator, |registers| {
-        crate::execute::execute_completion_in_place(ops, registers)
+        crate::execute::execute_completion_step_in_place(ops, registers)
     })
 }
 
