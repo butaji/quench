@@ -44,7 +44,9 @@ fn execute_frame_range(
 ) -> Result<crate::completion::Completion, VmError> {
     let store = generator.machine.borrow().store.clone().ok_or(VmError::MissingReturn)?;
     let ops = store.get(range).ok_or(VmError::MissingReturn)?;
-    crate::execute::execute_completion_in_place(ops, &mut registers_mut(generator))
+    execute_with_generator_registers(generator, |registers| {
+        crate::execute::execute_completion_in_place(ops, registers)
+    })
 }
 
 fn complete_try_frame(
@@ -85,14 +87,16 @@ fn resume_after_try(
 ) -> Result<crate::completion::Completion, VmError> {
     if !matches!(completion, crate::completion::Completion::Normal) { return Ok(completion); }
     let start = range.start.saturating_sub(generator.function.code.range.start) as usize;
-    let step = crate::vm::execute_generator_step(generator.function.ops(), &mut registers_mut(generator), state.environment.clone(), start, completion)?;
+    let step = execute_with_generator_registers(generator, |registers| {
+        crate::vm::execute_generator_step(generator.function.ops(), registers, state.environment.clone(), start, completion)
+    })?;
     set_machine_pc(generator, step.pc);
     state.suspension = step.suspension;
     Ok(step.completion)
 }
 
-fn install_try_frame_input(generator: &GeneratorData, registers: &mut Vec<Value>, input: &Value) -> bool {
+fn install_try_frame_input(generator: &GeneratorData, input: &Value) -> bool {
     let Some(frame) = try_frame_resume(generator) else { return false; };
-    crate::execute::write_value(registers, frame.yield_dst, input.clone());
+    crate::execute::write_value(&mut registers_mut(generator), frame.yield_dst, input.clone());
     true
 }

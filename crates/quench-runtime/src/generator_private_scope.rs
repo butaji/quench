@@ -35,7 +35,9 @@ fn resume_suspended_conditional(
     if !matches!(resume, crate::completion::Completion::Normal) {
         return Ok(Some(resume));
     }
-    let completion = crate::execute::execute_completion_in_place(suffix, &mut registers_mut(generator))?;
+    let completion = execute_with_generator_registers(generator, |registers| {
+        crate::execute::execute_completion_in_place(suffix, registers)
+    })?;
     Ok(Some(completion))
 }
 
@@ -117,7 +119,9 @@ fn resume_suspended_private_scope(
         None => crate::private_environment::Guard::install(names),
     };
     let suffix = &body[index + 1..];
-    let completion = crate::execute::execute_completion_in_place(suffix, &mut registers_mut(generator))?;
+    let completion = execute_with_generator_registers(generator, |registers| {
+        crate::execute::execute_completion_in_place(suffix, registers)
+    })?;
     if matches!(completion, crate::completion::Completion::Yield(_)) {
         let yielded = suffix
             .iter()
@@ -141,13 +145,12 @@ fn finish_private_scope_resume(
     }
     let _home = crate::super_scope::Guard::install(&generator.function, &generator.receiver);
     let _with_scope = crate::with_scope::FunctionGuard::isolate();
-    let step = crate::vm::execute_generator_step(
-        generator.function.ops(),
-        &mut registers_mut(generator),
-        state.environment.clone(),
-        machine_pc(generator),
-        crate::completion::Completion::Normal,
-    )?;
+    let step = execute_with_generator_registers(generator, |registers| {
+        crate::vm::execute_generator_step(
+            generator.function.ops(), registers, state.environment.clone(), machine_pc(generator),
+            crate::completion::Completion::Normal,
+        )
+    })?;
     set_machine_pc(generator, step.pc);
     state.suspension = step.suspension;
     Ok(step.completion)

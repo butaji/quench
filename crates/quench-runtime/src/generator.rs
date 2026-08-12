@@ -246,16 +246,11 @@ fn resume_suspended_contexts(
         return resume_machine_frame(generator, state, completion).map(Some);
     }
     let resumed = match suspended_context(generator, state) {
-        Some(SuspendedContext::Try) => {
-            ensure_try_frame(generator, state)?;
-            resume_suspended_try(generator, state, completion.clone())?
-        }
+        Some(SuspendedContext::Try) => resume_suspended_try(generator, state, completion.clone())?,
         Some(SuspendedContext::Conditional) => {
-            ensure_control_frame(generator, state)?;
             resume_suspended_conditional(generator, state, completion.clone())?
         }
         Some(SuspendedContext::PrivateScope) => {
-            ensure_control_frame(generator, state)?;
             resume_suspended_private_scope(generator, state, completion.clone())?
         }
         Some(SuspendedContext::IteratorBinding) => {
@@ -264,7 +259,7 @@ fn resume_suspended_contexts(
         Some(SuspendedContext::Yield | SuspendedContext::YieldStar) | None => None,
     };
     resumed
-        .map(|completion| resume_machine_frame(generator, state, completion))
+        .map(|completion| complete_step(generator, state, completion))
         .transpose()
 }
 
@@ -348,9 +343,13 @@ fn resume_suspended_try(
     let Some((try_op, yield_op, suffix)) = suspended_try(generator, state) else {
         return Ok(None);
     };
-    let completion =
-        resume_suspended_try_op(&mut registers_mut(generator), yield_op, suffix, resume)?;
-    complete_suspended_try(try_op, &mut registers_mut(generator), completion).map(Some)
+    let completion = execute_with_generator_registers(generator, |registers| {
+        resume_suspended_try_op(registers, yield_op, suffix, resume)
+    })?;
+    execute_with_generator_registers(generator, |registers| {
+        complete_suspended_try(try_op, registers, completion)
+    })
+    .map(Some)
 }
 
 fn complete_suspended_try(
