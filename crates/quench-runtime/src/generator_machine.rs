@@ -113,45 +113,18 @@ fn update_await_frame(
     )
 }
 
-fn push_iterator_frame(generator: &GeneratorData, state: &GeneratorState) -> Result<(), VmError> {
+fn push_iterator_frame(generator: &GeneratorData, state: &GeneratorState) -> Result<bool, VmError> {
     if generator.machine.borrow().frame_count() != 0 {
-        return Ok(());
+        return Ok(false);
     }
-    let Some((_, body_ops, index)) = suspended_iterator_binding(generator, state)
-    else {
-        return Ok(());
+    let Some(frames) = iterator_frame_chain(generator, state)? else {
+        return Ok(false);
     };
-    let Some(Op::Yield { src }) = body_ops.get(index) else {
-        return Ok(());
-    };
-    let Some(Op::IteratorBinding { iterator: binding, body, close_normal }) =
-        generator.function.ops().get(machine_pc(generator).wrapping_sub(1))
-    else {
-        return Ok(());
-    };
-    let iterator = crate::execute::read_register(&registers(generator), *binding)?;
-    let resume = crate::machine::CodeRange {
-        code: generator.function.code_id(),
-        start: generator.function.code.range.start.saturating_add(machine_pc(generator) as u32),
-        end: generator.function.code.range.end,
-    };
-    try_push_frame(
-        &mut generator.machine.borrow_mut(),
-        crate::machine::Frame::Iterator {
-            phase: crate::machine::IteratorPhase::Body,
-            iterator,
-            binding: *binding,
-            body: body.range,
-            body_resume: crate::machine::CodeRange {
-                code: body.range.code,
-                start: body.range.start.saturating_add(index as u32 + 1),
-                end: body.range.end,
-            },
-            resume,
-            yield_dst: *src,
-            close_normal: *close_normal,
-        },
-    )
+    let mut machine = generator.machine.borrow_mut();
+    for frame in frames {
+        try_push_frame(&mut machine, frame)?;
+    }
+    Ok(true)
 }
 
 fn push_branch_frame(generator: &GeneratorData, state: &GeneratorState) -> Result<(), VmError> {
