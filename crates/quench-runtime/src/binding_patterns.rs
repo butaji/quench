@@ -123,7 +123,11 @@ fn assign_array(
     if let Some(rest) = &pattern.rest {
         assign_rest_target(&rest.target, iterator, &mut body, facts, next, locals)?;
     }
-    ops.push(Op::IteratorBinding { iterator, body });
+    ops.push(Op::IteratorBinding {
+        iterator,
+        body,
+        close_normal: true,
+    });
     Some(())
 }
 
@@ -348,7 +352,11 @@ fn bind_array(
         let value = iterator_rest(iterator, &mut body, next);
         bind(&rest.argument, value, &mut body, facts, next, locals)?;
     }
-    ops.push(Op::IteratorBinding { iterator, body });
+    ops.push(Op::IteratorBinding {
+        iterator,
+        body,
+        close_normal: false,
+    });
     Some(())
 }
 
