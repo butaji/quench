@@ -37,6 +37,9 @@ fn special(builtin: Builtin, key: &str) -> Option<Value> {
 }
 fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
     use Builtin::*;
+    if builtin == IteratorPrototype && key == "Symbol.iterator" {
+        return Some(Value::Builtin(IteratorSelf));
+    }
     if let Some(value) = typed_array_static_property(builtin, key) {
         return Some(value);
     }
@@ -114,10 +117,15 @@ fn builtin_method(builtin: Builtin, key: &str) -> Option<Builtin> {
     if builtin == Number && key == "parseInt" {
         return Some(ParseInt);
     }
-    if builtin == DataViewPrototype {
-        return data_view_method(key);
+    if let Some(method) = data_view_method_for(builtin, key) {
+        return Some(method);
     }
     builtin_method_core(builtin, key)
+}
+fn data_view_method_for(builtin: Builtin, key: &str) -> Option<Builtin> {
+    (builtin == Builtin::DataViewPrototype)
+        .then(|| data_view_method(key))
+        .flatten()
 }
 fn string_static_method(key: &str) -> Option<Builtin> {
     Some(match key {
@@ -167,6 +175,7 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
         _ => builtin_method2(builtin, key),
     }
 }
+
 fn builtin_method_prefix(builtin: Builtin, key: &str) -> Option<Builtin> {
     if let Builtin::HostCapability(kind) = builtin {
         return host_capability_method(kind, key);
