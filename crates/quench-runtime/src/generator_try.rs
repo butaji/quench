@@ -27,9 +27,6 @@ fn resume_suspended_try_op(
         }
         Ok(Some(completion)) => Ok(completion),
         Ok(None) => crate::execute::execute_completion_in_place(suffix, registers),
-        Err(crate::execute::VmError::Thrown(value)) => {
-            Ok(crate::completion::Completion::Throw(value))
-        }
-        Err(error) => Err(error),
+        Err(error) => crate::completion::Completion::from_vm_error(error),
     }
 }
