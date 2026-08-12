@@ -71,6 +71,10 @@ pub(crate) fn callable_property(builtin: Builtin, key: &str) -> Option<Value> {
     props::callable(builtin, key)
 }
 
+pub(crate) fn own_property_names(builtin: Builtin) -> &'static [&'static str] {
+    props::own_property_names(builtin)
+}
+
 pub(crate) fn builtin_name(builtin: Builtin) -> &'static str {
     props::builtin_name(builtin)
 }

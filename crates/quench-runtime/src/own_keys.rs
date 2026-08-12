@@ -82,6 +82,13 @@ fn keys(target: &Value, symbols: bool) -> Vec<String> {
                 .map_or_else(Vec::new, |properties| ordered(&properties, symbols));
         }
         Value::Function(function) => return function_keys(function, symbols),
+        Value::Builtin(builtin) => {
+            return crate::builtins::own_property_names(*builtin)
+                .iter()
+                .map(|key| (*key).to_string())
+                .filter(|key| key.contains('\0') == symbols)
+                .collect();
+        }
         _ => return Vec::new(),
     };
     ordered(properties, symbols)

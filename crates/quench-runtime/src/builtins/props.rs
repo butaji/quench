@@ -1,5 +1,6 @@
 use crate::{ops::Builtin, value::Value};
 include!("props_modules.rs");
+include!("props_own_names.rs");
 pub(crate) fn lookup(builtin: Builtin, key: &str) -> Value {
     if crate::builtins::builtin_prototype_property_is_removed(builtin, key) {
         return Value::Undefined;
@@ -74,7 +75,6 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         _ => builtin_method(builtin, key).map(Value::Builtin),
     }
 }
-
 fn iterator_property(builtin: Builtin, key: &str) -> Option<Value> {
     if builtin != Builtin::IteratorPrototype {
         return None;
@@ -179,7 +179,6 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
         _ => builtin_method2(builtin, key),
     }
 }
-
 fn builtin_method_prefix(builtin: Builtin, key: &str) -> Option<Builtin> {
     if let Builtin::HostCapability(kind) = builtin {
         return host_capability_method(kind, key);
@@ -404,6 +403,7 @@ pub(crate) fn callable(builtin: Builtin, key: &str) -> Option<Value> {
         _ => None,
     }
 }
+
 pub(crate) fn is_builtin_deletable(_builtin: Builtin, key: &str) -> bool {
     if key == "prototype" {
         return false;
