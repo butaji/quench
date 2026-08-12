@@ -294,7 +294,7 @@ fn execute_data_view_builtin(
 ) -> Result<Value, VmError> {
     let view = data_view_receiver(receiver)?;
     let offset = data_view_offset(arguments.first())?;
-    if view.is_detached() {
+    if view.is_detached() && !is_bigint_setter(builtin) {
         return Err(type_error("Detached DataView"));
     }
     let endian_argument = if is_data_view_setter(builtin) { 2 } else { 1 };
@@ -375,6 +375,9 @@ fn is_data_view_setter(builtin: Builtin) -> bool {
             | Builtin::DataViewSetBigUint64
     )
 }
+fn is_bigint_setter(builtin: Builtin) -> bool {
+    matches!(builtin, Builtin::DataViewSetBigInt64 | Builtin::DataViewSetBigUint64)
+}
 fn execute_data_view_set(
     builtin: Builtin,
     view: &crate::value::DataViewData,
@@ -412,6 +415,9 @@ fn execute_data_view_bigint_set(
         return Err(type_error("Cannot convert Number to BigInt"));
     }
     let value = explicit_bigint(Some(input))?;
+    if view.is_detached() {
+        return Err(type_error("Detached DataView"));
+    }
     let bits = crate::construct::bigint_bits(&value)?;
     let result = match builtin {
         Builtin::DataViewSetBigInt64 => view.set_bigint64(offset, bits as i64, little_endian),
