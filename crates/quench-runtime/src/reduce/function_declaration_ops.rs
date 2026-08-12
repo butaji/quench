@@ -1,7 +1,29 @@
-fn name_function_declaration(ops: &mut Vec<Op>, function: u16, name: &str) {
+fn name_function_declaration(
+    ops: &mut Vec<Op>,
+    function: u16,
+    slot: u16,
+    next_register: &mut u16,
+    name: &str,
+) {
     ops.push(Op::SetFunctionName {
         function,
         name: name.to_string(),
+    });
+    ops.push(Op::DeclareEvalBinding {
+        name: name.to_string(),
+        slot,
+    });
+    let marker = *next_register;
+    *next_register = next_register.saturating_add(1);
+    ops.push(Op::Const {
+        dst: marker,
+        value: crate::ops::Constant::Boolean(true),
+    });
+    ops.push(Op::SetProperty {
+        object: function,
+        key: crate::functions::FUNCTION_SELF.to_string(),
+        src: marker,
+        strict: true,
     });
 }
 

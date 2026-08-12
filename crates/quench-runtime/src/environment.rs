@@ -128,6 +128,9 @@ impl Environment {
 
     pub(crate) fn capture(environment: &Rc<Self>, count: u16) -> Rc<Self> {
         let count = usize::from(count);
+        for index in 0..count {
+            environment.ensure_slot(index as u16);
+        }
         let slots = environment.slots.borrow();
         let refs = slots.iter().take(count).cloned().collect();
         Rc::new(Self {
