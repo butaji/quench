@@ -449,9 +449,6 @@ fn reduce_literal_atom(
         crate::facts::ReduceContext::Value,
         crate::facts::Fact::Proven(value.fact.clone()),
     );
-    facts.constants.push(crate::facts::ConstantFact {
-        value: value.fact.clone(),
-    });
     ops.push(Op::Const {
         dst,
         value: value.op,

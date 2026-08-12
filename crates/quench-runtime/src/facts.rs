@@ -19,12 +19,15 @@ pub enum ReduceContext {
     Define,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FactSiteId(pub u32);
+
 #[derive(Debug, PartialEq)]
-pub struct SpanFacts<T> {
-    entries: HashMap<(Span, ReduceContext), Fact<T>>,
+pub struct SiteFacts<T> {
+    entries: HashMap<(FactSiteId, ReduceContext), Fact<T>>,
 }
 
-impl<T> Default for SpanFacts<T> {
+impl<T> Default for SiteFacts<T> {
     fn default() -> Self {
         Self {
             entries: HashMap::new(),
@@ -32,22 +35,22 @@ impl<T> Default for SpanFacts<T> {
     }
 }
 
-impl<T: Clone> SpanFacts<T> {
-    pub fn insert(&mut self, span: Span, fact: Fact<T>) {
-        self.insert_in_context(span, ReduceContext::Value, fact);
+impl<T: Clone> SiteFacts<T> {
+    pub fn insert(&mut self, site: FactSiteId, fact: Fact<T>) {
+        self.insert_in_context(site, ReduceContext::Value, fact);
     }
 
-    pub fn insert_in_context(&mut self, span: Span, context: ReduceContext, fact: Fact<T>) {
-        self.entries.insert((span, context), fact);
+    pub fn insert_in_context(&mut self, site: FactSiteId, context: ReduceContext, fact: Fact<T>) {
+        self.entries.insert((site, context), fact);
     }
 
-    pub fn query(&self, span: Span) -> Fact<T> {
-        self.query_in_context(span, ReduceContext::Value)
+    pub fn query(&self, site: FactSiteId) -> Fact<T> {
+        self.query_in_context(site, ReduceContext::Value)
     }
 
-    pub fn query_in_context(&self, span: Span, context: ReduceContext) -> Fact<T> {
+    pub fn query_in_context(&self, site: FactSiteId, context: ReduceContext) -> Fact<T> {
         self.entries
-            .get(&(span, context))
+            .get(&(site, context))
             .cloned()
             .unwrap_or(Fact::Unknown)
     }
@@ -77,8 +80,8 @@ impl<T> Fact<T> {
 
 #[derive(Debug, Default, PartialEq)]
 pub struct ProgramDb {
-    pub constants: Vec<ConstantFact>,
-    pub(crate) span_facts: SpanFacts<Constant>,
+    pub(crate) site_facts: SiteFacts<Constant>,
+    pub(crate) site_ids: HashMap<Span, FactSiteId>,
     pub scope_count: usize,
     pub symbol_count: usize,
     pub(crate) private_names: HashMap<Span, PrivateNameId>,
@@ -133,21 +136,36 @@ impl Epochs {
 }
 
 impl ProgramDb {
+    pub(crate) fn install_fact_sites(&mut self, sites: HashMap<Span, FactSiteId>) {
+        self.site_ids = sites;
+    }
+
+    pub(crate) fn finish_reduction(&mut self) {
+        self.site_ids.clear();
+    }
+
     pub(crate) fn record_fact_in_context(
         &mut self,
         span: Span,
         context: ReduceContext,
         fact: Fact<Constant>,
     ) {
-        self.span_facts.insert_in_context(span, context, fact);
+        let Some(site) = self.site_ids.get(&span).copied() else {
+            return;
+        };
+        self.site_facts.insert_in_context(site, context, fact);
     }
 
-    pub fn query_fact(&self, span: Span) -> Fact<Constant> {
-        self.span_facts.query(span)
+    pub fn query_fact(&self, site: FactSiteId) -> Fact<Constant> {
+        self.site_facts.query(site)
     }
 
-    pub fn query_fact_in_context(&self, span: Span, context: ReduceContext) -> Fact<Constant> {
-        self.span_facts.query_in_context(span, context)
+    pub fn query_fact_in_context(
+        &self,
+        site: FactSiteId,
+        context: ReduceContext,
+    ) -> Fact<Constant> {
+        self.site_facts.query_in_context(site, context)
     }
 
     pub fn insert_private_name(&mut self, span: Span, id: PrivateNameId) {
@@ -163,11 +181,6 @@ impl ProgramDb {
 pub struct PrivateNameId(pub u32);
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ConstantFact {
-    pub value: Constant,
-}
-
-#[derive(Debug, Clone, PartialEq)]
 pub enum Constant {
     Number(f64),
     Boolean(bool),
@@ -179,7 +192,7 @@ pub enum Constant {
 
 #[cfg(test)]
 mod tests {
-    use super::Epochs;
+    use super::{Epochs, FactSiteId, ReduceContext};
 
     #[test]
     fn epochs_are_independent_invalidation_dimensions() {
@@ -191,5 +204,27 @@ mod tests {
         assert_eq!(epochs.prototype(), 0);
         assert_eq!(epochs.realm(), 0);
         assert_eq!(epochs.global(), 2);
+    }
+
+    #[test]
+    fn reduction_keeps_site_facts_without_retaining_source_spans() {
+        let program = crate::reduce::reduce_source("1;").expect("literal source reduces");
+        assert!(program.facts.site_ids.is_empty());
+        assert!(!program.facts.site_facts.entries.is_empty());
+        let (site, _) = program
+            .facts
+            .site_facts
+            .entries
+            .keys()
+            .next()
+            .expect("literal fact");
+        assert!(program
+            .facts
+            .query_fact_in_context(*site, ReduceContext::Value)
+            .is_known());
+        assert_eq!(
+            program.facts.query_fact(FactSiteId(u32::MAX)),
+            super::Fact::Unknown
+        );
     }
 }
