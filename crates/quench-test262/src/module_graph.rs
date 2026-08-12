@@ -18,6 +18,7 @@ pub struct ModuleGraph {
     entry: Option<ModuleId>,
     units: Vec<ModuleUnit>,
     paths: HashMap<PathBuf, ModuleId>,
+    edges: HashMap<ModuleId, Vec<ModuleId>>,
 }
 
 impl ModuleGraph {
@@ -53,6 +54,51 @@ impl ModuleGraph {
         let base = self.units.get(from.0 as usize)?.path.parent()?;
         let path = normalize_module_path(&base.join(specifier));
         self.paths.get(&path).copied()
+    }
+
+    /// Record a statically resolved import edge. The graph owns resolution;
+    /// execution remains the host's concern.
+    pub fn link(&mut self, from: ModuleId, to: ModuleId) -> Result<(), String> {
+        if self.unit(from).is_none() || self.unit(to).is_none() {
+            return Err("module edge references an unknown unit".to_string());
+        }
+        let dependencies = self.edges.entry(from).or_default();
+        if !dependencies.contains(&to) {
+            dependencies.push(to);
+        }
+        Ok(())
+    }
+
+    /// Return post-order evaluation units for an entry, preserving declared
+    /// edge order and rejecting cycles instead of inventing an execution order.
+    pub fn dependency_order(&self, entry: ModuleId) -> Result<Vec<ModuleId>, String> {
+        if self.unit(entry).is_none() {
+            return Err("module entry references an unknown unit".to_string());
+        }
+        let mut state = HashMap::new();
+        let mut order = Vec::new();
+        self.visit(entry, &mut state, &mut order)?;
+        Ok(order)
+    }
+
+    fn visit(
+        &self,
+        id: ModuleId,
+        state: &mut HashMap<ModuleId, bool>,
+        order: &mut Vec<ModuleId>,
+    ) -> Result<(), String> {
+        if state.get(&id).copied() == Some(false) {
+            return Ok(());
+        }
+        if state.insert(id, true) == Some(true) {
+            return Err("cyclic module dependency graph".to_string());
+        }
+        for dependency in self.edges.get(&id).into_iter().flatten() {
+            self.visit(*dependency, state, order)?;
+        }
+        state.insert(id, false);
+        order.push(id);
+        Ok(())
     }
 
     fn add_unit(&mut self, path: PathBuf, source: String, entry: bool) -> ModuleId {
@@ -106,5 +152,21 @@ mod tests {
         assert_eq!(graph.entry_unit().map(|unit| unit.id), Some(entry));
         assert_eq!(graph.unit(dependency).map(|unit| unit.id), Some(dependency));
         assert_eq!(graph.units().len(), 2);
+        graph.link(entry, dependency).expect("known edge");
+        assert_eq!(
+            graph.dependency_order(entry).unwrap(),
+            vec![dependency, entry]
+        );
+    }
+
+    #[test]
+    fn graph_rejects_cycles_and_unknown_edges() {
+        let mut graph = ModuleGraph::new();
+        let entry = graph.add_entry(PathBuf::from("entry.js"), "".to_string());
+        let dependency = graph.add_dependency(PathBuf::from("dep.js"), "".to_string());
+        assert!(graph.link(entry, ModuleId(99)).is_err());
+        graph.link(entry, dependency).unwrap();
+        graph.link(dependency, entry).unwrap();
+        assert!(graph.dependency_order(entry).is_err());
     }
 }
