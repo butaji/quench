@@ -25,11 +25,14 @@ pub(crate) fn reduce_expression(
     let alternate = reduce_branch(&conditional.alternate, facts, next_register, locals)?;
     let dst = *next_register;
     *next_register = next_register.saturating_add(1);
+    let mut branches = crate::machine::FunctionCode::from_ops_many(vec![consequent, alternate]);
+    let alternate = branches.pop()?;
+    let consequent = branches.pop()?;
     ops.push(crate::ops::Op::Conditional {
         dst,
         condition,
-        consequent: crate::machine::FunctionCode::from_ops(consequent),
-        alternate: crate::machine::FunctionCode::from_ops(alternate),
+        consequent,
+        alternate,
     });
     Some(dst)
 }

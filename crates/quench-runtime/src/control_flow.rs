@@ -84,15 +84,26 @@ fn promote_conditional_tail(ops: &mut Vec<Op>, returned: u16) -> bool {
     let mut alternate = alternate;
     let promoted = promote_branch_tail(&mut consequent) | promote_branch_tail(&mut alternate);
     if promoted {
-        ops.push(Op::Branch {
-            condition,
-            then_ops: crate::machine::FunctionCode::from_ops(consequent),
-            else_ops: crate::machine::FunctionCode::from_ops(alternate),
-        });
+        push_promoted_branch(ops, condition, consequent, alternate);
     } else {
         restore_conditional(ops, dst, condition, consequent, alternate);
     }
     promoted
+}
+
+fn push_promoted_branch(ops: &mut Vec<Op>, condition: u16, consequent: Vec<Op>, alternate: Vec<Op>) {
+    let mut branches = crate::machine::FunctionCode::from_ops_many(vec![consequent, alternate]);
+    let Some(alternate) = branches.pop() else {
+        return;
+    };
+    let Some(consequent) = branches.pop() else {
+        return;
+    };
+    ops.push(Op::Branch {
+        condition,
+        then_ops: consequent,
+        else_ops: alternate,
+    });
 }
 
 fn restore_conditional(
@@ -102,11 +113,18 @@ fn restore_conditional(
     consequent: Vec<Op>,
     alternate: Vec<Op>,
 ) {
+    let mut branches = crate::machine::FunctionCode::from_ops_many(vec![consequent, alternate]);
+    let Some(alternate) = branches.pop() else {
+        return;
+    };
+    let Some(consequent) = branches.pop() else {
+        return;
+    };
     ops.push(Op::Conditional {
         dst,
         condition,
-        consequent: crate::machine::FunctionCode::from_ops(consequent),
-        alternate: crate::machine::FunctionCode::from_ops(alternate),
+        consequent,
+        alternate,
     });
 }
 
