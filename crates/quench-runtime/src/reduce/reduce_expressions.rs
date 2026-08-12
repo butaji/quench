@@ -47,12 +47,26 @@ pub fn reduce_if_statement(
         .map(|alternate| crate::branch::reduce(alternate, facts, locals))
         .transpose()?
         .unwrap_or_default();
+    push_branch(ops, condition, then_ops, else_ops)?;
+    Ok(None)
+}
+
+fn push_branch(
+    ops: &mut Vec<Op>,
+    condition: u16,
+    then_ops: Vec<Op>,
+    else_ops: Vec<Op>,
+) -> Result<(), Vec<String>> {
+    let [then_ops, else_ops] =
+        crate::machine::FunctionCode::from_ops_many(vec![then_ops, else_ops])
+            .try_into()
+            .map_err(|_| vec!["failed to materialize branch bodies".to_string()])?;
     ops.push(Op::Branch {
         condition,
-        then_ops: crate::machine::FunctionCode::from_ops(then_ops),
-        else_ops: crate::machine::FunctionCode::from_ops(else_ops),
+        then_ops,
+        else_ops,
     });
-    Ok(None)
+    Ok(())
 }
 fn reduce_static_if(
     statement: &oxc::ast::ast::IfStatement<'_>,
