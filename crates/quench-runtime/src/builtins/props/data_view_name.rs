@@ -21,6 +21,8 @@ pub(crate) fn data_view_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::DataViewSetInt32 => "setInt32",
         Builtin::DataViewSetUint32 => "setUint32",
         Builtin::DataViewSetFloat16 => "setFloat16",
+        Builtin::DataViewSetBigInt64 => "setBigInt64",
+        Builtin::DataViewSetBigUint64 => "setBigUint64",
         Builtin::DataViewSetFloat32 => "setFloat32",
         Builtin::DataViewSetFloat64 => "setFloat64",
         _ => return None,

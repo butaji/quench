@@ -30,3 +30,5 @@ fn promise_builtin_method(builtin: Builtin, key: &str) -> Option<Builtin> {
         _ => None,
     }
 }
+
+include!("props_names.rs");
