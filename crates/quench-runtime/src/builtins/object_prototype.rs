@@ -4,6 +4,7 @@ pub(crate) fn get_prototype_of(value: Option<&Value>) -> Result<Value, crate::ex
         return crate::proxy::proxy_get_prototype_of(value);
     }
     Ok(match value {
+        Value::Builtin(Builtin::ObjectPrototype) => Value::Null,
         Value::Builtin(builtin) if is_typed_array_constructor(*builtin) => {
             Value::Builtin(Builtin::TypedArray)
         }
