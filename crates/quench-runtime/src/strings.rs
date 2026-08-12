@@ -88,6 +88,7 @@ pub(crate) fn property_method(key: &str) -> Option<crate::ops::Builtin> {
         "replace" => Some(crate::ops::Builtin::StringReplace),
         "replaceAll" => Some(crate::ops::Builtin::StringReplaceAll),
         "search" => Some(crate::ops::Builtin::StringSearch),
+        "match" => Some(crate::ops::Builtin::StringMatch),
         _ => None,
     }
 }
@@ -127,6 +128,7 @@ pub(crate) fn execute_builtin(
         crate::ops::Builtin::StringReplace => replace(receiver, arguments, false),
         crate::ops::Builtin::StringReplaceAll => replace(receiver, arguments, true),
         crate::ops::Builtin::StringSearch => Ok(search(receiver, arguments)),
+        crate::ops::Builtin::StringMatch => string_match(receiver, arguments),
         _ => return None,
     };
     Some(result)
@@ -468,33 +470,4 @@ fn apply_callable_replacement(
     Ok(result)
 }
 
-pub(crate) fn search(receiver: Option<&Value>, arguments: &[Value]) -> Value {
-    let Some(Value::String(value)) = receiver else {
-        return Value::Number(-1.0);
-    };
-    let pattern = arguments.first().map_or_else(String::new, to_string);
-    Value::Number(value.find(&pattern).map_or(-1.0, |index| index as f64))
-}
-
-fn argument(arguments: &[Value]) -> String {
-    arguments.first().map_or_else(String::new, to_string)
-}
-
-fn to_string(value: &Value) -> String {
-    match value {
-        Value::String(value) => value.clone(),
-        Value::Number(value) => value.to_string(),
-        Value::Boolean(value) => value.to_string(),
-        Value::Null => "null".to_string(),
-        Value::Undefined => "undefined".to_string(),
-        _ => "[object Object]".to_string(),
-    }
-}
-
-fn number(value: &Value) -> Option<f64> {
-    match value {
-        Value::Number(value) => Some(*value),
-        Value::String(value) => value.parse().ok(),
-        _ => None,
-    }
-}
+include!("strings_tail.rs");

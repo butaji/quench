@@ -107,6 +107,7 @@ pub enum Builtin {
     StringReplace,
     StringReplaceAll,
     StringSearch,
+    StringMatch,
     MathAbs,
     MathFloor,
     MathCeil,
