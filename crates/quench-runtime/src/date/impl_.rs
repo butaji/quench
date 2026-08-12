@@ -1,6 +1,6 @@
 //! Date builtin implementation logic.
 use crate::{execute::VmError, ops::Builtin, value::Value};
-use chrono::{Datelike, Duration, NaiveDate};
+use chrono::Datelike;
 use std::rc::Rc;
 
 use super::{chrono_utils, extract_time, helpers, store_time, DateValue};
@@ -97,41 +97,11 @@ fn date_constructor(arguments: &[Value]) -> Result<Value, VmError> {
         let minute = helpers::arg_or(arguments.get(4), 0.0);
         let second = helpers::arg_or(arguments.get(5), 0.0);
         let ms_val = helpers::arg_or(arguments.get(6), 0.0);
-        local_date_ms(year, month, day, hour, minute, second, ms_val)
+        let year = chrono_utils::normalize_constructor_year(year);
+        chrono_utils::make_local_ms(year, month, day, hour, minute, second, ms_val)
     };
     let props = vec![("timeValue".to_string(), Value::Number(ms))];
     Ok(Value::Object(Rc::new(crate::value::ObjectData::new(props))))
-}
-
-fn local_date_ms(
-    year: f64,
-    month: f64,
-    day: f64,
-    hour: f64,
-    minute: f64,
-    second: f64,
-    millisecond: f64,
-) -> f64 {
-    let month_index = year * 12.0 + month.trunc();
-    let normalized_year = (month_index / 12.0).floor() as i32;
-    let normalized_month = (month_index - f64::from(normalized_year) * 12.0) as u32 + 1;
-    let Some(date) = NaiveDate::from_ymd_opt(normalized_year, normalized_month, 1) else {
-        return f64::NAN;
-    };
-    let millis = millisecond.trunc() as i64;
-    let duration = Duration::days(day.trunc() as i64 - 1)
-        + Duration::hours(hour.trunc() as i64)
-        + Duration::minutes(minute.trunc() as i64)
-        + Duration::seconds(second.trunc() as i64)
-        + Duration::milliseconds(millis);
-    let Some(local) = date
-        .and_hms_opt(0, 0, 0)
-        .and_then(|dt| dt.checked_add_signed(duration))
-    else {
-        return f64::NAN;
-    };
-    let utc = local - Duration::minutes(i64::from(chrono_utils::local_tz_offset_minutes()));
-    chrono_utils::time_clip(utc.and_utc().timestamp_millis() as f64)
 }
 
 fn date_parse(arguments: &[Value]) -> Value {
@@ -302,7 +272,7 @@ fn date_set_full_year(receiver: Option<&Value>, arguments: &[Value]) -> Value {
     let minute = helpers::arg_or(arguments.get(4), cmin as f64);
     let second = helpers::arg_or(arguments.get(5), cs as f64);
     let ms_val = helpers::arg_or(arguments.get(6), cms as f64);
-    let result = chrono_utils::make_utc_ms(year, month + 1.0, day, hour, minute, second, ms_val);
+    let result = chrono_utils::make_local_ms(year, month, day, hour, minute, second, ms_val);
     store_time(receiver.unwrap_or(&Value::Undefined), result);
     Value::Number(chrono_utils::time_clip(result))
 }
@@ -312,14 +282,8 @@ fn date_set_month(receiver: Option<&Value>, arguments: &[Value]) -> Value {
     let new_month = helpers::to_int32(arguments.first().unwrap_or(&Value::Undefined));
     let (y, _, d, h, m, s, ms) =
         chrono_utils::local_components(current).unwrap_or((2000, 1, 1, 0, 0, 0, 0));
-    let result = chrono_utils::make_utc_ms(
-        y as f64,
-        new_month + 1.0,
-        d as f64,
-        h as f64,
-        m as f64,
-        s as f64,
-        ms as f64,
+    let result = chrono_utils::make_local_ms(
+        y as f64, new_month, d as f64, h as f64, m as f64, s as f64, ms as f64,
     );
     store_time(receiver.unwrap_or(&Value::Undefined), result);
     Value::Number(chrono_utils::time_clip(result))
@@ -330,19 +294,25 @@ fn date_set_date(receiver: Option<&Value>, arguments: &[Value]) -> Value {
     let new_day = helpers::to_int32(arguments.first().unwrap_or(&Value::Undefined));
     let (y, m, _, h, min, s, ms) =
         chrono_utils::local_components(current).unwrap_or((2000, 1, 1, 0, 0, 0, 0));
-    let result = chrono_utils::make_utc_ms(
-        y as f64, m as f64, new_day, h as f64, min as f64, s as f64, ms as f64,
+    let result = chrono_utils::make_local_ms(
+        y as f64,
+        (m - 1) as f64,
+        new_day,
+        h as f64,
+        min as f64,
+        s as f64,
+        ms as f64,
     );
     store_time(receiver.unwrap_or(&Value::Undefined), result);
     Value::Number(chrono_utils::time_clip(result))
 }
 
 fn date_set_hours(receiver: Option<&Value>, arguments: &[Value]) -> Value {
-    set_local_time_components(receiver, arguments, 4)
+    set_local_time_components(receiver, arguments, 0)
 }
 
 fn date_set_minutes(receiver: Option<&Value>, arguments: &[Value]) -> Value {
-    set_local_time_components(receiver, arguments, 3)
+    set_local_time_components(receiver, arguments, 1)
 }
 
 fn date_set_seconds(receiver: Option<&Value>, arguments: &[Value]) -> Value {
@@ -350,15 +320,15 @@ fn date_set_seconds(receiver: Option<&Value>, arguments: &[Value]) -> Value {
 }
 
 fn date_set_milliseconds(receiver: Option<&Value>, arguments: &[Value]) -> Value {
-    set_local_time_components(receiver, arguments, 1)
+    set_local_time_components(receiver, arguments, 3)
 }
 
 fn date_set_utc_hours(receiver: Option<&Value>, arguments: &[Value]) -> Value {
-    set_utc_time_components(receiver, arguments, 4)
+    set_utc_time_components(receiver, arguments, 0)
 }
 
 fn date_set_utc_minutes(receiver: Option<&Value>, arguments: &[Value]) -> Value {
-    set_utc_time_components(receiver, arguments, 3)
+    set_utc_time_components(receiver, arguments, 1)
 }
 
 fn date_set_utc_seconds(receiver: Option<&Value>, arguments: &[Value]) -> Value {
@@ -366,7 +336,7 @@ fn date_set_utc_seconds(receiver: Option<&Value>, arguments: &[Value]) -> Value 
 }
 
 fn date_set_utc_milliseconds(receiver: Option<&Value>, arguments: &[Value]) -> Value {
-    set_utc_time_components(receiver, arguments, 1)
+    set_utc_time_components(receiver, arguments, 3)
 }
 
 fn date_get_year(receiver: Option<&Value>) -> Value {
@@ -386,73 +356,74 @@ fn date_set_year(receiver: Option<&Value>, arguments: &[Value]) -> Value {
     let current = extract_time(receiver);
     let (_, m, d, h, min, s, ms) =
         chrono_utils::local_components(current).unwrap_or((2000, 1, 1, 0, 0, 0, 0));
-    let result = chrono_utils::make_utc_ms(
-        year, m as f64, d as f64, h as f64, min as f64, s as f64, ms as f64,
+    let result = chrono_utils::make_local_ms(
+        year,
+        (m - 1) as f64,
+        d as f64,
+        h as f64,
+        min as f64,
+        s as f64,
+        ms as f64,
     );
     store_time(receiver.unwrap_or(&Value::Undefined), result);
     Value::Number(chrono_utils::time_clip(result))
 }
 
-fn set_local_time_components(
-    receiver: Option<&Value>,
-    arguments: &[Value],
-    min_args: usize,
-) -> Value {
+fn settable_components(arguments: &[Value], start: usize, current: [f64; 4]) -> [f64; 4] {
+    let mut out = current;
+    for (slot, value) in out
+        .iter_mut()
+        .enumerate()
+        .filter(|(slot, _)| *slot >= start)
+    {
+        let index = slot - start;
+        if index < arguments.len() {
+            *value = helpers::to_int32(&arguments[index]);
+        }
+    }
+    out
+}
+
+fn set_local_time_components(receiver: Option<&Value>, arguments: &[Value], start: usize) -> Value {
     let current = extract_time(receiver);
-    let (y, m, d, ch, cm, cs, _) =
+    let (y, m, d, ch, cm, cs, cms) =
         chrono_utils::local_components(current).unwrap_or((2000, 1, 1, 0, 0, 0, 0));
-
-    let hour = if min_args >= 4 {
-        helpers::to_int32(arguments.first().unwrap_or(&Value::Undefined))
-    } else {
-        ch as f64
-    };
-    let minute = if min_args >= 3 {
-        helpers::to_int32(arguments.get(1).unwrap_or(&Value::Undefined))
-    } else {
-        cm as f64
-    };
-    let second = if min_args >= 2 {
-        helpers::to_int32(arguments.get(2).unwrap_or(&Value::Undefined))
-    } else {
-        cs as f64
-    };
-    let ms_val = helpers::to_int32(arguments.get(3).unwrap_or(&Value::Undefined));
-
-    let result =
-        chrono_utils::make_utc_ms(y as f64, m as f64, d as f64, hour, minute, second, ms_val);
+    let [hour, minute, second, ms_val] = settable_components(
+        arguments,
+        start,
+        [ch as f64, cm as f64, cs as f64, cms as f64],
+    );
+    let result = chrono_utils::make_local_ms(
+        y as f64,
+        (m - 1) as f64,
+        d as f64,
+        hour,
+        minute,
+        second,
+        ms_val,
+    );
     store_time(receiver.unwrap_or(&Value::Undefined), result);
     Value::Number(chrono_utils::time_clip(result))
 }
 
-fn set_utc_time_components(
-    receiver: Option<&Value>,
-    arguments: &[Value],
-    min_args: usize,
-) -> Value {
+fn set_utc_time_components(receiver: Option<&Value>, arguments: &[Value], start: usize) -> Value {
     let current = extract_time(receiver);
-    let (y, m, d, ch, cm, cs, _) =
+    let (y, m, d, ch, cm, cs, cms) =
         chrono_utils::utc_components(current).unwrap_or((2000, 1, 1, 0, 0, 0, 0));
-
-    let hour = if min_args >= 4 {
-        helpers::to_int32(arguments.first().unwrap_or(&Value::Undefined))
-    } else {
-        ch as f64
-    };
-    let minute = if min_args >= 3 {
-        helpers::to_int32(arguments.get(1).unwrap_or(&Value::Undefined))
-    } else {
-        cm as f64
-    };
-    let second = if min_args >= 2 {
-        helpers::to_int32(arguments.get(2).unwrap_or(&Value::Undefined))
-    } else {
-        cs as f64
-    };
-    let ms_val = helpers::to_int32(arguments.get(3).unwrap_or(&Value::Undefined));
-
-    let result =
-        chrono_utils::make_utc_ms(y as f64, m as f64, d as f64, hour, minute, second, ms_val);
+    let [hour, minute, second, ms_val] = settable_components(
+        arguments,
+        start,
+        [ch as f64, cm as f64, cs as f64, cms as f64],
+    );
+    let result = chrono_utils::make_date_ms(
+        y as f64,
+        (m - 1) as f64,
+        d as f64,
+        hour,
+        minute,
+        second,
+        ms_val,
+    );
     store_time(receiver.unwrap_or(&Value::Undefined), result);
     Value::Number(chrono_utils::time_clip(result))
 }
