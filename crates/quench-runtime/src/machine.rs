@@ -406,6 +406,26 @@ impl Machine {
         *phase = next;
         true
     }
+
+    pub(crate) fn advance_private_resume(
+        &mut self,
+        body_resume: CodeRange,
+        yield_dst: u16,
+    ) -> bool {
+        let Some(Frame::Private {
+            phase,
+            body_resume: current_resume,
+            yield_dst: current_dst,
+            ..
+        }) = self.frames.frames.last_mut()
+        else {
+            return false;
+        };
+        *phase = PrivatePhase::Body;
+        *current_resume = body_resume;
+        *current_dst = yield_dst;
+        true
+    }
 }
 
 #[cfg(test)]
