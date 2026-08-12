@@ -195,10 +195,20 @@ pub(crate) fn reduce_selected_body(
     let mut next_slot = local_count;
     crate::reduce_support::predeclare_functions(statements, &mut locals, &mut next_slot);
     crate::reduce_support::predeclare_lexicals(statements, &mut locals, &mut next_slot);
+    let barrier_len = facts.eval_var_barrier.len();
+    facts
+        .eval_var_barrier
+        .extend(crate::semantic_early::lexically_declared_names_in(statements));
     for statement in ordered {
-        let value = evaluate_statement(statement, facts, &mut ops, &mut next_register, &mut next_slot, &mut locals)?;
+        let Some(value) =
+            evaluate_statement(statement, facts, &mut ops, &mut next_register, &mut next_slot, &mut locals)
+        else {
+            facts.eval_var_barrier.truncate(barrier_len);
+            return None;
+        };
         last = value.or(last);
     }
+    facts.eval_var_barrier.truncate(barrier_len);
     finalize_function_body(ops, last, expression_body)
 }
 
