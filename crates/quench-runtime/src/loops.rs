@@ -245,9 +245,11 @@ fn iterate_loop_keys(
         let value = crate::value::Value::String(key);
         let _binding = bind_iteration(slot, value, per_iteration);
         match execute_loop_body(registers, label, body)? {
-            LoopAction::Continue => {}
-            LoopAction::Break => return Ok(crate::completion::Completion::Normal),
-            LoopAction::Propagate(completion) => return Ok(completion),
+            crate::completion::LoopTransition::Continue => {}
+            crate::completion::LoopTransition::Break => {
+                return Ok(crate::completion::Completion::Normal)
+            }
+            crate::completion::LoopTransition::Propagate(completion) => return Ok(completion),
         }
     }
     Ok(crate::completion::Completion::Normal)
@@ -298,14 +300,14 @@ fn iterate_loop_values(
         };
         let _binding = bind_iteration(slot, value, per_iteration);
         match execute_loop_body(registers, label, body)? {
-            LoopAction::Continue => {}
-            LoopAction::Break => {
+            crate::completion::LoopTransition::Continue => {}
+            crate::completion::LoopTransition::Break => {
                 return crate::collections::iterator::close(
                     iterator,
                     crate::completion::Completion::Normal,
                 );
             }
-            LoopAction::Propagate(completion) => {
+            crate::completion::LoopTransition::Propagate(completion) => {
                 return crate::collections::iterator::close(iterator, completion);
             }
         }
@@ -325,28 +327,15 @@ fn bind_iteration(
     }
 }
 
-enum LoopAction {
-    Continue,
-    Break,
-    Propagate(crate::completion::Completion),
-}
-
 fn execute_loop_body(
     registers: &mut Vec<crate::value::Value>,
     label: &Option<String>,
     body: &[Op],
-) -> Result<LoopAction, crate::execute::VmError> {
-    use crate::completion::Completion;
-    match crate::execute::execute_completion_in_place(body, registers)? {
-        Completion::Normal => Ok(LoopAction::Continue),
-        Completion::Continue(continue_label) if continue_matches(label, &continue_label) => {
-            Ok(LoopAction::Continue)
-        }
-        Completion::Break(break_label) if break_matches(label, &break_label) => {
-            Ok(LoopAction::Break)
-        }
-        completion => Ok(LoopAction::Propagate(completion)),
-    }
+) -> Result<crate::completion::LoopTransition, crate::execute::VmError> {
+    Ok(crate::completion::Completion::into_loop_transition(
+        crate::execute::execute_completion_in_place(body, registers)?,
+        label,
+    ))
 }
 
 pub(crate) fn execute(
@@ -394,9 +383,9 @@ fn run_loop(
             break;
         }
         match execute_loop_body(registers, label, body)? {
-            LoopAction::Continue => {}
-            LoopAction::Break => break,
-            LoopAction::Propagate(completion) => return Ok(completion),
+            crate::completion::LoopTransition::Continue => {}
+            crate::completion::LoopTransition::Break => break,
+            crate::completion::LoopTransition::Propagate(completion) => return Ok(completion),
         }
         run_fragment(update, registers)?;
         if post_test && !loop_test(test, registers)? {
@@ -411,17 +400,6 @@ fn loop_test(
     registers: &mut Vec<crate::value::Value>,
 ) -> Result<bool, crate::execute::VmError> {
     crate::execute::execute_in_place(test, registers).map(|value| crate::execute::is_truthy(&value))
-}
-
-fn break_matches(loop_label: &Option<String>, break_label: &Option<String>) -> bool {
-    match break_label {
-        None => true,
-        Some(label) => loop_label.as_ref() == Some(label),
-    }
-}
-
-fn continue_matches(loop_label: &Option<String>, continue_label: &Option<String>) -> bool {
-    continue_label.is_none() || loop_label == continue_label
 }
 
 /// Run a loop fragment. An empty fragment (no init/update, e.g. a `while`
