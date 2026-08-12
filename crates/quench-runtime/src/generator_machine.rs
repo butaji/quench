@@ -49,6 +49,27 @@ fn execute_with_generator_registers<T>(
     result
 }
 
+fn resume_generator_range(
+    generator: &GeneratorData,
+    state: &mut GeneratorState,
+    range: crate::machine::CodeRange,
+    completion: crate::completion::Completion,
+) -> Result<crate::completion::Completion, VmError> {
+    if !matches!(completion, crate::completion::Completion::Normal) { return Ok(completion); }
+    let _private = crate::private_environment::Guard::install_environment(generator.function.private_environment.clone());
+    let _home = crate::super_scope::Guard::install(&generator.function, &generator.receiver);
+    let _with = crate::with_scope::FunctionGuard::isolate();
+    let start = range.start.saturating_sub(generator.function.code.range.start) as usize;
+    let step = execute_with_generator_registers(generator, |registers| {
+        crate::vm::execute_generator_step(
+            generator.function.ops(), registers, machine_environment(generator)?, start, completion,
+        )
+    })?;
+    set_machine_pc(generator, step.pc);
+    state.suspension = step.suspension;
+    Ok(step.completion)
+}
+
 fn update_await_frame(
     generator: &GeneratorData,
     _state: &GeneratorState,
