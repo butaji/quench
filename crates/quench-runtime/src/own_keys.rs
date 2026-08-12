@@ -25,6 +25,13 @@ pub(crate) fn enumerable_key_strings(target: Option<&Value>) -> Vec<String> {
     };
     let properties = match target {
         Value::Object(properties) => properties.as_slice(),
+        Value::ObjectAlias(alias) => {
+            return alias
+                .0
+                .borrow()
+                .upgrade()
+                .map_or_else(Vec::new, |properties| enumerable(&properties));
+        }
         Value::Function(function) => return enumerable_function(function),
         _ => return Vec::new(),
     };

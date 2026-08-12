@@ -45,8 +45,12 @@ fn has_optional_chain_callee(expression: &Expression<'_>) -> bool {
         Expression::ParenthesizedExpression(parenthesized) => {
             has_optional_chain_callee(&parenthesized.expression)
         }
-        Expression::StaticMemberExpression(member) => member.optional,
-        Expression::ComputedMemberExpression(member) => member.optional,
+        Expression::StaticMemberExpression(member) => {
+            member.optional || has_optional_chain_callee(&member.object)
+        }
+        Expression::ComputedMemberExpression(member) => {
+            member.optional || has_optional_chain_callee(&member.object)
+        }
         _ => false,
     }
 }

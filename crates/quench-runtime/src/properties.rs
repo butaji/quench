@@ -10,14 +10,29 @@ pub(crate) fn reduce(
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
-    let (object, key) = match expression {
-        Expression::StaticMemberExpression(member) => {
-            (&member.object, member.property.name.to_string())
-        }
+    let (object, key, optional) = match expression {
+        Expression::StaticMemberExpression(member) => (
+            &member.object,
+            member.property.name.to_string(),
+            member.optional,
+        ),
         Expression::PrivateFieldExpression(member) => {
             return reduce_private_get(member, ops, facts, next_register, locals);
         }
         Expression::ComputedMemberExpression(member) => {
+            if matches!(member.object, Expression::Super(_)) {
+                let key = crate::reduce::reduce_expression(
+                    &member.expression,
+                    ops,
+                    facts,
+                    next_register,
+                    locals,
+                )?;
+                let dst = *next_register;
+                *next_register = next_register.saturating_add(1);
+                ops.push(Op::GetSuperPropertyDynamic { dst, key });
+                return Some(dst);
+            }
             let object = crate::reduce::reduce_expression(
                 &member.object,
                 ops,
@@ -36,7 +51,7 @@ pub(crate) fn reduce(
         }
         _ => return None,
     };
-    emit_get(object, key, ops, facts, next_register, locals)
+    emit_get(object, key, optional, ops, facts, next_register, locals)
 }
 fn reduce_private_get(
     member: &oxc::ast::ast::PrivateFieldExpression<'_>,
@@ -54,25 +69,52 @@ fn reduce_private_get(
     Some(dst)
 }
 fn emit_get(
-    object: &Expression<'_>,
+    object_expression: &Expression<'_>,
     key: String,
+    optional: bool,
     ops: &mut Vec<Op>,
     facts: &mut ProgramDb,
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
-    if matches!(object, Expression::Super(_)) {
+    if matches!(object_expression, Expression::Super(_)) {
         return Some(emit_super_get(ops, next_register, key));
     }
-    let object = crate::reduce::reduce_expression(object, ops, facts, next_register, locals)?;
+    let object =
+        crate::reduce::reduce_expression(object_expression, ops, facts, next_register, locals)?;
     let register = *next_register;
     *next_register = next_register.saturating_add(1);
-    ops.push(Op::GetProperty {
-        dst: register,
-        object,
-        key,
-    });
+    let op = if optional || is_optional_chain_value(object_expression) {
+        Op::OptionalGet {
+            dst: register,
+            object,
+            key,
+        }
+    } else {
+        Op::GetProperty {
+            dst: register,
+            object,
+            key,
+        }
+    };
+    ops.push(op);
     Some(register)
+}
+
+fn is_optional_chain_value(expression: &Expression<'_>) -> bool {
+    match expression {
+        Expression::ChainExpression(_) => true,
+        Expression::ParenthesizedExpression(parenthesized) => {
+            is_optional_chain_value(&parenthesized.expression)
+        }
+        Expression::StaticMemberExpression(member) => {
+            member.optional || is_optional_chain_value(&member.object)
+        }
+        Expression::ComputedMemberExpression(member) => {
+            member.optional || is_optional_chain_value(&member.object)
+        }
+        _ => false,
+    }
 }
 fn emit_super_get(ops: &mut Vec<Op>, next_register: &mut u16, key: String) -> u16 {
     let dst = *next_register;
