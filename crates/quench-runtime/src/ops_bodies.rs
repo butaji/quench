@@ -20,39 +20,42 @@ impl Op {
             | Self::IteratorBinding { body, .. }
             | Self::ForIn { body, .. }
             | Self::ForOf { body, .. } => visitor(body),
-            Self::Branch { then_ops, else_ops, .. }
-            | Self::Conditional {
-                consequent: then_ops,
-                alternate: else_ops,
-                ..
-            } => { visitor(then_ops); visitor(else_ops); }
-            Self::Try {
-                body,
-                handler,
-                finalizer,
-                ..
-            } => {
-                visitor(body);
-                if let Some(handler) = handler {
-                    visitor(handler);
-                }
-                if let Some(finalizer) = finalizer {
-                    visitor(finalizer);
-                }
+            Self::Branch { then_ops, else_ops, .. } => visit_pair(then_ops, else_ops, visitor),
+            Self::Conditional { consequent, alternate, .. } => {
+                visit_pair(consequent, alternate, visitor)
             }
-            Self::Loop {
-                init,
-                test,
-                body,
-                update,
-                ..
-            } => { visitor(init); visitor(test); visitor(body); visitor(update); }
-            Self::Switch { cases, .. } => {
-                for (_, body) in cases {
-                    visitor(body);
-                }
+            Self::Try { body, handler, finalizer, .. } => visit_try(body, handler, finalizer, visitor),
+            Self::Loop { init, test, body, update, .. } => {
+                visit_many([init, test, body, update], visitor)
             }
+            Self::Switch { cases, .. } => cases.iter().for_each(|(_, body)| visitor(body)),
             _ => {}
         }
     }
+}
+
+fn visit_pair(
+    first: &crate::machine::FunctionCode,
+    second: &crate::machine::FunctionCode,
+    visitor: &mut impl FnMut(&crate::machine::FunctionCode),
+) {
+    visitor(first);
+    visitor(second);
+}
+
+fn visit_many<const N: usize>(
+    bodies: [&crate::machine::FunctionCode; N],
+    visitor: &mut impl FnMut(&crate::machine::FunctionCode),
+) {
+    bodies.into_iter().for_each(visitor);
+}
+
+fn visit_try(
+    body: &crate::machine::FunctionCode,
+    handler: &Option<crate::machine::FunctionCode>,
+    finalizer: &Option<crate::machine::FunctionCode>,
+    visitor: &mut impl FnMut(&crate::machine::FunctionCode),
+) {
+    visitor(body);
+    handler.iter().chain(finalizer).for_each(visitor);
 }
