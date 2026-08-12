@@ -1,4 +1,5 @@
 use crate::value::Value;
+include!("strings_static.rs");
 
 /// The ECMAScript length of `s`: its count of UTF-16 code units.
 pub(crate) fn utf16_len(s: &str) -> usize {
@@ -98,6 +99,7 @@ pub(crate) fn execute_builtin(
 ) -> Option<Result<Value, crate::execute::VmError>> {
     let result = match builtin {
         crate::ops::Builtin::StringFromCharCode => Ok(from_char_code(arguments)),
+        crate::ops::Builtin::StringFromCodePoint => from_code_point(arguments),
         crate::ops::Builtin::StringIncludes => Ok(includes(receiver, arguments)),
         crate::ops::Builtin::StringIsWellFormed => is_well_formed(receiver),
         crate::ops::Builtin::StringToWellFormed => to_well_formed(receiver),
