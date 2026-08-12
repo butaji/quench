@@ -1,6 +1,6 @@
 //! VM op execution helpers (arithmetic, unary, binary, call dispatch).
 use crate::bigint;
-use crate::intl::tolocale::value::{is_truthy, strict_equal, to_int32, to_string, type_of};
+use crate::intl::tolocale::value::{is_truthy, strict_equal, to_int32, type_of};
 use crate::ops::Builtin;
 use crate::value::Value;
 
@@ -21,7 +21,7 @@ pub(crate) fn execute_unary(
         UnaryOp::BitwiseNot => bitwise_not(&value)?,
         UnaryOp::Void => Value::Undefined,
         UnaryOp::Typeof => Value::String(type_of(&value).to_string()),
-        UnaryOp::ToString => Value::String(to_string(Some(&value))),
+        UnaryOp::ToString => Value::String(crate::conversion::to_string(&value)?),
         UnaryOp::ToNumeric => to_numeric(&value)?,
         UnaryOp::Delete => Value::Boolean(true),
         UnaryOp::IsNullish => Value::Boolean(matches!(value, Value::Null | Value::Undefined)),
@@ -369,7 +369,7 @@ fn add_string(value: &Value) -> Result<String, VmError> {
     }
     Ok(bigint_value(value)
         .map(str::to_string)
-        .unwrap_or_else(|| to_string(Some(value))))
+        .unwrap_or_else(|| crate::intl::tolocale::value::to_string(Some(value))))
 }
 
 fn bigint_value(value: &Value) -> Option<&str> {
