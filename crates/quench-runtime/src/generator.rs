@@ -375,6 +375,9 @@ fn resume_suspended_try(
     let completion = execute_with_generator_registers(generator, |registers| {
         resume_suspended_try_op(registers, yield_op, suffix, resume)
     })?;
+    if completion.is_suspension() {
+        return Ok(Some(completion));
+    }
     execute_with_generator_registers(generator, |registers| {
         complete_suspended_try(try_op, registers, completion)
     })
