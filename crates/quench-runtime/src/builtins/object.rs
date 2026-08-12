@@ -5,6 +5,8 @@ use crate::{
 };
 use std::rc::Rc;
 
+include!("object_proxy.rs");
+
 pub(crate) fn boxed_constructor(value: &Value) -> Builtin {
     match value {
         Value::String(value) if value.contains('\0') => Builtin::Symbol,
@@ -40,11 +42,14 @@ pub(crate) fn execute_special(
         Builtin::ObjectGetOwnPropertyDescriptor => {
             let (target, key) = static_target(arguments);
             require_object_coercible(target)?;
+            if let (Some(target @ Value::Proxy(_)), Some(Value::String(key))) = (target, key) {
+                return crate::proxy::proxy_get_own_property_descriptor(target, key);
+            }
             descriptor(target, key)
         }
         Builtin::ObjectGetOwnPropertyNames => crate::own_keys::names(arguments.first()),
         Builtin::ObjectGetOwnPropertySymbols => crate::own_keys::symbols(arguments.first()),
-        Builtin::ObjectKeys => Ok(crate::own_keys::enumerable_names(arguments.first())),
+        Builtin::ObjectKeys => object_keys(arguments.first()),
         Builtin::ObjectAssign => assign(arguments),
         Builtin::ObjectFromEntries => from_entries(arguments),
         Builtin::ObjectGroupBy => group_by(arguments),

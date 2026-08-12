@@ -370,6 +370,13 @@ pub(crate) fn define_property(arguments: &[Value]) -> Result<Value, crate::execu
         return Ok(Value::Undefined);
     };
     let key = crate::conversion::to_property_key(arguments.get(1).unwrap_or(&Value::Undefined))?;
+    if matches!(target, Value::Proxy(_)) {
+        return crate::proxy::proxy_define_property(
+            target,
+            &key,
+            arguments.get(2).unwrap_or(&Value::Undefined),
+        );
+    }
     let Some(Value::Object(descriptor)) = arguments.get(2) else {
         return Ok(target.clone());
     };

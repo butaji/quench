@@ -94,7 +94,6 @@ fn reduce_dynamic_get(
     ops.push(Op::GetPropertyDynamic { dst, object, key });
     Some(dst)
 }
-
 pub(crate) fn execute_get_dynamic(
     registers: &mut Vec<crate::value::Value>,
     op: &Op,
@@ -109,7 +108,6 @@ pub(crate) fn execute_get_dynamic(
     crate::execute::write_value(registers, *dst, value);
     Ok(())
 }
-
 pub(crate) fn execute_set_property(
     registers: &mut Vec<crate::value::Value>,
     op: &Op,
@@ -123,9 +121,7 @@ pub(crate) fn execute_set_property(
     }
     let value = crate::execute::read_register(registers, src)?.clone();
     if matches!(target, crate::value::Value::Proxy(_)) {
-        let result = assign_set_property(&target, &key, value)?;
-        crate::execute::write_value(registers, object, result);
-        return Ok(());
+        return assign_proxy_set(registers, object, &target, &key, value);
     }
     if crate::vm::is_global_object(&target) && crate::with_scope::set_if_bound(&key, &value)? {
         return Ok(());
@@ -146,7 +142,6 @@ pub(crate) fn execute_set_property(
     finish_property_write(registers, object, &target, &key, value);
     Ok(())
 }
-
 fn set_property_parts(
     registers: &[crate::value::Value],
     op: &Op,
@@ -236,6 +231,9 @@ pub(crate) fn is_extensible_value(
     target: Option<&crate::value::Value>,
 ) -> Result<crate::value::Value, crate::execute::VmError> {
     let target = target.ok_or(crate::execute::VmError::NotCallable)?;
+    if matches!(target, crate::value::Value::Proxy(_)) {
+        return crate::proxy::proxy_is_extensible(target);
+    }
     Ok(crate::value::Value::Boolean(object_is_extensible(target)))
 }
 
@@ -294,7 +292,6 @@ fn inherited_write_blocked(target: &crate::value::Value, key: &str) -> bool {
         Some(crate::value::Value::Boolean(false))
     )
 }
-
 fn write_failure(strict: bool) -> Result<(), crate::execute::VmError> {
     if strict {
         return Err(crate::value::error::throw_type_error(
@@ -343,6 +340,9 @@ pub(crate) fn execute_delete_property(
         ));
     }
     let key = dynamic_property_key(&crate::execute::read_register(registers, *key)?)?;
+    if matches!(target, crate::value::Value::Proxy(_)) {
+        return delete_proxy_property(registers, *dst, &target, &key, *strict);
+    }
     let (result, deleted) = crate::builtins::delete_property(target.clone(), &key);
     if !deleted && *strict {
         return Err(crate::value::error::throw_type_error(
