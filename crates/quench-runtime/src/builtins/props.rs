@@ -37,6 +37,9 @@ fn special(builtin: Builtin, key: &str) -> Option<Value> {
 }
 fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
     use Builtin::*;
+    if builtin == ArrayIteratorPrototype && key == "constructor" {
+        return Some(Value::Builtin(Array));
+    }
     if builtin == IteratorPrototype && key == "Symbol.iterator" {
         return Some(Value::Builtin(IteratorSelf));
     }
