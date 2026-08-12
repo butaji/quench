@@ -6,13 +6,10 @@ impl Op {
     }
 
     pub(crate) fn visit_bodies(&self, visitor: &mut impl FnMut(&crate::machine::FunctionCode)) {
-        macro_rules! visit {
-            ($($body:expr),+ $(,)?) => { $(visitor($body);)+ };
-        }
         match self {
             Self::AppendInstanceField(op) => {
                 if let Some(initializer) = &op.initializer {
-                    visit!(&initializer.body);
+                    visitor(&initializer.body);
                 }
             }
             Self::MakeFunction { body, .. }
@@ -22,29 +19,25 @@ impl Op {
             | Self::PrivateScope { body, .. }
             | Self::IteratorBinding { body, .. }
             | Self::ForIn { body, .. }
-            | Self::ForOf { body, .. } => {
-                visit!(body);
-            }
+            | Self::ForOf { body, .. } => visitor(body),
             Self::Branch { then_ops, else_ops, .. }
             | Self::Conditional {
                 consequent: then_ops,
                 alternate: else_ops,
                 ..
-            } => {
-                visit!(then_ops, else_ops);
-            }
+            } => { visitor(then_ops); visitor(else_ops); }
             Self::Try {
                 body,
                 handler,
                 finalizer,
                 ..
             } => {
-                visit!(body);
+                visitor(body);
                 if let Some(handler) = handler {
-                    visit!(handler);
+                    visitor(handler);
                 }
                 if let Some(finalizer) = finalizer {
-                    visit!(finalizer);
+                    visitor(finalizer);
                 }
             }
             Self::Loop {
@@ -53,12 +46,10 @@ impl Op {
                 body,
                 update,
                 ..
-            } => {
-                visit!(init, test, body, update);
-            }
+            } => { visitor(init); visitor(test); visitor(body); visitor(update); }
             Self::Switch { cases, .. } => {
                 for (_, body) in cases {
-                    visit!(body);
+                    visitor(body);
                 }
             }
             _ => {}

@@ -12,6 +12,11 @@ use array_like::{array_like_length, array_like_value};
 use intrinsic_overrides as overrides;
 use std::rc::Rc;
 const DESCRIPTOR_PREFIX: &str = "\0quench:descriptor:\0";
+const DELETED_PREFIX: &str = "\0quench:deleted:\0";
+
+pub(crate) fn deleted_key(key: &str) -> String {
+    format!("{DELETED_PREFIX}{key}")
+}
 
 pub(crate) fn descriptor_key(key: &str) -> String {
     format!("{DESCRIPTOR_PREFIX}{key}")
@@ -238,11 +243,8 @@ fn boxed_object(value: &Value) -> Value {
         ("_value".to_string(), value.clone()),
         ("constructor".to_string(), Value::Builtin(constructor)),
     ];
-    if constructor == Builtin::BigInt {
-        properties.push((
-            "\0prototype".to_string(),
-            Value::Builtin(Builtin::BigIntPrototype),
-        ));
+    if let Some(prototype) = crate::builtin_meta::instance_prototype(constructor) {
+        properties.push(("\0prototype".to_string(), Value::Builtin(prototype)));
     }
     Value::Object(Rc::new(ObjectData::new(properties)))
 }
@@ -441,6 +443,11 @@ fn store_descriptor_metadata(result: &mut Value, key: &str, descriptor: &[(Strin
             properties.push((descriptor_key, metadata));
         }
         Value::Builtin(builtin) => write_intrinsic_override(*builtin, key, metadata),
+        Value::BoundFunction(bound) => {
+            if let Value::Builtin(builtin) = bound.target {
+                write_intrinsic_override(builtin, key, metadata);
+            }
+        }
         _ => {}
     }
 }
