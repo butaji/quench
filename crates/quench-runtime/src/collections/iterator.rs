@@ -1,16 +1,17 @@
 use crate::value::{IteratorData, IteratorState, Value};
 use std::{cell::RefCell, rc::Rc};
-
 #[path = "iterator_map.rs"]
 mod iterator_map;
+#[path = "iterator_protocol.rs"]
+mod iterator_protocol;
 #[path = "iterator_typed.rs"]
 mod iterator_typed;
 #[path = "iterator_values.rs"]
 mod iterator_values;
+pub(crate) use iterator_protocol::{should_update_protocol_receiver, ReceiverUpdateGuard};
 pub(crate) use iterator_values::{
     from_map, from_map_keys, from_map_values, from_set, make, next, property,
 };
-
 fn make_protocol(iterator: Value, next: Value) -> Value {
     Value::Iterator(Rc::new(IteratorData {
         state: RefCell::new(IteratorState::Protocol {
@@ -20,7 +21,6 @@ fn make_protocol(iterator: Value, next: Value) -> Value {
         }),
     }))
 }
-
 pub(crate) fn execute(
     registers: &mut Vec<Value>,
     op: &crate::ops::Op,
@@ -426,7 +426,7 @@ pub(crate) fn step_value(value: &Value) -> Result<Option<Value>, crate::execute:
     let Some((iterator, next)) = protocol else {
         return Ok(None);
     };
-    let result = call(&next, &iterator)?;
+    let result = iterator_protocol::call_next(data, &next, &iterator)?;
     protocol_result(data, result)
 }
 fn native_step(values: &[Value], index: &mut usize, done: &mut bool) -> Option<Value> {
