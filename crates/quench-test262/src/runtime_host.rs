@@ -60,10 +60,7 @@ impl LinkedModuleGraph {
                 let target = graph
                     .resolve(id, &binding.source)
                     .ok_or_else(|| format!("unresolved module {}", binding.source))?;
-                let cell = units
-                    .get(&target)
-                    .and_then(|unit| unit.export_cell(&binding.imported))
-                    .ok_or_else(|| format!("SyntaxError: export {} missing", binding.imported))?;
+                let cell = import_cell(&units, target, &binding.imported)?;
                 units
                     .get(&id)
                     .ok_or_else(|| "module unit missing".to_string())?
@@ -86,6 +83,48 @@ impl LinkedModuleGraph {
     pub fn export_cell(&self, unit: ModuleId, name: &str) -> Option<ModuleBindingCell> {
         self.units.get(&unit)?.export_cell(name)
     }
+}
+
+fn import_cell(
+    units: &std::collections::HashMap<ModuleId, LinkedModule>,
+    target: ModuleId,
+    imported: &str,
+) -> Result<ModuleBindingCell, String> {
+    if imported == "*" {
+        return namespace_cell(units, target);
+    }
+    units
+        .get(&target)
+        .and_then(|unit| unit.export_cell(imported))
+        .ok_or_else(|| format!("SyntaxError: export {imported} missing"))
+}
+
+fn namespace_cell(
+    units: &std::collections::HashMap<ModuleId, LinkedModule>,
+    target: ModuleId,
+) -> Result<ModuleBindingCell, String> {
+    let unit = units
+        .get(&target)
+        .ok_or_else(|| "module unit missing".to_string())?;
+    let metadata = unit
+        .program
+        .module_metadata
+        .as_ref()
+        .ok_or_else(|| "module metadata missing".to_string())?;
+    let properties = metadata
+        .exported_names
+        .iter()
+        .filter_map(|name| unit.export_cell(name).map(|cell| (name.clone(), cell)))
+        .map(|(name, cell)| {
+            (
+                name,
+                quench_runtime::value::Value::BindingCell(cell.shared()),
+            )
+        })
+        .collect();
+    Ok(ModuleBindingCell::new(
+        quench_runtime::value::Value::object(properties),
+    ))
 }
 
 impl LinkedModule {
@@ -340,6 +379,25 @@ mod tests {
             "import value from './dep.js'; export default value;".to_string(),
         );
         graph.add_dependency(PathBuf::from("dep.js"), "export default true;".to_string());
+        let linked = LinkedModuleGraph::compile(&mut graph).expect("graph compiles");
+        linked.execute(&graph, entry).expect("graph executes");
+        let cell = linked
+            .export_cell(entry, "default")
+            .expect("default export");
+        assert_eq!(cell.get(), Value::Boolean(true));
+    }
+
+    #[test]
+    fn namespace_import_reads_live_export_cells() {
+        let mut graph = ModuleGraph::new();
+        let entry = graph.add_entry(
+            PathBuf::from("entry.js"),
+            "import * as ns from './dep.js'; export default ns.value;".to_string(),
+        );
+        graph.add_dependency(
+            PathBuf::from("dep.js"),
+            "export const value = true;".to_string(),
+        );
         let linked = LinkedModuleGraph::compile(&mut graph).expect("graph compiles");
         linked.execute(&graph, entry).expect("graph executes");
         let cell = linked
