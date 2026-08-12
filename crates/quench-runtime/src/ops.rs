@@ -160,6 +160,7 @@ pub enum Builtin {
     String,
     StringValueOf,
     StringFromCharCode,
+    StringFromCodePoint,
     Symbol,
     SymbolValueOf,
     SymbolIterator,
