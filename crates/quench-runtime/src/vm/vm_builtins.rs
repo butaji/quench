@@ -12,7 +12,6 @@ fn early_dispatch(
         .or_else(|| crate::promise::execute_builtin(builtin, receiver, arguments))
         .or_else(|| (builtin != Builtin::Date).then(|| crate::date::execute(builtin, receiver, arguments))?)
 }
-
 fn is_function_builtin(builtin: Builtin) -> bool {
     matches!(
         builtin,
@@ -32,7 +31,6 @@ fn is_function_builtin(builtin: Builtin) -> bool {
             | Builtin::ArrayToSorted
     )
 }
-
 pub(crate) fn execute_function_apply(
     receiver: Option<&Value>,
     arguments: &[Value],
@@ -45,7 +43,6 @@ pub(crate) fn execute_function_apply(
     let list = create_list_from_array_like(arguments.get(1))?;
     crate::functions::execute_target(target, receiver, &list)
 }
-
 fn create_list_from_array_like(value: Option<&Value>) -> Result<Vec<Value>, VmError> {
     let Some(value) = value.filter(|value| !matches!(value, Value::Null | Value::Undefined)) else {
         return Ok(Vec::new());
@@ -61,7 +58,6 @@ fn create_list_from_array_like(value: Option<&Value>) -> Result<Vec<Value>, VmEr
         .map(|index| crate::execute::get_property_result(value, &index.to_string()))
         .collect()
 }
-
 fn array_like_length(value: &Value) -> Result<usize, VmError> {
     let number = crate::conversion::to_number(value)?;
     if number.is_nan() || number <= 0.0 {
@@ -70,7 +66,6 @@ fn array_like_length(value: &Value) -> Result<usize, VmError> {
     const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
     Ok(number.floor().min(MAX_SAFE_INTEGER).min(usize::MAX as f64) as usize)
 }
-
 fn is_simple_builtin(builtin: Builtin) -> bool {
     matches!(
         builtin,
@@ -247,7 +242,6 @@ fn is_error_constructor(builtin: Builtin) -> bool {
             | Builtin::TypeError
     )
 }
-
 fn is_array_buffer_view(value: Option<&Value>) -> bool {
     matches!(
         value,
@@ -265,7 +259,6 @@ fn is_array_buffer_view(value: Option<&Value>) -> bool {
         )
     )
 }
-
 fn is_data_view_builtin(builtin: Builtin) -> bool {
     matches!(
         builtin,
@@ -278,6 +271,8 @@ fn is_data_view_builtin(builtin: Builtin) -> bool {
             | Builtin::DataViewGetFloat16
             | Builtin::DataViewGetFloat32
             | Builtin::DataViewGetFloat64
+            | Builtin::DataViewGetBigInt64
+            | Builtin::DataViewGetBigUint64
             | Builtin::DataViewSetInt8
             | Builtin::DataViewSetUint8
             | Builtin::DataViewSetInt16
@@ -289,7 +284,6 @@ fn is_data_view_builtin(builtin: Builtin) -> bool {
             | Builtin::DataViewSetFloat64
     )
 }
-
 fn execute_data_view_builtin(
     builtin: Builtin,
     receiver: Option<&Value>,
@@ -304,7 +298,6 @@ fn execute_data_view_builtin(
     }
     execute_data_view_set(builtin, view, offset, little_endian, arguments)
 }
-
 fn data_view_receiver(receiver: Option<&Value>) -> Result<&crate::value::DataViewData, VmError> {
     match receiver {
         Some(Value::DataView(view)) => Ok(view),
@@ -346,6 +339,18 @@ fn execute_data_view_wide_get(
         Builtin::DataViewGetFloat16 => view.get_float16(offset, little_endian),
         Builtin::DataViewGetFloat32 => view.get_float32(offset, little_endian).map(|v| v as f64),
         Builtin::DataViewGetFloat64 => view.get_float64(offset, little_endian),
+        Builtin::DataViewGetBigInt64 => {
+            return view
+                .get_bigint64(offset, little_endian)
+                .map(|value| Value::BigInt(value.to_string()))
+                .map_err(data_view_error);
+        }
+        Builtin::DataViewGetBigUint64 => {
+            return view
+                .get_biguint64(offset, little_endian)
+                .map(|value| Value::BigInt(value.to_string()))
+                .map_err(data_view_error);
+        }
         _ => return Err(VmError::NotCallable),
     };
     value.map(Value::Number).map_err(data_view_error)
