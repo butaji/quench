@@ -27,6 +27,15 @@ pub(crate) fn reduce_global_script_source(source: &str) -> Result<ResidualProgra
 pub fn reduce_module_source(source: &str) -> Result<ResidualProgram, Vec<String>> {
     reduce_source_with_type(source, SourceType::mjs())
 }
+
+pub fn inspect_module_source(source: &str) -> Result<crate::reduce::ModuleMetadata, Vec<String>> {
+    let allocator = Allocator::default();
+    let parsed = Parser::new(&allocator, source, SourceType::mjs()).parse();
+    crate::reduce_support::validate_parse(&parsed)?;
+    Ok(crate::reduce::ModuleMetadata::from_statements(
+        &parsed.program.body,
+    ))
+}
 pub fn reduce_source_with_type(
     source: &str,
     source_type: SourceType,
