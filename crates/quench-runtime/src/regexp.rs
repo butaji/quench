@@ -310,6 +310,9 @@ fn build_re_flags(flags: &str) -> String {
     if flags.contains('m') {
         f.push('m');
     }
+    if flags.contains('u') {
+        f.push('u');
+    }
     f
 }
 
