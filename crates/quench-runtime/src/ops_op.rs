@@ -389,9 +389,9 @@ pub enum Op {
         body: crate::machine::FunctionCode,
     },
     Try {
-        body: Vec<Op>,
-        handler: Option<Vec<Op>>,
-        finalizer: Option<Vec<Op>>,
+        body: crate::machine::FunctionCode,
+        handler: Option<crate::machine::FunctionCode>,
+        finalizer: Option<crate::machine::FunctionCode>,
         catch_slot: Option<u16>,
     },
     /// Execute a binding pattern and close its iterator with the body's exact completion.

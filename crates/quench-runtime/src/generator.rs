@@ -6,7 +6,6 @@ use crate::{
 };
 use std::collections::HashMap;
 use std::{cell::RefCell, rc::Rc};
-
 include!("generator_private_scope.rs");
 include!("generator_async.rs");
 include!("generator_try.rs");
@@ -275,6 +274,7 @@ fn suspended_try<'a>(
     let op @ Op::Try { body, .. } = generator.function.ops().get(index)? else {
         return None;
     };
+    let body = body.ops()?;
     let (yield_index, yield_op) = body
         .iter()
         .enumerate()
@@ -312,6 +312,9 @@ fn complete_suspended_try(
     let Some(finalizer) = finalizer else {
         return Ok(completion);
     };
+    let Some(finalizer) = finalizer.ops() else {
+        return Err(VmError::MissingReturn);
+    };
     match crate::execute::execute_completion_in_place(finalizer, registers)? {
         crate::completion::Completion::Normal => Ok(completion),
         abrupt => Ok(abrupt),
@@ -320,7 +323,7 @@ fn complete_suspended_try(
 
 fn handle_suspended_throw(
     registers: &mut Vec<Value>,
-    handler: &Option<Vec<Op>>,
+    handler: &Option<crate::machine::FunctionCode>,
     catch_slot: Option<u16>,
     completion: crate::completion::Completion,
 ) -> Result<crate::completion::Completion, VmError> {
@@ -333,6 +336,9 @@ fn handle_suspended_throw(
     if let Some(slot) = catch_slot {
         crate::locals::write(slot, value);
     }
+    let Some(handler) = handler.ops() else {
+        return Err(VmError::MissingReturn);
+    };
     crate::execute::execute_completion_in_place(handler, registers)
 }
 
