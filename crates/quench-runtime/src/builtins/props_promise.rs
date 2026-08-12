@@ -8,6 +8,7 @@ fn promise_method(key: &str) -> Option<Builtin> {
         "allSettled" => Some(PromiseAllSettled),
         "any" => Some(PromiseAny),
         "race" => Some(PromiseRace),
+        "withResolvers" => Some(PromiseWithResolvers),
         _ => None,
     }
 }
