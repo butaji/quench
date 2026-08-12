@@ -11,6 +11,24 @@ pub struct CodeRange {
     pub end: u32,
 }
 
+impl CodeRange {
+    pub fn new(code: CodeId, start: u32, end: u32) -> Option<Self> {
+        (start <= end).then_some(Self { code, start, end })
+    }
+
+    pub fn len(self) -> u32 {
+        self.end.saturating_sub(self.start)
+    }
+
+    pub fn is_empty(self) -> bool {
+        self.start == self.end
+    }
+
+    pub fn contains(self, offset: u32) -> bool {
+        offset >= self.start && offset < self.end
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct EnvironmentRef(pub u32);
 
@@ -118,9 +136,8 @@ impl CodeArena {
 
     pub fn get(&self, range: CodeRange) -> Option<&[Op]> {
         let (start, end) = self.ranges.get(range.code.0 as usize).copied()?;
-        let start = start.max(range.start);
-        let end = end.min(range.end);
-        (start <= end).then(|| &self.ops[start as usize..end as usize])
+        (range.start >= start && range.end <= end)
+            .then(|| &self.ops[range.start as usize..range.end as usize])
     }
 
     pub fn len(&self) -> usize {
@@ -158,9 +175,8 @@ impl FunctionCode {
 
     pub fn ops(&self) -> Option<&[Op]> {
         let (start, end) = self.store.ranges.get(self.range.code.0 as usize).copied()?;
-        let start = start.max(self.range.start);
-        let end = end.min(self.range.end);
-        (start <= end).then(|| &self.store.ops[start as usize..end as usize])
+        (self.range.start >= start && self.range.end <= end)
+            .then(|| &self.store.ops[self.range.start as usize..self.range.end as usize])
     }
 }
 
@@ -264,6 +280,16 @@ impl Machine {
 mod tests {
     use super::{CodeId, EnvironmentRef, Frame, FrameStack, Machine, RegisterWindow};
     use crate::value::Value;
+
+    #[test]
+    fn code_ranges_validate_and_measure_offsets() {
+        let range = super::CodeRange::new(super::CodeId(2), 3, 7).unwrap();
+        assert_eq!(range.len(), 4);
+        assert!(range.contains(3));
+        assert!(range.contains(6));
+        assert!(!range.contains(7));
+        assert!(super::CodeRange::new(super::CodeId(2), 8, 7).is_none());
+    }
 
     #[test]
     fn register_window_is_pre_sized_from_code_metadata() {
