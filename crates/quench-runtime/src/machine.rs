@@ -164,6 +164,10 @@ impl FunctionCode {
     pub fn ops(&self) -> Option<&[Op]> {
         self.store.get(self.range)
     }
+
+    pub fn code_id(&self) -> CodeId {
+        self.range.code
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
