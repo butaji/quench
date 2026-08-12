@@ -7,6 +7,7 @@ use crate::{
 use std::collections::HashMap;
 use std::{cell::RefCell, rc::Rc};
 include!("generator_private_scope.rs");
+include!("generator_private_frame.rs");
 include!("generator_branch.rs");
 include!("generator_async.rs");
 include!("generator_try.rs");
@@ -17,6 +18,7 @@ include!("generator_reduce.rs");
 include!("generator_machine.rs");
 include!("generator_result.rs");
 include!("generator_completion.rs");
+include!("generator_resume_input.rs");
 
 pub(crate) fn create(
     function: &Rc<crate::value::FunctionValue>,
@@ -142,9 +144,9 @@ fn resume(generator: &GeneratorData, resume: Resume) -> Result<Value, VmError> {
     let step = execute_generator_step(generator, &mut state, completion)?;
     state.pc = step.pc;
     state.suspension = step.suspension;
+    capture_suspended_private_environment(generator, &mut state, &step.completion);
     update_machine_frame(generator, &state)?;
     update_await_frame(generator, &state, &step.completion)?;
-    capture_suspended_private_environment(generator, &mut state, &step.completion);
     let result = complete_step(generator, &state, step.completion);
     generator.state.replace(Some(state));
     result
@@ -194,6 +196,10 @@ fn push_nested_frame(generator: &GeneratorData, state: &GeneratorState) -> Resul
         push_branch_frame(generator, state)?;
         return Ok(true);
     }
+    if suspended_private_scope(generator, state).is_some() {
+        push_private_frame(generator, state)?;
+        return Ok(true);
+    }
     Ok(false)
 }
 
@@ -202,6 +208,9 @@ fn resume_suspended_contexts(
     state: &mut GeneratorState,
     completion: &crate::completion::Completion,
 ) -> Result<Option<Value>, VmError> {
+    if let Some(completion) = resume_private_frame(generator, state, completion.clone())? {
+        return resume_machine_frame(generator, state, completion).map(Some);
+    }
     if let Some(completion) = resume_try_frame(generator, state, completion.clone())? {
         return resume_machine_frame(generator, state, completion).map(Some);
     }
@@ -366,46 +375,6 @@ fn handle_suspended_throw(
 fn throw_and_finish(generator: &GeneratorData, value: Value) -> Result<Value, VmError> {
     *generator.done.borrow_mut() = true;
     Err(VmError::Thrown(value))
-}
-
-fn install_resume_input(generator: &GeneratorData, state: &mut GeneratorState, input: Value) {
-    if let Some(point) = state.suspension.take() {
-        if matches!(
-            point,
-            crate::continuation::SuspensionPoint::YieldStar { .. }
-        ) {
-            generator.machine.borrow_mut().pop_frame();
-        }
-        match point {
-            crate::continuation::SuspensionPoint::Yield { src, .. }
-            | crate::continuation::SuspensionPoint::YieldStar { dst: src, .. } => {
-                crate::execute::write_value(&mut state.registers, src, input);
-            }
-        }
-        return;
-    }
-    if let Some(Op::YieldStar { dst, .. }) = generator.function.ops().get(state.pc) {
-        crate::execute::write_value(&mut state.registers, *dst, input);
-        return;
-    }
-    if install_try_frame_input(generator, &mut state.registers, &input) {
-        return;
-    }
-    if install_branch_frame_input(generator, &mut state.registers, &input) {
-        return;
-    }
-    if let Some((_, Op::Yield { src }, _)) = suspended_try(generator, state) {
-        crate::execute::write_value(&mut state.registers, *src, input);
-        return;
-    }
-    let Some(index) = state.pc.checked_sub(1) else {
-        return;
-    };
-    let Some(Op::Yield { src }) = generator.function.ops().get(index) else {
-        install_nested_resume_input(generator, state, input);
-        return;
-    };
-    crate::execute::write_value(&mut state.registers, *src, input);
 }
 
 pub(crate) fn execute_yield_star(
