@@ -47,6 +47,7 @@ pub(crate) fn execute_special(
         Builtin::ObjectKeys => Ok(crate::own_keys::enumerable_names(arguments.first())),
         Builtin::ObjectAssign => assign(arguments),
         Builtin::ObjectFromEntries => from_entries(arguments),
+        Builtin::ObjectGroupBy => group_by(arguments),
         Builtin::ObjectCreate => create(arguments),
         Builtin::ObjectSetPrototypeOf => set_prototype_of(arguments),
         _ => Ok(Value::Undefined),
