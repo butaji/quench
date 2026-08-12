@@ -12,7 +12,11 @@ macro_rules! set_number_view {
     ($target:expr, $key:expr, $value:expr, $variant:ident, $convert:expr) => {
         if let Value::$variant(view) = $target {
             let index = $key.parse::<usize>().ok()?;
-            let number = crate::intl::tolocale::value::to_number(Some($value));
+            let number = crate::conversion::to_number($value);
+            let number = match number {
+                Ok(number) => number,
+                Err(error) => return Some(Err(error)),
+            };
             view.set(index, $convert(number));
             return Some(Ok($target.clone()));
         }
@@ -71,7 +75,7 @@ fn resize_buffer(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value,
             "resize requires an ArrayBuffer",
         ));
     };
-    let length = crate::intl::tolocale::value::to_number(arguments.first());
+    let length = crate::intl::tolocale::value::to_number_result(arguments.first())?;
     let length = crate::construct::to_index(length)?;
     buffer
         .resize(length)
@@ -81,7 +85,7 @@ fn resize_buffer(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value,
 
 fn fill(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let receiver = receiver.ok_or_else(crate::vm::not_callable)?;
-    let number = crate::intl::tolocale::value::to_number(arguments.first());
+    let number = crate::intl::tolocale::value::to_number_result(arguments.first())?;
     match receiver {
         Value::Float64Array(view) => fill_view!(view, number, |value| value),
         Value::Float32Array(view) => fill_view!(view, number, |value| value as f32),
