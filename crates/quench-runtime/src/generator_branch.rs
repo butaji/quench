@@ -22,6 +22,7 @@ fn resume_branch_frame(
         return Ok(None);
     };
     if !matches!(resume, crate::completion::Completion::Normal) {
+        generator.machine.borrow_mut().pop_frame();
         return Ok(Some(resume));
     }
     let store = generator.machine.borrow().store.clone().ok_or(VmError::MissingReturn)?;
