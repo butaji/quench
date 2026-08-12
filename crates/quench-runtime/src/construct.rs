@@ -75,7 +75,6 @@ pub(crate) fn construct_value_with_new_target(
 ) -> Result<Value, crate::execute::VmError> {
     construct_with_new_target(target, new_target, arguments)
 }
-
 pub(crate) fn construct_super(
     target: &Value,
     new_target: &std::rc::Rc<crate::value::FunctionValue>,
@@ -84,7 +83,6 @@ pub(crate) fn construct_super(
     let new_target = Value::Function(std::rc::Rc::clone(new_target));
     construct_with_new_target(target, &new_target, arguments)
 }
-
 fn construct_with_new_target(
     target: &Value,
     new_target: &Value,
@@ -132,6 +130,11 @@ fn construct_bound(
     let mut combined = bound.arguments.clone();
     combined.extend_from_slice(arguments);
     let value = construct_builtin(*builtin, &combined)?;
+    let value = if let Value::HostCapability(capability) = &bound.receiver {
+        crate::builtins::set_property(value, "\0realm", Value::HostCapability(capability.clone()))
+    } else {
+        value
+    };
     Ok(crate::builtins::set_property(
         value,
         "constructor",
