@@ -255,6 +255,7 @@ pub enum Frame {
         iterator: Value,
         binding: u16,
         body: CodeRange,
+        resume: CodeRange,
     },
     Await {
         phase: u8,
