@@ -212,7 +212,7 @@ fn tail_dispatch(
         Builtin::ParseFloat => Value::Number(parse_float(arguments.first())),
         Builtin::ParseInt => Value::Number(parse_int(arguments)),
         Builtin::String => match arguments.first() {
-            Some(value) => Value::String(crate::conversion::to_string(value)?),
+            Some(value) => Value::String(crate::conversion::to_string_explicit(value)?),
             None => Value::String(String::new()),
         },
         Builtin::Unescape => crate::builtins::unescape(arguments.first()),
