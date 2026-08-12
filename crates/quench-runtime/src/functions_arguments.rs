@@ -334,7 +334,7 @@ fn execute_frame_completion(
         frame.function.private_environment.clone(),
     );
     let _home = crate::super_scope::Guard::install(&frame.function, &frame.receiver);
-    let _with_scope = crate::with_scope::FunctionGuard::isolate();
+    let _with_scope = crate::with_scope::FunctionGuard::install(&frame.function.with_captures);
     let (mut registers, environment) =
         build_registers(&frame.function, &frame.receiver, &frame.arguments);
     let context = crate::vm::current_context_or_default();
