@@ -1,12 +1,12 @@
 //! Adapter from the runner contract to the residual runtime.
 
-use std::sync::OnceLock;
+use std::{path::Path, sync::OnceLock};
 
 use quench_runtime::module_bindings::ModuleBindingCell;
 use quench_runtime::ops::{HostCapabilityKind, HostCapabilityRef, RealmId};
 use quench_runtime::reduce::{
-    reduce_module_sequence, reduce_module_source, reduce_script_sources, reduce_source,
-    ScriptSource,
+    inspect_module_source, reduce_module_sequence, reduce_module_source, reduce_script_sources,
+    reduce_source, ScriptSource,
 };
 use quench_runtime::vm::{execute_with_context, ExecutionScope, VmContext};
 
@@ -29,10 +29,23 @@ pub struct LinkedModuleGraph {
 
 impl LinkedModuleGraph {
     pub fn compile(graph: &mut ModuleGraph) -> Result<Self, String> {
+        Self::compile_with_entry_prefix(graph, None, &[])
+    }
+
+    pub fn compile_with_entry_prefix(
+        graph: &mut ModuleGraph,
+        entry: Option<ModuleId>,
+        prefix: &[&str],
+    ) -> Result<Self, String> {
         graph.link_all_units()?;
         let mut units = std::collections::HashMap::new();
         for unit in graph.units() {
-            units.insert(unit.id, LinkedModule::compile(&unit.source)?);
+            let module = if Some(unit.id) == entry {
+                LinkedModule::compile_with_prefix(prefix, &unit.source)?
+            } else {
+                LinkedModule::compile(&unit.source)?
+            };
+            units.insert(unit.id, module);
         }
         let ids = units.keys().copied().collect::<Vec<_>>();
         for id in ids {
@@ -71,6 +84,14 @@ impl LinkedModuleGraph {
 impl LinkedModule {
     pub fn compile(source: &str) -> Result<Self, String> {
         let program = reduce_module_source(source).map_err(|errors| errors.join("; "))?;
+        Ok(Self {
+            program,
+            scope: ExecutionScope::new(),
+        })
+    }
+
+    pub fn compile_with_prefix(prefix: &[&str], source: &str) -> Result<Self, String> {
+        let program = reduce_module_sequence(prefix, source).map_err(|errors| errors.join("; "))?;
         Ok(Self {
             program,
             scope: ExecutionScope::new(),
@@ -146,6 +167,70 @@ impl Test262Host for RuntimeHost {
             reduce_module_sequence(harness, source).map_err(|errors| errors.join("; "))?;
         execute_program(&program)
     }
+
+    fn run_harnessed_module_at(
+        &mut self,
+        harness: &[&str],
+        source: &str,
+        path: &Path,
+    ) -> Result<(), String> {
+        reduce_module_sequence(harness, source).map_err(|errors| errors.join("; "))?;
+        let mut graph = module_graph(path, source)?;
+        let entry = graph
+            .entry()
+            .ok_or_else(|| "module graph missing entry".to_string())?;
+        let linked =
+            LinkedModuleGraph::compile_with_entry_prefix(&mut graph, Some(entry), harness)?;
+        quench_runtime::builtins::reset_intrinsic_prototype_state();
+        linked.execute(&graph, entry)
+    }
+}
+
+fn module_graph(path: &Path, source: &str) -> Result<ModuleGraph, String> {
+    let mut graph = ModuleGraph::new();
+    let entry = graph.add_entry(path.to_path_buf(), source.to_string());
+    load_module_dependencies(&mut graph, entry)?;
+    Ok(graph)
+}
+
+fn load_module_dependencies(graph: &mut ModuleGraph, from: ModuleId) -> Result<(), String> {
+    let (base, source) = graph
+        .unit(from)
+        .map(|unit| {
+            (
+                unit.path
+                    .parent()
+                    .unwrap_or_else(|| Path::new(""))
+                    .to_path_buf(),
+                unit.source.clone(),
+            )
+        })
+        .ok_or_else(|| "module unit is unknown".to_string())?;
+    let metadata = inspect_module_source(&source).map_err(|errors| errors.join("; "))?;
+    for specifier in metadata.import_specifiers {
+        if graph.resolve(from, &specifier).is_some() {
+            continue;
+        }
+        let path = base.join(&specifier);
+        let source = load_module_source(&path)?;
+        let dependency = graph.add_dependency(path, source);
+        load_module_dependencies(graph, dependency)?;
+    }
+    Ok(())
+}
+
+fn load_module_source(path: &Path) -> Result<String, String> {
+    let source = std::fs::read_to_string(path)
+        .map_err(|error| format!("module {}: {error}", path.display()))?;
+    if path
+        .extension()
+        .is_some_and(|extension| extension == "json")
+    {
+        serde_json::from_str::<serde_json::Value>(&source)
+            .map_err(|error| format!("SyntaxError: invalid JSON module: {error}"))?;
+        return Ok(format!("export default {source};"));
+    }
+    Ok(source)
 }
 
 fn run_source(source: &str) -> Result<(), String> {

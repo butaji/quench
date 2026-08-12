@@ -59,6 +59,7 @@ fn reduce_units(units: &[SourceUnit<'_>]) -> Result<ResidualProgram, Vec<String>
     let mut totals = (0, 0);
     let mut last = None;
     let mut facts_out = ProgramDb::default();
+    let mut module_metadata = None;
     for unit in units {
         let strict_source;
         let source = if unit.strict && unit.source_type.is_script() {
@@ -71,6 +72,9 @@ fn reduce_units(units: &[SourceUnit<'_>]) -> Result<ResidualProgram, Vec<String>
         reject_parse_errors(&parsed)?;
         crate::reduce_support::validate_program(&parsed.program)?;
         let analysis = crate::semantic::analyze(&parsed.program)?;
+        if unit.source_type.is_module() {
+            module_metadata = Some(super::ModuleMetadata::from_statements(&parsed.program.body));
+        }
         totals.0 += analysis.scope_count;
         totals.1 += analysis.symbol_count;
         let mut facts = ProgramDb {
@@ -81,7 +85,7 @@ fn reduce_units(units: &[SourceUnit<'_>]) -> Result<ResidualProgram, Vec<String>
         last = state.append(&parsed.program.body, &mut facts, unit.program_scope)?;
         merge_facts(&mut facts_out, facts);
     }
-    finish(state, totals, last, facts_out)
+    finish(state, totals, last, facts_out, module_metadata)
 }
 
 fn merge_facts(target: &mut ProgramDb, source: ProgramDb) {
@@ -114,13 +118,15 @@ fn finish(
     totals: (usize, usize),
     last: Option<u16>,
     mut facts: ProgramDb,
+    module_metadata: Option<super::ModuleMetadata>,
 ) -> Result<ResidualProgram, Vec<String>> {
     facts.scope_count = totals.0;
     facts.symbol_count = totals.1;
+    let local_slots = state.local_slots();
     Ok(ResidualProgram {
         facts,
         ops: crate::reduce_support::finish_program(state.ops, last)?,
-        module_metadata: None,
-        local_slots: std::collections::HashMap::new(),
+        module_metadata,
+        local_slots,
     })
 }
