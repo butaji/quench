@@ -10,7 +10,7 @@ use quench_runtime::reduce::{
 };
 use quench_runtime::vm::{execute_with_context, ExecutionScope, VmContext};
 
-use crate::module_graph::{ModuleGraph, ModuleId};
+use crate::module_graph::{ModuleGraph, ModuleId, ModuleKind};
 use crate::Test262Host;
 
 #[derive(Debug, Default)]
@@ -20,6 +20,7 @@ pub struct RuntimeHost;
 pub struct LinkedModule {
     program: quench_runtime::reduce::ResidualProgram,
     scope: ExecutionScope,
+    fixed_exports: Vec<(String, quench_runtime::value::Value)>,
 }
 
 /// Graph-owned collection of independently compiled linked modules.
@@ -42,6 +43,8 @@ impl LinkedModuleGraph {
         for unit in graph.units() {
             let module = if Some(unit.id) == entry {
                 LinkedModule::compile_with_prefix(prefix, &unit.source)?
+            } else if unit.kind == ModuleKind::Json {
+                LinkedModule::compile_json(&unit.source)?
             } else {
                 LinkedModule::compile(&unit.source)?
             };
@@ -91,6 +94,7 @@ impl LinkedModule {
         Ok(Self {
             program,
             scope: ExecutionScope::new(),
+            fixed_exports: Vec::new(),
         })
     }
 
@@ -99,7 +103,16 @@ impl LinkedModule {
         Ok(Self {
             program,
             scope: ExecutionScope::new(),
+            fixed_exports: Vec::new(),
         })
+    }
+
+    pub fn compile_json(source: &str) -> Result<Self, String> {
+        let value = quench_runtime::parse_json(source)
+            .map_err(|error| format!("SyntaxError: invalid JSON module: {error}"))?;
+        let mut module = Self::compile("export default null;")?;
+        module.fixed_exports.push(("default".to_string(), value));
+        Ok(module)
     }
 
     pub fn bind_import(&self, local: &str, cell: ModuleBindingCell) -> Result<(), String> {
@@ -132,9 +145,17 @@ impl LinkedModule {
 
     pub fn execute(&self) -> Result<quench_runtime::value::Value, String> {
         let mut registers = Vec::new();
-        self.scope
+        let result = self
+            .scope
             .execute(&self.program.ops, &mut registers, host_context())
-            .map_err(|error| format!("residual VM error: {}", error.render()))
+            .map_err(|error| format!("residual VM error: {}", error.render()))?;
+        for (name, value) in &self.fixed_exports {
+            let cell = self
+                .export_cell(name)
+                .ok_or_else(|| format!("fixed export {name} missing"))?;
+            cell.set(value.clone());
+        }
+        Ok(result)
     }
 }
 
@@ -209,31 +230,37 @@ fn load_module_dependencies(graph: &mut ModuleGraph, from: ModuleId) -> Result<(
             )
         })
         .ok_or_else(|| "module unit is unknown".to_string())?;
+    if graph
+        .unit(from)
+        .is_some_and(|unit| unit.kind == ModuleKind::Json)
+    {
+        return Ok(());
+    }
     let metadata = inspect_module_source(&source).map_err(|errors| errors.join("; "))?;
     for specifier in metadata.import_specifiers {
         if graph.resolve(from, &specifier).is_some() {
             continue;
         }
         let path = base.join(&specifier);
-        let source = load_module_source(&path)?;
-        let dependency = graph.add_dependency(path, source);
+        let dependency = add_module_source(graph, path)?;
         load_module_dependencies(graph, dependency)?;
     }
     Ok(())
 }
 
-fn load_module_source(path: &Path) -> Result<String, String> {
-    let source = std::fs::read_to_string(path)
+fn add_module_source(
+    graph: &mut ModuleGraph,
+    path: std::path::PathBuf,
+) -> Result<ModuleId, String> {
+    let source = std::fs::read_to_string(&path)
         .map_err(|error| format!("module {}: {error}", path.display()))?;
     if path
         .extension()
         .is_some_and(|extension| extension == "json")
     {
-        serde_json::from_str::<serde_json::Value>(&source)
-            .map_err(|error| format!("SyntaxError: invalid JSON module: {error}"))?;
-        return Ok(format!("export default {source};"));
+        return Ok(graph.add_json_dependency(path, source));
     }
-    Ok(source)
+    Ok(graph.add_dependency(path, source))
 }
 
 fn run_source(source: &str) -> Result<(), String> {
@@ -289,6 +316,20 @@ mod tests {
         let cell = module.export_cell("default").expect("default export cell");
         module.execute().expect("module executes");
         assert_eq!(cell.get(), Value::Boolean(true));
+    }
+
+    #[test]
+    fn json_module_exports_recursive_runtime_values() {
+        let module =
+            LinkedModule::compile_json("[true, {\"answer\": 42}]").expect("JSON module compiles");
+        let cell = module.export_cell("default").expect("default export cell");
+        module.execute().expect("module executes");
+        let Value::Array(values) = cell.get() else {
+            panic!("JSON default export is not an array");
+        };
+        assert_eq!(values.logical_len(), 2);
+        assert_eq!(values[0], Value::Boolean(true));
+        assert!(matches!(values[1], Value::Object(_)));
     }
 
     #[test]
