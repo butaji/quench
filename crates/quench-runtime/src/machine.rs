@@ -199,14 +199,14 @@ impl Machine {
         }
     }
 
-    pub fn step<F>(&mut self, input: Completion, execute: F) -> Completion
+    pub fn step<F, E>(&mut self, input: Completion, execute: F) -> Result<Completion, E>
     where
-        F: FnOnce(&mut Self) -> Completion,
+        F: FnOnce(&mut Self) -> Result<Completion, E>,
     {
         self.completion = input;
-        let completion = execute(self);
+        let completion = execute(self)?;
         self.completion = completion.clone();
-        completion
+        Ok(completion)
     }
 }
 
@@ -230,9 +230,11 @@ mod tests {
         assert_eq!(frames.count, 1);
         assert!(frames.pop().is_some());
         assert_eq!(frames.count, 0);
-        let completion = machine.step(Completion::Normal, |_| {
-            Completion::Return(crate::value::Value::Undefined)
-        });
+        let completion = machine
+            .step(Completion::Normal, |_| {
+                Ok::<_, ()>(Completion::Return(crate::value::Value::Undefined))
+            })
+            .expect("machine test transition should succeed");
         assert!(matches!(
             completion,
             Completion::Return(crate::value::Value::Undefined)

@@ -9,29 +9,18 @@ fn execute_generator_step(
     let _home = crate::super_scope::Guard::install(&generator.function, &generator.receiver);
     let _with_scope = crate::with_scope::FunctionGuard::isolate();
     let mut result = None;
-    let mut failure = None;
     let input = completion.clone();
     generator.machine.borrow_mut().step(input, |_| {
-        match crate::vm::execute_generator_step(
+        let step = crate::vm::execute_generator_step(
             generator.function.ops(),
             &mut state.registers,
             state.environment.clone(),
             state.pc,
             completion,
-        ) {
-            Ok(step) => {
-                let completion = step.completion.clone();
-                result = Some(step);
-                completion
-            }
-            Err(error) => {
-                failure = Some(error);
-                crate::completion::Completion::Normal
-            }
-        }
-    });
-    if let Some(error) = failure {
-        return Err(error);
-    }
+        )?;
+        let completion = step.completion.clone();
+        result = Some(step);
+        Ok(completion)
+    })?;
     result.ok_or(VmError::MissingReturn)
 }
