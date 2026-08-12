@@ -121,5 +121,6 @@ fn finish(
         facts,
         ops: crate::reduce_support::finish_program(state.ops, last)?,
         module_metadata: None,
+        local_slots: std::collections::HashMap::new(),
     })
 }

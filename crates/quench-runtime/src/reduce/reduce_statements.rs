@@ -11,6 +11,15 @@ use oxc::{
 use std::collections::HashMap;
 const GLOBAL_THIS: &str = "globalThis";
 const SCRIPT_THIS_SLOT: &str = "\0script_this";
+type ReducedStatements = (Vec<Op>, HashMap<String, u16>);
+type ReducedProgram = (
+    ProgramDb,
+    Vec<Op>,
+    usize,
+    usize,
+    Option<crate::reduce::ModuleMetadata>,
+    HashMap<String, u16>,
+);
 include!("function_declaration_ops.rs");
 include!("reduce_eval_entry.rs");
 #[derive(Debug, PartialEq)]
@@ -18,6 +27,7 @@ pub struct ResidualProgram {
     pub facts: ProgramDb,
     pub ops: Vec<Op>,
     pub module_metadata: Option<crate::reduce::ModuleMetadata>,
+    pub local_slots: HashMap<String, u16>,
 }
 pub fn reduce_source(source: &str) -> Result<ResidualProgram, Vec<String>> {
     reduce_source_with_type(source, SourceType::cjs())
@@ -48,39 +58,42 @@ fn reduce_source_with_type_and_global(
     source_type: SourceType,
     global: bool,
 ) -> Result<ResidualProgram, Vec<String>> {
-    let (mut facts, ops, scope_count, symbol_count, module_metadata) = {
-        let allocator = Allocator::default();
-        let parsed = Parser::new(&allocator, source, source_type).parse();
-        crate::reduce_support::validate_parse(&parsed)?;
-        let analysis = crate::semantic::analyze(&parsed.program)?;
-        let module_metadata = module_metadata(source_type, &parsed.program.body);
-        let strict = source_type.is_module()
-            || parsed
-                .program
-                .directives
-                .iter()
-                .any(|directive| directive.directive.as_str() == "use strict");
-        let mut facts = ProgramDb {
-            strict,
-            private_names: analysis.private_names.into_iter().collect(),
-            ..ProgramDb::default()
-        };
-        let ops = reduce_statements(&parsed.program.body, source_type, global, &mut facts)?;
-        (
-            facts,
-            ops,
-            analysis.scope_count,
-            analysis.symbol_count,
-            module_metadata,
-        )
-    };
+    let allocator = Allocator::default();
+    let parsed = Parser::new(&allocator, source, source_type).parse();
+    crate::reduce_support::validate_parse(&parsed)?;
+    let (mut facts, ops, scope_count, symbol_count, module_metadata, local_slots) =
+        reduce_program(&parsed.program, source_type, global)?;
     facts.scope_count = scope_count;
     facts.symbol_count = symbol_count;
     Ok(ResidualProgram {
         facts,
         ops,
         module_metadata,
+        local_slots,
     })
+}
+
+fn reduce_program(
+    program: &oxc::ast::ast::Program<'_>,
+    source_type: SourceType,
+    global: bool,
+) -> Result<ReducedProgram, Vec<String>> {
+    let analysis = crate::semantic::analyze(program)?;
+    let strict = source_type.is_module() || crate::reduce_support::has_strict_directive(program);
+    let mut facts = ProgramDb {
+        strict,
+        private_names: analysis.private_names.into_iter().collect(),
+        ..ProgramDb::default()
+    };
+    let (ops, local_slots) = reduce_statements(&program.body, source_type, global, &mut facts)?;
+    Ok((
+        facts,
+        ops,
+        analysis.scope_count,
+        analysis.symbol_count,
+        module_metadata(source_type, &program.body),
+        local_slots,
+    ))
 }
 
 fn module_metadata(
@@ -97,10 +110,13 @@ fn reduce_statements(
     source_type: SourceType,
     global: bool,
     facts: &mut ProgramDb,
-) -> Result<Vec<Op>, Vec<String>> {
+) -> Result<ReducedStatements, Vec<String>> {
     let mut state = StatementReducer::new_with_global(source_type, global);
     let last = state.append(statements, facts, true)?;
-    crate::reduce_support::finish_program(state.ops, last)
+    Ok((
+        crate::reduce_support::finish_program(state.ops, last)?,
+        state.locals,
+    ))
 }
 pub(super) struct StatementReducer {
     locals: HashMap<String, u16>,
