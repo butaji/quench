@@ -62,9 +62,11 @@ fn reduce_cases(
                 &mut body_locals,
             )?;
         }
-        cases.push((test, crate::machine::FunctionCode::from_ops(body)));
+        cases.push((test, body));
     }
-    Ok(cases)
+    let (tests, bodies): (Vec<_>, Vec<_>) = cases.into_iter().unzip();
+    let stores = crate::machine::FunctionCode::from_ops_many(bodies);
+    Ok(tests.into_iter().zip(stores).collect())
 }
 
 pub(crate) fn execute(
