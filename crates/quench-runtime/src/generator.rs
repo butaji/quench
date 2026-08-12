@@ -136,6 +136,7 @@ fn resume(generator: &GeneratorData, resume: Resume) -> Result<Value, VmError> {
     state.pc = step.pc;
     state.suspension = step.suspension;
     update_machine_frame(generator, &state);
+    update_await_frame(generator, &state, &step.completion);
     capture_suspended_private_environment(generator, &mut state, &step.completion);
     let result = complete_step(generator, &state, step.completion);
     generator.state.replace(Some(state));
@@ -435,7 +436,6 @@ fn delegation_record(registers: &mut Vec<Value>, source: u16, slot: u16) -> Resu
     crate::execute::write_value(registers, slot, iterator.clone());
     Ok(iterator)
 }
-
 fn delegate(
     iterator: &Value,
     input: Value,
