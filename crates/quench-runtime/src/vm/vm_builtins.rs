@@ -157,12 +157,16 @@ fn weak_ref_deref(receiver: Option<&Value>) -> Result<Value, VmError> {
             "WeakRef.prototype.deref called on incompatible receiver",
         ));
     };
-    Ok(object
+    let Some((_, target)) = object
         .iter()
         .rev()
         .find(|(key, _)| key == "\0weakref")
-        .map(|(_, value)| value.clone())
-        .unwrap_or(Value::Undefined))
+    else {
+        return Err(crate::value::error::throw_type_error(
+            "WeakRef.prototype.deref called on incompatible receiver",
+        ));
+    };
+    Ok(target.clone())
 }
 
 pub(crate) fn realm_id_for_intrinsic_receiver(receiver: Option<&Value>) -> Option<RealmId> {

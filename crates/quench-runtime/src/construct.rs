@@ -104,11 +104,21 @@ fn with_new_target_prototype(value: Value, target: &Value, new_target: &Value) -
         return value;
     }
     let prototype = crate::execute::get_property(new_target, "prototype");
-    if crate::value::is_object(&prototype) {
-        crate::builtins::set_property(value, "\0prototype", prototype)
+    let prototype = if crate::value::is_object(&prototype) {
+        Some(prototype)
     } else {
-        value
-    }
+        builtin_default_prototype(target)
+    };
+    prototype.map_or(value.clone(), |prototype| {
+        crate::builtins::set_property(value, "\0prototype", prototype)
+    })
+}
+
+fn builtin_default_prototype(target: &Value) -> Option<Value> {
+    let Value::Builtin(builtin) = target else {
+        return None;
+    };
+    crate::builtin_meta::prototype(*builtin).map(Value::Builtin)
 }
 
 fn construct_bound(
@@ -173,7 +183,10 @@ fn construct_builtin(
 fn construct_weak_ref(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
     let Some(target) = arguments
         .first()
-        .filter(|value| crate::value::is_object(value))
+        .filter(|value| {
+            crate::value::is_object(value)
+                || matches!(value, crate::value::Value::String(text) if crate::conversion::is_symbol(value) && !text.starts_with("Symbol.for."))
+        })
     else {
         return Err(crate::value::error::throw_type_error(
             "WeakRef target must be an object",
