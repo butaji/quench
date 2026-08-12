@@ -190,6 +190,7 @@ fn is_intrinsic_prototype(builtin: Builtin) -> bool {
             | Builtin::WeakSetPrototype
             | Builtin::SharedArrayBufferPrototype
             | Builtin::WeakRefPrototype
+            | Builtin::BigIntPrototype
     )
 }
 
