@@ -80,7 +80,6 @@ pub(crate) fn close(
     let result = call(&method, &iterator);
     finish_close(completion, result)
 }
-
 fn close_target(record: &Value) -> Result<Option<Value>, crate::execute::VmError> {
     let Value::Iterator(data) = record else {
         return Err(not_iterable());
@@ -141,7 +140,6 @@ fn close_result_error() -> crate::execute::VmError {
 fn read(registers: &[Value], index: u16) -> Result<Value, crate::execute::VmError> {
     crate::execute::read_register(registers, index)
 }
-
 fn require_object_coercible(value: Value) -> Result<(), crate::execute::VmError> {
     if matches!(value, Value::Null | Value::Undefined) {
         return Err(crate::value::error::throw_type_error(
@@ -150,7 +148,6 @@ fn require_object_coercible(value: Value) -> Result<(), crate::execute::VmError>
     }
     Ok(())
 }
-
 pub(crate) fn open(value: Value) -> Result<Value, crate::execute::VmError> {
     if matches!(value, Value::Iterator(_)) {
         return Ok(value);
@@ -180,7 +177,6 @@ pub(crate) fn open(value: Value) -> Result<Value, crate::execute::VmError> {
     }
     Ok(make_protocol(iterator, next))
 }
-
 fn open_self_iterator(iterator: Value) -> Result<Value, crate::execute::VmError> {
     let next = crate::execute::get_property_result(&iterator, "next")?;
     if !crate::conversion::is_callable(&next) {
@@ -188,7 +184,6 @@ fn open_self_iterator(iterator: Value) -> Result<Value, crate::execute::VmError>
     }
     Ok(make_protocol(iterator, next))
 }
-
 pub(crate) fn collect_iterator_object(value: Value) -> Result<Vec<Value>, crate::execute::VmError> {
     collect(&open_self_iterator(value)?)
 }
