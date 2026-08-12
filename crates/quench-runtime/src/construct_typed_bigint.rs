@@ -118,9 +118,10 @@ fn bigint_view_bounds(
     if *buffer.detached.borrow() {
         return Err(type_error("Cannot use a detached ArrayBuffer"));
     }
-    let offset = arguments.get(1).map_or(0.0, |value| {
-        crate::intl::tolocale::value::to_number(Some(value))
-    });
+    let offset = match arguments.get(1) {
+        Some(value) => crate::conversion::to_number(value)?,
+        None => 0.0,
+    };
     let offset = to_index(offset)?;
     let available = buffer
         .byte_length()
@@ -132,7 +133,7 @@ fn bigint_view_bounds(
         return Err(range_error(&format!("Invalid {name} byte offset")));
     }
     let length = match arguments.get(2) {
-        Some(value) => to_index(crate::intl::tolocale::value::to_number(Some(value)))?,
+        Some(value) => to_index(crate::conversion::to_number(value)?)?,
         None => view_length(buffer, available / BIGINT_ELEMENT_SIZE),
     };
     if arguments.get(2).is_some() && typed_byte_length(length)? > available {
