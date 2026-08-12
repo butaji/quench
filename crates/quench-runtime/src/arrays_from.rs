@@ -8,6 +8,9 @@ fn from(
     let iterable = !matches!(source, Value::ArrayBuffer(_) | Value::DataView(_))
         && has_iterator(&source)?;
     if iterable {
+        if is_default_array_iterator(&source)? {
+            return from_live_array(receiver, source, mapper.as_ref(), arguments);
+        }
         return from_iterable(receiver, source, mapper.as_ref(), arguments);
     }
     let mut values = Vec::new();
@@ -17,6 +20,47 @@ fn from(
         collect_array_like(&source, mapper.as_ref(), arguments, &mut values)?;
     }
     create_result(receiver, values, iterable)
+}
+
+fn is_default_array_iterator(source: &Value) -> Result<bool, crate::execute::VmError> {
+    Ok(matches!(
+        source,
+        Value::Array(_)
+    ) && matches!(
+        crate::execute::get_property_result(source, "Symbol.iterator")?,
+        Value::Builtin(crate::ops::Builtin::ArrayIterator)
+    ))
+}
+
+fn from_live_array(
+    receiver: Option<&Value>,
+    source: Value,
+    mapper: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let mut result = construct_result(receiver, 0, true)?;
+    let this_arg = arguments.get(2).cloned().unwrap_or(Value::Undefined);
+    let mut index = 0;
+    loop {
+        let mut current = source.clone();
+        while let Some(updated) = crate::locals::replacement(&current) {
+            current = updated;
+        }
+        let Value::Array(array) = current else { break };
+        if index >= array.logical_len() {
+            break;
+        }
+        let item = array.get_index(index).unwrap_or(Value::Undefined);
+        let value = map_item(mapper, this_arg.clone(), item, index)?;
+        result = write_result_element(result, index, value)?;
+        index += 1;
+    }
+    let updated = crate::properties::assign_set_property(
+        &result,
+        "length",
+        Value::Number(index as f64),
+    )?;
+    Ok(updated)
 }
 
 fn from_iterable(

@@ -5,6 +5,7 @@ use crate::{environment::Environment, execute::VmError, value::Value};
 thread_local! {
     static CURRENT_ENVIRONMENT: RefCell<Option<Rc<Environment>>> = const { RefCell::new(None) };
     static GLOBAL_LEXICAL_ENVIRONMENT: RefCell<Option<Rc<Environment>>> = const { RefCell::new(None) };
+    static REPLACEMENTS: RefCell<Vec<(Value, Value)>> = const { RefCell::new(Vec::new()) };
 }
 
 pub(crate) struct EnvironmentGuard {
@@ -245,4 +246,26 @@ pub(crate) fn capture(count: u16) -> Rc<Environment> {
 
 pub(crate) fn replace_value(old: &Value, new: &Value) {
     current().replace_value(old, new);
+    REPLACEMENTS.with(|replacements| {
+        replacements.borrow_mut().push((old.clone(), new.clone()));
+    });
+}
+
+pub(crate) fn replacement(value: &Value) -> Option<Value> {
+    REPLACEMENTS.with(|replacements| {
+        replacements
+            .borrow()
+            .iter()
+            .rev()
+            .find_map(|(old, new)| same_identity(old, value).then(|| new.clone()))
+    })
+}
+
+fn same_identity(left: &Value, right: &Value) -> bool {
+    match (left, right) {
+        (Value::Array(left), Value::Array(right)) => Rc::ptr_eq(left, right),
+        (Value::Object(left), Value::Object(right)) => Rc::ptr_eq(left, right),
+        (Value::Function(left), Value::Function(right)) => Rc::ptr_eq(left, right),
+        _ => false,
+    }
 }
