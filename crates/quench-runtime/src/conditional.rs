@@ -28,8 +28,8 @@ pub(crate) fn reduce_expression(
     ops.push(crate::ops::Op::Conditional {
         dst,
         condition,
-        consequent,
-        alternate,
+        consequent: crate::machine::FunctionCode::from_ops(consequent),
+        alternate: crate::machine::FunctionCode::from_ops(alternate),
     });
     Some(dst)
 }
@@ -65,6 +65,9 @@ pub(crate) fn execute(
         consequent
     } else {
         alternate
+    };
+    let Some(branch) = branch.ops() else {
+        return Err(crate::execute::VmError::MissingReturn);
     };
     let value = crate::execute::execute_in_place(branch, registers)?;
     crate::execute::write_value(registers, *dst, value);
