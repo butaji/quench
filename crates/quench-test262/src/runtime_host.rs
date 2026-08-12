@@ -2,9 +2,9 @@
 
 use std::sync::OnceLock;
 
-use quench_runtime::ops::{HostCapabilityKind, RealmId};
+use quench_runtime::ops::{HostCapabilityKind, HostCapabilityRef, RealmId};
 use quench_runtime::reduce::{
-    reduce_module_source, reduce_module_with_harness, reduce_script_sources, reduce_source,
+    reduce_module_sequence, reduce_module_source, reduce_script_sources, reduce_source,
     ScriptSource,
 };
 use quench_runtime::vm::{execute_with_context, VmContext};
@@ -43,7 +43,7 @@ impl Test262Host for RuntimeHost {
 
     fn run_harnessed_module(&mut self, harness: &[&str], source: &str) -> Result<(), String> {
         let program =
-            reduce_module_with_harness(harness, source).map_err(|errors| errors.join("; "))?;
+            reduce_module_sequence(harness, source).map_err(|errors| errors.join("; "))?;
         execute_program(&program)
     }
 }
@@ -76,6 +76,13 @@ fn host_context() -> &'static VmContext {
                 HostCapabilityKind::EvalScript,
                 HostCapabilityKind::DetachArrayBuffer,
             ],
+        )
+        .with_host_capability(
+            "$262",
+            HostCapabilityRef {
+                realm: RealmId::ROOT,
+                kind: HostCapabilityKind::GetGlobal,
+            },
         )
     })
 }

@@ -112,12 +112,10 @@ fn global_property(
     if key == "globalThis" {
         return Value::Object(properties.clone());
     }
-    if key == "$262" {
-        if let Some(realm) = realm {
-            return realm::host_capability(realm, HostCapabilityKind::GetGlobal)
-                .unwrap_or(Value::Undefined);
+    if realm.is_none() {
+        if let Some(binding) = crate::vm::current_context_or_default().host_binding(key) {
+            return Value::HostCapability(Rc::new(crate::value::HostCapabilityValue::new(binding)));
         }
-        return current_host_capability(HostCapabilityKind::GetGlobal);
     }
     realm::global_builtin(key).map_or_else(
         || crate::builtins::property(Builtin::ObjectPrototype, key),

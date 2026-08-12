@@ -15,12 +15,17 @@ pub type OutputSink = Arc<dyn Fn(&str) + Send + Sync>;
 pub(crate) fn with_realm<T>(realm: RealmId, callback: impl FnOnce() -> T) -> Option<T> {
     realm::with_realm(realm, callback)
 }
+
+pub(crate) fn global_builtin_exists(key: &str) -> bool {
+    realm::global_builtin_exists(key)
+}
 type ObjectProperties = Rc<crate::value::ObjectData>;
 #[derive(Clone)]
 pub struct VmContext {
     output_sink: Option<OutputSink>,
     realm: RealmId,
     capabilities: Vec<HostCapabilityRef>,
+    host_bindings: Vec<(String, HostCapabilityRef)>,
 }
 impl Default for VmContext {
     fn default() -> Self {
@@ -28,6 +33,7 @@ impl Default for VmContext {
             output_sink: None,
             realm: RealmId::ROOT,
             capabilities: Vec::new(),
+            host_bindings: Vec::new(),
         }
     }
 }
@@ -56,6 +62,22 @@ impl VmContext {
             output_sink: Some(output_sink),
             ..Self::default()
         }
+    }
+
+    pub fn with_host_capability(
+        mut self,
+        name: impl Into<String>,
+        value: HostCapabilityRef,
+    ) -> Self {
+        self.host_bindings.push((name.into(), value));
+        self
+    }
+
+    pub(crate) fn host_binding(&self, name: &str) -> Option<HostCapabilityRef> {
+        self.host_bindings
+            .iter()
+            .rev()
+            .find_map(|(key, value)| (key == name).then_some(*value))
     }
 
     pub fn for_realm(realm: RealmId, capabilities: Vec<HostCapabilityKind>) -> Self {

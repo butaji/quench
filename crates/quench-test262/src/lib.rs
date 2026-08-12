@@ -1,6 +1,10 @@
 //! Standalone ECMA-262 conformance runner boundary.
 //!
 //! This crate owns runner outcomes and dispatch.
+//!
+//! It is the sole owner of test262 metadata, exact harness composition,
+//! staging selection, and expected-completion classification. The runtime is
+//! treated as an external JavaScript engine and is never given test262 policy.
 
 use std::{collections::HashMap, path::Path};
 
