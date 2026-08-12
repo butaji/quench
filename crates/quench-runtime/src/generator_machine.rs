@@ -10,6 +10,7 @@ fn execute_generator_step(
     let _with_scope = crate::with_scope::FunctionGuard::isolate();
     let mut result = None;
     let input = completion.clone();
+    generator.machine.borrow_mut().pop_await_frame();
     generator.machine.borrow_mut().step(input, |_| {
         let step = crate::vm::execute_generator_step(
             generator.function.ops(),
@@ -62,6 +63,23 @@ fn ensure_control_frame(generator: &GeneratorData, state: &GeneratorState) {
                 code: crate::machine::CodeId(0),
                 start: state.pc.saturating_sub(1) as u32,
                 end: state.pc as u32,
+            },
+        });
+}
+
+fn update_await_frame(generator: &GeneratorData, state: &GeneratorState, completion: &crate::completion::Completion) {
+    if !matches!(completion, crate::completion::Completion::Suspend(_)) {
+        return;
+    }
+    generator
+        .machine
+        .borrow_mut()
+        .push_frame(crate::machine::Frame::Await {
+            phase: 0,
+            resume: crate::machine::CodeRange {
+                code: crate::machine::CodeId(0),
+                start: state.pc as u32,
+                end: state.pc as u32 + 1,
             },
         });
 }
