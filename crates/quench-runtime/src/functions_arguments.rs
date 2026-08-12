@@ -1,28 +1,3 @@
-fn reduce_body_statements(
-    body: &[oxc::ast::ast::Statement<'_>],
-    formal: &oxc::ast::ast::FormalParameters<'_>,
-    facts: &mut ProgramDb,
-    parameters: &std::collections::HashMap<String, u16>,
-    next_slot: u16,
-) -> Result<Vec<Op>, Vec<String>> {
-    let formal = crate::function_parameters::bindings(formal)?.0;
-    let mut locals = parameters.clone();
-    crate::reduce_support::shadow_function_bindings(body, &mut locals, &formal);
-    let ordered = crate::functions::ordered_function_declarations_first(body);
-    let barrier = std::mem::take(&mut facts.eval_var_barrier);
-    let reduced = crate::functions::reduce_selected_body(
-        body,
-        &ordered,
-        facts,
-        locals,
-        next_slot,
-        false,
-    )
-    .ok_or_else(|| vec!["Unsupported function body".to_string()])?;
-    facts.eval_var_barrier = barrier;
-    Ok(reduced)
-}
-
 fn emit_function_expression(
     ops: &mut Vec<Op>,
     next: &mut u16,
