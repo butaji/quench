@@ -162,6 +162,52 @@ pub(crate) fn initialize_resolved(
     Ok(())
 }
 
+pub(crate) fn set_resolved_local(
+    registers: &[Value],
+    target: u16,
+    slot: u16,
+    name: &str,
+    strict: bool,
+    source: u16,
+) -> Result<(), VmError> {
+    let mut target = crate::execute::read_register(registers, target)?;
+    let value = crate::execute::read_register(registers, source)?;
+    while let Some(updated) = replacement(&target) {
+        target = updated;
+    }
+    if matches!(target, Value::Undefined) {
+        ensure_initialized(slot, name)?;
+        write(slot, value);
+        return Ok(());
+    }
+    if strict && !crate::with_scope::has_property(&target, name)? {
+        return Err(crate::value::error::throw_reference_error(&format!(
+            "{name} is not defined"
+        )));
+    }
+    let updated = crate::proxy::proxy_set(&target, name, &value, None)?;
+    replace_value(&target, &updated);
+    Ok(())
+}
+
+pub(crate) fn load_resolved_local(
+    registers: &mut Vec<Value>,
+    dst: u16,
+    target: u16,
+    slot: u16,
+    name: &str,
+) -> Result<(), VmError> {
+    let target = crate::execute::read_register(registers, target)?;
+    let value = if matches!(target, Value::Undefined) {
+        ensure_initialized(slot, name)?;
+        current().get(slot)
+    } else {
+        crate::execute::get_property_result(&target, name)?
+    };
+    crate::execute::write_value(registers, dst, value);
+    Ok(())
+}
+
 pub(crate) fn load(registers: &mut Vec<Value>, dst: u16, slot: u16) -> Result<(), VmError> {
     ensure_initialized(slot, "binding")?;
     crate::execute::write_value(registers, dst, current().get(slot));

@@ -91,6 +91,7 @@ pub struct ProgramDb {
     pub(crate) eval_var_barrier: Vec<String>,
     pub(crate) eval_deletable: Vec<(String, u16)>,
     pub(crate) epochs: Epochs,
+    pub(crate) dynamic_scope_depth: u16,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -136,6 +137,18 @@ impl Epochs {
 }
 
 impl ProgramDb {
+    pub(crate) fn enter_dynamic_scope(&mut self) {
+        self.dynamic_scope_depth = self.dynamic_scope_depth.saturating_add(1);
+    }
+
+    pub(crate) fn exit_dynamic_scope(&mut self) {
+        self.dynamic_scope_depth = self.dynamic_scope_depth.saturating_sub(1);
+    }
+
+    pub(crate) fn has_dynamic_scope(&self) -> bool {
+        self.dynamic_scope_depth != 0
+    }
+
     pub(crate) fn install_fact_sites(&mut self, sites: HashMap<Span, FactSiteId>) {
         self.site_ids = sites;
     }
