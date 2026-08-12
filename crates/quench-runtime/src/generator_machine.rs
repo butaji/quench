@@ -24,3 +24,24 @@ fn execute_generator_step(
     })?;
     result.ok_or(VmError::MissingReturn)
 }
+
+fn ensure_try_frame(generator: &GeneratorData, state: &GeneratorState) {
+    if suspended_try(generator, state).is_none()
+        || generator.machine.borrow().frame_count() != 0
+    {
+        return;
+    }
+    generator
+        .machine
+        .borrow_mut()
+        .push_frame(crate::machine::Frame::Try {
+            phase: 0,
+            body: crate::machine::CodeRange {
+                code: crate::machine::CodeId(0),
+                start: state.pc.saturating_sub(1) as u32,
+                end: state.pc as u32,
+            },
+            handler: None,
+            finalizer: None,
+        });
+}

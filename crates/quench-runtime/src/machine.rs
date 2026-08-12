@@ -216,6 +216,10 @@ impl Machine {
     pub fn pop_frame(&mut self) -> Option<Frame> {
         self.frames.pop()
     }
+
+    pub fn frame_count(&self) -> u16 {
+        self.frames.count
+    }
 }
 
 #[cfg(test)]
