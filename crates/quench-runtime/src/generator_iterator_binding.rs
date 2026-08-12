@@ -29,11 +29,12 @@ fn resume_iterator_frame(
     set_iterator_phase(generator, crate::machine::IteratorPhase::Continue);
     let store = generator.machine.borrow().store.clone().ok_or(VmError::MissingReturn)?;
     let body = store.get(frame.body_resume).ok_or(VmError::MissingReturn)?;
-    let completion = execute_with_generator_registers(generator, |registers| {
-        crate::execute::execute_completion_in_place(body, registers)
+    let step = execute_with_generator_registers(generator, |registers| {
+        crate::execute::execute_completion_step_in_place(body, registers)
     })?;
+    let completion = step.completion;
     if completion.is_suspension() {
-        advance_frame_after_yield(generator, frame.body_resume)?;
+        advance_frame_after_yield(generator, frame.body_resume, step.next)?;
         set_iterator_phase(generator, crate::machine::IteratorPhase::Body);
         return Ok(Some(completion));
     }

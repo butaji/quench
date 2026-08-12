@@ -23,12 +23,16 @@ fn resume_try_frame(
     let Some(frame) = try_frame_resume(generator) else {
         return Ok(None);
     };
-    let completion = match input {
-        crate::completion::Completion::Normal => execute_frame_range(generator, state, frame.body_resume)?,
-        completion => completion,
+    let (completion, next) = match input {
+        crate::completion::Completion::Normal => {
+            let step = execute_frame_step(generator, frame.body_resume)?;
+            (step.completion, Some(step.next))
+        }
+        completion => (completion, None),
     };
     if completion.is_suspension() {
-        advance_frame_after_yield(generator, frame.body_resume)?;
+        let next = next.ok_or(VmError::MissingReturn)?;
+        advance_frame_after_yield(generator, frame.body_resume, next)?;
         return Ok(Some(completion));
     }
     let completion = complete_try_frame(generator, state, &frame, completion)?;
@@ -42,10 +46,17 @@ fn resume_try_frame(
 fn execute_frame_range(
     generator: &GeneratorData, _state: &mut GeneratorState, range: crate::machine::CodeRange,
 ) -> Result<crate::completion::Completion, VmError> {
+    Ok(execute_frame_step(generator, range)?.completion)
+}
+
+fn execute_frame_step(
+    generator: &GeneratorData,
+    range: crate::machine::CodeRange,
+) -> Result<crate::vm::CompletionStep, VmError> {
     let store = generator.machine.borrow().store.clone().ok_or(VmError::MissingReturn)?;
     let ops = store.get(range).ok_or(VmError::MissingReturn)?;
     execute_with_generator_registers(generator, |registers| {
-        crate::execute::execute_completion_in_place(ops, registers)
+        crate::execute::execute_completion_step_in_place(ops, registers)
     })
 }
 

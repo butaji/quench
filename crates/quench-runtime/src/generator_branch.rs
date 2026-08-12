@@ -27,11 +27,12 @@ fn resume_branch_frame(
     }
     let store = generator.machine.borrow().store.clone().ok_or(VmError::MissingReturn)?;
     let ops = store.get(frame.branch_resume).ok_or(VmError::MissingReturn)?;
-    let completion = execute_with_generator_registers(generator, |registers| {
-        crate::execute::execute_completion_in_place(ops, registers)
+    let step = execute_with_generator_registers(generator, |registers| {
+        crate::execute::execute_completion_step_in_place(ops, registers)
     })?;
+    let completion = step.completion;
     if completion.is_suspension() {
-        advance_frame_after_yield(generator, frame.branch_resume)?;
+        advance_frame_after_yield(generator, frame.branch_resume, step.next)?;
         return Ok(Some(completion));
     }
     let crate::completion::Completion::Return(value) = completion else {
