@@ -22,7 +22,7 @@ pub(crate) fn execute_builtin(
     let result = match builtin {
         Array => return Some(Ok(crate::builtins::array(arguments))),
         ArrayIsArray => return Some(Ok(crate::builtins::is_array(arguments.first()))),
-        ArrayFrom => return Some(from(arguments.first())),
+        ArrayFrom => return Some(from(receiver, arguments)),
         ArrayMap => return Some(crate::builtins::array_map(receiver, arguments)),
         ArrayFilter => return Some(crate::builtins::array_filter(receiver, arguments)),
         ArraySome => return Some(some(receiver, arguments)),
@@ -65,23 +65,7 @@ fn array_iterator_builtin(builtin: crate::ops::Builtin, receiver: Option<&Value>
 }
 
 include!("arrays_mutation.rs");
-
-fn from(value: Option<&Value>) -> Result<Value, crate::execute::VmError> {
-    let values = match value {
-        Some(Value::Array(values)) => values.to_vec(),
-        Some(Value::Set(data)) => data.values.borrow().iter().cloned().collect(),
-        Some(Value::Map(data)) => data
-            .keys
-            .borrow()
-            .iter()
-            .zip(data.values.borrow().iter())
-            .map(|(key, value)| Value::array(vec![key.clone(), value.clone()]))
-            .collect(),
-        Some(value @ Value::Iterator(_)) => crate::collections::iterator::collect(value)?,
-        _ => Vec::new(),
-    };
-    Ok(Value::array(values))
-}
+include!("arrays_from.rs");
 
 fn splice(receiver: Option<&Value>, arguments: &[Value]) -> Value {
     let Some(receiver @ Value::Array(values)) = receiver else {
