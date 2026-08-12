@@ -95,6 +95,14 @@ impl FrameStack {
             frames: Vec::new(),
         }
     }
+
+    pub fn with_capacity(capacity: u16) -> Self {
+        Self {
+            base: 0,
+            count: 0,
+            frames: Vec::with_capacity(usize::from(capacity)),
+        }
+    }
 }
 
 impl Default for FrameStack {
@@ -322,6 +330,14 @@ mod tests {
             .values
             .iter()
             .all(|value| matches!(value, Value::Undefined)));
+    }
+
+    #[test]
+    fn frame_stack_can_reserve_fixed_metadata_capacity() {
+        let stack = FrameStack::with_capacity(4);
+        assert_eq!(stack.count, 0);
+        assert!(stack.frames.is_empty());
+        assert!(stack.frames.capacity() >= 4);
     }
     use crate::completion::Completion;
 
