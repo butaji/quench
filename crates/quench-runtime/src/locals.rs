@@ -112,17 +112,7 @@ pub(crate) fn load_binding(
         return Ok(());
     }
     ensure_initialized(slot, name)?;
-    let value = current().get(slot);
-    let value = if matches!(value, Value::Undefined) {
-        registers
-            .get(usize::from(slot))
-            .filter(|value| !matches!(value, Value::Undefined))
-            .cloned()
-            .unwrap_or(value)
-    } else {
-        value
-    };
-    crate::execute::write_value(registers, dst, value);
+    crate::execute::write_value(registers, dst, current().get(slot));
     Ok(())
 }
 
