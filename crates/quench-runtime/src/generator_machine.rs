@@ -177,6 +177,22 @@ fn push_try_frame(generator: &GeneratorData, state: &GeneratorState) -> Result<(
     })
 }
 
+fn push_private_frame(generator: &GeneratorData, state: &GeneratorState) -> Result<(), VmError> {
+    if generator.machine.borrow().frame_count() != 0 { return Ok(()); }
+    let Some((_, body_ops, index)) = suspended_private_scope(generator, state) else { return Ok(()); };
+    let Some(Op::Yield { src }) = body_ops.get(index) else { return Ok(()); };
+    let Some(Op::PrivateScope { body, .. }) = generator.function.ops().get(state.pc.wrapping_sub(1)) else { return Ok(()); };
+    let Some(environment) = state.private_environment.clone() else { return Ok(()); };
+    let body_resume = crate::machine::CodeRange { code: body.range.code, start: body.range.start.saturating_add(index as u32 + 1), end: body.range.end };
+    try_push_frame(&mut generator.machine.borrow_mut(), crate::machine::Frame::Private {
+        phase: crate::machine::PrivatePhase::Body,
+        environment,
+        body_resume,
+        resume: parent_resume_range(generator, state),
+        yield_dst: *src,
+    })
+}
+
 fn range_after(range: crate::machine::CodeRange, suffix_len: usize) -> crate::machine::CodeRange {
     crate::machine::CodeRange {
         code: range.code,

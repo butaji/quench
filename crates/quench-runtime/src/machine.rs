@@ -257,6 +257,12 @@ pub enum TryPhase {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum PrivatePhase {
+    Body,
+    Resume,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Frame {
     Try {
         phase: TryPhase,
@@ -292,6 +298,13 @@ pub enum Frame {
         branch_resume: CodeRange,
         resume: CodeRange,
         dst: u16,
+        yield_dst: u16,
+    },
+    Private {
+        phase: PrivatePhase,
+        environment: crate::private_environment::PrivateEnvironment,
+        body_resume: CodeRange,
+        resume: CodeRange,
         yield_dst: u16,
     },
     Control {
