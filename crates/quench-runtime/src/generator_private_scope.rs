@@ -82,6 +82,7 @@ fn suspended_private_scope<'a>(
     else {
         return None;
     };
+    let body = body.ops()?;
     let index = match state.nested.checked_sub(1) {
         Some(index) if index < body.len() => index,
         _ => body.iter().position(|op| matches!(op, Op::Yield { .. }))?,
