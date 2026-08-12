@@ -1,17 +1,12 @@
 fn name_function_declaration(
     ops: &mut Vec<Op>,
     function: u16,
-    slot: u16,
     next_register: &mut u16,
     name: &str,
 ) {
     ops.push(Op::SetFunctionName {
         function,
         name: name.to_string(),
-    });
-    ops.push(Op::DeclareEvalBinding {
-        name: name.to_string(),
-        slot,
     });
     let marker = *next_register;
     *next_register = next_register.saturating_add(1);
