@@ -10,11 +10,13 @@ fn execute_generator_step(
     let _with_scope = crate::with_scope::FunctionGuard::isolate();
     let mut machine = generator.machine.borrow_mut();
     machine.pop_await_frame();
+    let store = machine.store.clone().ok_or(VmError::MissingReturn)?;
+    let ops = store.get(generator.function.code.range).ok_or(VmError::MissingReturn)?;
     let input = completion;
     let mut generated = None;
     let completion = machine.step(input.clone(), |_| {
         let step = crate::vm::execute_generator_step(
-            generator.function.ops(),
+            ops,
             &mut state.registers,
             state.environment.clone(),
             state.pc,
