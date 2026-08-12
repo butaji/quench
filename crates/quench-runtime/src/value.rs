@@ -38,6 +38,12 @@ pub(crate) mod error {
             &[Value::String(message.to_string())],
         ))
     }
+    pub(crate) fn throw_uri_error(message: &str) -> crate::execute::VmError {
+        crate::execute::VmError::Thrown(crate::builtins::error(
+            crate::ops::Builtin::URIError,
+            &[Value::String(message.to_string())],
+        ))
+    }
 }
 /// Identity-bearing host capability kept outside the JavaScript value space.
 #[derive(Clone, Debug)]
