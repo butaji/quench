@@ -71,9 +71,6 @@ fn write_kind(
     metadata: FunctionMetadata,
 ) {
     let (dst, body, params, captures) = function;
-    let Some(body) = body.ops() else {
-        return;
-    };
     crate::functions::write(registers, dst, body, params, captures, metadata);
 }
 
@@ -85,9 +82,6 @@ fn write_ordinary(
     mapped_arguments: bool,
 ) {
     let (dst, body, params, length, captures) = function;
-    let Some(body) = body.ops() else {
-        return;
-    };
     crate::functions::write(
         registers,
         dst,
