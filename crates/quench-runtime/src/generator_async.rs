@@ -5,7 +5,7 @@ fn yielded_result(
 ) -> Result<Value, VmError> {
     let op = generator
         .function
-        .body
+        .ops()
         .get(state.pc)
         .or_else(|| suspended_try(generator, state).map(|(_, yield_op, _)| yield_op));
     if generator.function.is_async {

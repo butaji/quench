@@ -44,7 +44,7 @@ fn initialize_parameters(
     arguments: &[Value],
 ) -> Result<Option<GeneratorState>, VmError> {
     let Some(marker) = function
-        .body
+        .ops()
         .iter()
         .position(|op| matches!(op, Op::ParameterEnd))
     else {
