@@ -122,6 +122,11 @@ pub(crate) fn execute_set_property(
         return write_failure(strict);
     }
     let value = crate::execute::read_register(registers, src)?.clone();
+    if matches!(target, crate::value::Value::Proxy(_)) {
+        let result = assign_set_property(&target, &key, value)?;
+        crate::execute::write_value(registers, object, result);
+        return Ok(());
+    }
     if crate::vm::is_global_object(&target) && crate::with_scope::set_if_bound(&key, &value)? {
         return Ok(());
     }
@@ -167,7 +172,6 @@ fn set_property_parts(
         _ => Err(crate::execute::VmError::MissingReturn),
     }
 }
-
 fn finish_property_write(
     registers: &mut Vec<crate::value::Value>,
     object: u16,
@@ -180,7 +184,6 @@ fn finish_property_write(
     crate::vm::synchronize_global_object(registers, target, &result);
     crate::execute::write_value(registers, object, result);
 }
-
 fn reject_nullish_property_write(
     target: &crate::value::Value,
 ) -> Result<(), crate::execute::VmError> {
@@ -194,7 +197,6 @@ fn reject_nullish_property_write(
     }
     Ok(())
 }
-
 include!("properties_function_name.rs");
 
 fn set_builtin_property(
@@ -469,7 +471,6 @@ fn reduce_super_method_call(
     });
     Some(dst)
 }
-
 fn reduce_call_arguments(
     call: &oxc::ast::ast::CallExpression<'_>,
     ops: &mut Vec<Op>,
@@ -484,7 +485,6 @@ fn reduce_call_arguments(
         })
         .collect()
 }
-
 fn computed_method_key(expression: &Expression<'_>) -> Option<String> {
     if let Some(literal) = reduce_literal(expression) {
         return property_key(&literal.op);
