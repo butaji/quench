@@ -313,9 +313,30 @@ fn build_re_flags(flags: &str) -> String {
     f
 }
 
-fn find_match<'a>(regex: &'a Regex, text: &'a str) -> Result<Option<regress::Match>, VmError> {
-    catch_unwind(AssertUnwindSafe(|| regex.find(text)))
-        .map_err(|_| VmError::EvalError("invalid regular expression execution".to_string()))
+fn find_match<'a>(
+    regex: &'a Regex,
+    text: &'a str,
+    sticky: bool,
+) -> Result<Option<regress::Match>, VmError> {
+    catch_unwind(AssertUnwindSafe(|| {
+        regex
+            .find(text)
+            .filter(|matched| !sticky || matched.start() == 0)
+    }))
+    .map_err(|_| VmError::EvalError("invalid regular expression execution".to_string()))
+}
+
+fn anchored_match(source: &str, flags: &str, last_index: usize, input: &str) -> bool {
+    if last_index == 0 || !source.starts_with('^') {
+        return true;
+    }
+    if !flags.contains('m') {
+        return false;
+    }
+    input
+        .as_bytes()
+        .get(last_index.saturating_sub(1))
+        .is_some_and(|byte| *byte == b'\n' || *byte == b'\r')
 }
 
 /// Implement `RegExp.prototype.test(str)`.
@@ -331,7 +352,10 @@ pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
     let pattern = if source.is_empty() { "(?:)" } else { &source };
     let re_flags = build_re_flags(&flags);
     let re = compile(pattern, &re_flags).map_err(VmError::EvalError)?;
-    let found = find_match(&re, search_string)?;
+    let found = anchored_match(&source, &flags, last_index, &s)
+        .then(|| find_match(&re, search_string, flags.contains('y')))
+        .transpose()?
+        .flatten();
     let matched = found.is_some();
     if flags.contains('g') || flags.contains('y') {
         let new_index = found.map_or(0, |match_| match_.end() + search_start);
@@ -353,7 +377,11 @@ pub fn exec(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
     let pattern = if source.is_empty() { "(?:)" } else { &source };
     let re_flags = build_re_flags(&flags);
     let re = compile(pattern, &re_flags).map_err(VmError::EvalError)?;
-    if let Some(m) = find_match(&re, search_string)? {
+    if let Some(m) = anchored_match(&source, &flags, last_index, &s)
+        .then(|| find_match(&re, search_string, flags.contains('y')))
+        .transpose()?
+        .flatten()
+    {
         build_match_result(receiver, &s, m, search_start, &flags)
     } else {
         if flags.contains('g') || flags.contains('y') {
