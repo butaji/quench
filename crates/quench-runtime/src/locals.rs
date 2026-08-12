@@ -129,11 +129,11 @@ pub(crate) fn load_binding(
         crate::execute::write_value(registers, dst, value);
         return Ok(());
     }
+    ensure_initialized(slot, name)?;
     if let Some(value) = resolve_name(name) {
         crate::execute::write_value(registers, dst, value);
         return Ok(());
     }
-    ensure_initialized(slot, name)?;
     crate::execute::write_value(registers, dst, current().get(slot));
     Ok(())
 }
