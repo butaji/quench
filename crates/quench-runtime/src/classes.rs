@@ -377,13 +377,13 @@ fn emit_default_constructor(ops: &mut Vec<Op>, next: &mut u16) -> u16 {
     let dst = take_register(next);
     ops.push(Op::MakeFunctionWithKind {
         dst,
-        body: vec![
+        body: crate::machine::FunctionCode::from_ops(vec![
             Op::Const {
                 dst: 0,
                 value: Constant::Undefined,
             },
             Op::Return { src: 0 },
-        ],
+        ]),
         params: 0,
         captures: 0,
         kind: FunctionKind::Ordinary,
