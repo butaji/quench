@@ -77,6 +77,9 @@ pub(crate) fn execute_scope(
     let Op::PrivateScope { names, body } = op else {
         return Err(VmError::MissingReturn);
     };
+    let Some(body) = body.ops() else {
+        return Err(VmError::MissingReturn);
+    };
     let _scope = Guard::install(names);
     let completion = crate::execute::execute_completion_in_place(body, registers)?;
     if completion.is_suspension() {

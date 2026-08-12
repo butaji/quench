@@ -19,7 +19,10 @@ pub(crate) fn reduce_expression(
         next,
         locals,
     )?;
-    ops.push(Op::PrivateScope { names, body });
+    ops.push(Op::PrivateScope {
+        names,
+        body: crate::machine::FunctionCode::from_ops(body),
+    });
     Some(constructor)
 }
 
