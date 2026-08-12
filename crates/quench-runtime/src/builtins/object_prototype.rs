@@ -37,6 +37,12 @@ pub(crate) fn is_prototype_of(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
+    let Some(value) = arguments
+        .first()
+        .filter(|value| crate::value::is_object(value))
+    else {
+        return Ok(Value::Boolean(false));
+    };
     let prototype = receiver
         .filter(|value| crate::value::is_object(value))
         .ok_or_else(|| {
@@ -44,12 +50,6 @@ pub(crate) fn is_prototype_of(
                 "Object.prototype.isPrototypeOf called on null or undefined",
             )
         })?;
-    let Some(value) = arguments
-        .first()
-        .filter(|value| crate::value::is_object(value))
-    else {
-        return Ok(Value::Boolean(false));
-    };
     let mut current = get_prototype_of(Some(value))?;
     while !matches!(current, Value::Null) {
         if crate::builtins::same_value(Some(&current), Some(prototype)) {
