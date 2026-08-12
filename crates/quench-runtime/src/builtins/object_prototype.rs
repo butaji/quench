@@ -3,7 +3,11 @@ pub(crate) fn get_prototype_of(value: Option<&Value>) -> Result<Value, crate::ex
     if matches!(value, Value::Proxy(_)) {
         return crate::proxy::proxy_get_prototype_of(value);
     }
-    Ok(match value {
+    Ok(prototype_for_value(value))
+}
+
+fn prototype_for_value(value: &Value) -> Value {
+    match value {
         Value::Builtin(Builtin::ObjectPrototype) => Value::Null,
         Value::Builtin(builtin) if is_typed_array_constructor(*builtin) => {
             Value::Builtin(Builtin::TypedArray)
@@ -37,7 +41,7 @@ pub(crate) fn get_prototype_of(value: Option<&Value>) -> Result<Value, crate::ex
             .find_map(|(name, value)| (name == "\0prototype").then(|| value.clone()))
             .unwrap_or(Value::Builtin(Builtin::ObjectPrototype)),
         _ => Value::Null,
-    })
+    }
 }
 
 fn iterator_prototype(builtin: Builtin) -> Value {
