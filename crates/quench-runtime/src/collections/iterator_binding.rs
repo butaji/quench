@@ -15,6 +15,9 @@ pub(crate) fn execute_binding(
         return Err(crate::execute::VmError::MissingReturn);
     };
     let completion = crate::execute::execute_completion_in_place(body, registers)?;
+    if completion.is_suspension() {
+        return Ok(completion);
+    }
     if matches!(completion, crate::completion::Completion::Normal) && !close_normal {
         return Ok(completion);
     }
