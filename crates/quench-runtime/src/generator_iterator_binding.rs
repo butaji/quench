@@ -118,13 +118,12 @@ fn resume_suspended_iterator_binding(
         state.nested = 0;
         return close_iterator_binding(op, &registers(generator), resume).map(Some);
     }
-    let completion = execute_with_generator_registers(generator, |registers| {
-        crate::execute::execute_completion_in_place(&body[index + 1..], registers)
+    let step = execute_with_generator_registers(generator, |registers| {
+        crate::execute::execute_completion_step_in_place(&body[index + 1..], registers)
     })?;
+    let completion = step.completion;
     if matches!(completion, crate::completion::Completion::Yield(_)) {
-        if let Some(yielded) = next_yield(&body[index + 1..]) {
-            state.nested = index + yielded + 2;
-        }
+        state.nested = index + step.next + 1;
         return Ok(Some(completion));
     }
     state.nested = 0;
@@ -170,10 +169,6 @@ fn write_conditional_result(
     };
     crate::execute::write_value(registers, *dst, value);
     Ok(())
-}
-
-fn next_yield(ops: &[Op]) -> Option<usize> {
-    ops.iter().position(|op| matches!(op, Op::Yield { .. }))
 }
 
 fn close_iterator_binding(
