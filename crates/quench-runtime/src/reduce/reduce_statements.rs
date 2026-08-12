@@ -51,7 +51,7 @@ fn reduce_source_with_type_and_global(
                 .any(|directive| directive.directive.as_str() == "use strict");
         let mut facts = ProgramDb {
             strict,
-            private_names: analysis.private_names,
+            private_names: analysis.private_names.into_iter().collect(),
             ..ProgramDb::default()
         };
         let ops = reduce_statements(&parsed.program.body, source_type, global, &mut facts)?;

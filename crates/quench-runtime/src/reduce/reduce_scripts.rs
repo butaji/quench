@@ -75,7 +75,7 @@ fn reduce_units(units: &[SourceUnit<'_>]) -> Result<ResidualProgram, Vec<String>
         totals.1 += analysis.symbol_count;
         let mut facts = ProgramDb {
             strict: unit.strict || has_strict_directive(&parsed.program),
-            private_names: analysis.private_names,
+            private_names: analysis.private_names.into_iter().collect(),
             ..ProgramDb::default()
         };
         last = state.append(&parsed.program.body, &mut facts, unit.program_scope)?;
@@ -92,9 +92,7 @@ fn merge_facts(target: &mut ProgramDb, source: ProgramDb) {
     target.strict |= source.strict;
     target.in_function = source.in_function;
     target.tail_calls = source.tail_calls;
-    if !source.private_names.is_empty() {
-        target.private_names = source.private_names;
-    }
+    target.private_names.extend(source.private_names);
 }
 
 fn reject_parse_errors(parsed: &oxc::parser::ParserReturn<'_>) -> Result<(), Vec<String>> {
