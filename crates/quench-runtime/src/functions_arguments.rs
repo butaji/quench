@@ -58,7 +58,8 @@ pub(crate) fn build_registers(
     let arguments = arguments_object(function, original_arguments, &environment);
     let arguments_slot = function.captures.len() as u16 + function.params;
     environment.set(arguments_slot, arguments);
-    (vec![crate::value::Value::Undefined; 32], environment)
+    let register_count = function.ops().len().max(32);
+    (vec![crate::value::Value::Undefined; register_count], environment)
 }
 
 /// Execute a constructor and return its result plus the final `this` value.
