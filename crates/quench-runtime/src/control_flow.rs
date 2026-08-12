@@ -70,6 +70,12 @@ fn promote_conditional_tail(ops: &mut Vec<Op>, returned: u16) -> bool {
     else {
         return false;
     };
+    let Some(consequent) = consequent.ops().map(<[_]>::to_vec) else {
+        return false;
+    };
+    let Some(alternate) = alternate.ops().map(<[_]>::to_vec) else {
+        return false;
+    };
     if !branch_completes(&consequent) || !branch_completes(&alternate) {
         restore_conditional(ops, dst, condition, consequent, alternate);
         return false;
@@ -99,8 +105,8 @@ fn restore_conditional(
     ops.push(Op::Conditional {
         dst,
         condition,
-        consequent,
-        alternate,
+        consequent: crate::machine::FunctionCode::from_ops(consequent),
+        alternate: crate::machine::FunctionCode::from_ops(alternate),
     });
 }
 
