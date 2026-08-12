@@ -465,6 +465,7 @@ fn is_object_special(builtin: Builtin) -> bool {
             | Builtin::ObjectKeys
             | Builtin::ObjectAssign
             | Builtin::ObjectFromEntries
+            | Builtin::ObjectGroupBy
             | Builtin::ObjectCreate
             | Builtin::ObjectSetPrototypeOf
             | Builtin::ObjectPropertyIsEnumerable

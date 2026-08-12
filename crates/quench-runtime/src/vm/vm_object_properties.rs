@@ -51,6 +51,12 @@ fn object_property(properties: &Rc<crate::value::ObjectData>, key: &str) -> Valu
             return indexed;
         }
     }
+    if properties
+        .iter()
+        .any(|(name, value)| name == "\0prototype" && matches!(value, Value::Null))
+    {
+        return Value::Undefined;
+    }
     let inherited = object_prototype_property(properties, key);
     if !matches!(inherited, Value::Undefined) {
         return inherited;
