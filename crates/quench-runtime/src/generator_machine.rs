@@ -83,3 +83,20 @@ fn update_await_frame(generator: &GeneratorData, state: &GeneratorState, complet
             },
         });
 }
+
+fn resume_machine_frame(
+    generator: &GeneratorData,
+    state: &GeneratorState,
+    completion: crate::completion::Completion,
+) -> Result<Value, VmError> {
+    let should_pop = !completion.is_suspension();
+    let input = completion.clone();
+    generator
+        .machine
+        .borrow_mut()
+        .step(input, |_| Ok(completion.clone()))?;
+    if should_pop {
+        generator.machine.borrow_mut().pop_frame();
+    }
+    complete_step(generator, state, completion)
+}
