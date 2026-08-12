@@ -6,7 +6,6 @@ use crate::{
 };
 
 /// Execute a `try`/`catch`/`finally` container.
-///
 pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<Completion, VmError> {
     let Op::Try {
         body,
@@ -17,6 +16,9 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<Completion,
     else {
         return Err(VmError::MissingReturn);
     };
+    let Some(body) = body.ops() else {
+        return Err(VmError::MissingReturn);
+    };
     let body_completion = execute_try_body(body, registers)?;
     if body_completion.is_suspension() {
         return Ok(body_completion);
@@ -24,6 +26,9 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<Completion,
     let completion = match body_completion {
         Completion::Throw(value) => match handler {
             Some(ops) => {
+                let Some(ops) = ops.ops() else {
+                    return Err(VmError::MissingReturn);
+                };
                 bind_caught(value, *catch_slot, registers);
                 execute_completion_in_place(ops, registers)?
             }
@@ -31,13 +36,26 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<Completion,
         },
         completion => completion,
     };
-    if let Some(finalizer) = finalizer {
-        match execute_completion_in_place(finalizer, registers)? {
-            Completion::Normal => {}
-            abrupt => return Ok(abrupt),
-        }
+    if let Some(abrupt) = run_finalizer(finalizer, registers)? {
+        return Ok(abrupt);
     }
     Ok(completion)
+}
+
+fn run_finalizer(
+    finalizer: &Option<crate::machine::FunctionCode>,
+    registers: &mut Vec<Value>,
+) -> Result<Option<Completion>, VmError> {
+    let Some(finalizer) = finalizer else {
+        return Ok(None);
+    };
+    let Some(finalizer) = finalizer.ops() else {
+        return Err(VmError::MissingReturn);
+    };
+    match execute_completion_in_place(finalizer, registers)? {
+        Completion::Normal => Ok(None),
+        abrupt => Ok(Some(abrupt)),
+    }
 }
 
 fn execute_try_body(ops: &[Op], registers: &mut Vec<Value>) -> Result<Completion, VmError> {

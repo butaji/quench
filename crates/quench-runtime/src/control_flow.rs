@@ -147,9 +147,9 @@ pub(crate) fn reduce_try(
     let (handler, catch_slot) = reduce_try_handler(statement, facts, &try_locals)?;
     let finalizer = reduce_try_finalizer(statement, facts, &try_locals, next_slot)?;
     ops.push(Op::Try {
-        body,
-        handler,
-        finalizer,
+        body: crate::machine::FunctionCode::from_ops(body),
+        handler: handler.map(crate::machine::FunctionCode::from_ops),
+        finalizer: finalizer.map(crate::machine::FunctionCode::from_ops),
         catch_slot,
     });
     Ok(())
