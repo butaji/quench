@@ -232,6 +232,11 @@ pub fn execute_builtin(
         Builtin::RegExpEscape => Some(escape(arguments)),
         Builtin::RegExpTest => Some(test(receiver, arguments)),
         Builtin::RegExpExec => Some(exec(receiver, arguments)),
+        Builtin::RegExpSymbolMatch => Some(symbol_match(receiver, arguments)),
+        Builtin::RegExpSymbolSearch => Some(symbol_search(receiver, arguments)),
+        Builtin::RegExpSymbolReplace => Some(symbol_replace(receiver, arguments)),
+        Builtin::RegExpSymbolSplit => Some(symbol_split(receiver, arguments)),
+        Builtin::RegExpSymbolMatchAll => Some(symbol_match_all(receiver, arguments)),
         _ => None,
     }
 }
