@@ -14,6 +14,7 @@ pub fn read_register(registers: &[Value], index: u16) -> Result<Value, VmError> 
     registers
         .get(usize::from(index))
         .cloned()
+        .map(crate::locals::resolved_replacement)
         .ok_or(VmError::RegisterOutOfBounds(index))
 }
 pub fn get_property(value: &Value, key: &str) -> Value {
