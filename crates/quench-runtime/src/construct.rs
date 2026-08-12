@@ -1,11 +1,9 @@
-use std::{collections::HashMap, rc::Rc};
-
 use crate::{
     facts::ProgramDb,
     ops::Op,
     value::{ObjectData, Value},
 };
-
+use std::{collections::HashMap, rc::Rc};
 pub(crate) fn reduce(
     expression: &oxc::ast::ast::NewExpression<'_>,
     ops: &mut Vec<Op>,
@@ -32,7 +30,6 @@ pub(crate) fn reduce(
     });
     Some(dst)
 }
-
 pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<(), crate::execute::VmError> {
     let Op::Construct {
         dst,
@@ -49,7 +46,6 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<(), crate::
     crate::execute::write_value(registers, *dst, value);
     Ok(())
 }
-
 fn collect_construct_arguments(
     registers: &[Value],
     args: &[u16],
@@ -66,14 +62,12 @@ fn collect_construct_arguments(
     }
     Ok(arguments)
 }
-
 pub(crate) fn construct_value(
     target: &Value,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     construct_with_new_target(target, target, arguments)
 }
-
 pub(crate) fn construct_value_with_new_target(
     target: &Value,
     new_target: &Value,
@@ -498,10 +492,4 @@ pub(crate) fn derived_constructor(
         .ok_or_else(|| crate::value::error::throw_reference_error("super is unavailable"))
 }
 
-fn is_default_derived_constructor(function: &crate::value::FunctionValue) -> bool {
-    function
-        .properties
-        .borrow()
-        .iter()
-        .any(|(name, _)| name == "\0default_derived_constructor")
-}
+include!("construct_tail.rs");

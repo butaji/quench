@@ -153,7 +153,12 @@ pub(crate) fn reduce_optional_call(
     *next = next.saturating_add(1);
     if receiver_guard {
         return reduce_guarded_optional_call(
-            call, callee, receiver?, dst, ops, facts, next, locals,
+            call,
+            (callee, receiver?, dst),
+            ops,
+            facts,
+            next,
+            locals,
         );
     }
     let (args, spreads) = crate::reduce::reduce_expressions::calls_reduce::reduce_arguments(
@@ -176,21 +181,16 @@ pub(crate) fn reduce_optional_call(
 
 fn reduce_guarded_optional_call(
     call: &oxc::ast::ast::CallExpression<'_>,
-    callee: u16,
-    receiver: u16,
-    dst: u16,
+    registers: (u16, u16, u16),
     ops: &mut Vec<Op>,
     facts: &mut ProgramDb,
     next: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
+    let (callee, receiver, dst) = registers;
     let condition = *next;
     *next = next.saturating_add(1);
-    ops.push(Op::Unary {
-        dst: condition,
-        operator: crate::ops::UnaryOp::IsNullish,
-        src: receiver,
-    });
+    emit_nullish_guard(ops, condition, receiver);
     let mut else_ops = Vec::new();
     let (args, spreads) = crate::reduce::reduce_expressions::calls_reduce::reduce_arguments(
         &call.arguments,
@@ -207,6 +207,19 @@ fn reduce_guarded_optional_call(
         args,
         spreads,
     });
+    emit_optional_branch(ops, condition, dst, else_ops);
+    Some(dst)
+}
+
+fn emit_nullish_guard(ops: &mut Vec<Op>, dst: u16, src: u16) {
+    ops.push(Op::Unary {
+        dst,
+        operator: crate::ops::UnaryOp::IsNullish,
+        src,
+    });
+}
+
+fn emit_optional_branch(ops: &mut Vec<Op>, condition: u16, dst: u16, else_ops: Vec<Op>) {
     ops.push(Op::Branch {
         condition,
         then_ops: vec![Op::Const {
@@ -215,7 +228,6 @@ fn reduce_guarded_optional_call(
         }],
         else_ops,
     });
-    Some(dst)
 }
 
 fn reduce_optional_callee(
