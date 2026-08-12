@@ -81,7 +81,7 @@ pub struct ProgramDb {
     pub(crate) span_facts: SpanFacts<Constant>,
     pub scope_count: usize,
     pub symbol_count: usize,
-    pub(crate) private_names: Vec<(Span, PrivateNameId)>,
+    pub(crate) private_names: HashMap<Span, PrivateNameId>,
     pub(crate) strict: bool,
     pub(crate) in_function: bool,
     pub(crate) tail_calls: bool,
@@ -108,17 +108,11 @@ impl ProgramDb {
     }
 
     pub fn insert_private_name(&mut self, span: Span, id: PrivateNameId) {
-        if let Some((_, stored)) = self.private_names.iter_mut().find(|(key, _)| *key == span) {
-            *stored = id;
-        } else {
-            self.private_names.push((span, id));
-        }
+        self.private_names.insert(span, id);
     }
 
     pub fn private_name(&self, span: Span) -> Option<PrivateNameId> {
-        self.private_names
-            .iter()
-            .find_map(|(key, id)| (*key == span).then_some(*id))
+        self.private_names.get(&span).copied()
     }
 }
 
