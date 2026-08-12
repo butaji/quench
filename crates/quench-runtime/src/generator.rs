@@ -9,6 +9,7 @@ use std::{cell::RefCell, rc::Rc};
 include!("generator_private_scope.rs");
 include!("generator_async.rs");
 include!("generator_try.rs");
+include!("generator_suspension.rs");
 include!("generator_reduce.rs");
 include!("generator_machine.rs");
 
@@ -176,19 +177,24 @@ fn resume_suspended_contexts(
     state: &mut GeneratorState,
     completion: &crate::completion::Completion,
 ) -> Result<Option<Value>, VmError> {
-    ensure_try_frame(generator, state)?;
-    if let Some(completion) = resume_suspended_try(generator, state, completion.clone())? {
-        return resume_machine_frame(generator, state, completion).map(Some);
-    }
-    ensure_control_frame(generator, state)?;
-    if let Some(completion) = resume_suspended_conditional(generator, state, completion.clone())? {
-        return resume_machine_frame(generator, state, completion).map(Some);
-    }
-    if let Some(completion) = resume_suspended_private_scope(generator, state, completion.clone())?
-    {
-        return resume_machine_frame(generator, state, completion).map(Some);
-    }
-    Ok(None)
+    let resumed = match suspended_context(generator, state) {
+        Some(SuspendedContext::Try) => {
+            ensure_try_frame(generator, state)?;
+            resume_suspended_try(generator, state, completion.clone())?
+        }
+        Some(SuspendedContext::Conditional) => {
+            ensure_control_frame(generator, state)?;
+            resume_suspended_conditional(generator, state, completion.clone())?
+        }
+        Some(SuspendedContext::PrivateScope) => {
+            ensure_control_frame(generator, state)?;
+            resume_suspended_private_scope(generator, state, completion.clone())?
+        }
+        Some(SuspendedContext::Yield | SuspendedContext::YieldStar) | None => None,
+    };
+    resumed
+        .map(|completion| resume_machine_frame(generator, state, completion))
+        .transpose()
 }
 
 impl Resume {
@@ -245,25 +251,6 @@ fn completed_resume(resume: Resume) -> Result<Value, VmError> {
         Resume::Return(value) => Ok(iterator_result(value, true)),
         Resume::Throw(value) => Err(VmError::Thrown(value)),
     }
-}
-
-fn is_suspended(generator: &GeneratorData, state: &GeneratorState) -> bool {
-    if state.suspension.is_some() {
-        return true;
-    }
-    if matches!(
-        generator.function.ops().get(state.pc.wrapping_sub(1)),
-        Some(Op::Yield { .. })
-    ) {
-        return true;
-    }
-    let Some(Op::YieldStar { iterator, .. }) = generator.function.ops().get(state.pc) else {
-        return suspended_try(generator, state).is_some()
-            || suspended_conditional(generator, state).is_some()
-            || suspended_private_scope(generator, state).is_some();
-    };
-    crate::execute::read_register(&state.registers, *iterator)
-        .is_ok_and(|value| !matches!(value, Value::Undefined))
 }
 
 fn suspended_try<'a>(
