@@ -64,6 +64,9 @@ pub(crate) fn to_string(value: &Value) -> Result<String, VmError> {
             "Cannot convert a Symbol value to a string",
         ));
     }
+    if let Value::BigInt(value) = primitive {
+        return Ok(value);
+    }
     Ok(crate::intl::tolocale::value::to_string(Some(&primitive)))
 }
 
@@ -110,10 +113,14 @@ fn ordinary_to_primitive(value: &Value, hint: &str) -> Result<Value, VmError> {
             Some(&Value::String(name.to_string())),
         ) == Value::Boolean(true);
         if matches!(method, Value::Undefined) && !owns_method {
-            if name == "valueOf" {
+            let present = crate::with_scope::has_property(value, name)?;
+            if name == "valueOf" && !present {
                 if let Some(boxed) = boxed_primitive(value) {
                     return Ok(boxed);
                 }
+            }
+            if name == "toString" && !present {
+                return Ok(crate::builtins::prototype_to_string(Some(value)));
             }
             continue;
         }
