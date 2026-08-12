@@ -103,7 +103,7 @@ pub(crate) fn execute_construct(
         crate::value::Value::Function(std::rc::Rc::clone(function)),
     );
     let result = crate::vm::execute_in_environment(
-        &function.body,
+        function.ops(),
         &mut registers,
         &crate::vm::VmContext::default(),
         std::rc::Rc::clone(&environment),
