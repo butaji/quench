@@ -24,11 +24,13 @@ pub(crate) fn create(
     } else {
         Vec::new()
     };
+    let register_count = function.ops().len().clamp(32, usize::from(u16::MAX)) as u16;
     Ok(Value::Generator(Rc::new(GeneratorData {
         function: Rc::clone(function),
-        machine: RefCell::new(crate::machine::Machine::new(
+        machine: RefCell::new(crate::machine::Machine::with_register_count(
             crate::machine::CodeId(0),
             crate::machine::EnvironmentRef(0),
+            register_count,
         )),
         receiver: receiver.clone(),
         arguments: deferred_arguments,
