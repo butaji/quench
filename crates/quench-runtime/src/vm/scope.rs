@@ -32,6 +32,11 @@ impl ExecutionScope {
     pub fn bind_module_slot(&self, slot: u16, cell: ModuleBindingCell) {
         self.0.install_slot_cell(slot, cell.shared());
     }
+
+    /// Obtain the live cell backing a reducer-assigned export slot.
+    pub fn module_cell_slot(&self, slot: u16) -> ModuleBindingCell {
+        ModuleBindingCell::from_shared(self.0.slot_cell(slot))
+    }
 }
 
 impl Default for ExecutionScope {
