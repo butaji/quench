@@ -89,13 +89,10 @@ pub struct FrameStack {
 }
 
 impl FrameStack {
+    const DEFAULT_CAPACITY: u16 = 64;
+
     pub fn new() -> Self {
-        Self {
-            base: 0,
-            count: 0,
-            frames: Vec::new(),
-            limit: None,
-        }
+        Self::with_capacity(Self::DEFAULT_CAPACITY)
     }
 
     pub fn with_capacity(capacity: u16) -> Self {
@@ -123,7 +120,7 @@ impl FrameStack {
         Ok(())
     }
 
-    pub fn push(&mut self, frame: Frame) {
+    fn push(&mut self, frame: Frame) {
         self.frames.push(frame);
         self.count = u16::try_from(self.frames.len()).unwrap_or(u16::MAX);
     }
@@ -283,10 +280,6 @@ impl Machine {
 
     pub fn record_completion(&mut self, completion: Completion) {
         self.completion = completion;
-    }
-
-    pub fn push_frame(&mut self, frame: Frame) {
-        self.frames.push(frame);
     }
 
     pub fn try_push_frame(&mut self, frame: Frame) -> Result<(), Frame> {
