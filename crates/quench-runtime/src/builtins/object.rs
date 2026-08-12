@@ -4,7 +4,6 @@ use crate::{
     value::{ObjectData, Value},
 };
 use std::rc::Rc;
-
 include!("object_proxy.rs");
 
 pub(crate) fn boxed_constructor(value: &Value) -> Builtin {
@@ -58,7 +57,6 @@ pub(crate) fn execute_special(
         _ => Ok(Value::Undefined),
     }
 }
-
 fn assign(arguments: &[Value]) -> Result<Value, VmError> {
     let target = arguments.first().cloned().unwrap_or(Value::Undefined);
     crate::properties::assign_properties(target, &arguments[1..])
@@ -274,8 +272,12 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
     if let Some(descriptor) = crate::builtins::read_intrinsic_override(builtin, key) {
         return Some(public_descriptor(&descriptor));
     }
-    let property =
-        super::callable_property(builtin, key).or_else(|| super::special_property(builtin, key))?;
+    let property = super::callable_property(builtin, key)
+        .or_else(|| super::special_property(builtin, key))
+        .or_else(|| match super::property(builtin, key) {
+            Value::Undefined => None,
+            value => Some(value),
+        })?;
     let writable = !matches!(
         key,
         "length" | "name" | "prototype" | "Symbol.toStringTag" | "unscopables"
