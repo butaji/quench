@@ -24,3 +24,18 @@ fn error_name(builtin: Builtin) -> Option<&'static str> {
         URIError => "URIError", AggregateError => "AggregateError", _ => return None,
     })
 }
+fn object_prototype_method(key: &str) -> Option<crate::ops::Builtin> {
+    use crate::ops::Builtin::*;
+    Some(match key {
+        "hasOwnProperty" => ObjectHasOwnProperty,
+        "isPrototypeOf" => ObjectPrototypeIsPrototypeOf,
+        "__defineGetter__" => ObjectPrototypeDefineGetter,
+        "__defineSetter__" => ObjectPrototypeDefineSetter,
+        "__lookupGetter__" => ObjectPrototypeLookupGetter,
+        "__lookupSetter__" => ObjectPrototypeLookupSetter,
+        "propertyIsEnumerable" => ObjectPropertyIsEnumerable,
+        "toString" => ObjectPrototypeToString,
+        "valueOf" => ObjectPrototypeValueOf,
+        _ => return None,
+    })
+}

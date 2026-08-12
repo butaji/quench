@@ -33,6 +33,10 @@ pub(crate) fn execute_special(
             Ok(object_property_is_enumerable(receiver, arguments))
         }
         Builtin::ObjectPrototypeIsPrototypeOf => is_prototype_of(receiver, arguments),
+        Builtin::ObjectPrototypeDefineGetter => define_legacy_accessor(receiver, arguments, "get"),
+        Builtin::ObjectPrototypeDefineSetter => define_legacy_accessor(receiver, arguments, "set"),
+        Builtin::ObjectPrototypeLookupGetter => lookup_legacy_accessor(receiver, arguments, "get"),
+        Builtin::ObjectPrototypeLookupSetter => lookup_legacy_accessor(receiver, arguments, "set"),
         Builtin::ObjectGetOwnPropertyDescriptor => {
             let (target, key) = static_target(arguments);
             require_object_coercible(target)?;

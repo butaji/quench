@@ -7,6 +7,10 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
         Builtin::ObjectPrototypeValueOf => Some("Object.prototype.valueOf"),
         Builtin::ObjectHasOwnProperty => Some("Object.prototype.hasOwnProperty"),
         Builtin::ObjectPrototypeIsPrototypeOf => Some("Object.prototype.isPrototypeOf"),
+        Builtin::ObjectPrototypeDefineGetter => Some("Object.prototype.__defineGetter__"),
+        Builtin::ObjectPrototypeDefineSetter => Some("Object.prototype.__defineSetter__"),
+        Builtin::ObjectPrototypeLookupGetter => Some("Object.prototype.__lookupGetter__"),
+        Builtin::ObjectPrototypeLookupSetter => Some("Object.prototype.__lookupSetter__"),
         Builtin::ObjectPropertyIsEnumerable => Some("Object.prototype.propertyIsEnumerable"),
         Builtin::ObjectGetOwnPropertyDescriptor => Some("Object.getOwnPropertyDescriptor"),
         Builtin::ObjectKeys => Some("Object.keys"),
@@ -29,6 +33,10 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         }
         Builtin::ObjectHasOwnProperty
         | Builtin::ObjectPrototypeIsPrototypeOf
+        | Builtin::ObjectPrototypeDefineGetter
+        | Builtin::ObjectPrototypeDefineSetter
+        | Builtin::ObjectPrototypeLookupGetter
+        | Builtin::ObjectPrototypeLookupSetter
         | Builtin::ObjectPropertyIsEnumerable
         | Builtin::ObjectKeys
         | Builtin::ObjectGetOwnPropertyNames
@@ -50,6 +58,10 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
         }
         Builtin::ObjectHasOwnProperty => Some("hasOwnProperty"),
         Builtin::ObjectPrototypeIsPrototypeOf => Some("isPrototypeOf"),
+        Builtin::ObjectPrototypeDefineGetter => Some("__defineGetter__"),
+        Builtin::ObjectPrototypeDefineSetter => Some("__defineSetter__"),
+        Builtin::ObjectPrototypeLookupGetter => Some("__lookupGetter__"),
+        Builtin::ObjectPrototypeLookupSetter => Some("__lookupSetter__"),
         Builtin::ObjectPropertyIsEnumerable => Some("propertyIsEnumerable"),
         Builtin::ObjectGetOwnPropertyDescriptor => Some("getOwnPropertyDescriptor"),
         Builtin::ObjectKeys => Some("keys"),
