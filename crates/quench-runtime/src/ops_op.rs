@@ -412,14 +412,14 @@ pub enum Op {
         label: Option<String>,
         object: u16,
         slot: u16,
-        body: Vec<Op>,
+        body: crate::machine::FunctionCode,
         per_iteration: bool,
     },
     ForOf {
         label: Option<String>,
         iterable: u16,
         slot: u16,
-        body: Vec<Op>,
+        body: crate::machine::FunctionCode,
         per_iteration: bool,
     },
     Switch {

@@ -104,7 +104,7 @@ pub(crate) fn reduce_for_in(
         label: None,
         object,
         slot,
-        body,
+        body: crate::machine::FunctionCode::from_ops(body),
         per_iteration,
     });
     Ok(())
@@ -130,7 +130,7 @@ pub(crate) fn reduce_for_of(
         label: None,
         iterable,
         slot,
-        body,
+        body: crate::machine::FunctionCode::from_ops(body),
         per_iteration,
     });
     Ok(())
@@ -187,11 +187,17 @@ pub(crate) fn execute_for_of(
     iterate_loop_values(registers, label, slot, body, per_iteration, iterator)
 }
 
-type ForInLoopData<'a> = (&'a Option<String>, u16, &'a Vec<Op>, bool, Vec<String>);
+type ForInLoopData<'a> = (
+    &'a Option<String>,
+    u16,
+    &'a crate::machine::FunctionCode,
+    bool,
+    Vec<String>,
+);
 type ForOfLoopData<'a> = (
     &'a Option<String>,
     u16,
-    &'a Vec<Op>,
+    &'a crate::machine::FunctionCode,
     bool,
     crate::value::Value,
 );
@@ -228,10 +234,13 @@ fn iterate_loop_keys(
     registers: &mut Vec<crate::value::Value>,
     label: &Option<String>,
     slot: u16,
-    body: &[Op],
+    body: &crate::machine::FunctionCode,
     per_iteration: bool,
     keys: Vec<String>,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
+    let Some(body) = body.ops() else {
+        return Err(crate::execute::VmError::MissingReturn);
+    };
     for key in keys {
         let value = crate::value::Value::String(key);
         let _binding = bind_iteration(slot, value, per_iteration);
@@ -266,10 +275,13 @@ fn iterate_loop_values(
     registers: &mut Vec<crate::value::Value>,
     label: &Option<String>,
     slot: u16,
-    body: &[Op],
+    body: &crate::machine::FunctionCode,
     per_iteration: bool,
     iterator: crate::value::Value,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
+    let Some(body) = body.ops() else {
+        return Err(crate::execute::VmError::MissingReturn);
+    };
     loop {
         let value = match crate::collections::iterator::step_value(&iterator) {
             Ok(value) => value,
