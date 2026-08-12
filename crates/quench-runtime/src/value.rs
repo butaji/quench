@@ -20,14 +20,18 @@ pub(crate) mod error {
             &[Value::String(message.to_string())],
         ))
     }
-
     pub(crate) fn throw_reference_error(message: &str) -> crate::execute::VmError {
         crate::execute::VmError::Thrown(crate::builtins::error(
             crate::ops::Builtin::ReferenceError,
             &[Value::String(message.to_string())],
         ))
     }
-
+    pub(crate) fn throw_syntax_error(message: &str) -> crate::execute::VmError {
+        crate::execute::VmError::Thrown(crate::builtins::error(
+            crate::ops::Builtin::SyntaxError,
+            &[Value::String(message.to_string())],
+        ))
+    }
     pub(crate) fn throw_range_error(message: &str) -> crate::execute::VmError {
         crate::execute::VmError::Thrown(crate::builtins::error(
             crate::ops::Builtin::RangeError,
@@ -35,14 +39,12 @@ pub(crate) mod error {
         ))
     }
 }
-
 /// Identity-bearing host capability kept outside the JavaScript value space.
 #[derive(Clone, Debug)]
 pub struct HostCapabilityValue {
     pub descriptor: HostCapabilityRef,
     identity: Rc<()>,
 }
-
 impl HostCapabilityValue {
     pub fn new(descriptor: HostCapabilityRef) -> Self {
         Self {
@@ -63,13 +65,11 @@ impl HostCapabilityValue {
         Rc::ptr_eq(&self.identity, &other.identity)
     }
 }
-
 impl PartialEq for HostCapabilityValue {
     fn eq(&self, other: &Self) -> bool {
         self.descriptor == other.descriptor && self.same_identity(other)
     }
 }
-
 impl Eq for HostCapabilityValue {}
 
 /// Promise state: pending, fulfilled, or rejected.
