@@ -55,19 +55,40 @@ fn resume_generator_range(
     range: crate::machine::CodeRange,
     completion: crate::completion::Completion,
 ) -> Result<crate::completion::Completion, VmError> {
-    if !matches!(completion, crate::completion::Completion::Normal) { return Ok(completion); }
+    if !matches!(completion, crate::completion::Completion::Normal) {
+        return Ok(completion);
+    }
     let _private = crate::private_environment::Guard::install_environment(generator.function.private_environment.clone());
     let _home = crate::super_scope::Guard::install(&generator.function, &generator.receiver);
     let _with = crate::with_scope::FunctionGuard::install(&generator.function.with_captures);
-    let start = range.start.saturating_sub(generator.function.code.range.start) as usize;
-    let step = execute_with_generator_registers(generator, |registers| {
-        crate::vm::execute_generator_step(
-            generator.function.ops(), registers, machine_environment(generator)?, start, completion,
-        )
-    })?;
-    set_machine_pc(generator, step.pc);
+    let step = execute_generator_range(generator, range, completion)?;
+    update_range_execution(generator, range, &step);
     state.suspension = step.suspension;
     Ok(step.completion)
+}
+
+fn execute_generator_range(
+    generator: &GeneratorData,
+    range: crate::machine::CodeRange,
+    completion: crate::completion::Completion,
+) -> Result<crate::vm::GeneratorStep, VmError> {
+    let store = generator.machine.borrow().store.clone().ok_or(VmError::MissingReturn)?;
+    let ops = store.get(range).ok_or(VmError::MissingReturn)?;
+    execute_with_generator_registers(generator, |registers| {
+        crate::vm::execute_generator_step(ops, registers, machine_environment(generator)?, 0, completion)
+    })
+}
+
+fn update_range_execution(
+    generator: &GeneratorData,
+    range: crate::machine::CodeRange,
+    step: &crate::vm::GeneratorStep,
+) {
+    if range.code != generator.function.code_id() {
+        return;
+    }
+    let offset = range.start.saturating_sub(generator.function.code.range.start) as usize;
+    set_machine_pc(generator, offset.saturating_add(step.pc));
 }
 
 fn update_await_frame(
