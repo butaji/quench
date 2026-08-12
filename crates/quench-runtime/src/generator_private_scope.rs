@@ -133,13 +133,14 @@ fn finish_private_scope_resume(
     }
     let _home = crate::super_scope::Guard::install(&generator.function, &generator.receiver);
     let _with_scope = crate::with_scope::FunctionGuard::isolate();
-    let (completion, pc) = crate::vm::execute_generator_step(
+    let step = crate::vm::execute_generator_step(
         &generator.function.body,
         &mut state.registers,
         state.environment.clone(),
         state.pc,
         crate::completion::Completion::Normal,
     )?;
-    state.pc = pc;
-    Ok(completion)
+    state.pc = step.pc;
+    state.suspension = step.suspension;
+    Ok(step.completion)
 }

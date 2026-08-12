@@ -10,6 +10,7 @@ use std::{cell::RefCell, rc::Rc};
 include!("generator_private_scope.rs");
 include!("generator_async.rs");
 include!("generator_try.rs");
+include!("generator_reduce.rs");
 
 pub(crate) fn create(
     function: &Rc<crate::value::FunctionValue>,
@@ -51,20 +52,21 @@ fn initialize_parameters(
     );
     let _home = crate::super_scope::Guard::install(function, receiver);
     let _with_scope = crate::with_scope::FunctionGuard::isolate();
-    let (completion, _) = crate::vm::execute_generator_step(
+    let step = crate::vm::execute_generator_step(
         &function.body[..marker],
         &mut registers,
         Rc::clone(&environment),
         0,
         crate::completion::Completion::Normal,
     )?;
-    require_normal_parameter_completion(completion)?;
+    require_normal_parameter_completion(step.completion)?;
     Ok(Some(GeneratorState {
         registers,
         environment,
         pc: marker.saturating_add(1),
         nested: 0,
         private_environment: None,
+        suspension: None,
     }))
 }
 
@@ -115,30 +117,42 @@ fn resume(generator: &GeneratorData, resume: Resume) -> Result<Value, VmError> {
         }
     }
     let completion = resume.completion();
+    let direct_suspension = state.suspension.is_some();
     if let Resume::Next(input) = resume {
         install_resume_input(generator, &mut state, input);
     }
-    if let Some(result) = resume_suspended_contexts(generator, &mut state, &completion)? {
-        generator.state.replace(Some(state));
-        return Ok(result);
+    if !direct_suspension {
+        if let Some(result) = resume_suspended_contexts(generator, &mut state, &completion)? {
+            generator.state.replace(Some(state));
+            return Ok(result);
+        }
     }
+    let step = execute_generator_step(generator, &mut state, completion)?;
+    state.pc = step.pc;
+    state.suspension = step.suspension;
+    capture_suspended_private_environment(generator, &mut state, &step.completion);
+    let result = complete_step(generator, &state, step.completion);
+    generator.state.replace(Some(state));
+    result
+}
+
+fn execute_generator_step(
+    generator: &GeneratorData,
+    state: &mut GeneratorState,
+    completion: crate::completion::Completion,
+) -> Result<crate::vm::GeneratorStep, VmError> {
     let _private_environment = crate::private_environment::Guard::install_environment(
         generator.function.private_environment.clone(),
     );
     let _home = crate::super_scope::Guard::install(&generator.function, &generator.receiver);
     let _with_scope = crate::with_scope::FunctionGuard::isolate();
-    let (completion, pc) = crate::vm::execute_generator_step(
+    crate::vm::execute_generator_step(
         &generator.function.body,
         &mut state.registers,
         state.environment.clone(),
         state.pc,
         completion,
-    )?;
-    state.pc = pc;
-    capture_suspended_private_environment(generator, &mut state, &completion);
-    let result = complete_step(generator, &state, completion);
-    generator.state.replace(Some(state));
-    result
+    )
 }
 
 fn current_state(generator: &GeneratorData) -> Result<GeneratorState, VmError> {
@@ -226,6 +240,9 @@ fn completed_resume(resume: Resume) -> Result<Value, VmError> {
 }
 
 fn is_suspended(generator: &GeneratorData, state: &GeneratorState) -> bool {
+    if state.suspension.is_some() {
+        return true;
+    }
     if matches!(
         generator.function.body.get(state.pc.wrapping_sub(1)),
         Some(Op::Yield { .. })
@@ -316,6 +333,15 @@ fn throw_and_finish(generator: &GeneratorData, value: Value) -> Result<Value, Vm
 }
 
 fn install_resume_input(generator: &GeneratorData, state: &mut GeneratorState, input: Value) {
+    if let Some(point) = state.suspension.take() {
+        match point {
+            crate::continuation::SuspensionPoint::Yield { src, .. }
+            | crate::continuation::SuspensionPoint::YieldStar { dst: src, .. } => {
+                crate::execute::write_value(&mut state.registers, src, input);
+            }
+        }
+        return;
+    }
     if let Some(Op::YieldStar { dst, .. }) = generator.function.body.get(state.pc) {
         crate::execute::write_value(&mut state.registers, *dst, input);
         return;
@@ -419,6 +445,7 @@ fn initialize_state(generator: &GeneratorData) {
         pc: 0,
         nested: 0,
         private_environment: None,
+        suspension: None,
     });
 }
 
@@ -450,42 +477,4 @@ pub(crate) fn iterator_result(value: Value, done: bool) -> Value {
         ("value".to_string(), value),
         ("done".to_string(), Value::Boolean(done)),
     ])))
-}
-
-pub(crate) fn reduce_yield(
-    yield_expression: &oxc::ast::ast::YieldExpression<'_>,
-    ops: &mut Vec<Op>,
-    facts: &mut ProgramDb,
-    next: &mut u16,
-    locals: &HashMap<String, u16>,
-) -> Option<u16> {
-    if yield_expression.delegate {
-        return reduce_yield_star(yield_expression, ops, facts, next, locals);
-    }
-    let src = match yield_expression.argument.as_ref() {
-        Some(argument) => crate::reduce::reduce_expression(argument, ops, facts, next, locals)?,
-        None => crate::reduce_support::emit_undefined(ops, next),
-    };
-    ops.push(Op::Yield { src });
-    Some(src)
-}
-
-fn reduce_yield_star(
-    expression: &oxc::ast::ast::YieldExpression<'_>,
-    ops: &mut Vec<Op>,
-    facts: &mut ProgramDb,
-    next: &mut u16,
-    locals: &HashMap<String, u16>,
-) -> Option<u16> {
-    let source =
-        crate::reduce::reduce_expression(expression.argument.as_ref()?, ops, facts, next, locals)?;
-    let dst = *next;
-    let iterator = next.saturating_add(1);
-    *next = next.saturating_add(2);
-    ops.push(Op::YieldStar {
-        dst,
-        source,
-        iterator,
-    });
-    Some(dst)
 }
