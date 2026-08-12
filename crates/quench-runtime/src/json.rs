@@ -1,5 +1,30 @@
 use crate::{execute::VmError, ops::Builtin, value::Value};
 
+/// Parse JSON into the runtime's canonical JavaScript values.
+pub fn parse(source: &str) -> Result<Value, serde_json::Error> {
+    serde_json::from_str(source).map(from_json)
+}
+
+fn from_json(value: serde_json::Value) -> Value {
+    match value {
+        serde_json::Value::Null => Value::Null,
+        serde_json::Value::Bool(value) => Value::Boolean(value),
+        serde_json::Value::Number(value) => Value::Number(value.as_f64().unwrap_or(f64::NAN)),
+        serde_json::Value::String(value) => Value::String(value),
+        serde_json::Value::Array(values) => {
+            Value::array(values.into_iter().map(from_json).collect())
+        }
+        serde_json::Value::Object(values) => {
+            Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(
+                values
+                    .into_iter()
+                    .map(|(key, value)| (key, from_json(value)))
+                    .collect(),
+            )))
+        }
+    }
+}
+
 pub(crate) fn execute(builtin: Builtin, arguments: &[Value]) -> Option<Result<Value, VmError>> {
     (builtin == Builtin::JsonStringify).then(|| stringify(arguments.first()))
 }
