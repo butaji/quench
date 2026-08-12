@@ -91,7 +91,12 @@ fn promote_conditional_tail(ops: &mut Vec<Op>, returned: u16) -> bool {
     promoted
 }
 
-fn push_promoted_branch(ops: &mut Vec<Op>, condition: u16, consequent: Vec<Op>, alternate: Vec<Op>) {
+fn push_promoted_branch(
+    ops: &mut Vec<Op>,
+    condition: u16,
+    consequent: Vec<Op>,
+    alternate: Vec<Op>,
+) {
     let mut branches = crate::machine::FunctionCode::from_ops_many(vec![consequent, alternate]);
     let Some(alternate) = branches.pop() else {
         return;
