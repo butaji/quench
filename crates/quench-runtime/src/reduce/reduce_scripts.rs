@@ -124,10 +124,10 @@ fn finish(
     facts.scope_count = totals.0;
     facts.symbol_count = totals.1;
     let local_slots = state.local_slots();
-    Ok(ResidualProgram {
+    Ok(ResidualProgram::new(
         facts,
-        ops: crate::reduce_support::finish_program(state.ops, last)?,
+        crate::reduce_support::finish_program(state.ops, last)?,
         module_metadata,
         local_slots,
-    })
+    ))
 }

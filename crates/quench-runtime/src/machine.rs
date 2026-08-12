@@ -1,6 +1,6 @@
 pub use crate::identity::{CodeId, CodeRange, EnvironmentRef, FrameId, PackedCompletion};
 use crate::{completion::Completion, ops::Op, value::Value};
-use std::rc::Rc;
+use std::{rc::Rc, sync::OnceLock};
 
 #[derive(Debug, Default)]
 pub struct CodeArena {
@@ -100,6 +100,13 @@ impl CodeArena {
         self.append_slice(&body)
     }
 
+    fn append_tree(&mut self, mut body: Vec<Op>, store: &Rc<OnceLock<Rc<CodeStore>>>) -> CodeRange {
+        for op in &mut body {
+            op.rehome_bodies(self, store);
+        }
+        self.append(body)
+    }
+
     pub fn append_slice(&mut self, body: &[Op]) -> CodeRange {
         let nested = body.iter().map(Op::body_count).sum::<usize>();
         self.ranges.reserve(nested.saturating_add(1));
@@ -157,17 +164,19 @@ impl CodeStore {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct FunctionCode {
-    store: Rc<CodeStore>,
+    store: Rc<OnceLock<Rc<CodeStore>>>,
     pub range: CodeRange,
 }
 
 impl FunctionCode {
     pub fn from_ops(body: Vec<Op>) -> Self {
         let mut arena = CodeArena::new();
-        let range = arena.append(body);
-        Self::new(arena.freeze(), range)
+        let store = Rc::new(OnceLock::new());
+        let range = arena.append_tree(body, &store);
+        let _ = store.set(arena.freeze());
+        Self { store, range }
     }
 
     /// Materialize related nested bodies in one immutable store.
@@ -185,15 +194,34 @@ impl FunctionCode {
     }
 
     pub fn new(store: Rc<CodeStore>, range: CodeRange) -> Self {
-        Self { store, range }
+        let linked = Rc::new(OnceLock::new());
+        let _ = linked.set(store);
+        Self {
+            store: linked,
+            range,
+        }
     }
 
     pub fn ops(&self) -> Option<&[Op]> {
-        self.store.get(self.range)
+        self.store.get()?.get(self.range)
     }
 
     pub fn code_id(&self) -> CodeId {
         self.range.code
+    }
+
+    pub(crate) fn rehome(&mut self, arena: &mut CodeArena, store: &Rc<OnceLock<Rc<CodeStore>>>) {
+        let Some(body) = self.ops() else {
+            return;
+        };
+        self.range = arena.append_tree(body.to_vec(), store);
+        self.store = store.clone();
+    }
+}
+
+impl PartialEq for FunctionCode {
+    fn eq(&self, other: &Self) -> bool {
+        self.range == other.range && self.ops() == other.ops()
     }
 }
 
@@ -326,6 +354,21 @@ mod tests {
         let range = arena.append_function(&function).unwrap();
         let store = arena.freeze();
         assert_eq!(store.get(range).map(<[_]>::len), Some(1));
+    }
+
+    #[test]
+    fn linked_nested_bodies_share_one_immutable_code_store() {
+        let child = super::FunctionCode::from_ops(vec![super::Op::ParameterEnd]);
+        let root = super::FunctionCode::from_ops(vec![super::Op::IteratorBinding {
+            iterator: 0,
+            body: child,
+            close_normal: false,
+        }]);
+        let Some([super::Op::IteratorBinding { body, .. }]) = root.ops() else {
+            panic!("root body is not an iterator binding");
+        };
+        assert!(std::rc::Rc::ptr_eq(&root.store, &body.store));
+        assert_ne!(root.range, body.range);
     }
 
     #[test]
