@@ -21,7 +21,25 @@ pub enum Completion {
     Yield(Value),
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum LoopTransition {
+    Continue,
+    Break,
+    Propagate(Completion),
+}
+
 impl Completion {
+    pub(crate) fn into_loop_transition(self, label: &Option<String>) -> LoopTransition {
+        match self {
+            Self::Normal => LoopTransition::Continue,
+            Self::Continue(target) if target == *label || target.is_none() => {
+                LoopTransition::Continue
+            }
+            Self::Break(target) if target == *label || target.is_none() => LoopTransition::Break,
+            completion => LoopTransition::Propagate(completion),
+        }
+    }
+
     pub(crate) fn is_suspension(&self) -> bool {
         matches!(self, Self::Suspend(_) | Self::Yield(_))
     }
