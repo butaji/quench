@@ -28,8 +28,8 @@ pub(crate) fn create(
     let register_count = function.ops().len().clamp(32, usize::from(u16::MAX)) as u16;
     Ok(Value::Generator(Rc::new(GeneratorData {
         function: Rc::clone(function),
-        machine: RefCell::new(crate::machine::Machine::with_register_count(
-            function.code_id(),
+        machine: RefCell::new(crate::machine::Machine::with_function(
+            &function.code,
             crate::machine::EnvironmentRef(0),
             register_count,
         )),
