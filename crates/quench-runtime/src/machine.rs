@@ -1,4 +1,5 @@
 use crate::{completion::Completion, ops::Op, value::Value};
+use std::rc::Rc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CodeId(pub u32);
@@ -103,6 +104,38 @@ impl CodeArena {
 
     pub fn is_empty(&self) -> bool {
         self.ranges.is_empty()
+    }
+
+    pub fn freeze(self) -> Rc<CodeStore> {
+        Rc::new(CodeStore {
+            ops: self.ops.into_boxed_slice().into(),
+            ranges: self.ranges.into_boxed_slice().into(),
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CodeStore {
+    ops: Rc<[Op]>,
+    ranges: Rc<[(u32, u32)]>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FunctionCode {
+    store: Rc<CodeStore>,
+    pub range: CodeRange,
+}
+
+impl FunctionCode {
+    pub fn new(store: Rc<CodeStore>, range: CodeRange) -> Self {
+        Self { store, range }
+    }
+
+    pub fn ops(&self) -> Option<&[Op]> {
+        let (start, end) = self.store.ranges.get(self.range.code.0 as usize).copied()?;
+        let start = start.max(self.range.start);
+        let end = end.min(self.range.end);
+        (start <= end).then(|| &self.store.ops[start as usize..end as usize])
     }
 }
 

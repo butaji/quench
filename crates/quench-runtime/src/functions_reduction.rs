@@ -344,6 +344,7 @@ pub(super) fn make(
     let has_prototype = matches!(metadata.kind, FunctionKind::Ordinary | FunctionKind::Generator);
     let value = crate::value::Value::Function(std::rc::Rc::new(crate::value::FunctionValue {
         body: body.to_vec(),
+        code: None,
         params,
         captures,
         properties: function_properties(length),
