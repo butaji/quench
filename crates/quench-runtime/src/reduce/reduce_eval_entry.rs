@@ -52,7 +52,7 @@ pub(crate) fn reduce_eval_source_in_context(
         },
     )?;
     prefix.append(&mut ops);
-    Ok(ResidualProgram { facts, ops: prefix })
+    Ok(ResidualProgram { facts, ops: prefix, module_metadata: None })
 }
 
 fn eval_facts(analysis: &crate::semantic::Analysis, strict: bool) -> ProgramDb {

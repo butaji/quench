@@ -17,6 +17,7 @@ include!("reduce_eval_entry.rs");
 pub struct ResidualProgram {
     pub facts: ProgramDb,
     pub ops: Vec<Op>,
+    pub module_metadata: Option<crate::reduce::ModuleMetadata>,
 }
 pub fn reduce_source(source: &str) -> Result<ResidualProgram, Vec<String>> {
     reduce_source_with_type(source, SourceType::cjs())
@@ -47,11 +48,12 @@ fn reduce_source_with_type_and_global(
     source_type: SourceType,
     global: bool,
 ) -> Result<ResidualProgram, Vec<String>> {
-    let (mut facts, ops, scope_count, symbol_count) = {
+    let (mut facts, ops, scope_count, symbol_count, module_metadata) = {
         let allocator = Allocator::default();
         let parsed = Parser::new(&allocator, source, source_type).parse();
         crate::reduce_support::validate_parse(&parsed)?;
         let analysis = crate::semantic::analyze(&parsed.program)?;
+        let module_metadata = module_metadata(source_type, &parsed.program.body);
         let strict = source_type.is_module()
             || parsed
                 .program
@@ -64,12 +66,32 @@ fn reduce_source_with_type_and_global(
             ..ProgramDb::default()
         };
         let ops = reduce_statements(&parsed.program.body, source_type, global, &mut facts)?;
-        (facts, ops, analysis.scope_count, analysis.symbol_count)
+        (
+            facts,
+            ops,
+            analysis.scope_count,
+            analysis.symbol_count,
+            module_metadata,
+        )
     };
     facts.scope_count = scope_count;
     facts.symbol_count = symbol_count;
-    Ok(ResidualProgram { facts, ops })
+    Ok(ResidualProgram {
+        facts,
+        ops,
+        module_metadata,
+    })
 }
+
+fn module_metadata(
+    source_type: SourceType,
+    statements: &[Statement<'_>],
+) -> Option<crate::reduce::ModuleMetadata> {
+    source_type
+        .is_module()
+        .then(|| crate::reduce::ModuleMetadata::from_statements(statements))
+}
+
 fn reduce_statements(
     statements: &[Statement<'_>],
     source_type: SourceType,
