@@ -45,11 +45,8 @@ fn object_property(properties: &Rc<crate::value::ObjectData>, key: &str) -> Valu
     }) {
         return global_property(properties, key, None);
     }
-    if let Some((_, Value::String(value))) = properties.iter().find(|(name, _)| name == "_value") {
-        let indexed = get_property(&Value::String(value.clone()), key);
-        if !matches!(indexed, Value::Undefined) {
-            return indexed;
-        }
+    if let Some(value) = boxed_string_property(properties, key) {
+        return value;
     }
     if properties
         .iter()
@@ -66,6 +63,23 @@ fn object_property(properties: &Rc<crate::value::ObjectData>, key: &str) -> Valu
         return crate::builtins::property(prototype, key);
     }
     crate::builtins::property(prototype, key)
+}
+
+fn boxed_string_property(
+    properties: &Rc<crate::value::ObjectData>,
+    key: &str,
+) -> Option<Value> {
+    let Some((_, Value::String(value))) = properties.iter().find(|(name, _)| name == "_value")
+    else {
+        return None;
+    };
+    if crate::conversion::is_symbol_string(value) {
+        return None;
+    }
+    match get_property(&Value::String(value.clone()), key) {
+        Value::Undefined => None,
+        indexed => Some(indexed),
+    }
 }
 
 fn object_prototype(properties: &[(String, Value)]) -> Builtin {
