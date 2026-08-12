@@ -159,3 +159,4 @@ include!("functions_reduction.rs");
 include!("functions_tail.rs");
 
 include!("functions_arguments.rs");
+include!("functions_receiver.rs");
