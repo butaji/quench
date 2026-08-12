@@ -142,6 +142,7 @@ pub enum Builtin {
     ObjectAssign,
     ObjectKeys,
     ObjectHasOwnProperty,
+    ObjectPrototypeIsPrototypeOf,
     ObjectGetOwnPropertyDescriptor,
     ArrayPrototype,
     ParseFloat,
