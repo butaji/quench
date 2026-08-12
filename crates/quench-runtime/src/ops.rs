@@ -274,6 +274,7 @@ pub enum Builtin {
     FunctionPrototypeValueOf,
     ArrayToLocaleString,
     ArrayIterator,
+    ArrayIteratorPrototype,
     ArrayKeys,
     ArrayEntries,
     NumberToLocaleString,
