@@ -17,3 +17,24 @@ fn builtin_property_writable(builtin: Builtin, key: &str) -> bool {
     }
     true
 }
+fn is_well_known_symbol_property(builtin: Builtin, key: &str) -> bool {
+    builtin == Builtin::Symbol
+        && matches!(
+            key,
+            "asyncDispose"
+                | "asyncIterator"
+                | "dispose"
+                | "hasInstance"
+                | "isConcatSpreadable"
+                | "iterator"
+                | "match"
+                | "matchAll"
+                | "replace"
+                | "search"
+                | "species"
+                | "split"
+                | "toPrimitive"
+                | "toStringTag"
+                | "unscopables"
+        )
+}

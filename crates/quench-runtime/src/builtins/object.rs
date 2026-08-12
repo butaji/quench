@@ -5,7 +5,6 @@ use crate::{
 };
 use std::rc::Rc;
 include!("object_proxy.rs");
-
 pub(crate) fn boxed_constructor(value: &Value) -> Builtin {
     match value {
         Value::String(value) if value.contains('\0') => Builtin::Symbol,
@@ -61,7 +60,6 @@ fn assign(arguments: &[Value]) -> Result<Value, VmError> {
     let target = arguments.first().cloned().unwrap_or(Value::Undefined);
     crate::properties::assign_properties(target, &arguments[1..])
 }
-
 fn create(arguments: &[Value]) -> Result<Value, VmError> {
     let prototype = arguments.first().cloned().unwrap_or(Value::Undefined);
     if !matches!(prototype, Value::Null) && !crate::value::is_object(&prototype) {
@@ -281,8 +279,11 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
     let writable = !matches!(
         key,
         "length" | "name" | "prototype" | "Symbol.toStringTag" | "unscopables"
-    ) && builtin_property_writable(builtin, key);
-    let configurable = !matches!(key, "prototype" | "unscopables");
+    ) && !is_well_known_symbol_property(builtin, key)
+        && builtin_property_writable(builtin, key);
+    let configurable = !matches!(key, "prototype" | "unscopables")
+        && !is_well_known_symbol_property(builtin, key)
+        && !crate::conversion::is_symbol(&property);
     Some(descriptor_object_with_flags(
         property,
         writable,
@@ -290,7 +291,6 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
         configurable,
     ))
 }
-
 fn accessor_descriptor(getter: Builtin) -> Value {
     Value::Object(Rc::new(ObjectData::new(vec![
         ("get".to_string(), Value::Builtin(getter)),
