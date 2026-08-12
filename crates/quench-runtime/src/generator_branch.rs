@@ -26,7 +26,7 @@ fn resume_branch_frame(
     }
     let store = generator.machine.borrow().store.clone().ok_or(VmError::MissingReturn)?;
     let ops = store.get(frame.branch_resume).ok_or(VmError::MissingReturn)?;
-    let completion = crate::execute::execute_completion_in_place(ops, &mut state.registers)?;
+    let completion = crate::execute::execute_completion_in_place(ops, &mut registers_mut(generator))?;
     if completion.is_suspension() {
         advance_frame_after_yield(generator, frame.branch_resume)?;
         return Ok(Some(completion));
@@ -34,7 +34,7 @@ fn resume_branch_frame(
     let crate::completion::Completion::Return(value) = completion else {
         return Ok(Some(completion));
     };
-    crate::execute::write_value(&mut state.registers, frame.dst, value);
+    crate::execute::write_value(&mut registers_mut(generator), frame.dst, value);
     generator.machine.borrow_mut().pop_frame();
     resume_after_branch(generator, state, frame.resume).map(Some)
 }
@@ -47,7 +47,7 @@ fn resume_after_branch(
     let start = resume.start.saturating_sub(generator.function.code.range.start) as usize;
     let step = crate::vm::execute_generator_step(
         generator.function.ops(),
-        &mut state.registers,
+        &mut registers_mut(generator),
         state.environment.clone(),
         start,
         crate::completion::Completion::Normal,

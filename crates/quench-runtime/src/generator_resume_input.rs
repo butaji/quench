@@ -2,7 +2,7 @@ fn install_resume_input(generator: &GeneratorData, state: &mut GeneratorState, i
     if install_direct_resume_input(generator, state, &input) { return; }
     if install_frame_resume_input(generator, state, &input) { return; }
     if let Some((_, Op::Yield { src }, _)) = suspended_try(generator, state) {
-        crate::execute::write_value(&mut state.registers, *src, input);
+        crate::execute::write_value(&mut registers_mut(generator), *src, input);
         return;
     }
     install_scanned_resume_input(generator, state, input);
@@ -15,18 +15,18 @@ fn install_direct_resume_input(generator: &GeneratorData, state: &mut GeneratorS
         crate::continuation::SuspensionPoint::Yield { src, .. }
         | crate::continuation::SuspensionPoint::YieldStar { dst: src, .. } => src,
     };
-    crate::execute::write_value(&mut state.registers, src, input.clone());
+    crate::execute::write_value(&mut registers_mut(generator), src, input.clone());
     true
 }
 
 fn install_frame_resume_input(generator: &GeneratorData, state: &mut GeneratorState, input: &Value) -> bool {
     if let Some(Op::YieldStar { dst, .. }) = generator.function.ops().get(state.pc) {
-        crate::execute::write_value(&mut state.registers, *dst, input.clone());
+        crate::execute::write_value(&mut registers_mut(generator), *dst, input.clone());
         return true;
     }
-    install_try_frame_input(generator, &mut state.registers, input)
-        || install_private_frame_input(generator, &mut state.registers, input)
-        || install_branch_frame_input(generator, &mut state.registers, input)
+    install_try_frame_input(generator, &mut registers_mut(generator), input)
+        || install_private_frame_input(generator, &mut registers_mut(generator), input)
+        || install_branch_frame_input(generator, &mut registers_mut(generator), input)
 }
 
 fn install_scanned_resume_input(generator: &GeneratorData, state: &mut GeneratorState, input: Value) {
@@ -35,5 +35,5 @@ fn install_scanned_resume_input(generator: &GeneratorData, state: &mut Generator
         install_nested_resume_input(generator, state, input);
         return;
     };
-    crate::execute::write_value(&mut state.registers, *src, input);
+    crate::execute::write_value(&mut registers_mut(generator), *src, input);
 }

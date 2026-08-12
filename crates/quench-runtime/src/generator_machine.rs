@@ -14,10 +14,10 @@ fn execute_generator_step(
     let ops = store.get(generator.function.code.range).ok_or(VmError::MissingReturn)?;
     let input = completion;
     let mut generated = None;
-    let completion = machine.step(input.clone(), |_| {
+    let completion = machine.step(input.clone(), |registers| {
         let step = crate::vm::execute_generator_step(
             ops,
-            &mut state.registers,
+            registers,
             state.environment.clone(),
             state.pc,
             input,
@@ -99,7 +99,7 @@ fn push_iterator_frame(generator: &GeneratorData, state: &GeneratorState) -> Res
     else {
         return Ok(());
     };
-    let iterator = crate::execute::read_register(&state.registers, *binding)?;
+    let iterator = crate::execute::read_register(&registers(generator), *binding)?;
     let resume = crate::machine::CodeRange {
         code: generator.function.code_id(),
         start: generator.function.code.range.start.saturating_add(state.pc as u32),
@@ -133,7 +133,7 @@ fn push_branch_frame(generator: &GeneratorData, state: &GeneratorState) -> Resul
     else {
         return Ok(());
     };
-    let test = crate::execute::read_register(&state.registers, *condition)?;
+    let test = crate::execute::read_register(&registers(generator), *condition)?;
     let branch = if crate::execute::is_truthy(&test) { consequent } else { alternate };
     let Some(ops) = branch.ops() else { return Ok(()); };
     let Some((index, Op::Yield { src })) = ops.iter().enumerate().find(|(_, op)| matches!(op, Op::Yield { .. })) else {

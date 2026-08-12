@@ -11,7 +11,7 @@ fn yielded_result(
     if generator.function.is_async {
         let value = match op {
             Some(Op::YieldStar { dst, .. }) => {
-                let result = crate::execute::read_register(&state.registers, *dst)?;
+                let result = crate::execute::read_register(&registers(generator), *dst)?;
                 crate::execute::get_property_result(&result, "value")?
             }
             _ => value,
@@ -21,7 +21,7 @@ fn yielded_result(
     let Some(Op::YieldStar { dst, .. }) = op else {
         return Ok(iterator_result(value, false));
     };
-    crate::execute::read_register(&state.registers, *dst)
+    crate::execute::read_register(&registers(generator), *dst)
 }
 
 fn async_yield_result(generator: &GeneratorData, value: Value) -> Result<Value, VmError> {
