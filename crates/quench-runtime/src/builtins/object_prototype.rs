@@ -1,5 +1,8 @@
 pub(crate) fn get_prototype_of(value: Option<&Value>) -> Result<Value, crate::execute::VmError> {
     let value = require_object_coercible(value)?;
+    if matches!(value, Value::Proxy(_)) {
+        return crate::proxy::proxy_get_prototype_of(value);
+    }
     Ok(match value {
         Value::Builtin(builtin) if is_typed_array_constructor(*builtin) => {
             Value::Builtin(Builtin::TypedArray)
