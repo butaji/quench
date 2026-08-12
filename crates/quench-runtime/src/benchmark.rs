@@ -1,6 +1,7 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BenchmarkRecord {
     pub workload: String,
+    pub commit: String,
     pub samples: u32,
     pub cycles: u64,
     pub operations: u64,
