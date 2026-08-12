@@ -45,7 +45,7 @@ fn run_yield_star_step(
     let completion = crate::generator::execute_yield_star(registers, op, resume.clone())?;
     if let Some(completion) = completion {
         crate::vm::flush_global_declaration_batch(registers);
-        let offset = usize::from(!matches!(completion, crate::completion::Completion::Yield(_)));
+        let offset = usize::from(!completion.is_suspension());
         return Ok(Some((completion, next + offset)));
     }
     Ok(None)
