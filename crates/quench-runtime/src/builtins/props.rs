@@ -1,6 +1,7 @@
 use crate::{ops::Builtin, value::Value};
 include!("props_modules.rs");
 include!("props_own_names.rs");
+include!("props_collections.rs");
 pub(crate) fn lookup(builtin: Builtin, key: &str) -> Value {
     if crate::builtins::builtin_prototype_property_is_removed(builtin, key) {
         return Value::Undefined;
@@ -385,12 +386,10 @@ fn builtin_method3(builtin: Builtin, key: &str) -> Option<Builtin> {
         (BigInt, "asIntN") => Some(BigIntAsIntN),
         (BigInt, "asUintN") => Some(BigIntAsUintN),
         (BigIntPrototype, "valueOf") => Some(BigIntValueOf),
+        (BigIntPrototype, "constructor") => Some(BigInt),
         (BigIntPrototype, "toString" | "toLocaleString") => Some(BigIntToString),
         _ => None,
     }
-}
-fn collections_prop(builtin: Builtin, key: &str) -> Option<Value> {
-    crate::builtin_meta::collections::collections_property(builtin, key)
 }
 pub(crate) fn special_property(builtin: Builtin, key: &str) -> Option<Value> {
     special(builtin, key)
