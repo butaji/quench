@@ -118,6 +118,57 @@ pub(crate) fn from_entries(arguments: &[Value]) -> Result<Value, crate::execute:
     Ok(result.into_inner())
 }
 
+pub(crate) fn group_by(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
+    let iterable = arguments.first().cloned().unwrap_or(Value::Undefined);
+    let callback = arguments.get(1).cloned().unwrap_or(Value::Undefined);
+    if !crate::conversion::is_callable(&callback) {
+        return Err(crate::value::error::throw_type_error(
+            "Object.groupBy callback is not callable",
+        ));
+    }
+    let result = std::cell::RefCell::new(Value::Object(std::rc::Rc::new(
+        crate::value::ObjectData::new(vec![("\0prototype".into(), Value::Null)]),
+    )));
+    let mut index = 0usize;
+    crate::collections::iterator::for_each_iterable(iterable, |value| {
+        let key_value = crate::functions::execute_target(
+            &callback,
+            &Value::Undefined,
+            &[value.clone(), Value::Number(index as f64)],
+        )?;
+        index += 1;
+        let key = crate::conversion::to_property_key(&key_value)?;
+        add_group_value(&result, &key, value)?;
+        Ok(())
+    })?;
+    Ok(result.into_inner())
+}
+
+fn add_group_value(
+    result: &std::cell::RefCell<Value>,
+    key: &str,
+    value: Value,
+) -> Result<(), crate::execute::VmError> {
+    let current = result.borrow().clone();
+    let previous = crate::execute::get_property_result(&current, key)?;
+    let values = match previous {
+        Value::Array(array) => {
+            let mut values = array.snapshot();
+            values.push(value);
+            Value::array(values)
+        }
+        _ => Value::array(vec![value]),
+    };
+    let descriptor = vec![
+        ("value".to_string(), values),
+        ("writable".to_string(), Value::Boolean(true)),
+        ("enumerable".to_string(), Value::Boolean(true)),
+        ("configurable".to_string(), Value::Boolean(true)),
+    ];
+    *result.borrow_mut() = crate::builtins::define_own_property(&current, key, &descriptor)?;
+    Ok(())
+}
+
 fn is_intrinsic_prototype(builtin: Builtin) -> bool {
     matches!(
         builtin,
