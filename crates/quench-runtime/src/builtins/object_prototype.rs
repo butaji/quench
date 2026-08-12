@@ -25,6 +25,7 @@ pub(crate) fn get_prototype_of(value: Option<&Value>) -> Result<Value, crate::ex
             Builtin::SetPrototype
         })),
         Value::Generator(_) => Value::Builtin(Builtin::ObjectPrototype),
+        Value::Iterator(_) => Value::Builtin(Builtin::IteratorPrototype),
         Value::Array(values) if values.is_arguments() => Value::Builtin(Builtin::ObjectPrototype),
         Value::Array(_) => Value::Builtin(Builtin::ArrayPrototype),
         Value::Object(properties) => properties
