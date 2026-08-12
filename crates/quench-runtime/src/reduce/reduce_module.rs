@@ -1,14 +1,13 @@
 //! Reduction of ES module declarations.
 //!
 //! Declarations are reduced through the ordinary statement path. Import
-//! declarations remain a hard boundary: they require a resolved module graph
-//! and are rejected until the host supplies one.
+//! bindings reserve lexical slots; hosts populate those slots during linking.
 
 use std::collections::HashMap;
 
 use oxc::ast::ast::{
     ExportDefaultDeclaration, ExportDefaultDeclarationKind, ExportNamedDeclaration,
-    ImportDeclaration, Statement,
+    ImportDeclaration, ImportDeclarationSpecifier, Statement,
 };
 
 use crate::statements;
@@ -103,15 +102,29 @@ pub(super) fn reduce_module_declaration(
 
 fn reduce_import(
     import: &ImportDeclaration<'_>,
-    _ops: &mut Vec<Op>,
+    ops: &mut Vec<Op>,
     _next_register: &mut u16,
-    _next_slot: &mut u16,
-    _locals: &mut HashMap<String, u16>,
+    next_slot: &mut u16,
+    locals: &mut HashMap<String, u16>,
 ) -> Result<Option<u16>, Vec<String>> {
-    let _ = import;
-    Err(vec![
-        "module import requires a resolved module graph".to_string()
-    ])
+    let Some(specifiers) = &import.specifiers else {
+        return Ok(None);
+    };
+    for specifier in specifiers {
+        let local = match specifier {
+            ImportDeclarationSpecifier::ImportSpecifier(value) => &value.local,
+            ImportDeclarationSpecifier::ImportDefaultSpecifier(value) => &value.local,
+            ImportDeclarationSpecifier::ImportNamespaceSpecifier(value) => &value.local,
+        };
+        let slot = *next_slot;
+        *next_slot = next_slot.saturating_add(1);
+        locals.insert(local.name.to_string(), slot);
+        ops.push(Op::DeclareEvalBinding {
+            name: local.name.to_string(),
+            slot,
+        });
+    }
+    Ok(None)
 }
 
 fn reduce_named(
