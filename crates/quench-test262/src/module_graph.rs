@@ -69,8 +69,8 @@ impl ModuleGraph {
         Ok(())
     }
 
-    /// Return post-order evaluation units for an entry, preserving declared
-    /// edge order and rejecting cycles instead of inventing an execution order.
+    /// Return deterministic post-order units for an entry, preserving edge
+    /// order and tolerating back-edges for legal cyclic module graphs.
     pub fn dependency_order(&self, entry: ModuleId) -> Result<Vec<ModuleId>, String> {
         if self.unit(entry).is_none() {
             return Err("module entry references an unknown unit".to_string());
@@ -84,19 +84,20 @@ impl ModuleGraph {
     fn visit(
         &self,
         id: ModuleId,
-        state: &mut HashMap<ModuleId, bool>,
+        state: &mut HashMap<ModuleId, u8>,
         order: &mut Vec<ModuleId>,
     ) -> Result<(), String> {
-        if state.get(&id).copied() == Some(false) {
+        if state.get(&id).copied() == Some(2) {
             return Ok(());
         }
-        if state.insert(id, true) == Some(true) {
-            return Err("cyclic module dependency graph".to_string());
+        if state.get(&id).copied() == Some(1) {
+            return Ok(());
         }
+        state.insert(id, 1);
         for dependency in self.edges.get(&id).into_iter().flatten() {
             self.visit(*dependency, state, order)?;
         }
-        state.insert(id, false);
+        state.insert(id, 2);
         order.push(id);
         Ok(())
     }
@@ -160,13 +161,16 @@ mod tests {
     }
 
     #[test]
-    fn graph_rejects_cycles_and_unknown_edges() {
+    fn graph_allows_cycles_and_rejects_unknown_edges() {
         let mut graph = ModuleGraph::new();
         let entry = graph.add_entry(PathBuf::from("entry.js"), "".to_string());
         let dependency = graph.add_dependency(PathBuf::from("dep.js"), "".to_string());
         assert!(graph.link(entry, ModuleId(99)).is_err());
         graph.link(entry, dependency).unwrap();
         graph.link(dependency, entry).unwrap();
-        assert!(graph.dependency_order(entry).is_err());
+        assert_eq!(
+            graph.dependency_order(entry).unwrap(),
+            vec![dependency, entry]
+        );
     }
 }
