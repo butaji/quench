@@ -184,7 +184,10 @@ fn add_group_value(
 fn is_intrinsic_prototype(builtin: Builtin) -> bool {
     matches!(
         builtin,
-        Builtin::MapPrototype
+        Builtin::NumberPrototype
+            | Builtin::BooleanPrototype
+            | Builtin::StringPrototype
+            | Builtin::MapPrototype
             | Builtin::SetPrototype
             | Builtin::WeakMapPrototype
             | Builtin::WeakSetPrototype
