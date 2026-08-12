@@ -1,13 +1,13 @@
 fn suspended_conditional<'a>(
     generator: &'a GeneratorData,
-    state: &GeneratorState,
+    _state: &GeneratorState,
 ) -> Option<(&'a Op, &'a [Op])> {
     let Op::Conditional {
         condition,
         consequent,
         alternate,
         ..
-    } = generator.function.ops().get(state.pc.checked_sub(1)?)?
+    } = generator.function.ops().get(machine_pc(generator).checked_sub(1)?)?
     else {
         return None;
     };
@@ -47,7 +47,7 @@ fn capture_suspended_private_environment(
     if !matches!(completion, crate::completion::Completion::Yield(_)) {
         return;
     }
-    let Some(Op::PrivateScope { .. }) = generator.function.ops().get(state.pc.wrapping_sub(1))
+    let Some(Op::PrivateScope { .. }) = generator.function.ops().get(machine_pc(generator).wrapping_sub(1))
     else {
         return;
     };
@@ -85,7 +85,7 @@ fn suspended_private_scope<'a>(
     generator: &'a GeneratorData,
     state: &GeneratorState,
 ) -> Option<(&'a [crate::facts::PrivateNameId], &'a [Op], usize)> {
-    let Op::PrivateScope { names, body } = generator.function.ops().get(state.pc.checked_sub(1)?)?
+    let Op::PrivateScope { names, body } = generator.function.ops().get(machine_pc(generator).checked_sub(1)?)?
     else {
         return None;
     };
@@ -145,10 +145,10 @@ fn finish_private_scope_resume(
         generator.function.ops(),
         &mut registers_mut(generator),
         state.environment.clone(),
-        state.pc,
+        machine_pc(generator),
         crate::completion::Completion::Normal,
     )?;
-    state.pc = step.pc;
+    set_machine_pc(generator, step.pc);
     state.suspension = step.suspension;
     Ok(step.completion)
 }
