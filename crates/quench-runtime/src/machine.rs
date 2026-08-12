@@ -85,6 +85,7 @@ pub struct FrameStack {
     pub base: u32,
     pub count: u16,
     pub frames: Vec<Frame>,
+    limit: Option<u16>,
 }
 
 impl FrameStack {
@@ -93,6 +94,7 @@ impl FrameStack {
             base: 0,
             count: 0,
             frames: Vec::new(),
+            limit: None,
         }
     }
 
@@ -101,6 +103,7 @@ impl FrameStack {
             base: 0,
             count: 0,
             frames: Vec::with_capacity(usize::from(capacity)),
+            limit: Some(capacity),
         }
     }
 }
@@ -112,6 +115,14 @@ impl Default for FrameStack {
 }
 
 impl FrameStack {
+    pub fn try_push(&mut self, frame: Frame) -> Result<(), Frame> {
+        if self.limit.is_some_and(|limit| self.count >= limit) {
+            return Err(frame);
+        }
+        self.push(frame);
+        Ok(())
+    }
+
     pub fn push(&mut self, frame: Frame) {
         self.frames.push(frame);
         self.count = u16::try_from(self.frames.len()).unwrap_or(u16::MAX);
@@ -297,7 +308,7 @@ impl Machine {
 
 #[cfg(test)]
 mod tests {
-    use super::{CodeId, EnvironmentRef, Frame, FrameStack, Machine, RegisterWindow};
+    use super::{CodeId, CodeRange, EnvironmentRef, Frame, FrameStack, Machine, RegisterWindow};
     use crate::value::Value;
 
     #[test]
@@ -334,10 +345,16 @@ mod tests {
 
     #[test]
     fn frame_stack_can_reserve_fixed_metadata_capacity() {
-        let stack = FrameStack::with_capacity(4);
+        let mut stack = FrameStack::with_capacity(1);
         assert_eq!(stack.count, 0);
         assert!(stack.frames.is_empty());
-        assert!(stack.frames.capacity() >= 4);
+        assert!(stack.frames.capacity() >= 1);
+        let frame = Frame::Control {
+            phase: 0,
+            body: CodeRange::new(CodeId(0), 0, 0).unwrap(),
+        };
+        assert!(stack.try_push(frame.clone()).is_ok());
+        assert!(stack.try_push(frame).is_err());
     }
     use crate::completion::Completion;
 
