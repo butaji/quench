@@ -53,7 +53,7 @@ fn reduce_branch(
 pub(crate) fn execute(
     registers: &mut Vec<crate::value::Value>,
     op: &crate::ops::Op,
-) -> Result<(), crate::execute::VmError> {
+) -> Result<crate::completion::Completion, crate::execute::VmError> {
     let crate::ops::Op::Conditional {
         dst,
         condition,
@@ -72,7 +72,10 @@ pub(crate) fn execute(
     let Some(branch) = branch.ops() else {
         return Err(crate::execute::VmError::MissingReturn);
     };
-    let value = crate::execute::execute_in_place(branch, registers)?;
+    let completion = crate::execute::execute_completion_in_place(branch, registers)?;
+    let crate::completion::Completion::Return(value) = completion else {
+        return Ok(completion);
+    };
     crate::execute::write_value(registers, *dst, value);
-    Ok(())
+    Ok(crate::completion::Completion::Normal)
 }

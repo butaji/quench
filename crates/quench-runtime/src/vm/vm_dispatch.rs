@@ -175,7 +175,7 @@ fn run_control_op(
             .map(Some),
         Loop { .. } => crate::loops::execute(registers, op).map(Some),
         Switch { .. } => crate::switch::execute(registers, op).map(Some),
-        Conditional { .. } => run_conditional(registers, op).map(return_completion),
+        Conditional { .. } => run_conditional(registers, op).map(Some),
         Return { src } => read_register(registers, *src)
             .map(Completion::Return)
             .map(Some),
@@ -191,10 +191,6 @@ fn run_control_op(
             .map(Some),
         _ => Ok(None),
     }
-}
-
-fn return_completion(value: Option<Value>) -> Option<crate::completion::Completion> {
-    value.map(crate::completion::Completion::Return)
 }
 
 fn run_dispatch_op(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Value>, VmError> {
@@ -350,9 +346,11 @@ fn run_method_or_construct(registers: &mut Vec<Value>, op: &Op) -> Result<(), Vm
     Ok(())
 }
 
-fn run_conditional(registers: &mut Vec<Value>, op: &Op) -> Result<Option<Value>, VmError> {
-    crate::conditional::execute(registers, op)?;
-    Ok(None)
+fn run_conditional(
+    registers: &mut Vec<Value>,
+    op: &Op,
+) -> Result<crate::completion::Completion, VmError> {
+    crate::conditional::execute(registers, op)
 }
 
 fn render_thrown(value: &Value) -> String {
