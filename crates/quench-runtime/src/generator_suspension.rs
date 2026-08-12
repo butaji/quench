@@ -37,7 +37,7 @@ fn suspended_context(
     if suspended_conditional(generator, state).is_some() {
         return Some(SuspendedContext::Conditional);
     }
-    if suspended_iterator_binding(generator, state).is_some()
+    if iterator_frame_chain(generator, state).is_ok_and(|frames| frames.is_some())
         || suspended_iterator_conditional(generator, state).is_some()
     {
         return Some(SuspendedContext::IteratorBinding);

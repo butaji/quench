@@ -6,6 +6,86 @@ struct IteratorFrameResume {
     close_normal: bool,
 }
 
+fn iterator_frame_chain(
+    generator: &GeneratorData,
+    state: &GeneratorState,
+) -> Result<Option<Vec<crate::machine::Frame>>, VmError> {
+    let index = machine_pc(generator).checked_sub(1).ok_or(VmError::MissingReturn)?;
+    let Some(binding @ Op::IteratorBinding { .. }) = generator.function.ops().get(index) else {
+        return Ok(None);
+    };
+    let resume = parent_resume_range(generator, state);
+    let mut frames = Vec::new();
+    let registers = registers(generator);
+    if collect_iterator_frames(binding, resume, &registers, &mut frames)? {
+        return Ok(Some(frames));
+    }
+    Ok(None)
+}
+
+fn collect_iterator_frames(
+    binding: &Op,
+    resume: crate::machine::CodeRange,
+    registers: &[Value],
+    frames: &mut Vec<crate::machine::Frame>,
+) -> Result<bool, VmError> {
+    let Op::IteratorBinding { iterator, body, close_normal } = binding else {
+        return Ok(false);
+    };
+    let Some(ops) = body.ops() else {
+        return Err(VmError::MissingReturn);
+    };
+    for (index, op) in ops.iter().enumerate() {
+        if let Op::Yield { src } = op {
+            frames.push(iterator_frame(*iterator, body.range, resume, index, *src, *close_normal, registers)?);
+            return Ok(true);
+        }
+        if matches!(op, Op::IteratorBinding { .. }) {
+            let next = range_after_iterator_op(body.range, index);
+            let frame = iterator_frame(*iterator, body.range, resume, index, 0, *close_normal, registers)?;
+            frames.push(frame);
+            if collect_iterator_frames(op, next, registers, frames)? {
+                return Ok(true);
+            }
+            frames.pop();
+        }
+    }
+    Ok(false)
+}
+
+fn iterator_frame(
+    binding: u16,
+    body: crate::machine::CodeRange,
+    resume: crate::machine::CodeRange,
+    index: usize,
+    yield_dst: u16,
+    close_normal: bool,
+    registers: &[Value],
+) -> Result<crate::machine::Frame, VmError> {
+    let iterator = crate::execute::read_register(registers, binding)?;
+    Ok(crate::machine::Frame::Iterator {
+        phase: crate::machine::IteratorPhase::Body,
+        iterator,
+        binding,
+        body,
+        body_resume: range_after_iterator_op(body, index),
+        resume,
+        yield_dst,
+        close_normal,
+    })
+}
+
+fn range_after_iterator_op(
+    range: crate::machine::CodeRange,
+    index: usize,
+) -> crate::machine::CodeRange {
+    crate::machine::CodeRange {
+        code: range.code,
+        start: range.start.saturating_add(index as u32 + 1),
+        end: range.end,
+    }
+}
+
 fn iterator_frame_resume(generator: &GeneratorData) -> Option<IteratorFrameResume> {
     let frame = generator.machine.borrow().frames.frames.last()?.clone();
     let crate::machine::Frame::Iterator { iterator, body_resume, resume, yield_dst, close_normal, .. } = frame else {
