@@ -272,7 +272,7 @@ impl LinkedModule {
         let mut registers = Vec::new();
         let result = self
             .scope
-            .execute(&self.program.ops, &mut registers, host_context())
+            .execute(self.program.ops(), &mut registers, host_context())
             .map_err(|error| format!("residual VM error: {}", error.render()))?;
         for (name, value) in &self.fixed_exports {
             let cell = self
@@ -395,7 +395,7 @@ fn run_source(source: &str) -> Result<(), String> {
 
 fn execute_program(program: &quench_runtime::reduce::ResidualProgram) -> Result<(), String> {
     quench_runtime::builtins::reset_intrinsic_prototype_state();
-    execute_with_context(&program.ops, host_context())
+    execute_with_context(program.ops(), host_context())
         .map(|_| ())
         .map_err(|error| format!("residual VM error: {}", error.render()))
 }
