@@ -361,6 +361,8 @@ pub enum Builtin {
     ReflectOwnKeys,
     ReflectApply,
     BigInt,
+    BigIntAsIntN,
+    BigIntAsUintN,
     BigIntToString,
     BigIntValueOf,
     BoxedValueOf,
