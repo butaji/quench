@@ -398,9 +398,10 @@ fn range_error(message: &str) -> crate::execute::VmError {
 }
 
 fn construct_number(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
-    let value = arguments.first().map_or(0.0, |argument| {
-        crate::intl::tolocale::value::to_number(Some(argument))
-    });
+    let value = match arguments.first() {
+        Some(argument) => crate::conversion::to_number(argument)?,
+        None => 0.0,
+    };
     Ok(boxed_primitive(
         Value::Number(value),
         crate::ops::Builtin::Number,
