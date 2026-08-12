@@ -244,12 +244,12 @@ pub struct GeneratorState {
     pub nested: usize,
     /// Private-name capabilities captured when a class body suspended on `yield`.
     pub private_environment: Option<crate::private_environment::PrivateEnvironment>,
+    pub(crate) suspension: Option<crate::continuation::SuspensionPoint>,
 }
 
 pub type ObjectProperties = Vec<(String, Value)>;
 pub(crate) type PrivateSlots = Rc<RefCell<Vec<(PrivateName, PrivateSlot)>>>;
 
-/// Ordinary public properties plus opaque private slots for one JS object.
 #[derive(Debug, Clone)]
 pub struct ObjectData {
     pub(crate) properties: ObjectProperties,

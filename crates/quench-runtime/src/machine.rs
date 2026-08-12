@@ -30,6 +30,52 @@ pub struct CodeArena {
     ranges: Vec<(u32, u32)>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct RegisterWindow {
+    pub base: u32,
+    pub count: u16,
+    pub values: Vec<Value>,
+}
+
+impl RegisterWindow {
+    pub fn new() -> Self {
+        Self {
+            base: 0,
+            count: 0,
+            values: Vec::new(),
+        }
+    }
+}
+
+impl Default for RegisterWindow {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FrameStack {
+    pub base: u32,
+    pub count: u16,
+    pub frames: Vec<Frame>,
+}
+
+impl FrameStack {
+    pub fn new() -> Self {
+        Self {
+            base: 0,
+            count: 0,
+            frames: Vec::new(),
+        }
+    }
+}
+
+impl Default for FrameStack {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CodeArena {
     pub fn new() -> Self {
         Self::default()
@@ -89,10 +135,10 @@ pub enum Frame {
 pub struct Machine {
     pub(crate) code: CodeId,
     pub(crate) pc: u32,
-    pub(crate) registers: Vec<Value>,
+    pub(crate) registers: RegisterWindow,
     pub(crate) environment: EnvironmentRef,
     pub(crate) completion: Completion,
-    pub(crate) frames: Vec<Frame>,
+    pub(crate) frames: FrameStack,
 }
 
 impl Machine {
@@ -100,10 +146,10 @@ impl Machine {
         Self {
             code,
             pc: 0,
-            registers: Vec::new(),
+            registers: RegisterWindow::new(),
             environment,
             completion: Completion::Normal,
-            frames: Vec::new(),
+            frames: FrameStack::new(),
         }
     }
 }
