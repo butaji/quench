@@ -69,7 +69,7 @@ fn array_like_length(value: &Value) -> Result<usize, VmError> {
 fn is_simple_builtin(builtin: Builtin) -> bool {
     matches!(
         builtin,
-        Builtin::Boolean | Builtin::BooleanValueOf
+        Builtin::Boolean | Builtin::BooleanValueOf | Builtin::BooleanToString
             | Builtin::Eval
             | Builtin::Escape
             | Builtin::IsFinite
@@ -116,6 +116,7 @@ fn execute_simple_builtin(
     match builtin {
         Builtin::Boolean => Ok(Value::Boolean(arguments.first().is_some_and(is_truthy))),
         Builtin::BooleanValueOf => boolean_value_of(receiver),
+        Builtin::BooleanToString => boolean_to_string(receiver),
         Builtin::Eval => crate::reflect::builtin(builtin, arguments, receiver),
         Builtin::Escape => Ok(crate::builtins::escape(arguments.first())),
         Builtin::IsFinite => Ok(Value::Boolean(is_finite(arguments.first()))),
@@ -125,7 +126,7 @@ fn execute_simple_builtin(
         Builtin::BigIntAsIntN | Builtin::BigIntAsUintN =>
             bigint_as_n(arguments, builtin == Builtin::BigIntAsIntN),
         Builtin::BigIntToString => bigint_to_string(receiver, arguments),
-        Builtin::NumberToString => Ok(Value::String(to_string(arguments.first()))),
+        Builtin::NumberToString => boolean_or_number_string(receiver, arguments),
         Builtin::NumberValueOf => number_value_of(receiver),
         Builtin::BigIntValueOf => bigint_value_of(receiver),
         Builtin::SymbolValueOf => symbol_value_of(receiver),
@@ -144,6 +145,47 @@ fn execute_simple_builtin(
         Builtin::Date => Ok(crate::date::call()),
         _ => Ok(Value::Undefined),
     }
+}
+
+fn boolean_or_number_string(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
+    if let Some(value) = boolean_receiver(receiver) {
+        return Ok(Value::String(value.to_string()));
+    }
+    Ok(Value::String(to_string(arguments.first())))
+}
+
+fn boolean_receiver(receiver: Option<&Value>) -> Option<bool> {
+    match receiver {
+        Some(Value::Boolean(value)) => Some(*value),
+        Some(Value::Builtin(Builtin::BooleanPrototype)) => Some(false),
+        _ => None,
+    }
+}
+
+fn boolean_to_string(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let value = match receiver {
+        Some(Value::Builtin(Builtin::BooleanPrototype)) => false,
+        Some(Value::Boolean(value)) => *value,
+        Some(Value::Object(object)) => match object
+            .iter()
+            .rev()
+            .find_map(|(name, value)| (name == "_value").then_some(value))
+        {
+            Some(Value::Boolean(value)) => *value,
+            _ => return Err(boolean_receiver_error()),
+        },
+        _ => return Err(boolean_receiver_error()),
+    };
+    Ok(Value::String(value.to_string()))
+}
+
+fn boolean_receiver_error() -> VmError {
+    crate::value::error::throw_type_error(
+        "Boolean.prototype.toString called on incompatible receiver",
+    )
 }
 fn weak_ref_deref(receiver: Option<&Value>) -> Result<Value, VmError> {
     let Some(Value::Object(object)) = receiver else {

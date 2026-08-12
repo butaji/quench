@@ -31,6 +31,12 @@ fn object_prototype_property(properties: &[(String, Value)], key: &str) -> Value
 }
 
 fn object_property(properties: &Rc<crate::value::ObjectData>, key: &str) -> Value {
+    if properties
+        .iter()
+        .any(|(name, _)| name == &crate::builtins::deleted_key(key))
+    {
+        return Value::Undefined;
+    }
     if let Some((_, value)) = properties.iter().rev().find(|(name, _)| name == key) {
         return property_value(value);
     }
