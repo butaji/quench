@@ -58,6 +58,11 @@ pub(crate) fn to_number(value: &Value) -> Result<f64, VmError> {
 
 pub(crate) fn to_string(value: &Value) -> Result<String, VmError> {
     let primitive = to_primitive(value, "string")?;
+    if is_symbol(&primitive) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot convert a Symbol value to a string",
+        ));
+    }
     Ok(crate::intl::tolocale::value::to_string(Some(&primitive)))
 }
 

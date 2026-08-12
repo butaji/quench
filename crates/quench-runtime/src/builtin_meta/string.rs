@@ -6,6 +6,7 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
     match b {
         Builtin::StringFromCharCode => Some("String.fromCharCode"),
         Builtin::StringFromCodePoint => Some("String.fromCodePoint"),
+        Builtin::StringRaw => Some("String.raw"),
         Builtin::StringValueOf => Some("String.prototype.valueOf"),
         Builtin::StringIncludes => Some("String.prototype.includes"),
         Builtin::StringIsWellFormed => Some("String.prototype.isWellFormed"),
@@ -43,6 +44,7 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
     match b {
         Builtin::StringFromCharCode => Some(1.0),
         Builtin::StringFromCodePoint => Some(1.0),
+        Builtin::StringRaw => Some(1.0),
         Builtin::StringValueOf => Some(0.0),
         Builtin::StringRepeat
         | Builtin::StringTrim
@@ -78,6 +80,7 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
     match b {
         Builtin::StringFromCharCode => Some("fromCharCode"),
         Builtin::StringFromCodePoint => Some("fromCodePoint"),
+        Builtin::StringRaw => Some("raw"),
         Builtin::StringValueOf => Some("valueOf"),
         Builtin::StringIncludes => Some("includes"),
         Builtin::StringIsWellFormed => Some("isWellFormed"),
