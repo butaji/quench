@@ -87,6 +87,49 @@ pub struct ProgramDb {
     pub(crate) tail_calls: bool,
     pub(crate) eval_var_barrier: Vec<String>,
     pub(crate) eval_deletable: Vec<(String, u16)>,
+    pub(crate) epochs: Epochs,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Epochs {
+    shape: u32,
+    prototype: u32,
+    realm: u32,
+    global: u32,
+}
+
+impl Epochs {
+    pub fn shape(&self) -> u32 {
+        self.shape
+    }
+
+    pub fn prototype(&self) -> u32 {
+        self.prototype
+    }
+
+    pub fn realm(&self) -> u32 {
+        self.realm
+    }
+
+    pub fn global(&self) -> u32 {
+        self.global
+    }
+
+    pub fn bump_shape(&mut self) {
+        self.shape = self.shape.wrapping_add(1);
+    }
+
+    pub fn bump_prototype(&mut self) {
+        self.prototype = self.prototype.wrapping_add(1);
+    }
+
+    pub fn bump_realm(&mut self) {
+        self.realm = self.realm.wrapping_add(1);
+    }
+
+    pub fn bump_global(&mut self) {
+        self.global = self.global.wrapping_add(1);
+    }
 }
 
 impl ProgramDb {
@@ -132,4 +175,21 @@ pub enum Constant {
     BigInt(String),
     Null,
     Undefined,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Epochs;
+
+    #[test]
+    fn epochs_are_independent_invalidation_dimensions() {
+        let mut epochs = Epochs::default();
+        epochs.bump_shape();
+        epochs.bump_global();
+        epochs.bump_global();
+        assert_eq!(epochs.shape(), 1);
+        assert_eq!(epochs.prototype(), 0);
+        assert_eq!(epochs.realm(), 0);
+        assert_eq!(epochs.global(), 2);
+    }
 }
