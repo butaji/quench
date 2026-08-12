@@ -85,7 +85,9 @@ fn reduce_program(
         private_names: analysis.private_names.into_iter().collect(),
         ..ProgramDb::default()
     };
+    facts.install_fact_sites(analysis.fact_sites);
     let (ops, local_slots) = reduce_statements(&program.body, source_type, global, &mut facts)?;
+    facts.finish_reduction();
     Ok((
         facts,
         ops,

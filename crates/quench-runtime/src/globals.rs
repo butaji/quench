@@ -1,14 +1,14 @@
 use std::collections::HashMap;
 
 use crate::{
-    facts::{Constant as FactConstant, ConstantFact, ProgramDb},
+    facts::{Constant as FactConstant, ProgramDb},
     ops::{Constant, Op},
 };
 
 pub(crate) fn reduce(
     name: &str,
     ops: &mut Vec<Op>,
-    facts: &mut ProgramDb,
+    _facts: &mut ProgramDb,
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
@@ -18,9 +18,8 @@ pub(crate) fn reduce(
     if let Some(builtin) = builtin(name) {
         return Some(emit_builtin(ops, next_register, builtin));
     }
-    let (fact, value) = global_constant(name)?;
+    let (_, value) = global_constant(name)?;
     let register = take_register(next_register);
-    facts.constants.push(ConstantFact { value: fact });
     ops.push(Op::Const {
         dst: register,
         value,
