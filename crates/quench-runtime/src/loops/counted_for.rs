@@ -217,7 +217,7 @@ fn reduce_dynamic_for(
         label: None,
         init,
         test,
-        body,
+        body: crate::machine::FunctionCode::from_ops(body),
         update,
         post_test: false,
     });
