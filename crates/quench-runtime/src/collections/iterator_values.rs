@@ -56,6 +56,7 @@ pub(crate) fn next(receiver: Option<&Value>) -> Value {
 pub(crate) fn property(key: &str) -> Value {
     match key {
         "next" => Value::Builtin(crate::ops::Builtin::IteratorNext),
+        "Symbol.iterator" => Value::Builtin(crate::ops::Builtin::IteratorSelf),
         _ => Value::Undefined,
     }
 }

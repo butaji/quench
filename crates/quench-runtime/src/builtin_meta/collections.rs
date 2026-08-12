@@ -77,6 +77,7 @@ fn weak_set_property(key: &str) -> Option<Value> {
 
 pub const fn fn_name(b: Builtin) -> Option<&'static str> {
     match b {
+        Builtin::IteratorSelf => Some("Iterator.prototype[Symbol.iterator]"),
         Builtin::MapSet => Some("Map.prototype.set"),
         Builtin::MapSizeGetter => Some("get size"),
         Builtin::MapGet => Some("Map.prototype.get"),
@@ -116,6 +117,7 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
 
 pub const fn fn_len(b: Builtin) -> Option<f64> {
     match b {
+        Builtin::IteratorSelf => Some(0.0),
         Builtin::MapSet => Some(2.0),
         Builtin::MapSizeGetter | Builtin::SetSizeGetter => Some(0.0),
         Builtin::MapGet | Builtin::MapHas | Builtin::MapDelete => Some(1.0),
@@ -151,6 +153,7 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
         return Some(name);
     }
     match b {
+        Builtin::IteratorSelf => Some("[Symbol.iterator]"),
         Builtin::MapSet => Some("set"),
         Builtin::MapGet => Some("get"),
         Builtin::MapHas => Some("has"),
