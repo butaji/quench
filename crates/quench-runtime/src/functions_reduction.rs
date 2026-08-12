@@ -47,6 +47,32 @@ fn reduce_function_ops_named(
     Some((bind_rest(prefix, rest, parameter_count, captures), captures))
 }
 
+pub(crate) fn reduce_named_declaration(
+    body: &oxc::ast::ast::FunctionBody<'_>,
+    formal: &oxc::ast::ast::FormalParameters<'_>,
+    facts: &mut ProgramDb,
+    locals: &HashMap<String, u16>,
+    name: &str,
+    kind: FunctionKind,
+    is_async: bool,
+) -> Result<(Vec<Op>, u16), Vec<String>> {
+    let (parameters, parameter_count) = crate::function_parameters::bindings(formal)?;
+    let strictness = crate::reduce_support::function_strictness(body, facts.strict);
+    let tail_calls = tail_calls_enabled(strictness, kind, is_async);
+    let inherited = enter_function(facts, strictness, tail_calls);
+    let reduced = reduce_function_ops_named(
+        &body.statements,
+        formal,
+        facts,
+        (parameters, parameter_count),
+        locals,
+        None,
+        Some(name),
+    );
+    (facts.strict, facts.in_function, facts.tail_calls) = inherited;
+    reduced.ok_or_else(|| vec!["Unsupported function declaration body".to_string()])
+}
+
 fn reduce_function_body(
     syntax: (
         &[oxc::ast::ast::Statement<'_>],
