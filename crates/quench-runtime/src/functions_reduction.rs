@@ -369,7 +369,7 @@ pub(super) fn make(
 ) -> crate::value::Value {
     let has_prototype = matches!(metadata.kind, FunctionKind::Ordinary | FunctionKind::Generator);
     let mut arena = crate::machine::CodeArena::new();
-    let range = arena.append(body.to_vec());
+    let range = arena.append_slice(body);
     let code = Some(crate::machine::FunctionCode::new(arena.freeze(), range));
     let value = crate::value::Value::Function(std::rc::Rc::new(crate::value::FunctionValue {
         body: Vec::new(),
