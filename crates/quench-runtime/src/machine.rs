@@ -1,4 +1,4 @@
-use crate::{completion::Completion, value::Value};
+use crate::{completion::Completion, ops::Op, value::Value};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CodeId(pub u32);
@@ -22,6 +22,42 @@ pub struct PackedCompletion {
     pub flags: u8,
     pub payload: u32,
     pub aux: u32,
+}
+
+#[derive(Debug, Default)]
+pub struct CodeArena {
+    ops: Vec<Op>,
+    ranges: Vec<(u32, u32)>,
+}
+
+impl CodeArena {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn append(&mut self, body: Vec<Op>) -> CodeRange {
+        let code = CodeId(self.ranges.len() as u32);
+        let start = self.ops.len() as u32;
+        self.ops.extend(body);
+        let end = self.ops.len() as u32;
+        self.ranges.push((start, end));
+        CodeRange { code, start, end }
+    }
+
+    pub fn get(&self, range: CodeRange) -> Option<&[Op]> {
+        let (start, end) = self.ranges.get(range.code.0 as usize).copied()?;
+        let start = start.max(range.start);
+        let end = end.min(range.end);
+        (start <= end).then(|| &self.ops[start as usize..end as usize])
+    }
+
+    pub fn len(&self) -> usize {
+        self.ranges.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.ranges.is_empty()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
