@@ -137,6 +137,67 @@ pub fn prototype(builtin: Builtin) -> Option<Builtin> {
     }
 }
 
+pub fn is_prototype(builtin: Builtin) -> bool {
+    matches!(
+        builtin,
+        Builtin::IteratorPrototype
+            | Builtin::ArrayBufferPrototype
+            | Builtin::SharedArrayBufferPrototype
+            | Builtin::Float64ArrayPrototype
+            | Builtin::Float32ArrayPrototype
+            | Builtin::Int8ArrayPrototype
+            | Builtin::Int16ArrayPrototype
+            | Builtin::Int32ArrayPrototype
+            | Builtin::Uint8ArrayPrototype
+            | Builtin::Uint16ArrayPrototype
+            | Builtin::Uint32ArrayPrototype
+            | Builtin::Uint8ClampedArrayPrototype
+            | Builtin::BigInt64ArrayPrototype
+            | Builtin::BigUint64ArrayPrototype
+            | Builtin::DataViewPrototype
+            | Builtin::ArrayPrototype
+            | Builtin::FunctionPrototype
+            | Builtin::GeneratorFunctionPrototype
+            | Builtin::AsyncGeneratorFunctionPrototype
+            | Builtin::DatePrototype
+            | Builtin::RegExpPrototype
+            | Builtin::ObjectPrototype
+            | Builtin::ArrayIteratorPrototype
+            | Builtin::NumberPrototype
+            | Builtin::BooleanPrototype
+            | Builtin::SymbolPrototype
+            | Builtin::StringPrototype
+            | Builtin::BigIntPrototype
+            | Builtin::IntlLocalePrototype
+            | Builtin::IntlNumberFormatPrototype
+            | Builtin::IntlPluralRulesPrototype
+            | Builtin::IntlDateTimeFormatPrototype
+            | Builtin::IntlCollatorPrototype
+            | Builtin::IntlListFormatPrototype
+            | Builtin::IntlRelativeTimeFormatPrototype
+            | Builtin::IntlSegmenterPrototype
+            | Builtin::IntlDisplayNamesPrototype
+            | Builtin::MapPrototype
+            | Builtin::SetPrototype
+            | Builtin::WeakMapPrototype
+            | Builtin::WeakSetPrototype
+            | Builtin::WeakRefPrototype
+            | Builtin::ErrorPrototype
+            | Builtin::PromisePrototype
+    )
+}
+
+pub fn instance_prototype(builtin: Builtin) -> Option<Builtin> {
+    match builtin {
+        Builtin::Boolean => Some(Builtin::BooleanPrototype),
+        Builtin::Number => Some(Builtin::NumberPrototype),
+        Builtin::String => Some(Builtin::StringPrototype),
+        Builtin::Symbol => Some(Builtin::SymbolPrototype),
+        Builtin::BigInt => Some(Builtin::BigIntPrototype),
+        _ => prototype(builtin),
+    }
+}
+
 /// Returns the `length` property value for a builtin constructor.
 ///
 /// Returns `None` for builtins that are not constructors or have no defined length.

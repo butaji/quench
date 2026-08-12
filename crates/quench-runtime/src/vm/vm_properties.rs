@@ -255,8 +255,11 @@ fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
     if matches!(key, "prototype" | "constructor") {
         return property;
     }
-    if !matches!(property, Value::Undefined) || builtin == Builtin::FunctionPrototype {
+    if !matches!(property, Value::Undefined) {
         return property;
+    }
+    if crate::builtin_meta::is_prototype(builtin) {
+        return crate::builtins::property(Builtin::ObjectPrototype, key);
     }
     let inherited = crate::builtins::property(Builtin::FunctionPrototype, key);
     if !matches!(inherited, Value::Undefined) {

@@ -11,6 +11,7 @@ pub(crate) fn get_prototype_of(value: Option<&Value>) -> Result<Value, crate::ex
         Value::Builtin(builtin) if is_intrinsic_prototype(*builtin) => {
             Value::Builtin(Builtin::ObjectPrototype)
         }
+        Value::Builtin(Builtin::FunctionPrototype) => Value::Builtin(Builtin::ObjectPrototype),
         Value::Builtin(builtin @ (Builtin::ArrayIteratorPrototype | Builtin::IteratorPrototype)) => iterator_prototype(*builtin),
         Value::Builtin(_) | Value::Function(_) | Value::BoundFunction(_) => {
             Value::Builtin(Builtin::FunctionPrototype)

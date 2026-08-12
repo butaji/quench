@@ -141,9 +141,17 @@ fn require_object_coercible(receiver: Option<&Value>) -> Result<&Value, VmError>
 }
 fn owns_property(receiver: &Value, key: &str) -> Result<bool, VmError> {
     Ok(match receiver {
-        Value::Object(properties) => properties
-            .iter()
-            .any(|(name, _)| name == key && !super::is_descriptor_key(name)),
+        Value::Object(properties) => {
+            let deleted = properties
+                .iter()
+                .any(|(name, _)| name == &crate::builtins::deleted_key(key));
+            properties
+                .iter()
+                .any(|(name, _)| name == key && !super::is_descriptor_key(name))
+                || (!deleted
+                    && crate::vm::is_global_object(&Value::Object(properties.clone()))
+                    && crate::vm::global_builtin_exists(key))
+        }
         Value::Array(values) => {
             (!values.is_arguments() && key == "length")
                 || key
@@ -212,7 +220,21 @@ pub(crate) fn descriptor(
     };
     let key = crate::conversion::to_property_key(key)?;
     let descriptor = match value {
-        Value::Object(properties) => object_descriptor(properties, &key),
+        Value::Object(properties) => {
+            let global = Value::Object(properties.clone());
+            let deleted = properties
+                .iter()
+                .any(|(name, _)| name == &crate::builtins::deleted_key(&key));
+            if !deleted
+                && crate::vm::is_global_object(&global)
+                && crate::vm::global_builtin_exists(&key)
+            {
+                let value = crate::execute::get_property(&global, &key);
+                Some(descriptor_object_with_flags(value, true, false, true))
+            } else {
+                object_descriptor(properties, &key)
+            }
+        }
         Value::Array(values) => array_descriptor(values, &key),
         Value::String(value) => string_descriptor(value, &key),
         Value::Builtin(builtin) => builtin_descriptor(*builtin, &key),
@@ -254,7 +276,13 @@ fn object_descriptor(properties: &[(String, Value)], key: &str) -> Option<Value>
         .iter()
         .rev()
         .find(|(name, _)| name == key)
-        .map(|(_, value)| descriptor_object(value))
+        .map(|(_, value)| {
+            if matches!(value, Value::Builtin(_)) && crate::vm::global_builtin_exists(key) {
+                descriptor_object_with_flags(value.clone(), true, false, true)
+            } else {
+                descriptor_object(value)
+            }
+        })
 }
 fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
     if builtin == Builtin::MapPrototype && key == "size" {
