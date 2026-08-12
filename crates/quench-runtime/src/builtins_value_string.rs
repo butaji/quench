@@ -3,6 +3,7 @@ fn value_to_string(value: &Value) -> String {
         Value::String(value) => value.clone(),
         Value::Number(value) => value.to_string(),
         Value::Boolean(value) => value.to_string(),
+        Value::BigInt(value) => value.clone(),
         Value::Null => "null".to_string(),
         Value::Undefined => "undefined".to_string(),
         _ => "[object Object]".to_string(),
