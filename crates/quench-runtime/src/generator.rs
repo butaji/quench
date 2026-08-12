@@ -9,6 +9,7 @@ use std::{cell::RefCell, rc::Rc};
 include!("generator_private_scope.rs");
 include!("generator_async.rs");
 include!("generator_try.rs");
+include!("generator_iterator_binding.rs");
 include!("generator_suspension.rs");
 include!("generator_reduce.rs");
 include!("generator_machine.rs");
@@ -189,6 +190,9 @@ fn resume_suspended_contexts(
         Some(SuspendedContext::PrivateScope) => {
             ensure_control_frame(generator, state)?;
             resume_suspended_private_scope(generator, state, completion.clone())?
+        }
+        Some(SuspendedContext::IteratorBinding) => {
+            resume_suspended_iterator_binding(generator, state, completion.clone())?
         }
         Some(SuspendedContext::Yield | SuspendedContext::YieldStar) | None => None,
     };
