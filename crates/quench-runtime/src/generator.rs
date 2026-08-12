@@ -5,7 +5,10 @@ use crate::{
     value::{GeneratorData, GeneratorState, Value},
 };
 use std::collections::HashMap;
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::{Ref, RefCell, RefMut},
+    rc::Rc,
+};
 include!("generator_private_scope.rs");
 include!("generator_private_frame.rs");
 include!("generator_branch.rs");
@@ -25,20 +28,22 @@ pub(crate) fn create(
     receiver: &Value,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
-    let state = initialize_parameters(function, receiver, arguments)?;
+    let (state, registers) = initialize_parameters(function, receiver, arguments)?;
     let deferred_arguments = if state.is_none() {
         arguments.to_vec()
     } else {
         Vec::new()
     };
     let register_count = function.ops().len().clamp(32, usize::from(u16::MAX)) as u16;
+    let mut machine = crate::machine::Machine::with_function(
+        &function.code,
+        crate::machine::EnvironmentRef(0),
+        register_count,
+    );
+    machine.registers.values = registers;
     Ok(Value::Generator(Rc::new(GeneratorData {
         function: Rc::clone(function),
-        machine: RefCell::new(crate::machine::Machine::with_function(
-            &function.code,
-            crate::machine::EnvironmentRef(0),
-            register_count,
-        )),
+        machine: RefCell::new(machine),
         receiver: receiver.clone(),
         arguments: deferred_arguments,
         done: RefCell::new(false),
@@ -51,13 +56,13 @@ fn initialize_parameters(
     function: &Rc<crate::value::FunctionValue>,
     receiver: &Value,
     arguments: &[Value],
-) -> Result<Option<GeneratorState>, VmError> {
+) -> Result<(Option<GeneratorState>, Vec<Value>), VmError> {
     let Some(marker) = function
         .ops()
         .iter()
         .position(|op| matches!(op, Op::ParameterEnd))
     else {
-        return Ok(None);
+        return Ok((None, Vec::new()));
     };
     let (mut registers, environment) =
         crate::functions::build_registers(function, receiver, arguments);
@@ -74,14 +79,28 @@ fn initialize_parameters(
         crate::completion::Completion::Normal,
     )?;
     require_normal_parameter_completion(step.completion)?;
-    Ok(Some(GeneratorState {
+    Ok((
+        Some(GeneratorState {
+            environment,
+            pc: marker.saturating_add(1),
+            nested: 0,
+            private_environment: None,
+            suspension: None,
+        }),
         registers,
-        environment,
-        pc: marker.saturating_add(1),
-        nested: 0,
-        private_environment: None,
-        suspension: None,
-    }))
+    ))
+}
+
+fn registers(generator: &GeneratorData) -> Ref<'_, Vec<Value>> {
+    Ref::map(generator.machine.borrow(), |machine| {
+        &machine.registers.values
+    })
+}
+
+fn registers_mut(generator: &GeneratorData) -> RefMut<'_, Vec<Value>> {
+    RefMut::map(generator.machine.borrow_mut(), |machine| {
+        &mut machine.registers.values
+    })
 }
 
 fn require_normal_parameter_completion(
@@ -170,7 +189,7 @@ fn update_machine_frame(generator: &GeneratorData, state: &GeneratorState) -> Re
     else {
         return Ok(());
     };
-    let Ok(iterator) = crate::execute::read_register(&state.registers, iterator) else {
+    let Ok(iterator) = crate::execute::read_register(&registers(generator), iterator) else {
         return Ok(());
     };
     try_push_frame(
@@ -308,7 +327,7 @@ fn suspended_try<'a>(
     let (yield_index, yield_op) = body
         .iter()
         .enumerate()
-        .find(|(_, candidate)| suspended_try_op(candidate, state))?;
+        .find(|(_, candidate)| suspended_try_op(candidate, generator))?;
     Some((op, yield_op, &body[yield_index + 1..]))
 }
 
@@ -320,8 +339,9 @@ fn resume_suspended_try(
     let Some((try_op, yield_op, suffix)) = suspended_try(generator, state) else {
         return Ok(None);
     };
-    let completion = resume_suspended_try_op(&mut state.registers, yield_op, suffix, resume)?;
-    complete_suspended_try(try_op, &mut state.registers, completion).map(Some)
+    let completion =
+        resume_suspended_try_op(&mut registers_mut(generator), yield_op, suffix, resume)?;
+    complete_suspended_try(try_op, &mut registers_mut(generator), completion).map(Some)
 }
 
 fn complete_suspended_try(
@@ -455,8 +475,8 @@ fn initialize_state(generator: &GeneratorData) {
         &generator.receiver,
         &generator.arguments,
     );
+    generator.machine.borrow_mut().registers.values = registers;
     *state = Some(GeneratorState {
-        registers,
         environment,
         pc: 0,
         nested: 0,
