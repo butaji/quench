@@ -25,4 +25,40 @@ impl Completion {
     pub(crate) fn is_suspension(&self) -> bool {
         matches!(self, Self::Suspend(_) | Self::Yield(_))
     }
+
+    pub(crate) fn from_vm_error(
+        error: crate::execute::VmError,
+    ) -> Result<Self, crate::execute::VmError> {
+        use crate::execute::VmError;
+        Ok(match error {
+            VmError::Thrown(value) => Self::Throw(value),
+            VmError::Break(label) => Self::Break(label),
+            VmError::Continue(label) => Self::Continue(label),
+            VmError::Suspended(promise) => Self::Suspend(promise),
+            VmError::Yield(value) => Self::Yield(value),
+            VmError::NotCallable => {
+                let VmError::Thrown(value) = crate::execute::not_callable() else {
+                    return Err(VmError::NotCallable);
+                };
+                Self::Throw(value)
+            }
+            error => return Err(error),
+        })
+    }
+
+    pub(crate) fn into_vm_error(self) -> Result<Value, crate::execute::VmError> {
+        use crate::execute::VmError;
+        match self {
+            Self::Normal => Err(VmError::MissingReturn),
+            Self::Return(value) => Ok(value),
+            Self::TailCall(_) => Err(VmError::EvalError(
+                "Unconsumed tail-call completion".to_string(),
+            )),
+            Self::Throw(value) => Err(VmError::Thrown(value)),
+            Self::Break(label) => Err(VmError::Break(label)),
+            Self::Continue(label) => Err(VmError::Continue(label)),
+            Self::Suspend(promise) => Err(VmError::Suspended(promise)),
+            Self::Yield(value) => Err(VmError::Yield(value)),
+        }
+    }
 }

@@ -58,14 +58,17 @@ fn run_generator_op(
     next: usize,
 ) -> Result<Option<(crate::completion::Completion, usize)>, VmError> {
     let result = match run_op(registers, op, context) {
-        Err(VmError::Yield(value)) => {
-            crate::vm::flush_global_declaration_batch(registers);
-            return Ok(Some((crate::completion::Completion::Yield(value), next + 1)));
-        }
-        Err(error) => {
-            crate::vm::flush_global_declaration_batch(registers);
-            return Err(error);
-        }
+        Err(error) => match crate::completion::Completion::from_vm_error(error) {
+            Ok(crate::completion::Completion::Yield(value)) => {
+                crate::vm::flush_global_declaration_batch(registers);
+                return Ok(Some((crate::completion::Completion::Yield(value), next + 1)));
+            }
+            Ok(completion) => Some(completion),
+            Err(error) => {
+                crate::vm::flush_global_declaration_batch(registers);
+                return Err(error);
+            }
+        },
         Ok(result) => result,
     };
     if matches!(
