@@ -4,9 +4,33 @@ Finish the architecture and every implementation task described by the
 repository docs. Read `README.md`, `docs/`, and all of `tasks/` first; treat
 them as the specification and keep their design coherent as the code evolves.
 
-Build one OXC-facts residual VM: syntax and static meaning come from OXC,
-facts describe what is proven/guarded/unknown, and runtime code represents only
-the remaining dynamic uncertainty. Do not create parallel semantic worlds.
+Build one machine-first OXC-facts residual VM: syntax and static meaning come
+from OXC, facts describe what is proven/guarded/unknown, and runtime code
+represents only remaining dynamic uncertainty. The runtime must be shaped for
+instruction-cache locality, predictable branches, compact loads, low allocation
+rate, and minimal peak RSS. Do not create parallel semantic worlds.
+
+The performance end state is part of the goal, not a later optimization pass:
+
+- flat encoded Ops and shared Code IDs, never nested runtime operation vectors;
+- `HeapRef(u32)` values, shape IDs, packed slots, indexed environments, and
+  fixed stack frames;
+- bounded caches and reclaimable arenas for code, keys, metadata, and temporary
+  compilation state;
+- one generated mechanical declaration per value layout, Op, builtin, and
+  intrinsic relation;
+- explicit Completion transitions and materialized continuations only for live
+  suspension state;
+- benchmark evidence for cycles/op, branches, allocations, live bytes, and RSS
+  before accepting a fast path.
+
+Any design that adds a second semantic representation, duplicates metadata,
+keeps an avoidable allocation in a hot path, or trades RSS for unmeasured speed
+is incomplete even if its tests pass.
+
+This scope has exactly one execution engine: the compact residual interpreter.
+JITs, native lowering, native code caches, alternate execution modes, and
+benchmark-only behavior are explicitly out of scope.
 
 Think in Lisp:
 

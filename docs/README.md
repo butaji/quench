@@ -7,35 +7,47 @@ the execution engine is intentionally being rebuilt around the doctrine.
 Run `tools/lint-rust.sh` before committing. It enforces zero warnings, the
 500-line file limit, the 40-line function limit, and cognitive complexity 10.
 
-## Frozen performance and representation direction
+## Frozen machine-first direction
 
-Quench optimizes a deliberately measured frontier: the smallest possible
-handwritten semantic core, V8-class execution on workloads where reduction or
-compact specialization gives a structural advantage, and shockingly low cold
-and peak RSS. It does not assume one configuration can match V8 on every
-dynamic workload while also minimizing memory and implementation size.
+Quench is designed for one thing: make the machine execute as few bytes, loads,
+branches, allocations, and dispatches as possible while preserving JavaScript
+observability. Reduction is the primary optimizer. Runtime code is the residue
+of uncertainty, not a general-purpose JavaScript implementation.
 
-Syntax, types, shapes, facts, semantic operations, and runtime metadata are
-data. The VM represents only dynamic uncertainty. Declarative macros generate tags,
-layouts, operations, dispatch, tracing, verification, and other mechanical
-consequences. They do not form a second language for specification algorithms.
-Generation is accepted only while binary text, static data, compile time, and
-RSS remain within explicit budgets.
+The non-negotiable representation is:
 
-The implementation must preserve these boundaries while it evolves:
+```text
+OXC data -> facts -> flat Code/Op tables -> HeapRef(u32) values -> shape/slot heap
+                                      -> fixed stack frames -> bounded slow paths
+```
 
-- OXC owns syntax, scopes, and symbols; Quench owns facts and reduction.
-- Canonical completion-aware semantics land before specialized execution.
-- Semantic operations are canonical; physical operations may be specialized,
-  fused, encoded compactly, interpreted, or compiled from the same definition.
-- Runtime objects use compact `HeapRef(u32)` handles, shape IDs, and slots.
-- Closures use shared indexed environments rather than copied object graphs.
-- Ordinary calls use compact stack frames; resumable continuations are
-  materialized only at genuine suspension boundaries.
-- The OXC arena is ephemeral unless source tooling explicitly requires it.
-- Caches, interning, generated code, and native code are bounded and
-  reclaimable where possible.
-- Any specialization must preserve observable JavaScript behavior.
+There is one semantic path, one residual instruction vocabulary, and one
+compact interpreter in this phase. No JIT, native backend, alternate IR,
+self-hosted builtin universe, shadow AST, or parallel optimizer is allowed.
+
+Every hot-path decision is data-driven and measurable. The budget includes
+instructions, branches, allocations, live bytes, peak RSS, binary text, static
+data, cache bytes, generated code, generated source, handwritten source, and
+compile-time memory. An optimization that improves throughput while inflating
+the resident set or duplicating semantics fails the design review.
+
+The implementation must enforce these boundaries:
+
+- OXC owns syntax, scopes, and symbols; Quench stores only indexed facts.
+- Objects are `HeapRef(u32) -> ShapeId + packed slots`; no string-keyed object
+  vectors on the hot path.
+- Ops are flat, fixed-width or compactly encoded records; nested `Vec<Op>` is
+  a compiler temporary, never the runtime format.
+- Calls use fixed stack frames and register windows; continuations contain only
+  live state at genuine suspension points.
+- Property, call, conversion, construction, iteration, descriptor, equality,
+  and completion protocols each have exactly one semantic owner.
+- Keys, shapes, code, environments, and metadata use bounded per-program or
+  per-realm tables and are reclaimable.
+- Generated declarations own all mechanical consequences; readable Rust owns
+  observable algorithms.
+- Generic semantics precede guards; every guard falls back to the same generic
+  operation without changing ordering or observability.
 
 See [`architecture.md`](architecture.md) for the target layering and
 [`../tasks/architecture.md`](../tasks/architecture.md) for the implementation

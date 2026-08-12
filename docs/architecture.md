@@ -14,8 +14,7 @@ SOURCE
   -> ProgramDb facts: Proven | Guarded | Unknown
   -> five-context reducer: Program + Knowledge -> flat residual Ops
   -> compact interpreter
-  -> bounded guarded Ops and measured superinstructions
-  -> optional disposable baseline-native execution
+  -> bounded guarded Ops and measured interpreter superinstructions
 ```
 
 Do not add a second syntax tree, HIR/MIR ladder, TypeGraph, self-hosted
@@ -35,13 +34,14 @@ Use declarative macros as the source of truth for mechanical runtime data:
 - `value!`/`heap!` declarations generate tags, layouts, casts, tracing,
   allocation metadata, serialization, and verification;
 - `ops!` declarations generate operation definitions, encoding, decoding,
-  dispatch, verification, disassembly, profiling, and backend hooks;
+  dispatch, verification, disassembly, and profiling hooks;
 - `builtin!` declarations generate primordial installation and callable
   metadata while readable Rust owns complex algorithms;
 - specialization declarations derive `guard -> typed fast kernel -> canonical
   fallback` from canonical semantic operations;
-- a measured, fixed superinstruction set may be generated only under code-size
-  and RSS budgets.
+- generate a measured, fixed interpreter superinstruction set only after a
+  benchmark identifies a dispatch bottleneck and the code-size/RSS budget is
+  recorded.
 
 No mechanically derivable fact should be handwritten in multiple places. Do
 not create a DSL for observable specification algorithms; readable Rust owns
@@ -61,17 +61,16 @@ ordinary call -> compact stack frame + code ID + PC + register window
 suspension -> materialized live continuation
 ```
 
-The current prototype representation may be migrated behind these boundaries,
-but new semantic code must not deepen coupling to `Rc<Vec<(String, Value)>>`,
-copied closure environments, string-keyed runtime lookup, or nested unencoded
-operation vectors.
+The prototype representation must be migrated behind these boundaries. New
+semantic code must not couple to `Rc<Vec<(String, Value)>>`, copied closure
+environments, string-keyed runtime lookup, or nested unencoded operation
+vectors; those forms are temporary debt with an explicit removal order.
 
 Optimize semantic count before opcode count. Site caches start monomorphic,
-remain strictly bounded, and collapse to generic lookup rather than growing an
+remain strictly bounded, and collapse to generic lookup without growing an
 optimizer subsystem. Intern structural keys per program or realm; ordinary
-runtime strings remain collectible. A baseline compiler, if added, consumes
-exactly the same residual Ops, owns no alternative semantics, uses a capped
-code cache, and releases cold code.
+runtime strings remain collectible. No JIT, native lowering, or alternate
+execution backend belongs to this phase.
 
 ## Implementation order
 
@@ -82,7 +81,8 @@ code cache, and releases cold code.
 5. Generate value, heap, Op, builtin, and intrinsic mechanics.
 6. Add bounded monomorphic guarded Ops with canonical fallback.
 7. Add only measured interpreter fusions.
-8. Add disposable baseline-native execution only when dispatch dominates.
+8. Stop after the compact interpreter and its measured superinstructions are
+   complete. JIT/native execution is a separate future scope.
 
 Do not lead with a moving or generational collector. Begin with centralized
 heap ownership, explicit roots, generated tracing, and the simplest correct
@@ -95,16 +95,15 @@ unless observable dynamic compilation or requested diagnostics require them.
 
 ## Performance envelope and budgets
 
-“V8-class” is not a universal claim. Measure startup, one-shot execution, warm
-interpretation, hot loops, dynamic objects, allocation-heavy programs, and
-peak RSS independently. Full Test262 coverage establishes semantics, not fast
-path coverage.
+Performance is benchmark-defined, never a slogan. Measure startup, one-shot
+execution, warm interpretation, hot loops, dynamic objects, allocation-heavy
+programs, and peak RSS independently. Full Test262 coverage establishes
+semantics, not fast-path coverage.
 
 Every optimization is charged for executed residual Ops, allocations, retained
-bytes, bytes per live object, heap RSS, cache RSS, native-code RSS, binary text,
-static data, generated LOC, handwritten LOC, build time, and conformance. Use
-interpreter-only, balanced, and throughput host policies without changing Ops
-or semantic ownership.
+bytes, bytes per live object, peak RSS, binary text, static data, generated LOC,
+handwritten LOC, build time, and conformance. Use one interpreter policy without
+changing Ops or semantic ownership.
 
 ## Correctness boundary
 
