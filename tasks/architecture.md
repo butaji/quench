@@ -24,7 +24,7 @@ constraints:
 
 The implementation order is a dependency order, not a menu. Do not add caches,
 superinstructions, or other dispatch tricks to the prototype representation;
-first make the representation compact and flat.
+first make the representation compact, flat, and resumable.
 
 ## 1. Canonical semantics and completions
 
@@ -35,6 +35,28 @@ first make the representation compact and flat.
 - Keep protocol owners small and composable; do not build a semantic god module
   or specification DSL.
 - Route every complete feature through the generic path before specializing it.
+
+### 1.1 Universal machine and frame algebra
+
+- Define one `Machine` state: `CodeId`, `PC`, register window, indexed
+  environment, current `Completion`, and a compact tagged frame stack.
+- Define one `step(machine, resume_input)` transition entry point for ordinary,
+  generator, async, delegated-iterator, module, and host-job execution.
+- Represent control state as data: `Try`, `Iterator`, `Await`, and `Delegate`
+  frames with explicit phases and code ranges.
+- Implement iterator phases as `Fetch -> Bind -> Body -> Continue`, with one
+  canonical `Close` transition for abrupt completion and exhaustion.
+- Implement `try` phases as `Body -> Catch -> Finally -> Resume`; finally
+  completion precedence must be represented by the shared Completion algebra.
+- Materialize frames only at genuine suspension boundaries. Never recover
+  continuation state by scanning neighboring Ops or by adding a feature-specific
+  `resume_*` walker.
+- Route Promise reactions and host jobs through the same transition interface;
+  use a scheduler queue only to re-enter machines, not as a second semantic
+  execution model.
+- Keep Rx-like push-stream abstractions out of ECMAScript iteration. Borrow
+  only scheduling, cancellation, and cleanup patterns where they preserve the
+  pull-based iterator protocol.
 
 ## 2. Indexed heap and object representation
 
@@ -58,6 +80,8 @@ first make the representation compact and flat.
   environment, caller position, and completion target.
 - Materialize only live continuation state at genuine generator, async, job,
   module, or host suspension boundaries.
+- Store frame references as compact `CodeId` plus start/end ranges and resume
+  targets. A nested `Vec<Op>` is never a runtime body representation.
 
 ## 4. Reducer contexts and operational facts
 
@@ -85,6 +109,9 @@ first make the representation compact and flat.
 
 - Add monomorphic property, call, arithmetic, and iterator guards as generated
   `guard -> typed fast kernel -> canonical fallback` paths.
+- Model each dynamic site as a bounded DLR-style rule table: guard, fast kernel,
+  and one canonical generic fallback. Rules are data, never a second semantic
+  implementation.
 - Keep site caches fixed and small; bounded polymorphism uses a shared table,
   while megamorphic sites collapse directly to generic behavior.
 - Fuse only measured frequent sequences into interpreter superinstructions under

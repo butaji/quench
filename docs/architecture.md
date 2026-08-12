@@ -66,6 +66,48 @@ semantic code must not couple to `Rc<Vec<(String, Value)>>`, copied closure
 environments, string-keyed runtime lookup, or nested unencoded operation
 vectors; those forms are temporary debt with an explicit removal order.
 
+## Universal continuation machine
+
+All resumable execution uses one machine and one transition protocol. Do not
+invent per-feature resume walkers for generators, async functions, `yield*`,
+`await`, `for...of`, `try/finally`, modules, or host jobs.
+
+```text
+Machine {
+  CodeId, PC, register window, Environment, Completion, FrameStack
+}
+
+Frame =
+  Try { phase, handler, finalizer }
+  Iterator { phase, iterator, binding, body range }
+  Await { promise, resume target }
+  Delegate { iterator, destination }
+```
+
+`step(machine, input)` is the only continuation entry point. A frame is
+materialized only at a genuine suspension boundary; ordinary execution stays
+in the compact interpreter. Frames are tagged data with explicit phases, not
+Rust call-stack state and not code that searches neighboring Ops to infer where
+execution stopped.
+
+Canonical phases are mandatory for control protocols:
+
+- iterator loops: `Fetch -> Bind -> Body -> Continue`, with `Close` on abrupt
+  completion or exhaustion;
+- `try`: `Body -> Catch -> Finally -> Resume`;
+- await: `Evaluate -> Pending -> Fulfilled | Rejected`;
+- delegation: `Open -> Resume -> Yield | Complete`.
+
+Every transition returns the shared `Completion` algebra. Iterator closing,
+finally precedence, generator resumption, promise reactions, and host jobs
+must consume that algebra rather than translate through feature-specific error
+conventions.
+
+Rx-style push streams are not an execution model for JavaScript iteration.
+Only its useful scheduling and cleanup ideas may inform the host/job queue;
+ECMAScript iterators remain pull protocols with canonical `next`, `return`,
+receiver, ordering, and `IteratorClose` semantics.
+
 Optimize semantic count before opcode count. Site caches start monomorphic,
 remain strictly bounded, and collapse to generic lookup without growing an
 optimizer subsystem. Intern structural keys per program or realm; ordinary
@@ -74,11 +116,12 @@ execution backend belongs to this phase.
 
 ## Implementation order
 
-1. Canonicalize semantic protocols and explicit completions.
+1. Canonicalize semantic protocols, the Completion algebra, and the universal
+   continuation machine.
 2. Replace prototype values with the indexed heap and shape/slot objects.
-3. Flatten residual Ops and introduce compact stack frames and shared code.
+3. Flatten residual Ops and encode ranges, Code IDs, and compact stack frames.
 4. Implement all five reducer contexts and make `ProgramDb` facts operational.
-5. Generate value, heap, Op, builtin, and intrinsic mechanics.
+5. Generate value, heap, frame, Op, builtin, and intrinsic mechanics.
 6. Add bounded monomorphic guarded Ops with canonical fallback.
 7. Add only measured interpreter fusions.
 8. Stop after the compact interpreter and its measured superinstructions are
