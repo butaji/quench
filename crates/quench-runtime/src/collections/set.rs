@@ -37,7 +37,14 @@ pub fn property(key: &str) -> Value {
         "isSubsetOf" => Value::Builtin(Builtin::SetIsSubsetOf),
         "isSupersetOf" => Value::Builtin(Builtin::SetIsSupersetOf),
         "Symbol.iterator" => Value::Builtin(Builtin::SetIterator),
-        "Symbol.toStringTag" => Value::String("Set".into()),
+        "Symbol.toStringTag"
+            if !crate::builtins::builtin_prototype_property_is_removed(
+                Builtin::SetPrototype,
+                "Symbol.toStringTag",
+            ) =>
+        {
+            Value::String("Set".into())
+        }
         _ => Value::Undefined,
     }
 }
