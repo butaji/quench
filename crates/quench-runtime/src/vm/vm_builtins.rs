@@ -177,12 +177,21 @@ fn explicit_number(value: Option<&Value>) -> Result<f64, VmError> {
     crate::intl::tolocale::value::to_number_result(Some(value))
 }
 fn explicit_bigint(value: Option<&Value>) -> Result<Value, VmError> {
-    let raw = match value {
-        Some(Value::BigInt(value)) => return Ok(Value::BigInt(value.clone())),
-        Some(Value::Number(value)) if value.is_finite() && value.fract() == 0.0 => {
+    let primitive = match value {
+        Some(value) => crate::conversion::to_primitive(value, "number")?,
+        None => return Err(crate::value::error::throw_type_error("Cannot convert value to BigInt")),
+    };
+    let raw = match &primitive {
+        Value::BigInt(value) => return Ok(Value::BigInt(value.clone())),
+        Value::Number(value) if value.is_finite() && value.fract() == 0.0 => {
             format!("{value:.0}")
         }
-        Some(Value::String(value)) => value.clone(),
+        Value::Number(_) => {
+            return Err(crate::value::error::throw_range_error(
+                "Cannot convert non-integral Number to BigInt",
+            ));
+        }
+        Value::String(value) => value.clone(),
         _ => return Err(crate::value::error::throw_type_error("Cannot convert value to BigInt")),
     };
     let value = raw
@@ -362,6 +371,8 @@ fn is_data_view_setter(builtin: Builtin) -> bool {
             | Builtin::DataViewSetFloat16
             | Builtin::DataViewSetFloat32
             | Builtin::DataViewSetFloat64
+            | Builtin::DataViewSetBigInt64
+            | Builtin::DataViewSetBigUint64
     )
 }
 fn execute_data_view_set(
