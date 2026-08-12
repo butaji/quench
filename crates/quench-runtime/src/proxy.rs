@@ -85,7 +85,7 @@ pub(crate) fn call_trap(
             arguments,
         ),
         Value::BoundFunction(bound) => crate::functions::execute_bound(bound, arguments),
-        _ => Err(VmError::NotCallable),
+        _ => Err(crate::vm::not_callable()),
     }
 }
 
