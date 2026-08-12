@@ -147,7 +147,7 @@ fn finish_private_scope_resume(
     let _with_scope = crate::with_scope::FunctionGuard::isolate();
     let step = execute_with_generator_registers(generator, |registers| {
         crate::vm::execute_generator_step(
-            generator.function.ops(), registers, state.environment.clone(), machine_pc(generator),
+            generator.function.ops(), registers, machine_environment(generator)?, machine_pc(generator),
             crate::completion::Completion::Normal,
         )
     })?;
