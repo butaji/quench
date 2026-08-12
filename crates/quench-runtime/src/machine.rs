@@ -162,6 +162,19 @@ pub struct CodeStore {
     ranges: Rc<[(u32, u32)]>,
 }
 
+impl CodeStore {
+    pub fn get(&self, range: CodeRange) -> Option<&[Op]> {
+        let (start, end) = self.ranges.get(range.code.0 as usize).copied()?;
+        (range.start >= start && range.end <= end)
+            .then(|| &self.ops[range.start as usize..range.end as usize])
+    }
+
+    pub fn range_len(&self, code: CodeId) -> Option<u32> {
+        let (start, end) = self.ranges.get(code.0 as usize).copied()?;
+        Some(end.saturating_sub(start))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionCode {
     store: Rc<CodeStore>,
@@ -174,9 +187,7 @@ impl FunctionCode {
     }
 
     pub fn ops(&self) -> Option<&[Op]> {
-        let (start, end) = self.store.ranges.get(self.range.code.0 as usize).copied()?;
-        (self.range.start >= start && self.range.end <= end)
-            .then(|| &self.store.ops[self.range.start as usize..self.range.end as usize])
+        self.store.get(self.range)
     }
 }
 
@@ -289,6 +300,17 @@ mod tests {
         assert!(range.contains(6));
         assert!(!range.contains(7));
         assert!(super::CodeRange::new(super::CodeId(2), 8, 7).is_none());
+    }
+
+    #[test]
+    fn code_store_exposes_only_checked_ranges() {
+        let mut arena = super::CodeArena::new();
+        let range = arena.append_slice(&[super::Op::ParameterEnd]);
+        let store = arena.freeze();
+        assert_eq!(store.range_len(range.code), Some(1));
+        assert_eq!(store.get(range).map(<[_]>::len), Some(1));
+        let invalid = super::CodeRange::new(range.code, 0, 2).unwrap();
+        assert!(store.get(invalid).is_none());
     }
 
     #[test]
