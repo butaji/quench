@@ -378,7 +378,7 @@ pub enum Op {
     },
     Label {
         name: String,
-        body: Vec<Op>,
+        body: crate::machine::FunctionCode,
     },
     With {
         object: u16,
