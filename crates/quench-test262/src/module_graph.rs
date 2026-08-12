@@ -69,6 +69,21 @@ impl ModuleGraph {
         Ok(())
     }
 
+    /// Resolve and record all static imports discovered by the runtime's OXC
+    /// metadata pass. Resolution remains graph-owned; execution is separate.
+    pub fn link_specifiers<'a, I>(&mut self, from: ModuleId, specifiers: I) -> Result<(), String>
+    where
+        I: IntoIterator<Item = &'a str>,
+    {
+        for specifier in specifiers {
+            let target = self.resolve(from, specifier).ok_or_else(|| {
+                format!("unresolved module specifier {specifier:?} from {from:?}")
+            })?;
+            self.link(from, target)?;
+        }
+        Ok(())
+    }
+
     /// Return deterministic post-order units for an entry, preserving edge
     /// order and tolerating back-edges for legal cyclic module graphs.
     pub fn dependency_order(&self, entry: ModuleId) -> Result<Vec<ModuleId>, String> {
@@ -153,7 +168,9 @@ mod tests {
         assert_eq!(graph.entry_unit().map(|unit| unit.id), Some(entry));
         assert_eq!(graph.unit(dependency).map(|unit| unit.id), Some(dependency));
         assert_eq!(graph.units().len(), 2);
-        graph.link(entry, dependency).expect("known edge");
+        graph
+            .link_specifiers(entry, ["./lib/value.js"])
+            .expect("known edge");
         assert_eq!(
             graph.dependency_order(entry).unwrap(),
             vec![dependency, entry]
