@@ -5,44 +5,16 @@
 //! It is the sole owner of test262 metadata, exact harness composition,
 //! staging selection, and expected-completion classification. The runtime is
 //! treated as an external JavaScript engine and is never given test262 policy.
-use std::{collections::HashMap, path::Path};
+use std::path::Path;
 
+mod harness_cache;
 pub mod module_graph;
+mod runner_support;
 pub mod runtime_host;
 mod stages;
+pub use harness_cache::HarnessCache;
 pub use runtime_host::{LinkedModule, LinkedModuleGraph, RuntimeHost};
 pub use stages::{list_stages, resolve_stages, ConformanceStage, ResolvedStage};
-pub struct HarnessCache {
-    root: std::path::PathBuf,
-    sources: HashMap<String, String>,
-}
-impl HarnessCache {
-    pub fn new(root: std::path::PathBuf) -> Self {
-        Self {
-            root,
-            sources: HashMap::new(),
-        }
-    }
-    pub fn load(&mut self, name: &str) -> Result<String, String> {
-        self.ensure(name)?;
-        Ok(self.get(name)?.to_string())
-    }
-    fn ensure(&mut self, name: &str) -> Result<(), String> {
-        if !self.sources.contains_key(name) {
-            let source = std::fs::read_to_string(self.root.join(name))
-                .map_err(|error| format!("harness {name}: {error}"))?;
-            self.sources.insert(name.to_string(), source);
-        }
-        Ok(())
-    }
-
-    fn get(&self, name: &str) -> Result<&str, String> {
-        self.sources
-            .get(name)
-            .map(String::as_str)
-            .ok_or_else(|| format!("harness cache missing {name}"))
-    }
-}
 
 /// Engine-facing execution contract for an external conformance runner.
 pub trait Test262Host: Send {
@@ -62,6 +34,19 @@ pub trait Test262Host: Send {
 
     /// Execute harness scripts, then one module in the same realm.
     fn run_harnessed_module(&mut self, harness: &[&str], source: &str) -> Result<(), String>;
+
+    /// Execute a module whose source-file location is known to the runner.
+    ///
+    /// The default preserves source-only hosts. A filesystem-aware host uses
+    /// this location solely to resolve the module's declared specifiers.
+    fn run_harnessed_module_at(
+        &mut self,
+        harness: &[&str],
+        source: &str,
+        _path: &Path,
+    ) -> Result<(), String> {
+        self.run_harnessed_module(harness, source)
+    }
 }
 
 /// Runner metadata needed before dispatching one test.
@@ -207,18 +192,18 @@ impl<H: Test262Host> Test262Runner<H> {
 
     /// Run one script test source.
     pub fn run_script(&mut self, source: &str) -> TestOutcome {
-        map_result(self.host.run_script(source))
+        runner_support::outcome(self.host.run_script(source))
     }
 
     /// Run one module test source.
     pub fn run_module_script(&mut self, source: &str) -> TestOutcome {
-        map_result(self.host.run_module_script(source))
+        runner_support::outcome(self.host.run_module_script(source))
     }
 
     /// Parse dispatch metadata and run one complete test source.
     pub fn run_test(&mut self, source: &str) -> Result<TestOutcome, String> {
         let metadata = TestMetadata::parse(source)?;
-        Ok(apply_negative_expectation(
+        Ok(runner_support::negative(
             self.dispatch_test(&[], source, &metadata),
             &metadata,
         ))
@@ -234,9 +219,9 @@ impl<H: Test262Host> Test262Runner<H> {
         F: FnMut(&str) -> Result<String, String>,
     {
         let metadata = TestMetadata::parse(source)?;
-        let harness = load_harness(&metadata, &mut load)?;
+        let harness = runner_support::harness(&metadata, &mut load)?;
         let harness = harness.iter().map(String::as_str).collect::<Vec<_>>();
-        Ok(apply_negative_expectation(
+        Ok(runner_support::negative(
             self.dispatch_test(&harness, source, &metadata),
             &metadata,
         ))
@@ -249,8 +234,8 @@ impl<H: Test262Host> Test262Runner<H> {
         cache: &mut HarnessCache,
     ) -> Result<TestOutcome, String> {
         let metadata = TestMetadata::parse(source)?;
-        let harness = load_cached_harness(&metadata, cache)?;
-        Ok(apply_negative_expectation(
+        let harness = runner_support::cached_harness(&metadata, cache)?;
+        Ok(runner_support::negative(
             self.dispatch_test(&harness, source, &metadata),
             &metadata,
         ))
@@ -263,8 +248,8 @@ impl<H: Test262Host> Test262Runner<H> {
         metadata: &TestMetadata,
         cache: &mut HarnessCache,
     ) -> Result<TestOutcome, String> {
-        let harness = load_cached_harness(metadata, cache)?;
-        Ok(apply_negative_expectation(
+        let harness = runner_support::cached_harness(metadata, cache)?;
+        Ok(runner_support::negative(
             self.dispatch_test(&harness, source, metadata),
             metadata,
         ))
@@ -299,7 +284,21 @@ impl<H: Test262Host> Test262Runner<H> {
     {
         let source = std::fs::read_to_string(path.as_ref())
             .map_err(|error| format!("test262 read failed: {error}"))?;
-        self.run_test_with_cache(&source, cache)
+        self.run_test_with_cache_at(&source, path.as_ref(), cache)
+    }
+
+    fn run_test_with_cache_at(
+        &mut self,
+        source: &str,
+        path: &Path,
+        cache: &mut HarnessCache,
+    ) -> Result<TestOutcome, String> {
+        let metadata = TestMetadata::parse(source)?;
+        let harness = runner_support::cached_harness(&metadata, cache)?;
+        Ok(runner_support::negative(
+            self.dispatch_test_at(&harness, source, &metadata, Some(path)),
+            &metadata,
+        ))
     }
 
     /// Run files in iterator order and collect all outcomes.
@@ -316,7 +315,7 @@ impl<H: Test262Host> Test262Runner<H> {
                 Ok(outcome) => outcome,
                 Err(reason) => TestOutcome::Fail { reason },
             };
-            record_outcome(&mut report, path, outcome);
+            runner_support::record(&mut report, path, outcome);
         }
         Ok(report)
     }
@@ -340,7 +339,7 @@ impl<H: Test262Host> Test262Runner<H> {
                 Ok(outcome) => outcome,
                 Err(reason) => TestOutcome::Fail { reason },
             };
-            record_outcome(&mut report, path, outcome);
+            runner_support::record(&mut report, path, outcome);
         }
         Ok(report)
     }
@@ -395,9 +394,9 @@ impl<H: Test262Host> Test262Runner<H> {
                 None => true,
             };
             if keep_failures {
-                record_outcome(&mut report, path, outcome);
+                runner_support::record(&mut report, path, outcome);
             } else {
-                count_failure(&mut report, outcome);
+                runner_support::count(&mut report, outcome);
             }
         }
         Ok(report)
@@ -409,91 +408,28 @@ impl<H: Test262Host> Test262Runner<H> {
         source: &str,
         metadata: &TestMetadata,
     ) -> TestOutcome {
+        self.dispatch_test_at(harness, source, metadata, None)
+    }
+
+    fn dispatch_test_at(
+        &mut self,
+        harness: &[&str],
+        source: &str,
+        metadata: &TestMetadata,
+        path: Option<&Path>,
+    ) -> TestOutcome {
         if metadata.is_module {
-            return map_result(self.host.run_harnessed_module(harness, source));
+            if let Some(path) = path {
+                return runner_support::outcome(
+                    self.host.run_harnessed_module_at(harness, source, path),
+                );
+            }
+            return runner_support::outcome(self.host.run_harnessed_module(harness, source));
         }
-        map_result(
-            self.host
-                .run_harnessed_script(harness, source, metadata.only_strict),
-        )
-    }
-}
-
-fn count_failure(report: &mut StageReport, outcome: TestOutcome) {
-    if let TestOutcome::Fail { .. } = outcome {
-        report.failed += 1;
-    } else {
-        report.passed += 1;
-    }
-}
-
-fn load_cached_harness<'a>(
-    metadata: &TestMetadata,
-    cache: &'a mut HarnessCache,
-) -> Result<Vec<&'a str>, String> {
-    let names = harness_names(metadata);
-    for name in &names {
-        cache.ensure(name)?;
-    }
-    names.into_iter().map(|name| cache.get(name)).collect()
-}
-
-fn record_outcome(report: &mut StageReport, path: std::path::PathBuf, outcome: TestOutcome) {
-    match outcome {
-        TestOutcome::Pass => report.passed += 1,
-        TestOutcome::Fail { reason } => {
-            report.failed += 1;
-            report.failures.push((path, reason));
-        }
-    }
-}
-
-fn load_harness<F>(metadata: &TestMetadata, load: &mut F) -> Result<Vec<String>, String>
-where
-    F: FnMut(&str) -> Result<String, String>,
-{
-    harness_names(metadata).into_iter().map(load).collect()
-}
-
-fn harness_names(metadata: &TestMetadata) -> Vec<&str> {
-    if metadata.is_raw {
-        return Vec::new();
-    }
-    let mut names = vec!["assert.js", "sta.js"];
-    if metadata.is_async {
-        names.push("doneprintHandle.js");
-    }
-    names.extend(
-        metadata
-            .includes
-            .iter()
-            .map(String::as_str)
-            .filter(|include| !is_default_harness_binding(include)),
-    );
-    names
-}
-
-fn is_default_harness_binding(include: &str) -> bool {
-    matches!(include, "assert.js" | "sta.js")
-}
-
-fn apply_negative_expectation(outcome: TestOutcome, metadata: &TestMetadata) -> TestOutcome {
-    let Some(expected_type) = metadata.negative_type.as_deref() else {
-        return outcome;
-    };
-    match outcome {
-        TestOutcome::Pass => TestOutcome::Fail {
-            reason: format!("expected {expected_type} but execution completed"),
-        },
-        TestOutcome::Fail { reason } if reason.contains(expected_type) => TestOutcome::Pass,
-        TestOutcome::Fail { reason } => TestOutcome::Fail {
-            reason: format!("expected {expected_type}, got {reason}"),
-        },
-    }
-}
-fn map_result(result: Result<(), String>) -> TestOutcome {
-    match result {
-        Ok(()) => TestOutcome::Pass,
-        Err(reason) => TestOutcome::Fail { reason },
+        runner_support::outcome(self.host.run_harnessed_script(
+            harness,
+            source,
+            metadata.only_strict,
+        ))
     }
 }
