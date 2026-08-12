@@ -169,6 +169,12 @@ fn internal_prototype(value: &Value) -> Option<Value> {
 }
 
 fn builtin_prototype_parent(builtin: Builtin) -> Option<Value> {
+    if matches!(
+        builtin,
+        Builtin::GeneratorFunctionPrototype | Builtin::AsyncGeneratorFunctionPrototype
+    ) {
+        return Some(Value::Builtin(Builtin::FunctionPrototype));
+    }
     matches!(
         builtin,
         Builtin::FunctionPrototype

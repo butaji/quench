@@ -127,9 +127,11 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
         (DataView, "prototype") => Some(DataViewPrototype),
         (DataViewPrototype, "constructor") => Some(DataView),
         (Function, "prototype") => Some(FunctionPrototype),
-        (AsyncFunction | GeneratorFunction | AsyncGeneratorFunction, "prototype") => {
-            Some(FunctionPrototype)
-        }
+        (AsyncFunction, "prototype") => Some(FunctionPrototype),
+        (GeneratorFunction, "prototype") => Some(GeneratorFunctionPrototype),
+        (AsyncGeneratorFunction, "prototype") => Some(AsyncGeneratorFunctionPrototype),
+        (GeneratorFunctionPrototype, "constructor") => Some(GeneratorFunction),
+        (AsyncGeneratorFunctionPrototype, "constructor") => Some(AsyncGeneratorFunction),
         (FunctionPrototype, "apply") => Some(FunctionApply),
         (FunctionPrototype, "call") => Some(FunctionCall),
         (FunctionPrototype, "bind") => Some(FunctionBind),
