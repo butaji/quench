@@ -221,6 +221,14 @@ impl Machine {
         self.frames.pop()
     }
 
+    pub fn pop_await_frame(&mut self) -> bool {
+        if !matches!(self.frames.frames.last(), Some(Frame::Await { .. })) {
+            return false;
+        }
+        self.frames.pop();
+        true
+    }
+
     pub fn frame_count(&self) -> u16 {
         self.frames.count
     }
