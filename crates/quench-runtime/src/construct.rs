@@ -109,12 +109,14 @@ fn with_new_target_prototype(value: Value, target: &Value, new_target: &Value) -
     let prototype = if crate::value::is_object(&prototype) {
         Some(prototype)
     } else {
-        builtin_default_prototype(target)
+        realm_default_prototype(target, new_target)
     };
     prototype.map_or(value.clone(), |prototype| {
         crate::builtins::set_property(value, "\0prototype", prototype)
     })
 }
+
+include!("construct_realm.rs");
 
 fn construct_bound(
     bound: &crate::value::BoundFunctionValue,
