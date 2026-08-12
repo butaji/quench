@@ -67,8 +67,8 @@ pub(crate) fn is_revoked(proxy: &ProxyValue) -> bool {
 
 fn check_revoked(proxy: &ProxyValue) -> Result<(), VmError> {
     if is_revoked(proxy) {
-        Err(VmError::EvalError(
-            "Cannot perform operation on revoked proxy".to_string(),
+        Err(crate::value::error::throw_type_error(
+            "Cannot perform operation on revoked proxy",
         ))
     } else {
         Ok(())
