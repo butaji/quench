@@ -138,15 +138,12 @@ fn execute_simple_builtin(
             function_prototype_builtin(builtin, receiver)
         }
         Builtin::RegExpPrototypeToString => regexp_prototype_to_string(receiver),
-        Builtin::NumberToFixed | Builtin::NumberToPrecision | Builtin::NumberToExponential => {
-            crate::number_fmt::number_format(arguments.first(), arguments.get(1), builtin)
-        }
+        Builtin::NumberToFixed | Builtin::NumberToPrecision | Builtin::NumberToExponential => crate::number_fmt::number_format(arguments.first(), arguments.get(1), builtin),
         Builtin::Object => Ok(crate::builtins::object(arguments)),
         Builtin::Date => Ok(crate::date::call()),
         _ => Ok(Value::Undefined),
     }
 }
-
 fn boolean_or_number_string(
     receiver: Option<&Value>,
     arguments: &[Value],
@@ -156,7 +153,6 @@ fn boolean_or_number_string(
     }
     Ok(Value::String(to_string(arguments.first())))
 }
-
 fn boolean_receiver(receiver: Option<&Value>) -> Option<bool> {
     match receiver {
         Some(Value::Boolean(value)) => Some(*value),
@@ -164,7 +160,6 @@ fn boolean_receiver(receiver: Option<&Value>) -> Option<bool> {
         _ => None,
     }
 }
-
 fn boolean_to_string(receiver: Option<&Value>) -> Result<Value, VmError> {
     let value = match receiver {
         Some(Value::Builtin(Builtin::BooleanPrototype)) => false,

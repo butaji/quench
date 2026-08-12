@@ -34,7 +34,11 @@ pub(crate) fn prototype_to_string(receiver: Option<&Value>) -> Value {
     if let Some(tag) = receiver.and_then(string_tag) {
         return Value::String(format!("[object {tag}]"));
     }
-    let tag = match receiver {
+    Value::String(format!("[object {}]", prototype_tag(receiver)))
+}
+
+fn prototype_tag(receiver: Option<&Value>) -> &'static str {
+    match receiver {
         None | Some(Value::Undefined) => "Undefined",
         Some(Value::Null) => "Null",
         Some(Value::Boolean(_)) => "Boolean",
@@ -57,8 +61,7 @@ pub(crate) fn prototype_to_string(receiver: Option<&Value>) -> Value {
         Some(Value::Uint32Array(_)) => "Uint32Array",
         Some(Value::BigInt64Array(_)) => "BigInt64Array",
         Some(Value::BigUint64Array(_)) => "BigUint64Array",
-        Some(Value::Function(_)) => "Function",
-        Some(Value::BoundFunction(_)) => "Function",
+        Some(Value::Function(_) | Value::BoundFunction(_)) => "Function",
         Some(Value::Builtin(Builtin::ObjectPrototype)) => "Object",
         Some(Value::Builtin(Builtin::BooleanPrototype)) => "Boolean",
         Some(Value::Builtin(Builtin::NumberPrototype)) => "Number",
@@ -70,10 +73,9 @@ pub(crate) fn prototype_to_string(receiver: Option<&Value>) -> Value {
         Some(Value::Promise(_)) => "Promise",
         Some(Value::Map(_)) | Some(Value::Set(_)) => "Object",
         Some(Value::Generator(_)) => "Generator",
-        Some(Value::BindingCell(cell)) => return prototype_to_string(Some(&cell.borrow())),
+        Some(Value::BindingCell(cell)) => return prototype_tag(Some(&cell.borrow())),
         Some(Value::HostCapability(_) | Value::Iterator(_) | Value::ObjectAlias(_)) => "Object",
-    };
-    Value::String(format!("[object {tag}]"))
+    }
 }
 
 fn string_tag(value: &Value) -> Option<String> {
