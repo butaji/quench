@@ -183,7 +183,23 @@ fn step(value: Value) -> Result<Value, crate::execute::VmError> {
 }
 
 fn rest(value: Value) -> Result<Value, crate::execute::VmError> {
-    collect_iterable(value).map(Value::array)
+    collect_rest(&value).map(Value::array)
+}
+
+fn collect_rest(value: &Value) -> Result<Vec<Value>, crate::execute::VmError> {
+    let mut values = Vec::new();
+    loop {
+        match step_value(value) {
+            Ok(Some(value)) => values.push(value),
+            Ok(None) => return Ok(values),
+            Err(error) => {
+                if let Value::Iterator(data) = value {
+                    mark_done(data);
+                }
+                return Err(error);
+            }
+        }
+    }
 }
 
 pub(crate) fn collect(value: &Value) -> Result<Vec<Value>, crate::execute::VmError> {
