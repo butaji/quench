@@ -6,6 +6,7 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
     match b {
         Builtin::ObjectPrototypeValueOf => Some("Object.prototype.valueOf"),
         Builtin::ObjectHasOwnProperty => Some("Object.prototype.hasOwnProperty"),
+        Builtin::ObjectPrototypeIsPrototypeOf => Some("Object.prototype.isPrototypeOf"),
         Builtin::ObjectPropertyIsEnumerable => Some("Object.prototype.propertyIsEnumerable"),
         Builtin::ObjectGetOwnPropertyDescriptor => Some("Object.getOwnPropertyDescriptor"),
         Builtin::ObjectKeys => Some("Object.keys"),
@@ -27,6 +28,7 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
             Some(0.0)
         }
         Builtin::ObjectHasOwnProperty
+        | Builtin::ObjectPrototypeIsPrototypeOf
         | Builtin::ObjectPropertyIsEnumerable
         | Builtin::ObjectKeys
         | Builtin::ObjectGetOwnPropertyNames
@@ -47,6 +49,7 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
             Some("valueOf")
         }
         Builtin::ObjectHasOwnProperty => Some("hasOwnProperty"),
+        Builtin::ObjectPrototypeIsPrototypeOf => Some("isPrototypeOf"),
         Builtin::ObjectPropertyIsEnumerable => Some("propertyIsEnumerable"),
         Builtin::ObjectGetOwnPropertyDescriptor => Some("getOwnPropertyDescriptor"),
         Builtin::ObjectKeys => Some("keys"),

@@ -33,6 +33,33 @@ pub(crate) fn get_prototype_of(value: Option<&Value>) -> Result<Value, crate::ex
     })
 }
 
+pub(crate) fn is_prototype_of(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let prototype = receiver
+        .filter(|value| crate::value::is_object(value))
+        .ok_or_else(|| {
+            crate::value::error::throw_type_error(
+                "Object.prototype.isPrototypeOf called on null or undefined",
+            )
+        })?;
+    let Some(value) = arguments
+        .first()
+        .filter(|value| crate::value::is_object(value))
+    else {
+        return Ok(Value::Boolean(false));
+    };
+    let mut current = get_prototype_of(Some(value))?;
+    while !matches!(current, Value::Null) {
+        if crate::builtins::same_value(Some(&current), Some(prototype)) {
+            return Ok(Value::Boolean(true));
+        }
+        current = get_prototype_of(Some(&current))?;
+    }
+    Ok(Value::Boolean(false))
+}
+
 fn is_intrinsic_prototype(builtin: Builtin) -> bool {
     matches!(
         builtin,

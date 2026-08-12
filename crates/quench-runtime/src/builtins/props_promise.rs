@@ -22,3 +22,11 @@ fn promise_prototype_method(key: &str) -> Option<Builtin> {
         _ => None,
     }
 }
+
+fn promise_builtin_method(builtin: Builtin, key: &str) -> Option<Builtin> {
+    match builtin {
+        Builtin::Promise => promise_method(key),
+        Builtin::PromisePrototype => promise_prototype_method(key),
+        _ => None,
+    }
+}
