@@ -9,7 +9,7 @@ pub mod reduce_statements;
 mod tagged_template;
 
 // Re-export commonly used functions at the crate::reduce level
-pub use module_metadata::ModuleMetadata;
+pub use module_metadata::{ExportBinding, ModuleMetadata};
 pub use reduce_assignments::reduce_assignment;
 pub use reduce_expressions::{
     reduce_atom, reduce_call, reduce_declaration, reduce_expression, reduce_expression_statement,
