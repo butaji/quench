@@ -156,6 +156,9 @@ fn current_state(generator: &GeneratorData) -> Result<GeneratorState, VmError> {
 }
 
 fn update_machine_frame(generator: &GeneratorData, state: &GeneratorState) -> Result<(), VmError> {
+    if suspended_iterator_binding(generator, state).is_some() {
+        return push_iterator_frame(generator, state);
+    }
     let Some(crate::continuation::SuspensionPoint::YieldStar { dst, iterator, .. }) =
         state.suspension
     else {
@@ -173,6 +176,7 @@ fn update_machine_frame(generator: &GeneratorData, state: &GeneratorState) -> Re
         },
     )
 }
+
 fn resume_suspended_contexts(
     generator: &GeneratorData,
     state: &mut GeneratorState,
