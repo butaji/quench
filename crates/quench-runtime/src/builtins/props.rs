@@ -1,8 +1,5 @@
 use crate::{ops::Builtin, value::Value};
-mod data_view_name;
-#[path = "props_number.rs"]
-mod props_number;
-include!("props_promise.rs");
+include!("props_modules.rs");
 pub(crate) fn lookup(builtin: Builtin, key: &str) -> Value {
     if crate::builtins::builtin_prototype_property_is_removed(builtin, key) {
         return Value::Undefined;
@@ -37,6 +34,9 @@ fn special(builtin: Builtin, key: &str) -> Option<Value> {
 }
 fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
     use Builtin::*;
+    if let Some(value) = typed_array_static_property(builtin, key) {
+        return Some(value);
+    }
     match (builtin, key) {
         (Symbol, "prototype") => Some(Value::Builtin(SymbolPrototype)),
         (Symbol, "unscopables") => Some(Value::String("Symbol.unscopables\0".to_string())),
@@ -218,34 +218,6 @@ fn is_typed_array_prototype(builtin: Builtin) -> bool {
             | BigInt64ArrayPrototype
             | BigUint64ArrayPrototype
     )
-}
-fn typed_array_constructor_property(builtin: Builtin, key: &str) -> Option<Builtin> {
-    use Builtin::*;
-    Some(match (builtin, key) {
-        (Float64Array, "prototype") => Float64ArrayPrototype,
-        (Float64ArrayPrototype, "constructor") => Float64Array,
-        (Float32Array, "prototype") => Float32ArrayPrototype,
-        (Float32ArrayPrototype, "constructor") => Float32Array,
-        (Int8Array, "prototype") => Int8ArrayPrototype,
-        (Int8ArrayPrototype, "constructor") => Int8Array,
-        (Int16Array, "prototype") => Int16ArrayPrototype,
-        (Int16ArrayPrototype, "constructor") => Int16Array,
-        (Uint16Array, "prototype") => Uint16ArrayPrototype,
-        (Uint16ArrayPrototype, "constructor") => Uint16Array,
-        (Int32Array, "prototype") => Int32ArrayPrototype,
-        (Int32ArrayPrototype, "constructor") => Int32Array,
-        (Uint8Array, "prototype") => Uint8ArrayPrototype,
-        (Uint8ArrayPrototype, "constructor") => Uint8Array,
-        (Uint32Array, "prototype") => Uint32ArrayPrototype,
-        (Uint32ArrayPrototype, "constructor") => Uint32Array,
-        (Uint8ClampedArray, "prototype") => Uint8ClampedArrayPrototype,
-        (Uint8ClampedArrayPrototype, "constructor") => Uint8ClampedArray,
-        (BigInt64Array, "prototype") => BigInt64ArrayPrototype,
-        (BigInt64ArrayPrototype, "constructor") => BigInt64Array,
-        (BigUint64Array, "prototype") => BigUint64ArrayPrototype,
-        (BigUint64ArrayPrototype, "constructor") => BigUint64Array,
-        _ => return None,
-    })
 }
 fn host_capability_method(_kind: crate::ops::HostCapabilityKind, key: &str) -> Option<Builtin> {
     use crate::ops::HostCapabilityKind::*;

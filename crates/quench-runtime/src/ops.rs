@@ -60,6 +60,8 @@ pub enum Builtin {
     DataViewSetBigUint64,
     ArrayIsArray,
     ArrayFrom,
+    TypedArrayFrom,
+    TypedArrayOf,
     ArrayMap,
     ArrayFilter,
     ArraySome,
