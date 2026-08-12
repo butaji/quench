@@ -20,8 +20,8 @@ fn default_value(
     ops.push(Op::Conditional {
         dst,
         condition,
-        consequent,
-        alternate: vec![Op::Return { src: source }],
+        consequent: crate::machine::FunctionCode::from_ops(consequent),
+        alternate: crate::machine::FunctionCode::from_ops(vec![Op::Return { src: source }]),
     });
     Some(dst)
 }

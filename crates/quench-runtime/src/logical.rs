@@ -29,8 +29,8 @@ pub(crate) fn reduce_assignment(
     ops.push(Op::Conditional {
         dst,
         condition,
-        consequent,
-        alternate,
+        consequent: crate::machine::FunctionCode::from_ops(consequent),
+        alternate: crate::machine::FunctionCode::from_ops(alternate),
     });
     Some(dst)
 }
@@ -131,8 +131,8 @@ fn reduce_dynamic(
     ops.push(Op::Conditional {
         dst,
         condition,
-        consequent,
-        alternate,
+        consequent: crate::machine::FunctionCode::from_ops(consequent),
+        alternate: crate::machine::FunctionCode::from_ops(alternate),
     });
     Some(dst)
 }

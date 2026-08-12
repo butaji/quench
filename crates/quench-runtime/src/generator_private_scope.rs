@@ -17,6 +17,7 @@ fn suspended_conditional<'a>(
     } else {
         alternate
     };
+    let branch = branch.ops()?;
     let index = branch
         .iter()
         .position(|op| matches!(op, Op::Yield { .. }))?;
