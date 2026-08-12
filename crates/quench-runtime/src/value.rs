@@ -470,6 +470,7 @@ pub struct FunctionValue {
     pub(crate) code: Option<crate::machine::FunctionCode>,
     pub params: u16,
     pub captures: Rc<crate::environment::Environment>,
+    pub(crate) with_captures: Vec<Value>,
     pub properties: Rc<RefCell<Vec<(String, Value)>>>,
     pub(crate) private_slots: PrivateSlots,
     pub(crate) private_environment: crate::private_environment::PrivateEnvironment,

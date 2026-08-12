@@ -19,6 +19,11 @@ impl FunctionGuard {
         let previous = OBJECTS.with(|objects| objects.replace(Vec::new()));
         Self { previous }
     }
+
+    pub(crate) fn install(captured: &[Value]) -> Self {
+        let previous = OBJECTS.with(|objects| objects.replace(captured.to_vec()));
+        Self { previous }
+    }
 }
 
 impl Drop for FunctionGuard {
@@ -48,6 +53,10 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<Completion,
     OBJECTS.with(|objects| objects.borrow_mut().push(object));
     let _guard = ScopeGuard;
     crate::execute::execute_completion_in_place(body, registers)
+}
+
+pub(crate) fn capture() -> Vec<Value> {
+    OBJECTS.with(|objects| objects.borrow().clone())
 }
 
 pub(crate) fn execute_resolve_global(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
