@@ -10,6 +10,7 @@ include!("generator_private_scope.rs");
 include!("generator_branch.rs");
 include!("generator_async.rs");
 include!("generator_try.rs");
+include!("generator_try_frame.rs");
 include!("generator_iterator_binding.rs");
 include!("generator_suspension.rs");
 include!("generator_reduce.rs");
@@ -181,6 +182,10 @@ fn update_machine_frame(generator: &GeneratorData, state: &GeneratorState) -> Re
 }
 
 fn push_nested_frame(generator: &GeneratorData, state: &GeneratorState) -> Result<bool, VmError> {
+    if suspended_try(generator, state).is_some() {
+        push_try_frame(generator, state)?;
+        return Ok(true);
+    }
     if suspended_iterator_binding(generator, state).is_some() {
         push_iterator_frame(generator, state)?;
         return Ok(true);
@@ -197,6 +202,9 @@ fn resume_suspended_contexts(
     state: &mut GeneratorState,
     completion: &crate::completion::Completion,
 ) -> Result<Option<Value>, VmError> {
+    if let Some(completion) = resume_try_frame(generator, state, completion.clone())? {
+        return resume_machine_frame(generator, state, completion).map(Some);
+    }
     if let Some(completion) = resume_branch_frame(generator, state, completion.clone())? {
         return resume_machine_frame(generator, state, completion).map(Some);
     }
@@ -378,6 +386,9 @@ fn install_resume_input(generator: &GeneratorData, state: &mut GeneratorState, i
     }
     if let Some(Op::YieldStar { dst, .. }) = generator.function.ops().get(state.pc) {
         crate::execute::write_value(&mut state.registers, *dst, input);
+        return;
+    }
+    if install_try_frame_input(generator, &mut state.registers, &input) {
         return;
     }
     if install_branch_frame_input(generator, &mut state.registers, &input) {
