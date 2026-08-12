@@ -62,9 +62,7 @@ fn execute_program(program: &quench_runtime::reduce::ResidualProgram) -> Result<
 
 fn run_module_source(source: &str) -> Result<(), String> {
     let program = reduce_module_source(source).map_err(|errors| errors.join("; "))?;
-    execute_with_context(&program.ops, host_context())
-        .map(|_| ())
-        .map_err(|error| format!("residual VM error: {}", error.render()))
+    execute_program(&program)
 }
 
 fn host_context() -> &'static VmContext {
