@@ -55,7 +55,7 @@ struct SourceUnit<'a> {
 
 fn reduce_units(units: &[SourceUnit<'_>]) -> Result<ResidualProgram, Vec<String>> {
     let allocator = Allocator::default();
-    let mut state = StatementReducer::new_with_script(SourceType::cjs(), false);
+    let mut state = StatementReducer::new_with_global(SourceType::cjs(), false);
     let mut totals = (0, 0);
     let mut last = None;
     let mut facts_out = ProgramDb::default();
