@@ -11,6 +11,7 @@ include!("generator_private_scope.rs");
 include!("generator_async.rs");
 include!("generator_try.rs");
 include!("generator_reduce.rs");
+include!("generator_machine.rs");
 
 pub(crate) fn create(
     function: &Rc<crate::value::FunctionValue>,
@@ -25,6 +26,10 @@ pub(crate) fn create(
     };
     Ok(Value::Generator(Rc::new(GeneratorData {
         function: Rc::clone(function),
+        machine: RefCell::new(crate::machine::Machine::new(
+            crate::machine::CodeId(0),
+            crate::machine::EnvironmentRef(0),
+        )),
         receiver: receiver.clone(),
         arguments: deferred_arguments,
         done: RefCell::new(false),
@@ -134,25 +139,6 @@ fn resume(generator: &GeneratorData, resume: Resume) -> Result<Value, VmError> {
     let result = complete_step(generator, &state, step.completion);
     generator.state.replace(Some(state));
     result
-}
-
-fn execute_generator_step(
-    generator: &GeneratorData,
-    state: &mut GeneratorState,
-    completion: crate::completion::Completion,
-) -> Result<crate::vm::GeneratorStep, VmError> {
-    let _private_environment = crate::private_environment::Guard::install_environment(
-        generator.function.private_environment.clone(),
-    );
-    let _home = crate::super_scope::Guard::install(&generator.function, &generator.receiver);
-    let _with_scope = crate::with_scope::FunctionGuard::isolate();
-    crate::vm::execute_generator_step(
-        generator.function.ops(),
-        &mut state.registers,
-        state.environment.clone(),
-        state.pc,
-        completion,
-    )
 }
 
 fn current_state(generator: &GeneratorData) -> Result<GeneratorState, VmError> {
