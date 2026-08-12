@@ -15,12 +15,7 @@ pub(crate) fn reduce_call(
     next: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
-    if call.optional
-        || matches!(
-            &call.callee,
-            Expression::StaticMemberExpression(member) if member.optional
-        )
-    {
+    if call.optional || has_optional_chain_callee(&call.callee) {
         return crate::special::reduce_optional_call(call, ops, facts, next, locals);
     }
     if is_direct_eval(call, locals) {
@@ -42,6 +37,18 @@ pub(crate) fn reduce_call(
         spreads,
     });
     Some(dst)
+}
+
+fn has_optional_chain_callee(expression: &Expression<'_>) -> bool {
+    match expression {
+        Expression::ChainExpression(_) => true,
+        Expression::ParenthesizedExpression(parenthesized) => {
+            has_optional_chain_callee(&parenthesized.expression)
+        }
+        Expression::StaticMemberExpression(member) => member.optional,
+        Expression::ComputedMemberExpression(member) => member.optional,
+        _ => false,
+    }
 }
 
 fn reduce_super_constructor_call(

@@ -141,6 +141,18 @@ fn reduce_optional_callee(
     locals: &HashMap<String, u16>,
 ) -> Option<(u16, Option<u16>, bool)> {
     match callee {
+        Expression::ParenthesizedExpression(parenthesized) => {
+            reduce_optional_callee(&parenthesized.expression, ops, facts, next, locals)
+        }
+        Expression::ChainExpression(chain) => match &chain.expression {
+            oxc::ast::ast::ChainElement::StaticMemberExpression(member) => {
+                reduce_static_callee(member, ops, facts, next, locals)
+            }
+            oxc::ast::ast::ChainElement::ComputedMemberExpression(member) => {
+                reduce_computed_callee(member, ops, facts, next, locals)
+            }
+            _ => reduce_chain_callee_without_static_member(callee, ops, facts, next, locals),
+        },
         Expression::StaticMemberExpression(member) => {
             reduce_static_callee(member, ops, facts, next, locals)
         }
@@ -152,6 +164,26 @@ fn reduce_optional_callee(
             None,
             false,
         )),
+    }
+}
+
+fn reduce_chain_callee_without_static_member(
+    callee: &Expression<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<(u16, Option<u16>, bool)> {
+    let start = ops.len();
+    let value = crate::reduce::reduce_expression(callee, ops, facts, next, locals)?;
+    let receiver = ops[start..].iter().rev().find_map(optional_receiver);
+    Some((value, receiver, receiver.is_some()))
+}
+
+fn optional_receiver(op: &Op) -> Option<u16> {
+    match op {
+        Op::OptionalGet { object, .. } | Op::OptionalGetDynamic { object, .. } => Some(*object),
+        _ => None,
     }
 }
 
