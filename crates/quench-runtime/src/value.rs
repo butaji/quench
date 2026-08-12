@@ -466,6 +466,7 @@ pub enum PrivateSlot {
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionValue {
     pub body: Vec<Op>,
+    pub(crate) code: Option<crate::machine::FunctionCode>,
     pub params: u16,
     pub captures: Rc<crate::environment::Environment>,
     pub properties: Rc<RefCell<Vec<(String, Value)>>>,
@@ -478,7 +479,6 @@ pub struct FunctionValue {
     pub is_async: bool,
     pub mapped_arguments: bool,
 }
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct BoundFunctionValue {
     pub target: Value,
