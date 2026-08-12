@@ -138,6 +138,21 @@ pub fn prototype(builtin: Builtin) -> Option<Builtin> {
 }
 
 pub fn is_prototype(builtin: Builtin) -> bool {
+    is_runtime_prototype(builtin)
+        || is_intl_prototype(builtin)
+        || matches!(
+            builtin,
+            Builtin::MapPrototype
+                | Builtin::SetPrototype
+                | Builtin::WeakMapPrototype
+                | Builtin::WeakSetPrototype
+                | Builtin::WeakRefPrototype
+                | Builtin::ErrorPrototype
+                | Builtin::PromisePrototype
+        )
+}
+
+fn is_runtime_prototype(builtin: Builtin) -> bool {
     matches!(
         builtin,
         Builtin::IteratorPrototype
@@ -168,7 +183,13 @@ pub fn is_prototype(builtin: Builtin) -> bool {
             | Builtin::SymbolPrototype
             | Builtin::StringPrototype
             | Builtin::BigIntPrototype
-            | Builtin::IntlLocalePrototype
+    )
+}
+
+fn is_intl_prototype(builtin: Builtin) -> bool {
+    matches!(
+        builtin,
+        Builtin::IntlLocalePrototype
             | Builtin::IntlNumberFormatPrototype
             | Builtin::IntlPluralRulesPrototype
             | Builtin::IntlDateTimeFormatPrototype
@@ -177,13 +198,6 @@ pub fn is_prototype(builtin: Builtin) -> bool {
             | Builtin::IntlRelativeTimeFormatPrototype
             | Builtin::IntlSegmenterPrototype
             | Builtin::IntlDisplayNamesPrototype
-            | Builtin::MapPrototype
-            | Builtin::SetPrototype
-            | Builtin::WeakMapPrototype
-            | Builtin::WeakSetPrototype
-            | Builtin::WeakRefPrototype
-            | Builtin::ErrorPrototype
-            | Builtin::PromisePrototype
     )
 }
 
