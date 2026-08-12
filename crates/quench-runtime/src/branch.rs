@@ -16,6 +16,9 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<Completion,
     } else {
         else_ops
     };
+    let Some(selected) = selected.ops() else {
+        return Err(VmError::MissingReturn);
+    };
     crate::execute::execute_completion_in_place(selected, registers)
 }
 

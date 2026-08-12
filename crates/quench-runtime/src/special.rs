@@ -134,8 +134,8 @@ fn reduce_guarded_computed_chain(
     else_ops.push(Op::OptionalGetDynamic { dst, object, key });
     ops.push(Op::Branch {
         condition,
-        then_ops: std::mem::take(&mut then_ops),
-        else_ops,
+        then_ops: crate::machine::FunctionCode::from_ops(std::mem::take(&mut then_ops)),
+        else_ops: crate::machine::FunctionCode::from_ops(else_ops),
     });
     Some(())
 }
@@ -222,11 +222,11 @@ fn emit_nullish_guard(ops: &mut Vec<Op>, dst: u16, src: u16) {
 fn emit_optional_branch(ops: &mut Vec<Op>, condition: u16, dst: u16, else_ops: Vec<Op>) {
     ops.push(Op::Branch {
         condition,
-        then_ops: vec![Op::Const {
+        then_ops: crate::machine::FunctionCode::from_ops(vec![Op::Const {
             dst,
             value: crate::ops::Constant::Undefined,
-        }],
-        else_ops,
+        }]),
+        else_ops: crate::machine::FunctionCode::from_ops(else_ops),
     });
 }
 
