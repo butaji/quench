@@ -76,7 +76,7 @@ fn is_simple_builtin(builtin: Builtin) -> bool {
             | Builtin::IsNaN
             | Builtin::NumberIsInteger | Builtin::NumberIsSafeInteger
             | Builtin::Number | Builtin::BigInt
-            | Builtin::BigIntAsIntN | Builtin::BigIntAsUintN
+            | Builtin::BigIntAsIntN | Builtin::BigIntAsUintN | Builtin::BigIntToString
             | Builtin::NumberToString | Builtin::NumberValueOf
             | Builtin::BigIntValueOf | Builtin::SymbolValueOf | Builtin::StringValueOf
             | Builtin::BoxedValueOf
@@ -92,7 +92,6 @@ fn is_simple_builtin(builtin: Builtin) -> bool {
             | Builtin::NumberToFixed
             | Builtin::NumberToPrecision
             | Builtin::NumberToExponential
-            | Builtin::ArrayBufferIsView
             | Builtin::Object
             | Builtin::Date
             | Builtin::Error
@@ -123,9 +122,9 @@ fn execute_simple_builtin(
         Builtin::IsNaN => Ok(Value::Boolean(to_number(arguments.first()).is_nan())),
         Builtin::Number => Ok(Value::Number(explicit_number(arguments.first())?)),
         Builtin::BigInt => explicit_bigint(arguments.first()),
-        Builtin::BigIntAsIntN => bigint_as_n(arguments, true),
-        Builtin::BigIntAsUintN => bigint_as_n(arguments, false),
-        Builtin::ArrayBufferIsView => Ok(Value::Boolean(is_array_buffer_view(arguments.first()))),
+        Builtin::BigIntAsIntN | Builtin::BigIntAsUintN =>
+            bigint_as_n(arguments, builtin == Builtin::BigIntAsIntN),
+        Builtin::BigIntToString => bigint_to_string(receiver, arguments),
         Builtin::NumberToString => Ok(Value::String(to_string(arguments.first()))),
         Builtin::NumberValueOf => number_value_of(receiver),
         Builtin::BigIntValueOf => bigint_value_of(receiver),
@@ -222,23 +221,6 @@ fn is_error_constructor(builtin: Builtin) -> bool {
             | Builtin::URIError
             | Builtin::AggregateError
             | Builtin::TypeError
-    )
-}
-fn is_array_buffer_view(value: Option<&Value>) -> bool {
-    matches!(
-        value,
-        Some(
-            Value::Float64Array(_)
-                | Value::Float32Array(_)
-                | Value::Int8Array(_)
-                | Value::Int16Array(_)
-                | Value::Uint16Array(_)
-                | Value::Int32Array(_)
-                | Value::Uint8Array(_)
-                | Value::Uint32Array(_)
-                | Value::Uint8ClampedArray(_)
-                | Value::DataView(_),
-        )
     )
 }
 fn is_data_view_builtin(builtin: Builtin) -> bool {
