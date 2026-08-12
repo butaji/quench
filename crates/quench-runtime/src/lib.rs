@@ -21,7 +21,7 @@ mod builtin_meta;
 pub mod builtins;
 mod classes;
 mod collections;
-mod completion;
+pub mod completion;
 mod conditional;
 mod construct;
 mod continuation;
