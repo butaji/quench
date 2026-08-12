@@ -86,7 +86,7 @@ fn resume_after_try(
     if !matches!(completion, crate::completion::Completion::Normal) { return Ok(completion); }
     let start = range.start.saturating_sub(generator.function.code.range.start) as usize;
     let step = crate::vm::execute_generator_step(generator.function.ops(), &mut registers_mut(generator), state.environment.clone(), start, completion)?;
-    state.pc = step.pc;
+    set_machine_pc(generator, step.pc);
     state.suspension = step.suspension;
     Ok(step.completion)
 }

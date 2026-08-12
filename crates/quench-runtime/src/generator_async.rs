@@ -6,7 +6,7 @@ fn yielded_result(
     let op = generator
         .function
         .ops()
-        .get(state.pc)
+        .get(machine_pc(generator))
         .or_else(|| suspended_try(generator, state).map(|(_, yield_op, _)| yield_op));
     if generator.function.is_async {
         let value = match op {

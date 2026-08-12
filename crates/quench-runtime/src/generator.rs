@@ -28,7 +28,7 @@ pub(crate) fn create(
     receiver: &Value,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
-    let (state, registers) = initialize_parameters(function, receiver, arguments)?;
+    let (state, registers, pc) = initialize_parameters(function, receiver, arguments)?;
     let deferred_arguments = if state.is_none() {
         arguments.to_vec()
     } else {
@@ -41,6 +41,7 @@ pub(crate) fn create(
         register_count,
     );
     machine.registers.values = registers;
+    machine.pc = pc;
     Ok(Value::Generator(Rc::new(GeneratorData {
         function: Rc::clone(function),
         machine: RefCell::new(machine),
@@ -56,13 +57,13 @@ fn initialize_parameters(
     function: &Rc<crate::value::FunctionValue>,
     receiver: &Value,
     arguments: &[Value],
-) -> Result<(Option<GeneratorState>, Vec<Value>), VmError> {
+) -> Result<(Option<GeneratorState>, Vec<Value>, u32), VmError> {
     let Some(marker) = function
         .ops()
         .iter()
         .position(|op| matches!(op, Op::ParameterEnd))
     else {
-        return Ok((None, Vec::new()));
+        return Ok((None, Vec::new(), 0));
     };
     let (mut registers, environment) =
         crate::functions::build_registers(function, receiver, arguments);
@@ -82,12 +83,12 @@ fn initialize_parameters(
     Ok((
         Some(GeneratorState {
             environment,
-            pc: marker.saturating_add(1),
             nested: 0,
             private_environment: None,
             suspension: None,
         }),
         registers,
+        marker.saturating_add(1) as u32,
     ))
 }
 
@@ -101,6 +102,14 @@ fn registers_mut(generator: &GeneratorData) -> RefMut<'_, Vec<Value>> {
     RefMut::map(generator.machine.borrow_mut(), |machine| {
         &mut machine.registers.values
     })
+}
+
+fn machine_pc(generator: &GeneratorData) -> usize {
+    generator.machine.borrow().pc as usize
+}
+
+fn set_machine_pc(generator: &GeneratorData, pc: usize) {
+    generator.machine.borrow_mut().pc = pc as u32;
 }
 
 fn require_normal_parameter_completion(
@@ -161,7 +170,7 @@ fn resume(generator: &GeneratorData, resume: Resume) -> Result<Value, VmError> {
         }
     }
     let step = execute_generator_step(generator, &mut state, completion)?;
-    state.pc = step.pc;
+    set_machine_pc(generator, step.pc);
     state.suspension = step.suspension;
     capture_suspended_private_environment(generator, &mut state, &step.completion);
     update_machine_frame(generator, &state)?;
@@ -317,9 +326,9 @@ fn completed_resume(resume: Resume) -> Result<Value, VmError> {
 
 fn suspended_try<'a>(
     generator: &'a GeneratorData,
-    state: &GeneratorState,
+    _state: &GeneratorState,
 ) -> Option<(&'a Op, &'a Op, &'a [Op])> {
-    let index = state.pc.checked_sub(1)?;
+    let index = machine_pc(generator).checked_sub(1)?;
     let op @ Op::Try { body, .. } = generator.function.ops().get(index)? else {
         return None;
     };
@@ -476,9 +485,9 @@ fn initialize_state(generator: &GeneratorData) {
         &generator.arguments,
     );
     generator.machine.borrow_mut().registers.values = registers;
+    generator.machine.borrow_mut().pc = 0;
     *state = Some(GeneratorState {
         environment,
-        pc: 0,
         nested: 0,
         private_environment: None,
         suspension: None,

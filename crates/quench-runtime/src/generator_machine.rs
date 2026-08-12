@@ -12,6 +12,7 @@ fn execute_generator_step(
     machine.pop_await_frame();
     let store = machine.store.clone().ok_or(VmError::MissingReturn)?;
     let ops = store.get(generator.function.code.range).ok_or(VmError::MissingReturn)?;
+    let pc = machine.pc as usize;
     let input = completion;
     let mut generated = None;
     let completion = machine.step(input.clone(), |registers| {
@@ -19,7 +20,7 @@ fn execute_generator_step(
             ops,
             registers,
             state.environment.clone(),
-            state.pc,
+            pc,
             input,
         )?;
         let completion = step.completion.clone();
@@ -55,8 +56,8 @@ fn ensure_control_frame(generator: &GeneratorData, state: &GeneratorState) -> Re
             phase: 0,
             body: crate::machine::CodeRange {
                 code: generator.function.code_id(),
-                start: state.pc.saturating_sub(1) as u32,
-                end: state.pc as u32,
+                start: machine_pc(generator).saturating_sub(1) as u32,
+                end: machine_pc(generator) as u32,
             },
         },
     )
@@ -64,7 +65,7 @@ fn ensure_control_frame(generator: &GeneratorData, state: &GeneratorState) -> Re
 
 fn update_await_frame(
     generator: &GeneratorData,
-    state: &GeneratorState,
+    _state: &GeneratorState,
     completion: &crate::completion::Completion,
 ) -> Result<(), VmError> {
     if !matches!(completion, crate::completion::Completion::Suspend(_)) {
@@ -76,8 +77,8 @@ fn update_await_frame(
             phase: 0,
             resume: crate::machine::CodeRange {
                 code: generator.function.code_id(),
-                start: state.pc as u32,
-                end: state.pc as u32 + 1,
+                start: machine_pc(generator) as u32,
+                end: machine_pc(generator) as u32 + 1,
             },
         },
     )
@@ -95,14 +96,14 @@ fn push_iterator_frame(generator: &GeneratorData, state: &GeneratorState) -> Res
         return Ok(());
     };
     let Some(Op::IteratorBinding { iterator: binding, body, close_normal }) =
-        generator.function.ops().get(state.pc.wrapping_sub(1))
+        generator.function.ops().get(machine_pc(generator).wrapping_sub(1))
     else {
         return Ok(());
     };
     let iterator = crate::execute::read_register(&registers(generator), *binding)?;
     let resume = crate::machine::CodeRange {
         code: generator.function.code_id(),
-        start: generator.function.code.range.start.saturating_add(state.pc as u32),
+        start: generator.function.code.range.start.saturating_add(machine_pc(generator) as u32),
         end: generator.function.code.range.end,
     };
     try_push_frame(
@@ -129,7 +130,7 @@ fn push_branch_frame(generator: &GeneratorData, state: &GeneratorState) -> Resul
         return Ok(());
     }
     let Some(Op::Conditional { dst, condition, consequent, alternate }) =
-        generator.function.ops().get(state.pc.wrapping_sub(1))
+        generator.function.ops().get(machine_pc(generator).wrapping_sub(1))
     else {
         return Ok(());
     };
@@ -181,7 +182,7 @@ fn push_private_frame(generator: &GeneratorData, state: &GeneratorState) -> Resu
     if generator.machine.borrow().frame_count() != 0 { return Ok(()); }
     let Some((_, body_ops, index)) = suspended_private_scope(generator, state) else { return Ok(()); };
     let Some(Op::Yield { src }) = body_ops.get(index) else { return Ok(()); };
-    let Some(Op::PrivateScope { body, .. }) = generator.function.ops().get(state.pc.wrapping_sub(1)) else { return Ok(()); };
+    let Some(Op::PrivateScope { body, .. }) = generator.function.ops().get(machine_pc(generator).wrapping_sub(1)) else { return Ok(()); };
     let Some(environment) = state.private_environment.clone() else { return Ok(()); };
     let body_resume = crate::machine::CodeRange { code: body.range.code, start: body.range.start.saturating_add(index as u32 + 1), end: body.range.end };
     try_push_frame(&mut generator.machine.borrow_mut(), crate::machine::Frame::Private {
@@ -220,10 +221,10 @@ fn advance_frame_after_yield(
         .ok_or(VmError::MissingReturn)
 }
 
-fn parent_resume_range(generator: &GeneratorData, state: &GeneratorState) -> crate::machine::CodeRange {
+fn parent_resume_range(generator: &GeneratorData, _state: &GeneratorState) -> crate::machine::CodeRange {
     crate::machine::CodeRange {
         code: generator.function.code_id(),
-        start: generator.function.code.range.start.saturating_add(state.pc as u32),
+        start: generator.function.code.range.start.saturating_add(machine_pc(generator) as u32),
         end: generator.function.code.range.end,
     }
 }

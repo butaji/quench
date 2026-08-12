@@ -52,7 +52,7 @@ fn resume_after_branch(
         start,
         crate::completion::Completion::Normal,
     )?;
-    state.pc = step.pc;
+    set_machine_pc(generator, step.pc);
     state.suspension = step.suspension;
     Ok(step.completion)
 }
