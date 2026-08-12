@@ -9,6 +9,7 @@ use std::slice;
 pub(crate) fn proxy_new(arguments: &[Value]) -> Result<Value, VmError> {
     let target = arguments.first().ok_or(VmError::NotCallable)?;
     let handler = arguments.get(1).ok_or(VmError::NotCallable)?;
+    validate_proxy_arguments(target, handler)?;
     let revoked = Rc::new(std::cell::RefCell::new(false));
     Ok(Value::Proxy(Rc::new(ProxyValue {
         target: target.clone(),
@@ -19,6 +20,7 @@ pub(crate) fn proxy_new(arguments: &[Value]) -> Result<Value, VmError> {
 pub(crate) fn proxy_revocable(arguments: &[Value]) -> Result<Value, VmError> {
     let target = arguments.first().ok_or(VmError::NotCallable)?;
     let handler = arguments.get(1).ok_or(VmError::NotCallable)?;
+    validate_proxy_arguments(target, handler)?;
     let revoked = Rc::new(std::cell::RefCell::new(false));
     let proxy = Value::Proxy(Rc::new(ProxyValue {
         target: target.clone(),
@@ -30,6 +32,15 @@ pub(crate) fn proxy_revocable(arguments: &[Value]) -> Result<Value, VmError> {
         ("proxy".to_string(), proxy),
         ("revoke".to_string(), revoke),
     ]))))
+}
+
+fn validate_proxy_arguments(target: &Value, handler: &Value) -> Result<(), VmError> {
+    if !crate::value::is_object(target) || !crate::value::is_object(handler) {
+        return Err(crate::value::error::throw_type_error(
+            "Proxy target and handler must be objects",
+        ));
+    }
+    Ok(())
 }
 
 fn create_revoke_function(proxy: Value) -> Value {
