@@ -250,6 +250,11 @@ path unless a sound guard preserves their behavior.
 test262 metadata, exact harness composition, and host classification; it may
 never override harness behavior.
 
+This boundary is mechanically checked by `tools/check-boundaries.sh`, which is
+also part of `tools/lint-rust.sh`. The runtime source and manifest must contain
+no test262, harness, staging, or conformance references and must not depend on
+the runner crate. The runner may depend on the runtime, never the reverse.
+
 ## Test262 domain strategy
 
 Test262 covers ECMA-262, ECMA-402, and JSON, and its repository is organized

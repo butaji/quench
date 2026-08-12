@@ -237,6 +237,9 @@ The following are hard physical gates:
 - Never specialize through observable JavaScript behavior.
 - Keep `quench-runtime` unaware of test262 and keep harness fidelity entirely in
   `quench-test262`.
+- Enforce that ownership boundary in tooling: `tools/check-boundaries.sh` must
+  fail if runtime source or dependencies mention test262, harnesses, staging,
+  conformance policy, or the runner crate.
 - Preserve zero warnings, 500-line files, 40-line functions, and cognitive
   complexity ≤ 10 for every Rust change.
 

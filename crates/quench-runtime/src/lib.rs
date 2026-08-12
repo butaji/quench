@@ -7,6 +7,10 @@
 //!
 //! `source -> OXC -> ProgramDb facts -> partial evaluator -> residual Ops -> VM`
 //!
+//! This crate is a pure JavaScript runtime. External runners provide source
+//! text and consume execution results through the public contract; runner
+//! policy and source fixtures do not belong here.
+//!
 //! The first implementation should establish the semantic kernel and the
 //! compact representations (`Value`, `HeapRef`, `Shape`, `Frame`, `Code`,
 //! `Fact`, and `Continuation`) before adding breadth.

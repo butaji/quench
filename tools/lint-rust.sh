@@ -4,6 +4,8 @@ set -euo pipefail
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root_dir"
 
+tools/check-boundaries.sh
+
 fail=0
 while IFS= read -r file; do
     lines=$(wc -l < "$file")

@@ -23,11 +23,11 @@ pub fn reduce_script_sources(sources: &[ScriptSource<'_>]) -> Result<ResidualPro
     reduce_units(&units)
 }
 
-pub fn reduce_module_with_harness(
-    harness: &[&str],
+pub fn reduce_module_sequence(
+    prefix_scripts: &[&str],
     source: &str,
 ) -> Result<ResidualProgram, Vec<String>> {
-    let mut units = harness
+    let mut units = prefix_scripts
         .iter()
         .map(|source| SourceUnit {
             source,
