@@ -25,7 +25,7 @@ include!("reduce_eval_entry.rs");
 #[derive(Debug, PartialEq)]
 pub struct ResidualProgram {
     pub facts: ProgramDb,
-    code: crate::machine::FunctionCode,
+    code: crate::machine::ExecutableCode,
     pub module_metadata: Option<crate::reduce::ModuleMetadata>,
     pub local_slots: HashMap<String, u16>,
 }
@@ -39,14 +39,14 @@ impl ResidualProgram {
     ) -> Self {
         Self {
             facts,
-            code: crate::machine::FunctionCode::from_ops(ops),
+            code: crate::machine::ExecutableCode::from_ops(ops),
             module_metadata,
             local_slots,
         }
     }
 
     pub fn ops(&self) -> &[Op] {
-        self.code.ops().unwrap_or(&[])
+        self.code.ops()
     }
 }
 pub fn reduce_source(source: &str) -> Result<ResidualProgram, Vec<String>> {
