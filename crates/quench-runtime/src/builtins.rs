@@ -85,6 +85,7 @@ pub(crate) fn builtin_name(builtin: Builtin) -> &'static str {
 }
 
 include!("builtins_escape.rs");
+include!("builtins_uri.rs");
 
 pub(crate) fn array(arguments: &[Value]) -> Value {
     if let [Value::Number(length)] = arguments {
