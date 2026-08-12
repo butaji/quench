@@ -30,6 +30,7 @@ fn resume_iterator_frame(
     let body = store.get(frame.body_resume).ok_or(VmError::MissingReturn)?;
     let completion = crate::execute::execute_completion_in_place(body, &mut state.registers)?;
     if completion.is_suspension() {
+        advance_frame_after_yield(generator, frame.body_resume)?;
         set_iterator_phase(generator, crate::machine::IteratorPhase::Body);
         return Ok(Some(completion));
     }
