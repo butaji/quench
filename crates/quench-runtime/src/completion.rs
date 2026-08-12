@@ -20,3 +20,9 @@ pub(crate) enum Completion {
     Suspend(Rc<PromiseData>),
     Yield(Value),
 }
+
+impl Completion {
+    pub(crate) fn is_suspension(&self) -> bool {
+        matches!(self, Self::Suspend(_) | Self::Yield(_))
+    }
+}

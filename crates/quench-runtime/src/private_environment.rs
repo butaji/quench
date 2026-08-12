@@ -79,7 +79,7 @@ pub(crate) fn execute_scope(
     };
     let _scope = Guard::install(names);
     let completion = crate::execute::execute_completion_in_place(body, registers)?;
-    if matches!(completion, Completion::Yield(_)) {
+    if completion.is_suspension() {
         SUSPENDED.with(|slot| *slot.borrow_mut() = Some(current()));
     }
     Ok(completion)
