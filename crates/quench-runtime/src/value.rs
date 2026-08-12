@@ -228,6 +228,7 @@ pub enum IteratorState {
 #[derive(Debug, PartialEq)]
 pub struct GeneratorData {
     pub function: Rc<FunctionValue>,
+    pub machine: RefCell<crate::machine::Machine>,
     pub receiver: Value,
     pub arguments: Vec<Value>,
     pub done: RefCell<bool>,
@@ -485,7 +486,6 @@ pub struct BoundFunctionValue {
     pub receiver: Value,
     pub arguments: Vec<Value>,
 }
-
 impl From<&Constant> for Value {
     fn from(value: &Constant) -> Self {
         match value {
