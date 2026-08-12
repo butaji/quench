@@ -4,6 +4,28 @@ This is an implementation backlog, not a status ledger. Do not add pass
 counts, stage totals, completion percentages, or skip lists here. Verify work
 with the relevant commands and test262 runs at execution time.
 
+## Machine-first acceptance contract
+
+Every implementation item below is incomplete until it satisfies all of these
+constraints:
+
+- the hot path uses compact integers, offsets, IDs, and packed storage;
+- no avoidable `String`, `Vec`, `Rc`, `RefCell`, or descriptor allocation occurs
+  per ordinary property access, call, arithmetic operation, or loop iteration;
+- repeated mechanics have one declaration and generated consequences;
+- generic semantics remain the sole fallback for `Unknown` facts and observable
+  behavior;
+- a benchmark records cycles/op, branch misses, allocations, live bytes, and
+  peak RSS before and after the change;
+- `cargo fmt`, workspace clippy, workspace tests, and the Rust size/complexity
+  lint pass;
+- no JIT, native execution mode, alternate IR, shadow AST, or benchmark-only
+  behavior is introduced.
+
+The implementation order is a dependency order, not a menu. Do not add caches,
+superinstructions, or other dispatch tricks to the prototype representation;
+first make the representation compact and flat.
+
 ## 1. Canonical semantics and completions
 
 - Give property access, descriptors, conversion, equality, calls,
@@ -24,8 +46,9 @@ with the relevant commands and test262 runs at execution time.
   tables; never use an immortal global string interner.
 - Replace copied closure captures with shared indexed environments and explicit
   capture/update rules.
-- Start with centralized ownership, explicit roots, generated tracing, and the
-  simplest correct collector. Add generations or movement only from evidence.
+- Start with centralized ownership, explicit roots, generated tracing, and one
+  compact non-moving collector. Add generations or movement only after a
+  recorded RSS/throughput experiment proves the need.
 
 ## 3. Flat code and compact execution state
 
@@ -62,12 +85,12 @@ with the relevant commands and test262 runs at execution time.
 
 - Add monomorphic property, call, arithmetic, and iterator guards as generated
   `guard -> typed fast kernel -> canonical fallback` paths.
-- Keep site caches fixed and small; bounded polymorphism may use a shared table,
+- Keep site caches fixed and small; bounded polymorphism uses a shared table,
   while megamorphic sites collapse directly to generic behavior.
-- Fuse only measured frequent sequences under binary-text and RSS budgets.
-- Add a baseline compiler only after profiling proves dispatch dominates. It
-  consumes exact residual Ops, has a capped reclaimable code cache, and owns no
-  alternate semantics or IR.
+- Fuse only measured frequent sequences into interpreter superinstructions under
+  binary-text and RSS budgets.
+- Do not add a JIT, native lowering, native code cache, or alternate execution
+  backend in this scope. The compact interpreter is the only execution engine.
 
 ## 7. Memory and RSS verification
 
@@ -77,10 +100,10 @@ with the relevant commands and test262 runs at execution time.
 - Make heap references, slots, arrays, captures, shapes, and snapshots compact
   and relocatable.
 - Measure startup, one-shot, warm interpreter, hot loops, dynamic object work,
-  allocation volume, retained bytes, peak RSS, binary text, static data, cache
-  memory, native-code memory, generated LOC, and handwritten LOC independently.
-- Support interpreter-only, balanced, and throughput policies without changing
-  residual Ops or semantic ownership.
+  allocation volume, retained bytes, peak RSS, binary text, static data,
+  generated LOC, and handwritten LOC independently.
+- Keep one interpreter policy and one residual Op vocabulary; do not multiply
+  execution modes while the representation is being rebuilt.
 
 ## 8. Engineering constraints
 

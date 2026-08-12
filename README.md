@@ -22,8 +22,7 @@ Semantics are combinators. The VM exists only for uncertainty.**
 12. No subsystem gets an independent universe without semantic need.
 13. Types are facts, not another runtime.
 14. Profiles are facts, not another optimizer.
-15. Optional native execution is disposable and consumes the exact same
-    residual operations.
+15. This phase has one execution engine: the compact residual interpreter.
 16. Work that can disappear before runtime must justify remaining.
 17. Complete semantics precede specialization; unknown behavior stays cheap.
 18. Ordinary calls use compact stack frames; continuations exist only for
@@ -40,10 +39,10 @@ canonical semantics and completions
   -> generated mechanical declarations
   -> bounded guarded Ops
   -> measured interpreter fusion
-  -> optional disposable baseline-native execution
 ```
 
-The performance claim is workload-specific rather than universal: target
-V8-class execution where reduction, compact storage, or bounded specialization
-provides a structural advantage, while keeping cold start and RSS dramatically
-smaller. Full conformance always uses the same complete semantic path.
+The performance target is concrete rather than rhetorical: minimize executed
+residual instructions, memory traffic, allocation count, and peak RSS on the
+declared benchmark workloads. Full conformance and fast execution always use
+the same complete semantic path; no benchmark-only semantics or shortcuts are
+permitted.
