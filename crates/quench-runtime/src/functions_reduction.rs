@@ -371,7 +371,22 @@ pub(super) fn make(
     let mut arena = crate::machine::CodeArena::new();
     let range = arena.append_slice(body);
     let code = crate::machine::FunctionCode::new(arena.freeze(), range);
-    let value = crate::value::Value::Function(std::rc::Rc::new(crate::value::FunctionValue {
+    let value = make_function_value(code, params, captures, length, metadata);
+    attach_lexical_super(&value, metadata.kind);
+    if has_prototype {
+        attach_prototype(&value);
+    }
+    value
+}
+
+fn make_function_value(
+    code: crate::machine::FunctionCode,
+    params: u16,
+    captures: std::rc::Rc<crate::environment::Environment>,
+    length: u16,
+    metadata: FunctionMetadata,
+) -> crate::value::Value {
+    crate::value::Value::Function(std::rc::Rc::new(crate::value::FunctionValue {
         code,
         params,
         captures,
@@ -384,29 +399,35 @@ pub(super) fn make(
         strictness: metadata.strictness,
         is_async: metadata.is_async,
         mapped_arguments: metadata.mapped_arguments,
-    }));
-    if matches!(metadata.kind, FunctionKind::Arrow) {
-        if let Some((home, receiver, lexical_function)) = crate::super_scope::capture_lexical() {
-            if let crate::value::Value::Function(function) = &value {
-                let mut properties = function.properties.borrow_mut();
-                properties.push(("\0home_object".to_string(), home));
-                properties.push(("\0super_receiver".to_string(), receiver));
-                properties.push(("\0super_function".to_string(), lexical_function));
-            }
-        }
+    }))
+}
+
+fn attach_lexical_super(value: &crate::value::Value, kind: FunctionKind) {
+    if !matches!(kind, FunctionKind::Arrow) {
+        return;
     }
-    if has_prototype {
-        let prototype = crate::value::Value::Object(std::rc::Rc::new(
-            crate::value::ObjectData::new(vec![("constructor".to_string(), value.clone())]),
-        ));
-        if let crate::value::Value::Function(ref function) = value {
-            function
-                .properties
-                .borrow_mut()
-                .push(("prototype".to_string(), prototype));
-        }
+    let Some((home, receiver, lexical_function)) = crate::super_scope::capture_lexical() else {
+        return;
+    };
+    let crate::value::Value::Function(function) = value else {
+        return;
+    };
+    let mut properties = function.properties.borrow_mut();
+    properties.push(("\0home_object".to_string(), home));
+    properties.push(("\0super_receiver".to_string(), receiver));
+    properties.push(("\0super_function".to_string(), lexical_function));
+}
+
+fn attach_prototype(value: &crate::value::Value) {
+    let prototype = crate::value::Value::Object(std::rc::Rc::new(
+        crate::value::ObjectData::new(vec![("constructor".to_string(), value.clone())]),
+    ));
+    if let crate::value::Value::Function(function) = value {
+        function
+            .properties
+            .borrow_mut()
+            .push(("prototype".to_string(), prototype));
     }
-    value
 }
 
 pub(crate) fn write(
