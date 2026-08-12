@@ -65,6 +65,7 @@ fn array_iterator_builtin(builtin: crate::ops::Builtin, receiver: Option<&Value>
 }
 
 include!("arrays_mutation.rs");
+include!("arrays_typed_static.rs");
 include!("arrays_from.rs");
 
 fn splice(receiver: Option<&Value>, arguments: &[Value]) -> Value {

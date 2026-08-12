@@ -1,12 +1,12 @@
-fn from(
+pub(crate) fn from(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     let source = arguments.first().cloned().unwrap_or(Value::Undefined);
     reject_source(&source)?;
     let mapper = mapper(arguments)?;
-    let iterable = !matches!(source, Value::ArrayBuffer(_) | Value::DataView(_))
-        && has_iterator(&source)?;
+    let iterable =
+        !matches!(source, Value::ArrayBuffer(_) | Value::DataView(_)) && has_iterator(&source)?;
     if iterable {
         if is_default_array_iterator(&source)? {
             return from_live_array(receiver, source, mapper.as_ref(), arguments);
@@ -23,13 +23,11 @@ fn from(
 }
 
 fn is_default_array_iterator(source: &Value) -> Result<bool, crate::execute::VmError> {
-    Ok(matches!(
-        source,
-        Value::Array(_)
-    ) && matches!(
-        crate::execute::get_property_result(source, "Symbol.iterator")?,
-        Value::Builtin(crate::ops::Builtin::ArrayIterator)
-    ))
+    Ok(matches!(source, Value::Array(_))
+        && matches!(
+            crate::execute::get_property_result(source, "Symbol.iterator")?,
+            Value::Builtin(crate::ops::Builtin::ArrayIterator)
+        ))
 }
 
 fn from_live_array(
@@ -55,11 +53,8 @@ fn from_live_array(
         result = write_result_element(result, index, value)?;
         index += 1;
     }
-    let updated = crate::properties::assign_set_property(
-        &result,
-        "length",
-        Value::Number(index as f64),
-    )?;
+    let updated =
+        crate::properties::assign_set_property(&result, "length", Value::Number(index as f64))?;
     Ok(updated)
 }
 
@@ -79,11 +74,8 @@ fn from_iterable(
         index += 1;
         Ok(())
     })?;
-    let updated = crate::properties::assign_set_property(
-        &result,
-        "length",
-        Value::Number(index as f64),
-    )?;
+    let updated =
+        crate::properties::assign_set_property(&result, "length", Value::Number(index as f64))?;
     crate::locals::replace_value(&result, &updated);
     Ok(updated)
 }
@@ -179,11 +171,8 @@ fn create_result(
     for (index, value) in values.into_iter().enumerate() {
         result = write_result_element(result, index, value)?;
     }
-    result = crate::properties::assign_set_property(
-        &result,
-        "length",
-        Value::Number(length as f64),
-    )?;
+    result =
+        crate::properties::assign_set_property(&result, "length", Value::Number(length as f64))?;
     Ok(result)
 }
 
@@ -193,10 +182,8 @@ fn write_result_element(
     value: Value,
 ) -> Result<Value, crate::execute::VmError> {
     let key = index.to_string();
-    let current = crate::builtins::object::descriptor(
-        Some(&result),
-        Some(&Value::String(key.clone())),
-    )?;
+    let current =
+        crate::builtins::object::descriptor(Some(&result), Some(&Value::String(key.clone())))?;
     if !crate::properties::object_is_extensible(&result) && matches!(current, Value::Undefined) {
         return Err(crate::value::error::throw_type_error(
             "Cannot create property on a non-extensible object",
