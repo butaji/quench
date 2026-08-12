@@ -38,23 +38,25 @@ pub(crate) fn reduce_eval_source_in_context(
         super::reduce_eval::directive_completion(&parsed.program, inherited_strict);
     let mut facts = eval_facts(&analysis, strict);
     facts.install_fact_sites(analysis.fact_sites);
-    let (locals, next_slot, mut prefix, behavior, deletable) =
-        crate::reduce_support::eval_bindings(&parsed.program, bindings, strict, global);
+    let binding_state = crate::reduce_support::eval_bindings(&parsed.program, bindings, strict, global);
+    let (locals, next_slot, mut prefix, behavior, deletable) = binding_state;
     facts.eval_deletable = deletable;
-    let mut ops = reduce_statements_opt(
-        &parsed.program.body,
-        &mut facts,
-        locals,
-        next_slot,
-        StatementsOptions {
-            tail: true,
-            eval_behavior: behavior,
-            directive_completion,
-        },
-    )?;
+    let mut ops = reduce_eval_body(&parsed.program.body, &mut facts, locals, next_slot, behavior, directive_completion)?;
     prefix.append(&mut ops);
     facts.finish_reduction();
-    Ok(ResidualProgram { facts, ops: prefix, module_metadata: None, local_slots: std::collections::HashMap::new() })
+    Ok(ResidualProgram::new(
+        facts,
+        prefix,
+        None,
+        std::collections::HashMap::new(),
+    ))
+}
+
+fn reduce_eval_body(
+    statements: &[oxc::ast::ast::Statement<'_>], facts: &mut ProgramDb, locals: HashMap<String, u16>,
+    next_slot: u16, behavior: crate::reduce_support::EvalBehavior, directive_completion: Option<String>,
+) -> Result<Vec<crate::ops::Op>, Vec<String>> {
+    reduce_statements_opt(statements, facts, locals, next_slot, StatementsOptions { tail: true, eval_behavior: behavior, directive_completion })
 }
 
 fn eval_facts(analysis: &crate::semantic::Analysis, strict: bool) -> ProgramDb {

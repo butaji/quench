@@ -25,9 +25,29 @@ include!("reduce_eval_entry.rs");
 #[derive(Debug, PartialEq)]
 pub struct ResidualProgram {
     pub facts: ProgramDb,
-    pub ops: Vec<Op>,
+    code: crate::machine::FunctionCode,
     pub module_metadata: Option<crate::reduce::ModuleMetadata>,
     pub local_slots: HashMap<String, u16>,
+}
+
+impl ResidualProgram {
+    pub(crate) fn new(
+        facts: ProgramDb,
+        ops: Vec<Op>,
+        module_metadata: Option<crate::reduce::ModuleMetadata>,
+        local_slots: HashMap<String, u16>,
+    ) -> Self {
+        Self {
+            facts,
+            code: crate::machine::FunctionCode::from_ops(ops),
+            module_metadata,
+            local_slots,
+        }
+    }
+
+    pub fn ops(&self) -> &[Op] {
+        self.code.ops().unwrap_or(&[])
+    }
 }
 pub fn reduce_source(source: &str) -> Result<ResidualProgram, Vec<String>> {
     reduce_source_with_type(source, SourceType::cjs())
@@ -65,12 +85,12 @@ fn reduce_source_with_type_and_global(
         reduce_program(&parsed.program, source_type, global)?;
     facts.scope_count = scope_count;
     facts.symbol_count = symbol_count;
-    Ok(ResidualProgram {
+    Ok(ResidualProgram::new(
         facts,
         ops,
         module_metadata,
         local_slots,
-    })
+    ))
 }
 
 fn reduce_program(

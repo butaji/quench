@@ -369,9 +369,7 @@ pub(super) fn make(
     metadata: FunctionMetadata,
 ) -> crate::value::Value {
     let has_prototype = matches!(metadata.kind, FunctionKind::Ordinary | FunctionKind::Generator);
-    let mut arena = crate::machine::CodeArena::new();
-    let range = arena.append_slice(body);
-    let code = crate::machine::FunctionCode::new(arena.freeze(), range);
+    let code = crate::machine::FunctionCode::from_ops(body.to_vec());
     let value = make_function_value(code, params, captures, length, metadata);
     attach_lexical_super(&value, metadata.kind);
     if has_prototype {
