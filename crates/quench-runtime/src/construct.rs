@@ -490,11 +490,3 @@ fn is_default_derived_constructor(function: &crate::value::FunctionValue) -> boo
         .iter()
         .any(|(name, _)| name == "\0default_derived_constructor")
 }
-
-fn constructor_receiver(target: &Value) -> Value {
-    let prototype = crate::execute::get_property(target, "prototype");
-    Value::Object(std::rc::Rc::new(ObjectData::new(vec![(
-        "\0prototype".to_string(),
-        prototype,
-    )])))
-}
