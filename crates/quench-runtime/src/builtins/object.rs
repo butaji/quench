@@ -362,6 +362,11 @@ fn array_descriptor(values: &crate::value::ArrayData, key: &str) -> Option<Value
         .ok()
         .and_then(|index| values.get_index(index))
         .map(|value| descriptor_object(&value))
+        .or_else(|| {
+            values
+                .property(key)
+                .map(|value| descriptor_object_with_flags(value, true, true, true))
+        })
 }
 fn refresh_array_descriptor(
     values: &crate::value::ArrayData,
