@@ -105,6 +105,11 @@ fn push_iterator_frame(generator: &GeneratorData, state: &GeneratorState) -> Res
         return Ok(());
     };
     let iterator = crate::execute::read_register(&state.registers, *binding)?;
+    let resume = crate::machine::CodeRange {
+        code: generator.function.code_id(),
+        start: generator.function.code.range.start.saturating_add(state.pc as u32),
+        end: generator.function.code.range.end,
+    };
     try_push_frame(
         &mut generator.machine.borrow_mut(),
         crate::machine::Frame::Iterator {
@@ -112,6 +117,7 @@ fn push_iterator_frame(generator: &GeneratorData, state: &GeneratorState) -> Res
             iterator,
             binding: *binding,
             body: body.range,
+            resume,
         },
     )
 }
