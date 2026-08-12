@@ -1,21 +1,22 @@
 struct IteratorFrameResume {
     iterator: Value,
     body_resume: crate::machine::CodeRange,
+    resume: crate::machine::CodeRange,
     yield_dst: u16,
     close_normal: bool,
 }
 
 fn iterator_frame_resume(generator: &GeneratorData) -> Option<IteratorFrameResume> {
     let frame = generator.machine.borrow().frames.frames.last()?.clone();
-    let crate::machine::Frame::Iterator { iterator, body_resume, yield_dst, close_normal, .. } = frame else {
+    let crate::machine::Frame::Iterator { iterator, body_resume, resume, yield_dst, close_normal, .. } = frame else {
         return None;
     };
-    Some(IteratorFrameResume { iterator, body_resume, yield_dst, close_normal })
+    Some(IteratorFrameResume { iterator, body_resume, resume, yield_dst, close_normal })
 }
 
 fn resume_iterator_frame(
     generator: &GeneratorData,
-    _state: &mut GeneratorState,
+    state: &mut GeneratorState,
     resume: crate::completion::Completion,
 ) -> Result<Option<crate::completion::Completion>, VmError> {
     let Some(frame) = iterator_frame_resume(generator) else {
@@ -23,7 +24,7 @@ fn resume_iterator_frame(
     };
     if !matches!(resume, crate::completion::Completion::Normal) {
         set_iterator_phase(generator, crate::machine::IteratorPhase::Close);
-        return close_iterator_frame(&frame, resume).map(Some);
+        return finish_iterator_frame(generator, state, &frame, resume).map(Some);
     }
     set_iterator_phase(generator, crate::machine::IteratorPhase::Continue);
     let store = generator.machine.borrow().store.clone().ok_or(VmError::MissingReturn)?;
@@ -37,7 +38,36 @@ fn resume_iterator_frame(
         return Ok(Some(completion));
     }
     set_iterator_phase(generator, crate::machine::IteratorPhase::Close);
-    close_iterator_frame(&frame, completion).map(Some)
+    finish_iterator_frame(generator, state, &frame, completion).map(Some)
+}
+
+fn finish_iterator_frame(
+    generator: &GeneratorData,
+    state: &mut GeneratorState,
+    frame: &IteratorFrameResume,
+    completion: crate::completion::Completion,
+) -> Result<crate::completion::Completion, VmError> {
+    let completion = close_iterator_frame(frame, completion)?;
+    generator.machine.borrow_mut().pop_frame();
+    resume_after_iterator(generator, state, frame.resume, completion)
+}
+
+fn resume_after_iterator(
+    generator: &GeneratorData,
+    state: &mut GeneratorState,
+    range: crate::machine::CodeRange,
+    completion: crate::completion::Completion,
+) -> Result<crate::completion::Completion, VmError> {
+    if !matches!(completion, crate::completion::Completion::Normal) { return Ok(completion); }
+    let start = range.start.saturating_sub(generator.function.code.range.start) as usize;
+    let step = execute_with_generator_registers(generator, |registers| {
+        crate::vm::execute_generator_step(
+            generator.function.ops(), registers, machine_environment(generator)?, start, completion,
+        )
+    })?;
+    set_machine_pc(generator, step.pc);
+    state.suspension = step.suspension;
+    Ok(step.completion)
 }
 
 fn set_iterator_phase(generator: &GeneratorData, phase: crate::machine::IteratorPhase) {
