@@ -179,6 +179,9 @@ fn resume(generator: &GeneratorData, resume: Resume) -> Result<Value, VmError> {
     }
     let completion = resume.completion();
     let direct_suspension = state.suspension.is_some();
+    if direct_yield_abrupt(&state, &completion) {
+        return complete_step(generator, &state, completion);
+    }
     if let Resume::Next(input) = resume {
         install_resume_input(generator, &mut state, input);
     }
@@ -197,6 +200,13 @@ fn resume(generator: &GeneratorData, resume: Resume) -> Result<Value, VmError> {
     let result = complete_step(generator, &state, step.completion);
     generator.state.replace(Some(state));
     result
+}
+
+fn direct_yield_abrupt(state: &GeneratorState, completion: &crate::completion::Completion) -> bool {
+    matches!(
+        state.suspension,
+        Some(crate::continuation::SuspensionPoint::Yield { .. })
+    ) && !matches!(completion, crate::completion::Completion::Normal)
 }
 
 fn current_state(generator: &GeneratorData) -> Result<GeneratorState, VmError> {
