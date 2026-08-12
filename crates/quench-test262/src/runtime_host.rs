@@ -79,6 +79,10 @@ impl LinkedModuleGraph {
         }
         Ok(())
     }
+
+    pub fn export_cell(&self, unit: ModuleId, name: &str) -> Option<ModuleBindingCell> {
+        self.units.get(&unit)?.export_cell(name)
+    }
 }
 
 impl LinkedModule {
@@ -269,4 +273,37 @@ fn host_context() -> &'static VmContext {
             },
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::{LinkedModule, LinkedModuleGraph};
+    use crate::module_graph::ModuleGraph;
+    use quench_runtime::value::Value;
+
+    #[test]
+    fn default_export_cell_observes_module_execution() {
+        let module = LinkedModule::compile("export default true;").expect("module compiles");
+        let cell = module.export_cell("default").expect("default export cell");
+        module.execute().expect("module executes");
+        assert_eq!(cell.get(), Value::Boolean(true));
+    }
+
+    #[test]
+    fn linked_import_reads_the_exporters_live_default_cell() {
+        let mut graph = ModuleGraph::new();
+        let entry = graph.add_entry(
+            PathBuf::from("entry.js"),
+            "import value from './dep.js'; export default value;".to_string(),
+        );
+        graph.add_dependency(PathBuf::from("dep.js"), "export default true;".to_string());
+        let linked = LinkedModuleGraph::compile(&mut graph).expect("graph compiles");
+        linked.execute(&graph, entry).expect("graph executes");
+        let cell = linked
+            .export_cell(entry, "default")
+            .expect("default export");
+        assert_eq!(cell.get(), Value::Boolean(true));
+    }
 }
