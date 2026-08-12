@@ -6,6 +6,24 @@ thread_local! {
     static CURRENT_ENVIRONMENT: RefCell<Option<Rc<Environment>>> = const { RefCell::new(None) };
     static GLOBAL_LEXICAL_ENVIRONMENT: RefCell<Option<Rc<Environment>>> = const { RefCell::new(None) };
     static REPLACEMENTS: RefCell<Vec<(Value, Value)>> = const { RefCell::new(Vec::new()) };
+    static STRICT_EVAL: RefCell<bool> = const { RefCell::new(false) };
+}
+
+pub(crate) struct StrictEvalGuard {
+    previous: bool,
+}
+
+impl StrictEvalGuard {
+    pub(crate) fn install(active: bool) -> Self {
+        let previous = STRICT_EVAL.with(|value| value.replace(active));
+        Self { previous }
+    }
+}
+
+impl Drop for StrictEvalGuard {
+    fn drop(&mut self) {
+        STRICT_EVAL.with(|value| value.replace(self.previous));
+    }
 }
 
 pub(crate) struct EnvironmentGuard {
@@ -194,7 +212,8 @@ fn ensure_initialized(slot: u16, name: &str) -> Result<(), VmError> {
 
 pub(crate) fn alias_name(name: &str, slot: u16) {
     let environment = current();
-    if !environment.alias_caller_name(name, slot) {
+    let strict_eval = STRICT_EVAL.with(|value| *value.borrow());
+    if strict_eval || !environment.alias_caller_name(name, slot) {
         environment.alias_name(name, slot);
     }
 }
