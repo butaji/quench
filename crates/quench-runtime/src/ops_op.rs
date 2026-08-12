@@ -397,7 +397,7 @@ pub enum Op {
     /// Execute a binding pattern and close its iterator with the body's exact completion.
     IteratorBinding {
         iterator: u16,
-        body: Vec<Op>,
+        body: crate::machine::FunctionCode,
         close_normal: bool,
     },
     Loop {

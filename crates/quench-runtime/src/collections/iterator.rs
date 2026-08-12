@@ -44,25 +44,7 @@ pub(crate) fn execute(
     }
     Ok(())
 }
-pub(crate) fn execute_binding(
-    registers: &mut Vec<Value>,
-    op: &crate::ops::Op,
-) -> Result<crate::completion::Completion, crate::execute::VmError> {
-    let crate::ops::Op::IteratorBinding {
-        iterator,
-        body,
-        close_normal,
-    } = op
-    else {
-        return Err(crate::execute::VmError::MissingReturn);
-    };
-    let iterator = read(registers, *iterator)?;
-    let completion = crate::execute::execute_completion_in_place(body, registers)?;
-    if matches!(completion, crate::completion::Completion::Normal) && !close_normal {
-        return Ok(completion);
-    }
-    close(iterator, completion)
-}
+include!("iterator_binding.rs");
 pub(crate) fn close(
     record: Value,
     completion: crate::completion::Completion,
