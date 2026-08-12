@@ -61,7 +61,7 @@ fn execute_try_body(ops: &[Op], registers: &mut Vec<Value>) -> Result<Completion
 
 fn bind_caught(value: Value, catch_slot: Option<u16>, registers: &mut Vec<Value>) {
     if let Some(slot) = catch_slot {
-        let _ = registers;
+        crate::execute::write_value(registers, slot, value.clone());
         crate::locals::write(slot, value);
     }
 }
