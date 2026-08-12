@@ -153,6 +153,9 @@ pub(crate) fn open(value: Value) -> Result<Value, crate::execute::VmError> {
     if !crate::value::is_object(&iterator) {
         return Err(not_iterable());
     }
+    if matches!(iterator, Value::Iterator(_)) {
+        return Ok(iterator);
+    }
     Ok(make_protocol(iterator))
 }
 fn open_self_iterator(iterator: Value) -> Result<Value, crate::execute::VmError> {
@@ -271,17 +274,17 @@ pub fn delegate_next(
             IteratorState::Set { .. } | IteratorState::Map { .. } => {
                 return Ok(DelegationResult::Done(Value::Undefined));
             }
-            IteratorState::Protocol {
-                iterator,
-                next,
-                done,
-            } if !*done => Some((iterator.clone(), next.clone())),
+            IteratorState::Protocol { iterator, done, .. } if !*done => Some(iterator.clone()),
             IteratorState::Protocol { .. } => None,
         }
     };
-    let Some((iterator, next)) = protocol else {
+    let Some(iterator) = protocol else {
         return Ok(DelegationResult::Done(Value::Undefined));
     };
+    let next = crate::execute::get_property_result(&iterator, "next")?;
+    if !crate::conversion::is_callable(&next) {
+        return Err(not_iterable());
+    }
     let result = call_with_arguments(&next, &iterator, std::slice::from_ref(&input))?;
     delegation_result(data, result)
 }
