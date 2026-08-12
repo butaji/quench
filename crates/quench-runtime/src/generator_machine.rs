@@ -8,59 +8,45 @@ fn execute_generator_step(
     );
     let _home = crate::super_scope::Guard::install(&generator.function, &generator.receiver);
     let _with_scope = crate::with_scope::FunctionGuard::isolate();
+    let (store, pc, mut registers) = take_machine_execution(generator)?;
+    let ops = store.get(generator.function.code.range).ok_or(VmError::MissingReturn)?;
+    let result = crate::vm::execute_generator_step(
+        ops, &mut registers, state.environment.clone(), pc, completion,
+    );
+    restore_machine_execution(generator, registers, result)
+}
+
+fn take_machine_execution(
+    generator: &GeneratorData,
+) -> Result<(std::rc::Rc<crate::machine::CodeStore>, usize, Vec<Value>), VmError> {
     let mut machine = generator.machine.borrow_mut();
     machine.pop_await_frame();
     let store = machine.store.clone().ok_or(VmError::MissingReturn)?;
-    let ops = store.get(generator.function.code.range).ok_or(VmError::MissingReturn)?;
-    let pc = machine.pc as usize;
-    let input = completion;
-    let mut generated = None;
-    let completion = machine.step(input.clone(), |registers| {
-        let step = crate::vm::execute_generator_step(
-            ops,
-            registers,
-            state.environment.clone(),
-            pc,
-            input,
-        )?;
-        let completion = step.completion.clone();
-        generated = Some(step);
-        Ok(completion)
-    })?;
-    let Some(mut step) = generated else {
-        return Err(VmError::MissingReturn);
-    };
-    step.completion = completion;
-    Ok(step)
+    let registers = std::mem::take(&mut machine.registers.values);
+    Ok((store, machine.pc as usize, registers))
 }
 
-fn ensure_try_frame(generator: &GeneratorData, state: &GeneratorState) -> Result<(), VmError> {
-    if suspended_try(generator, state).is_none()
-        || generator.machine.borrow().frame_count() != 0
-    {
-        return Ok(());
+fn restore_machine_execution(
+    generator: &GeneratorData,
+    registers: Vec<Value>,
+    result: Result<crate::vm::GeneratorStep, VmError>,
+) -> Result<crate::vm::GeneratorStep, VmError> {
+    let mut machine = generator.machine.borrow_mut();
+    machine.registers.values = registers;
+    if let Ok(step) = &result {
+        machine.record_completion(step.completion.clone());
     }
-    push_try_frame(generator, state)
+    result
 }
 
-fn ensure_control_frame(generator: &GeneratorData, state: &GeneratorState) -> Result<(), VmError> {
-    if (suspended_conditional(generator, state).is_none()
-        && suspended_private_scope(generator, state).is_none())
-        || generator.machine.borrow().frame_count() != 0
-    {
-        return Ok(());
-    }
-    try_push_frame(
-        &mut generator.machine.borrow_mut(),
-        crate::machine::Frame::Control {
-            phase: 0,
-            body: crate::machine::CodeRange {
-                code: generator.function.code_id(),
-                start: machine_pc(generator).saturating_sub(1) as u32,
-                end: machine_pc(generator) as u32,
-            },
-        },
-    )
+fn execute_with_generator_registers<T>(
+    generator: &GeneratorData,
+    execute: impl FnOnce(&mut Vec<Value>) -> Result<T, VmError>,
+) -> Result<T, VmError> {
+    let mut registers = std::mem::take(&mut generator.machine.borrow_mut().registers.values);
+    let result = execute(&mut registers);
+    generator.machine.borrow_mut().registers.values = registers;
+    result
 }
 
 fn update_await_frame(
@@ -71,14 +57,15 @@ fn update_await_frame(
     if !matches!(completion, crate::completion::Completion::Suspend(_)) {
         return Ok(());
     }
+    let pc = machine_pc(generator) as u32;
     try_push_frame(
         &mut generator.machine.borrow_mut(),
         crate::machine::Frame::Await {
             phase: 0,
             resume: crate::machine::CodeRange {
                 code: generator.function.code_id(),
-                start: machine_pc(generator) as u32,
-                end: machine_pc(generator) as u32 + 1,
+                start: pc,
+                end: pc + 1,
             },
         },
     )
