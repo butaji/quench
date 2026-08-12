@@ -65,6 +65,12 @@ fn install_nested_resume_input(
         crate::execute::write_value(&mut state.registers, *src, input);
         return;
     }
+    if install_iterator_binding_input(generator, state, &input) {
+        return;
+    }
+    if install_iterator_conditional_input(generator, state, &input) {
+        return;
+    }
     let Some((_, body, index)) = suspended_private_scope(generator, state) else {
         return;
     };
