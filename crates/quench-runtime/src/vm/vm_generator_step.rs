@@ -69,11 +69,6 @@ fn run_generator_op(
 ) -> Result<Option<GeneratorStep>, VmError> {
     let result = match run_op(registers, op, context) {
         Err(error) => match crate::completion::Completion::from_vm_error(error) {
-            Ok(crate::completion::Completion::Yield(value)) => {
-                crate::vm::flush_global_declaration_batch(registers);
-                let suspension = direct_suspension(op, next);
-                return Ok(Some(GeneratorStep { completion: crate::completion::Completion::Yield(value), pc: next + 1, suspension }));
-            }
             Ok(completion) => Some(completion),
             Err(error) => {
                 crate::vm::flush_global_declaration_batch(registers);

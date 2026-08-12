@@ -98,7 +98,6 @@ pub enum VmError {
     EvalError(String),
     Thrown(Value),
     Suspended(Rc<crate::value::PromiseData>),
-    Yield(Value),
 }
 
 pub(crate) fn not_callable() -> VmError {

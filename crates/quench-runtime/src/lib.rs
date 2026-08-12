@@ -12,6 +12,7 @@
 //! `Fact`, and `Continuation`) before adding breadth.
 
 mod arrays;
+pub mod benchmark;
 mod bigint;
 mod binding_patterns;
 mod blocks;
@@ -40,6 +41,7 @@ mod generator;
 mod global_environment;
 mod globals;
 mod identifiers;
+pub mod identity;
 mod intl;
 mod json;
 mod literal;

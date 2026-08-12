@@ -35,7 +35,6 @@ impl Completion {
             VmError::Break(label) => Self::Break(label),
             VmError::Continue(label) => Self::Continue(label),
             VmError::Suspended(promise) => Self::Suspend(promise),
-            VmError::Yield(value) => Self::Yield(value),
             VmError::NotCallable => {
                 let VmError::Thrown(value) = crate::execute::not_callable() else {
                     return Err(VmError::NotCallable);
@@ -58,7 +57,9 @@ impl Completion {
             Self::Break(label) => Err(VmError::Break(label)),
             Self::Continue(label) => Err(VmError::Continue(label)),
             Self::Suspend(promise) => Err(VmError::Suspended(promise)),
-            Self::Yield(value) => Err(VmError::Yield(value)),
+            Self::Yield(_) => Err(VmError::EvalError(
+                "Unconsumed yield completion".to_string(),
+            )),
         }
     }
 }
