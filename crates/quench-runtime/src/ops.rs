@@ -1,5 +1,6 @@
 include!("ops_prelude.rs");
 include!("ops_op.rs");
+include!("ops_bodies.rs");
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Builtin {
@@ -138,6 +139,7 @@ pub enum Builtin {
     FunctionApply,
     Boolean,
     BooleanValueOf,
+    BooleanToString,
     Print,
     Eval,
     Escape,

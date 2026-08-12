@@ -101,6 +101,8 @@ impl CodeArena {
     }
 
     pub fn append_slice(&mut self, body: &[Op]) -> CodeRange {
+        let nested = body.iter().map(Op::body_count).sum::<usize>();
+        self.ranges.reserve(nested.saturating_add(1));
         let code = CodeId(self.ranges.len() as u32);
         let start = self.ops.len() as u32;
         self.ops.extend_from_slice(body);
