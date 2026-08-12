@@ -109,10 +109,7 @@ fn assign_array(
 ) -> Option<()> {
     let iterator = iterator_start(source, ops, next);
     let mut body = Vec::new();
-    for (index, element) in pattern.elements.iter().enumerate() {
-        if pattern.rest.is_none() && index + 1 == pattern.elements.len() && element.is_none() {
-            continue;
-        }
+    for element in &pattern.elements {
         let place = element.as_ref().and_then(|element| {
             crate::reduce::reduce_assignments::maybe_default_place(
                 element, &mut body, facts, next, locals,
@@ -345,10 +342,7 @@ fn bind_array(
 ) -> Option<()> {
     let iterator = iterator_start(source, ops, next);
     let mut body = Vec::new();
-    for (index, element) in pattern.elements.iter().enumerate() {
-        if pattern.rest.is_none() && index + 1 == pattern.elements.len() && element.is_none() {
-            continue;
-        }
+    for element in &pattern.elements {
         let value = iterator_step(iterator, &mut body, next);
         if let Some(element) = element {
             bind(element, value, &mut body, facts, next, locals)?;
@@ -361,7 +355,7 @@ fn bind_array(
     ops.push(Op::IteratorBinding {
         iterator,
         body: crate::machine::FunctionCode::from_ops(body),
-        close_normal: false,
+        close_normal: true,
     });
     Some(())
 }
