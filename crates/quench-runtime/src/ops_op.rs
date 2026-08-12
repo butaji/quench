@@ -429,8 +429,8 @@ pub enum Op {
     Conditional {
         dst: u16,
         condition: u16,
-        consequent: Vec<Op>,
-        alternate: Vec<Op>,
+        consequent: crate::machine::FunctionCode,
+        alternate: crate::machine::FunctionCode,
     },
     Unary {
         dst: u16,
