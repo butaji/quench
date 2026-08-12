@@ -2,17 +2,70 @@
 
 use std::sync::OnceLock;
 
+use quench_runtime::module_bindings::ModuleBindingCell;
 use quench_runtime::ops::{HostCapabilityKind, HostCapabilityRef, RealmId};
 use quench_runtime::reduce::{
     reduce_module_sequence, reduce_module_source, reduce_script_sources, reduce_source,
     ScriptSource,
 };
-use quench_runtime::vm::{execute_with_context, VmContext};
+use quench_runtime::vm::{execute_with_context, ExecutionScope, VmContext};
 
 use crate::Test262Host;
 
 #[derive(Debug, Default)]
 pub struct RuntimeHost;
+
+/// Independently reduced module unit with explicit live-cell linking.
+pub struct LinkedModule {
+    program: quench_runtime::reduce::ResidualProgram,
+    scope: ExecutionScope,
+}
+
+impl LinkedModule {
+    pub fn compile(source: &str) -> Result<Self, String> {
+        let program = reduce_module_source(source).map_err(|errors| errors.join("; "))?;
+        Ok(Self {
+            program,
+            scope: ExecutionScope::new(),
+        })
+    }
+
+    pub fn bind_import(&self, local: &str, cell: ModuleBindingCell) -> Result<(), String> {
+        let slot = self
+            .program
+            .local_slots
+            .get(local)
+            .copied()
+            .ok_or_else(|| format!("unknown module import binding {local}"))?;
+        self.scope.bind_module_slot(slot, cell);
+        Ok(())
+    }
+
+    pub fn export_cell(&self, name: &str) -> Option<ModuleBindingCell> {
+        if !self
+            .program
+            .module_metadata
+            .as_ref()?
+            .exported_names
+            .iter()
+            .any(|export| export == name)
+        {
+            return None;
+        }
+        self.program
+            .local_slots
+            .get(name)
+            .copied()
+            .map(|slot| self.scope.module_cell_slot(slot))
+    }
+
+    pub fn execute(&self) -> Result<quench_runtime::value::Value, String> {
+        let mut registers = Vec::new();
+        self.scope
+            .execute(&self.program.ops, &mut registers, host_context())
+            .map_err(|error| format!("residual VM error: {}", error.render()))
+    }
+}
 
 impl Test262Host for RuntimeHost {
     fn run_script(&mut self, source: &str) -> Result<(), String> {
