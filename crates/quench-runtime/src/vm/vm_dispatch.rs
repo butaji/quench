@@ -135,6 +135,19 @@ fn run_local_op(registers: &mut Vec<Value>, op: &Op) -> Result<bool, VmError> {
             name,
             src,
         } => crate::locals::initialize_resolved(registers, *target, *slot, name, *src)?,
+        SetResolvedLocalBinding {
+            target,
+            slot,
+            name,
+            strict,
+            src,
+        } => crate::locals::set_resolved_local(registers, *target, *slot, name, *strict, *src)?,
+        LoadResolvedLocalBinding {
+            dst,
+            target,
+            slot,
+            name,
+        } => crate::locals::load_resolved_local(registers, *dst, *target, *slot, name)?,
         SetResolvedBinding {
             target,
             name,

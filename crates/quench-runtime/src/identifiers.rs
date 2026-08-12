@@ -11,8 +11,10 @@ pub(crate) fn reduce(
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
-    if let Some(register) = reduce_global(identifier, ops, facts, next_register, locals) {
-        return Some(register);
+    if !facts.has_dynamic_scope() {
+        if let Some(register) = reduce_global(identifier, ops, facts, next_register, locals) {
+            return Some(register);
+        }
     }
     if let Some(register) = reduce_local(identifier, ops, next_register, locals) {
         return Some(register);
