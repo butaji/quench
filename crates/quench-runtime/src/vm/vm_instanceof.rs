@@ -174,9 +174,14 @@ fn builtin_prototype_parent(builtin: Builtin) -> Option<Value> {
         builtin,
         Builtin::GeneratorFunctionPrototype
             | Builtin::AsyncGeneratorFunctionPrototype
-            | Builtin::IteratorPrototype
     ) {
         return Some(Value::Builtin(Builtin::FunctionPrototype));
+    }
+    if builtin == Builtin::ArrayIteratorPrototype {
+        return Some(Value::Builtin(Builtin::IteratorPrototype));
+    }
+    if builtin == Builtin::IteratorPrototype {
+        return Some(Value::Builtin(Builtin::ObjectPrototype));
     }
     matches!(
         builtin,
