@@ -4,4 +4,6 @@ pub use crate::vm::{
     execute_with_registers, get_property, get_property_result, is_truthy, read_register,
     write_value, VmError,
 };
-pub(crate) use crate::vm::{execute_completion_in_place, not_callable};
+pub(crate) use crate::vm::{
+    execute_completion_in_place, execute_completion_step_in_place, not_callable,
+};
