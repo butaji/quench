@@ -69,6 +69,7 @@ fn accessor_value(value: &Value, key: &str, field: &str) -> Option<Value> {
             .upgrade()
             .and_then(|properties| accessor_field(&properties, key, field)),
         Value::Promise(promise) => accessor_field(&promise.properties.borrow(), key, field),
+        Value::BoundFunction(bound) => accessor_value(&bound.target, key, field),
         Value::Number(_) => accessor_value(&Value::Builtin(Builtin::NumberPrototype), key, field),
         Value::Boolean(_) => accessor_value(&Value::Builtin(Builtin::BooleanPrototype), key, field),
         Value::String(_) => accessor_value(&Value::Builtin(Builtin::StringPrototype), key, field),

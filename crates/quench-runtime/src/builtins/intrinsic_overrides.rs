@@ -1,4 +1,4 @@
-//! Runtime-defined overrides for intrinsic prototype properties. Test262
+//! Runtime-defined overrides for intrinsic prototype properties.
 //! calls `Object.defineProperty(Object.prototype, "x", …)` to install getters
 //! that should affect primitive lookups too; we record the descriptor here
 //! so subsequent reads see it.

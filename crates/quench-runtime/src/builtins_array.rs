@@ -56,11 +56,16 @@ fn delete_function_property(function: Rc<crate::value::FunctionValue>, key: &str
 }
 
 fn delete_object_property(properties: Rc<crate::value::ObjectData>, key: &str) -> Value {
-    let values = properties
+    let mut values: Vec<(String, Value)> = properties
             .iter()
             .filter(|(name, _)| name != key && name != &descriptor_key(key))
             .cloned()
             .collect();
+    if crate::vm::is_global_object(&Value::Object(Rc::clone(&properties)))
+        && crate::vm::global_builtin_exists(key)
+    {
+        values.push((crate::builtins::deleted_key(key), Value::Boolean(true)));
+    }
     Value::Object(Rc::new(crate::value::ObjectData::with_private_slots(
         values,
         Rc::clone(&properties.private_slots),
