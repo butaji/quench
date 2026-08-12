@@ -60,7 +60,7 @@ impl LinkedModuleGraph {
                 let cell = units
                     .get(&target)
                     .and_then(|unit| unit.export_cell(&binding.imported))
-                    .ok_or_else(|| format!("export {} missing", binding.imported))?;
+                    .ok_or_else(|| format!("SyntaxError: export {} missing", binding.imported))?;
                 units
                     .get(&id)
                     .ok_or_else(|| "module unit missing".to_string())?
