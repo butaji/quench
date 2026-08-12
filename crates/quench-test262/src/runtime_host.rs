@@ -1,6 +1,6 @@
 //! Adapter from the runner contract to the residual runtime.
 
-use std::{path::Path, sync::OnceLock};
+use std::{cell::RefCell, collections::HashMap, path::Path, sync::OnceLock};
 
 use quench_runtime::module_bindings::ModuleBindingCell;
 use quench_runtime::ops::{HostCapabilityKind, HostCapabilityRef, RealmId};
@@ -21,6 +21,7 @@ pub struct LinkedModule {
     program: quench_runtime::reduce::ResidualProgram,
     scope: ExecutionScope,
     fixed_exports: Vec<(String, quench_runtime::value::Value)>,
+    linked_exports: RefCell<HashMap<String, ModuleBindingCell>>,
 }
 
 /// Graph-owned collection of independently compiled linked modules.
@@ -50,6 +51,7 @@ impl LinkedModuleGraph {
             };
             units.insert(unit.id, module);
         }
+        link_reexports(graph, &units)?;
         let ids = units.keys().copied().collect::<Vec<_>>();
         for id in ids {
             let metadata = units
@@ -85,6 +87,70 @@ impl LinkedModuleGraph {
     }
 }
 
+fn link_reexports(
+    graph: &ModuleGraph,
+    units: &HashMap<ModuleId, LinkedModule>,
+) -> Result<(), String> {
+    for unit in graph.units() {
+        let metadata = unit_metadata(units, unit.id)?;
+        for binding in &metadata.reexports {
+            let target = resolve_reexport(graph, unit.id, &binding.source)?;
+            link_reexport(units, unit.id, target, binding)?;
+        }
+    }
+    Ok(())
+}
+
+fn unit_metadata(
+    units: &HashMap<ModuleId, LinkedModule>,
+    id: ModuleId,
+) -> Result<&quench_runtime::reduce::ModuleMetadata, String> {
+    units
+        .get(&id)
+        .and_then(|unit| unit.program.module_metadata.as_ref())
+        .ok_or_else(|| "module metadata missing".to_string())
+}
+
+fn resolve_reexport(graph: &ModuleGraph, from: ModuleId, source: &str) -> Result<ModuleId, String> {
+    graph
+        .resolve(from, source)
+        .ok_or_else(|| format!("unresolved module {source}"))
+}
+
+fn link_reexport(
+    units: &HashMap<ModuleId, LinkedModule>,
+    from: ModuleId,
+    target: ModuleId,
+    binding: &quench_runtime::reduce::ReexportBinding,
+) -> Result<(), String> {
+    if binding.imported == "*all*" {
+        return link_star_exports(units, from, target);
+    }
+    let cell = import_cell(units, target, &binding.imported)?;
+    units
+        .get(&from)
+        .ok_or_else(|| "module unit missing".to_string())?
+        .link_export(&binding.exported, cell);
+    Ok(())
+}
+
+fn link_star_exports(
+    units: &HashMap<ModuleId, LinkedModule>,
+    from: ModuleId,
+    target: ModuleId,
+) -> Result<(), String> {
+    let names = unit_metadata(units, target)?.exported_names.clone();
+    let from_unit = units
+        .get(&from)
+        .ok_or_else(|| "module unit missing".to_string())?;
+    for name in names.into_iter().filter(|name| name != "default") {
+        if let Some(cell) = units.get(&target).and_then(|unit| unit.export_cell(&name)) {
+            from_unit.link_export(&name, cell);
+        }
+    }
+    Ok(())
+}
+
 fn import_cell(
     units: &std::collections::HashMap<ModuleId, LinkedModule>,
     target: ModuleId,
@@ -106,13 +172,8 @@ fn namespace_cell(
     let unit = units
         .get(&target)
         .ok_or_else(|| "module unit missing".to_string())?;
-    let metadata = unit
-        .program
-        .module_metadata
-        .as_ref()
-        .ok_or_else(|| "module metadata missing".to_string())?;
-    let properties = metadata
-        .exported_names
+    let properties = unit
+        .export_names()
         .iter()
         .filter_map(|name| unit.export_cell(name).map(|cell| (name.clone(), cell)))
         .map(|(name, cell)| {
@@ -134,6 +195,7 @@ impl LinkedModule {
             program,
             scope: ExecutionScope::new(),
             fixed_exports: Vec::new(),
+            linked_exports: RefCell::new(HashMap::new()),
         })
     }
 
@@ -143,6 +205,7 @@ impl LinkedModule {
             program,
             scope: ExecutionScope::new(),
             fixed_exports: Vec::new(),
+            linked_exports: RefCell::new(HashMap::new()),
         })
     }
 
@@ -166,6 +229,9 @@ impl LinkedModule {
     }
 
     pub fn export_cell(&self, name: &str) -> Option<ModuleBindingCell> {
+        if let Some(cell) = self.linked_exports.borrow().get(name) {
+            return Some(cell.clone());
+        }
         let local = self
             .program
             .module_metadata
@@ -180,6 +246,26 @@ impl LinkedModule {
             .get(local)
             .copied()
             .map(|slot| self.scope.module_cell_slot(slot))
+    }
+
+    fn export_names(&self) -> Vec<String> {
+        let mut names = self
+            .program
+            .module_metadata
+            .as_ref()
+            .map_or_else(Vec::new, |metadata| metadata.exported_names.clone());
+        for name in self.linked_exports.borrow().keys() {
+            if !names.contains(name) {
+                names.push(name.clone());
+            }
+        }
+        names
+    }
+
+    fn link_export(&self, name: &str, cell: ModuleBindingCell) {
+        self.linked_exports
+            .borrow_mut()
+            .insert(name.to_string(), cell);
     }
 
     pub fn execute(&self) -> Result<quench_runtime::value::Value, String> {
@@ -343,66 +429,5 @@ fn host_context() -> &'static VmContext {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
-    use super::{LinkedModule, LinkedModuleGraph};
-    use crate::module_graph::ModuleGraph;
-    use quench_runtime::value::Value;
-
-    #[test]
-    fn default_export_cell_observes_module_execution() {
-        let module = LinkedModule::compile("export default true;").expect("module compiles");
-        let cell = module.export_cell("default").expect("default export cell");
-        module.execute().expect("module executes");
-        assert_eq!(cell.get(), Value::Boolean(true));
-    }
-
-    #[test]
-    fn json_module_exports_recursive_runtime_values() {
-        let module =
-            LinkedModule::compile_json("[true, {\"answer\": 42}]").expect("JSON module compiles");
-        let cell = module.export_cell("default").expect("default export cell");
-        module.execute().expect("module executes");
-        let Value::Array(values) = cell.get() else {
-            panic!("JSON default export is not an array");
-        };
-        assert_eq!(values.logical_len(), 2);
-        assert_eq!(values[0], Value::Boolean(true));
-        assert!(matches!(values[1], Value::Object(_)));
-    }
-
-    #[test]
-    fn linked_import_reads_the_exporters_live_default_cell() {
-        let mut graph = ModuleGraph::new();
-        let entry = graph.add_entry(
-            PathBuf::from("entry.js"),
-            "import value from './dep.js'; export default value;".to_string(),
-        );
-        graph.add_dependency(PathBuf::from("dep.js"), "export default true;".to_string());
-        let linked = LinkedModuleGraph::compile(&mut graph).expect("graph compiles");
-        linked.execute(&graph, entry).expect("graph executes");
-        let cell = linked
-            .export_cell(entry, "default")
-            .expect("default export");
-        assert_eq!(cell.get(), Value::Boolean(true));
-    }
-
-    #[test]
-    fn namespace_import_reads_live_export_cells() {
-        let mut graph = ModuleGraph::new();
-        let entry = graph.add_entry(
-            PathBuf::from("entry.js"),
-            "import * as ns from './dep.js'; export default ns.value;".to_string(),
-        );
-        graph.add_dependency(
-            PathBuf::from("dep.js"),
-            "export const value = true;".to_string(),
-        );
-        let linked = LinkedModuleGraph::compile(&mut graph).expect("graph compiles");
-        linked.execute(&graph, entry).expect("graph executes");
-        let cell = linked
-            .export_cell(entry, "default")
-            .expect("default export");
-        assert_eq!(cell.get(), Value::Boolean(true));
-    }
+    include!("runtime_host_tests.rs");
 }
