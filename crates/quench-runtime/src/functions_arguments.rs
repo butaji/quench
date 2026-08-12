@@ -153,9 +153,11 @@ fn map_arguments(
     let captures = function.captures.len() as u16;
     let mapped = function.params.min(arguments.logical_len() as u16);
     for index in 0..mapped {
-        if let Some(binding) = environment.slot(captures.saturating_add(index)) {
-            arguments.map_index(usize::from(index), binding);
-        }
+        environment.map_argument(
+            arguments,
+            usize::from(index),
+            captures.saturating_add(index),
+        );
     }
 }
 

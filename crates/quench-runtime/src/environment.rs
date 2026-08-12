@@ -95,6 +95,17 @@ impl Environment {
         self.slots.borrow().get(usize::from(slot)).cloned()
     }
 
+    pub(crate) fn map_argument(
+        &self,
+        arguments: &mut crate::value::ArrayData,
+        argument: usize,
+        slot: u16,
+    ) {
+        if let Some(binding) = self.slot(slot) {
+            arguments.map_index(argument, binding);
+        }
+    }
+
     pub(crate) fn slot_cell(&self, slot: u16) -> Rc<RefCell<Value>> {
         self.ensure_slot(slot)
     }
