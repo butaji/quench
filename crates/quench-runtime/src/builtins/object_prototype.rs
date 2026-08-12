@@ -68,19 +68,26 @@ pub(crate) fn is_prototype_of(
                 "Object.prototype.isPrototypeOf called on null or undefined",
             )
         })?;
+    prototype_chain_contains(value, prototype).map(Value::Boolean)
+}
+
+fn prototype_chain_contains(value: &Value, prototype: &Value) -> Result<bool, crate::execute::VmError> {
+    let mut seen = Vec::new();
     let mut current = get_prototype_of(Some(value))?;
-    let mut steps = 0u8;
     while !matches!(current, Value::Null) {
-        steps = steps.saturating_add(1);
-        if steps == 64 {
-            return Ok(Value::Boolean(false));
-        }
         if crate::builtins::same_value(Some(&current), Some(prototype)) {
-            return Ok(Value::Boolean(true));
+            return Ok(true);
         }
+        if seen
+            .iter()
+            .any(|seen| crate::builtins::same_value(Some(&current), Some(seen)))
+        {
+            return Ok(false);
+        }
+        seen.push(current.clone());
         current = get_prototype_of(Some(&current))?;
     }
-    Ok(Value::Boolean(false))
+    Ok(false)
 }
 
 pub(crate) fn define_legacy_accessor(
