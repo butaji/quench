@@ -174,6 +174,7 @@ pub(crate) fn execute_completion_in_place(
 }
 
 pub fn execute_with_context(ops: &[Op], context: &VmContext) -> Result<Value, VmError> {
+    crate::locals::reset_replacements();
     execute_with_registers_context(ops, Vec::new(), context)
 }
 

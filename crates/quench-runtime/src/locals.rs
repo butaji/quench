@@ -334,6 +334,21 @@ pub(crate) fn replacement(value: &Value) -> Option<Value> {
     })
 }
 
+pub(crate) fn reset_replacements() {
+    REPLACEMENTS.with(|replacements| replacements.borrow_mut().clear());
+}
+
+pub(crate) fn resolved_replacement(value: Value) -> Value {
+    let mut value = value;
+    while let Some(updated) = replacement(&value) {
+        if same_identity(&value, &updated) {
+            break;
+        }
+        value = updated;
+    }
+    value
+}
+
 fn same_identity(left: &Value, right: &Value) -> bool {
     match (left, right) {
         (Value::Array(left), Value::Array(right)) => Rc::ptr_eq(left, right),
