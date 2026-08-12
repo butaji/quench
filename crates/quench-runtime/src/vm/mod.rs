@@ -12,8 +12,8 @@ mod vm_ops;
 mod vm_typed_bigint;
 pub use crate::intl::tolocale::value::is_truthy;
 pub type OutputSink = Arc<dyn Fn(&str) + Send + Sync>;
-pub(crate) fn intrinsic_for_realm(realm: RealmId, builtin: Builtin) -> Option<Value> {
-    realm::intrinsic(realm, builtin)
+pub(crate) fn with_realm<T>(realm: RealmId, callback: impl FnOnce() -> T) -> Option<T> {
+    realm::with_realm(realm, callback)
 }
 type ObjectProperties = Rc<crate::value::ObjectData>;
 #[derive(Clone)]
