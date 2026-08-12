@@ -9,6 +9,7 @@ use std::{cell::RefCell, rc::Rc};
 
 include!("generator_private_scope.rs");
 include!("generator_async.rs");
+include!("generator_try.rs");
 
 pub(crate) fn create(
     function: &Rc<crate::value::FunctionValue>,
@@ -248,13 +249,10 @@ fn suspended_try<'a>(
     let op @ Op::Try { body, .. } = generator.function.body.get(index)? else {
         return None;
     };
-    let (yield_index, yield_op) = body.iter().enumerate().find(|(_, candidate)| {
-        let Op::YieldStar { iterator, .. } = candidate else {
-            return false;
-        };
-        crate::execute::read_register(&state.registers, *iterator)
-            .is_ok_and(|value| !matches!(value, Value::Undefined))
-    })?;
+    let (yield_index, yield_op) = body
+        .iter()
+        .enumerate()
+        .find(|(_, candidate)| suspended_try_op(candidate, state))?;
     Some((op, yield_op, &body[yield_index + 1..]))
 }
 
@@ -266,15 +264,7 @@ fn resume_suspended_try(
     let Some((try_op, yield_op, suffix)) = suspended_try(generator, state) else {
         return Ok(None);
     };
-    let completion = match execute_yield_star(&mut state.registers, yield_op, resume) {
-        Ok(Some(crate::completion::Completion::Yield(value))) => {
-            return Ok(Some(crate::completion::Completion::Yield(value)));
-        }
-        Ok(Some(completion)) => completion,
-        Ok(None) => crate::execute::execute_completion_in_place(suffix, &mut state.registers)?,
-        Err(VmError::Thrown(value)) => crate::completion::Completion::Throw(value),
-        Err(error) => return Err(error),
-    };
+    let completion = resume_suspended_try_op(&mut state.registers, yield_op, suffix, resume)?;
     complete_suspended_try(try_op, &mut state.registers, completion).map(Some)
 }
 
@@ -328,6 +318,10 @@ fn throw_and_finish(generator: &GeneratorData, value: Value) -> Result<Value, Vm
 fn install_resume_input(generator: &GeneratorData, state: &mut GeneratorState, input: Value) {
     if let Some(Op::YieldStar { dst, .. }) = generator.function.body.get(state.pc) {
         crate::execute::write_value(&mut state.registers, *dst, input);
+        return;
+    }
+    if let Some((_, Op::Yield { src }, _)) = suspended_try(generator, state) {
+        crate::execute::write_value(&mut state.registers, *src, input);
         return;
     }
     let Some(index) = state.pc.checked_sub(1) else {
