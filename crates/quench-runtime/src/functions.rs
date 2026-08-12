@@ -19,39 +19,6 @@ pub(super) fn function_parameters(
 ) -> Result<(HashMap<String, u16>, u16), Vec<String>> {
     crate::function_parameters::bindings(&function.params)
 }
-pub(crate) fn reduce_body(
-    body: &oxc::ast::ast::FunctionBody<'_>,
-    formal: &oxc::ast::ast::FormalParameters<'_>,
-    facts: &mut ProgramDb,
-    parameters: HashMap<String, u16>,
-    parameter_count: u16,
-    captures: u16,
-    metadata: FunctionMetadata,
-) -> Result<Vec<Op>, Vec<String>> {
-    let lexical_receiver = matches!(metadata.kind, FunctionKind::Arrow);
-    let rest = rest_slot(
-        &parameters,
-        parameter_count,
-        captures,
-        lexical_receiver,
-        false,
-    );
-    let minimum = captures
-        .saturating_add(parameter_count)
-        .saturating_add(reserved_slots(lexical_receiver, rest));
-    let next_slot = crate::reduce_support::register_base(&parameters).max(minimum);
-    let tail_calls = tail_calls_enabled(metadata.strictness, metadata.kind, metadata.is_async);
-    let inherited = enter_function(facts, metadata.strictness, tail_calls);
-    let prefix = crate::function_parameters::prefix(formal, facts, &parameters, captures, true);
-    let reduced = reduce_body_statements(&body.statements, formal, facts, &parameters, next_slot)?;
-    (facts.strict, facts.in_function, facts.tail_calls) = inherited;
-    let mut prefix =
-        prefix.ok_or_else(|| vec!["Unsupported function parameter initialization".to_string()])?;
-    prefix.extend((!prefix.is_empty()).then_some(Op::ParameterEnd));
-    prefix.extend(reduced);
-    Ok(bind_rest(prefix, rest, parameter_count, captures))
-}
-
 fn enter_function(
     facts: &mut ProgramDb,
     strictness: FunctionStrictness,

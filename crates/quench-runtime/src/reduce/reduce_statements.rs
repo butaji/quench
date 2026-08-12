@@ -356,6 +356,13 @@ pub fn reduce_function_declaration(
     let slot = declaration_slot(identifier.name.as_str(), next_slot, locals);
     let (body_ops, parameter_count, captures, metadata) =
         reduce_function_body(function, body, facts, locals)?;
+    let reserve = *next_register;
+    *next_register = next_register.saturating_add(1);
+    ops.push(Op::Const {
+        dst: reserve,
+        value: crate::ops::Constant::Undefined,
+    });
+    ops.push(Op::StoreLocal { slot, src: reserve });
     let register = *next_register;
     *next_register = next_register.saturating_add(1);
     ops.push(function_declaration_op(
@@ -365,7 +372,7 @@ pub fn reduce_function_declaration(
         captures,
         metadata,
     ));
-    name_function_declaration(ops, register, identifier.name.as_str());
+    name_function_declaration(ops, register, slot, next_register, identifier.name.as_str());
     ops.push(Op::StoreLocal {
         slot,
         src: register,
@@ -378,17 +385,17 @@ fn reduce_function_body(
     facts: &mut ProgramDb,
     locals: &HashMap<String, u16>,
 ) -> Result<(Vec<Op>, u16, u16, functions::FunctionMetadata), Vec<String>> {
-    let (parameters, parameter_count, captures) = function_locals(function, locals)?;
+    let (_, parameter_count) = crate::function_parameters::bindings(&function.params)?;
     let strictness = crate::reduce_support::function_strictness(body, facts.strict);
     let metadata = function_metadata(function, strictness);
-    let body_ops = functions::reduce_body(
+    let (body_ops, captures) = functions::reduce_named_declaration(
         body,
         &function.params,
         facts,
-        parameters,
-        parameter_count,
-        captures,
-        metadata,
+        locals,
+        function.id.as_ref().map_or("", |id| id.name.as_str()),
+        functions::function_kind(function),
+        function.r#async,
     )?;
     Ok((body_ops, parameter_count, captures, metadata))
 }
@@ -412,14 +419,4 @@ fn declaration_slot(name: &str, next_slot: &mut u16, locals: &mut HashMap<String
     *next_slot = next_slot.saturating_add(1);
     locals.insert(name.to_string(), slot);
     slot
-}
-fn function_locals(
-    function: &oxc::ast::ast::Function<'_>,
-    locals: &HashMap<String, u16>,
-) -> Result<(HashMap<String, u16>, u16, u16), Vec<String>> {
-    let (parameters, parameter_count) = crate::function_parameters::bindings(&function.params)?;
-    let captures = locals.values().copied().max().map_or(0, |slot| slot + 1);
-    let bindings =
-        functions::function_bindings(parameters, parameter_count, captures, locals, false);
-    Ok((bindings, parameter_count, captures))
 }
