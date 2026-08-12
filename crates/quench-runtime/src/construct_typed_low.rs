@@ -102,7 +102,7 @@ fn values_uint16_array(values: &[Value]) -> Result<Value, crate::execute::VmErro
     for (index, value) in values.iter().enumerate() {
         view.set(
             index,
-            to_uint16(crate::intl::tolocale::value::to_number(Some(value))),
+            to_uint16(crate::conversion::to_number(value)?),
         );
     }
     Ok(Value::Uint16Array(Rc::new(view)))
@@ -123,9 +123,10 @@ fn view_uint16_array(
     buffer: &Rc<crate::value::ArrayBufferData>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let offset = arguments.get(1).map_or(0.0, |value| {
-        crate::intl::tolocale::value::to_number(Some(value))
-    });
+    let offset = match arguments.get(1) {
+        Some(value) => crate::conversion::to_number(value)?,
+        None => 0.0,
+    };
     let offset = to_index(offset)?;
     let element_size = crate::value::Uint16ArrayData::BYTES_PER_ELEMENT;
     if offset % element_size != 0 || offset > buffer.byte_length() {
@@ -133,7 +134,7 @@ fn view_uint16_array(
     }
     let available = buffer.byte_length() - offset;
     let length = match arguments.get(2) {
-        Some(value) => to_index(crate::intl::tolocale::value::to_number(Some(value)))?,
+        Some(value) => to_index(crate::conversion::to_number(value)?)?,
         None => view_length(buffer, available / element_size),
     };
     if arguments.get(2).is_some() && length > available / element_size {
@@ -160,7 +161,7 @@ fn values_uint32_array(values: &[Value]) -> Result<Value, crate::execute::VmErro
     for (index, value) in values.iter().enumerate() {
         view.set(
             index,
-            to_uint32(crate::intl::tolocale::value::to_number(Some(value))),
+            to_uint32(crate::conversion::to_number(value)?),
         );
     }
     Ok(Value::Uint32Array(Rc::new(view)))
@@ -181,9 +182,10 @@ fn view_uint32_array(
     buffer: &Rc<crate::value::ArrayBufferData>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let offset = arguments.get(1).map_or(0.0, |value| {
-        crate::intl::tolocale::value::to_number(Some(value))
-    });
+    let offset = match arguments.get(1) {
+        Some(value) => crate::conversion::to_number(value)?,
+        None => 0.0,
+    };
     let offset = to_index(offset)?;
     let element_size = crate::value::Uint32ArrayData::BYTES_PER_ELEMENT;
     if offset % element_size != 0 || offset > buffer.byte_length() {
@@ -191,7 +193,7 @@ fn view_uint32_array(
     }
     let available = buffer.byte_length() - offset;
     let length = match arguments.get(2) {
-        Some(value) => to_index(crate::intl::tolocale::value::to_number(Some(value)))?,
+        Some(value) => to_index(crate::conversion::to_number(value)?)?,
         None => view_length(buffer, available / element_size),
     };
     if arguments.get(2).is_some() && length > available / element_size {
@@ -227,7 +229,7 @@ fn values_uint8_array(values: &[Value]) -> Result<Value, crate::execute::VmError
     for (index, value) in values.iter().enumerate() {
         view.set(
             index,
-            to_uint8(crate::intl::tolocale::value::to_number(Some(value))),
+            to_uint8(crate::conversion::to_number(value)?),
         );
     }
     Ok(Value::Uint8Array(Rc::new(view)))
@@ -244,7 +246,7 @@ fn values_uint8_clamped_array(values: &[Value]) -> Result<Value, crate::execute:
     let buffer = Rc::new(crate::value::ArrayBufferData::new(values.len()));
     let view = crate::value::Uint8ClampedArrayData::new(buffer, 0, values.len());
     for (index, value) in values.iter().enumerate() {
-        view.set(index, crate::intl::tolocale::value::to_number(Some(value)));
+        view.set(index, crate::conversion::to_number(value)?);
     }
     Ok(Value::Uint8ClampedArray(Rc::new(view)))
 }
@@ -264,16 +266,17 @@ fn view_uint8_clamped_array(
     buffer: &Rc<crate::value::ArrayBufferData>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let offset = arguments.get(1).map_or(0.0, |value| {
-        crate::intl::tolocale::value::to_number(Some(value))
-    });
+    let offset = match arguments.get(1) {
+        Some(value) => crate::conversion::to_number(value)?,
+        None => 0.0,
+    };
     let offset = to_index(offset)?;
     if offset > buffer.byte_length() {
         return Err(range_error("Invalid Uint8ClampedArray byte offset"));
     }
     let available = buffer.byte_length() - offset;
     let length = match arguments.get(2) {
-        Some(value) => to_index(crate::intl::tolocale::value::to_number(Some(value)))?,
+        Some(value) => to_index(crate::conversion::to_number(value)?)?,
         None => view_length(buffer, available),
     };
     if arguments.get(2).is_some() && length > available {
@@ -299,16 +302,17 @@ fn view_uint8_array(
     buffer: &Rc<crate::value::ArrayBufferData>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let offset = arguments.get(1).map_or(0.0, |value| {
-        crate::intl::tolocale::value::to_number(Some(value))
-    });
+    let offset = match arguments.get(1) {
+        Some(value) => crate::conversion::to_number(value)?,
+        None => 0.0,
+    };
     let offset = to_index(offset)?;
     if offset > buffer.byte_length() {
         return Err(range_error("Invalid Uint8Array byte offset"));
     }
     let available = buffer.byte_length() - offset;
     let length = match arguments.get(2) {
-        Some(value) => to_index(crate::intl::tolocale::value::to_number(Some(value)))?,
+        Some(value) => to_index(crate::conversion::to_number(value)?)?,
         None => view_length(buffer, available),
     };
     if arguments.get(2).is_some() && length > available {
