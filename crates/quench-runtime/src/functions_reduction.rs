@@ -260,7 +260,7 @@ fn emit_function_op(
     *next_register = next_register.saturating_add(1);
     ops.push(Op::MakeFunctionWithKind {
         dst: register,
-        body,
+        body: crate::machine::FunctionCode::from_ops(body),
         params,
         captures,
         length: metadata.length,

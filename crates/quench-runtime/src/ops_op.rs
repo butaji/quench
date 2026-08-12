@@ -287,7 +287,7 @@ pub enum Op {
     },
     MakeFunction {
         dst: u16,
-        body: Vec<Op>,
+        body: crate::machine::FunctionCode,
         params: u16,
         length: u16,
         captures: u16,
@@ -297,7 +297,7 @@ pub enum Op {
     },
     MakeFunctionWithKind {
         dst: u16,
-        body: Vec<Op>,
+        body: crate::machine::FunctionCode,
         params: u16,
         length: u16,
         captures: u16,

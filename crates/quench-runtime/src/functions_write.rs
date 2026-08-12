@@ -42,7 +42,7 @@ pub(crate) fn write_op(registers: &mut Vec<crate::value::Value>, op: &Op) {
 
 fn write_non_ordinary(
     registers: &mut Vec<crate::value::Value>,
-    function: (u16, &[Op], u16, u16),
+    function: (u16, &crate::machine::FunctionCode, u16, u16),
     metadata: (
         crate::ops::FunctionKind,
         u16,
@@ -67,21 +67,27 @@ fn write_non_ordinary(
 
 fn write_kind(
     registers: &mut Vec<crate::value::Value>,
-    function: (u16, &[Op], u16, u16),
+    function: (u16, &crate::machine::FunctionCode, u16, u16),
     metadata: FunctionMetadata,
 ) {
     let (dst, body, params, captures) = function;
+    let Some(body) = body.ops() else {
+        return;
+    };
     crate::functions::write(registers, dst, body, params, captures, metadata);
 }
 
 fn write_ordinary(
     registers: &mut Vec<crate::value::Value>,
-    function: (u16, &[Op], u16, u16, u16),
+    function: (u16, &crate::machine::FunctionCode, u16, u16, u16),
     strictness: crate::ops::FunctionStrictness,
     is_async: bool,
     mapped_arguments: bool,
 ) {
     let (dst, body, params, length, captures) = function;
+    let Some(body) = body.ops() else {
+        return;
+    };
     crate::functions::write(
         registers,
         dst,
