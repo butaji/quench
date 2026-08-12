@@ -128,8 +128,12 @@ impl RootRegistry {
     }
 
     pub fn remove(&mut self, domain: LifetimeDomain, reference: HeapRef) {
-        if let Some(set) = self.sets.iter_mut().find(|set| set.domain() == domain) {
-            set.remove(reference);
+        let Some(index) = self.sets.iter().position(|set| set.domain() == domain) else {
+            return;
+        };
+        self.sets[index].remove(reference);
+        if self.sets[index].iter().next().is_none() {
+            self.sets.remove(index);
         }
     }
 
@@ -163,6 +167,8 @@ mod tests {
         registry.clear(LifetimeDomain::Request);
         assert!(!registry.contains(LifetimeDomain::Request, HeapRef(2)));
         assert_eq!(registry.all_roots().collect::<Vec<_>>(), vec![HeapRef(1)]);
+        registry.remove(LifetimeDomain::Realm, HeapRef(1));
+        assert_eq!(registry.all_roots().count(), 0);
     }
 
     #[test]
