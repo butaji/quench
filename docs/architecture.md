@@ -66,6 +66,32 @@ semantic code must not couple to `Rc<Vec<(String, Value)>>`, copied closure
 environments, string-keyed runtime lookup, or nested unencoded operation
 vectors; those forms are temporary debt with an explicit removal order.
 
+These are physical contracts, not illustrative types:
+
+```text
+Machine    = CodeId(u32) + PC(u32) + register window + EnvironmentRef
+             + FrameBase(u32) + FrameCount(u16) + PackedCompletion
+OpWord     = fixed-width opcode word; uncommon operands use side tables
+CodeRange  = CodeId(u32) + start(u32) + end(u32)
+HeapRef    = u32 arena/handle index
+PropertyKey = per-program or per-realm KeyId(u32)
+```
+
+The dispatch loop decodes one opcode tag and enters one generated handler
+table. It must not walk layered recognizer matches for every operation.
+Register windows are pre-sized from code metadata; ordinary execution must not
+resize a `Vec<Value>` or allocate a register object.
+
+Completion storage is packed even when its semantic API is richer:
+
+```text
+PackedCompletion = tag(u8) + flags(u8) + payload(u32) + aux(u32)
+```
+
+The payload is a `HeapRef`, `ContinuationId`, `LabelId`, or immediate according
+to the tag. JavaScript control flow is never transported through incidental VM
+errors.
+
 ## Universal continuation machine
 
 All resumable execution uses one machine and one transition protocol. Do not
@@ -108,6 +134,16 @@ Only its useful scheduling and cleanup ideas may inform the host/job queue;
 ECMAScript iterators remain pull protocols with canonical `next`, `return`,
 receiver, ordering, and `IteratorClose` semantics.
 
+Dynamic sites use bounded rule data:
+
+```text
+Rule = guard dependencies + typed kernel + generic fallback
+```
+
+Guards record the shape, prototype, realm, and global-binding epochs they
+depend on. A miss binds only within a fixed capacity; a megamorphic site
+collapses to the generic protocol. No rule is a second semantic implementation.
+
 Optimize semantic count before opcode count. Site caches start monomorphic,
 remain strictly bounded, and collapse to generic lookup without growing an
 optimizer subsystem. Intern structural keys per program or realm; ordinary
@@ -136,6 +172,11 @@ Compilation memory is phased: parse and analyze, reduce and compact, then drop
 OXC arenas, semantic data, facts, source buffers, and oversized constant data
 unless observable dynamic compilation or requested diagnostics require them.
 
+The heap contract defines root enumeration from machine registers, frame
+payloads, environments, job queues, realm intrinsics, and weak references
+before `Value` migration begins. `HeapRef(u32)` is an arena/handle contract,
+not a second object model and not an alias for `Rc` ownership.
+
 ## Performance envelope and budgets
 
 Performance is benchmark-defined, never a slogan. Measure startup, one-shot
@@ -147,6 +188,11 @@ Every optimization is charged for executed residual Ops, allocations, retained
 bytes, bytes per live object, peak RSS, binary text, static data, generated LOC,
 handwritten LOC, build time, and conformance. Use one interpreter policy without
 changing Ops or semantic ownership.
+
+Every benchmark emits a stable record containing workload, commit, cycles/op,
+branches/op, branch misses/op, allocations/op, live bytes, peak RSS, opcode
+text bytes, generated LOC, and handwritten LOC. No specialization or
+superinstruction is accepted without such a before/after record.
 
 ## Correctness boundary
 

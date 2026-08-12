@@ -26,6 +26,18 @@ The implementation order is a dependency order, not a menu. Do not add caches,
 superinstructions, or other dispatch tricks to the prototype representation;
 first make the representation compact, flat, and resumable.
 
+The following are hard physical gates:
+
+- no hot-path `Vec<Value>` resizing, per-slot `Rc<RefCell<Value>>`, trait-object
+  dispatch, or string-key allocation;
+- no nested `Vec<Op>` survives into executable code or continuation payloads;
+- no packed fast path exists without a canonical generic fallback;
+- no cache or superinstruction lands without a benchmark record;
+- no heap migration starts before root enumeration and `HeapRef` lifetime rules
+  are specified;
+- no subsystem defines its own completion, iterator-close, or scheduling
+  protocol.
+
 ## 1. Canonical semantics and completions
 
 - Give property access, descriptors, conversion, equality, calls,
@@ -58,6 +70,17 @@ first make the representation compact, flat, and resumable.
   only scheduling, cancellation, and cleanup patterns where they preserve the
   pull-based iterator protocol.
 
+### 1.2 Physical machine contract
+
+- Define `Machine` with fixed-width `CodeId`, `PC`, register-window base/count,
+  environment reference, frame base/count, and packed completion fields.
+- Define `PackedCompletion { tag, flags, payload, aux }`; map payloads to
+  `HeapRef`, `ContinuationId`, `LabelId`, or immediates without allocations.
+- Define frame kinds, phase widths, frame alignment, caller-save/callee-save
+  registers, and the hot/cold split for frame payloads.
+- Define `step(machine, input)` as the only re-entry ABI. `VmError` is reserved
+  for internal/host failures, never ordinary JavaScript control flow.
+
 ## 2. Indexed heap and object representation
 
 - Replace allocation-owning runtime values with compact immediates or
@@ -71,6 +94,14 @@ first make the representation compact, flat, and resumable.
 - Start with centralized ownership, explicit roots, generated tracing, and one
   compact non-moving collector. Add generations or movement only after a
   recorded RSS/throughput experiment proves the need.
+- Specify `HeapRef(u32)` as an arena/handle index, object headers, shape epoch,
+  prototype epoch, root enumeration, weak references, and realm teardown
+  before converting any `Value` variant.
+- Replace ordinary object/property vectors with `ShapeId + packed slots +
+  PropertyKeyId`; retain a cold generic path for proxies, accessors, and
+  exotic objects.
+- Store ordinary bindings in dense slot arrays with initialization/immutability
+  bitsets. Name hash maps are cold metadata, not the load/store representation.
 
 ## 3. Flat code and compact execution state
 
@@ -82,6 +113,13 @@ first make the representation compact, flat, and resumable.
   module, or host suspension boundaries.
 - Store frame references as compact `CodeId` plus start/end ranges and resume
   targets. A nested `Vec<Op>` is never a runtime body representation.
+- Choose one physical Op encoding: fixed-width opcode words with side tables for
+  uncommon operands. Do not leave “fixed-width or compact” as an unresolved
+  implementation choice.
+- Generate one opcode dispatch table from the Op declaration; do not layer
+  recognizer matches (`simple -> control -> dispatch`) around the hot loop.
+- Pre-size register windows from code metadata. Resizing register vectors is a
+  representation failure, not an optimization opportunity.
 
 ## 4. Reducer contexts and operational facts
 
@@ -93,6 +131,10 @@ first make the representation compact, flat, and resumable.
   and a cheap compact generic Op immediately for `Unknown`.
 - Phase memory: parse, analyze, reduce, compact, then release OXC arenas, facts,
   source buffers, and temporary constant data unless explicitly required.
+- Index facts by `NodeId/SymbolId/SiteId + ReduceContext`, not linear span scans.
+  A `Guarded` fact names its guard dependencies and invalidation epochs.
+- Define epochs for shape, prototype, realm, and global bindings. Observable
+  mutation increments the relevant epoch and invalidates dependent rules/facts.
 
 ## 5. Declarative generation
 
@@ -104,6 +146,11 @@ first make the representation compact, flat, and resumable.
   algorithms as readable Rust.
 - Generate mechanical consequences only; never encode observable specification
   algorithms in a new DSL.
+- One declaration must generate tags, layouts, encode/decode, tracing,
+  metadata, verification, disassembly, and dispatch. Duplicate handwritten
+  consequences are a design failure.
+- Generated output is budgeted by source LOC, binary text, static data, and
+  compile time; generation is not free merely because handwritten LOC falls.
 
 ## 6. Bounded specialization and execution performance
 
@@ -118,6 +165,9 @@ first make the representation compact, flat, and resumable.
   binary-text and RSS budgets.
 - Do not add a JIT, native lowering, native code cache, or alternate execution
   backend in this scope. The compact interpreter is the only execution engine.
+- A rule is `{guard dependencies, fast kernel, generic fallback}`. Guards must
+  include every observable invalidation dimension; misses are bounded and then
+  collapse to generic behavior.
 
 ## 7. Memory and RSS verification
 
@@ -131,6 +181,9 @@ first make the representation compact, flat, and resumable.
   generated LOC, and handwritten LOC independently.
 - Keep one interpreter policy and one residual Op vocabulary; do not multiply
   execution modes while the representation is being rebuilt.
+- Every performance change emits workload, commit, cycles/op, branches/op,
+  branch misses/op, allocations/op, live bytes, peak RSS, opcode text bytes,
+  generated LOC, and handwritten LOC. Missing measurements block acceptance.
 
 ## 8. Engineering constraints
 
