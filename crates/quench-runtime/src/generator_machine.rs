@@ -22,7 +22,7 @@ fn take_machine_execution(
     let mut machine = generator.machine.borrow_mut();
     machine.pop_await_frame();
     let store = machine.store.clone().ok_or(VmError::MissingReturn)?;
-    let registers = std::mem::take(&mut machine.registers.values);
+    let registers = machine.take_registers();
     Ok((store, machine.pc as usize, registers))
 }
 
@@ -32,7 +32,7 @@ fn restore_machine_execution(
     result: Result<crate::vm::GeneratorStep, VmError>,
 ) -> Result<crate::vm::GeneratorStep, VmError> {
     let mut machine = generator.machine.borrow_mut();
-    machine.registers.values = registers;
+    machine.restore_registers(registers);
     if let Ok(step) = &result {
         machine.record_completion(step.completion.clone());
     }
@@ -43,9 +43,9 @@ fn execute_with_generator_registers<T>(
     generator: &GeneratorData,
     execute: impl FnOnce(&mut Vec<Value>) -> Result<T, VmError>,
 ) -> Result<T, VmError> {
-    let mut registers = std::mem::take(&mut generator.machine.borrow_mut().registers.values);
+    let mut registers = generator.machine.borrow_mut().take_registers();
     let result = execute(&mut registers);
-    generator.machine.borrow_mut().registers.values = registers;
+    generator.machine.borrow_mut().restore_registers(registers);
     result
 }
 
