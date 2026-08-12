@@ -98,7 +98,6 @@ fn construct_with_new_target(
         _ => Err(crate::vm::not_callable()),
     }
 }
-
 fn with_new_target_prototype(value: Value, target: &Value, new_target: &Value) -> Value {
     if crate::builtins::same_value(Some(target), Some(new_target)) {
         return value;
@@ -113,7 +112,6 @@ fn with_new_target_prototype(value: Value, target: &Value, new_target: &Value) -
         crate::builtins::set_property(value, "\0prototype", prototype)
     })
 }
-
 include!("construct_realm.rs");
 
 fn construct_bound(
@@ -489,7 +487,6 @@ pub(crate) fn initialize_instance_fields(
     initialize_instance_fields_impl(function, receiver)
 }
 include!("construct_instance_fields.rs");
-
 pub(crate) fn derived_constructor(
     function: &crate::value::FunctionValue,
 ) -> Result<Value, crate::execute::VmError> {
