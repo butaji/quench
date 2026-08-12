@@ -7,12 +7,15 @@ use crate::{
 use std::collections::HashMap;
 use std::{cell::RefCell, rc::Rc};
 include!("generator_private_scope.rs");
+include!("generator_branch.rs");
 include!("generator_async.rs");
 include!("generator_try.rs");
 include!("generator_iterator_binding.rs");
 include!("generator_suspension.rs");
 include!("generator_reduce.rs");
 include!("generator_machine.rs");
+include!("generator_result.rs");
+include!("generator_completion.rs");
 
 pub(crate) fn create(
     function: &Rc<crate::value::FunctionValue>,
@@ -156,8 +159,8 @@ fn current_state(generator: &GeneratorData) -> Result<GeneratorState, VmError> {
 }
 
 fn update_machine_frame(generator: &GeneratorData, state: &GeneratorState) -> Result<(), VmError> {
-    if suspended_iterator_binding(generator, state).is_some() {
-        return push_iterator_frame(generator, state);
+    if push_nested_frame(generator, state)? {
+        return Ok(());
     }
     let Some(crate::continuation::SuspensionPoint::YieldStar { dst, iterator, .. }) =
         state.suspension
@@ -177,11 +180,26 @@ fn update_machine_frame(generator: &GeneratorData, state: &GeneratorState) -> Re
     )
 }
 
+fn push_nested_frame(generator: &GeneratorData, state: &GeneratorState) -> Result<bool, VmError> {
+    if suspended_iterator_binding(generator, state).is_some() {
+        push_iterator_frame(generator, state)?;
+        return Ok(true);
+    }
+    if suspended_conditional(generator, state).is_some() {
+        push_branch_frame(generator, state)?;
+        return Ok(true);
+    }
+    Ok(false)
+}
+
 fn resume_suspended_contexts(
     generator: &GeneratorData,
     state: &mut GeneratorState,
     completion: &crate::completion::Completion,
 ) -> Result<Option<Value>, VmError> {
+    if let Some(completion) = resume_branch_frame(generator, state, completion.clone())? {
+        return resume_machine_frame(generator, state, completion).map(Some);
+    }
     let resumed = match suspended_context(generator, state) {
         Some(SuspendedContext::Try) => {
             ensure_try_frame(generator, state)?;
@@ -362,6 +380,9 @@ fn install_resume_input(generator: &GeneratorData, state: &mut GeneratorState, i
         crate::execute::write_value(&mut state.registers, *dst, input);
         return;
     }
+    if install_branch_frame_input(generator, &mut state.registers, &input) {
+        return;
+    }
     if let Some((_, Op::Yield { src }, _)) = suspended_try(generator, state) {
         crate::execute::write_value(&mut state.registers, *src, input);
         return;
@@ -462,34 +483,4 @@ fn initialize_state(generator: &GeneratorData) {
         private_environment: None,
         suspension: None,
     });
-}
-
-fn complete_step(
-    generator: &GeneratorData,
-    state: &GeneratorState,
-    completion: crate::completion::Completion,
-) -> Result<Value, VmError> {
-    use crate::completion::Completion;
-    match completion {
-        Completion::Yield(value) => yielded_result(generator, state, value),
-        Completion::Return(value) => finish(generator, value),
-        Completion::Normal => finish(generator, Value::Undefined),
-        Completion::Throw(value) => {
-            *generator.done.borrow_mut() = true;
-            Err(VmError::Thrown(value))
-        }
-        _ => Err(VmError::MissingReturn),
-    }
-}
-
-fn finish(generator: &GeneratorData, value: Value) -> Result<Value, VmError> {
-    *generator.done.borrow_mut() = true;
-    Ok(iterator_result(value, true))
-}
-
-pub(crate) fn iterator_result(value: Value, done: bool) -> Value {
-    Value::Object(Rc::new(crate::value::ObjectData::new(vec![
-        ("value".to_string(), value),
-        ("done".to_string(), Value::Boolean(done)),
-    ])))
 }

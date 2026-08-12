@@ -136,6 +136,44 @@ fn push_iterator_frame(generator: &GeneratorData, state: &GeneratorState) -> Res
     )
 }
 
+fn push_branch_frame(generator: &GeneratorData, state: &GeneratorState) -> Result<(), VmError> {
+    if generator.machine.borrow().frame_count() != 0 {
+        return Ok(());
+    }
+    let Some(Op::Conditional { dst, condition, consequent, alternate }) =
+        generator.function.ops().get(state.pc.wrapping_sub(1))
+    else {
+        return Ok(());
+    };
+    let test = crate::execute::read_register(&state.registers, *condition)?;
+    let branch = if crate::execute::is_truthy(&test) { consequent } else { alternate };
+    let Some(ops) = branch.ops() else { return Ok(()); };
+    let Some((index, Op::Yield { src })) = ops.iter().enumerate().find(|(_, op)| matches!(op, Op::Yield { .. })) else {
+        return Ok(());
+    };
+    let resume = parent_resume_range(generator, state);
+    let branch_resume = crate::machine::CodeRange {
+        code: branch.range.code,
+        start: branch.range.start.saturating_add(index as u32 + 1),
+        end: branch.range.end,
+    };
+    try_push_frame(&mut generator.machine.borrow_mut(), crate::machine::Frame::Branch {
+        phase: crate::machine::BranchPhase::Body,
+        branch_resume,
+        resume,
+        dst: *dst,
+        yield_dst: *src,
+    })
+}
+
+fn parent_resume_range(generator: &GeneratorData, state: &GeneratorState) -> crate::machine::CodeRange {
+    crate::machine::CodeRange {
+        code: generator.function.code_id(),
+        start: generator.function.code.range.start.saturating_add(state.pc as u32),
+        end: generator.function.code.range.end,
+    }
+}
+
 fn try_push_frame(machine: &mut crate::machine::Machine, frame: crate::machine::Frame) -> Result<(), VmError> {
     machine
         .try_push_frame(frame)

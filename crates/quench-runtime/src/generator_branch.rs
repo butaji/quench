@@ -1,0 +1,62 @@
+struct BranchFrameResume {
+    branch_resume: crate::machine::CodeRange,
+    resume: crate::machine::CodeRange,
+    dst: u16,
+    yield_dst: u16,
+}
+
+fn branch_frame_resume(generator: &GeneratorData) -> Option<BranchFrameResume> {
+    let frame = generator.machine.borrow().frames.frames.last()?.clone();
+    let crate::machine::Frame::Branch { branch_resume, resume, dst, yield_dst, .. } = frame else {
+        return None;
+    };
+    Some(BranchFrameResume { branch_resume, resume, dst, yield_dst })
+}
+
+fn resume_branch_frame(
+    generator: &GeneratorData,
+    state: &mut GeneratorState,
+    resume: crate::completion::Completion,
+) -> Result<Option<crate::completion::Completion>, VmError> {
+    let Some(frame) = branch_frame_resume(generator) else {
+        return Ok(None);
+    };
+    if !matches!(resume, crate::completion::Completion::Normal) {
+        return Ok(Some(resume));
+    }
+    let store = generator.machine.borrow().store.clone().ok_or(VmError::MissingReturn)?;
+    let ops = store.get(frame.branch_resume).ok_or(VmError::MissingReturn)?;
+    let completion = crate::execute::execute_completion_in_place(ops, &mut state.registers)?;
+    let crate::completion::Completion::Return(value) = completion else {
+        return Ok(Some(completion));
+    };
+    crate::execute::write_value(&mut state.registers, frame.dst, value);
+    generator.machine.borrow_mut().pop_frame();
+    resume_after_branch(generator, state, frame.resume).map(Some)
+}
+
+fn resume_after_branch(
+    generator: &GeneratorData,
+    state: &mut GeneratorState,
+    resume: crate::machine::CodeRange,
+) -> Result<crate::completion::Completion, VmError> {
+    let start = resume.start.saturating_sub(generator.function.code.range.start) as usize;
+    let step = crate::vm::execute_generator_step(
+        generator.function.ops(),
+        &mut state.registers,
+        state.environment.clone(),
+        start,
+        crate::completion::Completion::Normal,
+    )?;
+    state.pc = step.pc;
+    state.suspension = step.suspension;
+    Ok(step.completion)
+}
+
+fn install_branch_frame_input(generator: &GeneratorData, registers: &mut Vec<Value>, input: &Value) -> bool {
+    let Some(frame) = branch_frame_resume(generator) else {
+        return false;
+    };
+    crate::execute::write_value(registers, frame.yield_dst, input.clone());
+    true
+}

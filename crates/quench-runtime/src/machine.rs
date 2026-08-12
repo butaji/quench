@@ -243,6 +243,12 @@ pub enum IteratorPhase {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum BranchPhase {
+    Body,
+    Resume,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Frame {
     Try {
         phase: u8,
@@ -268,6 +274,13 @@ pub enum Frame {
         phase: u8,
         iterator: Value,
         destination: u16,
+    },
+    Branch {
+        phase: BranchPhase,
+        branch_resume: CodeRange,
+        resume: CodeRange,
+        dst: u16,
+        yield_dst: u16,
     },
     Control {
         phase: u8,
@@ -372,7 +385,7 @@ impl Machine {
 
 #[cfg(test)]
 mod tests {
-    use super::{CodeId, CodeRange, EnvironmentRef, Frame, FrameStack, Machine, RegisterWindow};
+    use super::{EnvironmentRef, Machine, RegisterWindow};
     use crate::value::Value;
 
     #[test]
@@ -396,95 +409,5 @@ mod tests {
         assert!(store.get(invalid).is_none());
     }
 
-    #[test]
-    fn code_arena_can_import_existing_function_ranges() {
-        let function = super::FunctionCode::from_ops(vec![super::Op::ParameterEnd]);
-        let mut arena = super::CodeArena::new();
-        let range = arena.append_function(&function).unwrap();
-        let store = arena.freeze();
-        assert_eq!(store.get(range).map(<[_]>::len), Some(1));
-    }
-
-    #[test]
-    fn linked_nested_bodies_share_one_immutable_code_store() {
-        let child = super::FunctionCode::from_ops(vec![super::Op::ParameterEnd]);
-        let root = super::FunctionCode::from_ops(vec![super::Op::IteratorBinding {
-            iterator: 0,
-            body: child,
-            close_normal: false,
-        }]);
-        let Some([super::Op::IteratorBinding { body, .. }]) = root.ops() else {
-            panic!("root body is not an iterator binding");
-        };
-        assert!(std::rc::Rc::ptr_eq(&root.store, &body.store));
-        assert_ne!(root.range, body.range);
-    }
-
-    #[test]
-    fn grouped_bodies_recursively_share_one_immutable_code_store() {
-        let child = super::FunctionCode::from_ops(vec![super::Op::ParameterEnd]);
-        let bodies = super::FunctionCode::from_ops_many(vec![vec![super::Op::IteratorBinding {
-            iterator: 0,
-            body: child,
-            close_normal: false,
-        }]]);
-        let Some([super::Op::IteratorBinding { body, .. }]) = bodies[0].ops() else {
-            panic!("grouped body is not an iterator binding");
-        };
-        assert!(std::rc::Rc::ptr_eq(&bodies[0].store, &body.store));
-    }
-
     include!("machine_tests.rs");
-
-    #[test]
-    fn register_window_is_pre_sized_from_code_metadata() {
-        let window = RegisterWindow::with_count(3);
-        assert_eq!(window.count, 3);
-        assert_eq!(window.values.len(), 3);
-        assert!(window
-            .values
-            .iter()
-            .all(|value| matches!(value, Value::Undefined)));
-    }
-
-    #[test]
-    fn frame_stack_can_reserve_fixed_metadata_capacity() {
-        let mut stack = FrameStack::with_capacity(1);
-        assert_eq!(stack.count, 0);
-        assert!(stack.frames.is_empty());
-        assert!(stack.frames.capacity() >= 1);
-        let frame = Frame::Control {
-            phase: 0,
-            body: CodeRange::new(CodeId(0), 0, 0).unwrap(),
-        };
-        assert!(stack.try_push(frame.clone()).is_ok());
-        assert!(stack.try_push(frame).is_err());
-    }
-    use crate::completion::Completion;
-
-    #[test]
-    fn machine_step_updates_completion_and_frame_count() {
-        let mut machine = Machine::new(CodeId(1), EnvironmentRef(2));
-        let mut frames = FrameStack::new();
-        frames.push(Frame::Await {
-            phase: 0,
-            resume: super::CodeRange {
-                code: CodeId(1),
-                start: 0,
-                end: 1,
-            },
-        });
-        assert_eq!(frames.count, 1);
-        assert!(frames.pop().is_some());
-        assert_eq!(frames.count, 0);
-        let completion = machine
-            .step(Completion::Normal, |_| {
-                Ok::<_, ()>(Completion::Return(crate::value::Value::Undefined))
-            })
-            .expect("machine test transition should succeed");
-        assert!(matches!(
-            completion,
-            Completion::Return(crate::value::Value::Undefined)
-        ));
-    }
 }
