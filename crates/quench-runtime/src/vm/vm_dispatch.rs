@@ -294,32 +294,24 @@ fn run_get_set_property(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmErr
     match op {
         GetProperty { .. } => crate::properties::execute_get(registers, op)?,
         OptionalGet { .. } => crate::properties::execute_optional_get(registers, op)?,
-        OptionalGetDynamic { .. } => {
-            crate::properties::execute_optional_get_dynamic(registers, op)?
-        }
+        OptionalGetDynamic { .. } => crate::properties::execute_optional_get_dynamic(registers, op)?,
         GetPrivate { .. } => crate::private_slots::execute_get(registers, op)?,
-        GetSuperProperty { .. } | GetSuperPropertyDynamic { .. } => {
-            crate::super_scope::execute_get(registers, op)?
-        }
+        GetSuperProperty { .. } | GetSuperPropertyDynamic { .. } => crate::super_scope::execute_get(registers, op)?,
         ResolveGlobal { .. } => crate::with_scope::execute_resolve_global(registers, op)?,
         GetPropertyDynamic { .. } => crate::properties::execute_get_dynamic(registers, op)?,
         HasPropertyDynamic { .. } => crate::with_scope::execute_has_property(registers, op)?,
-        ResolveName { .. } | SetName { .. } | SetResolvedBinding { .. } | CheckStrictName { .. } => crate::with_scope::execute_name(registers, op)?,
-        SetFunctionName { .. } => crate::properties::execute_set_function_name(registers, op)?,
-        SetFunctionNameDynamic { .. } => {
-            crate::properties::execute_set_function_name_dynamic(registers, op)?
+        ResolveName { .. } | SetName { .. } | SetResolvedBinding { .. } | CheckStrictName { .. } => {
+            run_name_property(registers, op)?
         }
+        SetFunctionName { .. } => crate::properties::execute_set_function_name(registers, op)?,
+        SetFunctionNameDynamic { .. } => crate::properties::execute_set_function_name_dynamic(registers, op)?,
         ResolveNameOrUndefined { dst, name } => {
             write_value(registers, *dst, crate::locals::resolve_name_or_undefined(name)?)
         }
         ToPropertyKey { dst, src } => to_property_key(registers, *dst, *src)?,
-        SetProperty { .. } | SetPropertyDynamic { .. } => {
-            crate::properties::execute_set_property(registers, op)?
-        }
+        SetProperty { .. } | SetPropertyDynamic { .. } => crate::properties::execute_set_property(registers, op)?,
         SetPrototype { .. } => crate::properties::execute_set_prototype(registers, op)?,
-        SetSuperProperty { .. } | SetSuperPropertyDynamic { .. } => {
-            crate::super_scope::execute_set(registers, op)?
-        }
+        SetSuperProperty { .. } | SetSuperPropertyDynamic { .. } => crate::super_scope::execute_set(registers, op)?,
         SetPrivate { .. } => crate::private_slots::execute_set(registers, op)?,
         DefinePrivate { .. } => crate::private_slots::execute_define(registers, op)?,
         DefineProperty { .. } => crate::property_define::execute(registers, op)?,
@@ -329,6 +321,10 @@ fn run_get_set_property(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmErr
         _ => {}
     }
     Ok(())
+}
+
+fn run_name_property(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
+    crate::with_scope::execute_name(registers, op)
 }
 
 fn run_delete_property(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
