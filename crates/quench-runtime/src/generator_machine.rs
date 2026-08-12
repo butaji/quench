@@ -108,7 +108,7 @@ fn push_iterator_frame(generator: &GeneratorData, state: &GeneratorState) -> Res
     try_push_frame(
         &mut generator.machine.borrow_mut(),
         crate::machine::Frame::Iterator {
-            phase: 2,
+            phase: crate::machine::IteratorPhase::Body,
             iterator,
             binding: *binding,
             body: body.range,
