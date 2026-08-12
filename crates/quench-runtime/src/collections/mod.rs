@@ -48,10 +48,7 @@ pub(crate) fn execute_builtin(
 }
 
 fn iterator_self(receiver: Option<&Value>) -> Result<Value, VmError> {
-    receiver
-        .filter(|value| matches!(value, Value::Iterator(_)))
-        .cloned()
-        .ok_or_else(|| crate::value::error::throw_type_error("not an iterator"))
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
 fn execute_weak(
