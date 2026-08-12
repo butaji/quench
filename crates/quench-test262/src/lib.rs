@@ -5,7 +5,6 @@
 //! It is the sole owner of test262 metadata, exact harness composition,
 //! staging selection, and expected-completion classification. The runtime is
 //! treated as an external JavaScript engine and is never given test262 policy.
-
 use std::{collections::HashMap, path::Path};
 
 pub mod module_graph;
@@ -13,12 +12,10 @@ pub mod runtime_host;
 mod stages;
 pub use runtime_host::RuntimeHost;
 pub use stages::{list_stages, resolve_stages, ConformanceStage, ResolvedStage};
-
 pub struct HarnessCache {
     root: std::path::PathBuf,
     sources: HashMap<String, String>,
 }
-
 impl HarnessCache {
     pub fn new(root: std::path::PathBuf) -> Self {
         Self {
@@ -26,12 +23,10 @@ impl HarnessCache {
             sources: HashMap::new(),
         }
     }
-
     pub fn load(&mut self, name: &str) -> Result<String, String> {
         self.ensure(name)?;
         Ok(self.get(name)?.to_string())
     }
-
     fn ensure(&mut self, name: &str) -> Result<(), String> {
         if !self.sources.contains_key(name) {
             let source = std::fs::read_to_string(self.root.join(name))

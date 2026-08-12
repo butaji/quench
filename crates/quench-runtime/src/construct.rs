@@ -113,7 +113,6 @@ fn with_new_target_prototype(value: Value, target: &Value, new_target: &Value) -
     })
 }
 include!("construct_realm.rs");
-
 fn construct_bound(
     bound: &crate::value::BoundFunctionValue,
     target: &Value,
@@ -139,7 +138,6 @@ fn construct_bound(
         target.clone(),
     ))
 }
-
 fn construct_builtin(
     builtin: crate::ops::Builtin,
     arguments: &[Value],
