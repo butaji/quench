@@ -106,7 +106,6 @@ fn is_simple_builtin(builtin: Builtin) -> bool {
             | Builtin::WeakRefDeref
     )
 }
-
 fn execute_simple_builtin(
     builtin: Builtin,
     arguments: &[Value],
@@ -191,14 +190,12 @@ fn explicit_bigint(value: Option<&Value>) -> Result<Value, VmError> {
         .map_err(|_| crate::value::error::throw_type_error("Invalid BigInt value"))?;
     Ok(Value::BigInt(value.to_string()))
 }
-
 fn boxed_value(receiver: Option<&Value>) -> Value {
     receiver.map_or(Value::Undefined, |value| match value {
         Value::Object(_) => crate::execute::get_property(value, "_value"),
         _ => value.clone(),
     })
 }
-
 fn number_value_of(receiver: Option<&Value>) -> Result<Value, VmError> {
     match receiver {
         Some(Value::Builtin(Builtin::NumberPrototype)) => Ok(Value::Number(0.0)),
@@ -224,7 +221,6 @@ fn number_value_of(receiver: Option<&Value>) -> Result<Value, VmError> {
         )),
     }
 }
-
 fn is_error_constructor(builtin: Builtin) -> bool {
     matches!(
         builtin,
@@ -278,6 +274,8 @@ fn is_data_view_builtin(builtin: Builtin) -> bool {
             | Builtin::DataViewSetFloat16
             | Builtin::DataViewSetFloat32
             | Builtin::DataViewSetFloat64
+            | Builtin::DataViewSetBigInt64
+            | Builtin::DataViewSetBigUint64
     )
 }
 fn execute_data_view_builtin(
@@ -305,7 +303,6 @@ fn data_view_receiver(receiver: Option<&Value>) -> Result<&crate::value::DataVie
         )),
     }
 }
-
 fn execute_data_view_get(
     builtin: Builtin,
     view: &crate::value::DataViewData,
@@ -323,7 +320,6 @@ fn execute_data_view_get(
     };
     Ok(result)
 }
-
 fn execute_data_view_wide_get(
     builtin: Builtin,
     view: &crate::value::DataViewData,
@@ -354,7 +350,6 @@ fn execute_data_view_wide_get(
     };
     value.map(Value::Number).map_err(data_view_error)
 }
-
 fn is_data_view_setter(builtin: Builtin) -> bool {
     matches!(
         builtin,
@@ -369,7 +364,6 @@ fn is_data_view_setter(builtin: Builtin) -> bool {
             | Builtin::DataViewSetFloat64
     )
 }
-
 fn execute_data_view_set(
     builtin: Builtin,
     view: &crate::value::DataViewData,
@@ -377,6 +371,9 @@ fn execute_data_view_set(
     little_endian: bool,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
+    if matches!(builtin, Builtin::DataViewSetBigInt64 | Builtin::DataViewSetBigUint64) {
+        return execute_data_view_bigint_set(builtin, view, offset, little_endian, arguments);
+    }
     let number = crate::intl::tolocale::value::to_number_result(arguments.get(1))?;
     let result = match builtin {
         Builtin::DataViewSetInt8 => view.set_int8(offset, to_i8(number)),
@@ -392,7 +389,26 @@ fn execute_data_view_set(
     };
     result.map_err(data_view_error).map(|()| Value::Undefined)
 }
-
+fn execute_data_view_bigint_set(
+    builtin: Builtin,
+    view: &crate::value::DataViewData,
+    offset: usize,
+    little_endian: bool,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
+    let input = arguments.get(1).unwrap_or(&Value::Undefined);
+    if matches!(input, Value::Number(_)) {
+        return Err(type_error("Cannot convert Number to BigInt"));
+    }
+    let value = explicit_bigint(Some(input))?;
+    let bits = crate::construct::bigint_bits(&value)?;
+    let result = match builtin {
+        Builtin::DataViewSetBigInt64 => view.set_bigint64(offset, bits as i64, little_endian),
+        Builtin::DataViewSetBigUint64 => view.set_biguint64(offset, bits, little_endian),
+        _ => return Err(VmError::NotCallable),
+    };
+    result.map_err(data_view_error).map(|()| Value::Undefined)
+}
 fn data_view_offset(value: Option<&Value>) -> Result<usize, VmError> {
     let number = crate::intl::tolocale::value::to_number_result(value)?;
     if !number.is_finite() || number < 0.0 {
@@ -400,7 +416,6 @@ fn data_view_offset(value: Option<&Value>) -> Result<usize, VmError> {
     }
     Ok(number.trunc() as usize)
 }
-
 fn data_view_error(error: crate::value::DataViewError) -> VmError {
     match error {
         crate::value::DataViewError::Detached => type_error("Detached DataView"),
@@ -409,58 +424,24 @@ fn data_view_error(error: crate::value::DataViewError) -> VmError {
         }
     }
 }
-
+fn integer_modulo(value: f64, modulus: f64) -> u64 {
+    if !value.is_finite() || value == 0.0 { return 0; }
+    value.trunc().rem_euclid(modulus) as u64
+}
+fn to_u8(value: f64) -> u8 { integer_modulo(value, 256.0) as u8 }
+fn to_i8(value: f64) -> i8 { let value = to_u8(value); if value >= 128 { (value as i16 - 256) as i8 } else { value as i8 } }
+fn to_u16(value: f64) -> u16 { integer_modulo(value, 65536.0) as u16 }
+fn to_i16(value: f64) -> i16 { let value = to_u16(value); if value >= 32768 { (value as i32 - 65536) as i16 } else { value as i16 } }
+fn to_u32(value: f64) -> u32 { integer_modulo(value, 4294967296.0) as u32 }
+fn to_i32(value: f64) -> i32 { let value = to_u32(value); if value >= 2147483648 { (value as i64 - 4294967296) as i32 } else { value as i32 } }
 fn type_error(message: &str) -> VmError {
     let arguments = [Value::String(message.to_string())];
     VmError::Thrown(crate::builtins::error(Builtin::TypeError, &arguments))
 }
-
 fn range_error(message: &str) -> VmError {
     let arguments = [Value::String(message.to_string())];
     VmError::Thrown(crate::builtins::error(Builtin::RangeError, &arguments))
 }
-
-fn integer_modulo(value: f64, modulus: f64) -> u64 {
-    if !value.is_finite() || value == 0.0 {
-        return 0;
-    }
-    value.trunc().rem_euclid(modulus) as u64
-}
-
-fn to_u8(value: f64) -> u8 {
-    integer_modulo(value, 256.0) as u8
-}
-fn to_i8(value: f64) -> i8 {
-    let value = to_u8(value);
-    if value >= 128 {
-        (value as i16 - 256) as i8
-    } else {
-        value as i8
-    }
-}
-fn to_u16(value: f64) -> u16 {
-    integer_modulo(value, 65536.0) as u16
-}
-fn to_i16(value: f64) -> i16 {
-    let value = to_u16(value);
-    if value >= 32768 {
-        (value as i32 - 65536) as i16
-    } else {
-        value as i16
-    }
-}
-fn to_u32(value: f64) -> u32 {
-    integer_modulo(value, 4294967296.0) as u32
-}
-fn to_i32(value: f64) -> i32 {
-    let value = to_u32(value);
-    if value >= 2147483648 {
-        (value as i64 - 4294967296) as i32
-    } else {
-        value as i32
-    }
-}
-
 fn function_prototype_builtin(
     builtin: Builtin,
     receiver: Option<&Value>,
@@ -475,7 +456,6 @@ fn function_prototype_builtin(
         _ => Ok(Value::Undefined),
     }
 }
-
 fn regexp_prototype_to_string(
     receiver: Option<&Value>,
 ) -> Result<Value, VmError> {

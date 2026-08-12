@@ -56,6 +56,8 @@ pub enum Builtin {
     DataViewSetFloat32,
     DataViewSetFloat64,
     DataViewSetFloat16,
+    DataViewSetBigInt64,
+    DataViewSetBigUint64,
     ArrayIsArray,
     ArrayFrom,
     ArrayMap,
