@@ -41,7 +41,7 @@ pub(crate) fn execute_builtin(
         MapKeys => Some(iterator::from_map_keys(receiver)),
         MapValues => Some(iterator::from_map_values(receiver)),
         SetIterator => Some(iterator::from_set(receiver)),
-        IteratorNext => Some(Ok(iterator::next(receiver))),
+        IteratorNext => Some(iterator::next(receiver)),
         IteratorSelf => Some(iterator_self(receiver)),
         _ => None,
     }
