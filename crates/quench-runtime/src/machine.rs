@@ -313,6 +313,55 @@ pub enum Frame {
     },
 }
 
+impl Frame {
+    fn advance_resume(&mut self, range: CodeRange, yield_dst: u16) -> bool {
+        match self {
+            Self::Try {
+                phase,
+                body_resume,
+                yield_dst: dst,
+                ..
+            } => {
+                *phase = TryPhase::Body;
+                *body_resume = range;
+                *dst = yield_dst;
+            }
+            Self::Iterator {
+                phase,
+                body_resume,
+                yield_dst: dst,
+                ..
+            } => {
+                *phase = IteratorPhase::Body;
+                *body_resume = range;
+                *dst = yield_dst;
+            }
+            Self::Branch {
+                phase,
+                branch_resume,
+                yield_dst: dst,
+                ..
+            } => {
+                *phase = BranchPhase::Body;
+                *branch_resume = range;
+                *dst = yield_dst;
+            }
+            Self::Private {
+                phase,
+                body_resume,
+                yield_dst: dst,
+                ..
+            } => {
+                *phase = PrivatePhase::Body;
+                *body_resume = range;
+                *dst = yield_dst;
+            }
+            _ => return false,
+        }
+        true
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Machine {
     pub(crate) store: Option<Rc<CodeStore>>,
@@ -407,24 +456,11 @@ impl Machine {
         true
     }
 
-    pub(crate) fn advance_private_resume(
-        &mut self,
-        body_resume: CodeRange,
-        yield_dst: u16,
-    ) -> bool {
-        let Some(Frame::Private {
-            phase,
-            body_resume: current_resume,
-            yield_dst: current_dst,
-            ..
-        }) = self.frames.frames.last_mut()
-        else {
+    pub(crate) fn advance_frame_resume(&mut self, resume: CodeRange, yield_dst: u16) -> bool {
+        let Some(frame) = self.frames.frames.last_mut() else {
             return false;
         };
-        *phase = PrivatePhase::Body;
-        *current_resume = body_resume;
-        *current_dst = yield_dst;
-        true
+        frame.advance_resume(resume, yield_dst)
     }
 }
 

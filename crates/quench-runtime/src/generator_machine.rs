@@ -201,6 +201,25 @@ fn range_after(range: crate::machine::CodeRange, suffix_len: usize) -> crate::ma
     }
 }
 
+fn advance_frame_after_yield(
+    generator: &GeneratorData,
+    range: crate::machine::CodeRange,
+) -> Result<(), VmError> {
+    let store = generator.machine.borrow().store.clone().ok_or(VmError::MissingReturn)?;
+    let ops = store.get(range).ok_or(VmError::MissingReturn)?;
+    let Some((index, Op::Yield { src })) = ops.iter().enumerate().find(|(_, op)| matches!(op, Op::Yield { .. })) else {
+        return Err(VmError::MissingReturn);
+    };
+    let resume = crate::machine::CodeRange {
+        code: range.code,
+        start: range.start.saturating_add(index as u32 + 1),
+        end: range.end,
+    };
+    generator.machine.borrow_mut().advance_frame_resume(resume, *src)
+        .then_some(())
+        .ok_or(VmError::MissingReturn)
+}
+
 fn parent_resume_range(generator: &GeneratorData, state: &GeneratorState) -> crate::machine::CodeRange {
     crate::machine::CodeRange {
         code: generator.function.code_id(),

@@ -27,6 +27,10 @@ fn resume_branch_frame(
     let store = generator.machine.borrow().store.clone().ok_or(VmError::MissingReturn)?;
     let ops = store.get(frame.branch_resume).ok_or(VmError::MissingReturn)?;
     let completion = crate::execute::execute_completion_in_place(ops, &mut state.registers)?;
+    if completion.is_suspension() {
+        advance_frame_after_yield(generator, frame.branch_resume)?;
+        return Ok(Some(completion));
+    }
     let crate::completion::Completion::Return(value) = completion else {
         return Ok(Some(completion));
     };
