@@ -111,6 +111,19 @@ pub enum Op {
         name: String,
         src: u16,
     },
+    SetResolvedLocalBinding {
+        target: u16,
+        slot: u16,
+        name: String,
+        strict: bool,
+        src: u16,
+    },
+    LoadResolvedLocalBinding {
+        dst: u16,
+        target: u16,
+        slot: u16,
+        name: String,
+    },
     LoadBinding {
         dst: u16,
         slot: u16,
