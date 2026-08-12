@@ -95,6 +95,27 @@ fn update_await_frame(
     )
 }
 
+fn push_iterator_frame(generator: &GeneratorData, state: &GeneratorState) -> Result<(), VmError> {
+    if generator.machine.borrow().frame_count() != 0 {
+        return Ok(());
+    }
+    let Some(Op::IteratorBinding { iterator: binding, body, .. }) =
+        generator.function.ops().get(state.pc.wrapping_sub(1))
+    else {
+        return Ok(());
+    };
+    let iterator = crate::execute::read_register(&state.registers, *binding)?;
+    try_push_frame(
+        &mut generator.machine.borrow_mut(),
+        crate::machine::Frame::Iterator {
+            phase: 2,
+            iterator,
+            binding: *binding,
+            body: body.range,
+        },
+    )
+}
+
 fn try_push_frame(machine: &mut crate::machine::Machine, frame: crate::machine::Frame) -> Result<(), VmError> {
     machine
         .try_push_frame(frame)
