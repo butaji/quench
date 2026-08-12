@@ -32,6 +32,7 @@ fn reduce_body(
     locals: &mut HashMap<String, u16>,
 ) -> Result<Option<u16>, Vec<String>> {
     let mut block_locals = locals.clone();
+    block_locals.retain(|name, _| !name.starts_with("\0lexical-predeclared:"));
     let mut last = None;
     for statement in &block.body {
         if let Some(value) = reduce_statement(

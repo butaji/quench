@@ -146,7 +146,8 @@ fn declaration_slot(
     locals: &HashMap<String, u16>,
 ) -> u16 {
     if _kind != VariableDeclarationKind::Var {
-        if let Some(slot) = locals.get(name) {
+        let marker = format!("\0lexical-predeclared:{name}");
+        if let Some(slot) = locals.get(&marker) {
             return *slot;
         }
         let slot = *next_slot;
