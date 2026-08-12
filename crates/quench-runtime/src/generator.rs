@@ -135,8 +135,8 @@ fn resume(generator: &GeneratorData, resume: Resume) -> Result<Value, VmError> {
     let step = execute_generator_step(generator, &mut state, completion)?;
     state.pc = step.pc;
     state.suspension = step.suspension;
-    update_machine_frame(generator, &state);
-    update_await_frame(generator, &state, &step.completion);
+    update_machine_frame(generator, &state)?;
+    update_await_frame(generator, &state, &step.completion)?;
     capture_suspended_private_environment(generator, &mut state, &step.completion);
     let result = complete_step(generator, &state, step.completion);
     generator.state.replace(Some(state));
@@ -152,34 +152,34 @@ fn current_state(generator: &GeneratorData) -> Result<GeneratorState, VmError> {
         .ok_or(VmError::MissingReturn)
 }
 
-fn update_machine_frame(generator: &GeneratorData, state: &GeneratorState) {
+fn update_machine_frame(generator: &GeneratorData, state: &GeneratorState) -> Result<(), VmError> {
     let Some(crate::continuation::SuspensionPoint::YieldStar { dst, iterator, .. }) =
         state.suspension
     else {
-        return;
+        return Ok(());
     };
     let Ok(iterator) = crate::execute::read_register(&state.registers, iterator) else {
-        return;
+        return Ok(());
     };
-    generator
-        .machine
-        .borrow_mut()
-        .push_frame(crate::machine::Frame::Delegate {
+    try_push_frame(
+        &mut generator.machine.borrow_mut(),
+        crate::machine::Frame::Delegate {
             phase: 0,
             iterator,
             destination: dst,
-        });
+        },
+    )
 }
 fn resume_suspended_contexts(
     generator: &GeneratorData,
     state: &mut GeneratorState,
     completion: &crate::completion::Completion,
 ) -> Result<Option<Value>, VmError> {
-    ensure_try_frame(generator, state);
+    ensure_try_frame(generator, state)?;
     if let Some(completion) = resume_suspended_try(generator, state, completion.clone())? {
         return resume_machine_frame(generator, state, completion).map(Some);
     }
-    ensure_control_frame(generator, state);
+    ensure_control_frame(generator, state)?;
     if let Some(completion) = resume_suspended_conditional(generator, state, completion.clone())? {
         return resume_machine_frame(generator, state, completion).map(Some);
     }

@@ -31,16 +31,15 @@ fn execute_generator_step(
     Ok(step)
 }
 
-fn ensure_try_frame(generator: &GeneratorData, state: &GeneratorState) {
+fn ensure_try_frame(generator: &GeneratorData, state: &GeneratorState) -> Result<(), VmError> {
     if suspended_try(generator, state).is_none()
         || generator.machine.borrow().frame_count() != 0
     {
-        return;
+        return Ok(());
     }
-    generator
-        .machine
-        .borrow_mut()
-        .push_frame(crate::machine::Frame::Try {
+    try_push_frame(
+        &mut generator.machine.borrow_mut(),
+        crate::machine::Frame::Try {
             phase: 0,
             body: crate::machine::CodeRange {
                 code: crate::machine::CodeId(0),
@@ -49,44 +48,55 @@ fn ensure_try_frame(generator: &GeneratorData, state: &GeneratorState) {
             },
             handler: None,
             finalizer: None,
-        });
+        },
+    )
 }
 
-fn ensure_control_frame(generator: &GeneratorData, state: &GeneratorState) {
+fn ensure_control_frame(generator: &GeneratorData, state: &GeneratorState) -> Result<(), VmError> {
     if (suspended_conditional(generator, state).is_none()
         && suspended_private_scope(generator, state).is_none())
         || generator.machine.borrow().frame_count() != 0
     {
-        return;
+        return Ok(());
     }
-    generator
-        .machine
-        .borrow_mut()
-        .push_frame(crate::machine::Frame::Control {
+    try_push_frame(
+        &mut generator.machine.borrow_mut(),
+        crate::machine::Frame::Control {
             phase: 0,
             body: crate::machine::CodeRange {
                 code: crate::machine::CodeId(0),
                 start: state.pc.saturating_sub(1) as u32,
                 end: state.pc as u32,
             },
-        });
+        },
+    )
 }
 
-fn update_await_frame(generator: &GeneratorData, state: &GeneratorState, completion: &crate::completion::Completion) {
+fn update_await_frame(
+    generator: &GeneratorData,
+    state: &GeneratorState,
+    completion: &crate::completion::Completion,
+) -> Result<(), VmError> {
     if !matches!(completion, crate::completion::Completion::Suspend(_)) {
-        return;
+        return Ok(());
     }
-    generator
-        .machine
-        .borrow_mut()
-        .push_frame(crate::machine::Frame::Await {
+    try_push_frame(
+        &mut generator.machine.borrow_mut(),
+        crate::machine::Frame::Await {
             phase: 0,
             resume: crate::machine::CodeRange {
                 code: crate::machine::CodeId(0),
                 start: state.pc as u32,
                 end: state.pc as u32 + 1,
             },
-        });
+        },
+    )
+}
+
+fn try_push_frame(machine: &mut crate::machine::Machine, frame: crate::machine::Frame) -> Result<(), VmError> {
+    machine
+        .try_push_frame(frame)
+        .map_err(|_| VmError::EvalError("continuation frame stack overflow".to_string()))
 }
 
 fn resume_machine_frame(
