@@ -169,7 +169,6 @@ fn update_machine_frame(generator: &GeneratorData, state: &GeneratorState) {
             destination: dst,
         });
 }
-
 fn resume_suspended_contexts(
     generator: &GeneratorData,
     state: &mut GeneratorState,
@@ -182,16 +181,22 @@ fn resume_suspended_contexts(
         }
         return complete_step(generator, state, completion).map(Some);
     }
+    ensure_control_frame(generator, state);
     if let Some(completion) = resume_suspended_conditional(generator, state, completion.clone())? {
+        if !completion.is_suspension() {
+            generator.machine.borrow_mut().pop_frame();
+        }
         return complete_step(generator, state, completion).map(Some);
     }
     if let Some(completion) = resume_suspended_private_scope(generator, state, completion.clone())?
     {
+        if !completion.is_suspension() {
+            generator.machine.borrow_mut().pop_frame();
+        }
         return complete_step(generator, state, completion).map(Some);
     }
     Ok(None)
 }
-
 impl Resume {
     fn completion(&self) -> crate::completion::Completion {
         match self {
@@ -201,7 +206,6 @@ impl Resume {
         }
     }
 }
-
 fn generator_receiver<'a>(
     receiver: Option<&'a Value>,
     method: &str,

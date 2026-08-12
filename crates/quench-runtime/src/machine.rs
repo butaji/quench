@@ -175,6 +175,10 @@ pub enum Frame {
         iterator: Value,
         destination: u16,
     },
+    Control {
+        phase: u8,
+        body: CodeRange,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
