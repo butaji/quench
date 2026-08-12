@@ -74,6 +74,14 @@ pub(crate) fn construct_value(
     construct_with_new_target(target, target, arguments)
 }
 
+pub(crate) fn construct_value_with_new_target(
+    target: &Value,
+    new_target: &Value,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    construct_with_new_target(target, new_target, arguments)
+}
+
 pub(crate) fn construct_super(
     target: &Value,
     new_target: &std::rc::Rc<crate::value::FunctionValue>,
@@ -447,7 +455,7 @@ fn construct_function(
     if derived_constructor(function).is_ok() {
         let _context = crate::super_scope::Guard::install(function, &Value::Undefined);
         let (result, final_this) =
-            crate::functions::execute_construct(function, &Value::Undefined, arguments)?;
+            crate::functions::execute_construct(function, &Value::Undefined, target, arguments)?;
         if crate::value::is_object(&result) {
             return Ok(result);
         }
@@ -459,7 +467,8 @@ fn construct_function(
         ));
     }
     let object = initialize_instance_fields(function, constructor_receiver(target))?;
-    let (result, final_this) = crate::functions::execute_construct(function, &object, arguments)?;
+    let (result, final_this) =
+        crate::functions::execute_construct(function, &object, target, arguments)?;
     if crate::value::is_object(&result) {
         Ok(result)
     } else if crate::value::is_object(&final_this) {

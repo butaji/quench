@@ -149,6 +149,13 @@ pub(crate) fn reduce_optional_call(
 ) -> Option<u16> {
     let (callee, receiver, receiver_guard) =
         reduce_optional_callee(&call.callee, ops, facts, next, locals)?;
+    let dst = *next;
+    *next = next.saturating_add(1);
+    if receiver_guard {
+        return reduce_guarded_optional_call(
+            call, callee, receiver?, dst, ops, facts, next, locals,
+        );
+    }
     let (args, spreads) = crate::reduce::reduce_expressions::calls_reduce::reduce_arguments(
         &call.arguments,
         ops,
@@ -156,8 +163,6 @@ pub(crate) fn reduce_optional_call(
         next,
         locals,
     )?;
-    let dst = *next;
-    *next = next.saturating_add(1);
     ops.push(Op::OptionalCall {
         dst,
         callee,
@@ -165,6 +170,50 @@ pub(crate) fn reduce_optional_call(
         guard_receiver: receiver_guard,
         args,
         spreads,
+    });
+    Some(dst)
+}
+
+fn reduce_guarded_optional_call(
+    call: &oxc::ast::ast::CallExpression<'_>,
+    callee: u16,
+    receiver: u16,
+    dst: u16,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<u16> {
+    let condition = *next;
+    *next = next.saturating_add(1);
+    ops.push(Op::Unary {
+        dst: condition,
+        operator: crate::ops::UnaryOp::IsNullish,
+        src: receiver,
+    });
+    let mut else_ops = Vec::new();
+    let (args, spreads) = crate::reduce::reduce_expressions::calls_reduce::reduce_arguments(
+        &call.arguments,
+        &mut else_ops,
+        facts,
+        next,
+        locals,
+    )?;
+    else_ops.push(Op::OptionalCall {
+        dst,
+        callee,
+        receiver: Some(receiver),
+        guard_receiver: true,
+        args,
+        spreads,
+    });
+    ops.push(Op::Branch {
+        condition,
+        then_ops: vec![Op::Const {
+            dst,
+            value: crate::ops::Constant::Undefined,
+        }],
+        else_ops,
     });
     Some(dst)
 }
@@ -230,10 +279,13 @@ fn reduce_static_callee(
     next: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<(u16, Option<u16>, bool)> {
+    if matches!(member.object, Expression::Super(_)) {
+        return reduce_super_static_callee(member, ops, next, locals);
+    }
     let object = crate::reduce::reduce_expression(&member.object, ops, facts, next, locals)?;
     let callee = *next;
     *next = next.saturating_add(1);
-    let op = if member.optional {
+    let op = if member.optional || has_optional_chain_object(&member.object) {
         Op::OptionalGet {
             dst: callee,
             object,
@@ -247,7 +299,45 @@ fn reduce_static_callee(
         }
     };
     ops.push(op);
-    Some((callee, Some(object), member.optional))
+    Some((
+        callee,
+        Some(object),
+        member.optional || has_optional_chain_object(&member.object),
+    ))
+}
+
+fn reduce_super_static_callee(
+    member: &oxc::ast::ast::StaticMemberExpression<'_>,
+    ops: &mut Vec<Op>,
+    next: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<(u16, Option<u16>, bool)> {
+    let callee = *next;
+    *next = next.saturating_add(1);
+    ops.push(Op::GetSuperProperty {
+        dst: callee,
+        key: member.property.name.to_string(),
+    });
+    let receiver = emit_this_receiver(ops, next, locals)?;
+    Some((callee, Some(receiver), member.optional))
+}
+
+fn emit_this_receiver(
+    ops: &mut Vec<Op>,
+    next: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<u16> {
+    let slot = locals
+        .get("this")
+        .or_else(|| locals.get("\0script_this"))
+        .copied()?;
+    let receiver = *next;
+    *next = next.saturating_add(1);
+    ops.push(Op::LoadLocal {
+        dst: receiver,
+        slot,
+    });
+    Some(receiver)
 }
 
 fn reduce_computed_callee(
@@ -261,7 +351,7 @@ fn reduce_computed_callee(
     let key = crate::reduce::reduce_expression(&member.expression, ops, facts, next, locals)?;
     let callee = *next;
     *next = next.saturating_add(1);
-    let op = if member.optional {
+    let op = if member.optional || has_optional_chain_object(&member.object) {
         Op::OptionalGetDynamic {
             dst: callee,
             object,
@@ -275,7 +365,27 @@ fn reduce_computed_callee(
         }
     };
     ops.push(op);
-    Some((callee, Some(object), member.optional))
+    Some((
+        callee,
+        Some(object),
+        member.optional || has_optional_chain_object(&member.object),
+    ))
+}
+
+fn has_optional_chain_object(expression: &Expression<'_>) -> bool {
+    match expression {
+        Expression::ChainExpression(_) => true,
+        Expression::ParenthesizedExpression(parenthesized) => {
+            has_optional_chain_object(&parenthesized.expression)
+        }
+        Expression::StaticMemberExpression(member) => {
+            member.optional || has_optional_chain_object(&member.object)
+        }
+        Expression::ComputedMemberExpression(member) => {
+            member.optional || has_optional_chain_object(&member.object)
+        }
+        _ => false,
+    }
 }
 
 fn reduce_secondary(

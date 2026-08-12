@@ -259,7 +259,8 @@ pub(crate) fn proxy_construct(
             );
         }
     }
-    crate::construct::construct_value(target, arguments)
+    let new_target = new_target.unwrap_or(target);
+    crate::construct::construct_value_with_new_target(target, new_target, arguments)
 }
 
 fn is_constructible(value: &Value) -> bool {
