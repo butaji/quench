@@ -4,6 +4,7 @@ use std::{
     rc::Rc,
 };
 
+use crate::module_bindings::ModuleBindingCell;
 use crate::value::Value;
 
 #[derive(Debug, Default, PartialEq)]
@@ -223,7 +224,11 @@ impl Environment {
     }
 
     pub(crate) fn alias_binding(&self, name: &str, binding: Rc<RefCell<Value>>) {
-        let store = SlotStore::from_cell(binding);
+        self.alias_module_binding(name, ModuleBindingCell::from_shared(binding));
+    }
+
+    pub(crate) fn alias_module_binding(&self, name: &str, binding: ModuleBindingCell) {
+        let store = SlotStore::from_cell(binding.shared());
         let reference = BindingRef::new(store, 0);
         self.insert_alias(name, reference);
     }

@@ -57,6 +57,7 @@ mod loops;
 pub mod machine;
 mod math;
 mod methods;
+mod module_bindings;
 mod number_fmt;
 mod objects;
 pub mod ops;
