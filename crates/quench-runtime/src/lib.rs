@@ -41,6 +41,7 @@ mod functions_write;
 mod generator;
 mod global_environment;
 mod globals;
+pub mod heap;
 mod identifiers;
 pub mod identity;
 mod intl;

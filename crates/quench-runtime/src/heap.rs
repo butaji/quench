@@ -1,0 +1,80 @@
+use crate::identity::HeapRef;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LifetimeDomain {
+    Realm,
+    Module,
+    Request,
+    Temporary,
+    Continuation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RootSet {
+    domain: LifetimeDomain,
+    refs: Vec<HeapRef>,
+}
+
+impl RootSet {
+    pub fn new(domain: LifetimeDomain) -> Self {
+        Self {
+            domain,
+            refs: Vec::new(),
+        }
+    }
+
+    pub fn domain(&self) -> LifetimeDomain {
+        self.domain
+    }
+
+    pub fn insert(&mut self, reference: HeapRef) {
+        if !self.refs.contains(&reference) {
+            self.refs.push(reference);
+        }
+    }
+
+    pub fn remove(&mut self, reference: HeapRef) {
+        self.refs.retain(|candidate| *candidate != reference);
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = HeapRef> + '_ {
+        self.refs.iter().copied()
+    }
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct RootRegistry {
+    sets: Vec<RootSet>,
+}
+
+impl RootRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn roots(&self, domain: LifetimeDomain) -> impl Iterator<Item = HeapRef> + '_ {
+        self.sets
+            .iter()
+            .filter(move |set| set.domain() == domain)
+            .flat_map(RootSet::iter)
+    }
+
+    pub fn add(&mut self, domain: LifetimeDomain, reference: HeapRef) {
+        self.set(domain).insert(reference);
+    }
+
+    pub fn remove(&mut self, domain: LifetimeDomain, reference: HeapRef) {
+        if let Some(set) = self.sets.iter_mut().find(|set| set.domain() == domain) {
+            set.remove(reference);
+        }
+    }
+
+    fn set(&mut self, domain: LifetimeDomain) -> &mut RootSet {
+        if let Some(index) = self.sets.iter().position(|set| set.domain() == domain) {
+            return &mut self.sets[index];
+        }
+        let index = self.sets.len();
+        self.sets.push(RootSet::new(domain));
+        &mut self.sets[index]
+    }
+}
