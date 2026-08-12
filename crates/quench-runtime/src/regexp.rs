@@ -1,15 +1,9 @@
-//! RegExp execution using the `regress` crate.
-
+use regress::{Flags, Regex};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::Rc;
 
-use regress::{Flags, Regex};
-
 use crate::{execute::VmError, ops::Builtin, value::Value};
 
-/// Walk the body of a regex literal and reject arithmetic-modifier groups
-/// (`(? flags : Disjunction)` / `(? add - remove : Disjunction)`) that fail
-/// the sec-patterns-static-semantics-early-errors rules.
 pub fn validate_literal(body: &str) -> Result<(), String> {
     let mut index = 0;
     while let Some(found) = body[index..].find("(?") {
@@ -32,7 +26,6 @@ pub fn validate_literal(body: &str) -> Result<(), String> {
     }
     Ok(())
 }
-
 fn validate_modifier_group(body: &str, start: usize) -> Result<(), String> {
     let bytes = body.as_bytes();
     let (first, mut cursor) = read_flag_chunk(bytes, start)?;
@@ -63,7 +56,6 @@ fn validate_modifier_group(body: &str, start: usize) -> Result<(), String> {
     }
     Ok(())
 }
-
 fn read_flag_chunk(bytes: &[u8], start: usize) -> Result<(String, usize), String> {
     let mut end = start;
     while end < bytes.len() {
@@ -78,7 +70,6 @@ fn read_flag_chunk(bytes: &[u8], start: usize) -> Result<(String, usize), String
         .to_string();
     Ok((slice, end))
 }
-
 fn validate_flag_chars(chunk: &str, allow_empty: bool) -> Result<(), String> {
     if chunk.is_empty() {
         return if allow_empty {
@@ -99,13 +90,9 @@ fn validate_flag_chars(chunk: &str, allow_empty: bool) -> Result<(), String> {
     }
     Ok(())
 }
-
 fn syntax_error() -> String {
     "SyntaxError: invalid regular expression modifiers".to_string()
 }
-
-/// Walk the body of a regex literal and reject bodies whose pattern text
-/// fails the sec-patterns-static-semantics-early-errors rules.
 pub fn validate_pattern(body: &str) -> Result<(), String> {
     validate_initial_quantifier(body)?;
     validate_braced_quantifier(body)?;
@@ -113,7 +100,6 @@ pub fn validate_pattern(body: &str) -> Result<(), String> {
     validate_named_groups(body)?;
     Ok(())
 }
-
 fn validate_initial_quantifier(body: &str) -> Result<(), String> {
     if let Some(first) = body.chars().next() {
         if matches!(first, '?' | '*' | '+') {
@@ -122,7 +108,6 @@ fn validate_initial_quantifier(body: &str) -> Result<(), String> {
     }
     Ok(())
 }
-
 fn validate_braced_quantifier(body: &str) -> Result<(), String> {
     let bytes = body.as_bytes();
     let mut index = 0;
@@ -145,7 +130,6 @@ fn validate_braced_quantifier(body: &str) -> Result<(), String> {
     }
     Ok(())
 }
-
 fn is_decimal_braced(suffix: &str) -> bool {
     let bytes = suffix.as_bytes();
     if bytes.first().copied() != Some(b'{') {
@@ -224,7 +208,6 @@ fn find_close_paren(body: &str, start: usize) -> Option<usize> {
 
 include!("regexp_named_groups.rs");
 
-/// Build a regress `Regex` from pattern and JS-style flags.
 pub fn compile(pattern: &str, flags: &str) -> Result<Regex, String> {
     let reg_flags: Flags = flags.into();
     catch_unwind(AssertUnwindSafe(|| Regex::with_flags(pattern, reg_flags)))
@@ -232,9 +215,6 @@ pub fn compile(pattern: &str, flags: &str) -> Result<Regex, String> {
         .map_err(|e| e.to_string())
 }
 
-/// Reject a regex literal whose pattern fails the ECMA-262 `u`-flag static
-/// early errors. The `regress` kernel enforces unicode-mode identity escapes,
-/// class ranges, control escapes, decimal escapes, and quantified assertions.
 pub fn validate_unicode(pattern: &str, flags: &str) -> Result<(), String> {
     let reg_flags: Flags = flags.into();
     catch_unwind(AssertUnwindSafe(|| Regex::with_flags(pattern, reg_flags)))
@@ -243,7 +223,6 @@ pub fn validate_unicode(pattern: &str, flags: &str) -> Result<(), String> {
         .map_err(|error| format!("SyntaxError: {error}"))
 }
 
-/// Dispatch builtin to implementation.
 pub fn execute_builtin(
     builtin: Builtin,
     receiver: Option<&Value>,
@@ -342,7 +321,6 @@ fn anchored_match(source: &str, flags: &str, last_index: usize, input: &str) -> 
         .is_some_and(|byte| *byte == b'\n' || *byte == b'\r')
 }
 
-/// Implement `RegExp.prototype.test(str)`.
 pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let Some(receiver @ Value::Object(_)) = receiver else {
         return Err(VmError::EvalError(
@@ -367,7 +345,6 @@ pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
     Ok(Value::Boolean(matched))
 }
 
-/// Implement `RegExp.prototype.exec(str)`.
 pub fn exec(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let Some(receiver @ Value::Object(_)) = receiver else {
         return Err(VmError::EvalError(
@@ -512,13 +489,4 @@ fn set_last_index(receiver: &Value, index: f64) {
     }
 }
 
-fn value_to_string(value: &Value) -> String {
-    match value {
-        Value::String(s) => s.clone(),
-        Value::Number(n) => n.to_string(),
-        Value::Boolean(b) => b.to_string(),
-        Value::Null => "null".to_string(),
-        Value::Undefined => "undefined".to_string(),
-        _ => "[object Object]".to_string(),
-    }
-}
+include!("regexp_tail.rs");

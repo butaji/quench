@@ -1,4 +1,3 @@
-//! Proxy and Reflect builtins for JavaScript Proxy and Reflect API.
 use crate::{
     execute::VmError,
     ops::{Builtin, FunctionKind},
