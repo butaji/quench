@@ -27,6 +27,10 @@ fn resume_try_frame(
         crate::completion::Completion::Normal => execute_frame_range(generator, state, frame.body_resume)?,
         completion => completion,
     };
+    if completion.is_suspension() {
+        advance_frame_after_yield(generator, frame.body_resume)?;
+        return Ok(Some(completion));
+    }
     let completion = complete_try_frame(generator, state, &frame, completion)?;
     if completion.is_suspension() {
         return Ok(Some(completion));
