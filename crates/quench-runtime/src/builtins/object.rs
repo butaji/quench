@@ -32,6 +32,7 @@ pub(crate) fn execute_special(
         Builtin::ObjectPropertyIsEnumerable => {
             Ok(object_property_is_enumerable(receiver, arguments))
         }
+        Builtin::ObjectPrototypeIsPrototypeOf => is_prototype_of(receiver, arguments),
         Builtin::ObjectGetOwnPropertyDescriptor => {
             let (target, key) = static_target(arguments);
             require_object_coercible(target)?;

@@ -467,6 +467,7 @@ fn is_object_special(builtin: Builtin) -> bool {
             | Builtin::ObjectCreate
             | Builtin::ObjectSetPrototypeOf
             | Builtin::ObjectPropertyIsEnumerable
+            | Builtin::ObjectPrototypeIsPrototypeOf
     )
 }
 
