@@ -172,8 +172,8 @@ pub(crate) fn proxy_has(target: &Value, prop: &str) -> Result<Value, VmError> {
         if let Some(trap) = get_handler_trap(proxy, "has") {
             return call_trap(
                 &trap,
-                &[target.clone(), Value::String(prop.to_string())],
-                None,
+                &[proxy.target.clone(), Value::String(prop.to_string())],
+                Some(&proxy.handler),
             );
         }
     }
@@ -322,10 +322,16 @@ pub(crate) fn proxy_get_own_property_descriptor(
         if let Some(trap) = get_handler_trap(proxy, "getOwnPropertyDescriptor") {
             return call_trap(
                 &trap,
-                &[target.clone(), Value::String(prop.to_string())],
-                None,
+                &[proxy.target.clone(), Value::String(prop.to_string())],
+                Some(&proxy.handler),
             );
         }
+    }
+    if let Value::Proxy(proxy) = target {
+        return crate::builtins::object::descriptor(
+            Some(&proxy.target),
+            Some(&Value::String(prop.to_string())),
+        );
     }
     crate::builtins::object::descriptor(Some(target), Some(&Value::String(prop.to_string())))
 }
@@ -358,6 +364,9 @@ pub(crate) fn proxy_own_keys(target: &Value) -> Result<Value, VmError> {
         if let Some(trap) = get_handler_trap(proxy, "ownKeys") {
             return call_trap(&trap, slice::from_ref(target), None);
         }
+    }
+    if let Value::Proxy(proxy) = target {
+        return Ok(crate::builtins::keys(Some(&proxy.target)));
     }
     Ok(crate::builtins::keys(Some(target)))
 }
