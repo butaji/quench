@@ -62,7 +62,10 @@ fn reduce_with(
         next_slot,
         locals,
     )?;
-    ops.push(Op::With { object, body });
+    ops.push(Op::With {
+        object,
+        body: crate::machine::FunctionCode::from_ops(body),
+    });
     Ok(None)
 }
 
