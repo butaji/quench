@@ -1,3 +1,56 @@
+struct IteratorFrameResume {
+    iterator: Value,
+    body_resume: crate::machine::CodeRange,
+    yield_dst: u16,
+    close_normal: bool,
+}
+
+fn iterator_frame_resume(generator: &GeneratorData) -> Option<IteratorFrameResume> {
+    let frame = generator.machine.borrow().frames.frames.last()?.clone();
+    let crate::machine::Frame::Iterator { iterator, body_resume, yield_dst, close_normal, .. } = frame else {
+        return None;
+    };
+    Some(IteratorFrameResume { iterator, body_resume, yield_dst, close_normal })
+}
+
+fn resume_iterator_frame(
+    generator: &GeneratorData,
+    state: &mut GeneratorState,
+    resume: crate::completion::Completion,
+) -> Result<Option<crate::completion::Completion>, VmError> {
+    let Some(frame) = iterator_frame_resume(generator) else {
+        return Ok(None);
+    };
+    if !matches!(resume, crate::completion::Completion::Normal) {
+        return close_iterator_frame(&frame, resume).map(Some);
+    }
+    let store = generator.machine.borrow().store.clone().ok_or(VmError::MissingReturn)?;
+    let body = store.get(frame.body_resume).ok_or(VmError::MissingReturn)?;
+    let completion = crate::execute::execute_completion_in_place(body, &mut state.registers)?;
+    if completion.is_suspension() {
+        return Ok(Some(completion));
+    }
+    close_iterator_frame(&frame, completion).map(Some)
+}
+
+fn close_iterator_frame(
+    frame: &IteratorFrameResume,
+    completion: crate::completion::Completion,
+) -> Result<crate::completion::Completion, VmError> {
+    if matches!(completion, crate::completion::Completion::Normal) && !frame.close_normal {
+        return Ok(completion);
+    }
+    crate::collections::iterator::close(frame.iterator.clone(), completion)
+}
+
+fn install_iterator_frame_input(generator: &GeneratorData, registers: &mut Vec<Value>, input: &Value) -> bool {
+    let Some(frame) = iterator_frame_resume(generator) else {
+        return false;
+    };
+    crate::execute::write_value(registers, frame.yield_dst, input.clone());
+    true
+}
+
 fn suspended_iterator_binding<'a>(
     generator: &'a GeneratorData,
     state: &GeneratorState,
@@ -19,6 +72,9 @@ fn resume_suspended_iterator_binding(
     state: &mut GeneratorState,
     resume: crate::completion::Completion,
 ) -> Result<Option<crate::completion::Completion>, VmError> {
+    if let Some(completion) = resume_iterator_frame(generator, state, resume.clone())? {
+        return Ok(Some(completion));
+    }
     if let Some(completion) = resume_iterator_conditional(generator, state, resume.clone())? {
         return Ok(Some(completion));
     }
@@ -98,6 +154,9 @@ fn close_iterator_binding(
 }
 
 fn install_iterator_binding_input(generator: &GeneratorData, state: &mut GeneratorState, input: &Value) -> bool {
+    if install_iterator_frame_input(generator, &mut state.registers, input) {
+        return true;
+    }
     let Some((_, body, index)) = suspended_iterator_binding(generator, state) else {
         return false;
     };

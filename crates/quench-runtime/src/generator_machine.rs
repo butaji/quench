@@ -99,7 +99,14 @@ fn push_iterator_frame(generator: &GeneratorData, state: &GeneratorState) -> Res
     if generator.machine.borrow().frame_count() != 0 {
         return Ok(());
     }
-    let Some(Op::IteratorBinding { iterator: binding, body, .. }) =
+    let Some((_, body_ops, index)) = suspended_iterator_binding(generator, state)
+    else {
+        return Ok(());
+    };
+    let Some(Op::Yield { src }) = body_ops.get(index) else {
+        return Ok(());
+    };
+    let Some(Op::IteratorBinding { iterator: binding, body, close_normal }) =
         generator.function.ops().get(state.pc.wrapping_sub(1))
     else {
         return Ok(());
@@ -117,7 +124,14 @@ fn push_iterator_frame(generator: &GeneratorData, state: &GeneratorState) -> Res
             iterator,
             binding: *binding,
             body: body.range,
+            body_resume: crate::machine::CodeRange {
+                code: body.range.code,
+                start: body.range.start.saturating_add(index as u32 + 1),
+                end: body.range.end,
+            },
             resume,
+            yield_dst: *src,
+            close_normal: *close_normal,
         },
     )
 }

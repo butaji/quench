@@ -1,5 +1,7 @@
 fn is_suspended(generator: &GeneratorData, state: &GeneratorState) -> bool {
-    state.suspension.is_some() || suspended_context(generator, state).is_some()
+    state.suspension.is_some()
+        || generator.machine.borrow().frame_count() != 0
+        || suspended_context(generator, state).is_some()
 }
 
 #[derive(Clone, Copy)]
