@@ -14,8 +14,10 @@ pub fn execute(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Option<Result<Value, VmError>> {
+    if builtin == Builtin::Date {
+        return Some(date_constructor(arguments));
+    }
     let result = match builtin {
-        Builtin::Date => date_constructor(arguments),
         Builtin::DateNow => Value::Number(chrono_utils::current_time_ms()),
         Builtin::DateParse => date_parse(arguments),
         Builtin::DateUTC => date_utc(arguments),
@@ -30,7 +32,11 @@ pub fn execute(
 }
 
 pub(crate) fn call() -> Value {
-    date_to_string(Some(&date_constructor(&[])))
+    let value = match date_constructor(&[]) {
+        Ok(value) => value,
+        Err(_) => Value::Undefined,
+    };
+    date_to_string(Some(&value))
 }
 
 fn dispatch_get(builtin: Builtin, receiver: Option<&Value>) -> Option<Value> {
@@ -77,7 +83,7 @@ fn dispatch_set(builtin: Builtin, receiver: Option<&Value>, args: &[Value]) -> O
     }
 }
 
-fn date_constructor(arguments: &[Value]) -> Value {
+fn date_constructor(arguments: &[Value]) -> Result<Value, VmError> {
     let ms = if arguments.is_empty() {
         chrono_utils::time_clip(chrono_utils::current_time_ms())
     } else if arguments.len() == 1 {
@@ -85,7 +91,7 @@ fn date_constructor(arguments: &[Value]) -> Value {
         if let Value::String(s) = val {
             chrono_utils::time_clip(DateValue::parse(s))
         } else {
-            chrono_utils::time_clip(helpers::to_number(val))
+            chrono_utils::time_clip(crate::conversion::to_number(val)?)
         }
     } else {
         let year = helpers::to_number(&arguments[0]);
@@ -98,7 +104,7 @@ fn date_constructor(arguments: &[Value]) -> Value {
         local_date_ms(year, month, day, hour, minute, second, ms_val)
     };
     let props = vec![("timeValue".to_string(), Value::Number(ms))];
-    Value::Object(Rc::new(crate::value::ObjectData::new(props)))
+    Ok(Value::Object(Rc::new(crate::value::ObjectData::new(props))))
 }
 
 fn local_date_ms(
