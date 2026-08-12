@@ -69,7 +69,18 @@ fn accessor_value(value: &Value, key: &str, field: &str) -> Option<Value> {
             .upgrade()
             .and_then(|properties| accessor_field(&properties, key, field)),
         Value::Promise(promise) => accessor_field(&promise.properties.borrow(), key, field),
-        Value::BoundFunction(bound) => accessor_value(&bound.target, key, field),
+        Value::BoundFunction(bound) => {
+            if let Value::Builtin(builtin) = bound.target {
+                if let Some(descriptor) =
+                    crate::builtins::read_intrinsic_override(builtin, field_key(key))
+                {
+                    if let Some(found) = descriptor_field(&descriptor, field) {
+                        return Some(found);
+                    }
+                }
+            }
+            accessor_value(&bound.target, key, field)
+        }
         Value::Number(_) => accessor_value(&Value::Builtin(Builtin::NumberPrototype), key, field),
         Value::Boolean(_) => accessor_value(&Value::Builtin(Builtin::BooleanPrototype), key, field),
         Value::String(_) => accessor_value(&Value::Builtin(Builtin::StringPrototype), key, field),
