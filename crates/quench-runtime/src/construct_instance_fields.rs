@@ -98,3 +98,15 @@ fn define_instance_field(
     ];
     crate::builtins::define_own_property(&receiver, key, &descriptor)
 }
+
+fn constructor_receiver(target: &crate::value::Value) -> crate::value::Value {
+    let prototype = crate::execute::get_property(target, "prototype");
+    let prototype = if crate::value::is_object(&prototype) {
+        prototype
+    } else {
+        crate::value::Value::Builtin(crate::ops::Builtin::ObjectPrototype)
+    };
+    crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
+        ("\0prototype".to_string(), prototype),
+    ])))
+}
