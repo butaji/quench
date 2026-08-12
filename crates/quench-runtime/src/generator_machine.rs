@@ -42,7 +42,7 @@ fn ensure_try_frame(generator: &GeneratorData, state: &GeneratorState) -> Result
         crate::machine::Frame::Try {
             phase: 0,
             body: crate::machine::CodeRange {
-                code: crate::machine::CodeId(0),
+                code: generator.function.code_id(),
                 start: state.pc.saturating_sub(1) as u32,
                 end: state.pc as u32,
             },
@@ -64,7 +64,7 @@ fn ensure_control_frame(generator: &GeneratorData, state: &GeneratorState) -> Re
         crate::machine::Frame::Control {
             phase: 0,
             body: crate::machine::CodeRange {
-                code: crate::machine::CodeId(0),
+                code: generator.function.code_id(),
                 start: state.pc.saturating_sub(1) as u32,
                 end: state.pc as u32,
             },
@@ -85,7 +85,7 @@ fn update_await_frame(
         crate::machine::Frame::Await {
             phase: 0,
             resume: crate::machine::CodeRange {
-                code: crate::machine::CodeId(0),
+                code: generator.function.code_id(),
                 start: state.pc as u32,
                 end: state.pc as u32 + 1,
             },
