@@ -19,8 +19,8 @@ fn install_direct_resume_input(generator: &GeneratorData, state: &mut GeneratorS
     true
 }
 
-fn install_frame_resume_input(generator: &GeneratorData, state: &mut GeneratorState, input: &Value) -> bool {
-    if let Some(Op::YieldStar { dst, .. }) = generator.function.ops().get(state.pc) {
+fn install_frame_resume_input(generator: &GeneratorData, _state: &mut GeneratorState, input: &Value) -> bool {
+    if let Some(Op::YieldStar { dst, .. }) = generator.function.ops().get(machine_pc(generator)) {
         crate::execute::write_value(&mut registers_mut(generator), *dst, input.clone());
         return true;
     }
@@ -30,7 +30,7 @@ fn install_frame_resume_input(generator: &GeneratorData, state: &mut GeneratorSt
 }
 
 fn install_scanned_resume_input(generator: &GeneratorData, state: &mut GeneratorState, input: Value) {
-    let Some(index) = state.pc.checked_sub(1) else { return; };
+    let Some(index) = machine_pc(generator).checked_sub(1) else { return; };
     let Some(Op::Yield { src }) = generator.function.ops().get(index) else {
         install_nested_resume_input(generator, state, input);
         return;

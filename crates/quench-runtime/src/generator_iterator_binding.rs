@@ -64,7 +64,7 @@ fn suspended_iterator_binding<'a>(
     generator: &'a GeneratorData,
     state: &GeneratorState,
 ) -> Option<(&'a Op, &'a [Op], usize)> {
-    let op @ Op::IteratorBinding { body, .. } = generator.function.ops().get(state.pc.checked_sub(1)?)? else {
+    let op @ Op::IteratorBinding { body, .. } = generator.function.ops().get(machine_pc(generator).checked_sub(1)?)? else {
         return None;
     };
     let body = body.ops()?;
@@ -178,9 +178,9 @@ fn install_iterator_binding_input(generator: &GeneratorData, state: &mut Generat
 
 fn suspended_iterator_conditional<'a>(
     generator: &'a GeneratorData,
-    state: &GeneratorState,
+    _state: &GeneratorState,
 ) -> Option<IteratorConditional<'a>> {
-    let binding @ Op::IteratorBinding { body, .. } = generator.function.ops().get(state.pc.checked_sub(1)?)? else {
+    let binding @ Op::IteratorBinding { body, .. } = generator.function.ops().get(machine_pc(generator).checked_sub(1)?)? else {
         return None;
     };
     let body = body.ops()?;
