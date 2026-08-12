@@ -120,6 +120,13 @@ impl ArrayData {
             .find_map(|(name, value)| (name == key).then(|| value.clone()))
     }
 
+    pub(crate) fn property_keys(&self) -> Vec<String> {
+        self.properties
+            .iter()
+            .map(|(key, _)| key.clone())
+            .collect()
+    }
+
     pub(crate) fn set_property(&mut self, key: &str, value: Value) {
         if let Some((_, current)) = self
             .properties
