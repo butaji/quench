@@ -31,10 +31,9 @@ impl DateValue {
     }
 
     pub fn utc(y: f64, m: f64, d: f64, h: f64, min: f64, s: f64, ms: f64) -> Self {
-        let ms = chrono_utils::make_utc_ms(y, m, d, h, min, s, ms);
-        Self {
-            ms: chrono_utils::time_clip(ms),
-        }
+        let year = chrono_utils::normalize_constructor_year(y);
+        let ms = chrono_utils::make_date_ms(year, m, d, h, min, s, ms);
+        Self { ms }
     }
 
     pub fn parse(s: &str) -> f64 {
