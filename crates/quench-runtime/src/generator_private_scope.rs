@@ -141,7 +141,7 @@ fn finish_private_scope_resume(
         return Ok(completion);
     }
     let _home = crate::super_scope::Guard::install(&generator.function, &generator.receiver);
-    let _with_scope = crate::with_scope::FunctionGuard::isolate();
+    let _with_scope = crate::with_scope::FunctionGuard::install(&generator.function.with_captures);
     let step = execute_with_generator_registers(generator, |registers| {
         crate::vm::execute_generator_step(
             generator.function.ops(), registers, machine_environment(generator)?, machine_pc(generator),

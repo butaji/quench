@@ -7,7 +7,7 @@ fn execute_generator_step(
         generator.function.private_environment.clone(),
     );
     let _home = crate::super_scope::Guard::install(&generator.function, &generator.receiver);
-    let _with_scope = crate::with_scope::FunctionGuard::isolate();
+    let _with_scope = crate::with_scope::FunctionGuard::install(&generator.function.with_captures);
     let (store, pc, mut registers) = take_machine_execution(generator)?;
     let ops = store.get(generator.function.code.range).ok_or(VmError::MissingReturn)?;
     let result = crate::vm::execute_generator_step(
@@ -58,7 +58,7 @@ fn resume_generator_range(
     if !matches!(completion, crate::completion::Completion::Normal) { return Ok(completion); }
     let _private = crate::private_environment::Guard::install_environment(generator.function.private_environment.clone());
     let _home = crate::super_scope::Guard::install(&generator.function, &generator.receiver);
-    let _with = crate::with_scope::FunctionGuard::isolate();
+    let _with = crate::with_scope::FunctionGuard::install(&generator.function.with_captures);
     let start = range.start.saturating_sub(generator.function.code.range.start) as usize;
     let step = execute_with_generator_registers(generator, |registers| {
         crate::vm::execute_generator_step(
