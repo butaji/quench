@@ -175,13 +175,44 @@ pub(crate) fn reduce_try(
     let body = reduce_try_body(statement, facts, &try_locals, next_slot)?;
     let (handler, catch_slot) = reduce_try_handler(statement, facts, &try_locals)?;
     let finalizer = reduce_try_finalizer(statement, facts, &try_locals, next_slot)?;
+    let (body, handler, finalizer) = materialize_try_bodies(body, handler, finalizer)?;
     ops.push(Op::Try {
-        body: crate::machine::FunctionCode::from_ops(body),
-        handler: handler.map(crate::machine::FunctionCode::from_ops),
-        finalizer: finalizer.map(crate::machine::FunctionCode::from_ops),
+        body,
+        handler,
+        finalizer,
         catch_slot,
     });
     Ok(())
+}
+
+fn materialize_try_bodies(
+    body: Vec<Op>,
+    handler: Option<Vec<Op>>,
+    finalizer: Option<Vec<Op>>,
+) -> Result<
+    (
+        crate::machine::FunctionCode,
+        Option<crate::machine::FunctionCode>,
+        Option<crate::machine::FunctionCode>,
+    ),
+    Vec<String>,
+> {
+    let mut bodies = vec![body];
+    let handler_index = handler.map(|body| {
+        bodies.push(body);
+        bodies.len() - 1
+    });
+    let finalizer_index = finalizer.map(|body| {
+        bodies.push(body);
+        bodies.len() - 1
+    });
+    let mut functions = crate::machine::FunctionCode::from_ops_many(bodies).into_iter();
+    let Some(body) = functions.next() else {
+        return Err(vec!["Missing try body".to_string()]);
+    };
+    let handler = handler_index.and_then(|_| functions.next());
+    let finalizer = finalizer_index.and_then(|_| functions.next());
+    Ok((body, handler, finalizer))
 }
 
 fn reduce_try_body(
