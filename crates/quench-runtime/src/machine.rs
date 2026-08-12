@@ -109,6 +109,11 @@ impl CodeArena {
         CodeRange { code, start, end }
     }
 
+    pub fn append_function(&mut self, function: &FunctionCode) -> Option<CodeRange> {
+        let body = function.ops()?;
+        Some(self.append_slice(body))
+    }
+
     pub fn get(&self, range: CodeRange) -> Option<&[Op]> {
         let (start, end) = self.ranges.get(range.code.0 as usize).copied()?;
         (range.start >= start && range.end <= end)
@@ -296,6 +301,15 @@ mod tests {
         assert_eq!(store.get(range).map(<[_]>::len), Some(1));
         let invalid = super::CodeRange::new(range.code, 0, 2).unwrap();
         assert!(store.get(invalid).is_none());
+    }
+
+    #[test]
+    fn code_arena_can_import_existing_function_ranges() {
+        let function = super::FunctionCode::from_ops(vec![super::Op::ParameterEnd]);
+        let mut arena = super::CodeArena::new();
+        let range = arena.append_function(&function).unwrap();
+        let store = arena.freeze();
+        assert_eq!(store.get(range).map(<[_]>::len), Some(1));
     }
 
     #[test]
