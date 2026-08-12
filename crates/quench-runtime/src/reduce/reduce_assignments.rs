@@ -15,6 +15,12 @@ pub(crate) enum Place {
     Local {
         slot: u16,
     },
+    DynamicLocal {
+        name: String,
+        slot: u16,
+        strict: bool,
+        target: Option<u16>,
+    },
     Name {
         name: String,
         strict: bool,
@@ -115,6 +121,7 @@ pub(crate) fn reduce_place(
         AssignmentTarget::AssignmentTargetIdentifier(identifier) => Some(identifier_place(
             identifier.name.as_str(),
             facts.strict,
+            facts.has_dynamic_scope(),
             locals,
         )),
         AssignmentTarget::StaticMemberExpression(member) => member_place(
@@ -183,10 +190,10 @@ pub(crate) fn emit_object_rest(
 
 pub(crate) fn identifier_assignment_place(
     name: &str,
-    strict: bool,
+    facts: &ProgramDb,
     locals: &HashMap<String, u16>,
 ) -> Place {
-    identifier_place(name, strict, locals)
+    identifier_place(name, facts.strict, facts.has_dynamic_scope(), locals)
 }
 
 pub(crate) fn reduce_simple_place(
@@ -197,9 +204,14 @@ pub(crate) fn reduce_simple_place(
     locals: &HashMap<String, u16>,
 ) -> Option<Place> {
     match target {
-        oxc::ast::ast::SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) => Some(
-            identifier_place(identifier.name.as_str(), facts.strict, locals),
-        ),
+        oxc::ast::ast::SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) => {
+            Some(identifier_place(
+                identifier.name.as_str(),
+                facts.strict,
+                facts.has_dynamic_scope(),
+                locals,
+            ))
+        }
         oxc::ast::ast::SimpleAssignmentTarget::StaticMemberExpression(member) => member_place(
             &member.object,
             PlaceKey::Static(member.property.name.to_string()),
@@ -223,25 +235,48 @@ pub(crate) fn reduce_simple_place(
     }
 }
 
-fn identifier_place(name: &str, strict: bool, locals: &HashMap<String, u16>) -> Place {
+fn identifier_place(
+    name: &str,
+    strict: bool,
+    dynamic_scope: bool,
+    locals: &HashMap<String, u16>,
+) -> Place {
     locals.get(name).map_or_else(
         || Place::Name {
             name: name.to_string(),
             strict,
             target: None,
         },
-        |slot| Place::Local { slot: *slot },
+        |slot| {
+            if dynamic_scope {
+                Place::DynamicLocal {
+                    name: name.to_string(),
+                    slot: *slot,
+                    strict,
+                    target: None,
+                }
+            } else {
+                Place::Local { slot: *slot }
+            }
+        },
     )
 }
 
-fn capture_name_target(place: &mut Place, ops: &mut Vec<Op>, next: &mut u16) {
+pub(crate) fn capture_name_target(place: &mut Place, ops: &mut Vec<Op>, next: &mut u16) {
     let Place::Name { name, target, .. } = place else {
+        if let Place::DynamicLocal { name, target, .. } = place {
+            capture_target(name, target, ops, next);
+        }
         return;
     };
+    capture_target(name, target, ops, next);
+}
+
+fn capture_target(name: &str, target: &mut Option<u16>, ops: &mut Vec<Op>, next: &mut u16) {
     let dst = take_register(next);
     ops.push(Op::ResolveBindingTarget {
         dst,
-        name: name.clone(),
+        name: name.to_string(),
     });
     *target = Some(dst);
 }
@@ -330,6 +365,27 @@ pub(crate) fn get(place: &Place, ops: &mut Vec<Op>, next: &mut u16) -> Option<u1
     let dst = take_register(next);
     match place {
         Place::Local { slot } => ops.push(Op::LoadLocal { dst, slot: *slot }),
+        Place::DynamicLocal {
+            name,
+            slot,
+            target: Some(target),
+            ..
+        } => ops.push(Op::LoadResolvedLocalBinding {
+            dst,
+            target: *target,
+            slot: *slot,
+            name: name.clone(),
+        }),
+        Place::DynamicLocal {
+            name,
+            slot,
+            target: None,
+            ..
+        } => ops.push(Op::LoadBinding {
+            dst,
+            slot: *slot,
+            name: name.clone(),
+        }),
         Place::Name { name, .. } => ops.push(Op::ResolveName {
             dst,
             key: name.clone(),
@@ -377,6 +433,24 @@ pub(crate) fn put(place: Place, value: u16, ops: &mut Vec<Op>) -> Option<()> {
             });
             ops.push(Op::StoreLocal { slot, src: value });
         }
+        Place::DynamicLocal {
+            name,
+            slot,
+            strict,
+            target: Some(target),
+            ..
+        } => ops.push(Op::SetResolvedLocalBinding {
+            target,
+            name,
+            slot,
+            strict,
+            src: value,
+        }),
+        Place::DynamicLocal { name, strict, .. } => ops.push(Op::SetName {
+            key: name,
+            src: value,
+            strict,
+        }),
         Place::Name {
             name,
             strict,

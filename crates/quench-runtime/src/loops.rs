@@ -28,6 +28,7 @@ pub(crate) fn reduce_update(
         next_register,
         locals,
     )?;
+    crate::reduce::reduce_assignments::capture_name_target(&mut place, ops, next_register);
     crate::reduce::reduce_assignments::prepare_get(&mut place, ops, next_register);
     let old = crate::reduce::reduce_assignments::get(&place, ops, next_register)?;
     let one = emit_one(ops, next_register);

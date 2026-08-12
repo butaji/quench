@@ -54,14 +54,17 @@ fn reduce_with(
         crate::reduce::reduce_expression(&statement.object, ops, facts, next_register, locals)
             .ok_or_else(|| vec!["Unsupported with object".to_string()])?;
     let mut body = Vec::new();
-    crate::reduce::reduce_statement(
+    facts.enter_dynamic_scope();
+    let result = crate::reduce::reduce_statement(
         &statement.body,
         &mut body,
         facts,
         next_register,
         next_slot,
         locals,
-    )?;
+    );
+    facts.exit_dynamic_scope();
+    result?;
     ops.push(Op::With {
         object,
         body: crate::machine::FunctionCode::from_ops(body),

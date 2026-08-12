@@ -207,8 +207,7 @@ fn assign_identifier_property(
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
     let name = property.binding.name.as_str();
-    let place =
-        crate::reduce::reduce_assignments::identifier_assignment_place(name, facts.strict, locals);
+    let place = crate::reduce::reduce_assignments::identifier_assignment_place(name, facts, locals);
     let excluded = emit_const(ops, next, Constant::String(name.to_string()));
     let value = get_property(ReducedKey::Static(name.to_string()), source, ops, next);
     let value = match &property.init {
