@@ -174,6 +174,14 @@ impl DataViewData {
         )))
     }
 
+    pub fn get_bigint64(&self, offset: usize, little_endian: bool) -> Result<i64, DataViewError> {
+        Ok(decode::<i64, 8>(self.read::<8>(offset)?, little_endian))
+    }
+
+    pub fn get_biguint64(&self, offset: usize, little_endian: bool) -> Result<u64, DataViewError> {
+        Ok(decode::<u64, 8>(self.read::<8>(offset)?, little_endian))
+    }
+
     pub fn set_int8(&self, offset: usize, value: i8) -> Result<(), DataViewError> {
         self.write(offset, value.to_ne_bytes())
     }
@@ -307,6 +315,8 @@ data_view_codec!(i16, 2);
 data_view_codec!(u16, 2);
 data_view_codec!(i32, 4);
 data_view_codec!(u32, 4);
+data_view_codec!(i64, 8);
+data_view_codec!(u64, 8);
 data_view_codec!(f32, 4);
 data_view_codec!(f64, 8);
 

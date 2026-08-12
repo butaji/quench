@@ -262,6 +262,8 @@ fn data_view_method(key: &str) -> Option<Builtin> {
         "getFloat16" => Some(DataViewGetFloat16),
         "getFloat32" => Some(DataViewGetFloat32),
         "getFloat64" => Some(DataViewGetFloat64),
+        "getBigInt64" => Some(DataViewGetBigInt64),
+        "getBigUint64" => Some(DataViewGetBigUint64),
         "setInt8" => Some(DataViewSetInt8),
         "setUint8" => Some(DataViewSetUint8),
         "setInt16" => Some(DataViewSetInt16),
@@ -443,6 +445,7 @@ fn data_view_length(builtin: Builtin) -> Option<f64> {
         DataViewGetInt8 | DataViewGetUint8 => Some(1.0),
         DataViewGetInt16 | DataViewGetUint16 | DataViewGetInt32 | DataViewGetUint32
         | DataViewGetFloat16 | DataViewGetFloat32 | DataViewGetFloat64 => Some(1.0),
+        DataViewGetBigInt64 | DataViewGetBigUint64 => Some(1.0),
         DataViewSetInt8 | DataViewSetUint8 => Some(2.0),
         DataViewSetInt16 | DataViewSetUint16 | DataViewSetInt32 | DataViewSetUint32
         | DataViewSetFloat16 | DataViewSetFloat32 | DataViewSetFloat64 => Some(2.0),
