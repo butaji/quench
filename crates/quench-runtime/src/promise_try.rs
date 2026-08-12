@@ -14,17 +14,22 @@ fn promise_try(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, V
             "Promise.try callback is not callable",
         ));
     }
-    let promise = Rc::new(PromiseData::default());
-    if !matches!(constructor, Value::Builtin(Builtin::Promise)) {
-        let prototype = crate::execute::get_property_result(constructor, "prototype")?;
-        if crate::value::is_object(&prototype) {
-            promise.set_prototype(prototype);
-        }
-    }
+    let promise = if matches!(constructor, Value::Builtin(Builtin::Promise)) {
+        Value::Promise(Rc::new(PromiseData::default()))
+    } else {
+        let executor_target = Rc::new(PromiseData::default());
+        let executor = bound_settler(Builtin::PromiseResolve, &executor_target);
+        crate::construct::construct_value(constructor, &[executor])?
+    };
+    let Value::Promise(promise_data) = &promise else {
+        return Err(crate::value::error::throw_type_error(
+            "Promise.try constructor did not create a Promise",
+        ));
+    };
     match crate::functions::execute_target(&callback, &Value::Undefined, &arguments[1..]) {
-        Ok(value) => resolve_promise(&promise, value),
-        Err(VmError::Thrown(reason)) => reject_promise(&promise, reason),
-        Err(_) => reject_promise(&promise, Value::Undefined),
+        Ok(value) => resolve_promise(promise_data, value),
+        Err(VmError::Thrown(reason)) => reject_promise(promise_data, reason),
+        Err(_) => reject_promise(promise_data, Value::Undefined),
     }
-    Ok(Value::Promise(promise))
+    Ok(promise)
 }
