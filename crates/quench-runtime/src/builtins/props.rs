@@ -294,7 +294,7 @@ fn array_method(key: &str) -> Option<Builtin> {
         "flatMap" => Some(ArrayFlatMap),
         "at" => Some(ArrayAt),
         "toReversed" => Some(ArrayToReversed),
-        "join" => Some(ArrayJoin),
+        "join" | "toString" => Some(ArrayJoin),
         "reduce" => Some(ArrayReduce),
         "reduceRight" => Some(ArrayReduceRight),
         "toLocaleString" => Some(ArrayToLocaleString),
