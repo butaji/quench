@@ -82,6 +82,7 @@ fn keys(target: &Value, symbols: bool) -> Vec<String> {
                 .map_or_else(Vec::new, |properties| ordered(&properties, symbols));
         }
         Value::Function(function) => return function_keys(function, symbols),
+        Value::Array(values) => return array_keys(values, symbols),
         Value::Builtin(builtin) => {
             return crate::builtins::own_property_names(*builtin)
                 .iter()
@@ -92,6 +93,44 @@ fn keys(target: &Value, symbols: bool) -> Vec<String> {
         _ => return Vec::new(),
     };
     ordered(properties, symbols)
+}
+
+fn array_keys(values: &crate::value::ArrayData, symbols: bool) -> Vec<String> {
+    let mut keys = indexed_array_keys(values, symbols);
+    if !symbols {
+        keys.push("length".to_string());
+    }
+    append_unique(
+        &mut keys,
+        ordered_properties(&values.property_keys(), symbols),
+    );
+    keys
+}
+
+fn indexed_array_keys(values: &crate::value::ArrayData, symbols: bool) -> Vec<String> {
+    if symbols {
+        return Vec::new();
+    }
+    (0..values.logical_len())
+        .filter(|index| values.has_index(*index))
+        .map(|index| index.to_string())
+        .collect()
+}
+
+fn ordered_properties(keys: &[String], symbols: bool) -> Vec<String> {
+    let properties = keys
+        .iter()
+        .map(|key| (key.clone(), Value::Undefined))
+        .collect::<Vec<_>>();
+    ordered(&properties, symbols)
+}
+
+fn append_unique(keys: &mut Vec<String>, additions: Vec<String>) {
+    for key in additions {
+        if !keys.contains(&key) {
+            keys.push(key);
+        }
+    }
 }
 
 fn function_keys(function: &crate::value::FunctionValue, symbols: bool) -> Vec<String> {
@@ -131,5 +170,27 @@ fn require_object(target: Option<&Value>) -> Result<&Value, VmError> {
             "Cannot convert undefined or null to object",
         )),
         Some(target) => Ok(target),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::names;
+    use crate::value::Value;
+
+    #[test]
+    fn array_names_include_indices_and_length() {
+        let array = Value::array(vec![Value::Boolean(true), Value::Null]);
+        let Value::Array(names) = names(Some(&array)).expect("array names") else {
+            panic!("own names result is not an array");
+        };
+        assert_eq!(
+            &names[..],
+            &[
+                Value::String("0".into()),
+                Value::String("1".into()),
+                Value::String("length".into())
+            ]
+        );
     }
 }
