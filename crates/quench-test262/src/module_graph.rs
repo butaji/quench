@@ -37,6 +37,14 @@ impl ModuleGraph {
         self.entry
     }
 
+    pub fn entry_unit(&self) -> Option<&ModuleUnit> {
+        self.entry.and_then(|id| self.unit(id))
+    }
+
+    pub fn unit(&self, id: ModuleId) -> Option<&ModuleUnit> {
+        self.units.get(id.0 as usize).filter(|unit| unit.id == id)
+    }
+
     pub fn units(&self) -> &[ModuleUnit] {
         &self.units
     }
@@ -95,6 +103,8 @@ mod tests {
         );
         assert_eq!(graph.resolve(entry, "./lib/value.js"), Some(dependency));
         assert_eq!(graph.entry(), Some(ModuleId(0)));
+        assert_eq!(graph.entry_unit().map(|unit| unit.id), Some(entry));
+        assert_eq!(graph.unit(dependency).map(|unit| unit.id), Some(dependency));
         assert_eq!(graph.units().len(), 2);
     }
 }
