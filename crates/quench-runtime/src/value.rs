@@ -8,7 +8,7 @@ use std::{
 
 use crate::{
     facts::PrivateNameId,
-    ops::{Builtin, Constant, FunctionKind, FunctionStrictness, HostCapabilityRef, Op, RealmId},
+    ops::{Builtin, Constant, FunctionKind, FunctionStrictness, HostCapabilityRef, RealmId},
 };
 
 pub(crate) mod error {
@@ -466,7 +466,6 @@ pub enum PrivateSlot {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionValue {
-    pub body: Vec<Op>,
     pub(crate) code: Option<crate::machine::FunctionCode>,
     pub params: u16,
     pub captures: Rc<crate::environment::Environment>,
