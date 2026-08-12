@@ -11,6 +11,7 @@ use oxc::ast::ast::{
 pub struct ModuleMetadata {
     pub import_specifiers: Vec<String>,
     pub imports: Vec<ImportBinding>,
+    pub exports: Vec<ExportBinding>,
     pub exported_names: Vec<String>,
 }
 
@@ -19,6 +20,13 @@ pub struct ImportBinding {
     pub source: String,
     pub imported: String,
     pub local: String,
+}
+
+/// One local binding exposed under an exported module name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExportBinding {
+    pub local: String,
+    pub exported: String,
 }
 
 impl ModuleMetadata {
@@ -69,15 +77,36 @@ impl ModuleMetadata {
     fn visit_named(&mut self, export: &ExportNamedDeclaration<'_>) {
         for specifier in &export.specifiers {
             push_name(&mut self.exported_names, Some(&specifier.exported));
+            self.exports.push(ExportBinding {
+                local: module_export_name(&specifier.local),
+                exported: module_export_name(&specifier.exported),
+            });
         }
         if let Some(declaration) = &export.declaration {
             declaration_names(declaration, &mut self.exported_names);
+            self.exports.extend(declaration_bindings(declaration));
         }
     }
 
     fn visit_default(&mut self, _export: &ExportDefaultDeclaration<'_>) {
         push_unique(&mut self.exported_names, "default");
+        self.exports.push(ExportBinding {
+            local: "default".to_string(),
+            exported: "default".to_string(),
+        });
     }
+}
+
+fn declaration_bindings(declaration: &Declaration<'_>) -> Vec<ExportBinding> {
+    let mut names = Vec::new();
+    declaration_names(declaration, &mut names);
+    names
+        .into_iter()
+        .map(|name| ExportBinding {
+            local: name.clone(),
+            exported: name,
+        })
+        .collect()
 }
 
 fn declaration_names(declaration: &Declaration<'_>, names: &mut Vec<String>) {

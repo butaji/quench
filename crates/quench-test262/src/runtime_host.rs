@@ -110,19 +110,18 @@ impl LinkedModule {
     }
 
     pub fn export_cell(&self, name: &str) -> Option<ModuleBindingCell> {
-        if !self
+        let local = self
             .program
             .module_metadata
             .as_ref()?
-            .exported_names
+            .exports
             .iter()
-            .any(|export| export == name)
-        {
-            return None;
-        }
+            .find(|binding| binding.exported == name)?
+            .local
+            .as_str();
         self.program
             .local_slots
-            .get(name)
+            .get(local)
             .copied()
             .map(|slot| self.scope.module_cell_slot(slot))
     }
