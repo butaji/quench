@@ -42,8 +42,16 @@ pub(crate) fn execute_builtin(
         MapValues => Some(iterator::from_map_values(receiver)),
         SetIterator => Some(iterator::from_set(receiver)),
         IteratorNext => Some(Ok(iterator::next(receiver))),
+        IteratorSelf => Some(iterator_self(receiver)),
         _ => None,
     }
+}
+
+fn iterator_self(receiver: Option<&Value>) -> Result<Value, VmError> {
+    receiver
+        .filter(|value| matches!(value, Value::Iterator(_)))
+        .cloned()
+        .ok_or_else(|| crate::value::error::throw_type_error("not an iterator"))
 }
 
 fn execute_weak(
