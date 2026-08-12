@@ -110,7 +110,7 @@ fn assign_array(
     let iterator = iterator_start(source, ops, next);
     let mut body = Vec::new();
     for (index, element) in pattern.elements.iter().enumerate() {
-        if index + 1 == pattern.elements.len() && element.is_none() {
+        if pattern.rest.is_none() && index + 1 == pattern.elements.len() && element.is_none() {
             continue;
         }
         let place = element.as_ref().and_then(|element| {
@@ -346,7 +346,7 @@ fn bind_array(
     let iterator = iterator_start(source, ops, next);
     let mut body = Vec::new();
     for (index, element) in pattern.elements.iter().enumerate() {
-        if index + 1 == pattern.elements.len() && element.is_none() {
+        if pattern.rest.is_none() && index + 1 == pattern.elements.len() && element.is_none() {
             continue;
         }
         let value = iterator_step(iterator, &mut body, next);
