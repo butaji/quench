@@ -69,34 +69,42 @@ fn accessor_value(value: &Value, key: &str, field: &str) -> Option<Value> {
             .upgrade()
             .and_then(|properties| accessor_field(&properties, key, field)),
         Value::Promise(promise) => accessor_field(&promise.properties.borrow(), key, field),
-        Value::BoundFunction(bound) => {
-            if let Value::Builtin(builtin) = bound.target {
-                if let Some(descriptor) =
-                    crate::builtins::read_intrinsic_override(builtin, field_key(key))
-                {
-                    if let Some(found) = descriptor_field(&descriptor, field) {
-                        return Some(found);
-                    }
-                }
-            }
-            accessor_value(&bound.target, key, field)
-        }
-        Value::Number(_) => accessor_value(&Value::Builtin(Builtin::NumberPrototype), key, field),
-        Value::Boolean(_) => accessor_value(&Value::Builtin(Builtin::BooleanPrototype), key, field),
-        Value::String(_) => accessor_value(&Value::Builtin(Builtin::StringPrototype), key, field),
-        Value::BigInt(_) => accessor_value(&Value::Builtin(Builtin::BigIntPrototype), key, field),
-        Value::Builtin(builtin) => {
-            if let Some(descriptor) =
-                crate::builtins::read_intrinsic_override(*builtin, field_key(key))
-            {
-                if let Some(found) = descriptor_field(&descriptor, field) {
-                    return Some(found);
-                }
-            }
-            builtin_prototype(*builtin).and_then(|prototype| accessor_value(&prototype, key, field))
-        }
+        Value::BoundFunction(bound) => accessor_bound(bound, key, field),
+        Value::Number(_) => accessor_primitive(Builtin::NumberPrototype, key, field),
+        Value::Boolean(_) => accessor_primitive(Builtin::BooleanPrototype, key, field),
+        Value::String(_) => accessor_primitive(Builtin::StringPrototype, key, field),
+        Value::BigInt(_) => accessor_primitive(Builtin::BigIntPrototype, key, field),
+        Value::Builtin(builtin) => accessor_builtin(*builtin, key, field),
         _ => None,
     }
+}
+
+fn accessor_primitive(builtin: Builtin, key: &str, field: &str) -> Option<Value> {
+    accessor_value(&Value::Builtin(builtin), key, field)
+}
+
+fn accessor_bound(
+    bound: &crate::value::BoundFunctionValue,
+    key: &str,
+    field: &str,
+) -> Option<Value> {
+    if let Value::Builtin(builtin) = bound.target {
+        if let Some(descriptor) = crate::builtins::read_intrinsic_override(builtin, field_key(key))
+        {
+            if let Some(found) = descriptor_field(&descriptor, field) {
+                return Some(found);
+            }
+        }
+    }
+    accessor_value(&bound.target, key, field)
+}
+
+fn accessor_builtin(builtin: Builtin, key: &str, field: &str) -> Option<Value> {
+    crate::builtins::read_intrinsic_override(builtin, field_key(key))
+        .and_then(|descriptor| descriptor_field(&descriptor, field))
+        .or_else(|| {
+            builtin_prototype(builtin).and_then(|prototype| accessor_value(&prototype, key, field))
+        })
 }
 
 fn field_key(descriptor_key: &str) -> &str {
