@@ -393,6 +393,7 @@ pub enum Op {
     IteratorBinding {
         iterator: u16,
         body: Vec<Op>,
+        close_normal: bool,
     },
     Loop {
         label: Option<String>,
