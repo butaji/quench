@@ -152,6 +152,7 @@ pub(super) fn global_builtin(key: &str) -> Option<Builtin> {
     use Builtin::*;
     Some(match key {
         "Array" => Array,
+        "Iterator" => Iterator,
         "ArrayBuffer" => ArrayBuffer,
         "DataView" => DataView,
         "Float32Array" => Float32Array,
