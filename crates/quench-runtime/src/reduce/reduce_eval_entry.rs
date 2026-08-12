@@ -37,6 +37,7 @@ pub(crate) fn reduce_eval_source_in_context(
     let directive_completion =
         super::reduce_eval::directive_completion(&parsed.program, inherited_strict);
     let mut facts = eval_facts(&analysis, strict);
+    facts.install_fact_sites(analysis.fact_sites);
     let (locals, next_slot, mut prefix, behavior, deletable) =
         crate::reduce_support::eval_bindings(&parsed.program, bindings, strict, global);
     facts.eval_deletable = deletable;
@@ -52,6 +53,7 @@ pub(crate) fn reduce_eval_source_in_context(
         },
     )?;
     prefix.append(&mut ops);
+    facts.finish_reduction();
     Ok(ResidualProgram { facts, ops: prefix, module_metadata: None, local_slots: std::collections::HashMap::new() })
 }
 

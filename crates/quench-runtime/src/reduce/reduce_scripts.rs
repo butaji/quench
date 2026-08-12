@@ -82,15 +82,16 @@ fn reduce_units(units: &[SourceUnit<'_>]) -> Result<ResidualProgram, Vec<String>
             private_names: analysis.private_names.into_iter().collect(),
             ..ProgramDb::default()
         };
+        facts.install_fact_sites(analysis.fact_sites);
         last = state.append(&parsed.program.body, &mut facts, unit.program_scope)?;
+        facts.finish_reduction();
         merge_facts(&mut facts_out, facts);
     }
     finish(state, totals, last, facts_out, module_metadata)
 }
 
 fn merge_facts(target: &mut ProgramDb, source: ProgramDb) {
-    target.constants.extend(source.constants);
-    target.span_facts.merge(source.span_facts);
+    target.site_facts.merge(source.site_facts);
     target.eval_var_barrier.extend(source.eval_var_barrier);
     target.eval_deletable.extend(source.eval_deletable);
     target.strict |= source.strict;
