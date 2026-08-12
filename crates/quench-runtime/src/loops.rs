@@ -353,20 +353,41 @@ pub(crate) fn execute(
     registers: &mut Vec<crate::value::Value>,
     op: &crate::ops::Op,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
-    let crate::ops::Op::Loop {
-        label,
-        init,
-        test,
-        body,
-        update,
-        post_test,
-    } = op
-    else {
-        return Err(crate::execute::VmError::MissingReturn);
+    let (label, init, test, body, update, post_test) = match op {
+        crate::ops::Op::Loop {
+            label,
+            init,
+            test,
+            body,
+            update,
+            post_test,
+        } => (label, init, test, body, update, post_test),
+        _ => return Err(crate::execute::VmError::MissingReturn),
     };
     let Some(body) = body.ops() else {
         return Err(crate::execute::VmError::MissingReturn);
     };
+    let Some(init) = init.ops() else {
+        return Err(crate::execute::VmError::MissingReturn);
+    };
+    let Some(test) = test.ops() else {
+        return Err(crate::execute::VmError::MissingReturn);
+    };
+    let Some(update) = update.ops() else {
+        return Err(crate::execute::VmError::MissingReturn);
+    };
+    run_loop(label, init, test, body, update, *post_test, registers)
+}
+
+fn run_loop(
+    label: &Option<String>,
+    init: &[Op],
+    test: &[Op],
+    body: &[Op],
+    update: &[Op],
+    post_test: bool,
+    registers: &mut Vec<crate::value::Value>,
+) -> Result<crate::completion::Completion, crate::execute::VmError> {
     run_fragment(init, registers)?;
     loop {
         if !post_test && !loop_test(test, registers)? {
@@ -378,7 +399,7 @@ pub(crate) fn execute(
             LoopAction::Propagate(completion) => return Ok(completion),
         }
         run_fragment(update, registers)?;
-        if *post_test && !loop_test(test, registers)? {
+        if post_test && !loop_test(test, registers)? {
             break;
         }
     }
@@ -439,10 +460,10 @@ pub(crate) fn reduce_while(
     };
     ops.push(Op::Loop {
         label: None,
-        init: Vec::new(),
-        test,
+        init: crate::machine::FunctionCode::from_ops(Vec::new()),
+        test: crate::machine::FunctionCode::from_ops(test),
         body: crate::machine::FunctionCode::from_ops(body),
-        update: Vec::new(),
+        update: crate::machine::FunctionCode::from_ops(Vec::new()),
         post_test: false,
     });
     Ok(())
@@ -468,10 +489,10 @@ pub(crate) fn reduce_do_while(
     let test = reduce_fragment(Some(&statement.test), ops, facts, next_register, locals)?;
     ops.push(Op::Loop {
         label: None,
-        init: Vec::new(),
-        test,
+        init: crate::machine::FunctionCode::from_ops(Vec::new()),
+        test: crate::machine::FunctionCode::from_ops(test),
         body: crate::machine::FunctionCode::from_ops(body),
-        update: Vec::new(),
+        update: crate::machine::FunctionCode::from_ops(Vec::new()),
         post_test: true,
     });
     Ok(())
