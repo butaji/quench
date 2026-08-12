@@ -412,6 +412,7 @@ pub enum Builtin {
     WeakRefPrototype,
     WeakRefDeref,
     IteratorNext,
+    IteratorSelf,
     GeneratorNext,
     GeneratorReturn,
     GeneratorThrow,
