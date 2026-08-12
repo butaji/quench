@@ -178,6 +178,11 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
         (RegExp, "escape") => Some(RegExpEscape),
         (RegExpPrototype, "test") => Some(RegExpTest),
         (RegExpPrototype, "exec") => Some(RegExpExec),
+        (RegExpPrototype, "Symbol.match") => Some(RegExpSymbolMatch),
+        (RegExpPrototype, "Symbol.search") => Some(RegExpSymbolSearch),
+        (RegExpPrototype, "Symbol.replace") => Some(RegExpSymbolReplace),
+        (RegExpPrototype, "Symbol.split") => Some(RegExpSymbolSplit),
+        (RegExpPrototype, "Symbol.matchAll") => Some(RegExpSymbolMatchAll),
         _ => builtin_method2(builtin, key),
     }
 }

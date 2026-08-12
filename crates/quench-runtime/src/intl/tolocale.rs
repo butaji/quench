@@ -243,7 +243,8 @@ pub(crate) mod value {
             | crate::ops::Builtin::SymbolMatch
             | crate::ops::Builtin::SymbolReplace
             | crate::ops::Builtin::SymbolSearch
-            | crate::ops::Builtin::SymbolSplit => "symbol",
+            | crate::ops::Builtin::SymbolSplit
+            | crate::ops::Builtin::SymbolMatchAll => "symbol",
             crate::ops::Builtin::Math
             | crate::ops::Builtin::Reflect
             | crate::ops::Builtin::Json => "object",
@@ -344,6 +345,7 @@ pub(crate) mod symbol {
             Builtin::SymbolReplace => "Symbol.replace",
             Builtin::SymbolSearch => "Symbol.search",
             Builtin::SymbolSplit => "Symbol.split",
+            Builtin::SymbolMatchAll => "Symbol.matchAll",
             _ => return None,
         })
     }
