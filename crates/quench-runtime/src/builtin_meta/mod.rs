@@ -102,9 +102,9 @@ pub fn prototype(builtin: Builtin) -> Option<Builtin> {
         Builtin::Promise => Some(Builtin::PromisePrototype),
         Builtin::Date => Some(Builtin::DatePrototype),
         Builtin::Function => Some(Builtin::FunctionPrototype),
-        Builtin::AsyncFunction | Builtin::GeneratorFunction | Builtin::AsyncGeneratorFunction => {
-            Some(Builtin::FunctionPrototype)
-        }
+        Builtin::AsyncFunction => Some(Builtin::FunctionPrototype),
+        Builtin::GeneratorFunction => Some(Builtin::GeneratorFunctionPrototype),
+        Builtin::AsyncGeneratorFunction => Some(Builtin::AsyncGeneratorFunctionPrototype),
         Builtin::Number => Some(Builtin::ObjectPrototype),
         Builtin::Object => Some(Builtin::ObjectPrototype),
         Builtin::RegExp => Some(Builtin::RegExpPrototype),
