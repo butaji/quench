@@ -49,8 +49,8 @@ pub fn reduce_if_statement(
         .unwrap_or_default();
     ops.push(Op::Branch {
         condition,
-        then_ops,
-        else_ops,
+        then_ops: crate::machine::FunctionCode::from_ops(then_ops),
+        else_ops: crate::machine::FunctionCode::from_ops(else_ops),
     });
     Ok(None)
 }
