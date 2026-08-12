@@ -7,7 +7,7 @@ use crate::{
 use oxc::ast::ast::SwitchStatement;
 use std::collections::HashMap;
 
-type SwitchCases = Vec<(Option<Constant>, Vec<Op>)>;
+type SwitchCases = Vec<(Option<Constant>, crate::machine::FunctionCode)>;
 
 pub(crate) fn reduce(
     statement: &SwitchStatement<'_>,
@@ -62,7 +62,7 @@ fn reduce_cases(
                 &mut body_locals,
             )?;
         }
-        cases.push((test, body));
+        cases.push((test, crate::machine::FunctionCode::from_ops(body)));
     }
     Ok(cases)
 }
@@ -88,6 +88,9 @@ pub(crate) fn execute(
         return Ok(crate::completion::Completion::Normal);
     };
     for (_, body) in &cases[start..] {
+        let Some(body) = body.ops() else {
+            return Err(crate::execute::VmError::MissingReturn);
+        };
         match crate::execute::execute_completion_in_place(body, registers)? {
             crate::completion::Completion::Normal => continue,
             crate::completion::Completion::Break(None) => {
