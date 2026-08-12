@@ -45,6 +45,7 @@ mod literal;
 mod locals;
 mod logical;
 mod loops;
+pub mod machine;
 mod math;
 mod methods;
 mod number_fmt;
