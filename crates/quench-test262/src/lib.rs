@@ -4,6 +4,7 @@
 
 use std::{collections::HashMap, path::Path};
 
+pub mod module_graph;
 pub mod runtime_host;
 mod stages;
 pub use runtime_host::RuntimeHost;
@@ -491,7 +492,6 @@ fn apply_negative_expectation(outcome: TestOutcome, metadata: &TestMetadata) -> 
         },
     }
 }
-
 fn map_result(result: Result<(), String>) -> TestOutcome {
     match result {
         Ok(()) => TestOutcome::Pass,
