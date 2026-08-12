@@ -213,12 +213,16 @@ fn reduce_dynamic_for(
     let body = reduce_body_fragment(statement, ops, facts, next_register, next_slot, locals)?;
     let update =
         super::reduce_fragment(statement.update.as_ref(), ops, facts, next_register, locals)?;
+    let [init, test, body, update] =
+        crate::machine::FunctionCode::from_ops_many(vec![init, test, body, update])
+            .try_into()
+            .expect("four loop bodies");
     ops.push(Op::Loop {
         label: None,
-        init: crate::machine::FunctionCode::from_ops(init),
-        test: crate::machine::FunctionCode::from_ops(test),
-        body: crate::machine::FunctionCode::from_ops(body),
-        update: crate::machine::FunctionCode::from_ops(update),
+        init,
+        test,
+        body,
+        update,
         post_test: false,
     });
     Ok(())
