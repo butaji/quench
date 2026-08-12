@@ -10,7 +10,15 @@ use oxc::ast::ast::{
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct ModuleMetadata {
     pub import_specifiers: Vec<String>,
+    pub imports: Vec<ImportBinding>,
     pub exported_names: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportBinding {
+    pub source: String,
+    pub imported: String,
+    pub local: String,
 }
 
 impl ModuleMetadata {
@@ -25,7 +33,29 @@ impl ModuleMetadata {
     fn visit_statement(&mut self, statement: &Statement<'_>) {
         match statement {
             Statement::ImportDeclaration(import) => {
-                push_unique(&mut self.import_specifiers, import.source.value.as_str());
+                let source = import.source.value.to_string();
+                push_unique(&mut self.import_specifiers, &source);
+                if let Some(specifiers) = &import.specifiers {
+                    for specifier in specifiers {
+                        let (imported, local) = match specifier {
+                            oxc::ast::ast::ImportDeclarationSpecifier::ImportSpecifier(value) => (
+                                module_export_name(&value.imported),
+                                value.local.name.to_string(),
+                            ),
+                            oxc::ast::ast::ImportDeclarationSpecifier::ImportDefaultSpecifier(
+                                value,
+                            ) => ("default".to_string(), value.local.name.to_string()),
+                            oxc::ast::ast::ImportDeclarationSpecifier::ImportNamespaceSpecifier(
+                                value,
+                            ) => ("*".to_string(), value.local.name.to_string()),
+                        };
+                        self.imports.push(ImportBinding {
+                            source: source.clone(),
+                            imported,
+                            local,
+                        });
+                    }
+                }
             }
             Statement::ExportNamedDeclaration(export) => self.visit_named(export),
             Statement::ExportDefaultDeclaration(export) => self.visit_default(export),
@@ -104,6 +134,14 @@ fn push_name(names: &mut Vec<String>, name: Option<&ModuleExportName<'_>>) {
             ModuleExportName::StringLiteral(literal) => literal.value.as_str(),
         };
         push_unique(names, value);
+    }
+}
+
+fn module_export_name(name: &ModuleExportName<'_>) -> String {
+    match name {
+        ModuleExportName::IdentifierName(identifier) => identifier.name.to_string(),
+        ModuleExportName::IdentifierReference(identifier) => identifier.name.to_string(),
+        ModuleExportName::StringLiteral(literal) => literal.value.to_string(),
     }
 }
 
