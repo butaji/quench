@@ -18,6 +18,26 @@ fn explicit_bigint(value: Option<&Value>) -> Result<Value, VmError> {
     }
 }
 
+fn bigint_to_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    let value = bigint_value_of(receiver)?;
+    let Value::BigInt(value) = value else {
+        return Err(crate::value::error::throw_type_error("Invalid BigInt receiver"));
+    };
+    let radix: f64 = arguments
+        .first()
+        .map(|value| crate::intl::tolocale::value::to_number_result(Some(value)))
+        .transpose()?
+        .unwrap_or(10.0);
+    let radix = if radix.is_nan() { 10.0 } else { radix.trunc() };
+    if !(2.0..=36.0).contains(&radix) {
+        return Err(crate::value::error::throw_range_error("Invalid BigInt radix"));
+    }
+    let value = value
+        .parse::<num_bigint::BigInt>()
+        .map_err(|_| crate::value::error::throw_type_error("Invalid BigInt value"))?;
+    Ok(Value::String(value.to_str_radix(radix as u32)))
+}
+
 fn bigint_as_n(arguments: &[Value], signed: bool) -> Result<Value, VmError> {
     let bits = arguments
         .first()
