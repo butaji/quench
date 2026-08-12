@@ -376,6 +376,7 @@ pub(super) fn make(
         code,
         params,
         captures,
+        with_captures: crate::with_scope::capture(),
         properties: function_properties(length),
         private_slots: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
         private_environment: crate::private_environment::current(),

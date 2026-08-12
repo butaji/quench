@@ -9,6 +9,7 @@ fn has_own_observes_function_own_properties() {
         is_async: false,
         mapped_arguments: true,
         captures: crate::environment::Environment::new(),
+        with_captures: Vec::new(),
         properties: Rc::new(RefCell::new(vec![
             ("length".to_string(), Value::Number(2.0)),
             ("custom".to_string(), Value::Boolean(true)),
