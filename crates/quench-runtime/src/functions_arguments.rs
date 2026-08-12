@@ -361,7 +361,7 @@ fn execute_frame_completion(
     let (mut registers, environment) =
         build_registers(&frame.function, &frame.receiver, &frame.arguments);
     let context = crate::vm::current_context_or_default();
-    crate::vm::execute_frame_completion(&frame.function.body, &mut registers, &context, environment)
+    crate::vm::execute_frame_completion(frame.function.ops(), &mut registers, &context, environment)
 }
 
 fn resolve_tail_target(
