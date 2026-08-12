@@ -42,3 +42,16 @@ fn empty_function_code() -> crate::machine::FunctionCode {
     let range = arena.append_slice(&[]);
     crate::machine::FunctionCode::new(arena.freeze(), range)
 }
+
+#[test]
+fn array_property_descriptor_exposes_assigned_value() {
+    let array = crate::builtins::set_property(
+        Value::array(Vec::new()),
+        "custom",
+        Value::Boolean(true),
+    );
+    let descriptor = descriptor(Some(&array), Some(&Value::String("custom".into())))
+        .expect("array descriptor");
+    assert_eq!(crate::execute::get_property(&descriptor, "value"), Value::Boolean(true));
+    assert_eq!(crate::execute::get_property(&descriptor, "enumerable"), Value::Boolean(true));
+}
