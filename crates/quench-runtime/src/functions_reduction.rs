@@ -372,7 +372,6 @@ pub(super) fn make(
     let range = arena.append_slice(body);
     let code = Some(crate::machine::FunctionCode::new(arena.freeze(), range));
     let value = crate::value::Value::Function(std::rc::Rc::new(crate::value::FunctionValue {
-        body: Vec::new(),
         code,
         params,
         captures,
