@@ -39,24 +39,7 @@ fn resume_branch_frame(
     };
     crate::execute::write_value(&mut registers_mut(generator), frame.dst, value);
     generator.machine.borrow_mut().pop_frame();
-    resume_after_branch(generator, state, frame.resume).map(Some)
-}
-
-fn resume_after_branch(
-    generator: &GeneratorData,
-    state: &mut GeneratorState,
-    resume: crate::machine::CodeRange,
-) -> Result<crate::completion::Completion, VmError> {
-    let start = resume.start.saturating_sub(generator.function.code.range.start) as usize;
-    let step = execute_with_generator_registers(generator, |registers| {
-        crate::vm::execute_generator_step(
-            generator.function.ops(), registers, machine_environment(generator)?, start,
-            crate::completion::Completion::Normal,
-        )
-    })?;
-    set_machine_pc(generator, step.pc);
-    state.suspension = step.suspension;
-    Ok(step.completion)
+    resume_generator_range(generator, state, frame.resume, crate::completion::Completion::Normal).map(Some)
 }
 
 fn install_branch_frame_input(generator: &GeneratorData, input: &Value) -> bool {
