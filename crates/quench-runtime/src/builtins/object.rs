@@ -47,8 +47,8 @@ pub(crate) fn execute_special(
             }
             descriptor(target, key)
         }
-        Builtin::ObjectGetOwnPropertyNames => crate::own_keys::names(arguments.first()),
-        Builtin::ObjectGetOwnPropertySymbols => crate::own_keys::symbols(arguments.first()),
+        Builtin::ObjectGetOwnPropertyNames => object_proxy_names(arguments.first(), false),
+        Builtin::ObjectGetOwnPropertySymbols => object_proxy_names(arguments.first(), true),
         Builtin::ObjectKeys => object_keys(arguments.first()),
         Builtin::ObjectAssign => assign(arguments),
         Builtin::ObjectFromEntries => from_entries(arguments),
