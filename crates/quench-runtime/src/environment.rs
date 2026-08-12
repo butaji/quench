@@ -27,10 +27,59 @@ impl SlotCell {
     }
 }
 
+#[derive(Debug, Default, PartialEq)]
+struct SlotStore {
+    slots: RefCell<Vec<SlotCell>>,
+}
+
+impl SlotStore {
+    fn from_values(values: Vec<Value>) -> Rc<Self> {
+        Rc::new(Self {
+            slots: RefCell::new(values.into_iter().map(SlotCell::new).collect()),
+        })
+    }
+
+    fn prefix(&self, count: usize) -> Rc<Self> {
+        let mut slots = self.slots.borrow_mut();
+        while slots.len() < count {
+            slots.push(SlotCell::new(Value::Undefined));
+        }
+        Rc::new(Self {
+            slots: RefCell::new(slots.iter().take(count).cloned().collect()),
+        })
+    }
+
+    fn len(&self) -> usize {
+        self.slots.borrow().len()
+    }
+
+    fn get(&self, slot: u16) -> Option<SlotCell> {
+        self.slots.borrow().get(usize::from(slot)).cloned()
+    }
+
+    fn ensure(&self, slot: u16) -> SlotCell {
+        let index = usize::from(slot);
+        let mut slots = self.slots.borrow_mut();
+        while slots.len() <= index {
+            slots.push(SlotCell::new(Value::Undefined));
+        }
+        slots[index].clone()
+    }
+
+    fn replace(&self, slot: u16, cell: SlotCell) -> SlotCell {
+        let index = usize::from(slot);
+        let mut slots = self.slots.borrow_mut();
+        while slots.len() <= index {
+            slots.push(SlotCell::new(Value::Undefined));
+        }
+        std::mem::replace(&mut slots[index], cell)
+    }
+}
+
 /// Shared indexed lexical bindings. Captured prefixes share their slot cells.
 #[derive(Debug, Default, PartialEq)]
 pub struct Environment {
-    slots: RefCell<Vec<SlotCell>>,
+    slots: Rc<SlotStore>,
     names: RefCell<Option<HashMap<String, SlotCell>>>,
     immutable_names: RefCell<Option<HashSet<String>>>,
     immutable_slots: RefCell<Option<HashSet<u16>>>,
@@ -43,28 +92,11 @@ impl Environment {
         Rc::new(Self::default())
     }
 
-    /// Create a fresh declarative record whose name resolution continues in
-    /// `outer` without sharing its indexed slots.
-    pub(crate) fn with_outer(outer: Option<&Rc<Self>>, values: Vec<Value>) -> Rc<Self> {
-        Rc::new(Self {
-            slots: RefCell::new(values.into_iter().map(SlotCell::new).collect()),
-            names: RefCell::new(None),
-            immutable_names: RefCell::new(None),
-            immutable_slots: RefCell::new(None),
-            uninitialized: RefCell::new(None),
-            caller: outer.map(Rc::clone),
-        })
-    }
-
     pub(crate) fn capture(environment: &Rc<Self>, count: u16) -> Rc<Self> {
         let count = usize::from(count);
-        let mut source = environment.slots.borrow_mut();
-        while source.len() < count {
-            source.push(SlotCell::new(Value::Undefined));
-        }
-        let slots = source.iter().take(count).cloned().collect();
+        let slots = environment.slots.prefix(count);
         Rc::new(Self {
-            slots: RefCell::new(slots),
+            slots,
             names: RefCell::new(environment.names.borrow().clone()),
             immutable_names: RefCell::new(environment.immutable_names.borrow().clone()),
             immutable_slots: RefCell::new(environment.immutable_slots.borrow().clone()),
@@ -74,11 +106,20 @@ impl Environment {
     }
 
     pub(crate) fn child(captures: &Rc<Self>, values: Vec<Value>) -> Rc<Self> {
-        let mut slots = captures.slots.borrow().clone();
-        slots.extend(values.into_iter().map(SlotCell::new));
+        let slots = SlotStore::from_values(values);
+        let mut combined = captures.slots.slots.borrow().clone();
+        combined.extend(slots.slots.borrow().iter().cloned());
         let caller = crate::locals::is_installed().then(crate::locals::current);
-        let environment = Self::with_outer(caller.as_ref(), Vec::new());
-        environment.slots.replace(slots);
+        let environment = Rc::new(Self {
+            slots: Rc::new(SlotStore {
+                slots: RefCell::new(combined),
+            }),
+            names: RefCell::new(None),
+            immutable_names: RefCell::new(None),
+            immutable_slots: RefCell::new(None),
+            uninitialized: RefCell::new(None),
+            caller,
+        });
         environment
             .uninitialized
             .replace(captures.uninitialized.borrow().clone());
@@ -89,14 +130,13 @@ impl Environment {
     }
 
     pub(crate) fn len(&self) -> usize {
-        self.slots.borrow().len()
+        self.slots.len()
     }
 
     pub(crate) fn get(&self, slot: u16) -> Value {
         self.slots
-            .borrow()
-            .get(usize::from(slot))
-            .map_or(Value::Undefined, SlotCell::load)
+            .get(slot)
+            .map_or(Value::Undefined, |slot| slot.load())
     }
 
     pub(crate) fn set(&self, slot: u16, value: Value) {
@@ -108,7 +148,7 @@ impl Environment {
     }
 
     fn slot(&self, slot: u16) -> Option<SlotCell> {
-        self.slots.borrow().get(usize::from(slot)).cloned()
+        self.slots.get(slot)
     }
 
     pub(crate) fn map_argument(
@@ -127,12 +167,7 @@ impl Environment {
     }
 
     pub(crate) fn install_slot_cell(&self, slot: u16, cell: Rc<RefCell<Value>>) {
-        let index = usize::from(slot);
-        let mut slots = self.slots.borrow_mut();
-        while slots.len() <= index {
-            slots.push(SlotCell::new(Value::Undefined));
-        }
-        slots[index] = SlotCell(cell);
+        self.slots.replace(slot, SlotCell(cell));
     }
 
     pub(crate) fn alias_name(&self, name: &str, slot: u16) {
@@ -272,12 +307,7 @@ impl Environment {
     }
 
     fn ensure_slot(&self, slot: u16) -> SlotCell {
-        let index = usize::from(slot);
-        let mut slots = self.slots.borrow_mut();
-        while slots.len() <= index {
-            slots.push(SlotCell::new(Value::Undefined));
-        }
-        slots[index].clone()
+        self.slots.ensure(slot)
     }
 
     pub(crate) fn initialize(&self, slot: u16) {
@@ -325,37 +355,34 @@ impl Environment {
     }
 
     fn initialize_binding(&self, binding: &SlotCell) {
-        let slot = self
-            .slots
-            .borrow()
-            .iter()
-            .position(|candidate| candidate.ptr_eq(binding));
+        let slot = (0..self.slots.len()).find(|slot| {
+            self.slots
+                .get(*slot as u16)
+                .is_some_and(|candidate| candidate.ptr_eq(binding))
+        });
         if let Some(slot) = slot.and_then(|slot| u16::try_from(slot).ok()) {
             self.initialize(slot);
         }
     }
 
     pub(crate) fn replace_slot(&self, slot: u16, value: Value) -> Rc<RefCell<Value>> {
-        let index = usize::from(slot);
-        let mut slots = self.slots.borrow_mut();
-        while slots.len() <= index {
-            slots.push(SlotCell::new(Value::Undefined));
-        }
-        let previous = std::mem::replace(&mut slots[index], SlotCell::new(value));
-        drop(slots);
+        let previous = self.slots.replace(slot, SlotCell::new(value));
         self.initialize(slot);
         previous.0
     }
 
     pub(crate) fn restore_slot(&self, slot: u16, value: Rc<RefCell<Value>>) {
-        self.slots.borrow_mut()[usize::from(slot)] = SlotCell(value);
+        self.slots.replace(slot, SlotCell(value));
     }
 
     pub(crate) fn replace_value(&self, old: &Value, new: &Value) {
         if let Some(caller) = &self.caller {
             caller.replace_value(old, new);
         }
-        for slot in self.slots.borrow().iter() {
+        for index in 0..self.slots.len() {
+            let Some(slot) = self.slots.get(index as u16) else {
+                continue;
+            };
             let mut value = slot.load();
             if same_identity(&value, old) {
                 value = new.clone();
