@@ -437,6 +437,14 @@ impl Machine {
         self.frames.count
     }
 
+    pub(crate) fn take_registers(&mut self) -> Vec<Value> {
+        std::mem::take(&mut self.registers.values)
+    }
+
+    pub(crate) fn restore_registers(&mut self, registers: Vec<Value>) {
+        self.registers.values = registers;
+    }
+
     pub fn iterator_phase(&self) -> Option<&IteratorPhase> {
         let Some(Frame::Iterator { phase, .. }) = self.frames.frames.last() else {
             return None;
