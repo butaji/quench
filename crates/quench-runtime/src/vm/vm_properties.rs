@@ -490,6 +490,9 @@ fn typed_index(key: &str, get: impl FnOnce(usize) -> Option<f64>) -> Option<Valu
     Some(get(index).map_or(Value::Undefined, Value::Number))
 }
 fn data_view_property(view: &crate::value::DataViewData, key: &str) -> Value {
+    if let Some(prototype) = view.prototype() {
+        return get_property(&prototype, key);
+    }
     match key {
         "buffer" => Value::ArrayBuffer(view.buffer.clone()),
         "byteLength" => Value::Number(view.byte_length() as f64),
