@@ -4,6 +4,40 @@ This is an implementation backlog, not a status ledger. Do not add pass
 counts, stage totals, completion percentages, or skip lists here. Verify work
 with the relevant commands and test262 runs at execution time.
 
+## Immediate migration gates
+
+These gates must be applied before adding broad new runtime features. They are
+architecture changes, not benchmark-dependent tuning:
+
+- Freeze `HeapRef(u32)`, `CodeId(u32)`, `CodeRange`, `ShapeId`,
+  `PropertyKeyId`, `EnvironmentRef`, and `ContinuationId` as the internal
+  identity boundary. Internal arena indexes may be narrower, but the ABI is
+  fixed-width.
+- Hide the physical `Value` representation behind canonical value/heap
+  operations. Do not make semantic code depend on NaN-boxing, enum layout,
+  pointer ownership, or tag width.
+- Replace direct environment-cell coupling with indexed slot load/store,
+  capture, initialization, and immutability operations. Name lookup remains
+  cold metadata.
+- Define heap ownership, root enumeration, weak references, and realm/module/
+  request/temporary/continuation lifetime domains before introducing handle
+  storage or arena reset.
+- Define one flat executable-code ABI and one continuation ABI before adding
+  more suspension-heavy features. Runtime bodies and continuation payloads
+  contain code ranges and IDs, never nested `Vec<Op>`.
+- Treat `VmError` as an internal/host failure channel only. JavaScript control
+  flow uses the shared Completion algebra and the single `step(machine, input)`
+  entry point.
+- Add the benchmark record schema and baseline workloads before accepting any
+  physical encoding, cache, dispatch, paging, or superinstruction choice.
+
+The following are explicitly deferred experiments, not competing architecture
+contracts: NaN boxing versus another one-word `Value`, narrower internal
+arena indexes, exact object-of-arrays layout, register-window size, cache
+capacity, request-object promotion heuristics, direct-threaded dispatch,
+superinstructions, moving collection, and OS page policy. None may leak into
+semantic APIs or become a second execution engine.
+
 ## Machine-first acceptance contract
 
 Every implementation item below is incomplete until it satisfies all of these

@@ -36,8 +36,9 @@ The implementation must enforce these boundaries:
 - OXC owns syntax, scopes, and symbols; Quench stores only indexed facts.
 - Objects are `HeapRef(u32) -> ShapeId + packed slots`; no string-keyed object
   vectors on the hot path.
-- Ops are flat, fixed-width or compactly encoded records; nested `Vec<Op>` is
-  a compiler temporary, never the runtime format.
+- Ops are flat fixed-width opcode words with side tables for uncommon
+  operands; nested `Vec<Op>` is a compiler temporary, never the runtime
+  format.
 - Calls use fixed stack frames and register windows; continuations contain only
   live state at genuine suspension points.
 - Property, call, conversion, construction, iteration, descriptor, equality,
