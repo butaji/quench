@@ -77,6 +77,49 @@ pub(crate) fn execute_name(registers: &mut Vec<Value>, op: &Op) -> Result<(), Vm
     }
 }
 
+pub(crate) fn set_resolved(
+    registers: &mut [Value],
+    target_register: u16,
+    key: &str,
+    src: u16,
+    strict: bool,
+) -> Result<(), VmError> {
+    let mut target = crate::execute::read_register(registers, target_register)?;
+    while let Some(updated) = crate::locals::replacement(&target) {
+        target = updated;
+    }
+    let value = crate::execute::read_register(registers, src)?;
+    if matches!(target, Value::Undefined) {
+        return set_name_value(key, value, strict);
+    }
+    let updated = crate::proxy::proxy_set(&target, key, &value, None)?;
+    crate::locals::replace_value(&target, &updated);
+    Ok(())
+}
+
+fn set_name_value(key: &str, value: Value, strict: bool) -> Result<(), VmError> {
+    if crate::locals::is_immutable_name(key) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot assign to immutable binding",
+        ));
+    }
+    if set_if_bound(key, &value)? {
+        return Ok(());
+    }
+    if crate::locals::set_named(key, value.clone()) {
+        return Ok(());
+    }
+    let global = crate::vm::current_global_object();
+    if strict && !has_property(&global, key)? {
+        return Err(crate::value::error::throw_reference_error(&format!(
+            "{key} is not defined"
+        )));
+    }
+    let updated = crate::builtins::set_property(global.clone(), key, value);
+    crate::vm::synchronize_global_object(&mut Vec::new(), &global, &updated);
+    Ok(())
+}
+
 pub(crate) fn execute_delete_name(
     registers: &mut Vec<Value>,
     dst: u16,

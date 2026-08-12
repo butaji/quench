@@ -134,6 +134,12 @@ fn run_local_op(registers: &mut Vec<Value>, op: &Op) -> Result<bool, VmError> {
             name,
             src,
         } => crate::locals::initialize_resolved(registers, *target, *slot, name, *src)?,
+        SetResolvedBinding {
+            target,
+            name,
+            src,
+            strict,
+        } => crate::with_scope::set_resolved(registers, *target, name, *src, *strict)?,
         _ => return Ok(false),
     }
     Ok(true)
@@ -293,9 +299,7 @@ fn run_get_set_property(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmErr
         ResolveGlobal { .. } => crate::with_scope::execute_resolve_global(registers, op)?,
         GetPropertyDynamic { .. } => crate::properties::execute_get_dynamic(registers, op)?,
         HasPropertyDynamic { .. } => crate::with_scope::execute_has_property(registers, op)?,
-        ResolveName { .. } | SetName { .. } | CheckStrictName { .. } => {
-            crate::with_scope::execute_name(registers, op)?
-        }
+        ResolveName { .. } | SetName { .. } | SetResolvedBinding { .. } | CheckStrictName { .. } => crate::with_scope::execute_name(registers, op)?,
         SetFunctionName { .. } => crate::properties::execute_set_function_name(registers, op)?,
         SetFunctionNameDynamic { .. } => {
             crate::properties::execute_set_function_name_dynamic(registers, op)?
