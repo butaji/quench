@@ -208,6 +208,14 @@ impl Machine {
         self.completion = completion.clone();
         Ok(completion)
     }
+
+    pub fn push_frame(&mut self, frame: Frame) {
+        self.frames.push(frame);
+    }
+
+    pub fn pop_frame(&mut self) -> Option<Frame> {
+        self.frames.pop()
+    }
 }
 
 #[cfg(test)]

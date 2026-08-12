@@ -135,6 +135,7 @@ fn resume(generator: &GeneratorData, resume: Resume) -> Result<Value, VmError> {
     let step = execute_generator_step(generator, &mut state, completion)?;
     state.pc = step.pc;
     state.suspension = step.suspension;
+    update_machine_frame(generator, &state);
     capture_suspended_private_environment(generator, &mut state, &step.completion);
     let result = complete_step(generator, &state, step.completion);
     generator.state.replace(Some(state));
@@ -148,6 +149,25 @@ fn current_state(generator: &GeneratorData) -> Result<GeneratorState, VmError> {
         .as_ref()
         .cloned()
         .ok_or(VmError::MissingReturn)
+}
+
+fn update_machine_frame(generator: &GeneratorData, state: &GeneratorState) {
+    let Some(crate::continuation::SuspensionPoint::YieldStar { dst, iterator, .. }) =
+        state.suspension
+    else {
+        return;
+    };
+    let Ok(iterator) = crate::execute::read_register(&state.registers, iterator) else {
+        return;
+    };
+    generator
+        .machine
+        .borrow_mut()
+        .push_frame(crate::machine::Frame::Delegate {
+            phase: 0,
+            iterator,
+            destination: dst,
+        });
 }
 
 fn resume_suspended_contexts(
@@ -320,6 +340,12 @@ fn throw_and_finish(generator: &GeneratorData, value: Value) -> Result<Value, Vm
 
 fn install_resume_input(generator: &GeneratorData, state: &mut GeneratorState, input: Value) {
     if let Some(point) = state.suspension.take() {
+        if matches!(
+            point,
+            crate::continuation::SuspensionPoint::YieldStar { .. }
+        ) {
+            generator.machine.borrow_mut().pop_frame();
+        }
         match point {
             crate::continuation::SuspensionPoint::Yield { src, .. }
             | crate::continuation::SuspensionPoint::YieldStar { dst: src, .. } => {
