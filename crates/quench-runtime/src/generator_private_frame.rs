@@ -43,11 +43,11 @@ fn advance_private_frame(
 }
 
 fn execute_private_suffix(
-    generator: &GeneratorData, state: &mut GeneratorState, range: crate::machine::CodeRange,
+    generator: &GeneratorData, _state: &mut GeneratorState, range: crate::machine::CodeRange,
 ) -> Result<crate::completion::Completion, VmError> {
     let store = generator.machine.borrow().store.clone().ok_or(VmError::MissingReturn)?;
     let ops = store.get(range).ok_or(VmError::MissingReturn)?;
-    crate::execute::execute_completion_in_place(ops, &mut state.registers)
+    crate::execute::execute_completion_in_place(ops, &mut registers_mut(generator))
 }
 
 fn resume_after_private(
@@ -56,7 +56,7 @@ fn resume_after_private(
 ) -> Result<crate::completion::Completion, VmError> {
     if !matches!(completion, crate::completion::Completion::Normal) { return Ok(completion); }
     let start = range.start.saturating_sub(generator.function.code.range.start) as usize;
-    let step = crate::vm::execute_generator_step(generator.function.ops(), &mut state.registers, state.environment.clone(), start, completion)?;
+    let step = crate::vm::execute_generator_step(generator.function.ops(), &mut registers_mut(generator), state.environment.clone(), start, completion)?;
     state.pc = step.pc;
     state.suspension = step.suspension;
     Ok(step.completion)

@@ -1,7 +1,7 @@
-fn suspended_try_op(op: &crate::ops::Op, state: &crate::value::GeneratorState) -> bool {
+fn suspended_try_op(op: &crate::ops::Op, generator: &GeneratorData) -> bool {
     match op {
         crate::ops::Op::Yield { .. } => true,
-        crate::ops::Op::YieldStar { iterator, .. } => crate::execute::read_register(&state.registers, *iterator)
+        crate::ops::Op::YieldStar { iterator, .. } => crate::execute::read_register(&registers(generator), *iterator)
             .is_ok_and(|value| !matches!(value, Value::Undefined)),
         _ => false,
     }

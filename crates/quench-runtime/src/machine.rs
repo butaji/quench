@@ -409,10 +409,10 @@ impl Machine {
 
     pub fn step<F, E>(&mut self, input: Completion, execute: F) -> Result<Completion, E>
     where
-        F: FnOnce(&mut Self) -> Result<Completion, E>,
+        F: FnOnce(&mut Vec<Value>) -> Result<Completion, E>,
     {
         self.completion = input;
-        let completion = execute(self)?;
+        let completion = execute(&mut self.registers.values)?;
         self.completion = completion.clone();
         Ok(completion)
     }
