@@ -48,11 +48,23 @@ macro_rules! reduce_module_exported_decl {
 }
 
 macro_rules! reduce_exported_default {
-    (expression $expression:expr, $ops:expr, $facts:expr, $next_register:expr, $locals:expr) => {{
-        if let Some(src) =
-            crate::reduce::reduce_expression($expression, $ops, $facts, $next_register, $locals)
-        {
-            let _ = src;
+    (expression $expression:expr, $ops:expr, $facts:expr, $next_register:expr, $next_slot:expr, $locals:expr) => {{
+        let result = crate::reduce::reduce_expression(
+            $expression,
+            $ops,
+            $facts,
+            $next_register,
+            $locals,
+        );
+        if let Some(src) = result {
+            let slot = *$next_slot;
+            *$next_slot = $next_slot.saturating_add(1);
+            $locals.insert("default".to_string(), slot);
+            $ops.push(Op::DeclareEvalBinding {
+                name: "default".to_string(),
+                slot,
+            });
+            $ops.push(Op::StoreLocal { slot, src });
         }
         Ok(None)
     }};
@@ -251,7 +263,7 @@ fn reduce_default(
     locals: &mut HashMap<String, u16>,
 ) -> Result<Option<u16>, Vec<String>> {
     if let Some(expression) = export.declaration.as_expression() {
-        return reduce_default_expression(expression, ops, facts, next_register, locals);
+        return reduce_default_expression(expression, ops, facts, next_register, next_slot, locals);
     }
     reduce_default_declaration(
         &export.declaration,
@@ -268,6 +280,7 @@ fn reduce_default_expression(
     ops: &mut Vec<Op>,
     facts: &mut ProgramDb,
     next_register: &mut u16,
+    next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
 ) -> Result<Option<u16>, Vec<String>> {
     reduce_exported_default!(
@@ -275,6 +288,7 @@ fn reduce_default_expression(
         ops,
         facts,
         next_register,
+        next_slot,
         locals
     )
 }
