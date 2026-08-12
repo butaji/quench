@@ -10,7 +10,7 @@ mod iterator_typed;
 mod iterator_values;
 pub(crate) use iterator_protocol::{should_update_protocol_receiver, ReceiverUpdateGuard};
 pub(crate) use iterator_values::{
-    from_map, from_map_keys, from_map_values, from_set, make, next, property,
+    from_map, from_map_keys, from_map_values, from_set, make, next, property_for,
 };
 fn make_protocol(iterator: Value, next: Value) -> Value {
     Value::Iterator(Rc::new(IteratorData {

@@ -60,6 +60,22 @@ pub(crate) fn property(key: &str) -> Value {
     }
 }
 
+pub(crate) fn property_for(value: &Value, key: &str) -> Value {
+    if key != "Symbol.toStringTag" {
+        return property(key);
+    }
+    let Value::Iterator(data) = value else {
+        return Value::Undefined;
+    };
+    let tag = match &*data.state.borrow() {
+        IteratorState::Native { .. } => "Array Iterator",
+        IteratorState::Set { .. } => "Set Iterator",
+        IteratorState::Map { .. } => "Map Iterator",
+        IteratorState::Protocol { .. } => "Iterator",
+    };
+    Value::String(tag.to_string())
+}
+
 pub(crate) fn make(values: Vec<Value>) -> Value {
     Value::Iterator(Rc::new(IteratorData {
         state: RefCell::new(IteratorState::Native {
