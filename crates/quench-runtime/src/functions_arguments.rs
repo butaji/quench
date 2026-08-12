@@ -66,18 +66,17 @@ pub(crate) fn build_registers(
 pub(crate) fn execute_construct(
     function: &std::rc::Rc<crate::value::FunctionValue>,
     this_value: &crate::value::Value,
+    new_target: &crate::value::Value,
     arguments: &[crate::value::Value],
 ) -> Result<(crate::value::Value, crate::value::Value), crate::execute::VmError> {
     let captures = function.captures.len() as u16;
     let (mut registers, environment) = build_registers(function, this_value, arguments);
     let this_slot = captures.saturating_add(function.params).saturating_add(1);
+    let new_target_slot = this_slot.saturating_add(1);
+    environment.set(new_target_slot, new_target.clone());
     if is_derived_constructor(function) {
         environment.mark_uninitialized(this_slot);
     }
-    environment.set(
-        captures.saturating_add(function.params).saturating_add(2),
-        crate::value::Value::Function(std::rc::Rc::clone(function)),
-    );
     let result = crate::vm::execute_in_environment(
         function.ops(),
         &mut registers,
