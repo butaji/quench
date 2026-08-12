@@ -372,14 +372,13 @@ pub(crate) fn reduce_arrow(
 }
 
 pub(super) fn make(
-    body: &[Op],
+    code: crate::machine::FunctionCode,
     params: u16,
     length: u16,
     captures: std::rc::Rc<crate::environment::Environment>,
     metadata: FunctionMetadata,
 ) -> crate::value::Value {
     let has_prototype = matches!(metadata.kind, FunctionKind::Ordinary | FunctionKind::Generator);
-    let code = crate::machine::FunctionCode::from_ops(body.to_vec());
     let value = make_function_value(code, params, captures, length, metadata);
     attach_lexical_super(&value, metadata.kind);
     if has_prototype {
@@ -442,13 +441,13 @@ fn attach_prototype(value: &crate::value::Value) {
 pub(crate) fn write(
     registers: &mut Vec<crate::value::Value>,
     dst: u16,
-    body: &[Op],
+    body: &crate::machine::FunctionCode,
     params: u16,
     captures: u16,
     metadata: FunctionMetadata,
 ) {
     let value = make(
-        body,
+        body.clone(),
         params,
         metadata.length,
         crate::locals::capture(captures),
