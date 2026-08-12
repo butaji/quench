@@ -309,54 +309,7 @@ pub enum Frame {
     },
 }
 
-impl Frame {
-    fn advance_resume(&mut self, range: CodeRange, yield_dst: u16) -> bool {
-        match self {
-            Self::Try {
-                phase,
-                body_resume,
-                yield_dst: dst,
-                ..
-            } => {
-                *phase = TryPhase::Body;
-                *body_resume = range;
-                *dst = yield_dst;
-            }
-            Self::Iterator {
-                phase,
-                body_resume,
-                yield_dst: dst,
-                ..
-            } => {
-                *phase = IteratorPhase::Body;
-                *body_resume = range;
-                *dst = yield_dst;
-            }
-            Self::Branch {
-                phase,
-                branch_resume,
-                yield_dst: dst,
-                ..
-            } => {
-                *phase = BranchPhase::Body;
-                *branch_resume = range;
-                *dst = yield_dst;
-            }
-            Self::Private {
-                phase,
-                body_resume,
-                yield_dst: dst,
-                ..
-            } => {
-                *phase = PrivatePhase::Body;
-                *body_resume = range;
-                *dst = yield_dst;
-            }
-            _ => return false,
-        }
-        true
-    }
-}
+include!("frame_resume.rs");
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Machine {

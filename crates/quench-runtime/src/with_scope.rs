@@ -104,6 +104,11 @@ pub(crate) fn set_resolved(
     if matches!(target, Value::Undefined) {
         return set_name_value(key, value, strict);
     }
+    if strict && !has_property(&target, key)? {
+        return Err(crate::value::error::throw_reference_error(&format!(
+            "{key} is not defined"
+        )));
+    }
     let updated = crate::proxy::proxy_set(&target, key, &value, None)?;
     crate::locals::replace_value(&target, &updated);
     Ok(())
