@@ -97,6 +97,15 @@ impl ModuleGraph {
         self.link_specifiers(from, metadata.import_specifiers.iter().map(String::as_str))
     }
 
+    /// Link every currently loaded unit from its canonical static metadata.
+    pub fn link_all_units(&mut self) -> Result<(), String> {
+        let units = self.units.iter().map(|unit| unit.id).collect::<Vec<_>>();
+        for unit in units {
+            self.link_unit_imports(unit)?;
+        }
+        Ok(())
+    }
+
     /// Return deterministic post-order units for an entry, preserving edge
     /// order and tolerating back-edges for legal cyclic module graphs.
     pub fn dependency_order(&self, entry: ModuleId) -> Result<Vec<ModuleId>, String> {
@@ -184,7 +193,7 @@ mod tests {
         assert_eq!(graph.entry_unit().map(|unit| unit.id), Some(entry));
         assert_eq!(graph.unit(dependency).map(|unit| unit.id), Some(dependency));
         assert_eq!(graph.units().len(), 2);
-        graph.link_unit_imports(entry).expect("known edge");
+        graph.link_all_units().expect("known edge");
         assert_eq!(
             graph.dependency_order(entry).unwrap(),
             vec![dependency, entry]
