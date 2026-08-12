@@ -24,9 +24,9 @@ fn install_frame_resume_input(generator: &GeneratorData, _state: &mut GeneratorS
         crate::execute::write_value(&mut registers_mut(generator), *dst, input.clone());
         return true;
     }
-    install_try_frame_input(generator, &mut registers_mut(generator), input)
-        || install_private_frame_input(generator, &mut registers_mut(generator), input)
-        || install_branch_frame_input(generator, &mut registers_mut(generator), input)
+    install_try_frame_input(generator, input)
+        || install_private_frame_input(generator, input)
+        || install_branch_frame_input(generator, input)
 }
 
 fn install_scanned_resume_input(generator: &GeneratorData, state: &mut GeneratorState, input: Value) {

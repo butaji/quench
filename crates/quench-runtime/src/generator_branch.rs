@@ -26,7 +26,9 @@ fn resume_branch_frame(
     }
     let store = generator.machine.borrow().store.clone().ok_or(VmError::MissingReturn)?;
     let ops = store.get(frame.branch_resume).ok_or(VmError::MissingReturn)?;
-    let completion = crate::execute::execute_completion_in_place(ops, &mut registers_mut(generator))?;
+    let completion = execute_with_generator_registers(generator, |registers| {
+        crate::execute::execute_completion_in_place(ops, registers)
+    })?;
     if completion.is_suspension() {
         advance_frame_after_yield(generator, frame.branch_resume)?;
         return Ok(Some(completion));
@@ -45,22 +47,21 @@ fn resume_after_branch(
     resume: crate::machine::CodeRange,
 ) -> Result<crate::completion::Completion, VmError> {
     let start = resume.start.saturating_sub(generator.function.code.range.start) as usize;
-    let step = crate::vm::execute_generator_step(
-        generator.function.ops(),
-        &mut registers_mut(generator),
-        state.environment.clone(),
-        start,
-        crate::completion::Completion::Normal,
-    )?;
+    let step = execute_with_generator_registers(generator, |registers| {
+        crate::vm::execute_generator_step(
+            generator.function.ops(), registers, state.environment.clone(), start,
+            crate::completion::Completion::Normal,
+        )
+    })?;
     set_machine_pc(generator, step.pc);
     state.suspension = step.suspension;
     Ok(step.completion)
 }
 
-fn install_branch_frame_input(generator: &GeneratorData, registers: &mut Vec<Value>, input: &Value) -> bool {
+fn install_branch_frame_input(generator: &GeneratorData, input: &Value) -> bool {
     let Some(frame) = branch_frame_resume(generator) else {
         return false;
     };
-    crate::execute::write_value(registers, frame.yield_dst, input.clone());
+    crate::execute::write_value(&mut registers_mut(generator), frame.yield_dst, input.clone());
     true
 }
