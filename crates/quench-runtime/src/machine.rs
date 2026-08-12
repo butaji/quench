@@ -96,9 +96,13 @@ impl CodeArena {
     }
 
     pub fn append(&mut self, body: Vec<Op>) -> CodeRange {
+        self.append_slice(&body)
+    }
+
+    pub fn append_slice(&mut self, body: &[Op]) -> CodeRange {
         let code = CodeId(self.ranges.len() as u32);
         let start = self.ops.len() as u32;
-        self.ops.extend(body);
+        self.ops.extend_from_slice(body);
         let end = self.ops.len() as u32;
         self.ranges.push((start, end));
         CodeRange { code, start, end }
