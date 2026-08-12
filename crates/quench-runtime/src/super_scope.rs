@@ -33,10 +33,27 @@ impl Guard {
             .iter()
             .rev()
             .find_map(|(name, value)| (name == "\0home_object").then(|| value.clone()));
+        let receiver = function
+            .properties
+            .borrow()
+            .iter()
+            .rev()
+            .find_map(|(name, value)| (name == "\0super_receiver").then(|| value.clone()))
+            .unwrap_or_else(|| receiver.clone());
+        let lexical_function = function
+            .properties
+            .borrow()
+            .iter()
+            .rev()
+            .find_map(|(name, value)| (name == "\0super_function").then(|| value.clone()));
+        let context_function = match lexical_function {
+            Some(Value::Function(value)) => value,
+            _ => Rc::clone(function),
+        };
         let current = home.map(|home| Context {
             home,
-            receiver: receiver.clone(),
-            function: Rc::clone(function),
+            receiver,
+            function: context_function,
         });
         let current = current.or_else(|| CURRENT.with(|slot| slot.borrow().clone()));
         let previous = CURRENT.with(|slot| slot.replace(current));
@@ -62,6 +79,18 @@ pub(crate) fn is_active() -> bool {
 
 pub(crate) fn is_strict() -> bool {
     STRICT.with(Cell::get)
+}
+
+pub(crate) fn capture_lexical() -> Option<(Value, Value, Value)> {
+    CURRENT.with(|slot| {
+        slot.borrow().as_ref().map(|context| {
+            (
+                context.home.clone(),
+                context.receiver.clone(),
+                Value::Function(context.function.clone()),
+            )
+        })
+    })
 }
 
 pub(crate) fn execute_get(registers: &mut Vec<Value>, op: &crate::ops::Op) -> Result<(), VmError> {

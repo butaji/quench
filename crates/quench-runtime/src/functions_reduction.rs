@@ -386,6 +386,16 @@ pub(super) fn make(
         is_async: metadata.is_async,
         mapped_arguments: metadata.mapped_arguments,
     }));
+    if matches!(metadata.kind, FunctionKind::Arrow) {
+        if let Some((home, receiver, lexical_function)) = crate::super_scope::capture_lexical() {
+            if let crate::value::Value::Function(function) = &value {
+                let mut properties = function.properties.borrow_mut();
+                properties.push(("\0home_object".to_string(), home));
+                properties.push(("\0super_receiver".to_string(), receiver));
+                properties.push(("\0super_function".to_string(), lexical_function));
+            }
+        }
+    }
     if has_prototype {
         let prototype = crate::value::Value::Object(std::rc::Rc::new(
             crate::value::ObjectData::new(vec![("constructor".to_string(), value.clone())]),
