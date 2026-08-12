@@ -1,4 +1,8 @@
 impl StatementReducer {
+    pub(super) fn local_slots(&self) -> HashMap<String, u16> {
+        self.locals.clone()
+    }
+
     pub(super) fn new_with_global(source_type: SourceType, global: bool) -> Self {
         let locals = initialize_statement_locals(source_type);
         let (mut ops, next_register) = initialize_statement_ops(global);
