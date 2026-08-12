@@ -468,6 +468,10 @@ fn is_object_special(builtin: Builtin) -> bool {
             | Builtin::ObjectSetPrototypeOf
             | Builtin::ObjectPropertyIsEnumerable
             | Builtin::ObjectPrototypeIsPrototypeOf
+            | Builtin::ObjectPrototypeDefineGetter
+            | Builtin::ObjectPrototypeDefineSetter
+            | Builtin::ObjectPrototypeLookupGetter
+            | Builtin::ObjectPrototypeLookupSetter
     )
 }
 

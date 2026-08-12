@@ -60,6 +60,37 @@ pub(crate) fn is_prototype_of(
     Ok(Value::Boolean(false))
 }
 
+pub(crate) fn define_legacy_accessor(
+    receiver: Option<&Value>, arguments: &[Value], field: &str,
+) -> Result<Value, crate::execute::VmError> {
+    let target = require_object_receiver(receiver)?;
+    let key = crate::conversion::to_property_key(arguments.first().unwrap_or(&Value::Undefined))?;
+    let accessor = arguments.get(1).cloned().unwrap_or(Value::Undefined);
+    if !crate::conversion::is_callable(&accessor) {
+        return Err(crate::value::error::throw_type_error("Accessor must be callable"));
+    }
+    let descriptor = vec![(field.to_string(), accessor),
+        ("enumerable".to_string(), Value::Boolean(true)),
+        ("configurable".to_string(), Value::Boolean(true))];
+    let result = crate::builtins::define_own_property(target, &key, &descriptor)?;
+    crate::locals::replace_value(target, &result);
+    Ok(Value::Undefined)
+}
+
+pub(crate) fn lookup_legacy_accessor(
+    receiver: Option<&Value>, arguments: &[Value], field: &str,
+) -> Result<Value, crate::execute::VmError> {
+    let target = require_object_receiver(receiver)?;
+    let key = crate::conversion::to_property_key(arguments.first().unwrap_or(&Value::Undefined))?;
+    Ok(crate::property_define::accessor(target, &key, field).unwrap_or(Value::Undefined))
+}
+
+fn require_object_receiver(receiver: Option<&Value>) -> Result<&Value, crate::execute::VmError> {
+    receiver.filter(|value| crate::value::is_object(value)).ok_or_else(|| {
+        crate::value::error::throw_type_error("Object receiver required")
+    })
+}
+
 fn is_intrinsic_prototype(builtin: Builtin) -> bool {
     matches!(
         builtin,
