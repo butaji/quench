@@ -134,7 +134,7 @@ impl Environment {
             immutable_names: RefCell::new(environment.immutable_names.borrow().clone()),
             immutable_slots: RefCell::new(environment.immutable_slots.borrow().clone()),
             uninitialized: RefCell::new(environment.uninitialized.borrow().clone()),
-            caller: None,
+            caller: Some(Rc::clone(environment)),
         })
     }
 
@@ -142,14 +142,13 @@ impl Environment {
         let store = SlotStore::from_values(values);
         let mut combined = captures.slots.borrow().clone();
         combined.extend((0..store.len()).map(|index| BindingRef::new(Rc::clone(&store), index)));
-        let caller = crate::locals::is_installed().then(crate::locals::current);
         let environment = Rc::new(Self {
             slots: RefCell::new(combined),
             names: RefCell::new(None),
             immutable_names: RefCell::new(None),
             immutable_slots: RefCell::new(None),
             uninitialized: RefCell::new(None),
-            caller,
+            caller: Some(Rc::clone(captures)),
         });
         environment
             .uninitialized
