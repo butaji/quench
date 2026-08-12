@@ -23,6 +23,7 @@ mod collections;
 mod completion;
 mod conditional;
 mod construct;
+mod continuation;
 mod control_flow;
 mod conversion;
 pub mod date;
