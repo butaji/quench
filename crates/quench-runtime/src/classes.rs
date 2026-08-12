@@ -315,7 +315,10 @@ fn reduce_field_initializer(
     (facts.strict, facts.in_function) = inherited;
     let result = result?;
     body.push(Op::Return { src: result });
-    Some(InstanceFieldInitializerOp { body, captures })
+    Some(InstanceFieldInitializerOp {
+        body: crate::machine::FunctionCode::from_ops(body),
+        captures,
+    })
 }
 
 fn define_method(ops: &mut Vec<Op>, object: u16, key: u16, value: u16, kind: MethodDefinitionKind) {

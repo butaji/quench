@@ -14,7 +14,7 @@ pub enum InstanceFieldKeyOp {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct InstanceFieldInitializerOp {
-    pub body: Vec<Op>,
+    pub body: crate::machine::FunctionCode,
     pub captures: u16,
 }
 
