@@ -29,3 +29,33 @@ pub(crate) fn assign_set_property(
     }
     Ok(crate::builtins::set_property(target.clone(), key, value))
 }
+
+fn assign_proxy_set(
+    registers: &mut Vec<crate::value::Value>,
+    object: u16,
+    target: &crate::value::Value,
+    key: &str,
+    value: crate::value::Value,
+) -> Result<(), crate::execute::VmError> {
+    let result = assign_set_property(target, key, value)?;
+    crate::execute::write_value(registers, object, result);
+    Ok(())
+}
+
+fn delete_proxy_property(
+    registers: &mut Vec<crate::value::Value>,
+    dst: u16,
+    target: &crate::value::Value,
+    key: &str,
+    strict: bool,
+) -> Result<(), crate::execute::VmError> {
+    let result = crate::proxy::proxy_delete(target, key)?;
+    let deleted = matches!(result, crate::value::Value::Boolean(true));
+    if !deleted && strict {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot delete property through Proxy",
+        ));
+    }
+    crate::execute::write_value(registers, dst, result);
+    Ok(())
+}
