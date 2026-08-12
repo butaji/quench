@@ -47,6 +47,26 @@ No mechanically derivable fact should be handwritten in multiple places. Do
 not create a DSL for observable specification algorithms; readable Rust owns
 their exact coercion, reentrancy, abrupt-completion, and ordering behavior.
 
+### Literal and metadata vocabulary
+
+Repeated JavaScript literals are declared once as data, in the smallest
+canonical vocabulary that gives them semantic identity. A declarative table or
+macro owns builtin names, intrinsic keys, prototype relations, function names
+and lengths, and other mechanical metadata; it generates lookup, reverse
+lookup, installation, encoding, and diagnostic consequences. Internal code uses
+enum or fixed-width IDs and materializes strings only at an observable or host
+boundary.
+
+```text
+builtin_table! { Boolean { name: "Boolean", prototype: BooleanPrototype } }
+```
+
+Do not copy literal strings across reducers, runtime dispatch, descriptors, and
+primordial installation. Do not introduce a general literal wrapper or a DSL
+for observable ECMAScript algorithms: coercion, ordering, reentrancy,
+abrupt-completion behavior, and proxy interaction remain readable Rust owned by
+the canonical semantic protocol.
+
 ## Runtime representation target
 
 The stable runtime boundary is:
