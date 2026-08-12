@@ -3,6 +3,9 @@ fn array_mutation_builtin(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> BuiltinResult {
+    if let Some(result) = typed_array_static(builtin, receiver, arguments) {
+        return Some(result);
+    }
     use crate::ops::Builtin::*;
     match builtin {
         ArrayShift => Some(Ok(crate::builtins::array_shift(receiver))),
