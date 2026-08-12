@@ -10,6 +10,9 @@ pub(crate) fn lookup(builtin: Builtin, key: &str) -> Value {
     if let Some(value) = crate::intl::property(builtin, key) {
         return value;
     }
+    if let Some(value) = iterator_property(builtin, key) {
+        return value;
+    }
     if let Some(value) = special(builtin, key) {
         return value;
     }
@@ -65,6 +68,17 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         _ => builtin_method(builtin, key).map(Value::Builtin),
     }
 }
+
+fn iterator_property(builtin: Builtin, key: &str) -> Option<Value> {
+    if builtin != Builtin::IteratorPrototype {
+        return None;
+    }
+    match key {
+        "Symbol.toStringTag" => Some(Value::String("Iterator".into())),
+        "constructor" => Some(Value::Builtin(Builtin::Iterator)),
+        _ => None,
+    }
+}
 fn builtin_method(builtin: Builtin, key: &str) -> Option<Builtin> {
     use Builtin::*;
     if builtin == ArrayPrototype {
@@ -78,6 +92,9 @@ fn builtin_method(builtin: Builtin, key: &str) -> Option<Builtin> {
     }
     if builtin == ArrayBuffer && key == "prototype" {
         return Some(ArrayBufferPrototype);
+    }
+    if builtin == Iterator && key == "prototype" {
+        return Some(IteratorPrototype);
     }
     if builtin == SharedArrayBuffer && key == "prototype" {
         return Some(SharedArrayBufferPrototype);
