@@ -432,7 +432,8 @@ fn builtin_length(builtin: Builtin) -> f64 {
         return length;
     }
     match builtin {
-        Escape | Unescape | DateSetYear | GeneratorNext | GeneratorReturn | GeneratorThrow => 1.0,
+        Escape | Unescape | EncodeURI | EncodeURIComponent | DecodeURI | DecodeURIComponent
+        | DateSetYear | GeneratorNext | GeneratorReturn | GeneratorThrow => 1.0,
         ArrayBuffer => 1.0,
         Object => 1.0,
         Float64Array => 3.0,

@@ -72,6 +72,10 @@ fn is_simple_builtin(builtin: Builtin) -> bool {
         Builtin::Boolean | Builtin::BooleanValueOf | Builtin::BooleanToString
             | Builtin::Eval
             | Builtin::Escape
+            | Builtin::EncodeURI
+            | Builtin::EncodeURIComponent
+            | Builtin::DecodeURI
+            | Builtin::DecodeURIComponent
             | Builtin::IsFinite
             | Builtin::IsNaN
             | Builtin::NumberIsInteger | Builtin::NumberIsSafeInteger
@@ -119,6 +123,10 @@ fn execute_simple_builtin(
         Builtin::BooleanToString => boolean_to_string(receiver),
         Builtin::Eval => crate::reflect::builtin(builtin, arguments, receiver),
         Builtin::Escape => Ok(crate::builtins::escape(arguments.first())),
+        Builtin::EncodeURI => crate::builtins::encode_uri(arguments.first(), true),
+        Builtin::EncodeURIComponent => crate::builtins::encode_uri(arguments.first(), false),
+        Builtin::DecodeURI => crate::builtins::decode_uri(arguments.first(), true),
+        Builtin::DecodeURIComponent => crate::builtins::decode_uri(arguments.first(), false),
         Builtin::IsFinite => Ok(Value::Boolean(is_finite(arguments.first()))),
         Builtin::IsNaN => Ok(Value::Boolean(to_number(arguments.first()).is_nan())),
         Builtin::Number => Ok(Value::Number(explicit_number(arguments.first())?)),
