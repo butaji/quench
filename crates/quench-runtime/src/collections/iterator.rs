@@ -12,11 +12,11 @@ pub(crate) use iterator_protocol::{should_update_protocol_receiver, ReceiverUpda
 pub(crate) use iterator_values::{
     from_map, from_map_keys, from_map_values, from_set, make, next, property_for,
 };
-fn make_protocol(iterator: Value, next: Value) -> Value {
+fn make_protocol(iterator: Value) -> Value {
     Value::Iterator(Rc::new(IteratorData {
         state: RefCell::new(IteratorState::Protocol {
             iterator,
-            next,
+            next: Value::Undefined,
             done: false,
         }),
     }))
@@ -153,18 +153,10 @@ pub(crate) fn open(value: Value) -> Result<Value, crate::execute::VmError> {
     if !crate::value::is_object(&iterator) {
         return Err(not_iterable());
     }
-    let next = crate::execute::get_property_result(&iterator, "next")?;
-    if !crate::conversion::is_callable(&next) {
-        return Err(not_iterable());
-    }
-    Ok(make_protocol(iterator, next))
+    Ok(make_protocol(iterator))
 }
 fn open_self_iterator(iterator: Value) -> Result<Value, crate::execute::VmError> {
-    let next = crate::execute::get_property_result(&iterator, "next")?;
-    if !crate::conversion::is_callable(&next) {
-        return Err(not_iterable());
-    }
-    Ok(make_protocol(iterator, next))
+    Ok(make_protocol(iterator))
 }
 pub(crate) fn collect_iterator_object(value: Value) -> Result<Vec<Value>, crate::execute::VmError> {
     collect(&open_self_iterator(value)?)
@@ -414,15 +406,19 @@ pub(crate) fn step_value(value: &Value) -> Result<Option<Value>, crate::execute:
             } => return Ok(iterator_map::step(data, index, kind, done)),
             IteratorState::Protocol {
                 iterator,
-                next,
+                next: _,
                 done,
-            } if !*done => Some((iterator.clone(), next.clone())),
+            } if !*done => Some(iterator.clone()),
             IteratorState::Protocol { .. } => None,
         }
     };
-    let Some((iterator, next)) = protocol else {
+    let Some(iterator) = protocol else {
         return Ok(None);
     };
+    let next = crate::execute::get_property_result(&iterator, "next")?;
+    if !crate::conversion::is_callable(&next) {
+        return Err(not_iterable());
+    }
     let result = iterator_protocol::call_next(data, &next, &iterator)?;
     protocol_result(data, result)
 }
