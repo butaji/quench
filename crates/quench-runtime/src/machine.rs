@@ -289,6 +289,10 @@ impl Machine {
         self.frames.push(frame);
     }
 
+    pub fn try_push_frame(&mut self, frame: Frame) -> Result<(), Frame> {
+        self.frames.try_push(frame)
+    }
+
     pub fn pop_frame(&mut self) -> Option<Frame> {
         self.frames.pop()
     }
