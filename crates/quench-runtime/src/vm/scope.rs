@@ -27,6 +27,11 @@ impl ExecutionScope {
     pub fn bind_module(&self, name: &str, cell: ModuleBindingCell) {
         self.0.alias_module_binding(name, cell);
     }
+
+    /// Install a live cell at a reducer-assigned lexical slot.
+    pub fn bind_module_slot(&self, slot: u16, cell: ModuleBindingCell) {
+        self.0.install_slot_cell(slot, cell.shared());
+    }
 }
 
 impl Default for ExecutionScope {
