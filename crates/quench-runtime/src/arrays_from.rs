@@ -158,6 +158,15 @@ fn write_result_element(
             "Cannot create property on a non-extensible object",
         ));
     }
+    let result = if matches!(
+        crate::builtins::descriptor_flag(&result, &key, "configurable"),
+        Some(true)
+    ) {
+        let (updated, _) = crate::builtins::delete_property(result, &key);
+        updated
+    } else {
+        result
+    };
     let descriptor = vec![
         ("value".to_string(), value),
         ("writable".to_string(), Value::Boolean(true)),
