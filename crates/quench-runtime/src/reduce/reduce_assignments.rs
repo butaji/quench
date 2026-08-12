@@ -18,6 +18,7 @@ pub(crate) enum Place {
     Name {
         name: String,
         strict: bool,
+        target: Option<u16>,
     },
     Property {
         object: u16,
@@ -49,7 +50,11 @@ pub fn reduce_assignment(
         return Some(value);
     }
     let mut place = reduce_place(&assignment.left, ops, facts, next, locals)?;
-    if let Place::Name { name, strict: true } = &place {
+    capture_name_target(&mut place, ops, next);
+    if let Place::Name {
+        name, strict: true, ..
+    } = &place
+    {
         ops.push(Op::CheckStrictName { key: name.clone() });
     }
     if assignment.operator.is_logical() {
@@ -223,9 +228,22 @@ fn identifier_place(name: &str, strict: bool, locals: &HashMap<String, u16>) -> 
         || Place::Name {
             name: name.to_string(),
             strict,
+            target: None,
         },
         |slot| Place::Local { slot: *slot },
     )
+}
+
+fn capture_name_target(place: &mut Place, ops: &mut Vec<Op>, next: &mut u16) {
+    let Place::Name { name, target, .. } = place else {
+        return;
+    };
+    let dst = take_register(next);
+    ops.push(Op::ResolveBindingTarget {
+        dst,
+        name: name.clone(),
+    });
+    *target = Some(dst);
 }
 
 fn computed_place(
@@ -359,11 +377,11 @@ pub(crate) fn put(place: Place, value: u16, ops: &mut Vec<Op>) -> Option<()> {
             });
             ops.push(Op::StoreLocal { slot, src: value });
         }
-        Place::Name { name, strict } => ops.push(Op::SetName {
-            key: name,
-            src: value,
+        Place::Name {
+            name,
             strict,
-        }),
+            target,
+        } => put_name(ops, name, strict, target, value),
         Place::Property {
             object,
             key,
@@ -377,6 +395,22 @@ pub(crate) fn put(place: Place, value: u16, ops: &mut Vec<Op>) -> Option<()> {
         Place::Super { key } => emit_super_put(ops, key, value),
     }
     Some(())
+}
+
+fn put_name(ops: &mut Vec<Op>, name: String, strict: bool, target: Option<u16>, src: u16) {
+    match target {
+        Some(target) => ops.push(Op::SetResolvedBinding {
+            target,
+            name,
+            src,
+            strict,
+        }),
+        None => ops.push(Op::SetName {
+            key: name,
+            src,
+            strict,
+        }),
+    }
 }
 
 fn emit_super_put(ops: &mut Vec<Op>, key: PlaceKey, value: u16) {

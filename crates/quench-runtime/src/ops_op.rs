@@ -185,6 +185,12 @@ pub enum Op {
         src: u16,
         strict: bool,
     },
+    SetResolvedBinding {
+        target: u16,
+        name: String,
+        src: u16,
+        strict: bool,
+    },
     CheckStrictName {
         key: String,
     },
