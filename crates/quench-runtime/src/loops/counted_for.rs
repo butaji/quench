@@ -215,10 +215,10 @@ fn reduce_dynamic_for(
         super::reduce_fragment(statement.update.as_ref(), ops, facts, next_register, locals)?;
     ops.push(Op::Loop {
         label: None,
-        init,
-        test,
+        init: crate::machine::FunctionCode::from_ops(init),
+        test: crate::machine::FunctionCode::from_ops(test),
         body: crate::machine::FunctionCode::from_ops(body),
-        update,
+        update: crate::machine::FunctionCode::from_ops(update),
         post_test: false,
     });
     Ok(())

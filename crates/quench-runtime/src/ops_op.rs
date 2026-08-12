@@ -402,10 +402,10 @@ pub enum Op {
     },
     Loop {
         label: Option<String>,
-        init: Vec<Op>,
-        test: Vec<Op>,
+        init: crate::machine::FunctionCode,
+        test: crate::machine::FunctionCode,
         body: crate::machine::FunctionCode,
-        update: Vec<Op>,
+        update: crate::machine::FunctionCode,
         post_test: bool,
     },
     ForIn {
