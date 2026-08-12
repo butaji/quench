@@ -9,6 +9,7 @@ enum SuspendedContext {
     Try,
     Conditional,
     PrivateScope,
+    IteratorBinding,
 }
 
 fn suspended_context(
@@ -33,6 +34,11 @@ fn suspended_context(
     }
     if suspended_conditional(generator, state).is_some() {
         return Some(SuspendedContext::Conditional);
+    }
+    if suspended_iterator_binding(generator, state).is_some()
+        || suspended_iterator_conditional(generator, state).is_some()
+    {
+        return Some(SuspendedContext::IteratorBinding);
     }
     suspended_private_scope(generator, state).map(|_| SuspendedContext::PrivateScope)
 }
