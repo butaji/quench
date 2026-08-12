@@ -1,6 +1,6 @@
 fn execute_generator_step(
     generator: &GeneratorData,
-    state: &mut GeneratorState,
+    _state: &mut GeneratorState,
     completion: crate::completion::Completion,
 ) -> Result<crate::vm::GeneratorStep, VmError> {
     let _private_environment = crate::private_environment::Guard::install_environment(
@@ -11,7 +11,7 @@ fn execute_generator_step(
     let (store, pc, mut registers) = take_machine_execution(generator)?;
     let ops = store.get(generator.function.code.range).ok_or(VmError::MissingReturn)?;
     let result = crate::vm::execute_generator_step(
-        ops, &mut registers, state.environment.clone(), pc, completion,
+        ops, &mut registers, machine_environment(generator)?, pc, completion,
     );
     restore_machine_execution(generator, registers, result)
 }

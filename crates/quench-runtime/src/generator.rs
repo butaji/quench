@@ -9,6 +9,12 @@ use std::{
     cell::{Ref, RefCell, RefMut},
     rc::Rc,
 };
+type InitialGeneratorState = (
+    Option<GeneratorState>,
+    Vec<Value>,
+    u32,
+    Option<Rc<crate::environment::Environment>>,
+);
 include!("generator_private_scope.rs");
 include!("generator_private_frame.rs");
 include!("generator_branch.rs");
@@ -28,7 +34,7 @@ pub(crate) fn create(
     receiver: &Value,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
-    let (state, registers, pc) = initialize_parameters(function, receiver, arguments)?;
+    let (state, registers, pc, environment) = initialize_parameters(function, receiver, arguments)?;
     let deferred_arguments = if state.is_none() {
         arguments.to_vec()
     } else {
@@ -42,6 +48,9 @@ pub(crate) fn create(
     );
     machine.registers.values = registers;
     machine.pc = pc;
+    if let Some(environment) = environment {
+        machine.install_environment(environment);
+    }
     Ok(Value::Generator(Rc::new(GeneratorData {
         function: Rc::clone(function),
         machine: RefCell::new(machine),
@@ -57,13 +66,13 @@ fn initialize_parameters(
     function: &Rc<crate::value::FunctionValue>,
     receiver: &Value,
     arguments: &[Value],
-) -> Result<(Option<GeneratorState>, Vec<Value>, u32), VmError> {
+) -> Result<InitialGeneratorState, VmError> {
     let Some(marker) = function
         .ops()
         .iter()
         .position(|op| matches!(op, Op::ParameterEnd))
     else {
-        return Ok((None, Vec::new(), 0));
+        return Ok((None, Vec::new(), 0, None));
     };
     let (mut registers, environment) =
         crate::functions::build_registers(function, receiver, arguments);
@@ -82,13 +91,13 @@ fn initialize_parameters(
     require_normal_parameter_completion(step.completion)?;
     Ok((
         Some(GeneratorState {
-            environment,
             nested: 0,
             private_environment: None,
             suspension: None,
         }),
         registers,
         marker.saturating_add(1) as u32,
+        Some(environment),
     ))
 }
 
@@ -110,6 +119,16 @@ fn machine_pc(generator: &GeneratorData) -> usize {
 
 fn set_machine_pc(generator: &GeneratorData, pc: usize) {
     generator.machine.borrow_mut().pc = pc as u32;
+}
+
+fn machine_environment(
+    generator: &GeneratorData,
+) -> Result<Rc<crate::environment::Environment>, VmError> {
+    generator
+        .machine
+        .borrow()
+        .environment()
+        .ok_or(VmError::MissingReturn)
 }
 
 fn require_normal_parameter_completion(
@@ -485,8 +504,11 @@ fn initialize_state(generator: &GeneratorData) {
     );
     generator.machine.borrow_mut().registers.values = registers;
     generator.machine.borrow_mut().pc = 0;
+    generator
+        .machine
+        .borrow_mut()
+        .install_environment(environment);
     *state = Some(GeneratorState {
-        environment,
         nested: 0,
         private_environment: None,
         suspension: None,

@@ -49,7 +49,7 @@ fn resume_after_branch(
     let start = resume.start.saturating_sub(generator.function.code.range.start) as usize;
     let step = execute_with_generator_registers(generator, |registers| {
         crate::vm::execute_generator_step(
-            generator.function.ops(), registers, state.environment.clone(), start,
+            generator.function.ops(), registers, machine_environment(generator)?, start,
             crate::completion::Completion::Normal,
         )
     })?;

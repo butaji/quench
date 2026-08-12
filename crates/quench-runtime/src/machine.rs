@@ -365,6 +365,7 @@ pub struct Machine {
     pub(crate) pc: u32,
     pub(crate) registers: RegisterWindow,
     pub(crate) environment: EnvironmentRef,
+    environment_data: Option<Rc<crate::environment::Environment>>,
     pub(crate) completion: Completion,
     pub(crate) frames: FrameStack,
 }
@@ -377,6 +378,7 @@ impl Machine {
             pc: 0,
             registers: RegisterWindow::new(),
             environment,
+            environment_data: None,
             completion: Completion::Normal,
             frames: FrameStack::new(),
         }
@@ -435,6 +437,14 @@ impl Machine {
 
     pub fn frame_count(&self) -> u16 {
         self.frames.count
+    }
+
+    pub(crate) fn install_environment(&mut self, environment: Rc<crate::environment::Environment>) {
+        self.environment_data = Some(environment);
+    }
+
+    pub(crate) fn environment(&self) -> Option<Rc<crate::environment::Environment>> {
+        self.environment_data.clone()
     }
 
     pub(crate) fn take_registers(&mut self) -> Vec<Value> {
