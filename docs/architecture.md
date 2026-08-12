@@ -66,6 +66,30 @@ semantic code must not couple to `Rc<Vec<(String, Value)>>`, copied closure
 environments, string-keyed runtime lookup, or nested unencoded operation
 vectors; those forms are temporary debt with an explicit removal order.
 
+These boundaries are mandatory now, before adding more semantic surface:
+
+- `HeapRef`, `CodeId`, `ShapeId`, `PropertyKeyId`, `EnvironmentRef`, and
+  `ContinuationId` are stable fixed-width internal identities. Narrower
+  indexes may be used inside an arena, but no variable-width reference format
+  is part of the runtime ABI.
+- Physical `Value` storage is hidden behind value/heap operations. The exact
+  one-word encoding is a benchmarkable implementation choice; semantic code
+  must not depend on its tag layout or ownership representation.
+- Environment access is indexed slot load/store/capture plus cold name
+  metadata. No semantic code may depend on per-slot `Rc<RefCell<Value>>`
+  identity.
+- Executable code and continuation payloads contain ranges and IDs only.
+  Nested operation vectors are reduction-time temporaries and must not cross
+  the executable-code boundary.
+- Heap roots and lifetime domains (realm, module, request, temporary, and
+  continuation) are specified before handle storage, arena reset, or value
+  migration is introduced.
+
+Do not commit to NaN boxing, variable-width runtime references, request-wide
+heap reset, huge pages, direct-threaded dispatch, or superinstructions at this
+boundary. Each remains an implementation experiment behind these contracts
+and requires a before/after benchmark record.
+
 These are physical contracts, not illustrative types:
 
 ```text
