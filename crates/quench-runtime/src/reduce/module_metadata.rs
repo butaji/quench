@@ -12,6 +12,7 @@ pub struct ModuleMetadata {
     pub import_specifiers: Vec<String>,
     pub imports: Vec<ImportBinding>,
     pub exports: Vec<ExportBinding>,
+    pub reexports: Vec<ReexportBinding>,
     pub exported_names: Vec<String>,
 }
 
@@ -26,6 +27,14 @@ pub struct ImportBinding {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExportBinding {
     pub local: String,
+    pub exported: String,
+}
+
+/// A binding re-exposed from another module without a local runtime slot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReexportBinding {
+    pub source: String,
+    pub imported: String,
     pub exported: String,
 }
 
@@ -67,14 +76,16 @@ impl ModuleMetadata {
             }
             Statement::ExportNamedDeclaration(export) => self.visit_named(export),
             Statement::ExportDefaultDeclaration(export) => self.visit_default(export),
-            Statement::ExportAllDeclaration(export) => {
-                push_name(&mut self.exported_names, export.exported.as_ref());
-            }
+            Statement::ExportAllDeclaration(export) => self.visit_all(export),
             _ => {}
         }
     }
 
     fn visit_named(&mut self, export: &ExportNamedDeclaration<'_>) {
+        if let Some(source) = &export.source {
+            self.visit_named_reexports(export, source.value.as_str());
+            return;
+        }
         for specifier in &export.specifiers {
             push_name(&mut self.exported_names, Some(&specifier.exported));
             self.exports.push(ExportBinding {
@@ -85,6 +96,39 @@ impl ModuleMetadata {
         if let Some(declaration) = &export.declaration {
             declaration_names(declaration, &mut self.exported_names);
             self.exports.extend(declaration_bindings(declaration));
+        }
+    }
+
+    fn visit_named_reexports(&mut self, export: &ExportNamedDeclaration<'_>, source: &str) {
+        push_unique(&mut self.import_specifiers, source);
+        for specifier in &export.specifiers {
+            let exported = module_export_name(&specifier.exported);
+            push_unique(&mut self.exported_names, &exported);
+            self.reexports.push(ReexportBinding {
+                source: source.to_string(),
+                imported: module_export_name(&specifier.local),
+                exported,
+            });
+        }
+    }
+
+    fn visit_all(&mut self, export: &oxc::ast::ast::ExportAllDeclaration<'_>) {
+        let source = export.source.value.to_string();
+        push_unique(&mut self.import_specifiers, &source);
+        if let Some(exported) = &export.exported {
+            let exported = module_export_name(exported);
+            push_unique(&mut self.exported_names, &exported);
+            self.reexports.push(ReexportBinding {
+                source,
+                imported: "*".to_string(),
+                exported,
+            });
+        } else {
+            self.reexports.push(ReexportBinding {
+                source,
+                imported: "*all*".to_string(),
+                exported: "*all*".to_string(),
+            });
         }
     }
 
