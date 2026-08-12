@@ -157,6 +157,12 @@ pub struct FunctionCode {
 }
 
 impl FunctionCode {
+    pub fn from_ops(body: Vec<Op>) -> Self {
+        let mut arena = CodeArena::new();
+        let range = arena.append(body);
+        Self::new(arena.freeze(), range)
+    }
+
     pub fn new(store: Rc<CodeStore>, range: CodeRange) -> Self {
         Self { store, range }
     }
