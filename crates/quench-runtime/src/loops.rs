@@ -364,6 +364,9 @@ pub(crate) fn execute(
     else {
         return Err(crate::execute::VmError::MissingReturn);
     };
+    let Some(body) = body.ops() else {
+        return Err(crate::execute::VmError::MissingReturn);
+    };
     run_fragment(init, registers)?;
     loop {
         if !post_test && !loop_test(test, registers)? {
@@ -438,7 +441,7 @@ pub(crate) fn reduce_while(
         label: None,
         init: Vec::new(),
         test,
-        body,
+        body: crate::machine::FunctionCode::from_ops(body),
         update: Vec::new(),
         post_test: false,
     });
@@ -467,7 +470,7 @@ pub(crate) fn reduce_do_while(
         label: None,
         init: Vec::new(),
         test,
-        body,
+        body: crate::machine::FunctionCode::from_ops(body),
         update: Vec::new(),
         post_test: true,
     });

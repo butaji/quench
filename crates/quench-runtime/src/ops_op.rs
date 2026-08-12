@@ -404,7 +404,7 @@ pub enum Op {
         label: Option<String>,
         init: Vec<Op>,
         test: Vec<Op>,
-        body: Vec<Op>,
+        body: crate::machine::FunctionCode,
         update: Vec<Op>,
         post_test: bool,
     },
