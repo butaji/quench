@@ -34,6 +34,7 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
         Builtin::StringReplace => Some("String.prototype.replace"),
         Builtin::StringReplaceAll => Some("String.prototype.replaceAll"),
         Builtin::StringSearch => Some("String.prototype.search"),
+        Builtin::StringMatch => Some("String.prototype.match"),
         Builtin::StringToLocaleLowerCase => Some("String.prototype.toLocaleLowerCase"),
         Builtin::StringToLocaleUpperCase => Some("String.prototype.toLocaleUpperCase"),
         _ => None,
@@ -59,6 +60,7 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         | Builtin::StringTrimEnd
         | Builtin::StringToString
         | Builtin::StringSearch
+        | Builtin::StringMatch
         | Builtin::StringIsWellFormed
         | Builtin::StringToWellFormed
         | Builtin::StringToLocaleLowerCase
@@ -108,6 +110,7 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
         Builtin::StringReplace => Some("replace"),
         Builtin::StringReplaceAll => Some("replaceAll"),
         Builtin::StringSearch => Some("search"),
+        Builtin::StringMatch => Some("match"),
         Builtin::StringToLocaleLowerCase => Some("toLocaleLowerCase"),
         Builtin::StringToLocaleUpperCase => Some("toLocaleUpperCase"),
         _ => None,
