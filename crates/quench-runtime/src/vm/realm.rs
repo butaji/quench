@@ -93,13 +93,6 @@ pub(super) fn token(id: RealmId) -> Option<Rc<HostCapabilityValue>> {
     state(id).map(|state| Rc::clone(&state.token))
 }
 
-pub(super) fn host_capability(id: RealmId, kind: HostCapabilityKind) -> Option<Value> {
-    state(id)?;
-    Some(Value::HostCapability(Rc::new(HostCapabilityValue::new(
-        HostCapabilityRef { realm: id, kind },
-    ))))
-}
-
 pub(super) fn id_for_token(token: &HostCapabilityValue) -> Option<RealmId> {
     let state = state(token.realm())?;
     state.token.same_identity(token).then_some(state.id)
@@ -197,6 +190,10 @@ pub(super) fn global_builtin(key: &str) -> Option<Builtin> {
     })
 }
 
+pub(super) fn global_builtin_exists(key: &str) -> bool {
+    global_builtin(key).is_some() || key == "globalThis"
+}
+
 pub(super) fn is_intrinsic(bound: &crate::value::BoundFunctionValue) -> bool {
     let Value::HostCapability(token) = &bound.receiver else {
         return false;
@@ -252,6 +249,19 @@ fn child_context(parent: &VmContext, realm: RealmId) -> VmContext {
         output_sink: parent.output_sink.clone(),
         realm,
         capabilities,
+        host_bindings: parent
+            .host_bindings
+            .iter()
+            .map(|(name, capability)| {
+                (
+                    name.clone(),
+                    HostCapabilityRef {
+                        realm,
+                        kind: capability.kind,
+                    },
+                )
+            })
+            .collect(),
     }
 }
 
