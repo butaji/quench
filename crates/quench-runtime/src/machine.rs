@@ -234,6 +234,15 @@ impl PartialEq for FunctionCode {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum IteratorPhase {
+    Fetch,
+    Bind,
+    Body,
+    Continue,
+    Close,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Frame {
     Try {
         phase: u8,
@@ -242,7 +251,7 @@ pub enum Frame {
         finalizer: Option<CodeRange>,
     },
     Iterator {
-        phase: u8,
+        phase: IteratorPhase,
         iterator: Value,
         binding: u16,
         body: CodeRange,
@@ -339,6 +348,13 @@ impl Machine {
 
     pub fn frame_count(&self) -> u16 {
         self.frames.count
+    }
+
+    pub fn iterator_phase(&self) -> Option<&IteratorPhase> {
+        let Some(Frame::Iterator { phase, .. }) = self.frames.frames.last() else {
+            return None;
+        };
+        Some(phase)
     }
 }
 
