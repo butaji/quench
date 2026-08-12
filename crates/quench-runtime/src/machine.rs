@@ -164,6 +164,31 @@ impl CodeStore {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExecutableCode {
+    store: Rc<CodeStore>,
+    entry: CodeRange,
+}
+
+impl ExecutableCode {
+    pub fn from_ops(body: Vec<Op>) -> Self {
+        let (store, entry) = freeze_tree(body);
+        Self { store, entry }
+    }
+
+    pub fn ops(&self) -> &[Op] {
+        self.store.get(self.entry).unwrap_or(&[])
+    }
+
+    pub fn store(&self) -> Rc<CodeStore> {
+        self.store.clone()
+    }
+
+    pub fn entry(&self) -> CodeRange {
+        self.entry
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct FunctionCode {
     store: Rc<OnceLock<Rc<CodeStore>>>,
@@ -172,11 +197,8 @@ pub struct FunctionCode {
 
 impl FunctionCode {
     pub fn from_ops(body: Vec<Op>) -> Self {
-        let mut arena = CodeArena::new();
-        let store = Rc::new(OnceLock::new());
-        let range = arena.append_tree(body, &store);
-        let _ = store.set(arena.freeze());
-        Self { store, range }
+        let (store, range) = freeze_tree(body);
+        Self::new(store, range)
     }
 
     /// Materialize related nested bodies in one immutable store.
@@ -225,6 +247,15 @@ impl FunctionCode {
         self.range = arena.append_tree(body.to_vec(), store);
         self.store = store.clone();
     }
+}
+
+fn freeze_tree(body: Vec<Op>) -> (Rc<CodeStore>, CodeRange) {
+    let mut arena = CodeArena::new();
+    let linked = Rc::new(OnceLock::new());
+    let range = arena.append_tree(body, &linked);
+    let store = arena.freeze();
+    let _ = linked.set(store.clone());
+    (store, range)
 }
 
 impl PartialEq for FunctionCode {
