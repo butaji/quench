@@ -39,19 +39,7 @@ fn ensure_try_frame(generator: &GeneratorData, state: &GeneratorState) -> Result
     {
         return Ok(());
     }
-    try_push_frame(
-        &mut generator.machine.borrow_mut(),
-        crate::machine::Frame::Try {
-            phase: 0,
-            body: crate::machine::CodeRange {
-                code: generator.function.code_id(),
-                start: state.pc.saturating_sub(1) as u32,
-                end: state.pc as u32,
-            },
-            handler: None,
-            finalizer: None,
-        },
-    )
+    push_try_frame(generator, state)
 }
 
 fn ensure_control_frame(generator: &GeneratorData, state: &GeneratorState) -> Result<(), VmError> {
@@ -164,6 +152,37 @@ fn push_branch_frame(generator: &GeneratorData, state: &GeneratorState) -> Resul
         dst: *dst,
         yield_dst: *src,
     })
+}
+
+fn push_try_frame(generator: &GeneratorData, state: &GeneratorState) -> Result<(), VmError> {
+    if generator.machine.borrow().frame_count() != 0 {
+        return Ok(());
+    }
+    let Some((Op::Try { body, handler, finalizer, catch_slot }, Op::Yield { src }, suffix)) =
+        suspended_try(generator, state)
+    else {
+        return Ok(());
+    };
+    let body_resume = range_after(body.range, suffix.len());
+    let resume = parent_resume_range(generator, state);
+    try_push_frame(&mut generator.machine.borrow_mut(), crate::machine::Frame::Try {
+        phase: crate::machine::TryPhase::Body,
+        body: body.range,
+        handler: handler.as_ref().map(|body| body.range),
+        finalizer: finalizer.as_ref().map(|body| body.range),
+        body_resume,
+        resume,
+        yield_dst: *src,
+        catch_slot: *catch_slot,
+    })
+}
+
+fn range_after(range: crate::machine::CodeRange, suffix_len: usize) -> crate::machine::CodeRange {
+    crate::machine::CodeRange {
+        code: range.code,
+        start: range.end.saturating_sub(suffix_len as u32),
+        end: range.end,
+    }
 }
 
 fn parent_resume_range(generator: &GeneratorData, state: &GeneratorState) -> crate::machine::CodeRange {
