@@ -7,15 +7,41 @@ fn from(
     let mapper = mapper(arguments)?;
     let iterable = !matches!(source, Value::ArrayBuffer(_) | Value::DataView(_))
         && has_iterator(&source)?;
+    if iterable {
+        return from_iterable(receiver, source, mapper.as_ref(), arguments);
+    }
     let mut values = Vec::new();
     if let Value::Array(array) = &source {
         collect_array_iterator(array, mapper.as_ref(), arguments, &mut values)?;
-    } else if iterable {
-        collect_iterator(source, mapper.as_ref(), arguments, &mut values)?;
     } else {
         collect_array_like(&source, mapper.as_ref(), arguments, &mut values)?;
     }
     create_result(receiver, values, iterable)
+}
+
+fn from_iterable(
+    receiver: Option<&Value>,
+    source: Value,
+    mapper: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let mut result = construct_result(receiver, 0, true)?;
+    let mut index = 0;
+    let this_arg = arguments.get(2).cloned().unwrap_or(Value::Undefined);
+    let _receiver_guard = crate::collections::iterator::ReceiverUpdateGuard::install();
+    crate::collections::iterator::for_each_iterable(source, |item| {
+        let value = map_item(mapper, this_arg.clone(), item, index)?;
+        result = write_result_element(result.clone(), index, value)?;
+        index += 1;
+        Ok(())
+    })?;
+    let updated = crate::properties::assign_set_property(
+        &result,
+        "length",
+        Value::Number(index as f64),
+    )?;
+    crate::locals::replace_value(&result, &updated);
+    Ok(updated)
 }
 
 fn collect_array_iterator(
@@ -60,22 +86,6 @@ fn has_iterator(source: &Value) -> Result<bool, crate::execute::VmError> {
     Ok(!matches!(method, Value::Undefined | Value::Null))
 }
 
-fn collect_iterator(
-    source: Value,
-    mapper: Option<&Value>,
-    arguments: &[Value],
-    values: &mut Vec<Value>,
-) -> Result<(), crate::execute::VmError> {
-    let _receiver_guard = crate::collections::iterator::ReceiverUpdateGuard::install();
-    let this_arg = arguments.get(2).cloned().unwrap_or(Value::Undefined);
-    crate::collections::iterator::for_each_iterable(source, |item| {
-        let index = values.len();
-        let value = map_item(mapper, this_arg.clone(), item, index)?;
-        values.push(value);
-        Ok(())
-    })
-}
-
 fn collect_array_like(
     source: &Value,
     mapper: Option<&Value>,
@@ -92,6 +102,9 @@ fn collect_array_like(
 }
 
 fn array_like_length(source: &Value) -> Result<usize, crate::execute::VmError> {
+    if matches!(source, Value::ArrayBuffer(_) | Value::DataView(_)) {
+        return Ok(0);
+    }
     let value = crate::execute::get_property_result(source, "length")?;
     let number = crate::conversion::to_number(&value)?;
     if !number.is_finite() || number <= 0.0 {
@@ -117,13 +130,43 @@ fn create_result(
     values: Vec<Value>,
     iterable: bool,
 ) -> Result<Value, crate::execute::VmError> {
-    let mut result = construct_result(receiver, values.len(), iterable)?;
+    let length = values.len();
+    let mut result = construct_result(receiver, length, iterable)?;
     for (index, value) in values.into_iter().enumerate() {
-        let updated = crate::builtins::set_property(result.clone(), &index.to_string(), value);
-        crate::locals::replace_value(&result, &updated);
-        result = updated;
+        result = write_result_element(result, index, value)?;
     }
+    result = crate::properties::assign_set_property(
+        &result,
+        "length",
+        Value::Number(length as f64),
+    )?;
     Ok(result)
+}
+
+fn write_result_element(
+    result: Value,
+    index: usize,
+    value: Value,
+) -> Result<Value, crate::execute::VmError> {
+    let key = index.to_string();
+    let current = crate::builtins::object::descriptor(
+        Some(&result),
+        Some(&Value::String(key.clone())),
+    )?;
+    if !crate::properties::object_is_extensible(&result) && matches!(current, Value::Undefined) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot create property on a non-extensible object",
+        ));
+    }
+    let descriptor = vec![
+        ("value".to_string(), value),
+        ("writable".to_string(), Value::Boolean(true)),
+        ("enumerable".to_string(), Value::Boolean(true)),
+        ("configurable".to_string(), Value::Boolean(true)),
+    ];
+    let updated = crate::builtins::define_own_property(&result, &key, &descriptor)?;
+    crate::locals::replace_value(&result, &updated);
+    Ok(updated)
 }
 
 fn construct_result(
