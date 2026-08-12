@@ -47,6 +47,9 @@ The implementation must enforce these boundaries:
   per-realm tables and are reclaimable.
 - Generated declarations own all mechanical consequences; readable Rust owns
   observable algorithms.
+- Repeated JavaScript literals and intrinsic metadata are declared once in a
+  canonical table or macro; consumers use generated IDs and accessors, not
+  copied strings. Literal declarations must not become a second semantic DSL.
 - Generic semantics precede guards; every guard falls back to the same generic
   operation without changing ordering or observability.
 

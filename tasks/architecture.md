@@ -178,8 +178,19 @@ The following are hard physical gates:
   generated physical dispatch, verification, disassembly, and profiling hooks.
 - Introduce declarative builtin and primordial metadata; retain complex builtin
   algorithms as readable Rust.
+- Create one canonical literal/metadata vocabulary for repeated JavaScript
+  names and intrinsic facts: builtin names, property keys, prototype links,
+  function names, lengths, and installation records. Generate forward lookup,
+  reverse lookup, IDs, and mechanical consumers from that declaration.
+- Keep internal consumers on enums or fixed-width IDs; materialize strings only
+  at observable or host boundaries. Grep for duplicate literal definitions
+  before adding a new spelling.
 - Generate mechanical consequences only; never encode observable specification
   algorithms in a new DSL.
+- Do not introduce a generic literal wrapper or duplicate semantic facts merely
+  to avoid spelling a string. Coercion, ordering, reentrancy, proxy behavior,
+  and abrupt-completion algorithms remain handwritten under their canonical
+  protocol owners.
 - One declaration must generate tags, layouts, encode/decode, tracing,
   metadata, verification, disassembly, and dispatch. Duplicate handwritten
   consequences are a design failure.
