@@ -128,7 +128,7 @@ fn assign_array(
     }
     ops.push(Op::IteratorBinding {
         iterator,
-        body,
+        body: crate::machine::FunctionCode::from_ops(body),
         close_normal: true,
     });
     Some(())
@@ -360,7 +360,7 @@ fn bind_array(
     }
     ops.push(Op::IteratorBinding {
         iterator,
-        body,
+        body: crate::machine::FunctionCode::from_ops(body),
         close_normal: false,
     });
     Some(())
