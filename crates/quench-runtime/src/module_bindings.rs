@@ -7,26 +7,26 @@ use crate::value::Value;
 /// Imports and exports observe the same mutable cell rather than copied
 /// values. The wrapper keeps module linkage independent from slot storage.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct ModuleBindingCell(Rc<RefCell<Value>>);
+pub struct ModuleBindingCell(Rc<RefCell<Value>>);
 
 impl ModuleBindingCell {
-    pub(crate) fn new(value: Value) -> Self {
+    pub fn new(value: Value) -> Self {
         Self(Rc::new(RefCell::new(value)))
     }
 
-    pub(crate) fn from_shared(cell: Rc<RefCell<Value>>) -> Self {
+    pub fn from_shared(cell: Rc<RefCell<Value>>) -> Self {
         Self(cell)
     }
 
-    pub(crate) fn get(&self) -> Value {
+    pub fn get(&self) -> Value {
         self.0.borrow().clone()
     }
 
-    pub(crate) fn set(&self, value: Value) {
+    pub fn set(&self, value: Value) {
         self.0.replace(value);
     }
 
-    pub(crate) fn shared(&self) -> Rc<RefCell<Value>> {
+    pub fn shared(&self) -> Rc<RefCell<Value>> {
         Rc::clone(&self.0)
     }
 }

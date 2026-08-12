@@ -1,6 +1,6 @@
 use std::{cell::RefCell, rc::Rc};
 
-use crate::{execute::VmError, module_bindings::ModuleBindingCell, ops::Op, value::Value};
+use crate::{execute::VmError, ops::Op, value::Value};
 
 struct Descriptor {
     value: Value,
@@ -129,9 +129,9 @@ fn create_var(
     let cell = binding_cell(name, slot, current.as_ref().map(|value| &value.value));
     // Per spec, global var bindings are non-configurable.
     let descriptor = match current {
-        Some(current) if !current.configurable => value_descriptor(cell.shared()),
-        Some(current) => descriptor_with_flags(cell.shared(), &current),
-        None => data_descriptor(cell.shared(), true, true, deletable),
+        Some(current) if !current.configurable => value_descriptor(cell),
+        Some(current) => descriptor_with_flags(cell, &current),
+        None => data_descriptor(cell, true, true, deletable),
     };
     define_global(registers, name, descriptor)
 }
@@ -143,28 +143,27 @@ fn create_function(
     deletable: bool,
 ) -> Result<(), VmError> {
     let current = own_descriptor(name);
-    let value = ModuleBindingCell::from_shared(crate::locals::slot_cell(slot)).get();
+    let value = crate::locals::slot_cell(slot).borrow().clone();
     let cell = binding_cell(name, slot, Some(&value));
     // Per spec, global function bindings are configurable when declared from eval
     // bindings and non-configurable otherwise.
     let descriptor = match current {
-        Some(current) if !current.configurable => value_descriptor(cell.shared()),
-        _ => data_descriptor(cell.shared(), true, true, deletable),
+        Some(current) if !current.configurable => value_descriptor(cell),
+        _ => data_descriptor(cell, true, true, deletable),
     };
     define_global(registers, name, descriptor)
 }
 
-fn binding_cell(name: &str, slot: u16, value: Option<&Value>) -> ModuleBindingCell {
-    let cell = raw_binding_cell(name)
-        .unwrap_or_else(|| ModuleBindingCell::new(crate::locals::slot_cell(slot).borrow().clone()));
+fn binding_cell(name: &str, slot: u16, value: Option<&Value>) -> Rc<RefCell<Value>> {
+    let cell = raw_binding_cell(name).unwrap_or_else(|| crate::locals::slot_cell(slot));
     if let Some(value) = value {
-        cell.set(value.clone());
+        *cell.borrow_mut() = value.clone();
     }
-    crate::locals::install_slot_cell(slot, cell.shared());
+    crate::locals::install_slot_cell(slot, Rc::clone(&cell));
     cell
 }
 
-fn raw_binding_cell(name: &str) -> Option<ModuleBindingCell> {
+fn raw_binding_cell(name: &str) -> Option<Rc<RefCell<Value>>> {
     let Value::Object(properties) = crate::vm::current_global_object() else {
         return None;
     };
@@ -173,7 +172,7 @@ fn raw_binding_cell(name: &str) -> Option<ModuleBindingCell> {
             return None;
         }
         match value {
-            Value::BindingCell(cell) => Some(ModuleBindingCell::from_shared(Rc::clone(cell))),
+            Value::BindingCell(cell) => Some(Rc::clone(cell)),
             _ => None,
         }
     })
