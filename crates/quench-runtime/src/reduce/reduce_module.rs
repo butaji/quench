@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use oxc::ast::ast::{
     ExportDefaultDeclaration, ExportDefaultDeclarationKind, ExportNamedDeclaration,
-    ImportDeclaration, ImportDeclarationSpecifier, Statement,
+    ImportDeclaration, Statement,
 };
 
 use crate::statements;
@@ -102,34 +102,15 @@ pub(super) fn reduce_module_declaration(
 
 fn reduce_import(
     import: &ImportDeclaration<'_>,
-    ops: &mut Vec<Op>,
-    next_register: &mut u16,
-    next_slot: &mut u16,
-    locals: &mut HashMap<String, u16>,
+    _ops: &mut Vec<Op>,
+    _next_register: &mut u16,
+    _next_slot: &mut u16,
+    _locals: &mut HashMap<String, u16>,
 ) -> Result<Option<u16>, Vec<String>> {
-    let mut declare = |name: &str| {
-        let slot = *locals.entry(name.to_string()).or_insert_with(|| {
-            let slot = *next_slot;
-            *next_slot = next_slot.saturating_add(1);
-            slot
-        });
-        let src = crate::reduce_support::emit_undefined(ops, next_register);
-        ops.push(Op::StoreLocal { slot, src });
-    };
-    for specifier in import.specifiers.iter().flatten() {
-        match specifier {
-            ImportDeclarationSpecifier::ImportDefaultSpecifier(default) => {
-                declare(default.local.name.as_str())
-            }
-            ImportDeclarationSpecifier::ImportNamespaceSpecifier(ns) => {
-                declare(ns.local.name.as_str())
-            }
-            ImportDeclarationSpecifier::ImportSpecifier(specifier) => {
-                declare(specifier.local.name.as_str())
-            }
-        }
-    }
-    Ok(None)
+    let _ = import;
+    Err(vec![
+        "module import requires a resolved module graph".to_string()
+    ])
 }
 
 fn reduce_named(
