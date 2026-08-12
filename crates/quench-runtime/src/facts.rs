@@ -1,6 +1,7 @@
 //! Facts shared by frontend queries and residualization.
 
 use oxc::span::Span;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Fact<T> {
@@ -9,7 +10,7 @@ pub enum Fact<T> {
     Unknown,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ReduceContext {
     Value,
     Place,
@@ -20,13 +21,13 @@ pub enum ReduceContext {
 
 #[derive(Debug, PartialEq)]
 pub struct SpanFacts<T> {
-    entries: Vec<(Span, ReduceContext, Fact<T>)>,
+    entries: HashMap<(Span, ReduceContext), Fact<T>>,
 }
 
 impl<T> Default for SpanFacts<T> {
     fn default() -> Self {
         Self {
-            entries: Vec::new(),
+            entries: HashMap::new(),
         }
     }
 }
@@ -37,15 +38,7 @@ impl<T: Clone> SpanFacts<T> {
     }
 
     pub fn insert_in_context(&mut self, span: Span, context: ReduceContext, fact: Fact<T>) {
-        if let Some((_, _, stored)) = self
-            .entries
-            .iter_mut()
-            .find(|(key, stored_context, _)| *key == span && *stored_context == context)
-        {
-            *stored = fact;
-        } else {
-            self.entries.push((span, context, fact));
-        }
+        self.entries.insert((span, context), fact);
     }
 
     pub fn query(&self, span: Span) -> Fact<T> {
@@ -54,15 +47,13 @@ impl<T: Clone> SpanFacts<T> {
 
     pub fn query_in_context(&self, span: Span, context: ReduceContext) -> Fact<T> {
         self.entries
-            .iter()
-            .find_map(|(key, stored_context, fact)| {
-                (*key == span && *stored_context == context).then(|| fact.clone())
-            })
+            .get(&(span, context))
+            .cloned()
             .unwrap_or(Fact::Unknown)
     }
 
     pub fn merge(&mut self, other: Self) {
-        for (span, context, fact) in other.entries {
+        for ((span, context), fact) in other.entries {
             self.insert_in_context(span, context, fact);
         }
     }
