@@ -22,15 +22,23 @@ fn resume_iterator_frame(
         return Ok(None);
     };
     if !matches!(resume, crate::completion::Completion::Normal) {
+        set_iterator_phase(generator, crate::machine::IteratorPhase::Close);
         return close_iterator_frame(&frame, resume).map(Some);
     }
+    set_iterator_phase(generator, crate::machine::IteratorPhase::Continue);
     let store = generator.machine.borrow().store.clone().ok_or(VmError::MissingReturn)?;
     let body = store.get(frame.body_resume).ok_or(VmError::MissingReturn)?;
     let completion = crate::execute::execute_completion_in_place(body, &mut state.registers)?;
     if completion.is_suspension() {
+        set_iterator_phase(generator, crate::machine::IteratorPhase::Body);
         return Ok(Some(completion));
     }
+    set_iterator_phase(generator, crate::machine::IteratorPhase::Close);
     close_iterator_frame(&frame, completion).map(Some)
+}
+
+fn set_iterator_phase(generator: &GeneratorData, phase: crate::machine::IteratorPhase) {
+    generator.machine.borrow_mut().set_iterator_phase(phase);
 }
 
 fn close_iterator_frame(
