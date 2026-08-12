@@ -131,11 +131,8 @@ fn instance_field_initializer(
     let Some(initializer) = initializer else {
         return Ok(crate::value::InstanceFieldInitializer::Undefined);
     };
-    let Some(body) = initializer.body.ops() else {
-        return Err(crate::execute::VmError::MissingReturn);
-    };
     let value = crate::functions::make(
-        body,
+        initializer.body.clone(),
         0,
         0,
         crate::locals::capture(initializer.captures),
