@@ -293,43 +293,13 @@ fn run_ops_completion(
 }
 
 fn error_completion(error: VmError) -> Result<crate::completion::Completion, VmError> {
-    use crate::completion::Completion;
-    match error {
-        VmError::Thrown(value) => Ok(Completion::Throw(value)),
-        VmError::Break(label) => Ok(Completion::Break(label)),
-        VmError::Continue(label) => Ok(Completion::Continue(label)),
-        VmError::Suspended(promise) => Ok(Completion::Suspend(promise)),
-        VmError::Yield(value) => Ok(Completion::Yield(value)),
-        VmError::NotCallable => {
-            if let VmError::Thrown(value) = not_callable() {
-                Ok(Completion::Throw(value))
-            } else {
-                Ok(Completion::Throw(crate::builtins::error(
-                    Builtin::TypeError,
-                    &[Value::String("value is not callable".to_string())],
-                )))
-            }
-        }
-        error => Err(error),
-    }
+    crate::completion::Completion::from_vm_error(error)
 }
 
 pub(crate) fn completion_result(
     completion: crate::completion::Completion,
 ) -> Result<Value, VmError> {
-    use crate::completion::Completion;
-    match completion {
-        Completion::Normal => Err(VmError::MissingReturn),
-        Completion::Return(value) => Ok(value),
-        Completion::TailCall(_) => Err(VmError::EvalError(
-            "Unconsumed tail-call completion".to_string(),
-        )),
-        Completion::Throw(value) => Err(VmError::Thrown(value)),
-        Completion::Break(label) => Err(VmError::Break(label)),
-        Completion::Continue(label) => Err(VmError::Continue(label)),
-        Completion::Suspend(promise) => Err(VmError::Suspended(promise)),
-        Completion::Yield(value) => Err(VmError::Yield(value)),
-    }
+    completion.into_vm_error()
 }
 
 struct GlobalObjectGuard {
