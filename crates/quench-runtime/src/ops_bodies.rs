@@ -1,4 +1,39 @@
 impl Op {
+    pub(crate) fn rehome_bodies(
+        &mut self,
+        arena: &mut crate::machine::CodeArena,
+        store: &std::rc::Rc<std::sync::OnceLock<std::rc::Rc<crate::machine::CodeStore>>>,
+    ) {
+        match self {
+            Self::AppendInstanceField(op) => {
+                if let Some(initializer) = &mut op.initializer {
+                    initializer.body.rehome(arena, store);
+                }
+            }
+            Self::MakeFunction { body, .. }
+            | Self::MakeFunctionWithKind { body, .. }
+            | Self::Label { body, .. }
+            | Self::With { body, .. }
+            | Self::PrivateScope { body, .. }
+            | Self::IteratorBinding { body, .. }
+            | Self::ForIn { body, .. }
+            | Self::ForOf { body, .. } => body.rehome(arena, store),
+            Self::Branch { then_ops, else_ops, .. }
+            | Self::Conditional { consequent: then_ops, alternate: else_ops, .. } => {
+                then_ops.rehome(arena, store);
+                else_ops.rehome(arena, store);
+            }
+            Self::Try { body, handler, finalizer, .. } => {
+                body.rehome(arena, store);
+                rehome_optional(handler, arena, store);
+                rehome_optional(finalizer, arena, store);
+            }
+            Self::Loop { init, test, body, update, .. } => rehome_loop(init, test, body, update, arena, store),
+            Self::Switch { cases, .. } => rehome_cases(cases, arena, store),
+            _ => {}
+        }
+    }
+
     pub(crate) fn body_count(&self) -> usize {
         let mut count = 0;
         self.visit_bodies(&mut |_| count += 1);
@@ -31,6 +66,35 @@ impl Op {
             Self::Switch { cases, .. } => cases.iter().for_each(|(_, body)| visitor(body)),
             _ => {}
         }
+    }
+}
+
+fn rehome_loop(
+    init: &mut crate::machine::FunctionCode,
+    test: &mut crate::machine::FunctionCode,
+    body: &mut crate::machine::FunctionCode,
+    update: &mut crate::machine::FunctionCode,
+    arena: &mut crate::machine::CodeArena,
+    store: &std::rc::Rc<std::sync::OnceLock<std::rc::Rc<crate::machine::CodeStore>>>,
+) {
+    for code in [init, test, body, update] { code.rehome(arena, store); }
+}
+
+fn rehome_cases(
+    cases: &mut Vec<(Option<Constant>, crate::machine::FunctionCode)>,
+    arena: &mut crate::machine::CodeArena,
+    store: &std::rc::Rc<std::sync::OnceLock<std::rc::Rc<crate::machine::CodeStore>>>,
+) {
+    for (_, body) in cases { body.rehome(arena, store); }
+}
+
+fn rehome_optional(
+    body: &mut Option<crate::machine::FunctionCode>,
+    arena: &mut crate::machine::CodeArena,
+    store: &std::rc::Rc<std::sync::OnceLock<std::rc::Rc<crate::machine::CodeStore>>>,
+) {
+    if let Some(body) = body {
+        body.rehome(arena, store);
     }
 }
 

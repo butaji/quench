@@ -58,8 +58,8 @@ fn evaluate(
     let program = crate::reduce::reduce_eval_source(source, strict, true, false, &bindings, &[])
         .map_err(syntax_error)?;
     match realm {
-        Some(realm) => crate::vm::execute_indirect_eval_in_realm(realm, &program.ops),
-        None => crate::vm::execute_indirect_eval(&program.ops),
+        Some(realm) => crate::vm::execute_indirect_eval_in_realm(realm, program.ops()),
+        None => crate::vm::execute_indirect_eval(program.ops()),
     }
 }
 
@@ -87,7 +87,7 @@ fn evaluate_direct(
         grammar,
     )
     .map_err(syntax_error)?;
-    execute_direct_eval(&program.ops, program.facts.strict)
+    execute_direct_eval(program.ops(), program.facts.strict)
 }
 
 fn execute_direct_eval(ops: &[crate::ops::Op], strict: bool) -> Result<Value, VmError> {

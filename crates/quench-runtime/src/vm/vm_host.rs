@@ -49,8 +49,8 @@ fn run_eval_script(arguments: &[Value]) -> Result<Value, VmError> {
         }
     };
     match realm {
-        Some(realm) => execute_indirect_eval_in_realm(realm, &program.ops),
-        None => execute_indirect_eval(&program.ops),
+        Some(realm) => execute_indirect_eval_in_realm(realm, program.ops()),
+        None => execute_indirect_eval(program.ops()),
     }
 }
 
