@@ -10,8 +10,10 @@ pub(crate) fn eval_bindings(
     let declared = if strict {
         shadow_names(&names, &mut locals, &mut next_slot);
         Vec::new()
-    } else {
+    } else if global {
         reserve_names(&names, &mut locals, &mut next_slot)
+    } else {
+        shadow_names(&names, &mut locals, &mut next_slot)
     };
     let behavior = if strict {
         EvalBehavior::Strict
