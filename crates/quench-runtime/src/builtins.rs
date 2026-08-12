@@ -224,18 +224,27 @@ pub(crate) fn object(arguments: &[Value]) -> Value {
         | Some(Value::Builtin(_)) => arguments[0].clone(),
         Some(
             value @ (Value::String(_) | Value::Number(_) | Value::Boolean(_) | Value::BigInt(_)),
-        ) => Value::Object(Rc::new(ObjectData::new(vec![
-            ("_value".to_string(), value.clone()),
-            (
-                "constructor".to_string(),
-                Value::Builtin(object::boxed_constructor(value)),
-            ),
-        ]))),
+        ) => boxed_object(value),
         _ => Value::Object(Rc::new(ObjectData::new(vec![(
             "constructor".to_string(),
             Value::Builtin(Builtin::Object),
         )]))),
     }
+}
+
+fn boxed_object(value: &Value) -> Value {
+    let constructor = object::boxed_constructor(value);
+    let mut properties = vec![
+        ("_value".to_string(), value.clone()),
+        ("constructor".to_string(), Value::Builtin(constructor)),
+    ];
+    if constructor == Builtin::BigInt {
+        properties.push((
+            "\0prototype".to_string(),
+            Value::Builtin(Builtin::BigIntPrototype),
+        ));
+    }
+    Value::Object(Rc::new(ObjectData::new(properties)))
 }
 
 /// Construct an error object for the given error constructor.
