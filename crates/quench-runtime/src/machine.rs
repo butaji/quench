@@ -307,10 +307,6 @@ pub enum Frame {
         resume: CodeRange,
         yield_dst: u16,
     },
-    Control {
-        phase: u8,
-        body: CodeRange,
-    },
 }
 
 impl Frame {
