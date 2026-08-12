@@ -13,6 +13,7 @@ pub(crate) fn to_property_key(value: &Value) -> Result<String, VmError> {
     match primitive {
         Value::String(value) => Ok(value),
         Value::Number(value) => Ok(number_to_string(value)),
+        Value::BigInt(value) => Ok(value),
         value => Ok(crate::intl::tolocale::value::to_string(Some(&value))),
     }
 }
@@ -68,6 +69,9 @@ pub(crate) fn to_string(value: &Value) -> Result<String, VmError> {
 
 pub(crate) fn to_string_explicit(value: &Value) -> Result<String, VmError> {
     let primitive = to_primitive(value, "string")?;
+    if let Value::BigInt(value) = primitive {
+        return Ok(value);
+    }
     Ok(crate::intl::tolocale::value::to_string(Some(&primitive)))
 }
 
@@ -110,9 +114,6 @@ fn ordinary_to_primitive(value: &Value, hint: &str) -> Result<Value, VmError> {
                 if let Some(boxed) = boxed_primitive(value) {
                     return Ok(boxed);
                 }
-            }
-            if name == "toString" {
-                return Ok(crate::builtins::prototype_to_string(Some(value)));
             }
             continue;
         }

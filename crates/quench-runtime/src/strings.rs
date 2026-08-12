@@ -117,7 +117,7 @@ pub(crate) fn execute_builtin(
         crate::ops::Builtin::StringLastIndexOf => Ok(last_index_of(receiver, arguments)),
         crate::ops::Builtin::StringSlice => Ok(slice(receiver, arguments)),
         crate::ops::Builtin::StringSubstring => Ok(substring(receiver, arguments)),
-        crate::ops::Builtin::StringConcat => Ok(concat(receiver, arguments)),
+        crate::ops::Builtin::StringConcat => concat(receiver, arguments),
         crate::ops::Builtin::StringSplit => Ok(split(receiver, arguments)),
         crate::ops::Builtin::StringPadStart => Ok(pad_start(receiver, arguments)),
         crate::ops::Builtin::StringPadEnd => Ok(pad_end(receiver, arguments)),
@@ -316,15 +316,18 @@ fn substring_index(value: Option<&Value>, length: isize) -> isize {
         .min(length as f64) as isize
 }
 
-pub(crate) fn concat(receiver: Option<&Value>, arguments: &[Value]) -> Value {
+pub(crate) fn concat(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
     let Some(Value::String(value)) = receiver else {
-        return Value::String(String::new());
+        return Ok(Value::String(String::new()));
     };
     let mut result = value.clone();
     for argument in arguments {
-        result.push_str(&to_string(argument));
+        result.push_str(&crate::conversion::to_string(argument)?);
     }
-    Value::String(result)
+    Ok(Value::String(result))
 }
 
 pub(crate) fn split(receiver: Option<&Value>, arguments: &[Value]) -> Value {
