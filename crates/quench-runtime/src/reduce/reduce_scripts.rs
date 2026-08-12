@@ -120,5 +120,6 @@ fn finish(
     Ok(ResidualProgram {
         facts,
         ops: crate::reduce_support::finish_program(state.ops, last)?,
+        module_metadata: None,
     })
 }
