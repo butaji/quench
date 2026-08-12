@@ -145,7 +145,6 @@ fn execute_simple_builtin(
         _ => Ok(Value::Undefined),
     }
 }
-
 fn weak_ref_deref(receiver: Option<&Value>) -> Result<Value, VmError> {
     let Some(Value::Object(object)) = receiver else {
         return Err(crate::value::error::throw_type_error(
@@ -163,14 +162,12 @@ fn weak_ref_deref(receiver: Option<&Value>) -> Result<Value, VmError> {
     };
     Ok(target.clone())
 }
-
 pub(crate) fn realm_id_for_intrinsic_receiver(receiver: Option<&Value>) -> Option<RealmId> {
     let Some(Value::HostCapability(token)) = receiver else {
         return None;
     };
     realm::id_for_token(token)
 }
-
 fn explicit_number(value: Option<&Value>) -> Result<f64, VmError> {
     let Some(value) = value else {
         return Ok(0.0);
@@ -180,7 +177,6 @@ fn explicit_number(value: Option<&Value>) -> Result<f64, VmError> {
     }
     crate::intl::tolocale::value::to_number_result(Some(value))
 }
-
 fn explicit_bigint(value: Option<&Value>) -> Result<Value, VmError> {
     let raw = match value {
         Some(Value::BigInt(value)) => return Ok(Value::BigInt(value.clone())),
@@ -290,6 +286,9 @@ fn execute_data_view_builtin(
     arguments: &[Value],
 ) -> Result<Value, VmError> {
     let view = data_view_receiver(receiver)?;
+    if view.is_detached() {
+        return Err(type_error("Detached DataView"));
+    }
     let offset = data_view_offset(arguments.first())?;
     let endian_argument = if is_data_view_setter(builtin) { 2 } else { 1 };
     let little_endian = arguments.get(endian_argument).is_some_and(is_truthy);
@@ -403,11 +402,12 @@ fn data_view_offset(value: Option<&Value>) -> Result<usize, VmError> {
 }
 
 fn data_view_error(error: crate::value::DataViewError) -> VmError {
-    let message = match error {
-        crate::value::DataViewError::Detached => "Detached DataView",
-        crate::value::DataViewError::OutOfBounds => "Offset is outside the bounds of the DataView",
-    };
-    range_error(message)
+    match error {
+        crate::value::DataViewError::Detached => type_error("Detached DataView"),
+        crate::value::DataViewError::OutOfBounds => {
+            range_error("Offset is outside the bounds of the DataView")
+        }
+    }
 }
 
 fn type_error(message: &str) -> VmError {
