@@ -245,8 +245,7 @@ fn push_nested_frame(generator: &GeneratorData, state: &GeneratorState) -> Resul
         push_try_frame(generator, state)?;
         return Ok(true);
     }
-    if suspended_iterator_binding(generator, state).is_some() {
-        push_iterator_frame(generator, state)?;
+    if push_iterator_frame(generator, state)? {
         return Ok(true);
     }
     if suspended_conditional(generator, state).is_some() {
