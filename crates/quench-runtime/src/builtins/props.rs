@@ -128,6 +128,7 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
         (FunctionPrototype, "bind") => Some(FunctionBind),
         (FunctionCall, "bind") => Some(FunctionBind),
         (Object, "prototype") => Some(ObjectPrototype),
+        (Object, "fromEntries") => Some(ObjectFromEntries),
         (Date, "prototype") => Some(DatePrototype),
         (Date, "now") => Some(DateNow),
         (Date, "parse") => Some(DateParse),
