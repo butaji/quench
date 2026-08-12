@@ -39,18 +39,7 @@ fn advance_private_frame(
     generator: &GeneratorData,
     range: crate::machine::CodeRange,
 ) -> Result<(), VmError> {
-    let store = generator.machine.borrow().store.clone().ok_or(VmError::MissingReturn)?;
-    let ops = store.get(range).ok_or(VmError::MissingReturn)?;
-    let Some((index, Op::Yield { src })) = ops.iter().enumerate().find(|(_, op)| matches!(op, Op::Yield { .. })) else {
-        return Err(VmError::MissingReturn);
-    };
-    let resume = crate::machine::CodeRange {
-        code: range.code,
-        start: range.start.saturating_add(index as u32 + 1),
-        end: range.end,
-    };
-    if generator.machine.borrow_mut().advance_private_resume(resume, *src) { return Ok(()); }
-    Err(VmError::MissingReturn)
+    advance_frame_after_yield(generator, range)
 }
 
 fn execute_private_suffix(
