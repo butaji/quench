@@ -24,7 +24,7 @@ pub(crate) fn execute_target_with_receiver(
         build_registers(&frame.function, &frame.receiver, &frame.arguments);
     let context = crate::vm::current_context_or_default();
     let completion = crate::vm::execute_frame_completion(
-        &frame.function.body,
+        frame.function.ops(),
         &mut registers,
         &context,
         std::rc::Rc::clone(&environment),
