@@ -84,6 +84,19 @@ impl ModuleGraph {
         Ok(())
     }
 
+    /// Extract and link the unit's static imports through the runtime's OXC
+    /// metadata path. The graph owns resolution; the runtime owns syntax.
+    pub fn link_unit_imports(&mut self, from: ModuleId) -> Result<(), String> {
+        let source = self
+            .unit(from)
+            .ok_or_else(|| "module unit is unknown".to_string())?
+            .source
+            .clone();
+        let metadata = quench_runtime::reduce::inspect_module_source(&source)
+            .map_err(|errors| errors.join("; "))?;
+        self.link_specifiers(from, metadata.import_specifiers.iter().map(String::as_str))
+    }
+
     /// Return deterministic post-order units for an entry, preserving edge
     /// order and tolerating back-edges for legal cyclic module graphs.
     pub fn dependency_order(&self, entry: ModuleId) -> Result<Vec<ModuleId>, String> {
@@ -154,7 +167,10 @@ mod tests {
     #[test]
     fn graph_deduplicates_units_and_resolves_relative_edges() {
         let mut graph = ModuleGraph::new();
-        let entry = graph.add_entry(PathBuf::from("test/entry.js"), "".to_string());
+        let entry = graph.add_entry(
+            PathBuf::from("test/entry.js"),
+            "import value from './lib/value.js';".to_string(),
+        );
         let dependency = graph.add_dependency(PathBuf::from("test/lib/value.js"), "".to_string());
         assert_eq!(
             graph.add_dependency(
@@ -168,9 +184,7 @@ mod tests {
         assert_eq!(graph.entry_unit().map(|unit| unit.id), Some(entry));
         assert_eq!(graph.unit(dependency).map(|unit| unit.id), Some(dependency));
         assert_eq!(graph.units().len(), 2);
-        graph
-            .link_specifiers(entry, ["./lib/value.js"])
-            .expect("known edge");
+        graph.link_unit_imports(entry).expect("known edge");
         assert_eq!(
             graph.dependency_order(entry).unwrap(),
             vec![dependency, entry]
