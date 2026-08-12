@@ -310,10 +310,11 @@ fn is_odd_integer(value: f64) -> bool {
 }
 
 fn unary_plus(value: &Value) -> Result<Value, VmError> {
-    if bigint_value(value).is_some() {
+    let value = crate::conversion::to_primitive(value, "number")?;
+    if bigint_value(&value).is_some() {
         return Err(type_error("Cannot convert BigInt value to number"));
     }
-    numeric_unary(value, |n| n)
+    numeric_unary(&value, |n| n)
 }
 
 fn unary_minus(value: &Value) -> Result<Value, VmError> {
