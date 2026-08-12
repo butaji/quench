@@ -424,7 +424,7 @@ pub enum Op {
     },
     Switch {
         discriminant: u16,
-        cases: Vec<(Option<Constant>, Vec<Op>)>,
+        cases: Vec<(Option<Constant>, crate::machine::FunctionCode)>,
     },
     Conditional {
         dst: u16,
