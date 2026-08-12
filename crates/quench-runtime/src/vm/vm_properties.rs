@@ -74,7 +74,6 @@ fn promise_value_property(
         .or_else(|| promise.prototype().map(|prototype| get_property(&prototype, key)))
         .unwrap_or_else(|| promise_property(value, key))
 }
-
 fn map_property(data: &crate::value::MapData, key: &str) -> Value {
     if key == "constructor" {
         return Value::Builtin(if data.weak {
@@ -92,7 +91,6 @@ fn map_property(data: &crate::value::MapData, key: &str) -> Value {
         crate::collections::map::property(key)
     }
 }
-
 /// Look up a property on the boxed prototype for a primitive value.
 ///
 /// Returns the result when the prototype or its chain owns `key`; otherwise
