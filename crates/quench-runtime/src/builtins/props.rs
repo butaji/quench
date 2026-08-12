@@ -111,6 +111,9 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
     if let Some(method) = promise_builtin_method(builtin, key) {
         return Some(method);
     }
+    if builtin == ObjectPrototype {
+        return object_prototype_method(key);
+    }
     match (builtin, key) {
         (Array, "prototype") => Some(ArrayPrototype),
         (ArrayBuffer, "isView") => Some(ArrayBufferIsView),
@@ -125,11 +128,6 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
         (FunctionPrototype, "bind") => Some(FunctionBind),
         (FunctionCall, "bind") => Some(FunctionBind),
         (Object, "prototype") => Some(ObjectPrototype),
-        (ObjectPrototype, "hasOwnProperty") => Some(ObjectHasOwnProperty),
-        (ObjectPrototype, "isPrototypeOf") => Some(ObjectPrototypeIsPrototypeOf),
-        (ObjectPrototype, "propertyIsEnumerable") => Some(ObjectPropertyIsEnumerable),
-        (ObjectPrototype, "toString") => Some(ObjectPrototypeToString),
-        (ObjectPrototype, "valueOf") => Some(ObjectPrototypeValueOf),
         (Date, "prototype") => Some(DatePrototype),
         (Date, "now") => Some(DateNow),
         (Date, "parse") => Some(DateParse),
