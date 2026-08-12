@@ -60,6 +60,7 @@ pub(crate) fn script_properties(ops: &mut Vec<Op>, next_register: &mut u16) -> V
         "WeakSet",
         "SharedArrayBuffer",
         "WeakRef",
+        "BigInt",
     ];
     names
         .into_iter()
