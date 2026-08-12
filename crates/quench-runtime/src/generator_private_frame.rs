@@ -26,10 +26,31 @@ fn resume_private_frame(
     }
     let _scope = crate::private_environment::Guard::install_environment(frame.environment);
     let completion = execute_private_suffix(generator, state, frame.body_resume)?;
-    if completion.is_suspension() { return Ok(Some(completion)); }
+    if completion.is_suspension() {
+        advance_private_frame(generator, frame.body_resume)?;
+        return Ok(Some(completion));
+    }
     generator.machine.borrow_mut().pop_frame();
     state.private_environment = None;
     resume_after_private(generator, state, frame.resume, completion).map(Some)
+}
+
+fn advance_private_frame(
+    generator: &GeneratorData,
+    range: crate::machine::CodeRange,
+) -> Result<(), VmError> {
+    let store = generator.machine.borrow().store.clone().ok_or(VmError::MissingReturn)?;
+    let ops = store.get(range).ok_or(VmError::MissingReturn)?;
+    let Some((index, Op::Yield { src })) = ops.iter().enumerate().find(|(_, op)| matches!(op, Op::Yield { .. })) else {
+        return Err(VmError::MissingReturn);
+    };
+    let resume = crate::machine::CodeRange {
+        code: range.code,
+        start: range.start.saturating_add(index as u32 + 1),
+        end: range.end,
+    };
+    if generator.machine.borrow_mut().advance_private_resume(resume, *src) { return Ok(()); }
+    Err(VmError::MissingReturn)
 }
 
 fn execute_private_suffix(
