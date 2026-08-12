@@ -124,6 +124,14 @@ pub(super) fn execute(id: RealmId, ops: &[Op]) -> Result<Value, VmError> {
     result
 }
 
+pub(super) fn with_realm<T>(id: RealmId, callback: impl FnOnce() -> T) -> Option<T> {
+    let state = state(id)?;
+    let context = state.context.clone();
+    let _context = super::ContextGuard::install(&context);
+    let _realm = ExecutionGuard::install(state);
+    Some(callback())
+}
+
 pub(super) fn id_for_global(global: &ObjectProperties) -> Option<RealmId> {
     REALMS.with(|realms| {
         realms

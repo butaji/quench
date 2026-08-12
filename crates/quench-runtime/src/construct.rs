@@ -129,7 +129,7 @@ fn construct_bound(
     }
     let mut combined = bound.arguments.clone();
     combined.extend_from_slice(arguments);
-    let value = construct_builtin(*builtin, &combined)?;
+    let value = construct_bound_in_realm(bound, *builtin, &combined)?;
     let value = if let Value::HostCapability(capability) = &bound.receiver {
         crate::builtins::set_property(value, "\0realm", Value::HostCapability(capability.clone()))
     } else {
