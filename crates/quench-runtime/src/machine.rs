@@ -249,12 +249,24 @@ pub enum BranchPhase {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum TryPhase {
+    Body,
+    Catch,
+    Finally,
+    Resume,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Frame {
     Try {
-        phase: u8,
+        phase: TryPhase,
         body: CodeRange,
         handler: Option<CodeRange>,
         finalizer: Option<CodeRange>,
+        body_resume: CodeRange,
+        resume: CodeRange,
+        yield_dst: u16,
+        catch_slot: Option<u16>,
     },
     Iterator {
         phase: IteratorPhase,
