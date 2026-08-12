@@ -28,16 +28,50 @@ pub(crate) fn set_property(
     key: &str,
     value: &Value,
 ) -> Option<Result<Value, VmError>> {
+    if let Some(result) = set_number_property(target, key, value) {
+        return Some(result);
+    }
+    set_bigint_property(target, key, value)
+}
+
+fn set_number_property(target: &Value, key: &str, value: &Value) -> Option<Result<Value, VmError>> {
+    set_float_property(target, key, value)
+        .or_else(|| set_signed_property(target, key, value))
+        .or_else(|| set_unsigned_property(target, key, value))
+        .or_else(|| set_clamped_property(target, key, value))
+}
+
+fn set_float_property(target: &Value, key: &str, value: &Value) -> Option<Result<Value, VmError>> {
     set_number_view!(target, key, value, Float64Array, |value| value);
     set_number_view!(target, key, value, Float32Array, |value| value as f32);
+    None
+}
+
+fn set_signed_property(target: &Value, key: &str, value: &Value) -> Option<Result<Value, VmError>> {
     set_number_view!(target, key, value, Int8Array, crate::construct::to_int8);
     set_number_view!(target, key, value, Int16Array, crate::construct::to_int16);
     set_number_view!(target, key, value, Int32Array, crate::construct::to_int32);
+    None
+}
+
+fn set_unsigned_property(
+    target: &Value,
+    key: &str,
+    value: &Value,
+) -> Option<Result<Value, VmError>> {
     set_number_view!(target, key, value, Uint8Array, crate::construct::to_uint8);
     set_number_view!(target, key, value, Uint16Array, crate::construct::to_uint16);
     set_number_view!(target, key, value, Uint32Array, crate::construct::to_uint32);
+    None
+}
+
+fn set_clamped_property(
+    target: &Value,
+    key: &str,
+    value: &Value,
+) -> Option<Result<Value, VmError>> {
     set_number_view!(target, key, value, Uint8ClampedArray, |value| value);
-    set_bigint_property(target, key, value)
+    None
 }
 
 fn set_bigint_property(target: &Value, key: &str, value: &Value) -> Option<Result<Value, VmError>> {
