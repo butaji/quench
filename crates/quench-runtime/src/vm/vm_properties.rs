@@ -57,7 +57,7 @@ fn get_property_value(value: &Value, key: &str) -> Value {
         Set(data) if key == "size" => Value::Number(data.values.borrow().len() as f64),
         Set(data) if data.weak => crate::collections::set::weak_property(key),
         Set(_) => crate::collections::set::property(key),
-        Iterator(_) => bind_method(value, crate::collections::iterator::property(key)),
+        Iterator(_) => bind_method(value, crate::collections::iterator::property_for(value, key)),
         Generator(_) => generator_property(value, key),
         Promise(promise) => promise_value_property(promise, value, key),
         HostCapability(capability) => host_capability_property(value, capability.descriptor, key),
