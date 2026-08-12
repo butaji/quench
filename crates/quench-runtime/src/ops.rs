@@ -5,6 +5,8 @@ include!("ops_op.rs");
 pub enum Builtin {
     HostCapability(HostCapabilityKind),
     Array,
+    Iterator,
+    IteratorPrototype,
     TypedArray,
     ArrayBuffer,
     ArrayBufferPrototype,

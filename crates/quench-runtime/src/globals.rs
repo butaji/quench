@@ -129,6 +129,7 @@ fn builtin_core(name: &str) -> Option<crate::ops::Builtin> {
     }
     match name {
         "Array" => Some(crate::ops::Builtin::Array),
+        "Iterator" => Some(crate::ops::Builtin::Iterator),
         "ArrayBuffer" => Some(crate::ops::Builtin::ArrayBuffer),
         "SharedArrayBuffer" => Some(crate::ops::Builtin::SharedArrayBuffer),
         "DataView" => Some(crate::ops::Builtin::DataView),

@@ -33,6 +33,7 @@ pub fn constructor_name(builtin: Builtin) -> Option<&'static str> {
     }
     match builtin {
         Builtin::Array => Some("Array"),
+        Builtin::Iterator => Some("Iterator"),
         Builtin::ArrayBuffer => Some("ArrayBuffer"),
         Builtin::Boolean => Some("Boolean"),
         Builtin::BigInt => Some("BigInt"),
@@ -148,6 +149,7 @@ pub fn constructor_length(builtin: Builtin) -> Option<f64> {
     }
     match builtin {
         Builtin::Array => Some(1.0),
+        Builtin::Iterator => Some(0.0),
         Builtin::ArrayBuffer => Some(1.0),
         Builtin::Boolean => Some(1.0),
         Builtin::BigInt => Some(1.0),
