@@ -1,10 +1,7 @@
 //! Date builtin implementation logic.
-
-use std::rc::Rc;
-
-use chrono::{Datelike, Duration, NaiveDate};
-
 use crate::{execute::VmError, ops::Builtin, value::Value};
+use chrono::{Datelike, Duration, NaiveDate};
+use std::rc::Rc;
 
 use super::{chrono_utils, extract_time, helpers, store_time, DateValue};
 
@@ -38,7 +35,6 @@ pub(crate) fn call() -> Value {
     };
     date_to_string(Some(&value))
 }
-
 fn dispatch_get(builtin: Builtin, receiver: Option<&Value>) -> Option<Value> {
     match builtin {
         Builtin::DateValueOf | Builtin::DateGetTime => Some(date_value_of(receiver)),
