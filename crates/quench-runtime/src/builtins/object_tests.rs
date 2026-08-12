@@ -1,8 +1,7 @@
 #[test]
 fn has_own_observes_function_own_properties() {
     let function = Value::Function(Rc::new(FunctionValue {
-        body: Vec::new(),
-        code: None,
+        code: Some(empty_function_code()),
         params: 2,
         kind: crate::ops::FunctionKind::Ordinary,
         strictness: crate::ops::FunctionStrictness::Sloppy,
@@ -36,4 +35,10 @@ fn has_own_observes_function_own_properties() {
         .unwrap(),
         Value::Boolean(true)
     );
+}
+
+fn empty_function_code() -> crate::machine::FunctionCode {
+    let mut arena = crate::machine::CodeArena::new();
+    let range = arena.append_slice(&[]);
+    crate::machine::FunctionCode::new(arena.freeze(), range)
 }

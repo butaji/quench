@@ -5,6 +5,6 @@ impl FunctionValue {
         self.code
             .as_ref()
             .and_then(crate::machine::FunctionCode::ops)
-            .unwrap_or(&self.body)
+            .unwrap_or(&[])
     }
 }
