@@ -18,6 +18,7 @@ include!("promise_combinators.rs");
 include!("promise_finally.rs");
 include!("promise_settlement.rs");
 include!("promise_with_resolvers.rs");
+include!("promise_try.rs");
 
 thread_local! {
     static MICROTASK_QUEUE: RefCell<VecDeque<Rc<PromiseData>>> =
@@ -414,6 +415,7 @@ pub fn execute_builtin(
         Builtin::PromiseAny => promise_combinator(PromiseAggregateKind::Any, arguments),
         Builtin::PromiseRace => promise_combinator(PromiseAggregateKind::Race, arguments),
         Builtin::PromiseWithResolvers => with_resolvers(receiver),
+        Builtin::PromiseTry => promise_try(receiver, arguments),
         Builtin::PromiseThen => promise_then(receiver, arguments),
         Builtin::PromiseCatch => promise_catch(receiver, arguments),
         Builtin::PromiseFinally => promise_finally(receiver, arguments),
