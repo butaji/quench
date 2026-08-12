@@ -454,48 +454,4 @@ fn builtin_length(builtin: Builtin) -> f64 {
         _ => 0.0,
     }
 }
-pub(crate) fn builtin_name(builtin: Builtin) -> &'static str {
-    use Builtin::*;
-    if let Some(name) = metadata_builtin_name(builtin) {
-        return name;
-    }
-    match builtin {
-        Escape => "escape",
-        Unescape => "unescape",
-        Array => "Array",
-        ArrayBuffer => "ArrayBuffer",
-        ArrayBufferIsView => "isView",
-        Object => "Object",
-        String => "String",
-        Symbol => "Symbol",
-        Number => "Number",
-        Date => "Date",
-        DateGetYear => "getYear",
-        DateSetYear => "setYear",
-        RegExp => "RegExp",
-        RegExpTest => "test",
-        RegExpExec => "exec",
-        _ => "",
-    }
-}
-fn metadata_builtin_name(builtin: Builtin) -> Option<&'static str> {
-    if let Some(name) = crate::builtin_meta::methods::short_name(builtin) {
-        return Some(name);
-    }
-    if let Some(name) = crate::builtin_meta::methods::function_name(builtin) {
-        return Some(name);
-    }
-    if let Some(name) = data_view_name::data_view_name(builtin) {
-        return Some(name);
-    }
-    if let Some(name) = error_name(builtin) {
-        return Some(name);
-    }
-    if let Some(name) = generator_name(builtin) {
-        return Some(name);
-    }
-    if let Some(name) = typed_array_name(builtin) {
-        return Some(name);
-    }
-    crate::builtin_meta::constructor_name(builtin)
-}
+include!("props_builtin_names.rs");
