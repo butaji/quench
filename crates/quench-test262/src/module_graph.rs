@@ -11,6 +11,13 @@ pub struct ModuleUnit {
     pub id: ModuleId,
     pub path: PathBuf,
     pub source: String,
+    pub kind: ModuleKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModuleKind {
+    JavaScript,
+    Json,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -27,11 +34,15 @@ impl ModuleGraph {
     }
 
     pub fn add_entry(&mut self, path: PathBuf, source: String) -> ModuleId {
-        self.add_unit(path, source, true)
+        self.add_unit(path, source, ModuleKind::JavaScript, true)
     }
 
     pub fn add_dependency(&mut self, path: PathBuf, source: String) -> ModuleId {
-        self.add_unit(path, source, false)
+        self.add_unit(path, source, ModuleKind::JavaScript, false)
+    }
+
+    pub fn add_json_dependency(&mut self, path: PathBuf, source: String) -> ModuleId {
+        self.add_unit(path, source, ModuleKind::Json, false)
     }
 
     pub fn entry(&self) -> Option<ModuleId> {
@@ -87,11 +98,13 @@ impl ModuleGraph {
     /// Extract and link the unit's static imports through the runtime's OXC
     /// metadata path. The graph owns resolution; the runtime owns syntax.
     pub fn link_unit_imports(&mut self, from: ModuleId) -> Result<(), String> {
-        let source = self
+        let unit = self
             .unit(from)
-            .ok_or_else(|| "module unit is unknown".to_string())?
-            .source
-            .clone();
+            .ok_or_else(|| "module unit is unknown".to_string())?;
+        if unit.kind == ModuleKind::Json {
+            return Ok(());
+        }
+        let source = unit.source.clone();
         let metadata = quench_runtime::reduce::inspect_module_source(&source)
             .map_err(|errors| errors.join("; "))?;
         self.link_specifiers(from, metadata.import_specifiers.iter().map(String::as_str))
@@ -139,14 +152,25 @@ impl ModuleGraph {
         Ok(())
     }
 
-    fn add_unit(&mut self, path: PathBuf, source: String, entry: bool) -> ModuleId {
+    fn add_unit(
+        &mut self,
+        path: PathBuf,
+        source: String,
+        kind: ModuleKind,
+        entry: bool,
+    ) -> ModuleId {
         let path = normalize_module_path(&path);
         if let Some(id) = self.paths.get(&path).copied() {
             return id;
         }
         let id = ModuleId(self.units.len() as u32);
         self.paths.insert(path.clone(), id);
-        self.units.push(ModuleUnit { id, path, source });
+        self.units.push(ModuleUnit {
+            id,
+            path,
+            source,
+            kind,
+        });
         if entry {
             self.entry = Some(id);
         }
