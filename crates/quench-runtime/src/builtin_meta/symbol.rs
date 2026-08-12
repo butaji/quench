@@ -17,6 +17,7 @@ pub fn symbol_prop(key: &str) -> Option<Builtin> {
         "replace" => Some(SymbolReplace),
         "search" => Some(SymbolSearch),
         "split" => Some(SymbolSplit),
+        "matchAll" => Some(SymbolMatchAll),
         "for" => Some(SymbolFor),
         "keyFor" => Some(SymbolKeyFor),
         _ => None,

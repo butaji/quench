@@ -95,6 +95,14 @@ fn computed_method_key(expression: &Expression<'_>) -> Option<String> {
     let Expression::Identifier(object) = &member.object else {
         return None;
     };
-    (object.name == "Symbol" && member.property.name == "iterator")
-        .then(|| "Symbol.iterator".to_string())
+    if object.name != "Symbol" {
+        return None;
+    }
+    let name = member.property.name.as_str();
+    match name {
+        "iterator" | "match" | "replace" | "search" | "split" | "matchAll" => {
+            Some(format!("Symbol.{name}"))
+        }
+        _ => None,
+    }
 }
