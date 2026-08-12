@@ -17,11 +17,17 @@ fn default_value(
     });
     let consequent = fallback_ops(fallback, name, facts, next, locals)?;
     let dst = take_register(next);
+    let [consequent, alternate] = crate::machine::FunctionCode::from_ops_many(vec![
+        consequent,
+        vec![Op::Return { src: source }],
+    ])
+    .try_into()
+    .ok()?;
     ops.push(Op::Conditional {
         dst,
         condition,
-        consequent: crate::machine::FunctionCode::from_ops(consequent),
-        alternate: crate::machine::FunctionCode::from_ops(vec![Op::Return { src: source }]),
+        consequent,
+        alternate,
     });
     Some(dst)
 }
