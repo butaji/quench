@@ -90,6 +90,7 @@ pub enum UnaryOp {
     ToString,
     ToNumeric,
     Delete,
+    IsNullish,
 }
 
 #[derive(Debug, Clone, PartialEq)]

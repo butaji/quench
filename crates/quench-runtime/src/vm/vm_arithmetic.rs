@@ -24,6 +24,7 @@ pub(crate) fn execute_unary(
         UnaryOp::ToString => Value::String(to_string(Some(&value))),
         UnaryOp::ToNumeric => to_numeric(&value)?,
         UnaryOp::Delete => Value::Boolean(true),
+        UnaryOp::IsNullish => Value::Boolean(matches!(value, Value::Null | Value::Undefined)),
     };
     write_value(registers, dst, result);
     Ok(())
