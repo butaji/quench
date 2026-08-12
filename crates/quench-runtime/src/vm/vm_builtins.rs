@@ -284,10 +284,10 @@ fn execute_data_view_builtin(
     arguments: &[Value],
 ) -> Result<Value, VmError> {
     let view = data_view_receiver(receiver)?;
+    let offset = data_view_offset(arguments.first())?;
     if view.is_detached() {
         return Err(type_error("Detached DataView"));
     }
-    let offset = data_view_offset(arguments.first())?;
     let endian_argument = if is_data_view_setter(builtin) { 2 } else { 1 };
     let little_endian = arguments.get(endian_argument).is_some_and(is_truthy);
     if !is_data_view_setter(builtin) {
@@ -411,6 +411,9 @@ fn execute_data_view_bigint_set(
 }
 fn data_view_offset(value: Option<&Value>) -> Result<usize, VmError> {
     let number = crate::intl::tolocale::value::to_number_result(value)?;
+    if number.is_nan() {
+        return Ok(0);
+    }
     if !number.is_finite() || number < 0.0 {
         return Err(range_error("Offset is outside the bounds of the DataView"));
     }
