@@ -80,6 +80,7 @@ fn iterator_property(builtin: Builtin, key: &str) -> Option<Value> {
         return None;
     }
     match key {
+        "Symbol.iterator" => Some(Value::Builtin(Builtin::IteratorSelf)),
         "Symbol.toStringTag" => Some(Value::String("Iterator".into())),
         "constructor" => Some(Value::Builtin(Builtin::Iterator)),
         _ => None,
