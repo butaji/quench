@@ -10,6 +10,7 @@ use quench_runtime::reduce::{
 };
 use quench_runtime::vm::{execute_with_context, ExecutionScope, VmContext};
 
+use crate::module_graph::{ModuleGraph, ModuleId};
 use crate::Test262Host;
 
 #[derive(Debug, Default)]
@@ -19,6 +20,52 @@ pub struct RuntimeHost;
 pub struct LinkedModule {
     program: quench_runtime::reduce::ResidualProgram,
     scope: ExecutionScope,
+}
+
+/// Graph-owned collection of independently compiled linked modules.
+pub struct LinkedModuleGraph {
+    units: std::collections::HashMap<ModuleId, LinkedModule>,
+}
+
+impl LinkedModuleGraph {
+    pub fn compile(graph: &mut ModuleGraph) -> Result<Self, String> {
+        graph.link_all_units()?;
+        let mut units = std::collections::HashMap::new();
+        for unit in graph.units() {
+            units.insert(unit.id, LinkedModule::compile(&unit.source)?);
+        }
+        let ids = units.keys().copied().collect::<Vec<_>>();
+        for id in ids {
+            let metadata = units
+                .get(&id)
+                .and_then(|unit| unit.program.module_metadata.as_ref())
+                .ok_or_else(|| "module metadata missing".to_string())?;
+            for binding in &metadata.imports {
+                let target = graph
+                    .resolve(id, &binding.source)
+                    .ok_or_else(|| format!("unresolved module {}", binding.source))?;
+                let cell = units
+                    .get(&target)
+                    .and_then(|unit| unit.export_cell(&binding.imported))
+                    .ok_or_else(|| format!("export {} missing", binding.imported))?;
+                units
+                    .get(&id)
+                    .ok_or_else(|| "module unit missing".to_string())?
+                    .bind_import(&binding.local, cell)?;
+            }
+        }
+        Ok(Self { units })
+    }
+
+    pub fn execute(&self, graph: &ModuleGraph, entry: ModuleId) -> Result<(), String> {
+        for id in graph.dependency_order(entry)? {
+            self.units
+                .get(&id)
+                .ok_or_else(|| "module unit missing".to_string())?
+                .execute()?;
+        }
+        Ok(())
+    }
 }
 
 impl LinkedModule {

@@ -10,7 +10,7 @@ use std::{collections::HashMap, path::Path};
 pub mod module_graph;
 pub mod runtime_host;
 mod stages;
-pub use runtime_host::{LinkedModule, RuntimeHost};
+pub use runtime_host::{LinkedModule, LinkedModuleGraph, RuntimeHost};
 pub use stages::{list_stages, resolve_stages, ConformanceStage, ResolvedStage};
 pub struct HarnessCache {
     root: std::path::PathBuf,
