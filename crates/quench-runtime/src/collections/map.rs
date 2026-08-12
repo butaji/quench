@@ -35,7 +35,14 @@ pub fn property(key: &str) -> Value {
         "getOrInsert" => Value::Builtin(Builtin::MapGetOrInsert),
         "getOrInsertComputed" => Value::Builtin(Builtin::MapGetOrInsertComputed),
         "Symbol.iterator" => Value::Builtin(Builtin::MapEntries),
-        "Symbol.toStringTag" => Value::String("Map".into()),
+        "Symbol.toStringTag"
+            if !crate::builtins::builtin_prototype_property_is_removed(
+                Builtin::MapPrototype,
+                "Symbol.toStringTag",
+            ) =>
+        {
+            Value::String("Map".into())
+        }
         _ => Value::Undefined,
     }
 }

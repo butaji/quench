@@ -110,3 +110,10 @@ fn constructor_receiver(target: &crate::value::Value) -> crate::value::Value {
         ("\0prototype".to_string(), prototype),
     ])))
 }
+
+fn builtin_default_prototype(target: &crate::value::Value) -> Option<crate::value::Value> {
+    let crate::value::Value::Builtin(builtin) = target else {
+        return None;
+    };
+    crate::builtin_meta::prototype(*builtin).map(crate::value::Value::Builtin)
+}

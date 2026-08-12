@@ -458,43 +458,5 @@ fn set_function_property(
 }
 
 include!("builtins/function_name.rs");
-/// Implement `Object.prototype.toString` using the receiver's [[Class]].
-pub(crate) fn prototype_to_string(receiver: Option<&Value>) -> Value {
-    let tag = match receiver {
-        None | Some(Value::Undefined) => "Undefined",
-        Some(Value::Null) => "Null",
-        Some(Value::Boolean(_)) => "Boolean",
-        Some(Value::Number(_)) => "Number",
-        Some(Value::String(s)) if s.starts_with("Symbol(") => "Symbol",
-        Some(Value::String(_)) => "String",
-        Some(Value::BigInt(_)) => "BigInt",
-        Some(Value::Array(_)) => "Array",
-        Some(Value::Object(_)) => "Object",
-        Some(Value::ArrayBuffer(_)) => "ArrayBuffer",
-        Some(Value::DataView(_)) => "DataView",
-        Some(Value::Float32Array(_)) => "Float32Array",
-        Some(Value::Float64Array(_)) => "Float64Array",
-        Some(Value::Int16Array(_)) => "Int16Array",
-        Some(Value::Int8Array(_)) => "Int8Array",
-        Some(Value::Int32Array(_)) => "Int32Array",
-        Some(Value::Uint16Array(_)) => "Uint16Array",
-        Some(Value::Uint8Array(_)) => "Uint8Array",
-        Some(Value::Uint8ClampedArray(_)) => "Uint8ClampedArray",
-        Some(Value::Uint32Array(_)) => "Uint32Array",
-        Some(Value::BigInt64Array(_)) => "BigInt64Array",
-        Some(Value::BigUint64Array(_)) => "BigUint64Array",
-        Some(Value::Function(_)) => "Function",
-        Some(Value::BoundFunction(_)) => "Function",
-        Some(Value::Builtin(_)) => "Function",
-        Some(Value::Proxy(_)) => "Object",
-        Some(Value::Promise(_)) => "Promise",
-        Some(Value::Map(_)) => "Map",
-        Some(Value::Set(_)) => "Set",
-        Some(Value::Generator(_)) => "Generator",
-        Some(Value::BindingCell(cell)) => return prototype_to_string(Some(&cell.borrow())),
-        Some(Value::HostCapability(_) | Value::Iterator(_) | Value::ObjectAlias(_)) => "Object",
-    };
-    Value::String(format!("[object {tag}]"))
-}
 include!("builtins_prototype.rs");
 include!("builtins_value_string.rs");
