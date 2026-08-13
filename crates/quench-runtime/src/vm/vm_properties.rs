@@ -55,6 +55,7 @@ fn get_property_value(value: &Value, key: &str) -> Value {
         ObjectAlias(alias) => object_alias_property(alias, key),
         String(value) if crate::conversion::is_symbol_string(value) => Value::Undefined,
         String(value) => string_property(value, key),
+        StringUnits(units) => string_units_property(units, key),
         Number(value) => number_property(*value, key),
         Boolean(value) => boolean_property(*value, key),
         Function(_) if matches!(key, "apply" | "call" | "bind") => {

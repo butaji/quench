@@ -431,6 +431,23 @@ fn string_property(value: &str, key: &str) -> Value {
         .unwrap_or(Value::Undefined)
 }
 
+pub(crate) fn string_units_property(units: &[u16], key: &str) -> Value {
+    use crate::ops::Builtin::*;
+    match key {
+        "length" => return Value::Number(units.len() as f64),
+        "toLocaleLowerCase" => return Value::Builtin(StringToLocaleLowerCase),
+        "toLocaleUpperCase" => return Value::Builtin(StringToLocaleUpperCase),
+        _ => {}
+    }
+    if let Some(method) = crate::strings::property_method(key) {
+        return Value::Builtin(method);
+    }
+    key.parse::<usize>()
+        .ok()
+        .and_then(|index| crate::strings::char_at_units(units, index))
+        .unwrap_or(Value::Undefined)
+}
+
 fn number_property(_value: f64, key: &str) -> Value {
     use crate::ops::Builtin::*;
     match key {
