@@ -97,6 +97,7 @@ pub(crate) fn execute_get(registers: &mut Vec<Value>, op: &crate::ops::Op) -> Re
     match op {
         crate::ops::Op::GetSuperProperty { dst, key } => {
             let context = current()?;
+            require_initialized_this(&context)?;
             let prototype = require_super_base(&context.home)?;
             let value = get_with_receiver(&prototype, key, &context.receiver)?;
             crate::execute::write_value(registers, *dst, value);
@@ -104,6 +105,7 @@ pub(crate) fn execute_get(registers: &mut Vec<Value>, op: &crate::ops::Op) -> Re
         }
         crate::ops::Op::GetSuperPropertyDynamic { dst, key } => {
             let context = current()?;
+            require_initialized_this(&context)?;
             let prototype = require_super_base(&context.home)?;
             let key_value = crate::execute::read_register(registers, *key)?;
             let key_string = crate::properties::dynamic_property_key(&key_value)?;
@@ -119,6 +121,7 @@ pub(crate) fn execute_set(registers: &mut [Value], op: &crate::ops::Op) -> Resul
     match op {
         crate::ops::Op::SetSuperProperty { key, src } => {
             let context = current()?;
+            require_initialized_this(&context)?;
             let prototype = require_super_base(&context.home)?;
             let value = crate::execute::read_register(registers, *src)?.clone();
             put_with_receiver(&prototype, key, value, &context.receiver)?;
@@ -126,6 +129,7 @@ pub(crate) fn execute_set(registers: &mut [Value], op: &crate::ops::Op) -> Resul
         }
         crate::ops::Op::SetSuperPropertyDynamic { key, src } => {
             let context = current()?;
+            require_initialized_this(&context)?;
             let prototype = require_super_base(&context.home)?;
             let key_value = crate::execute::read_register(registers, *key)?;
             let key_string = crate::properties::dynamic_property_key(&key_value)?;
@@ -148,6 +152,7 @@ pub(crate) fn execute_call(registers: &mut Vec<Value>, op: &crate::ops::Op) -> R
         return Err(VmError::MissingReturn);
     };
     let context = current()?;
+    require_initialized_this(&context)?;
     let prototype = require_super_base(&context.home)?;
     let callee = get_with_receiver(&prototype, key, &context.receiver)?;
     let arguments = args
@@ -193,6 +198,25 @@ fn current() -> Result<Context, VmError> {
     CURRENT
         .with(|slot| slot.borrow().clone())
         .ok_or_else(super_error)
+}
+
+fn require_initialized_this(context: &Context) -> Result<(), VmError> {
+    if !crate::functions::is_derived_constructor(&context.function) {
+        return Ok(());
+    }
+    let slot = context
+        .function
+        .captures
+        .len()
+        .saturating_add(usize::from(context.function.params))
+        .saturating_add(1);
+    let slot = u16::try_from(slot).map_err(|_| VmError::MissingReturn)?;
+    if crate::locals::current().is_uninitialized(slot) {
+        return Err(crate::value::error::throw_reference_error(
+            "this is uninitialized",
+        ));
+    }
+    Ok(())
 }
 
 fn get_with_receiver(target: &Value, key: &str, receiver: &Value) -> Result<Value, VmError> {
