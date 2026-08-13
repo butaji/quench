@@ -10,7 +10,7 @@ pub fn time_clip(ms: f64) -> f64 {
     if ms.is_nan() || ms.is_infinite() || ms.abs() > TIME_CLIP_LIMIT {
         f64::NAN
     } else {
-        ms
+        ms.trunc()
     }
 }
 
