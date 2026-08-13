@@ -22,8 +22,15 @@ pub(crate) fn number_to_string(value: f64) -> String {
     if value == 0.0 {
         return "0".to_string();
     }
-    if !value.is_finite() {
-        return value.to_string();
+    if value.is_nan() {
+        return "NaN".to_string();
+    }
+    if value.is_infinite() {
+        return if value.is_sign_negative() {
+            "-Infinity".to_string()
+        } else {
+            "Infinity".to_string()
+        };
     }
     let magnitude = value.abs();
     if !(1.0e-6..1.0e21).contains(&magnitude) {
