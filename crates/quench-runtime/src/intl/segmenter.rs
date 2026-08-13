@@ -127,21 +127,30 @@ fn segment(text: &str, granularity: &str, locale: &str) -> Value {
 fn word_segments(text: &str) -> Vec<Value> {
     let mut result = Vec::new();
     let mut start = 0;
+    let mut start_utf16 = 0;
+    let mut utf16_index = 0;
     let mut whitespace: Option<bool> = None;
     for (index, character) in text.char_indices() {
         let is_space = character.is_whitespace();
         if let Some(previous) = whitespace {
             if previous != is_space {
-                result.push(word_entry(&text[start..index], start, text, !previous));
+                result.push(word_entry(
+                    &text[start..index],
+                    start_utf16,
+                    text,
+                    !previous,
+                ));
                 start = index;
+                start_utf16 = utf16_index;
             }
         }
+        utf16_index += character.len_utf16();
         whitespace = Some(is_space);
     }
     if start < text.len() {
         result.push(word_entry(
             &text[start..],
-            start,
+            start_utf16,
             text,
             !whitespace.unwrap_or(false),
         ));
