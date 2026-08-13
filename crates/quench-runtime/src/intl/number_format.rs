@@ -296,6 +296,8 @@ pub(crate) fn format_currency(
 pub(crate) fn format_unit(text: &str, unit: Option<&str>, display: &str) -> String {
     let suffix = match (unit, display) {
         (Some("percent"), _) => "%",
+        (Some("meter"), "long") => "meters",
+        (Some("meter"), _) => "m",
         (Some("kilometer"), "long") => "kilometers",
         (Some("kilometer"), _) => "km",
         (Some("kilometer-per-hour"), "long") => "kilometers per hour",
@@ -512,6 +514,8 @@ pub(crate) fn unit_parts(
 fn unit_suffix(unit: Option<&str>, display: &str, locale: &str) -> String {
     match (unit, display) {
         (Some("percent"), _) => "%".to_string(),
+        (Some("meter"), "long") => "meters".to_string(),
+        (Some("meter"), _) => "m".to_string(),
         (Some("kilometer"), "long") => "kilometers".to_string(),
         (Some("kilometer"), _) => "km".to_string(),
         (Some("kilometer-per-hour"), "long") if locale.starts_with("de") => {
