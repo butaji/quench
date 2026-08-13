@@ -90,7 +90,16 @@ fn construct_with_new_target(
     let result = match target {
         Value::Builtin(builtin) => {
             let value = construct_builtin(*builtin, arguments)?;
-            with_new_target_prototype(value, target, new_target)
+            let value = with_new_target_prototype(value, target, new_target)?;
+            if let Value::DataView(view) = &value {
+                if *view.buffer.detached.borrow() {
+                    return Err(type_error("Cannot use a detached ArrayBuffer"));
+                }
+                if view.is_out_of_bounds() {
+                    return Err(range_error("Invalid DataView byte length"));
+                }
+            }
+            Ok(value)
         }
         Value::Function(function) => construct_function(function, new_target, arguments),
         Value::BoundFunction(bound) => construct_bound(bound, target, new_target, arguments),
@@ -378,23 +387,30 @@ fn construct_data_view(arguments: &[Value]) -> Result<Value, crate::execute::VmE
     let Some(Value::ArrayBuffer(buffer)) = arguments.first() else {
         return Err(type_error("DataView buffer must be an ArrayBuffer"));
     };
+    let offset = match arguments.get(1) {
+        Some(value) => crate::conversion::to_number(value)?,
+        None => 0.0,
+    };
+    let offset = to_index(offset)?;
     if *buffer.detached.borrow() {
         return Err(type_error("Cannot use a detached ArrayBuffer"));
     }
-    let offset = arguments.get(1).map_or(0.0, |value| {
-        crate::intl::tolocale::value::to_number(Some(value))
-    });
-    let offset = to_index(offset)?;
     let buffer_length = buffer.byte_length();
     if offset > buffer_length {
         return Err(range_error("Invalid DataView byte offset"));
     }
     let available = buffer_length - offset;
     let length = match arguments.get(2) {
-        Some(value) => to_index(crate::intl::tolocale::value::to_number(Some(value)))?,
-        None => view_length(buffer, available),
+        Some(Value::Undefined) | None => view_length(buffer, available),
+        Some(value) => {
+            let length = to_index(crate::conversion::to_number(value)?)?;
+            if *buffer.detached.borrow() {
+                return Err(type_error("Cannot use a detached ArrayBuffer"));
+            }
+            length
+        }
     };
-    if length != usize::MAX && length > available {
+    if length != usize::MAX && length > buffer_length - offset {
         return Err(range_error("Invalid DataView byte length"));
     }
     Ok(Value::DataView(Rc::new(crate::value::DataViewData::new(
