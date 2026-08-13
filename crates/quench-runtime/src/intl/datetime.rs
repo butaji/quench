@@ -289,11 +289,11 @@ pub(crate) fn prototype_method(
     let slots = receiver_slots(receiver)?;
     match builtin {
         crate::ops::Builtin::IntlDateTimeFormatFormat => {
-            let value = to_string_value(arguments.first().unwrap_or(&Value::Undefined));
+            let value = range_value(arguments.first().unwrap_or(&Value::Undefined))?;
             Ok(Value::String(value))
         }
         crate::ops::Builtin::IntlDateTimeFormatFormatToParts => {
-            let value = to_string_value(arguments.first().unwrap_or(&Value::Undefined));
+            let value = range_value(arguments.first().unwrap_or(&Value::Undefined))?;
             Ok(make_array(vec![literal_part(&value)]))
         }
         crate::ops::Builtin::IntlDateTimeFormatFormatRange => {
