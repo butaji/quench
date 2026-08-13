@@ -160,7 +160,8 @@ impl NumberOptions {
             rounding_increment: raw.rounding_increment.max(1.0) as u32,
             sign_display: raw.sign_display,
             minimum_significant_digits: significant_digits(raw.minimum_significant_digits),
-            maximum_significant_digits: significant_digits(raw.maximum_significant_digits),
+            maximum_significant_digits: significant_digits(raw.maximum_significant_digits)
+                .or_else(|| significant_digits(raw.minimum_significant_digits).map(|_| 21)),
         })
     }
 
