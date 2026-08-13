@@ -1,6 +1,6 @@
 //! `Intl.DateTimeFormat`.
 
-use crate::{execute::VmError, value::Value};
+use crate::{conversion, execute::VmError, value::Value};
 
 use super::{
     default_locale, make_array, make_object, resolve_locales, runtime_error, to_string_value, SLOT,
@@ -178,6 +178,14 @@ impl DateTimeOptions {
                 Value::Builtin(crate::ops::Builtin::IntlDateTimeFormatFormatToParts),
             ),
             (
+                "formatRange".to_string(),
+                Value::Builtin(crate::ops::Builtin::IntlDateTimeFormatFormatRange),
+            ),
+            (
+                "formatRangeToParts".to_string(),
+                Value::Builtin(crate::ops::Builtin::IntlDateTimeFormatFormatRangeToParts),
+            ),
+            (
                 "resolvedOptions".to_string(),
                 Value::Builtin(crate::ops::Builtin::IntlDateTimeFormatResolvedOptions),
             ),
@@ -288,9 +296,41 @@ pub(crate) fn prototype_method(
             let value = to_string_value(arguments.first().unwrap_or(&Value::Undefined));
             Ok(make_array(vec![literal_part(&value)]))
         }
+        crate::ops::Builtin::IntlDateTimeFormatFormatRange => {
+            let (start, end) = range_values(arguments)?;
+            if start == end {
+                return Ok(Value::String(start));
+            }
+            Ok(Value::String(format!("{start} – {end}")))
+        }
+        crate::ops::Builtin::IntlDateTimeFormatFormatRangeToParts => {
+            let (start, end) = range_values(arguments)?;
+            if start == end {
+                return Ok(make_array(vec![literal_part(&start)]));
+            }
+            Ok(make_array(vec![
+                literal_part(&start),
+                literal_part(" – "),
+                literal_part(&end),
+            ]))
+        }
         crate::ops::Builtin::IntlDateTimeFormatResolvedOptions => Ok(make_object(slots)),
         _ => Err(runtime_error("TypeError: method not found")),
     }
+}
+
+fn range_values(arguments: &[Value]) -> Result<(String, String), VmError> {
+    let start = range_value(arguments.first().unwrap_or(&Value::Undefined))?;
+    let end = range_value(arguments.get(1).unwrap_or(&Value::Undefined))?;
+    Ok((start, end))
+}
+
+fn range_value(value: &Value) -> Result<String, VmError> {
+    let number = conversion::to_number(value)?;
+    if !number.is_finite() {
+        return Err(runtime_error("RangeError: date value is not finite"));
+    }
+    Ok(conversion::number_to_string(number.trunc()))
 }
 
 fn receiver_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)>, VmError> {
@@ -306,6 +346,8 @@ pub(crate) fn dispatch(
         crate::ops::Builtin::IntlDateTimeFormat => Some(construct(arguments)),
         crate::ops::Builtin::IntlDateTimeFormatFormat
         | crate::ops::Builtin::IntlDateTimeFormatFormatToParts
+        | crate::ops::Builtin::IntlDateTimeFormatFormatRange
+        | crate::ops::Builtin::IntlDateTimeFormatFormatRangeToParts
         | crate::ops::Builtin::IntlDateTimeFormatResolvedOptions => {
             Some(prototype_method(builtin, arguments, receiver))
         }
