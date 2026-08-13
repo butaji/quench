@@ -491,7 +491,7 @@ fn set_last_index(receiver: &Value, index: f64) -> Result<(), VmError> {
 
 fn set_last_index_value(receiver: &Value, value: Value) -> Result<(), VmError> {
     let updated = crate::properties::assign_set_property(receiver, "lastIndex", value)?;
-    crate::locals::replace_value(receiver, &updated);
+    crate::properties::propagate_updated_object(&mut Vec::new(), None, receiver, &updated);
     Ok(())
 }
 
