@@ -29,6 +29,8 @@ pub(crate) fn group_integer_locale(text: &str, locale: &str) -> String {
     let grouped = group_integer(text);
     if locale.starts_with("de") {
         grouped.replace(',', ".")
+    } else if locale.starts_with("pt") {
+        grouped.replace(',', "\u{a0}")
     } else {
         grouped
     }
