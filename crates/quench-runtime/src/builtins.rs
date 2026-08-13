@@ -344,6 +344,7 @@ pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
             Value::Object(properties)
         }
         Value::Object(properties) => builtins_cells::set_object_property(properties, key, value),
+        Value::ObjectAlias(alias) => set_object_alias_property(alias, key, value),
         Value::Array(values) if array_descriptor_flag(&values, key, "writable") == Some(false) => {
             Value::Array(values)
         }
@@ -351,6 +352,24 @@ pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
         Value::Function(function) => set_function_property(function, key, value),
         other => other,
     }
+}
+
+fn set_object_alias_property(
+    alias: crate::value::ObjectAliasValue,
+    key: &str,
+    value: Value,
+) -> Value {
+    let Some(properties) = alias.0.borrow().upgrade() else {
+        return Value::ObjectAlias(alias);
+    };
+    let result = builtins_cells::set_object_property(properties, key, value);
+    retarget_object_alias(&alias, &result);
+    result
+}
+
+fn retarget_object_alias(alias: &crate::value::ObjectAliasValue, value: &Value) {
+    let Value::Object(object) = value else { return };
+    *alias.0.borrow_mut() = Rc::downgrade(object);
 }
 
 fn set_prototype_slot(target: &Value, key: &str, value: Value) -> Option<Value> {
