@@ -242,6 +242,9 @@ pub(crate) mod value {
     fn builtin_type(builtin: crate::ops::Builtin) -> &'static str {
         match builtin {
             crate::ops::Builtin::SymbolIterator
+            | crate::ops::Builtin::SymbolAsyncIterator
+            | crate::ops::Builtin::SymbolDispose
+            | crate::ops::Builtin::SymbolAsyncDispose
             | crate::ops::Builtin::SymbolUnscopables
             | crate::ops::Builtin::SymbolToStringTag
             | crate::ops::Builtin::SymbolToPrimitive
