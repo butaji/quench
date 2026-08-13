@@ -36,6 +36,7 @@ mod disposable_stack;
 mod environment;
 mod equality;
 mod exceptions;
+mod finalization_registry;
 pub mod execute;
 pub mod facts;
 mod function_code;
