@@ -60,6 +60,20 @@ pub fn make_date_ms(
     second: f64,
     ms: f64,
 ) -> f64 {
+    time_clip(make_date_unclipped(
+        year, month, day, hour, minute, second, ms,
+    ))
+}
+
+fn make_date_unclipped(
+    year: f64,
+    month: f64,
+    day: f64,
+    hour: f64,
+    minute: f64,
+    second: f64,
+    ms: f64,
+) -> f64 {
     if year.is_nan()
         || month.is_nan()
         || day.is_nan()
@@ -82,7 +96,7 @@ pub fn make_date_ms(
     let first_day = days_from_civil(year_of as i64, month_of as i64, 1);
     let day_ms = (first_day + day as i64 - 1) as f64 * MS_PER_DAY;
     let time_ms = hour * MS_PER_HOUR + minute * MS_PER_MINUTE + second * MS_PER_SECOND + ms;
-    time_clip(day_ms + time_ms)
+    day_ms + time_ms
 }
 
 /// Interpret calendar components in the current local time zone.
@@ -95,7 +109,7 @@ pub fn make_local_ms(
     second: f64,
     ms: f64,
 ) -> f64 {
-    time_clip(make_date_ms(year, month, day, hour, minute, second, ms) - local_offset_ms())
+    time_clip(make_date_unclipped(year, month, day, hour, minute, second, ms) - local_offset_ms())
 }
 
 fn local_offset_ms() -> f64 {
@@ -104,6 +118,15 @@ fn local_offset_ms() -> f64 {
 
 /// Parse a date string according to ECMAScript Date.parse semantics.
 pub fn parse_date_string(s: &str) -> f64 {
+    if s.len() == 4 && s.bytes().all(|byte| byte.is_ascii_digit()) {
+        let Some(year) = s.parse().ok() else {
+            return f64::NAN;
+        };
+        return make_date_ms(year, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0);
+    }
+    if let Some(value) = parse_iso_utc(s) {
+        return time_clip(value);
+    }
     if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
         return dt.timestamp_millis() as f64;
     }
@@ -133,6 +156,51 @@ pub fn parse_date_string(s: &str) -> f64 {
             .map_or(f64::NAN, |value| value.and_utc().timestamp_millis() as f64);
     }
     f64::NAN
+}
+
+fn parse_iso_utc(s: &str) -> Option<f64> {
+    let (date, time) = s.strip_suffix('Z')?.split_once('T')?;
+    let (year, rest) = split_iso_year(date)?;
+    let (month, day) = split_iso_date(rest)?;
+    let (hour, minute, second, ms) = split_iso_time(time)?;
+    Some(make_date_ms(
+        year,
+        month - 1.0,
+        day,
+        hour,
+        minute,
+        second,
+        ms,
+    ))
+}
+
+fn split_iso_year(date: &str) -> Option<(f64, &str)> {
+    let length = if date.starts_with('+') || date.starts_with('-') {
+        7
+    } else {
+        4
+    };
+    let year = date.get(..length)?;
+    let rest = date.get(length..)?;
+    Some((year.parse().ok()?, rest.strip_prefix('-')?))
+}
+
+fn split_iso_date(date: &str) -> Option<(f64, f64)> {
+    let (month, day) = date.split_once('-')?;
+    Some((month.parse().ok()?, day.parse().ok()?))
+}
+
+fn split_iso_time(time: &str) -> Option<(f64, f64, f64, f64)> {
+    let (hour, rest) = time.split_once(':')?;
+    let (minute, second) = rest.split_once(':')?;
+    let (second, fraction) = second.split_once('.').unwrap_or((second, "0"));
+    let ms = format!("{fraction:0<3}").get(..3)?.parse().ok()?;
+    Some((
+        hour.parse().ok()?,
+        minute.parse().ok()?,
+        second.parse().ok()?,
+        ms,
+    ))
 }
 
 fn parse_local_iso(s: &str) -> Option<f64> {
