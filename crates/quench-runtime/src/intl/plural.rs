@@ -130,7 +130,10 @@ fn arabic_cardinal(number: f64) -> String {
 }
 
 fn ordinal_select(number: f64) -> String {
-    let integer = number as i64;
+    if !number.is_finite() || number.fract() != 0.0 {
+        return "other".to_string();
+    }
+    let integer = number.abs() as i64;
     if integer % 10 == 1 && integer % 100 != 11 {
         "one"
     } else if integer % 10 == 2 && integer % 100 != 12 {
