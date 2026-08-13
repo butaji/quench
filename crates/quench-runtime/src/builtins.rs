@@ -530,9 +530,9 @@ fn store_descriptor_metadata(result: &mut Value, key: &str, descriptor: &[(Strin
         }
         Value::Builtin(builtin) => write_intrinsic_override(*builtin, key, metadata),
         Value::BoundFunction(bound) => {
-            if let Value::Builtin(builtin) = bound.target {
-                write_intrinsic_override(builtin, key, metadata);
-            }
+            let mut properties = bound.properties.borrow_mut();
+            properties.retain(|(name, _)| name != &descriptor_key);
+            properties.push((descriptor_key, metadata));
         }
         _ => {}
     }
@@ -540,7 +540,11 @@ fn store_descriptor_metadata(result: &mut Value, key: &str, descriptor: &[(Strin
 fn define_accessor_placeholder(target: Value, key: &str) -> Value {
     if matches!(
         target,
-        Value::Object(_) | Value::Function(_) | Value::Builtin(_) | Value::Promise(_)
+        Value::Object(_)
+            | Value::Function(_)
+            | Value::Builtin(_)
+            | Value::Promise(_)
+            | Value::BoundFunction(_)
     ) {
         return set_property(target, key, Value::Undefined);
     }

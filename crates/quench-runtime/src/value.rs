@@ -460,6 +460,7 @@ pub struct BoundFunctionValue {
     pub target: Value,
     pub receiver: Value,
     pub arguments: Vec<Value>,
+    pub properties: RefCell<Vec<(String, Value)>>,
 }
 impl From<&Constant> for Value {
     fn from(value: &Constant) -> Self {

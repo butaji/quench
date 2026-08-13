@@ -144,6 +144,7 @@ pub(super) fn intrinsic(id: RealmId, builtin: Builtin) -> Option<Value> {
         target: Value::Builtin(builtin),
         receiver: Value::HostCapability(Rc::clone(&state.token)),
         arguments: Vec::new(),
+        properties: RefCell::new(Vec::new()),
     }));
     state.intrinsics.borrow_mut().push((builtin, value.clone()));
     Some(value)

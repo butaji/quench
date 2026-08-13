@@ -312,6 +312,9 @@ fn bound_function_property(
     bound: &crate::value::BoundFunctionValue,
     key: &str,
 ) -> Value {
+    if let Some((_, value)) = bound.properties.borrow().iter().rev().find(|(name, _)| name == key) {
+        return value.clone();
+    }
     if matches!(key, "apply" | "call" | "bind") {
         bind_function_property(value, key)
     } else if key == "length" && !realm::is_intrinsic(bound) {
@@ -336,6 +339,7 @@ fn bind_method(receiver: &Value, property: Value) -> Value {
         target: Value::Builtin(builtin),
         receiver: receiver.clone(),
         arguments: Vec::new(),
+        properties: RefCell::new(Vec::new()),
     }))
 }
 fn promise_property(value: &Value, key: &str) -> Value {
@@ -354,6 +358,7 @@ fn promise_property(value: &Value, key: &str) -> Value {
         target: Value::Builtin(builtin),
         receiver: value.clone(),
         arguments: Vec::new(),
+        properties: RefCell::new(Vec::new()),
     }))
 }
 fn array_buffer_property(buffer: &crate::value::ArrayBufferData, key: &str) -> Value {

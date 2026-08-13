@@ -235,6 +235,7 @@ fn bind_function_target(
             target: receiver.cloned().unwrap_or(crate::value::Value::Undefined),
             receiver: target,
             arguments: extra,
+            properties: std::cell::RefCell::new(Vec::new()),
         },
     )))
 }
