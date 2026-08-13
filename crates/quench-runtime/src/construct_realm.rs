@@ -38,6 +38,10 @@ fn builtin_default_name(target: &Value) -> Option<crate::ops::Builtin> {
         Value::Builtin(crate::ops::Builtin::Number) => Some(crate::ops::Builtin::NumberPrototype),
         Value::Builtin(crate::ops::Builtin::String) => Some(crate::ops::Builtin::StringPrototype),
         Value::Builtin(crate::ops::Builtin::Object) => Some(crate::ops::Builtin::ObjectPrototype),
+        Value::Builtin(crate::ops::Builtin::Map) => Some(crate::ops::Builtin::MapPrototype),
+        Value::Builtin(crate::ops::Builtin::Set) => Some(crate::ops::Builtin::SetPrototype),
+        Value::Builtin(crate::ops::Builtin::WeakMap) => Some(crate::ops::Builtin::WeakMapPrototype),
+        Value::Builtin(crate::ops::Builtin::WeakSet) => Some(crate::ops::Builtin::WeakSetPrototype),
         _ => None,
     }
 }
