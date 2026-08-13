@@ -20,6 +20,9 @@ pub fn execute(
     if builtin == Builtin::DateSetDate {
         return Some(super::setter::set_date(receiver, arguments));
     }
+    if builtin == Builtin::DateSetUTCDate {
+        return Some(super::setter::set_utc_date(receiver, arguments));
+    }
     if builtin == Builtin::DateSetFullYear {
         return Some(super::setter::set_full_year(receiver, arguments));
     }
