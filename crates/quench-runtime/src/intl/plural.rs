@@ -7,12 +7,37 @@ use super::{default_locale, make_object, resolve_locales, runtime_error, slot_st
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
     let locale = locales.first().cloned().unwrap_or_else(default_locale);
+    let mut notation = "standard".to_string();
+    let mut compact_display: Option<String> = None;
     let plural_type = match arguments.get(1) {
-        Some(Value::Object(properties)) => properties
-            .iter()
-            .find(|(key, _)| key == "type")
-            .map(|(_, value)| super::to_string_value(value))
-            .unwrap_or_else(|| "cardinal".to_string()),
+        Some(Value::Object(properties)) => {
+            for (key, value) in properties.iter() {
+                let text = super::to_string_value(value);
+                match key.as_str() {
+                    "notation" => {
+                        if !matches!(
+                            text.as_str(),
+                            "standard" | "compact" | "scientific" | "engineering"
+                        ) {
+                            return Err(runtime_error("RangeError: invalid notation"));
+                        }
+                        notation = text;
+                    }
+                    "compactDisplay" => {
+                        if !matches!(text.as_str(), "short" | "long") {
+                            return Err(runtime_error("RangeError: invalid compactDisplay"));
+                        }
+                        compact_display = Some(text);
+                    }
+                    _ => {}
+                }
+            }
+            properties
+                .iter()
+                .find(|(key, _)| key == "type")
+                .map(|(_, value)| super::to_string_value(value))
+                .unwrap_or_else(|| "cardinal".to_string())
+        }
         _ => "cardinal".to_string(),
     };
     if !matches!(plural_type.as_str(), "cardinal" | "ordinal") {
@@ -32,6 +57,11 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             make_object(vec![
                 ("locale".to_string(), Value::String(locale)),
                 ("type".to_string(), Value::String(plural_type)),
+                ("notation".to_string(), Value::String(notation)),
+                (
+                    "compactDisplay".to_string(),
+                    Value::String(compact_display.unwrap_or_else(|| "short".to_string())),
+                ),
             ]),
         ),
     ]))
@@ -54,10 +84,19 @@ pub(crate) fn prototype_method(
             let slots = super::intl_slots(receiver)?;
             let locale = slot_string(&slots, "locale").unwrap_or_else(default_locale);
             let plural_type = slot_string(&slots, "type").unwrap_or_else(|| "cardinal".to_string());
-            Ok(make_object(vec![
+            let notation =
+                slot_string(&slots, "notation").unwrap_or_else(|| "standard".to_string());
+            let compact_display =
+                slot_string(&slots, "compactDisplay").unwrap_or_else(|| "short".to_string());
+            let mut properties = vec![
                 ("locale".to_string(), Value::String(locale)),
                 ("type".to_string(), Value::String(plural_type)),
-            ]))
+                ("notation".to_string(), Value::String(notation.clone())),
+            ];
+            if notation == "compact" {
+                properties.push(("compactDisplay".to_string(), Value::String(compact_display)));
+            }
+            Ok(make_object(properties))
         }
         _ => Err(runtime_error("TypeError: method not found")),
     }
