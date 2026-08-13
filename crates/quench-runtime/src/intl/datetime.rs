@@ -104,7 +104,12 @@ impl DateTimeOptions {
         }
         match key {
             "hour12" => self.hour12 = Some(text == "true"),
-            "timeZone" => self.time_zone = canonicalize_time_zone(&text),
+            "timeZone" => {
+                if text.starts_with(['+', '-']) && normalize_offset(&text).is_none() {
+                    return Err(runtime_error("RangeError: invalid time zone"));
+                }
+                self.time_zone = canonicalize_time_zone(&text);
+            }
             "calendar" => self.calendar = text.to_ascii_lowercase(),
             "numberingSystem" => self.numbering_system = text.to_ascii_lowercase(),
             "fractionalSecondDigits" => {
@@ -267,10 +272,10 @@ fn normalize_offset(time_zone: &str) -> Option<String> {
         '-' => ('-', &time_zone[1..]),
         _ => return None,
     };
-    let (hours, minutes) = match rest.split_once(':') {
-        Some((hours, minutes)) => (hours, minutes),
-        None => (rest, "00"),
-    };
+    let (hours, minutes) = rest.split_once(':')?;
+    if hours.len() != 2 || minutes.len() != 2 {
+        return None;
+    }
     let hour: u32 = hours.parse().ok()?;
     let minute: u32 = minutes.parse().ok()?;
     if hour > 23 || minute > 59 {
