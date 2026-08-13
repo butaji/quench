@@ -389,12 +389,37 @@ fn bind_method(receiver: &Value, property: Value) -> Value {
     let Value::Builtin(builtin) = property else {
         return property;
     };
+    let properties = if builtin == Builtin::IntlNumberFormatFormat {
+        RefCell::new(number_format_bound_properties())
+    } else {
+        RefCell::new(Vec::new())
+    };
     Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
         target: Value::Builtin(builtin),
         receiver: receiver.clone(),
         arguments: Vec::new(),
-        properties: RefCell::new(Vec::new()),
+        properties,
     }))
+}
+fn number_format_bound_properties() -> Vec<(String, Value)> {
+    [
+        ("name", Value::String(String::new())),
+        ("length", Value::Number(1.0)),
+    ]
+    .into_iter()
+    .flat_map(|(key, value)| {
+        let metadata = Value::Object(Rc::new(crate::value::ObjectData::new(vec![
+            ("value".to_string(), value.clone()),
+            ("writable".to_string(), Value::Boolean(false)),
+            ("enumerable".to_string(), Value::Boolean(false)),
+            ("configurable".to_string(), Value::Boolean(true)),
+        ])));
+        [
+            (key.to_string(), value),
+            (crate::builtins::descriptor_key(key), metadata),
+        ]
+    })
+    .collect()
 }
 fn promise_property(value: &Value, key: &str) -> Value {
     if key == "finally" {
