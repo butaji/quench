@@ -87,15 +87,16 @@ fn construct_with_new_target(
     new_target: &Value,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    match target {
+    let result = match target {
         Value::Builtin(builtin) => {
             let value = construct_builtin(*builtin, arguments)?;
             with_new_target_prototype(value, target, new_target)
         }
         Value::Function(function) => construct_function(function, new_target, arguments),
-        Value::BoundFunction(bound) => construct_bound(bound, target, arguments),
+        Value::BoundFunction(bound) => construct_bound(bound, target, new_target, arguments),
         _ => Err(crate::vm::not_callable()),
-    }
+    };
+    result
 }
 fn with_new_target_prototype(
     value: Value,
@@ -119,27 +120,39 @@ include!("construct_realm.rs");
 fn construct_bound(
     bound: &crate::value::BoundFunctionValue,
     target: &Value,
+    new_target: &Value,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let Value::Builtin(builtin) = &bound.target else {
-        return Err(crate::vm::not_callable());
-    };
-    if crate::builtin_meta::constructor_name(*builtin).is_none() {
-        return Err(crate::vm::not_callable());
-    }
     let mut combined = bound.arguments.clone();
     combined.extend_from_slice(arguments);
-    let value = construct_bound_in_realm(bound, *builtin, &combined)?;
-    let value = if let Value::HostCapability(capability) = &bound.receiver {
+    let same = crate::builtins::same_value(Some(target), Some(new_target));
+    let new_target = if same {
+        bound.target.clone()
+    } else {
+        new_target.to_owned()
+    };
+    let value = match &bound.target {
+        Value::Builtin(builtin) => {
+            if crate::builtin_meta::constructor_name(*builtin).is_none() {
+                return Err(crate::vm::not_callable());
+            }
+            let value = construct_bound_in_realm(bound, *builtin, &combined)?;
+            with_new_target_prototype(value, &Value::Builtin(*builtin), &new_target)?
+        }
+        Value::Function(function) => construct_function(function, &new_target, &combined)?,
+        Value::BoundFunction(next) => construct_bound(
+            next,
+            &Value::BoundFunction(std::rc::Rc::clone(next)),
+            &new_target,
+            &combined,
+        )?,
+        _ => return Err(crate::vm::not_callable()),
+    };
+    Ok(if let Value::HostCapability(capability) = &bound.receiver {
         crate::builtins::set_property(value, "\0realm", Value::HostCapability(capability.clone()))
     } else {
         value
-    };
-    Ok(crate::builtins::set_property(
-        value,
-        "constructor",
-        target.clone(),
-    ))
+    })
 }
 fn construct_builtin(
     builtin: crate::ops::Builtin,
@@ -443,6 +456,9 @@ fn construct_error(
     builtin: &crate::ops::Builtin,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
+    if *builtin == crate::ops::Builtin::SuppressedError {
+        return crate::builtins::suppressed_error(arguments);
+    }
     Ok(crate::builtins::error(*builtin, arguments))
 }
 
