@@ -48,6 +48,9 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
     if let Some(value) = typed_array_static_property(builtin, key) {
         return Some(value);
     }
+    if let Some(value) = weak_special(builtin, key) {
+        return Some(value);
+    }
     match (builtin, key) {
         (RegExpStringIteratorPrototype, "Symbol.toStringTag") => {
             Some(Value::String("RegExp String Iterator".into()))
@@ -56,7 +59,17 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (Symbol, "unscopables") => Some(Value::String("Symbol.unscopables\0".to_string())),
         (Symbol, k) => crate::builtin_meta::symbol::symbol_prop(k).map(Value::Builtin),
         (Map, "groupBy") => Some(Value::Builtin(MapGroupBy)),
+        (Set, "Symbol.species") => Some(Value::Builtin(Set)),
         (MapPrototype | SetPrototype, k) => collections_prop(builtin, k),
+        (BigIntPrototype, "Symbol.toStringTag") => Some(Value::String("BigInt".to_string())),
+        (DatePrototype, k) => crate::builtin_meta::date::date_prop(k).map(Value::Builtin),
+        _ => builtin_method(builtin, key).map(Value::Builtin),
+    }
+}
+
+fn weak_special(builtin: Builtin, key: &str) -> Option<Value> {
+    use Builtin::*;
+    match (builtin, key) {
         (WeakMapPrototype, "constructor") => Some(Value::Builtin(WeakMap)),
         (WeakMapPrototype, "Symbol.toStringTag") => Some(Value::String("WeakMap".into())),
         (WeakMapPrototype, k) => match crate::collections::map::weak_property(k) {
@@ -75,9 +88,7 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (WeakRefPrototype, "constructor") => Some(Value::Builtin(WeakRef)),
         (WeakRefPrototype, "deref") => Some(Value::Builtin(WeakRefDeref)),
         (WeakRefPrototype, "Symbol.toStringTag") => Some(Value::String("WeakRef".into())),
-        (BigIntPrototype, "Symbol.toStringTag") => Some(Value::String("BigInt".to_string())),
-        (DatePrototype, k) => crate::builtin_meta::date::date_prop(k).map(Value::Builtin),
-        _ => builtin_method(builtin, key).map(Value::Builtin),
+        _ => None,
     }
 }
 fn iterator_property(builtin: Builtin, key: &str) -> Option<Value> {

@@ -11,19 +11,29 @@ pub(crate) fn execute_builtin(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Option<Result<Value, VmError>> {
-    use Builtin::*;
     if is_set_relation(builtin) {
         return Some(set::set_relation(builtin, receiver, arguments));
     }
     if let Some(result) = execute_weak(builtin, receiver, arguments) {
         return Some(result);
     }
+    execute_core(builtin, receiver, arguments)
+}
+
+fn execute_core(
+    builtin: Builtin,
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Option<Result<Value, VmError>> {
+    use Builtin::*;
     match builtin {
         Map => Some(constructor_receiver(receiver).and_then(|_| map::map_new(arguments))),
         MapGroupBy => Some(map::map_group_by(arguments)),
         MapGetOrInsert => Some(map::map_get_or_insert(receiver, arguments)),
         MapGetOrInsertComputed => Some(map::map_get_or_insert_computed(receiver, arguments)),
-        Set => Some(constructor_receiver(receiver).and_then(|_| set::set_new(arguments))),
+        Set => Some(Err(crate::value::error::throw_type_error(
+            "Constructor Set requires 'new'",
+        ))),
         MapSet => Some(map::map_set(receiver, arguments)),
         MapSizeGetter => Some(map::map_size(receiver)),
         MapGet => Some(map::map_get(receiver, arguments)),
@@ -41,6 +51,8 @@ pub(crate) fn execute_builtin(
         MapKeys => Some(iterator::from_map_keys(receiver)),
         MapValues => Some(iterator::from_map_values(receiver)),
         SetIterator => Some(iterator::from_set(receiver)),
+        SetEntries => Some(iterator::from_set_entries(receiver)),
+        SetSpeciesGetter => Some(set::set_species(receiver)),
         IteratorNext => Some(iterator::next(receiver)),
         IteratorSelf => Some(iterator_self(receiver)),
         _ => None,
@@ -67,9 +79,9 @@ fn execute_weak(
         Builtin::WeakMapGetOrInsert | Builtin::WeakMapGetOrInsertComputed => {
             weak_map_extended(builtin, receiver, arguments)?
         }
-        Builtin::WeakSet => {
-            constructor_receiver(receiver).and_then(|_| set::weak_set_new(arguments))
-        }
+        Builtin::WeakSet => Err(crate::value::error::throw_type_error(
+            "Constructor WeakSet requires 'new'",
+        )),
         Builtin::WeakSetAdd => set::weak_set_add(receiver, arguments),
         Builtin::WeakSetHas => set::weak_set_has(receiver, arguments),
         Builtin::WeakSetDelete => set::weak_set_delete(receiver, arguments),
