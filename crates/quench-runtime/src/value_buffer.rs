@@ -5,6 +5,7 @@ pub struct ArrayBufferData {
     pub bytes: Rc<RefCell<Vec<u8>>>,
     pub detached: Rc<RefCell<bool>>,
     pub max_byte_length: Option<usize>,
+    pub immutable: bool,
     prototype: RefCell<Option<Value>>,
 }
 
@@ -18,6 +19,7 @@ impl ArrayBufferData {
             bytes: Rc::new(RefCell::new(vec![0; byte_length])),
             detached: Rc::new(RefCell::new(false)),
             max_byte_length: None,
+            immutable: false,
             prototype: RefCell::new(None),
         }
     }
@@ -51,11 +53,20 @@ impl ArrayBufferData {
 
     pub fn resize(&self, byte_length: usize) -> Result<(), ResizeError> {
         let exceeds_maximum = self.max_byte_length.map_or(true, |max| byte_length > max);
-        if *self.detached.borrow() || exceeds_maximum {
+        if *self.detached.borrow() || self.immutable || exceeds_maximum {
             return Err(ResizeError);
         }
         self.bytes.borrow_mut().resize(byte_length, 0);
         Ok(())
+    }
+
+    pub fn transfer_to_immutable(&self) -> ArrayBufferData {
+        let bytes = std::mem::take(&mut *self.bytes.borrow_mut());
+        *self.detached.borrow_mut() = true;
+        let mut buffer = ArrayBufferData::new(0);
+        buffer.bytes = Rc::new(RefCell::new(bytes));
+        buffer.immutable = true;
+        buffer
     }
 }
 
@@ -79,11 +90,27 @@ impl DataViewData {
     }
 
     pub fn byte_length(&self) -> usize {
+        if self.is_length_tracking() {
+            return self.buffer.byte_length().saturating_sub(self.byte_offset);
+        }
         if self.buffer.byte_length() < self.byte_offset + self.byte_length {
             0
         } else {
             self.byte_length
         }
+    }
+
+    pub fn is_length_tracking(&self) -> bool {
+        self.byte_length == usize::MAX
+    }
+
+    pub fn is_out_of_bounds(&self) -> bool {
+        let required = if self.is_length_tracking() {
+            self.byte_offset
+        } else {
+            self.byte_offset.saturating_add(self.byte_length)
+        };
+        self.buffer.byte_length() < required
     }
 
     pub(crate) fn prototype(&self) -> Option<Value> {
@@ -102,10 +129,13 @@ impl DataViewData {
         if self.is_detached() {
             return Err(DataViewError::Detached);
         }
+        if self.is_out_of_bounds() {
+            return Err(DataViewError::ViewOutOfBounds);
+        }
         let end = offset
             .checked_add(width)
             .ok_or(DataViewError::OutOfBounds)?;
-        if end > self.byte_length {
+        if end > self.byte_length() {
             return Err(DataViewError::OutOfBounds);
         }
         self.byte_offset
@@ -276,6 +306,7 @@ impl DataViewData {
 pub enum DataViewError {
     Detached,
     OutOfBounds,
+    ViewOutOfBounds,
 }
 
 fn decode<T, const N: usize>(bytes: [u8; N], little_endian: bool) -> T

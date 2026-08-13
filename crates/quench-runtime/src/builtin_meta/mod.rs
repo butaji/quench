@@ -8,6 +8,7 @@ use crate::ops::Builtin;
 pub mod array;
 pub mod bigint;
 pub mod collections;
+pub mod dataview;
 pub mod date;
 pub mod disposable;
 pub mod function;

@@ -341,6 +341,9 @@ fn is_data_view_builtin(builtin: Builtin) -> bool {
             | Builtin::DataViewSetFloat64
             | Builtin::DataViewSetBigInt64
             | Builtin::DataViewSetBigUint64
+            | Builtin::DataViewBufferGetter
+            | Builtin::DataViewByteLengthGetter
+            | Builtin::DataViewByteOffsetGetter
     )
 }
 fn execute_data_view_builtin(
@@ -349,8 +352,14 @@ fn execute_data_view_builtin(
     arguments: &[Value],
 ) -> Result<Value, VmError> {
     let view = data_view_receiver(receiver)?;
+    if let Some(result) = data_view_accessor(builtin, view) {
+        return result;
+    }
+    if is_data_view_setter(builtin) && view.buffer.immutable {
+        return Err(type_error("Cannot write to an immutable ArrayBuffer"));
+    }
     let offset = data_view_offset(arguments.first())?;
-    if view.is_detached() && !is_bigint_setter(builtin) {
+    if !is_data_view_setter(builtin) && view.is_detached() {
         return Err(type_error("Detached DataView"));
     }
     let endian_argument = if is_data_view_setter(builtin) { 2 } else { 1 };
@@ -359,6 +368,28 @@ fn execute_data_view_builtin(
         return execute_data_view_get(builtin, view, offset, little_endian);
     }
     execute_data_view_set(builtin, view, offset, little_endian, arguments)
+}
+fn data_view_accessor(
+    builtin: Builtin,
+    view: &crate::value::DataViewData,
+) -> Option<Result<Value, VmError>> {
+    let detached = view.is_detached();
+    Some(Ok(match builtin {
+        Builtin::DataViewBufferGetter => Value::ArrayBuffer(view.buffer.clone()),
+        Builtin::DataViewByteLengthGetter => {
+            if detached || view.is_out_of_bounds() {
+                return Some(Err(type_error("Detached DataView")));
+            }
+            Value::Number(view.byte_length() as f64)
+        }
+        Builtin::DataViewByteOffsetGetter => {
+            if detached || view.is_out_of_bounds() {
+                return Some(Err(type_error("Detached DataView")));
+            }
+            Value::Number(view.byte_offset as f64)
+        }
+        _ => return None,
+    }))
 }
 fn data_view_receiver(receiver: Option<&Value>) -> Result<&crate::value::DataViewData, VmError> {
     match receiver {
@@ -431,9 +462,6 @@ fn is_data_view_setter(builtin: Builtin) -> bool {
             | Builtin::DataViewSetBigUint64
     )
 }
-fn is_bigint_setter(builtin: Builtin) -> bool {
-    matches!(builtin, Builtin::DataViewSetBigInt64 | Builtin::DataViewSetBigUint64)
-}
 fn execute_data_view_set(
     builtin: Builtin,
     view: &crate::value::DataViewData,
@@ -487,14 +515,18 @@ fn data_view_offset(value: Option<&Value>) -> Result<usize, VmError> {
     if number.is_nan() {
         return Ok(0);
     }
-    if !number.is_finite() || number < 0.0 {
+    let index = number.trunc();
+    if !index.is_finite() || index < 0.0 {
         return Err(range_error("Offset is outside the bounds of the DataView"));
     }
-    Ok(number.trunc() as usize)
+    Ok(index as usize)
 }
 fn data_view_error(error: crate::value::DataViewError) -> VmError {
     match error {
         crate::value::DataViewError::Detached => type_error("Detached DataView"),
+        crate::value::DataViewError::ViewOutOfBounds => {
+            type_error("DataView is out of bounds")
+        }
         crate::value::DataViewError::OutOfBounds => {
             range_error("Offset is outside the bounds of the DataView")
         }

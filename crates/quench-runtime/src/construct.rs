@@ -392,9 +392,9 @@ fn construct_data_view(arguments: &[Value]) -> Result<Value, crate::execute::VmE
     let available = buffer_length - offset;
     let length = match arguments.get(2) {
         Some(value) => to_index(crate::intl::tolocale::value::to_number(Some(value)))?,
-        None => available,
+        None => view_length(buffer, available),
     };
-    if length > available {
+    if length != usize::MAX && length > available {
         return Err(range_error("Invalid DataView byte length"));
     }
     Ok(Value::DataView(Rc::new(crate::value::DataViewData::new(
