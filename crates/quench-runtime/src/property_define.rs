@@ -69,7 +69,8 @@ fn accessor_value(value: &Value, key: &str, field: &str) -> Option<Value> {
             .upgrade()
             .and_then(|properties| accessor_field(&properties, key, field)),
         Value::Promise(promise) => accessor_field(&promise.properties.borrow(), key, field),
-        Value::BoundFunction(bound) => accessor_bound(bound, key, field),
+        Value::BoundFunction(bound) => accessor_field(&bound.properties.borrow(), key, field)
+            .or_else(|| accessor_bound(bound, key, field)),
         Value::Number(_) => accessor_primitive(Builtin::NumberPrototype, key, field),
         Value::Boolean(_) => accessor_primitive(Builtin::BooleanPrototype, key, field),
         Value::String(value) if crate::conversion::is_symbol_string(value) => {
