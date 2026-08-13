@@ -161,9 +161,9 @@ fn joiners(locale: &str, style: &str, list_type: &str) -> (String, String, Strin
         word.to_string()
     } else if style == "short" {
         if disjunction {
-            " or ".to_string()
+            ", or ".to_string()
         } else {
-            " & ".to_string()
+            ", & ".to_string()
         }
     } else {
         format!(",{}", word)
