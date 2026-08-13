@@ -21,6 +21,7 @@ pub(crate) struct NumberOptions {
     pub minimum_fraction_digits: u32,
     pub maximum_fraction_digits: u32,
     pub use_grouping: bool,
+    pub grouping_min2: bool,
     pub notation: String,
     pub compact_display: String,
     pub rounding_mode: String,
@@ -38,6 +39,7 @@ pub(crate) struct RawOptions {
     minimum_fraction_digits: f64,
     maximum_fraction_digits: f64,
     use_grouping: bool,
+    grouping_min2: bool,
     notation: String,
     compact_display: String,
     rounding_mode: String,
@@ -57,6 +59,7 @@ impl RawOptions {
             minimum_fraction_digits: 0.0,
             maximum_fraction_digits: 3.0,
             use_grouping: true,
+            grouping_min2: false,
             notation: "standard".to_string(),
             compact_display: "short".to_string(),
             rounding_mode: "halfExpand".to_string(),
@@ -79,7 +82,10 @@ impl RawOptions {
                     "maximumFractionDigits" => {
                         raw.maximum_fraction_digits = value.parse().unwrap_or(3.0)
                     }
-                    "useGrouping" => raw.use_grouping = value == "true",
+                    "useGrouping" => {
+                        raw.use_grouping = grouping_enabled(&value);
+                        raw.grouping_min2 = value == "min2";
+                    }
                     "notation" => raw.notation = value,
                     "compactDisplay" => raw.compact_display = value,
                     "roundingMode" => raw.rounding_mode = value,
@@ -129,6 +135,7 @@ impl NumberOptions {
             minimum_fraction_digits,
             maximum_fraction_digits,
             use_grouping: raw.use_grouping,
+            grouping_min2: raw.grouping_min2,
             notation: raw.notation,
             compact_display: raw.compact_display,
             rounding_mode: raw.rounding_mode,
@@ -217,6 +224,10 @@ fn valid_unit(unit: Option<&str>) -> bool {
     matches!(unit, Some("percent" | "kilometer" | "kilometer-per-hour"))
 }
 
+fn grouping_enabled(value: &str) -> bool {
+    matches!(value, "true" | "always" | "auto")
+}
+
 fn fraction_digits(style: &str, currency: Option<&str>, requested: f64) -> u32 {
     match style {
         "percent" => 0,
@@ -279,6 +290,7 @@ impl NumberOptions {
             maximum_fraction_digits: slot_number(slots, "maximumFractionDigits").unwrap_or(3.0)
                 as u32,
             use_grouping: slot_bool(slots, "useGrouping").unwrap_or(true),
+            grouping_min2: false,
             notation: slot_string(slots, "notation").unwrap_or_else(|| "standard".to_string()),
             compact_display: slot_string(slots, "compactDisplay")
                 .unwrap_or_else(|| "short".to_string()),
@@ -323,6 +335,7 @@ impl NumberOptions {
         let mut text = format_number_rounded(value, fraction_digits, self.rounding_increment);
         if scientific.is_none()
             && self.use_grouping
+            && (!self.grouping_min2 || scaled.abs() >= 10_000.0)
             && (self.notation != "compact" || (compact_unscaled_de && scaled.abs() >= 10_000.0))
         {
             text = group_integer_locale(&text, &self.locale);
