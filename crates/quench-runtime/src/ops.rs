@@ -396,6 +396,8 @@ pub enum Builtin {
     IntlDateTimeFormatSupportedLocalesOf,
     IntlDateTimeFormatFormat,
     IntlDateTimeFormatFormatToParts,
+    IntlDateTimeFormatFormatRange,
+    IntlDateTimeFormatFormatRangeToParts,
     IntlDateTimeFormatResolvedOptions,
     IntlCollator,
     IntlCollatorCompare,
