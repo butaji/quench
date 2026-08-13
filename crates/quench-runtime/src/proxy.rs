@@ -192,7 +192,9 @@ pub(crate) fn proxy_has(target: &Value, prop: &str) -> Result<Value, VmError> {
             );
         }
     }
-    Ok(Value::Boolean(has_own_property(target, prop)))
+    Ok(Value::Boolean(crate::with_scope::has_property(
+        target, prop,
+    )?))
 }
 
 pub(crate) fn proxy_delete(target: &Value, prop: &str) -> Result<Value, VmError> {
@@ -390,28 +392,6 @@ pub(crate) fn proxy_own_keys(target: &Value) -> Result<Value, VmError> {
         target => target,
     };
     crate::own_keys::all(target)
-}
-
-fn has_own_property(target: &Value, prop: &str) -> bool {
-    match target {
-        Value::Object(properties) => properties.iter().any(|(name, _)| name == prop),
-        Value::Array(values) => {
-            prop == "length" || prop.parse::<usize>().is_ok_and(|i| i < values.len())
-        }
-        Value::String(value) => {
-            prop == "length"
-                || prop
-                    .parse::<usize>()
-                    .is_ok_and(|i| i < value.chars().count())
-        }
-        Value::Builtin(builtin) => {
-            crate::builtins::object::has_own_property(
-                Some(&Value::Builtin(*builtin)),
-                Some(&Value::String(prop.to_string())),
-            ) == Value::Boolean(true)
-        }
-        _ => false,
-    }
 }
 
 pub fn builtin(builtin: Builtin, arguments: &[Value]) -> Result<Value, VmError> {
