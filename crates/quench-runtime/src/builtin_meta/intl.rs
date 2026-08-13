@@ -61,6 +61,10 @@ const fn intl_name_group_a(b: Builtin) -> Option<&'static str> {
         Builtin::IntlDateTimeFormatFormatToParts => {
             Some("Intl.DateTimeFormat.prototype.formatToParts")
         }
+        Builtin::IntlDateTimeFormatFormatRange => Some("Intl.DateTimeFormat.prototype.formatRange"),
+        Builtin::IntlDateTimeFormatFormatRangeToParts => {
+            Some("Intl.DateTimeFormat.prototype.formatRangeToParts")
+        }
         Builtin::IntlDateTimeFormatResolvedOptions => {
             Some("Intl.DateTimeFormat.prototype.resolvedOptions")
         }
@@ -134,7 +138,10 @@ const fn intl_fn_len(b: Builtin) -> Option<f64> {
         | Builtin::IntlDisplayNamesOf
         | Builtin::IntlDisplayNamesResolvedOptions => Some(0.0),
         Builtin::IntlNumberFormatFormatToParts => Some(1.0),
-        Builtin::IntlNumberFormatFormatRange | Builtin::IntlNumberFormatFormatRangeToParts => {
+        Builtin::IntlNumberFormatFormatRange
+        | Builtin::IntlNumberFormatFormatRangeToParts
+        | Builtin::IntlDateTimeFormatFormatRange
+        | Builtin::IntlDateTimeFormatFormatRangeToParts => {
             Some(2.0)
         }
         Builtin::IntlListFormatFormat
@@ -182,6 +189,8 @@ const fn intl_short_name(b: Builtin) -> Option<&'static str> {
         Builtin::IntlPluralRulesResolvedOptions => Some("resolvedOptions"),
         Builtin::IntlDateTimeFormatFormat => Some("format"),
         Builtin::IntlDateTimeFormatFormatToParts => Some("formatToParts"),
+        Builtin::IntlDateTimeFormatFormatRange => Some("formatRange"),
+        Builtin::IntlDateTimeFormatFormatRangeToParts => Some("formatRangeToParts"),
         Builtin::IntlDateTimeFormatResolvedOptions => Some("resolvedOptions"),
         Builtin::IntlCollatorCompare => Some("compare"),
         Builtin::IntlCollatorResolvedOptions => Some("resolvedOptions"),
