@@ -3,7 +3,7 @@ use crate::{
     ops::Op,
     value::{ObjectData, Value},
 };
-use std::{collections::HashMap, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 pub(crate) fn reduce(
     expression: &oxc::ast::ast::NewExpression<'_>,
     ops: &mut Vec<Op>,
@@ -252,6 +252,7 @@ fn construct_regexp(arguments: &[Value]) -> Result<Value, crate::execute::VmErro
     let flags = arguments
         .get(1)
         .map_or_else(|| Ok(String::new()), crate::conversion::to_string)?;
+    let last_index = Value::BindingCell(Rc::new(RefCell::new(Value::Number(0.0))));
     let mut entries = vec![
         (
             "\0prototype".to_string(),
@@ -267,7 +268,7 @@ fn construct_regexp(arguments: &[Value]) -> Result<Value, crate::execute::VmErro
             crate::builtins::descriptor_key("flags"),
             regexp_data_descriptor(false, true, Value::String(flags.clone())),
         ),
-        ("lastIndex".to_string(), Value::Number(0.0)),
+        ("lastIndex".to_string(), last_index),
         (
             crate::builtins::descriptor_key("lastIndex"),
             regexp_data_descriptor(true, false, Value::Number(0.0)),

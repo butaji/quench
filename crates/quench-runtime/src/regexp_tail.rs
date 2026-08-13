@@ -20,7 +20,7 @@ fn regex_receiver<'a>(receiver: Option<&'a Value>, method: &str) -> Result<&'a V
 
 /// Extract the owned source/flags and compile a regress regex for `receiver`.
 fn compiled_regex(receiver: &Value) -> Result<(regress::Regex, String), VmError> {
-    let (source, flags, _) = extract_regex_parts(receiver);
+    let (source, flags, _) = extract_regex_parts(receiver)?;
     let pattern = if source.is_empty() { "(?:)" } else { &source };
     let re = compile(pattern, &build_re_flags(&flags)).map_err(VmError::EvalError)?;
     Ok((re, flags))
@@ -49,10 +49,10 @@ fn symbol_match(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, 
 }
 
 fn symbol_match_global(receiver: &Value, s: &str) -> Result<Value, VmError> {
-    set_last_index(receiver, 0.0);
+    set_last_index(receiver, 0.0)?;
     let mut matched = Vec::new();
     loop {
-        let previous = extract_last_index(receiver) as usize;
+        let previous = extract_last_index(receiver)?;
         let result = exec(Some(receiver), &[Value::String(s.to_string())])?;
         let Value::Object(props) = result else { break };
         let full = props
@@ -61,8 +61,8 @@ fn symbol_match_global(receiver: &Value, s: &str) -> Result<Value, VmError> {
             .map_or(Value::Undefined, |(_, value)| value.clone());
         matched.push(full.clone());
         let empty = matches!(&full, Value::String(value) if value.is_empty());
-        if empty && extract_last_index(receiver) as usize <= previous {
-            set_last_index(receiver, (previous + 1) as f64);
+        if empty && extract_last_index(receiver)? <= previous {
+            set_last_index(receiver, (previous + 1) as f64)?;
         }
     }
     let result = Value::array(matched);
@@ -75,7 +75,7 @@ fn symbol_match_global(receiver: &Value, s: &str) -> Result<Value, VmError> {
 fn symbol_search(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let receiver = regex_receiver(receiver, "@@search")?;
     let _ = to_string_argument(arguments)?;
-    set_last_index(receiver, 0.0);
+    set_last_index(receiver, 0.0)?;
     let result = exec(Some(receiver), arguments)?;
     let Value::Object(props) = result else { return Ok(Value::Number(-1.0)) };
     let index = match props.iter().find(|(key, _)| key == "index") {
@@ -331,13 +331,6 @@ fn match_all_start(receiver: &Value, input: &str) -> Result<usize, VmError> {
     Ok(utf16_byte_index(input, index))
 }
 
-fn to_length(value: f64) -> usize {
-    if !value.is_finite() || value <= 0.0 {
-        return 0;
-    }
-    value.floor().min(9_007_199_254_740_991.0) as usize
-}
-
 fn utf16_byte_index(text: &str, index: usize) -> usize {
     let mut units = 0;
     for (byte, character) in text.char_indices() {
@@ -353,20 +346,7 @@ fn utf16_byte_index(text: &str, index: usize) -> usize {
 }
 
 fn match_row(input: &str, rest: &str, m: &regress::Match) -> Value {
-    let mut values: Vec<Value> = m
-        .groups()
-        .map(|group| match group {
-            Some(range) => Value::String(rest[range.start..range.end].to_string()),
-            None => Value::Undefined,
-        })
-        .collect();
-    if values.is_empty() {
-        values.push(Value::String(rest[m.start()..m.end()].to_string()));
-    }
-    let index = (input.len() - rest.len() + m.start()) as f64;
-    crate::builtins::set_property(
-        crate::builtins::set_property(Value::array(values), "index", Value::Number(index)),
-        "input",
-        Value::String(input.to_string()),
-    )
+    let values = match_values(rest, m, 0);
+    let index = Value::Number((input.len() - rest.len() + m.start()) as f64);
+    match_result(values, index, input)
 }
