@@ -162,6 +162,18 @@ fn propagate_default(result: &Rc<PromiseData>, state: &PromiseState, value: Valu
 }
 
 fn adopt_promise(result: &Rc<PromiseData>, next: &Rc<PromiseData>) {
+    if Rc::ptr_eq(result, next) {
+        reject_promise(
+            result,
+            crate::builtins::error(
+                Builtin::TypeError,
+                &[Value::String(
+                    "promise cannot resolve to itself".to_string(),
+                )],
+            ),
+        );
+        return;
+    }
     match next.state.borrow().clone() {
         PromiseState::Fulfilled(value) => resolve_promise(result, value),
         PromiseState::Rejected(reason) => reject_promise(result, reason),
