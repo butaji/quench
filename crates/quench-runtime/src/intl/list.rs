@@ -125,6 +125,9 @@ fn part(kind: &str, value: &str) -> Value {
 }
 
 fn joiner_for(index: usize, length: usize, joiners: &(String, String, String)) -> &str {
+    if length == 2 {
+        return &joiners.1;
+    }
     if index == length - 1 {
         &joiners.2
     } else {
@@ -136,9 +139,14 @@ fn joiners(locale: &str, style: &str, list_type: &str) -> (String, String, Strin
     if list_type == "unit" {
         return (", ".to_string(), ", ".to_string(), ", ".to_string());
     }
+    if style == "narrow" {
+        return (" ".to_string(), " ".to_string(), " ".to_string());
+    }
     let spanish = locale.starts_with("es");
     let disjunction = list_type == "disjunction";
-    let word = if disjunction {
+    let word = if style == "short" && !spanish && !disjunction {
+        " & "
+    } else if disjunction {
         if spanish {
             " o "
         } else {
@@ -149,14 +157,23 @@ fn joiners(locale: &str, style: &str, list_type: &str) -> (String, String, Strin
     } else {
         " and "
     };
-    let final_word = if style == "narrow" { " " } else { word };
-    let comma = if style == "narrow" { " " } else { ", " };
-    let final_joiner = if spanish || style != "long" {
-        format!("{}{}", comma, final_word.trim())
+    let final_joiner = if style == "short" && !spanish {
+        if disjunction {
+            " or ".to_string()
+        } else {
+            " & ".to_string()
+        }
+    } else if spanish {
+        format!(",{}", word.trim_start())
     } else {
-        format!(",{}", final_word)
+        format!(",{}", word)
     };
-    (comma.to_string(), word.to_string(), final_joiner)
+    let middle = if style == "short" && !spanish {
+        ", ".to_string()
+    } else {
+        ", ".to_string()
+    };
+    (middle, word.to_string(), final_joiner)
 }
 
 fn format_list(items: &[String], locale: &str, style: &str, list_type: &str) -> String {
