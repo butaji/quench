@@ -256,15 +256,15 @@ fn host_capability_property(value: &Value, capability: HostCapabilityRef, key: &
     property
 }
 fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
-    if builtin != Builtin::FunctionPrototype && matches!(key, "apply" | "call" | "bind") {
-        return bind_function_property(value, key);
-    }
     let property = builtin_property(builtin, key);
     if matches!(key, "prototype" | "constructor") {
         return property;
     }
     if !matches!(property, Value::Undefined) {
         return property;
+    }
+    if builtin != Builtin::FunctionPrototype && matches!(key, "apply" | "call" | "bind") {
+        return bind_function_property(value, key);
     }
     if crate::builtin_meta::is_prototype(builtin) {
         return crate::builtins::property(Builtin::ObjectPrototype, key);
