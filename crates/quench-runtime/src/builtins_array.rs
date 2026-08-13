@@ -134,6 +134,12 @@ fn define_array_descriptor(target: &mut Value, key: &str, descriptor: Vec<(Strin
             Rc::make_mut(&mut values).disconnect_index(index as usize);
         }
     }
+    if let Some(index) = crate::arrays::array_index(key) {
+        let data = Rc::make_mut(&mut values);
+        if index as usize >= data.logical_len() {
+            data.set_length(index as usize + 1);
+        }
+    }
     Rc::make_mut(&mut values).define_descriptor(
         key,
         Value::Object(Rc::new(crate::value::ObjectData::new(descriptor))),
