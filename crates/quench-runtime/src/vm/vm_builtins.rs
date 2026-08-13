@@ -256,7 +256,7 @@ pub(crate) fn realm_id_for_intrinsic_receiver(receiver: Option<&Value>) -> Optio
     };
     realm::id_for_token(token)
 }
-fn explicit_number(value: Option<&Value>) -> Result<f64, VmError> {
+pub(crate) fn explicit_number(value: Option<&Value>) -> Result<f64, VmError> {
     let Some(value) = value else {
         return Ok(0.0);
     };
