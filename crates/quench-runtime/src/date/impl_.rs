@@ -154,7 +154,13 @@ fn date_constructor(arguments: &[Value]) -> Result<Value, VmError> {
         let year = chrono_utils::normalize_constructor_year(year);
         chrono_utils::make_local_ms(year, month, day, hour, minute, second, ms_val)
     };
-    let props = vec![("timeValue".to_string(), super::time_property(ms))];
+    let props = vec![
+        ("timeValue".to_string(), super::time_property(ms)),
+        (
+            "\0prototype".to_string(),
+            Value::Builtin(Builtin::DatePrototype),
+        ),
+    ];
     Ok(Value::Object(Rc::new(crate::value::ObjectData::new(props))))
 }
 

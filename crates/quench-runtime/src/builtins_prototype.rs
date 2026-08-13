@@ -86,6 +86,9 @@ fn string_tag(value: &Value) -> Option<String> {
 }
 
 fn boxed_object_tag(properties: &crate::value::ObjectData) -> Option<&'static str> {
+    if properties.iter().any(|(key, _)| key == "timeValue") {
+        return Some("Date");
+    }
     let value = properties
         .iter()
         .rev()
