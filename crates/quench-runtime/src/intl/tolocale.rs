@@ -144,10 +144,17 @@ pub(crate) mod value {
         if matches!(value, "INFINITY" | "infinity" | "+infinity" | "-infinity") {
             return f64::NAN;
         }
-        for (prefix, radix) in [("0b", 2), ("0o", 8), ("0x", 16)] {
-            if let Some(digits) = value.strip_prefix(prefix) {
-                return i64::from_str_radix(digits, radix).map_or(f64::NAN, |n| n as f64);
-            }
+        let Some((prefix, digits)) = value.get(0..2).map(|prefix| (prefix, &value[2..])) else {
+            return value.parse().unwrap_or(f64::NAN);
+        };
+        let radix = match prefix {
+            "0b" | "0B" => Some(2),
+            "0o" | "0O" => Some(8),
+            "0x" | "0X" => Some(16),
+            _ => None,
+        };
+        if let Some(radix) = radix {
+            return i64::from_str_radix(digits, radix).map_or(f64::NAN, |n| n as f64);
         }
         value.parse().unwrap_or(f64::NAN)
     }
