@@ -295,7 +295,31 @@ pub(crate) fn proxy_set_prototype_of(target: &Value, prototype: &Value) -> Resul
             return Ok(Value::Boolean(crate::execute::is_truthy(&result)));
         }
     }
-    Ok(prototype.clone())
+    if prototype_matches(target, prototype)? {
+        return Ok(Value::Boolean(true));
+    }
+    if !crate::properties::object_is_extensible(target) || prototype_contains(prototype, target)? {
+        return Ok(Value::Boolean(false));
+    }
+    let updated = crate::builtins::object::set_prototype_of(&[target.clone(), prototype.clone()])?;
+    crate::locals::replace_value(target, &updated);
+    Ok(Value::Boolean(true))
+}
+
+fn prototype_matches(target: &Value, prototype: &Value) -> Result<bool, VmError> {
+    let current = crate::builtins::object::get_prototype_of(Some(target))?;
+    Ok(crate::builtins::same_value(Some(&current), Some(prototype)))
+}
+
+fn prototype_contains(prototype: &Value, target: &Value) -> Result<bool, VmError> {
+    let mut current = prototype.clone();
+    while !matches!(current, Value::Null) {
+        if crate::builtins::same_value(Some(&current), Some(target)) {
+            return Ok(true);
+        }
+        current = crate::builtins::object::get_prototype_of(Some(&current))?;
+    }
+    Ok(false)
 }
 
 pub(crate) fn proxy_is_extensible(target: &Value) -> Result<Value, VmError> {
