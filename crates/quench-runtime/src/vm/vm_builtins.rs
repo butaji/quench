@@ -159,7 +159,7 @@ fn execute_simple_builtin(
 }
 fn boolean_or_number_string(
     receiver: Option<&Value>,
-    _arguments: &[Value],
+    arguments: &[Value],
 ) -> Result<Value, VmError> {
     if let Some(value) = boolean_receiver(receiver) {
         return Ok(Value::String(value.to_string()));
@@ -169,7 +169,40 @@ fn boolean_or_number_string(
             "Number.prototype.toString called on incompatible receiver",
         ));
     };
-    Ok(Value::String(crate::conversion::number_to_string(value)))
+    let radix = radix(arguments.first())?;
+    Ok(Value::String(number_to_string(value, radix)))
+}
+
+fn radix(value: Option<&Value>) -> Result<u32, VmError> {
+    let Some(value) = value.filter(|value| !matches!(value, Value::Undefined)) else {
+        return Ok(10);
+    };
+    let radix = crate::conversion::to_number(value)?.trunc();
+    if !(2.0..=36.0).contains(&radix) {
+        return Err(crate::value::error::throw_range_error("Invalid radix"));
+    }
+    Ok(radix as u32)
+}
+
+fn number_to_string(value: f64, radix: u32) -> String {
+    if radix == 10 || !value.is_finite() || value.fract() != 0.0 {
+        return crate::conversion::number_to_string(value);
+    }
+    let sign = if value.is_sign_negative() { "-" } else { "" };
+    format!("{sign}{}", radix_digits(value.abs() as u64, radix))
+}
+
+fn radix_digits(mut value: u64, radix: u32) -> String {
+    if value == 0 {
+        return "0".to_string();
+    }
+    let mut digits = Vec::new();
+    while value != 0 {
+        let digit = (value % u64::from(radix)) as u8;
+        digits.push(char::from(if digit < 10 { b'0' + digit } else { b'a' + digit - 10 }));
+        value /= u64::from(radix);
+    }
+    digits.iter().rev().collect()
 }
 fn boolean_receiver(receiver: Option<&Value>) -> Option<bool> {
     match receiver {

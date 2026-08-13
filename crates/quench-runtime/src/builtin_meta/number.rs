@@ -29,13 +29,13 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         | Builtin::NumberIsInteger
         | Builtin::NumberIsSafeInteger => Some(1.0),
         Builtin::ParseInt => Some(2.0),
-        Builtin::NumberToString
-        | Builtin::BooleanToString
-        | Builtin::NumberValueOf
-        | Builtin::NumberToLocaleString => Some(0.0),
-        Builtin::NumberToFixed | Builtin::NumberToPrecision | Builtin::NumberToExponential => {
-            Some(1.0)
+        Builtin::BooleanToString | Builtin::NumberValueOf | Builtin::NumberToLocaleString => {
+            Some(0.0)
         }
+        Builtin::NumberToString
+        | Builtin::NumberToFixed
+        | Builtin::NumberToPrecision
+        | Builtin::NumberToExponential => Some(1.0),
         _ => None,
     }
 }
