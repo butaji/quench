@@ -10,9 +10,16 @@ use super::{
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
     let locale = locales.first().cloned().unwrap_or_else(default_locale);
+    let mut usage = "sort".to_string();
     let mut sensitivity = "variant".to_string();
     let mut ignore_punctuation = locale.starts_with("th");
     if let Some(Value::Object(properties)) = arguments.get(1) {
+        if let Some((_, value)) = properties.iter().find(|(name, _)| name == "usage") {
+            usage = to_string_value(value);
+            if !matches!(usage.as_str(), "sort" | "search") {
+                return Err(runtime_error("RangeError: invalid usage"));
+            }
+        }
         if let Some((_, value)) = properties.iter().find(|(name, _)| name == "sensitivity") {
             sensitivity = to_string_value(value);
             if !matches!(sensitivity.as_str(), "base" | "accent" | "case" | "variant") {
@@ -39,6 +46,7 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             SLOT.to_string(),
             make_object(vec![
                 ("locale".to_string(), Value::String(locale)),
+                ("usage".to_string(), Value::String(usage)),
                 ("sensitivity".to_string(), Value::String(sensitivity)),
                 (
                     "ignorePunctuation".to_string(),
@@ -64,7 +72,10 @@ pub(crate) fn prototype_method(
         }
         crate::ops::Builtin::IntlCollatorResolvedOptions => Ok(make_object(vec![
             ("locale".to_string(), Value::String(locale)),
-            ("usage".to_string(), Value::String("sort".to_string())),
+            (
+                "usage".to_string(),
+                Value::String(slot_string(&slots, "usage").unwrap_or_else(|| "sort".to_string())),
+            ),
             (
                 "sensitivity".to_string(),
                 Value::String(
