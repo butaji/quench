@@ -220,7 +220,12 @@ fn sum_precise(value: Option<&Value>) -> Result<Value, crate::execute::VmError> 
         sum = total;
         Ok(())
     })?;
-    Ok(Value::Number(sum + compensation))
+    let result = if compensation == 0.0 {
+        sum
+    } else {
+        sum + compensation
+    };
+    Ok(Value::Number(result))
 }
 
 fn unary(numbers: &[f64], operation: fn(f64) -> f64) -> f64 {
