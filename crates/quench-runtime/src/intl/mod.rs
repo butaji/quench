@@ -169,10 +169,16 @@ fn segmenter_supported_locales_of(arguments: &[Value]) -> Result<Value, VmError>
     Ok(make_array(
         locales
             .into_iter()
-            .filter(|locale| locale == "en" || locale.starts_with("en-") || locale == "sr")
+            .filter(|locale| supported_segmenter_locale(locale))
             .map(Value::String)
             .collect(),
     ))
+}
+
+fn supported_segmenter_locale(locale: &str) -> bool {
+    ["de", "en", "sr", "zh"]
+        .iter()
+        .any(|language| locale == *language || locale.starts_with(&format!("{language}-")))
 }
 
 fn requested_locales(arguments: &[Value]) -> Result<Vec<String>, VmError> {
