@@ -53,6 +53,9 @@ pub fn execute(
     if builtin == Builtin::DateToPrimitive {
         return Some(date_to_primitive(receiver, arguments));
     }
+    if builtin == Builtin::DateToJSON {
+        return Some(date_to_json(receiver));
+    }
     let result = match builtin {
         Builtin::DateNow => Value::Number(chrono_utils::current_time_ms()),
         Builtin::DateParse => date_parse(arguments),
@@ -202,6 +205,20 @@ fn date_to_primitive(receiver: Option<&Value>, arguments: &[Value]) -> Result<Va
         _ => return Err(crate::value::error::throw_type_error("Invalid hint")),
     };
     crate::conversion::ordinary_to_primitive(receiver, hint)
+}
+
+fn date_to_json(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let receiver = receiver
+        .filter(|value| !matches!(value, Value::Null | Value::Undefined))
+        .ok_or_else(|| {
+            crate::value::error::throw_type_error("Cannot convert undefined or null to object")
+        })?;
+    let primitive = crate::conversion::to_primitive(receiver, "number")?;
+    if matches!(primitive, Value::Number(number) if !number.is_finite()) {
+        return Ok(Value::Null);
+    }
+    let method = crate::execute::get_property_result(receiver, "toISOString")?;
+    crate::functions::execute_target(&method, receiver, &[])
 }
 
 fn date_value_of(receiver: Option<&Value>) -> Value {
