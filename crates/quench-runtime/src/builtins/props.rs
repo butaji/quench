@@ -75,6 +75,12 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (AsyncDisposableStackPrototype, "constructor") => {
             Some(Value::Builtin(AsyncDisposableStack))
         }
+        (AsyncDisposableStackPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("AsyncDisposableStack".into()))
+        }
+        (AsyncDisposableStackPrototype, k) => {
+            crate::builtin_meta::disposable::async_property(k).map(Value::Builtin)
+        }
         (DisposableStackPrototype, "Symbol.dispose") => {
             Some(Value::Builtin(DisposableStackDispose))
         }
