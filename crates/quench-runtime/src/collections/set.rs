@@ -29,6 +29,7 @@ pub fn property(key: &str) -> Value {
         "clear" => Value::Builtin(Builtin::SetClear),
         "forEach" => Value::Builtin(Builtin::SetForEach),
         "keys" | "values" => Value::Builtin(Builtin::SetIterator),
+        "entries" => Value::Builtin(Builtin::SetEntries),
         "difference" => Value::Builtin(Builtin::SetDifference),
         "intersection" => Value::Builtin(Builtin::SetIntersection),
         "symmetricDifference" => Value::Builtin(Builtin::SetSymmetricDifference),
@@ -47,6 +48,10 @@ pub fn property(key: &str) -> Value {
         }
         _ => Value::Undefined,
     }
+}
+
+pub(crate) fn set_species(receiver: Option<&Value>) -> Result<Value, VmError> {
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
 pub(crate) fn set_size(receiver: Option<&Value>) -> Result<Value, VmError> {
@@ -87,14 +92,11 @@ pub(crate) fn set_new(arguments: &[Value]) -> Result<Value, VmError> {
             "Set.prototype.add is not callable",
         ));
     }
-    let set = std::cell::RefCell::new(set);
     crate::collections::iterator::for_each_iterable(iterable, |value| {
-        let current = set.borrow().clone();
-        let result = crate::functions::execute_target(&adder, &current, &[value])?;
-        *set.borrow_mut() = result;
+        crate::functions::execute_target(&adder, &set, &[value])?;
         Ok(())
     })?;
-    Ok(set.into_inner())
+    Ok(set)
 }
 
 pub(crate) fn weak_set_new(arguments: &[Value]) -> Result<Value, VmError> {
@@ -130,11 +132,11 @@ pub(crate) fn weak_set_new(arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 fn weak_set_from_iterable(iterable: Value) -> Result<Value, VmError> {
-    let set = std::cell::RefCell::new(Value::Set(Rc::new(SetData {
+    let set = Value::Set(Rc::new(SetData {
         weak: true,
         values: std::cell::RefCell::new(VecDeque::new()),
         prototype: std::cell::RefCell::new(None),
-    })));
+    }));
     let adder =
         crate::execute::get_property_result(&Value::Builtin(Builtin::WeakSetPrototype), "add")?;
     if !crate::conversion::is_callable(&adder) {
@@ -143,17 +145,13 @@ fn weak_set_from_iterable(iterable: Value) -> Result<Value, VmError> {
         ));
     }
     crate::collections::iterator::for_each_iterable(iterable, |value| {
-        let current = set.borrow().clone();
-        let result = crate::functions::execute_target(&adder, &current, &[value])?;
-        if matches!(result, Value::Set(_)) {
-            *set.borrow_mut() = result;
-        }
+        crate::functions::execute_target(&adder, &set, &[value])?;
         Ok(())
     })?;
-    Ok(set.into_inner())
+    Ok(set)
 }
 
-fn populate_weak_set(mut set: Value) -> Result<Value, VmError> {
+fn populate_weak_set(set: Value) -> Result<Value, VmError> {
     let adder =
         crate::execute::get_property_result(&Value::Builtin(Builtin::WeakSetPrototype), "add")?;
     if !crate::conversion::is_callable(&adder) {
@@ -166,10 +164,7 @@ fn populate_weak_set(mut set: Value) -> Result<Value, VmError> {
         _ => Vec::new(),
     };
     for value in values {
-        let result = crate::functions::execute_target(&adder, &set, &[value])?;
-        if matches!(result, Value::Set(_)) {
-            set = result;
-        }
+        crate::functions::execute_target(&adder, &set, &[value])?;
     }
     Ok(set)
 }
@@ -178,45 +173,46 @@ pub(crate) fn weak_set_add(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
-    require_weak(receiver)?;
+    let data = require_weak(receiver)?;
     require_object(arguments.first())?;
-    set_add(receiver, arguments)
+    set_add_value(data, arguments)
 }
 
 pub(crate) fn weak_set_has(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
-    require_weak(receiver)?;
+    let data = require_weak(receiver)?;
     if let Some(value) = arguments.first() {
         if !is_weakly_holdable(value) {
             return Ok(Value::Boolean(false));
         }
     }
-    set_has(receiver, arguments)
+    Ok(set_has_value(data, arguments))
 }
 
 pub(crate) fn weak_set_delete(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
-    require_weak(receiver)?;
+    let data = require_weak(receiver)?;
     if let Some(value) = arguments.first() {
         if !is_weakly_holdable(value) {
             return Ok(Value::Boolean(false));
         }
     }
-    set_delete(receiver, arguments)
+    Ok(set_delete_value(data, arguments))
 }
 
-fn require_weak(receiver: Option<&Value>) -> Result<(), VmError> {
-    if matches!(receiver, Some(Value::Set(data)) if data.weak) {
-        Ok(())
-    } else {
-        Err(crate::value::error::throw_type_error(
-            "WeakSet method called on incompatible receiver",
-        ))
+fn require_weak(receiver: Option<&Value>) -> Result<&Rc<SetData>, VmError> {
+    if let Some(Value::Set(data)) = receiver {
+        if data.weak {
+            return Ok(data);
+        }
     }
+    Err(crate::value::error::throw_type_error(
+        "WeakSet method called on incompatible receiver",
+    ))
 }
 
 fn require_object(value: Option<&Value>) -> Result<(), VmError> {
@@ -234,12 +230,23 @@ fn is_weakly_holdable(value: &Value) -> bool {
         || matches!(value, Value::String(text) if text.starts_with("Symbol.") && !text.starts_with("Symbol.for.") && text.contains('\0'))
 }
 
-pub(crate) fn set_add(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let Some(Value::Set(data)) = receiver else {
+fn require_set(receiver: Option<&Value>) -> Result<&Rc<SetData>, VmError> {
+    let Some(Value::Set(data)) =
+        receiver.filter(|value| matches!(value, Value::Set(data) if !data.weak))
+    else {
         return Err(crate::value::error::throw_type_error(
             "Set method called on incompatible receiver",
         ));
     };
+    Ok(data)
+}
+
+pub(crate) fn set_add(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    let data = require_set(receiver)?;
+    set_add_value(data, arguments)
+}
+
+fn set_add_value(data: &Rc<SetData>, arguments: &[Value]) -> Result<Value, VmError> {
     let Some(value) = arguments.first() else {
         return Ok(Value::Undefined);
     };
@@ -251,49 +258,43 @@ pub(crate) fn set_add(receiver: Option<&Value>, arguments: &[Value]) -> Result<V
 }
 
 pub(crate) fn set_has(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let Some(Value::Set(data)) = receiver else {
-        return Err(crate::value::error::throw_type_error(
-            "Set method called on incompatible receiver",
-        ));
-    };
+    let data = require_set(receiver)?;
+    Ok(set_has_value(data, arguments))
+}
+
+fn set_has_value(data: &Rc<SetData>, arguments: &[Value]) -> Value {
     let Some(value) = arguments.first() else {
-        return Ok(Value::Boolean(false));
+        return Value::Boolean(false);
     };
-    Ok(Value::Boolean(
+    Value::Boolean(
         data.values
             .borrow()
             .iter()
             .any(|v| same_value_zero(v, value)),
-    ))
+    )
 }
 
 pub(crate) fn set_delete(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let Some(Value::Set(data)) = receiver else {
-        return Err(crate::value::error::throw_type_error(
-            "Set method called on incompatible receiver",
-        ));
-    };
+    let data = require_set(receiver)?;
+    Ok(set_delete_value(data, arguments))
+}
+
+fn set_delete_value(data: &Rc<SetData>, arguments: &[Value]) -> Value {
     let Some(value) = arguments.first() else {
-        return Ok(Value::Boolean(false));
+        return Value::Boolean(false);
     };
     let mut values = data.values.borrow_mut();
     if let Some(pos) = values.iter().position(|v| same_value_zero(v, value)) {
         values.remove(pos);
-        Ok(Value::Boolean(true))
+        Value::Boolean(true)
     } else {
-        Ok(Value::Boolean(false))
+        Value::Boolean(false)
     }
 }
 
 pub(crate) fn set_clear(receiver: Option<&Value>) -> Result<Value, VmError> {
-    if !matches!(receiver, Some(Value::Set(_))) {
-        return Err(crate::value::error::throw_type_error(
-            "Set method called on incompatible receiver",
-        ));
-    }
-    if let Some(Value::Set(data)) = receiver {
-        data.values.borrow_mut().clear();
-    }
+    let data = require_set(receiver)?;
+    data.values.borrow_mut().clear();
     Ok(Value::Undefined)
 }
 

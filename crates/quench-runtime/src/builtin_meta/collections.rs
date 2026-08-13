@@ -12,6 +12,7 @@ pub fn collections_property(builtin: Builtin, key: &str) -> Option<Value> {
         return map_property(key);
     }
     match (builtin, key) {
+        (SetPrototype, "constructor") => Some(Value::Builtin(Set)),
         (SetPrototype, "size") => Some(Value::Builtin(SetSizeGetter)),
         (SetPrototype, "Symbol.toStringTag") => Some(Value::String("Set".into())),
         (SetPrototype, "add") => Some(Value::Builtin(SetAdd)),
@@ -21,6 +22,7 @@ pub fn collections_property(builtin: Builtin, key: &str) -> Option<Value> {
         (SetPrototype, "forEach") => Some(Value::Builtin(SetForEach)),
         (SetPrototype, "keys") => Some(Value::Builtin(SetIterator)),
         (SetPrototype, "values") => Some(Value::Builtin(SetIterator)),
+        (SetPrototype, "entries") => Some(Value::Builtin(SetEntries)),
         (SetPrototype, "Symbol.iterator") => Some(Value::Builtin(SetIterator)),
         (SetPrototype, "difference") => Some(Value::Builtin(SetDifference)),
         (SetPrototype, "intersection") => Some(Value::Builtin(SetIntersection)),
@@ -76,6 +78,9 @@ fn weak_set_property(key: &str) -> Option<Value> {
 }
 
 pub const fn fn_name(b: Builtin) -> Option<&'static str> {
+    if let Some(name) = set_fn_name(b) {
+        return Some(name);
+    }
     match b {
         Builtin::IteratorSelf => Some("Iterator.prototype[Symbol.iterator]"),
         Builtin::MapSet => Some("Map.prototype.set"),
@@ -88,20 +93,6 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
         Builtin::MapEntries => Some("Map.prototype.entries"),
         Builtin::MapKeys => Some("Map.prototype.keys"),
         Builtin::MapValues => Some("Map.prototype.values"),
-        Builtin::SetAdd => Some("Set.prototype.add"),
-        Builtin::SetSizeGetter => Some("get size"),
-        Builtin::SetHas => Some("Set.prototype.has"),
-        Builtin::SetDelete => Some("Set.prototype.delete"),
-        Builtin::SetClear => Some("Set.prototype.clear"),
-        Builtin::SetForEach => Some("Set.prototype.forEach"),
-        Builtin::SetIterator => Some("Set.prototype.values"),
-        Builtin::SetDifference => Some("Set.prototype.difference"),
-        Builtin::SetIntersection => Some("Set.prototype.intersection"),
-        Builtin::SetSymmetricDifference => Some("Set.prototype.symmetricDifference"),
-        Builtin::SetUnion => Some("Set.prototype.union"),
-        Builtin::SetIsDisjointFrom => Some("Set.prototype.isDisjointFrom"),
-        Builtin::SetIsSubsetOf => Some("Set.prototype.isSubsetOf"),
-        Builtin::SetIsSupersetOf => Some("Set.prototype.isSupersetOf"),
         Builtin::WeakMapSet => Some("WeakMap.prototype.set"),
         Builtin::WeakMapGet => Some("WeakMap.prototype.get"),
         Builtin::WeakMapHas => Some("WeakMap.prototype.has"),
@@ -111,6 +102,28 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
         Builtin::WeakSetAdd => Some("WeakSet.prototype.add"),
         Builtin::WeakSetHas => Some("WeakSet.prototype.has"),
         Builtin::WeakSetDelete => Some("WeakSet.prototype.delete"),
+        _ => None,
+    }
+}
+
+const fn set_fn_name(b: Builtin) -> Option<&'static str> {
+    match b {
+        Builtin::SetAdd => Some("Set.prototype.add"),
+        Builtin::SetSizeGetter => Some("get size"),
+        Builtin::SetHas => Some("Set.prototype.has"),
+        Builtin::SetDelete => Some("Set.prototype.delete"),
+        Builtin::SetClear => Some("Set.prototype.clear"),
+        Builtin::SetForEach => Some("Set.prototype.forEach"),
+        Builtin::SetIterator => Some("Set.prototype.values"),
+        Builtin::SetEntries => Some("Set.prototype.entries"),
+        Builtin::SetSpeciesGetter => Some("get [Symbol.species]"),
+        Builtin::SetDifference => Some("Set.prototype.difference"),
+        Builtin::SetIntersection => Some("Set.prototype.intersection"),
+        Builtin::SetSymmetricDifference => Some("Set.prototype.symmetricDifference"),
+        Builtin::SetUnion => Some("Set.prototype.union"),
+        Builtin::SetIsDisjointFrom => Some("Set.prototype.isDisjointFrom"),
+        Builtin::SetIsSubsetOf => Some("Set.prototype.isSubsetOf"),
+        Builtin::SetIsSupersetOf => Some("Set.prototype.isSupersetOf"),
         _ => None,
     }
 }
@@ -130,6 +143,7 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         Builtin::SetClear => Some(0.0),
         Builtin::SetForEach => Some(1.0),
         Builtin::SetIterator => Some(0.0),
+        Builtin::SetEntries | Builtin::SetSpeciesGetter => Some(0.0),
         Builtin::SetDifference
         | Builtin::SetIntersection
         | Builtin::SetSymmetricDifference
@@ -172,6 +186,7 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
         Builtin::SetClear => Some("clear"),
         Builtin::SetForEach => Some("forEach"),
         Builtin::SetIterator => Some("values"),
+        Builtin::SetEntries => Some("entries"),
         Builtin::SetDifference => Some("difference"),
         Builtin::SetIntersection => Some("intersection"),
         Builtin::SetSymmetricDifference => Some("symmetricDifference"),
