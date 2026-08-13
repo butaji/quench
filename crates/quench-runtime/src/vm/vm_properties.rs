@@ -234,6 +234,30 @@ pub(crate) fn get_property_with_receiver(
     if let Some(result) = crate::disposable_stack::accessor(value, key, receiver) {
         return result;
     }
+    if let Some(result) = data_view_instance_accessor(value, key) {
+        return result;
+    }
+    if let Ok(descriptor) = crate::builtins::object::descriptor(
+        Some(value),
+        Some(&Value::String(key.to_string())),
+    ) {
+        if !matches!(descriptor, Value::Undefined) {
+            if let Value::Object(descriptor) = descriptor {
+                if let Some((_, getter)) = descriptor
+                    .iter()
+                    .rev()
+                    .find_map(|(name, value)| (name == "get").then_some((name, value)))
+                {
+                    return if matches!(getter, Value::Undefined) {
+                        Ok(Value::Undefined)
+                    } else {
+                        invoke_accessor(getter, receiver)
+                    };
+                }
+            }
+            return Ok(get_property(value, key));
+        }
+    }
     let getter = crate::property_define::accessor(value, key, "get");
     let Some(getter) = getter else {
         return Ok(get_property(value, key));
@@ -325,10 +349,12 @@ fn bound_function_property(
         }
     } else if key == "name" && !realm::is_intrinsic(bound) {
         Value::String(String::new())
-    } else if realm::is_intrinsic(bound) {
-        get_property(&bound.target, key)
     } else {
-        Value::Undefined
+        let result = get_property(&bound.target, key);
+        if !matches!(result, Value::Undefined) {
+            return result;
+        }
+        function_prototype_property(key)
     }
 }
 fn bind_method(receiver: &Value, property: Value) -> Value {
@@ -369,6 +395,7 @@ fn array_buffer_property(buffer: &crate::value::ArrayBufferData, key: &str) -> V
         }
         "resizable" => Value::Boolean(buffer.max_byte_length.is_some()),
         "resize" => Value::Builtin(Builtin::ArrayBufferResize),
+        "transferToImmutable" => Value::Builtin(Builtin::ArrayBufferTransferToImmutable),
         _ => crate::builtins::property(Builtin::ArrayBuffer, key),
     }
 }
@@ -527,6 +554,30 @@ fn typed_index(key: &str, get: impl FnOnce(usize) -> Option<f64>) -> Option<Valu
     let index = key.parse().ok()?;
     Some(get(index).map_or(Value::Undefined, Value::Number))
 }
+fn data_view_instance_accessor(value: &Value, key: &str) -> Option<Result<Value, VmError>> {
+    let Value::DataView(view) = value else {
+        return None;
+    };
+    if view.prototype().is_some() {
+        return None;
+    }
+    match key {
+        "buffer" => Some(Ok(Value::ArrayBuffer(view.buffer.clone()))),
+        "byteLength" | "byteOffset" => {
+            if view.is_detached() || view.is_out_of_bounds() {
+                return Some(Err(crate::value::error::throw_type_error("Detached DataView")));
+            }
+            let value = if key == "byteLength" {
+                view.byte_length()
+            } else {
+                view.byte_offset
+            };
+            Some(Ok(Value::Number(value as f64)))
+        }
+        _ => None,
+    }
+}
+
 fn data_view_property(view: &crate::value::DataViewData, key: &str) -> Value {
     if let Some(prototype) = view.prototype() {
         return get_property(&prototype, key);
