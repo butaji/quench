@@ -178,6 +178,8 @@ fn is_runtime_prototype(builtin: Builtin) -> bool {
             | Builtin::DatePrototype
             | Builtin::RegExpPrototype
             | Builtin::RegExpStringIteratorPrototype
+            | Builtin::SetIteratorPrototype
+            | Builtin::MapIteratorPrototype
             | Builtin::ObjectPrototype
             | Builtin::ArrayIteratorPrototype
             | Builtin::NumberPrototype

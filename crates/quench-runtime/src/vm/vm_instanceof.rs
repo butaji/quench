@@ -194,7 +194,7 @@ fn internal_prototype(value: &Value) -> Option<Value> {
             .prototype()
             .or_else(|| Some(Value::Builtin(Builtin::PromisePrototype))),
         Value::Generator(generator) => generator_instance_prototype(generator),
-        Value::Iterator(_) => Some(Value::Builtin(Builtin::IteratorPrototype)),
+        Value::Iterator(_) => Some(crate::collections::iterator::prototype_of(value)),
         Value::Builtin(builtin) => builtin_prototype_parent(*builtin),
         Value::Function(_) => Some(Value::Builtin(Builtin::FunctionPrototype)),
         Value::BoundFunction(_) => {
@@ -227,7 +227,12 @@ fn builtin_prototype_parent(builtin: Builtin) -> Option<Value> {
     ) {
         return Some(Value::Builtin(Builtin::FunctionPrototype));
     }
-    if builtin == Builtin::ArrayIteratorPrototype {
+    if matches!(
+        builtin,
+        Builtin::ArrayIteratorPrototype
+            | Builtin::SetIteratorPrototype
+            | Builtin::MapIteratorPrototype
+    ) {
         return Some(Value::Builtin(Builtin::IteratorPrototype));
     }
     if builtin == Builtin::IteratorPrototype {

@@ -14,7 +14,7 @@ pub(crate) use iterator_protocol::{should_update_protocol_receiver, ReceiverUpda
 pub(crate) use iterator_step::step_value;
 pub(crate) use iterator_values::{
     from_map, from_map_keys, from_map_values, from_set, from_set_entries, make, make_regexp_string,
-    next, property_for,
+    next, next_map, next_set, property_for, prototype_of,
 };
 fn make_protocol(iterator: Value) -> Value {
     Value::Iterator(Rc::new(IteratorData {
