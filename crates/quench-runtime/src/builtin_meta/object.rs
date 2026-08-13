@@ -24,6 +24,12 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
         Builtin::ObjectDefineProperty => Some("Object.defineProperty"),
         Builtin::ObjectGetOwnPropertyNames => Some("Object.getOwnPropertyNames"),
         Builtin::ObjectGetOwnPropertySymbols => Some("Object.getOwnPropertySymbols"),
+        Builtin::ObjectFreeze => Some("Object.freeze"),
+        Builtin::ObjectSeal => Some("Object.seal"),
+        Builtin::ObjectPreventExtensions => Some("Object.preventExtensions"),
+        Builtin::ObjectIsFrozen => Some("Object.isFrozen"),
+        Builtin::ObjectIsSealed => Some("Object.isSealed"),
+        Builtin::ObjectIsExtensible => Some("Object.isExtensible"),
         Builtin::WeakRefDeref => Some("WeakRef.prototype.deref"),
         Builtin::ProxyRevocable => Some("Proxy.revocable"),
         Builtin::ProxyRevoke => Some("revoke"),
@@ -47,7 +53,13 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         | Builtin::ObjectValues
         | Builtin::ObjectEntries
         | Builtin::ObjectGetOwnPropertyNames
-        | Builtin::ObjectGetOwnPropertySymbols => Some(1.0),
+        | Builtin::ObjectGetOwnPropertySymbols
+        | Builtin::ObjectFreeze
+        | Builtin::ObjectSeal
+        | Builtin::ObjectPreventExtensions
+        | Builtin::ObjectIsFrozen
+        | Builtin::ObjectIsSealed
+        | Builtin::ObjectIsExtensible => Some(1.0),
         Builtin::ObjectHasOwn => Some(2.0),
         Builtin::ObjectGetOwnPropertyDescriptor | Builtin::ObjectIs => Some(2.0),
         Builtin::ObjectAssign => Some(2.0),
@@ -85,6 +97,12 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
         Builtin::ObjectDefineProperty => Some("defineProperty"),
         Builtin::ObjectGetOwnPropertyNames => Some("getOwnPropertyNames"),
         Builtin::ObjectGetOwnPropertySymbols => Some("getOwnPropertySymbols"),
+        Builtin::ObjectFreeze => Some("freeze"),
+        Builtin::ObjectSeal => Some("seal"),
+        Builtin::ObjectPreventExtensions => Some("preventExtensions"),
+        Builtin::ObjectIsFrozen => Some("isFrozen"),
+        Builtin::ObjectIsSealed => Some("isSealed"),
+        Builtin::ObjectIsExtensible => Some("isExtensible"),
         Builtin::WeakRefDeref => Some("deref"),
         Builtin::ProxyRevocable => Some("revocable"),
         Builtin::ProxyRevoke => Some("revoke"),

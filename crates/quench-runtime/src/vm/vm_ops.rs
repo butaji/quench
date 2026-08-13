@@ -200,7 +200,11 @@ fn tail_dispatch(
             arguments.get(1),
         )),
         Builtin::ObjectIsExtensible => crate::properties::is_extensible_value(arguments.first())?,
-        Builtin::ObjectPreventExtensions | Builtin::ObjectFreeze => {
+        Builtin::ObjectIsFrozen => crate::properties::integrity_level(arguments.first(), true)?,
+        Builtin::ObjectIsSealed => crate::properties::integrity_level(arguments.first(), false)?,
+        Builtin::ObjectFreeze => crate::properties::integrity_apply(arguments.first(), true)?,
+        Builtin::ObjectSeal => crate::properties::integrity_apply(arguments.first(), false)?,
+        Builtin::ObjectPreventExtensions => {
             crate::properties::prevent_extensions(arguments.first())?
         }
         Builtin::ObjectGetPrototypeOf => {
