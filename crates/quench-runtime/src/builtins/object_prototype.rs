@@ -45,6 +45,9 @@ fn prototype_for_value(value: &Value) -> Value {
         },
         Value::Array(values) if values.is_arguments() => Value::Builtin(Builtin::ObjectPrototype),
         Value::Array(_) => Value::Builtin(Builtin::ArrayPrototype),
+        Value::String(value) if crate::conversion::is_symbol_string(value) => {
+            Value::Builtin(Builtin::SymbolPrototype)
+        }
         Value::Object(properties) => properties
             .iter()
             .rev()
