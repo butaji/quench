@@ -15,6 +15,7 @@ impl Op {
             | Self::Label { body, .. }
             | Self::With { body, .. }
             | Self::PrivateScope { body, .. }
+            | Self::StaticBlock { body, .. }
             | Self::IteratorBinding { body, .. }
             | Self::ForIn { body, .. }
             | Self::ForOf { body, .. } => body.rehome(arena, store),
@@ -52,6 +53,7 @@ impl Op {
             | Self::Label { body, .. }
             | Self::With { body, .. }
             | Self::PrivateScope { body, .. }
+            | Self::StaticBlock { body, .. }
             | Self::IteratorBinding { body, .. }
             | Self::ForIn { body, .. }
             | Self::ForOf { body, .. } => visitor(body),

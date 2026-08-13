@@ -135,6 +135,7 @@ fn run_control_op(
         Label { .. } => crate::statement_control::execute_label(registers, op).map(Some),
         With { .. } => crate::with_scope::execute(registers, op).map(Some),
         PrivateScope { .. } => crate::private_environment::execute_scope(registers, op).map(Some),
+        StaticBlock { .. } => crate::classes::execute_static_block(registers, op).map(Some),
         Try { .. } => crate::exceptions::execute(registers, op).map(Some),
         IteratorBinding { .. } => crate::collections::iterator::execute_binding(registers, op)
             .map(Some),

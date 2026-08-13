@@ -23,6 +23,37 @@ pub(crate) fn append_instance_field(
         .push(crate::value::InstanceFieldPlan { key, initializer });
     Ok(())
 }
+
+pub(crate) fn execute_static_block(
+    registers: &mut [crate::value::Value],
+    op: &Op,
+) -> Result<crate::completion::Completion, crate::execute::VmError> {
+    let Op::StaticBlock {
+        constructor,
+        captures,
+        body,
+    } = op
+    else {
+        return Err(crate::execute::VmError::MissingReturn);
+    };
+    let function = Op::MakeFunctionWithKind {
+        dst: 0,
+        body: body.clone(),
+        params: 0,
+        captures: *captures,
+        length: 0,
+        kind: crate::ops::FunctionKind::Ordinary,
+        strictness: crate::ops::FunctionStrictness::Strict,
+        is_async: false,
+        mapped_arguments: false,
+    };
+    let receiver = crate::execute::read_register(registers, *constructor)?;
+    let mut block_registers = Vec::new();
+    crate::functions::write_op(&mut block_registers, &function);
+    let block = crate::execute::read_register(&block_registers, 0)?;
+    crate::functions::execute_target(&block, &receiver, &[])?;
+    Ok(crate::completion::Completion::Normal)
+}
 include!("instance_fields_private.rs");
 
 type PrivateAccessorValues =
