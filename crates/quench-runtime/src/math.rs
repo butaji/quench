@@ -111,7 +111,10 @@ pub(crate) fn execute(
     if builtin == Builtin::MathSumPrecise {
         return sum_precise(arguments.first());
     }
-    let numbers: Vec<f64> = arguments.iter().map(number).collect();
+    let numbers: Vec<f64> = arguments
+        .iter()
+        .map(crate::conversion::to_number)
+        .collect::<Result<_, _>>()?;
     if let Some(value) = transcendental(builtin, &numbers) {
         return Ok(Value::Number(value));
     }
@@ -230,16 +233,6 @@ fn sum_precise(value: Option<&Value>) -> Result<Value, crate::execute::VmError> 
 
 fn unary(numbers: &[f64], operation: fn(f64) -> f64) -> f64 {
     operation(numbers.first().copied().unwrap_or(f64::NAN))
-}
-
-fn number(value: &Value) -> f64 {
-    match value {
-        Value::Number(value) => *value,
-        Value::Null => 0.0,
-        Value::Boolean(value) => f64::from(*value),
-        Value::String(value) => value.parse().unwrap_or(f64::NAN),
-        _ => f64::NAN,
-    }
 }
 
 fn round(value: f64) -> f64 {
