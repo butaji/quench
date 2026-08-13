@@ -424,7 +424,6 @@ pub enum Builtin {
     MapGetOrInsert,
     MapGetOrInsertComputed,
     SetIterator,
-    SetEntries,
     WeakMap,
     WeakMapPrototype,
     WeakMapSet,
