@@ -12,7 +12,10 @@ fn early_dispatch(
         .or_else(|| crate::promise::execute_builtin(builtin, receiver, arguments))
         .or_else(|| crate::disposable_stack::execute(builtin, receiver, arguments))
         .or_else(|| crate::finalization_registry::execute(builtin, receiver, arguments))
-        .or_else(|| (builtin != Builtin::Date).then(|| crate::date::execute(builtin, receiver, arguments))?)
+        .or_else(|| {
+            (builtin != Builtin::Date)
+                .then(|| crate::date::execute(builtin, receiver, arguments))?
+        })
 }
 fn is_function_builtin(builtin: Builtin) -> bool {
     matches!(
@@ -71,7 +74,9 @@ fn array_like_length(value: &Value) -> Result<usize, VmError> {
 fn is_simple_builtin(builtin: Builtin) -> bool {
     matches!(
         builtin,
-        Builtin::Boolean | Builtin::BooleanValueOf | Builtin::BooleanToString
+        Builtin::Boolean
+            | Builtin::BooleanValueOf
+            | Builtin::BooleanToString
             | Builtin::Eval
             | Builtin::Escape
             | Builtin::EncodeURI
@@ -80,10 +85,15 @@ fn is_simple_builtin(builtin: Builtin) -> bool {
             | Builtin::DecodeURIComponent
             | Builtin::IsFinite
             | Builtin::IsNaN
-            | Builtin::NumberIsInteger | Builtin::NumberIsSafeInteger
-            | Builtin::Number | Builtin::BigInt
-            | Builtin::BigIntAsIntN | Builtin::BigIntAsUintN | Builtin::BigIntToString
-            | Builtin::NumberToString | Builtin::NumberValueOf
+            | Builtin::NumberIsInteger
+            | Builtin::NumberIsSafeInteger
+            | Builtin::Number
+            | Builtin::BigInt
+            | Builtin::BigIntAsIntN
+            | Builtin::BigIntAsUintN
+            | Builtin::BigIntToString
+            | Builtin::NumberToString
+            | Builtin::NumberValueOf
             | Builtin::BigIntValueOf
             | Builtin::SymbolToString
             | Builtin::SymbolValueOf
@@ -143,12 +153,16 @@ fn execute_simple_builtin(
         Builtin::EncodeURIComponent => crate::builtins::encode_uri(arguments.first(), false),
         Builtin::DecodeURI => crate::builtins::decode_uri(arguments.first(), true),
         Builtin::DecodeURIComponent => crate::builtins::decode_uri(arguments.first(), false),
-        Builtin::IsFinite => Ok(Value::Boolean(is_finite_check(arguments.first(), receiver)?)),
+        Builtin::IsFinite => Ok(Value::Boolean(is_finite_check(
+            arguments.first(),
+            receiver,
+        )?)),
         Builtin::IsNaN => Ok(Value::Boolean(is_nan_check(arguments.first(), receiver)?)),
         Builtin::Number => Ok(Value::Number(explicit_number(arguments.first())?)),
         Builtin::BigInt => explicit_bigint(arguments.first()),
-        Builtin::BigIntAsIntN | Builtin::BigIntAsUintN =>
-            bigint_as_n(arguments, builtin == Builtin::BigIntAsIntN),
+        Builtin::BigIntAsIntN | Builtin::BigIntAsUintN => {
+            bigint_as_n(arguments, builtin == Builtin::BigIntAsIntN)
+        }
         Builtin::BigIntToString => bigint_to_string(receiver, arguments),
         Builtin::NumberToString => boolean_or_number_string(receiver, arguments),
         Builtin::NumberValueOf => number_value_of(receiver),
@@ -165,7 +179,9 @@ fn execute_simple_builtin(
             function_prototype_builtin(builtin, receiver)
         }
         Builtin::RegExpPrototypeToString => regexp_prototype_to_string(receiver),
-        Builtin::NumberToFixed | Builtin::NumberToPrecision | Builtin::NumberToExponential => crate::number_fmt::number_format(receiver, arguments.first(), builtin),
+        Builtin::NumberToFixed | Builtin::NumberToPrecision | Builtin::NumberToExponential => {
+            crate::number_fmt::number_format(receiver, arguments.first(), builtin)
+        }
         Builtin::Error
         | Builtin::RangeError
         | Builtin::ReferenceError
@@ -181,9 +197,7 @@ fn execute_simple_builtin(
         | Builtin::ErrorPrototypeMessageGetter
         | Builtin::ErrorPrototypeCauseGetter
         | Builtin::ErrorPrototypeStackGetter
-        | Builtin::ErrorPrototypeStackSetter => {
-            Ok(error_builtin(builtin, arguments, receiver)?)
-        }
+        | Builtin::ErrorPrototypeStackSetter => Ok(error_builtin(builtin, arguments, receiver)?),
         Builtin::Object => Ok(crate::builtins::object(arguments)),
         Builtin::Date => Ok(crate::date::call()),
         _ => Ok(Value::Undefined),
@@ -255,10 +269,46 @@ fn error_stack_setter(receiver: Option<&Value>, arguments: &[Value]) -> Result<V
         }
     }
     let Value::String(_) = stack else {
-        return Err(crate::value::error::throw_type_error("Stack value must be a string"));
+        return Err(crate::value::error::throw_type_error(
+            "Stack value must be a string",
+        ));
     };
-    crate::properties::assign_set_property(value, "stack", stack.clone())?;
+    if matches!(value, Value::Proxy(_)) {
+        define_proxy_stack(value, stack.clone())?;
+        return Ok(Value::Undefined);
+    }
+    let key = Value::String("stack".to_string());
+    if !matches!(
+        crate::builtins::object::descriptor(Some(value), Some(&key))?,
+        Value::Undefined
+    ) {
+        crate::builtins::set_property(value.clone(), "stack", stack.clone());
+    } else {
+        define_own_stack(value, stack.clone())?;
+    }
     Ok(Value::Undefined)
+}
+
+fn define_own_stack(value: &Value, stack: Value) -> Result<(), VmError> {
+    let updated = crate::builtins::set_property(value.clone(), "stack", stack);
+    crate::locals::replace_value(value, &updated);
+    Ok(())
+}
+
+fn define_proxy_stack(value: &Value, stack: Value) -> Result<Value, VmError> {
+    let descriptor = Value::Object(Rc::new(crate::value::ObjectData::new(vec![
+        ("value".to_string(), stack),
+        ("writable".to_string(), Value::Boolean(true)),
+        ("enumerable".to_string(), Value::Boolean(true)),
+        ("configurable".to_string(), Value::Boolean(true)),
+    ])));
+    let result = crate::proxy::proxy_define_property(value, "stack", &descriptor)?;
+    if matches!(result, Value::Boolean(false)) {
+        return Err(crate::value::error::throw_type_error(
+            "Proxy defineProperty trap returned false",
+        ));
+    }
+    Ok(result)
 }
 
 fn set_error_stack_home() -> Option<Value> {
@@ -274,12 +324,14 @@ fn set_error_stack_home() -> Option<Value> {
 
 fn has_error_slot(value: &Value) -> bool {
     match value {
-        Value::Object(value) => value.iter().any(|(key, _)| key == crate::builtins::ERROR_SLOT),
-        Value::ObjectAlias(alias) => alias
-            .0
-            .borrow()
-            .upgrade()
-            .is_some_and(|value| value.iter().any(|(key, _)| key == crate::builtins::ERROR_SLOT)),
+        Value::Object(value) => value
+            .iter()
+            .any(|(key, _)| key == crate::builtins::ERROR_SLOT),
+        Value::ObjectAlias(alias) => alias.0.borrow().upgrade().is_some_and(|value| {
+            value
+                .iter()
+                .any(|(key, _)| key == crate::builtins::ERROR_SLOT)
+        }),
         _ => false,
     }
 }
@@ -373,7 +425,11 @@ fn radix_digits(mut value: u64, radix: u32) -> String {
     let mut digits = Vec::new();
     while value != 0 {
         let digit = (value % u64::from(radix)) as u8;
-        digits.push(char::from(if digit < 10 { b'0' + digit } else { b'a' + digit - 10 }));
+        digits.push(char::from(if digit < 10 {
+            b'0' + digit
+        } else {
+            b'a' + digit - 10
+        }));
         value /= u64::from(radix);
     }
     digits.iter().rev().collect()
@@ -413,11 +469,7 @@ fn weak_ref_deref(receiver: Option<&Value>) -> Result<Value, VmError> {
             "WeakRef.prototype.deref called on incompatible receiver",
         ));
     };
-    let Some((_, target)) = object
-        .iter()
-        .rev()
-        .find(|(key, _)| key == "\0weakref")
-    else {
+    let Some((_, target)) = object.iter().rev().find(|(key, _)| key == "\0weakref") else {
         return Err(crate::value::error::throw_type_error(
             "WeakRef.prototype.deref called on incompatible receiver",
         ));
@@ -645,7 +697,10 @@ fn execute_data_view_set(
     little_endian: bool,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
-    if matches!(builtin, Builtin::DataViewSetBigInt64 | Builtin::DataViewSetBigUint64) {
+    if matches!(
+        builtin,
+        Builtin::DataViewSetBigInt64 | Builtin::DataViewSetBigUint64
+    ) {
         return execute_data_view_bigint_set(builtin, view, offset, little_endian, arguments);
     }
     let number = crate::intl::tolocale::value::to_number_result(arguments.get(1))?;
@@ -700,24 +755,51 @@ fn data_view_offset(value: Option<&Value>) -> Result<usize, VmError> {
 fn data_view_error(error: crate::value::DataViewError) -> VmError {
     match error {
         crate::value::DataViewError::Detached => type_error("Detached DataView"),
-        crate::value::DataViewError::ViewOutOfBounds => {
-            type_error("DataView is out of bounds")
-        }
+        crate::value::DataViewError::ViewOutOfBounds => type_error("DataView is out of bounds"),
         crate::value::DataViewError::OutOfBounds => {
             range_error("Offset is outside the bounds of the DataView")
         }
     }
 }
 fn integer_modulo(value: f64, modulus: f64) -> u64 {
-    if !value.is_finite() || value == 0.0 { return 0; }
+    if !value.is_finite() || value == 0.0 {
+        return 0;
+    }
     value.trunc().rem_euclid(modulus) as u64
 }
-fn to_u8(value: f64) -> u8 { integer_modulo(value, 256.0) as u8 }
-fn to_i8(value: f64) -> i8 { let value = to_u8(value); if value >= 128 { (value as i16 - 256) as i8 } else { value as i8 } }
-fn to_u16(value: f64) -> u16 { integer_modulo(value, 65536.0) as u16 }
-fn to_i16(value: f64) -> i16 { let value = to_u16(value); if value >= 32768 { (value as i32 - 65536) as i16 } else { value as i16 } }
-fn to_u32(value: f64) -> u32 { integer_modulo(value, 4294967296.0) as u32 }
-fn to_i32(value: f64) -> i32 { let value = to_u32(value); if value >= 2147483648 { (value as i64 - 4294967296) as i32 } else { value as i32 } }
+fn to_u8(value: f64) -> u8 {
+    integer_modulo(value, 256.0) as u8
+}
+fn to_i8(value: f64) -> i8 {
+    let value = to_u8(value);
+    if value >= 128 {
+        (value as i16 - 256) as i8
+    } else {
+        value as i8
+    }
+}
+fn to_u16(value: f64) -> u16 {
+    integer_modulo(value, 65536.0) as u16
+}
+fn to_i16(value: f64) -> i16 {
+    let value = to_u16(value);
+    if value >= 32768 {
+        (value as i32 - 65536) as i16
+    } else {
+        value as i16
+    }
+}
+fn to_u32(value: f64) -> u32 {
+    integer_modulo(value, 4294967296.0) as u32
+}
+fn to_i32(value: f64) -> i32 {
+    let value = to_u32(value);
+    if value >= 2147483648 {
+        (value as i64 - 4294967296) as i32
+    } else {
+        value as i32
+    }
+}
 fn type_error(message: &str) -> VmError {
     let arguments = [Value::String(message.to_string())];
     VmError::Thrown(crate::builtins::error(Builtin::TypeError, &arguments))
@@ -740,10 +822,9 @@ fn function_prototype_builtin(
         _ => Ok(Value::Undefined),
     }
 }
-fn regexp_prototype_to_string(
-    receiver: Option<&Value>,
-) -> Result<Value, VmError> {
-    let Some(value) = receiver.filter(|value| !matches!(value, Value::Null | Value::Undefined)) else {
+fn regexp_prototype_to_string(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let Some(value) = receiver.filter(|value| !matches!(value, Value::Null | Value::Undefined))
+    else {
         return Err(crate::value::error::throw_type_error(
             "RegExp.prototype.toString called on incompatible receiver",
         ));
