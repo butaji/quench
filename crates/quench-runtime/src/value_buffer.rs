@@ -254,13 +254,19 @@ impl DataViewData {
     }
 
     pub fn set_bigint64(
-        &self, offset: usize, value: i64, little_endian: bool,
+        &self,
+        offset: usize,
+        value: i64,
+        little_endian: bool,
     ) -> Result<(), DataViewError> {
         encode::<i64, 8>(self, offset, value, little_endian)
     }
 
     pub fn set_biguint64(
-        &self, offset: usize, value: u64, little_endian: bool,
+        &self,
+        offset: usize,
+        value: u64,
+        little_endian: bool,
     ) -> Result<(), DataViewError> {
         encode::<u64, 8>(self, offset, value, little_endian)
     }
@@ -380,6 +386,10 @@ fn f64_to_half(value: f64) -> u16 {
         return sign | ((half_exponent + 1) << 10);
     }
     sign | (half_exponent << 10) | significand
+}
+
+pub(crate) fn f16_round(value: f64) -> f64 {
+    half_to_f64(f64_to_half(value))
 }
 
 fn round_half(value: f64) -> u16 {
