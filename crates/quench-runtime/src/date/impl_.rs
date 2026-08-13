@@ -23,6 +23,12 @@ pub fn execute(
     if builtin == Builtin::DateSetUTCDate {
         return Some(super::setter::set_utc_date(receiver, arguments));
     }
+    if builtin == Builtin::DateSetUTCMonth {
+        return Some(super::setter::set_utc_month(receiver, arguments));
+    }
+    if builtin == Builtin::DateSetUTCFullYear {
+        return Some(super::setter::set_utc_full_year(receiver, arguments));
+    }
     if builtin == Builtin::DateSetFullYear {
         return Some(super::setter::set_full_year(receiver, arguments));
     }
