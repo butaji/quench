@@ -175,13 +175,24 @@ pub(super) fn global_builtin(key: &str) -> Option<Builtin> {
         "BigInt" => BigInt,
         "String" => String,
         "Date" => Date,
+        _ => return global_builtin_error(key),
+    })
+}
+
+fn global_builtin_error(key: &str) -> Option<Builtin> {
+    use Builtin::*;
+    Some(match key {
         "eval" => Eval,
         "JSON" => Json,
         "Math" => Math,
         "Reflect" => Reflect,
         "Map" => Map,
         "Set" => Set,
+        "WeakMap" => WeakMap,
+        "WeakSet" => WeakSet,
+        "WeakRef" => WeakRef,
         "Error" => Error,
+        "AggregateError" => AggregateError,
         "TypeError" => TypeError,
         "RangeError" => RangeError,
         "ReferenceError" => ReferenceError,
