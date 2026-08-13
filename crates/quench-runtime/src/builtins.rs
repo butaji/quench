@@ -13,6 +13,7 @@ use intrinsic_overrides as overrides;
 use std::rc::Rc;
 const DESCRIPTOR_PREFIX: &str = "\0quench:descriptor:\0";
 const DELETED_PREFIX: &str = "\0quench:deleted:\0";
+pub(crate) const ERROR_SLOT: &str = "\0error_slot";
 
 pub(crate) fn deleted_key(key: &str) -> String {
     format!("{DELETED_PREFIX}{key}")
@@ -314,35 +315,77 @@ fn boxed_object(value: &Value) -> Value {
     Value::Object(Rc::new(ObjectData::new(properties)))
 }
 
-/// Construct an error object for the given error constructor.
-///
-/// The resulting object carries `name`, `message`, and `constructor` so that
-/// `err.constructor` and `err.constructor.name` behave like the specification.
 pub(crate) fn error(builtin: Builtin, arguments: &[Value]) -> Value {
-    let (name, constructor) = match builtin {
-        Builtin::RangeError => ("RangeError", Builtin::RangeError),
-        Builtin::ReferenceError => ("ReferenceError", Builtin::ReferenceError),
-        Builtin::SyntaxError => ("SyntaxError", Builtin::SyntaxError),
-        Builtin::EvalError => ("EvalError", Builtin::EvalError),
-        Builtin::URIError => ("URIError", Builtin::URIError),
-        Builtin::AggregateError => ("AggregateError", Builtin::AggregateError),
-        Builtin::SuppressedError => ("SuppressedError", Builtin::SuppressedError),
-        Builtin::TypeError => ("TypeError", Builtin::TypeError),
-        _ => ("Error", Builtin::Error),
+    let (name, constructor, prototype) = match builtin {
+        Builtin::RangeError => ("RangeError", Builtin::RangeError, Builtin::ErrorPrototype),
+        Builtin::ReferenceError => (
+            "ReferenceError",
+            Builtin::ReferenceError,
+            Builtin::ErrorPrototype,
+        ),
+        Builtin::SyntaxError => ("SyntaxError", Builtin::SyntaxError, Builtin::ErrorPrototype),
+        Builtin::EvalError => ("EvalError", Builtin::EvalError, Builtin::ErrorPrototype),
+        Builtin::URIError => ("URIError", Builtin::URIError, Builtin::ErrorPrototype),
+        Builtin::AggregateError => (
+            "AggregateError",
+            Builtin::AggregateError,
+            Builtin::ErrorPrototype,
+        ),
+        Builtin::TypeError => ("TypeError", Builtin::TypeError, Builtin::ErrorPrototype),
+        Builtin::SuppressedError => (
+            "SuppressedError",
+            Builtin::SuppressedError,
+            Builtin::ErrorPrototype,
+        ),
+        Builtin::Error => ("Error", Builtin::Error, Builtin::ErrorPrototype),
+        _ => ("Error", Builtin::Error, Builtin::ErrorPrototype),
     };
-    let message = arguments.first().map_or_else(
-        || Value::String(String::new()),
-        |value| Value::String(value_to_string(value)),
-    );
+    let message = arguments.first().map_or_else(String::new, value_to_string);
     let mut properties = vec![
         ("name".to_string(), Value::String(name.to_string())),
-        ("message".to_string(), message),
+        ("message".to_string(), Value::String(message)),
         ("constructor".to_string(), Value::Builtin(constructor)),
+        (ERROR_SLOT.to_string(), Value::Boolean(true)),
+        ("\0prototype".to_string(), Value::Builtin(prototype)),
     ];
     if let Some(Value::Object(existing)) = arguments.first() {
         properties.extend(existing.properties.clone());
     }
     Value::Object(Rc::new(ObjectData::new(properties)))
+}
+
+pub(crate) fn suppressed_error(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
+    let error = arguments.first().cloned().unwrap_or(Value::Undefined);
+    let suppressed = arguments.get(1).cloned().unwrap_or(Value::Undefined);
+    let message = arguments
+        .get(2)
+        .filter(|value| !matches!(value, Value::Undefined))
+        .map(crate::conversion::to_string)
+        .transpose()?;
+    let mut properties = vec![
+        (
+            "name".to_string(),
+            Value::String("SuppressedError".to_string()),
+        ),
+        (
+            "\0prototype".to_string(),
+            Value::Builtin(Builtin::ErrorPrototype),
+        ),
+        (
+            "constructor".to_string(),
+            Value::Builtin(Builtin::SuppressedError),
+        ),
+        (
+            crate::builtins::ERROR_SLOT.to_string(),
+            Value::Boolean(true),
+        ),
+        ("error".to_string(), error),
+        ("suppressed".to_string(), suppressed),
+    ];
+    if let Some(message) = message {
+        properties.insert(2, ("message".to_string(), Value::String(message)));
+    }
+    Ok(Value::Object(Rc::new(ObjectData::new(properties))))
 }
 pub(crate) fn same_value(left: Option<&Value>, right: Option<&Value>) -> bool {
     let (Some(left), Some(right)) = (left, right) else {
@@ -376,6 +419,7 @@ pub(crate) fn same_value(left: Option<&Value>, right: Option<&Value>) -> bool {
         (Value::Uint32Array(left), Value::Uint32Array(right)) => Rc::ptr_eq(left, right),
         (Value::Function(left), Value::Function(right)) => Rc::ptr_eq(left, right),
         (Value::Generator(left), Value::Generator(right)) => Rc::ptr_eq(left, right),
+        (Value::BoundFunction(left), Value::BoundFunction(right)) => Rc::ptr_eq(left, right),
         _ => left == right,
     }
 }
@@ -411,6 +455,14 @@ pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
         }
         Value::Array(values) => set_array_property(values, key, value),
         Value::Function(function) => set_function_property(function, key, value),
+        Value::BoundFunction(bound) => {
+            {
+                let mut properties = bound.properties.borrow_mut();
+                properties.retain(|(name, _)| name != key);
+                properties.push((key.to_string(), value));
+            }
+            Value::BoundFunction(bound)
+        }
         other => other,
     }
 }
@@ -546,7 +598,7 @@ fn define_accessor_placeholder(target: Value, key: &str) -> Value {
             | Value::Promise(_)
             | Value::BoundFunction(_)
     ) {
-        return set_property(target, key, Value::Undefined);
+        return define_property_value(target, key, Value::Undefined);
     }
     target
 }

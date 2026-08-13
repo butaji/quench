@@ -478,7 +478,103 @@ fn construct_error(
     if *builtin == crate::ops::Builtin::SuppressedError {
         return crate::builtins::suppressed_error(arguments);
     }
-    Ok(crate::builtins::error(*builtin, arguments))
+
+    let (name, constructor) = match builtin {
+        crate::ops::Builtin::RangeError => ("RangeError", crate::ops::Builtin::RangeError),
+        crate::ops::Builtin::ReferenceError => {
+            ("ReferenceError", crate::ops::Builtin::ReferenceError)
+        }
+        crate::ops::Builtin::SyntaxError => ("SyntaxError", crate::ops::Builtin::SyntaxError),
+        crate::ops::Builtin::EvalError => ("EvalError", crate::ops::Builtin::EvalError),
+        crate::ops::Builtin::URIError => ("URIError", crate::ops::Builtin::URIError),
+        crate::ops::Builtin::AggregateError => {
+            ("AggregateError", crate::ops::Builtin::AggregateError)
+        }
+        crate::ops::Builtin::TypeError => ("TypeError", crate::ops::Builtin::TypeError),
+        crate::ops::Builtin::Error | _ => ("Error", crate::ops::Builtin::Error),
+    };
+
+    let message = arguments
+        .first()
+        .map_or(Ok(String::new()), crate::conversion::to_string)?;
+    let mut properties = vec![
+        ("name".to_string(), Value::String(name.to_string())),
+        ("message".to_string(), Value::String(message)),
+        ("constructor".to_string(), Value::Builtin(constructor)),
+        (
+            crate::builtins::ERROR_SLOT.to_string(),
+            Value::Boolean(true),
+        ),
+        (
+            "\0prototype".to_string(),
+            Value::Builtin(crate::ops::Builtin::ErrorPrototype),
+        ),
+    ];
+
+    if let Some(cause_source) = arguments
+        .get(1)
+        .filter(|value| !matches!(value, Value::Undefined))
+    {
+        let options = to_object(cause_source)?;
+        if !crate::with_scope::has_property(&options, "cause")? {
+            return Ok(Value::Object(std::rc::Rc::new(ObjectData::new(properties))));
+        }
+        let cause = crate::execute::get_property_result(&options, "cause")?;
+        properties.push(("cause".to_string(), cause));
+    }
+
+    Ok(Value::Object(std::rc::Rc::new(ObjectData::new(properties))))
+}
+
+fn to_object(value: &Value) -> Result<Value, crate::execute::VmError> {
+    match value {
+        Value::Object(_)
+        | Value::Array(_)
+        | Value::ObjectAlias(_)
+        | Value::Function(_)
+        | Value::BoundFunction(_)
+        | Value::Builtin(_)
+        | Value::Proxy(_)
+        | Value::Promise(_)
+        | Value::Map(_)
+        | Value::Set(_)
+        | Value::ArrayBuffer(_)
+        | Value::DataView(_)
+        | Value::Float32Array(_)
+        | Value::Float64Array(_)
+        | Value::Int8Array(_)
+        | Value::Int16Array(_)
+        | Value::Int32Array(_)
+        | Value::Uint8Array(_)
+        | Value::Uint8ClampedArray(_)
+        | Value::Uint16Array(_)
+        | Value::Uint32Array(_)
+        | Value::BigInt64Array(_)
+        | Value::BigUint64Array(_)
+        | Value::Iterator(_)
+        | Value::Generator(_)
+        | Value::HostCapability(_) => Ok(value.clone()),
+
+        Value::Number(value) => Ok(boxed_primitive(
+            Value::Number(*value),
+            crate::ops::Builtin::Number,
+        )),
+        Value::Boolean(value) => Ok(boxed_primitive(
+            Value::Boolean(*value),
+            crate::ops::Builtin::Boolean,
+        )),
+        Value::String(value) => Ok(boxed_primitive(
+            Value::String(value.clone()),
+            crate::ops::Builtin::String,
+        )),
+        Value::BigInt(value) => Ok(boxed_primitive(
+            Value::BigInt(value.clone()),
+            crate::ops::Builtin::BigInt,
+        )),
+        Value::BindingCell(_) | Value::Undefined | Value::Null => Err(
+            crate::value::error::throw_type_error("Cannot convert undefined or null to object"),
+        ),
+    }
 }
 
 fn construct_function(
