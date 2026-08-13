@@ -239,6 +239,20 @@ pub(crate) fn get_property_with_receiver(
         }
         return invoke_accessor(&getter, receiver);
     }
+    if let Value::Array(values) = value {
+        let has_own = key == "length"
+            || crate::arrays::array_index(key).is_some_and(|index| values.has_index(index as usize))
+            || values.descriptor(key).is_some()
+            || values.property(key).is_some();
+        if !has_own {
+            if let Some(getter) = crate::arrays::prototype_override_getter(key) {
+                if matches!(getter, Value::Undefined) {
+                    return Ok(Value::Undefined);
+                }
+                return invoke_accessor(&getter, receiver);
+            }
+        }
+    }
     if let Some(result) = crate::disposable_stack::accessor(value, key, receiver) {
         return result;
     }
