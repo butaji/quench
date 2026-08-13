@@ -2,8 +2,10 @@ use super::super::{slot_bool, slot_number};
 use crate::value::Value;
 
 pub(crate) fn format_resolved(number: f64, slots: &[(String, Value)]) -> String {
-    let max_fraction = slot_number(slots, "maximumFractionDigits").unwrap_or(3.0) as usize;
     let min_fraction = slot_number(slots, "minimumFractionDigits").unwrap_or(0.0) as usize;
+    let max_fraction = slot_number(slots, "maximumFractionDigits")
+        .unwrap_or(3.0)
+        .max(min_fraction as f64) as usize;
     let use_grouping = slot_bool(slots, "useGrouping").unwrap_or(true);
     let mut text = format_fixed(number, max_fraction);
     if use_grouping {
