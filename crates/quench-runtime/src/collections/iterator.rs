@@ -10,7 +10,8 @@ mod iterator_typed;
 mod iterator_values;
 pub(crate) use iterator_protocol::{should_update_protocol_receiver, ReceiverUpdateGuard};
 pub(crate) use iterator_values::{
-    from_map, from_map_keys, from_map_values, from_set, make, next, property_for,
+    from_map, from_map_keys, from_map_values, from_set, make, make_regexp_string, next,
+    property_for,
 };
 fn make_protocol(iterator: Value) -> Value {
     Value::Iterator(Rc::new(IteratorData {
@@ -72,9 +73,11 @@ fn close_target(record: &Value) -> Result<Option<Value>, crate::execute::VmError
         | IteratorState::Set { done: true, .. }
         | IteratorState::Map { done: true, .. }
         | IteratorState::Protocol { done: true, .. }
+        | IteratorState::RegExpString { done: true, .. }
         | IteratorState::Native { .. } => Ok(None),
         IteratorState::Set { .. } => Ok(None),
         IteratorState::Map { .. } => Ok(None),
+        IteratorState::RegExpString { .. } => Ok(None),
         IteratorState::Protocol { iterator, .. } => Ok(Some(iterator.clone())),
     }
 }
@@ -271,7 +274,9 @@ pub fn delegate_next(
             } => {
                 return Ok(native_delegation_step(values, index, done));
             }
-            IteratorState::Set { .. } | IteratorState::Map { .. } => {
+            IteratorState::Set { .. }
+            | IteratorState::Map { .. }
+            | IteratorState::RegExpString { .. } => {
                 return Ok(DelegationResult::Done(Value::Undefined));
             }
             IteratorState::Protocol { iterator, done, .. } if !*done => Some(iterator.clone()),
@@ -349,9 +354,10 @@ fn delegation_target(
     };
     let iterator = match &*data.state.borrow() {
         IteratorState::Protocol { iterator, .. } => Some(iterator.clone()),
-        IteratorState::Native { .. } | IteratorState::Set { .. } | IteratorState::Map { .. } => {
-            None
-        }
+        IteratorState::Native { .. }
+        | IteratorState::Set { .. }
+        | IteratorState::Map { .. }
+        | IteratorState::RegExpString { .. } => None,
     };
     Ok(iterator.map(|iterator| (data.as_ref(), iterator)))
 }
@@ -407,6 +413,16 @@ pub(crate) fn step_value(value: &Value) -> Result<Option<Value>, crate::execute:
                 kind,
                 done,
             } => return Ok(iterator_map::step(data, index, kind, done)),
+            IteratorState::RegExpString {
+                regexp,
+                input,
+                global,
+                unicode,
+                done,
+            } if !*done => {
+                return crate::regexp::iterator_step(regexp, input, *global, *unicode, done)
+            }
+            IteratorState::RegExpString { .. } => return Ok(None),
             IteratorState::Protocol {
                 iterator,
                 next: _,
@@ -465,7 +481,8 @@ fn mark_done(data: &IteratorData) {
         IteratorState::Native { done, .. }
         | IteratorState::Set { done, .. }
         | IteratorState::Map { done, .. }
-        | IteratorState::Protocol { done, .. } => *done = true,
+        | IteratorState::Protocol { done, .. }
+        | IteratorState::RegExpString { done, .. } => *done = true,
     }
 }
 fn call(callee: &Value, receiver: &Value) -> Result<Value, crate::execute::VmError> {
