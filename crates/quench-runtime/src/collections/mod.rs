@@ -26,14 +26,15 @@ fn execute_core(
     arguments: &[Value],
 ) -> Option<Result<Value, VmError>> {
     use Builtin::*;
+    if let Some(result) = execute_iterator_next(builtin, receiver) {
+        return Some(result);
+    }
     match builtin {
-        Map => Some(constructor_receiver(receiver).and_then(|_| map::map_new(arguments))),
+        Map => Some(constructor_requires_new("Map")),
         MapGroupBy => Some(map::map_group_by(arguments)),
         MapGetOrInsert => Some(map::map_get_or_insert(receiver, arguments)),
         MapGetOrInsertComputed => Some(map::map_get_or_insert_computed(receiver, arguments)),
-        Set => Some(Err(crate::value::error::throw_type_error(
-            "Constructor Set requires 'new'",
-        ))),
+        Set => Some(constructor_requires_new("Set")),
         MapSet => Some(map::map_set(receiver, arguments)),
         MapSizeGetter => Some(map::map_size(receiver)),
         MapGet => Some(map::map_get(receiver, arguments)),
@@ -52,11 +53,26 @@ fn execute_core(
         MapValues => Some(iterator::from_map_values(receiver)),
         SetIterator => Some(iterator::from_set(receiver)),
         SetEntries => Some(iterator::from_set_entries(receiver)),
-        SetSpeciesGetter => Some(set::set_species(receiver)),
-        IteratorNext => Some(iterator::next(receiver)),
-        IteratorSelf => Some(iterator_self(receiver)),
+        SetSpeciesGetter | MapSpeciesGetter => Some(set::set_species(receiver)),
         _ => None,
     }
+}
+
+fn execute_iterator_next(builtin: Builtin, receiver: Option<&Value>) -> Option<Result<Value, VmError>> {
+    use Builtin::*;
+    Some(match builtin {
+        IteratorNext => iterator::next(receiver),
+        SetIteratorNext => iterator::next_set(receiver),
+        MapIteratorNext => iterator::next_map(receiver),
+        IteratorSelf => iterator_self(receiver),
+        _ => return None,
+    })
+}
+
+fn constructor_requires_new(name: &str) -> Result<Value, VmError> {
+    Err(crate::value::error::throw_type_error(&format!(
+        "Constructor {name} requires 'new'"
+    )))
 }
 
 fn iterator_self(receiver: Option<&Value>) -> Result<Value, VmError> {
@@ -69,9 +85,9 @@ fn execute_weak(
     arguments: &[Value],
 ) -> Option<Result<Value, VmError>> {
     Some(match builtin {
-        Builtin::WeakMap => {
-            constructor_receiver(receiver).and_then(|_| map::weak_map_new(arguments))
-        }
+        Builtin::WeakMap => Err(crate::value::error::throw_type_error(
+            "Constructor WeakMap requires 'new'",
+        )),
         Builtin::WeakMapSet => map::weak_map_set(receiver, arguments),
         Builtin::WeakMapGet => map::weak_map_get(receiver, arguments),
         Builtin::WeakMapHas => map::weak_map_has(receiver, arguments),
@@ -87,10 +103,6 @@ fn execute_weak(
         Builtin::WeakSetDelete => set::weak_set_delete(receiver, arguments),
         _ => return None,
     })
-}
-
-fn constructor_receiver(receiver: Option<&Value>) -> Result<(), VmError> {
-    receiver.map(|_| ()).ok_or_else(crate::vm::not_callable)
 }
 
 fn weak_map_extended(
