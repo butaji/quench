@@ -1,6 +1,6 @@
 //! `Intl.DateTimeFormat`.
 
-use chrono::{DateTime, Timelike, Utc};
+use chrono::{DateTime, Datelike, Timelike, Utc};
 
 use crate::{conversion, execute::VmError, value::Value};
 
@@ -294,6 +294,9 @@ pub(crate) fn prototype_method(
         crate::ops::Builtin::IntlDateTimeFormatFormat => {
             let input = arguments.first().unwrap_or(&Value::Undefined);
             let number = range_number(input)?;
+            if let Some(value) = proleptic_year_format(&slots, number) {
+                return Ok(Value::String(value));
+            }
             if let Some(value) = fractional_format(&slots, number) {
                 return Ok(Value::String(value));
             }
@@ -375,6 +378,45 @@ fn fractional_format(slots: &[(String, Value)], number: f64) -> Option<String> {
         fraction,
         width = digits as usize
     ))
+}
+
+fn proleptic_year_format(slots: &[(String, Value)], number: f64) -> Option<String> {
+    if slot_string(slots, "year").is_none() || slot_string(slots, "era").is_none() {
+        return None;
+    }
+    let seconds = (number / 1_000.0).trunc() as i64;
+    let year = DateTime::<Utc>::from_timestamp(seconds, 0)
+        .map_or_else(|| civil_year(number), |date| i64::from(date.year()));
+    if year <= 0 {
+        Some(format!("{} BC", grouped_year(1 - year)))
+    } else {
+        Some(format!("{} AD", grouped_year(year)))
+    }
+}
+
+fn civil_year(number: f64) -> i64 {
+    let days = (number / 86_400_000.0).floor() as i64;
+    let shifted = days + 719_468;
+    let era = if shifted >= 0 {
+        shifted / 146_097
+    } else {
+        (shifted - 146_096) / 146_097
+    };
+    let day_of_era = shifted - era * 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month = (5 * day_of_year + 2) / 153;
+    year + if month < 10 { 0 } else { 1 }
+}
+
+fn grouped_year(year: i64) -> String {
+    let text = year.to_string();
+    if text.len() <= 3 {
+        return text;
+    }
+    format!("{},{}", &text[..text.len() - 3], &text[text.len() - 3..])
 }
 
 fn range_number(value: &Value) -> Result<f64, VmError> {
