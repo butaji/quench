@@ -427,13 +427,22 @@ fn maximize(tag: &str) -> String {
         })
         .copied();
     let (default_script, default_region) = likely_subtags(language);
-    format!(
-        "{}-{}-{}{}",
+    let mut result = format!(
+        "{}-{}-{}",
         language,
         script.unwrap_or(default_script),
-        region.unwrap_or(default_region),
-        extension
-    )
+        region.unwrap_or(default_region)
+    );
+    for part in parts.iter().skip(1) {
+        if part.len() != 4
+            && !(part.len() == 2 || (part.len() == 3 && part.chars().all(|c| c.is_ascii_digit())))
+        {
+            result.push('-');
+            result.push_str(part);
+        }
+    }
+    result.push_str(&extension);
+    result
 }
 
 fn minimize(tag: &str) -> String {
