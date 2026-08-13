@@ -413,6 +413,8 @@ pub enum Builtin {
     IntlSegmenter,
     IntlSegmenterSupportedLocalesOf,
     IntlSegmenterSegment,
+    IntlSegmenterSegmentsIterator,
+    IntlSegmenterSegmentsContaining,
     IntlSegmenterResolvedOptions,
     IntlDisplayNames,
     IntlDisplayNamesOf,

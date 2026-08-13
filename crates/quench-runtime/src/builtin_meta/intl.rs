@@ -88,6 +88,8 @@ const fn intl_name_group_b(b: Builtin) -> Option<&'static str> {
             Some("Intl.RelativeTimeFormat.prototype.resolvedOptions")
         }
         Builtin::IntlSegmenterSegment => Some("Intl.Segmenter.prototype.segment"),
+        Builtin::IntlSegmenterSegmentsIterator => Some("%Segments.prototype%[Symbol.iterator]"),
+        Builtin::IntlSegmenterSegmentsContaining => Some("%Segments.prototype%.containing"),
         Builtin::IntlSegmenterResolvedOptions => Some("Intl.Segmenter.prototype.resolvedOptions"),
         Builtin::IntlDisplayNamesOf => Some("Intl.DisplayNames.prototype.of"),
         Builtin::IntlDisplayNamesResolvedOptions => {
@@ -136,6 +138,8 @@ const fn intl_fn_len(b: Builtin) -> Option<f64> {
         | Builtin::IntlCollatorCompare
         | Builtin::IntlCollatorResolvedOptions
         | Builtin::IntlSegmenterSegment
+        | Builtin::IntlSegmenterSegmentsIterator
+        | Builtin::IntlSegmenterSegmentsContaining
         | Builtin::IntlSegmenterResolvedOptions
         | Builtin::IntlDisplayNamesOf
         | Builtin::IntlDisplayNamesResolvedOptions => Some(0.0),
@@ -202,6 +206,8 @@ const fn intl_short_name(b: Builtin) -> Option<&'static str> {
         Builtin::IntlRelativeTimeFormatFormatToParts => Some("formatToParts"),
         Builtin::IntlRelativeTimeFormatResolvedOptions => Some("resolvedOptions"),
         Builtin::IntlSegmenterSegment => Some("segment"),
+        Builtin::IntlSegmenterSegmentsIterator => Some("[Symbol.iterator]"),
+        Builtin::IntlSegmenterSegmentsContaining => Some("containing"),
         Builtin::IntlSegmenterResolvedOptions => Some("resolvedOptions"),
         Builtin::IntlDisplayNamesOf => Some("of"),
         Builtin::IntlDisplayNamesResolvedOptions => Some("resolvedOptions"),
