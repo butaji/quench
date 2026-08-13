@@ -27,6 +27,7 @@ fn run_simple_single_op(
         | IteratorRest { .. } => crate::collections::iterator::execute(registers, op)?,
         ValidateClassHeritage { .. } => run_class_heritage(registers, op)?,
         GetClassPrototype { .. } => run_class_prototype(registers, op)?,
+        CheckSuperThis => crate::super_scope::check_initialized_this()?,
         AppendInstanceField(_) => crate::classes::append_instance_field(registers, op)?,
         DeleteProperty { .. } => run_delete_property(registers, op)?,
         MakeFunction { .. } | MakeFunctionWithKind { .. } => {

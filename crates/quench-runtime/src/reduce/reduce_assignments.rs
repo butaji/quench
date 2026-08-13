@@ -296,6 +296,9 @@ fn computed_place(
     locals: &HashMap<String, u16>,
 ) -> Option<Place> {
     let object = reduce_member_object(&member.object, ops, facts, next, locals)?;
+    if object.is_none() {
+        ops.push(Op::CheckSuperThis);
+    }
     let key = crate::reduce::reduce_expression(&member.expression, ops, facts, next, locals)?;
     finish_member_place(object, PlaceKey::Dynamic(key), facts.strict)
 }
