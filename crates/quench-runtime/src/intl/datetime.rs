@@ -92,22 +92,33 @@ impl DateTimeOptions {
         }
         let text = to_string_value(value);
         if let Some((name, allowed)) = COMPONENT_VALUES.iter().find(|(name, _)| *name == key) {
-            if let Some(valid) = valid_component(&text, allowed) {
-                self.set_component(name, valid);
-            }
+            let valid = valid_component(&text, allowed)
+                .ok_or_else(|| runtime_error("RangeError: invalid date-time option"))?;
+            self.set_component(name, valid);
             return Ok(());
         }
         match key {
             "hour12" => self.hour12 = Some(text == "true"),
             "timeZone" => self.time_zone = canonicalize_time_zone(&text),
-            "calendar" => self.calendar = text.to_ascii_lowercase(),
-            "numberingSystem" => self.numbering_system = text.to_ascii_lowercase(),
-            "fractionalSecondDigits" => {
-                if let Ok(digits) = text.parse::<u32>() {
-                    if (1..=9).contains(&digits) {
-                        self.fractional_second_digits = Some(digits);
-                    }
+            "calendar" => {
+                if text.is_empty() {
+                    return Err(runtime_error("RangeError: invalid calendar"));
                 }
+                self.calendar = text.to_ascii_lowercase();
+            }
+            "numberingSystem" => {
+                if text.is_empty() {
+                    return Err(runtime_error("RangeError: invalid numberingSystem"));
+                }
+                self.numbering_system = text.to_ascii_lowercase();
+            }
+            "fractionalSecondDigits" => {
+                let digits = text
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|digits| (1..=9).contains(digits))
+                    .ok_or_else(|| runtime_error("RangeError: invalid fractionalSecondDigits"))?;
+                self.fractional_second_digits = Some(digits);
             }
             _ => {}
         }
