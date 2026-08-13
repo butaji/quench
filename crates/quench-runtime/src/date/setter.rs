@@ -28,6 +28,22 @@ pub fn set_full_year(receiver: Option<&Value>, arguments: &[Value]) -> Result<Va
     store(receiver, result)
 }
 
+pub fn set_month(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    let current = date_time(receiver)?;
+    let parts = chrono_utils::local_components(current);
+    let month = argument(arguments, 0, f64::NAN)?;
+    let day = argument(arguments, 1, parts.map_or(f64::NAN, |parts| parts.2 as f64))?;
+    let result = parts.map_or(f64::NAN, |parts| {
+        local_time(parts, parts.0 as f64, month, day)
+    });
+    store(receiver, result)
+}
+
+pub fn set_time(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    date_time(receiver)?;
+    store(receiver, argument(arguments, 0, f64::NAN)?)
+}
+
 pub fn set_time_components(
     builtin: Builtin,
     receiver: Option<&Value>,

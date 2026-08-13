@@ -23,6 +23,12 @@ pub fn execute(
     if builtin == Builtin::DateSetFullYear {
         return Some(super::setter::set_full_year(receiver, arguments));
     }
+    if builtin == Builtin::DateSetMonth {
+        return Some(super::setter::set_month(receiver, arguments));
+    }
+    if builtin == Builtin::DateSetTime {
+        return Some(super::setter::set_time(receiver, arguments));
+    }
     if let Some(result) = super::setter::set_time_components(builtin, receiver, arguments) {
         return Some(result);
     }
@@ -73,8 +79,6 @@ fn dispatch_get(builtin: Builtin, receiver: Option<&Value>) -> Option<Value> {
 
 fn dispatch_set(builtin: Builtin, receiver: Option<&Value>, args: &[Value]) -> Option<Value> {
     match builtin {
-        Builtin::DateSetTime => Some(date_set_time(receiver, args)),
-        Builtin::DateSetMonth => Some(date_set_month(receiver, args)),
         Builtin::DateSetYear => Some(date_set_year(receiver, args)),
         _ => None,
     }
@@ -260,24 +264,6 @@ fn date_get_utc_milliseconds(receiver: Option<&Value>) -> Value {
     chrono_utils::utc_components(extract_time(receiver))
         .map(|(_, _, _, _, _, _, ms)| Value::Number(ms as f64))
         .unwrap_or(Value::Number(f64::NAN))
-}
-
-fn date_set_time(receiver: Option<&Value>, arguments: &[Value]) -> Value {
-    let ms = helpers::to_number(arguments.first().unwrap_or(&Value::Undefined));
-    store_time(receiver.unwrap_or(&Value::Undefined), ms);
-    Value::Number(chrono_utils::time_clip(ms))
-}
-
-fn date_set_month(receiver: Option<&Value>, arguments: &[Value]) -> Value {
-    let current = extract_time(receiver);
-    let new_month = helpers::to_int32(arguments.first().unwrap_or(&Value::Undefined));
-    let (y, _, d, h, m, s, ms) =
-        chrono_utils::local_components(current).unwrap_or((2000, 1, 1, 0, 0, 0, 0));
-    let result = chrono_utils::make_local_ms(
-        y as f64, new_month, d as f64, h as f64, m as f64, s as f64, ms as f64,
-    );
-    store_time(receiver.unwrap_or(&Value::Undefined), result);
-    Value::Number(chrono_utils::time_clip(result))
 }
 
 fn date_get_year(receiver: Option<&Value>) -> Value {
