@@ -6,8 +6,9 @@ pub(crate) fn search(receiver: Option<&Value>, arguments: &[Value]) -> Value {
     let Some(Value::String(value)) = receiver else { return Value::Number(-1.0) };
     if let Some(Value::Object(pattern)) = arguments.first() {
         let pattern = Value::Object(pattern.clone());
-        if let Ok(Value::Object(result)) = crate::regexp::exec(Some(&pattern), &[Value::String(value.clone())]) {
-            return result.iter().find_map(|(key, value)| (key == "index").then(|| value.clone())).unwrap_or(Value::Number(-1.0));
+        if let Ok(Value::Array(result)) = crate::regexp::exec(Some(&pattern), &[Value::String(value.clone())]) {
+            return crate::execute::get_property_result(&Value::Array(result), "index")
+                .unwrap_or_else(|_| Value::Number(-1.0));
         }
         return Value::Number(-1.0);
     }
