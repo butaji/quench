@@ -178,6 +178,9 @@ fn call_primitive(method: &Value, receiver: &Value, arguments: &[Value]) -> Resu
 
 pub(crate) fn is_callable(value: &Value) -> bool {
     match value {
+        Value::Builtin(
+            crate::ops::Builtin::Math | crate::ops::Builtin::Reflect | crate::ops::Builtin::Json,
+        ) => false,
         Value::Builtin(_) | Value::Function(_) | Value::BoundFunction(_) => true,
         Value::Proxy(proxy) => is_callable(&proxy.target),
         _ => false,
