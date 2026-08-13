@@ -45,6 +45,7 @@ fn run_eval(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
         global,
         direct,
         bindings,
+        reusable_var_names,
         forbidden_var_names,
     } = op
     else {
@@ -59,6 +60,7 @@ fn run_eval(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
             global: *global,
             direct: *direct,
             bindings,
+            reusable_var_names,
             forbidden_var_names,
         },
     )

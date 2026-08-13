@@ -43,6 +43,7 @@ fn emit_dynamic_local_get(ops: &mut Vec<Op>, dst: u16, name: &str, slot: u16, ta
             dst,
             slot,
             name: name.to_string(),
+            dynamic: true,
         }),
     }
 }

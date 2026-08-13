@@ -24,6 +24,7 @@ pub(crate) fn execute_eval(
             input.strict,
             input.global,
             input.bindings,
+            input.reusable_var_names,
             input.forbidden_var_names,
         )?
     } else {
@@ -40,6 +41,7 @@ pub(crate) struct EvalExecution<'a> {
     pub(crate) global: bool,
     pub(crate) direct: bool,
     pub(crate) bindings: &'a [(String, u16)],
+    pub(crate) reusable_var_names: &'a [String],
     pub(crate) forbidden_var_names: &'a [String],
 }
 
@@ -68,6 +70,7 @@ fn evaluate_direct(
     strict: bool,
     global: bool,
     bindings: &[(String, u16)],
+    reusable_var_names: &[String],
     forbidden_var_names: &[String],
 ) -> Result<Value, VmError> {
     let Value::String(source) = value else {
@@ -81,8 +84,8 @@ fn evaluate_direct(
         source,
         strict,
         global,
-        true,
         bindings,
+        reusable_var_names,
         forbidden_var_names,
         grammar,
     )

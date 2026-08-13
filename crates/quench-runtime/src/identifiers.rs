@@ -16,7 +16,7 @@ pub(crate) fn reduce(
             return Some(register);
         }
     }
-    if let Some(register) = reduce_local(identifier, ops, next_register, locals) {
+    if let Some(register) = reduce_local(identifier, ops, facts, next_register, locals) {
         return Some(register);
     }
     resolve_name(identifier, ops, next_register)
@@ -35,6 +35,7 @@ fn reduce_global(
 fn reduce_local(
     identifier: &IdentifierReference<'_>,
     ops: &mut Vec<Op>,
+    facts: &ProgramDb,
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
@@ -45,6 +46,7 @@ fn reduce_local(
         dst: register,
         slot,
         name: identifier.name.to_string(),
+        dynamic: facts.in_function && slot < facts.eval_var_scope_start,
     });
     Some(register)
 }

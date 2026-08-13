@@ -124,15 +124,18 @@ pub(crate) fn load_binding(
     dst: u16,
     slot: u16,
     name: &str,
+    dynamic: bool,
 ) -> Result<(), VmError> {
     if let Some(value) = crate::with_scope::resolve_binding(name)? {
         crate::execute::write_value(registers, dst, value);
         return Ok(());
     }
     ensure_initialized(slot, name)?;
-    if let Some(value) = resolve_name(name) {
-        crate::execute::write_value(registers, dst, value);
-        return Ok(());
+    if dynamic {
+        if let Some(value) = resolve_eval_name(name) {
+            crate::execute::write_value(registers, dst, value);
+            return Ok(());
+        }
     }
     crate::execute::write_value(registers, dst, current().get(slot));
     Ok(())
@@ -260,11 +263,10 @@ fn ensure_initialized(slot: u16, name: &str) -> Result<(), VmError> {
     Ok(())
 }
 
-pub(crate) fn alias_name(name: &str, slot: u16) {
+pub(crate) fn alias_eval_name(name: &str, slot: u16) {
     let environment = current();
-    let strict_eval = STRICT_EVAL.with(|value| *value.borrow());
-    if strict_eval || !environment.alias_caller_name(name, slot) {
-        environment.alias_name(name, slot);
+    if !STRICT_EVAL.with(|value| *value.borrow()) {
+        environment.alias_eval_caller_name(name, slot);
     }
 }
 
@@ -291,11 +293,15 @@ pub(crate) fn resolve_name(name: &str) -> Option<Value> {
     })
 }
 
+pub(crate) fn resolve_eval_name(name: &str) -> Option<Value> {
+    current().resolve_eval_name(name)
+}
+
 pub(crate) fn resolve_name_or_undefined(name: &str) -> Result<Value, VmError> {
     if let Some(value) = crate::with_scope::resolve_binding(name)? {
         return Ok(value);
     }
-    if let Some(value) = resolve_name(name) {
+    if let Some(value) = resolve_eval_name(name).or_else(|| resolve_name(name)) {
         return Ok(value);
     }
     if let Some(value) = crate::globals::immutable_value(name) {
@@ -308,9 +314,13 @@ pub(crate) fn set_named(name: &str, value: Value) -> bool {
     current().set_named(name, value)
 }
 
+pub(crate) fn set_eval_named(name: &str, value: Value) -> bool {
+    current().set_eval_named(name, value)
+}
+
 pub(crate) fn delete_named(name: &str, slot: u16) -> bool {
     let environment = current();
-    environment.delete_caller_name(name, slot) || environment.delete_named(name, slot)
+    environment.delete_eval_caller_name(name, slot)
 }
 
 pub(crate) fn capture(count: u16) -> Rc<Environment> {

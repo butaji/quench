@@ -1,6 +1,7 @@
 pub(crate) fn eval_bindings(
     program: &oxc::ast::ast::Program<'_>,
     bindings: &[(String, u16)],
+    reusable_var_names: &[String],
     strict: bool,
     global: bool,
 ) -> EvalBindings {
@@ -13,7 +14,7 @@ pub(crate) fn eval_bindings(
     } else if global {
         reserve_names(&names, &mut locals, &mut next_slot)
     } else {
-        shadow_names(&names, &mut locals, &mut next_slot)
+        shadow_eval_names(&names, reusable_var_names, &mut locals, &mut next_slot)
     };
     let behavior = if strict {
         EvalBehavior::Strict
@@ -32,6 +33,20 @@ pub(crate) fn eval_bindings(
     let lexical = shadow_names(&lexical_names, &mut locals, &mut next_slot);
     prefix.extend(lexical.into_iter().map(|(_, slot)| Op::MarkUninitialized { slot }));
     (locals, next_slot, prefix, behavior, deletable)
+}
+
+fn shadow_eval_names(
+    names: &[String],
+    reusable: &[String],
+    locals: &mut HashMap<String, u16>,
+    next_slot: &mut u16,
+) -> Vec<(String, u16)> {
+    let names = names
+        .iter()
+        .filter(|name| !reusable.contains(name))
+        .cloned()
+        .collect::<Vec<_>>();
+    shadow_names(&names, locals, next_slot)
 }
 
 fn shadow_names(
