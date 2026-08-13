@@ -375,7 +375,11 @@ fn decimal_numeric_parts(text: &str, locale: &str) -> Vec<Value> {
         parts.push(part("fraction", fraction));
     }
     if let Some(suffix) = suffix {
-        parts.push(part("compact", suffix));
+        let trimmed = suffix.trim_start();
+        if trimmed.len() != suffix.len() {
+            parts.push(part("literal", &suffix[..suffix.len() - trimmed.len()]));
+        }
+        parts.push(part("compact", trimmed));
     }
     parts
 }

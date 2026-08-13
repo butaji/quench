@@ -420,6 +420,9 @@ impl NumberOptions {
                 &self.locale,
             );
         }
+        if self.style == "percent" {
+            return unit_parts(&formatted, Some("percent"), "narrow", &self.locale);
+        }
         if self.style == "decimal" && self.unit.is_none() {
             if number.is_infinite()
                 || number.is_nan()
