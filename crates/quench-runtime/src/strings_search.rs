@@ -1,9 +1,21 @@
+/// The UTF-16 units of the search-string argument, rejecting regular
+/// expressions as includes/startsWith/endsWith require.
+fn search_string(arguments: &[Value]) -> Result<Vec<u16>, crate::execute::VmError> {
+    let value = argument_value(arguments);
+    if crate::regexp::is_regexp(value)? {
+        return Err(crate::value::error::throw_type_error(
+            "First argument must not be a regular expression",
+        ));
+    }
+    Ok(crate::conversion::to_string(value)?.encode_utf16().collect())
+}
+
 pub(crate) fn includes(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     let units = receiver_units(receiver)?;
-    let search: Vec<u16> = argument(arguments).encode_utf16().collect();
+    let search = search_string(arguments)?;
     let start = search_position(arguments.get(1), units.len())?;
     Ok(Value::Boolean(contains_from(&units, &search, start)))
 }
@@ -40,7 +52,7 @@ pub(crate) fn starts_with(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     let units = receiver_units(receiver)?;
-    let search: Vec<u16> = argument(arguments).encode_utf16().collect();
+    let search = search_string(arguments)?;
     let start = search_position(arguments.get(1), units.len())?;
     Ok(Value::Boolean(
         units
@@ -54,7 +66,7 @@ pub(crate) fn ends_with(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     let units = receiver_units(receiver)?;
-    let search: Vec<u16> = argument(arguments).encode_utf16().collect();
+    let search = search_string(arguments)?;
     let end = match arguments.get(1) {
         None => units.len(),
         value => search_position(value, units.len())?,
