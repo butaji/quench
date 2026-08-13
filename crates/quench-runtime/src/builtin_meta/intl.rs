@@ -28,7 +28,7 @@ const fn intl_name_group_a(b: Builtin) -> Option<&'static str> {
         Builtin::IntlLocaleGetTimeZones => Some("Intl.Locale.prototype.getTimeZones"),
         Builtin::IntlLocaleGetTextInfo => Some("Intl.Locale.prototype.getTextInfo"),
         Builtin::IntlLocaleGetWeekInfo => Some("Intl.Locale.prototype.getWeekInfo"),
-        Builtin::IntlNumberFormatFormat => Some("Intl.NumberFormat.prototype.format"),
+        Builtin::IntlNumberFormatFormat => Some(""),
         Builtin::IntlNumberFormatFormatToParts => Some("Intl.NumberFormat.prototype.formatToParts"),
         Builtin::IntlNumberFormatResolvedOptions => {
             Some("Intl.NumberFormat.prototype.resolvedOptions")
@@ -86,8 +86,8 @@ const fn intl_fn_len(b: Builtin) -> Option<f64> {
         | Builtin::IntlLocaleGetTimeZones
         | Builtin::IntlLocaleGetTextInfo
         | Builtin::IntlLocaleGetWeekInfo => Some(0.0),
-        Builtin::IntlNumberFormatFormat
-        | Builtin::IntlNumberFormatFormatToParts
+        Builtin::IntlNumberFormatFormat => Some(1.0),
+        Builtin::IntlNumberFormatFormatToParts
         | Builtin::IntlNumberFormatResolvedOptions
         | Builtin::IntlPluralRulesSelect
         | Builtin::IntlPluralRulesResolvedOptions
@@ -122,7 +122,7 @@ const fn intl_short_name(b: Builtin) -> Option<&'static str> {
         Builtin::IntlLocaleGetTimeZones => Some("getTimeZones"),
         Builtin::IntlLocaleGetTextInfo => Some("getTextInfo"),
         Builtin::IntlLocaleGetWeekInfo => Some("getWeekInfo"),
-        Builtin::IntlNumberFormatFormat => Some("format"),
+        Builtin::IntlNumberFormatFormat => Some(""),
         Builtin::IntlNumberFormatFormatToParts => Some("formatToParts"),
         Builtin::IntlNumberFormatResolvedOptions => Some("resolvedOptions"),
         Builtin::IntlPluralRulesSelect => Some("select"),
