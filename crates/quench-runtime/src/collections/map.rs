@@ -129,16 +129,18 @@ pub(crate) fn map_new(arguments: &[Value]) -> Result<Value, VmError> {
             "Map.prototype.set is not callable",
         ));
     }
-    let map = std::cell::RefCell::new(map);
     crate::collections::iterator::for_each_iterable(iterable, |entry| {
+        if !crate::value::is_object(&entry) {
+            return Err(crate::value::error::throw_type_error(
+                "Iterator value is not an entry object",
+            ));
+        }
         let key = crate::execute::get_property_result(&entry, "0")?;
         let value = crate::execute::get_property_result(&entry, "1")?;
-        let current = map.borrow().clone();
-        let result = crate::functions::execute_target(&setter, &current, &[key, value])?;
-        *map.borrow_mut() = result;
+        crate::functions::execute_target(&setter, &map, &[key, value])?;
         Ok(())
     })?;
-    Ok(map.into_inner())
+    Ok(map)
 }
 
 pub(crate) fn weak_map_new(arguments: &[Value]) -> Result<Value, VmError> {
