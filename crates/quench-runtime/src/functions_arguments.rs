@@ -185,7 +185,7 @@ pub(crate) fn execute_target(
     arguments: &[crate::value::Value],
 ) -> Result<crate::value::Value, crate::execute::VmError> {
     match target {
-        crate::value::Value::Builtin(builtin) => {
+        crate::value::Value::Builtin(builtin) if crate::conversion::is_callable(target) => {
             execute_builtin_target(*builtin, Some(receiver), arguments)
         }
         crate::value::Value::Function(function) => execute(function, receiver, arguments),

@@ -157,7 +157,7 @@ fn invoke_with_receiver(
     match callee_value {
         Value::Function(body) => crate::functions::execute(body, receiver, arguments),
         Value::BoundFunction(bound) => crate::functions::execute_bound(bound, arguments),
-        Value::Builtin(builtin) => {
+        Value::Builtin(builtin) if crate::conversion::is_callable(callee_value) => {
             super::execute_builtin_with_receiver(*builtin, arguments, Some(receiver))
         }
         Value::Proxy(proxy) if crate::conversion::is_callable(callee_value) => {

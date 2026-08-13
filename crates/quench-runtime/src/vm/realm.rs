@@ -177,6 +177,8 @@ pub(super) fn global_builtin(key: &str) -> Option<Builtin> {
         "Date" => Date,
         "eval" => Eval,
         "JSON" => Json,
+        "Math" => Math,
+        "Reflect" => Reflect,
         "Map" => Map,
         "Set" => Set,
         "Error" => Error,
