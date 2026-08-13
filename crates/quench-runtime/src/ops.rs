@@ -245,6 +245,7 @@ pub enum Builtin {
     DateSetFullYear,
     DateSetMonth,
     DateSetDate,
+    DateSetUTCDate,
     DateSetHours,
     DateSetMinutes,
     DateSetSeconds,

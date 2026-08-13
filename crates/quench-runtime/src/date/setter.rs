@@ -16,6 +16,18 @@ pub fn set_date(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, 
     store(receiver, result)
 }
 
+pub fn set_utc_date(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    let current = time_value(receiver)?;
+    let day = argument(arguments, 0, f64::NAN)?;
+    if current.is_nan() {
+        return Ok(Value::Number(f64::NAN));
+    }
+    let result = chrono_utils::utc_components(current).map_or(f64::NAN, |parts| {
+        utc_time(parts, parts.0 as f64, (parts.1 - 1) as f64, day)
+    });
+    store(receiver, result)
+}
+
 pub fn set_full_year(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let current = time_value(receiver)?;
     let parts = if current.is_nan() {
@@ -157,6 +169,18 @@ pub(crate) fn time_value(receiver: Option<&Value>) -> Result<f64, VmError> {
 
 fn local_time(parts: (i32, u32, u32, u32, u32, u32, u32), year: f64, month: f64, day: f64) -> f64 {
     chrono_utils::make_local_ms(
+        year,
+        month,
+        day,
+        parts.3 as f64,
+        parts.4 as f64,
+        parts.5 as f64,
+        parts.6 as f64,
+    )
+}
+
+fn utc_time(parts: (i32, u32, u32, u32, u32, u32, u32), year: f64, month: f64, day: f64) -> f64 {
+    chrono_utils::make_date_ms(
         year,
         month,
         day,
