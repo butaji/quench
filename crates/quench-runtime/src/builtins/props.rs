@@ -400,6 +400,7 @@ fn builtin_method3(builtin: Builtin, key: &str) -> Option<Builtin> {
         (ObjectPrototype, "constructor") => Some(Object),
         (ObjectPrototype, "toLocaleString") => Some(ObjectPrototypeToString),
         (Symbol, "prototype") => Some(SymbolPrototype),
+        (SymbolPrototype, "toString") => Some(SymbolToString),
         (SymbolPrototype, "valueOf") => Some(SymbolValueOf),
         (String, "prototype") => Some(StringPrototype),
         (StringPrototype, "valueOf") => Some(StringValueOf),

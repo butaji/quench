@@ -55,6 +55,11 @@ fn symbol_value_of(receiver: Option<&Value>) -> Result<Value, crate::execute::Vm
     }
 }
 
+fn symbol_to_string(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
+    let value = symbol_value_of(receiver)?;
+    Ok(Value::String(crate::intl::tolocale::value::to_string(Some(&value))))
+}
+
 fn wrapped_symbol(value: &Value) -> Result<Value, crate::execute::VmError> {
     let constructor = crate::execute::get_property_result(value, "constructor")?;
     let wrapped = crate::execute::get_property_result(value, "_value")?;
