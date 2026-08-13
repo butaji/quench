@@ -30,6 +30,13 @@ pub fn get_property(value: &Value, key: &str) -> Value {
 fn get_property_value(value: &Value, key: &str) -> Value {
     use Value::*;
     match value {
+        Builtin(builtin) if crate::intl::tolocale::symbol::name(*builtin).is_some() => {
+            bind_callable_property(
+                &Value::Builtin(crate::ops::Builtin::SymbolPrototype),
+                crate::ops::Builtin::SymbolPrototype,
+                key,
+            )
+        }
         Builtin(builtin) => bind_callable_property(value, *builtin, key),
         Array(values) => crate::arrays::property(values, key),
         ArrayBuffer(buffer) => array_buffer_property(buffer, key),

@@ -85,6 +85,7 @@ fn is_simple_builtin(builtin: Builtin) -> bool {
             | Builtin::BigIntValueOf
             | Builtin::SymbolToString
             | Builtin::SymbolValueOf
+            | Builtin::SymbolPrototypeToPrimitive
             | Builtin::SymbolDescriptionGetter
             | Builtin::StringToString
             | Builtin::StringValueOf
@@ -144,6 +145,7 @@ fn execute_simple_builtin(
         Builtin::BigIntValueOf => bigint_value_of(receiver),
         Builtin::SymbolToString => symbol_to_string(receiver),
         Builtin::SymbolValueOf => symbol_value_of(receiver),
+        Builtin::SymbolPrototypeToPrimitive => symbol_value_of(receiver),
         Builtin::SymbolDescriptionGetter => symbol_description(receiver),
         Builtin::StringToString | Builtin::StringValueOf => string_value_of(receiver),
         Builtin::BoxedValueOf => Ok(boxed_value(receiver)),
