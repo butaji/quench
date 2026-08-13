@@ -124,9 +124,9 @@ pub(crate) fn execute(
         Builtin::MathCeil => numbers.first().copied().unwrap_or(f64::NAN).ceil(),
         Builtin::MathRound => round(numbers.first().copied().unwrap_or(f64::NAN)),
         Builtin::MathTrunc => numbers.first().copied().unwrap_or(f64::NAN).trunc(),
-        Builtin::MathMax => numbers.into_iter().fold(f64::NEG_INFINITY, f64::max),
-        Builtin::MathMin => numbers.into_iter().fold(f64::INFINITY, f64::min),
-        Builtin::MathSign => numbers.first().copied().unwrap_or(f64::NAN).signum(),
+        Builtin::MathMax => extrema(&numbers, f64::NEG_INFINITY, f64::max),
+        Builtin::MathMin => extrema(&numbers, f64::INFINITY, f64::min),
+        Builtin::MathSign => sign(numbers.first().copied().unwrap_or(f64::NAN)),
         Builtin::MathSqrt => numbers.first().copied().unwrap_or(f64::NAN).sqrt(),
         Builtin::MathCbrt => numbers.first().copied().unwrap_or(f64::NAN).cbrt(),
         Builtin::MathHypot => numbers
@@ -177,9 +177,27 @@ fn transcendental(builtin: Builtin, numbers: &[f64]) -> Option<f64> {
 }
 
 fn imul(left: Option<&f64>, right: Option<&f64>) -> f64 {
-    let left = left.copied().unwrap_or(f64::NAN) as i32;
-    let right = right.copied().unwrap_or(f64::NAN) as i32;
+    let left = crate::construct::to_int32(left.copied().unwrap_or(f64::NAN));
+    let right = crate::construct::to_int32(right.copied().unwrap_or(f64::NAN));
     left.wrapping_mul(right) as f64
+}
+
+fn extrema(numbers: &[f64], initial: f64, compare: fn(f64, f64) -> f64) -> f64 {
+    numbers
+        .iter()
+        .copied()
+        .try_fold(initial, |result, value| {
+            (!value.is_nan()).then_some(compare(result, value))
+        })
+        .unwrap_or(f64::NAN)
+}
+
+fn sign(value: f64) -> f64 {
+    if value == 0.0 {
+        value
+    } else {
+        value.signum()
+    }
 }
 
 fn clz32(value: f64) -> u32 {
