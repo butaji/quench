@@ -28,6 +28,19 @@ const fn intl_name_group_a(b: Builtin) -> Option<&'static str> {
         Builtin::IntlLocaleGetTimeZones => Some("Intl.Locale.prototype.getTimeZones"),
         Builtin::IntlLocaleGetTextInfo => Some("Intl.Locale.prototype.getTextInfo"),
         Builtin::IntlLocaleGetWeekInfo => Some("Intl.Locale.prototype.getWeekInfo"),
+        Builtin::IntlLocaleBaseNameGetter => Some("get baseName"),
+        Builtin::IntlLocaleCalendarGetter => Some("get calendar"),
+        Builtin::IntlLocaleCaseFirstGetter => Some("get caseFirst"),
+        Builtin::IntlLocaleCollationGetter => Some("get collation"),
+        Builtin::IntlLocaleFirstDayOfWeekGetter => Some("get firstDayOfWeek"),
+        Builtin::IntlLocaleHourCycleGetter => Some("get hourCycle"),
+        Builtin::IntlLocaleLanguageGetter => Some("get language"),
+        Builtin::IntlLocaleNumberingSystemGetter => Some("get numberingSystem"),
+        Builtin::IntlLocaleNumericGetter => Some("get numeric"),
+        Builtin::IntlLocaleRegionGetter => Some("get region"),
+        Builtin::IntlLocaleScriptGetter => Some("get script"),
+        Builtin::IntlLocaleTextInfoGetter => Some("get textInfo"),
+        Builtin::IntlLocaleVariantsGetter => Some("get variants"),
         Builtin::IntlNumberFormatFormat => Some(""),
         Builtin::IntlNumberFormatFormatToParts => Some("Intl.NumberFormat.prototype.formatToParts"),
         Builtin::IntlNumberFormatFormatRange => Some("Intl.NumberFormat.prototype.formatRange"),
@@ -90,6 +103,19 @@ const fn intl_fn_len(b: Builtin) -> Option<f64> {
         | Builtin::IntlLocaleGetTimeZones
         | Builtin::IntlLocaleGetTextInfo
         | Builtin::IntlLocaleGetWeekInfo => Some(0.0),
+        Builtin::IntlLocaleBaseNameGetter
+        | Builtin::IntlLocaleCalendarGetter
+        | Builtin::IntlLocaleCaseFirstGetter
+        | Builtin::IntlLocaleCollationGetter
+        | Builtin::IntlLocaleFirstDayOfWeekGetter
+        | Builtin::IntlLocaleHourCycleGetter
+        | Builtin::IntlLocaleLanguageGetter
+        | Builtin::IntlLocaleNumberingSystemGetter
+        | Builtin::IntlLocaleNumericGetter
+        | Builtin::IntlLocaleRegionGetter
+        | Builtin::IntlLocaleScriptGetter
+        | Builtin::IntlLocaleTextInfoGetter
+        | Builtin::IntlLocaleVariantsGetter => Some(0.0),
         Builtin::IntlNumberFormatFormat => Some(1.0),
         Builtin::IntlNumberFormatResolvedOptions
         | Builtin::IntlPluralRulesSelect
@@ -129,6 +155,19 @@ const fn intl_short_name(b: Builtin) -> Option<&'static str> {
         Builtin::IntlLocaleGetTimeZones => Some("getTimeZones"),
         Builtin::IntlLocaleGetTextInfo => Some("getTextInfo"),
         Builtin::IntlLocaleGetWeekInfo => Some("getWeekInfo"),
+        Builtin::IntlLocaleBaseNameGetter => Some("baseName"),
+        Builtin::IntlLocaleCalendarGetter => Some("calendar"),
+        Builtin::IntlLocaleCaseFirstGetter => Some("caseFirst"),
+        Builtin::IntlLocaleCollationGetter => Some("collation"),
+        Builtin::IntlLocaleFirstDayOfWeekGetter => Some("firstDayOfWeek"),
+        Builtin::IntlLocaleHourCycleGetter => Some("hourCycle"),
+        Builtin::IntlLocaleLanguageGetter => Some("language"),
+        Builtin::IntlLocaleNumberingSystemGetter => Some("numberingSystem"),
+        Builtin::IntlLocaleNumericGetter => Some("numeric"),
+        Builtin::IntlLocaleRegionGetter => Some("region"),
+        Builtin::IntlLocaleScriptGetter => Some("script"),
+        Builtin::IntlLocaleTextInfoGetter => Some("textInfo"),
+        Builtin::IntlLocaleVariantsGetter => Some("variants"),
         Builtin::IntlNumberFormatFormat => Some(""),
         Builtin::IntlNumberFormatFormatToParts => Some("formatToParts"),
         Builtin::IntlNumberFormatFormatRange => Some("formatRange"),

@@ -273,6 +273,21 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
             Builtin::AsyncDisposableStackDisposed
         }
         (Builtin::ErrorPrototype, "stack") => Builtin::ErrorPrototypeStackGetter,
+        (Builtin::IntlLocalePrototype, "baseName") => Builtin::IntlLocaleBaseNameGetter,
+        (Builtin::IntlLocalePrototype, "calendar") => Builtin::IntlLocaleCalendarGetter,
+        (Builtin::IntlLocalePrototype, "caseFirst") => Builtin::IntlLocaleCaseFirstGetter,
+        (Builtin::IntlLocalePrototype, "collation") => Builtin::IntlLocaleCollationGetter,
+        (Builtin::IntlLocalePrototype, "firstDayOfWeek") => Builtin::IntlLocaleFirstDayOfWeekGetter,
+        (Builtin::IntlLocalePrototype, "hourCycle") => Builtin::IntlLocaleHourCycleGetter,
+        (Builtin::IntlLocalePrototype, "language") => Builtin::IntlLocaleLanguageGetter,
+        (Builtin::IntlLocalePrototype, "numberingSystem") => {
+            Builtin::IntlLocaleNumberingSystemGetter
+        }
+        (Builtin::IntlLocalePrototype, "numeric") => Builtin::IntlLocaleNumericGetter,
+        (Builtin::IntlLocalePrototype, "region") => Builtin::IntlLocaleRegionGetter,
+        (Builtin::IntlLocalePrototype, "script") => Builtin::IntlLocaleScriptGetter,
+        (Builtin::IntlLocalePrototype, "textInfo") => Builtin::IntlLocaleTextInfoGetter,
+        (Builtin::IntlLocalePrototype, "variants") => Builtin::IntlLocaleVariantsGetter,
         _ => return None,
     };
     let descriptor = match (builtin, key) {
