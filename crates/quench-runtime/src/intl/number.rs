@@ -421,7 +421,9 @@ impl NumberOptions {
             );
         }
         if self.style == "percent" {
-            return unit_parts(&formatted, Some("percent"), "narrow", &self.locale);
+            let mut parts = numeric_parts(&formatted, &self.locale);
+            parts.push(crate::intl::number_format::percent_part());
+            return parts;
         }
         if self.style == "decimal" && self.unit.is_none() {
             if number.is_infinite()
