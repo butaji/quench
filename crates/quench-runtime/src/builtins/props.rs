@@ -49,6 +49,9 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         return Some(value);
     }
     match (builtin, key) {
+        (RegExpStringIteratorPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("RegExp String Iterator".into()))
+        }
         (Symbol, "prototype") => Some(Value::Builtin(SymbolPrototype)),
         (Symbol, "unscopables") => Some(Value::String("Symbol.unscopables\0".to_string())),
         (Symbol, k) => crate::builtin_meta::symbol::symbol_prop(k).map(Value::Builtin),
@@ -193,6 +196,7 @@ fn regexp_method(builtin: Builtin, key: &str) -> Option<Builtin> {
         (RegExpPrototype, "Symbol.replace") => RegExpSymbolReplace,
         (RegExpPrototype, "Symbol.split") => RegExpSymbolSplit,
         (RegExpPrototype, "Symbol.matchAll") => RegExpSymbolMatchAll,
+        (RegExpStringIteratorPrototype, "next") => RegExpStringIteratorNext,
         _ => return None,
     })
 }
