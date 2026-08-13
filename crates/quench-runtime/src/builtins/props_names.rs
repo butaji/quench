@@ -21,7 +21,7 @@ fn error_name(builtin: Builtin) -> Option<&'static str> {
     Some(match builtin {
         Error => "Error", TypeError => "TypeError", RangeError => "RangeError",
         ReferenceError => "ReferenceError", SyntaxError => "SyntaxError", EvalError => "EvalError",
-        URIError => "URIError", AggregateError => "AggregateError", _ => return None,
+        URIError => "URIError", AggregateError => "AggregateError", SuppressedError => "SuppressedError", _ => return None,
     })
 }
 fn object_prototype_method(key: &str) -> Option<crate::ops::Builtin> {

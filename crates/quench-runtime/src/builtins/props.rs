@@ -255,6 +255,7 @@ fn error_prototype(builtin: Builtin, key: &str) -> Option<Builtin> {
                 | Builtin::EvalError
                 | Builtin::URIError
                 | Builtin::AggregateError
+                | Builtin::SuppressedError
                 | Builtin::TypeError
         ))
     .then_some(Builtin::ErrorPrototype)
@@ -395,6 +396,7 @@ fn builtin_method2(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Object, "keys") => Some(ObjectKeys),
         (Object, "values") => Some(ObjectValues),
         (Object, "entries") => Some(ObjectEntries),
+        (Object, "hasOwn") => Some(ObjectHasOwn),
         (Object, "getOwnPropertyNames") => Some(ObjectGetOwnPropertyNames),
         (Object, "getOwnPropertySymbols") => Some(ObjectGetOwnPropertySymbols),
         (Object, "create") => Some(ObjectCreate),

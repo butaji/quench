@@ -318,6 +318,7 @@ fn is_error_builtin(builtin: crate::ops::Builtin) -> bool {
             | crate::ops::Builtin::EvalError
             | crate::ops::Builtin::URIError
             | crate::ops::Builtin::AggregateError
+            | crate::ops::Builtin::SuppressedError
     )
 }
 

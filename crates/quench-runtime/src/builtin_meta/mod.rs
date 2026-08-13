@@ -63,6 +63,7 @@ pub fn constructor_name(builtin: Builtin) -> Option<&'static str> {
         | Builtin::EvalError
         | Builtin::URIError
         | Builtin::AggregateError => error_constructor_name(builtin),
+        Builtin::SuppressedError => Some("SuppressedError"),
         _ => None,
     }
 }
@@ -93,6 +94,7 @@ fn error_constructor_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::EvalError => "EvalError",
         Builtin::URIError => "URIError",
         Builtin::AggregateError => "AggregateError",
+        Builtin::SuppressedError => "SuppressedError",
         _ => return None,
     })
 }
@@ -138,6 +140,7 @@ pub fn prototype(builtin: Builtin) -> Option<Builtin> {
         Builtin::EvalError => Some(Builtin::ErrorPrototype),
         Builtin::URIError => Some(Builtin::ErrorPrototype),
         Builtin::AggregateError => Some(Builtin::ErrorPrototype),
+        Builtin::SuppressedError => Some(Builtin::ErrorPrototype),
         Builtin::TypeError => Some(Builtin::ErrorPrototype),
         _ => None,
     }
@@ -263,6 +266,7 @@ pub fn constructor_length(builtin: Builtin) -> Option<f64> {
         | Builtin::EvalError
         | Builtin::URIError
         | Builtin::AggregateError => Some(1.0),
+        Builtin::SuppressedError => Some(3.0),
         _ => None,
     }
 }
