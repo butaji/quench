@@ -257,7 +257,7 @@ fn set_builtin_property(
     Ok(())
 }
 
-fn rejects_new_property(target: &crate::value::Value, key: &str) -> bool {
+pub(crate) fn rejects_new_property(target: &crate::value::Value, key: &str) -> bool {
     let crate::value::Value::Object(properties) = target else {
         return false;
     };
