@@ -237,7 +237,7 @@ fn valid_unit(unit: Option<&str>) -> bool {
 }
 
 fn grouping_enabled(value: &str) -> bool {
-    matches!(value, "true" | "always" | "auto")
+    matches!(value, "true" | "always" | "auto" | "min2")
 }
 
 fn fraction_digits(style: &str, currency: Option<&str>, requested: f64) -> u32 {
