@@ -28,6 +28,30 @@ pub fn set_utc_date(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
     store(receiver, result)
 }
 
+pub fn set_utc_month(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    let current = time_value(receiver)?;
+    let parts = chrono_utils::utc_components(current);
+    let month = argument(arguments, 0, f64::NAN)?;
+    let day = argument(arguments, 1, parts.map_or(f64::NAN, |parts| parts.2 as f64))?;
+    if current.is_nan() {
+        return Ok(Value::Number(f64::NAN));
+    }
+    let result = parts.map_or(f64::NAN, |parts| {
+        utc_time(parts, parts.0 as f64, month, day)
+    });
+    store(receiver, result)
+}
+
+pub fn set_utc_full_year(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    let current = time_value(receiver)?;
+    let parts = chrono_utils::utc_components(if current.is_nan() { 0.0 } else { current })
+        .unwrap_or((1970, 1, 1, 0, 0, 0, 0));
+    let year = argument(arguments, 0, f64::NAN)?;
+    let month = argument(arguments, 1, (parts.1 - 1) as f64)?;
+    let day = argument(arguments, 2, parts.2 as f64)?;
+    store(receiver, utc_time(parts, year, month, day))
+}
+
 pub fn set_full_year(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let current = time_value(receiver)?;
     let parts = if current.is_nan() {
