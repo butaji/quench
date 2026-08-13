@@ -236,7 +236,8 @@ const fn weak_short_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::WeakSetHas => Some("has"),
         Builtin::WeakMapHas => Some("has"),
         Builtin::WeakMapDelete | Builtin::WeakSetDelete => Some("delete"),
-        Builtin::WeakMapGetOrInsert | Builtin::WeakMapGetOrInsertComputed => Some("getOrInsert"),
+        Builtin::WeakMapGetOrInsert => Some("getOrInsert"),
+        Builtin::WeakMapGetOrInsertComputed => Some("getOrInsertComputed"),
         _ => None,
     }
 }
