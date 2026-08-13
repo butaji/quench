@@ -348,7 +348,15 @@ fn round(value: f64) -> f64 {
     if value.is_nan() || value.is_infinite() || value == 0.0 {
         return value;
     }
-    let result = (value + 0.5).floor();
+    if value.fract() == 0.0 {
+        return value;
+    }
+    let lower = value.floor();
+    let result = if value - lower < 0.5 {
+        lower
+    } else {
+        lower + 1.0
+    };
     if result == 0.0 && value < 0.0 {
         -0.0
     } else {
