@@ -86,6 +86,10 @@ fn prototype_property(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Builtin::IntlNumberFormatPrototype, "formatToParts") => {
             Builtin::IntlNumberFormatFormatToParts
         }
+        (Builtin::IntlNumberFormatPrototype, "formatRange") => Builtin::IntlNumberFormatFormatRange,
+        (Builtin::IntlNumberFormatPrototype, "formatRangeToParts") => {
+            Builtin::IntlNumberFormatFormatRangeToParts
+        }
         (Builtin::IntlNumberFormatPrototype, "resolvedOptions") => {
             Builtin::IntlNumberFormatResolvedOptions
         }
