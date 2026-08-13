@@ -345,10 +345,11 @@ pub(crate) fn to_index(value: f64) -> Result<usize, crate::execute::VmError> {
     if value.is_nan() {
         return Ok(0);
     }
-    if !value.is_finite() || value < 0.0 {
+    let truncated = value.trunc();
+    if !value.is_finite() || truncated < 0.0 {
         return Err(range_error("Invalid typed-array length"));
     }
-    usize::try_from(value.trunc() as u128)
+    usize::try_from(truncated as u128)
         .map_err(|_| range_error("Typed-array length is too large"))
 }
 

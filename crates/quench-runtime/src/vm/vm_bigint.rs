@@ -3,10 +3,15 @@ fn explicit_bigint(value: Option<&Value>) -> Result<Value, VmError> {
         Some(value) => crate::conversion::to_primitive(value, "number")?,
         None => return Err(crate::value::error::throw_type_error("Cannot convert value to BigInt")),
     };
+    if crate::conversion::is_symbol(&primitive) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot convert Symbol to BigInt",
+        ));
+    }
     match primitive {
         Value::BigInt(value) => Ok(Value::BigInt(value)),
         Value::Number(value) if value.is_finite() && value.fract() == 0.0 => {
-            Ok(Value::BigInt(format!("{value:.0}")))
+            Ok(Value::BigInt(format!("{:.0}", value + 0.0)))
         }
         Value::Number(_) => Err(crate::value::error::throw_range_error(
             "Cannot convert non-integral Number to BigInt",
