@@ -9,6 +9,7 @@ pub mod array;
 pub mod bigint;
 pub mod collections;
 pub mod date;
+pub mod disposable;
 pub mod function;
 pub mod intl;
 pub mod json;
@@ -42,6 +43,8 @@ pub fn constructor_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::Proxy => Some("Proxy"),
         Builtin::Promise => Some("Promise"),
         Builtin::Date => Some("Date"),
+        Builtin::DisposableStack => Some("DisposableStack"),
+        Builtin::AsyncDisposableStack => Some("AsyncDisposableStack"),
         Builtin::Function => Some("Function"),
         Builtin::AsyncFunction => Some("AsyncFunction"),
         Builtin::GeneratorFunction => Some("GeneratorFunction"),
@@ -103,6 +106,8 @@ pub fn prototype(builtin: Builtin) -> Option<Builtin> {
         Builtin::Boolean => Some(Builtin::ObjectPrototype),
         Builtin::Promise => Some(Builtin::PromisePrototype),
         Builtin::Date => Some(Builtin::DatePrototype),
+        Builtin::DisposableStack => Some(Builtin::DisposableStackPrototype),
+        Builtin::AsyncDisposableStack => Some(Builtin::AsyncDisposableStackPrototype),
         Builtin::Function => Some(Builtin::FunctionPrototype),
         Builtin::AsyncFunction => Some(Builtin::FunctionPrototype),
         Builtin::GeneratorFunction => Some(Builtin::GeneratorFunctionPrototype),
@@ -176,6 +181,8 @@ fn is_runtime_prototype(builtin: Builtin) -> bool {
             | Builtin::GeneratorFunctionPrototype
             | Builtin::AsyncGeneratorFunctionPrototype
             | Builtin::DatePrototype
+            | Builtin::DisposableStackPrototype
+            | Builtin::AsyncDisposableStackPrototype
             | Builtin::RegExpPrototype
             | Builtin::RegExpStringIteratorPrototype
             | Builtin::SetIteratorPrototype
@@ -236,6 +243,8 @@ pub fn constructor_length(builtin: Builtin) -> Option<f64> {
         Builtin::Proxy => Some(2.0),
         Builtin::Promise => Some(1.0),
         Builtin::Date => Some(7.0),
+        Builtin::DisposableStack => Some(0.0),
+        Builtin::AsyncDisposableStack => Some(0.0),
         Builtin::Function => Some(1.0),
         Builtin::AsyncFunction | Builtin::GeneratorFunction | Builtin::AsyncGeneratorFunction => {
             Some(1.0)

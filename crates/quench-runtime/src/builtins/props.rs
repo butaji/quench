@@ -70,6 +70,20 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         }
         (BigIntPrototype, "Symbol.toStringTag") => Some(Value::String("BigInt".to_string())),
         (DatePrototype, k) => crate::builtin_meta::date::date_prop(k).map(Value::Builtin),
+        (DisposableStack, "prototype") => Some(Value::Builtin(DisposableStackPrototype)),
+        (AsyncDisposableStack, "prototype") => Some(Value::Builtin(AsyncDisposableStackPrototype)),
+        (AsyncDisposableStackPrototype, "constructor") => {
+            Some(Value::Builtin(AsyncDisposableStack))
+        }
+        (DisposableStackPrototype, "Symbol.dispose") => {
+            Some(Value::Builtin(DisposableStackDispose))
+        }
+        (DisposableStackPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("DisposableStack".into()))
+        }
+        (DisposableStackPrototype, k) => {
+            crate::builtin_meta::disposable::property(k).map(Value::Builtin)
+        }
         _ => builtin_method(builtin, key).map(Value::Builtin),
     }
 }

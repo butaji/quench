@@ -382,7 +382,7 @@ fn execute_object(
 
 fn builtin_property(builtin: crate::ops::Builtin, key: &str) -> Value {
     if builtin == Builtin::Object && key == "hasOwn" {
-        return Value::Builtin(Builtin::ObjectHasOwnProperty);
+        return Value::Builtin(Builtin::ObjectHasOwn);
     }
     if key == "BYTES_PER_ELEMENT" {
         if let Some(size) = typed_array_element_size(builtin) {
