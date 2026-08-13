@@ -87,7 +87,7 @@ pub(crate) fn execute_construct(
     Ok((result, final_this))
 }
 
-fn is_derived_constructor(function: &crate::value::FunctionValue) -> bool {
+pub(crate) fn is_derived_constructor(function: &crate::value::FunctionValue) -> bool {
     function
         .properties
         .borrow()
