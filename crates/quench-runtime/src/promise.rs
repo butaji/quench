@@ -273,6 +273,7 @@ fn bound_settler(target: Builtin, promise: &Rc<PromiseData>) -> Value {
         target: Value::Builtin(target),
         receiver: Value::Promise(Rc::clone(promise)),
         arguments: Vec::new(),
+        properties: RefCell::new(Vec::new()),
     }))
 }
 
@@ -341,11 +342,13 @@ pub(crate) fn construct_promise(executor: &Value) -> Result<Value, VmError> {
         target: Value::Builtin(Builtin::PromiseResolve),
         receiver: promise.clone(),
         arguments: Vec::new(),
+        properties: RefCell::new(Vec::new()),
     }));
     let reject = Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
         target: Value::Builtin(Builtin::PromiseReject),
         receiver: promise.clone(),
         arguments: Vec::new(),
+        properties: RefCell::new(Vec::new()),
     }));
     crate::functions::execute_target(executor, &Value::Undefined, &[resolve, reject])?;
     Ok(promise)

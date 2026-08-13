@@ -48,6 +48,7 @@ fn create_revoke_function(proxy: Value) -> Value {
         target: Value::Builtin(Builtin::ProxyRevoke),
         receiver: proxy,
         arguments: Vec::new(),
+        properties: std::cell::RefCell::new(Vec::new()),
     }))
 }
 
@@ -146,6 +147,7 @@ fn proxy_target_property(
                 target: Value::Builtin(builtin),
                 receiver: receiver.clone(),
                 arguments: Vec::new(),
+                properties: std::cell::RefCell::new(Vec::new()),
             },
         )));
     }

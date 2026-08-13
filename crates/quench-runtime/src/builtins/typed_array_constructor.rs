@@ -29,6 +29,7 @@ fn typed_array_static_property(builtin: Builtin, key: &str) -> Option<Value> {
             target: Value::Builtin(target),
             receiver: Value::Builtin(builtin),
             arguments: Vec::new(),
+            properties: std::cell::RefCell::new(Vec::new()),
         },
     )))
 }

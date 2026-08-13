@@ -25,6 +25,7 @@ fn finally_handler(builtin: Builtin, callback: Value) -> Value {
         target: Value::Builtin(builtin),
         receiver: callback,
         arguments: Vec::new(),
+        properties: RefCell::new(Vec::new()),
     }))
 }
 
@@ -62,6 +63,7 @@ fn finally_settle_handler(fulfilled: bool, original: Value) -> Value {
         }),
         receiver: original,
         arguments: Vec::new(),
+        properties: RefCell::new(Vec::new()),
     }))
 }
 
