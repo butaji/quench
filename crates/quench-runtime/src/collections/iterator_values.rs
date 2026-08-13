@@ -66,6 +66,45 @@ pub(crate) fn next(receiver: Option<&Value>) -> Result<Value, crate::execute::Vm
     }
 }
 
+pub(crate) fn next_set(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
+    branded_next(receiver, "Set")
+}
+
+pub(crate) fn next_map(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
+    branded_next(receiver, "Map")
+}
+
+fn branded_next(receiver: Option<&Value>, brand: &str) -> Result<Value, crate::execute::VmError> {
+    let branded = matches!(receiver, Some(Value::Iterator(data)) if {
+        let state = data.state.borrow();
+        match brand {
+            "Set" => matches!(&*state, IteratorState::Set { .. }),
+            _ => matches!(&*state, IteratorState::Map { .. }),
+        }
+    });
+    if !branded {
+        return Err(crate::value::error::throw_type_error(
+            "Iterator next called on incompatible receiver",
+        ));
+    }
+    next(receiver)
+}
+
+pub(crate) fn prototype_of(value: &Value) -> Value {
+    let Value::Iterator(data) = value else {
+        return Value::Builtin(crate::ops::Builtin::ArrayIteratorPrototype);
+    };
+    let builtin = match &*data.state.borrow() {
+        IteratorState::RegExpString { .. } => crate::ops::Builtin::RegExpStringIteratorPrototype,
+        IteratorState::Set { .. } => crate::ops::Builtin::SetIteratorPrototype,
+        IteratorState::Map { .. } => crate::ops::Builtin::MapIteratorPrototype,
+        IteratorState::Native { .. } | IteratorState::Protocol { .. } => {
+            crate::ops::Builtin::ArrayIteratorPrototype
+        }
+    };
+    Value::Builtin(builtin)
+}
+
 pub(crate) fn property(key: &str) -> Value {
     match key {
         "next" => Value::Builtin(crate::ops::Builtin::IteratorNext),
@@ -76,7 +115,7 @@ pub(crate) fn property(key: &str) -> Value {
 
 pub(crate) fn property_for(value: &Value, key: &str) -> Value {
     if key == "next" {
-        return regexp_next(value).unwrap_or_else(|| property(key));
+        return next_for(value);
     }
     if key != "Symbol.toStringTag" {
         return property(key);
@@ -94,12 +133,18 @@ pub(crate) fn property_for(value: &Value, key: &str) -> Value {
     Value::String(tag.to_string())
 }
 
-fn regexp_next(value: &Value) -> Option<Value> {
+fn next_for(value: &Value) -> Value {
+    use crate::ops::Builtin;
     let Value::Iterator(data) = value else {
-        return None;
+        return property("next");
     };
-    matches!(&*data.state.borrow(), IteratorState::RegExpString { .. })
-        .then(|| Value::Builtin(crate::ops::Builtin::RegExpStringIteratorNext))
+    let builtin = match &*data.state.borrow() {
+        IteratorState::RegExpString { .. } => Builtin::RegExpStringIteratorNext,
+        IteratorState::Set { .. } => Builtin::SetIteratorNext,
+        IteratorState::Map { .. } => Builtin::MapIteratorNext,
+        IteratorState::Native { .. } | IteratorState::Protocol { .. } => Builtin::IteratorNext,
+    };
+    Value::Builtin(builtin)
 }
 
 pub(crate) fn make(values: Vec<Value>) -> Value {
