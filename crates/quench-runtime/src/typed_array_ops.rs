@@ -11,7 +11,7 @@ macro_rules! fill_view {
 macro_rules! set_number_view {
     ($target:expr, $key:expr, $value:expr, $variant:ident, $convert:expr) => {
         if let Value::$variant(view) = $target {
-            let index = $key.parse::<usize>().ok()?;
+            let index = typed_array_index($key)?;
             let number = crate::conversion::to_number($value);
             let number = match number {
                 Ok(number) => number,
@@ -23,15 +23,50 @@ macro_rules! set_number_view {
     };
 }
 
+fn typed_array_index(key: &str) -> Option<usize> {
+    let index = key.parse::<usize>().ok()?;
+    (index.to_string() == key).then_some(index)
+}
+
 pub(crate) fn set_property(
     target: &Value,
     key: &str,
     value: &Value,
 ) -> Option<Result<Value, VmError>> {
+    if typed_array_index(key).is_none() {
+        if let Some(result) = set_named_property(target, key, value.clone()) {
+            return Some(Ok(result));
+        }
+    }
     if let Some(result) = set_number_property(target, key, value) {
         return Some(result);
     }
     set_bigint_property(target, key, value)
+}
+
+fn set_named_property(target: &Value, key: &str, value: Value) -> Option<Value> {
+    macro_rules! store {
+        ($($variant:ident),+) => {
+            match target {
+                $(Value::$variant(data) => data.meta.set_property(key, value),)+
+                _ => return None,
+            }
+        };
+    }
+    store!(
+        Float64Array,
+        Float32Array,
+        Int8Array,
+        Int16Array,
+        Uint16Array,
+        Int32Array,
+        Uint32Array,
+        BigInt64Array,
+        BigUint64Array,
+        Uint8Array,
+        Uint8ClampedArray
+    );
+    Some(target.clone())
 }
 
 fn set_number_property(target: &Value, key: &str, value: &Value) -> Option<Result<Value, VmError>> {
@@ -78,7 +113,7 @@ fn set_bigint_property(target: &Value, key: &str, value: &Value) -> Option<Resul
     if !matches!(target, Value::BigInt64Array(_) | Value::BigUint64Array(_)) {
         return None;
     }
-    let index = key.parse::<usize>().ok()?;
+    let index = typed_array_index(key)?;
     let bits = match crate::construct::bigint_bits(value) {
         Ok(bits) => bits,
         Err(error) => return Some(Err(error)),
