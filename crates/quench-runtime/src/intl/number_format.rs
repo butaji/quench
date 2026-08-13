@@ -259,9 +259,15 @@ pub(crate) fn format_significant(value: f64, minimum: u32, maximum: u32, mode: &
         };
     }
     let exponent = value.abs().log10().floor() as i32;
-    let decimals = (maximum as i32 - exponent - 1).max(0) as usize;
-    let scale = 10f64.powi(decimals as i32);
-    let rounded = round_units(value * scale, mode) / scale;
+    let decimal_places = maximum as i32 - exponent - 1;
+    let scale = 10f64.powi(decimal_places);
+    let rounded = if decimal_places >= 0 {
+        round_units(value * scale, mode) / scale
+    } else {
+        let quantum = 10f64.powi(-decimal_places);
+        round_units(value / quantum, mode) * quantum
+    };
+    let decimals = decimal_places.max(0) as usize;
     let mut text = format!("{:.*}", decimals, rounded);
     if let Some((whole, fraction)) = text.split_once('.') {
         let mut fraction = fraction.trim_end_matches('0').to_string();
