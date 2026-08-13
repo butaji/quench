@@ -2,6 +2,9 @@ fn instanceof(value: &Value, constructor: &Value) -> Result<bool, VmError> {
     if !crate::value::is_object(constructor) {
         return Err(type_error("Right-hand side of instanceof is not an object"));
     }
+    if builtin_error_instance(value, constructor) {
+        return Ok(true);
+    }
     if let Some(handler) = has_instance_handler(constructor)? {
         let arguments = [value.clone()];
         let result = crate::functions::execute_target(&handler, constructor, &arguments)?;
@@ -17,6 +20,23 @@ fn instanceof(value: &Value, constructor: &Value) -> Result<bool, VmError> {
         return Ok(result);
     }
     ordinary_instanceof(value, constructor)
+}
+
+fn builtin_error_instance(value: &Value, constructor: &Value) -> bool {
+    let Value::Builtin(constructor) = constructor else {
+        return false;
+    };
+    matches!(
+        constructor,
+        Builtin::Error
+            | Builtin::RangeError
+            | Builtin::ReferenceError
+            | Builtin::SyntaxError
+            | Builtin::EvalError
+            | Builtin::URIError
+            | Builtin::AggregateError
+            | Builtin::TypeError
+    ) && own_constructor(value) == Some(Value::Builtin(*constructor))
 }
 
 fn has_instance_handler(constructor: &Value) -> Result<Option<Value>, VmError> {
