@@ -480,19 +480,15 @@ fn construct_error(
         return crate::builtins::suppressed_error(arguments);
     }
 
-    let (name, constructor) = match builtin {
-        crate::ops::Builtin::RangeError => ("RangeError", crate::ops::Builtin::RangeError),
-        crate::ops::Builtin::ReferenceError => {
-            ("ReferenceError", crate::ops::Builtin::ReferenceError)
-        }
-        crate::ops::Builtin::SyntaxError => ("SyntaxError", crate::ops::Builtin::SyntaxError),
-        crate::ops::Builtin::EvalError => ("EvalError", crate::ops::Builtin::EvalError),
-        crate::ops::Builtin::URIError => ("URIError", crate::ops::Builtin::URIError),
-        crate::ops::Builtin::AggregateError => {
-            ("AggregateError", crate::ops::Builtin::AggregateError)
-        }
-        crate::ops::Builtin::TypeError => ("TypeError", crate::ops::Builtin::TypeError),
-        crate::ops::Builtin::Error | _ => ("Error", crate::ops::Builtin::Error),
+    let name = match builtin {
+        crate::ops::Builtin::RangeError => "RangeError",
+        crate::ops::Builtin::ReferenceError => "ReferenceError",
+        crate::ops::Builtin::SyntaxError => "SyntaxError",
+        crate::ops::Builtin::EvalError => "EvalError",
+        crate::ops::Builtin::URIError => "URIError",
+        crate::ops::Builtin::AggregateError => "AggregateError",
+        crate::ops::Builtin::TypeError => "TypeError",
+        crate::ops::Builtin::Error | _ => "Error",
     };
 
     let message = arguments
@@ -501,7 +497,6 @@ fn construct_error(
     let mut properties = vec![
         ("name".to_string(), Value::String(name.to_string())),
         ("message".to_string(), Value::String(message)),
-        ("constructor".to_string(), Value::Builtin(constructor)),
         (
             crate::builtins::ERROR_SLOT.to_string(),
             Value::Boolean(true),
