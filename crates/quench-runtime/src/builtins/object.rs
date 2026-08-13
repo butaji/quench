@@ -336,12 +336,23 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
         (Builtin::SetPrototype, "size") => Builtin::SetSizeGetter,
         (Builtin::MapPrototype, "size") => Builtin::MapSizeGetter,
         (Builtin::DisposableStackPrototype, "disposed") => Builtin::DisposableStackDisposed,
+        (Builtin::AsyncDisposableStackPrototype, "disposed") => {
+            Builtin::AsyncDisposableStackDisposed
+        }
         _ => return None,
     };
     Some(accessor_descriptor(getter))
 }
 
 fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
+    if builtin == Builtin::Object && key == "hasOwn" {
+        return Some(descriptor_object_with_flags(
+            Value::Builtin(Builtin::ObjectHasOwn),
+            true,
+            false,
+            true,
+        ));
+    }
     if let Some(descriptor) = intrinsic_accessor(builtin, key) {
         return Some(descriptor);
     }

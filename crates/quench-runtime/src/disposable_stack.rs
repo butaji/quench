@@ -5,21 +5,23 @@ use std::{cell::RefCell, rc::Rc};
 use crate::{
     execute::VmError,
     ops::Builtin,
-    value::{ArrayData, ObjectData, Value},
+    value::{ArrayData, ObjectData, PromiseData, PromiseState, Value},
 };
 
 const STATE: &str = "\0disposable:disposed";
 const RECORDS: &str = "\0disposable:records";
+const ASYNC: &str = "\0disposable:async";
 
 pub(crate) fn construct() -> Result<Value, VmError> {
     Ok(stack(Value::Array(Rc::new(ArrayData::new(Vec::new())))))
 }
 
 pub(crate) fn construct_async() -> Result<Value, VmError> {
-    Ok(Value::Object(Rc::new(ObjectData::new(vec![(
-        "\0prototype".into(),
+    Ok(stack_with(
         Value::Builtin(Builtin::AsyncDisposableStackPrototype),
-    )]))))
+        true,
+        Value::Array(Rc::new(ArrayData::new(Vec::new()))),
+    ))
 }
 
 pub(crate) fn execute(
@@ -36,6 +38,13 @@ pub(crate) fn execute(
         DisposableStackMove => move_stack(receiver),
         DisposableStackDispose => dispose_stack(receiver),
         DisposableStackDisposed => disposed(receiver),
+        AsyncDisposableStack => Err(requires_new()),
+        AsyncDisposableStackUse => async_use(receiver, arguments),
+        AsyncDisposableStackAdopt => async_adopt(receiver, arguments),
+        AsyncDisposableStackDefer => async_defer(receiver, arguments),
+        AsyncDisposableStackMove => async_move(receiver),
+        AsyncDisposableStackDisposeAsync => async_dispose(receiver),
+        AsyncDisposableStackDisposed => async_disposed(receiver),
         _ => return None,
     })
 }
@@ -45,17 +54,29 @@ pub(crate) fn accessor(
     key: &str,
     receiver: &Value,
 ) -> Option<Result<Value, VmError>> {
-    (key == "disposed" && is_stack(value)).then(|| disposed(Some(receiver)))
+    (key == "disposed" && is_stack(value)).then(|| {
+        if is_async(value) {
+            async_disposed(Some(receiver))
+        } else {
+            disposed(Some(receiver))
+        }
+    })
 }
 
 fn stack(records: Value) -> Value {
+    stack_with(
+        Value::Builtin(Builtin::DisposableStackPrototype),
+        false,
+        records,
+    )
+}
+
+fn stack_with(prototype: Value, async_: bool, records: Value) -> Value {
     Value::Object(Rc::new(ObjectData::new(vec![
-        (
-            "\0prototype".into(),
-            Value::Builtin(Builtin::DisposableStackPrototype),
-        ),
+        ("\0prototype".into(), prototype),
         (STATE.into(), cell(Value::Boolean(false))),
         (RECORDS.into(), cell(records)),
+        (ASYNC.into(), Value::Boolean(async_)),
     ])))
 }
 
@@ -104,6 +125,77 @@ fn defer_resource(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value
         method,
     );
     Ok(Value::Undefined)
+}
+
+fn async_use(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    async_receiver(receiver)?;
+    let resource = arguments.first().cloned().unwrap_or(Value::Undefined);
+    let records = active_records(receiver)?;
+    if matches!(resource, Value::Null | Value::Undefined) {
+        return Ok(resource);
+    }
+    if !crate::value::is_object(&resource) {
+        return Err(crate::vm::not_callable());
+    }
+    let method = async_dispose_method(&resource)?;
+    ensure_callable(&method)?;
+    push_record(&records, "use", resource.clone(), method);
+    Ok(resource)
+}
+
+fn async_dispose_method(resource: &Value) -> Result<Value, VmError> {
+    let async_method = crate::execute::get_property_result(resource, "Symbol.asyncDispose")?;
+    if !matches!(async_method, Value::Null | Value::Undefined) {
+        return Ok(async_method);
+    }
+    let method = crate::execute::get_property_result(resource, "Symbol.dispose")?;
+    if matches!(method, Value::Null | Value::Undefined) {
+        Err(crate::vm::not_callable())
+    } else {
+        Ok(method)
+    }
+}
+
+fn async_adopt(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    async_receiver(receiver)?;
+    adopt_resource(receiver, arguments)
+}
+
+fn async_defer(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    async_receiver(receiver)?;
+    defer_resource(receiver, arguments)
+}
+
+fn async_move(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let receiver = async_receiver(receiver)?;
+    let records = active_records(Some(receiver))?;
+    set_disposed(receiver, true)?;
+    let moved = records.borrow().clone();
+    *records.borrow_mut() = Value::Array(Rc::new(ArrayData::new(Vec::new())));
+    Ok(stack_with(
+        Value::Builtin(Builtin::AsyncDisposableStackPrototype),
+        true,
+        moved,
+    ))
+}
+
+fn async_dispose(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let result = async_receiver(receiver).and_then(|receiver| dispose_stack(Some(receiver)));
+    Ok(promise(result))
+}
+
+fn async_disposed(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let receiver = async_receiver(receiver)?;
+    disposed(Some(receiver))
+}
+
+fn promise(result: Result<Value, VmError>) -> Value {
+    let state = match result {
+        Ok(value) => PromiseState::Fulfilled(value),
+        Err(VmError::Thrown(value)) => PromiseState::Rejected(value),
+        Err(_) => PromiseState::Rejected(Value::Undefined),
+    };
+    Value::Promise(Rc::new(PromiseData::new(state)))
 }
 
 fn move_stack(receiver: Option<&Value>) -> Result<Value, VmError> {
@@ -167,6 +259,17 @@ fn is_stack(value: &Value) -> bool {
     slot(value, STATE).is_some() && slot(value, RECORDS).is_some()
 }
 
+fn is_async(value: &Value) -> bool {
+    matches!(slot_value(value, ASYNC), Some(Value::Boolean(true)))
+}
+
+fn async_receiver(receiver: Option<&Value>) -> Result<&Value, VmError> {
+    let receiver = receiver.ok_or_else(incompatible_receiver)?;
+    is_async(receiver)
+        .then_some(receiver)
+        .ok_or_else(incompatible_receiver)
+}
+
 fn state(value: &Value) -> Result<Rc<RefCell<Value>>, VmError> {
     slot(value, STATE).ok_or_else(incompatible_receiver)
 }
@@ -189,6 +292,15 @@ fn slot(value: &Value, name: &str) -> Option<Rc<RefCell<Value>>> {
                 None
             }
         })
+}
+
+fn slot_value(value: &Value, name: &str) -> Option<Value> {
+    let Value::Object(object) = value else {
+        return None;
+    };
+    object
+        .iter()
+        .find_map(|(key, value)| (key == name).then(|| value.clone()))
 }
 
 fn set_disposed(value: &Value, disposed: bool) -> Result<(), VmError> {
