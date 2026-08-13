@@ -106,7 +106,7 @@ pub fn execute_await(registers: &mut Vec<Value>, dst: u16, src: u16) -> Result<(
     }
 }
 
-fn collect_call_arguments(
+pub(crate) fn collect_call_arguments(
     registers: &[Value],
     args: &[u16],
     spreads: &[bool],
