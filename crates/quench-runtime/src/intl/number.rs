@@ -22,6 +22,7 @@ pub(crate) struct NumberOptions {
     pub maximum_fraction_digits: u32,
     pub use_grouping: bool,
     pub notation: String,
+    pub compact_display: String,
     pub rounding_mode: String,
     pub sign_display: String,
 }
@@ -37,6 +38,7 @@ pub(crate) struct RawOptions {
     maximum_fraction_digits: f64,
     use_grouping: bool,
     notation: String,
+    compact_display: String,
     rounding_mode: String,
     sign_display: String,
 }
@@ -54,6 +56,7 @@ impl RawOptions {
             maximum_fraction_digits: 3.0,
             use_grouping: true,
             notation: "standard".to_string(),
+            compact_display: "short".to_string(),
             rounding_mode: "halfExpand".to_string(),
             sign_display: "auto".to_string(),
         };
@@ -75,6 +78,7 @@ impl RawOptions {
                     }
                     "useGrouping" => raw.use_grouping = value == "true",
                     "notation" => raw.notation = value,
+                    "compactDisplay" => raw.compact_display = value,
                     "roundingMode" => raw.rounding_mode = value,
                     "signDisplay" => raw.sign_display = value,
                     _ => {}
@@ -119,6 +123,7 @@ impl NumberOptions {
             maximum_fraction_digits,
             use_grouping: raw.use_grouping,
             notation: raw.notation,
+            compact_display: raw.compact_display,
             rounding_mode: raw.rounding_mode,
             sign_display: raw.sign_display,
         })
@@ -161,6 +166,10 @@ impl NumberOptions {
                 Value::Number(self.maximum_fraction_digits as f64),
             ),
             ("notation".to_string(), Value::String(self.notation.clone())),
+            (
+                "compactDisplay".to_string(),
+                Value::String(self.compact_display.clone()),
+            ),
             (
                 "signDisplay".to_string(),
                 Value::String(self.sign_display.clone()),
@@ -255,6 +264,8 @@ impl NumberOptions {
                 as u32,
             use_grouping: slot_bool(slots, "useGrouping").unwrap_or(true),
             notation: slot_string(slots, "notation").unwrap_or_else(|| "standard".to_string()),
+            compact_display: slot_string(slots, "compactDisplay")
+                .unwrap_or_else(|| "short".to_string()),
             rounding_mode: slot_string(slots, "roundingMode")
                 .unwrap_or_else(|| "halfExpand".to_string()),
             sign_display: slot_string(slots, "signDisplay").unwrap_or_else(|| "auto".to_string()),
@@ -267,7 +278,7 @@ impl NumberOptions {
             _ => number,
         };
         let magnitude = if self.notation == "compact" {
-            compact_scale(scaled)
+            compact_scale(scaled, &self.locale, &self.compact_display)
         } else {
             0
         };
@@ -276,15 +287,31 @@ impl NumberOptions {
         } else {
             scaled / 10f64.powi(magnitude)
         };
-        let mut text = format_number_rounded(value, self.maximum_fraction_digits);
-        if self.use_grouping {
+        let compact_unscaled_de = self.notation == "compact"
+            && self.locale.starts_with("de")
+            && magnitude == 0
+            && scaled.abs() >= 1_000.0;
+        let fraction_digits = if self.notation == "compact" && !compact_unscaled_de {
+            compact_fraction_digits(value)
+        } else {
+            self.maximum_fraction_digits
+        };
+        let mut text = format_number_rounded(value, fraction_digits);
+        if self.use_grouping
+            && (self.notation != "compact" || (compact_unscaled_de && scaled.abs() >= 10_000.0))
+        {
             text = group_integer_locale(&text, &self.locale);
+        } else if self.notation == "compact" && self.locale.starts_with("de") {
+            text = text.replace('.', ",");
         }
         text = apply_minimum_integer(&text, self.minimum_integer_digits);
         if self.minimum_fraction_digits > 0 {
             text = pad_fraction(&text, self.minimum_fraction_digits);
         }
         let negative = text.starts_with('-');
+        if number.is_nan() && self.locale.starts_with("zh") {
+            text = "非數值".to_string();
+        }
         let zero = number == 0.0;
         let rounded_zero = text
             .trim_start_matches('-')
@@ -321,7 +348,11 @@ impl NumberOptions {
             _ => {}
         }
         if magnitude > 0 {
-            text.push_str(compact_suffix(magnitude));
+            text.push_str(compact_suffix(
+                magnitude,
+                &self.locale,
+                &self.compact_display,
+            ));
         }
         text
     }
@@ -367,6 +398,10 @@ impl NumberOptions {
                 Value::Number(self.maximum_fraction_digits as f64),
             ),
             ("notation".to_string(), Value::String(self.notation.clone())),
+            (
+                "compactDisplay".to_string(),
+                Value::String(self.compact_display.clone()),
+            ),
             (
                 "signDisplay".to_string(),
                 Value::String(self.sign_display.clone()),

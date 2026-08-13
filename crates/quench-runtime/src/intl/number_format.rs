@@ -109,8 +109,40 @@ pub(crate) fn pad_fraction(text: &str, minimum: u32) -> String {
     out
 }
 
-pub(crate) fn compact_scale(value: f64) -> i32 {
+pub(crate) fn compact_scale(value: f64, locale: &str, display: &str) -> i32 {
+    if !value.is_finite() {
+        return 0;
+    }
     let magnitude = value.abs().log10().floor() as i32;
+    if locale.starts_with("ja") || locale.starts_with("zh") {
+        return if magnitude >= 8 {
+            8
+        } else if magnitude >= 4 {
+            4
+        } else {
+            0
+        };
+    }
+    if locale.starts_with("ko") {
+        return if magnitude >= 8 {
+            8
+        } else if magnitude >= 4 {
+            4
+        } else if magnitude >= 3 {
+            3
+        } else {
+            0
+        };
+    }
+    if locale.starts_with("de") {
+        return if magnitude >= 6 {
+            6
+        } else if display == "long" && magnitude >= 3 {
+            3
+        } else {
+            0
+        };
+    }
     if magnitude >= 9 {
         9
     } else if magnitude >= 6 {
@@ -122,8 +154,47 @@ pub(crate) fn compact_scale(value: f64) -> i32 {
     }
 }
 
-pub(crate) fn compact_suffix(magnitude: i32) -> &'static str {
+pub(crate) fn compact_fraction_digits(value: f64) -> u32 {
+    if value == 0.0 || !value.is_finite() {
+        return 0;
+    }
+    (1 - value.abs().log10().floor() as i32).max(0) as u32
+}
+
+pub(crate) fn compact_suffix(magnitude: i32, locale: &str, display: &str) -> &'static str {
+    if locale.starts_with("ja") || locale.starts_with("zh") {
+        return match magnitude {
+            8 => "億",
+            4 => {
+                if locale.starts_with("zh-TW") {
+                    "萬"
+                } else {
+                    "万"
+                }
+            }
+            _ => "",
+        };
+    }
+    if locale.starts_with("ko") {
+        return match magnitude {
+            8 => "억",
+            4 => "만",
+            3 => "천",
+            _ => "",
+        };
+    }
+    if locale.starts_with("de") {
+        return match (magnitude, display) {
+            (6, "long") => " Millionen",
+            (3, "long") => " Tausend",
+            (6, _) => "\u{a0}Mio.",
+            _ => "",
+        };
+    }
     match magnitude {
+        3 if display == "long" => " thousand",
+        6 if display == "long" => " million",
+        9 if display == "long" => " billion",
         3 => "K",
         6 => "M",
         9 => "B",
