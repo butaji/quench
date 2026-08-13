@@ -129,11 +129,7 @@ pub(crate) fn execute(
         Builtin::MathSign => sign(numbers.first().copied().unwrap_or(f64::NAN)),
         Builtin::MathSqrt => numbers.first().copied().unwrap_or(f64::NAN).sqrt(),
         Builtin::MathCbrt => numbers.first().copied().unwrap_or(f64::NAN).cbrt(),
-        Builtin::MathHypot => numbers
-            .iter()
-            .map(|value| value * value)
-            .sum::<f64>()
-            .sqrt(),
+        Builtin::MathHypot => hypot(&numbers),
         Builtin::MathImul => imul(numbers.first(), numbers.get(1)),
         Builtin::MathClz32 => f64::from(clz32(numbers.first().copied().unwrap_or(f64::NAN))),
         Builtin::MathFround => f64::from(numbers.first().copied().unwrap_or(f64::NAN) as f32),
@@ -190,6 +186,24 @@ fn extrema(numbers: &[f64], initial: f64, compare: fn(f64, f64) -> f64) -> f64 {
             (!value.is_nan()).then_some(compare(result, value))
         })
         .unwrap_or(f64::NAN)
+}
+
+fn hypot(numbers: &[f64]) -> f64 {
+    if numbers.iter().any(|value| value.is_infinite()) {
+        return f64::INFINITY;
+    }
+    if numbers.iter().any(|value| value.is_nan()) {
+        return f64::NAN;
+    }
+    let largest = numbers.iter().copied().map(f64::abs).fold(0.0, f64::max);
+    if largest == 0.0 {
+        return 0.0;
+    }
+    let squares = numbers
+        .iter()
+        .map(|value| (value / largest).powi(2))
+        .sum::<f64>();
+    largest * squares.sqrt()
 }
 
 fn sign(value: f64) -> f64 {
