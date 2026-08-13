@@ -294,6 +294,9 @@ pub(crate) fn prototype_method(
         crate::ops::Builtin::IntlDateTimeFormatFormat => {
             let input = arguments.first().unwrap_or(&Value::Undefined);
             let number = range_number(input)?;
+            if let Some(value) = day_period_format(&slots, number) {
+                return Ok(Value::String(value));
+            }
             if let Some(value) = proleptic_year_format(&slots, number) {
                 return Ok(Value::String(value));
             }
@@ -304,7 +307,11 @@ pub(crate) fn prototype_method(
             Ok(Value::String(value))
         }
         crate::ops::Builtin::IntlDateTimeFormatFormatToParts => {
-            let value = range_value(arguments.first().unwrap_or(&Value::Undefined))?;
+            let number = range_number(arguments.first().unwrap_or(&Value::Undefined))?;
+            if let Some(value) = day_period_parts(&slots, number) {
+                return Ok(make_array(value));
+            }
+            let value = range_text(number);
             Ok(make_array(vec![literal_part(&value)]))
         }
         crate::ops::Builtin::IntlDateTimeFormatFormatRange => {
@@ -330,6 +337,40 @@ pub(crate) fn prototype_method(
     }
 }
 
+fn day_period_format(slots: &[(String, Value)], number: f64) -> Option<String> {
+    let style = slot_string(slots, "dayPeriod")?;
+    let hour = DateTime::<Utc>::from_timestamp((number / 1_000.0).trunc() as i64, 0)?.hour();
+    Some(match style.as_str() {
+        "narrow" => day_period_name(hour, false),
+        "short" => day_period_name(hour, true),
+        _ => day_period_name(hour, true),
+    })
+}
+
+fn day_period_parts(slots: &[(String, Value)], number: f64) -> Option<Vec<Value>> {
+    let value = day_period_format(slots, number)?;
+    Some(vec![make_object(vec![
+        ("type".to_string(), Value::String("dayPeriod".to_string())),
+        ("value".to_string(), Value::String(value)),
+    ])])
+}
+
+fn day_period_name(hour: u32, with_prefix: bool) -> String {
+    let name = match hour {
+        0..=5 => "night",
+        6..=11 => "in the morning",
+        12 => "noon",
+        13..=17 => "in the afternoon",
+        18..=20 => "in the evening",
+        _ => "at night",
+    };
+    if with_prefix {
+        name.to_string()
+    } else {
+        name.replace("in the ", "").replace("at ", "")
+    }
+}
+
 fn range_values(arguments: &[Value]) -> Result<(String, String), VmError> {
     let Some(start_value) = arguments.first() else {
         return Err(crate::value::error::throw_type_error(
@@ -349,10 +390,6 @@ fn range_values(arguments: &[Value]) -> Result<(String, String), VmError> {
     let start = range_number(start_value)?;
     let end = range_number(end_value)?;
     Ok((range_text(start), range_text(end)))
-}
-
-fn range_value(value: &Value) -> Result<String, VmError> {
-    range_number(value).map(range_text)
 }
 
 fn fractional_format(slots: &[(String, Value)], number: f64) -> Option<String> {
