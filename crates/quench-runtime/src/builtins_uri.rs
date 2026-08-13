@@ -81,6 +81,9 @@ fn percent_run<'a>(source: &'a str, index: &mut usize) -> Result<(Vec<u8>, Vec<&
     let mut escapes = Vec::new();
     while source.as_bytes().get(*index) == Some(&b'%') {
         let escape = source.get(*index..*index + 3).ok_or_else(uri_error)?;
+        if !escape[1..].bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(uri_error());
+        }
         let byte = u8::from_str_radix(&escape[1..], 16).map_err(|_| uri_error())?;
         bytes.push(byte);
         escapes.push(escape);
