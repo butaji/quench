@@ -165,7 +165,12 @@ fn adopt_promise(result: &Rc<PromiseData>, next: &Rc<PromiseData>) {
     match next.state.borrow().clone() {
         PromiseState::Fulfilled(value) => resolve_promise(result, value),
         PromiseState::Rejected(reason) => reject_promise(result, reason),
-        PromiseState::Pending => {}
+        PromiseState::Pending => {
+            let next_value = Value::Promise(Rc::clone(next));
+            let resolve = bound_settler(Builtin::PromiseResolve, result);
+            let reject = bound_settler(Builtin::PromiseReject, result);
+            let _ = promise_then(Some(&next_value), &[resolve, reject]);
+        }
     }
 }
 
