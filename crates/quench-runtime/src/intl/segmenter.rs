@@ -180,7 +180,11 @@ fn word_segments(text: &str) -> Vec<Value> {
     let mut utf16_index = 0;
     let mut kind: Option<u8> = None;
     for (index, character) in text.char_indices() {
-        let next_kind = character_kind(character);
+        let next_kind = if decimal_point(text, index, character) {
+            1
+        } else {
+            character_kind(character)
+        };
         if kind.is_some_and(|previous| previous != next_kind || next_kind == 2) {
             push_word_segment(&mut result, &text[start..index], start_utf16, text, kind);
             start = index;
@@ -193,6 +197,15 @@ fn word_segments(text: &str) -> Vec<Value> {
         push_word_segment(&mut result, &text[start..], start_utf16, text, kind);
     }
     result
+}
+
+fn decimal_point(text: &str, index: usize, character: char) -> bool {
+    character == '.'
+        && text[..index].chars().next_back().is_some_and(|value| value.is_ascii_digit())
+        && text[index + character.len_utf8()..]
+            .chars()
+            .next()
+            .is_some_and(|value| value.is_ascii_digit())
 }
 
 fn character_kind(character: char) -> u8 {
