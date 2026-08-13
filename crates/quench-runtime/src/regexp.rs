@@ -294,8 +294,14 @@ fn build_re_flags(flags: &str) -> String {
     if flags.contains('m') {
         f.push('m');
     }
+    if flags.contains('s') {
+        f.push('s');
+    }
     if flags.contains('u') {
         f.push('u');
+    }
+    if flags.contains('v') {
+        f.push('v');
     }
     f
 }
