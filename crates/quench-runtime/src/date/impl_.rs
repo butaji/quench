@@ -47,8 +47,8 @@ pub fn execute(
                 .map(|_| dispatch_get(builtin, receiver).unwrap_or(Value::Undefined)),
         );
     }
-    if builtin == Builtin::DateToString {
-        return Some(super::setter::time_value(receiver).map(|_| date_to_string(receiver)));
+    if let Some(result) = super::format::execute(builtin, receiver) {
+        return Some(result);
     }
     let result = match builtin {
         Builtin::DateNow => Value::Number(chrono_utils::current_time_ms()),
@@ -182,7 +182,7 @@ fn date_argument(arguments: &[Value], index: usize, default: f64) -> Result<f64,
 }
 
 fn date_to_string(receiver: Option<&Value>) -> Value {
-    Value::String(format_date(extract_time(receiver)))
+    Value::String(super::format::date_string(extract_time(receiver)))
 }
 
 fn date_value_of(receiver: Option<&Value>) -> Value {
@@ -337,43 +337,4 @@ fn date_set_year(receiver: Option<&Value>, arguments: &[Value]) -> Value {
     );
     store_time(receiver.unwrap_or(&Value::Undefined), result);
     Value::Number(chrono_utils::time_clip(result))
-}
-
-fn format_date(ms: f64) -> String {
-    if ms.is_nan() || ms.is_infinite() {
-        return "Invalid Date".to_string();
-    }
-    let Some((year, month, day, hour, minute, second, _)) = chrono_utils::local_components(ms)
-    else {
-        return "Invalid Date".to_string();
-    };
-    let tz_offset = chrono_utils::local_tz_offset_minutes();
-    let tz_hours = tz_offset.abs() / 60;
-    let tz_mins = (tz_offset.abs() % 60) as u32;
-    let tz_sign = if tz_offset >= 0 { "+" } else { "-" };
-
-    let day_names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    let month_names = [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-    ];
-    let weekday = chrono_utils::ms_to_datetime(ms)
-        .map(|dt| {
-            let offset = chrono::Duration::minutes(tz_offset as i64);
-            (dt + offset).weekday().num_days_from_sunday() as usize
-        })
-        .unwrap_or(0);
-
-    format!(
-        "{} {} {:02} {} {:02}:{:02}:{:02} GMT{}{:02}{:02}",
-        day_names[weekday],
-        month_names[(month - 1) as usize],
-        day,
-        year,
-        hour,
-        minute,
-        second,
-        tz_sign,
-        tz_hours,
-        tz_mins
-    )
 }
