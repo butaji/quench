@@ -5,7 +5,7 @@ fn symbol_split(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, 
     let flags = match_all_flags(receiver)?;
     let matcher = split_matcher(receiver, &flags)?;
     if dynamic_splitter(&matcher) {
-        return split_with_exec(matcher, &input, limit, flags.contains('u'));
+        return split_with_exec(matcher, &input, limit, unicode_mode(&flags));
     }
     split_compiled(&mut input, &matcher, limit)
 }
