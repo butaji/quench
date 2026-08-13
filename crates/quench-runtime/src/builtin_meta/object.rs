@@ -14,6 +14,8 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
         Builtin::ObjectPropertyIsEnumerable => Some("Object.prototype.propertyIsEnumerable"),
         Builtin::ObjectGetOwnPropertyDescriptor => Some("Object.getOwnPropertyDescriptor"),
         Builtin::ObjectKeys => Some("Object.keys"),
+        Builtin::ObjectValues => Some("Object.values"),
+        Builtin::ObjectEntries => Some("Object.entries"),
         Builtin::ObjectIs => Some("Object.is"),
         Builtin::ObjectAssign => Some("Object.assign"),
         Builtin::ObjectFromEntries => Some("Object.fromEntries"),
@@ -41,6 +43,8 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         | Builtin::ObjectPrototypeLookupSetter
         | Builtin::ObjectPropertyIsEnumerable
         | Builtin::ObjectKeys
+        | Builtin::ObjectValues
+        | Builtin::ObjectEntries
         | Builtin::ObjectGetOwnPropertyNames
         | Builtin::ObjectGetOwnPropertySymbols => Some(1.0),
         Builtin::ObjectGetOwnPropertyDescriptor | Builtin::ObjectIs => Some(2.0),
@@ -69,6 +73,8 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
         Builtin::ObjectPropertyIsEnumerable => Some("propertyIsEnumerable"),
         Builtin::ObjectGetOwnPropertyDescriptor => Some("getOwnPropertyDescriptor"),
         Builtin::ObjectKeys => Some("keys"),
+        Builtin::ObjectValues => Some("values"),
+        Builtin::ObjectEntries => Some("entries"),
         Builtin::ObjectIs => Some("is"),
         Builtin::ObjectAssign => Some("assign"),
         Builtin::ObjectFromEntries => Some("fromEntries"),

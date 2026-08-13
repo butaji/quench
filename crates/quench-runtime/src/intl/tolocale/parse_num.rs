@@ -64,7 +64,11 @@ fn digit_prefix_value(digits: &str, radix: u32) -> f64 {
         value = value * f64::from(radix) + f64::from(digit);
         any = true;
     }
-    if any { value } else { f64::NAN }
+    if any {
+        value
+    } else {
+        f64::NAN
+    }
 }
 
 pub(crate) fn parse_float(value: Option<&Value>) -> Result<f64, VmError> {

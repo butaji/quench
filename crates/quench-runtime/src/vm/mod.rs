@@ -478,6 +478,8 @@ fn is_object_special(builtin: Builtin) -> bool {
             | Builtin::ObjectGetOwnPropertyNames
             | Builtin::ObjectGetOwnPropertySymbols
             | Builtin::ObjectKeys
+            | Builtin::ObjectValues
+            | Builtin::ObjectEntries
             | Builtin::ObjectAssign
             | Builtin::ObjectFromEntries
             | Builtin::ObjectGroupBy

@@ -48,6 +48,8 @@ pub(crate) fn execute_special(
         Builtin::ObjectGetOwnPropertyNames => object_proxy_names(arguments.first(), false),
         Builtin::ObjectGetOwnPropertySymbols => object_proxy_names(arguments.first(), true),
         Builtin::ObjectKeys => object_keys(arguments.first()),
+        Builtin::ObjectValues => object_values_entries(arguments.first(), false),
+        Builtin::ObjectEntries => object_values_entries(arguments.first(), true),
         Builtin::ObjectAssign => assign(arguments),
         Builtin::ObjectFromEntries => from_entries(arguments),
         Builtin::ObjectGroupBy => group_by(arguments),
@@ -116,10 +118,10 @@ fn has_own_target<'a>(
     receiver: Option<&'a Value>,
     arguments: &'a [Value],
 ) -> (Option<&'a Value>, Option<&'a Value>) {
-    if receiver.is_none() {
-        return static_target(arguments);
+    match receiver {
+        None | Some(Value::Builtin(Builtin::Object)) => static_target(arguments),
+        _ => (receiver, arguments.first()),
     }
-    (receiver, arguments.first())
 }
 fn static_target(arguments: &[Value]) -> (Option<&Value>, Option<&Value>) {
     (arguments.first(), arguments.get(1))
@@ -128,11 +130,11 @@ fn has_own_property_result(
     receiver: Option<&Value>,
     key: Option<&Value>,
 ) -> Result<Value, VmError> {
+    let receiver = require_object_coercible(receiver)?;
     let Some(key) = key else {
         return Ok(Value::Boolean(false));
     };
     let key = crate::properties::dynamic_property_key(key)?;
-    let receiver = require_object_coercible(receiver)?;
     Ok(Value::Boolean(owns_property(receiver, &key)?))
 }
 fn require_object_coercible(receiver: Option<&Value>) -> Result<&Value, VmError> {
@@ -181,9 +183,24 @@ fn object_data_owns(properties: &Rc<ObjectData>, key: &str) -> bool {
     properties
         .iter()
         .any(|(name, _)| name == key && !super::is_descriptor_key(name))
+        || boxed_string_owns(properties, key)
         || (!deleted
             && crate::vm::is_global_object(&Value::Object(properties.clone()))
             && crate::vm::global_builtin_exists(key))
+}
+
+fn boxed_string_owns(properties: &[(String, Value)], key: &str) -> bool {
+    let Some((_, Value::String(value))) = properties.iter().find(|(name, _)| name == "_value")
+    else {
+        return false;
+    };
+    if crate::conversion::is_symbol_string(value) {
+        return false;
+    }
+    key == "length"
+        || key
+            .parse::<usize>()
+            .is_ok_and(|index| index < crate::strings::utf16_len(value))
 }
 
 fn array_owns(values: &crate::value::ArrayData, key: &str) -> bool {
@@ -196,15 +213,7 @@ fn array_owns(values: &crate::value::ArrayData, key: &str) -> bool {
 }
 
 fn object_owns(properties: &Rc<ObjectData>, key: &str) -> bool {
-    let deleted = properties
-        .iter()
-        .any(|(name, _)| name == &crate::builtins::deleted_key(key));
-    properties
-        .iter()
-        .any(|(name, _)| name == key && !super::is_descriptor_key(name))
-        || (!deleted
-            && crate::vm::is_global_object(&Value::Object(properties.clone()))
-            && crate::vm::global_builtin_exists(key))
+    object_data_owns(properties, key)
 }
 fn builtin_owns_property(builtin: Builtin, key: &str) -> bool {
     if crate::builtins::builtin_prototype_property_is_removed(builtin, key) {
