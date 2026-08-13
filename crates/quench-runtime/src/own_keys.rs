@@ -36,8 +36,13 @@ pub(crate) fn keys_result(target: Option<&Value>) -> Result<Value, VmError> {
 pub(crate) fn values(target: Option<&Value>, entries: bool) -> Result<Value, VmError> {
     let target = require_object(target)?;
     let mut result = Vec::new();
-    for key in own_enumerable_string_keys(target) {
-        let value = crate::execute::get_property_result(target, &key)?;
+    for key in keys(target, false) {
+        let current = crate::locals::resolved_replacement(target.clone());
+        let descriptor = crate::proxy::proxy_get_own_property_descriptor(&current, &key)?;
+        if !descriptor_enumerable_value_opt(&descriptor) {
+            continue;
+        }
+        let value = crate::execute::get_property_result(&current, &key)?;
         result.push(if entries {
             Value::array(vec![Value::String(key), value])
         } else {
@@ -45,6 +50,13 @@ pub(crate) fn values(target: Option<&Value>, entries: bool) -> Result<Value, VmE
         });
     }
     Ok(Value::array(result))
+}
+
+fn descriptor_enumerable_value_opt(descriptor: &Value) -> bool {
+    match descriptor {
+        Value::Object(_) => descriptor_enumerable_value(Some(descriptor)),
+        _ => false,
+    }
 }
 
 fn own_enumerable_string_keys(target: &Value) -> Vec<String> {
@@ -62,6 +74,10 @@ fn own_enumerable_string_keys(target: &Value) -> Vec<String> {
                 .filter(|key| key != "prototype")
                 .collect()
         }
+        Value::BoundFunction(bound) => enumerable_ordered(&bound.properties.borrow())
+            .into_iter()
+            .filter(|key| key != "prototype")
+            .collect(),
         Value::Array(values) => array_enumerable_keys(values),
         Value::String(value) if !crate::conversion::is_symbol_string(value) => {
             string_indices(value)
@@ -100,16 +116,46 @@ fn string_indices(value: &str) -> Vec<String> {
 }
 
 fn array_enumerable_keys(values: &crate::value::ArrayData) -> Vec<String> {
-    let mut keys = indexed_array_keys(values, false);
-    for key in values.property_keys() {
-        if key == "length" || array_index(&key).is_some() || keys.contains(&key) {
+    let mut indices = dense_enumerable_indices(values);
+    let mut named = Vec::new();
+    for key in array_extra_keys(values) {
+        if !array_key_enumerable(values, &key) {
             continue;
         }
-        if descriptor_enumerable_value(values.descriptor(&key).as_ref()) {
-            keys.push(key);
+        match array_index(&key) {
+            Some(index) => indices.push((index, key)),
+            None => named.push(key),
         }
     }
+    indices.sort_by_key(|(index, _)| *index);
+    let mut keys: Vec<String> = indices.into_iter().map(|(_, key)| key).collect();
+    keys.extend(named);
+    keys.dedup();
     keys
+}
+
+fn dense_enumerable_indices(values: &crate::value::ArrayData) -> Vec<(u32, String)> {
+    (0..values.logical_len().min(values.len()))
+        .filter(|index| values.has_index(*index))
+        .map(|index| index as u32)
+        .filter(|index| array_key_enumerable(values, &index.to_string()))
+        .map(|index| (index, index.to_string()))
+        .collect()
+}
+
+fn array_extra_keys(values: &crate::value::ArrayData) -> Vec<String> {
+    let mut extra = values.property_keys();
+    extra.extend(values.descriptor_keys());
+    extra.retain(|key| key != "length" && !key.contains('\0'));
+    extra.dedup();
+    extra
+}
+
+fn array_key_enumerable(values: &crate::value::ArrayData, key: &str) -> bool {
+    match values.descriptor(key) {
+        Some(descriptor) => descriptor_enumerable_value(Some(&descriptor)),
+        None => !(values.is_arguments() && (key == "callee" || key == "Symbol.iterator")),
+    }
 }
 
 pub(crate) fn enumerable_key_strings(target: Option<&Value>) -> Vec<String> {
@@ -175,6 +221,7 @@ fn keys(target: &Value, symbols: bool) -> Vec<String> {
             .upgrade()
             .map_or_else(Vec::new, |properties| ordered(&properties, symbols)),
         Value::Function(function) => function_keys(function, symbols),
+        Value::BoundFunction(bound) => bound_function_keys(bound, symbols),
         Value::Array(values) => array_keys(values, symbols),
         Value::String(value) if !crate::conversion::is_symbol_string(value) => {
             string_keys(value, symbols)
@@ -215,7 +262,7 @@ fn indexed_array_keys(values: &crate::value::ArrayData, symbols: bool) -> Vec<St
     if symbols {
         return Vec::new();
     }
-    (0..values.logical_len())
+    (0..values.logical_len().min(values.len()))
         .filter(|index| values.has_index(*index))
         .map(|index| index.to_string())
         .collect()
@@ -239,6 +286,10 @@ fn append_unique(keys: &mut Vec<String>, additions: Vec<String>) {
 
 fn function_keys(function: &crate::value::FunctionValue, symbols: bool) -> Vec<String> {
     ordered(&function.properties.borrow(), symbols)
+}
+
+fn bound_function_keys(bound: &crate::value::BoundFunctionValue, symbols: bool) -> Vec<String> {
+    ordered(&bound.properties.borrow(), symbols)
 }
 
 fn ordered(properties: &[(String, Value)], symbols: bool) -> Vec<String> {

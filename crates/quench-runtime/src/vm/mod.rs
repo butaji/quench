@@ -21,6 +21,10 @@ pub(crate) fn with_realm<T>(realm: RealmId, callback: impl FnOnce() -> T) -> Opt
 pub(crate) fn global_builtin_exists(key: &str) -> bool {
     realm::global_builtin_exists(key)
 }
+
+pub(crate) fn global_builtin_value(key: &str) -> Option<Value> {
+    crate::globals::builtin(key).map(Value::Builtin)
+}
 type ObjectProperties = Rc<crate::value::ObjectData>;
 #[derive(Clone)]
 pub struct VmContext {

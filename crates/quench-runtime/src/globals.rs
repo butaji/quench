@@ -15,8 +15,13 @@ pub(crate) fn reduce(
     if locals.contains_key(name) {
         return None;
     }
-    if let Some(builtin) = builtin(name) {
-        return Some(emit_builtin(ops, next_register, builtin));
+    if builtin(name).is_some() {
+        let register = take_register(next_register);
+        ops.push(Op::ResolveName {
+            dst: register,
+            key: name.to_string(),
+        });
+        return Some(register);
     }
     let (_, value) = global_constant(name)?;
     let register = take_register(next_register);
@@ -109,7 +114,7 @@ fn take_register(next_register: &mut u16) -> u16 {
     register
 }
 
-fn builtin(name: &str) -> Option<crate::ops::Builtin> {
+pub(crate) fn builtin(name: &str) -> Option<crate::ops::Builtin> {
     typed_array_builtin(name)
         .or_else(|| (name == "Proxy").then_some(crate::ops::Builtin::Proxy))
         .or_else(|| builtin_core(name))

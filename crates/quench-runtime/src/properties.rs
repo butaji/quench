@@ -249,10 +249,15 @@ fn set_builtin_property(
     key: &str,
     value: crate::value::Value,
 ) -> Result<(), crate::execute::VmError> {
-    let properties = std::rc::Rc::new(crate::value::ObjectData::new(vec![(
-        "value".to_string(),
-        value,
-    )]));
+    let properties = std::rc::Rc::new(crate::value::ObjectData::new(vec![
+        ("value".to_string(), value),
+        ("writable".to_string(), crate::value::Value::Boolean(true)),
+        ("enumerable".to_string(), crate::value::Value::Boolean(true)),
+        (
+            "configurable".to_string(),
+            crate::value::Value::Boolean(true),
+        ),
+    ]));
     let updated = crate::builtins::define_own_property(target, key, properties.as_ref())?;
     crate::execute::write_value(registers, object, updated);
     Ok(())
@@ -271,6 +276,7 @@ pub(crate) fn object_is_extensible(target: &crate::value::Value) -> bool {
         crate::value::Value::Object(properties) => {
             !properties.iter().any(|(name, _)| name == NON_EXTENSIBLE)
         }
+        crate::value::Value::Array(values) => values.property(NON_EXTENSIBLE).is_none(),
         value => crate::value::is_object(value),
     }
 }
@@ -284,6 +290,8 @@ pub(crate) fn is_extensible_value(
     }
     Ok(crate::value::Value::Boolean(object_is_extensible(target)))
 }
+
+include!("properties_integrity.rs");
 
 pub(crate) fn prevent_extensions(
     target: Option<&crate::value::Value>,
