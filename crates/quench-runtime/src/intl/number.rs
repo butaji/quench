@@ -268,7 +268,7 @@ impl NumberOptions {
         };
         let mut text = format_number_rounded(value, self.maximum_fraction_digits);
         if self.use_grouping {
-            text = group_integer(&text);
+            text = group_integer_locale(&text, &self.locale);
         }
         text = apply_minimum_integer(&text, self.minimum_integer_digits);
         if self.minimum_fraction_digits > 0 {
