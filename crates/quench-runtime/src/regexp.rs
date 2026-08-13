@@ -349,7 +349,9 @@ pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
         .flatten();
     let matched = found.is_some();
     if flags.contains('g') || flags.contains('y') {
-        let new_index = found.map_or(0, |match_| match_.end() + search_start);
+        let new_index = found.map_or(0, |match_| {
+            crate::strings::byte_to_utf16(&s, match_.end() + search_start)
+        });
         set_last_index(receiver, new_index as f64)?;
     }
     Ok(Value::Boolean(matched))
@@ -403,12 +405,12 @@ fn build_match_result(
     search_start: usize,
     flags: &str,
 ) -> Result<Value, VmError> {
-    let new_index = m.end() + search_start;
+    let new_index = crate::strings::byte_to_utf16(s, m.end() + search_start);
     if flags.contains('g') || flags.contains('y') {
         set_last_index(receiver, new_index as f64)?;
     }
     let values = match_values(s, &m, search_start);
-    let index = Value::Number((m.start() + search_start) as f64);
+    let index = Value::Number(crate::strings::byte_to_utf16(s, m.start() + search_start) as f64);
     Ok(match_result(values, index, s))
 }
 
@@ -450,7 +452,7 @@ fn extract_regex_parts(receiver: &Value) -> Result<(String, String, usize), VmEr
 
 fn prepare_search<'a>(s: &'a str, flags: &str, last_index: usize) -> (usize, &'a str) {
     let search_start = if flags.contains('g') || flags.contains('y') {
-        last_index.min(s.len())
+        crate::strings::utf16_byte_index(s, last_index)
     } else {
         0
     };
