@@ -10,33 +10,46 @@ fn object_alias_property(alias: &crate::value::ObjectAliasValue, key: &str) -> V
 }
 
 pub(crate) fn has_restricted_function_property(value: &Value, key: &str) -> bool {
-    let Value::Function(function) = value else {
-        return false;
-    };
     if !matches!(key, "caller" | "arguments") {
         return false;
     }
-    let is_restricted = matches!(
-        function.kind,
-        crate::ops::FunctionKind::Arrow | crate::ops::FunctionKind::Generator
-    )
-        || function.strictness == crate::ops::FunctionStrictness::Strict;
-    let properties = function.properties.borrow();
-    is_restricted
-        && !properties
-            .iter()
-            .any(|(name, _)| name == key)
+    let is_restricted = match value {
+        Value::Function(function) => {
+            matches!(
+                function.kind,
+                crate::ops::FunctionKind::Arrow | crate::ops::FunctionKind::Generator
+            ) || function.strictness == crate::ops::FunctionStrictness::Strict
+        }
+        Value::BoundFunction(_) => true,
+        _ => return false,
+    };
+    let properties = match value {
+        Value::Function(function) => &function.properties.borrow()[..],
+        Value::BoundFunction(bound) => &bound.properties.borrow()[..],
+        _ => &[],
+    };
+    is_restricted && !properties.iter().any(|(name, _)| name == key)
 }
 
-fn object_prototype_property(properties: &[(String, Value)], key: &str) -> Value {
+fn object_prototype_property(
+    receiver: &Value,
+    properties: &[(String, Value)],
+    key: &str,
+) -> Value {
     properties
         .iter()
         .rev()
         .find_map(|(name, value)| (name == "\0prototype").then_some(value))
-        .map_or(Value::Undefined, |prototype| get_property(prototype, key))
+        .map_or(Value::Undefined, |prototype| {
+            get_property_with_receiver(prototype, key, receiver).unwrap_or(Value::Undefined)
+        })
 }
 
-fn object_property(properties: &Rc<crate::value::ObjectData>, key: &str) -> Value {
+pub(crate) fn object_property(
+    properties: &Rc<crate::value::ObjectData>,
+    receiver: &Value,
+    key: &str,
+) -> Value {
     if properties
         .iter()
         .any(|(name, _)| name == &crate::builtins::deleted_key(key))
@@ -66,7 +79,7 @@ fn object_property(properties: &Rc<crate::value::ObjectData>, key: &str) -> Valu
     {
         return Value::Undefined;
     }
-    let inherited = object_prototype_property(properties, key);
+    let inherited = object_prototype_property(receiver, properties, key);
     if !matches!(inherited, Value::Undefined) {
         return inherited;
     }
