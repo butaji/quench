@@ -9,7 +9,7 @@ use super::{
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
-    let locale = locales.first().cloned().unwrap_or_else(default_locale);
+    let mut locale = locales.first().cloned().unwrap_or_else(default_locale);
     let mut usage = "sort".to_string();
     let mut sensitivity = "variant".to_string();
     let mut ignore_punctuation = locale.starts_with("th");
@@ -38,6 +38,12 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             if !matches!(sensitivity.as_str(), "base" | "accent" | "case" | "variant") {
                 return Err(runtime_error("RangeError: invalid sensitivity"));
             }
+        }
+        if case_first != "false" {
+            locale = remove_conflicting_extension(&locale, "kf", &case_first);
+        }
+        if numeric {
+            locale = remove_conflicting_extension(&locale, "kn", "true");
         }
         if let Some((_, Value::Boolean(value))) = properties
             .iter()
@@ -70,6 +76,26 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             ]),
         ),
     ]))
+}
+
+fn remove_conflicting_extension(locale: &str, key: &str, value: &str) -> String {
+    let parts: Vec<&str> = locale.split('-').collect();
+    let Some(index) = parts.iter().position(|part| part.eq_ignore_ascii_case(key)) else {
+        return locale.to_string();
+    };
+    let extension_value = parts.get(index + 1).copied().unwrap_or("true");
+    if extension_value.eq_ignore_ascii_case(value) {
+        return locale.to_string();
+    }
+    let result = parts[..index]
+        .iter()
+        .chain(parts.get(index + 2..).unwrap_or_default().iter())
+        .copied()
+        .collect::<Vec<_>>()
+        .join("-")
+        .trim_end_matches("-u")
+        .to_string();
+    result
 }
 
 pub(crate) fn prototype_method(
