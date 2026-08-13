@@ -82,6 +82,7 @@ fn reduce_units(units: &[SourceUnit<'_>]) -> Result<ResidualProgram, Vec<String>
             private_names: analysis.private_names.into_iter().collect(),
             ..ProgramDb::default()
         };
+        facts.install_reduction_source(source);
         facts.install_fact_sites(analysis.fact_sites);
         last = state.append(&parsed.program.body, &mut facts, unit.program_scope)?;
         facts.finish_reduction();

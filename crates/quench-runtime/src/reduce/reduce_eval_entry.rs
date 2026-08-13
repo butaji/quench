@@ -37,6 +37,7 @@ pub(crate) fn reduce_eval_source_in_context(
     let directive_completion =
         super::reduce_eval::directive_completion(&parsed.program, inherited_strict);
     let mut facts = eval_facts(&analysis, strict);
+    facts.install_reduction_source(source);
     facts.install_fact_sites(analysis.fact_sites);
     let binding_state = crate::reduce_support::eval_bindings(&parsed.program, bindings, strict, global);
     let (locals, next_slot, mut prefix, behavior, deletable) = binding_state;

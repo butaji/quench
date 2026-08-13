@@ -92,6 +92,7 @@ pub struct ProgramDb {
     pub(crate) eval_deletable: Vec<(String, u16)>,
     pub(crate) epochs: Epochs,
     pub(crate) dynamic_scope_depth: u16,
+    pub(crate) reduction_source: String,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -153,8 +154,32 @@ impl ProgramDb {
         self.site_ids = sites;
     }
 
+    pub(crate) fn install_reduction_source(&mut self, source: &str) {
+        self.reduction_source = source.to_string();
+    }
+
+    pub(crate) fn is_cover_parenthesized_identifier(&self, span: Span) -> bool {
+        let start = usize::try_from(span.start).ok();
+        let end = usize::try_from(span.end).ok();
+        let (Some(start), Some(end)) = (start, end) else {
+            return false;
+        };
+        let before = self
+            .reduction_source
+            .get(..start)
+            .unwrap_or_default()
+            .trim_end();
+        let after = self
+            .reduction_source
+            .get(end..)
+            .unwrap_or_default()
+            .trim_start();
+        before.ends_with('(') && after.starts_with(')')
+    }
+
     pub(crate) fn finish_reduction(&mut self) {
         self.site_ids.clear();
+        self.reduction_source.clear();
     }
 
     pub(crate) fn record_fact_in_context(
