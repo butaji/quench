@@ -57,10 +57,14 @@ impl ArrayData {
         if let Some(Some(binding)) = self.mapped.get(index) {
             *binding.borrow_mut() = value.clone();
         }
-        self.values
-            .resize(index.saturating_add(1), Value::Undefined);
+        if self.values.len() <= index {
+            self.values
+                .resize(index.saturating_add(1), Value::Undefined);
+        }
         self.values[index] = value;
-        self.deleted.resize(index.saturating_add(1), false);
+        if self.deleted.len() <= index {
+            self.deleted.resize(index.saturating_add(1), false);
+        }
         self.deleted[index] = false;
         self.length = self.length.max(index.saturating_add(1));
     }
@@ -121,10 +125,7 @@ impl ArrayData {
     }
 
     pub(crate) fn property_keys(&self) -> Vec<String> {
-        self.properties
-            .iter()
-            .map(|(key, _)| key.clone())
-            .collect()
+        self.properties.iter().map(|(key, _)| key.clone()).collect()
     }
 
     pub(crate) fn set_property(&mut self, key: &str, value: Value) {
