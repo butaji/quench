@@ -59,6 +59,8 @@ pub(crate) fn script_properties(ops: &mut Vec<Op>, next_register: &mut u16) -> V
         "encodeURIComponent",
         "decodeURI",
         "decodeURIComponent",
+        "parseInt",
+        "parseFloat",
         "WeakMap",
         "WeakSet",
         "SharedArrayBuffer",
