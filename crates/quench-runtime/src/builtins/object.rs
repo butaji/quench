@@ -355,9 +355,9 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
         "length" | "name" | "prototype" | "Symbol.toStringTag" | "unscopables"
     ) && !is_well_known_symbol_property(builtin, key)
         && builtin_property_writable(builtin, key);
-    let configurable = builtin != Builtin::Math
-        && !matches!(key, "prototype" | "unscopables")
+    let configurable = !matches!(key, "prototype" | "unscopables")
         && !is_well_known_symbol_property(builtin, key)
+        && builtin_property_configurable(builtin, key)
         && !crate::conversion::is_symbol(&property);
     Some(descriptor_object_with_flags(
         property,
