@@ -59,8 +59,16 @@ fn owns_property(receiver: &Value, key: &str) -> Result<bool, VmError> {
             crate::proxy::proxy_get_own_property_descriptor(receiver, key)? != Value::Undefined
         }
         Value::DataView(view) => view.own_property(key).is_some(),
+        value if typed_array_owns(value, key) => true,
         _ => false,
     })
+}
+
+fn typed_array_owns(value: &Value, key: &str) -> bool {
+    if let Ok(index) = key.parse::<usize>() {
+        return crate::typed_array_prototype::index_exists(value, index);
+    }
+    crate::typed_array_prototype::own_property(value, key).is_some()
 }
 
 fn object_data_owns(properties: &Rc<ObjectData>, key: &str) -> bool {

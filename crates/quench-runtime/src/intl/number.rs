@@ -287,12 +287,19 @@ impl NumberOptions {
             "percent" => number * 100.0,
             _ => number,
         };
+        let scientific = match self.notation.as_str() {
+            "scientific" => Some(scientific_parts(scaled, false)),
+            "engineering" => Some(scientific_parts(scaled, true)),
+            _ => None,
+        };
         let magnitude = if self.notation == "compact" {
             compact_scale(scaled, &self.locale, &self.compact_display)
         } else {
             0
         };
-        let value = if magnitude == 0 {
+        let value = if let Some((coefficient, _)) = scientific {
+            coefficient
+        } else if magnitude == 0 {
             scaled
         } else {
             scaled / 10f64.powi(magnitude)
@@ -307,12 +314,20 @@ impl NumberOptions {
             self.maximum_fraction_digits
         };
         let mut text = format_number_rounded(value, fraction_digits, self.rounding_increment);
-        if self.use_grouping
+        if scientific.is_none()
+            && self.use_grouping
             && (self.notation != "compact" || (compact_unscaled_de && scaled.abs() >= 10_000.0))
         {
             text = group_integer_locale(&text, &self.locale);
         } else if self.notation == "compact" && self.locale.starts_with("de") {
             text = text.replace('.', ",");
+        }
+        if let Some((_, exponent)) = scientific.filter(|(value, _)| value.is_finite()) {
+            if self.locale.starts_with("de") {
+                text = text.replace('.', ",");
+            }
+            let exponent = format!("E{exponent}");
+            text.push_str(&exponent);
         }
         text = apply_minimum_integer(&text, self.minimum_integer_digits);
         if self.minimum_fraction_digits > 0 {
