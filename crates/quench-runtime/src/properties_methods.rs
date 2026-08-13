@@ -57,17 +57,24 @@ fn reduce_super_method_call(
     next: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
-    let Expression::StaticMemberExpression(member) = &call.callee else {
-        return None;
-    };
-    if !matches!(member.object, Expression::Super(_)) {
-        return None;
-    }
+    let key = super_method_key(&call.callee)?;
     let args = reduce_call_arguments(call, ops, facts, next, locals)?;
     let dst = *next;
     *next = next.saturating_add(1);
-    ops.push(Op::CallSuperMethod { dst, key: member.property.name.to_string(), args });
+    ops.push(Op::CallSuperMethod { dst, key, args });
     Some(dst)
+}
+
+fn super_method_key(expression: &Expression<'_>) -> Option<String> {
+    match expression {
+        Expression::StaticMemberExpression(member) if matches!(member.object, Expression::Super(_)) => {
+            Some(member.property.name.to_string())
+        }
+        Expression::ComputedMemberExpression(member) if matches!(member.object, Expression::Super(_)) => {
+            computed_method_key(&member.expression)
+        }
+        _ => None,
+    }
 }
 
 fn reduce_call_arguments(
