@@ -3,7 +3,7 @@
 use crate::ops::Builtin;
 
 use super::{
-    array, bigint, collections, date, function, intl, math, number, object, promise, reflect,
+    array, bigint, collections, date, function, intl, json, math, number, object, promise, reflect,
     regexp, string, symbol,
 };
 
@@ -44,7 +44,8 @@ pub fn function_name(builtin: Builtin) -> Option<&'static str> {
     if let Some(v) = collections::fn_name(builtin) {
         return Some(v);
     }
-    promise::fn_name(builtin).or_else(|| string::fn_name(builtin))
+    json::fn_name(builtin)
+        .or_else(|| promise::fn_name(builtin).or_else(|| string::fn_name(builtin)))
 }
 
 pub fn function_length(builtin: Builtin) -> Option<f64> {
@@ -84,7 +85,7 @@ pub fn function_length(builtin: Builtin) -> Option<f64> {
     if let Some(v) = collections::fn_len(builtin) {
         return Some(v);
     }
-    promise::fn_len(builtin).or_else(|| string::fn_len(builtin))
+    json::fn_len(builtin).or_else(|| promise::fn_len(builtin).or_else(|| string::fn_len(builtin)))
 }
 
 pub fn short_name(builtin: Builtin) -> Option<&'static str> {
@@ -124,5 +125,6 @@ pub fn short_name(builtin: Builtin) -> Option<&'static str> {
     if let Some(v) = collections::short_name(builtin) {
         return Some(v);
     }
-    promise::short_name(builtin).or_else(|| string::short_name(builtin))
+    json::short_name(builtin)
+        .or_else(|| promise::short_name(builtin).or_else(|| string::short_name(builtin)))
 }

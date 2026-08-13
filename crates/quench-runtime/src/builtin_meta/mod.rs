@@ -11,6 +11,7 @@ pub mod collections;
 pub mod date;
 pub mod function;
 pub mod intl;
+pub mod json;
 pub mod math;
 pub mod methods;
 pub mod number;
