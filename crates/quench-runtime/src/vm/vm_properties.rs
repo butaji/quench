@@ -76,7 +76,12 @@ fn get_property_value(value: &Value, key: &str) -> Value {
 
 fn iterator_property(value: &Value, key: &str) -> Value {
     let property = crate::collections::iterator::property_for(value, key);
-    if matches!(property, Value::Builtin(crate::ops::Builtin::RegExpStringIteratorNext)) {
+    if matches!(
+        property,
+        Value::Builtin(
+            Builtin::RegExpStringIteratorNext | Builtin::SetIteratorNext | Builtin::MapIteratorNext
+        )
+    ) {
         return property;
     }
     bind_method(value, property)

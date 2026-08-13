@@ -19,14 +19,10 @@ fn prototype_for_value(value: &Value) -> Value {
             Value::Builtin(Builtin::ObjectPrototype)
         }
         Value::Builtin(Builtin::FunctionPrototype) => Value::Builtin(Builtin::ObjectPrototype),
-        Value::Builtin(builtin @ (Builtin::ArrayIteratorPrototype | Builtin::RegExpStringIteratorPrototype | Builtin::IteratorPrototype)) => iterator_prototype(*builtin),
-        Value::Function(function) => function
-            .properties
-            .borrow()
-            .iter()
-            .rev()
-            .find_map(|(name, value)| (name == "\0prototype").then(|| value.clone()))
-            .unwrap_or(Value::Builtin(Builtin::FunctionPrototype)),
+        Value::Builtin(builtin @ (Builtin::ArrayIteratorPrototype | Builtin::RegExpStringIteratorPrototype | Builtin::SetIteratorPrototype | Builtin::MapIteratorPrototype | Builtin::IteratorPrototype)) => iterator_prototype(*builtin),
+        Value::Function(function) => {
+            internal_prototype(&function.properties.borrow(), Builtin::FunctionPrototype)
+        }
         Value::Builtin(_) | Value::BoundFunction(_) => Value::Builtin(Builtin::FunctionPrototype),
         Value::Promise(_) => Value::Builtin(Builtin::PromisePrototype),
         Value::Map(data) => data.prototype().unwrap_or(Value::Builtin(if data.weak {
@@ -40,22 +36,13 @@ fn prototype_for_value(value: &Value) -> Value {
             Builtin::SetPrototype
         })),
         Value::Generator(generator) => generator_prototype(generator),
-        Value::Iterator(data) => match &*data.state.borrow() {
-            crate::value::IteratorState::RegExpString { .. } => {
-                Value::Builtin(Builtin::RegExpStringIteratorPrototype)
-            }
-            _ => Value::Builtin(Builtin::ArrayIteratorPrototype),
-        },
+        Value::Iterator(_) => crate::collections::iterator::prototype_of(value),
         Value::Array(values) if values.is_arguments() => Value::Builtin(Builtin::ObjectPrototype),
         Value::Array(_) => Value::Builtin(Builtin::ArrayPrototype),
         Value::String(value) if crate::conversion::is_symbol_string(value) => {
             Value::Builtin(Builtin::SymbolPrototype)
         }
-        Value::Object(properties) => properties
-            .iter()
-            .rev()
-            .find_map(|(name, value)| (name == "\0prototype").then(|| value.clone()))
-            .unwrap_or(Value::Builtin(Builtin::ObjectPrototype)),
+        Value::Object(properties) => internal_prototype(properties, Builtin::ObjectPrototype),
         _ => Value::Null,
     }
 }
@@ -78,8 +65,22 @@ fn generator_prototype(generator: &crate::value::GeneratorData) -> Value {
         })
 }
 
+fn internal_prototype(properties: &[(String, Value)], fallback: Builtin) -> Value {
+    properties
+        .iter()
+        .rev()
+        .find_map(|(name, value)| (name == "\0prototype").then(|| value.clone()))
+        .unwrap_or(Value::Builtin(fallback))
+}
+
 fn iterator_prototype(builtin: Builtin) -> Value {
-    if matches!(builtin, Builtin::ArrayIteratorPrototype | Builtin::RegExpStringIteratorPrototype) {
+    if matches!(
+        builtin,
+        Builtin::ArrayIteratorPrototype
+            | Builtin::RegExpStringIteratorPrototype
+            | Builtin::SetIteratorPrototype
+            | Builtin::MapIteratorPrototype
+    ) {
         return Value::Builtin(Builtin::IteratorPrototype);
     }
     Value::Builtin(Builtin::ObjectPrototype)
