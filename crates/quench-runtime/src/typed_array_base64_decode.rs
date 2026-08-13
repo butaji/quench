@@ -56,22 +56,28 @@ fn take_group(
     if group.len() < 2 {
         return Err(syntax_error());
     }
+    let (kind, index) = padded_kind(group.len(), bytes, index)?;
+    Ok((group, kind, index))
+}
+
+fn padded_kind(group_len: usize, bytes: &[u8], start: usize) -> Result<(ChunkKind, usize), VmError> {
     let mut padding = 0;
+    let mut index = start;
     while bytes.get(index) == Some(&b'=') {
         padding += 1;
         index += 1;
     }
-    if padding > 4 - group.len() {
+    if padding > 4 - group_len {
         return Err(syntax_error());
     }
     index = skip_whitespace(bytes, index);
-    let valid = padding == 4 - group.len() && index == bytes.len();
+    let valid = padding == 4 - group_len && index == bytes.len();
     let kind = if valid {
         ChunkKind::Padded
     } else {
         ChunkKind::BadPadding
     };
-    Ok((group, kind, index))
+    Ok((kind, index))
 }
 
 fn decode_group(alphabet: &[u8; 64], group: &[u8], check_bits: bool) -> Option<Vec<u8>> {

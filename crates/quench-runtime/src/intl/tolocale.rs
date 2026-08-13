@@ -193,6 +193,7 @@ pub(crate) mod value {
                 "symbol"
             }
             Value::String(_) => "string",
+            Value::StringUnits(_) => "string",
             Value::Builtin(builtin) => builtin_type(*builtin),
             Value::Function(_) | Value::BoundFunction(_) => "function",
             Value::BigInt(_) => "bigint",
