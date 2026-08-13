@@ -1,3 +1,5 @@
+use num_bigint::{BigInt, Sign};
+
 use crate::{ops::Builtin, value::Value};
 
 pub(crate) fn property(key: &str) -> Option<Builtin> {
@@ -222,45 +224,120 @@ fn sum_precise(value: Option<&Value>) -> Result<Value, crate::execute::VmError> 
     let iterable = value.cloned().ok_or_else(|| {
         crate::value::error::throw_type_error("Math.sumPrecise requires an iterable")
     })?;
-    let mut sum = -0.0f64;
-    let mut compensation = 0.0f64;
+    let mut sum = BigInt::from(0_u8);
+    let mut state = SumState::default();
     crate::collections::iterator::for_each_iterable(iterable, |value| {
         let Value::Number(value) = value else {
             return Err(crate::value::error::throw_type_error(
                 "Math.sumPrecise requires numbers",
             ));
         };
-        if value.is_nan() || sum.is_nan() {
-            sum = f64::NAN;
-            return Ok(());
-        }
-        if !value.is_finite() {
-            if sum.is_infinite() && sum.is_sign_positive() != value.is_sign_positive() {
-                sum = f64::NAN;
-            } else if !sum.is_infinite() {
-                sum = value;
-            }
-            compensation = 0.0;
-            return Ok(());
-        }
-        if sum.is_infinite() {
-            return Ok(());
-        }
-        let total = sum + value;
-        compensation += if sum.abs() >= value.abs() {
-            (sum - total) + value
-        } else {
-            (value - total) + sum
-        };
-        sum = total;
+        state.add(value, &mut sum);
         Ok(())
     })?;
-    let result = if compensation == 0.0 {
-        sum
+    Ok(Value::Number(state.finish(sum)))
+}
+
+#[derive(Default)]
+struct SumState {
+    infinity: Option<bool>,
+    invalid: bool,
+    positive_zero: bool,
+    nonzero: bool,
+}
+
+impl SumState {
+    fn add(&mut self, value: f64, sum: &mut BigInt) {
+        if value.is_nan() {
+            self.invalid = true;
+        } else if value.is_infinite() {
+            self.add_infinity(value.is_sign_positive());
+        } else if value == 0.0 {
+            self.positive_zero |= value.is_sign_positive();
+        } else {
+            self.nonzero = true;
+            *sum += binary_units(value);
+        }
+    }
+
+    fn add_infinity(&mut self, positive: bool) {
+        self.invalid |= self.infinity.is_some_and(|sign| sign != positive);
+        self.infinity.get_or_insert(positive);
+    }
+
+    fn finish(self, sum: BigInt) -> f64 {
+        if self.invalid {
+            f64::NAN
+        } else if let Some(positive) = self.infinity {
+            if positive {
+                f64::INFINITY
+            } else {
+                f64::NEG_INFINITY
+            }
+        } else if sum == BigInt::from(0_u8) {
+            if !self.nonzero && !self.positive_zero {
+                -0.0
+            } else {
+                0.0
+            }
+        } else {
+            scaled_binary_units(sum)
+        }
+    }
+}
+
+fn binary_units(value: f64) -> BigInt {
+    let bits = value.to_bits();
+    let fraction = bits & ((1_u64 << 52) - 1);
+    let exponent = ((bits >> 52) & 0x7ff) as usize;
+    let significand = if exponent == 0 {
+        fraction
     } else {
-        sum + compensation
+        fraction | (1_u64 << 52)
     };
-    Ok(Value::Number(result))
+    let units = BigInt::from(significand) << exponent.saturating_sub(1);
+    if value.is_sign_negative() {
+        -units
+    } else {
+        units
+    }
+}
+
+fn scaled_binary_units(sum: BigInt) -> f64 {
+    let negative = sum.sign() == Sign::Minus;
+    let magnitude = if negative { -sum } else { sum };
+    let bits = magnitude.magnitude().bits() as usize;
+    let result = if bits <= 52 {
+        bigint_to_f64(&magnitude) * 2_f64.powi(-1074)
+    } else {
+        let shift = bits - 53;
+        let significand = rounded_significand(&magnitude, shift);
+        bigint_to_f64(&significand) * 2_f64.powi(shift as i32 - 1074)
+    };
+    if negative {
+        -result
+    } else {
+        result
+    }
+}
+
+fn rounded_significand(magnitude: &BigInt, shift: usize) -> BigInt {
+    let mut significand = magnitude >> shift;
+    if shift == 0 {
+        return significand;
+    }
+    let remainder = magnitude - (&significand << shift);
+    let halfway = BigInt::from(1_u8) << (shift - 1);
+    if remainder > halfway
+        || remainder == halfway && (&significand & BigInt::from(1_u8)) != BigInt::from(0_u8)
+    {
+        significand += 1_u8;
+    }
+    significand
+}
+
+fn bigint_to_f64(value: &BigInt) -> f64 {
+    value.to_string().parse().unwrap_or(f64::NAN)
 }
 
 fn unary(numbers: &[f64], operation: fn(f64) -> f64) -> f64 {

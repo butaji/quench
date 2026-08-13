@@ -1,5 +1,5 @@
 fn builtin_property_writable(builtin: Builtin, key: &str) -> bool {
-    if matches!(builtin, Builtin::Math) {
+    if builtin == Builtin::Math && crate::math::constant(key).is_some() {
         return false;
     }
     if builtin == Builtin::Number {
@@ -16,6 +16,10 @@ fn builtin_property_writable(builtin: Builtin, key: &str) -> bool {
         );
     }
     true
+}
+
+fn builtin_property_configurable(builtin: Builtin, key: &str) -> bool {
+    builtin != Builtin::Math || crate::math::constant(key).is_none()
 }
 fn is_well_known_symbol_property(builtin: Builtin, key: &str) -> bool {
     builtin == Builtin::Symbol
