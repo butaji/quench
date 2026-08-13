@@ -145,7 +145,7 @@ pub fn prototype(builtin: Builtin) -> Option<Builtin> {
         Builtin::EvalError => Some(Builtin::ErrorPrototype),
         Builtin::URIError => Some(Builtin::ErrorPrototype),
         Builtin::AggregateError => Some(Builtin::ErrorPrototype),
-        Builtin::SuppressedError => Some(Builtin::ErrorPrototype),
+        Builtin::SuppressedError => Some(Builtin::SuppressedErrorPrototype),
         Builtin::TypeError => Some(Builtin::ErrorPrototype),
         _ => None,
     }
@@ -162,6 +162,7 @@ pub fn is_prototype(builtin: Builtin) -> bool {
                 | Builtin::WeakSetPrototype
                 | Builtin::WeakRefPrototype
                 | Builtin::ErrorPrototype
+                | Builtin::SuppressedErrorPrototype
                 | Builtin::PromisePrototype
         )
 }
