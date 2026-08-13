@@ -259,10 +259,13 @@ fn method_properties() -> Vec<(String, Value)> {
 }
 
 fn locale_slot(locale: &Locale) -> Value {
-    let mut properties = vec![(
-        "language".to_string(),
-        Value::String(locale.language.clone()),
-    )];
+    let mut properties = vec![
+        (
+            "language".to_string(),
+            Value::String(locale.language.clone()),
+        ),
+        ("base".to_string(), Value::String(locale.base_name())),
+    ];
     if let Some(script) = &locale.script {
         properties.push(("script".to_string(), Value::String(script.clone())));
     }
@@ -278,6 +281,16 @@ fn locale_slot(locale: &Locale) -> Value {
     if let Some(hour_cycle) = &locale.hour_cycle {
         properties.push(("hourCycle".to_string(), Value::String(hour_cycle.clone())));
     }
+    if let Some(case_first) = &locale.case_first {
+        properties.push(("caseFirst".to_string(), Value::String(case_first.clone())));
+    }
+    if let Some(numbering_system) = &locale.numbering_system {
+        properties.push((
+            "numberingSystem".to_string(),
+            Value::String(numbering_system.clone()),
+        ));
+    }
+    properties.push(("numeric".to_string(), Value::Boolean(locale.numeric)));
     properties.push(("full".to_string(), Value::String(slot_full(locale))));
     make_object(properties)
 }
@@ -359,8 +372,46 @@ pub(crate) fn prototype_method(
                 make_array(vec![Value::Number(6.0), Value::Number(7.0)]),
             ),
         ])),
+        crate::ops::Builtin::IntlLocaleBaseNameGetter => Ok(Value::String(
+            slot_string(&super::intl_slots(receiver)?, "base").unwrap_or_default(),
+        )),
+        crate::ops::Builtin::IntlLocaleCalendarGetter
+        | crate::ops::Builtin::IntlLocaleCaseFirstGetter
+        | crate::ops::Builtin::IntlLocaleCollationGetter
+        | crate::ops::Builtin::IntlLocaleFirstDayOfWeekGetter
+        | crate::ops::Builtin::IntlLocaleHourCycleGetter
+        | crate::ops::Builtin::IntlLocaleLanguageGetter
+        | crate::ops::Builtin::IntlLocaleNumberingSystemGetter
+        | crate::ops::Builtin::IntlLocaleNumericGetter
+        | crate::ops::Builtin::IntlLocaleRegionGetter
+        | crate::ops::Builtin::IntlLocaleScriptGetter
+        | crate::ops::Builtin::IntlLocaleTextInfoGetter
+        | crate::ops::Builtin::IntlLocaleVariantsGetter => {
+            let key = match builtin {
+                crate::ops::Builtin::IntlLocaleCalendarGetter => "calendar",
+                crate::ops::Builtin::IntlLocaleCaseFirstGetter => "caseFirst",
+                crate::ops::Builtin::IntlLocaleCollationGetter => "collation",
+                crate::ops::Builtin::IntlLocaleFirstDayOfWeekGetter => "firstDayOfWeek",
+                crate::ops::Builtin::IntlLocaleHourCycleGetter => "hourCycle",
+                crate::ops::Builtin::IntlLocaleLanguageGetter => "language",
+                crate::ops::Builtin::IntlLocaleNumberingSystemGetter => "numberingSystem",
+                crate::ops::Builtin::IntlLocaleNumericGetter => "numeric",
+                crate::ops::Builtin::IntlLocaleRegionGetter => "region",
+                crate::ops::Builtin::IntlLocaleScriptGetter => "script",
+                crate::ops::Builtin::IntlLocaleTextInfoGetter => "textInfo",
+                _ => "variants",
+            };
+            Ok(locale_slot_value(&super::intl_slots(receiver)?, key))
+        }
         _ => Err(runtime_error("TypeError: method not found")),
     }
+}
+
+fn locale_slot_value(slots: &[(String, Value)], key: &str) -> Value {
+    slots
+        .iter()
+        .find(|(name, _)| name == key)
+        .map_or(Value::Undefined, |(_, value)| value.clone())
 }
 
 pub(crate) fn dispatch(
@@ -379,7 +430,22 @@ pub(crate) fn dispatch(
         | crate::ops::Builtin::IntlLocaleGetNumberingSystems
         | crate::ops::Builtin::IntlLocaleGetTimeZones
         | crate::ops::Builtin::IntlLocaleGetTextInfo
-        | crate::ops::Builtin::IntlLocaleGetWeekInfo => Some(prototype_method(builtin, receiver)),
+        | crate::ops::Builtin::IntlLocaleGetWeekInfo
+        | crate::ops::Builtin::IntlLocaleBaseNameGetter
+        | crate::ops::Builtin::IntlLocaleCalendarGetter
+        | crate::ops::Builtin::IntlLocaleCaseFirstGetter
+        | crate::ops::Builtin::IntlLocaleCollationGetter
+        | crate::ops::Builtin::IntlLocaleFirstDayOfWeekGetter
+        | crate::ops::Builtin::IntlLocaleHourCycleGetter
+        | crate::ops::Builtin::IntlLocaleLanguageGetter
+        | crate::ops::Builtin::IntlLocaleNumberingSystemGetter
+        | crate::ops::Builtin::IntlLocaleNumericGetter
+        | crate::ops::Builtin::IntlLocaleRegionGetter
+        | crate::ops::Builtin::IntlLocaleScriptGetter
+        | crate::ops::Builtin::IntlLocaleTextInfoGetter
+        | crate::ops::Builtin::IntlLocaleVariantsGetter => {
+            Some(prototype_method(builtin, receiver))
+        }
         _ => None,
     }
 }

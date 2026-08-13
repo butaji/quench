@@ -82,6 +82,21 @@ fn prototype_property(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Builtin::IntlLocalePrototype, "getTimeZones") => Builtin::IntlLocaleGetTimeZones,
         (Builtin::IntlLocalePrototype, "getTextInfo") => Builtin::IntlLocaleGetTextInfo,
         (Builtin::IntlLocalePrototype, "getWeekInfo") => Builtin::IntlLocaleGetWeekInfo,
+        (Builtin::IntlLocalePrototype, "baseName") => Builtin::IntlLocaleBaseNameGetter,
+        (Builtin::IntlLocalePrototype, "calendar") => Builtin::IntlLocaleCalendarGetter,
+        (Builtin::IntlLocalePrototype, "caseFirst") => Builtin::IntlLocaleCaseFirstGetter,
+        (Builtin::IntlLocalePrototype, "collation") => Builtin::IntlLocaleCollationGetter,
+        (Builtin::IntlLocalePrototype, "firstDayOfWeek") => Builtin::IntlLocaleFirstDayOfWeekGetter,
+        (Builtin::IntlLocalePrototype, "hourCycle") => Builtin::IntlLocaleHourCycleGetter,
+        (Builtin::IntlLocalePrototype, "language") => Builtin::IntlLocaleLanguageGetter,
+        (Builtin::IntlLocalePrototype, "numberingSystem") => {
+            Builtin::IntlLocaleNumberingSystemGetter
+        }
+        (Builtin::IntlLocalePrototype, "numeric") => Builtin::IntlLocaleNumericGetter,
+        (Builtin::IntlLocalePrototype, "region") => Builtin::IntlLocaleRegionGetter,
+        (Builtin::IntlLocalePrototype, "script") => Builtin::IntlLocaleScriptGetter,
+        (Builtin::IntlLocalePrototype, "textInfo") => Builtin::IntlLocaleTextInfoGetter,
+        (Builtin::IntlLocalePrototype, "variants") => Builtin::IntlLocaleVariantsGetter,
         (Builtin::IntlNumberFormatPrototype, "format") => Builtin::IntlNumberFormatFormat,
         (Builtin::IntlNumberFormatPrototype, "formatToParts") => {
             Builtin::IntlNumberFormatFormatToParts
