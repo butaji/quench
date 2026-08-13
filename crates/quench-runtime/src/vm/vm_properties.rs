@@ -409,8 +409,8 @@ fn bind_method(receiver: &Value, property: Value) -> Value {
 }
 fn number_format_bound_properties() -> Vec<(String, Value)> {
     [
-        ("name", Value::String(String::new())),
         ("length", Value::Number(1.0)),
+        ("name", Value::String(String::new())),
     ]
     .into_iter()
     .flat_map(|(key, value)| {
