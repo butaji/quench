@@ -67,8 +67,10 @@ pub(crate) fn index_of(
     let start = search_from_index(arguments.get(1), length)?;
     for index in start..length.min(i32::MAX as isize) {
         let key = index.to_string();
-        if crate::with_scope::has_property(&this, &key)?
-            && strict_equal(&crate::execute::get_property_result(&this, &key)?, search)
+        // A getter may have replaced the receiver (copy-on-write) mid-search.
+        let current = crate::locals::resolved_replacement(this.clone());
+        if crate::with_scope::has_property(&current, &key)?
+            && strict_equal(&crate::execute::get_property_result(&current, &key)?, search)
         {
             return Ok(Value::Number(index as f64));
         }
@@ -91,8 +93,10 @@ pub(crate) fn last_index_of(
     let start = last_search_from_index(arguments.get(1), length)?;
     for index in (0..=start).rev() {
         let key = index.to_string();
-        if crate::with_scope::has_property(&this, &key)?
-            && strict_equal(&crate::execute::get_property_result(&this, &key)?, search)
+        // A getter may have replaced the receiver (copy-on-write) mid-search.
+        let current = crate::locals::resolved_replacement(this.clone());
+        if crate::with_scope::has_property(&current, &key)?
+            && strict_equal(&crate::execute::get_property_result(&current, &key)?, search)
         {
             return Ok(Value::Number(index as f64));
         }
