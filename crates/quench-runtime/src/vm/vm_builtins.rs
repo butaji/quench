@@ -132,7 +132,7 @@ fn execute_simple_builtin(
         Builtin::DecodeURI => crate::builtins::decode_uri(arguments.first(), true),
         Builtin::DecodeURIComponent => crate::builtins::decode_uri(arguments.first(), false),
         Builtin::IsFinite => Ok(Value::Boolean(is_finite(arguments.first()))),
-        Builtin::IsNaN => Ok(Value::Boolean(to_number(arguments.first()).is_nan())),
+        Builtin::IsNaN => Ok(Value::Boolean(matches!(arguments.first(), Some(Value::Number(value)) if value.is_nan()))),
         Builtin::Number => Ok(Value::Number(explicit_number(arguments.first())?)),
         Builtin::BigInt => explicit_bigint(arguments.first()),
         Builtin::BigIntAsIntN | Builtin::BigIntAsUintN =>
