@@ -47,7 +47,8 @@ pub(crate) fn prototype_method(
             let number = super::number::to_number(arguments.first());
             let slots = super::intl_slots(receiver)?;
             let plural_type = slot_string(&slots, "type").unwrap_or_else(|| "cardinal".to_string());
-            Ok(Value::String(select(number, &plural_type)))
+            let locale = slot_string(&slots, "locale").unwrap_or_else(default_locale);
+            Ok(Value::String(select(number, &plural_type, &locale)))
         }
         crate::ops::Builtin::IntlPluralRulesResolvedOptions => {
             let slots = super::intl_slots(receiver)?;
@@ -62,9 +63,23 @@ pub(crate) fn prototype_method(
     }
 }
 
-fn select(number: f64, plural_type: &str) -> String {
+fn select(number: f64, plural_type: &str, locale: &str) -> String {
     if plural_type == "ordinal" {
         return ordinal_select(number);
+    }
+    if locale.starts_with("fr") {
+        return if number == 0.0 || number == 1.0 {
+            "one"
+        } else {
+            "other"
+        }
+        .to_string();
+    }
+    if locale.starts_with("ru") || locale.starts_with("uk") {
+        return russian_cardinal(number);
+    }
+    if locale.starts_with("ar") {
+        return arabic_cardinal(number);
     }
     if number == 1.0 {
         "one"
@@ -72,6 +87,42 @@ fn select(number: f64, plural_type: &str) -> String {
         "two"
     } else if number == 0.0 {
         "zero"
+    } else {
+        "other"
+    }
+    .to_string()
+}
+
+fn russian_cardinal(number: f64) -> String {
+    if !number.is_finite() || number.fract() != 0.0 {
+        return "other".to_string();
+    }
+    let integer = number.abs() as i64;
+    let last = integer % 10;
+    let last_two = integer % 100;
+    if last == 1 && last_two != 11 {
+        "one"
+    } else if (2..=4).contains(&last) && !(12..=14).contains(&last_two) {
+        "few"
+    } else if last == 0 || (5..=9).contains(&last) || (11..=14).contains(&last_two) {
+        "many"
+    } else {
+        "other"
+    }
+    .to_string()
+}
+
+fn arabic_cardinal(number: f64) -> String {
+    if number == 0.0 {
+        "zero"
+    } else if number == 1.0 {
+        "one"
+    } else if number == 2.0 {
+        "two"
+    } else if number.fract() == 0.0 && (3.0..=10.0).contains(&number) {
+        "few"
+    } else if number.fract() == 0.0 && (11.0..=99.0).contains(&number) {
+        "many"
     } else {
         "other"
     }
