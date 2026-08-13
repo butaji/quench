@@ -148,7 +148,14 @@ pub(crate) fn weak_map_new(arguments: &[Value]) -> Result<Value, VmError> {
         return weak_map_from_iterable(Value::Object(iterable.clone()));
     }
     let entries = match arguments.first() {
-        None | Some(Value::Undefined | Value::Null) => Vec::new(),
+        None | Some(Value::Undefined | Value::Null) => {
+            return Ok(Value::Map(Rc::new(MapData {
+                weak: true,
+                keys: std::cell::RefCell::new(VecDeque::new()),
+                values: std::cell::RefCell::new(Vec::new()),
+                prototype: std::cell::RefCell::new(None),
+            })));
+        }
         Some(Value::Array(entries)) => entries.iter().cloned().collect(),
         Some(Value::Object(_)) => crate::collections::iterator::collect_iterable(
             arguments.first().cloned().unwrap_or(Value::Undefined),
@@ -165,10 +172,22 @@ pub(crate) fn weak_map_new(arguments: &[Value]) -> Result<Value, VmError> {
         values: std::cell::RefCell::new(Vec::new()),
         prototype: std::cell::RefCell::new(None),
     }));
+    let setter = weak_map_adder()?;
     if entries.is_empty() {
         return Ok(set);
     }
-    populate_weak_map(set, entries)
+    populate_weak_map(set, setter, entries)
+}
+
+fn weak_map_adder() -> Result<Value, VmError> {
+    let setter =
+        crate::execute::get_property_result(&Value::Builtin(Builtin::WeakMapPrototype), "set")?;
+    if !crate::conversion::is_callable(&setter) {
+        return Err(crate::value::error::throw_type_error(
+            "WeakMap.prototype.set is not callable",
+        ));
+    }
+    Ok(setter)
 }
 
 fn weak_map_from_iterable(iterable: Value) -> Result<Value, VmError> {
@@ -178,13 +197,7 @@ fn weak_map_from_iterable(iterable: Value) -> Result<Value, VmError> {
         values: std::cell::RefCell::new(Vec::new()),
         prototype: std::cell::RefCell::new(None),
     })));
-    let setter =
-        crate::execute::get_property_result(&Value::Builtin(Builtin::WeakMapPrototype), "set")?;
-    if !crate::conversion::is_callable(&setter) {
-        return Err(crate::value::error::throw_type_error(
-            "WeakMap.prototype.set is not callable",
-        ));
-    }
+    let setter = weak_map_adder()?;
     crate::collections::iterator::for_each_iterable(iterable, |entry| {
         if !crate::value::is_object(&entry) {
             return Err(crate::value::error::throw_type_error(
@@ -203,14 +216,7 @@ fn weak_map_from_iterable(iterable: Value) -> Result<Value, VmError> {
     Ok(map.into_inner())
 }
 
-fn populate_weak_map(map: Value, entries: Vec<Value>) -> Result<Value, VmError> {
-    let setter =
-        crate::execute::get_property_result(&Value::Builtin(Builtin::WeakMapPrototype), "set")?;
-    if !crate::conversion::is_callable(&setter) {
-        return Err(crate::value::error::throw_type_error(
-            "WeakMap.prototype.set is not callable",
-        ));
-    }
+fn populate_weak_map(map: Value, setter: Value, entries: Vec<Value>) -> Result<Value, VmError> {
     let mut map = map;
     for entry in entries {
         let Value::Array(pair) = entry else {
