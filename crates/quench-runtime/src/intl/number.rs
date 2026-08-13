@@ -114,6 +114,9 @@ impl NumberOptions {
             raw.maximum_fraction_digits,
             minimum_fraction_digits,
         );
+        if raw.style == "unit" && !valid_unit(raw.unit.as_deref()) {
+            return Err(crate::value::error::throw_range_error("invalid unit"));
+        }
         Ok(NumberOptions {
             locale,
             style: raw.style,
@@ -208,6 +211,10 @@ impl NumberOptions {
         }
         make_object(properties)
     }
+}
+
+fn valid_unit(unit: Option<&str>) -> bool {
+    matches!(unit, Some("percent" | "kilometer" | "kilometer-per-hour"))
 }
 
 fn fraction_digits(style: &str, currency: Option<&str>, requested: f64) -> u32 {
