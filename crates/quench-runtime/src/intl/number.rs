@@ -221,7 +221,10 @@ impl NumberOptions {
 }
 
 fn valid_unit(unit: Option<&str>) -> bool {
-    matches!(unit, Some("percent" | "kilometer" | "kilometer-per-hour"))
+    matches!(
+        unit,
+        Some("percent" | "meter" | "kilometer" | "kilometer-per-hour")
+    )
 }
 
 fn grouping_enabled(value: &str) -> bool {
