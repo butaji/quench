@@ -7,6 +7,9 @@ pub(crate) fn get_prototype_of(value: Option<&Value>) -> Result<Value, crate::ex
 }
 
 fn prototype_for_value(value: &Value) -> Value {
+    if let Some(prototype) = slot_prototype(value) {
+        return prototype;
+    }
     match value {
         Value::Builtin(Builtin::ObjectPrototype) => Value::Null,
         Value::Builtin(Builtin::Math | Builtin::Reflect | Builtin::Json) => {
@@ -25,16 +28,6 @@ fn prototype_for_value(value: &Value) -> Value {
         }
         Value::Builtin(_) | Value::BoundFunction(_) => Value::Builtin(Builtin::FunctionPrototype),
         Value::Promise(_) => Value::Builtin(Builtin::PromisePrototype),
-        Value::Map(data) => data.prototype().unwrap_or(Value::Builtin(if data.weak {
-            Builtin::WeakMapPrototype
-        } else {
-            Builtin::MapPrototype
-        })),
-        Value::Set(data) => data.prototype().unwrap_or(Value::Builtin(if data.weak {
-            Builtin::WeakSetPrototype
-        } else {
-            Builtin::SetPrototype
-        })),
         Value::Generator(generator) => generator_prototype(generator),
         Value::Iterator(_) => crate::collections::iterator::prototype_of(value),
         Value::Array(values) if values.is_arguments() => Value::Builtin(Builtin::ObjectPrototype),
@@ -45,6 +38,28 @@ fn prototype_for_value(value: &Value) -> Value {
         Value::Object(properties) => internal_prototype(properties, Builtin::ObjectPrototype),
         _ => Value::Null,
     }
+}
+
+fn slot_prototype(value: &Value) -> Option<Value> {
+    Some(match value {
+        Value::ArrayBuffer(buffer) => buffer
+            .prototype()
+            .unwrap_or(Value::Builtin(Builtin::ArrayBufferPrototype)),
+        Value::DataView(view) => view
+            .prototype()
+            .unwrap_or(Value::Builtin(Builtin::DataViewPrototype)),
+        Value::Map(data) => data.prototype().unwrap_or(Value::Builtin(if data.weak {
+            Builtin::WeakMapPrototype
+        } else {
+            Builtin::MapPrototype
+        })),
+        Value::Set(data) => data.prototype().unwrap_or(Value::Builtin(if data.weak {
+            Builtin::WeakSetPrototype
+        } else {
+            Builtin::SetPrototype
+        })),
+        _ => return None,
+    })
 }
 
 fn generator_prototype(generator: &crate::value::GeneratorData) -> Value {
