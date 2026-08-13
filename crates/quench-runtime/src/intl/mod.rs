@@ -247,7 +247,7 @@ fn canonicalize_subtags(
         }
         match classify_subtag(part, script_done, region_done, variant_done) {
             Subtag::Script => {
-                out.push(part.to_ascii_lowercase());
+                out.push(titlecase_script(part));
                 script_done = true;
             }
             Subtag::Region => {
@@ -262,6 +262,14 @@ fn canonicalize_subtags(
         }
     }
     Ok(out)
+}
+
+fn titlecase_script(part: &str) -> String {
+    let mut chars = part.chars();
+    let first = chars.next().map_or(String::new(), |value| {
+        value.to_ascii_uppercase().to_string()
+    });
+    format!("{first}{}", chars.as_str().to_ascii_lowercase())
 }
 
 enum Subtag {
