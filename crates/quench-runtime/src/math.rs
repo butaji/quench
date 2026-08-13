@@ -26,6 +26,16 @@ pub(crate) fn property(key: &str) -> Option<Builtin> {
         "acos" => Some(Builtin::MathAcos),
         "atan" => Some(Builtin::MathAtan),
         "atan2" => Some(Builtin::MathAtan2),
+        "acosh" => Some(Builtin::MathAcosh),
+        "asinh" => Some(Builtin::MathAsinh),
+        "atanh" => Some(Builtin::MathAtanh),
+        "clz32" => Some(Builtin::MathClz32),
+        "cosh" => Some(Builtin::MathCosh),
+        "expm1" => Some(Builtin::MathExpm1),
+        "fround" => Some(Builtin::MathFround),
+        "log1p" => Some(Builtin::MathLog1p),
+        "sinh" => Some(Builtin::MathSinh),
+        "tanh" => Some(Builtin::MathTanh),
         _ => None,
     }
 }
@@ -74,6 +84,16 @@ fn property_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::MathAcos => Some("acos"),
         Builtin::MathAtan => Some("atan"),
         Builtin::MathAtan2 => Some("atan2"),
+        Builtin::MathAcosh => Some("acosh"),
+        Builtin::MathAsinh => Some("asinh"),
+        Builtin::MathAtanh => Some("atanh"),
+        Builtin::MathClz32 => Some("clz32"),
+        Builtin::MathCosh => Some("cosh"),
+        Builtin::MathExpm1 => Some("expm1"),
+        Builtin::MathFround => Some("fround"),
+        Builtin::MathLog1p => Some("log1p"),
+        Builtin::MathSinh => Some("sinh"),
+        Builtin::MathTanh => Some("tanh"),
         _ => None,
     }
 }
@@ -103,6 +123,8 @@ pub(crate) fn execute(
             .sum::<f64>()
             .sqrt(),
         Builtin::MathImul => imul(numbers.first(), numbers.get(1)),
+        Builtin::MathClz32 => f64::from(clz32(numbers.first().copied().unwrap_or(f64::NAN))),
+        Builtin::MathFround => f64::from(numbers.first().copied().unwrap_or(f64::NAN) as f32),
         _ => return Err(crate::execute::VmError::NotCallable),
     };
     Ok(Value::Number(value))
@@ -120,6 +142,14 @@ fn transcendental(builtin: Builtin, numbers: &[f64]) -> Option<f64> {
         Builtin::MathAsin => unary(numbers, f64::asin),
         Builtin::MathAcos => unary(numbers, f64::acos),
         Builtin::MathAtan => unary(numbers, f64::atan),
+        Builtin::MathAcosh => unary(numbers, f64::acosh),
+        Builtin::MathAsinh => unary(numbers, f64::asinh),
+        Builtin::MathAtanh => unary(numbers, f64::atanh),
+        Builtin::MathCosh => unary(numbers, f64::cosh),
+        Builtin::MathExpm1 => unary(numbers, f64::exp_m1),
+        Builtin::MathLog1p => unary(numbers, f64::ln_1p),
+        Builtin::MathSinh => unary(numbers, f64::sinh),
+        Builtin::MathTanh => unary(numbers, f64::tanh),
         Builtin::MathAtan2 => numbers
             .first()
             .copied()
@@ -134,6 +164,10 @@ fn imul(left: Option<&f64>, right: Option<&f64>) -> f64 {
     let left = left.copied().unwrap_or(f64::NAN) as i32;
     let right = right.copied().unwrap_or(f64::NAN) as i32;
     left.wrapping_mul(right) as f64
+}
+
+fn clz32(value: f64) -> u32 {
+    crate::construct::to_uint32(value).leading_zeros()
 }
 
 fn unary(numbers: &[f64], operation: fn(f64) -> f64) -> f64 {

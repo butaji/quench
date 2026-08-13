@@ -27,6 +27,16 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
         Builtin::MathAcos => Some("Math.acos"),
         Builtin::MathAtan => Some("Math.atan"),
         Builtin::MathAtan2 => Some("Math.atan2"),
+        Builtin::MathAcosh => Some("Math.acosh"),
+        Builtin::MathAsinh => Some("Math.asinh"),
+        Builtin::MathAtanh => Some("Math.atanh"),
+        Builtin::MathClz32 => Some("Math.clz32"),
+        Builtin::MathCosh => Some("Math.cosh"),
+        Builtin::MathExpm1 => Some("Math.expm1"),
+        Builtin::MathFround => Some("Math.fround"),
+        Builtin::MathLog1p => Some("Math.log1p"),
+        Builtin::MathSinh => Some("Math.sinh"),
+        Builtin::MathTanh => Some("Math.tanh"),
         Builtin::MathPow => Some("Math.pow"),
         _ => None,
     }
@@ -34,7 +44,35 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
 
 pub const fn fn_len(b: Builtin) -> Option<f64> {
     match b {
-        Builtin::MathAtan2 | Builtin::MathImul => Some(2.0),
+        Builtin::MathAtan2 | Builtin::MathImul | Builtin::MathPow => Some(2.0),
+        Builtin::MathAbs
+        | Builtin::MathFloor
+        | Builtin::MathCeil
+        | Builtin::MathRound
+        | Builtin::MathTrunc
+        | Builtin::MathSign
+        | Builtin::MathSqrt
+        | Builtin::MathCbrt
+        | Builtin::MathLog
+        | Builtin::MathLog10
+        | Builtin::MathLog2
+        | Builtin::MathExp
+        | Builtin::MathSin
+        | Builtin::MathCos
+        | Builtin::MathTan
+        | Builtin::MathAsin
+        | Builtin::MathAcos
+        | Builtin::MathAtan
+        | Builtin::MathAcosh
+        | Builtin::MathAsinh
+        | Builtin::MathAtanh
+        | Builtin::MathClz32
+        | Builtin::MathCosh
+        | Builtin::MathExpm1
+        | Builtin::MathFround
+        | Builtin::MathLog1p
+        | Builtin::MathSinh
+        | Builtin::MathTanh => Some(1.0),
         _ => None,
     }
 }
@@ -64,6 +102,16 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
         Builtin::MathAcos => Some("acos"),
         Builtin::MathAtan => Some("atan"),
         Builtin::MathAtan2 => Some("atan2"),
+        Builtin::MathAcosh => Some("acosh"),
+        Builtin::MathAsinh => Some("asinh"),
+        Builtin::MathAtanh => Some("atanh"),
+        Builtin::MathClz32 => Some("clz32"),
+        Builtin::MathCosh => Some("cosh"),
+        Builtin::MathExpm1 => Some("expm1"),
+        Builtin::MathFround => Some("fround"),
+        Builtin::MathLog1p => Some("log1p"),
+        Builtin::MathSinh => Some("sinh"),
+        Builtin::MathTanh => Some("tanh"),
         Builtin::MathPow => Some("pow"),
         _ => None,
     }
