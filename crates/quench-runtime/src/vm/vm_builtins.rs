@@ -83,6 +83,7 @@ fn is_simple_builtin(builtin: Builtin) -> bool {
             | Builtin::BigIntAsIntN | Builtin::BigIntAsUintN | Builtin::BigIntToString
             | Builtin::NumberToString | Builtin::NumberValueOf
             | Builtin::BigIntValueOf
+            | Builtin::SymbolToString
             | Builtin::SymbolValueOf
             | Builtin::StringToString
             | Builtin::StringValueOf
@@ -140,6 +141,7 @@ fn execute_simple_builtin(
         Builtin::NumberToString => boolean_or_number_string(receiver, arguments),
         Builtin::NumberValueOf => number_value_of(receiver),
         Builtin::BigIntValueOf => bigint_value_of(receiver),
+        Builtin::SymbolToString => symbol_to_string(receiver),
         Builtin::SymbolValueOf => symbol_value_of(receiver),
         Builtin::StringToString | Builtin::StringValueOf => string_value_of(receiver),
         Builtin::BoxedValueOf => Ok(boxed_value(receiver)),
