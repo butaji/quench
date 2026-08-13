@@ -106,7 +106,7 @@ pub(crate) fn is_symbol_string(value: &str) -> bool {
     value.starts_with("Symbol.") && value.contains('\0')
 }
 
-fn ordinary_to_primitive(value: &Value, hint: &str) -> Result<Value, VmError> {
+pub(crate) fn ordinary_to_primitive(value: &Value, hint: &str) -> Result<Value, VmError> {
     let string_hint = hint == "string" || hint == "default" && is_date_object(value);
     let methods = if string_hint {
         ["toString", "valueOf"]
