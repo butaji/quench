@@ -7,7 +7,7 @@ mod chrono_utils;
 mod helpers;
 mod impl_;
 
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 
 use crate::value::Value;
 
@@ -49,6 +49,10 @@ pub fn extract_time(receiver: Option<&Value>) -> f64 {
             .find(|(k, _)| k == "timeValue")
             .and_then(|(_, v)| match v {
                 Value::Number(ms) => Some(*ms),
+                Value::BindingCell(cell) => match &*cell.borrow() {
+                    Value::Number(ms) => Some(*ms),
+                    _ => None,
+                },
                 _ => None,
             })
             .unwrap_or(f64::NAN),
@@ -56,23 +60,17 @@ pub fn extract_time(receiver: Option<&Value>) -> f64 {
     }
 }
 
+pub fn time_property(ms: f64) -> Value {
+    Value::BindingCell(Rc::new(RefCell::new(Value::Number(ms))))
+}
+
 /// Store time value in a Date Object.
 pub fn store_time(receiver: &Value, ms: f64) -> Value {
-    match receiver {
-        Value::Object(props) => {
-            let mut props = (**props).clone();
-            if let Some((_, v)) = props.iter_mut().find(|(k, _)| k == "timeValue") {
-                *v = Value::Number(chrono_utils::time_clip(ms));
-            } else {
-                props.push((
-                    "timeValue".to_string(),
-                    Value::Number(chrono_utils::time_clip(ms)),
-                ));
-            }
-            Value::Object(Rc::new(props))
-        }
-        _ => Value::Undefined,
-    }
+    crate::builtins::set_property(
+        receiver.clone(),
+        "timeValue",
+        Value::Number(chrono_utils::time_clip(ms)),
+    )
 }
 
 pub(crate) use impl_::call;
