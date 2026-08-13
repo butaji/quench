@@ -1,6 +1,77 @@
 use crate::value::Value;
 include!("strings_static.rs");
 
+/// Builds the canonical string value for raw UTF-16 code units: a plain
+/// `String` when the units are valid UTF-16, otherwise `StringUnits`.
+pub(crate) fn from_units(units: Vec<u16>) -> Value {
+    match String::from_utf16(&units) {
+        Ok(value) => Value::String(value),
+        Err(_) => Value::StringUnits(std::rc::Rc::new(units)),
+    }
+}
+
+/// The raw UTF-16 code units of a string value.
+pub(crate) fn units_of(value: &Value) -> Option<Vec<u16>> {
+    match value {
+        Value::String(value) => Some(value.encode_utf16().collect()),
+        Value::StringUnits(units) => Some((**units).clone()),
+        _ => None,
+    }
+}
+
+/// The lossy UTF-8 view of a string value (lone surrogates become U+FFFD).
+pub(crate) fn lossy(value: &Value) -> Option<String> {
+    match value {
+        Value::String(value) => Some(value.clone()),
+        Value::StringUnits(units) => Some(String::from_utf16_lossy(units)),
+        _ => None,
+    }
+}
+
+/// Whether two string values hold identical UTF-16 code units.
+pub(crate) fn units_equal(left: &Value, right: &Value) -> bool {
+    match (units_of(left), units_of(right)) {
+        (Some(left), Some(right)) => left == right,
+        _ => false,
+    }
+}
+
+/// Whether `units` form a well-formed UTF-16 sequence (no lone surrogates).
+pub(crate) fn units_well_formed(units: &[u16]) -> bool {
+    let mut index = 0;
+    while index < units.len() {
+        let unit = units[index];
+        if is_high_surrogate(unit) {
+            if !units
+                .get(index + 1)
+                .is_some_and(|next| is_low_surrogate(*next))
+            {
+                return false;
+            }
+            index += 2;
+        } else if is_low_surrogate(unit) {
+            return false;
+        } else {
+            index += 1;
+        }
+    }
+    true
+}
+
+/// The string value of the code point at UTF-16 code-unit `index`, preserving
+/// a lone surrogate as a one-unit `StringUnits`.
+pub(crate) fn char_at_units(units: &[u16], index: usize) -> Option<Value> {
+    let unit = *units.get(index)?;
+    let code = code_point(units, index);
+    if code > 0xFFFF {
+        Some(from_units(units[index..index + 2].to_vec()))
+    } else if is_surrogate(code) {
+        Some(from_units(vec![unit]))
+    } else {
+        char::from_u32(code).map(|character| Value::String(character.to_string()))
+    }
+}
+
 /// The ECMAScript length of `s`: its count of UTF-16 code units.
 pub(crate) fn utf16_len(s: &str) -> usize {
     s.encode_utf16().count()
@@ -9,13 +80,6 @@ pub(crate) fn utf16_len(s: &str) -> usize {
 /// The UTF-16 code unit at `index`, if any.
 pub(crate) fn utf16_code_unit(s: &str, index: usize) -> Option<u16> {
     s.encode_utf16().nth(index)
-}
-
-/// The code point starting at UTF-16 code-unit `index`, folding a surrogate
-/// pair into a single code point and otherwise yielding the lone code unit.
-pub(crate) fn code_point_at_utf16(s: &str, index: usize) -> Option<u32> {
-    let units: Vec<u16> = s.encode_utf16().collect();
-    units.get(index).map(|_| code_point(&units, index))
 }
 
 /// The character (code point) at UTF-16 code-unit `index`, as a string.
@@ -157,7 +221,7 @@ fn from_char_code(arguments: &[Value]) -> Value {
             crate::construct::to_uint16(number)
         })
         .collect::<Vec<_>>();
-    Value::String(String::from_utf16_lossy(&units))
+    from_units(units)
 }
 
 pub(crate) fn includes(receiver: Option<&Value>, arguments: &[Value]) -> Value {
@@ -168,15 +232,18 @@ pub(crate) fn includes(receiver: Option<&Value>, arguments: &[Value]) -> Value {
 }
 
 fn is_well_formed(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
+    if let Some(Value::StringUnits(units)) = receiver {
+        return Ok(Value::Boolean(units_well_formed(units)));
+    }
     let value = string_receiver(receiver)?;
-    Ok(Value::Boolean(
-        value
-            .encode_utf16()
-            .all(|unit| !(0xD800..0xE000).contains(&unit)),
-    ))
+    let units: Vec<u16> = value.encode_utf16().collect();
+    Ok(Value::Boolean(units_well_formed(&units)))
 }
 
 fn to_well_formed(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
+    if let Some(Value::StringUnits(units)) = receiver {
+        return Ok(Value::String(String::from_utf16_lossy(units)));
+    }
     Ok(Value::String(string_receiver(receiver)?.to_string()))
 }
 
@@ -246,19 +313,21 @@ pub(crate) fn to_upper_case(receiver: Option<&Value>) -> Value {
 }
 
 pub(crate) fn char_at(receiver: Option<&Value>, arguments: &[Value]) -> Value {
-    let Some(Value::String(value)) = receiver else {
+    let Some(units) = receiver.and_then(units_of) else {
         return Value::String(String::new());
     };
     let index = arguments.first().and_then(number).unwrap_or(0.0).max(0.0) as usize;
-    Value::String(char_at_utf16(value, index).unwrap_or_default())
+    char_at_units(&units, index).unwrap_or_else(|| Value::String(String::new()))
 }
 
 pub(crate) fn char_code_at(receiver: Option<&Value>, arguments: &[Value]) -> Value {
-    let Some(Value::String(value)) = receiver else {
+    let Some(units) = receiver.and_then(units_of) else {
         return Value::Number(f64::NAN);
     };
     let index = arguments.first().and_then(number).unwrap_or(0.0).max(0.0) as usize;
-    utf16_code_unit(value, index).map_or(Value::Number(f64::NAN), |unit| Value::Number(unit as f64))
+    units
+        .get(index)
+        .map_or(Value::Number(f64::NAN), |unit| Value::Number(*unit as f64))
 }
 
 pub(crate) fn index_of(receiver: Option<&Value>, arguments: &[Value]) -> Value {
@@ -286,31 +355,29 @@ pub(crate) fn last_index_of(receiver: Option<&Value>, arguments: &[Value]) -> Va
 }
 
 pub(crate) fn slice(receiver: Option<&Value>, arguments: &[Value]) -> Value {
-    let Some(Value::String(value)) = receiver else {
+    let Some(units) = receiver.and_then(units_of) else {
         return Value::String(String::new());
     };
-    let units: Vec<u16> = value.encode_utf16().collect();
     let length = units.len() as isize;
     let start = string_index(arguments.first(), length);
     let end = arguments
         .get(1)
         .map_or(length, |value| string_index(Some(value), length));
     let range = start.min(end) as usize..end.max(start) as usize;
-    Value::String(String::from_utf16_lossy(&units[range]))
+    from_units(units[range].to_vec())
 }
 
 pub(crate) fn substring(receiver: Option<&Value>, arguments: &[Value]) -> Value {
-    let Some(Value::String(value)) = receiver else {
+    let Some(units) = receiver.and_then(units_of) else {
         return Value::String(String::new());
     };
-    let units: Vec<u16> = value.encode_utf16().collect();
     let length = units.len() as isize;
     let start = substring_index(arguments.first(), length);
     let end = arguments
         .get(1)
         .map_or(length, |value| substring_index(Some(value), length));
     let range = start.min(end) as usize..end.max(start) as usize;
-    Value::String(String::from_utf16_lossy(&units[range]))
+    from_units(units[range].to_vec())
 }
 
 fn string_index(value: Option<&Value>, length: isize) -> isize {
@@ -335,32 +402,33 @@ pub(crate) fn concat(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let Some(Value::String(value)) = receiver else {
+    let Some(mut units) = receiver.and_then(units_of) else {
         return Ok(Value::String(String::new()));
     };
-    let mut result = value.clone();
     for argument in arguments {
-        result.push_str(&crate::conversion::to_string(argument)?);
+        units.extend(crate::conversion::to_string(argument)?.encode_utf16());
     }
-    Ok(Value::String(result))
+    Ok(from_units(units))
 }
 
 pub(crate) fn split(receiver: Option<&Value>, arguments: &[Value]) -> Value {
+    let separator = arguments.first().map_or_else(String::new, to_string);
+    if separator.is_empty() {
+        let values = receiver
+            .and_then(units_of)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|unit| from_units(vec![unit]))
+            .collect();
+        return Value::array(values);
+    }
     let Some(Value::String(value)) = receiver else {
         return Value::array(Vec::new());
     };
-    let separator = arguments.first().map_or_else(String::new, to_string);
-    let values = if separator.is_empty() {
-        value
-            .encode_utf16()
-            .map(|unit| Value::String(String::from_utf16_lossy(&[unit])))
-            .collect()
-    } else {
-        value
-            .split(&separator)
-            .map(|part| Value::String(part.to_string()))
-            .collect()
-    };
+    let values = value
+        .split(&separator)
+        .map(|part| Value::String(part.to_string()))
+        .collect();
     Value::array(values)
 }
 
@@ -373,12 +441,12 @@ pub(crate) fn pad_end(receiver: Option<&Value>, arguments: &[Value]) -> Value {
 }
 
 fn pad(receiver: Option<&Value>, arguments: &[Value], start: bool) -> Value {
-    let Some(Value::String(value)) = receiver else {
+    let Some(value) = receiver.and_then(lossy) else {
         return Value::String(String::new());
     };
     let target = arguments.first().and_then(number).unwrap_or(0.0).max(0.0) as usize;
     let fill = arguments.get(1).map_or_else(|| " ".to_string(), to_string);
-    let count = target.saturating_sub(utf16_len(value));
+    let count = target.saturating_sub(utf16_len(&value));
     let padding_units: Vec<u16> = fill.encode_utf16().cycle().take(count).collect();
     let padding = String::from_utf16_lossy(&padding_units);
     if start {
@@ -406,17 +474,19 @@ pub(crate) fn code_point_at(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let value = string_receiver(receiver)?;
+    let units = match receiver {
+        Some(Value::StringUnits(units)) => (**units).clone(),
+        _ => string_receiver(receiver)?.encode_utf16().collect(),
+    };
     let position = match arguments.first() {
         None => 0.0,
         Some(value) => crate::conversion::to_number(value)?,
     };
-    if position < 0.0 || position.is_nan() || position >= utf16_len(&value) as f64 {
+    if position < 0.0 || position.is_nan() || position >= units.len() as f64 {
         return Ok(Value::Undefined);
     }
-    let index = position as usize;
-    Ok(code_point_at_utf16(&value, index)
-        .map_or(Value::Undefined, |code| Value::Number(code as f64)))
+    let code = code_point(&units, position as usize);
+    Ok(Value::Number(code as f64))
 }
 
 pub(crate) fn to_string_value(receiver: Option<&Value>) -> Value {

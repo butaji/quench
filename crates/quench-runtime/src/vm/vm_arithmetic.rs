@@ -127,14 +127,10 @@ fn arithmetic_value(
             "Cannot convert Symbol value",
         ));
     }
-    if operator == crate::ops::BinaryOp::Add
-        && (matches!(left, Value::String(_)) || matches!(right, Value::String(_)))
-    {
-        return Ok(Value::String(format!(
-            "{}{}",
-            add_string(&left)?,
-            add_string(&right)?
-        )));
+    if operator == crate::ops::BinaryOp::Add && (is_string_like(&left) || is_string_like(&right)) {
+        let mut units = add_units(&left)?;
+        units.extend(add_units(&right)?);
+        return Ok(crate::strings::from_units(units));
     }
     if has_bigint_operand(&left, &right) {
         return bigint_binary(&left, &right, operator);
@@ -380,6 +376,17 @@ fn range_error(message: &str) -> VmError {
         Builtin::RangeError,
         &[Value::String(message.to_string())],
     ))
+}
+
+fn is_string_like(value: &Value) -> bool {
+    matches!(value, Value::String(_) | Value::StringUnits(_))
+}
+
+fn add_units(value: &Value) -> Result<Vec<u16>, VmError> {
+    if let Value::StringUnits(units) = value {
+        return Ok((**units).clone());
+    }
+    Ok(add_string(value)?.encode_utf16().collect())
 }
 
 fn add_string(value: &Value) -> Result<String, VmError> {

@@ -59,6 +59,7 @@ impl Serializer {
             Value::Number(value) => Ok(Some(serialize_number(*value))),
             Value::String(_) if crate::conversion::is_symbol(&value) => Ok(None),
             Value::String(value) => Ok(Some(quote(value))),
+            Value::StringUnits(units) => Ok(Some(quote_units(units))),
             Value::BigInt(_) => Err(big_int_error()),
             _ if crate::value::is_object(&value) && !crate::conversion::is_callable(&value) => {
                 self.nested(value)
@@ -309,8 +310,49 @@ fn serialize_number(value: f64) -> String {
     crate::conversion::number_to_string(value)
 }
 
-fn quote(value: &str) -> String {
-    let mut output = String::with_capacity(value.len() + 2);
+// Quotes a lone-surrogate string: unpaired units escape as `\uXXXX`, valid
+// pairs serialize as their astral character, and the usual escapes apply.
+fn quote_units(units: &[u16]) -> String {
+    let mut output = String::with_capacity(units.len() + 2);
+    output.push('"');
+    let mut index = 0;
+    while index < units.len() {
+        let unit = units[index];
+        match unit {
+            0x22 => output.push_str("\\\""),
+            0x5C => output.push_str("\\\\"),
+            0x8 => output.push_str("\\b"),
+            0x9 => output.push_str("\\t"),
+            0xA => output.push_str("\\n"),
+            0xC => output.push_str("\\f"),
+            0xD => output.push_str("\\r"),
+            0x0..=0x1F => output.push_str(&format!("\\u{unit:04x}")),
+            0xD800..=0xDBFF
+                if units
+                    .get(index + 1)
+                    .is_some_and(|low| (0xDC00..0xE000).contains(low)) =>
+            {
+                let code =
+                    0x1_0000 + (((unit - 0xD800) as u32) << 10) + (units[index + 1] - 0xDC00) as u32;
+                if let Some(character) = char::from_u32(code) {
+                    output.push(character);
+                }
+                index += 1;
+            }
+            0xD800..=0xDFFF => output.push_str(&format!("\\u{unit:04x}")),
+            _ => {
+                if let Some(character) = char::from_u32(unit as u32) {
+                    output.push(character);
+                }
+            }
+        }
+        index += 1;
+    }
+    output.push('"');
+    output
+}
+
+fn quote(value: &str) -> String {    let mut output = String::with_capacity(value.len() + 2);
     output.push('"');
     let mut rest = value;
     while let Some(character) = rest.chars().next() {

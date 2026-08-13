@@ -3,32 +3,57 @@ use crate::execute::VmError;
 const URI_RESERVED: &str = ";/?:@&=+$,#";
 
 pub(crate) fn encode_uri(value: Option<&Value>, preserve_reserved: bool) -> Result<Value, VmError> {
-    let source = uri_source(value)?;
-    Ok(Value::String(encode(&source, preserve_reserved)))
+    let units = uri_units(value)?;
+    Ok(Value::String(encode(&units, preserve_reserved)?))
 }
 
 pub(crate) fn decode_uri(value: Option<&Value>, preserve_reserved: bool) -> Result<Value, VmError> {
-    let source = uri_source(value)?;
-    Ok(Value::String(decode(&source, preserve_reserved)?))
+    let units = uri_units(value)?;
+    Ok(crate::strings::from_units(decode(&units, preserve_reserved)?))
 }
 
-fn uri_source(value: Option<&Value>) -> Result<String, VmError> {
-    match value {
-        Some(value) => crate::conversion::to_string(value),
-        None => crate::conversion::to_string(&Value::Undefined),
+fn uri_units(value: Option<&Value>) -> Result<Vec<u16>, VmError> {
+    let value = match value {
+        Some(value) => value,
+        None => &Value::Undefined,
+    };
+    if let Some(units) = crate::strings::units_of(value) {
+        return Ok(units);
     }
+    Ok(crate::conversion::to_string(value)?.encode_utf16().collect())
 }
 
-fn encode(source: &str, preserve_reserved: bool) -> String {
+fn encode(units: &[u16], preserve_reserved: bool) -> Result<String, VmError> {
     let mut encoded = String::new();
-    for character in source.chars() {
-        if uri_unescaped(character, preserve_reserved) {
-            encoded.push(character);
+    let mut index = 0;
+    while index < units.len() {
+        let unit = units[index];
+        if (0xD800..0xDC00).contains(&unit) {
+            let Some(low) = units.get(index + 1) else {
+                return Err(uri_error());
+            };
+            if !(0xDC00..0xE000).contains(low) {
+                return Err(uri_error());
+            }
+            let code = 0x1_0000 + (((unit - 0xD800) as u32) << 10) + (*low - 0xDC00) as u32;
+            if let Some(character) = char::from_u32(code) {
+                encode_character(&mut encoded, character);
+            }
+            index += 2;
+        } else if (0xDC00..0xE000).contains(&unit) {
+            return Err(uri_error());
+        } else if let Some(character) = char::from_u32(unit as u32) {
+            if uri_unescaped(character, preserve_reserved) {
+                encoded.push(character);
+            } else {
+                encode_character(&mut encoded, character);
+            }
+            index += 1;
         } else {
-            encode_character(&mut encoded, character);
+            index += 1;
         }
     }
-    encoded
+    Ok(encoded)
 }
 
 fn uri_unescaped(character: char, preserve_reserved: bool) -> bool {
@@ -44,72 +69,61 @@ fn encode_character(encoded: &mut String, character: char) {
     }
 }
 
-fn decode(source: &str, preserve_reserved: bool) -> Result<String, VmError> {
-    let mut decoded = String::new();
+fn decode(units: &[u16], preserve_reserved: bool) -> Result<Vec<u16>, VmError> {
+    let mut decoded = Vec::new();
     let mut index = 0;
-    while index < source.len() {
-        if source.as_bytes()[index] == b'%' {
-            decode_run(source, &mut index, preserve_reserved, &mut decoded)?;
+    while index < units.len() {
+        if units[index] == u16::from(b'%') {
+            decode_run(units, &mut index, preserve_reserved, &mut decoded)?;
         } else {
-            copy_character(source, &mut index, &mut decoded);
+            decoded.push(units[index]);
+            index += 1;
         }
     }
     Ok(decoded)
 }
 
-fn copy_character(source: &str, index: &mut usize, decoded: &mut String) {
-    if let Some(character) = source[*index..].chars().next() {
-        decoded.push(character);
-        *index += character.len_utf8();
-    }
-}
-
 fn decode_run(
-    source: &str,
+    units: &[u16],
     index: &mut usize,
     preserve_reserved: bool,
-    decoded: &mut String,
+    decoded: &mut Vec<u16>,
 ) -> Result<(), VmError> {
-    let (bytes, escapes) = percent_run(source, index)?;
-    std::str::from_utf8(&bytes).map_err(|_| uri_error())?;
-    append_decoded(&bytes, &escapes, preserve_reserved, decoded);
+    let (bytes, escapes) = percent_run(units, index)?;
+    let text = std::str::from_utf8(&bytes).map_err(|_| uri_error())?;
+    append_decoded(&escapes, preserve_reserved, text, decoded);
     Ok(())
 }
 
-fn percent_run<'a>(source: &'a str, index: &mut usize) -> Result<(Vec<u8>, Vec<&'a str>), VmError> {
+fn percent_run(units: &[u16], index: &mut usize) -> Result<(Vec<u8>, Vec<String>), VmError> {
     let mut bytes = Vec::new();
     let mut escapes = Vec::new();
-    while source.as_bytes().get(*index) == Some(&b'%') {
-        let escape = source.get(*index..*index + 3).ok_or_else(uri_error)?;
-        if !escape[1..].bytes().all(|byte| byte.is_ascii_hexdigit()) {
+    while units.get(*index) == Some(&u16::from(b'%')) {
+        let escape = units.get(*index + 1..*index + 3).ok_or_else(uri_error)?;
+        if !escape
+            .iter()
+            .all(|unit| char::from_u32(*unit as u32).is_some_and(|c| c.is_ascii_hexdigit()))
+        {
             return Err(uri_error());
         }
-        let byte = u8::from_str_radix(&escape[1..], 16).map_err(|_| uri_error())?;
+        let text = String::from_utf16_lossy(escape);
+        let byte = u8::from_str_radix(&text, 16).map_err(|_| uri_error())?;
         bytes.push(byte);
-        escapes.push(escape);
+        escapes.push(String::from_utf16_lossy(&units[*index..*index + 3]));
         *index += 3;
     }
     Ok((bytes, escapes))
 }
 
-fn append_decoded(bytes: &[u8], escapes: &[&str], preserve_reserved: bool, decoded: &mut String) {
+fn append_decoded(escapes: &[String], preserve_reserved: bool, text: &str, decoded: &mut Vec<u16>) {
     let mut index = 0;
-    while index < bytes.len() {
-        if preserve_reserved && URI_RESERVED.contains(bytes[index] as char) {
-            decoded.push_str(escapes[index]);
-            index += 1;
+    for character in text.chars() {
+        if preserve_reserved && URI_RESERVED.contains(character) {
+            decoded.extend(escapes[index].encode_utf16());
         } else {
-            append_character(bytes, &mut index, decoded);
+            decoded.extend(character.to_string().encode_utf16());
         }
-    }
-}
-
-fn append_character(bytes: &[u8], index: &mut usize, decoded: &mut String) {
-    if let Ok(text) = std::str::from_utf8(&bytes[*index..]) {
-        if let Some(character) = text.chars().next() {
-            decoded.push(character);
-            *index += character.len_utf8();
-        }
+        index += character.len_utf8();
     }
 }
 

@@ -352,6 +352,10 @@ pub enum Value {
     Number(f64),
     Boolean(bool),
     String(String),
+    /// A string containing lone surrogates, kept as raw UTF-16 code units.
+    /// Created only when the sequence cannot round-trip through UTF-8; all
+    /// lossy boundaries degrade via `String::from_utf16_lossy`.
+    StringUnits(Rc<Vec<u16>>),
     BigInt(String),
     Array(Rc<ArrayData>),
     Object(Rc<ObjectData>),
@@ -393,6 +397,7 @@ pub(crate) fn is_object(value: &Value) -> bool {
         Value::Number(_)
             | Value::Boolean(_)
             | Value::String(_)
+            | Value::StringUnits(_)
             | Value::BigInt(_)
             | Value::Null
             | Value::Undefined
