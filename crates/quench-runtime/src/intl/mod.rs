@@ -308,6 +308,7 @@ fn language_alias(language: String) -> String {
         "in" => "id".to_string(),
         "ji" => "yi".to_string(),
         "tl" => "fil".to_string(),
+        "mo" => "ro".to_string(),
         other => other.to_string(),
     }
 }

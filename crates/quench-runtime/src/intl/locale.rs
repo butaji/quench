@@ -92,13 +92,20 @@ fn parse_extensions(locale: &mut Locale, parts: &[&str]) {
                 let item = parts[j + 1];
                 match key {
                     "ca" => {
-                        locale.calendar =
-                            Some(canonicalize(item).unwrap_or_else(|_| item.to_string()))
+                        if locale.calendar.is_none() {
+                            locale.calendar = Some(calendar_alias(item));
+                        }
                     }
-                    "co" => locale.collation = Some(item.to_string()),
-                    "kf" => locale.case_first = Some(item.to_string()),
-                    "hc" => locale.hour_cycle = Some(item.to_string()),
-                    "nu" => locale.numbering_system = Some(item.to_string()),
+                    "co" if locale.collation.is_none() => locale.collation = Some(item.to_string()),
+                    "kf" if locale.case_first.is_none() => {
+                        locale.case_first = Some(item.to_string())
+                    }
+                    "hc" if locale.hour_cycle.is_none() => {
+                        locale.hour_cycle = Some(item.to_string())
+                    }
+                    "nu" if locale.numbering_system.is_none() => {
+                        locale.numbering_system = Some(item.to_string())
+                    }
                     _ => {}
                 }
                 j += 2;
@@ -106,6 +113,13 @@ fn parse_extensions(locale: &mut Locale, parts: &[&str]) {
             break;
         }
         i += 1;
+    }
+}
+
+fn calendar_alias(value: &str) -> String {
+    match value {
+        "islamicc" => "islamic-civil".to_string(),
+        other => canonicalize(other).unwrap_or_else(|_| other.to_string()),
     }
 }
 
@@ -119,7 +133,10 @@ fn apply_options(mut locale: Locale, options: Option<&Value>) -> Result<Locale, 
         }
         let text = crate::conversion::to_string(value)?;
         match key.as_str() {
-            "calendar" => locale.calendar = Some(option_value(&text, "calendar")?),
+            "calendar" => {
+                let value = option_value(&text, "calendar")?;
+                locale.calendar = Some(calendar_alias(&value));
+            }
             "collation" => locale.collation = Some(option_value(&text, "collation")?),
             "caseFirst" => locale.case_first = Some(normalize_case_first(&text)?),
             "hourCycle" => locale.hour_cycle = Some(normalize_hour_cycle(&text)?),
