@@ -58,7 +58,10 @@ fn execute_core(
     }
 }
 
-fn execute_iterator_next(builtin: Builtin, receiver: Option<&Value>) -> Option<Result<Value, VmError>> {
+fn execute_iterator_next(
+    builtin: Builtin,
+    receiver: Option<&Value>,
+) -> Option<Result<Value, VmError>> {
     use Builtin::*;
     Some(match builtin {
         IteratorNext => iterator::next(receiver),
