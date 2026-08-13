@@ -12,14 +12,26 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locale = locales.first().cloned().unwrap_or_else(default_locale);
     let mut style = "long".to_string();
     let mut list_type = "conjunction".to_string();
-    if let Some(Value::Object(properties)) = arguments.get(1) {
-        for (key, value) in properties.iter() {
-            match key.as_str() {
-                "style" => style = to_string_value(value),
-                "type" => list_type = to_string_value(value),
-                _ => {}
-            }
+    if let Some(options) = arguments.get(1) {
+        if matches!(options, Value::Null) {
+            return Err(crate::value::error::throw_type_error(
+                "Cannot convert null or undefined to object",
+            ));
         }
+        let style_value = crate::execute::get_property_result(options, "style")?;
+        if !matches!(style_value, Value::Undefined) {
+            style = crate::conversion::to_string(&style_value)?;
+        }
+        let type_value = crate::execute::get_property_result(options, "type")?;
+        if !matches!(type_value, Value::Undefined) {
+            list_type = crate::conversion::to_string(&type_value)?;
+        }
+    }
+    if !matches!(style.as_str(), "long" | "short" | "narrow") {
+        return Err(runtime_error("RangeError: invalid style"));
+    }
+    if !matches!(list_type.as_str(), "conjunction" | "disjunction" | "unit") {
+        return Err(runtime_error("RangeError: invalid type"));
     }
     Ok(make_object(vec![
         (
@@ -56,18 +68,16 @@ pub(crate) fn prototype_method(
     let list_type = slot_string(&slots, "type").unwrap_or_else(|| "conjunction".to_string());
     match builtin {
         crate::ops::Builtin::IntlListFormatFormat => {
-            let items = array_items(arguments.first());
+            let items = iterable_items(arguments.first())?;
             Ok(Value::String(format_list(
                 &items, &locale, &style, &list_type,
             )))
         }
         crate::ops::Builtin::IntlListFormatFormatToParts => {
-            let items = array_items(arguments.first());
-            let joined = format_list(&items, &locale, &style, &list_type);
-            Ok(make_array(vec![make_object(vec![
-                ("type".to_string(), Value::String("element".to_string())),
-                ("value".to_string(), Value::String(joined)),
-            ])]))
+            let items = iterable_items(arguments.first())?;
+            Ok(make_array(format_parts(
+                &items, &locale, &style, &list_type,
+            )))
         }
         crate::ops::Builtin::IntlListFormatResolvedOptions => Ok(make_object(vec![
             ("locale".to_string(), Value::String(locale)),
@@ -82,39 +92,88 @@ fn receiver_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)>, VmEr
     super::intl_slots(receiver)
 }
 
-fn array_items(value: Option<&Value>) -> Vec<String> {
-    match value {
-        Some(Value::Array(values)) => values.iter().map(to_string_value).collect(),
-        _ => Vec::new(),
+fn iterable_items(value: Option<&Value>) -> Result<Vec<String>, VmError> {
+    let value = value.unwrap_or(&Value::Undefined);
+    let iterator = crate::collections::iterator::open(value.clone())?;
+    crate::collections::iterator::collect(&iterator)
+        .map(|values| values.iter().map(to_string_value).collect())
+}
+
+fn format_parts(items: &[String], locale: &str, style: &str, list_type: &str) -> Vec<Value> {
+    if items.is_empty() {
+        return Vec::new();
+    }
+    if items.len() == 1 {
+        return vec![part("element", &items[0])];
+    }
+    let joiners = joiners(locale, style, list_type);
+    let mut parts = Vec::with_capacity(items.len() * 2 - 1);
+    for (index, item) in items.iter().enumerate() {
+        if index > 0 {
+            parts.push(part("literal", joiner_for(index, items.len(), &joiners)));
+        }
+        parts.push(part("element", item));
+    }
+    parts
+}
+
+fn part(kind: &str, value: &str) -> Value {
+    make_object(vec![
+        ("type".to_string(), Value::String(kind.to_string())),
+        ("value".to_string(), Value::String(value.to_string())),
+    ])
+}
+
+fn joiner_for(index: usize, length: usize, joiners: &(String, String, String)) -> &str {
+    if index == length - 1 {
+        &joiners.2
+    } else {
+        &joiners.0
     }
 }
 
-fn format_list(items: &[String], locale: &str, style: &str, list_type: &str) -> String {
-    let _ = locale;
-    if items.is_empty() {
-        return String::new();
+fn joiners(locale: &str, style: &str, list_type: &str) -> (String, String, String) {
+    if list_type == "unit" {
+        return (", ".to_string(), ", ".to_string(), ", ".to_string());
     }
-    if items.len() == 1 {
-        return items[0].clone();
-    }
-    if items.len() == 2 {
-        let (and, or) = if style == "short" || style == "narrow" {
-            (" & ", " or ")
+    let spanish = locale.starts_with("es");
+    let disjunction = list_type == "disjunction";
+    let word = if disjunction {
+        if spanish {
+            " o "
         } else {
-            (" and ", " or ")
-        };
-        let joiner = if list_type == "disjunction" { or } else { and };
-        return format!("{}{joiner}{}", items[0], items[1]);
-    }
-    let last = items.last().unwrap();
-    let head = &items[..items.len() - 1];
-    let (and, or) = if style == "short" || style == "narrow" {
-        (", & ", ", or ")
+            " or "
+        }
+    } else if spanish {
+        " y "
     } else {
-        (", and ", ", or ")
+        " and "
     };
-    let joiner = if list_type == "disjunction" { or } else { and };
-    format!("{}{joiner}{last}", head.join(", "))
+    let final_word = if style == "narrow" { " " } else { word };
+    let comma = if style == "narrow" { " " } else { ", " };
+    let final_joiner = if spanish || style != "long" {
+        format!("{}{}", comma, final_word.trim())
+    } else {
+        format!(",{}", final_word)
+    };
+    (comma.to_string(), word.to_string(), final_joiner)
+}
+
+fn format_list(items: &[String], locale: &str, style: &str, list_type: &str) -> String {
+    format_parts(items, locale, style, list_type)
+        .into_iter()
+        .filter_map(|part| match part {
+            Value::Object(object) => object
+                .properties
+                .iter()
+                .find(|(key, _)| key == "value")
+                .and_then(|(_, value)| match value {
+                    Value::String(value) => Some(value.clone()),
+                    _ => None,
+                }),
+            _ => None,
+        })
+        .collect()
 }
 
 pub(crate) fn dispatch(
