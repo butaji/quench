@@ -1,6 +1,6 @@
 fn reflect_define_property(arguments: &[Value]) -> Result<Value, VmError> {
-    let target = arguments.first().ok_or(VmError::NotCallable)?;
-    let prop = arguments.get(1).map(value_to_string).unwrap_or_default();
+    let target = reflect_target(arguments)?;
+    let prop = reflect_property(arguments)?;
     let descriptor = arguments.get(2).cloned().unwrap_or(Value::Undefined);
     proxy_define_property(target, &prop, &descriptor)?;
     Ok(Value::Boolean(true))
@@ -31,12 +31,4 @@ fn reflect_apply(arguments: &[Value]) -> Result<Value, VmError> {
 fn reflect_construct(arguments: &[Value]) -> Result<Value, VmError> {
     let target = arguments.first().ok_or(VmError::NotCallable)?;
     proxy_construct(target, &extract_array_arg(arguments, 1)?, arguments.get(2))
-}
-
-fn value_to_string(value: &Value) -> String {
-    match value {
-        Value::String(value) => value.clone(), Value::Number(value) => value.to_string(),
-        Value::Boolean(value) => value.to_string(), Value::Null => "null".to_string(),
-        Value::Undefined => "undefined".to_string(), _ => "[object Object]".to_string(),
-    }
 }
