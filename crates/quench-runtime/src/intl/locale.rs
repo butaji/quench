@@ -305,7 +305,6 @@ pub(crate) fn prototype_method(
                 "weekend".to_string(),
                 make_array(vec![Value::Number(6.0), Value::Number(7.0)]),
             ),
-            ("minimalDays".to_string(), Value::Number(1.0)),
         ])),
         _ => Err(runtime_error("TypeError: method not found")),
     }
