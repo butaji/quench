@@ -116,6 +116,15 @@ pub(crate) fn compact_scale(value: f64, locale: &str, display: &str) -> i32 {
         return 0;
     }
     let magnitude = value.abs().log10().floor() as i32;
+    if locale.starts_with("en-IN") {
+        return if magnitude >= 5 {
+            5
+        } else if magnitude >= 3 {
+            3
+        } else {
+            0
+        };
+    }
     if locale.starts_with("ja") || locale.starts_with("zh") {
         return if magnitude >= 8 {
             8
@@ -192,6 +201,9 @@ pub(crate) fn compact_suffix(magnitude: i32, locale: &str, display: &str) -> &'s
             (6, _) => "\u{a0}Mio.",
             _ => "",
         };
+    }
+    if locale.starts_with("en-IN") && magnitude == 5 {
+        return "L";
     }
     match magnitude {
         3 if display == "long" => " thousand",
@@ -315,6 +327,7 @@ pub(crate) fn format_unit(text: &str, unit: Option<&str>, display: &str) -> Stri
         format!("{text} {suffix}")
     }
 }
+
 use crate::{intl::make_object, value::Value};
 
 fn part(kind: &str, value: &str) -> Value {
