@@ -1,6 +1,6 @@
 //! Chrono utility functions for Date implementation.
 
-use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, Timelike, Utc};
+use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
 
 /// Maximum and minimum time values per ECMAScript TimeClip spec (±8.64e15 ms).
 const TIME_CLIP_LIMIT: f64 = 8.64e15;
@@ -50,7 +50,7 @@ pub fn normalize_constructor_year(year: f64) -> f64 {
 
 /// MakeDay + MakeTime + MakeDate in epoch milliseconds (month is 0-indexed).
 /// Month/day/hour overflow rolls over per ECMAScript (e.g. `setDate(0)` lands
-/// on the last day of the prior month); out-of-chrono-range results yield NaN.
+/// on the last day of the prior month).
 pub fn make_date_ms(
     year: f64,
     month: f64,
@@ -79,13 +79,8 @@ pub fn make_date_ms(
     let ms = ms.trunc();
     let year_of = year + (month / 12.0).floor();
     let month_of = month.rem_euclid(12.0) + 1.0;
-    let Some(first) = NaiveDate::from_ymd_opt(year_of as i32, month_of as u32, 1) else {
-        return f64::NAN;
-    };
-    let first_ms = first
-        .and_hms_opt(0, 0, 0)
-        .map_or(f64::NAN, |t| t.and_utc().timestamp_millis() as f64);
-    let day_ms = first_ms + (day.trunc() - 1.0) * MS_PER_DAY;
+    let first_day = days_from_civil(year_of as i64, month_of as i64, 1);
+    let day_ms = (first_day + day as i64 - 1) as f64 * MS_PER_DAY;
     let time_ms = hour * MS_PER_HOUR + minute * MS_PER_MINUTE + second * MS_PER_SECOND + ms;
     time_clip(day_ms + time_ms)
 }
@@ -165,30 +160,66 @@ pub fn local_tz_offset_minutes() -> i32 {
 
 /// Extract date/time components from milliseconds in local time.
 pub fn local_components(ms: f64) -> Option<(i32, u32, u32, u32, u32, u32, u32)> {
-    let dt = ms_to_datetime(ms)?;
-    let offset = chrono::Duration::minutes(local_tz_offset_minutes() as i64);
-    let local_dt = dt + offset;
-    Some((
-        local_dt.year(),
-        local_dt.month(),
-        local_dt.day(),
-        local_dt.hour(),
-        local_dt.minute(),
-        local_dt.second(),
-        local_dt.nanosecond() / 1_000_000,
-    ))
+    (!time_clip(ms).is_nan())
+        .then(|| fields_from_ms(ms + local_offset_ms()))
+        .flatten()
 }
 
 /// Extract date/time components from milliseconds in UTC.
 pub fn utc_components(ms: f64) -> Option<(i32, u32, u32, u32, u32, u32, u32)> {
-    let dt = ms_to_datetime(ms)?;
+    (!time_clip(ms).is_nan())
+        .then(|| fields_from_ms(ms))
+        .flatten()
+}
+
+/// Weekday number with Sunday represented by zero.
+pub fn weekday(ms: f64) -> Option<usize> {
+    (!time_clip(ms).is_nan())
+        .then(|| ((ms.trunc() as i64).div_euclid(MS_PER_DAY as i64) + 4).rem_euclid(7) as usize)
+}
+
+fn fields_from_ms(ms: f64) -> Option<(i32, u32, u32, u32, u32, u32, u32)> {
+    if !ms.is_finite() {
+        return None;
+    }
+    let whole = ms.trunc() as i64;
+    let days = whole.div_euclid(MS_PER_DAY as i64);
+    let time = whole.rem_euclid(MS_PER_DAY as i64);
+    let (year, month, day) = civil_from_days(days);
+    let hour = (time / MS_PER_HOUR as i64) as u32;
+    let minute = ((time / MS_PER_MINUTE as i64) % 60) as u32;
+    let second = ((time / MS_PER_SECOND as i64) % 60) as u32;
     Some((
-        dt.year(),
-        dt.month(),
-        dt.day(),
-        dt.hour(),
-        dt.minute(),
-        dt.second(),
-        dt.nanosecond() / 1_000_000,
+        year as i32,
+        month as u32,
+        day as u32,
+        hour,
+        minute,
+        second,
+        (time % 1000) as u32,
     ))
+}
+
+fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
+    let year = year - i64::from(month <= 2);
+    let era = if year >= 0 { year } else { year - 399 } / 400;
+    let yoe = year - era * 400;
+    let month = month + if month > 2 { -3 } else { 9 };
+    let doy = (153 * month + 2) / 5 + day - 1;
+    era * 146_097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719_468
+}
+
+fn civil_from_days(days: i64) -> (i64, i64, i64) {
+    let days = days + 719_468;
+    let era = if days >= 0 { days } else { days - 146_096 } / 146_097;
+    let doe = days - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let year = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let month = (5 * doy + 2) / 153;
+    (
+        year + i64::from(month >= 10),
+        month + if month < 10 { 3 } else { -9 },
+        doy - (153 * month + 2) / 5 + 1,
+    )
 }

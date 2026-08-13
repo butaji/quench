@@ -87,23 +87,14 @@ fn iso_string(receiver: Option<&Value>) -> Result<String, VmError> {
 
 fn local_fields(ms: f64) -> Option<(i32, u32, u32, u32, u32, u32, usize)> {
     let (y, m, d, h, min, sec, _) = chrono_utils::local_components(ms)?;
-    let dt = chrono_utils::ms_to_datetime(ms)?
-        + chrono::Duration::minutes(chrono_utils::local_tz_offset_minutes() as i64);
-    Some((
-        y,
-        m,
-        d,
-        h,
-        min,
-        sec,
-        chrono::Datelike::weekday(&dt).num_days_from_sunday() as usize,
-    ))
+    let day =
+        chrono_utils::weekday(ms + chrono_utils::local_tz_offset_minutes() as f64 * 60_000.0)?;
+    Some((y, m, d, h, min, sec, day))
 }
 
 fn utc_fields(ms: f64) -> Option<(i32, u32, u32, u32, u32, u32, usize, u32)> {
     let (y, m, d, h, min, sec, milli) = chrono_utils::utc_components(ms)?;
-    let day = chrono::Datelike::weekday(&chrono_utils::ms_to_datetime(ms)?).num_days_from_sunday()
-        as usize;
+    let day = chrono_utils::weekday(ms)?;
     Some((y, m, d, h, min, sec, day, milli))
 }
 
