@@ -136,13 +136,18 @@ fn joiner_for(index: usize, length: usize, joiners: &(String, String, String)) -
 }
 
 fn joiners(locale: &str, style: &str, list_type: &str) -> (String, String, String) {
-    if list_type == "unit" {
-        return (", ".to_string(), ", ".to_string(), ", ".to_string());
-    }
     if style == "narrow" {
-        return (", ".to_string(), ", ".to_string(), ", ".to_string());
+        let separator = if list_type == "unit" { " " } else { ", " };
+        return (
+            separator.to_string(),
+            separator.to_string(),
+            separator.to_string(),
+        );
     }
     let spanish = locale.starts_with("es");
+    if list_type == "unit" && !spanish {
+        return (", ".to_string(), ", ".to_string(), ", ".to_string());
+    }
     let disjunction = list_type == "disjunction";
     let word = if style == "short" && !spanish && !disjunction {
         " & "
@@ -157,6 +162,9 @@ fn joiners(locale: &str, style: &str, list_type: &str) -> (String, String, Strin
     } else {
         " and "
     };
+    if list_type == "unit" && spanish && style == "short" {
+        return (", ".to_string(), word.to_string(), ", ".to_string());
+    }
     let final_joiner = if spanish {
         word.to_string()
     } else if style == "short" {
