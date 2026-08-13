@@ -105,7 +105,11 @@ fn invalid() -> String {
     "Invalid Date".to_string()
 }
 fn display_year(year: i32) -> String {
-    format!("{year:04}")
+    if year < 0 {
+        format!("-{:04}", year.unsigned_abs())
+    } else {
+        format!("{year:04}")
+    }
 }
 fn iso_year(year: i32) -> String {
     if (0..=9999).contains(&year) {

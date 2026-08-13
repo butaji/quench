@@ -181,6 +181,9 @@ fn split_iso_year(date: &str) -> Option<(f64, &str)> {
         4
     };
     let year = date.get(..length)?;
+    if year == "-000000" {
+        return None;
+    }
     let rest = date.get(length..)?;
     Some((year.parse().ok()?, rest.strip_prefix('-')?))
 }
@@ -192,7 +195,7 @@ fn split_iso_date(date: &str) -> Option<(f64, f64)> {
 
 fn split_iso_time(time: &str) -> Option<(f64, f64, f64, f64)> {
     let (hour, rest) = time.split_once(':')?;
-    let (minute, second) = rest.split_once(':')?;
+    let (minute, second) = rest.split_once(':').unwrap_or((rest, "0"));
     let (second, fraction) = second.split_once('.').unwrap_or((second, "0"));
     let ms = format!("{fraction:0<3}").get(..3)?.parse().ok()?;
     Some((
