@@ -4,6 +4,7 @@
 //! with special handling for NaN (invalid dates) and TimeClip limits.
 
 mod chrono_utils;
+mod format;
 mod helpers;
 mod impl_;
 mod setter;

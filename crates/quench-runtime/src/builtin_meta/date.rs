@@ -6,7 +6,12 @@ use crate::ops::Builtin;
 pub fn date_prop(key: &str) -> Option<Builtin> {
     use Builtin::*;
     match key {
+        "constructor" => Some(Date),
         "toString" => Some(DateToString),
+        "toDateString" => Some(DateToDateString),
+        "toTimeString" => Some(DateToTimeString),
+        "toUTCString" => Some(DateToUTCString),
+        "toISOString" => Some(DateToISOString),
         "valueOf" => Some(DateValueOf),
         "getTime" => Some(DateGetTime),
         "getFullYear" => Some(DateGetFullYear),
@@ -71,6 +76,10 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
         DateParse => Some("Date.parse"),
         DateUTC => Some("Date.UTC"),
         DateToString => Some("Date.prototype.toString"),
+        DateToDateString => Some("Date.prototype.toDateString"),
+        DateToTimeString => Some("Date.prototype.toTimeString"),
+        DateToUTCString => Some("Date.prototype.toUTCString"),
+        DateToISOString => Some("Date.prototype.toISOString"),
         DateValueOf => Some("Date.prototype.valueOf"),
         DateGetTime => Some("Date.prototype.getTime"),
         DateGetFullYear => Some("Date.prototype.getFullYear"),
@@ -142,6 +151,11 @@ const fn fn_len_get_or_set(b: Builtin) -> Option<f64> {
     use Builtin::*;
     match b {
         DateGetTime
+        | DateToString
+        | DateToDateString
+        | DateToTimeString
+        | DateToUTCString
+        | DateToISOString
         | DateGetFullYear
         | DateGetMonth
         | DateGetDate
@@ -186,6 +200,10 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
         DateParse => Some("parse"),
         DateUTC => Some("UTC"),
         DateToString => Some("toString"),
+        DateToDateString => Some("toDateString"),
+        DateToTimeString => Some("toTimeString"),
+        DateToUTCString => Some("toUTCString"),
+        DateToISOString => Some("toISOString"),
         DateValueOf => Some("valueOf"),
         DateGetTime => Some("getTime"),
         DateGetFullYear => Some("getFullYear"),
