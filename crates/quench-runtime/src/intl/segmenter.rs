@@ -96,10 +96,19 @@ fn segment(text: &str, granularity: &str, locale: &str) -> Value {
     let _ = locale;
     let segments = match granularity {
         "word" => word_segments(text),
-        "sentence" => vec![segment_entry(text, 0, text, true)],
+        "sentence" => vec![segment_entry(text, 0, text, false)],
         _ => text
             .char_indices()
-            .map(|(index, character)| segment_entry(&character.to_string(), index, text, false))
+            .scan(0, |utf16_index, (byte_index, character)| {
+                let index = *utf16_index;
+                *utf16_index += character.len_utf16();
+                Some(segment_entry(
+                    &text[byte_index..byte_index + character.len_utf8()],
+                    index,
+                    text,
+                    false,
+                ))
+            })
             .collect(),
     };
     make_object(vec![
@@ -123,14 +132,14 @@ fn word_segments(text: &str) -> Vec<Value> {
         let is_space = character.is_whitespace();
         if let Some(previous) = whitespace {
             if previous != is_space {
-                result.push(segment_entry(&text[start..index], start, text, !previous));
+                result.push(word_entry(&text[start..index], start, text, !previous));
                 start = index;
             }
         }
         whitespace = Some(is_space);
     }
     if start < text.len() {
-        result.push(segment_entry(
+        result.push(word_entry(
             &text[start..],
             start,
             text,
@@ -138,6 +147,16 @@ fn word_segments(text: &str) -> Vec<Value> {
         ));
     }
     result
+}
+
+fn word_entry(segment: &str, index: usize, input: &str, word_like: bool) -> Value {
+    let value = segment_entry(segment, index, input, false);
+    let Value::Object(object) = value else {
+        return value;
+    };
+    let mut properties = object.properties.clone();
+    properties.push(("isWordLike".to_string(), Value::Boolean(word_like)));
+    make_object(properties)
 }
 
 fn segment_entry(segment: &str, index: usize, input: &str, word_like: bool) -> Value {
@@ -167,10 +186,39 @@ fn segments_containing(receiver: Option<&Value>, arguments: &[Value]) -> Result<
     let values = segment_values(receiver)?;
     let number = crate::conversion::to_number(arguments.first().unwrap_or(&Value::Undefined))?;
     let index = if number.is_nan() { 0.0 } else { number.trunc() };
-    if !index.is_finite() || index < 0.0 || index as usize >= values.len() {
+    if !index.is_finite() || index < 0.0 {
         return Ok(Value::Undefined);
     }
-    Ok(values[index as usize].clone())
+    let target = index as usize;
+    if target >= segment_input_length(values.first()) {
+        return Ok(Value::Undefined);
+    }
+    values
+        .iter()
+        .rev()
+        .find(|value| segment_index(value) <= target)
+        .cloned()
+        .map_or(Ok(Value::Undefined), Ok)
+}
+
+fn segment_input_length(value: Option<&Value>) -> usize {
+    value
+        .and_then(|value| crate::execute::get_property_result(value, "input").ok())
+        .and_then(|value| match value {
+            Value::String(text) => Some(text.encode_utf16().count()),
+            _ => None,
+        })
+        .unwrap_or(0)
+}
+
+fn segment_index(value: &Value) -> usize {
+    crate::execute::get_property_result(value, "index")
+        .ok()
+        .and_then(|value| match value {
+            Value::Number(number) => Some(number as usize),
+            _ => None,
+        })
+        .unwrap_or(0)
 }
 
 fn segment_values(receiver: Option<&Value>) -> Result<Vec<Value>, VmError> {
