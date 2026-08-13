@@ -50,6 +50,9 @@ pub fn execute(
     if let Some(result) = super::format::execute(builtin, receiver) {
         return Some(result);
     }
+    if builtin == Builtin::DateToPrimitive {
+        return Some(date_to_primitive(receiver, arguments));
+    }
     let result = match builtin {
         Builtin::DateNow => Value::Number(chrono_utils::current_time_ms()),
         Builtin::DateParse => date_parse(arguments),
@@ -183,6 +186,22 @@ fn date_argument(arguments: &[Value], index: usize, default: f64) -> Result<f64,
 
 fn date_to_string(receiver: Option<&Value>) -> Value {
     Value::String(super::format::date_string(extract_time(receiver)))
+}
+
+fn date_to_primitive(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    let receiver = receiver
+        .filter(|value| crate::value::is_object(value))
+        .ok_or_else(|| {
+            crate::value::error::throw_type_error(
+                "Date.prototype[Symbol.toPrimitive] requires an object",
+            )
+        })?;
+    let hint = match arguments.first() {
+        Some(Value::String(value)) if value == "string" || value == "default" => "string",
+        Some(Value::String(value)) if value == "number" => "number",
+        _ => return Err(crate::value::error::throw_type_error("Invalid hint")),
+    };
+    crate::conversion::ordinary_to_primitive(receiver, hint)
 }
 
 fn date_value_of(receiver: Option<&Value>) -> Value {

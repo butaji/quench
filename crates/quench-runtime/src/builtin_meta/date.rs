@@ -12,6 +12,7 @@ pub fn date_prop(key: &str) -> Option<Builtin> {
         "toTimeString" => Some(DateToTimeString),
         "toUTCString" => Some(DateToUTCString),
         "toISOString" => Some(DateToISOString),
+        "Symbol.toPrimitive" => Some(DateToPrimitive),
         "valueOf" => Some(DateValueOf),
         "getTime" => Some(DateGetTime),
         "getFullYear" => Some(DateGetFullYear),
@@ -80,6 +81,7 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
         DateToTimeString => Some("Date.prototype.toTimeString"),
         DateToUTCString => Some("Date.prototype.toUTCString"),
         DateToISOString => Some("Date.prototype.toISOString"),
+        DateToPrimitive => Some("Date.prototype[Symbol.toPrimitive]"),
         DateValueOf => Some("Date.prototype.valueOf"),
         DateGetTime => Some("Date.prototype.getTime"),
         DateGetFullYear => Some("Date.prototype.getFullYear"),
@@ -178,6 +180,7 @@ const fn fn_len_get_or_set(b: Builtin) -> Option<f64> {
         | DateToLocaleString
         | DateToLocaleDateString
         | DateToLocaleTimeString => Some(0.0),
+        DateToPrimitive => Some(1.0),
         DateSetTime
         | DateSetDate
         | DateSetUTCDate
@@ -204,6 +207,7 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
         DateToTimeString => Some("toTimeString"),
         DateToUTCString => Some("toUTCString"),
         DateToISOString => Some("toISOString"),
+        DateToPrimitive => Some("[Symbol.toPrimitive]"),
         DateValueOf => Some("valueOf"),
         DateGetTime => Some("getTime"),
         DateGetFullYear => Some("getFullYear"),
