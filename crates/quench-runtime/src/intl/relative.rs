@@ -218,7 +218,7 @@ fn numeric_parts(value: f64, unit: &str, style: &str) -> Vec<Part> {
             unit: false,
         }];
     }
-    let negative = value.is_sign_negative();
+    let negative = value < 0.0;
     let magnitude = value.abs();
     let mut parts = Vec::new();
     if !negative {
@@ -257,7 +257,7 @@ fn grouped_number(value: f64) -> String {
     if value.is_infinite() {
         return "Infinity".to_string();
     }
-    let mut text = format!("{value:.2}");
+    let mut text = format!("{value:.3}");
     if text.contains('.') {
         while text.ends_with('0') {
             text.pop();
