@@ -53,6 +53,9 @@ pub fn execute(
     if builtin == Builtin::DateToPrimitive {
         return Some(date_to_primitive(receiver, arguments));
     }
+    if builtin == Builtin::DateToTemporalInstant {
+        return Some(date_to_temporal_instant(receiver));
+    }
     if builtin == Builtin::DateToJSON {
         return Some(date_to_json(receiver));
     }
@@ -218,6 +221,23 @@ fn date_to_primitive(receiver: Option<&Value>, arguments: &[Value]) -> Result<Va
         _ => return Err(crate::value::error::throw_type_error("Invalid hint")),
     };
     crate::conversion::ordinary_to_primitive(receiver, hint)
+}
+
+fn date_to_temporal_instant(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let time = super::setter::time_value(receiver)?;
+    if time.is_nan() {
+        return Err(crate::value::error::throw_range_error("Invalid time value"));
+    }
+    let nanoseconds = format!("{time:.0}")
+        .parse::<num_bigint::BigInt>()
+        .map_err(|_| crate::value::error::throw_range_error("Invalid time value"))?
+        * 1_000_000_u32;
+    Ok(Value::Object(Rc::new(crate::value::ObjectData::new(vec![
+        (
+            "epochNanoseconds".to_string(),
+            Value::BigInt(nanoseconds.to_string()),
+        ),
+    ]))))
 }
 
 fn date_to_json(receiver: Option<&Value>) -> Result<Value, VmError> {

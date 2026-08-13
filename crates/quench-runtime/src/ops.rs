@@ -233,6 +233,7 @@ pub enum Builtin {
     DateToISOString,
     DateToJSON,
     DateToPrimitive,
+    DateToTemporalInstant,
     DateValueOf,
     DateGetTime,
     DateGetFullYear,
