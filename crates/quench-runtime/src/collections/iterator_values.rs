@@ -64,6 +64,9 @@ pub(crate) fn property(key: &str) -> Value {
 }
 
 pub(crate) fn property_for(value: &Value, key: &str) -> Value {
+    if key == "next" {
+        return regexp_next(value).unwrap_or_else(|| property(key));
+    }
     if key != "Symbol.toStringTag" {
         return property(key);
     }
@@ -72,6 +75,7 @@ pub(crate) fn property_for(value: &Value, key: &str) -> Value {
     };
     let tag = match &*data.state.borrow() {
         IteratorState::Native { .. } => "Array Iterator",
+        IteratorState::RegExpString { .. } => "RegExp String Iterator",
         IteratorState::Set { .. } => "Set Iterator",
         IteratorState::Map { .. } => "Map Iterator",
         IteratorState::Protocol { .. } => "Iterator",
@@ -79,11 +83,36 @@ pub(crate) fn property_for(value: &Value, key: &str) -> Value {
     Value::String(tag.to_string())
 }
 
+fn regexp_next(value: &Value) -> Option<Value> {
+    let Value::Iterator(data) = value else {
+        return None;
+    };
+    matches!(&*data.state.borrow(), IteratorState::RegExpString { .. })
+        .then(|| Value::Builtin(crate::ops::Builtin::RegExpStringIteratorNext))
+}
+
 pub(crate) fn make(values: Vec<Value>) -> Value {
     Value::Iterator(Rc::new(IteratorData {
         state: RefCell::new(IteratorState::Native {
             values,
             index: 0,
+            done: false,
+        }),
+    }))
+}
+
+pub(crate) fn make_regexp_string(
+    regexp: Value,
+    input: String,
+    global: bool,
+    unicode: bool,
+) -> Value {
+    Value::Iterator(Rc::new(IteratorData {
+        state: RefCell::new(IteratorState::RegExpString {
+            regexp,
+            input,
+            global,
+            unicode,
             done: false,
         }),
     }))
