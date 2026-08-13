@@ -82,7 +82,10 @@ fn is_simple_builtin(builtin: Builtin) -> bool {
             | Builtin::Number | Builtin::BigInt
             | Builtin::BigIntAsIntN | Builtin::BigIntAsUintN | Builtin::BigIntToString
             | Builtin::NumberToString | Builtin::NumberValueOf
-            | Builtin::BigIntValueOf | Builtin::SymbolValueOf | Builtin::StringValueOf
+            | Builtin::BigIntValueOf
+            | Builtin::SymbolValueOf
+            | Builtin::StringToString
+            | Builtin::StringValueOf
             | Builtin::BoxedValueOf
             | Builtin::ObjectPrototypeToString
             | Builtin::ObjectPrototypeValueOf
@@ -138,7 +141,7 @@ fn execute_simple_builtin(
         Builtin::NumberValueOf => number_value_of(receiver),
         Builtin::BigIntValueOf => bigint_value_of(receiver),
         Builtin::SymbolValueOf => symbol_value_of(receiver),
-        Builtin::StringValueOf => string_value_of(receiver),
+        Builtin::StringToString | Builtin::StringValueOf => string_value_of(receiver),
         Builtin::BoxedValueOf => Ok(boxed_value(receiver)),
         Builtin::ObjectPrototypeToString => Ok(crate::builtins::prototype_to_string(receiver)),
         Builtin::ObjectPrototypeValueOf => crate::builtins::prototype_value_of(receiver),
@@ -154,12 +157,17 @@ fn execute_simple_builtin(
 }
 fn boolean_or_number_string(
     receiver: Option<&Value>,
-    arguments: &[Value],
+    _arguments: &[Value],
 ) -> Result<Value, VmError> {
     if let Some(value) = boolean_receiver(receiver) {
         return Ok(Value::String(value.to_string()));
     }
-    Ok(Value::String(to_string(arguments.first())))
+    let Value::Number(value) = number_value_of(receiver)? else {
+        return Err(crate::value::error::throw_type_error(
+            "Number.prototype.toString called on incompatible receiver",
+        ));
+    };
+    Ok(Value::String(crate::conversion::number_to_string(value)))
 }
 fn boolean_receiver(receiver: Option<&Value>) -> Option<bool> {
     match receiver {
