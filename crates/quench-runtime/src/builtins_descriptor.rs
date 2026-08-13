@@ -127,6 +127,16 @@ fn validate_redefinition(
     {
         return Err(cannot_redefine());
     }
+    if descriptor_value(current, "writable") == Some(&Value::Boolean(false))
+        && descriptor_value_in(requested, "value").is_some_and(|requested_value| {
+            !crate::builtins::same_value(
+                Some(requested_value),
+                descriptor_value(current, "value"),
+            )
+        })
+    {
+        return Err(cannot_redefine());
+    }
     Ok(())
 }
 
