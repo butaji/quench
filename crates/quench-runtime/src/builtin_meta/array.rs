@@ -8,6 +8,13 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::ArrayFrom => Some("from"),
         Builtin::TypedArrayFrom => Some("from"),
         Builtin::TypedArrayOf => Some("of"),
+        Builtin::Uint8ArrayFromBase64 => Some("fromBase64"),
+        Builtin::Uint8ArrayFromHex => Some("fromHex"),
+        Builtin::Uint8ArraySetFromBase64 => Some("setFromBase64"),
+        Builtin::Uint8ArraySetFromHex => Some("setFromHex"),
+        Builtin::Uint8ArrayToBase64 => Some("toBase64"),
+        Builtin::Uint8ArrayToHex => Some("toHex"),
+        Builtin::Uint8ArraySubarray => Some("subarray"),
         Builtin::ArrayMap => Some("map"),
         Builtin::ArrayFilter => Some("filter"),
         Builtin::ArraySome => Some("some"),
@@ -56,6 +63,12 @@ pub const fn fn_len(builtin: Builtin) -> Option<f64> {
     match builtin {
         Builtin::ArrayIsArray | Builtin::ArrayFrom | Builtin::TypedArrayFrom => Some(1.0),
         Builtin::TypedArrayOf => Some(0.0),
+        Builtin::Uint8ArrayFromBase64
+        | Builtin::Uint8ArrayFromHex
+        | Builtin::Uint8ArraySetFromBase64
+        | Builtin::Uint8ArraySetFromHex => Some(1.0),
+        Builtin::Uint8ArrayToBase64 | Builtin::Uint8ArrayToHex => Some(0.0),
+        Builtin::Uint8ArraySubarray => Some(2.0),
         Builtin::ArrayMap
         | Builtin::ArrayFilter
         | Builtin::ArraySome
