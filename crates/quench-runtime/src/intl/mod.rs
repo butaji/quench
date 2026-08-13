@@ -424,6 +424,9 @@ fn strings(values: &[&str]) -> Vec<Value> {
 }
 
 fn runtime_error(message: &str) -> VmError {
+    if let Some(message) = message.strip_prefix("TypeError: ") {
+        return crate::value::error::throw_type_error(message);
+    }
     VmError::EvalError(message.to_string())
 }
 
