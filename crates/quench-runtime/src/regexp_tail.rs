@@ -401,19 +401,5 @@ fn match_all_start(receiver: &Value, input: &str) -> Result<usize, VmError> {
     let value = crate::execute::get_property_result(receiver, "lastIndex")?;
     let index = crate::conversion::to_number(&value)?;
     let index = to_length(index).min(crate::strings::utf16_len(input));
-    Ok(utf16_byte_index(input, index))
-}
-
-fn utf16_byte_index(text: &str, index: usize) -> usize {
-    let mut units = 0;
-    for (byte, character) in text.char_indices() {
-        if units >= index {
-            return byte;
-        }
-        units += character.len_utf16();
-        if units >= index {
-            return byte + character.len_utf8();
-        }
-    }
-    text.len()
+    Ok(crate::strings::utf16_byte_index(input, index))
 }
