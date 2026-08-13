@@ -44,11 +44,15 @@ impl RelativeOptions {
                     "style" => {
                         if let Some(style) = valid_enum(&text, &["long", "short", "narrow"]) {
                             formatter.style = style;
+                        } else {
+                            return Err(runtime_error("RangeError: invalid style"));
                         }
                     }
                     "numeric" => {
                         if let Some(numeric) = valid_enum(&text, &["always", "auto"]) {
                             formatter.numeric = numeric;
+                        } else {
+                            return Err(runtime_error("RangeError: invalid numeric"));
                         }
                     }
                     _ => {}
