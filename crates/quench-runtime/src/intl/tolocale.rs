@@ -22,7 +22,7 @@ pub(crate) mod value {
             None | Some(Value::Undefined) => "undefined".to_string(),
             Some(value @ (Value::Null | Value::Object(_))) => object_string(value),
             Some(Value::Boolean(value)) => value.to_string(),
-            Some(Value::Number(value)) => value.to_string(),
+            Some(Value::Number(value)) => crate::conversion::number_to_string(*value),
             Some(Value::String(value)) => symbol_string(value),
             Some(Value::Array(values)) => array_to_string(values),
             Some(Value::ArrayBuffer(_)) => "[object ArrayBuffer]".to_string(),
