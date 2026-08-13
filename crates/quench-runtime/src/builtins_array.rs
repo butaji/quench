@@ -25,6 +25,12 @@ pub(crate) fn delete_property(target: Value, key: &str) -> (Value, bool) {
         }
         Value::Array(values) => (Value::Array(values), false),
         Value::Function(function) => delete_function_property(function, key),
+        Value::BoundFunction(bound) => {
+            let mut properties = bound.properties.borrow_mut();
+            let metadata = descriptor_key(key);
+            properties.retain(|(name, _)| name != key && name != &metadata);
+            (Value::BoundFunction(std::rc::Rc::clone(&bound)), true)
+        }
         Value::Builtin(builtin) => {
             let deletable = crate::builtins::props::is_builtin_deletable(builtin, key);
             if deletable {
@@ -95,6 +101,18 @@ fn define_property_value(target: Value, key: &str, value: Value) -> Value {
             crate::builtins::builtins_cells::set_object_property(properties, key, value)
         }
         Value::Array(values) => set_array_property(values, key, value),
+        Value::Function(function) => {
+            let function = std::rc::Rc::clone(&function);
+            {
+                let mut properties = function.properties.borrow_mut();
+                if let Some((_, current)) = properties.iter_mut().rev().find(|(name, _)| name == key) {
+                    *current = value;
+                } else {
+                    properties.push((key.to_string(), value));
+                }
+            }
+            Value::Function(function)
+        }
         target => set_property(target, key, value),
     }
 }
