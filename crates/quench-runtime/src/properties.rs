@@ -174,11 +174,22 @@ pub(crate) fn execute_set_property(
     if crate::vm::is_global_object(&target) && crate::with_scope::set_if_bound(&key, &value)? {
         return Ok(());
     }
+    if key == "stack" && inherits_error_prototype(&target) {
+        crate::vm::execute_builtin_with_receiver(
+            crate::ops::Builtin::ErrorPrototypeStackSetter,
+            &[value],
+            Some(&target),
+        )?;
+        return Ok(());
+    }
     if let Some(setter) = crate::property_define::accessor(&target, &key, "set") {
         if matches!(setter, crate::value::Value::Undefined) {
             return write_failure(strict);
         }
         crate::functions::execute_target(&setter, &target, std::slice::from_ref(&value))?;
+        if let Some(updated) = crate::locals::replacement(&target) {
+            crate::execute::write_value(registers, object, updated);
+        }
         return Ok(());
     }
     if inherited_write_blocked(&target, &key) {
@@ -189,6 +200,34 @@ pub(crate) fn execute_set_property(
     }
     finish_property_write(registers, object, &target, &key, value);
     Ok(())
+}
+
+fn inherits_error_prototype(target: &crate::value::Value) -> bool {
+    if matches!(
+        target,
+        crate::value::Value::Builtin(crate::ops::Builtin::ErrorPrototype)
+    ) {
+        return true;
+    }
+    match target {
+        crate::value::Value::Object(properties) => properties
+            .iter()
+            .rev()
+            .find_map(|(name, value)| (name == "\0prototype").then_some(value))
+            .is_some_and(inherits_error_prototype),
+        crate::value::Value::ObjectAlias(alias) => alias
+            .0
+            .borrow()
+            .upgrade()
+            .and_then(|properties| {
+                properties
+                    .iter()
+                    .rev()
+                    .find_map(|(name, value)| (name == "\0prototype").then_some(value.clone()))
+            })
+            .is_some_and(|prototype| inherits_error_prototype(&prototype)),
+        _ => false,
+    }
 }
 fn set_property_parts(
     registers: &[crate::value::Value],

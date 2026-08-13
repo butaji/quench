@@ -64,11 +64,15 @@ fn accessor_value(value: &Value, key: &str, field: &str) -> Option<Value> {
         }),
         Value::Function(function) => accessor_field(&function.properties.borrow(), key, field)
             .or_else(|| accessor_builtin(Builtin::FunctionPrototype, key, field)),
-        Value::ObjectAlias(alias) => alias
-            .0
-            .borrow()
-            .upgrade()
-            .and_then(|properties| accessor_field(&properties, key, field)),
+        Value::ObjectAlias(alias) => alias.0.borrow().upgrade().and_then(|properties| {
+            accessor_field(&properties, key, field).or_else(|| {
+                properties
+                    .iter()
+                    .rev()
+                    .find_map(|(name, value)| (name == "\0prototype").then(|| value.clone()))
+                    .and_then(|prototype| accessor_value(&prototype, key, field))
+            })
+        }),
         Value::Promise(promise) => accessor_field(&promise.properties.borrow(), key, field),
         Value::BoundFunction(bound) => accessor_field(&bound.properties.borrow(), key, field)
             .or_else(|| accessor_bound(bound, key, field)),
@@ -105,6 +109,9 @@ fn accessor_bound(
 }
 
 fn accessor_builtin(builtin: Builtin, key: &str, field: &str) -> Option<Value> {
+    if builtin == Builtin::ErrorPrototype && key == "stack" && field == "set" {
+        return Some(Value::Builtin(Builtin::ErrorPrototypeStackSetter));
+    }
     static_accessor(builtin, field_key(key))
         .and_then(|descriptor| descriptor_field(&descriptor, field))
         .or_else(|| {
