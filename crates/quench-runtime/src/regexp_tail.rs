@@ -43,33 +43,45 @@ fn to_string_argument(arguments: &[Value]) -> Result<String, VmError> {
 fn symbol_match(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let receiver = regex_receiver(receiver, "@@match")?;
     let input = to_string_argument(arguments)?;
-    if !extract_flags(receiver).contains('g') {
+    let flags = match_all_flags(receiver)?;
+    let global = crate::execute::get_property_result(receiver, "global")?;
+    if !crate::execute::is_truthy(&global) {
         return regexp_exec(receiver, &input);
     }
-    symbol_match_global(receiver, &input)
+    symbol_match_global(receiver, &input, flags.contains('u'))
 }
 
-fn symbol_match_global(receiver: &Value, s: &str) -> Result<Value, VmError> {
+fn symbol_match_global(receiver: &Value, s: &str, unicode: bool) -> Result<Value, VmError> {
     set_last_index(receiver, 0.0)?;
     let mut matched = Vec::new();
     loop {
         let previous = extract_last_index(receiver)?;
         let result = regexp_exec(receiver, s)?;
-        let Value::Object(props) = result else { break };
-        let full = props
-            .iter()
-            .find(|(key, _)| key == "0")
-            .map_or(Value::Undefined, |(_, value)| value.clone());
+        if matches!(result, Value::Null) {
+            break;
+        }
+        let full = crate::execute::get_property_result(&result, "0")?;
         matched.push(full.clone());
         let empty = matches!(&full, Value::String(value) if value.is_empty());
         if empty && extract_last_index(receiver)? <= previous {
-            set_last_index(receiver, (previous + 1) as f64)?;
+            let next = advance_string_index(s, previous, unicode);
+            set_last_index(receiver, next as f64)?;
         }
     }
     let result = Value::array(matched);
     crate::builtins::set_property(result.clone(), "index", Value::Number(0.0));
     crate::builtins::set_property(result.clone(), "input", Value::String(s.to_string()));
     Ok(result)
+}
+
+fn advance_string_index(text: &str, index: usize, unicode: bool) -> usize {
+    let pair = unicode
+        && crate::strings::utf16_code_unit(text, index).is_some_and(|unit| {
+            (0xD800..=0xDBFF).contains(&unit)
+                && crate::strings::utf16_code_unit(text, index + 1)
+                    .is_some_and(|next| (0xDC00..=0xDFFF).contains(&next))
+        });
+    index + if pair { 2 } else { 1 }
 }
 
 fn regexp_exec(receiver: &Value, input: &str) -> Result<Value, VmError> {
