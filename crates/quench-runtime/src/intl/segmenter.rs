@@ -7,9 +7,7 @@ use crate::{
     value::{IteratorData, IteratorState, Value},
 };
 
-use super::{
-    default_locale, make_object, resolve_locales, runtime_error, slot_string, to_string_value, SLOT,
-};
+use super::{default_locale, make_object, resolve_locales, runtime_error, slot_string, SLOT};
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
@@ -67,7 +65,8 @@ pub(crate) fn prototype_method(
             let locale = slot_string(&slots, "locale").unwrap_or_else(default_locale);
             let granularity =
                 slot_string(&slots, "granularity").unwrap_or_else(|| "grapheme".to_string());
-            let text = to_string_value(arguments.first().unwrap_or(&Value::Undefined));
+            let text =
+                crate::conversion::to_string(arguments.first().unwrap_or(&Value::Undefined))?;
             Ok(segment(&text, &granularity, &locale))
         }
         crate::ops::Builtin::IntlSegmenterSegmentsIterator => segments_iterator(receiver),
