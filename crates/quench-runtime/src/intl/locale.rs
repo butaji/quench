@@ -114,25 +114,61 @@ fn apply_options(mut locale: Locale, options: Option<&Value>) -> Result<Locale, 
         return Ok(locale);
     };
     for (key, value) in properties.iter() {
-        let value = to_string_value(value);
+        if matches!(value, Value::Undefined) {
+            continue;
+        }
+        let text = crate::conversion::to_string(value)?;
         match key.as_str() {
-            "calendar" => locale.calendar = Some(value),
-            "collation" => locale.collation = Some(value),
-            "caseFirst" => locale.case_first = Some(value),
-            "hourCycle" => locale.hour_cycle = normalize_hour_cycle(&value),
-            "numberingSystem" => locale.numbering_system = Some(value),
-            "numeric" => locale.numeric = value == "true",
+            "calendar" => locale.calendar = Some(option_value(&text, "calendar")?),
+            "collation" => locale.collation = Some(option_value(&text, "collation")?),
+            "caseFirst" => locale.case_first = Some(normalize_case_first(&text)?),
+            "hourCycle" => locale.hour_cycle = Some(normalize_hour_cycle(&text)?),
+            "numberingSystem" => {
+                locale.numbering_system = Some(option_value(&text, "numberingSystem")?)
+            }
+            "numeric" => locale.numeric = normalize_numeric(value, &text)?,
+            "firstDayOfWeek" => {
+                let _ = option_value(&text, "firstDayOfWeek")?;
+            }
+            "language" | "region" | "script" | "variants" => {
+                let _ = option_value(&text, key)?;
+            }
             _ => {}
         }
     }
     Ok(locale)
 }
 
-fn normalize_hour_cycle(value: &str) -> Option<String> {
-    match value {
-        "h11" | "h12" | "h23" | "h24" => Some(value.to_string()),
-        _ => None,
+fn option_value(value: &str, name: &str) -> Result<String, VmError> {
+    if value.is_empty() || !value.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return Err(runtime_error(&format!("RangeError: invalid {name}")));
     }
+    Ok(value.to_string())
+}
+
+fn normalize_case_first(value: &str) -> Result<String, VmError> {
+    match value {
+        "upper" | "lower" | "false" => Ok(value.to_string()),
+        _ => Err(runtime_error("RangeError: invalid caseFirst")),
+    }
+}
+
+fn normalize_hour_cycle(value: &str) -> Result<String, VmError> {
+    match value {
+        "h11" | "h12" | "h23" | "h24" => Ok(value.to_string()),
+        _ => Err(runtime_error("RangeError: invalid hourCycle")),
+    }
+}
+
+fn normalize_numeric(value: &Value, text: &str) -> Result<bool, VmError> {
+    let truthy = match value {
+        Value::Undefined => return Ok(false),
+        Value::Null => false,
+        Value::Boolean(value) => *value,
+        Value::Number(value) => *value != 0.0 && !value.is_nan(),
+        _ => !text.is_empty(),
+    };
+    Ok(truthy)
 }
 
 fn build_object(locale: Locale) -> Value {
