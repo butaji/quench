@@ -358,6 +358,14 @@ pub(crate) fn prototype_method(
     let options = NumberOptions::from_slots(&slots)?;
     match builtin {
         crate::ops::Builtin::IntlNumberFormatFormat => {
+            if let Some(Value::String(value)) = arguments.first() {
+                if options.maximum_fraction_digits >= 20 && is_decimal_literal(value) {
+                    return Ok(Value::String(format_decimal_literal(
+                        value,
+                        &options.locale,
+                    )));
+                }
+            }
             let number = to_number_result(arguments.first())?;
             Ok(Value::String(options.format_number(number)))
         }
@@ -714,6 +722,32 @@ fn format_localized_unit(text: &str, unit: Option<&str>, display: &str, locale: 
         format!("{prefix}{text}{}", suffix.trim_start())
     } else {
         format!("{prefix}{text}{suffix}")
+    }
+}
+
+fn is_decimal_literal(value: &str) -> bool {
+    let value = value.strip_prefix(['+', '-']).unwrap_or(value);
+    let (integer, fraction) = value.split_once('.').unwrap_or((value, ""));
+    !integer.is_empty()
+        && integer.chars().all(|c| c.is_ascii_digit())
+        && fraction.chars().all(|c| c.is_ascii_digit())
+}
+
+fn format_decimal_literal(value: &str, locale: &str) -> String {
+    let (sign, body) = value
+        .strip_prefix('-')
+        .map_or(("", value), |rest| ("-", rest));
+    let (integer, fraction) = body.split_once('.').unwrap_or((body, ""));
+    let integer = group_integer_locale(integer, locale);
+    if fraction.is_empty() {
+        format!("{sign}{integer}")
+    } else {
+        let decimal = if locale.starts_with("de") || locale.starts_with("pt") {
+            ","
+        } else {
+            "."
+        };
+        format!("{sign}{integer}{decimal}{fraction}")
     }
 }
 
