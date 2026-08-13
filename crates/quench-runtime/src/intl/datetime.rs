@@ -97,6 +97,8 @@ impl DateTimeOptions {
         if let Some((name, allowed)) = COMPONENT_VALUES.iter().find(|(name, _)| *name == key) {
             if let Some(valid) = valid_component(&text, allowed) {
                 self.set_component(name, valid);
+            } else {
+                return Err(runtime_error("RangeError: invalid date/time option"));
             }
             return Ok(());
         }
