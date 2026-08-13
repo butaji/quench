@@ -1,5 +1,11 @@
-fn builtin_property_writable(builtin: Builtin, key: &str) -> bool {
+pub(crate) fn builtin_property_writable(builtin: Builtin, key: &str) -> bool {
     if builtin == Builtin::DatePrototype && key == "Symbol.toPrimitive" {
+        return false;
+    }
+    if builtin == Builtin::SymbolPrototype && key == "Symbol.toPrimitive" {
+        return false;
+    }
+    if is_well_known_symbol_property(builtin, key) {
         return false;
     }
     if builtin == Builtin::Math && crate::math::constant(key).is_some() {
