@@ -178,6 +178,10 @@ impl NumberOptions {
             ("style".to_string(), Value::String(self.style.clone())),
             ("useGrouping".to_string(), Value::Boolean(self.use_grouping)),
             (
+                "groupingMin2".to_string(),
+                Value::Boolean(self.grouping_min2),
+            ),
+            (
                 "minimumIntegerDigits".to_string(),
                 Value::Number(self.minimum_integer_digits as f64),
             ),
@@ -355,7 +359,7 @@ impl NumberOptions {
             maximum_fraction_digits: slot_number(slots, "maximumFractionDigits").unwrap_or(3.0)
                 as u32,
             use_grouping: slot_bool(slots, "useGrouping").unwrap_or(true),
-            grouping_min2: false,
+            grouping_min2: slot_bool(slots, "groupingMin2").unwrap_or(false),
             notation: slot_string(slots, "notation").unwrap_or_else(|| "standard".to_string()),
             compact_display: slot_string(slots, "compactDisplay")
                 .unwrap_or_else(|| "short".to_string()),
