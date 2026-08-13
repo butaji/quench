@@ -348,10 +348,14 @@ pub(crate) fn prototype_method(
         crate::ops::Builtin::IntlLocaleMaximize => Ok(Value::String(maximize(&slot))),
         crate::ops::Builtin::IntlLocaleMinimize => Ok(Value::String(minimize(&slot))),
         crate::ops::Builtin::IntlLocaleGetCalendars => {
-            Ok(make_array(vec![Value::String("gregory".to_string())]))
+            let calendar = slot_string(&super::intl_slots(receiver)?, "calendar")
+                .unwrap_or_else(|| "gregory".to_string());
+            Ok(make_array(vec![Value::String(calendar)]))
         }
         crate::ops::Builtin::IntlLocaleGetCollations => {
-            Ok(make_array(vec![Value::String("default".to_string())]))
+            let collation = slot_string(&super::intl_slots(receiver)?, "collation")
+                .unwrap_or_else(|| "default".to_string());
+            Ok(make_array(vec![Value::String(collation)]))
         }
         crate::ops::Builtin::IntlLocaleGetHourCycles => {
             Ok(make_array(vec![Value::String("h12".to_string())]))
