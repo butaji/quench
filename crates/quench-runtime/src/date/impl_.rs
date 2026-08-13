@@ -137,11 +137,11 @@ fn date_constructor(arguments: &[Value]) -> Result<Value, VmError> {
     let ms = if arguments.is_empty() {
         chrono_utils::time_clip(chrono_utils::current_time_ms())
     } else if arguments.len() == 1 {
-        let val = &arguments[0];
-        if let Value::String(s) = val {
-            chrono_utils::time_clip(DateValue::parse(s))
+        let value = crate::conversion::to_primitive(&arguments[0], "default")?;
+        if let Value::String(s) = value {
+            chrono_utils::time_clip(DateValue::parse(&s))
         } else {
-            chrono_utils::time_clip(crate::conversion::to_number(val)?)
+            chrono_utils::time_clip(crate::conversion::to_number(&value)?)
         }
     } else {
         let year = date_argument(arguments, 0, 0.0)?;
