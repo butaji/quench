@@ -479,7 +479,7 @@ mod tests {
         let right = Value::Object(Rc::new(ObjectData::new(Vec::new())));
         let array = Value::Array(Rc::new(ArrayData::new(vec![left.clone()])));
         let result = index_of(Some(&array), &[right]);
-        assert_eq!(result, Value::Number(-1.0));
+        assert_eq!(result, Ok(Value::Number(-1.0)));
     }
 }
 
