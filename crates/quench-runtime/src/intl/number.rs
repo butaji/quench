@@ -354,6 +354,12 @@ fn is_decimal_integer(value: &str) -> bool {
     !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit())
 }
 
+fn decimal_integer_greater(first: &str, second: &str) -> bool {
+    let first = first.trim_start_matches('0');
+    let second = second.trim_start_matches('0');
+    first.len() > second.len() || (first.len() == second.len() && first > second)
+}
+
 fn strip_positive_sign(text: &str) -> String {
     text.strip_prefix('+').unwrap_or(text).to_string()
 }
@@ -607,6 +613,11 @@ impl NumberOptions {
                 "Invalid number range",
             ));
         }
+        if start > end {
+            return Err(crate::value::error::throw_range_error(
+                "Number range start is greater than end",
+            ));
+        }
         Ok((start, end))
     }
 
@@ -648,6 +659,11 @@ impl NumberOptions {
         };
         if !is_decimal_integer(start) || !is_decimal_integer(end) {
             return None;
+        }
+        if decimal_integer_greater(start, end) {
+            return Some(Err(crate::value::error::throw_range_error(
+                "Number range start is greater than end",
+            )));
         }
         let first = if self.locale.starts_with("pt") {
             group_integer_locale(start, "pt")
