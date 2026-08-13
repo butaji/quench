@@ -9,6 +9,9 @@ pub(crate) fn get_prototype_of(value: Option<&Value>) -> Result<Value, crate::ex
 fn prototype_for_value(value: &Value) -> Value {
     match value {
         Value::Builtin(Builtin::ObjectPrototype) => Value::Null,
+        Value::Builtin(Builtin::Math | Builtin::Reflect | Builtin::Json) => {
+            Value::Builtin(Builtin::ObjectPrototype)
+        }
         Value::Builtin(builtin) if is_typed_array_constructor(*builtin) => {
             Value::Builtin(Builtin::TypedArray)
         }
