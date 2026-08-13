@@ -189,11 +189,11 @@ pub(crate) fn prototype_method(
     let options = NumberOptions::from_slots(&slots)?;
     match builtin {
         crate::ops::Builtin::IntlNumberFormatFormat => {
-            let number = to_number(arguments.first());
+            let number = to_number_result(arguments.first())?;
             Ok(Value::String(options.format_number(number)))
         }
         crate::ops::Builtin::IntlNumberFormatFormatToParts => {
-            let number = to_number(arguments.first());
+            let number = to_number_result(arguments.first())?;
             Ok(make_array(options.parts(number)))
         }
         crate::ops::Builtin::IntlNumberFormatResolvedOptions => Ok(options.resolved()),
@@ -304,15 +304,12 @@ fn receiver_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)>, VmEr
     super::intl_slots(receiver)
 }
 
+fn to_number_result(value: Option<&Value>) -> Result<f64, VmError> {
+    crate::conversion::to_number(value.unwrap_or(&Value::Undefined))
+}
+
 pub(crate) fn to_number(value: Option<&Value>) -> f64 {
-    match value {
-        None | Some(Value::Undefined) => f64::NAN,
-        Some(Value::Null) => 0.0,
-        Some(Value::Boolean(value)) => f64::from(*value),
-        Some(Value::Number(value)) => *value,
-        Some(Value::String(value)) => value.trim().parse().unwrap_or(f64::NAN),
-        _ => f64::NAN,
-    }
+    to_number_result(value).unwrap_or(f64::NAN)
 }
 
 fn format_number_rounded(value: f64, max_fraction: u32) -> String {
