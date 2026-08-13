@@ -36,7 +36,7 @@ fn prototype_for_value(value: &Value) -> Value {
         } else {
             Builtin::SetPrototype
         })),
-        Value::Generator(_) => Value::Builtin(Builtin::ObjectPrototype),
+        Value::Generator(generator) => generator_prototype(generator),
         Value::Iterator(data) => match &*data.state.borrow() {
             crate::value::IteratorState::RegExpString { .. } => {
                 Value::Builtin(Builtin::RegExpStringIteratorPrototype)
@@ -52,6 +52,24 @@ fn prototype_for_value(value: &Value) -> Value {
             .unwrap_or(Value::Builtin(Builtin::ObjectPrototype)),
         _ => Value::Null,
     }
+}
+
+fn generator_prototype(generator: &crate::value::GeneratorData) -> Value {
+    let properties = generator.function.properties.borrow();
+    let prototype = properties
+        .iter()
+        .rev()
+        .find_map(|(name, value)| (name == "prototype").then(|| value.clone()));
+    if prototype.as_ref().is_some_and(crate::value::is_object) {
+        return prototype.unwrap_or(Value::Undefined);
+    }
+    properties
+        .iter()
+        .rev()
+        .find_map(|(name, value)| (name == "\0prototype").then(|| value.clone()))
+        .map_or(Value::Builtin(Builtin::ObjectPrototype), |value| {
+            crate::execute::get_property(&value, "prototype")
+        })
 }
 
 fn iterator_prototype(builtin: Builtin) -> Value {
