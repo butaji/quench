@@ -330,11 +330,29 @@ pub(crate) fn has_property(value: &Value, key: &str) -> Result<bool, VmError> {
     if own == Value::Boolean(true) {
         return Ok(true);
     }
+    if let Some(prototype) = primitive_boxed_prototype(value) {
+        return has_property(&prototype, key);
+    }
     let prototype = crate::builtins::object::get_prototype_of(Some(value))?;
     if !matches!(prototype, Value::Null) && prototype != *value {
         return has_property(&prototype, key);
     }
     Ok(false)
+}
+
+/// The prototype a primitive value boxes to for property walks.
+fn primitive_boxed_prototype(value: &Value) -> Option<Value> {
+    use crate::ops::Builtin;
+    Some(match value {
+        Value::Number(_) => Value::Builtin(Builtin::NumberPrototype),
+        Value::Boolean(_) => Value::Builtin(Builtin::BooleanPrototype),
+        Value::BigInt(_) => Value::Builtin(Builtin::BigIntPrototype),
+        Value::String(value) if crate::conversion::is_symbol_string(value) => {
+            Value::Builtin(Builtin::SymbolPrototype)
+        }
+        Value::String(_) | Value::StringUnits(_) => Value::Builtin(Builtin::StringPrototype),
+        _ => return None,
+    })
 }
 
 pub(crate) fn execute_has_property(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {

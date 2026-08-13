@@ -392,7 +392,13 @@ fn reject_restricted_property_write(
 }
 
 fn inherited_write_blocked(target: &crate::value::Value, key: &str) -> bool {
-    if crate::builtins::descriptor_flag(target, key, "writable") == Some(false) {
+    // Prototype objects do not truly own `length`/`name`; assigning them
+    // creates an own property that shadows the callable metadata.
+    let prototype_meta_key = matches!(key, "length" | "name")
+        && matches!(target, crate::value::Value::Builtin(builtin) if crate::builtin_meta::is_prototype(*builtin));
+    if !prototype_meta_key
+        && crate::builtins::descriptor_flag(target, key, "writable") == Some(false)
+    {
         return true;
     }
     matches!(
