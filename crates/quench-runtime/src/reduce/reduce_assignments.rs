@@ -76,7 +76,7 @@ pub fn reduce_assignment(
         Some(get(&place, ops, next)?)
     };
     let rhs = crate::reduce::reduce_expression(&assignment.right, ops, facts, next, locals)?;
-    infer_assignment_name(assignment, rhs, ops);
+    infer_assignment_name(assignment, rhs, facts, ops);
     let value = assignment_value(assignment.operator, lhs, rhs, ops, next)?;
     put(place, value, ops)?;
     Some(value)
@@ -85,6 +85,7 @@ pub fn reduce_assignment(
 pub(crate) fn infer_assignment_name(
     assignment: &oxc::ast::ast::AssignmentExpression<'_>,
     value: u16,
+    facts: &ProgramDb,
     ops: &mut Vec<Op>,
 ) {
     if assignment.operator != AssignmentOperator::Assign && !assignment.operator.is_logical()
@@ -95,6 +96,9 @@ pub(crate) fn infer_assignment_name(
     let AssignmentTarget::AssignmentTargetIdentifier(identifier) = &assignment.left else {
         return;
     };
+    if facts.is_cover_parenthesized_identifier(identifier.span) {
+        return;
+    }
     ops.push(Op::SetFunctionName {
         function: value,
         name: identifier.name.to_string(),
