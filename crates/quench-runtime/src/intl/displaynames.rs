@@ -97,9 +97,7 @@ pub(crate) fn prototype_method(
 
 fn validate_code(code: &str, display_type: &str) -> Result<(), VmError> {
     let valid = match display_type {
-        "language" => {
-            (2..=3).contains(&code.len()) && code.chars().all(|c| c.is_ascii_alphabetic())
-        }
+        "language" => language_code_valid(code),
         "region" => {
             (code.len() == 2 && code.chars().all(|c| c.is_ascii_alphabetic()))
                 || (code.len() == 3 && code.chars().all(|c| c.is_ascii_digit()))
@@ -117,6 +115,16 @@ fn validate_code(code: &str, display_type: &str) -> Result<(), VmError> {
     } else {
         Err(runtime_error("RangeError: invalid code"))
     }
+}
+
+fn language_code_valid(code: &str) -> bool {
+    let mut parts = code.split('-');
+    let language = parts.next().unwrap_or("");
+    (2..=3).contains(&language.len())
+        && language.chars().all(|c| c.is_ascii_alphabetic())
+        && parts.all(|part| {
+            (2..=8).contains(&part.len()) && part.chars().all(|c| c.is_ascii_alphanumeric())
+        })
 }
 
 fn receiver_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)>, VmError> {
@@ -165,7 +173,8 @@ fn display_name(
 }
 
 fn language_name(code: &str, fallback: &str) -> Value {
-    let name = match code {
+    let language = code.split('-').next().unwrap_or(code);
+    let name = match language {
         "en" => "English",
         "fr" => "French",
         "de" => "German",
