@@ -207,7 +207,7 @@ fn replace_with_template(receiver: &Value, s: &str, template: &str) -> Result<Va
         let start = m.start();
         let end = m.end();
         out.push_str(&rest[..start]);
-        out.push_str(&expand_template(template, &rest, &m));
+        out.push_str(&expand_template(template, s, &rest, &m));
         drop(m);
         rest = rest[end..].to_string();
         if !global {
@@ -267,12 +267,12 @@ fn next_char(text: &str, at: usize) -> usize {
     text[at..].chars().next().map_or(text.len(), |c| at + c.len_utf8())
 }
 
-fn expand_template(template: &str, rest: &str, m: &regress::Match) -> String {
+fn expand_template(template: &str, input: &str, rest: &str, m: &regress::Match) -> String {
     let mut out = String::new();
     let chars: Vec<char> = template.chars().collect();
     let mut i = 0;
     while i < chars.len() {
-        if let Some(next) = expand_template_token(&mut out, &chars, i, rest, m) {
+        if let Some(next) = expand_template_token(&mut out, &chars, i, input, rest, m) {
             i = next;
         } else {
             out.push(chars[i]);
@@ -286,6 +286,7 @@ fn expand_template_token(
     out: &mut String,
     chars: &[char],
     index: usize,
+    input: &str,
     rest: &str,
     m: &regress::Match,
 ) -> Option<usize> {
@@ -296,13 +297,23 @@ fn expand_template_token(
     let replacement = match token {
         '$' => "$".to_string(),
         '&' => rest[m.start()..m.end()].to_string(),
-        '`' => rest[..m.start()].to_string(),
-        '\'' => rest[m.end()..].to_string(),
+        '`' => replacement_prefix(input, rest, m),
+        '\'' => replacement_suffix(input, rest, m),
         digit @ '1'..='9' => template_group(m, rest, digit)?,
         _ => return None,
     };
     out.push_str(&replacement);
     Some(index + 2)
+}
+
+fn replacement_prefix(input: &str, rest: &str, m: &regress::Match) -> String {
+    let offset = input.len() - rest.len();
+    input[..offset + m.start()].to_string()
+}
+
+fn replacement_suffix(input: &str, rest: &str, m: &regress::Match) -> String {
+    let offset = input.len() - rest.len();
+    input[offset + m.end()..].to_string()
 }
 
 fn template_group(m: &regress::Match, rest: &str, digit: char) -> Option<String> {
