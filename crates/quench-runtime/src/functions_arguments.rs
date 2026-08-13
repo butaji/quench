@@ -225,19 +225,101 @@ fn bind_function_target(
     if !receiver.is_some_and(crate::conversion::is_callable) {
         return Err(crate::execute::VmError::NotCallable);
     }
-    let target = arguments
+    let Some(target) = receiver else {
+        return Err(crate::execute::VmError::NotCallable);
+    };
+    let bound_target = arguments
         .first()
         .cloned()
         .unwrap_or(crate::value::Value::Undefined);
     let extra = arguments.get(1..).unwrap_or(&[]).to_vec();
+    let mut properties = Vec::new();
+    let name = bound_function_name(&target)?;
+    let length = bound_function_length(&target, extra.len() as f64);
+    insert_bound_property(
+        &mut properties,
+        "name",
+        crate::value::Value::String(name.clone()),
+        name_descriptor(&name),
+    );
+    insert_bound_property(
+        &mut properties,
+        "length",
+        crate::value::Value::Number(length),
+        length_descriptor(length),
+    );
     Ok(crate::value::Value::BoundFunction(std::rc::Rc::new(
         crate::value::BoundFunctionValue {
-            target: receiver.cloned().unwrap_or(crate::value::Value::Undefined),
-            receiver: target,
+            target: target.clone(),
+            receiver: bound_target,
             arguments: extra,
-            properties: std::cell::RefCell::new(Vec::new()),
+            properties: std::cell::RefCell::new(properties),
         },
     )))
+}
+
+fn insert_bound_property(
+    properties: &mut Vec<(String, crate::value::Value)>,
+    key: &str,
+    value: crate::value::Value,
+    descriptor: crate::value::Value,
+) {
+    properties.push((key.to_string(), value.clone()));
+    properties.push((crate::builtins::descriptor_key(key), descriptor));
+}
+
+fn bound_function_name(target: &crate::value::Value) -> Result<String, crate::execute::VmError> {
+    let target_name = crate::execute::get_property_result(target, "name")?;
+    let value = match target_name {
+        crate::value::Value::String(value) if !crate::conversion::is_symbol_string(&value) => value,
+        _ => String::new(),
+    };
+    Ok(format!("bound {value}"))
+}
+
+fn bound_function_length(target: &crate::value::Value, bound_args: f64) -> f64 {
+    let has_length = crate::builtins::object::has_own_property(
+        Some(target),
+        Some(&crate::value::Value::String("length".to_string())),
+    );
+    if !matches!(has_length, crate::value::Value::Boolean(true)) {
+        return 0.0;
+    }
+    let length_value = match crate::execute::get_property_result(target, "length") {
+        Ok(crate::value::Value::Number(length)) => length,
+        _ => 0.0,
+    };
+    let value = to_integer_or_infinity(length_value);
+    (value - bound_args).max(0.0)
+}
+
+fn to_integer_or_infinity(value: f64) -> f64 {
+    if value.is_nan() || value == 0.0 || value.is_infinite() && value.is_sign_negative() {
+        return 0.0;
+    }
+    if value.is_infinite() {
+        return f64::INFINITY;
+    }
+    let value = if value == -0.0 { 0.0 } else { value.trunc() };
+    value
+}
+
+fn length_descriptor(length: f64) -> crate::value::Value {
+    crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
+        ("value".to_string(), crate::value::Value::Number(length)),
+        ("writable".to_string(), crate::value::Value::Boolean(false)),
+        ("enumerable".to_string(), crate::value::Value::Boolean(false)),
+        ("configurable".to_string(), crate::value::Value::Boolean(true)),
+    ])))
+}
+
+fn name_descriptor(value: &str) -> crate::value::Value {
+    crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
+        ("value".to_string(), crate::value::Value::String(value.to_string())),
+        ("writable".to_string(), crate::value::Value::Boolean(false)),
+        ("enumerable".to_string(), crate::value::Value::Boolean(false)),
+        ("configurable".to_string(), crate::value::Value::Boolean(true)),
+    ])))
 }
 
 pub(crate) fn function_builtin(

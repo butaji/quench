@@ -109,8 +109,12 @@ fn cells(receiver: Option<&Value>) -> Result<Value, VmError> {
 }
 
 fn push_cell(cells: &Value, target: Value, held: Value, token: Value) {
-    let Value::BindingCell(cell) = cells else { return };
-    let Value::Array(records) = &mut *cell.borrow_mut() else { return };
+    let Value::BindingCell(cell) = cells else {
+        return;
+    };
+    let Value::Array(records) = &mut *cell.borrow_mut() else {
+        return;
+    };
     let record = Value::Object(Rc::new(ObjectData::new(vec![
         (TARGET.into(), target),
         (HELD.into(), held),
@@ -121,9 +125,13 @@ fn push_cell(cells: &Value, target: Value, held: Value, token: Value) {
 }
 
 fn remove_cells(cells: &Value, token: &Value) -> bool {
-    let Value::BindingCell(cell) = cells else { return false };
+    let Value::BindingCell(cell) = cells else {
+        return false;
+    };
     let mut value = cell.borrow_mut();
-    let Value::Array(records) = &*value else { return false };
+    let Value::Array(records) = &*value else {
+        return false;
+    };
     let snapshot = records.snapshot();
     let kept: Vec<Value> = snapshot
         .into_iter()
@@ -135,7 +143,9 @@ fn remove_cells(cells: &Value, token: &Value) -> bool {
 }
 
 fn same_token(record: &Value, token: &Value) -> bool {
-    let Value::Object(properties) = record else { return false };
+    let Value::Object(properties) = record else {
+        return false;
+    };
     let record_token = properties
         .iter()
         .find_map(|(name, value)| (name == TOKEN).then(|| value.clone()));

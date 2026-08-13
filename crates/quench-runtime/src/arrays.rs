@@ -12,6 +12,9 @@ pub(crate) fn execute_builtin(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> BuiltinResult {
+    if let Some(result) = map_argument_error(builtin, receiver, arguments) {
+        return Some(result);
+    }
     if let Some(result) = revoked_receiver_error(builtin, receiver) {
         return Some(result);
     }
@@ -35,7 +38,7 @@ pub(crate) fn execute_builtin(
         ArrayIndexOf => index_of(receiver, arguments),
         ArrayLastIndexOf => last_index_of(receiver, arguments),
         ArraySlice => slice(receiver, arguments),
-        ArrayConcat => concat(receiver, arguments),
+        ArrayConcat => return Some(concat(receiver, arguments)),
         ArrayFlat => flat(receiver, arguments),
         ArrayFlatMap => return Some(flat_map(receiver, arguments)),
         ArrayAt => return Some(Ok(at(receiver, arguments))),
@@ -49,6 +52,28 @@ pub(crate) fn execute_builtin(
         _ => return None,
     };
     Some(Ok(result))
+}
+
+fn map_argument_error(
+    builtin: crate::ops::Builtin,
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Option<Result<Value, crate::execute::VmError>> {
+    if builtin != crate::ops::Builtin::ArrayMap {
+        return None;
+    }
+    if receiver.is_none_or(|value| matches!(value, Value::Null | Value::Undefined)) {
+        return Some(Err(crate::value::error::throw_type_error(
+            "Array.prototype.map called on null or undefined",
+        )));
+    }
+    if !arguments
+        .first()
+        .is_some_and(crate::conversion::is_callable)
+    {
+        return Some(Err(crate::vm::not_callable()));
+    }
+    None
 }
 
 fn revoked_receiver_error(
@@ -338,115 +363,6 @@ pub(crate) fn slice(receiver: Option<&Value>, arguments: &[Value]) -> Value {
     }
     Value::array(values[start as usize..end as usize].to_vec())
 }
-pub(crate) fn concat(
-    receiver: Option<&Value>,
-    arguments: &[Value],
-) -> Result<Value, crate::execute::VmError> {
-    let this = receiver.cloned().unwrap_or(Value::Undefined);
-    if matches!(this, Value::Null | Value::Undefined) {
-        return Err(crate::value::error::throw_type_error(
-            "Array.prototype.concat called on null or undefined",
-        ));
-    }
-    let species = concat_species(&this)?;
-    let mut items = vec![this];
-    items.extend(arguments.iter().cloned());
-    let mut elements = Vec::new();
-    let mut holes = Vec::new();
-    for item in &items {
-        spread_concat_element(&mut elements, &mut holes, item)?;
-    }
-    if species.is_none() {
-        let mut data = crate::value::ArrayData::new(elements);
-        for index in holes {
-            data.delete_property(&index.to_string());
-        }
-        return Ok(Value::Array(std::rc::Rc::new(data)));
-    }
-    let hole = |index: usize| holes.contains(&index);
-    let mut target = species.unwrap_or_else(|| Value::array(Vec::new()));
-    let length = elements.len();
-    for (index, value) in elements.into_iter().enumerate() {
-        if !hole(index) {
-            target = crate::builtins::set_property(target, &index.to_string(), value);
-        }
-    }
-    Ok(crate::builtins::set_property(
-        target,
-        "length",
-        Value::Number(length as f64),
-    ))
-}
-
-/// `ArraySpeciesCreate`: the species-constructed result, or `None` for the
-/// default plain array.
-fn concat_species(this: &Value) -> Result<Option<Value>, crate::execute::VmError> {
-    if !matches!(this, Value::Array(_)) {
-        return Ok(None);
-    }
-    let constructor = crate::execute::get_property_result(this, "constructor")?;
-    if matches!(constructor, Value::Undefined) {
-        return Ok(None);
-    }
-    if !crate::value::is_object(&constructor) {
-        return Err(crate::value::error::throw_type_error(
-            "Species constructor is not a constructor",
-        ));
-    }
-    let species = crate::execute::get_property_result(&constructor, "Symbol.species")?;
-    if matches!(species, Value::Undefined | Value::Null) {
-        return Ok(None);
-    }
-    crate::construct::construct_value(&species, &[Value::Number(0.0)]).map(Some)
-}
-
-fn spread_concat_element(
-    elements: &mut Vec<Value>,
-    holes: &mut Vec<usize>,
-    item: &Value,
-) -> Result<(), crate::execute::VmError> {
-    if !is_concat_spreadable(item)? {
-        elements.push(item.clone());
-        return Ok(());
-    }
-    let length = concat_array_like_length(item)?;
-    if elements.len() + length > 9_007_199_254_740_991 {
-        return Err(crate::value::error::throw_type_error(
-            "Maximum array size exceeded",
-        ));
-    }
-    for index in 0..length {
-        let key = index.to_string();
-        let value = if crate::with_scope::has_property(item, &key)? {
-            crate::execute::get_property_result(item, &key)?
-        } else {
-            holes.push(elements.len());
-            Value::Undefined
-        };
-        elements.push(value);
-    }
-    Ok(())
-}
-
-fn is_concat_spreadable(value: &Value) -> Result<bool, crate::execute::VmError> {
-    if !crate::value::is_object(value) {
-        return Ok(false);
-    }
-    let flag = crate::execute::get_property_result(value, "Symbol.isConcatSpreadable")?;
-    if !matches!(flag, Value::Undefined) {
-        return Ok(crate::intl::tolocale::value::is_truthy(&flag));
-    }
-    Ok(matches!(value, Value::Array(_)))
-}
-
-fn concat_array_like_length(value: &Value) -> Result<usize, crate::execute::VmError> {
-    let length = crate::execute::get_property_result(value, "length")?;
-    let number = crate::conversion::to_number(&length)?;
-    if number.is_nan() || number <= 0.0 {
-        return Ok(0);
-    }
-    Ok(number.floor().min(9_007_199_254_740_991.0) as usize)
-}
 pub(crate) fn flat(receiver: Option<&Value>, arguments: &[Value]) -> Value {
     let Some(Value::Array(values)) = receiver else {
         return Value::array(Vec::new());
@@ -604,3 +520,5 @@ mod tests {
         assert_eq!(result, Value::Number(-1.0));
     }
 }
+
+include!("arrays_concat.rs");
