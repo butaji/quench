@@ -224,15 +224,62 @@ fn polish_number(value: f64) -> String {
 
 fn polish_word(unit: &str, style: &str, value: f64) -> String {
     if value.fract() != 0.0 {
+        if style != "long" {
+            return match unit {
+                "second" => {
+                    if style == "narrow" {
+                        "s"
+                    } else {
+                        "sek."
+                    }
+                }
+                "minute" => "min",
+                "hour" => {
+                    if style == "narrow" {
+                        "g."
+                    } else {
+                        "godz."
+                    }
+                }
+                "day" => "dnia",
+                "week" => "tyg.",
+                "month" => "mies.",
+                "quarter" => "kw.",
+                _ => "roku",
+            }
+            .to_string();
+        }
         return match unit {
             "day" => "dnia",
             "week" => "tygodnia",
             "month" => "miesiąca",
             "quarter" => "kwartału",
             "year" => "roku",
-            "second" => "sekundy",
-            "minute" => "minuty",
-            "hour" => "godziny",
+            "second" => {
+                if style == "narrow" {
+                    "s"
+                } else if style == "short" {
+                    "sek."
+                } else {
+                    "sekundy"
+                }
+            }
+            "minute" => {
+                if style == "long" {
+                    "minuty"
+                } else {
+                    "min"
+                }
+            }
+            "hour" => {
+                if style == "narrow" {
+                    "g."
+                } else if style == "short" {
+                    "godz."
+                } else {
+                    "godziny"
+                }
+            }
             _ => "lat",
         }
         .to_string();
