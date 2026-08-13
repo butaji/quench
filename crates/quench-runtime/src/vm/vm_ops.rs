@@ -225,6 +225,11 @@ fn tail_dispatch(
                 "Constructor DataView requires 'new'",
             ))
         }
+        Builtin::WeakRef => {
+            return Err(crate::value::error::throw_type_error(
+                "Constructor WeakRef requires 'new'",
+            ))
+        }
         Builtin::MathPow => crate::builtins::math_pow(arguments)?,
         _ => Value::Undefined,
     })
