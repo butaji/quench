@@ -1,7 +1,3 @@
-fn argument(arguments: &[Value]) -> String {
-    arguments.first().map_or_else(String::new, to_string)
-}
-
 pub(crate) fn search(receiver: Option<&Value>, arguments: &[Value]) -> Value {
     let Some(Value::String(value)) = receiver else { return Value::Number(-1.0) };
     if let Some(Value::Object(pattern)) = arguments.first() {
