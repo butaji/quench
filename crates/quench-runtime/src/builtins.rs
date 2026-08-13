@@ -65,11 +65,20 @@ pub fn reset_intrinsic_prototype_state() {
 }
 
 pub(crate) fn property(builtin: Builtin, key: &str) -> Value {
-    props::lookup(builtin, key)
+    let value = props::lookup(builtin, key);
+    if !matches!(value, Value::Undefined) {
+        return value;
+    }
+    crate::json::method_property(builtin, key)
 }
 
 pub(crate) fn special_property(builtin: Builtin, key: &str) -> Option<Value> {
-    props::special_property(builtin, key)
+    props::special_property(builtin, key).or_else(|| {
+        match crate::json::method_property(builtin, key) {
+            Value::Undefined => None,
+            value => Some(value),
+        }
+    })
 }
 
 pub(crate) fn callable_property(builtin: Builtin, key: &str) -> Option<Value> {
