@@ -35,12 +35,19 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let Some(tag_arg) = arguments.first() else {
         return Err(runtime_error("RangeError: Locale requires a tag"));
     };
-    let tag = to_string_value(tag_arg);
+    let tag = locale_tag(tag_arg)?;
     let canonical = canonicalize(&tag)?;
     let locale = parse_canonical(&canonical);
     let options = arguments.get(1);
     let locale = apply_options(locale, options)?;
     Ok(build_object(locale))
+}
+
+fn locale_tag(value: &Value) -> Result<String, VmError> {
+    match value {
+        Value::String(_) | Value::Object(_) => Ok(to_string_value(value)),
+        _ => Err(runtime_error("TypeError: locale tag must be a string")),
+    }
 }
 
 fn parse_canonical(tag: &str) -> Locale {
