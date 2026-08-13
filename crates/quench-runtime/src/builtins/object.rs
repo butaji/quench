@@ -311,15 +311,20 @@ fn object_descriptor(properties: &[(String, Value)], key: &str) -> Option<Value>
             }
         })
 }
+fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
+    let getter = match (builtin, key) {
+        (Builtin::Set, "Symbol.species") => Builtin::SetSpeciesGetter,
+        (Builtin::Map, "Symbol.species") => Builtin::MapSpeciesGetter,
+        (Builtin::SetPrototype, "size") => Builtin::SetSizeGetter,
+        (Builtin::MapPrototype, "size") => Builtin::MapSizeGetter,
+        _ => return None,
+    };
+    Some(accessor_descriptor(getter))
+}
+
 fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
-    if builtin == Builtin::MapPrototype && key == "size" {
-        return Some(accessor_descriptor(Builtin::MapSizeGetter));
-    }
-    if builtin == Builtin::SetPrototype && key == "size" {
-        return Some(accessor_descriptor(Builtin::SetSizeGetter));
-    }
-    if builtin == Builtin::Set && key == "Symbol.species" {
-        return Some(accessor_descriptor(Builtin::SetSpeciesGetter));
+    if let Some(descriptor) = intrinsic_accessor(builtin, key) {
+        return Some(descriptor);
     }
     if builtin == Builtin::SymbolPrototype && key == "description" {
         return Some(accessor_descriptor(Builtin::SymbolDescriptionGetter));
