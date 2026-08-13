@@ -1,9 +1,12 @@
 //! `Intl.DateTimeFormat`.
 
+use chrono::{DateTime, Timelike, Utc};
+
 use crate::{conversion, execute::VmError, value::Value};
 
 use super::{
-    default_locale, make_array, make_object, resolve_locales, runtime_error, to_string_value, SLOT,
+    default_locale, make_array, make_object, resolve_locales, runtime_error, slot_number,
+    slot_string, to_string_value, SLOT,
 };
 
 /// Allowed values for each string-valued date/time component option.
@@ -289,7 +292,12 @@ pub(crate) fn prototype_method(
     let slots = receiver_slots(receiver)?;
     match builtin {
         crate::ops::Builtin::IntlDateTimeFormatFormat => {
-            let value = range_value(arguments.first().unwrap_or(&Value::Undefined))?;
+            let input = arguments.first().unwrap_or(&Value::Undefined);
+            let number = range_number(input)?;
+            if let Some(value) = fractional_format(&slots, number) {
+                return Ok(Value::String(value));
+            }
+            let value = range_text(number);
             Ok(Value::String(value))
         }
         crate::ops::Builtin::IntlDateTimeFormatFormatToParts => {
@@ -342,6 +350,27 @@ fn range_values(arguments: &[Value]) -> Result<(String, String), VmError> {
 
 fn range_value(value: &Value) -> Result<String, VmError> {
     range_number(value).map(range_text)
+}
+
+fn fractional_format(slots: &[(String, Value)], number: f64) -> Option<String> {
+    if slot_string(slots, "minute").is_none() || slot_string(slots, "second").is_none() {
+        return None;
+    }
+    let digits = slot_number(slots, "fractionalSecondDigits").unwrap_or(0.0) as u32;
+    let seconds = (number / 1_000.0).trunc() as i64;
+    let date = DateTime::<Utc>::from_timestamp(seconds, 0)?;
+    if digits == 0 {
+        return Some(format!("{:02}:{:02}", date.minute(), date.second()));
+    }
+    let millis = number.rem_euclid(1_000.0) as u32;
+    let divisor = 10_u32.pow(3 - digits);
+    Some(format!(
+        "{:02}:{:02}.{:0width$}",
+        date.minute(),
+        date.second(),
+        millis / divisor,
+        width = digits as usize
+    ))
 }
 
 fn range_number(value: &Value) -> Result<f64, VmError> {
