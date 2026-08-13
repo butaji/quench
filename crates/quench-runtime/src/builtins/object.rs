@@ -100,6 +100,14 @@ pub(crate) fn set_prototype_of(arguments: &[Value]) -> Result<Value, VmError> {
             "Object prototype must be an object or null",
         ));
     }
+    let current = get_prototype_of(Some(target))?;
+    if !crate::builtins::same_value(Some(&current), Some(&prototype))
+        && !crate::properties::object_is_extensible(target)
+    {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot set the prototype of a non-extensible object",
+        ));
+    }
     let result = crate::builtins::set_property(target.clone(), "\0prototype", prototype);
     crate::super_scope::attach_home_objects(&result);
     Ok(result)
