@@ -108,6 +108,13 @@ fn prototype_property(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Builtin::IntlNumberFormatPrototype, "resolvedOptions") => {
             Builtin::IntlNumberFormatResolvedOptions
         }
+        (Builtin::IntlDateTimeFormatPrototype, "format") => Builtin::IntlDateTimeFormatFormat,
+        (Builtin::IntlDateTimeFormatPrototype, "formatToParts") => {
+            Builtin::IntlDateTimeFormatFormatToParts
+        }
+        (Builtin::IntlDateTimeFormatPrototype, "resolvedOptions") => {
+            Builtin::IntlDateTimeFormatResolvedOptions
+        }
         (Builtin::IntlPluralRulesPrototype, "select") => Builtin::IntlPluralRulesSelect,
         (Builtin::IntlPluralRulesPrototype, "resolvedOptions") => {
             Builtin::IntlPluralRulesResolvedOptions
