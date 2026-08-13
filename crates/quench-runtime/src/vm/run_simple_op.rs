@@ -26,6 +26,7 @@ fn run_simple_single_op(
         | IteratorStep { .. }
         | IteratorRest { .. } => crate::collections::iterator::execute(registers, op)?,
         ValidateClassHeritage { .. } => run_class_heritage(registers, op)?,
+        GetClassPrototype { .. } => run_class_prototype(registers, op)?,
         AppendInstanceField(_) => crate::classes::append_instance_field(registers, op)?,
         DeleteProperty { .. } => run_delete_property(registers, op)?,
         MakeFunction { .. } | MakeFunctionWithKind { .. } => {
@@ -48,6 +49,20 @@ fn run_simple_single_op(
         _ => return Ok(None),
     }
     Ok(Some(None))
+}
+
+fn run_class_prototype(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
+    let Op::GetClassPrototype { dst, heritage } = op else {
+        return Ok(());
+    };
+    let heritage = crate::execute::read_register(registers, *heritage)?;
+    let prototype = if matches!(heritage, Value::Null) {
+        Value::Null
+    } else {
+        crate::execute::get_property_result(&heritage, "prototype")?
+    };
+    write_value(registers, *dst, prototype);
+    Ok(())
 }
 
 fn run_optional_call(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {

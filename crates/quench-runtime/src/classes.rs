@@ -39,10 +39,9 @@ fn configure_heritage(
 ) {
     let Some(heritage) = heritage else { return };
     let parent_prototype = take_register(next);
-    ops.push(Op::GetProperty {
+    ops.push(Op::GetClassPrototype {
         dst: parent_prototype,
-        object: heritage,
-        key: "prototype".to_string(),
+        heritage,
     });
     set_internal_prototype(ops, prototype, parent_prototype);
     set_internal_prototype(ops, constructor, heritage);
