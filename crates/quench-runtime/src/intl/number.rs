@@ -39,6 +39,7 @@ pub(crate) struct RawOptions {
     unit: Option<String>,
     unit_display: String,
     minimum_fraction_digits: f64,
+    minimum_integer_digits: f64,
     maximum_fraction_digits: f64,
     use_grouping: bool,
     grouping_min2: bool,
@@ -61,6 +62,7 @@ impl RawOptions {
             unit: None,
             unit_display: "short".to_string(),
             minimum_fraction_digits: -1.0,
+            minimum_integer_digits: 1.0,
             maximum_fraction_digits: -1.0,
             use_grouping: true,
             grouping_min2: false,
@@ -84,6 +86,9 @@ impl RawOptions {
                     "unitDisplay" => raw.unit_display = value,
                     "minimumFractionDigits" => {
                         raw.minimum_fraction_digits = value.parse().unwrap_or(0.0)
+                    }
+                    "minimumIntegerDigits" => {
+                        raw.minimum_integer_digits = value.parse().unwrap_or(1.0)
                     }
                     "maximumFractionDigits" => {
                         raw.maximum_fraction_digits = value.parse().unwrap_or(3.0)
@@ -144,7 +149,7 @@ impl NumberOptions {
             currency_sign: raw.currency_sign,
             unit: raw.unit,
             unit_display: raw.unit_display,
-            minimum_integer_digits: 1,
+            minimum_integer_digits: raw.minimum_integer_digits.max(1.0) as u32,
             minimum_fraction_digits,
             maximum_fraction_digits,
             use_grouping: raw.use_grouping,
