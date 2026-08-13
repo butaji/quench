@@ -46,6 +46,8 @@ fn typed_array_constructor_property(builtin: Builtin, key: &str) -> Option<Built
         return Some(TypedArrayOf);
     }
     Some(match (builtin, key) {
+        (Uint8Array, "fromBase64") => Uint8ArrayFromBase64,
+        (Uint8Array, "fromHex") => Uint8ArrayFromHex,
         (Float64Array, "prototype") => Float64ArrayPrototype,
         (Float64ArrayPrototype, "constructor") => Float64Array,
         (Float32Array, "prototype") => Float32ArrayPrototype,
