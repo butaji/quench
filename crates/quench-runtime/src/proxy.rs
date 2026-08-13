@@ -5,6 +5,7 @@ use crate::{
 };
 use std::rc::Rc;
 use std::slice;
+include!("proxy_set.rs");
 pub(crate) fn proxy_new(arguments: &[Value]) -> Result<Value, VmError> {
     let target = arguments.first().ok_or(VmError::NotCallable)?;
     let handler = arguments.get(1).ok_or(VmError::NotCallable)?;
@@ -149,36 +150,6 @@ fn proxy_target_property(
         )));
     }
     crate::vm::get_property_with_receiver(&proxy.target, prop, receiver)
-}
-
-pub(crate) fn proxy_set(
-    target: &Value,
-    prop: &str,
-    value: &Value,
-    receiver: Option<&Value>,
-) -> Result<Value, VmError> {
-    if let Value::Proxy(proxy) = target {
-        check_revoked(proxy)?;
-        if let Some(trap) = get_handler_trap(proxy, "set") {
-            let receiver = receiver.unwrap_or(target);
-            let result = call_trap(
-                &trap,
-                &[
-                    target.clone(),
-                    Value::String(prop.to_string()),
-                    value.clone(),
-                    receiver.clone(),
-                ],
-                None,
-            )?;
-            return Ok(Value::Boolean(crate::execute::is_truthy(&result)));
-        }
-    }
-    Ok(crate::builtins::set_property(
-        target.clone(),
-        prop,
-        value.clone(),
-    ))
 }
 
 pub(crate) fn proxy_has(target: &Value, prop: &str) -> Result<Value, VmError> {
