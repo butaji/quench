@@ -282,11 +282,19 @@ pub(crate) fn prototype_method(
         crate::ops::Builtin::IntlLocaleGetCollations => {
             Ok(make_array(vec![Value::String("default".to_string())]))
         }
-        crate::ops::Builtin::IntlLocaleGetHourCycles => Ok(make_array(vec![])),
+        crate::ops::Builtin::IntlLocaleGetHourCycles => {
+            Ok(make_array(vec![Value::String("h12".to_string())]))
+        }
         crate::ops::Builtin::IntlLocaleGetNumberingSystems => {
             Ok(make_array(vec![Value::String("latn".to_string())]))
         }
-        crate::ops::Builtin::IntlLocaleGetTimeZones => Ok(make_array(vec![])),
+        crate::ops::Builtin::IntlLocaleGetTimeZones => {
+            if slot_string(&super::intl_slots(receiver)?, "region").is_some() {
+                Ok(make_array(vec![Value::String("UTC".to_string())]))
+            } else {
+                Ok(Value::Undefined)
+            }
+        }
         crate::ops::Builtin::IntlLocaleGetTextInfo => Ok(make_object(vec![(
             "direction".to_string(),
             Value::String("ltr".to_string()),
