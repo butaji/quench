@@ -200,7 +200,7 @@ fn tail_dispatch(
             arguments.get(1),
         )),
         Builtin::ObjectIsExtensible => crate::properties::is_extensible_value(arguments.first())?,
-        Builtin::ObjectPreventExtensions => {
+        Builtin::ObjectPreventExtensions | Builtin::ObjectFreeze => {
             crate::properties::prevent_extensions(arguments.first())?
         }
         Builtin::ObjectGetPrototypeOf => {
