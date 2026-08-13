@@ -85,7 +85,14 @@ impl ArrayData {
     }
 
     pub(crate) fn has_index(&self, index: usize) -> bool {
-        index < self.length && self.deleted.get(index) != Some(&true)
+        index < self.length
+            && self.deleted.get(index) != Some(&true)
+            && (index < self.values.len()
+                || self
+                    .mapped
+                    .get(index)
+                    .and_then(Option::as_ref)
+                    .is_some())
     }
 
     pub(crate) fn snapshot(&self) -> Vec<Value> {
