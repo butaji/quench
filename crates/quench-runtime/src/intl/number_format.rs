@@ -23,6 +23,13 @@ pub(crate) fn group_integer(text: &str) -> String {
 }
 
 pub(crate) fn apply_minimum_integer(text: &str, minimum: u32) -> String {
+    if text
+        .trim_start_matches(['-', '+'])
+        .chars()
+        .any(|c| !c.is_ascii_digit() && c != '.')
+    {
+        return text.to_string();
+    }
     let (sign, rest) = text
         .strip_prefix('-')
         .map_or(("", text), |rest| ("-", rest));
