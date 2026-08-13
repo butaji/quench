@@ -173,7 +173,7 @@ fn construct_builtin(
         crate::ops::Builtin::WeakRef => construct_weak_ref(arguments),
         crate::ops::Builtin::Date => crate::date::execute(builtin, None, arguments)
             .unwrap_or_else(|| Ok(crate::builtins::object(arguments))),
-        crate::ops::Builtin::RegExp => Ok(construct_regexp(arguments)),
+        crate::ops::Builtin::RegExp => construct_regexp(arguments),
         _ if is_intl_constructor(builtin) => crate::intl::execute(builtin, arguments, None)
             .unwrap_or_else(|| Ok(crate::builtins::object(arguments))),
         _ => Err(crate::vm::not_callable()),
@@ -245,13 +245,13 @@ fn is_intl_constructor(builtin: crate::ops::Builtin) -> bool {
     )
 }
 
-fn construct_regexp(arguments: &[Value]) -> Value {
-    let source = arguments.first().map_or_else(String::new, |value| {
-        crate::intl::tolocale::value::to_string(Some(value))
-    });
-    let flags = arguments.get(1).map_or_else(String::new, |value| {
-        crate::intl::tolocale::value::to_string(Some(value))
-    });
+fn construct_regexp(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
+    let source = arguments
+        .first()
+        .map_or_else(|| Ok(String::new()), crate::conversion::to_string)?;
+    let flags = arguments
+        .get(1)
+        .map_or_else(|| Ok(String::new()), crate::conversion::to_string)?;
     let mut entries = vec![
         (
             "\0prototype".to_string(),
@@ -260,29 +260,29 @@ fn construct_regexp(arguments: &[Value]) -> Value {
         ("source".to_string(), Value::String(source.clone())),
         (
             crate::builtins::descriptor_key("source"),
-            regexp_data_descriptor(false, Value::String(source)),
+            regexp_data_descriptor(false, true, Value::String(source)),
         ),
         ("flags".to_string(), Value::String(flags.clone())),
         (
             crate::builtins::descriptor_key("flags"),
-            regexp_data_descriptor(false, Value::String(flags.clone())),
+            regexp_data_descriptor(false, true, Value::String(flags.clone())),
         ),
         ("lastIndex".to_string(), Value::Number(0.0)),
         (
             crate::builtins::descriptor_key("lastIndex"),
-            regexp_data_descriptor(true, Value::Number(0.0)),
+            regexp_data_descriptor(true, false, Value::Number(0.0)),
         ),
     ];
     entries.extend(regexp_flag_entries(&flags));
-    Value::Object(Rc::new(ObjectData::new(entries)))
+    Ok(Value::Object(Rc::new(ObjectData::new(entries))))
 }
 
-fn regexp_data_descriptor(writable: bool, value: Value) -> Value {
+fn regexp_data_descriptor(writable: bool, configurable: bool, value: Value) -> Value {
     Value::Object(Rc::new(ObjectData::new(vec![
         ("value".to_string(), value),
         ("writable".to_string(), Value::Boolean(writable)),
         ("enumerable".to_string(), Value::Boolean(false)),
-        ("configurable".to_string(), Value::Boolean(false)),
+        ("configurable".to_string(), Value::Boolean(configurable)),
     ])))
 }
 
@@ -296,7 +296,7 @@ fn regexp_flag_entries(flags: &str) -> Vec<(String, Value)> {
         ("unicode", flags.contains('u')),
         ("sticky", flags.contains('y')),
     ] {
-        let descriptor = regexp_data_descriptor(false, Value::Boolean(enabled));
+        let descriptor = regexp_data_descriptor(false, true, Value::Boolean(enabled));
         entries.push((flag.to_string(), Value::Boolean(enabled)));
         entries.push((crate::builtins::descriptor_key(flag), descriptor));
     }
