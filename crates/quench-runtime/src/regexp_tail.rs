@@ -42,10 +42,11 @@ fn to_string_argument(arguments: &[Value]) -> Result<String, VmError> {
 // RegExp.prototype[Symbol.match]
 fn symbol_match(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let receiver = regex_receiver(receiver, "@@match")?;
+    let input = to_string_argument(arguments)?;
     if !extract_flags(receiver).contains('g') {
-        return exec(Some(receiver), arguments);
+        return regexp_exec(receiver, &input);
     }
-    symbol_match_global(receiver, &argument_string(arguments))
+    symbol_match_global(receiver, &input)
 }
 
 fn symbol_match_global(receiver: &Value, s: &str) -> Result<Value, VmError> {
@@ -53,7 +54,7 @@ fn symbol_match_global(receiver: &Value, s: &str) -> Result<Value, VmError> {
     let mut matched = Vec::new();
     loop {
         let previous = extract_last_index(receiver)?;
-        let result = exec(Some(receiver), &[Value::String(s.to_string())])?;
+        let result = regexp_exec(receiver, s)?;
         let Value::Object(props) = result else { break };
         let full = props
             .iter()
@@ -69,6 +70,23 @@ fn symbol_match_global(receiver: &Value, s: &str) -> Result<Value, VmError> {
     crate::builtins::set_property(result.clone(), "index", Value::Number(0.0));
     crate::builtins::set_property(result.clone(), "input", Value::String(s.to_string()));
     Ok(result)
+}
+
+fn regexp_exec(receiver: &Value, input: &str) -> Result<Value, VmError> {
+    let method = crate::execute::get_property_result(receiver, "exec")?;
+    if matches!(method, Value::Undefined | Value::Builtin(crate::ops::Builtin::RegExpExec)) {
+        return exec(Some(receiver), &[Value::String(input.to_string())]);
+    }
+    if !crate::conversion::is_callable(&method) {
+        return Err(crate::vm::not_callable());
+    }
+    let result = crate::functions::execute_target(&method, receiver, &[Value::String(input.to_string())])?;
+    if matches!(result, Value::Null) || crate::value::is_object(&result) {
+        return Ok(result);
+    }
+    Err(crate::value::error::throw_type_error(
+        "RegExp exec result must be an object or null",
+    ))
 }
 
 // RegExp.prototype[Symbol.search]
