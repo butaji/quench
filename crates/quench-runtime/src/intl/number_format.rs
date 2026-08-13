@@ -26,14 +26,25 @@ pub(crate) fn group_integer_locale(text: &str, locale: &str) -> String {
     if locale.starts_with("en-IN") {
         return group_indian(text);
     }
-    let grouped = group_integer(text);
-    if locale.starts_with("de") {
-        grouped.replace(',', ".")
+    let (sign, body) = text
+        .strip_prefix(['-', '+'])
+        .map_or(("", text), |rest| (&text[..1], rest));
+    let (integer, fraction) = body
+        .split_once('.')
+        .map_or((body, None), |value| (value.0, Some(value.1)));
+    let grouped = group_integer(integer);
+    let (grouping, decimal) = if locale.starts_with("de") {
+        ('.', ',')
     } else if locale.starts_with("pt") {
-        grouped.replace(',', "\u{a0}")
+        ('\u{a0}', ',')
     } else {
-        grouped
-    }
+        (',', '.')
+    };
+    let grouped = grouped.replace(',', &grouping.to_string());
+    fraction.map_or_else(
+        || format!("{sign}{grouped}"),
+        |fraction| format!("{sign}{grouped}{decimal}{fraction}"),
+    )
 }
 
 fn group_indian(text: &str) -> String {
