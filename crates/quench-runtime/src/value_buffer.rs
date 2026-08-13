@@ -77,6 +77,7 @@ pub struct DataViewData {
     pub byte_offset: usize,
     pub byte_length: usize,
     prototype: RefCell<Option<Value>>,
+    properties: RefCell<Vec<(String, Value)>>,
 }
 
 impl DataViewData {
@@ -86,7 +87,36 @@ impl DataViewData {
             byte_offset,
             byte_length,
             prototype: RefCell::new(None),
+            properties: RefCell::new(Vec::new()),
         }
+    }
+
+    pub(crate) fn own_property(&self, key: &str) -> Option<Value> {
+        self.properties
+            .borrow()
+            .iter()
+            .rev()
+            .find(|(name, _)| name == key)
+            .map(|(_, value)| value.clone())
+    }
+
+    pub(crate) fn set_own_property(&self, key: &str, value: Value) {
+        let mut properties = self.properties.borrow_mut();
+        properties.retain(|(name, _)| name != key);
+        properties.push((key.to_string(), value));
+    }
+
+    pub(crate) fn remove_own_property(&self, key: &str, descriptor_key: &str) -> bool {
+        let mut properties = self.properties.borrow_mut();
+        let non_configurable = properties.iter().any(|(name, value)| {
+            name == descriptor_key
+                && matches!(value, Value::Object(metadata) if metadata.iter().any(|(field, flag)| field == "configurable" && flag == &Value::Boolean(false)))
+        });
+        if non_configurable {
+            return false;
+        }
+        properties.retain(|(name, _)| name != key && name != descriptor_key);
+        true
     }
 
     pub fn byte_length(&self) -> usize {
