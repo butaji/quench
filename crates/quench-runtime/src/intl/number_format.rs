@@ -478,13 +478,19 @@ pub(crate) fn unit_parts(
 ) -> Vec<Value> {
     let suffix = unit_suffix(unit, display, locale);
     let narrow = display == "narrow" || unit == Some("percent");
-    let number = text
+    let localized_text = if locale.starts_with("de") {
+        text.replace('.', ",")
+    } else {
+        text.to_string()
+    };
+    let number = localized_text
         .strip_suffix('%')
-        .unwrap_or(text)
+        .unwrap_or(&localized_text)
         .find(|character: char| character.is_ascii_alphabetic())
-        .map_or(text.strip_suffix('%').unwrap_or(text), |index| {
-            text[..index].trim_end()
-        });
+        .map_or(
+            localized_text.strip_suffix('%').unwrap_or(&localized_text),
+            |index| localized_text[..index].trim_end(),
+        );
     let mut parts = numeric_parts(number, locale);
     if locale.starts_with("ko") && display == "long" {
         parts.insert(0, part("unit", "시속"));
