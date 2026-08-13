@@ -121,6 +121,11 @@ pub(crate) fn array_map(
         return Ok(Value::array(Vec::new()));
     };
     let length = array_like_length(receiver);
+    if length > u32::MAX as usize {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid array length",
+        ));
+    }
     let mut mapped = Vec::with_capacity(length);
     for index in 0..length {
         let value = array_like_value(receiver, index);

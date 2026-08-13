@@ -12,6 +12,9 @@ pub(crate) fn execute_builtin(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> BuiltinResult {
+    if let Some(result) = revoked_receiver_error(builtin, receiver) {
+        return Some(result);
+    }
     if let Some(result) = array_iterator_builtin(builtin, receiver) {
         return Some(result);
     }
@@ -46,6 +49,28 @@ pub(crate) fn execute_builtin(
         _ => return None,
     };
     Some(Ok(result))
+}
+
+fn revoked_receiver_error(
+    builtin: crate::ops::Builtin,
+    receiver: Option<&Value>,
+) -> Option<Result<Value, crate::execute::VmError>> {
+    let Some(Value::Proxy(proxy)) = receiver else {
+        return None;
+    };
+    let array_method = matches!(
+        builtin,
+        crate::ops::Builtin::ArrayConcat
+            | crate::ops::Builtin::ArrayFilter
+            | crate::ops::Builtin::ArrayMap
+            | crate::ops::Builtin::ArraySlice
+            | crate::ops::Builtin::ArraySplice
+    );
+    (array_method && crate::proxy::is_revoked(proxy)).then(|| {
+        Err(crate::value::error::throw_type_error(
+            "Cannot perform operation on a revoked proxy",
+        ))
+    })
 }
 
 fn array_to_locale_string(
