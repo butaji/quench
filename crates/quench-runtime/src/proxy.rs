@@ -195,7 +195,11 @@ pub(crate) fn proxy_apply(
         check_revoked(proxy)?;
         if let Some(trap) = get_handler_trap(proxy, "apply") {
             let args_array = Value::array(arguments.to_vec());
-            return call_trap(&trap, &[target.clone(), this_arg.clone(), args_array], None);
+            return call_trap(
+                &trap,
+                &[proxy.target.clone(), this_arg.clone(), args_array],
+                Some(&proxy.handler),
+            );
         }
         return proxy_apply(&proxy.target, this_arg, arguments);
     }
