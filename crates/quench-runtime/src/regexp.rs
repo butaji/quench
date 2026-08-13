@@ -328,8 +328,8 @@ fn anchored_match(source: &str, flags: &str, last_index: usize, input: &str) -> 
 
 pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let Some(receiver @ Value::Object(_)) = receiver else {
-        return Err(VmError::EvalError(
-            "RegExp.prototype.test requires RegExp".to_string(),
+        return Err(crate::value::error::throw_type_error(
+            "RegExp.prototype.test requires RegExp",
         ));
     };
     let s = argument_string(arguments);
@@ -352,8 +352,8 @@ pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
 
 pub fn exec(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let Some(receiver @ Value::Object(_)) = receiver else {
-        return Err(VmError::EvalError(
-            "RegExp.prototype.exec requires RegExp".to_string(),
+        return Err(crate::value::error::throw_type_error(
+            "RegExp.prototype.exec requires RegExp",
         ));
     };
     let s = argument_string(arguments);
