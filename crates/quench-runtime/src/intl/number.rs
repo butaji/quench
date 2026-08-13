@@ -555,12 +555,12 @@ impl NumberOptions {
             return None;
         }
         let first = if self.locale.starts_with("pt") {
-            group_integer_locale(start, "de")
+            group_integer_locale(start, "pt")
         } else {
             group_integer_locale(start, &self.locale)
         };
         let second = if self.locale.starts_with("pt") {
-            group_integer_locale(end, "de")
+            group_integer_locale(end, "pt")
         } else {
             group_integer_locale(end, &self.locale)
         };
