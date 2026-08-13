@@ -117,6 +117,7 @@ fn reduce_direct_eval(
         .map(|(name, slot)| (name.clone(), *slot))
         .collect::<Vec<_>>();
     bindings.sort_by(|left, right| left.0.cmp(&right.0));
+    let reusable_var_names = reusable_eval_var_names(locals, facts);
     ops.push(Op::Eval {
         dst,
         source,
@@ -124,9 +125,26 @@ fn reduce_direct_eval(
         global: !facts.in_function,
         direct: true,
         bindings,
+        reusable_var_names,
         forbidden_var_names: facts.eval_var_barrier.clone(),
     });
     Some(dst)
+}
+
+fn reusable_eval_var_names(locals: &HashMap<String, u16>, facts: &ProgramDb) -> Vec<String> {
+    let mut names = locals
+        .iter()
+        .filter(|(name, slot)| {
+            **slot >= facts.eval_var_scope_start && !facts.eval_var_barrier.contains(name)
+        })
+        .map(|(name, _)| name.clone())
+        .collect::<Vec<_>>();
+    if facts.eval_arrow_scope && locals.contains_key("arguments") {
+        names.push("arguments".to_string());
+    }
+    names.sort_unstable();
+    names.dedup();
+    names
 }
 
 fn reduce_eval_source(

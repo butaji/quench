@@ -123,7 +123,9 @@ fn set_name_value(key: &str, value: Value, strict: bool) -> Result<(), VmError> 
     if set_if_bound(key, &value)? {
         return Ok(());
     }
-    if crate::locals::set_named(key, value.clone()) {
+    if crate::locals::set_eval_named(key, value.clone())
+        || crate::locals::set_named(key, value.clone())
+    {
         return Ok(());
     }
     let global = crate::vm::current_global_object();
@@ -188,8 +190,11 @@ fn resolve_name(registers: &mut Vec<Value>, dst: u16, key: &str) -> Result<(), V
     let global = crate::vm::current_global_object();
     let binding = resolve_binding(key)?;
     let immutable = crate::globals::immutable_value(key);
-    let bound = binding.is_some() || crate::locals::has_name(key) || immutable.is_some();
+    let eval = crate::locals::resolve_eval_name(key);
+    let bound =
+        binding.is_some() || eval.is_some() || crate::locals::has_name(key) || immutable.is_some();
     let value = match binding
+        .or(eval)
         .or_else(|| crate::locals::resolve_name(key))
         .or(immutable)
     {
@@ -231,6 +236,7 @@ fn set_name(registers: &mut Vec<Value>, key: &str, src: u16, strict: bool) -> Re
 
 fn check_strict_name(key: &str) -> Result<(), VmError> {
     if binding_target(key)?.is_some()
+        || crate::locals::resolve_eval_name(key).is_some()
         || crate::locals::resolve_name(key).is_some()
         || has_property(&crate::vm::current_global_object(), key)?
     {
@@ -242,6 +248,9 @@ fn check_strict_name(key: &str) -> Result<(), VmError> {
 }
 
 fn resolve(key: &str) -> Result<Option<Value>, VmError> {
+    if let Some(value) = crate::locals::resolve_eval_name(key) {
+        return Ok(Some(value));
+    }
     let Some(target) = binding_target(key)? else {
         return Ok(None);
     };
