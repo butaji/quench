@@ -87,8 +87,7 @@ const fn intl_fn_len(b: Builtin) -> Option<f64> {
         | Builtin::IntlLocaleGetTextInfo
         | Builtin::IntlLocaleGetWeekInfo => Some(0.0),
         Builtin::IntlNumberFormatFormat => Some(1.0),
-        Builtin::IntlNumberFormatFormatToParts
-        | Builtin::IntlNumberFormatResolvedOptions
+        Builtin::IntlNumberFormatResolvedOptions
         | Builtin::IntlPluralRulesSelect
         | Builtin::IntlPluralRulesResolvedOptions
         | Builtin::IntlDateTimeFormatFormat
@@ -100,6 +99,7 @@ const fn intl_fn_len(b: Builtin) -> Option<f64> {
         | Builtin::IntlSegmenterResolvedOptions
         | Builtin::IntlDisplayNamesOf
         | Builtin::IntlDisplayNamesResolvedOptions => Some(0.0),
+        Builtin::IntlNumberFormatFormatToParts => Some(1.0),
         Builtin::IntlListFormatFormat
         | Builtin::IntlListFormatFormatToParts
         | Builtin::IntlListFormatResolvedOptions
