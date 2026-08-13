@@ -17,6 +17,9 @@ pub fn execute(
     if builtin == Builtin::DateUTC {
         return Some(date_utc(arguments));
     }
+    if builtin == Builtin::DateSetDate {
+        return Some(date_set_date(receiver, arguments));
+    }
     let result = match builtin {
         Builtin::DateNow => Value::Number(chrono_utils::current_time_ms()),
         Builtin::DateParse => date_parse(arguments),
@@ -67,7 +70,6 @@ fn dispatch_set(builtin: Builtin, receiver: Option<&Value>, args: &[Value]) -> O
         Builtin::DateSetTime => Some(date_set_time(receiver, args)),
         Builtin::DateSetFullYear => Some(date_set_full_year(receiver, args)),
         Builtin::DateSetMonth => Some(date_set_month(receiver, args)),
-        Builtin::DateSetDate => Some(date_set_date(receiver, args)),
         Builtin::DateSetHours => Some(date_set_hours(receiver, args)),
         Builtin::DateSetMinutes => Some(date_set_minutes(receiver, args)),
         Builtin::DateSetSeconds => Some(date_set_seconds(receiver, args)),
@@ -102,7 +104,7 @@ fn date_constructor(arguments: &[Value]) -> Result<Value, VmError> {
         let year = chrono_utils::normalize_constructor_year(year);
         chrono_utils::make_local_ms(year, month, day, hour, minute, second, ms_val)
     };
-    let props = vec![("timeValue".to_string(), Value::Number(ms))];
+    let props = vec![("timeValue".to_string(), super::time_property(ms))];
     Ok(Value::Object(Rc::new(crate::value::ObjectData::new(props))))
 }
 
@@ -297,22 +299,38 @@ fn date_set_month(receiver: Option<&Value>, arguments: &[Value]) -> Value {
     Value::Number(chrono_utils::time_clip(result))
 }
 
-fn date_set_date(receiver: Option<&Value>, arguments: &[Value]) -> Value {
-    let current = extract_time(receiver);
-    let new_day = helpers::to_int32(arguments.first().unwrap_or(&Value::Undefined));
-    let (y, m, _, h, min, s, ms) =
-        chrono_utils::local_components(current).unwrap_or((2000, 1, 1, 0, 0, 0, 0));
-    let result = chrono_utils::make_local_ms(
-        y as f64,
-        (m - 1) as f64,
-        new_day,
-        h as f64,
-        min as f64,
-        s as f64,
-        ms as f64,
-    );
+fn date_set_date(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    let current = date_time(receiver)?;
+    let day = date_argument(arguments, 0, f64::NAN)?;
+    let result =
+        chrono_utils::local_components(current).map_or(f64::NAN, |(y, m, _, h, min, s, ms)| {
+            chrono_utils::make_local_ms(
+                y as f64,
+                (m - 1) as f64,
+                day,
+                h as f64,
+                min as f64,
+                s as f64,
+                ms as f64,
+            )
+        });
+    let result = chrono_utils::time_clip(result);
     store_time(receiver.unwrap_or(&Value::Undefined), result);
-    Value::Number(chrono_utils::time_clip(result))
+    Ok(Value::Number(result))
+}
+
+fn date_time(receiver: Option<&Value>) -> Result<f64, VmError> {
+    let value = receiver.filter(|value| matches!(value, Value::Object(_)));
+    let valid = value.and_then(|value| match value {
+        Value::Object(properties) => properties
+            .iter()
+            .any(|(name, _)| name == "timeValue")
+            .then_some(value),
+        _ => None,
+    });
+    valid.map(|value| extract_time(Some(value))).ok_or_else(|| {
+        crate::value::error::throw_type_error("Date method called on incompatible receiver")
+    })
 }
 
 fn date_set_hours(receiver: Option<&Value>, arguments: &[Value]) -> Value {
