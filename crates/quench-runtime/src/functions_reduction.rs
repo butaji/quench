@@ -25,7 +25,7 @@ fn reduce_function_ops_named(
     parameters: (HashMap<String, u16>, u16),
     locals: &HashMap<String, u16>,
     arrow_expression: Option<bool>,
-    self_name: Option<&str>,
+    self_name: Option<(&str, bool)>,
 ) -> Option<(Vec<Op>, u16)> {
     let (parameters, parameter_count) = parameters;
     let lexical_receiver = arrow_expression.is_some();
@@ -34,8 +34,11 @@ fn reduce_function_ops_named(
         locals,
         (parameters, parameter_count),
         lexical_receiver,
-        self_name,
+        self_name.map(|(name, _)| name),
     );
+    let self_name_slot = self_name.and_then(|(name, immutable)| {
+        immutable.then(|| body_locals.get(name)).flatten().copied()
+    });
     let prefix = reduce_function_body(
         (statements, formal),
         facts,
@@ -43,6 +46,7 @@ fn reduce_function_ops_named(
         (parameter_count, captures),
         arrow_expression,
         rest,
+        self_name_slot,
     )?;
     Some((bind_rest(prefix, rest, parameter_count, captures), captures))
 }
@@ -67,7 +71,7 @@ pub(crate) fn reduce_named_declaration(
         (parameters, parameter_count),
         locals,
         None,
-        Some(name),
+        Some((name, false)),
     );
     (facts.strict, facts.in_function, facts.tail_calls) = inherited;
     reduced.ok_or_else(|| vec!["Unsupported function declaration body".to_string()])
@@ -83,12 +87,24 @@ fn reduce_function_body(
     layout: (u16, u16),
     arrow_expression: Option<bool>,
     rest: Option<u16>,
+    self_name_slot: Option<u16>,
 ) -> Option<Vec<Op>> {
+    let captured_name_slot = locals
+        .1
+        .values()
+        .copied()
+        .collect::<std::collections::HashSet<_>>();
     let inherited = (facts.eval_var_scope_start, facts.eval_arrow_scope);
     facts.eval_var_scope_start = layout.1;
     facts.eval_arrow_scope = arrow_expression.is_some();
+    let previous_name_slot = facts.function_name_slot;
+    facts.function_name_slot = self_name_slot.or_else(|| {
+        previous_name_slot
+            .filter(|slot| captured_name_slot.contains(slot))
+    });
     let result = reduce_function_body_inner(syntax, facts, locals, layout, arrow_expression, rest);
     (facts.eval_var_scope_start, facts.eval_arrow_scope) = inherited;
+    facts.function_name_slot = previous_name_slot;
     result
 }
 
@@ -139,7 +155,7 @@ fn prepare_function_scope(
 ) -> (HashMap<String, u16>, HashMap<String, u16>, u16, Option<u16>) {
     let (parameters, count) = parameters;
     let captures = capture_count(locals);
-    let (parameters, mut body) = split_function_locals(
+    let (mut parameters, mut body) = split_function_locals(
         statements,
         parameters,
         count,
@@ -149,10 +165,9 @@ fn prepare_function_scope(
         self_name.is_some(),
     );
     if let Some(name) = self_name {
-        body.insert(
-            name.to_string(),
-            captures.saturating_add(count.saturating_add(3)),
-        );
+        let slot = captures.saturating_add(count.saturating_add(3));
+        parameters.insert(name.to_string(), slot);
+        body.insert(name.to_string(), slot);
     }
     let rest = rest_slot(
         &parameters,
@@ -322,7 +337,7 @@ pub(crate) fn reduce_expression(
         (parameters, parameter_count),
         locals,
         None,
-        function.id.as_ref().map(|id| id.name.as_str()),
+        function.id.as_ref().map(|id| (id.name.as_str(), true)),
     );
     (facts.strict, facts.in_function, facts.tail_calls) = inherited;
     let (body_ops, captures) = reduced?;

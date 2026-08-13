@@ -47,6 +47,11 @@ pub enum Op {
         slot: u16,
         src: u16,
     },
+    StoreFunctionName {
+        slot: u16,
+        src: u16,
+        strict: bool,
+    },
     LoadCurrentGlobal {
         dst: u16,
     },

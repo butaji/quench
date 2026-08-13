@@ -5,6 +5,7 @@ pub(crate) fn get(place: &Place, ops: &mut Vec<Op>, next: &mut u16) -> Option<u1
     let dst = take_register(next);
     match place {
         Place::Local { slot } => ops.push(Op::LoadLocal { dst, slot: *slot }),
+        Place::FunctionName { slot, .. } => ops.push(Op::LoadLocal { dst, slot: *slot }),
         Place::DynamicLocal {
             name, slot, target, ..
         } => emit_dynamic_local_get(ops, dst, name, *slot, *target),
@@ -66,6 +67,11 @@ fn emit_property_get(ops: &mut Vec<Op>, dst: u16, object: u16, key: &PlaceKey) {
 pub(crate) fn put(place: Place, value: u16, ops: &mut Vec<Op>) -> Option<()> {
     match place {
         Place::Local { slot } => put_local(ops, slot, value),
+        Place::FunctionName { slot, strict } => ops.push(Op::StoreFunctionName {
+            slot,
+            src: value,
+            strict,
+        }),
         Place::DynamicLocal {
             name,
             slot,
