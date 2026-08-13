@@ -291,7 +291,10 @@ impl NumberOptions {
             .chars()
             .all(|character| matches!(character, '0' | '.' | ','));
         let hide_negative = self.sign_display == "never"
-            || (self.sign_display == "auto" && zero && self.style == "currency")
+            || (self.sign_display == "auto"
+                && zero
+                && self.style == "currency"
+                && self.currency_sign != "accounting")
             || (self.sign_display == "exceptZero" && rounded_zero)
             || (self.sign_display == "negative" && rounded_zero);
         if hide_negative && negative {
