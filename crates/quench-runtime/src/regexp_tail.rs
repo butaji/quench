@@ -184,7 +184,31 @@ fn exec_match(result: &Value) -> Result<Option<(String, usize)>, VmError> {
 }
 
 fn expand_exec_template(template: &str, matched: &str) -> String {
-    template.replace("$$", "$").replace("$&", matched)
+    let chars: Vec<char> = template.chars().collect();
+    let mut output = String::new();
+    let mut index = 0;
+    while index < chars.len() {
+        if chars.get(index) != Some(&'$') || index + 1 >= chars.len() {
+            output.push(chars[index]);
+            index += 1;
+            continue;
+        }
+        match chars[index + 1] {
+            '$' => {
+                output.push('$');
+                index += 2;
+            }
+            '&' => {
+                output.push_str(matched);
+                index += 2;
+            }
+            _ => {
+                output.push('$');
+                index += 1;
+            }
+        }
+    }
+    output
 }
 
 fn advance_empty_exec(receiver: &Value, input: &str, matched: &str) -> Result<(), VmError> {
