@@ -30,6 +30,9 @@ pub(crate) fn reduce_delete(
     if let Some(result) = reduce_eval_delete(expression, ops, facts, next_register) {
         return Some(result);
     }
+    if is_super_member(expression) {
+        return Some(reduce_delete_super(ops, next_register));
+    }
     if !is_member_expression(expression) {
         return reduce_non_member_delete(expression, ops, facts, next_register, locals);
     }
@@ -50,6 +53,35 @@ pub(crate) fn reduce_delete(
         _ => return None,
     };
     push_delete_property(ops, facts, next_register, object, key)
+}
+
+fn is_super_member(expression: &Expression<'_>) -> bool {
+    match expression {
+        Expression::ComputedMemberExpression(member) => {
+            matches!(member.object, Expression::Super(_))
+        }
+        Expression::StaticMemberExpression(member) => matches!(member.object, Expression::Super(_)),
+        _ => false,
+    }
+}
+
+fn reduce_delete_super(ops: &mut Vec<Op>, next: &mut u16) -> u16 {
+    let constructor = *next;
+    *next = next.saturating_add(1);
+    ops.push(Op::MakeBuiltin {
+        dst: constructor,
+        builtin: crate::ops::Builtin::ReferenceError,
+    });
+    let error = *next;
+    *next = next.saturating_add(1);
+    ops.push(Op::Call {
+        dst: error,
+        callee: constructor,
+        args: Vec::new(),
+        spreads: Vec::new(),
+    });
+    ops.push(Op::Throw { src: error });
+    error
 }
 
 fn reduce_non_member_delete(
