@@ -314,7 +314,12 @@ fn receiver_property(value: &Value, key: &str, receiver: &Value) -> Value {
         return property;
     }
     match property {
-        Value::Builtin(builtin) if !is_accessor_builtin(builtin) => bind_method(receiver, property),
+        Value::Builtin(builtin)
+            if !is_accessor_builtin(builtin)
+                && crate::intl::tolocale::symbol::name(builtin).is_none() =>
+        {
+            bind_method(receiver, property)
+        }
         other => other,
     }
 }
