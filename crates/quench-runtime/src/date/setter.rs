@@ -1,6 +1,6 @@
 //! Completion-aware Date setters.
 
-use crate::{execute::VmError, value::Value};
+use crate::{execute::VmError, ops::Builtin, value::Value};
 
 use super::{chrono_utils, extract_time, store_time};
 
@@ -26,6 +26,87 @@ pub fn set_full_year(receiver: Option<&Value>, arguments: &[Value]) -> Result<Va
     let day = argument(arguments, 2, parts.2 as f64)?;
     let result = local_time(parts, year, month, day);
     store(receiver, result)
+}
+
+pub fn set_time_components(
+    builtin: Builtin,
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Option<Result<Value, VmError>> {
+    let (start, utc) = match builtin {
+        Builtin::DateSetHours => (0, false),
+        Builtin::DateSetMinutes => (1, false),
+        Builtin::DateSetSeconds => (2, false),
+        Builtin::DateSetMilliseconds => (3, false),
+        Builtin::DateSetUTCHours => (0, true),
+        Builtin::DateSetUTCMinutes => (1, true),
+        Builtin::DateSetUTCSeconds => (2, true),
+        Builtin::DateSetUTCMilliseconds => (3, true),
+        _ => return None,
+    };
+    Some(set_components(receiver, arguments, start, utc))
+}
+
+fn set_components(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+    start: usize,
+    utc: bool,
+) -> Result<Value, VmError> {
+    let current = date_time(receiver)?;
+    let parts = if utc {
+        chrono_utils::utc_components(current)
+    } else {
+        chrono_utils::local_components(current)
+    };
+    let values = components(arguments, start, parts.map_or([0.0; 4], time_values))?;
+    let result = parts.map_or(f64::NAN, |parts| make_time(parts, values, utc));
+    store(receiver, result)
+}
+
+fn components(
+    arguments: &[Value],
+    start: usize,
+    mut values: [f64; 4],
+) -> Result<[f64; 4], VmError> {
+    for index in start..values.len() {
+        let value = arguments
+            .get(index - start)
+            .map(crate::conversion::to_number)
+            .transpose()?;
+        if index == start {
+            values[index] = value.unwrap_or(f64::NAN);
+        } else if let Some(value) = value {
+            values[index] = value;
+        }
+    }
+    Ok(values)
+}
+
+fn time_values(parts: (i32, u32, u32, u32, u32, u32, u32)) -> [f64; 4] {
+    [
+        parts.3 as f64,
+        parts.4 as f64,
+        parts.5 as f64,
+        parts.6 as f64,
+    ]
+}
+
+fn make_time(parts: (i32, u32, u32, u32, u32, u32, u32), values: [f64; 4], utc: bool) -> f64 {
+    let make = if utc {
+        chrono_utils::make_date_ms
+    } else {
+        chrono_utils::make_local_ms
+    };
+    make(
+        parts.0 as f64,
+        (parts.1 - 1) as f64,
+        parts.2 as f64,
+        values[0],
+        values[1],
+        values[2],
+        values[3],
+    )
 }
 
 fn argument(arguments: &[Value], index: usize, default: f64) -> Result<f64, VmError> {
