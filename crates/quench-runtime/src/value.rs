@@ -92,6 +92,7 @@ include!("value_promise.rs");
 #[derive(Debug, Clone, PartialEq, Default)]
 pub(crate) struct TypedArrayMeta {
     prototype: RefCell<Option<Value>>,
+    properties: RefCell<Vec<(String, Value)>>,
 }
 
 impl TypedArrayMeta {
@@ -101,6 +102,24 @@ impl TypedArrayMeta {
 
     pub(crate) fn set_prototype(&self, value: Value) {
         self.prototype.replace(Some(value));
+    }
+
+    pub(crate) fn property(&self, key: &str) -> Option<Value> {
+        self.properties
+            .borrow()
+            .iter()
+            .rev()
+            .find(|(name, _)| name == key)
+            .map(|(_, value)| value.clone())
+    }
+
+    pub(crate) fn set_property(&self, key: &str, value: Value) {
+        let mut properties = self.properties.borrow_mut();
+        if let Some((_, current)) = properties.iter_mut().rev().find(|(name, _)| name == key) {
+            *current = value;
+        } else {
+            properties.push((key.to_string(), value));
+        }
     }
 }
 

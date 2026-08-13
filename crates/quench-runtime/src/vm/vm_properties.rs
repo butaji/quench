@@ -29,6 +29,9 @@ pub fn get_property(value: &Value, key: &str) -> Value {
 }
 fn get_property_value(value: &Value, key: &str) -> Value {
     use Value::*;
+    if let Some(found) = crate::typed_array_prototype::own_property(value, key) {
+        return found;
+    }
     match value {
         Builtin(builtin) if crate::intl::tolocale::symbol::name(*builtin).is_some() => {
             bind_callable_property(
