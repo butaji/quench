@@ -17,9 +17,14 @@ fn prototype_for_value(value: &Value) -> Value {
         }
         Value::Builtin(Builtin::FunctionPrototype) => Value::Builtin(Builtin::ObjectPrototype),
         Value::Builtin(builtin @ (Builtin::ArrayIteratorPrototype | Builtin::RegExpStringIteratorPrototype | Builtin::IteratorPrototype)) => iterator_prototype(*builtin),
-        Value::Builtin(_) | Value::Function(_) | Value::BoundFunction(_) => {
-            Value::Builtin(Builtin::FunctionPrototype)
-        }
+        Value::Function(function) => function
+            .properties
+            .borrow()
+            .iter()
+            .rev()
+            .find_map(|(name, value)| (name == "\0prototype").then(|| value.clone()))
+            .unwrap_or(Value::Builtin(Builtin::FunctionPrototype)),
+        Value::Builtin(_) | Value::BoundFunction(_) => Value::Builtin(Builtin::FunctionPrototype),
         Value::Promise(_) => Value::Builtin(Builtin::PromisePrototype),
         Value::Map(data) => data.prototype().unwrap_or(Value::Builtin(if data.weak {
             Builtin::WeakMapPrototype
