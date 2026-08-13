@@ -95,7 +95,7 @@ fn segment(text: &str, granularity: &str, locale: &str) -> Value {
     let _ = locale;
     let segments = match granularity {
         "word" => word_segments(text),
-        "sentence" => vec![segment_entry(text, 0, text, false)],
+        "sentence" => sentence_segments(text),
         _ => grapheme_segments(text),
     };
     make_object(vec![
@@ -142,6 +142,35 @@ fn grapheme_segments(text: &str) -> Vec<Value> {
 
 fn is_combining_mark(character: char) -> bool {
     matches!(character as u32, 0x0300..=0x036f | 0x1ab0..=0x1aff | 0x1dc0..=0x1dff | 0x20d0..=0x20ff)
+}
+
+fn sentence_segments(text: &str) -> Vec<Value> {
+    let mut result = Vec::new();
+    let mut start_byte = 0;
+    let mut start_utf16 = 0;
+    for (index, character) in text.char_indices() {
+        if !matches!(character, '.' | '!' | '?') {
+            continue;
+        }
+        let end_byte = text[index + character.len_utf8()..]
+            .char_indices()
+            .find(|(_, next)| !next.is_whitespace())
+            .map_or(text.len(), |(offset, _)| {
+                index + character.len_utf8() + offset
+            });
+        result.push(segment_entry(
+            &text[start_byte..end_byte],
+            start_utf16,
+            text,
+            false,
+        ));
+        start_byte = end_byte;
+        start_utf16 = text[..start_byte].encode_utf16().count();
+    }
+    if start_byte < text.len() {
+        result.push(segment_entry(&text[start_byte..], start_utf16, text, false));
+    }
+    result
 }
 
 fn word_segments(text: &str) -> Vec<Value> {
