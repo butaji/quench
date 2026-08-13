@@ -461,29 +461,31 @@ impl NumberOptions {
             self.maximum_fraction_digits
         };
         let fraction_text = format_number_rounded(value, fraction_digits, self.rounding_increment);
-        let mut text = if let Some(maximum) = self.maximum_significant_digits {
-            let significant_text = format_significant(
-                value,
-                self.minimum_significant_digits.unwrap_or(1),
-                maximum,
-                &self.rounding_mode,
-            );
-            match self.rounding_priority.as_str() {
-                "morePrecision"
-                    if decimal_places(&fraction_text) > decimal_places(&significant_text) =>
-                {
-                    fraction_text
-                }
-                "lessPrecision"
-                    if decimal_places(&fraction_text) < decimal_places(&significant_text) =>
-                {
-                    fraction_text
-                }
-                _ => significant_text,
-            }
-        } else {
-            fraction_text
-        };
+        let (mut text, significant_selected) =
+            if let Some(maximum) = self.maximum_significant_digits {
+                let significant_text = format_significant(
+                    value,
+                    self.minimum_significant_digits.unwrap_or(1),
+                    maximum,
+                    &self.rounding_mode,
+                );
+                let selected = match self.rounding_priority.as_str() {
+                    "morePrecision"
+                        if decimal_places(&fraction_text) > decimal_places(&significant_text) =>
+                    {
+                        (fraction_text, false)
+                    }
+                    "lessPrecision"
+                        if decimal_places(&fraction_text) < decimal_places(&significant_text) =>
+                    {
+                        (fraction_text, false)
+                    }
+                    _ => (significant_text, true),
+                };
+                (selected.0, selected.1)
+            } else {
+                (fraction_text, false)
+            };
         if scientific.is_none()
             && self.use_grouping
             && (!self.grouping_min2 || scaled.abs() >= 10_000.0)
@@ -501,7 +503,7 @@ impl NumberOptions {
             text.push_str(&exponent);
         }
         text = apply_minimum_integer(&text, self.minimum_integer_digits);
-        if self.minimum_fraction_digits > 0 {
+        if self.minimum_fraction_digits > 0 && !significant_selected {
             text = pad_fraction(&text, self.minimum_fraction_digits);
         }
         let negative = text.starts_with('-');
