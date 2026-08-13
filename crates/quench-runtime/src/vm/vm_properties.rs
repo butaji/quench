@@ -90,14 +90,14 @@ fn iterator_property(value: &Value, key: &str) -> Value {
     }
     bind_method(value, property)
 }
-fn promise_value_property(
-    promise: &crate::value::PromiseData,
-    value: &Value,
-    key: &str,
-) -> Value {
+fn promise_value_property(promise: &crate::value::PromiseData, value: &Value, key: &str) -> Value {
     promise
         .property(key)
-        .or_else(|| promise.prototype().map(|prototype| get_property(&prototype, key)))
+        .or_else(|| {
+            promise
+                .prototype()
+                .map(|prototype| get_property(&prototype, key))
+        })
         .unwrap_or_else(|| promise_property(value, key))
 }
 fn map_property(data: &crate::value::MapData, key: &str) -> Value {
@@ -142,8 +142,12 @@ fn primitive_prototype_property(value: &Value, key: &str) -> Value {
         let builtin = match value {
             Value::Number(_) => Some(Builtin::Number),
             Value::Boolean(_) => Some(Builtin::Boolean),
-            Value::String(value) if !crate::conversion::is_symbol_string(value) => Some(Builtin::String),
-            Value::String(value) if crate::conversion::is_symbol_string(value) => Some(Builtin::Symbol),
+            Value::String(value) if !crate::conversion::is_symbol_string(value) => {
+                Some(Builtin::String)
+            }
+            Value::String(value) if crate::conversion::is_symbol_string(value) => {
+                Some(Builtin::Symbol)
+            }
             Value::BigInt(_) => Some(Builtin::BigInt),
             _ => None,
         };
@@ -241,10 +245,9 @@ pub(crate) fn get_property_with_receiver(
     if let Some(result) = data_view_instance_accessor(value, key) {
         return result;
     }
-    if let Ok(descriptor) = crate::builtins::object::descriptor(
-        Some(value),
-        Some(&Value::String(key.to_string())),
-    ) {
+    if let Ok(descriptor) =
+        crate::builtins::object::descriptor(Some(value), Some(&Value::String(key.to_string())))
+    {
         if !matches!(descriptor, Value::Undefined) {
             if let Value::Object(descriptor) = descriptor {
                 if let Some((_, getter)) = descriptor
@@ -259,12 +262,12 @@ pub(crate) fn get_property_with_receiver(
                     };
                 }
             }
-            return Ok(get_property(value, key));
+            return Ok(receiver_property(value, key, receiver));
         }
     }
     let getter = crate::property_define::accessor(value, key, "get");
     let Some(getter) = getter else {
-        return Ok(get_property(value, key));
+        return Ok(receiver_property(value, key, receiver));
     };
     if matches!(getter, Value::Undefined) {
         return Ok(Value::Undefined);
@@ -283,6 +286,17 @@ fn invoke_accessor(getter: &Value, receiver: &Value) -> Result<Value, VmError> {
             crate::vm::execute_builtin_with_receiver(*builtin, &[], Some(receiver))
         }
         _ => Err(crate::vm::not_callable()),
+    }
+}
+
+fn receiver_property(value: &Value, key: &str, receiver: &Value) -> Value {
+    let property = get_property(value, key);
+    if matches!(key, "constructor" | "prototype") {
+        return property;
+    }
+    match property {
+        Value::Builtin(_) => bind_method(receiver, property),
+        other => other,
     }
 }
 
@@ -324,7 +338,10 @@ fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
     if !matches!(inherited, Value::Undefined) {
         return bind_method(value, inherited);
     }
-    bind_method(value, crate::builtins::property(Builtin::ObjectPrototype, key))
+    bind_method(
+        value,
+        crate::builtins::property(Builtin::ObjectPrototype, key),
+    )
 }
 fn bind_function_property(value: &Value, key: &str) -> Value {
     let builtin = match key {
@@ -340,15 +357,22 @@ fn bound_function_property(
     bound: &crate::value::BoundFunctionValue,
     key: &str,
 ) -> Value {
-    if let Some((_, value)) = bound.properties.borrow().iter().rev().find(|(name, _)| name == key) {
+    if let Some((_, value)) = bound
+        .properties
+        .borrow()
+        .iter()
+        .rev()
+        .find(|(name, _)| name == key)
+    {
         return value.clone();
     }
     if matches!(key, "apply" | "call" | "bind") {
         bind_function_property(value, key)
     } else if key == "length" && !realm::is_intrinsic(bound) {
         match &bound.target {
-            Value::Builtin(builtin) => crate::builtins::props::callable(*builtin, key)
-                .unwrap_or(Value::Number(0.0)),
+            Value::Builtin(builtin) => {
+                crate::builtins::props::callable(*builtin, key).unwrap_or(Value::Number(0.0))
+            }
             target => get_property(target, key),
         }
     } else if key == "name" && !realm::is_intrinsic(bound) {
@@ -569,7 +593,9 @@ fn data_view_instance_accessor(value: &Value, key: &str) -> Option<Result<Value,
         "buffer" => Some(Ok(Value::ArrayBuffer(view.buffer.clone()))),
         "byteLength" | "byteOffset" => {
             if view.is_detached() || view.is_out_of_bounds() {
-                return Some(Err(crate::value::error::throw_type_error("Detached DataView")));
+                return Some(Err(crate::value::error::throw_type_error(
+                    "Detached DataView",
+                )));
             }
             let value = if key == "byteLength" {
                 view.byte_length()
