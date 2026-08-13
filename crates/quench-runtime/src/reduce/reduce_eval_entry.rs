@@ -2,7 +2,7 @@ pub fn reduce_eval_source(
     source: &str,
     inherited_strict: bool,
     global: bool,
-    direct: bool,
+    _direct: bool,
     bindings: &[(String, u16)],
     forbidden_var_names: &[String],
 ) -> Result<ResidualProgram, Vec<String>> {
@@ -10,8 +10,8 @@ pub fn reduce_eval_source(
         source,
         inherited_strict,
         global,
-        direct,
         bindings,
+        &[],
         forbidden_var_names,
         crate::semantic::EvalGrammarContext::default(),
     )
@@ -20,8 +20,8 @@ pub(crate) fn reduce_eval_source_in_context(
     source: &str,
     inherited_strict: bool,
     global: bool,
-    _direct: bool,
     bindings: &[(String, u16)],
+    reusable_var_names: &[String],
     forbidden_var_names: &[String],
     grammar: crate::semantic::EvalGrammarContext,
 ) -> Result<ResidualProgram, Vec<String>> {
@@ -39,7 +39,13 @@ pub(crate) fn reduce_eval_source_in_context(
     let mut facts = eval_facts(&analysis, strict);
     facts.install_reduction_source(source);
     facts.install_fact_sites(analysis.fact_sites);
-    let binding_state = crate::reduce_support::eval_bindings(&parsed.program, bindings, strict, global);
+    let binding_state = crate::reduce_support::eval_bindings(
+        &parsed.program,
+        bindings,
+        reusable_var_names,
+        strict,
+        global,
+    );
     let (locals, next_slot, mut prefix, behavior, deletable) = binding_state;
     facts.eval_deletable = deletable;
     let mut ops = reduce_eval_body(&parsed.program.body, &mut facts, locals, next_slot, behavior, directive_completion)?;

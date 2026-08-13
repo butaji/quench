@@ -84,6 +84,25 @@ fn reduce_function_body(
     arrow_expression: Option<bool>,
     rest: Option<u16>,
 ) -> Option<Vec<Op>> {
+    let inherited = (facts.eval_var_scope_start, facts.eval_arrow_scope);
+    facts.eval_var_scope_start = layout.1;
+    facts.eval_arrow_scope = arrow_expression.is_some();
+    let result = reduce_function_body_inner(syntax, facts, locals, layout, arrow_expression, rest);
+    (facts.eval_var_scope_start, facts.eval_arrow_scope) = inherited;
+    result
+}
+
+fn reduce_function_body_inner(
+    syntax: (
+        &[oxc::ast::ast::Statement<'_>],
+        &oxc::ast::ast::FormalParameters<'_>,
+    ),
+    facts: &mut ProgramDb,
+    locals: (&HashMap<String, u16>, HashMap<String, u16>),
+    layout: (u16, u16),
+    arrow_expression: Option<bool>,
+    rest: Option<u16>,
+) -> Option<Vec<Op>> {
     let (statements, formal) = syntax;
     let (parameters, body_locals) = locals;
     let captures = layout.1;
