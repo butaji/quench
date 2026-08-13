@@ -151,7 +151,7 @@ fn execute_simple_builtin(
             function_prototype_builtin(builtin, receiver)
         }
         Builtin::RegExpPrototypeToString => regexp_prototype_to_string(receiver),
-        Builtin::NumberToFixed | Builtin::NumberToPrecision | Builtin::NumberToExponential => crate::number_fmt::number_format(arguments.first(), arguments.get(1), builtin),
+        Builtin::NumberToFixed | Builtin::NumberToPrecision | Builtin::NumberToExponential => crate::number_fmt::number_format(receiver, arguments.first(), builtin),
         Builtin::Object => Ok(crate::builtins::object(arguments)),
         Builtin::Date => Ok(crate::date::call()),
         _ => Ok(Value::Undefined),
@@ -240,7 +240,7 @@ fn boxed_value(receiver: Option<&Value>) -> Value {
         _ => value.clone(),
     })
 }
-fn number_value_of(receiver: Option<&Value>) -> Result<Value, VmError> {
+pub(crate) fn number_value_of(receiver: Option<&Value>) -> Result<Value, VmError> {
     match receiver {
         Some(Value::Builtin(Builtin::NumberPrototype)) => Ok(Value::Number(0.0)),
         Some(Value::Number(value)) => Ok(Value::Number(*value)),
