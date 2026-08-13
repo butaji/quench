@@ -16,13 +16,16 @@ pub(crate) fn has_restricted_function_property(value: &Value, key: &str) -> bool
     if !matches!(key, "caller" | "arguments") {
         return false;
     }
-    let is_restricted = function.kind == crate::ops::FunctionKind::Arrow
+    let is_restricted = matches!(
+        function.kind,
+        crate::ops::FunctionKind::Arrow | crate::ops::FunctionKind::Generator
+    )
         || function.strictness == crate::ops::FunctionStrictness::Strict;
     let properties = function.properties.borrow();
     is_restricted
         && !properties
             .iter()
-            .any(|(name, _)| matches!(name.as_str(), "\0prototype") || name == key)
+            .any(|(name, _)| name == key)
 }
 
 fn object_prototype_property(properties: &[(String, Value)], key: &str) -> Value {

@@ -193,7 +193,7 @@ fn internal_prototype(value: &Value) -> Option<Value> {
         Value::Promise(data) => data
             .prototype()
             .or_else(|| Some(Value::Builtin(Builtin::PromisePrototype))),
-        Value::Generator(_) => Some(Value::Builtin(Builtin::ObjectPrototype)),
+        Value::Generator(generator) => generator_instance_prototype(generator),
         Value::Iterator(_) => Some(Value::Builtin(Builtin::IteratorPrototype)),
         Value::Builtin(builtin) => builtin_prototype_parent(*builtin),
         Value::Function(_) => Some(Value::Builtin(Builtin::FunctionPrototype)),
@@ -202,6 +202,21 @@ fn internal_prototype(value: &Value) -> Option<Value> {
         }
         _ => None,
     }
+}
+
+fn generator_instance_prototype(generator: &crate::value::GeneratorData) -> Option<Value> {
+    let properties = generator.function.properties.borrow();
+    let prototype = properties
+        .iter()
+        .rev()
+        .find_map(|(name, value)| (name == "prototype").then(|| value.clone()));
+    prototype.filter(crate::value::is_object).or_else(|| {
+        properties
+            .iter()
+            .rev()
+            .find_map(|(name, value)| (name == "\0prototype").then(|| value.clone()))
+            .map(|value| crate::execute::get_property(&value, "prototype"))
+    })
 }
 
 fn builtin_prototype_parent(builtin: Builtin) -> Option<Value> {
