@@ -9,7 +9,7 @@ use std::sync::Arc;
 mod realm;
 mod scope;
 mod vm_arithmetic;
-mod vm_ops;
+pub(crate) mod vm_ops;
 mod vm_typed_bigint;
 pub use crate::intl::tolocale::value::is_truthy;
 pub use scope::ExecutionScope;
