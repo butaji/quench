@@ -6,6 +6,7 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
     match b {
         Builtin::ObjectPrototypeValueOf => Some("Object.prototype.valueOf"),
         Builtin::ObjectHasOwnProperty => Some("Object.prototype.hasOwnProperty"),
+        Builtin::ObjectHasOwn => Some("Object.hasOwn"),
         Builtin::ObjectPrototypeIsPrototypeOf => Some("Object.prototype.isPrototypeOf"),
         Builtin::ObjectPrototypeDefineGetter => Some("Object.prototype.__defineGetter__"),
         Builtin::ObjectPrototypeDefineSetter => Some("Object.prototype.__defineSetter__"),
@@ -47,6 +48,7 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         | Builtin::ObjectEntries
         | Builtin::ObjectGetOwnPropertyNames
         | Builtin::ObjectGetOwnPropertySymbols => Some(1.0),
+        Builtin::ObjectHasOwn => Some(2.0),
         Builtin::ObjectGetOwnPropertyDescriptor | Builtin::ObjectIs => Some(2.0),
         Builtin::ObjectAssign => Some(2.0),
         Builtin::ObjectFromEntries => Some(1.0),
@@ -65,6 +67,7 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
             Some("valueOf")
         }
         Builtin::ObjectHasOwnProperty => Some("hasOwnProperty"),
+        Builtin::ObjectHasOwn => Some("hasOwn"),
         Builtin::ObjectPrototypeIsPrototypeOf => Some("isPrototypeOf"),
         Builtin::ObjectPrototypeDefineGetter => Some("__defineGetter__"),
         Builtin::ObjectPrototypeDefineSetter => Some("__defineSetter__"),

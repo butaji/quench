@@ -247,6 +247,7 @@ fn builtin_prototype_parent(builtin: Builtin) -> Option<Value> {
             | Builtin::WeakSetPrototype
             | Builtin::SharedArrayBufferPrototype
             | Builtin::WeakRefPrototype
+            | Builtin::DisposableStackPrototype
     )
     .then_some(Value::Builtin(Builtin::ObjectPrototype))
 }

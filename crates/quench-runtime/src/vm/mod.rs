@@ -474,6 +474,7 @@ fn is_object_special(builtin: Builtin) -> bool {
     matches!(
         builtin,
         Builtin::ObjectHasOwnProperty
+            | Builtin::ObjectHasOwn
             | Builtin::ObjectGetOwnPropertyDescriptor
             | Builtin::ObjectGetOwnPropertyNames
             | Builtin::ObjectGetOwnPropertySymbols
