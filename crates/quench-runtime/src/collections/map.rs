@@ -358,7 +358,12 @@ fn is_weak_key(value: &Value) -> bool {
 include!("map_storage.rs");
 
 pub(crate) fn map_set(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    map_set_inner(receiver, arguments, false)
+    let Some(key) = arguments.first() else {
+        return map_set_inner(receiver, arguments, false);
+    };
+    let mut normalized = arguments.to_vec();
+    normalized[0] = canonicalize_key(key);
+    map_set_inner(receiver, &normalized, false)
 }
 
 pub(crate) fn map_get(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
