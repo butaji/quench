@@ -262,7 +262,7 @@ fn add_group_value(
     Ok(())
 }
 
-fn is_intrinsic_prototype(builtin: Builtin) -> bool {
+pub(crate) fn is_intrinsic_prototype(builtin: Builtin) -> bool {
     matches!(
         builtin,
         Builtin::NumberPrototype
@@ -274,6 +274,7 @@ fn is_intrinsic_prototype(builtin: Builtin) -> bool {
             | Builtin::WeakSetPrototype
             | Builtin::SharedArrayBufferPrototype
             | Builtin::WeakRefPrototype
+            | Builtin::FinalizationRegistryPrototype
             | Builtin::BigIntPrototype
     )
 }

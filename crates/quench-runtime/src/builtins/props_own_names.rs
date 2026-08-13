@@ -10,6 +10,10 @@ pub(crate) fn own_property_names(builtin: Builtin) -> &'static [&'static str] {
             "Symbol.dispose", "Symbol.toStringTag",
         ],
         Builtin::AsyncDisposableStack => &["length", "name", "prototype"],
+        Builtin::FinalizationRegistry => &["length", "name", "prototype"],
+        Builtin::FinalizationRegistryPrototype => &[
+            "constructor", "register", "unregister", "Symbol.toStringTag",
+        ],
         Builtin::AsyncDisposableStackPrototype => &[
             "constructor", "use", "adopt", "defer", "move", "disposeAsync", "disposed",
             "Symbol.asyncDispose", "Symbol.toStringTag",
