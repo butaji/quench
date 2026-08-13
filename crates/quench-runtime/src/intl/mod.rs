@@ -55,6 +55,7 @@ fn constructor_property(builtin: Builtin, key: &str) -> Option<Builtin> {
         return match builtin {
             Builtin::IntlDateTimeFormat => Some(Builtin::IntlDateTimeFormatSupportedLocalesOf),
             Builtin::IntlSegmenter => Some(Builtin::IntlSegmenterSupportedLocalesOf),
+            Builtin::IntlListFormat => Some(Builtin::IntlListFormatSupportedLocalesOf),
             _ => None,
         };
     }
@@ -145,6 +146,7 @@ pub(crate) fn execute(
     match builtin {
         Builtin::IntlDateTimeFormatSupportedLocalesOf => Some(supported_locales_of(arguments)),
         Builtin::IntlSegmenterSupportedLocalesOf => Some(segmenter_supported_locales_of(arguments)),
+        Builtin::IntlListFormatSupportedLocalesOf => Some(list_supported_locales_of(arguments)),
         Builtin::IntlGetCanonicalLocales => Some(get_canonical_locales(arguments)),
         Builtin::IntlSupportedValuesOf => Some(supported_values_of(arguments)),
         _ => dispatch_all(builtin, arguments, receiver),
@@ -170,6 +172,18 @@ fn segmenter_supported_locales_of(arguments: &[Value]) -> Result<Value, VmError>
         locales
             .into_iter()
             .filter(|locale| supported_segmenter_locale(locale))
+            .map(Value::String)
+            .collect(),
+    ))
+}
+
+fn list_supported_locales_of(arguments: &[Value]) -> Result<Value, VmError> {
+    let locales = requested_locales(arguments)?;
+    validate_supported_options(arguments.get(1))?;
+    Ok(make_array(
+        locales
+            .into_iter()
+            .filter(|locale| locale == "en" || locale.starts_with("en-"))
             .map(Value::String)
             .collect(),
     ))
