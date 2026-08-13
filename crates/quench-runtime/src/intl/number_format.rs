@@ -231,6 +231,17 @@ pub(crate) fn format_number_rounded(value: f64, max_fraction: u32, increment: u3
     text
 }
 
+pub(crate) fn scientific_parts(value: f64, engineering: bool) -> (f64, i32) {
+    if value == 0.0 || !value.is_finite() {
+        return (value, 0);
+    }
+    let mut exponent = value.abs().log10().floor() as i32;
+    if engineering {
+        exponent -= exponent.rem_euclid(3);
+    }
+    (value / 10_f64.powi(exponent), exponent)
+}
+
 pub(crate) fn format_currency(
     text: &str,
     currency: Option<&str>,
