@@ -11,26 +11,13 @@ pub fn collections_property(builtin: Builtin, key: &str) -> Option<Value> {
     if builtin == MapPrototype {
         return map_property(key);
     }
+    if builtin == SetPrototype {
+        return set_property(key);
+    }
     match (builtin, key) {
-        (SetPrototype, "constructor") => Some(Value::Builtin(Set)),
-        (SetPrototype, "size") => Some(Value::Builtin(SetSizeGetter)),
-        (SetPrototype, "Symbol.toStringTag") => Some(Value::String("Set".into())),
-        (SetPrototype, "add") => Some(Value::Builtin(SetAdd)),
-        (SetPrototype, "has") => Some(Value::Builtin(SetHas)),
-        (SetPrototype, "delete") => Some(Value::Builtin(SetDelete)),
-        (SetPrototype, "clear") => Some(Value::Builtin(SetClear)),
-        (SetPrototype, "forEach") => Some(Value::Builtin(SetForEach)),
-        (SetPrototype, "keys") => Some(Value::Builtin(SetIterator)),
-        (SetPrototype, "values") => Some(Value::Builtin(SetIterator)),
-        (SetPrototype, "entries") => Some(Value::Builtin(SetEntries)),
-        (SetPrototype, "Symbol.iterator") => Some(Value::Builtin(SetIterator)),
-        (SetPrototype, "difference") => Some(Value::Builtin(SetDifference)),
-        (SetPrototype, "intersection") => Some(Value::Builtin(SetIntersection)),
-        (SetPrototype, "symmetricDifference") => Some(Value::Builtin(SetSymmetricDifference)),
-        (SetPrototype, "union") => Some(Value::Builtin(SetUnion)),
-        (SetPrototype, "isDisjointFrom") => Some(Value::Builtin(SetIsDisjointFrom)),
-        (SetPrototype, "isSubsetOf") => Some(Value::Builtin(SetIsSubsetOf)),
-        (SetPrototype, "isSupersetOf") => Some(Value::Builtin(SetIsSupersetOf)),
+        (SetIteratorPrototype | MapIteratorPrototype, k) => {
+            return iterator_prototype_property(builtin, k);
+        }
         (WeakMapPrototype, "set") => Some(Value::Builtin(WeakMapSet)),
         (WeakMapPrototype, "get") => Some(Value::Builtin(WeakMapGet)),
         (WeakMapPrototype, "has") => Some(Value::Builtin(WeakMapHas)),
@@ -39,6 +26,45 @@ pub fn collections_property(builtin: Builtin, key: &str) -> Option<Value> {
         (WeakMapPrototype, "getOrInsertComputed") => {
             Some(Value::Builtin(WeakMapGetOrInsertComputed))
         }
+        _ => None,
+    }
+}
+
+fn set_property(key: &str) -> Option<Value> {
+    use Builtin::*;
+    match key {
+        "constructor" => Some(Value::Builtin(Set)),
+        "size" => Some(Value::Builtin(SetSizeGetter)),
+        "Symbol.toStringTag" => Some(Value::String("Set".into())),
+        "add" => Some(Value::Builtin(SetAdd)),
+        "has" => Some(Value::Builtin(SetHas)),
+        "delete" => Some(Value::Builtin(SetDelete)),
+        "clear" => Some(Value::Builtin(SetClear)),
+        "forEach" => Some(Value::Builtin(SetForEach)),
+        "keys" | "values" | "Symbol.iterator" => Some(Value::Builtin(SetIterator)),
+        "entries" => Some(Value::Builtin(SetEntries)),
+        "difference" => Some(Value::Builtin(SetDifference)),
+        "intersection" => Some(Value::Builtin(SetIntersection)),
+        "symmetricDifference" => Some(Value::Builtin(SetSymmetricDifference)),
+        "union" => Some(Value::Builtin(SetUnion)),
+        "isDisjointFrom" => Some(Value::Builtin(SetIsDisjointFrom)),
+        "isSubsetOf" => Some(Value::Builtin(SetIsSubsetOf)),
+        "isSupersetOf" => Some(Value::Builtin(SetIsSupersetOf)),
+        _ => None,
+    }
+}
+
+fn iterator_prototype_property(builtin: Builtin, key: &str) -> Option<Value> {
+    use Builtin::*;
+    let (next, tag) = match builtin {
+        SetIteratorPrototype => (SetIteratorNext, "Set Iterator"),
+        MapIteratorPrototype => (MapIteratorNext, "Map Iterator"),
+        _ => return None,
+    };
+    match key {
+        "next" => Some(Value::Builtin(next)),
+        "Symbol.iterator" => Some(Value::Builtin(IteratorSelf)),
+        "Symbol.toStringTag" => Some(Value::String(tag.into())),
         _ => None,
     }
 }
@@ -83,6 +109,8 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
     }
     match b {
         Builtin::IteratorSelf => Some("Iterator.prototype[Symbol.iterator]"),
+        Builtin::SetIteratorNext => Some("SetIteratorPrototype.prototype.next"),
+        Builtin::MapIteratorNext => Some("MapIteratorPrototype.prototype.next"),
         Builtin::MapSet => Some("Map.prototype.set"),
         Builtin::MapSizeGetter => Some("get size"),
         Builtin::MapGet => Some("Map.prototype.get"),
@@ -116,7 +144,7 @@ const fn set_fn_name(b: Builtin) -> Option<&'static str> {
         Builtin::SetForEach => Some("Set.prototype.forEach"),
         Builtin::SetIterator => Some("Set.prototype.values"),
         Builtin::SetEntries => Some("Set.prototype.entries"),
-        Builtin::SetSpeciesGetter => Some("get [Symbol.species]"),
+        Builtin::SetSpeciesGetter | Builtin::MapSpeciesGetter => Some("get [Symbol.species]"),
         Builtin::SetDifference => Some("Set.prototype.difference"),
         Builtin::SetIntersection => Some("Set.prototype.intersection"),
         Builtin::SetSymmetricDifference => Some("Set.prototype.symmetricDifference"),
@@ -131,6 +159,7 @@ const fn set_fn_name(b: Builtin) -> Option<&'static str> {
 pub const fn fn_len(b: Builtin) -> Option<f64> {
     match b {
         Builtin::IteratorSelf => Some(0.0),
+        Builtin::SetIteratorNext | Builtin::MapIteratorNext => Some(0.0),
         Builtin::MapSet => Some(2.0),
         Builtin::MapSizeGetter | Builtin::SetSizeGetter => Some(0.0),
         Builtin::MapGet | Builtin::MapHas | Builtin::MapDelete => Some(1.0),
@@ -143,7 +172,7 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         Builtin::SetClear => Some(0.0),
         Builtin::SetForEach => Some(1.0),
         Builtin::SetIterator => Some(0.0),
-        Builtin::SetEntries | Builtin::SetSpeciesGetter => Some(0.0),
+        Builtin::SetEntries | Builtin::SetSpeciesGetter | Builtin::MapSpeciesGetter => Some(0.0),
         Builtin::SetDifference
         | Builtin::SetIntersection
         | Builtin::SetSymmetricDifference
@@ -168,6 +197,7 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
     }
     match b {
         Builtin::IteratorSelf => Some("[Symbol.iterator]"),
+        Builtin::SetIteratorNext | Builtin::MapIteratorNext => Some("next"),
         Builtin::MapSet => Some("set"),
         Builtin::MapGet => Some("get"),
         Builtin::MapHas => Some("has"),

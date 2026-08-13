@@ -121,6 +121,7 @@ fn static_accessor(builtin: Builtin, key: &str) -> Option<Value> {
         (Builtin::SetPrototype, "size") => Builtin::SetSizeGetter,
         (Builtin::MapPrototype, "size") => Builtin::MapSizeGetter,
         (Builtin::Set, "Symbol.species") => Builtin::SetSpeciesGetter,
+        (Builtin::Map, "Symbol.species") => Builtin::MapSpeciesGetter,
         (Builtin::SymbolPrototype, "description") => Builtin::SymbolDescriptionGetter,
         _ => return None,
     };

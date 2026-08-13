@@ -62,7 +62,10 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (Symbol, k) => crate::builtin_meta::symbol::symbol_prop(k).map(Value::Builtin),
         (Map, "groupBy") => Some(Value::Builtin(MapGroupBy)),
         (Set, "Symbol.species") => Some(Value::Builtin(Set)),
-        (MapPrototype | SetPrototype, k) => collections_prop(builtin, k),
+        (Map, "Symbol.species") => Some(Value::Builtin(Map)),
+        (MapPrototype | SetPrototype | SetIteratorPrototype | MapIteratorPrototype, k) => {
+            collections_prop(builtin, k)
+        }
         (BigIntPrototype, "Symbol.toStringTag") => Some(Value::String("BigInt".to_string())),
         (DatePrototype, k) => crate::builtin_meta::date::date_prop(k).map(Value::Builtin),
         _ => builtin_method(builtin, key).map(Value::Builtin),
