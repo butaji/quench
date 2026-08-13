@@ -13,11 +13,24 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let mut usage = "sort".to_string();
     let mut sensitivity = "variant".to_string();
     let mut ignore_punctuation = locale.starts_with("th");
+    let mut numeric = false;
+    let mut case_first = "false".to_string();
     if let Some(Value::Object(properties)) = arguments.get(1) {
         if let Some((_, value)) = properties.iter().find(|(name, _)| name == "usage") {
             usage = to_string_value(value);
             if !matches!(usage.as_str(), "sort" | "search") {
                 return Err(runtime_error("RangeError: invalid usage"));
+            }
+        }
+        if let Some((_, Value::Boolean(value))) =
+            properties.iter().find(|(name, _)| name == "numeric")
+        {
+            numeric = *value;
+        }
+        if let Some((_, value)) = properties.iter().find(|(name, _)| name == "caseFirst") {
+            case_first = to_string_value(value);
+            if !matches!(case_first.as_str(), "upper" | "lower" | "false") {
+                return Err(runtime_error("RangeError: invalid caseFirst"));
             }
         }
         if let Some((_, value)) = properties.iter().find(|(name, _)| name == "sensitivity") {
@@ -47,6 +60,8 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             make_object(vec![
                 ("locale".to_string(), Value::String(locale)),
                 ("usage".to_string(), Value::String(usage)),
+                ("numeric".to_string(), Value::Boolean(numeric)),
+                ("caseFirst".to_string(), Value::String(case_first)),
                 ("sensitivity".to_string(), Value::String(sensitivity)),
                 (
                     "ignorePunctuation".to_string(),
@@ -90,8 +105,16 @@ pub(crate) fn prototype_method(
                 "collation".to_string(),
                 Value::String("default".to_string()),
             ),
-            ("numeric".to_string(), Value::Boolean(false)),
-            ("caseFirst".to_string(), Value::String("false".to_string())),
+            (
+                "numeric".to_string(),
+                Value::Boolean(slot_bool(&slots, "numeric").unwrap_or(false)),
+            ),
+            (
+                "caseFirst".to_string(),
+                Value::String(
+                    slot_string(&slots, "caseFirst").unwrap_or_else(|| "false".to_string()),
+                ),
+            ),
         ])),
         _ => Err(runtime_error("TypeError: method not found")),
     }
