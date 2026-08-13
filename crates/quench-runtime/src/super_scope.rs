@@ -174,7 +174,6 @@ pub(crate) fn execute_constructor(
     let context = current()?;
     let arguments = crate::vm::vm_ops::collect_call_arguments(registers, args, spreads)?;
     let superclass = crate::construct::derived_constructor(&context.function)?;
-    let receiver = crate::construct::construct_super(&superclass, &context.function, &arguments)?;
     let this_slot = context
         .function
         .captures
@@ -182,6 +181,8 @@ pub(crate) fn execute_constructor(
         .saturating_add(usize::from(context.function.params))
         .saturating_add(1);
     let this_slot = u16::try_from(this_slot).map_err(|_| VmError::MissingReturn)?;
+    let new_target = crate::locals::current().get(this_slot.saturating_add(1));
+    let receiver = crate::construct::construct_super(&superclass, &new_target, &arguments)?;
     if !crate::locals::current().is_uninitialized(this_slot) {
         return Err(crate::value::error::throw_reference_error(
             "Super constructor may only be called once",
