@@ -327,12 +327,17 @@ fn anchored_match(source: &str, flags: &str, last_index: usize, input: &str) -> 
 }
 
 pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let Some(receiver @ Value::Object(_)) = receiver else {
+    let Some(receiver) = receiver else {
         return Err(crate::value::error::throw_type_error(
             "RegExp.prototype.test requires RegExp",
         ));
     };
-    let s = argument_string(arguments);
+    if !has_regexp_internal_slot(receiver) {
+        return Err(crate::value::error::throw_type_error(
+            "RegExp.prototype.test requires RegExp",
+        ));
+    }
+    let s = argument_string(arguments)?;
     let (source, flags, last_index) = extract_regex_parts(receiver)?;
     let (search_start, search_string) = prepare_search(&s, &flags, last_index);
     let pattern = if source.is_empty() { "(?:)" } else { &source };
@@ -351,12 +356,17 @@ pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
 }
 
 pub fn exec(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let Some(receiver @ Value::Object(_)) = receiver else {
+    let Some(receiver) = receiver else {
         return Err(crate::value::error::throw_type_error(
             "RegExp.prototype.exec requires RegExp",
         ));
     };
-    let s = argument_string(arguments);
+    if !has_regexp_internal_slot(receiver) {
+        return Err(crate::value::error::throw_type_error(
+            "RegExp.prototype.exec requires RegExp",
+        ));
+    }
+    let s = argument_string(arguments)?;
     let (source, flags, last_index) = extract_regex_parts(receiver)?;
     let (search_start, search_string) = prepare_search(&s, &flags, last_index);
     let pattern = if source.is_empty() { "(?:)" } else { &source };
@@ -374,6 +384,16 @@ pub fn exec(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
         }
         Ok(Value::Null)
     }
+}
+
+fn has_regexp_internal_slot(value: &Value) -> bool {
+    matches!(
+        value,
+        Value::Object(properties)
+            if properties
+                .iter()
+                .any(|(name, value)| name == "\0regexp" && matches!(value, Value::Boolean(true)))
+    )
 }
 
 fn build_match_result(
@@ -415,10 +435,10 @@ fn match_result(values: Vec<Value>, index: Value, input: &str) -> Value {
     crate::builtins::set_property(result, "input", Value::String(input.to_string()))
 }
 
-fn argument_string(arguments: &[Value]) -> String {
+fn argument_string(arguments: &[Value]) -> Result<String, VmError> {
     arguments
         .first()
-        .map_or_else(|| "undefined".to_string(), value_to_string)
+        .map_or_else(|| Ok("undefined".to_string()), crate::conversion::to_string)
 }
 
 fn extract_regex_parts(receiver: &Value) -> Result<(String, String, usize), VmError> {
