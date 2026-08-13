@@ -291,6 +291,12 @@ fn invoke_accessor(getter: &Value, receiver: &Value) -> Result<Value, VmError> {
 
 fn receiver_property(value: &Value, key: &str, receiver: &Value) -> Value {
     let property = get_property(value, key);
+    if matches!(value, Value::Builtin(_)) {
+        return property;
+    }
+    if matches!(value, Value::Object(_)) && crate::vm::is_global_object(value) {
+        return property;
+    }
     if matches!(key, "constructor" | "prototype") {
         return property;
     }
