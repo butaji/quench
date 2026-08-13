@@ -62,7 +62,8 @@ fn accessor_value(value: &Value, key: &str, field: &str) -> Option<Value> {
                 .find_map(|(name, value)| (name == "\0prototype").then(|| value.clone()))
                 .and_then(|prototype| accessor_value(&prototype, key, field))
         }),
-        Value::Function(function) => accessor_field(&function.properties.borrow(), key, field),
+        Value::Function(function) => accessor_field(&function.properties.borrow(), key, field)
+            .or_else(|| accessor_builtin(Builtin::FunctionPrototype, key, field)),
         Value::ObjectAlias(alias) => alias
             .0
             .borrow()
@@ -111,6 +112,14 @@ fn accessor_builtin(builtin: Builtin, key: &str, field: &str) -> Option<Value> {
                 .and_then(|descriptor| descriptor_field(&descriptor, field))
         })
         .or_else(|| {
+            crate::builtins::object::descriptor(
+                Some(&Value::Builtin(builtin)),
+                Some(&Value::String(key.to_string())),
+            )
+            .ok()
+            .and_then(|descriptor| descriptor_field(&descriptor, field))
+        })
+        .or_else(|| {
             builtin_prototype(builtin).and_then(|prototype| accessor_value(&prototype, key, field))
         })
 }
@@ -121,6 +130,9 @@ fn static_accessor(builtin: Builtin, key: &str) -> Option<Value> {
     let getter = match (builtin, key) {
         (Builtin::SetPrototype, "size") => Builtin::SetSizeGetter,
         (Builtin::MapPrototype, "size") => Builtin::MapSizeGetter,
+        (Builtin::DataViewPrototype, "buffer") => Builtin::DataViewBufferGetter,
+        (Builtin::DataViewPrototype, "byteLength") => Builtin::DataViewByteLengthGetter,
+        (Builtin::DataViewPrototype, "byteOffset") => Builtin::DataViewByteOffsetGetter,
         (Builtin::Set, "Symbol.species") => Builtin::SetSpeciesGetter,
         (Builtin::Map, "Symbol.species") => Builtin::MapSpeciesGetter,
         (Builtin::SymbolPrototype, "description") => Builtin::SymbolDescriptionGetter,

@@ -52,6 +52,9 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
     if let Some(value) = weak_special(builtin, key) {
         return Some(value);
     }
+    if builtin == Builtin::Error && key == "isError" {
+        return Some(Value::Builtin(Builtin::ErrorIsError));
+    }
     match (builtin, key) {
         (RegExpStringIteratorPrototype, "Symbol.toStringTag") => {
             Some(Value::String("RegExp String Iterator".into()))
@@ -93,6 +96,11 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (DisposableStackPrototype, "Symbol.dispose") => {
             Some(Value::Builtin(DisposableStackDispose))
         }
+        (ErrorPrototype, "toString") => Some(Value::Builtin(ErrorPrototypeToString)),
+        (ErrorPrototype, "name") => Some(Value::String("Error".to_string())),
+        (ErrorPrototype, "message") => Some(Value::String("".to_string())),
+        (ErrorPrototype, "cause") => Some(Value::Undefined),
+        (ErrorPrototype, "constructor") => Some(Value::Builtin(Error)),
         (DisposableStackPrototype, "Symbol.toStringTag") => {
             Some(Value::String("DisposableStack".into()))
         }
