@@ -31,9 +31,24 @@ pub(crate) fn char_at_utf16(s: &str, index: usize) -> Option<String> {
 }
 
 /// Converts a byte offset into `s` to a UTF-16 code-unit offset.
-fn byte_to_utf16(s: &str, byte: usize) -> usize {
+pub(crate) fn byte_to_utf16(s: &str, byte: usize) -> usize {
     s.get(..byte)
         .map_or(0, |prefix| prefix.encode_utf16().count())
+}
+
+/// Converts a UTF-16 code-unit offset into its corresponding UTF-8 byte offset.
+pub(crate) fn utf16_byte_index(s: &str, index: usize) -> usize {
+    let mut units = 0;
+    for (byte, character) in s.char_indices() {
+        if units >= index {
+            return byte;
+        }
+        units += character.len_utf16();
+        if units >= index {
+            return byte + character.len_utf8();
+        }
+    }
+    s.len()
 }
 
 /// The code point beginning at `index` within `units`, folding a valid

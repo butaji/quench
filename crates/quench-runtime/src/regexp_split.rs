@@ -102,7 +102,7 @@ fn split_with_exec(mut matcher: Value, input: &str, limit: usize, unicode: bool)
         q = p;
     }
     if values.len() < limit {
-        values.push(Value::String(input[utf16_byte_index(input, p)..].to_string()));
+        values.push(Value::String(input[crate::strings::utf16_byte_index(input, p)..].to_string()));
     }
     Ok(Value::array(values))
 }
@@ -114,8 +114,8 @@ fn split_empty_exec(matcher: &Value, input: &str) -> Result<Value, VmError> {
 }
 
 fn split_push(values: &mut Vec<Value>, input: &str, start: usize, end: usize, result: &Value, limit: usize) -> Result<(), VmError> {
-    let start = utf16_byte_index(input, start);
-    let end = utf16_byte_index(input, end);
+    let start = crate::strings::utf16_byte_index(input, start);
+    let end = crate::strings::utf16_byte_index(input, end);
     values.push(Value::String(input[start..end].to_string()));
     let length = crate::conversion::to_number(&crate::execute::get_property_result(result, "length")?)?;
     for index in 1..to_length(length) {
