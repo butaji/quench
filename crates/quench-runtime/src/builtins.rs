@@ -1,4 +1,3 @@
-mod array_like;
 mod builtins_cells;
 mod intrinsic_overrides;
 pub mod object;
@@ -8,7 +7,6 @@ use crate::{
     ops::Builtin,
     value::{ObjectData, Value},
 };
-use array_like::{array_like_length, array_like_value};
 use intrinsic_overrides as overrides;
 use std::rc::Rc;
 const DESCRIPTOR_PREFIX: &str = "\0quench:descriptor:\0";
@@ -120,20 +118,52 @@ pub(crate) fn array_map(
     let Some(callback) = arguments.first() else {
         return Ok(Value::array(Vec::new()));
     };
-    let length = array_like_length(receiver);
+    let length = map_length(receiver)?;
     if length > u32::MAX as usize {
         return Err(crate::value::error::throw_range_error(
             "Invalid array length",
         ));
     }
-    let mut mapped = Vec::with_capacity(length);
+    let mut mapped = Value::array(Vec::new());
+    if let Value::Array(values) = &mut mapped {
+        Rc::make_mut(values).set_length(length);
+    }
     for index in 0..length {
-        let value = array_like_value(receiver, index);
+        let Some(value) = map_value(receiver, index)? else {
+            continue;
+        };
         let args = [value, Value::Number(index as f64), receiver.clone()];
         let this_arg = arguments.get(1).map_or(&Value::Undefined, |value| value);
-        mapped.push(crate::functions::execute_target(callback, this_arg, &args)?);
+        let result = crate::functions::execute_target(callback, this_arg, &args)?;
+        if let Value::Array(values) = &mut mapped {
+            Rc::make_mut(values).set_index(index, result);
+        }
     }
-    Ok(Value::array(mapped))
+    Ok(mapped)
+}
+fn map_length(receiver: &Value) -> Result<usize, crate::execute::VmError> {
+    if let Value::Array(values) = receiver {
+        return Ok(values.logical_len());
+    }
+    let length = crate::execute::get_property_result(receiver, "length")?;
+    let number = crate::conversion::to_number(&length)?;
+    if number.is_nan() || number <= 0.0 {
+        return Ok(0);
+    }
+    Ok(number.floor().min(9_007_199_254_740_991.0) as usize)
+}
+fn map_value(receiver: &Value, index: usize) -> Result<Option<Value>, crate::execute::VmError> {
+    if let Value::Array(values) = receiver {
+        return Ok(values
+            .has_index(index)
+            .then(|| values.get_index(index))
+            .flatten());
+    }
+    let key = index.to_string();
+    if !crate::with_scope::has_property(receiver, &key)? {
+        return Ok(None);
+    }
+    crate::execute::get_property_result(receiver, &key).map(Some)
 }
 pub(crate) fn array_for_each(
     receiver: Option<&Value>,
