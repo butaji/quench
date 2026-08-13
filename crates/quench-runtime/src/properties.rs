@@ -195,8 +195,18 @@ pub(crate) fn execute_set_property(
     if inherited_write_blocked(&target, &key) {
         return write_failure(strict);
     }
+    if matches!(
+        target,
+        crate::value::Value::String(_)
+            | crate::value::Value::StringUnits(_)
+            | crate::value::Value::Number(_)
+            | crate::value::Value::Boolean(_)
+            | crate::value::Value::BigInt(_)
+    ) {
+        return write_failure(strict);
+    }
     if let crate::value::Value::Builtin(builtin) = &target {
-            if !crate::builtins::object::builtin_property_writable(*builtin, &key) {
+        if !crate::builtins::object::builtin_property_writable(*builtin, &key) {
             return write_failure(strict);
         }
         return set_builtin_property(registers, object, &target, &key, value);
