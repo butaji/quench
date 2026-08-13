@@ -68,10 +68,7 @@ fn symbol_match_global(receiver: &Value, s: &str, unicode: bool) -> Result<Value
             set_last_index(receiver, next as f64)?;
         }
     }
-    let result = Value::array(matched);
-    crate::builtins::set_property(result.clone(), "index", Value::Number(0.0));
-    crate::builtins::set_property(result.clone(), "input", Value::String(s.to_string()));
-    Ok(result)
+    Ok(Value::array(matched))
 }
 
 fn advance_string_index(text: &str, index: usize, unicode: bool) -> usize {
