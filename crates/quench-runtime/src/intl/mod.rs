@@ -51,6 +51,9 @@ fn global_property(builtin: Builtin, key: &str) -> Option<Builtin> {
 }
 
 fn constructor_property(builtin: Builtin, key: &str) -> Option<Builtin> {
+    if key == "supportedLocalesOf" && builtin == Builtin::IntlDateTimeFormat {
+        return Some(Builtin::IntlDateTimeFormatSupportedLocalesOf);
+    }
     if key != "prototype" {
         return None;
     }
@@ -130,10 +133,22 @@ pub(crate) fn execute(
     receiver: Option<&Value>,
 ) -> Option<Result<Value, VmError>> {
     match builtin {
+        Builtin::IntlDateTimeFormatSupportedLocalesOf => Some(supported_locales_of(arguments)),
         Builtin::IntlGetCanonicalLocales => Some(get_canonical_locales(arguments)),
         Builtin::IntlSupportedValuesOf => Some(supported_values_of(arguments)),
         _ => dispatch_all(builtin, arguments, receiver),
     }
+}
+
+fn supported_locales_of(arguments: &[Value]) -> Result<Value, VmError> {
+    let locales = resolve_locales(arguments)?;
+    Ok(make_array(
+        locales
+            .into_iter()
+            .filter(|locale| locale == "en" || locale.starts_with("en-"))
+            .map(Value::String)
+            .collect(),
+    ))
 }
 
 type Handler = fn(Builtin, &[Value], Option<&Value>) -> Option<Result<Value, VmError>>;
