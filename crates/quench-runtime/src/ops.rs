@@ -170,6 +170,7 @@ pub enum Builtin {
     StringFromCodePoint,
     StringRaw,
     Symbol,
+    SymbolToString,
     SymbolValueOf,
     SymbolIterator,
     SymbolUnscopables,
