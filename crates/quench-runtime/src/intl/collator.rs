@@ -3,16 +3,24 @@
 use crate::{execute::VmError, value::Value};
 
 use super::{
-    default_locale, make_object, resolve_locales, runtime_error, slot_string, to_string_value, SLOT,
+    default_locale, make_object, resolve_locales, runtime_error, slot_bool, slot_string,
+    to_string_value, SLOT,
 };
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
     let locale = locales.first().cloned().unwrap_or_else(default_locale);
     let mut sensitivity = "variant".to_string();
+    let mut ignore_punctuation = locale.starts_with("th");
     if let Some(Value::Object(properties)) = arguments.get(1) {
         if let Some((_, value)) = properties.iter().find(|(name, _)| name == "sensitivity") {
             sensitivity = to_string_value(value);
+        }
+        if let Some((_, Value::Boolean(value))) = properties
+            .iter()
+            .find(|(name, _)| name == "ignorePunctuation")
+        {
+            ignore_punctuation = *value;
         }
     }
     Ok(make_object(vec![
@@ -29,6 +37,10 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             make_object(vec![
                 ("locale".to_string(), Value::String(locale)),
                 ("sensitivity".to_string(), Value::String(sensitivity)),
+                (
+                    "ignorePunctuation".to_string(),
+                    Value::Boolean(ignore_punctuation),
+                ),
             ]),
         ),
     ]))
@@ -55,6 +67,10 @@ pub(crate) fn prototype_method(
                 Value::String(
                     slot_string(&slots, "sensitivity").unwrap_or_else(|| "variant".to_string()),
                 ),
+            ),
+            (
+                "ignorePunctuation".to_string(),
+                Value::Boolean(slot_bool(&slots, "ignorePunctuation").unwrap_or(false)),
             ),
             (
                 "collation".to_string(),
