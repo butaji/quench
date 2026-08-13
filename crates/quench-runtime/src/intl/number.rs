@@ -27,6 +27,8 @@ pub(crate) struct NumberOptions {
     pub rounding_mode: String,
     pub rounding_increment: u32,
     pub sign_display: String,
+    pub minimum_significant_digits: Option<u32>,
+    pub maximum_significant_digits: Option<u32>,
 }
 
 pub(crate) struct RawOptions {
@@ -45,6 +47,8 @@ pub(crate) struct RawOptions {
     rounding_mode: String,
     rounding_increment: f64,
     sign_display: String,
+    minimum_significant_digits: f64,
+    maximum_significant_digits: f64,
 }
 
 impl RawOptions {
@@ -65,6 +69,8 @@ impl RawOptions {
             rounding_mode: "halfExpand".to_string(),
             rounding_increment: 1.0,
             sign_display: "auto".to_string(),
+            minimum_significant_digits: -1.0,
+            maximum_significant_digits: -1.0,
         };
         if let Some(Value::Object(properties)) = options {
             for (key, value) in properties.iter() {
@@ -91,6 +97,12 @@ impl RawOptions {
                     "roundingMode" => raw.rounding_mode = value,
                     "roundingIncrement" => raw.rounding_increment = value.parse().unwrap_or(1.0),
                     "signDisplay" => raw.sign_display = value,
+                    "minimumSignificantDigits" => {
+                        raw.minimum_significant_digits = value.parse().unwrap_or(-1.0)
+                    }
+                    "maximumSignificantDigits" => {
+                        raw.maximum_significant_digits = value.parse().unwrap_or(-1.0)
+                    }
                     _ => {}
                 }
             }
@@ -142,6 +154,8 @@ impl NumberOptions {
             rounding_mode: raw.rounding_mode,
             rounding_increment: raw.rounding_increment.max(1.0) as u32,
             sign_display: raw.sign_display,
+            minimum_significant_digits: significant_digits(raw.minimum_significant_digits),
+            maximum_significant_digits: significant_digits(raw.maximum_significant_digits),
         })
     }
 
@@ -211,6 +225,18 @@ impl NumberOptions {
                 Value::Number(self.rounding_increment as f64),
             ),
         ];
+        if let Some(value) = self.minimum_significant_digits {
+            properties.push((
+                "minimumSignificantDigits".to_string(),
+                Value::Number(value as f64),
+            ));
+        }
+        if let Some(value) = self.maximum_significant_digits {
+            properties.push((
+                "maximumSignificantDigits".to_string(),
+                Value::Number(value as f64),
+            ));
+        }
         if let Some(currency) = &self.currency {
             properties.push(("currency".to_string(), Value::String(currency.clone())));
             properties.push((
@@ -254,6 +280,10 @@ fn fraction_digits(style: &str, currency: Option<&str>, requested: f64) -> u32 {
         "currency" => 2,
         _ => requested as u32,
     }
+}
+
+fn significant_digits(value: f64) -> Option<u32> {
+    (value >= 1.0).then_some(value as u32)
 }
 
 fn maximum_fraction(style: &str, currency: &Option<String>, requested: f64, minimum: u32) -> u32 {
@@ -367,6 +397,10 @@ impl NumberOptions {
                 .unwrap_or_else(|| "halfExpand".to_string()),
             rounding_increment: slot_number(slots, "roundingIncrement").unwrap_or(1.0) as u32,
             sign_display: slot_string(slots, "signDisplay").unwrap_or_else(|| "auto".to_string()),
+            minimum_significant_digits: slot_number(slots, "minimumSignificantDigits")
+                .map(|v| v as u32),
+            maximum_significant_digits: slot_number(slots, "maximumSignificantDigits")
+                .map(|v| v as u32),
         })
     }
 
@@ -401,7 +435,16 @@ impl NumberOptions {
         } else {
             self.maximum_fraction_digits
         };
-        let mut text = format_number_rounded(value, fraction_digits, self.rounding_increment);
+        let mut text = if let Some(maximum) = self.maximum_significant_digits {
+            format_significant(
+                value,
+                self.minimum_significant_digits.unwrap_or(1),
+                maximum,
+                &self.rounding_mode,
+            )
+        } else {
+            format_number_rounded(value, fraction_digits, self.rounding_increment)
+        };
         if scientific.is_none()
             && self.use_grouping
             && (!self.grouping_min2 || scaled.abs() >= 10_000.0)

@@ -245,6 +245,74 @@ pub(crate) fn format_number_rounded(value: f64, max_fraction: u32, increment: u3
     text
 }
 
+pub(crate) fn format_significant(value: f64, minimum: u32, maximum: u32, mode: &str) -> String {
+    if value == 0.0 {
+        let zero = if minimum > 1 {
+            format!("{:.*}", (minimum - 1) as usize, 0.0)
+        } else {
+            "0".to_string()
+        };
+        return if value.is_sign_negative() {
+            format!("-{zero}")
+        } else {
+            zero
+        };
+    }
+    let exponent = value.abs().log10().floor() as i32;
+    let decimals = (maximum as i32 - exponent - 1).max(0) as usize;
+    let scale = 10f64.powi(decimals as i32);
+    let rounded = round_units(value * scale, mode) / scale;
+    let mut text = format!("{:.*}", decimals, rounded);
+    if let Some((whole, fraction)) = text.split_once('.') {
+        let mut fraction = fraction.trim_end_matches('0').to_string();
+        let required = minimum.saturating_sub(whole.trim_start_matches('-').len() as u32);
+        while fraction.len() < required as usize {
+            fraction.push('0');
+        }
+        text = if fraction.is_empty() {
+            whole.to_string()
+        } else {
+            format!("{whole}.{fraction}")
+        };
+    }
+    text
+}
+
+fn round_units(value: f64, mode: &str) -> f64 {
+    match mode {
+        "ceil" => value.ceil(),
+        "floor" => value.floor(),
+        "trunc" => value.trunc(),
+        "expand" => {
+            if value.is_sign_negative() {
+                value.floor()
+            } else {
+                value.ceil()
+            }
+        }
+        "halfCeil" | "halfFloor" | "halfTrunc" | "halfEven" | "halfExpand" => {
+            let lower = value.floor();
+            let fraction = value - lower;
+            if fraction < 0.5 - 1e-9 {
+                lower
+            } else if fraction > 0.5 + 1e-9 {
+                lower + 1.0
+            } else {
+                match mode {
+                    "halfCeil" => lower + 1.0,
+                    "halfFloor" => lower,
+                    "halfExpand" if value.is_sign_negative() => lower,
+                    "halfTrunc" if value.is_sign_negative() => lower + 1.0,
+                    "halfTrunc" => lower,
+                    "halfEven" if (lower as i64) % 2 == 0 => lower,
+                    _ => lower + 1.0,
+                }
+            }
+        }
+        _ => value.round(),
+    }
+}
+
 pub(crate) fn scientific_parts(value: f64, engineering: bool) -> (f64, i32) {
     if value == 0.0 || !value.is_finite() {
         return (value, 0);
