@@ -4,6 +4,7 @@ use super::{resolve_locales, runtime_error, to_string_value};
 use crate::{execute::VmError, ops::Builtin, value::Value};
 
 mod date_kind;
+pub(crate) mod parse_num;
 pub(crate) use date_kind::DateLocaleKind;
 
 #[path = "tolocale_number.rs"]
@@ -96,7 +97,7 @@ pub(crate) mod value {
             Some(Value::Null) => 0.0,
             Some(Value::Boolean(value)) => f64::from(*value),
             Some(Value::Number(value)) => *value,
-            Some(Value::String(value)) => parse_number(value),
+            Some(Value::String(value)) => super::parse_num::parse_number(value),
             Some(Value::Object(properties)) => boxed_number(properties),
             Some(
                 Value::Array(_)
@@ -136,44 +137,6 @@ pub(crate) mod value {
     }
     pub(crate) fn to_number_result(value: Option<&Value>) -> Result<f64, crate::execute::VmError> {
         crate::conversion::to_number(value.unwrap_or(&Value::Undefined))
-    }
-    pub(crate) fn parse_number(value: &str) -> f64 {
-        let value = value.trim();
-        if value.is_empty() {
-            return 0.0;
-        }
-        if matches!(value, "INFINITY" | "infinity" | "+infinity" | "-infinity") {
-            return f64::NAN;
-        }
-        let Some((prefix, digits)) = value.get(0..2).map(|prefix| (prefix, &value[2..])) else {
-            return value.parse().unwrap_or(f64::NAN);
-        };
-        let radix = match prefix {
-            "0b" | "0B" => Some(2),
-            "0o" | "0O" => Some(8),
-            "0x" | "0X" => Some(16),
-            _ => None,
-        };
-        if let Some(radix) = radix {
-            return i64::from_str_radix(digits, radix).map_or(f64::NAN, |n| n as f64);
-        }
-        value.parse().unwrap_or(f64::NAN)
-    }
-    pub(crate) fn parse_int(arguments: &[Value]) -> f64 {
-        let text = to_string(arguments.first()).trim().to_string();
-        let radix = arguments.get(1).map_or(0, |v| to_number(Some(v)) as i32);
-        let radix = if radix == 0 { 10 } else { radix };
-        if !(2..=36).contains(&radix) {
-            return f64::NAN;
-        }
-        let (sign, digits) = match text.strip_prefix('-') {
-            Some(value) => (-1.0, value),
-            None => (1.0, text.strip_prefix('+').unwrap_or(&text)),
-        };
-        i64::from_str_radix(digits, radix as u32).map_or(f64::NAN, |v| sign * v as f64)
-    }
-    pub(crate) fn parse_float(value: Option<&Value>) -> f64 {
-        to_string(value).trim().parse().unwrap_or(f64::NAN)
     }
     pub fn is_truthy(value: &Value) -> bool {
         match value {
