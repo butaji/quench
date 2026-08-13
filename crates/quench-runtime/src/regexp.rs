@@ -1,6 +1,5 @@
 use regress::{Flags, Regex};
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::rc::Rc;
 
 use crate::{execute::VmError, ops::Builtin, value::Value};
 
@@ -333,7 +332,7 @@ pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
         ));
     };
     let s = argument_string(arguments);
-    let (source, flags, last_index) = extract_regex_parts(receiver);
+    let (source, flags, last_index) = extract_regex_parts(receiver)?;
     let (search_start, search_string) = prepare_search(&s, &flags, last_index);
     let pattern = if source.is_empty() { "(?:)" } else { &source };
     let re_flags = build_re_flags(&flags);
@@ -345,7 +344,7 @@ pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
     let matched = found.is_some();
     if flags.contains('g') || flags.contains('y') {
         let new_index = found.map_or(0, |match_| match_.end() + search_start);
-        set_last_index(receiver, new_index as f64);
+        set_last_index(receiver, new_index as f64)?;
     }
     Ok(Value::Boolean(matched))
 }
@@ -357,7 +356,7 @@ pub fn exec(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
         ));
     };
     let s = argument_string(arguments);
-    let (source, flags, last_index) = extract_regex_parts(receiver);
+    let (source, flags, last_index) = extract_regex_parts(receiver)?;
     let (search_start, search_string) = prepare_search(&s, &flags, last_index);
     let pattern = if source.is_empty() { "(?:)" } else { &source };
     let re_flags = build_re_flags(&flags);
@@ -370,7 +369,7 @@ pub fn exec(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
         build_match_result(receiver, &s, m, search_start, &flags)
     } else {
         if flags.contains('g') || flags.contains('y') {
-            set_last_index(receiver, 0.0);
+            set_last_index(receiver, 0.0)?;
         }
         Ok(Value::Null)
     }
@@ -385,31 +384,34 @@ fn build_match_result(
 ) -> Result<Value, VmError> {
     let new_index = m.end() + search_start;
     if flags.contains('g') || flags.contains('y') {
-        set_last_index(receiver, new_index as f64);
+        set_last_index(receiver, new_index as f64)?;
     }
-    let full_match = &s[m.start() + search_start..new_index];
-    let mut result = vec![
-        ("0".to_string(), Value::String(full_match.to_string())),
-        (
-            "index".to_string(),
-            Value::Number((m.start() + search_start) as f64),
-        ),
-        ("input".to_string(), Value::String(s.to_string())),
-    ];
-    for (i, group) in m.groups().enumerate() {
-        let val = match group {
+    let values = match_values(s, &m, search_start);
+    let index = Value::Number((m.start() + search_start) as f64);
+    Ok(match_result(values, index, s))
+}
+
+fn match_values(text: &str, m: &regress::Match, offset: usize) -> Vec<Value> {
+    let mut values = m
+        .groups()
+        .map(|group| match group {
             Some(range) => {
-                let start = range.start + search_start;
-                let end = range.end + search_start;
-                Value::String(s[start..end].to_string())
+                Value::String(text[offset + range.start..offset + range.end].to_string())
             }
             None => Value::Undefined,
-        };
-        result.push((i.to_string(), val));
+        })
+        .collect::<Vec<_>>();
+    if values.is_empty() {
+        values.push(Value::String(
+            text[offset + m.start()..offset + m.end()].to_string(),
+        ));
     }
-    Ok(Value::Object(Rc::new(crate::value::ObjectData::new(
-        result,
-    ))))
+    values
+}
+
+fn match_result(values: Vec<Value>, index: Value, input: &str) -> Value {
+    let result = crate::builtins::set_property(Value::array(values), "index", index);
+    crate::builtins::set_property(result, "input", Value::String(input.to_string()))
 }
 
 fn argument_string(arguments: &[Value]) -> String {
@@ -418,11 +420,11 @@ fn argument_string(arguments: &[Value]) -> String {
         .map_or_else(|| "undefined".to_string(), value_to_string)
 }
 
-fn extract_regex_parts(receiver: &Value) -> (String, String, usize) {
+fn extract_regex_parts(receiver: &Value) -> Result<(String, String, usize), VmError> {
     let source = extract_source(receiver);
     let flags = extract_flags(receiver);
-    let last_index = extract_last_index(receiver) as usize;
-    (source, flags, last_index)
+    let last_index = extract_last_index(receiver)?;
+    Ok((source, flags, last_index))
 }
 
 fn prepare_search<'a>(s: &'a str, flags: &str, last_index: usize) -> (usize, &'a str) {
@@ -468,30 +470,23 @@ fn extract_flags(receiver: &Value) -> String {
     }
 }
 
-fn extract_last_index(receiver: &Value) -> f64 {
-    match receiver {
-        Value::Object(props) => props
-            .iter()
-            .find(|(k, _)| k == "lastIndex")
-            .and_then(|(_, v)| {
-                if let Value::Number(n) = v {
-                    Some(*n)
-                } else {
-                    None
-                }
-            })
-            .unwrap_or(0.0),
-        _ => 0.0,
-    }
+fn extract_last_index(receiver: &Value) -> Result<usize, VmError> {
+    let value = crate::execute::get_property_result(receiver, "lastIndex")?;
+    let number = crate::conversion::to_number(&value)?;
+    Ok(to_length(number))
 }
 
-fn set_last_index(receiver: &Value, index: f64) {
-    if let Value::Object(props) = receiver {
-        let mut props = (**props).clone();
-        if let Some((_, v)) = props.iter_mut().find(|(k, _)| k == "lastIndex") {
-            *v = Value::Number(index);
-        }
+fn to_length(value: f64) -> usize {
+    if value.is_nan() || value <= 0.0 {
+        return 0;
     }
+    let value = value.floor();
+    value.min(9_007_199_254_740_991.0) as usize
+}
+
+fn set_last_index(receiver: &Value, index: f64) -> Result<(), VmError> {
+    crate::properties::assign_set_property(receiver, "lastIndex", Value::Number(index))?;
+    Ok(())
 }
 
 include!("regexp_tail.rs");
