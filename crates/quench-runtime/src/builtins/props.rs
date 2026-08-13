@@ -306,8 +306,23 @@ fn reflect_method(key: &str) -> Option<Builtin> {
     })
 }
 fn typed_array_property(builtin: Builtin, key: &str) -> Option<Builtin> {
-    typed_array_constructor_property(builtin, key).or_else(|| {
-        (is_typed_array_prototype(builtin) && key == "fill").then_some(Builtin::TypedArrayFill)
+    typed_array_constructor_property(builtin, key)
+        .or_else(|| {
+            (is_typed_array_prototype(builtin) && key == "fill").then_some(Builtin::TypedArrayFill)
+        })
+        .or_else(|| uint8_array_base64_method(builtin, key))
+}
+fn uint8_array_base64_method(builtin: Builtin, key: &str) -> Option<Builtin> {
+    if builtin != Builtin::Uint8ArrayPrototype {
+        return None;
+    }
+    Some(match key {
+        "setFromBase64" => Builtin::Uint8ArraySetFromBase64,
+        "setFromHex" => Builtin::Uint8ArraySetFromHex,
+        "toBase64" => Builtin::Uint8ArrayToBase64,
+        "toHex" => Builtin::Uint8ArrayToHex,
+        "subarray" => Builtin::Uint8ArraySubarray,
+        _ => return None,
     })
 }
 fn is_typed_array_prototype(builtin: Builtin) -> bool {

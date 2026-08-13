@@ -87,6 +87,7 @@ mod super_scope;
 mod switch;
 mod templates;
 mod transparent;
+mod typed_array_base64;
 mod typed_array_ops;
 mod typed_array_prototype;
 mod unary;

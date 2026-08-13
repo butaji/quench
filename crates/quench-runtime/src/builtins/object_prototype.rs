@@ -36,6 +36,17 @@ fn prototype_for_value(value: &Value) -> Value {
             Value::Builtin(Builtin::SymbolPrototype)
         }
         Value::Object(properties) => internal_prototype(properties, Builtin::ObjectPrototype),
+        Value::Float64Array(_) => Value::Builtin(Builtin::Float64ArrayPrototype),
+        Value::Float32Array(_) => Value::Builtin(Builtin::Float32ArrayPrototype),
+        Value::Int8Array(_) => Value::Builtin(Builtin::Int8ArrayPrototype),
+        Value::Int16Array(_) => Value::Builtin(Builtin::Int16ArrayPrototype),
+        Value::Int32Array(_) => Value::Builtin(Builtin::Int32ArrayPrototype),
+        Value::Uint8Array(_) => Value::Builtin(Builtin::Uint8ArrayPrototype),
+        Value::Uint16Array(_) => Value::Builtin(Builtin::Uint16ArrayPrototype),
+        Value::Uint32Array(_) => Value::Builtin(Builtin::Uint32ArrayPrototype),
+        Value::Uint8ClampedArray(_) => Value::Builtin(Builtin::Uint8ClampedArrayPrototype),
+        Value::BigInt64Array(_) => Value::Builtin(Builtin::BigInt64ArrayPrototype),
+        Value::BigUint64Array(_) => Value::Builtin(Builtin::BigUint64ArrayPrototype),
         _ => Value::Null,
     }
 }

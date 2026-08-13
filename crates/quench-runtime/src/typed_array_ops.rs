@@ -99,6 +99,15 @@ pub(crate) fn execute(
     match builtin {
         Builtin::TypedArrayFill => Some(fill(receiver, arguments)),
         Builtin::ArrayBufferResize => Some(resize_buffer(receiver, arguments)),
+        Builtin::Uint8ArrayFromBase64
+        | Builtin::Uint8ArrayFromHex
+        | Builtin::Uint8ArraySetFromBase64
+        | Builtin::Uint8ArraySetFromHex
+        | Builtin::Uint8ArrayToBase64
+        | Builtin::Uint8ArrayToHex
+        | Builtin::Uint8ArraySubarray => {
+            crate::typed_array_base64::execute(builtin, receiver, arguments)
+        }
         Builtin::ArrayBufferTransferToImmutable => Some(transfer_to_immutable(receiver)),
         _ => None,
     }
