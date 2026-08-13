@@ -397,6 +397,7 @@ pub(crate) fn dispatch(
     arguments: &[Value],
 ) -> Option<Result<Value, VmError>> {
     let result = match builtin {
+        Builtin::ArrayToLocaleString => array_to_locale_string(receiver, arguments),
         Builtin::NumberToLocaleString => number_to_locale_string(receiver, arguments),
         Builtin::StringToLocaleLowerCase => string_to_locale_case(receiver, false),
         Builtin::StringToLocaleUpperCase => string_to_locale_case(receiver, true),
