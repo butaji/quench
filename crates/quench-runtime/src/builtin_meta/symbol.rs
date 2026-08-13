@@ -7,6 +7,9 @@ pub fn symbol_prop(key: &str) -> Option<Builtin> {
     use Builtin::*;
     match key {
         "iterator" => Some(SymbolIterator),
+        "asyncIterator" => Some(SymbolAsyncIterator),
+        "dispose" => Some(SymbolDispose),
+        "asyncDispose" => Some(SymbolAsyncDispose),
         "unscopables" => Some(SymbolUnscopables),
         "toStringTag" => Some(SymbolToStringTag),
         "toPrimitive" => Some(SymbolToPrimitive),
