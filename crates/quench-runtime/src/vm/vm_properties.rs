@@ -579,14 +579,15 @@ fn data_view_instance_accessor(value: &Value, key: &str) -> Option<Result<Value,
 }
 
 fn data_view_property(view: &crate::value::DataViewData, key: &str) -> Value {
+    match key {
+        "buffer" => return Value::ArrayBuffer(view.buffer.clone()),
+        "byteLength" => return Value::Number(view.byte_length() as f64),
+        "byteOffset" => return Value::Number(view.byte_offset as f64),
+        _ => {}
+    }
     if let Some(prototype) = view.prototype() {
         return get_property(&prototype, key);
     }
-    match key {
-        "buffer" => Value::ArrayBuffer(view.buffer.clone()),
-        "byteLength" => Value::Number(view.byte_length() as f64),
-        "byteOffset" => Value::Number(view.byte_offset as f64),
-        _ => crate::builtins::property(Builtin::DataViewPrototype, key),
-    }
+    crate::builtins::property(Builtin::DataViewPrototype, key)
 }
 include!("vm_object_properties.rs");

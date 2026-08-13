@@ -69,6 +69,8 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
             collections_prop(builtin, k)
         }
         (BigIntPrototype, "Symbol.toStringTag") => Some(Value::String("BigInt".to_string())),
+        (DataViewPrototype, "Symbol.toStringTag") => Some(Value::String("DataView".into())),
+        (ObjectPrototype, "constructor") => Some(Value::Builtin(Object)),
         (DatePrototype, k) => crate::builtin_meta::date::date_prop(k).map(Value::Builtin),
         (DisposableStack, "prototype") => Some(Value::Builtin(DisposableStackPrototype)),
         (AsyncDisposableStack, "prototype") => Some(Value::Builtin(AsyncDisposableStackPrototype)),
