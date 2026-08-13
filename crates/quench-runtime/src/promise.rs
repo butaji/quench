@@ -132,10 +132,10 @@ fn process_async_continuation(
 fn process_thenable(target: Rc<PromiseData>, thenable: Value, then: Value) {
     let resolve = bound_settler(Builtin::PromiseResolve, &target);
     let reject = bound_settler(Builtin::PromiseReject, &target);
-    if let Err(VmError::Thrown(reason)) =
-        crate::functions::execute_target(&then, &thenable, &[resolve, reject])
-    {
-        reject_promise(&target, reason);
+    match crate::functions::execute_target(&then, &thenable, &[resolve, reject]) {
+        Ok(_) => {}
+        Err(VmError::Thrown(reason)) => reject_promise(&target, reason),
+        Err(_) => reject_promise(&target, Value::Undefined),
     }
 }
 
