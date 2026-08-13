@@ -176,6 +176,7 @@ fn is_runtime_prototype(builtin: Builtin) -> bool {
             | Builtin::AsyncGeneratorFunctionPrototype
             | Builtin::DatePrototype
             | Builtin::RegExpPrototype
+            | Builtin::RegExpStringIteratorPrototype
             | Builtin::ObjectPrototype
             | Builtin::ArrayIteratorPrototype
             | Builtin::NumberPrototype

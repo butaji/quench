@@ -84,13 +84,10 @@ fn advance_string_index(text: &str, index: usize, unicode: bool) -> usize {
     index + if pair { 2 } else { 1 }
 }
 
-fn regexp_exec(receiver: &Value, input: &str) -> Result<Value, VmError> {
+pub(crate) fn regexp_exec(receiver: &Value, input: &str) -> Result<Value, VmError> {
     let method = crate::execute::get_property_result(receiver, "exec")?;
-    if matches!(method, Value::Undefined | Value::Builtin(crate::ops::Builtin::RegExpExec)) {
-        return exec(Some(receiver), &[Value::String(input.to_string())]);
-    }
     if !crate::conversion::is_callable(&method) {
-        return Err(crate::vm::not_callable());
+        return exec(Some(receiver), &[Value::String(input.to_string())]);
     }
     let result = crate::functions::execute_target(&method, receiver, &[Value::String(input.to_string())])?;
     if matches!(result, Value::Null) || crate::value::is_object(&result) {
@@ -320,38 +317,45 @@ fn groups_at<'a>(m: &'a regress::Match) -> impl Iterator<Item = Option<(usize, u
 // RegExp.prototype[Symbol.matchAll]
 fn symbol_match_all(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let receiver = regex_receiver(receiver, "@@matchAll")?;
-    let mut s = to_string_argument(arguments)?;
-    let input = s.clone();
-    let last_index = match_all_start(receiver, &s)?;
+    let input = to_string_argument(arguments)?;
+    let last_index = match_all_start(receiver, &input)?;
     let flags = match_all_flags(receiver)?;
     let matcher = match_all_matcher(receiver, &flags)?;
     let matcher = crate::builtins::set_property(
         matcher,
         "lastIndex",
-        Value::Number(crate::strings::utf16_len(&s[..last_index]) as f64),
+        Value::Number(last_index as f64),
     );
-    s = s[last_index..].to_string();
-    let (re, _) = compiled_regex(&matcher)?;
-    let mut matches = Vec::new();
-    while !s.is_empty() {
-        let matched = find_match(&re, &s, false)?;
-        let Some(m) = matched else { break };
-        let start = m.start();
-        let end = m.end();
-        if start == end {
-            let next = next_char(&s, start);
-            drop(m);
-            s = s[next..].to_string();
-            continue;
-        }
-        matches.push(match_row(&input, &s, &m));
-        drop(m);
-        s = s[end..].to_string();
-        if !flags.contains('g') {
-            break;
-        }
+    Ok(crate::collections::iterator::make_regexp_string(
+        matcher,
+        input,
+        flags.contains('g'),
+        flags.contains('u'),
+    ))
+}
+
+pub(crate) fn iterator_step(
+    regexp: &mut Value,
+    input: &str,
+    global: bool,
+    unicode: bool,
+    done: &mut bool,
+) -> Result<Option<Value>, VmError> {
+    let result = regexp_exec(regexp, input)?;
+    if matches!(result, Value::Null) {
+        *done = true;
+        return Ok(None);
     }
-    Ok(crate::collections::iterator::make(matches))
+    if global {
+        let matched = crate::conversion::to_string(&crate::execute::get_property_result(&result, "0")?)?;
+        if matched.is_empty() {
+            let index = extract_last_index(regexp)?;
+            set_last_index(regexp, advance_string_index(input, index, unicode) as f64)?;
+        }
+    } else {
+        *done = true;
+    }
+    Ok(Some(result))
 }
 
 fn match_all_flags(receiver: &Value) -> Result<String, VmError> {
@@ -367,7 +371,7 @@ fn match_all_matcher(receiver: &Value, flags: &str) -> Result<Value, VmError> {
     }
     let constructor = crate::execute::get_property_result(receiver, "constructor")?;
     if matches!(constructor, Value::Undefined) {
-        return Ok(receiver.clone());
+        return default_match_all_matcher(receiver, flags);
     }
     if !crate::value::is_object(&constructor) {
         return Err(crate::value::error::throw_type_error(
@@ -376,9 +380,16 @@ fn match_all_matcher(receiver: &Value, flags: &str) -> Result<Value, VmError> {
     }
     let species = crate::execute::get_property_result(&constructor, "Symbol.species")?;
     if matches!(species, Value::Undefined | Value::Null) {
-        return Ok(receiver.clone());
+        return default_match_all_matcher(receiver, flags);
     }
     crate::construct::construct_value(&species, &[receiver.clone(), Value::String(flags.to_string())])
+}
+
+fn default_match_all_matcher(receiver: &Value, flags: &str) -> Result<Value, VmError> {
+    crate::construct::construct_value(
+        &Value::Builtin(crate::ops::Builtin::RegExp),
+        &[Value::String(extract_source(receiver)), Value::String(flags.to_string())],
+    )
 }
 
 fn is_regexp(value: &Value) -> Result<bool, VmError> {
@@ -405,10 +416,4 @@ fn utf16_byte_index(text: &str, index: usize) -> usize {
         }
     }
     text.len()
-}
-
-fn match_row(input: &str, rest: &str, m: &regress::Match) -> Value {
-    let values = match_values(rest, m, 0);
-    let index = Value::Number((input.len() - rest.len() + m.start()) as f64);
-    match_result(values, index, input)
 }

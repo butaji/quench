@@ -13,6 +13,7 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
         Builtin::RegExpSymbolReplace => Some("RegExp.prototype[Symbol.replace]"),
         Builtin::RegExpSymbolSplit => Some("RegExp.prototype[Symbol.split]"),
         Builtin::RegExpSymbolMatchAll => Some("RegExp.prototype[Symbol.matchAll]"),
+        Builtin::RegExpStringIteratorNext => Some("RegExpStringIterator.prototype.next"),
         _ => None,
     }
 }
@@ -24,6 +25,7 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         Builtin::RegExpSymbolSearch | Builtin::RegExpSymbolMatchAll => Some(1.0),
         Builtin::RegExpSymbolReplace | Builtin::RegExpSymbolSplit => Some(2.0),
         Builtin::RegExpSymbolMatch => Some(1.0),
+        Builtin::RegExpStringIteratorNext => Some(0.0),
         _ => None,
     }
 }
@@ -39,6 +41,7 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
         Builtin::RegExpSymbolReplace => Some("[Symbol.replace]"),
         Builtin::RegExpSymbolSplit => Some("[Symbol.split]"),
         Builtin::RegExpSymbolMatchAll => Some("[Symbol.matchAll]"),
+        Builtin::RegExpStringIteratorNext => Some("next"),
         _ => None,
     }
 }

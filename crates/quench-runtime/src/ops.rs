@@ -256,6 +256,8 @@ pub enum Builtin {
     RegExpSymbolReplace,
     RegExpSymbolSplit,
     RegExpSymbolMatchAll,
+    RegExpStringIteratorPrototype,
+    RegExpStringIteratorNext,
     ObjectPrototype,
     ArrayPush,
     ArrayShift,

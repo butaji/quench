@@ -16,7 +16,7 @@ fn prototype_for_value(value: &Value) -> Value {
             Value::Builtin(Builtin::ObjectPrototype)
         }
         Value::Builtin(Builtin::FunctionPrototype) => Value::Builtin(Builtin::ObjectPrototype),
-        Value::Builtin(builtin @ (Builtin::ArrayIteratorPrototype | Builtin::IteratorPrototype)) => iterator_prototype(*builtin),
+        Value::Builtin(builtin @ (Builtin::ArrayIteratorPrototype | Builtin::RegExpStringIteratorPrototype | Builtin::IteratorPrototype)) => iterator_prototype(*builtin),
         Value::Builtin(_) | Value::Function(_) | Value::BoundFunction(_) => {
             Value::Builtin(Builtin::FunctionPrototype)
         }
@@ -32,7 +32,12 @@ fn prototype_for_value(value: &Value) -> Value {
             Builtin::SetPrototype
         })),
         Value::Generator(_) => Value::Builtin(Builtin::ObjectPrototype),
-        Value::Iterator(_) => Value::Builtin(Builtin::ArrayIteratorPrototype),
+        Value::Iterator(data) => match &*data.state.borrow() {
+            crate::value::IteratorState::RegExpString { .. } => {
+                Value::Builtin(Builtin::RegExpStringIteratorPrototype)
+            }
+            _ => Value::Builtin(Builtin::ArrayIteratorPrototype),
+        },
         Value::Array(values) if values.is_arguments() => Value::Builtin(Builtin::ObjectPrototype),
         Value::Array(_) => Value::Builtin(Builtin::ArrayPrototype),
         Value::Object(properties) => properties
@@ -45,7 +50,7 @@ fn prototype_for_value(value: &Value) -> Value {
 }
 
 fn iterator_prototype(builtin: Builtin) -> Value {
-    if builtin == Builtin::ArrayIteratorPrototype {
+    if matches!(builtin, Builtin::ArrayIteratorPrototype | Builtin::RegExpStringIteratorPrototype) {
         return Value::Builtin(Builtin::IteratorPrototype);
     }
     Value::Builtin(Builtin::ObjectPrototype)
