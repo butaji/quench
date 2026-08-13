@@ -128,6 +128,7 @@ pub enum Op {
         dst: u16,
         slot: u16,
         name: String,
+        dynamic: bool,
     },
     LoadLocal {
         dst: u16,
@@ -350,6 +351,7 @@ pub enum Op {
         global: bool,
         direct: bool,
         bindings: Vec<(String, u16)>,
+        reusable_var_names: Vec<String>,
         forbidden_var_names: Vec<String>,
     },
     ParameterEnd,

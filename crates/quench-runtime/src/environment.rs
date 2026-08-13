@@ -110,6 +110,7 @@ impl BindingRef {
 pub struct Environment {
     slots: RefCell<Vec<BindingRef>>,
     names: RefCell<Option<HashMap<String, BindingRef>>>,
+    eval_names: RefCell<Option<HashMap<String, BindingRef>>>,
     immutable_names: RefCell<Option<HashSet<String>>>,
     immutable_slots: RefCell<Option<HashSet<u16>>>,
     uninitialized: RefCell<Option<Rc<RefCell<HashSet<u16>>>>>,
@@ -131,6 +132,7 @@ impl Environment {
         Rc::new(Self {
             slots: RefCell::new(refs),
             names: RefCell::new(environment.names.borrow().clone()),
+            eval_names: RefCell::new(environment.eval_names.borrow().clone()),
             immutable_names: RefCell::new(environment.immutable_names.borrow().clone()),
             immutable_slots: RefCell::new(environment.immutable_slots.borrow().clone()),
             uninitialized: RefCell::new(environment.uninitialized.borrow().clone()),
@@ -145,6 +147,7 @@ impl Environment {
         let environment = Rc::new(Self {
             slots: RefCell::new(combined),
             names: RefCell::new(None),
+            eval_names: RefCell::new(None),
             immutable_names: RefCell::new(None),
             immutable_slots: RefCell::new(None),
             uninitialized: RefCell::new(None),
@@ -200,17 +203,16 @@ impl Environment {
         self.slots.borrow_mut()[index] = BindingRef::new(SlotStore::from_cell(cell), 0);
     }
 
-    pub(crate) fn alias_name(&self, name: &str, slot: u16) {
-        let binding = self.ensure_slot(slot);
-        self.insert_alias(name, binding);
-    }
-
-    pub(crate) fn alias_caller_name(&self, name: &str, slot: u16) -> bool {
+    pub(crate) fn alias_eval_caller_name(&self, name: &str, slot: u16) -> bool {
         let Some(caller) = &self.caller else {
             return false;
         };
         let binding = self.ensure_slot(slot);
-        caller.insert_alias(name, binding);
+        caller
+            .eval_names
+            .borrow_mut()
+            .get_or_insert_with(HashMap::new)
+            .insert(name.to_string(), binding);
         true
     }
 
@@ -271,17 +273,6 @@ impl Environment {
                 .is_some_and(|caller| caller.has_name(name))
     }
 
-    pub(crate) fn delete_caller_name(&self, name: &str, slot: u16) -> bool {
-        let (Some(caller), Some(binding)) = (&self.caller, self.slot(slot)) else {
-            return false;
-        };
-        let removed = caller.remove_own_alias(name, &binding);
-        if removed {
-            self.shared_tdz().borrow_mut().insert(slot);
-        }
-        removed
-    }
-
     fn insert_alias(&self, name: &str, binding: BindingRef) {
         self.names
             .borrow_mut()
@@ -292,6 +283,34 @@ impl Environment {
 
     pub(crate) fn resolve_name(&self, name: &str) -> Option<Value> {
         self.named_binding(name).map(|binding| binding.load())
+    }
+
+    pub(crate) fn resolve_eval_name(&self, name: &str) -> Option<Value> {
+        if let Some(binding) = self
+            .eval_names
+            .borrow()
+            .as_ref()
+            .and_then(|names| names.get(name).cloned())
+        {
+            return Some(binding.load());
+        }
+        self.caller.as_ref()?.resolve_eval_name(name)
+    }
+
+    pub(crate) fn set_eval_named(&self, name: &str, value: Value) -> bool {
+        let binding = self
+            .eval_names
+            .borrow()
+            .as_ref()
+            .and_then(|names| names.get(name).cloned());
+        if let Some(binding) = binding {
+            binding.store(value);
+            self.initialize_binding(&binding);
+            return true;
+        }
+        self.caller
+            .as_ref()
+            .is_some_and(|caller| caller.set_eval_named(name, value))
     }
 
     pub(crate) fn set_named(&self, name: &str, value: Value) -> bool {
@@ -310,11 +329,11 @@ impl Environment {
             .is_some_and(|caller| caller.set_named(name, value))
     }
 
-    pub(crate) fn delete_named(&self, name: &str, slot: u16) -> bool {
-        let Some(slot_binding) = self.slot(slot) else {
+    pub(crate) fn delete_eval_caller_name(&self, name: &str, slot: u16) -> bool {
+        let (Some(caller), Some(binding)) = (&self.caller, self.slot(slot)) else {
             return false;
         };
-        let removed = self.remove_own_alias(name, &slot_binding);
+        let removed = caller.remove_own_eval_alias(name, &binding);
         if removed {
             self.shared_tdz().borrow_mut().insert(slot);
         }
@@ -340,6 +359,21 @@ impl Environment {
             .as_ref()
             .and_then(|names| names.get(name).cloned());
         binding.or_else(|| self.caller.as_ref()?.named_binding(name))
+    }
+
+    fn remove_own_eval_alias(&self, name: &str, binding: &BindingRef) -> bool {
+        let mut names = self.eval_names.borrow_mut();
+        let Some(names) = names.as_mut() else {
+            return false;
+        };
+        let Some(current) = names.get(name) else {
+            return false;
+        };
+        if !current.same(binding) {
+            return false;
+        }
+        names.remove(name);
+        true
     }
 
     fn ensure_slot(&self, slot: u16) -> BindingRef {
@@ -380,21 +414,6 @@ impl Environment {
         let mut state = self.uninitialized.borrow_mut();
         let slots = state.get_or_insert_with(|| Rc::new(RefCell::new(HashSet::new())));
         Rc::clone(slots)
-    }
-
-    fn remove_own_alias(&self, name: &str, slot: &BindingRef) -> bool {
-        let mut names = self.names.borrow_mut();
-        let Some(bindings) = names.as_mut() else {
-            return false;
-        };
-        let matches = bindings.get(name).is_some_and(|binding| binding.same(slot));
-        if matches {
-            bindings.remove(name);
-        }
-        if bindings.is_empty() {
-            *names = None;
-        }
-        matches
     }
 
     fn initialize_binding(&self, binding: &BindingRef) {
