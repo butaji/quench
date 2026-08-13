@@ -108,11 +108,11 @@ impl DateTimeOptions {
             "calendar" => self.calendar = text.to_ascii_lowercase(),
             "numberingSystem" => self.numbering_system = text.to_ascii_lowercase(),
             "fractionalSecondDigits" => {
-                if let Ok(digits) = text.parse::<u32>() {
-                    if (1..=9).contains(&digits) {
-                        self.fractional_second_digits = Some(digits);
-                    }
+                let digits = conversion::to_number(value)?;
+                if !digits.is_finite() || digits.fract() != 0.0 || !(1.0..=9.0).contains(&digits) {
+                    return Err(runtime_error("RangeError: invalid fractionalSecondDigits"));
                 }
+                self.fractional_second_digits = Some(digits as u32);
             }
             _ => {}
         }
