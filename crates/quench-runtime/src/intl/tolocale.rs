@@ -313,7 +313,7 @@ pub(crate) mod value {
 /// `Symbol` global and well-known symbol helpers extracted from `execute.rs`
 /// so the dispatch logic lives next to its sibling `tolocale::dispatch`.
 pub(crate) mod symbol {
-    use super::{to_string_value, Value, VmError};
+    use super::{Value, VmError};
     use crate::ops::Builtin;
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -324,7 +324,7 @@ pub(crate) mod symbol {
         _receiver: Option<&Value>,
     ) -> Option<Result<Value, VmError>> {
         if builtin == Builtin::Symbol {
-            return Some(Ok(make_symbol(arguments)));
+            return Some(make_symbol(arguments));
         }
         if let Some(name) = name(builtin) {
             let value = if builtin == Builtin::SymbolUnscopables {
@@ -335,8 +335,8 @@ pub(crate) mod symbol {
             return Some(Ok(value));
         }
         Some(match builtin {
-            Builtin::SymbolFor => Ok(symbol_for(arguments)),
-            Builtin::SymbolKeyFor => Ok(symbol_key_for(arguments)),
+            Builtin::SymbolFor => symbol_for(arguments),
+            Builtin::SymbolKeyFor => symbol_key_for(arguments),
             _ => return None,
         })
     }
@@ -357,30 +357,43 @@ pub(crate) mod symbol {
             _ => return None,
         })
     }
-    fn make_symbol(arguments: &[Value]) -> Value {
+    fn make_symbol(arguments: &[Value]) -> Result<Value, VmError> {
         let description = match arguments.first() {
             None | Some(Value::Undefined) => "\u{1}".to_string(),
-            Some(value) => to_string_value(value),
+            Some(value) => crate::conversion::to_string(value)?,
         };
         let counter = SYMBOL_COUNTER.fetch_add(1, Ordering::Relaxed);
-        Value::String(format!("Symbol.{description}\0{counter}"))
+        Ok(Value::String(format!("Symbol.{description}\0{counter}")))
     }
 
-    fn symbol_for(arguments: &[Value]) -> Value {
-        Value::String(format!(
-            "Symbol.for.{}\0",
-            to_string_value(arguments.first().unwrap_or(&Value::Undefined))
-        ))
+    fn symbol_for(arguments: &[Value]) -> Result<Value, VmError> {
+        let key = crate::conversion::to_string(arguments.first().unwrap_or(&Value::Undefined))?;
+        Ok(Value::String(format!("Symbol.for.{key}\0")))
     }
 
-    fn symbol_key_for(arguments: &[Value]) -> Value {
+    fn symbol_key_for(arguments: &[Value]) -> Result<Value, VmError> {
+        if arguments.first().is_some_and(
+            |value| matches!(value, Value::Builtin(builtin) if name(*builtin).is_some()),
+        ) {
+            return Ok(Value::Undefined);
+        }
         let Some(Value::String(value)) = arguments.first() else {
-            return Value::Undefined;
+            return Err(crate::value::error::throw_type_error(
+                "Symbol.keyFor requires a symbol",
+            ));
         };
         let Some(value) = value.strip_prefix("Symbol.for.") else {
-            return Value::Undefined;
+            return if crate::conversion::is_symbol_string(value) {
+                Ok(Value::Undefined)
+            } else {
+                Err(crate::value::error::throw_type_error(
+                    "Symbol.keyFor requires a symbol",
+                ))
+            };
         };
-        Value::String(value.strip_suffix('\0').unwrap_or(value).to_string())
+        Ok(Value::String(
+            value.strip_suffix('\0').unwrap_or(value).to_string(),
+        ))
     }
 }
 
