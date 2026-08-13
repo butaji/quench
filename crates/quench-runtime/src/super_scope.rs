@@ -243,25 +243,26 @@ fn put_with_receiver(
     value: Value,
     receiver: &Value,
 ) -> Result<(), VmError> {
+    let receiver = crate::locals::resolved_replacement(receiver.clone());
     if matches!(target, Value::Proxy(_)) {
-        crate::proxy::proxy_set(target, key, &value, Some(receiver))?;
+        crate::proxy::proxy_set(target, key, &value, Some(&receiver))?;
         return Ok(());
     }
     if let Some(setter) = crate::property_define::accessor(target, key, "set") {
         if matches!(setter, Value::Undefined) {
             return strict_write_failure();
         }
-        crate::functions::execute_target(&setter, receiver, std::slice::from_ref(&value))?;
+        crate::functions::execute_target(&setter, &receiver, std::slice::from_ref(&value))?;
         return Ok(());
     }
     if crate::builtins::descriptor_flag(target, key, "writable") == Some(false) {
         return strict_write_failure();
     }
-    if crate::properties::rejects_new_property(receiver, key) {
+    if crate::properties::rejects_new_property(&receiver, key) {
         return strict_write_failure();
     }
     let result = crate::builtins::set_property(receiver.clone(), key, value);
-    crate::locals::replace_value(receiver, &result);
+    crate::locals::replace_value(&receiver, &result);
     Ok(())
 }
 
