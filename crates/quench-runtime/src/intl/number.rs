@@ -56,8 +56,8 @@ impl RawOptions {
             currency_sign: "standard".to_string(),
             unit: None,
             unit_display: "short".to_string(),
-            minimum_fraction_digits: 0.0,
-            maximum_fraction_digits: 3.0,
+            minimum_fraction_digits: -1.0,
+            maximum_fraction_digits: -1.0,
             use_grouping: true,
             grouping_min2: false,
             notation: "standard".to_string(),
@@ -120,6 +120,7 @@ impl NumberOptions {
             raw.maximum_fraction_digits,
             minimum_fraction_digits,
         );
+        let minimum_fraction_digits = minimum_fraction_digits.min(maximum_fraction_digits);
         if raw.style == "unit" && !valid_unit(raw.unit.as_deref()) {
             return Err(crate::value::error::throw_range_error("invalid unit"));
         }
@@ -153,6 +154,14 @@ impl NumberOptions {
             (
                 "formatToParts".to_string(),
                 Value::Builtin(crate::ops::Builtin::IntlNumberFormatFormatToParts),
+            ),
+            (
+                "formatRange".to_string(),
+                Value::Builtin(crate::ops::Builtin::IntlNumberFormatFormatRange),
+            ),
+            (
+                "formatRangeToParts".to_string(),
+                Value::Builtin(crate::ops::Builtin::IntlNumberFormatFormatRangeToParts),
             ),
             (
                 "resolvedOptions".to_string(),
@@ -232,6 +241,9 @@ fn grouping_enabled(value: &str) -> bool {
 }
 
 fn fraction_digits(style: &str, currency: Option<&str>, requested: f64) -> u32 {
+    if requested >= 0.0 {
+        return requested as u32;
+    }
     match style {
         "percent" => 0,
         "currency" if currency == Some("JPY") => 0,
@@ -246,11 +258,51 @@ fn maximum_fraction(style: &str, currency: &Option<String>, requested: f64, mini
         "currency" => 2,
         _ => 3,
     };
-    if requested > 0.0 {
+    if requested >= 0.0 {
         requested as u32
     } else {
         default.max(minimum)
     }
+}
+
+fn range_value(value: Option<&Value>) -> Result<f64, VmError> {
+    match value {
+        None | Some(Value::Undefined) => Err(crate::value::error::throw_type_error(
+            "Number range argument is undefined",
+        )),
+        Some(Value::BigInt(value)) => value
+            .parse::<f64>()
+            .map_err(|_| crate::value::error::throw_range_error("Number range is out of range")),
+        Some(value) => crate::conversion::to_number(value),
+    }
+}
+
+fn strip_currency_prefix(text: &str, currency: Option<&str>) -> String {
+    let symbols = ["$", "€", "¥", "£", "₹", "₽", "₩"];
+    let (sign, mut result) = if let Some(rest) = text.strip_prefix('+') {
+        ("", rest.to_string())
+    } else if let Some(rest) = text.strip_prefix('-') {
+        ("-", rest.to_string())
+    } else {
+        ("", text.to_string())
+    };
+    for symbol in symbols {
+        if result.starts_with(symbol) {
+            result = result[symbol.len()..].to_string();
+            break;
+        }
+    }
+    let _ = currency;
+    format!("{sign}{result}")
+}
+
+fn strip_currency_suffix(text: &str) -> String {
+    text.rsplit_once('\u{a0}')
+        .map_or_else(|| text.to_string(), |(number, _)| number.to_string())
+}
+
+fn strip_positive_sign(text: &str) -> String {
+    text.strip_prefix('+').unwrap_or(text).to_string()
 }
 
 pub(crate) fn prototype_method(
@@ -268,6 +320,12 @@ pub(crate) fn prototype_method(
         crate::ops::Builtin::IntlNumberFormatFormatToParts => {
             let number = to_number_result(arguments.first())?;
             Ok(make_array(options.parts(number)))
+        }
+        crate::ops::Builtin::IntlNumberFormatFormatRange => {
+            Ok(Value::String(options.format_range(arguments)?))
+        }
+        crate::ops::Builtin::IntlNumberFormatFormatRangeToParts => {
+            Ok(make_array(options.range_parts(arguments)?))
         }
         crate::ops::Builtin::IntlNumberFormatResolvedOptions => Ok(options.resolved()),
         _ => Err(runtime_error("TypeError: method not found")),
@@ -442,6 +500,64 @@ impl NumberOptions {
         numeric_parts(&self.format_number(number), &self.locale)
     }
 
+    fn range_values(&self, arguments: &[Value]) -> Result<(f64, f64), VmError> {
+        let start = range_value(arguments.first())?;
+        let end = range_value(arguments.get(1))?;
+        if start.is_nan() || end.is_nan() {
+            return Err(crate::value::error::throw_range_error(
+                "Invalid number range",
+            ));
+        }
+        Ok((start, end))
+    }
+
+    fn format_range(&self, arguments: &[Value]) -> Result<String, VmError> {
+        let (start, end) = self.range_values(arguments)?;
+        let first = self.format_number(start);
+        let second = self.format_number(end);
+        Ok(if first == second {
+            if start == end {
+                first
+            } else {
+                format!("~{first}")
+            }
+        } else if self.locale.starts_with("pt") && self.style == "currency" {
+            let first = strip_currency_suffix(&first);
+            let second = strip_positive_sign(&second);
+            let separator = " - ";
+            format!("{first}{separator}{second}")
+        } else if self.style == "currency" {
+            if first.contains('.') || first.contains(',') {
+                let second = strip_currency_prefix(&second, self.currency.as_deref());
+                format!("{first}–{second}")
+            } else {
+                format!("{first} – {second}")
+            }
+        } else {
+            format!("{first} – {second}")
+        })
+    }
+
+    fn range_parts(&self, arguments: &[Value]) -> Result<Vec<Value>, VmError> {
+        let (start, end) = self.range_values(arguments)?;
+        let mut parts = self.parts(start);
+        if start != end {
+            let separator = if self.locale.starts_with("pt") && self.style == "currency" {
+                " - "
+            } else if self.style == "currency" {
+                "–"
+            } else {
+                " – "
+            };
+            parts.push(make_object(vec![
+                ("type".to_string(), Value::String("literal".to_string())),
+                ("value".to_string(), Value::String(separator.to_string())),
+            ]));
+            parts.extend(self.parts(end));
+        }
+        Ok(parts)
+    }
+
     fn resolved(&self) -> Value {
         make_object(vec![
             ("locale".to_string(), Value::String(self.locale.clone())),
@@ -501,6 +617,8 @@ pub(crate) fn dispatch(
         crate::ops::Builtin::IntlNumberFormat => Some(construct(arguments)),
         crate::ops::Builtin::IntlNumberFormatFormat
         | crate::ops::Builtin::IntlNumberFormatFormatToParts
+        | crate::ops::Builtin::IntlNumberFormatFormatRange
+        | crate::ops::Builtin::IntlNumberFormatFormatRangeToParts
         | crate::ops::Builtin::IntlNumberFormatResolvedOptions => {
             Some(prototype_method(builtin, arguments, receiver))
         }

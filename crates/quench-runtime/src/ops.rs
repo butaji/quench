@@ -373,6 +373,8 @@ pub enum Builtin {
     IntlNumberFormat,
     IntlNumberFormatFormat,
     IntlNumberFormatFormatToParts,
+    IntlNumberFormatFormatRange,
+    IntlNumberFormatFormatRangeToParts,
     IntlNumberFormatResolvedOptions,
     IntlPluralRules,
     IntlPluralRulesSelect,

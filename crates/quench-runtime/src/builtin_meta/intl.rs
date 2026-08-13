@@ -30,6 +30,10 @@ const fn intl_name_group_a(b: Builtin) -> Option<&'static str> {
         Builtin::IntlLocaleGetWeekInfo => Some("Intl.Locale.prototype.getWeekInfo"),
         Builtin::IntlNumberFormatFormat => Some(""),
         Builtin::IntlNumberFormatFormatToParts => Some("Intl.NumberFormat.prototype.formatToParts"),
+        Builtin::IntlNumberFormatFormatRange => Some("Intl.NumberFormat.prototype.formatRange"),
+        Builtin::IntlNumberFormatFormatRangeToParts => {
+            Some("Intl.NumberFormat.prototype.formatRangeToParts")
+        }
         Builtin::IntlNumberFormatResolvedOptions => {
             Some("Intl.NumberFormat.prototype.resolvedOptions")
         }
@@ -100,6 +104,9 @@ const fn intl_fn_len(b: Builtin) -> Option<f64> {
         | Builtin::IntlDisplayNamesOf
         | Builtin::IntlDisplayNamesResolvedOptions => Some(0.0),
         Builtin::IntlNumberFormatFormatToParts => Some(1.0),
+        Builtin::IntlNumberFormatFormatRange | Builtin::IntlNumberFormatFormatRangeToParts => {
+            Some(2.0)
+        }
         Builtin::IntlListFormatFormat
         | Builtin::IntlListFormatFormatToParts
         | Builtin::IntlListFormatResolvedOptions
@@ -124,6 +131,8 @@ const fn intl_short_name(b: Builtin) -> Option<&'static str> {
         Builtin::IntlLocaleGetWeekInfo => Some("getWeekInfo"),
         Builtin::IntlNumberFormatFormat => Some(""),
         Builtin::IntlNumberFormatFormatToParts => Some("formatToParts"),
+        Builtin::IntlNumberFormatFormatRange => Some("formatRange"),
+        Builtin::IntlNumberFormatFormatRangeToParts => Some("formatRangeToParts"),
         Builtin::IntlNumberFormatResolvedOptions => Some("resolvedOptions"),
         Builtin::IntlPluralRulesSelect => Some("select"),
         Builtin::IntlPluralRulesResolvedOptions => Some("resolvedOptions"),
