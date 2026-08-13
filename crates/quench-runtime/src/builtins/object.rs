@@ -186,6 +186,7 @@ pub(crate) fn descriptor(
         Value::Builtin(builtin) => builtin_descriptor(*builtin, &key),
         Value::Function(function) => function_descriptor(function, &key),
         Value::BoundFunction(bound) => bound_descriptor(bound, &key),
+        Value::DataView(view) => data_view_descriptor(view, &key),
         _ => None,
     };
     Ok(descriptor.unwrap_or(Value::Undefined))
@@ -210,6 +211,14 @@ fn function_descriptor(function: &crate::value::FunctionValue, key: &str) -> Opt
         return Some(descriptor_object_with_flags(value, false, false, false));
     }
     Some(descriptor_object(&value))
+}
+
+fn data_view_descriptor(view: &crate::value::DataViewData, key: &str) -> Option<Value> {
+    if let Some(metadata) = view.own_property(&super::descriptor_key(key)) {
+        return Some(public_descriptor(&metadata));
+    }
+    view.own_property(key)
+        .map(|value| descriptor_object(&value))
 }
 
 fn bound_descriptor(function: &crate::value::BoundFunctionValue, key: &str) -> Option<Value> {

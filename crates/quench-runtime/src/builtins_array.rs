@@ -32,6 +32,10 @@ pub(crate) fn delete_property(target: Value, key: &str) -> (Value, bool) {
             }
             (Value::Builtin(builtin), deletable)
         }
+        Value::DataView(view) => {
+            let removed = view.remove_own_property(key, &descriptor_key(key));
+            (Value::DataView(view), removed)
+        }
         value => (value, true),
     }
 }
