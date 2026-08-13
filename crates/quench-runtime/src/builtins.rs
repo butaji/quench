@@ -484,6 +484,11 @@ pub(crate) fn define_own_property(
 ) -> Result<Value, crate::execute::VmError> {
     let key_value = Value::String(key.to_string());
     let current = crate::builtins::object::descriptor(Some(target), Some(&key_value))?;
+    if matches!(current, Value::Undefined) && crate::properties::rejects_new_property(target, key) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot define a property on a non-extensible object",
+        ));
+    }
     validate_redefinition(&current, descriptor)?;
     let descriptor = complete_descriptor(descriptor, &current);
     let value = descriptor
