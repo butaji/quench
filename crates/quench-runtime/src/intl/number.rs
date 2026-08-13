@@ -12,6 +12,7 @@ pub(crate) struct NumberOptions {
     pub style: String,
     pub currency: Option<String>,
     pub currency_display: String,
+    pub currency_sign: String,
     pub unit: Option<String>,
     pub minimum_integer_digits: u32,
     pub minimum_fraction_digits: u32,
@@ -19,18 +20,21 @@ pub(crate) struct NumberOptions {
     pub use_grouping: bool,
     pub notation: String,
     pub rounding_mode: String,
+    pub sign_display: String,
 }
 
 pub(crate) struct RawOptions {
     style: String,
     currency: Option<String>,
     currency_display: String,
+    currency_sign: String,
     unit: Option<String>,
     minimum_fraction_digits: f64,
     maximum_fraction_digits: f64,
     use_grouping: bool,
     notation: String,
     rounding_mode: String,
+    sign_display: String,
 }
 
 impl RawOptions {
@@ -39,12 +43,14 @@ impl RawOptions {
             style: "decimal".to_string(),
             currency: None,
             currency_display: "symbol".to_string(),
+            currency_sign: "standard".to_string(),
             unit: None,
             minimum_fraction_digits: 0.0,
             maximum_fraction_digits: 3.0,
             use_grouping: true,
             notation: "standard".to_string(),
             rounding_mode: "halfExpand".to_string(),
+            sign_display: "auto".to_string(),
         };
         if let Some(Value::Object(properties)) = options {
             for (key, value) in properties.iter() {
@@ -53,6 +59,7 @@ impl RawOptions {
                     "style" => raw.style = value,
                     "currency" => raw.currency = Some(value.to_ascii_uppercase()),
                     "currencyDisplay" => raw.currency_display = value,
+                    "currencySign" => raw.currency_sign = value,
                     "unit" => raw.unit = Some(value),
                     "minimumFractionDigits" => {
                         raw.minimum_fraction_digits = value.parse().unwrap_or(0.0)
@@ -63,6 +70,7 @@ impl RawOptions {
                     "useGrouping" => raw.use_grouping = value == "true",
                     "notation" => raw.notation = value,
                     "roundingMode" => raw.rounding_mode = value,
+                    "signDisplay" => raw.sign_display = value,
                     _ => {}
                 }
             }
@@ -81,8 +89,11 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
 impl NumberOptions {
     fn from_options(locale: String, options: Option<&Value>) -> Result<Self, VmError> {
         let raw = RawOptions::from_value(options);
-        let minimum_fraction_digits =
-            fraction_digits(raw.style.as_str(), raw.minimum_fraction_digits);
+        let minimum_fraction_digits = fraction_digits(
+            raw.style.as_str(),
+            raw.currency.as_deref(),
+            raw.minimum_fraction_digits,
+        );
         let maximum_fraction_digits = maximum_fraction(
             &raw.style,
             &raw.currency,
@@ -94,6 +105,7 @@ impl NumberOptions {
             style: raw.style,
             currency: raw.currency,
             currency_display: raw.currency_display,
+            currency_sign: raw.currency_sign,
             unit: raw.unit,
             minimum_integer_digits: 1,
             minimum_fraction_digits,
@@ -101,6 +113,7 @@ impl NumberOptions {
             use_grouping: raw.use_grouping,
             notation: raw.notation,
             rounding_mode: raw.rounding_mode,
+            sign_display: raw.sign_display,
         })
     }
 
@@ -142,6 +155,10 @@ impl NumberOptions {
             ),
             ("notation".to_string(), Value::String(self.notation.clone())),
             (
+                "signDisplay".to_string(),
+                Value::String(self.sign_display.clone()),
+            ),
+            (
                 "roundingMode".to_string(),
                 Value::String(self.rounding_mode.clone()),
             ),
@@ -152,6 +169,10 @@ impl NumberOptions {
                 "currencyDisplay".to_string(),
                 Value::String(self.currency_display.clone()),
             ));
+            properties.push((
+                "currencySign".to_string(),
+                Value::String(self.currency_sign.clone()),
+            ));
         }
         if let Some(unit) = &self.unit {
             properties.push(("unit".to_string(), Value::String(unit.clone())));
@@ -160,9 +181,11 @@ impl NumberOptions {
     }
 }
 
-fn fraction_digits(style: &str, requested: f64) -> u32 {
+fn fraction_digits(style: &str, currency: Option<&str>, requested: f64) -> u32 {
     match style {
         "percent" => 0,
+        "currency" if currency == Some("JPY") => 0,
+        "currency" => 2,
         _ => requested as u32,
     }
 }
@@ -209,6 +232,8 @@ impl NumberOptions {
             currency: slot_string(slots, "currency"),
             currency_display: slot_string(slots, "currencyDisplay")
                 .unwrap_or_else(|| "symbol".to_string()),
+            currency_sign: slot_string(slots, "currencySign")
+                .unwrap_or_else(|| "standard".to_string()),
             unit: slot_string(slots, "unit"),
             minimum_integer_digits: slot_number(slots, "minimumIntegerDigits").unwrap_or(1.0)
                 as u32,
@@ -220,6 +245,7 @@ impl NumberOptions {
             notation: slot_string(slots, "notation").unwrap_or_else(|| "standard".to_string()),
             rounding_mode: slot_string(slots, "roundingMode")
                 .unwrap_or_else(|| "halfExpand".to_string()),
+            sign_display: slot_string(slots, "signDisplay").unwrap_or_else(|| "auto".to_string()),
         })
     }
 
@@ -246,10 +272,27 @@ impl NumberOptions {
         if self.minimum_fraction_digits > 0 {
             text = pad_fraction(&text, self.minimum_fraction_digits);
         }
+        let negative = text.starts_with('-');
+        let zero = number == 0.0;
+        let hide_negative = self.sign_display == "never"
+            || (self.sign_display == "auto" && zero && self.style == "currency")
+            || (self.sign_display == "exceptZero" && zero);
+        if hide_negative && negative {
+            text.remove(0);
+        } else if !negative && (self.sign_display == "always" || self.sign_display == "exceptZero")
+        {
+            text.insert(0, '+');
+        }
         match self.style.as_str() {
             "percent" => text.push('%'),
             "currency" => {
-                text = format_currency(&text, self.currency.as_deref(), &self.currency_display)
+                text = format_currency(
+                    &text,
+                    self.currency.as_deref(),
+                    &self.currency_display,
+                    &self.locale,
+                    &self.currency_sign,
+                )
             }
             "unit" => text = format_unit(&text, self.unit.as_deref()),
             _ => {}
@@ -292,6 +335,10 @@ impl NumberOptions {
                 Value::Number(self.maximum_fraction_digits as f64),
             ),
             ("notation".to_string(), Value::String(self.notation.clone())),
+            (
+                "signDisplay".to_string(),
+                Value::String(self.sign_display.clone()),
+            ),
             (
                 "roundingMode".to_string(),
                 Value::String(self.rounding_mode.clone()),
@@ -431,7 +478,25 @@ fn compact_suffix(magnitude: i32) -> &'static str {
     }
 }
 
-fn format_currency(text: &str, currency: Option<&str>, display: &str) -> String {
+fn format_currency(
+    text: &str,
+    currency: Option<&str>,
+    display: &str,
+    locale: &str,
+    currency_sign: &str,
+) -> String {
+    let (sign, text) = match text.strip_prefix('-') {
+        Some(rest) => ("-", rest),
+        None => match text.strip_prefix('+') {
+            Some(rest) => ("+", rest),
+            None => ("", text),
+        },
+    };
+    let text = if locale.starts_with("de") {
+        text.replace('.', ",")
+    } else {
+        text.to_string()
+    };
     let symbol = match display {
         "code" => currency.unwrap_or("USD"),
         "name" => currency.unwrap_or("USD"),
@@ -447,7 +512,23 @@ fn format_currency(text: &str, currency: Option<&str>, display: &str) -> String 
             _ => currency.unwrap_or("USD"),
         },
     };
-    format!("{symbol}{text}")
+    let symbol = if matches!(locale, l if l.starts_with("ko") || l.starts_with("zh"))
+        && currency == Some("USD")
+    {
+        "US$"
+    } else {
+        symbol
+    };
+    let formatted = if locale.starts_with("de") {
+        format!("{text}\u{a0}{symbol}")
+    } else {
+        format!("{symbol}{text}")
+    };
+    if sign == "-" && currency_sign == "accounting" && !locale.starts_with("de") {
+        format!("({formatted})")
+    } else {
+        format!("{sign}{formatted}")
+    }
 }
 
 fn format_unit(text: &str, unit: Option<&str>) -> String {
