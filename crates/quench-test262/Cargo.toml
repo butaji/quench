@@ -11,3 +11,4 @@ tempfile = "3"
 
 [dependencies]
 quench-runtime = { path = "../quench-runtime" }
+serde_json = "1"
