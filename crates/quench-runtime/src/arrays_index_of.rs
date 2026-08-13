@@ -37,14 +37,17 @@ pub(crate) fn includes(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     let this = search_receiver(receiver)?;
-    let Some(search) = arguments.first() else {
-        return Ok(Value::Boolean(false));
-    };
+    let search = arguments.first().unwrap_or(&Value::Undefined);
     let length = slice_length(&this)?;
     let this = crate::locals::resolved_replacement(this);
+    if length == 0 {
+        return Ok(Value::Boolean(false));
+    }
     let start = search_from_index(arguments.get(1), length)?;
     for index in start..length.min(i32::MAX as isize) {
-        let element = crate::execute::get_property_result(&this, &index.to_string())?;
+        // A getter may have replaced the receiver (copy-on-write) mid-search.
+        let current = crate::locals::resolved_replacement(this.clone());
+        let element = crate::execute::get_property_result(&current, &index.to_string())?;
         if same_value_zero(&element, search) {
             return Ok(Value::Boolean(true));
         }
