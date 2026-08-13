@@ -152,6 +152,9 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
     if builtin == ObjectPrototype {
         return object_prototype_method(key);
     }
+    if let Some(method) = regexp_method(builtin, key) {
+        return Some(method);
+    }
     match (builtin, key) {
         (Array, "prototype") => Some(ArrayPrototype),
         (ArrayBuffer, "isView") => Some(ArrayBufferIsView),
@@ -174,17 +177,24 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Date, "now") => Some(DateNow),
         (Date, "parse") => Some(DateParse),
         (Date, "UTC") => Some(DateUTC),
-        (RegExp, "prototype") => Some(RegExpPrototype),
-        (RegExp, "escape") => Some(RegExpEscape),
-        (RegExpPrototype, "test") => Some(RegExpTest),
-        (RegExpPrototype, "exec") => Some(RegExpExec),
-        (RegExpPrototype, "Symbol.match") => Some(RegExpSymbolMatch),
-        (RegExpPrototype, "Symbol.search") => Some(RegExpSymbolSearch),
-        (RegExpPrototype, "Symbol.replace") => Some(RegExpSymbolReplace),
-        (RegExpPrototype, "Symbol.split") => Some(RegExpSymbolSplit),
-        (RegExpPrototype, "Symbol.matchAll") => Some(RegExpSymbolMatchAll),
         _ => builtin_method2(builtin, key),
     }
+}
+fn regexp_method(builtin: Builtin, key: &str) -> Option<Builtin> {
+    use Builtin::*;
+    Some(match (builtin, key) {
+        (RegExp, "prototype") => RegExpPrototype,
+        (RegExpPrototype, "constructor") => RegExp,
+        (RegExp, "escape") => RegExpEscape,
+        (RegExpPrototype, "test") => RegExpTest,
+        (RegExpPrototype, "exec") => RegExpExec,
+        (RegExpPrototype, "Symbol.match") => RegExpSymbolMatch,
+        (RegExpPrototype, "Symbol.search") => RegExpSymbolSearch,
+        (RegExpPrototype, "Symbol.replace") => RegExpSymbolReplace,
+        (RegExpPrototype, "Symbol.split") => RegExpSymbolSplit,
+        (RegExpPrototype, "Symbol.matchAll") => RegExpSymbolMatchAll,
+        _ => return None,
+    })
 }
 fn builtin_method_prefix(builtin: Builtin, key: &str) -> Option<Builtin> {
     if let Builtin::HostCapability(kind) = builtin {
