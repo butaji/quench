@@ -400,7 +400,7 @@ fn default_match_all_matcher(receiver: &Value, flags: &str) -> Result<Value, VmE
     )
 }
 
-fn is_regexp(value: &Value) -> Result<bool, VmError> {
+pub(crate) fn is_regexp(value: &Value) -> Result<bool, VmError> {
     let matcher = crate::execute::get_property_result(value, "Symbol.match")?;
     Ok(crate::execute::is_truthy(&matcher))
 }
