@@ -124,6 +124,11 @@ fn calendar_alias(value: &str) -> String {
 }
 
 fn apply_options(mut locale: Locale, options: Option<&Value>) -> Result<Locale, VmError> {
+    if matches!(options, Some(Value::Null)) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot convert null or undefined to object",
+        ));
+    }
     let Some(Value::Object(properties)) = options else {
         return Ok(locale);
     };
