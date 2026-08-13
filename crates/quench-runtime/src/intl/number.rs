@@ -373,9 +373,9 @@ fn format_number_rounded(value: f64, max_fraction: u32) -> String {
     }
     if value.is_infinite() {
         return if value.is_sign_negative() {
-            "-Infinity".to_string()
+            "-∞".to_string()
         } else {
-            "Infinity".to_string()
+            "∞".to_string()
         };
     }
     let formatter = format!("{:.*}", max_fraction as usize, value);
