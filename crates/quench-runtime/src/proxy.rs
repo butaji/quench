@@ -384,10 +384,11 @@ pub(crate) fn proxy_own_keys(target: &Value) -> Result<Value, VmError> {
             return call_trap(&trap, slice::from_ref(target), None);
         }
     }
-    if let Value::Proxy(proxy) = target {
-        return Ok(crate::builtins::keys(Some(&proxy.target)));
-    }
-    Ok(crate::builtins::keys(Some(target)))
+    let target = match target {
+        Value::Proxy(proxy) => &proxy.target,
+        target => target,
+    };
+    crate::own_keys::all(target)
 }
 
 fn has_own_property(target: &Value, prop: &str) -> bool {

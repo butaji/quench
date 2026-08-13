@@ -375,10 +375,6 @@ pub(crate) fn same_value_zero(left: &Value, right: &Value) -> bool {
     }
     same_value(Some(left), Some(right))
 }
-pub(crate) fn keys(value: Option<&Value>) -> Value {
-    crate::own_keys::enumerable_names(value)
-}
-
 pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
     if let Some(result) = crate::typed_array_prototype::set(&target, key, value.clone()) {
         return result;

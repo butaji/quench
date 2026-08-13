@@ -10,6 +10,19 @@ pub(crate) fn symbols(target: Option<&Value>) -> Result<Value, VmError> {
     Ok(Value::array(keys.into_iter().map(Value::String).collect()))
 }
 
+pub(crate) fn all(target: &Value) -> Result<Value, VmError> {
+    if !crate::value::is_object(target) {
+        return Err(crate::value::error::throw_type_error(
+            "Reflect.ownKeys target must be an object",
+        ));
+    }
+    let mut values = keys(target, false);
+    values.extend(keys(target, true));
+    Ok(Value::array(
+        values.into_iter().map(Value::String).collect(),
+    ))
+}
+
 pub(crate) fn enumerable_names(target: Option<&Value>) -> Value {
     Value::array(
         enumerable_key_strings(target)
@@ -36,6 +49,34 @@ pub(crate) fn enumerable_key_strings(target: Option<&Value>) -> Vec<String> {
         _ => return Vec::new(),
     };
     enumerable(properties)
+}
+
+fn object_keys(properties: &[(String, Value)], symbols: bool) -> Vec<String> {
+    let Some((_, Value::String(value))) = properties.iter().find(|(key, _)| key == "_value") else {
+        return ordered(properties, symbols);
+    };
+    if crate::conversion::is_symbol_string(value) {
+        return ordered(properties, symbols);
+    }
+    boxed_string_keys(properties, value, symbols)
+}
+
+fn boxed_string_keys(properties: &[(String, Value)], value: &str, symbols: bool) -> Vec<String> {
+    if symbols {
+        return ordered(properties, true);
+    }
+    let mut keys = value
+        .chars()
+        .enumerate()
+        .map(|(index, _)| index.to_string())
+        .collect::<Vec<_>>();
+    keys.push("length".to_string());
+    keys.extend(
+        ordered(properties, false)
+            .into_iter()
+            .filter(|key| !matches!(key.as_str(), "_value" | "constructor")),
+    );
+    keys
 }
 
 fn enumerable_function(function: &crate::value::FunctionValue) -> Vec<String> {
@@ -72,27 +113,22 @@ fn descriptor_enumerable(properties: &[(String, Value)], key: &str) -> bool {
 }
 
 fn keys(target: &Value, symbols: bool) -> Vec<String> {
-    let properties = match target {
-        Value::Object(properties) => properties.as_slice(),
-        Value::ObjectAlias(alias) => {
-            return alias
-                .0
-                .borrow()
-                .upgrade()
-                .map_or_else(Vec::new, |properties| ordered(&properties, symbols));
-        }
-        Value::Function(function) => return function_keys(function, symbols),
-        Value::Array(values) => return array_keys(values, symbols),
-        Value::Builtin(builtin) => {
-            return crate::builtins::own_property_names(*builtin)
-                .iter()
-                .map(|key| (*key).to_string())
-                .filter(|key| key.contains('\0') == symbols)
-                .collect();
-        }
-        _ => return Vec::new(),
-    };
-    ordered(properties, symbols)
+    match target {
+        Value::Object(properties) => object_keys(properties, symbols),
+        Value::ObjectAlias(alias) => alias
+            .0
+            .borrow()
+            .upgrade()
+            .map_or_else(Vec::new, |properties| ordered(&properties, symbols)),
+        Value::Function(function) => function_keys(function, symbols),
+        Value::Array(values) => array_keys(values, symbols),
+        Value::Builtin(builtin) => crate::builtins::own_property_names(*builtin)
+            .iter()
+            .map(|key| (*key).to_string())
+            .filter(|key| key.contains('\0') == symbols)
+            .collect(),
+        _ => Vec::new(),
+    }
 }
 
 fn array_keys(values: &crate::value::ArrayData, symbols: bool) -> Vec<String> {
