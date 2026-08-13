@@ -199,7 +199,14 @@ fn resolve_name(registers: &mut Vec<Value>, dst: u16, key: &str) -> Result<(), V
         .or(immutable)
     {
         Some(value) => value,
-        None => crate::execute::get_property_result(&global, key)?,
+        None => {
+            let value = crate::execute::get_property_result(&global, key)?;
+            if matches!(value, Value::Undefined) && !global_builtin_deleted(&global, key) {
+                crate::vm::global_builtin_value(key).unwrap_or(value)
+            } else {
+                value
+            }
+        }
     };
     if matches!(value, Value::Undefined) && !bound && !has_property(&global, key)? {
         return Err(crate::value::error::throw_reference_error(&format!(
@@ -208,6 +215,14 @@ fn resolve_name(registers: &mut Vec<Value>, dst: u16, key: &str) -> Result<(), V
     }
     crate::execute::write_value(registers, dst, value);
     Ok(())
+}
+
+fn global_builtin_deleted(global: &Value, key: &str) -> bool {
+    let Value::Object(properties) = global else {
+        return false;
+    };
+    let marker = crate::builtins::deleted_key(key);
+    properties.iter().any(|(name, _)| name == &marker)
 }
 
 fn set_name(registers: &mut Vec<Value>, key: &str, src: u16, strict: bool) -> Result<(), VmError> {
