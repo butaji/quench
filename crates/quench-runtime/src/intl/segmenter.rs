@@ -96,19 +96,7 @@ fn segment(text: &str, granularity: &str, locale: &str) -> Value {
     let segments = match granularity {
         "word" => word_segments(text),
         "sentence" => vec![segment_entry(text, 0, text, false)],
-        _ => text
-            .char_indices()
-            .scan(0, |utf16_index, (byte_index, character)| {
-                let index = *utf16_index;
-                *utf16_index += character.len_utf16();
-                Some(segment_entry(
-                    &text[byte_index..byte_index + character.len_utf8()],
-                    index,
-                    text,
-                    false,
-                ))
-            })
-            .collect(),
+        _ => grapheme_segments(text),
     };
     make_object(vec![
         ("__segments".to_string(), Value::array(segments)),
@@ -121,6 +109,39 @@ fn segment(text: &str, granularity: &str, locale: &str) -> Value {
             Value::Builtin(crate::ops::Builtin::IntlSegmenterSegmentsContaining),
         ),
     ])
+}
+
+fn grapheme_segments(text: &str) -> Vec<Value> {
+    let mut result = Vec::new();
+    let mut start = None;
+    let mut utf16_index = 0;
+    let mut start_utf16 = 0;
+    for (byte_index, character) in text.char_indices() {
+        if start.is_none() {
+            start = Some(byte_index);
+            start_utf16 = utf16_index;
+        } else if !is_combining_mark(character) {
+            if let Some(cluster_start) = start {
+                result.push(segment_entry(
+                    &text[cluster_start..byte_index],
+                    start_utf16,
+                    text,
+                    false,
+                ));
+            }
+            start = Some(byte_index);
+            start_utf16 = utf16_index;
+        }
+        utf16_index += character.len_utf16();
+    }
+    if let Some(start) = start {
+        result.push(segment_entry(&text[start..], start_utf16, text, false));
+    }
+    result
+}
+
+fn is_combining_mark(character: char) -> bool {
+    matches!(character as u32, 0x0300..=0x036f | 0x1ab0..=0x1aff | 0x1dc0..=0x1dff | 0x20d0..=0x20ff)
 }
 
 fn word_segments(text: &str) -> Vec<Value> {
