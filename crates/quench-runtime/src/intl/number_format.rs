@@ -202,6 +202,35 @@ pub(crate) fn compact_suffix(magnitude: i32, locale: &str, display: &str) -> &'s
     }
 }
 
+pub(crate) fn format_number_rounded(value: f64, max_fraction: u32, increment: u32) -> String {
+    if value.is_nan() {
+        return "NaN".to_string();
+    }
+    if value.is_infinite() {
+        return if value.is_sign_negative() {
+            "-∞"
+        } else {
+            "∞"
+        }
+        .to_string();
+    }
+    let scale = 10_f64.powi(max_fraction as i32);
+    let quantum = f64::from(increment.max(1)) / scale;
+    let units = value / quantum;
+    let adjusted = units + units.signum() * 1e-9;
+    let rounded = adjusted.round() * quantum;
+    let mut text = format!("{:.*}", max_fraction as usize, rounded);
+    if text.contains('.') {
+        while text.ends_with('0') {
+            text.pop();
+        }
+        if text.ends_with('.') {
+            text.pop();
+        }
+    }
+    text
+}
+
 pub(crate) fn format_currency(
     text: &str,
     currency: Option<&str>,
