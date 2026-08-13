@@ -378,7 +378,9 @@ pub(crate) fn array_to_locale_string(
     arguments: &[Value],
 ) -> Result<Value, VmError> {
     let Some(Value::Array(values)) = receiver else {
-        return Ok(Value::String(String::new()));
+        return Err(crate::value::error::throw_type_error(
+            "Array.prototype.toLocaleString called on non-array",
+        ));
     };
     let locales = resolve_locales(arguments)?;
     let options = arguments.get(1);
