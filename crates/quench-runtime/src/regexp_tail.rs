@@ -260,8 +260,16 @@ fn symbol_match_all(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
     let receiver = regex_receiver(receiver, "@@matchAll")?;
     let mut s = to_string_argument(arguments)?;
     let input = s.clone();
-    s = s[match_all_start(receiver, &s)?..].to_string();
-    let (re, _) = compiled_regex(receiver)?;
+    let last_index = match_all_start(receiver, &s)?;
+    let flags = match_all_flags(receiver)?;
+    let matcher = match_all_matcher(receiver, &flags)?;
+    let matcher = crate::builtins::set_property(
+        matcher,
+        "lastIndex",
+        Value::Number(crate::strings::utf16_len(&s[..last_index]) as f64),
+    );
+    s = s[last_index..].to_string();
+    let (re, _) = compiled_regex(&matcher)?;
     let mut matches = Vec::new();
     while !s.is_empty() {
         let matched = find_match(&re, &s, false)?;
@@ -277,8 +285,43 @@ fn symbol_match_all(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
         matches.push(match_row(&input, &s, &m));
         drop(m);
         s = s[end..].to_string();
+        if !flags.contains('g') {
+            break;
+        }
     }
     Ok(crate::collections::iterator::make(matches))
+}
+
+fn match_all_flags(receiver: &Value) -> Result<String, VmError> {
+    crate::conversion::to_string(&crate::execute::get_property_result(receiver, "flags")?)
+}
+
+fn match_all_matcher(receiver: &Value, flags: &str) -> Result<Value, VmError> {
+    if !is_regexp(receiver)? {
+        return crate::construct::construct_value(
+            &Value::Builtin(crate::ops::Builtin::RegExp),
+            &[receiver.clone(), Value::String(flags.to_string())],
+        );
+    }
+    let constructor = crate::execute::get_property_result(receiver, "constructor")?;
+    if matches!(constructor, Value::Undefined) {
+        return Ok(receiver.clone());
+    }
+    if !crate::value::is_object(&constructor) {
+        return Err(crate::value::error::throw_type_error(
+            "RegExp constructor must be an object",
+        ));
+    }
+    let species = crate::execute::get_property_result(&constructor, "Symbol.species")?;
+    if matches!(species, Value::Undefined | Value::Null) {
+        return Ok(receiver.clone());
+    }
+    crate::construct::construct_value(&species, &[receiver.clone(), Value::String(flags.to_string())])
+}
+
+fn is_regexp(value: &Value) -> Result<bool, VmError> {
+    let matcher = crate::execute::get_property_result(value, "Symbol.match")?;
+    Ok(crate::execute::is_truthy(&matcher))
 }
 
 fn match_all_start(receiver: &Value, input: &str) -> Result<usize, VmError> {
