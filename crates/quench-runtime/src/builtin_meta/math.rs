@@ -37,6 +37,9 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
         Builtin::MathLog1p => Some("Math.log1p"),
         Builtin::MathSinh => Some("Math.sinh"),
         Builtin::MathTanh => Some("Math.tanh"),
+        Builtin::MathF16Round => Some("Math.f16round"),
+        Builtin::MathRandom => Some("Math.random"),
+        Builtin::MathSumPrecise => Some("Math.sumPrecise"),
         Builtin::MathPow => Some("Math.pow"),
         _ => None,
     }
@@ -73,6 +76,8 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         | Builtin::MathLog1p
         | Builtin::MathSinh
         | Builtin::MathTanh => Some(1.0),
+        Builtin::MathF16Round | Builtin::MathSumPrecise => Some(1.0),
+        Builtin::MathRandom => Some(0.0),
         _ => None,
     }
 }
@@ -112,6 +117,9 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
         Builtin::MathLog1p => Some("log1p"),
         Builtin::MathSinh => Some("sinh"),
         Builtin::MathTanh => Some("tanh"),
+        Builtin::MathF16Round => Some("f16round"),
+        Builtin::MathRandom => Some("random"),
+        Builtin::MathSumPrecise => Some("sumPrecise"),
         Builtin::MathPow => Some("pow"),
         _ => None,
     }

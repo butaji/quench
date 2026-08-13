@@ -36,6 +36,9 @@ pub(crate) fn property(key: &str) -> Option<Builtin> {
         "log1p" => Some(Builtin::MathLog1p),
         "sinh" => Some(Builtin::MathSinh),
         "tanh" => Some(Builtin::MathTanh),
+        "f16round" => Some(Builtin::MathF16Round),
+        "random" => Some(Builtin::MathRandom),
+        "sumPrecise" => Some(Builtin::MathSumPrecise),
         _ => None,
     }
 }
@@ -94,6 +97,9 @@ fn property_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::MathLog1p => Some("log1p"),
         Builtin::MathSinh => Some("sinh"),
         Builtin::MathTanh => Some("tanh"),
+        Builtin::MathF16Round => Some("f16round"),
+        Builtin::MathRandom => Some("random"),
+        Builtin::MathSumPrecise => Some("sumPrecise"),
         _ => None,
     }
 }
@@ -102,6 +108,9 @@ pub(crate) fn execute(
     builtin: Builtin,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
+    if builtin == Builtin::MathSumPrecise {
+        return sum_precise(arguments.first());
+    }
     let numbers: Vec<f64> = arguments.iter().map(number).collect();
     if let Some(value) = transcendental(builtin, &numbers) {
         return Ok(Value::Number(value));
@@ -125,6 +134,10 @@ pub(crate) fn execute(
         Builtin::MathImul => imul(numbers.first(), numbers.get(1)),
         Builtin::MathClz32 => f64::from(clz32(numbers.first().copied().unwrap_or(f64::NAN))),
         Builtin::MathFround => f64::from(numbers.first().copied().unwrap_or(f64::NAN) as f32),
+        Builtin::MathF16Round => {
+            crate::value::f16_round(numbers.first().copied().unwrap_or(f64::NAN))
+        }
+        Builtin::MathRandom => 0.5,
         _ => return Err(crate::execute::VmError::NotCallable),
     };
     Ok(Value::Number(value))
@@ -168,6 +181,46 @@ fn imul(left: Option<&f64>, right: Option<&f64>) -> f64 {
 
 fn clz32(value: f64) -> u32 {
     crate::construct::to_uint32(value).leading_zeros()
+}
+
+fn sum_precise(value: Option<&Value>) -> Result<Value, crate::execute::VmError> {
+    let iterable = value.cloned().ok_or_else(|| {
+        crate::value::error::throw_type_error("Math.sumPrecise requires an iterable")
+    })?;
+    let mut sum = -0.0f64;
+    let mut compensation = 0.0f64;
+    crate::collections::iterator::for_each_iterable(iterable, |value| {
+        let Value::Number(value) = value else {
+            return Err(crate::value::error::throw_type_error(
+                "Math.sumPrecise requires numbers",
+            ));
+        };
+        if value.is_nan() || sum.is_nan() {
+            sum = f64::NAN;
+            return Ok(());
+        }
+        if !value.is_finite() {
+            if sum.is_infinite() && sum.is_sign_positive() != value.is_sign_positive() {
+                sum = f64::NAN;
+            } else if !sum.is_infinite() {
+                sum = value;
+            }
+            compensation = 0.0;
+            return Ok(());
+        }
+        if sum.is_infinite() {
+            return Ok(());
+        }
+        let total = sum + value;
+        compensation += if sum.abs() >= value.abs() {
+            (sum - total) + value
+        } else {
+            (value - total) + sum
+        };
+        sum = total;
+        Ok(())
+    })?;
+    Ok(Value::Number(sum + compensation))
 }
 
 fn unary(numbers: &[f64], operation: fn(f64) -> f64) -> f64 {
