@@ -163,7 +163,7 @@ fn replace_with_exec(
         let result = regexp_exec(receiver, input)?;
         let Some((matched, index)) = exec_match(&result)? else { break };
         output.push_str(&input[next_source..index]);
-        output.push_str(&expand_exec_template(replacement, &matched));
+        output.push_str(&expand_exec_template(replacement, input, index, &matched));
         next_source = index + matched.len();
         if !global {
             break;
@@ -183,28 +183,36 @@ fn exec_match(result: &Value) -> Result<Option<(String, usize)>, VmError> {
     Ok(Some((matched, to_length(index))))
 }
 
-fn expand_exec_template(template: &str, matched: &str) -> String {
+fn expand_exec_template(template: &str, input: &str, match_index: usize, matched: &str) -> String {
     let chars: Vec<char> = template.chars().collect();
     let mut output = String::new();
-    let mut index = 0;
-    while index < chars.len() {
-        if chars.get(index) != Some(&'$') || index + 1 >= chars.len() {
-            output.push(chars[index]);
-            index += 1;
+    let mut cursor = 0;
+    while cursor < chars.len() {
+        if chars.get(cursor) != Some(&'$') || cursor + 1 >= chars.len() {
+            output.push(chars[cursor]);
+            cursor += 1;
             continue;
         }
-        match chars[index + 1] {
+        match chars[cursor + 1] {
             '$' => {
                 output.push('$');
-                index += 2;
+                cursor += 2;
             }
             '&' => {
                 output.push_str(matched);
-                index += 2;
+                cursor += 2;
+            }
+            '`' => {
+                output.push_str(&input[..match_index]);
+                cursor += 2;
+            }
+            '\'' => {
+                output.push_str(&input[match_index + matched.len()..]);
+                cursor += 2;
             }
             _ => {
                 output.push('$');
-                index += 1;
+                cursor += 1;
             }
         }
     }
