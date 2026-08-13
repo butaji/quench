@@ -65,12 +65,9 @@ fn create_realm_value() -> Value {
     let Some(token) = realm::token(context.realm()) else {
         return Value::Undefined;
     };
-    let capability = Value::HostCapability(Rc::clone(&token));
-    let constructor = Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
-        target: Value::Builtin(Builtin::TypeError),
-        receiver: capability,
-        arguments: Vec::new(),
-    }));
+    let Some(constructor) = realm::intrinsic(realm, Builtin::TypeError) else {
+        return Value::Undefined;
+    };
     let properties = Rc::new(crate::value::ObjectData::new(vec![(
         "TypeError".to_string(),
         constructor,
