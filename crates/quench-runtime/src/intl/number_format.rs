@@ -182,10 +182,21 @@ pub(crate) fn format_currency(
     }
 }
 
-pub(crate) fn format_unit(text: &str, unit: Option<&str>) -> String {
-    match unit {
-        Some("percent") => format!("{text}%"),
-        Some("kilometer") => format!("{text} km"),
-        _ => text.to_string(),
+pub(crate) fn format_unit(text: &str, unit: Option<&str>, display: &str) -> String {
+    let suffix = match (unit, display) {
+        (Some("percent"), _) => "%",
+        (Some("kilometer"), "long") => "kilometers",
+        (Some("kilometer"), _) => "km",
+        (Some("kilometer-per-hour"), "long") => "kilometers per hour",
+        (Some("kilometer-per-hour"), "narrow") => "km/h",
+        (Some("kilometer-per-hour"), _) => "km/h",
+        _ => "",
+    };
+    if suffix.is_empty() {
+        text.to_string()
+    } else if display == "narrow" || unit == Some("percent") {
+        format!("{text}{suffix}")
+    } else {
+        format!("{text} {suffix}")
     }
 }
