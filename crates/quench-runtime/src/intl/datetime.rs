@@ -320,11 +320,23 @@ pub(crate) fn prototype_method(
 }
 
 fn range_values(arguments: &[Value]) -> Result<(String, String), VmError> {
-    let start = range_number(arguments.first().unwrap_or(&Value::Undefined))?;
-    let end = range_number(arguments.get(1).unwrap_or(&Value::Undefined))?;
-    if start > end {
-        return Err(runtime_error("RangeError: start date is after end date"));
+    let Some(start_value) = arguments.first() else {
+        return Err(crate::value::error::throw_type_error(
+            "date value is undefined",
+        ));
+    };
+    let Some(end_value) = arguments.get(1) else {
+        return Err(crate::value::error::throw_type_error(
+            "date value is undefined",
+        ));
+    };
+    if matches!(start_value, Value::Undefined) || matches!(end_value, Value::Undefined) {
+        return Err(crate::value::error::throw_type_error(
+            "date value is undefined",
+        ));
     }
+    let start = range_number(start_value)?;
+    let end = range_number(end_value)?;
     Ok((range_text(start), range_text(end)))
 }
 
