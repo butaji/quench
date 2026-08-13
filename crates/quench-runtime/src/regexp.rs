@@ -485,7 +485,13 @@ fn to_length(value: f64) -> usize {
 }
 
 fn set_last_index(receiver: &Value, index: f64) -> Result<(), VmError> {
-    crate::properties::assign_set_property(receiver, "lastIndex", Value::Number(index))?;
+    set_last_index_value(receiver, Value::Number(index))?;
+    Ok(())
+}
+
+fn set_last_index_value(receiver: &Value, value: Value) -> Result<(), VmError> {
+    let updated = crate::properties::assign_set_property(receiver, "lastIndex", value)?;
+    crate::locals::replace_value(receiver, &updated);
     Ok(())
 }
 

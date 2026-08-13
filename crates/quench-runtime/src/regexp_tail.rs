@@ -103,16 +103,27 @@ fn regexp_exec(receiver: &Value, input: &str) -> Result<Value, VmError> {
 
 // RegExp.prototype[Symbol.search]
 fn symbol_search(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let receiver = regex_receiver(receiver, "@@search")?;
-    let _ = to_string_argument(arguments)?;
-    set_last_index(receiver, 0.0)?;
-    let result = exec(Some(receiver), arguments)?;
-    let Value::Object(props) = result else { return Ok(Value::Number(-1.0)) };
-    let index = match props.iter().find(|(key, _)| key == "index") {
-        Some((_, Value::Number(n))) => *n,
-        _ => -1.0,
-    };
-    Ok(Value::Number(index))
+    let receiver = regex_receiver(receiver, "@@search")?.clone();
+    let input = to_string_argument(arguments)?;
+    let previous = crate::execute::get_property_result(&receiver, "lastIndex")?;
+    if !crate::builtins::same_value(Some(&previous), Some(&Value::Number(0.0))) {
+        set_last_index(&receiver, 0.0)?;
+    }
+    let receiver = crate::locals::resolved_replacement(receiver);
+    let result = regexp_exec(&receiver, &input)?;
+    restore_search_last_index(&receiver, &previous)?;
+    if matches!(result, Value::Null) {
+        return Ok(Value::Number(-1.0));
+    }
+    crate::execute::get_property_result(&result, "index")
+}
+
+fn restore_search_last_index(receiver: &Value, previous: &Value) -> Result<(), VmError> {
+    let current = crate::execute::get_property_result(receiver, "lastIndex")?;
+    if !crate::builtins::same_value(Some(&current), Some(previous)) {
+        set_last_index_value(receiver, previous.clone())?;
+    }
+    Ok(())
 }
 
 // RegExp.prototype[Symbol.split]
