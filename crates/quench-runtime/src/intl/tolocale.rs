@@ -25,6 +25,7 @@ pub(crate) mod value {
             Some(Value::Boolean(value)) => value.to_string(),
             Some(Value::Number(value)) => crate::conversion::number_to_string(*value),
             Some(Value::String(value)) => symbol_string(value),
+            Some(Value::StringUnits(value)) => String::from_utf16_lossy(value),
             Some(Value::Array(values)) => array_to_string(values),
             Some(Value::ArrayBuffer(_)) => "[object ArrayBuffer]".to_string(),
             Some(Value::DataView(_)) => "[object DataView]".to_string(),
@@ -98,6 +99,9 @@ pub(crate) mod value {
             Some(Value::Boolean(value)) => f64::from(*value),
             Some(Value::Number(value)) => *value,
             Some(Value::String(value)) => super::parse_num::parse_number(value),
+            Some(Value::StringUnits(value)) => {
+                super::parse_num::parse_number(&String::from_utf16_lossy(value))
+            }
             Some(Value::Object(properties)) => boxed_number(properties),
             Some(
                 Value::Array(_)
@@ -144,6 +148,7 @@ pub(crate) mod value {
             Value::Boolean(value) => *value,
             Value::Number(value) => *value != 0.0 && !value.is_nan(),
             Value::String(value) => !value.is_empty(),
+            Value::StringUnits(value) => !value.is_empty(),
             Value::BigInt(value) => value != "0",
             Value::Null | Value::Undefined => false,
             Value::Array(_)
