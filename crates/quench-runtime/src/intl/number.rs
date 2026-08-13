@@ -29,6 +29,7 @@ pub(crate) struct NumberOptions {
     pub sign_display: String,
     pub minimum_significant_digits: Option<u32>,
     pub maximum_significant_digits: Option<u32>,
+    pub rounding_priority: String,
 }
 
 pub(crate) struct RawOptions {
@@ -50,6 +51,7 @@ pub(crate) struct RawOptions {
     sign_display: String,
     minimum_significant_digits: f64,
     maximum_significant_digits: f64,
+    rounding_priority: String,
 }
 
 impl RawOptions {
@@ -73,6 +75,7 @@ impl RawOptions {
             sign_display: "auto".to_string(),
             minimum_significant_digits: -1.0,
             maximum_significant_digits: -1.0,
+            rounding_priority: "auto".to_string(),
         };
         if let Some(Value::Object(properties)) = options {
             for (key, value) in properties.iter() {
@@ -108,6 +111,7 @@ impl RawOptions {
                     "maximumSignificantDigits" => {
                         raw.maximum_significant_digits = value.parse().unwrap_or(-1.0)
                     }
+                    "roundingPriority" => raw.rounding_priority = value,
                     _ => {}
                 }
             }
@@ -162,6 +166,7 @@ impl NumberOptions {
             minimum_significant_digits: significant_digits(raw.minimum_significant_digits),
             maximum_significant_digits: significant_digits(raw.maximum_significant_digits)
                 .or_else(|| significant_digits(raw.minimum_significant_digits).map(|_| 21)),
+            rounding_priority: raw.rounding_priority,
         })
     }
 
@@ -225,6 +230,10 @@ impl NumberOptions {
             (
                 "roundingMode".to_string(),
                 Value::String(self.rounding_mode.clone()),
+            ),
+            (
+                "roundingPriority".to_string(),
+                Value::String(self.rounding_priority.clone()),
             ),
             (
                 "roundingIncrement".to_string(),
@@ -409,6 +418,8 @@ impl NumberOptions {
                 .unwrap_or_else(|| "short".to_string()),
             rounding_mode: slot_string(slots, "roundingMode")
                 .unwrap_or_else(|| "halfExpand".to_string()),
+            rounding_priority: slot_string(slots, "roundingPriority")
+                .unwrap_or_else(|| "auto".to_string()),
             rounding_increment: slot_number(slots, "roundingIncrement").unwrap_or(1.0) as u32,
             sign_display: slot_string(slots, "signDisplay").unwrap_or_else(|| "auto".to_string()),
             minimum_significant_digits: slot_number(slots, "minimumSignificantDigits")
@@ -449,15 +460,29 @@ impl NumberOptions {
         } else {
             self.maximum_fraction_digits
         };
+        let fraction_text = format_number_rounded(value, fraction_digits, self.rounding_increment);
         let mut text = if let Some(maximum) = self.maximum_significant_digits {
-            format_significant(
+            let significant_text = format_significant(
                 value,
                 self.minimum_significant_digits.unwrap_or(1),
                 maximum,
                 &self.rounding_mode,
-            )
+            );
+            match self.rounding_priority.as_str() {
+                "morePrecision"
+                    if decimal_places(&fraction_text) > decimal_places(&significant_text) =>
+                {
+                    fraction_text
+                }
+                "lessPrecision"
+                    if decimal_places(&fraction_text) < decimal_places(&significant_text) =>
+                {
+                    fraction_text
+                }
+                _ => significant_text,
+            }
         } else {
-            format_number_rounded(value, fraction_digits, self.rounding_increment)
+            fraction_text
         };
         if scientific.is_none()
             && self.use_grouping
@@ -731,6 +756,12 @@ fn is_decimal_literal(value: &str) -> bool {
     !integer.is_empty()
         && integer.chars().all(|c| c.is_ascii_digit())
         && fraction.chars().all(|c| c.is_ascii_digit())
+}
+
+fn decimal_places(value: &str) -> usize {
+    value
+        .split_once('.')
+        .map_or(0, |(_, fraction)| fraction.len())
 }
 
 fn format_decimal_literal(value: &str, locale: &str) -> String {
