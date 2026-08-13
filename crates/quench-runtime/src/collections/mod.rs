@@ -53,7 +53,7 @@ fn execute_core(
         MapValues => Some(iterator::from_map_values(receiver)),
         SetIterator => Some(iterator::from_set(receiver)),
         SetEntries => Some(iterator::from_set_entries(receiver)),
-        SetSpeciesGetter | MapSpeciesGetter => Some(set::set_species(receiver)),
+        SetSpeciesGetter | MapSpeciesGetter | SpeciesGetter => Some(set::set_species(receiver)),
         _ => None,
     }
 }
