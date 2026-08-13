@@ -334,7 +334,7 @@ fn symbol_match_all(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
         matcher,
         input,
         flags.contains('g'),
-        flags.contains('u'),
+        unicode_mode(&flags),
     ))
 }
 
@@ -354,6 +354,10 @@ pub(crate) fn iterator_step(
         let matched = crate::conversion::to_string(&crate::execute::get_property_result(&result, "0")?)?;
         if matched.is_empty() {
             let index = extract_last_index(regexp)?;
+            if index >= crate::strings::utf16_len(input) {
+                *done = true;
+                return Ok(Some(result));
+            }
             set_last_index(regexp, advance_string_index(input, index, unicode) as f64)?;
         }
     } else {
