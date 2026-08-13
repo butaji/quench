@@ -157,23 +157,18 @@ fn joiners(locale: &str, style: &str, list_type: &str) -> (String, String, Strin
     } else {
         " and "
     };
-    let final_joiner = if style == "short" && !spanish {
+    let final_joiner = if spanish {
+        word.to_string()
+    } else if style == "short" {
         if disjunction {
             " or ".to_string()
         } else {
             " & ".to_string()
         }
-    } else if spanish {
-        format!(",{}", word.trim_start())
     } else {
         format!(",{}", word)
     };
-    let middle = if style == "short" && !spanish {
-        ", ".to_string()
-    } else {
-        ", ".to_string()
-    };
-    (middle, word.to_string(), final_joiner)
+    (", ".to_string(), word.to_string(), final_joiner)
 }
 
 fn format_list(items: &[String], locale: &str, style: &str, list_type: &str) -> String {
