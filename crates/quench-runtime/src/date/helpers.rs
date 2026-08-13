@@ -32,11 +32,6 @@ pub fn to_int32(v: &Value) -> f64 {
     int as i32 as f64
 }
 
-/// Get argument or default.
-pub fn arg_or(val: Option<&Value>, default: f64) -> f64 {
-    val.map(to_number).unwrap_or(default)
-}
-
 /// Convert Value to String.
 pub fn value_to_string(v: &Value) -> String {
     match v {
