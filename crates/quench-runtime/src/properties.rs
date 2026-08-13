@@ -35,6 +35,7 @@ fn reduce_computed_get(
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
     if matches!(member.object, Expression::Super(_)) {
+        ops.push(Op::CheckSuperThis);
         let key = crate::reduce::reduce_expression(
             &member.expression,
             ops,

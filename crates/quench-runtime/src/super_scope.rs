@@ -219,6 +219,11 @@ fn require_initialized_this(context: &Context) -> Result<(), VmError> {
     Ok(())
 }
 
+pub(crate) fn check_initialized_this() -> Result<(), VmError> {
+    let context = current()?;
+    require_initialized_this(&context)
+}
+
 fn get_with_receiver(target: &Value, key: &str, receiver: &Value) -> Result<Value, VmError> {
     if matches!(target, Value::Proxy(_)) {
         return crate::proxy::proxy_get(target, key, Some(receiver));
