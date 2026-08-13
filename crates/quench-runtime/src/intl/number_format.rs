@@ -489,6 +489,12 @@ pub(crate) fn unit_parts(
     if locale.starts_with("ko") && display == "long" {
         parts.insert(0, part("unit", "시속"));
         parts.insert(1, part("literal", " "));
+    } else if locale.starts_with("ja") && display == "long" {
+        parts.insert(0, part("unit", "時速"));
+        parts.insert(1, part("literal", " "));
+    } else if locale.starts_with("zh-TW") && display == "long" {
+        parts.insert(0, part("unit", "每小時"));
+        parts.insert(1, part("literal", " "));
     }
     if !narrow {
         parts.push(part("literal", " "));
