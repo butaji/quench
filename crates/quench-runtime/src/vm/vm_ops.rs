@@ -216,7 +216,7 @@ fn tail_dispatch(
             None => Value::String(String::new()),
         },
         Builtin::Unescape => crate::builtins::unescape(arguments.first()),
-        Builtin::MathPow => crate::builtins::math_pow(arguments),
+        Builtin::MathPow => crate::builtins::math_pow(arguments)?,
         _ => Value::Undefined,
     })
 }
