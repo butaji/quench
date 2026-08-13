@@ -343,6 +343,9 @@ pub(crate) mod symbol {
     pub(crate) fn name(builtin: Builtin) -> Option<&'static str> {
         Some(match builtin {
             Builtin::SymbolIterator => "Symbol.iterator",
+            Builtin::SymbolAsyncIterator => "Symbol.asyncIterator",
+            Builtin::SymbolDispose => "Symbol.dispose",
+            Builtin::SymbolAsyncDispose => "Symbol.asyncDispose",
             Builtin::SymbolUnscopables => "Symbol.unscopables",
             Builtin::SymbolToStringTag => "Symbol.toStringTag",
             Builtin::SymbolToPrimitive => "Symbol.toPrimitive",
