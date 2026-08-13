@@ -122,8 +122,24 @@ fn with_new_target_prototype(
         realm_default_prototype(target, new_target)
     };
     Ok(prototype.map_or(value.clone(), |prototype| {
-        crate::builtins::set_property(value, "\0prototype", prototype)
+        let value = crate::builtins::set_property(value, "\0prototype", prototype);
+        drop_shadowed_error_constructor(value)
     }))
+}
+
+fn drop_shadowed_error_constructor(mut value: Value) -> Value {
+    let Value::Object(data) = &mut value else {
+        return value;
+    };
+    let data = std::rc::Rc::make_mut(data);
+    let is_error = data
+        .properties
+        .iter()
+        .any(|(key, _)| key == crate::builtins::ERROR_SLOT);
+    if is_error {
+        data.properties.retain(|(key, _)| key != "constructor");
+    }
+    value
 }
 include!("construct_realm.rs");
 fn construct_bound(
