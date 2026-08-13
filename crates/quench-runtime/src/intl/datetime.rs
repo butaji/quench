@@ -363,12 +363,16 @@ fn fractional_format(slots: &[(String, Value)], number: f64) -> Option<String> {
         return Some(format!("{:02}:{:02}", date.minute(), date.second()));
     }
     let millis = number.rem_euclid(1_000.0) as u32;
-    let divisor = 10_u32.pow(3 - digits);
+    let fraction = if digits <= 3 {
+        millis / 10_u32.pow(3 - digits)
+    } else {
+        millis * 10_u32.pow(digits - 3)
+    };
     Some(format!(
         "{:02}:{:02}.{:0width$}",
         date.minute(),
         date.second(),
-        millis / divisor,
+        fraction,
         width = digits as usize
     ))
 }
