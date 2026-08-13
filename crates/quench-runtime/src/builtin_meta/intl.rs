@@ -141,9 +141,7 @@ const fn intl_fn_len(b: Builtin) -> Option<f64> {
         Builtin::IntlNumberFormatFormatRange
         | Builtin::IntlNumberFormatFormatRangeToParts
         | Builtin::IntlDateTimeFormatFormatRange
-        | Builtin::IntlDateTimeFormatFormatRangeToParts => {
-            Some(2.0)
-        }
+        | Builtin::IntlDateTimeFormatFormatRangeToParts => Some(2.0),
         Builtin::IntlListFormatFormat
         | Builtin::IntlListFormatFormatToParts
         | Builtin::IntlListFormatResolvedOptions
