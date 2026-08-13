@@ -199,6 +199,8 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
     match (builtin, key) {
         (Array, "prototype") => Some(ArrayPrototype),
         (ArrayBuffer, "isView") => Some(ArrayBufferIsView),
+        (ArrayBufferPrototype, "resize") => Some(ArrayBufferResize),
+        (ArrayBufferPrototype, "transferToImmutable") => Some(ArrayBufferTransferToImmutable),
         (DataView, "prototype") => Some(DataViewPrototype),
         (DataViewPrototype, "constructor") => Some(DataView),
         (Function, "prototype") => Some(FunctionPrototype),

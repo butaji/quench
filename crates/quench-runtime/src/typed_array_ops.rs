@@ -99,8 +99,20 @@ pub(crate) fn execute(
     match builtin {
         Builtin::TypedArrayFill => Some(fill(receiver, arguments)),
         Builtin::ArrayBufferResize => Some(resize_buffer(receiver, arguments)),
+        Builtin::ArrayBufferTransferToImmutable => Some(transfer_to_immutable(receiver)),
         _ => None,
     }
+}
+
+fn transfer_to_immutable(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let Some(Value::ArrayBuffer(buffer)) = receiver else {
+        return Err(crate::value::error::throw_type_error(
+            "transferToImmutable requires an ArrayBuffer",
+        ));
+    };
+    Ok(Value::ArrayBuffer(std::rc::Rc::new(
+        buffer.transfer_to_immutable(),
+    )))
 }
 
 fn resize_buffer(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
