@@ -307,6 +307,14 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
     if let Some(descriptor) = crate::builtins::read_intrinsic_override(builtin, key) {
         return Some(public_descriptor(&descriptor));
     }
+    if builtin == Builtin::SuppressedErrorPrototype && key == "name" {
+        return Some(descriptor_object_with_flags(
+            Value::String("SuppressedError".to_string()),
+            true,
+            false,
+            true,
+        ));
+    }
     let property = super::callable_property(builtin, key)
         .or_else(|| super::special_property(builtin, key))
         .or_else(|| match super::property(builtin, key) {
