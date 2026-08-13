@@ -130,11 +130,10 @@ fn restore_search_last_index(receiver: &Value, previous: &Value) -> Result<(), V
 fn symbol_split(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let receiver = regex_receiver(receiver, "@@split")?;
     let mut s = to_string_argument(arguments)?;
-    let limit = match arguments.get(1) {
-        Some(Value::Number(n)) => *n as usize,
-        _ => usize::MAX,
-    };
-    let (re, _) = compiled_regex(receiver)?;
+    let limit = split_limit(arguments)?;
+    let flags = match_all_flags(receiver)?;
+    let matcher = split_matcher(receiver, &flags)?;
+    let (re, _) = compiled_regex(&matcher)?;
     let mut pieces = Vec::new();
     while pieces.len() < limit && !s.is_empty() {
         let matched = find_match(&re, &s, false)?;
@@ -150,7 +149,7 @@ fn symbol_split(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, 
             continue;
         }
         pieces.push(Value::String(s[..start].to_string()));
-        for group in groups {
+        for group in groups.into_iter().skip(1) {
             let value = match group {
                 Some((gs, ge)) => Value::String(s[gs..ge].to_string()),
                 None => Value::Undefined,
@@ -164,6 +163,48 @@ fn symbol_split(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, 
         pieces.push(Value::String(s));
     }
     Ok(Value::array(pieces.into_iter().take(limit).collect()))
+}
+
+fn split_limit(arguments: &[Value]) -> Result<usize, VmError> {
+    let Some(value) = arguments.get(1) else {
+        return Ok(usize::MAX);
+    };
+    let number = crate::conversion::to_number(value)?;
+    if number.is_nan() || number == 0.0 || !number.is_finite() {
+        return Ok(0);
+    }
+    let modulo = 4_294_967_296.0;
+    Ok(number.trunc().rem_euclid(modulo) as usize)
+}
+
+fn split_matcher(receiver: &Value, flags: &str) -> Result<Value, VmError> {
+    let flags = if flags.contains('y') {
+        flags.to_string()
+    } else {
+        format!("{flags}y")
+    };
+    let constructor = regexp_species_constructor(receiver)?;
+    if matches!(constructor, Value::Builtin(crate::ops::Builtin::RegExp)) {
+        return Ok(receiver.clone());
+    }
+    crate::construct::construct_value(&constructor, &[receiver.clone(), Value::String(flags)])
+}
+
+fn regexp_species_constructor(receiver: &Value) -> Result<Value, VmError> {
+    let constructor = crate::execute::get_property_result(receiver, "constructor")?;
+    if matches!(constructor, Value::Undefined) {
+        return Ok(Value::Builtin(crate::ops::Builtin::RegExp));
+    }
+    if !crate::value::is_object(&constructor) {
+        return Err(crate::value::error::throw_type_error(
+            "RegExp constructor must be an object",
+        ));
+    }
+    let species = crate::execute::get_property_result(&constructor, "Symbol.species")?;
+    if matches!(species, Value::Undefined | Value::Null) {
+        return Ok(Value::Builtin(crate::ops::Builtin::RegExp));
+    }
+    Ok(species)
 }
 
 // RegExp.prototype[Symbol.replace]
