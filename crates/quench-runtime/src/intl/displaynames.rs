@@ -106,7 +106,13 @@ fn option_string(
     properties
         .iter()
         .find(|(key, _)| key == name)
-        .map(|(_, value)| to_string_value(value))
+        .and_then(|(_, value)| match value {
+            Value::Undefined if name == "style" => Some("long".to_string()),
+            Value::Undefined if name == "fallback" => Some("code".to_string()),
+            Value::Undefined if name == "languageDisplay" => Some("dialect".to_string()),
+            Value::Undefined => None,
+            value => Some(to_string_value(value)),
+        })
         .or_else(|| (name == "style").then(|| "long".to_string()))
         .or_else(|| (name == "fallback").then(|| "code".to_string()))
         .or_else(|| (name == "languageDisplay").then(|| "dialect".to_string()))
