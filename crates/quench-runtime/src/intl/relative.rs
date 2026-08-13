@@ -128,15 +128,27 @@ fn valid_unit(unit: &str) -> Result<String, VmError> {
     }
 }
 
-fn format_relative(value: f64, unit: &str, style: &str, numeric: &str) -> Result<String, VmError> {
+fn format_relative(
+    value: f64,
+    unit: &str,
+    style: &str,
+    numeric: &str,
+    locale: &str,
+) -> Result<String, VmError> {
     let unit = valid_unit(unit)?;
-    let parts = phrase_parts(value, &unit, style, numeric);
+    let parts = phrase_parts(value, &unit, style, numeric, locale);
     Ok(parts.iter().map(|part| part.value.clone()).collect())
 }
 
-fn parts_value(value: f64, unit: &str, style: &str, numeric: &str) -> Result<Value, VmError> {
+fn parts_value(
+    value: f64,
+    unit: &str,
+    style: &str,
+    numeric: &str,
+    locale: &str,
+) -> Result<Value, VmError> {
     let unit = valid_unit(unit)?;
-    let parts = phrase_parts(value, &unit, style, numeric);
+    let parts = phrase_parts(value, &unit, style, numeric, locale);
     let values = parts
         .into_iter()
         .map(|part| part_object(part, &unit))
@@ -155,7 +167,7 @@ fn part_object(part: Part, unit: &str) -> Value {
     make_object(properties)
 }
 
-fn phrase_parts(value: f64, unit: &str, style: &str, numeric: &str) -> Vec<Part> {
+fn phrase_parts(value: f64, unit: &str, style: &str, numeric: &str, locale: &str) -> Vec<Part> {
     if numeric == "auto" {
         if let Some(exception) = auto_exception(value, unit) {
             return vec![Part {
@@ -165,7 +177,122 @@ fn phrase_parts(value: f64, unit: &str, style: &str, numeric: &str) -> Vec<Part>
             }];
         }
     }
-    numeric_parts(value, unit, style)
+    if locale.starts_with("pl") {
+        polish_parts(value, unit, style)
+    } else {
+        numeric_parts(value, unit, style)
+    }
+}
+
+fn polish_parts(value: f64, unit: &str, style: &str) -> Vec<Part> {
+    let negative = value < 0.0 || (value == 0.0 && value.is_sign_negative());
+    let text = polish_number(value.abs());
+    let mut parts = number_parts(&text);
+    for part in &mut parts {
+        part.unit = true;
+    }
+    let word = polish_word(unit, style, value.abs());
+    let prefix = if negative { "" } else { "za " };
+    let suffix = if negative { " temu" } else { "" };
+    let mut result = Vec::new();
+    if !prefix.is_empty() {
+        result.push(Part {
+            ty: "literal",
+            value: prefix.to_string(),
+            unit: false,
+        });
+    }
+    result.extend(parts);
+    result.push(Part {
+        ty: "literal",
+        value: format!(" {word}{suffix}"),
+        unit: false,
+    });
+    result
+}
+
+fn polish_number(value: f64) -> String {
+    let grouped = grouped_number(value)
+        .replace(',', "\u{a0}")
+        .replace('.', "|");
+    if value < 10_000.0 {
+        grouped.replace('\u{a0}', "")
+    } else {
+        grouped
+    }
+}
+
+fn polish_word(unit: &str, style: &str, value: f64) -> String {
+    if value.fract() != 0.0 {
+        return match unit {
+            "day" => "dnia",
+            "week" => "tygodnia",
+            "month" => "miesiąca",
+            "quarter" => "kwartału",
+            "year" => "roku",
+            "second" => "sekundy",
+            "minute" => "minuty",
+            "hour" => "godziny",
+            _ => "lat",
+        }
+        .to_string();
+    }
+    let plural = polish_plural(value);
+    if style != "long" {
+        return polish_short_word(unit, style, plural);
+    }
+    let words = match unit {
+        "second" => ["sekundę", "sekundy", "sekund"],
+        "minute" => ["minutę", "minuty", "minut"],
+        "hour" => ["godzinę", "godziny", "godzin"],
+        "day" => ["dzień", "dni", "dni"],
+        "week" => ["tydzień", "tygodnie", "tygodni"],
+        "month" => ["miesiąc", "miesiące", "miesięcy"],
+        "quarter" => ["kwartał", "kwartały", "kwartałów"],
+        _ => ["rok", "lata", "lat"],
+    };
+    words[plural].to_string()
+}
+
+fn polish_short_word(unit: &str, style: &str, plural: usize) -> String {
+    let words = match unit {
+        "second" => {
+            if style == "narrow" {
+                ["s", "s", "s"]
+            } else {
+                ["sek.", "sek.", "sek."]
+            }
+        }
+        "minute" => ["min", "min", "min"],
+        "hour" => {
+            if style == "narrow" {
+                ["g.", "g.", "g."]
+            } else {
+                ["godz.", "godz.", "godz."]
+            }
+        }
+        "day" => ["dzień", "dni", "dni"],
+        "week" => ["tydz.", "tyg.", "tyg."],
+        "month" => ["mies.", "mies.", "mies."],
+        "quarter" => ["kw.", "kw.", "kw."],
+        _ => ["rok", "lata", "lat"],
+    };
+    words[plural].to_string()
+}
+
+fn polish_plural(value: f64) -> usize {
+    if value == 1.0 {
+        return 0;
+    }
+    let integer = value as u64;
+    if value.fract() == 0.0
+        && (2..=4).contains(&(integer % 10))
+        && !(12..=14).contains(&(integer % 100))
+    {
+        1
+    } else {
+        2
+    }
 }
 
 fn auto_exception(value: f64, unit: &str) -> Option<String> {
@@ -302,15 +429,15 @@ fn number_parts(text: &str) -> Vec<Part> {
         } else {
             flush_digits(&mut parts, &mut digits, fractional);
             match character {
-                ',' => parts.push(Part {
+                ',' | '\u{a0}' => parts.push(Part {
                     ty: "group",
-                    value: ",".to_string(),
+                    value: character.to_string(),
                     unit: false,
                 }),
-                '.' => {
+                '.' | '|' => {
                     parts.push(Part {
                         ty: "decimal",
-                        value: ".".to_string(),
+                        value: if character == '|' { "," } else { "." }.to_string(),
                         unit: false,
                     });
                     fractional = true;
@@ -406,13 +533,13 @@ pub(crate) fn prototype_method(
             let value = super::number::to_number(arguments.first());
             let unit = to_string_value(arguments.get(1).unwrap_or(&Value::Undefined));
             Ok(Value::String(format_relative(
-                value, &unit, &style, &numeric,
+                value, &unit, &style, &numeric, &locale,
             )?))
         }
         crate::ops::Builtin::IntlRelativeTimeFormatFormatToParts => {
             let value = super::number::to_number(arguments.first());
             let unit = to_string_value(arguments.get(1).unwrap_or(&Value::Undefined));
-            parts_value(value, &unit, &style, &numeric)
+            parts_value(value, &unit, &style, &numeric, &locale)
         }
         crate::ops::Builtin::IntlRelativeTimeFormatResolvedOptions => Ok(make_object(vec![
             ("locale".to_string(), Value::String(locale)),
