@@ -51,8 +51,12 @@ fn global_property(builtin: Builtin, key: &str) -> Option<Builtin> {
 }
 
 fn constructor_property(builtin: Builtin, key: &str) -> Option<Builtin> {
-    if key == "supportedLocalesOf" && builtin == Builtin::IntlDateTimeFormat {
-        return Some(Builtin::IntlDateTimeFormatSupportedLocalesOf);
+    if key == "supportedLocalesOf" {
+        return match builtin {
+            Builtin::IntlDateTimeFormat => Some(Builtin::IntlDateTimeFormatSupportedLocalesOf),
+            Builtin::IntlSegmenter => Some(Builtin::IntlSegmenterSupportedLocalesOf),
+            _ => None,
+        };
     }
     if key != "prototype" {
         return None;
@@ -140,6 +144,7 @@ pub(crate) fn execute(
 ) -> Option<Result<Value, VmError>> {
     match builtin {
         Builtin::IntlDateTimeFormatSupportedLocalesOf => Some(supported_locales_of(arguments)),
+        Builtin::IntlSegmenterSupportedLocalesOf => Some(segmenter_supported_locales_of(arguments)),
         Builtin::IntlGetCanonicalLocales => Some(get_canonical_locales(arguments)),
         Builtin::IntlSupportedValuesOf => Some(supported_values_of(arguments)),
         _ => dispatch_all(builtin, arguments, receiver),
@@ -147,7 +152,8 @@ pub(crate) fn execute(
 }
 
 fn supported_locales_of(arguments: &[Value]) -> Result<Value, VmError> {
-    let locales = resolve_locales(arguments)?;
+    let locales = requested_locales(arguments)?;
+    validate_supported_options(arguments.get(1))?;
     Ok(make_array(
         locales
             .into_iter()
@@ -155,6 +161,48 @@ fn supported_locales_of(arguments: &[Value]) -> Result<Value, VmError> {
             .map(Value::String)
             .collect(),
     ))
+}
+
+fn segmenter_supported_locales_of(arguments: &[Value]) -> Result<Value, VmError> {
+    let locales = requested_locales(arguments)?;
+    validate_supported_options(arguments.get(1))?;
+    Ok(make_array(
+        locales
+            .into_iter()
+            .filter(|locale| locale == "en" || locale.starts_with("en-") || locale == "sr")
+            .map(Value::String)
+            .collect(),
+    ))
+}
+
+fn requested_locales(arguments: &[Value]) -> Result<Vec<String>, VmError> {
+    if matches!(arguments.first(), Some(Value::Null)) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot convert null to object",
+        ));
+    }
+    if arguments.is_empty() {
+        return Ok(Vec::new());
+    }
+    resolve_locales(arguments)
+}
+
+fn validate_supported_options(options: Option<&Value>) -> Result<(), VmError> {
+    let Some(Value::Object(properties)) = options else {
+        if matches!(options, Some(Value::Null)) {
+            return Err(crate::value::error::throw_type_error(
+                "Cannot convert null to object",
+            ));
+        }
+        return Ok(());
+    };
+    if let Some((_, value)) = properties.iter().find(|(name, _)| name == "localeMatcher") {
+        let matcher = to_string_value(value);
+        if matcher != "lookup" && matcher != "best fit" {
+            return Err(runtime_error("RangeError: invalid localeMatcher"));
+        }
+    }
+    Ok(())
 }
 
 type Handler = fn(Builtin, &[Value], Option<&Value>) -> Option<Result<Value, VmError>>;
