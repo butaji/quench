@@ -195,6 +195,7 @@ fn global_builtin_error(key: &str) -> Option<Builtin> {
         "WeakRef" => WeakRef,
         "Error" => Error,
         "AggregateError" => AggregateError,
+        "SuppressedError" => SuppressedError,
         "TypeError" => TypeError,
         "RangeError" => RangeError,
         "ReferenceError" => ReferenceError,

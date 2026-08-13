@@ -174,6 +174,7 @@ fn builtin_core(name: &str) -> Option<crate::ops::Builtin> {
         "EvalError" => Some(crate::ops::Builtin::EvalError),
         "URIError" => Some(crate::ops::Builtin::URIError),
         "AggregateError" => Some(crate::ops::Builtin::AggregateError),
+        "SuppressedError" => Some(crate::ops::Builtin::SuppressedError),
         _ => None,
     }
 }

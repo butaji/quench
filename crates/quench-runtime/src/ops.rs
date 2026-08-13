@@ -500,6 +500,7 @@ pub enum Builtin {
     EvalError,
     URIError,
     AggregateError,
+    SuppressedError,
     Promise,
     PromisePrototype,
     PromiseResolve,
