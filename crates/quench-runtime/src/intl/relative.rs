@@ -222,7 +222,7 @@ fn numeric_parts(value: f64, unit: &str, style: &str) -> Vec<Part> {
             unit: false,
         }];
     }
-    let negative = value < 0.0;
+    let negative = value < 0.0 || (value == 0.0 && value.is_sign_negative());
     let magnitude = value.abs();
     let mut parts = Vec::new();
     if !negative {
