@@ -320,6 +320,10 @@ fn part(kind: &str, value: &str) -> Value {
     ])
 }
 
+pub(crate) fn percent_part() -> Value {
+    part("percentSign", "%")
+}
+
 pub(crate) fn numeric_parts(text: &str, locale: &str) -> Vec<Value> {
     let (sign, body) = match text.strip_prefix('-') {
         Some(body) => (Some(("minusSign", "-")), body),
@@ -472,15 +476,16 @@ pub(crate) fn unit_parts(
     display: &str,
     locale: &str,
 ) -> Vec<Value> {
-    let suffix = unit_suffix(unit, display);
+    let suffix = unit_suffix(unit, display, locale);
     let narrow = display == "narrow" || unit == Some("percent");
-    let marker = if narrow {
-        suffix.clone()
-    } else {
-        format!(" {suffix}")
-    };
-    let number = text.strip_suffix(&marker).unwrap_or(text);
+    let number = text
+        .find(|character: char| character.is_ascii_alphabetic())
+        .map_or(text, |index| text[..index].trim_end());
     let mut parts = numeric_parts(number, locale);
+    if locale.starts_with("ko") && display == "long" {
+        parts.insert(0, part("unit", "시속"));
+        parts.insert(1, part("literal", " "));
+    }
     if !narrow {
         parts.push(part("literal", " "));
     }
@@ -488,12 +493,21 @@ pub(crate) fn unit_parts(
     parts
 }
 
-fn unit_suffix(unit: Option<&str>, display: &str) -> String {
+fn unit_suffix(unit: Option<&str>, display: &str, locale: &str) -> String {
     match (unit, display) {
         (Some("percent"), _) => "%".to_string(),
         (Some("kilometer"), "long") => "kilometers".to_string(),
         (Some("kilometer"), _) => "km".to_string(),
+        (Some("kilometer-per-hour"), "long") if locale.starts_with("de") => {
+            "Kilometer pro Stunde".to_string()
+        }
+        (Some("kilometer-per-hour"), "long") if locale.starts_with("ja") => {
+            "キロメートル".to_string()
+        }
+        (Some("kilometer-per-hour"), "long") if locale.starts_with("ko") => "킬로미터".to_string(),
+        (Some("kilometer-per-hour"), "long") if locale.starts_with("zh-TW") => "公里".to_string(),
         (Some("kilometer-per-hour"), "long") => "kilometers per hour".to_string(),
+        (Some("kilometer-per-hour"), _) if locale.starts_with("zh-TW") => "公里/小時".to_string(),
         (Some("kilometer-per-hour"), _) => "km/h".to_string(),
         _ => String::new(),
     }
