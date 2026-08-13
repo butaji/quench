@@ -187,6 +187,8 @@ fn global_builtin_error(key: &str) -> Option<Builtin> {
     use Builtin::*;
     Some(match key {
         "eval" => Eval,
+        "isNaN" => IsNaN,
+        "isFinite" => IsFinite,
         "JSON" => Json,
         "Math" => Math,
         "Reflect" => Reflect,
