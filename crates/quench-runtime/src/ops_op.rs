@@ -413,6 +413,11 @@ pub enum Op {
         names: Vec<crate::facts::PrivateNameId>,
         body: crate::machine::FunctionCode,
     },
+    StaticBlock {
+        constructor: u16,
+        captures: u16,
+        body: crate::machine::FunctionCode,
+    },
     Try {
         body: crate::machine::FunctionCode,
         handler: Option<crate::machine::FunctionCode>,
