@@ -135,10 +135,32 @@ pub fn reduce_declaration(
         let Some(register) = register else {
             return Err(vec!["Unsupported variable initializer".to_string()]);
         };
+        infer_declaration_name(&declarator.id, declarator.init.as_ref(), register, ops);
         crate::binding_patterns::bind(&declarator.id, register, ops, facts, next_register, locals)
             .ok_or_else(|| vec!["Unsupported binding pattern".to_string()])?;
     }
     Ok(())
+}
+
+fn infer_declaration_name(
+    pattern: &oxc::ast::ast::BindingPattern<'_>,
+    initializer: Option<&Expression<'_>>,
+    function: u16,
+    ops: &mut Vec<Op>,
+) {
+    let Some(initializer) = initializer else {
+        return;
+    };
+    if !crate::binding_patterns::anonymous_function_definition(initializer) {
+        return;
+    }
+    let oxc::ast::ast::BindingPatternKind::BindingIdentifier(identifier) = &pattern.kind else {
+        return;
+    };
+    ops.push(Op::SetFunctionName {
+        function,
+        name: identifier.name.to_string(),
+    });
 }
 
 fn allocate_pattern_slots(
