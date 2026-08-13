@@ -369,23 +369,37 @@ pub(crate) fn suppressed_error(arguments: &[Value]) -> Result<Value, crate::exec
         ),
         (
             "\0prototype".to_string(),
-            Value::Builtin(Builtin::ErrorPrototype),
+            Value::Builtin(Builtin::SuppressedErrorPrototype),
         ),
-        (
-            "constructor".to_string(),
-            Value::Builtin(Builtin::SuppressedError),
-        ),
-        (
-            crate::builtins::ERROR_SLOT.to_string(),
-            Value::Boolean(true),
-        ),
-        ("error".to_string(), error),
-        ("suppressed".to_string(), suppressed),
     ];
+    let mut data_properties = Vec::new();
     if let Some(message) = message {
-        properties.insert(2, ("message".to_string(), Value::String(message)));
+        data_properties.push(("message".to_string(), Value::String(message)));
     }
+    data_properties.push(("error".to_string(), error));
+    data_properties.push(("suppressed".to_string(), suppressed));
+    for (key, value) in data_properties {
+        properties.push((descriptor_key(&key), non_enumerable_descriptor(&value)));
+        properties.push((key, value));
+    }
+    properties.push((
+        "constructor".to_string(),
+        Value::Builtin(Builtin::SuppressedError),
+    ));
+    properties.push((
+        crate::builtins::ERROR_SLOT.to_string(),
+        Value::Boolean(true),
+    ));
     Ok(Value::Object(Rc::new(ObjectData::new(properties))))
+}
+
+fn non_enumerable_descriptor(value: &Value) -> Value {
+    Value::Object(Rc::new(ObjectData::new(vec![
+        ("value".to_string(), value.clone()),
+        ("writable".to_string(), Value::Boolean(true)),
+        ("enumerable".to_string(), Value::Boolean(false)),
+        ("configurable".to_string(), Value::Boolean(true)),
+    ])))
 }
 pub(crate) fn same_value(left: Option<&Value>, right: Option<&Value>) -> bool {
     let (Some(left), Some(right)) = (left, right) else {

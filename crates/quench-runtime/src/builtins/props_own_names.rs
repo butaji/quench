@@ -13,6 +13,7 @@ pub(crate) fn own_property_names(builtin: Builtin) -> &'static [&'static str] {
         Builtin::ErrorPrototype => {
             &["constructor", "name", "message", "cause", "stack", "toString"]
         }
+        Builtin::SuppressedErrorPrototype => &["constructor", "name", "message", "toString"],
         Builtin::DisposableStack => &["length", "name", "prototype"],
         Builtin::DisposableStackPrototype => &[
             "constructor", "use", "adopt", "defer", "move", "dispose", "disposed",

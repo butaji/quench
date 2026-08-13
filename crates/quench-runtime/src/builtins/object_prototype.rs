@@ -22,6 +22,10 @@ fn prototype_for_value(value: &Value) -> Value {
             Value::Builtin(Builtin::ObjectPrototype)
         }
         Value::Builtin(Builtin::FunctionPrototype) => Value::Builtin(Builtin::ObjectPrototype),
+        Value::Builtin(Builtin::SuppressedError) => Value::Builtin(Builtin::Error),
+        Value::Builtin(Builtin::SuppressedErrorPrototype) => {
+            Value::Builtin(Builtin::ErrorPrototype)
+        }
         Value::Builtin(builtin @ (Builtin::ArrayIteratorPrototype | Builtin::RegExpStringIteratorPrototype | Builtin::SetIteratorPrototype | Builtin::MapIteratorPrototype | Builtin::IteratorPrototype)) => iterator_prototype(*builtin),
         Value::Function(function) => {
             internal_prototype(&function.properties.borrow(), Builtin::FunctionPrototype)

@@ -101,6 +101,10 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (ErrorPrototype, "message") => Some(Value::String("".to_string())),
         (ErrorPrototype, "cause") => Some(Value::Undefined),
         (ErrorPrototype, "constructor") => Some(Value::Builtin(Error)),
+        (SuppressedError, "prototype") => Some(Value::Builtin(SuppressedErrorPrototype)),
+        (SuppressedErrorPrototype, "name") => Some(Value::String("SuppressedError".to_string())),
+        (SuppressedErrorPrototype, "message") => Some(Value::String("".to_string())),
+        (SuppressedErrorPrototype, "constructor") => Some(Value::Builtin(SuppressedError)),
         (DisposableStackPrototype, "Symbol.toStringTag") => {
             Some(Value::String("DisposableStack".into()))
         }
@@ -274,7 +278,6 @@ fn error_prototype(builtin: Builtin, key: &str) -> Option<Builtin> {
                 | Builtin::EvalError
                 | Builtin::URIError
                 | Builtin::AggregateError
-                | Builtin::SuppressedError
                 | Builtin::TypeError
         ))
     .then_some(Builtin::ErrorPrototype)
