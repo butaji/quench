@@ -254,6 +254,7 @@ fn construct_regexp(arguments: &[Value]) -> Result<Value, crate::execute::VmErro
         .map_or_else(|| Ok(String::new()), crate::conversion::to_string)?;
     let last_index = Value::BindingCell(Rc::new(RefCell::new(Value::Number(0.0))));
     let mut entries = vec![
+        ("\0regexp".to_string(), Value::Boolean(true)),
         (
             "\0prototype".to_string(),
             Value::Builtin(crate::ops::Builtin::RegExpPrototype),

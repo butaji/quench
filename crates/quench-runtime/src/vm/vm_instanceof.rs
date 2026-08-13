@@ -23,7 +23,7 @@ fn instanceof(value: &Value, constructor: &Value) -> Result<bool, VmError> {
 }
 
 fn builtin_error_instance(value: &Value, constructor: &Value) -> bool {
-    let Value::Builtin(constructor) = constructor else {
+    let Some(constructor) = intrinsic_builtin(constructor) else {
         return false;
     };
     matches!(
@@ -36,7 +36,20 @@ fn builtin_error_instance(value: &Value, constructor: &Value) -> bool {
             | Builtin::URIError
             | Builtin::AggregateError
             | Builtin::TypeError
-    ) && own_constructor(value) == Some(Value::Builtin(*constructor))
+    ) && own_constructor(value) == Some(Value::Builtin(constructor))
+}
+
+fn intrinsic_builtin(value: &Value) -> Option<Builtin> {
+    match value {
+        Value::Builtin(builtin) => Some(*builtin),
+        Value::BoundFunction(bound) if crate::vm::realm::is_intrinsic(bound) => {
+            let Value::Builtin(builtin) = &bound.target else {
+                return None;
+            };
+            Some(*builtin)
+        }
+        _ => None,
+    }
 }
 
 fn has_instance_handler(constructor: &Value) -> Result<Option<Value>, VmError> {
@@ -51,23 +64,25 @@ fn has_instance_handler(constructor: &Value) -> Result<Option<Value>, VmError> {
 }
 
 fn builtin_instanceof(value: &Value, constructor: &Value) -> Option<bool> {
-    if matches!(constructor, Value::Builtin(Builtin::Function)) {
+    let constructor = intrinsic_builtin(constructor)?;
+    if constructor == Builtin::Function {
         return Some(function_instanceof(value));
     }
     Some(match (value, constructor) {
-        (Value::BigInt64Array(_), Value::Builtin(Builtin::BigInt64Array))
-        | (Value::BigUint64Array(_), Value::Builtin(Builtin::BigUint64Array))
-        | (Value::Promise(_), Value::Builtin(Builtin::Promise)) => true,
-        (Value::Object(properties), Value::Builtin(Builtin::Date))
+        (Value::Array(values), Builtin::Array) if !values.is_arguments() => true,
+        (Value::BigInt64Array(_), Builtin::BigInt64Array)
+        | (Value::BigUint64Array(_), Builtin::BigUint64Array)
+        | (Value::Promise(_), Builtin::Promise) => true,
+        (Value::Object(properties), Builtin::Date)
             if properties.iter().any(|(name, _)| name == "timeValue") => true,
-        (Value::Object(properties), Value::Builtin(Builtin::RegExp))
+        (Value::Object(properties), Builtin::RegExp)
             if properties.iter().any(|(name, _)| name == "source") => true,
-        (Value::Map(data), Value::Builtin(Builtin::Map)) if !data.weak => true,
-        (Value::Map(data), Value::Builtin(Builtin::WeakMap)) if data.weak => true,
-        (Value::ArrayBuffer(data), Value::Builtin(Builtin::SharedArrayBuffer)) if data.shared => true,
-        (Value::Set(_), Value::Builtin(Builtin::Set)) => true,
-        (Value::Set(data), Value::Builtin(Builtin::WeakSet)) if data.weak => true,
-        (Value::Object(properties), Value::Builtin(Builtin::WeakRef)) => {
+        (Value::Map(data), Builtin::Map) if !data.weak => true,
+        (Value::Map(data), Builtin::WeakMap) if data.weak => true,
+        (Value::ArrayBuffer(data), Builtin::SharedArrayBuffer) if data.shared => true,
+        (Value::Set(_), Builtin::Set) => true,
+        (Value::Set(data), Builtin::WeakSet) if data.weak => true,
+        (Value::Object(properties), Builtin::WeakRef) => {
             properties.iter().any(|(name, _)| name == "\0weakref")
         }
         _ => return None,
@@ -91,8 +106,8 @@ fn ordinary_instanceof(value: &Value, constructor: &Value) -> Result<bool, VmErr
 }
 
 fn is_error_subclass(value: &Value, constructor: &Value) -> bool {
-    let (Value::Builtin(Builtin::Error), Some(Value::Builtin(actual))) =
-        (constructor, own_constructor(value))
+    let (Some(Builtin::Error), Some(Value::Builtin(actual))) =
+        (intrinsic_builtin(constructor), own_constructor(value))
     else {
         return false;
     };
