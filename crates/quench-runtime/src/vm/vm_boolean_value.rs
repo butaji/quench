@@ -137,9 +137,6 @@ fn simple_prelude(
     if matches!(builtin, Builtin::NumberIsInteger | Builtin::NumberIsSafeInteger) {
         return Some(Ok(Value::Boolean(number_predicate(builtin, arguments.first()))));
     }
-    if is_error_constructor(builtin) {
-        return Some(Ok(crate::builtins::error(builtin, arguments)));
-    }
     crate::functions_dynamic::construct_builtin(builtin, arguments)
 }
 
