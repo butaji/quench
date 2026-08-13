@@ -268,9 +268,13 @@ fn unary(numbers: &[f64], operation: fn(f64) -> f64) -> f64 {
 }
 
 fn round(value: f64) -> f64 {
-    if value.fract() == 0.5 {
-        (value - 0.5).ceil()
+    if value.is_nan() || value.is_infinite() || value == 0.0 {
+        return value;
+    }
+    let result = (value + 0.5).floor();
+    if result == 0.0 && value < 0.0 {
+        -0.0
     } else {
-        value.round()
+        result
     }
 }
