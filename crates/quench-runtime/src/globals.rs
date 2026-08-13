@@ -152,6 +152,7 @@ fn builtin_core(name: &str) -> Option<crate::ops::Builtin> {
         "DataView" => Some(crate::ops::Builtin::DataView),
         "DisposableStack" => Some(crate::ops::Builtin::DisposableStack),
         "AsyncDisposableStack" => Some(crate::ops::Builtin::AsyncDisposableStack),
+        "FinalizationRegistry" => Some(crate::ops::Builtin::FinalizationRegistry),
         "Boolean" => Some(crate::ops::Builtin::Boolean),
         "BigInt" => Some(crate::ops::Builtin::BigInt),
         "eval" => Some(crate::ops::Builtin::Eval),

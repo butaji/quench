@@ -11,6 +11,7 @@ pub mod collections;
 pub mod dataview;
 pub mod date;
 pub mod disposable;
+pub mod finalization_registry;
 pub mod function;
 pub mod intl;
 pub mod json;
@@ -46,6 +47,7 @@ pub fn constructor_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::Date => Some("Date"),
         Builtin::DisposableStack => Some("DisposableStack"),
         Builtin::AsyncDisposableStack => Some("AsyncDisposableStack"),
+        Builtin::FinalizationRegistry => Some("FinalizationRegistry"),
         Builtin::Function => Some("Function"),
         Builtin::AsyncFunction => Some("AsyncFunction"),
         Builtin::GeneratorFunction => Some("GeneratorFunction"),
@@ -111,6 +113,7 @@ pub fn prototype(builtin: Builtin) -> Option<Builtin> {
         Builtin::Date => Some(Builtin::DatePrototype),
         Builtin::DisposableStack => Some(Builtin::DisposableStackPrototype),
         Builtin::AsyncDisposableStack => Some(Builtin::AsyncDisposableStackPrototype),
+        Builtin::FinalizationRegistry => Some(Builtin::FinalizationRegistryPrototype),
         Builtin::Function => Some(Builtin::FunctionPrototype),
         Builtin::AsyncFunction => Some(Builtin::FunctionPrototype),
         Builtin::GeneratorFunction => Some(Builtin::GeneratorFunctionPrototype),
@@ -249,6 +252,7 @@ pub fn constructor_length(builtin: Builtin) -> Option<f64> {
         Builtin::Date => Some(7.0),
         Builtin::DisposableStack => Some(0.0),
         Builtin::AsyncDisposableStack => Some(0.0),
+        Builtin::FinalizationRegistry => Some(1.0),
         Builtin::Function => Some(1.0),
         Builtin::AsyncFunction | Builtin::GeneratorFunction | Builtin::AsyncGeneratorFunction => {
             Some(1.0)

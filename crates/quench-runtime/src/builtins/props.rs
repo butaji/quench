@@ -70,6 +70,13 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         }
         (BigIntPrototype, "Symbol.toStringTag") => Some(Value::String("BigInt".to_string())),
         (DataViewPrototype, "Symbol.toStringTag") => Some(Value::String("DataView".into())),
+        (FinalizationRegistry, "prototype") => Some(Value::Builtin(FinalizationRegistryPrototype)),
+        (FinalizationRegistryPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("FinalizationRegistry".into()))
+        }
+        (FinalizationRegistryPrototype, k) => {
+            crate::builtin_meta::finalization_registry::property(k).map(Value::Builtin)
+        }
         (ObjectPrototype, "constructor") => Some(Value::Builtin(Object)),
         (DatePrototype, k) => crate::builtin_meta::date::date_prop(k).map(Value::Builtin),
         (DisposableStack, "prototype") => Some(Value::Builtin(DisposableStackPrototype)),

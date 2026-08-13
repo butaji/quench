@@ -524,4 +524,8 @@ pub enum Builtin {
     PromiseFinallyOnRejected,
     PromiseAdoptResolve,
     PromiseAdoptReject,
+    FinalizationRegistry,
+    FinalizationRegistryPrototype,
+    FinalizationRegistryRegister,
+    FinalizationRegistryUnregister,
 }

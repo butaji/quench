@@ -196,6 +196,9 @@ fn construct_builtin(
             .unwrap_or_else(|| Ok(crate::builtins::object(arguments))),
         crate::ops::Builtin::DisposableStack => crate::disposable_stack::construct(),
         crate::ops::Builtin::AsyncDisposableStack => crate::disposable_stack::construct_async(),
+        crate::ops::Builtin::FinalizationRegistry => {
+            crate::finalization_registry::construct(arguments)
+        }
         crate::ops::Builtin::RegExp => construct_regexp(arguments),
         _ if is_intl_constructor(builtin) => crate::intl::execute(builtin, arguments, None)
             .unwrap_or_else(|| Ok(crate::builtins::object(arguments))),
