@@ -174,7 +174,66 @@ fn symbol_replace(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value
     if crate::conversion::is_callable(&replacement) {
         return replace_with_callable(receiver, &s, &replacement);
     }
-    replace_with_template(receiver, &s, &value_to_string(&replacement))
+    let replacement = crate::conversion::to_string(&replacement)?;
+    let global = crate::execute::is_truthy(&crate::execute::get_property_result(receiver, "global")?);
+    if dynamic_exec(receiver, global) {
+        return replace_with_exec(receiver, &s, &replacement, global);
+    }
+    replace_with_template(receiver, &s, &replacement)
+}
+
+fn dynamic_exec(receiver: &Value, global: bool) -> bool {
+    let flags_global = extract_flags(receiver).contains('g');
+    let exec = crate::execute::get_property(receiver, "exec");
+    global != flags_global || !matches!(exec, Value::Builtin(crate::ops::Builtin::RegExpExec))
+}
+
+fn replace_with_exec(
+    receiver: &Value,
+    input: &str,
+    replacement: &str,
+    global: bool,
+) -> Result<Value, VmError> {
+    if global {
+        set_last_index(receiver, 0.0)?;
+    }
+    let mut output = String::new();
+    let mut next_source = 0;
+    loop {
+        let result = regexp_exec(receiver, input)?;
+        let Some((matched, index)) = exec_match(&result)? else { break };
+        output.push_str(&input[next_source..index]);
+        output.push_str(&expand_exec_template(replacement, &matched));
+        next_source = index + matched.len();
+        if !global {
+            break;
+        }
+        advance_empty_exec(receiver, input, &matched)?;
+    }
+    output.push_str(&input[next_source..]);
+    Ok(Value::String(output))
+}
+
+fn exec_match(result: &Value) -> Result<Option<(String, usize)>, VmError> {
+    if matches!(result, Value::Null) {
+        return Ok(None);
+    }
+    let matched = crate::conversion::to_string(&crate::execute::get_property_result(result, "0")?)?;
+    let index = crate::conversion::to_number(&crate::execute::get_property_result(result, "index")?)?;
+    Ok(Some((matched, to_length(index))))
+}
+
+fn expand_exec_template(template: &str, matched: &str) -> String {
+    template.replace("$$", "$").replace("$&", matched)
+}
+
+fn advance_empty_exec(receiver: &Value, input: &str, matched: &str) -> Result<(), VmError> {
+    if !matched.is_empty() {
+        return Ok(());
+    }
+    let index = extract_last_index(receiver)?;
+    let unicode = extract_flags(receiver).contains('u');
+    set_last_index(receiver, advance_string_index(input, index, unicode) as f64)
 }
 
 fn replace_with_template(receiver: &Value, s: &str, template: &str) -> Result<Value, VmError> {
