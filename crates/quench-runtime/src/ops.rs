@@ -403,6 +403,7 @@ pub enum Builtin {
     IntlCollatorCompare,
     IntlCollatorResolvedOptions,
     IntlListFormat,
+    IntlListFormatSupportedLocalesOf,
     IntlListFormatFormat,
     IntlListFormatFormatToParts,
     IntlListFormatResolvedOptions,
