@@ -1,4 +1,14 @@
+//! JSON builtin: `JSON.parse`, `JSON.stringify`, `JSON.rawJSON`,
+//! `JSON.isRawJSON`, plus the serde-backed parser used by JSON modules.
+
 use crate::{execute::VmError, ops::Builtin, value::Value};
+use std::rc::Rc;
+
+include!("json/parse_text.rs");
+include!("json/reviver.rs");
+include!("json/serialize.rs");
+
+const RAW_JSON_KEY: &str = "\0rawjson";
 
 /// Parse JSON into the runtime's canonical JavaScript values.
 pub fn parse(source: &str) -> Result<Value, serde_json::Error> {
@@ -14,74 +24,82 @@ fn from_json(value: serde_json::Value) -> Value {
         serde_json::Value::Array(values) => {
             Value::array(values.into_iter().map(from_json).collect())
         }
-        serde_json::Value::Object(values) => {
-            Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(
-                values
-                    .into_iter()
-                    .map(|(key, value)| (key, from_json(value)))
-                    .collect(),
-            )))
-        }
+        serde_json::Value::Object(values) => Value::Object(Rc::new(crate::value::ObjectData::new(
+            values
+                .into_iter()
+                .map(|(key, value)| (key, from_json(value)))
+                .collect(),
+        ))),
     }
 }
 
 pub(crate) fn execute(builtin: Builtin, arguments: &[Value]) -> Option<Result<Value, VmError>> {
-    (builtin == Builtin::JsonStringify).then(|| stringify(arguments.first()))
-}
-
-fn stringify(value: Option<&Value>) -> Result<Value, VmError> {
-    let Some(value) = value else {
-        return Ok(Value::Undefined);
-    };
-    let Some(json) = to_json(value)? else {
-        return Ok(Value::Undefined);
-    };
-    serde_json::to_string(&json)
-        .map(Value::String)
-        .map_err(|error| VmError::EvalError(error.to_string()))
-}
-
-fn to_json(value: &Value) -> Result<Option<serde_json::Value>, VmError> {
-    Ok(match value {
-        Value::Undefined | Value::Function(_) | Value::Builtin(_) | Value::BoundFunction(_) => None,
-        Value::Null => Some(serde_json::Value::Null),
-        Value::Boolean(value) => Some((*value).into()),
-        Value::Number(value) => serde_json::Number::from_f64(*value)
-            .map(serde_json::Value::Number)
-            .or(Some(serde_json::Value::Null)),
-        Value::String(value) if value.contains('\0') => None,
-        Value::String(value) => Some(value.clone().into()),
-        Value::BigInt(_) => return Err(type_error("Do not know how to serialize a BigInt")),
-        Value::Array(values) => Some(array(values)?),
-        Value::Object(properties) => Some(object(properties)?),
-        _ => Some(serde_json::Value::Object(serde_json::Map::new())),
+    Some(match builtin {
+        Builtin::Json => Err(crate::value::error::throw_type_error(
+            "JSON is not a function",
+        )),
+        Builtin::JsonParse => parse_builtin(arguments),
+        Builtin::JsonStringify => stringify(arguments),
+        Builtin::JsonRawJson => raw_json(arguments),
+        Builtin::JsonIsRawJson => Ok(is_raw_json(arguments.first())),
+        _ => return None,
     })
 }
 
-fn array(values: &[Value]) -> Result<serde_json::Value, VmError> {
-    let values = values
-        .iter()
-        .map(|value| to_json(value).map(|value| value.unwrap_or(serde_json::Value::Null)))
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(serde_json::Value::Array(values))
-}
-
-fn object(properties: &[(String, Value)]) -> Result<serde_json::Value, VmError> {
-    let mut result = serde_json::Map::new();
-    for (key, value) in properties {
-        if crate::builtins::is_descriptor_key(key) {
-            continue;
-        }
-        if let Some(value) = to_json(value)? {
-            result.insert(key.clone(), value);
-        }
+/// Resolve `JSON` namespace members (methods and `Symbol.toStringTag`).
+pub(crate) fn method_property(builtin: Builtin, key: &str) -> Value {
+    if builtin != Builtin::Json
+        || crate::builtins::builtin_prototype_property_is_removed(builtin, key)
+    {
+        return Value::Undefined;
     }
-    Ok(serde_json::Value::Object(result))
+    match key {
+        "parse" => Value::Builtin(Builtin::JsonParse),
+        "stringify" => Value::Builtin(Builtin::JsonStringify),
+        "rawJSON" => Value::Builtin(Builtin::JsonRawJson),
+        "isRawJSON" => Value::Builtin(Builtin::JsonIsRawJson),
+        "Symbol.toStringTag" => Value::String("JSON".to_string()),
+        _ => Value::Undefined,
+    }
 }
 
-fn type_error(message: &str) -> VmError {
-    VmError::Thrown(crate::builtins::error(
-        Builtin::TypeError,
-        &[Value::String(message.to_string())],
-    ))
+fn parse_builtin(arguments: &[Value]) -> Result<Value, VmError> {
+    let text = crate::conversion::to_string(arguments.first().unwrap_or(&Value::Undefined))?;
+    let parsed = parse_text(&text)
+        .map_err(|()| crate::value::error::throw_syntax_error("Invalid JSON text"))?;
+    let reviver = arguments.get(1).unwrap_or(&Value::Undefined);
+    if !crate::conversion::is_callable(reviver) {
+        return Ok(parsed.value);
+    }
+    internalize(parsed, reviver)
+}
+
+fn raw_json(arguments: &[Value]) -> Result<Value, VmError> {
+    let text = crate::conversion::to_string(arguments.first().unwrap_or(&Value::Undefined))?;
+    let valid = !text.is_empty()
+        && !text.chars().next().is_some_and(is_json_whitespace)
+        && !text.chars().last().is_some_and(is_json_whitespace)
+        && parse_text(&text).is_ok();
+    if !valid {
+        return Err(crate::value::error::throw_syntax_error(
+            "Invalid raw JSON text",
+        ));
+    }
+    Ok(Value::Object(Rc::new(crate::value::ObjectData::new(vec![
+        ("\0prototype".to_string(), Value::Null),
+        ("rawJSON".to_string(), Value::String(text)),
+        (RAW_JSON_KEY.to_string(), Value::Boolean(true)),
+    ]))))
+}
+
+fn is_json_whitespace(character: char) -> bool {
+    matches!(character, '\t' | '\n' | '\r' | ' ')
+}
+
+fn is_raw_json(value: Option<&Value>) -> Value {
+    let is_raw = match value {
+        Some(Value::Object(properties)) => properties.iter().any(|(name, _)| name == RAW_JSON_KEY),
+        _ => false,
+    };
+    Value::Boolean(is_raw)
 }
