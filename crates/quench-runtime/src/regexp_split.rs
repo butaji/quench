@@ -62,7 +62,7 @@ fn split_compiled_match(
     groups: Vec<Option<(usize, usize)>>,
 ) {
     pieces.push(Value::String(input[..start].to_string()));
-    for group in groups.into_iter().skip(1) {
+    for group in groups {
         pieces.push(match group {
             Some((start, end)) => Value::String(input[start..end].to_string()),
             None => Value::Undefined,
