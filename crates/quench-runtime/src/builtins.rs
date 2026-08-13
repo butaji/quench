@@ -463,6 +463,10 @@ pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
             }
             Value::BoundFunction(bound)
         }
+        Value::DataView(view) => {
+            view.set_own_property(key, value);
+            Value::DataView(view)
+        }
         other => other,
     }
 }
@@ -581,6 +585,7 @@ fn store_descriptor_metadata(result: &mut Value, key: &str, descriptor: &[(Strin
             properties.push((descriptor_key, metadata));
         }
         Value::Builtin(builtin) => write_intrinsic_override(*builtin, key, metadata),
+        Value::DataView(view) => view.set_own_property(&descriptor_key, metadata),
         Value::BoundFunction(bound) => {
             let mut properties = bound.properties.borrow_mut();
             properties.retain(|(name, _)| name != &descriptor_key);

@@ -579,6 +579,9 @@ fn data_view_instance_accessor(value: &Value, key: &str) -> Option<Result<Value,
 }
 
 fn data_view_property(view: &crate::value::DataViewData, key: &str) -> Value {
+    if let Some(value) = view.own_property(key) {
+        return value;
+    }
     match key {
         "buffer" => return Value::ArrayBuffer(view.buffer.clone()),
         "byteLength" => return Value::Number(view.byte_length() as f64),
@@ -588,6 +591,10 @@ fn data_view_property(view: &crate::value::DataViewData, key: &str) -> Value {
     if let Some(prototype) = view.prototype() {
         return get_property(&prototype, key);
     }
-    crate::builtins::property(Builtin::DataViewPrototype, key)
+    let value = crate::builtins::property(Builtin::DataViewPrototype, key);
+    if matches!(value, Value::Undefined) {
+        return crate::builtins::property(Builtin::ObjectPrototype, key);
+    }
+    value
 }
 include!("vm_object_properties.rs");
