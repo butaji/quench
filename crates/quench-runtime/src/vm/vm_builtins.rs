@@ -135,8 +135,8 @@ fn execute_simple_builtin(
         Builtin::EncodeURIComponent => crate::builtins::encode_uri(arguments.first(), false),
         Builtin::DecodeURI => crate::builtins::decode_uri(arguments.first(), true),
         Builtin::DecodeURIComponent => crate::builtins::decode_uri(arguments.first(), false),
-        Builtin::IsFinite => Ok(Value::Boolean(is_finite(arguments.first()))),
-        Builtin::IsNaN => Ok(Value::Boolean(matches!(arguments.first(), Some(Value::Number(value)) if value.is_nan()))),
+        Builtin::IsFinite => Ok(Value::Boolean(is_finite_check(arguments.first(), receiver)?)),
+        Builtin::IsNaN => Ok(Value::Boolean(is_nan_check(arguments.first(), receiver)?)),
         Builtin::Number => Ok(Value::Number(explicit_number(arguments.first())?)),
         Builtin::BigInt => explicit_bigint(arguments.first()),
         Builtin::BigIntAsIntN | Builtin::BigIntAsUintN =>
@@ -513,6 +513,26 @@ fn is_data_view_builtin(builtin: Builtin) -> bool {
             | Builtin::DataViewByteOffsetGetter
     )
 }
+fn is_number_receiver(receiver: Option<&Value>) -> bool {
+    matches!(receiver, Some(Value::Builtin(Builtin::Number)))
+}
+
+fn is_nan_check(value: Option<&Value>, receiver: Option<&Value>) -> Result<bool, VmError> {
+    if is_number_receiver(receiver) {
+        return Ok(matches!(value, Some(Value::Number(number)) if number.is_nan()));
+    }
+    let value = value.cloned().unwrap_or(Value::Undefined);
+    Ok(crate::conversion::to_number(&value)?.is_nan())
+}
+
+fn is_finite_check(value: Option<&Value>, receiver: Option<&Value>) -> Result<bool, VmError> {
+    if is_number_receiver(receiver) {
+        return Ok(is_finite(value));
+    }
+    let value = value.cloned().unwrap_or(Value::Undefined);
+    Ok(crate::conversion::to_number(&value)?.is_finite())
+}
+
 fn execute_data_view_builtin(
     builtin: Builtin,
     receiver: Option<&Value>,

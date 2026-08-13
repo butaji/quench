@@ -182,6 +182,11 @@ pub(crate) fn is_callable(value: &Value) -> bool {
             crate::ops::Builtin::Math | crate::ops::Builtin::Reflect | crate::ops::Builtin::Json,
         ) => false,
         Value::Builtin(builtin)
+            if crate::intl::tolocale::symbol::name(*builtin).is_some() =>
+        {
+            false
+        }
+        Value::Builtin(builtin)
             if crate::builtins::object::is_intrinsic_prototype(*builtin) =>
         {
             false
