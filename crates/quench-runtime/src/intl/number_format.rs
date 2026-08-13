@@ -228,6 +228,9 @@ pub(crate) fn format_number_rounded(value: f64, max_fraction: u32, increment: u3
         }
         .to_string();
     }
+    if value.abs() >= 1e21 && increment == 1 {
+        return value.to_string();
+    }
     let scale = 10_f64.powi(max_fraction as i32);
     let quantum = f64::from(increment.max(1)) / scale;
     let units = value / quantum;
@@ -258,6 +261,9 @@ pub(crate) fn format_significant(value: f64, minimum: u32, maximum: u32, mode: &
             zero
         };
     }
+    if let Some(text) = format_large_significant(value, minimum, maximum, mode) {
+        return text;
+    }
     let exponent = value.abs().log10().floor() as i32;
     let decimal_places = maximum as i32 - exponent - 1;
     let scale = 10f64.powi(decimal_places);
@@ -282,6 +288,59 @@ pub(crate) fn format_significant(value: f64, minimum: u32, maximum: u32, mode: &
         };
     }
     text
+}
+
+fn format_large_significant(value: f64, minimum: u32, maximum: u32, mode: &str) -> Option<String> {
+    if !value.is_finite() || value.abs() < 1e21 {
+        return None;
+    }
+    let (sign, digits) = value
+        .to_string()
+        .strip_prefix('-')
+        .map_or(("", value.to_string()), |text| ("-", text.to_string()));
+    let mut digits: Vec<char> = digits.chars().filter(|c| c.is_ascii_digit()).collect();
+    let keep = maximum as usize;
+    if digits.len() > keep {
+        let round_up = should_round_up(digits[keep], mode, value.is_sign_negative());
+        digits.truncate(keep);
+        if round_up {
+            increment_digits(&mut digits);
+        }
+    }
+    let exponent = value
+        .abs()
+        .to_string()
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .count();
+    let total = exponent.max(digits.len());
+    while digits.len() < minimum as usize {
+        digits.push('0');
+    }
+    while digits.len() < total {
+        digits.push('0');
+    }
+    Some(format!("{sign}{}", digits.into_iter().collect::<String>()))
+}
+
+fn should_round_up(next: char, mode: &str, negative: bool) -> bool {
+    match mode {
+        "ceil" => !negative,
+        "floor" => negative,
+        "trunc" => false,
+        "expand" => true,
+        _ => next >= '5',
+    }
+}
+
+fn increment_digits(digits: &mut [char]) {
+    for digit in digits.iter_mut().rev() {
+        if *digit != '9' {
+            *digit = ((*digit as u8) + 1) as char;
+            return;
+        }
+        *digit = '0';
+    }
 }
 
 fn round_units(value: f64, mode: &str) -> f64 {
