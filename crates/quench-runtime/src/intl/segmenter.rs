@@ -178,33 +178,41 @@ fn word_segments(text: &str) -> Vec<Value> {
     let mut start = 0;
     let mut start_utf16 = 0;
     let mut utf16_index = 0;
-    let mut whitespace: Option<bool> = None;
+    let mut kind: Option<u8> = None;
     for (index, character) in text.char_indices() {
-        let is_space = character.is_whitespace();
-        if let Some(previous) = whitespace {
-            if previous != is_space {
-                result.push(word_entry(
-                    &text[start..index],
-                    start_utf16,
-                    text,
-                    !previous,
-                ));
-                start = index;
-                start_utf16 = utf16_index;
-            }
+        let next_kind = character_kind(character);
+        if kind.is_some_and(|previous| previous != next_kind || next_kind == 2) {
+            push_word_segment(&mut result, &text[start..index], start_utf16, text, kind);
+            start = index;
+            start_utf16 = utf16_index;
         }
         utf16_index += character.len_utf16();
-        whitespace = Some(is_space);
+        kind = Some(next_kind);
     }
     if start < text.len() {
-        result.push(word_entry(
-            &text[start..],
-            start_utf16,
-            text,
-            !whitespace.unwrap_or(false),
-        ));
+        push_word_segment(&mut result, &text[start..], start_utf16, text, kind);
     }
     result
+}
+
+fn character_kind(character: char) -> u8 {
+    if character.is_whitespace() {
+        0
+    } else if character.is_alphanumeric() {
+        1
+    } else {
+        2
+    }
+}
+
+fn push_word_segment(
+    result: &mut Vec<Value>,
+    segment: &str,
+    index: usize,
+    input: &str,
+    kind: Option<u8>,
+) {
+    result.push(word_entry(segment, index, input, kind == Some(1)));
 }
 
 fn word_entry(segment: &str, index: usize, input: &str, word_like: bool) -> Value {
