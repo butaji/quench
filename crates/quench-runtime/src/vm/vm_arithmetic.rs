@@ -112,6 +112,9 @@ fn arithmetic_value(
     right: &Value,
     operator: crate::ops::BinaryOp,
 ) -> Result<Value, VmError> {
+    if operator != crate::ops::BinaryOp::Add {
+        return numeric_binary_value(left, right, operator);
+    }
     let hint = if operator == crate::ops::BinaryOp::Add {
         "default"
     } else {
@@ -138,6 +141,21 @@ fn arithmetic_value(
     }
     let left = crate::conversion::primitive_to_number(&left)?;
     let right = crate::conversion::primitive_to_number(&right)?;
+    Ok(Value::Number(numeric_binary(left, right, operator)))
+}
+
+fn numeric_binary_value(
+    left: &Value,
+    right: &Value,
+    operator: crate::ops::BinaryOp,
+) -> Result<Value, VmError> {
+    let left = to_numeric(left)?;
+    let right = to_numeric(right)?;
+    if has_bigint_operand(&left, &right) {
+        return bigint_binary(&left, &right, operator);
+    }
+    let left = crate::conversion::to_number(&left)?;
+    let right = crate::conversion::to_number(&right)?;
     Ok(Value::Number(numeric_binary(left, right, operator)))
 }
 
