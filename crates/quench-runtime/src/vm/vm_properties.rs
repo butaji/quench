@@ -331,7 +331,12 @@ fn is_accessor_builtin(builtin: Builtin) -> bool {
     name.starts_with("get ") || name.starts_with("set ")
 }
 fn same_property_receiver(value: &Value, receiver: &Value) -> bool {
-    matches!((value, receiver), (Value::Builtin(left), Value::Builtin(right)) if left == right)
+    match (value, receiver) {
+        (Value::Builtin(left), Value::Builtin(right)) => left == right,
+        (Value::Map(left), Value::Map(right)) => std::rc::Rc::ptr_eq(left, right),
+        (Value::Set(left), Value::Set(right)) => std::rc::Rc::ptr_eq(left, right),
+        _ => false,
+    }
 }
 
 pub(crate) fn array_accessor(value: &Value, key: &str, field: &str) -> Option<Value> {
