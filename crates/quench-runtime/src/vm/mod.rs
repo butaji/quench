@@ -1,4 +1,4 @@
-use crate::intl::tolocale::value::{is_finite, to_number, to_string};
+use crate::intl::tolocale::value::{is_finite, to_string};
 use crate::ops::{
     Builtin, FunctionKind, FunctionStrictness, HostCapabilityKind, HostCapabilityRef, Op, RealmId,
 };
