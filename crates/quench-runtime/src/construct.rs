@@ -296,6 +296,7 @@ fn regexp_flag_entries(flags: &str) -> Vec<(String, Value)> {
         ("multiline", flags.contains('m')),
         ("dotAll", flags.contains('s')),
         ("unicode", flags.contains('u')),
+        ("unicodeSets", flags.contains('v')),
         ("sticky", flags.contains('y')),
     ] {
         let descriptor = regexp_data_descriptor(false, true, Value::Boolean(enabled));

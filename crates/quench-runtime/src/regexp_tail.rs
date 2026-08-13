@@ -48,7 +48,7 @@ fn symbol_match(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, 
     if !crate::execute::is_truthy(&global) {
         return regexp_exec(receiver, &input);
     }
-    symbol_match_global(receiver, &input, flags.contains('u'))
+    symbol_match_global(receiver, &input, unicode_mode(&flags))
 }
 
 fn symbol_match_global(receiver: &Value, s: &str, unicode: bool) -> Result<Value, VmError> {
@@ -82,6 +82,10 @@ fn advance_string_index(text: &str, index: usize, unicode: bool) -> usize {
                     .is_some_and(|next| (0xDC00..=0xDFFF).contains(&next))
         });
     index + if pair { 2 } else { 1 }
+}
+
+fn unicode_mode(flags: &str) -> bool {
+    flags.contains('u') || flags.contains('v')
 }
 
 pub(crate) fn regexp_exec(receiver: &Value, input: &str) -> Result<Value, VmError> {
@@ -191,7 +195,7 @@ fn advance_empty_exec(receiver: &Value, input: &str, matched: &str) -> Result<()
         return Ok(());
     }
     let index = extract_last_index(receiver)?;
-    let unicode = extract_flags(receiver).contains('u');
+    let unicode = unicode_mode(&extract_flags(receiver));
     set_last_index(receiver, advance_string_index(input, index, unicode) as f64)
 }
 
