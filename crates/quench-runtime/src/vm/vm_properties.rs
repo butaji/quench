@@ -294,10 +294,16 @@ fn receiver_property(value: &Value, key: &str, receiver: &Value) -> Value {
     if matches!(key, "constructor" | "prototype") {
         return property;
     }
+    if same_property_receiver(value, receiver) {
+        return property;
+    }
     match property {
         Value::Builtin(_) => bind_method(receiver, property),
         other => other,
     }
+}
+fn same_property_receiver(value: &Value, receiver: &Value) -> bool {
+    matches!((value, receiver), (Value::Builtin(left), Value::Builtin(right)) if left == right)
 }
 
 pub(crate) fn array_accessor(value: &Value, key: &str, field: &str) -> Option<Value> {
