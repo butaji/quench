@@ -256,7 +256,7 @@ pub(crate) fn format_currency(
         },
         |rest| ("-", rest),
     );
-    let text = if locale.starts_with("de") {
+    let text = if locale.starts_with("de") || locale.starts_with("pt") {
         text.replace('.', ",")
     } else {
         text.to_string()
@@ -281,7 +281,7 @@ pub(crate) fn format_currency(
         } else {
             symbol
         };
-    let formatted = if locale.starts_with("de") {
+    let formatted = if locale.starts_with("de") || locale.starts_with("pt") {
         format!("{text}\u{a0}{symbol}")
     } else {
         format!("{symbol}{text}")
