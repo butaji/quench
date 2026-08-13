@@ -152,6 +152,11 @@ fn owns_property(receiver: &Value, key: &str) -> Result<bool, VmError> {
                     && crate::vm::is_global_object(&Value::Object(properties.clone()))
                     && crate::vm::global_builtin_exists(key))
         }
+        Value::ObjectAlias(alias) => alias
+            .0
+            .borrow()
+            .upgrade()
+            .is_some_and(|properties| object_owns(&properties, key)),
         Value::Array(values) => {
             (!values.is_arguments() && key == "length")
                 || key
@@ -175,6 +180,18 @@ fn owns_property(receiver: &Value, key: &str) -> Result<bool, VmError> {
         }
         _ => false,
     })
+}
+
+fn object_owns(properties: &Rc<ObjectData>, key: &str) -> bool {
+    let deleted = properties
+        .iter()
+        .any(|(name, _)| name == &crate::builtins::deleted_key(key));
+    properties
+        .iter()
+        .any(|(name, _)| name == key && !super::is_descriptor_key(name))
+        || (!deleted
+            && crate::vm::is_global_object(&Value::Object(properties.clone()))
+            && crate::vm::global_builtin_exists(key))
 }
 fn builtin_owns_property(builtin: Builtin, key: &str) -> bool {
     if crate::builtins::builtin_prototype_property_is_removed(builtin, key) {
