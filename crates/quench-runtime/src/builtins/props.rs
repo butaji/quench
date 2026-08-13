@@ -30,7 +30,8 @@ fn special(builtin: Builtin, key: &str) -> Option<Value> {
     }
     if builtin == Math {
         return crate::math::constant(key)
-            .or_else(|| crate::math::property(key).map(Value::Builtin));
+            .or_else(|| crate::math::property(key).map(Value::Builtin))
+            .or_else(|| special_match(builtin, key));
     }
     if builtin == Json && key == "stringify" {
         return Some(Value::Builtin(JsonStringify));
@@ -55,6 +56,7 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (RegExpStringIteratorPrototype, "Symbol.toStringTag") => {
             Some(Value::String("RegExp String Iterator".into()))
         }
+        (Math, "Symbol.toStringTag") => Some(Value::String("Math".into())),
         (Reflect, "Symbol.toStringTag") => Some(Value::String("Reflect".into())),
         (SymbolPrototype, "Symbol.toStringTag") => Some(Value::String("Symbol".into())),
         (Symbol, "prototype") => Some(Value::Builtin(SymbolPrototype)),
