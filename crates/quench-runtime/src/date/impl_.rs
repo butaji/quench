@@ -137,12 +137,7 @@ fn date_constructor(arguments: &[Value]) -> Result<Value, VmError> {
     let ms = if arguments.is_empty() {
         chrono_utils::time_clip(chrono_utils::current_time_ms())
     } else if arguments.len() == 1 {
-        let value = crate::conversion::to_primitive(&arguments[0], "default")?;
-        if let Value::String(s) = value {
-            chrono_utils::time_clip(DateValue::parse(&s))
-        } else {
-            chrono_utils::time_clip(crate::conversion::to_number(&value)?)
-        }
+        date_constructor_value(&arguments[0])?
     } else {
         let year = date_argument(arguments, 0, 0.0)?;
         let month = date_argument(arguments, 1, 0.0)?;
@@ -162,6 +157,18 @@ fn date_constructor(arguments: &[Value]) -> Result<Value, VmError> {
         ),
     ];
     Ok(Value::Object(Rc::new(crate::value::ObjectData::new(props))))
+}
+
+fn date_constructor_value(value: &Value) -> Result<f64, VmError> {
+    if matches!(value, Value::Object(_)) && !extract_time(Some(value)).is_nan() {
+        return Ok(extract_time(Some(value)));
+    }
+    let value = crate::conversion::to_primitive(value, "default")?;
+    let time = match value {
+        Value::String(string) => DateValue::parse(&string),
+        value => crate::conversion::to_number(&value)?,
+    };
+    Ok(chrono_utils::time_clip(time))
 }
 
 fn date_parse(arguments: &[Value]) -> Value {
