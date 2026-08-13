@@ -193,10 +193,65 @@ include!("builtins_array_fill.rs");
 include!("builtins_array_copy_within.rs");
 include!("builtins_array_find_last.rs");
 include!("builtins_array_to_sorted.rs");
-pub(crate) fn math_pow(arguments: &[Value]) -> Value {
-    let base = arguments.first().map_or(f64::NAN, value_to_number);
-    let exponent = arguments.get(1).map_or(f64::NAN, value_to_number);
-    Value::Number(base.powf(exponent))
+pub(crate) fn math_pow(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
+    let base = arguments
+        .first()
+        .map_or(Ok(f64::NAN), crate::conversion::to_number)?;
+    let exponent = arguments
+        .get(1)
+        .map_or(Ok(f64::NAN), crate::conversion::to_number)?;
+    Ok(Value::Number(pow(base, exponent)))
+}
+
+fn pow(base: f64, exponent: f64) -> f64 {
+    if exponent == 0.0 {
+        return 1.0;
+    }
+    if exponent.is_nan() || base.is_nan() || base.abs() == 1.0 && exponent.is_infinite() {
+        return f64::NAN;
+    }
+    if base.is_infinite() {
+        return infinite_pow(base, exponent);
+    }
+    if base == 0.0 {
+        return zero_pow(base, exponent);
+    }
+    base.powf(exponent)
+}
+
+fn infinite_pow(base: f64, exponent: f64) -> f64 {
+    if exponent.is_sign_positive() {
+        if base.is_sign_negative() && is_odd_integer(exponent) {
+            f64::NEG_INFINITY
+        } else {
+            f64::INFINITY
+        }
+    } else if base.is_sign_negative() && is_odd_integer(exponent) {
+        -0.0
+    } else {
+        0.0
+    }
+}
+
+fn zero_pow(base: f64, exponent: f64) -> f64 {
+    if exponent.is_sign_positive() {
+        if base.is_sign_negative() && is_odd_integer(exponent) {
+            -0.0
+        } else {
+            0.0
+        }
+    } else if base.is_sign_negative() && is_odd_integer(exponent) {
+        f64::NEG_INFINITY
+    } else {
+        f64::INFINITY
+    }
+}
+
+fn is_odd_integer(value: f64) -> bool {
+    value.is_finite()
+        && value == value.trunc()
+        && value.abs() < 9_007_199_254_740_992.0
+        && value as i64 % 2 != 0
 }
 
 pub(crate) fn is_array(value: Option<&Value>) -> Value {
