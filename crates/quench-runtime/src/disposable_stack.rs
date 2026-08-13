@@ -32,12 +32,18 @@ pub(crate) fn execute(
     use Builtin::*;
     Some(match builtin {
         DisposableStack => Err(requires_new()),
-        DisposableStackUse => use_resource(receiver, arguments),
-        DisposableStackAdopt => adopt_resource(receiver, arguments),
-        DisposableStackDefer => defer_resource(receiver, arguments),
-        DisposableStackMove => move_stack(receiver),
-        DisposableStackDispose => dispose_stack(receiver),
-        DisposableStackDisposed => disposed(receiver),
+        DisposableStackUse => {
+            sync_receiver(receiver).and_then(|_| use_resource(receiver, arguments))
+        }
+        DisposableStackAdopt => {
+            sync_receiver(receiver).and_then(|_| adopt_resource(receiver, arguments))
+        }
+        DisposableStackDefer => {
+            sync_receiver(receiver).and_then(|_| defer_resource(receiver, arguments))
+        }
+        DisposableStackMove => sync_receiver(receiver).and_then(|_| move_stack(receiver)),
+        DisposableStackDispose => sync_receiver(receiver).and_then(|_| dispose_stack(receiver)),
+        DisposableStackDisposed => sync_receiver(receiver).and_then(|_| disposed(receiver)),
         AsyncDisposableStack => Err(requires_new()),
         AsyncDisposableStackUse => async_use(receiver, arguments),
         AsyncDisposableStackAdopt => async_adopt(receiver, arguments),
@@ -223,10 +229,32 @@ fn dispose_records(mut values: Vec<Value>) -> Result<Value, VmError> {
     let mut error = None;
     while let Some(record) = values.pop() {
         if let Err(next) = dispose_record(&record) {
-            error = Some(next);
+            error = Some(match error {
+                Some(previous) => suppress(next, previous),
+                None => next,
+            });
         }
     }
     error.map_or(Ok(Value::Undefined), Err)
+}
+
+fn suppress(error: VmError, suppressed: VmError) -> VmError {
+    let (VmError::Thrown(error), VmError::Thrown(suppressed)) = (error, suppressed) else {
+        return VmError::Thrown(Value::Undefined);
+    };
+    VmError::Thrown(Value::Object(Rc::new(ObjectData::new(vec![
+        (
+            "\0prototype".into(),
+            Value::Builtin(Builtin::ErrorPrototype),
+        ),
+        ("name".into(), Value::String("SuppressedError".into())),
+        (
+            "constructor".into(),
+            Value::Builtin(Builtin::SuppressedError),
+        ),
+        ("error".into(), error),
+        ("suppressed".into(), suppressed),
+    ]))))
 }
 
 fn dispose_record(record: &Value) -> Result<Value, VmError> {
@@ -266,6 +294,13 @@ fn is_async(value: &Value) -> bool {
 fn async_receiver(receiver: Option<&Value>) -> Result<&Value, VmError> {
     let receiver = receiver.ok_or_else(incompatible_receiver)?;
     is_async(receiver)
+        .then_some(receiver)
+        .ok_or_else(incompatible_receiver)
+}
+
+fn sync_receiver(receiver: Option<&Value>) -> Result<&Value, VmError> {
+    let receiver = receiver.ok_or_else(incompatible_receiver)?;
+    (!is_async(receiver) && is_stack(receiver))
         .then_some(receiver)
         .ok_or_else(incompatible_receiver)
 }

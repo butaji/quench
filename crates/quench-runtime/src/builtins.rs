@@ -326,6 +326,7 @@ pub(crate) fn error(builtin: Builtin, arguments: &[Value]) -> Value {
         Builtin::EvalError => ("EvalError", Builtin::EvalError),
         Builtin::URIError => ("URIError", Builtin::URIError),
         Builtin::AggregateError => ("AggregateError", Builtin::AggregateError),
+        Builtin::SuppressedError => ("SuppressedError", Builtin::SuppressedError),
         Builtin::TypeError => ("TypeError", Builtin::TypeError),
         _ => ("Error", Builtin::Error),
     };
