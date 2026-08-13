@@ -3,8 +3,8 @@
 use crate::ops::Builtin;
 
 use super::{
-    array, bigint, collections, date, function, intl, json, math, number, object, promise, reflect,
-    regexp, string, symbol,
+    array, bigint, collections, date, disposable, function, intl, json, math, number, object,
+    promise, reflect, regexp, string, symbol,
 };
 
 pub fn function_name(builtin: Builtin) -> Option<&'static str> {
@@ -12,6 +12,9 @@ pub fn function_name(builtin: Builtin) -> Option<&'static str> {
         return Some(v);
     }
     if let Some(v) = date::fn_name(builtin) {
+        return Some(v);
+    }
+    if let Some(v) = disposable::fn_name(builtin) {
         return Some(v);
     }
     if let Some(v) = function::fn_name(builtin) {
@@ -55,6 +58,9 @@ pub fn function_length(builtin: Builtin) -> Option<f64> {
     if let Some(v) = date::fn_len(builtin) {
         return Some(v);
     }
+    if let Some(v) = disposable::fn_len(builtin) {
+        return Some(v);
+    }
     if let Some(v) = function::fn_len(builtin) {
         return Some(v);
     }
@@ -93,6 +99,9 @@ pub fn short_name(builtin: Builtin) -> Option<&'static str> {
         return Some(v);
     }
     if let Some(v) = date::short_name(builtin) {
+        return Some(v);
+    }
+    if let Some(v) = disposable::short_name(builtin) {
         return Some(v);
     }
     if let Some(v) = function::short_name(builtin) {

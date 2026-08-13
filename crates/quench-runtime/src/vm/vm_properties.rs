@@ -231,6 +231,9 @@ pub(crate) fn get_property_with_receiver(
         }
         return invoke_accessor(&getter, receiver);
     }
+    if let Some(result) = crate::disposable_stack::accessor(value, key, receiver) {
+        return result;
+    }
     let getter = crate::property_define::accessor(value, key, "get");
     let Some(getter) = getter else {
         return Ok(get_property(value, key));

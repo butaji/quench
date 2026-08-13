@@ -172,6 +172,8 @@ fn construct_builtin(
         crate::ops::Builtin::WeakRef => construct_weak_ref(arguments),
         crate::ops::Builtin::Date => crate::date::execute(builtin, None, arguments)
             .unwrap_or_else(|| Ok(crate::builtins::object(arguments))),
+        crate::ops::Builtin::DisposableStack => crate::disposable_stack::construct(),
+        crate::ops::Builtin::AsyncDisposableStack => crate::disposable_stack::construct_async(),
         crate::ops::Builtin::RegExp => construct_regexp(arguments),
         _ if is_intl_constructor(builtin) => crate::intl::execute(builtin, arguments, None)
             .unwrap_or_else(|| Ok(crate::builtins::object(arguments))),
