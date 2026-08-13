@@ -110,6 +110,7 @@ fn array_owns(values: &crate::value::ArrayData, key: &str) -> bool {
             .parse::<usize>()
             .is_ok_and(|index| values.has_index(index))
         || values.property(key).is_some()
+        || values.descriptor(key).is_some()
         || (values.is_strict_arguments() && key == "callee")
 }
 

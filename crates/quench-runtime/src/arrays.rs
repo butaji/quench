@@ -269,6 +269,20 @@ fn array_prototype_override(key: &str) -> Option<Value> {
         .find_map(|(name, value)| (name == "value").then(|| value.clone()))
 }
 
+/// The `get` accessor of a user-defined `Array.prototype` override, e.g.
+/// `Object.defineProperty(Array.prototype, "2", { get: ... })`.
+pub(crate) fn prototype_override_getter(key: &str) -> Option<Value> {
+    let descriptor =
+        crate::builtins::read_intrinsic_override(crate::ops::Builtin::ArrayPrototype, key)?;
+    let Value::Object(properties) = descriptor else {
+        return None;
+    };
+    properties
+        .iter()
+        .rev()
+        .find_map(|(name, value)| (name == "get").then(|| value.clone()))
+}
+
 pub(crate) fn array_index(key: &str) -> Option<u32> {
     let index = key.parse::<u32>().ok()?;
     (index != u32::MAX && index.to_string() == key).then_some(index)
