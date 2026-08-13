@@ -67,7 +67,8 @@ fn symbol_description(receiver: Option<&Value>) -> Result<Value, crate::execute:
         ));
     };
     let description = symbol
-        .strip_prefix("Symbol.")
+        .strip_prefix("Symbol.for.")
+        .or_else(|| symbol.strip_prefix("Symbol."))
         .and_then(|value| value.rsplit_once('\0').map(|(value, _)| value))
         .ok_or_else(|| crate::value::error::throw_type_error("Symbol description requires a symbol"))?;
     if description == "\u{1}" {
