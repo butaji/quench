@@ -72,6 +72,9 @@ fn accessor_value(value: &Value, key: &str, field: &str) -> Option<Value> {
         Value::BoundFunction(bound) => accessor_bound(bound, key, field),
         Value::Number(_) => accessor_primitive(Builtin::NumberPrototype, key, field),
         Value::Boolean(_) => accessor_primitive(Builtin::BooleanPrototype, key, field),
+        Value::String(value) if crate::conversion::is_symbol_string(value) => {
+            accessor_primitive(Builtin::SymbolPrototype, key, field)
+        }
         Value::String(_) => accessor_primitive(Builtin::StringPrototype, key, field),
         Value::BigInt(_) => accessor_primitive(Builtin::BigIntPrototype, key, field),
         Value::Builtin(builtin) => accessor_builtin(*builtin, key, field),
@@ -118,6 +121,7 @@ fn static_accessor(builtin: Builtin, key: &str) -> Option<Value> {
         (Builtin::SetPrototype, "size") => Builtin::SetSizeGetter,
         (Builtin::MapPrototype, "size") => Builtin::MapSizeGetter,
         (Builtin::Set, "Symbol.species") => Builtin::SetSpeciesGetter,
+        (Builtin::SymbolPrototype, "description") => Builtin::SymbolDescriptionGetter,
         _ => return None,
     };
     Some(Value::Object(std::rc::Rc::new(
