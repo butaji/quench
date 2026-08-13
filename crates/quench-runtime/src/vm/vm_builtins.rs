@@ -43,7 +43,7 @@ pub(crate) fn execute_function_apply(
     let list = create_list_from_array_like(arguments.get(1))?;
     crate::functions::execute_target(target, receiver, &list)
 }
-fn create_list_from_array_like(value: Option<&Value>) -> Result<Vec<Value>, VmError> {
+pub(crate) fn create_list_from_array_like(value: Option<&Value>) -> Result<Vec<Value>, VmError> {
     let Some(value) = value.filter(|value| !matches!(value, Value::Null | Value::Undefined)) else {
         return Ok(Vec::new());
     };
