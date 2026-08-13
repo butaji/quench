@@ -7,6 +7,11 @@ pub(crate) fn descriptor_flag(target: &Value, key: &str, field: &str) -> Option<
     }
     match target {
         Value::Object(properties) => descriptor_flag_in(properties, key, field),
+        Value::ObjectAlias(alias) => alias
+            .0
+            .borrow()
+            .upgrade()
+            .and_then(|properties| descriptor_flag_in(&properties, key, field)),
         Value::Array(values) => array_flag(values, key, field),
         Value::Builtin(builtin) => builtin_flag(*builtin, key, field),
         _ => None,

@@ -9,6 +9,7 @@ pub(crate) fn delete_property(target: Value, key: &str) -> (Value, bool) {
             (Value::Object(properties), false)
         }
         Value::Object(properties) => (delete_object_property(properties, key), true),
+        Value::ObjectAlias(alias) => delete_object_alias_property(alias, key),
         Value::Array(values)
             if array_descriptor_flag(&values, key, "configurable") == Some(false) =>
         {
@@ -33,6 +34,18 @@ pub(crate) fn delete_property(target: Value, key: &str) -> (Value, bool) {
         }
         value => (value, true),
     }
+}
+
+fn delete_object_alias_property(
+    alias: crate::value::ObjectAliasValue,
+    key: &str,
+) -> (Value, bool) {
+    let Some(properties) = alias.0.borrow().upgrade() else {
+        return (Value::ObjectAlias(alias), true);
+    };
+    let result = delete_property(Value::Object(properties), key);
+    retarget_object_alias(&alias, &result.0);
+    result
 }
 
 fn global_constant(properties: &Rc<crate::value::ObjectData>, key: &str) -> bool {
