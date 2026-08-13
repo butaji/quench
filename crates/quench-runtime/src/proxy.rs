@@ -282,7 +282,7 @@ pub(crate) fn proxy_get_prototype_of(target: &Value) -> Result<Value, VmError> {
             return call_trap(&trap, slice::from_ref(target), None);
         }
     }
-    Ok(get_prototype_of(target))
+    crate::builtins::object::get_prototype_of(Some(target))
 }
 
 pub(crate) fn proxy_set_prototype_of(target: &Value, prototype: &Value) -> Result<Value, VmError> {
@@ -411,16 +411,6 @@ fn has_own_property(target: &Value, prop: &str) -> bool {
             ) == Value::Boolean(true)
         }
         _ => false,
-    }
-}
-
-fn get_prototype_of(target: &Value) -> Value {
-    match target {
-        Value::Object(_) | Value::Array(_) | Value::Function(_) | Value::Proxy(_) => Value::Null,
-        Value::Builtin(builtin) => {
-            crate::builtin_meta::prototype(*builtin).map_or(Value::Null, Value::Builtin)
-        }
-        _ => Value::Null,
     }
 }
 
