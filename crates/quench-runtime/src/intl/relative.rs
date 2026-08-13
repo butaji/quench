@@ -259,7 +259,7 @@ fn grouped_number(value: f64) -> String {
         return "NaN".to_string();
     }
     if value.is_infinite() {
-        return "Infinity".to_string();
+        return "∞".to_string();
     }
     let mut text = format!("{value:.3}");
     if text.contains('.') {
@@ -315,6 +315,11 @@ fn number_parts(text: &str) -> Vec<Part> {
                     });
                     fractional = true;
                 }
+                '∞' => parts.push(Part {
+                    ty: "integer",
+                    value: "∞".to_string(),
+                    unit: false,
+                }),
                 _ => {}
             }
         }
