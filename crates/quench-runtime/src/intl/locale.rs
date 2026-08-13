@@ -340,8 +340,8 @@ pub(crate) fn prototype_method(
     let slot = slot_string(&super::intl_slots(receiver)?, "full").unwrap_or_default();
     match builtin {
         crate::ops::Builtin::IntlLocaleToString => Ok(Value::String(slot)),
-        crate::ops::Builtin::IntlLocaleMaximize => Ok(Value::String(slot)),
-        crate::ops::Builtin::IntlLocaleMinimize => Ok(Value::String(slot)),
+        crate::ops::Builtin::IntlLocaleMaximize => Ok(Value::String(maximize(&slot))),
+        crate::ops::Builtin::IntlLocaleMinimize => Ok(Value::String(minimize(&slot))),
         crate::ops::Builtin::IntlLocaleGetCalendars => {
             Ok(make_array(vec![Value::String("gregory".to_string())]))
         }
@@ -404,6 +404,71 @@ pub(crate) fn prototype_method(
             Ok(locale_slot_value(&super::intl_slots(receiver)?, key))
         }
         _ => Err(runtime_error("TypeError: method not found")),
+    }
+}
+
+fn maximize(tag: &str) -> String {
+    let (base, extension) = tag
+        .split_once("-u")
+        .map_or((tag, String::new()), |(a, b)| (a, format!("-u{b}")));
+    let parts: Vec<&str> = base.split('-').collect();
+    let language = parts.first().copied().unwrap_or("und");
+    let script = parts.iter().skip(1).find(|part| part.len() == 4).copied();
+    let region = parts
+        .iter()
+        .skip(1)
+        .find(|part| {
+            part.len() == 2 || (part.len() == 3 && part.chars().all(|c| c.is_ascii_digit()))
+        })
+        .copied();
+    let (default_script, default_region) = likely_subtags(language);
+    format!(
+        "{}-{}-{}{}",
+        language,
+        script.unwrap_or(default_script),
+        region.unwrap_or(default_region),
+        extension
+    )
+}
+
+fn minimize(tag: &str) -> String {
+    let maximized = maximize(tag);
+    let (base, extension) = maximized
+        .split_once("-u")
+        .map_or((maximized.as_str(), String::new()), |(a, b)| {
+            (a, format!("-u{b}"))
+        });
+    let parts: Vec<&str> = base.split('-').collect();
+    let language = parts.first().copied().unwrap_or("und");
+    let (default_script, default_region) = likely_subtags(language);
+    let script = parts.get(1).copied().unwrap_or(default_script);
+    let region = parts.get(2).copied().unwrap_or(default_region);
+    let short = if script == default_script && region == default_region {
+        language.to_string()
+    } else if script == default_script {
+        format!("{language}-{region}")
+    } else if region == default_region {
+        format!("{language}-{script}")
+    } else {
+        format!("{language}-{script}-{region}")
+    };
+    short + &extension
+}
+
+fn likely_subtags(language: &str) -> (&'static str, &'static str) {
+    match language {
+        "ar" => ("Arab", "EG"),
+        "de" => ("Latn", "DE"),
+        "en" => ("Latn", "US"),
+        "es" => ("Latn", "ES"),
+        "fr" => ("Latn", "FR"),
+        "ja" => ("Jpan", "JP"),
+        "ko" => ("Kore", "KR"),
+        "ru" => ("Cyrl", "RU"),
+        "sr" => ("Cyrl", "RS"),
+        "zh" => ("Hans", "CN"),
+        "und" => ("Latn", "US"),
+        _ => ("Latn", "US"),
     }
 }
 
