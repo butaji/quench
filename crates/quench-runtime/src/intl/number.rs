@@ -421,7 +421,10 @@ impl NumberOptions {
             );
         }
         if self.style == "percent" {
-            let mut parts = numeric_parts(&formatted, &self.locale);
+            let mut parts = numeric_parts(
+                formatted.strip_suffix('%').unwrap_or(&formatted),
+                &self.locale,
+            );
             parts.push(crate::intl::number_format::percent_part());
             return parts;
         }

@@ -479,8 +479,12 @@ pub(crate) fn unit_parts(
     let suffix = unit_suffix(unit, display, locale);
     let narrow = display == "narrow" || unit == Some("percent");
     let number = text
+        .strip_suffix('%')
+        .unwrap_or(text)
         .find(|character: char| character.is_ascii_alphabetic())
-        .map_or(text, |index| text[..index].trim_end());
+        .map_or(text.strip_suffix('%').unwrap_or(text), |index| {
+            text[..index].trim_end()
+        });
     let mut parts = numeric_parts(number, locale);
     if locale.starts_with("ko") && display == "long" {
         parts.insert(0, part("unit", "시속"));
