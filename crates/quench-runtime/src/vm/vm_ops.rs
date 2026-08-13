@@ -1,5 +1,5 @@
 //! VM op execution dispatch (call, builtin tail, unary, binary).
-use crate::intl::tolocale::value::{parse_float, parse_int};
+use crate::intl::tolocale::parse_num::{parse_float, parse_int};
 use crate::ops::HostCapabilityKind;
 use crate::value::Value;
 
@@ -209,8 +209,8 @@ fn tail_dispatch(
         Builtin::ObjectHasOwnProperty | Builtin::ObjectGetOwnPropertyDescriptor => {
             crate::builtins::object::object_special(builtin, receiver, arguments)
         }
-        Builtin::ParseFloat => Value::Number(parse_float(arguments.first())),
-        Builtin::ParseInt => Value::Number(parse_int(arguments)),
+        Builtin::ParseFloat => Value::Number(parse_float(arguments.first())?),
+        Builtin::ParseInt => Value::Number(parse_int(arguments)?),
         Builtin::String => match arguments.first() {
             Some(value) => Value::String(crate::conversion::to_string_explicit(value)?),
             None => Value::String(String::new()),
