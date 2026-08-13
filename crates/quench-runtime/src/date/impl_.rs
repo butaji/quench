@@ -32,10 +32,18 @@ pub fn execute(
     if let Some(result) = super::setter::set_time_components(builtin, receiver, arguments) {
         return Some(result);
     }
+    if is_date_getter(builtin) {
+        return Some(
+            super::setter::time_value(receiver)
+                .map(|_| dispatch_get(builtin, receiver).unwrap_or(Value::Undefined)),
+        );
+    }
+    if builtin == Builtin::DateToString {
+        return Some(super::setter::time_value(receiver).map(|_| date_to_string(receiver)));
+    }
     let result = match builtin {
         Builtin::DateNow => Value::Number(chrono_utils::current_time_ms()),
         Builtin::DateParse => date_parse(arguments),
-        Builtin::DateToString => date_to_string(receiver),
         _ => {
             let val = dispatch_get(builtin, receiver)
                 .or_else(|| dispatch_set(builtin, receiver, arguments));
@@ -43,6 +51,32 @@ pub fn execute(
         }
     };
     Some(Ok(result))
+}
+
+fn is_date_getter(builtin: Builtin) -> bool {
+    matches!(
+        builtin,
+        Builtin::DateValueOf
+            | Builtin::DateGetTime
+            | Builtin::DateGetFullYear
+            | Builtin::DateGetMonth
+            | Builtin::DateGetDate
+            | Builtin::DateGetDay
+            | Builtin::DateGetHours
+            | Builtin::DateGetMinutes
+            | Builtin::DateGetSeconds
+            | Builtin::DateGetMilliseconds
+            | Builtin::DateGetTimezoneOffset
+            | Builtin::DateGetUTCFullYear
+            | Builtin::DateGetUTCMonth
+            | Builtin::DateGetUTCDate
+            | Builtin::DateGetUTCDay
+            | Builtin::DateGetUTCHours
+            | Builtin::DateGetUTCMinutes
+            | Builtin::DateGetUTCSeconds
+            | Builtin::DateGetUTCMilliseconds
+            | Builtin::DateGetYear
+    )
 }
 
 pub(crate) fn call() -> Value {
