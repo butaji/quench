@@ -228,8 +228,11 @@ fn put_with_receiver(
     if crate::builtins::descriptor_flag(target, key, "writable") == Some(false) {
         return strict_write_failure();
     }
-    let result = crate::builtins::set_property(target.clone(), key, value);
-    crate::locals::replace_value(target, &result);
+    if crate::properties::rejects_new_property(receiver, key) {
+        return strict_write_failure();
+    }
+    let result = crate::builtins::set_property(receiver.clone(), key, value);
+    crate::locals::replace_value(receiver, &result);
     Ok(())
 }
 
