@@ -320,17 +320,28 @@ pub(crate) fn prototype_method(
 }
 
 fn range_values(arguments: &[Value]) -> Result<(String, String), VmError> {
-    let start = range_value(arguments.first().unwrap_or(&Value::Undefined))?;
-    let end = range_value(arguments.get(1).unwrap_or(&Value::Undefined))?;
-    Ok((start, end))
+    let start = range_number(arguments.first().unwrap_or(&Value::Undefined))?;
+    let end = range_number(arguments.get(1).unwrap_or(&Value::Undefined))?;
+    if start > end {
+        return Err(runtime_error("RangeError: start date is after end date"));
+    }
+    Ok((range_text(start), range_text(end)))
 }
 
 fn range_value(value: &Value) -> Result<String, VmError> {
+    range_number(value).map(range_text)
+}
+
+fn range_number(value: &Value) -> Result<f64, VmError> {
     let number = conversion::to_number(value)?;
     if !number.is_finite() || number.abs() > 8_640_000_000_000_000.0 {
         return Err(runtime_error("RangeError: date value is not finite"));
     }
-    Ok(conversion::number_to_string(number.trunc()))
+    Ok(number.trunc())
+}
+
+fn range_text(number: f64) -> String {
+    conversion::number_to_string(number)
 }
 
 fn receiver_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)>, VmError> {
