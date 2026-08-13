@@ -254,6 +254,10 @@ pub enum Op {
     ValidateClassHeritage {
         src: u16,
     },
+    GetClassPrototype {
+        dst: u16,
+        heritage: u16,
+    },
     AppendInstanceField(AppendInstanceFieldOp),
     SetProperty {
         object: u16,
