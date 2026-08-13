@@ -321,6 +321,9 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
     if builtin == Builtin::Set && key == "Symbol.species" {
         return Some(accessor_descriptor(Builtin::SetSpeciesGetter));
     }
+    if builtin == Builtin::SymbolPrototype && key == "description" {
+        return Some(accessor_descriptor(Builtin::SymbolDescriptionGetter));
+    }
     if builtin == Builtin::Symbol && key == "unscopables" {
         return super::special_property(builtin, key)
             .map(|property| descriptor_object_with_flags(property, false, false, false));
