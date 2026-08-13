@@ -6,6 +6,7 @@ use std::collections::HashMap;
 include!("functions_properties.rs");
 const NEW_TARGET: &str = "\0new_target";
 pub(crate) const FUNCTION_SELF: &str = "\0function_self";
+pub(crate) const FUNCTION_NAME_IMMUTABLE: &str = "\0function_name_immutable";
 #[derive(Clone, Copy)]
 pub(crate) struct FunctionMetadata {
     pub(crate) kind: FunctionKind,

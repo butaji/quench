@@ -25,6 +25,12 @@ fn emit_function_expression(
             src: marker,
             strict: true,
         });
+        ops.push(Op::SetProperty {
+            object: function,
+            key: crate::functions::FUNCTION_NAME_IMMUTABLE.to_string(),
+            src: marker,
+            strict: true,
+        });
     }
     function
 }
@@ -43,14 +49,14 @@ pub(crate) fn build_registers(
     parameters.truncate(usize::from(function.params));
     parameters.push(crate::value::Value::Undefined);
     parameters.push(this_value.clone());
+    let named = function
+        .properties
+        .borrow()
+        .iter()
+        .any(|(name, _)| name == FUNCTION_SELF);
     if !matches!(function.kind, FunctionKind::Arrow) {
         parameters.push(crate::value::Value::Undefined);
-        if function
-            .properties
-            .borrow()
-            .iter()
-            .any(|(name, _)| name == FUNCTION_SELF)
-        {
+        if named {
             parameters.push(crate::value::Value::Function(std::rc::Rc::clone(function)));
         }
     }
@@ -58,6 +64,14 @@ pub(crate) fn build_registers(
     let arguments = arguments_object(function, original_arguments, &environment);
     let arguments_slot = function.captures.len() as u16 + function.params;
     environment.set(arguments_slot, arguments);
+    if function
+        .properties
+        .borrow()
+        .iter()
+        .any(|(name, _)| name == crate::functions::FUNCTION_NAME_IMMUTABLE)
+    {
+        environment.mark_immutable_slot(arguments_slot.saturating_add(3));
+    }
     let register_count = function.ops().len().max(32);
     (vec![crate::value::Value::Undefined; register_count], environment)
 }

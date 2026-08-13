@@ -7,22 +7,29 @@ thread_local! {
     static GLOBAL_LEXICAL_ENVIRONMENT: RefCell<Option<Rc<Environment>>> = const { RefCell::new(None) };
     static REPLACEMENTS: RefCell<Vec<(Value, Value)>> = const { RefCell::new(Vec::new()) };
     static STRICT_EVAL: RefCell<bool> = const { RefCell::new(false) };
+    static ACTIVE_EVAL: RefCell<bool> = const { RefCell::new(false) };
 }
 
 pub(crate) struct StrictEvalGuard {
     previous: bool,
+    previous_active: bool,
 }
 
 impl StrictEvalGuard {
     pub(crate) fn install(active: bool) -> Self {
         let previous = STRICT_EVAL.with(|value| value.replace(active));
-        Self { previous }
+        let previous_active = ACTIVE_EVAL.with(|value| value.replace(true));
+        Self {
+            previous,
+            previous_active,
+        }
     }
 }
 
 impl Drop for StrictEvalGuard {
     fn drop(&mut self) {
         STRICT_EVAL.with(|value| value.replace(self.previous));
+        ACTIVE_EVAL.with(|value| value.replace(self.previous_active));
     }
 }
 
@@ -108,6 +115,11 @@ pub(crate) fn is_installed() -> bool {
 pub(crate) fn store(registers: &[Value], slot: u16, source: u16) -> Result<(), VmError> {
     let value = crate::execute::read_register(registers, source)?;
     if current().is_immutable_slot(slot) && !current().is_uninitialized(slot) {
+        if ACTIVE_EVAL.with(|active| *active.borrow())
+            && !STRICT_EVAL.with(|strict| *strict.borrow())
+        {
+            return Ok(());
+        }
         return Err(crate::value::error::throw_type_error(
             "Cannot assign to immutable binding",
         ));
@@ -115,6 +127,20 @@ pub(crate) fn store(registers: &[Value], slot: u16, source: u16) -> Result<(), V
     current().set(slot, value);
     if slot == 0 {
         crate::vm::initialize_global_object(&current().get(slot));
+    }
+    Ok(())
+}
+
+pub(crate) fn store_function_name(
+    _registers: &[Value],
+    _slot: u16,
+    _source: u16,
+    strict: bool,
+) -> Result<(), VmError> {
+    if strict {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot assign to function name",
+        ));
     }
     Ok(())
 }
