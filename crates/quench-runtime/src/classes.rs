@@ -123,6 +123,9 @@ fn reduce_elements(
     let mut static_fields = Vec::new();
     for element in &class.body.body {
         match element {
+            ClassElement::StaticBlock(block) => {
+                static_fields.push(reduce_static_block(block, constructor, facts, locals)?);
+            }
             ClassElement::MethodDefinition(method) => {
                 reduce_class_method(method, prototype, constructor, ops, facts, next, locals)?
             }
@@ -148,6 +151,33 @@ fn reduce_elements(
         }
     }
     Some(static_fields)
+}
+
+fn reduce_static_block(
+    block: &oxc::ast::ast::StaticBlock<'_>,
+    constructor: u16,
+    facts: &mut ProgramDb,
+    locals: &HashMap<String, u16>,
+) -> Option<Op> {
+    let captures = crate::reduce_support::register_base(locals);
+    let mut block_locals = locals.clone();
+    block_locals.insert("this".to_string(), captures.saturating_add(1));
+    let inherited = (facts.strict, facts.in_function);
+    facts.strict = true;
+    facts.in_function = true;
+    let body = crate::reduce::reduce_expression_statements_with_locals(
+        &block.body,
+        facts,
+        block_locals,
+        captures.saturating_add(2),
+    );
+    (facts.strict, facts.in_function) = inherited;
+    let body = body.ok()?;
+    Some(Op::StaticBlock {
+        constructor,
+        captures,
+        body: crate::machine::FunctionCode::from_ops(body),
+    })
 }
 
 fn reduce_class_method(
