@@ -194,13 +194,21 @@ fn function_constructor(function: &crate::value::FunctionValue) -> Builtin {
     }
 }
 pub fn get_property_result(value: &Value, key: &str) -> Result<Value, VmError> {
+    get_property_with_receiver(value, key, value)
+}
+
+pub(crate) fn get_property_with_receiver(
+    value: &Value,
+    key: &str,
+    receiver: &Value,
+) -> Result<Value, VmError> {
     if matches!(value, Value::Null | Value::Undefined) {
         return Err(crate::value::error::throw_type_error(&format!(
             "Cannot read property `{key}` of null or undefined"
         )));
     }
     if matches!(value, Value::Proxy(_)) {
-        return crate::proxy::proxy_get(value, key, Some(value));
+        return crate::proxy::proxy_get(value, key, Some(receiver));
     }
     if matches!(value, Value::Array(values) if values.is_strict_arguments() && key == "callee") {
         return Err(crate::value::error::throw_type_error(
@@ -216,7 +224,7 @@ pub fn get_property_result(value: &Value, key: &str) -> Result<Value, VmError> {
         if matches!(getter, Value::Undefined) {
             return Ok(Value::Undefined);
         }
-        return invoke_accessor(&getter, value);
+        return invoke_accessor(&getter, receiver);
     }
     let getter = crate::property_define::accessor(value, key, "get");
     let Some(getter) = getter else {
@@ -225,7 +233,7 @@ pub fn get_property_result(value: &Value, key: &str) -> Result<Value, VmError> {
     if matches!(getter, Value::Undefined) {
         return Ok(Value::Undefined);
     }
-    invoke_accessor(&getter, value)
+    invoke_accessor(&getter, receiver)
 }
 
 /// Invoke a getter using the receiver as `this`. The getter's own

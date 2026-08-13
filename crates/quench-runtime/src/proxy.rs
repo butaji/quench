@@ -125,7 +125,7 @@ pub(crate) fn proxy_get(
         }
         return proxy_target_property(proxy, prop, receiver.unwrap_or(target));
     }
-    Ok(crate::execute::get_property(target, prop))
+    crate::vm::get_property_with_receiver(target, prop, receiver.unwrap_or(target))
 }
 
 fn proxy_target_property(
@@ -148,7 +148,7 @@ fn proxy_target_property(
             },
         )));
     }
-    Ok(crate::execute::get_property(&proxy.target, prop))
+    crate::vm::get_property_with_receiver(&proxy.target, prop, receiver)
 }
 
 pub(crate) fn proxy_set(
