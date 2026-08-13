@@ -85,6 +85,7 @@ pub(crate) fn set_prototype_of(arguments: &[Value]) -> Result<Value, VmError> {
             | Value::ObjectAlias(_)
             | Value::Function(_)
             | Value::BoundFunction(_)
+            | Value::Builtin(_)
     ) {
         return Err(crate::value::error::throw_type_error(
             "Object.setPrototypeOf target must be an object",
@@ -93,7 +94,7 @@ pub(crate) fn set_prototype_of(arguments: &[Value]) -> Result<Value, VmError> {
     let prototype = arguments.get(1).cloned().unwrap_or(Value::Undefined);
     if !matches!(
         prototype,
-        Value::Object(_) | Value::ObjectAlias(_) | Value::Null
+        Value::Object(_) | Value::ObjectAlias(_) | Value::Builtin(_) | Value::Null
     ) {
         return Err(crate::value::error::throw_type_error(
             "Object prototype must be an object or null",
