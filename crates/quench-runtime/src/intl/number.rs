@@ -24,6 +24,7 @@ pub(crate) struct NumberOptions {
     pub notation: String,
     pub compact_display: String,
     pub rounding_mode: String,
+    pub rounding_increment: u32,
     pub sign_display: String,
 }
 
@@ -40,6 +41,7 @@ pub(crate) struct RawOptions {
     notation: String,
     compact_display: String,
     rounding_mode: String,
+    rounding_increment: f64,
     sign_display: String,
 }
 
@@ -58,6 +60,7 @@ impl RawOptions {
             notation: "standard".to_string(),
             compact_display: "short".to_string(),
             rounding_mode: "halfExpand".to_string(),
+            rounding_increment: 1.0,
             sign_display: "auto".to_string(),
         };
         if let Some(Value::Object(properties)) = options {
@@ -80,6 +83,7 @@ impl RawOptions {
                     "notation" => raw.notation = value,
                     "compactDisplay" => raw.compact_display = value,
                     "roundingMode" => raw.rounding_mode = value,
+                    "roundingIncrement" => raw.rounding_increment = value.parse().unwrap_or(1.0),
                     "signDisplay" => raw.sign_display = value,
                     _ => {}
                 }
@@ -125,6 +129,7 @@ impl NumberOptions {
             notation: raw.notation,
             compact_display: raw.compact_display,
             rounding_mode: raw.rounding_mode,
+            rounding_increment: raw.rounding_increment.max(1.0) as u32,
             sign_display: raw.sign_display,
         })
     }
@@ -177,6 +182,10 @@ impl NumberOptions {
             (
                 "roundingMode".to_string(),
                 Value::String(self.rounding_mode.clone()),
+            ),
+            (
+                "roundingIncrement".to_string(),
+                Value::Number(self.rounding_increment as f64),
             ),
         ];
         if let Some(currency) = &self.currency {
@@ -268,6 +277,7 @@ impl NumberOptions {
                 .unwrap_or_else(|| "short".to_string()),
             rounding_mode: slot_string(slots, "roundingMode")
                 .unwrap_or_else(|| "halfExpand".to_string()),
+            rounding_increment: slot_number(slots, "roundingIncrement").unwrap_or(1.0) as u32,
             sign_display: slot_string(slots, "signDisplay").unwrap_or_else(|| "auto".to_string()),
         })
     }
@@ -296,7 +306,7 @@ impl NumberOptions {
         } else {
             self.maximum_fraction_digits
         };
-        let mut text = format_number_rounded(value, fraction_digits);
+        let mut text = format_number_rounded(value, fraction_digits, self.rounding_increment);
         if self.use_grouping
             && (self.notation != "compact" || (compact_unscaled_de && scaled.abs() >= 10_000.0))
         {
@@ -453,30 +463,6 @@ fn to_number_result(value: Option<&Value>) -> Result<f64, VmError> {
 
 pub(crate) fn to_number(value: Option<&Value>) -> f64 {
     to_number_result(value).unwrap_or(f64::NAN)
-}
-
-fn format_number_rounded(value: f64, max_fraction: u32) -> String {
-    if value.is_nan() {
-        return "NaN".to_string();
-    }
-    if value.is_infinite() {
-        return if value.is_sign_negative() {
-            "-∞".to_string()
-        } else {
-            "∞".to_string()
-        };
-    }
-    let formatter = format!("{:.*}", max_fraction as usize, value);
-    let mut formatter = formatter;
-    if formatter.contains('.') {
-        while formatter.ends_with('0') {
-            formatter.pop();
-        }
-        if formatter.ends_with('.') {
-            formatter.pop();
-        }
-    }
-    formatter
 }
 
 pub(crate) fn dispatch(
