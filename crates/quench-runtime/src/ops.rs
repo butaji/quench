@@ -448,6 +448,7 @@ pub enum Builtin {
     SetIterator,
     SetEntries,
     SetSpeciesGetter,
+    MapSpeciesGetter,
     WeakMap,
     WeakMapPrototype,
     WeakMapSet,
