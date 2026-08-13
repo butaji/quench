@@ -280,12 +280,23 @@ fn require_super_base(home: &Value) -> Result<Value, VmError> {
 }
 
 pub(crate) fn attach_home_objects(value: &Value) {
-    let Value::Object(object) = value else { return };
-    let alias = Value::ObjectAlias(ObjectAliasValue(Rc::new(RefCell::new(Rc::downgrade(
-        object,
-    )))));
-    for (_, property) in object.iter() {
-        attach(property, &alias);
+    match value {
+        Value::Object(object) => {
+            let alias = Value::ObjectAlias(ObjectAliasValue(Rc::new(RefCell::new(Rc::downgrade(
+                object,
+            )))));
+            for (_, property) in object.iter() {
+                attach(property, &alias);
+            }
+        }
+        Value::Function(function) => {
+            let home = Value::Function(Rc::clone(function));
+            let properties = function.properties.borrow().clone();
+            for (_, property) in &properties {
+                attach(property, &home);
+            }
+        }
+        _ => {}
     }
 }
 
