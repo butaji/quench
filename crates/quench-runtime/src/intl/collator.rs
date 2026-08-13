@@ -15,6 +15,9 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     if let Some(Value::Object(properties)) = arguments.get(1) {
         if let Some((_, value)) = properties.iter().find(|(name, _)| name == "sensitivity") {
             sensitivity = to_string_value(value);
+            if !matches!(sensitivity.as_str(), "base" | "accent" | "case" | "variant") {
+                return Err(runtime_error("RangeError: invalid sensitivity"));
+            }
         }
         if let Some((_, Value::Boolean(value))) = properties
             .iter()
