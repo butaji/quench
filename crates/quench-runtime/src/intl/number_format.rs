@@ -504,7 +504,7 @@ pub(crate) fn unit_parts(
         parts.insert(0, part("unit", "每小時"));
         parts.insert(1, part("literal", " "));
     }
-    if (!narrow || locale.starts_with("de")) && !(locale.starts_with("ko") && display == "long") {
+    if (!narrow || locale.starts_with("de")) && !locale.starts_with("ko") {
         parts.push(part("literal", " "));
     }
     parts.push(part("unit", &suffix));
