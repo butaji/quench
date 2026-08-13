@@ -37,7 +37,7 @@ pub(crate) fn execute_builtin(
         ArrayIncludes => includes(receiver, arguments),
         ArrayIndexOf => index_of(receiver, arguments),
         ArrayLastIndexOf => last_index_of(receiver, arguments),
-        ArraySlice => slice(receiver, arguments),
+        ArraySlice => return Some(slice(receiver, arguments)),
         ArrayConcat => return Some(concat(receiver, arguments)),
         ArrayFlat => flat(receiver, arguments),
         ArrayFlatMap => return Some(flat_map(receiver, arguments)),
@@ -375,20 +375,6 @@ pub(crate) fn last_index_of(receiver: Option<&Value>, arguments: &[Value]) -> Va
     let index = values.iter().rposition(|value| strict_equal(value, search));
     Value::Number(index.map_or(-1.0, |value| value as f64))
 }
-pub(crate) fn slice(receiver: Option<&Value>, arguments: &[Value]) -> Value {
-    let Some(Value::Array(values)) = receiver else {
-        return Value::array(Vec::new());
-    };
-    let length = values.len() as isize;
-    let start = relative_index(arguments.first(), length);
-    let end = arguments
-        .get(1)
-        .map_or(length, |value| end_index(value, length));
-    if end <= start {
-        return Value::array(Vec::new());
-    }
-    Value::array(values[start as usize..end as usize].to_vec())
-}
 pub(crate) fn flat(receiver: Option<&Value>, arguments: &[Value]) -> Value {
     let Some(Value::Array(values)) = receiver else {
         return Value::array(Vec::new());
@@ -517,13 +503,6 @@ fn relative_index(value: Option<&Value>, length: isize) -> isize {
         integer.min(length)
     }
 }
-fn end_index(value: &Value, length: isize) -> isize {
-    if matches!(value, Value::Undefined) {
-        length
-    } else {
-        relative_index(Some(value), length)
-    }
-}
 fn strict_equal(left: &Value, right: &Value) -> bool {
     crate::equality::strict_equal(left, right)
 }
@@ -548,3 +527,4 @@ mod tests {
 }
 
 include!("arrays_concat.rs");
+include!("arrays_slice.rs");
