@@ -24,7 +24,7 @@ fn builtin_property_writable(builtin: Builtin, key: &str) -> bool {
 fn builtin_property_configurable(builtin: Builtin, key: &str) -> bool {
     builtin != Builtin::Math || crate::math::constant(key).is_none()
 }
-fn is_well_known_symbol_property(builtin: Builtin, key: &str) -> bool {
+pub(crate) fn is_well_known_symbol_property(builtin: Builtin, key: &str) -> bool {
     builtin == Builtin::Symbol
         && matches!(
             key,

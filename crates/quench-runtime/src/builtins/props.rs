@@ -510,6 +510,9 @@ pub(crate) fn is_builtin_deletable(_builtin: Builtin, key: &str) -> bool {
     if key == "prototype" {
         return false;
     }
+    if crate::builtins::object::is_well_known_symbol_property(_builtin, key) {
+        return false;
+    }
     if matches!(
         (_builtin, key),
         (
