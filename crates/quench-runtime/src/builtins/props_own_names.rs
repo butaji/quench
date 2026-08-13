@@ -28,6 +28,18 @@ pub(crate) fn own_property_names(builtin: Builtin) -> &'static [&'static str] {
             "constructor", "use", "adopt", "defer", "move", "disposeAsync", "disposed",
             "Symbol.asyncDispose", "Symbol.toStringTag",
         ],
+        Builtin::Math => &[
+            "abs", "acos", "acosh", "asin", "asinh", "atan", "atan2", "atanh", "cbrt",
+            "ceil", "clz32", "cos", "cosh", "exp", "expm1", "f16round", "floor", "fround",
+            "hypot", "imul", "log", "log1p", "log2", "log10", "max", "min", "pow", "random",
+            "round", "sign", "sin", "sinh", "sqrt", "sumPrecise", "tan", "tanh", "trunc",
+            "E", "LN2", "LN10", "LOG2E", "LOG10E", "PI", "SQRT1_2", "SQRT2", "Symbol.toStringTag",
+        ],
+        Builtin::Reflect => &[
+            "apply", "construct", "defineProperty", "deleteProperty", "get",
+            "getOwnPropertyDescriptor", "getPrototypeOf", "has", "isExtensible", "ownKeys",
+            "preventExtensions", "set", "setPrototypeOf", "Symbol.toStringTag",
+        ],
         _ => &[],
     }
 }
