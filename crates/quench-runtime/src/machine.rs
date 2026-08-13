@@ -172,7 +172,7 @@ pub struct ExecutableCode {
 
 impl ExecutableCode {
     pub fn from_ops(body: Vec<Op>) -> Self {
-        let (store, entry) = freeze_tree(body);
+        let (store, entry, _) = freeze_tree(body);
         Self { store, entry }
     }
 
@@ -197,8 +197,8 @@ pub struct FunctionCode {
 
 impl FunctionCode {
     pub fn from_ops(body: Vec<Op>) -> Self {
-        let (store, range) = freeze_tree(body);
-        Self::new(store, range)
+        let (_, range, store) = freeze_tree(body);
+        Self { store, range }
     }
 
     /// Materialize related nested bodies in one immutable store.
@@ -249,13 +249,13 @@ impl FunctionCode {
     }
 }
 
-fn freeze_tree(body: Vec<Op>) -> (Rc<CodeStore>, CodeRange) {
+fn freeze_tree(body: Vec<Op>) -> (Rc<CodeStore>, CodeRange, Rc<OnceLock<Rc<CodeStore>>>) {
     let mut arena = CodeArena::new();
     let linked = Rc::new(OnceLock::new());
     let range = arena.append_tree(body, &linked);
     let store = arena.freeze();
     let _ = linked.set(store.clone());
-    (store, range)
+    (store, range, linked)
 }
 
 impl PartialEq for FunctionCode {
