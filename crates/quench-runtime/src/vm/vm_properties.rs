@@ -314,9 +314,16 @@ fn receiver_property(value: &Value, key: &str, receiver: &Value) -> Value {
         return property;
     }
     match property {
-        Value::Builtin(_) => bind_method(receiver, property),
+        Value::Builtin(builtin) if !is_accessor_builtin(builtin) => bind_method(receiver, property),
         other => other,
     }
+}
+/// Accessor getters/setters carry their `this` at invocation time; binding
+/// them to the object they were read from (e.g. a property descriptor's
+/// `.get`) would call them with the wrong receiver.
+fn is_accessor_builtin(builtin: Builtin) -> bool {
+    let name = crate::builtins::builtin_name(builtin);
+    name.starts_with("get ") || name.starts_with("set ")
 }
 fn same_property_receiver(value: &Value, receiver: &Value) -> bool {
     matches!((value, receiver), (Value::Builtin(left), Value::Builtin(right)) if left == right)
