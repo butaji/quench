@@ -18,6 +18,10 @@ pub(crate) enum Place {
     Local {
         slot: u16,
     },
+    FunctionName {
+        slot: u16,
+        strict: bool,
+    },
     DynamicLocal {
         name: String,
         slot: u16,
@@ -129,6 +133,7 @@ pub(crate) fn reduce_place(
             identifier.name.as_str(),
             facts.strict,
             facts.has_dynamic_scope(),
+            facts.function_name_slot,
             locals,
         )),
         AssignmentTarget::StaticMemberExpression(member) => member_place(
@@ -200,7 +205,13 @@ pub(crate) fn identifier_assignment_place(
     facts: &ProgramDb,
     locals: &HashMap<String, u16>,
 ) -> Place {
-    identifier_place(name, facts.strict, facts.has_dynamic_scope(), locals)
+    identifier_place(
+        name,
+        facts.strict,
+        facts.has_dynamic_scope(),
+        facts.function_name_slot,
+        locals,
+    )
 }
 
 pub(crate) fn reduce_simple_place(
@@ -216,6 +227,7 @@ pub(crate) fn reduce_simple_place(
                 identifier.name.as_str(),
                 facts.strict,
                 facts.has_dynamic_scope(),
+                facts.function_name_slot,
                 locals,
             ))
         }
@@ -246,6 +258,7 @@ fn identifier_place(
     name: &str,
     strict: bool,
     dynamic_scope: bool,
+    function_name_slot: Option<u16>,
     locals: &HashMap<String, u16>,
 ) -> Place {
     locals.get(name).map_or_else(
@@ -255,6 +268,12 @@ fn identifier_place(
             target: None,
         },
         |slot| {
+            if function_name_slot == Some(*slot) {
+                return Place::FunctionName {
+                    slot: *slot,
+                    strict,
+                };
+            }
             if dynamic_scope {
                 Place::DynamicLocal {
                     name: name.to_string(),
