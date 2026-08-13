@@ -13,7 +13,12 @@ fn object_values_entries(target: Option<&Value>, entries: bool) -> Result<Value,
         return crate::own_keys::values(target, entries);
     };
     let mut result = Vec::new();
-    for key in proxy_enumerable_string_keys(target)? {
+    for key in proxy_own_string_keys(target)? {
+        let descriptor = crate::proxy::proxy_get_own_property_descriptor(target, &key)?;
+        let enumerable = crate::execute::get_property_result(&descriptor, "enumerable")?;
+        if !crate::execute::is_truthy(&enumerable) {
+            continue;
+        }
         let value = crate::proxy::proxy_get(target, &key, None)?;
         result.push(if entries {
             Value::array(vec![Value::String(key), value])
@@ -25,6 +30,18 @@ fn object_values_entries(target: Option<&Value>, entries: bool) -> Result<Value,
 }
 
 fn proxy_enumerable_string_keys(target: &Value) -> Result<Vec<String>, VmError> {
+    let mut result = Vec::new();
+    for key in proxy_own_string_keys(target)? {
+        let descriptor = crate::proxy::proxy_get_own_property_descriptor(target, &key)?;
+        let enumerable = crate::execute::get_property_result(&descriptor, "enumerable")?;
+        if crate::execute::is_truthy(&enumerable) {
+            result.push(key);
+        }
+    }
+    Ok(result)
+}
+
+fn proxy_own_string_keys(target: &Value) -> Result<Vec<String>, VmError> {
     let keys = crate::proxy::proxy_own_keys(target)?;
     let Value::Array(keys) = keys else {
         return Err(crate::vm::not_callable());
@@ -36,12 +53,7 @@ fn proxy_enumerable_string_keys(target: &Value) -> Result<Vec<String>, VmError> 
                 "Proxy ownKeys must return property keys",
             ));
         };
-        if key.contains('\0') {
-            continue;
-        }
-        let descriptor = crate::proxy::proxy_get_own_property_descriptor(target, &key)?;
-        let enumerable = crate::execute::get_property_result(&descriptor, "enumerable")?;
-        if crate::execute::is_truthy(&enumerable) {
+        if !key.contains('\0') {
             result.push(key);
         }
     }

@@ -117,6 +117,10 @@ impl ArrayData {
         self.descriptors.push((key.to_string(), descriptor));
     }
 
+    pub(crate) fn descriptor_keys(&self) -> Vec<String> {
+        self.descriptors.iter().map(|(key, _)| key.clone()).collect()
+    }
+
     pub(crate) fn property(&self, key: &str) -> Option<Value> {
         self.properties
             .iter()
