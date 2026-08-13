@@ -297,6 +297,16 @@ fn receiver_property(value: &Value, key: &str, receiver: &Value) -> Value {
     if matches!(value, Value::Object(_)) && crate::vm::is_global_object(value) {
         return property;
     }
+    if matches!(
+        property,
+        Value::Builtin(
+            Builtin::IntlNumberFormatFormatToParts
+                | Builtin::IntlNumberFormatFormatRange
+                | Builtin::IntlNumberFormatFormatRangeToParts
+        )
+    ) {
+        return property;
+    }
     if matches!(key, "constructor" | "prototype") {
         return property;
     }
