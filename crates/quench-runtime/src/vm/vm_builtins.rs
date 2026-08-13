@@ -114,6 +114,14 @@ fn is_simple_builtin(builtin: Builtin) -> bool {
             | Builtin::URIError
             | Builtin::AggregateError
             | Builtin::TypeError
+            | Builtin::SuppressedError
+            | Builtin::ErrorIsError
+            | Builtin::ErrorPrototypeToString
+            | Builtin::ErrorPrototypeNameGetter
+            | Builtin::ErrorPrototypeMessageGetter
+            | Builtin::ErrorPrototypeCauseGetter
+            | Builtin::ErrorPrototypeStackGetter
+            | Builtin::ErrorPrototypeStackSetter
             | Builtin::WeakRefDeref
     )
 }
@@ -236,14 +244,32 @@ fn error_stack_getter(receiver: Option<&Value>) -> Result<Value, VmError> {
 
 fn error_stack_setter(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let value = error_receiver(receiver, "Error.prototype.stack")?;
-    let Some(stack) = arguments.first() else {
-        return Err(crate::value::error::throw_type_error("Argument required"));
-    };
+    let stack = arguments.first().ok_or_else(|| {
+        crate::value::error::throw_type_error("Cannot set property 'stack' of error")
+    })?;
+    if let Some(home) = set_error_stack_home() {
+        if crate::builtins::same_value(Some(&home), Some(value)) {
+            return Err(crate::value::error::throw_type_error(
+                "Cannot set property 'stack' of error",
+            ));
+        }
+    }
     let Value::String(_) = stack else {
         return Err(crate::value::error::throw_type_error("Stack value must be a string"));
     };
     crate::properties::assign_set_property(value, "stack", stack.clone())?;
     Ok(Value::Undefined)
+}
+
+fn set_error_stack_home() -> Option<Value> {
+    let value = crate::execute::get_property(&crate::vm::current_global_object(), "Error");
+    let Ok(value) = crate::execute::get_property_result(&value, "prototype") else {
+        return None;
+    };
+    if !crate::value::is_object(&value) {
+        return None;
+    }
+    Some(value)
 }
 
 fn has_error_slot(value: &Value) -> bool {
@@ -268,7 +294,11 @@ fn error_to_string(receiver: Option<&Value>) -> Result<Value, VmError> {
         Value::Undefined => String::new(),
         value => crate::conversion::to_string(&value)?,
     };
-    if message.is_empty() {
+    if name.is_empty() && message.is_empty() {
+        Ok(Value::String(String::new()))
+    } else if name.is_empty() {
+        Ok(Value::String(message))
+    } else if message.is_empty() {
         Ok(Value::String(name))
     } else {
         Ok(Value::String(format!("{name}: {message}")))
@@ -282,48 +312,7 @@ fn error_is_error(value: Option<&Value>) -> Value {
     if !crate::value::is_object(value) {
         return Value::Boolean(false);
     }
-    let constructor = crate::execute::get_property(value, "constructor");
-    let is_error_constructor = matches!(
-        constructor,
-        Value::Builtin(
-            Builtin::Error
-                | Builtin::RangeError
-                | Builtin::ReferenceError
-                | Builtin::SyntaxError
-                | Builtin::EvalError
-                | Builtin::URIError
-                | Builtin::AggregateError
-                | Builtin::TypeError
-                | Builtin::SuppressedError
-        )
-    );
-    if is_error_constructor {
-        return Value::Boolean(true);
-    }
-    Value::Boolean(error_prototype_chain_contains(value))
-}
-
-fn error_prototype_chain_contains(value: &Value) -> bool {
-    let mut current = value.clone();
-    let mut seen = Vec::new();
-    while !matches!(current, Value::Null | Value::Undefined) {
-        if seen.iter().any(|seen| seen == &current) {
-            return false;
-        }
-        seen.push(current.clone());
-        if let Ok(prototype) = crate::builtins::object::get_prototype_of(Some(&current)) {
-            if crate::builtins::same_value(
-                Some(&prototype),
-                Some(&Value::Builtin(Builtin::ErrorPrototype)),
-            ) {
-                return true;
-            }
-            current = prototype;
-            continue;
-        }
-        return false;
-    }
-    false
+    Value::Boolean(has_error_slot(value))
 }
 
 fn error_receiver<'a>(receiver: Option<&'a Value>, name: &str) -> Result<&'a Value, VmError> {

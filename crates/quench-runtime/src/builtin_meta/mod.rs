@@ -11,6 +11,7 @@ pub mod collections;
 pub mod dataview;
 pub mod date;
 pub mod disposable;
+pub mod error;
 pub mod finalization_registry;
 pub mod function;
 pub mod intl;

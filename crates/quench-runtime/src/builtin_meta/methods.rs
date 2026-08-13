@@ -3,7 +3,7 @@
 use crate::ops::Builtin;
 
 use super::{
-    array, bigint, collections, dataview, date, disposable, finalization_registry, function,
+    array, bigint, collections, dataview, date, disposable, error, finalization_registry, function,
     intl, json, math, number, object, promise, reflect, regexp, string, symbol,
 };
 
@@ -33,6 +33,9 @@ pub fn function_name(builtin: Builtin) -> Option<&'static str> {
         return Some(v);
     }
     if let Some(v) = number::fn_name(builtin) {
+        return Some(v);
+    }
+    if let Some(v) = error::fn_name(builtin) {
         return Some(v);
     }
     if let Some(v) = bigint::fn_name(builtin) {
@@ -85,6 +88,9 @@ pub fn function_length(builtin: Builtin) -> Option<f64> {
     if let Some(v) = number::fn_len(builtin) {
         return Some(v);
     }
+    if let Some(v) = error::fn_len(builtin) {
+        return Some(v);
+    }
     if let Some(v) = bigint::fn_len(builtin) {
         return Some(v);
     }
@@ -132,6 +138,9 @@ pub fn short_name(builtin: Builtin) -> Option<&'static str> {
         return Some(v);
     }
     if let Some(v) = number::short_name(builtin) {
+        return Some(v);
+    }
+    if let Some(v) = error::short_name(builtin) {
         return Some(v);
     }
     if let Some(v) = bigint::short_name(builtin) {

@@ -4,6 +4,15 @@ pub(crate) fn own_property_names(builtin: Builtin) -> &'static [&'static str] {
         Builtin::BigIntPrototype => {
             &["constructor", "toString", "valueOf", "Symbol.toStringTag"]
         }
+        Builtin::Error => &[
+            "length",
+            "name",
+            "prototype",
+            "isError",
+        ],
+        Builtin::ErrorPrototype => {
+            &["constructor", "name", "message", "cause", "stack", "toString"]
+        }
         Builtin::DisposableStack => &["length", "name", "prototype"],
         Builtin::DisposableStackPrototype => &[
             "constructor", "use", "adopt", "defer", "move", "dispose", "disposed",
