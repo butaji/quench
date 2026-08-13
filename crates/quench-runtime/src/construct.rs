@@ -499,7 +499,7 @@ pub(crate) fn derived_constructor(
         .borrow()
         .iter()
         .rev()
-        .find_map(|(name, value)| (name == "\0derived_constructor").then(|| value.clone()))
+        .find_map(|(name, value)| (name == "\0prototype").then(|| value.clone()))
         .ok_or_else(|| crate::value::error::throw_reference_error("super is unavailable"))
 }
 
