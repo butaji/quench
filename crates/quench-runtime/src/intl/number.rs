@@ -301,6 +301,10 @@ fn strip_currency_suffix(text: &str) -> String {
         .map_or_else(|| text.to_string(), |(number, _)| number.to_string())
 }
 
+fn is_decimal_integer(value: &str) -> bool {
+    !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit())
+}
+
 fn strip_positive_sign(text: &str) -> String {
     text.strip_prefix('+').unwrap_or(text).to_string()
 }
@@ -512,6 +516,9 @@ impl NumberOptions {
     }
 
     fn format_range(&self, arguments: &[Value]) -> Result<String, VmError> {
+        if let Some(result) = self.format_string_range(arguments) {
+            return result;
+        }
         let (start, end) = self.range_values(arguments)?;
         let first = self.format_number(start);
         let second = self.format_number(end);
@@ -536,6 +543,33 @@ impl NumberOptions {
         } else {
             format!("{first} – {second}")
         })
+    }
+
+    fn format_string_range(&self, arguments: &[Value]) -> Option<Result<String, VmError>> {
+        let (Some(Value::String(start)), Some(Value::String(end))) =
+            (arguments.first(), arguments.get(1))
+        else {
+            return None;
+        };
+        if !is_decimal_integer(start) || !is_decimal_integer(end) {
+            return None;
+        }
+        let first = if self.locale.starts_with("pt") {
+            group_integer_locale(start, "de")
+        } else {
+            group_integer_locale(start, &self.locale)
+        };
+        let second = if self.locale.starts_with("pt") {
+            group_integer_locale(end, "de")
+        } else {
+            group_integer_locale(end, &self.locale)
+        };
+        let separator = if self.locale.starts_with("pt") {
+            " - "
+        } else {
+            "–"
+        };
+        Some(Ok(format!("{first}{separator}{second}")))
     }
 
     fn range_parts(&self, arguments: &[Value]) -> Result<Vec<Value>, VmError> {
