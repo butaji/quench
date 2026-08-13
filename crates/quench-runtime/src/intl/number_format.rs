@@ -650,7 +650,7 @@ pub(crate) fn unit_parts(
         .find(|character: char| character.is_ascii_alphabetic())
         .map_or(
             localized_text.strip_suffix('%').unwrap_or(&localized_text),
-            |index| localized_text[..index].trim_end(),
+            |index| localized_text[..index].trim(),
         );
     let mut parts = numeric_parts(number, locale);
     if locale.starts_with("ko") && display == "long" {
