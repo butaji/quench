@@ -120,7 +120,7 @@ fn validate_code(code: &str, display_type: &str) -> Result<(), VmError> {
 fn language_code_valid(code: &str) -> bool {
     let mut parts = code.split('-');
     let language = parts.next().unwrap_or("");
-    (2..=3).contains(&language.len())
+    ((2..=3).contains(&language.len()) || (5..=8).contains(&language.len()))
         && language.chars().all(|c| c.is_ascii_alphabetic())
         && parts.all(|part| {
             (2..=8).contains(&part.len()) && part.chars().all(|c| c.is_ascii_alphanumeric())
