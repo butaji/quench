@@ -84,6 +84,7 @@ pub(crate) mod value {
             return format!("Symbol({description})");
         }
         if let Some(description) = symbol.strip_prefix("Symbol.") {
+            let description = description.strip_prefix('\u{1}').unwrap_or(description);
             return format!("Symbol({description})");
         }
         value.to_string()
@@ -358,7 +359,7 @@ pub(crate) mod symbol {
     }
     fn make_symbol(arguments: &[Value]) -> Value {
         let description = match arguments.first() {
-            None | Some(Value::Undefined) => String::new(),
+            None | Some(Value::Undefined) => "\u{1}".to_string(),
             Some(value) => to_string_value(value),
         };
         let counter = SYMBOL_COUNTER.fetch_add(1, Ordering::Relaxed);

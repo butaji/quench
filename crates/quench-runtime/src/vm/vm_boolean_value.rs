@@ -60,6 +60,22 @@ fn symbol_to_string(receiver: Option<&Value>) -> Result<Value, crate::execute::V
     Ok(Value::String(crate::intl::tolocale::value::to_string(Some(&value))))
 }
 
+fn symbol_description(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
+    let Value::String(symbol) = symbol_value_of(receiver)? else {
+        return Err(crate::value::error::throw_type_error(
+            "Symbol description requires a symbol",
+        ));
+    };
+    let description = symbol
+        .strip_prefix("Symbol.")
+        .and_then(|value| value.rsplit_once('\0').map(|(value, _)| value))
+        .ok_or_else(|| crate::value::error::throw_type_error("Symbol description requires a symbol"))?;
+    if description == "\u{1}" {
+        return Ok(Value::Undefined);
+    }
+    Ok(Value::String(description.to_string()))
+}
+
 fn wrapped_symbol(value: &Value) -> Result<Value, crate::execute::VmError> {
     let constructor = crate::execute::get_property_result(value, "constructor")?;
     let wrapped = crate::execute::get_property_result(value, "_value")?;

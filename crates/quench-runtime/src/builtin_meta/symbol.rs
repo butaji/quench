@@ -28,6 +28,7 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
     match b {
         Builtin::SymbolToString => Some("Symbol.prototype.toString"),
         Builtin::SymbolValueOf => Some("Symbol.prototype.valueOf"),
+        Builtin::SymbolDescriptionGetter => Some("get description"),
         Builtin::SymbolFor => Some("Symbol.for"),
         Builtin::SymbolKeyFor => Some("Symbol.keyFor"),
         _ => None,
@@ -36,7 +37,9 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
 
 pub const fn fn_len(b: Builtin) -> Option<f64> {
     match b {
-        Builtin::SymbolToString | Builtin::SymbolValueOf => Some(0.0),
+        Builtin::SymbolToString | Builtin::SymbolValueOf | Builtin::SymbolDescriptionGetter => {
+            Some(0.0)
+        }
         Builtin::SymbolFor | Builtin::SymbolKeyFor => Some(1.0),
         _ => None,
     }
@@ -46,6 +49,7 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
     match b {
         Builtin::SymbolToString => Some("toString"),
         Builtin::SymbolValueOf => Some("valueOf"),
+        Builtin::SymbolDescriptionGetter => Some("get description"),
         Builtin::SymbolFor => Some("for"),
         Builtin::SymbolKeyFor => Some("keyFor"),
         _ => None,
