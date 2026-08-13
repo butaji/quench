@@ -34,9 +34,9 @@ pub(crate) fn execute_builtin(
         ArraySome => return Some(some(receiver, arguments)),
         ArrayEvery => return Some(every(receiver, arguments)),
         ArrayFind => return Some(find(receiver, arguments)),
-        ArrayIncludes => includes(receiver, arguments),
-        ArrayIndexOf => index_of(receiver, arguments),
-        ArrayLastIndexOf => last_index_of(receiver, arguments),
+        ArrayIncludes => return Some(includes(receiver, arguments)),
+        ArrayIndexOf => return Some(index_of(receiver, arguments)),
+        ArrayLastIndexOf => return Some(last_index_of(receiver, arguments)),
         ArraySlice => return Some(slice(receiver, arguments)),
         ArrayConcat => return Some(concat(receiver, arguments)),
         ArrayFlat => flat(receiver, arguments),
@@ -318,63 +318,6 @@ fn index(values: &crate::value::ArrayData, key: &str) -> Value {
 }
 
 include!("arrays_iteration.rs");
-pub(crate) fn includes(receiver: Option<&Value>, arguments: &[Value]) -> Value {
-    let Some(Value::Array(values)) = receiver else {
-        return Value::Boolean(false);
-    };
-    let Some(search) = arguments.first() else {
-        return Value::Boolean(false);
-    };
-    Value::Boolean(values.iter().any(|value| same_value_zero(value, search)))
-}
-
-pub(crate) fn index_of(receiver: Option<&Value>, arguments: &[Value]) -> Value {
-    let Some(Value::Array(values)) = receiver else {
-        return Value::Number(-1.0);
-    };
-    let Some(search) = arguments.first() else {
-        return Value::Number(-1.0);
-    };
-    let length = values.logical_len() as isize;
-    let start = array_search_start(arguments.get(1), length);
-    if start >= length {
-        return Value::Number(-1.0);
-    }
-    let index = (start..length).find(|index| {
-        values
-            .get_index(*index as usize)
-            .is_some_and(|value| strict_equal(&value, search))
-    });
-    Value::Number(index.map_or(-1.0, |value| value as f64))
-}
-
-fn array_search_start(value: Option<&Value>, length: isize) -> isize {
-    let Some(value) = value else { return 0 };
-    let number = crate::conversion::to_number(value).unwrap_or(0.0);
-    if number.is_nan() {
-        return 0;
-    }
-    if number.is_infinite() {
-        return if number.is_sign_negative() { 0 } else { length };
-    }
-    let integer = number.trunc() as isize;
-    if integer < 0 {
-        (length + integer).max(0)
-    } else {
-        integer
-    }
-}
-
-pub(crate) fn last_index_of(receiver: Option<&Value>, arguments: &[Value]) -> Value {
-    let Some(Value::Array(values)) = receiver else {
-        return Value::Number(-1.0);
-    };
-    let Some(search) = arguments.first() else {
-        return Value::Number(-1.0);
-    };
-    let index = values.iter().rposition(|value| strict_equal(value, search));
-    Value::Number(index.map_or(-1.0, |value| value as f64))
-}
 pub(crate) fn flat(receiver: Option<&Value>, arguments: &[Value]) -> Value {
     let Some(Value::Array(values)) = receiver else {
         return Value::array(Vec::new());
@@ -528,3 +471,4 @@ mod tests {
 
 include!("arrays_concat.rs");
 include!("arrays_slice.rs");
+include!("arrays_index_of.rs");
