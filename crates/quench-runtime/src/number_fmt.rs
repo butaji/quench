@@ -79,16 +79,44 @@ fn exponential(number: f64, digits: Option<usize>) -> Result<String, VmError> {
         return Ok(crate::conversion::number_to_string(number));
     }
     Ok(match digits {
-        Some(digits) => scientific(number, digits),
+        Some(digits) => exponential_scientific(number, digits),
         None => default_exponential(number),
     })
 }
 
 fn scientific(number: f64, digits: usize) -> String {
+    formatted_scientific(number, digits, false)
+}
+
+fn exponential_scientific(number: f64, digits: usize) -> String {
+    formatted_scientific(number, digits, true)
+}
+
+fn formatted_scientific(number: f64, digits: usize, half_up: bool) -> String {
     let value = format!("{number:.digits$e}");
     let (coefficient, exponent) = value.split_once('e').unwrap_or((&value, "0"));
     let exponent = exponent.parse::<i32>().unwrap_or_default();
+    let rounded = half_up
+        .then(|| halfway_coefficient(number, digits, exponent))
+        .flatten();
+    let (coefficient, exponent) = rounded.unwrap_or_else(|| (coefficient.to_string(), exponent));
     format!("{coefficient}e{exponent:+}")
+}
+
+fn halfway_coefficient(number: f64, digits: usize, exponent: i32) -> Option<(String, i32)> {
+    let scale = 10_f64.powi(exponent - digits as i32);
+    let scaled = number.abs() / scale;
+    (scaled.fract() == 0.5).then(|| {
+        let mut rounded = scaled.floor() + 1.0;
+        let mut exponent = exponent;
+        if rounded == 10_f64.powi(digits as i32 + 1) {
+            rounded /= 10.0;
+            exponent += 1;
+        }
+        let coefficient = rounded / 10_f64.powi(digits as i32);
+        let sign = if number.is_sign_negative() { "-" } else { "" };
+        (format!("{sign}{coefficient:.digits$}"), exponent)
+    })
 }
 
 fn default_exponential(number: f64) -> String {
