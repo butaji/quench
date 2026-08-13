@@ -118,7 +118,7 @@ pub(crate) fn proxy_get(
             return call_trap(
                 &trap,
                 &[
-                    target.clone(),
+                    proxy.target.clone(),
                     Value::String(prop.to_string()),
                     receiver.clone(),
                 ],
@@ -366,7 +366,7 @@ pub(crate) fn proxy_define_property(
             return call_trap(
                 &trap,
                 &[
-                    target.clone(),
+                    proxy.target.clone(),
                     Value::String(prop.to_string()),
                     descriptor.clone(),
                 ],
