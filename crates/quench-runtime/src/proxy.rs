@@ -401,6 +401,12 @@ pub(crate) fn proxy_define_property(
             );
         }
     }
+    let updated = crate::builtins::define_property(&[
+        target.clone(),
+        Value::String(prop.to_string()),
+        descriptor.clone(),
+    ])?;
+    crate::locals::replace_value(target, &updated);
     Ok(Value::Boolean(true))
 }
 
