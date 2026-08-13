@@ -263,6 +263,15 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
     let getter = match (builtin, key) {
         (Builtin::Set, "Symbol.species") => Builtin::SetSpeciesGetter,
         (Builtin::Map, "Symbol.species") => Builtin::MapSpeciesGetter,
+        (
+            Builtin::Array
+            | Builtin::ArrayBuffer
+            | Builtin::Promise
+            | Builtin::RegExp
+            | Builtin::Symbol
+            | Builtin::TypedArray,
+            "Symbol.species",
+        ) => Builtin::SpeciesGetter,
         (Builtin::SetPrototype, "size") => Builtin::SetSizeGetter,
         (Builtin::MapPrototype, "size") => Builtin::MapSizeGetter,
         (Builtin::DataViewPrototype, "buffer") => Builtin::DataViewBufferGetter,

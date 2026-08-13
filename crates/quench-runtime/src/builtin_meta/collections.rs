@@ -144,7 +144,9 @@ const fn set_fn_name(b: Builtin) -> Option<&'static str> {
         Builtin::SetForEach => Some("Set.prototype.forEach"),
         Builtin::SetIterator => Some("Set.prototype.values"),
         Builtin::SetEntries => Some("Set.prototype.entries"),
-        Builtin::SetSpeciesGetter | Builtin::MapSpeciesGetter => Some("get [Symbol.species]"),
+        Builtin::SetSpeciesGetter | Builtin::MapSpeciesGetter | Builtin::SpeciesGetter => {
+            Some("get [Symbol.species]")
+        }
         Builtin::SetDifference => Some("Set.prototype.difference"),
         Builtin::SetIntersection => Some("Set.prototype.intersection"),
         Builtin::SetSymmetricDifference => Some("Set.prototype.symmetricDifference"),
@@ -172,7 +174,10 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         Builtin::SetClear => Some(0.0),
         Builtin::SetForEach => Some(1.0),
         Builtin::SetIterator => Some(0.0),
-        Builtin::SetEntries | Builtin::SetSpeciesGetter | Builtin::MapSpeciesGetter => Some(0.0),
+        Builtin::SetEntries
+        | Builtin::SetSpeciesGetter
+        | Builtin::MapSpeciesGetter
+        | Builtin::SpeciesGetter => Some(0.0),
         Builtin::SetDifference
         | Builtin::SetIntersection
         | Builtin::SetSymmetricDifference
