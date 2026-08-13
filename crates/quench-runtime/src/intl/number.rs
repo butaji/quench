@@ -579,6 +579,12 @@ impl NumberOptions {
             );
         }
         if self.style == "unit" {
+            if self.locale.starts_with("ja")
+                && self.unit == Some("kilometer-per-hour".to_string())
+                && self.unit_display == "long"
+            {
+                return japanese_speed_parts(&formatted);
+            }
             return unit_parts(
                 &formatted,
                 self.unit.as_deref(),
@@ -739,6 +745,44 @@ impl NumberOptions {
             ),
         ])
     }
+}
+
+fn japanese_speed_parts(formatted: &str) -> Vec<Value> {
+    let Some(number) = formatted
+        .strip_prefix("時速 ")
+        .and_then(|value| value.strip_suffix(" キロメートル"))
+    else {
+        return numeric_parts(formatted, "ja-JP");
+    };
+    let mut parts = vec![make_object(vec![
+        ("type".to_string(), Value::String("unit".to_string())),
+        ("value".to_string(), Value::String("時速".to_string())),
+        (
+            "unit".to_string(),
+            Value::String("kilometer-per-hour".to_string()),
+        ),
+    ])];
+    parts.push(make_object(vec![
+        ("type".to_string(), Value::String("literal".to_string())),
+        ("value".to_string(), Value::String(" ".to_string())),
+    ]));
+    parts.extend(numeric_parts(number, "ja-JP"));
+    parts.push(make_object(vec![
+        ("type".to_string(), Value::String("literal".to_string())),
+        ("value".to_string(), Value::String(" ".to_string())),
+    ]));
+    parts.push(make_object(vec![
+        ("type".to_string(), Value::String("unit".to_string())),
+        (
+            "value".to_string(),
+            Value::String("キロメートル".to_string()),
+        ),
+        (
+            "unit".to_string(),
+            Value::String("kilometer-per-hour".to_string()),
+        ),
+    ]));
+    parts
 }
 
 fn format_localized_unit(text: &str, unit: Option<&str>, display: &str, locale: &str) -> String {
