@@ -74,7 +74,9 @@ fn main() -> ExitCode {
     };
     println!("selected={} discovered={discovered_count}", files.len());
     let threads = args.threads.max(1).min(files.len());
-    let (passed, failed, failures, outcomes) = run_parallel(&root, sources, args.limit, threads);
+    let emit_outcomes = args.json.is_some();
+    let (passed, failed, failures, outcomes) =
+        run_parallel(&root, sources, args.limit, threads, emit_outcomes);
     if let Some(path) = &args.json {
         if let Err(error) = write_json_report(path, &args, &root, passed, failed, &outcomes) {
             return fail(&error);
@@ -258,6 +260,7 @@ fn run_parallel(
     files: Vec<TestSource>,
     limit: usize,
     threads: usize,
+    emit_outcomes: bool,
 ) -> (usize, usize, Vec<(PathBuf, String)>, Vec<JsonOutcome>) {
     let counter = Arc::new(AtomicUsize::new(0));
     let files = Arc::new(files);
@@ -271,7 +274,7 @@ fn run_parallel(
             let stack_size = worker_stack_size();
             thread::Builder::new()
                 .stack_size(stack_size)
-                .spawn(move || run_worker(files, root, limit, counter, next))
+                .spawn(move || run_worker(files, root, limit, counter, next, emit_outcomes))
                 .expect("spawn triage worker")
         })
         .collect();
@@ -298,6 +301,7 @@ fn run_worker(
     limit: usize,
     counter: Arc<AtomicUsize>,
     next: Arc<AtomicUsize>,
+    emit_outcomes: bool,
 ) -> RunReport {
     let mut runner = Test262Runner::new(RuntimeHost);
     let mut harness = HarnessCache::new(root.join("harness"));
@@ -314,6 +318,7 @@ fn run_worker(
             &files[start..stop],
             limit,
             &counter,
+            emit_outcomes,
             &mut report,
         );
         if counter.load(Ordering::Relaxed) >= limit {
@@ -329,6 +334,7 @@ fn run_fixture_batch(
     batch: &[TestSource],
     limit: usize,
     counter: &Arc<AtomicUsize>,
+    emit_outcomes: bool,
     report: &mut RunReport,
 ) {
     for fixture in batch {
@@ -343,10 +349,12 @@ fn run_fixture_batch(
                 (normalize_reason(reason.trim()), Some(reason))
             }
         };
-        report.outcomes.push(JsonOutcome {
-            path: fixture.path.clone(),
-            category,
-        });
+        if emit_outcomes {
+            report.outcomes.push(JsonOutcome {
+                path: fixture.path.clone(),
+                category,
+            });
+        }
         match reason {
             None => report.passed += 1,
             Some(reason) => {
