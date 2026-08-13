@@ -158,14 +158,12 @@ const fn fn_len_get_or_set(b: Builtin) -> Option<f64> {
         | DateToLocaleString
         | DateToLocaleDateString
         | DateToLocaleTimeString => Some(0.0),
-        DateSetTime
-        | DateSetMonth
-        | DateSetDate
-        | DateSetMilliseconds
-        | DateSetYear
-        | DateSetUTCMilliseconds => Some(1.0),
-        DateSetFullYear => Some(4.0),
-        DateSetHours | DateSetUTCHours => Some(5.0),
+        DateSetTime | DateSetDate | DateSetMilliseconds | DateSetYear | DateSetUTCMilliseconds => {
+            Some(1.0)
+        }
+        DateSetMonth => Some(2.0),
+        DateSetFullYear => Some(3.0),
+        DateSetHours | DateSetUTCHours => Some(4.0),
         DateSetMinutes | DateSetUTCMinutes => Some(3.0),
         DateSetSeconds | DateSetUTCSeconds => Some(2.0),
         _ => None,
