@@ -115,6 +115,12 @@ fn prototype_property(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Builtin::IntlDateTimeFormatPrototype, "formatToParts") => {
             Builtin::IntlDateTimeFormatFormatToParts
         }
+        (Builtin::IntlDateTimeFormatPrototype, "formatRange") => {
+            Builtin::IntlDateTimeFormatFormatRange
+        }
+        (Builtin::IntlDateTimeFormatPrototype, "formatRangeToParts") => {
+            Builtin::IntlDateTimeFormatFormatRangeToParts
+        }
         (Builtin::IntlDateTimeFormatPrototype, "resolvedOptions") => {
             Builtin::IntlDateTimeFormatResolvedOptions
         }
