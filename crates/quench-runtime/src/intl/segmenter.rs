@@ -95,7 +95,8 @@ fn receiver_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)>, VmEr
 fn segment(text: &str, granularity: &str, locale: &str) -> Value {
     let _ = locale;
     let segments = match granularity {
-        "word" | "sentence" => vec![segment_entry(text, 0, text, true)],
+        "word" => word_segments(text),
+        "sentence" => vec![segment_entry(text, 0, text, true)],
         _ => text
             .char_indices()
             .map(|(index, character)| segment_entry(&character.to_string(), index, text, false))
@@ -112,6 +113,31 @@ fn segment(text: &str, granularity: &str, locale: &str) -> Value {
             Value::Builtin(crate::ops::Builtin::IntlSegmenterSegmentsContaining),
         ),
     ])
+}
+
+fn word_segments(text: &str) -> Vec<Value> {
+    let mut result = Vec::new();
+    let mut start = 0;
+    let mut whitespace: Option<bool> = None;
+    for (index, character) in text.char_indices() {
+        let is_space = character.is_whitespace();
+        if let Some(previous) = whitespace {
+            if previous != is_space {
+                result.push(segment_entry(&text[start..index], start, text, !previous));
+                start = index;
+            }
+        }
+        whitespace = Some(is_space);
+    }
+    if start < text.len() {
+        result.push(segment_entry(
+            &text[start..],
+            start,
+            text,
+            !whitespace.unwrap_or(false),
+        ));
+    }
+    result
 }
 
 fn segment_entry(segment: &str, index: usize, input: &str, word_like: bool) -> Value {
