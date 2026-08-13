@@ -351,6 +351,7 @@ fn write_failure(strict: bool) -> Result<(), crate::execute::VmError> {
 
 include!("properties_assign.rs");
 include!("properties_copy_data.rs");
+include!("properties_reflect_set.rs");
 
 pub(crate) fn propagate_updated_object(
     registers: &mut Vec<crate::value::Value>,
