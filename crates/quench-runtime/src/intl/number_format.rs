@@ -1,0 +1,144 @@
+pub(crate) fn group_integer(text: &str) -> String {
+    let (sign, rest) = match text.strip_prefix('-') {
+        Some(rest) => ("-", rest),
+        None => ("", text),
+    };
+    let (integer, fraction) = rest
+        .split_once('.')
+        .map_or((rest, None), |value| (value.0, Some(value.1)));
+    let chars: Vec<char> = integer.chars().collect();
+    let mut grouped = String::new();
+    for (index, character) in chars.iter().enumerate() {
+        if index > 0 && (chars.len() - index) % 3 == 0 {
+            grouped.push(',');
+        }
+        grouped.push(*character);
+    }
+    let mut result = format!("{sign}{grouped}");
+    if let Some(fraction) = fraction {
+        result.push('.');
+        result.push_str(fraction);
+    }
+    result
+}
+
+pub(crate) fn apply_minimum_integer(text: &str, minimum: u32) -> String {
+    let (sign, rest) = text
+        .strip_prefix('-')
+        .map_or(("", text), |rest| ("-", rest));
+    let (integer, fraction) = rest
+        .split_once('.')
+        .map_or((rest, None), |value| (value.0, Some(value.1)));
+    let integer: String = integer.chars().filter(char::is_ascii_digit).collect();
+    let mut result = String::new();
+    for _ in integer.len()..minimum as usize {
+        result.push('0');
+    }
+    result.push_str(&integer);
+    let mut out = format!("{sign}{result}");
+    if let Some(fraction) = fraction {
+        out.push('.');
+        out.push_str(fraction);
+    }
+    out
+}
+
+pub(crate) fn pad_fraction(text: &str, minimum: u32) -> String {
+    let (sign, rest) = text
+        .strip_prefix('-')
+        .map_or(("", text), |rest| ("-", rest));
+    let fraction_digits = rest
+        .split_once('.')
+        .map_or(0, |(_, fraction)| fraction.len());
+    let mut out = format!("{sign}{rest}");
+    if minimum > 0 {
+        if !rest.contains('.') {
+            out.push('.');
+        }
+        for _ in fraction_digits..minimum as usize {
+            out.push('0');
+        }
+    }
+    out
+}
+
+pub(crate) fn compact_scale(value: f64) -> i32 {
+    let magnitude = value.abs().log10().floor() as i32;
+    if magnitude >= 9 {
+        9
+    } else if magnitude >= 6 {
+        6
+    } else if magnitude >= 3 {
+        3
+    } else {
+        0
+    }
+}
+
+pub(crate) fn compact_suffix(magnitude: i32) -> &'static str {
+    match magnitude {
+        3 => "K",
+        6 => "M",
+        9 => "B",
+        _ => "",
+    }
+}
+
+pub(crate) fn format_currency(
+    text: &str,
+    currency: Option<&str>,
+    display: &str,
+    locale: &str,
+    currency_sign: &str,
+) -> String {
+    let (sign, text) = text.strip_prefix('-').map_or_else(
+        || {
+            text.strip_prefix('+')
+                .map_or(("", text), |rest| ("+", rest))
+        },
+        |rest| ("-", rest),
+    );
+    let text = if locale.starts_with("de") {
+        text.replace('.', ",")
+    } else {
+        text.to_string()
+    };
+    let symbol = match display {
+        "code" | "name" => currency.unwrap_or("USD"),
+        _ => match currency {
+            Some("USD") => "$",
+            Some("EUR") => "€",
+            Some("JPY") => "¥",
+            Some("GBP") => "£",
+            Some("CNY") => "¥",
+            Some("INR") => "₹",
+            Some("RUB") => "₽",
+            Some("KRW") => "₩",
+            _ => currency.unwrap_or("USD"),
+        },
+    };
+    let symbol =
+        if (locale.starts_with("ko") || locale.starts_with("zh")) && currency == Some("USD") {
+            "US$"
+        } else {
+            symbol
+        };
+    let formatted = if locale.starts_with("de") {
+        format!("{text}\u{a0}{symbol}")
+    } else {
+        format!("{symbol}{text}")
+    };
+    if sign == "-" && currency_sign == "accounting" && !locale.starts_with("de") {
+        format!("({formatted})")
+    } else {
+        format!("{sign}{formatted}")
+    }
+}
+
+pub(crate) fn format_unit(text: &str, unit: Option<&str>) -> String {
+    match unit {
+        Some("percent") => format!("{text}%"),
+        Some("kilometer") => format!("{text} km"),
+        _ => text.to_string(),
+    }
+}

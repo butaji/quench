@@ -13,6 +13,7 @@ pub(crate) mod displaynames;
 pub(crate) mod list;
 pub(crate) mod locale;
 pub(crate) mod number;
+pub(crate) mod number_format;
 pub(crate) mod plural;
 pub(crate) mod relative;
 pub(crate) mod segmenter;
