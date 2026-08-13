@@ -107,9 +107,21 @@ fn computed_method_key(expression: &Expression<'_>) -> Option<String> {
     }
     let name = member.property.name.as_str();
     match name {
-        "iterator" | "match" | "replace" | "search" | "split" | "matchAll" => {
-            Some(format!("Symbol.{name}"))
-        }
+        "asyncDispose"
+        | "asyncIterator"
+        | "dispose"
+        | "hasInstance"
+        | "isConcatSpreadable"
+        | "iterator"
+        | "match"
+        | "matchAll"
+        | "replace"
+        | "search"
+        | "species"
+        | "split"
+        | "toPrimitive"
+        | "toStringTag"
+        | "unscopables" => Some(format!("Symbol.{name}")),
         _ => None,
     }
 }

@@ -6,7 +6,9 @@ fn compare_values(left: &Value, right: &Value, compare: fn(f64, f64) -> bool) ->
     let left = crate::conversion::to_primitive(left, "number")?;
     let right = crate::conversion::to_primitive(right, "number")?;
     if let (Value::String(left), Value::String(right)) = (&left, &right) {
-        return Ok(Value::Boolean(compare_strings(left, right, compare)));
+        if !crate::conversion::is_symbol_string(left) && !crate::conversion::is_symbol_string(right) {
+            return Ok(Value::Boolean(compare_strings(left, right, compare)));
+        }
     }
     if let Some(result) = compare_bigint_operands(&left, &right, compare)? {
         return Ok(Value::Boolean(result));
