@@ -142,6 +142,15 @@ fn static_accessor(builtin: Builtin, key: &str) -> Option<Value> {
         (Builtin::DataViewPrototype, "byteOffset") => Builtin::DataViewByteOffsetGetter,
         (Builtin::Set, "Symbol.species") => Builtin::SetSpeciesGetter,
         (Builtin::Map, "Symbol.species") => Builtin::MapSpeciesGetter,
+        (
+            Builtin::Array
+            | Builtin::ArrayBuffer
+            | Builtin::Promise
+            | Builtin::RegExp
+            | Builtin::Symbol
+            | Builtin::TypedArray,
+            "Symbol.species",
+        ) => Builtin::SpeciesGetter,
         (Builtin::SymbolPrototype, "description") => Builtin::SymbolDescriptionGetter,
         (Builtin::IntlLocalePrototype, "baseName") => Builtin::IntlLocaleBaseNameGetter,
         (Builtin::IntlLocalePrototype, "calendar") => Builtin::IntlLocaleCalendarGetter,
