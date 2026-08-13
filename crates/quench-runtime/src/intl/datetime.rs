@@ -327,7 +327,7 @@ fn range_values(arguments: &[Value]) -> Result<(String, String), VmError> {
 
 fn range_value(value: &Value) -> Result<String, VmError> {
     let number = conversion::to_number(value)?;
-    if !number.is_finite() {
+    if !number.is_finite() || number.abs() > 8_640_000_000_000_000.0 {
         return Err(runtime_error("RangeError: date value is not finite"));
     }
     Ok(conversion::number_to_string(number.trunc()))
