@@ -25,7 +25,7 @@ pub(crate) fn execute_special(
     arguments: &[Value],
 ) -> Result<Value, VmError> {
     match builtin {
-        Builtin::ObjectHasOwnProperty => {
+        Builtin::ObjectHasOwnProperty | Builtin::ObjectHasOwn => {
             let (target, key) = has_own_target(receiver, arguments);
             has_own_property_result(target, key)
         }
@@ -220,6 +220,7 @@ fn builtin_owns_property(builtin: Builtin, key: &str) -> bool {
         return false;
     }
     (builtin == Builtin::Object && key == "hasOwn")
+        || builtin_descriptor(builtin, key).is_some()
         || super::callable_property(builtin, key).is_some()
         || super::special_property(builtin, key).is_some()
 }
@@ -334,6 +335,7 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
         (Builtin::Map, "Symbol.species") => Builtin::MapSpeciesGetter,
         (Builtin::SetPrototype, "size") => Builtin::SetSizeGetter,
         (Builtin::MapPrototype, "size") => Builtin::MapSizeGetter,
+        (Builtin::DisposableStackPrototype, "disposed") => Builtin::DisposableStackDisposed,
         _ => return None,
     };
     Some(accessor_descriptor(getter))

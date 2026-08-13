@@ -175,6 +175,8 @@ pub(super) fn global_builtin(key: &str) -> Option<Builtin> {
         "BigInt" => BigInt,
         "String" => String,
         "Date" => Date,
+        "DisposableStack" => DisposableStack,
+        "AsyncDisposableStack" => AsyncDisposableStack,
         _ => return global_builtin_error(key),
     })
 }
