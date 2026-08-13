@@ -454,7 +454,14 @@ impl NumberOptions {
                     &self.currency_sign,
                 )
             }
-            "unit" => text = format_unit(&text, self.unit.as_deref(), &self.unit_display),
+            "unit" => {
+                text = format_localized_unit(
+                    &text,
+                    self.unit.as_deref(),
+                    &self.unit_display,
+                    &self.locale,
+                )
+            }
             _ => {}
         }
         if magnitude > 0 {
@@ -627,6 +634,33 @@ impl NumberOptions {
                 Value::String(self.rounding_mode.clone()),
             ),
         ])
+    }
+}
+
+fn format_localized_unit(text: &str, unit: Option<&str>, display: &str, locale: &str) -> String {
+    if unit != Some("kilometer-per-hour") {
+        return format_unit(text, unit, display);
+    }
+    let (prefix, suffix) = match (locale, display) {
+        (locale, "long") if locale.starts_with("ja") => ("時速 ", " キロメートル"),
+        (locale, "long") if locale.starts_with("ko") => ("시속 ", "킬로미터"),
+        (locale, "long") if locale.starts_with("zh-TW") => ("每小時 ", " 公里"),
+        (locale, "narrow") if locale.starts_with("zh-TW") => ("", "公里/小時"),
+        (locale, _) if locale.starts_with("zh-TW") => ("", " 公里/小時"),
+        (locale, "long") if locale.starts_with("de") => ("", " Kilometer pro Stunde"),
+        (locale, "long") if locale.starts_with("en") => ("", " kilometers per hour"),
+        (locale, _) if locale.starts_with("ko") => ("", "km/h"),
+        _ => ("", " km/h"),
+    };
+    let text = if locale.starts_with("de") {
+        text.replace('.', ",")
+    } else {
+        text.to_string()
+    };
+    if display == "narrow" && !locale.starts_with("de") {
+        format!("{prefix}{text}{}", suffix.trim_start())
+    } else {
+        format!("{prefix}{text}{suffix}")
     }
 }
 
