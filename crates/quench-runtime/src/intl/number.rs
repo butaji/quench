@@ -403,22 +403,32 @@ impl NumberOptions {
     }
 
     fn parts(&self, number: f64) -> Vec<Value> {
+        let formatted = self.format_number(number);
+        if self.style == "currency" {
+            return currency_parts(
+                &formatted,
+                self.currency.as_deref(),
+                &self.currency_display,
+                &self.locale,
+            );
+        }
+        if self.style == "unit" {
+            return unit_parts(
+                &formatted,
+                self.unit.as_deref(),
+                &self.unit_display,
+                &self.locale,
+            );
+        }
         if self.style == "decimal" && self.unit.is_none() {
-            let formatted = self.format_number(number);
             if number.is_infinite()
                 || number.is_nan()
                 || (formatted.starts_with(['-', '+']) && !formatted.contains('.'))
             {
-                return decimal_parts(&formatted);
+                return numeric_parts(&formatted, &self.locale);
             }
         }
-        vec![make_object(vec![
-            ("type".to_string(), Value::String("integer".to_string())),
-            (
-                "value".to_string(),
-                Value::String(self.format_number(number)),
-            ),
-        ])]
+        numeric_parts(&self.format_number(number), &self.locale)
     }
 
     fn resolved(&self) -> Value {
@@ -457,35 +467,6 @@ impl NumberOptions {
             ),
         ])
     }
-}
-
-fn decimal_parts(text: &str) -> Vec<Value> {
-    let (sign, body) = match text.strip_prefix('-') {
-        Some(body) => (Some(("minusSign", "-")), body),
-        None => match text.strip_prefix('+') {
-            Some(body) => (Some(("plusSign", "+")), body),
-            None => (None, text),
-        },
-    };
-    let kind = if body == "∞" {
-        "infinity"
-    } else if body == "NaN" {
-        "nan"
-    } else {
-        "integer"
-    };
-    let mut parts = Vec::new();
-    if let Some((part_type, value)) = sign {
-        parts.push(make_object(vec![
-            ("type".to_string(), Value::String(part_type.to_string())),
-            ("value".to_string(), Value::String(value.to_string())),
-        ]));
-    }
-    parts.push(make_object(vec![
-        ("type".to_string(), Value::String(kind.to_string())),
-        ("value".to_string(), Value::String(body.to_string())),
-    ]));
-    parts
 }
 
 fn receiver_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)>, VmError> {
