@@ -4,14 +4,17 @@ use std::{cell::RefCell, rc::Rc};
 mod iterator_map;
 #[path = "iterator_protocol.rs"]
 mod iterator_protocol;
+#[path = "iterator_step.rs"]
+mod iterator_step;
 #[path = "iterator_typed.rs"]
 mod iterator_typed;
 #[path = "iterator_values.rs"]
 mod iterator_values;
 pub(crate) use iterator_protocol::{should_update_protocol_receiver, ReceiverUpdateGuard};
+pub(crate) use iterator_step::step_value;
 pub(crate) use iterator_values::{
-    from_map, from_map_keys, from_map_values, from_set, make, make_regexp_string, next,
-    property_for,
+    from_map, from_map_keys, from_map_values, from_set, from_set_entries, make, make_regexp_string,
+    next, property_for,
 };
 fn make_protocol(iterator: Value) -> Value {
     Value::Iterator(Rc::new(IteratorData {
@@ -161,13 +164,9 @@ pub(crate) fn open(value: Value) -> Result<Value, crate::execute::VmError> {
     }
     Ok(make_protocol(iterator))
 }
-fn open_self_iterator(iterator: Value) -> Result<Value, crate::execute::VmError> {
+pub(crate) fn open_self_iterator(iterator: Value) -> Result<Value, crate::execute::VmError> {
     Ok(make_protocol(iterator))
 }
-pub(crate) fn collect_iterator_object(value: Value) -> Result<Vec<Value>, crate::execute::VmError> {
-    collect(&open_self_iterator(value)?)
-}
-
 fn step(value: Value) -> Result<Value, crate::execute::VmError> {
     match step_value(&value) {
         Ok(value) => Ok(value.unwrap_or(Value::Undefined)),
@@ -392,56 +391,7 @@ fn get_method(iterator: &Value, name: &str) -> Result<Option<Value>, crate::exec
 fn missing_throw_method() -> crate::execute::VmError {
     crate::value::error::throw_type_error("delegated iterator has no throw method")
 }
-pub(crate) fn step_value(value: &Value) -> Result<Option<Value>, crate::execute::VmError> {
-    let Value::Iterator(data) = value else {
-        return Err(not_iterable());
-    };
-    let protocol = {
-        let mut state = data.state.borrow_mut();
-        match &mut *state {
-            IteratorState::Native {
-                values,
-                index,
-                done,
-            } => return Ok(native_step(values, index, done)),
-            IteratorState::Set { data, index, done } => {
-                return Ok(set_step(data, index, done));
-            }
-            IteratorState::Map {
-                data,
-                index,
-                kind,
-                done,
-            } => return Ok(iterator_map::step(data, index, kind, done)),
-            IteratorState::RegExpString {
-                regexp,
-                input,
-                global,
-                unicode,
-                done,
-            } if !*done => {
-                return crate::regexp::iterator_step(regexp, input, *global, *unicode, done)
-            }
-            IteratorState::RegExpString { .. } => return Ok(None),
-            IteratorState::Protocol {
-                iterator,
-                next: _,
-                done,
-            } if !*done => Some(iterator.clone()),
-            IteratorState::Protocol { .. } => None,
-        }
-    };
-    let Some(iterator) = protocol else {
-        return Ok(None);
-    };
-    let next = crate::execute::get_property_result(&iterator, "next")?;
-    if !crate::conversion::is_callable(&next) {
-        return Err(not_iterable());
-    }
-    let result = iterator_protocol::call_next(data, &next, &iterator)?;
-    protocol_result(data, result)
-}
-fn native_step(values: &[Value], index: &mut usize, done: &mut bool) -> Option<Value> {
+pub(super) fn native_step(values: &[Value], index: &mut usize, done: &mut bool) -> Option<Value> {
     if *done {
         return None;
     }
@@ -450,33 +400,7 @@ fn native_step(values: &[Value], index: &mut usize, done: &mut bool) -> Option<V
     *done = value.is_none();
     value
 }
-fn set_step(data: &crate::value::SetData, index: &mut usize, done: &mut bool) -> Option<Value> {
-    if *done {
-        return None;
-    }
-    let value = data.values.borrow().get(*index).cloned();
-    if value.is_none() {
-        *done = true;
-    } else {
-        *index += 1;
-    }
-    value
-}
-fn protocol_result(
-    data: &IteratorData,
-    result: Value,
-) -> Result<Option<Value>, crate::execute::VmError> {
-    if !crate::value::is_object(&result) {
-        return Err(not_iterable());
-    }
-    let done = crate::execute::get_property_result(&result, "done")?;
-    if crate::execute::is_truthy(&done) {
-        mark_done(data);
-        return Ok(None);
-    }
-    crate::execute::get_property_result(&result, "value").map(Some)
-}
-fn mark_done(data: &IteratorData) {
+pub(super) fn mark_done(data: &IteratorData) {
     match &mut *data.state.borrow_mut() {
         IteratorState::Native { done, .. }
         | IteratorState::Set { done, .. }

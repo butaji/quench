@@ -14,10 +14,12 @@ pub fn execute(
     if builtin == Builtin::Date {
         return Some(date_constructor(arguments));
     }
+    if builtin == Builtin::DateUTC {
+        return Some(date_utc(arguments));
+    }
     let result = match builtin {
         Builtin::DateNow => Value::Number(chrono_utils::current_time_ms()),
         Builtin::DateParse => date_parse(arguments),
-        Builtin::DateUTC => date_utc(arguments),
         Builtin::DateToString => date_to_string(receiver),
         _ => {
             let val = dispatch_get(builtin, receiver)
@@ -90,13 +92,13 @@ fn date_constructor(arguments: &[Value]) -> Result<Value, VmError> {
             chrono_utils::time_clip(crate::conversion::to_number(val)?)
         }
     } else {
-        let year = helpers::to_number(&arguments[0]);
-        let month = helpers::to_number(&arguments[1]);
-        let day = helpers::arg_or(arguments.get(2), 1.0);
-        let hour = helpers::arg_or(arguments.get(3), 0.0);
-        let minute = helpers::arg_or(arguments.get(4), 0.0);
-        let second = helpers::arg_or(arguments.get(5), 0.0);
-        let ms_val = helpers::arg_or(arguments.get(6), 0.0);
+        let year = date_argument(arguments, 0, 0.0)?;
+        let month = date_argument(arguments, 1, 0.0)?;
+        let day = date_argument(arguments, 2, 1.0)?;
+        let hour = date_argument(arguments, 3, 0.0)?;
+        let minute = date_argument(arguments, 4, 0.0)?;
+        let second = date_argument(arguments, 5, 0.0)?;
+        let ms_val = date_argument(arguments, 6, 0.0)?;
         let year = chrono_utils::normalize_constructor_year(year);
         chrono_utils::make_local_ms(year, month, day, hour, minute, second, ms_val)
     };
@@ -112,19 +114,25 @@ fn date_parse(arguments: &[Value]) -> Value {
     Value::Number(chrono_utils::time_clip(DateValue::parse(&s)))
 }
 
-fn date_utc(arguments: &[Value]) -> Value {
-    Value::Number(
-        DateValue::utc(
-            helpers::arg_or(arguments.first(), 0.0),
-            helpers::arg_or(arguments.get(1), 0.0),
-            helpers::arg_or(arguments.get(2), 1.0),
-            helpers::arg_or(arguments.get(3), 0.0),
-            helpers::arg_or(arguments.get(4), 0.0),
-            helpers::arg_or(arguments.get(5), 0.0),
-            helpers::arg_or(arguments.get(6), 0.0),
-        )
-        .ms,
-    )
+fn date_utc(arguments: &[Value]) -> Result<Value, VmError> {
+    let year = date_argument(arguments, 0, 0.0)?;
+    let month = date_argument(arguments, 1, 0.0)?;
+    let day = date_argument(arguments, 2, 1.0)?;
+    let hour = date_argument(arguments, 3, 0.0)?;
+    let minute = date_argument(arguments, 4, 0.0)?;
+    let second = date_argument(arguments, 5, 0.0)?;
+    let millisecond = date_argument(arguments, 6, 0.0)?;
+    Ok(Value::Number(
+        DateValue::utc(year, month, day, hour, minute, second, millisecond).ms,
+    ))
+}
+
+fn date_argument(arguments: &[Value], index: usize, default: f64) -> Result<f64, VmError> {
+    arguments
+        .get(index)
+        .map(crate::conversion::to_number)
+        .transpose()
+        .map(|value| value.unwrap_or(default))
 }
 
 fn date_to_string(receiver: Option<&Value>) -> Value {
